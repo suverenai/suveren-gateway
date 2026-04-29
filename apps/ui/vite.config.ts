@@ -1,17 +1,19 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-// Proxy keys are prefix matches. Use trailing slashes for prefixes that
-// would otherwise collide with UI page paths — e.g. bare `/auth` would
-// catch `/authorizations`, `/integrations` would catch the integrations
-// page itself, etc. Each control-plane endpoint we proxy actually lives
-// at a subpath, so requiring `/auth/` is sound.
+// Vite proxy keys are prefix-string matches (dev-only). Where a prefix
+// would otherwise swallow a UI page path, we require a trailing slash:
+//   - `/auth/`         so it doesn't catch `/authorizations`
+//   - `/integrations/` so it doesn't catch the integrations page
+//   - `/agent-brief/`  so it doesn't catch the agent-brief page
+// Other keys stay bare because no UI route collides with them, and some
+// endpoints are POSTed at the bare path (e.g. `/gate-content`).
 export default defineConfig({
   plugins: [react()],
   server: {
     port: 3400,
     proxy: {
-      '/api/': {
+      '/api': {
         target: 'http://localhost:3402',
         changeOrigin: true,
       },
@@ -19,19 +21,19 @@ export default defineConfig({
         target: 'http://localhost:3402',
         changeOrigin: true,
       },
-      '/gate-content/': {
+      '/gate-content': {
         target: 'http://localhost:3402',
         changeOrigin: true,
       },
-      '/vault/': {
+      '/vault': {
         target: 'http://localhost:3402',
         changeOrigin: true,
       },
-      '/ai/': {
+      '/ai': {
         target: 'http://localhost:3402',
         changeOrigin: true,
       },
-      '/github/': {
+      '/github': {
         target: 'http://localhost:3402',
         changeOrigin: true,
       },
@@ -39,7 +41,7 @@ export default defineConfig({
         target: 'http://localhost:3402',
         changeOrigin: true,
       },
-      '/mcp/': {
+      '/mcp': {
         target: 'http://localhost:3402',
         changeOrigin: true,
       },
