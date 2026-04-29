@@ -59,18 +59,32 @@ function validateTag(value: string, format: string): boolean {
 
 // ─── NumberStepper ──────────────────────────────────────────────────────────
 
+/** Render a profile field's `unit` as a short human-readable suffix.
+ *  `count` returns empty string (the count is its own meaning). */
+function formatUnit(unit?: string): string {
+  if (!unit || unit === 'count') return '';
+  if (unit === 'minutes') return 'min';
+  if (unit === 'hours') return 'hr';
+  if (unit === 'days') return 'days';
+  if (unit === 'percent') return '%';
+  if (unit.startsWith('currency:')) return unit.slice('currency:'.length);
+  return unit;
+}
+
 function NumberStepper({
   id,
   value,
   onChange,
   disabled,
   placeholder,
+  unit,
 }: {
   id: string;
   value: string;
   onChange: (v: string) => void;
   disabled?: boolean;
   placeholder?: string;
+  unit?: string;
 }) {
   const handleDecrement = () => {
     const n = value === '' ? 0 : Number(value);
@@ -114,6 +128,9 @@ function NumberStepper({
       >
         +
       </button>
+      {formatUnit(unit) && (
+        <span className="stepper-unit" aria-hidden="true">{formatUnit(unit)}</span>
+      )}
     </div>
   );
 }
@@ -289,7 +306,6 @@ function FieldRow({
    * from the named integration. Overrides the plain-text-input fallback. */
   discoveryIntegrationId?: string;
 }) {
-  const [expanded, setExpanded] = useState(false);
   const label = humanizeFieldName(fieldKey, fieldDef);
   const fieldId = `${prefix}-field-${fieldKey}`;
 
@@ -338,6 +354,7 @@ function FieldRow({
           value={value}
           onChange={v => onChange(fieldKey, v)}
           disabled={readOnly}
+          unit={(fieldDef as { unit?: string }).unit}
         />
       ) : isTagField(fieldDef) ? (
         <TagInput
@@ -374,16 +391,6 @@ function FieldRow({
         <div className="bounds-field-label">
           <label className="form-label" htmlFor={fieldId}>{label}</label>
           {fieldDef.description && (
-            <button
-              type="button"
-              className="field-info-toggle"
-              onClick={() => setExpanded(!expanded)}
-              aria-label="Toggle description"
-            >
-              ?
-            </button>
-          )}
-          {expanded && fieldDef.description && (
             <div className="hint-text field-description">{fieldDef.description}</div>
           )}
         </div>
@@ -394,20 +401,8 @@ function FieldRow({
 
   return (
     <div className="form-group" key={`${prefix}-${fieldKey}`}>
-      <div className="bounds-field-label-inline">
-        <label className="form-label" htmlFor={fieldId}>{label}</label>
-        {fieldDef.description && (
-          <button
-            type="button"
-            className="field-info-toggle"
-            onClick={() => setExpanded(!expanded)}
-            aria-label="Toggle description"
-          >
-            ?
-          </button>
-        )}
-      </div>
-      {expanded && fieldDef.description && (
+      <label className="form-label" htmlFor={fieldId}>{label}</label>
+      {fieldDef.description && (
         <div className="hint-text field-description">{fieldDef.description}</div>
       )}
       {input}

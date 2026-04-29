@@ -2238,6 +2238,15 @@ body.has-update-banner .main-content {
   box-shadow: inset 0 0 0 2px var(--primary-focus-ring);
 }
 
+.stepper-unit {
+  padding: 0 0.5rem;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  user-select: none;
+  border-left: 1px solid var(--border);
+}
+
 /* ══════════════════════════════════════════════
    BOUNDS EDITOR — Tag Input
    ══════════════════════════════════════════════ */
