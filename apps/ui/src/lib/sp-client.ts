@@ -841,6 +841,58 @@ class SPClient {
     }
   }
 
+  // ─── Phase 7: Team governance views ────────────────────────────────────
+
+  /**
+   * Fetch all authorizations for a group (admin-only).
+   * SP endpoint: GET /api/groups/:id/attestations
+   * Returns the standard PendingItem shape plus an `owner` field per item.
+   */
+  async listTeamAuthorizations(groupId: string): Promise<Array<PendingItem & { owner: { userId: string; name?: string; email?: string } }>> {
+    const res = await this.fetch(`/api/groups/${encodeURIComponent(groupId)}/attestations`);
+    if (!res.ok) throw new Error(`Failed to fetch team authorizations: ${res.status}`);
+    const data = await res.json();
+    return (data.items ?? []).map((a: Record<string, unknown>) => {
+      const owner = (a.owner as { userId: string; name?: string; email?: string }) ?? { userId: '' };
+      const item: PendingItem & { owner: { userId: string; name?: string; email?: string } } = {
+        frame_hash: (a.boundsHash ?? a.frameHash ?? a.frame_hash) as string,
+        profile_id: (a.profileId ?? a.profile_id) as string,
+        path: (a.path ?? '') as string,
+        title: (a.title ?? null) as string | null,
+        sp_status: (a.status ?? a.sp_status ?? null) as string | null,
+        frame: (a.bounds ?? a.frame ?? {}) as Record<string, string | number>,
+        required_domains: (a.requiredDomains ?? a.required_domains ?? []) as string[],
+        attested_domains: (a.attestedDomains ?? a.attested_domains ?? []) as string[],
+        missing_domains: ((a.requiredDomains ?? a.required_domains ?? []) as string[]).filter(
+          (d: string) => !((a.attestedDomains ?? a.attested_domains ?? []) as string[]).includes(d)
+        ),
+        deferred_commitment_domains: (a.deferredCommitmentDomains ?? a.deferred_commitment_domains ?? []) as string[],
+        approvers_frozen: (a.approversFrozen ?? a.approvers_frozen ?? []) as string[],
+        above_cap: (a.aboveCap ?? a.above_cap ?? false) as boolean,
+        created_at: a.createdAt ? new Date((a.createdAt as number) * 1000).toISOString() : (a.created_at as string ?? ''),
+        earliest_expiry: (a.attestations as Array<{ expiresAt: number }> | undefined)?.length
+          ? new Date(Math.min(...(a.attestations as Array<{ expiresAt: number }>).map(att => att.expiresAt)) * 1000).toISOString()
+          : null,
+        remaining_seconds: (a.attestations as Array<{ expiresAt: number }> | undefined)?.length
+          ? Math.max(0, Math.min(...(a.attestations as Array<{ expiresAt: number }>).map(att => att.expiresAt)) - Math.floor(Date.now() / 1000))
+          : null,
+        owner,
+      };
+      return item;
+    });
+  }
+
+  /**
+   * Fetch execution receipts for a group (admin sees team-wide; others see own).
+   * SP endpoint: GET /api/groups/:id/receipts
+   */
+  async listTeamReceipts(groupId: string): Promise<ExecutionReceipt[]> {
+    const res = await this.fetch(`/api/groups/${encodeURIComponent(groupId)}/receipts`);
+    if (!res.ok) throw new Error(`Failed to fetch team receipts: ${res.status}`);
+    const data = await res.json();
+    return data.receipts ?? [];
+  }
+
   // ─── Action Thread (homepage feed) ──────────────────────────────────────
 
   /**
