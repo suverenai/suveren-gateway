@@ -374,7 +374,10 @@ class SPClient {
     const data = await res.json();
     // Normalize mine response to PendingItem shape
     return (data.attestations ?? []).map((a: Record<string, unknown>) => ({
-      frame_hash: a.boundsHash ?? a.frameHash,
+      // frameHash is the SP storage key (per-user scoped in v0.4 post-b228e58).
+      // boundsHash is the content fingerprint and may collide across users.
+      // Always use frameHash for read-by-hash lookups (revoke, intent, extend).
+      frame_hash: a.frameHash ?? a.boundsHash,
       profile_id: a.profileId,
       path: a.path,
       title: a.title ?? null,

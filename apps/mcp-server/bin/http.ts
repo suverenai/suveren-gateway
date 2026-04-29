@@ -149,8 +149,11 @@ app.post('/internal/gate-content', internalOnly, async (req: Request, res: Respo
       gateContent: GateContent;
     };
 
-    // Accept either frameHash (v0.3) or boundsHash (v0.4); use boundsHash when present
-    const storageHash = boundsHash ?? frameHash;
+    // frameHash is the SP storage key (per-user scoped in v0.4 post-b228e58).
+    // boundsHash is the content fingerprint and may collide across users in
+    // the same team. Use frameHash for SP lookups; fall back to boundsHash
+    // only for v0.3 compatibility where they're the same value.
+    const storageHash = frameHash ?? boundsHash;
 
     // v0.4: intent field. v0.3 compat: problem/objective/tradeoffs.
     const hasIntent = !!gateContent?.intent;
@@ -249,8 +252,8 @@ app.post('/internal/resync-gates', internalOnly, async (_req: Request, res: Resp
   let synced = 0;
   for (const gate of gates) {
     try {
-      // Use boundsHash if present (v0.4), otherwise fall back to frameHash (v0.3)
-      const syncHash = gate.boundsHash ?? gate.frameHash;
+      // SP storage key is per-user. Use frameHash (storage key) when stored.
+      const syncHash = gate.frameHash ?? gate.boundsHash;
       const auth = await state.cache.syncAuthorization(syncHash);
       if (auth) {
         state.setGateContent(gate.path, syncHash, auth.profileId, gate.gateContent, {

@@ -211,11 +211,14 @@ export function AgentReviewPage() {
         approvers_frozen: approversFrozen,
       });
 
-      // Push gate content + context to MCP server (after attestation exists on SP)
-      const attestationHash = result.bounds_hash ?? result.frame_hash ?? boundsHash;
+      // Push gate content + context to MCP server (after attestation exists on SP).
+      // frame_hash is the SP storage key (per-user); use it for all downstream
+      // SP lookups. bounds_hash is the content fingerprint — same across users.
+      const storageHash = result.frame_hash ?? result.bounds_hash ?? boundsHash;
       try {
         await spClient.pushGateContent({
-          boundsHash: attestationHash,
+          frameHash: storageHash,
+          boundsHash,
           contextHash,
           context: gateData.context,
           gateContent: gateData.gateContent,

@@ -203,7 +203,10 @@ export function createGatedToolHandler(
       if (!result.approved) {
       }
       if (result.approved) {
-        const authHash = auth.boundsHash ?? auth.frameHash;
+        // SP read-by-hash lookups (receipt, proposals) require the storage key.
+        // frameHash is per-user scoped post-b228e58; boundsHash is the content
+        // fingerprint and would miss on FrameMetadata reads.
+        const authHash = auth.frameHash ?? auth.boundsHash;
 
         // Check for deferred commitment domains — submit proposal instead of executing
         if ((auth.deferredCommitmentDomains ?? []).length > 0) {

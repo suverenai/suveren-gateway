@@ -7,8 +7,12 @@
 import { SPClient, type SPAttestationsResult, type SPPendingItem } from './sp-client';
 
 export interface CachedAuthorization {
-  frameHash: string;            // v0.3 compat (= boundsHash for v0.4)
-  boundsHash?: string;          // v0.4
+  // SP storage key. v0.4 post-b228e58: per-user scoped (`${boundsHash}:${userId}`).
+  // Use this for all SP read-by-hash lookups (revoke, intent, receipt, proposals).
+  frameHash: string;
+  // Content fingerprint. May collide across users with identical bounds.
+  // Use only for hash-equality checks and gate-store path-scoping fallback.
+  boundsHash?: string;
   contextHash?: string;         // v0.4
   profileId: string;
   path: string;
@@ -73,13 +77,15 @@ export class AttestationCache {
     const result = await this.spClient.getAttestations(frameHash);
     if (!result.profile_id || !result.frame) return null;
 
-    // v0.4: prefer bounds_hash; fall back to frame_hash for v0.3 compat
-    const boundsHash = result.bounds_hash ?? result.frame_hash;
+    // SP returns frame_hash (storage key, per-user) and bounds_hash (content).
+    // Track them separately. For v0.3 records that lack bounds_hash, fall back
+    // to frame_hash for the content-equivalent.
+    const storageHash = result.frame_hash ?? result.bounds_hash;
     const bounds = result.bounds ?? result.frame;
 
     const auth: CachedAuthorization = {
-      frameHash: boundsHash,           // compat alias
-      boundsHash: result.bounds_hash,  // v0.4 (undefined for v0.3)
+      frameHash: storageHash,
+      boundsHash: result.bounds_hash,  // content fingerprint (undefined for pre-v0.4 records)
       contextHash: result.context_hash,
       profileId: result.profile_id,
       path: result.path ?? result.profile_id,
