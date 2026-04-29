@@ -18,6 +18,10 @@ export function DashboardPage() {
   const { domain } = useAuth();
   const [auths, setAuths] = useState<PendingItem[]>([]);
   const [proposals, setProposals] = useState<Proposal[]>([]);
+  // Phase 6: above-cap proposals routed to me as approver. Separate from the
+  // domain-scoped legacy proposals because the approver inbox is keyed by
+  // userId, not domain.
+  const [approverProposals, setApproverProposals] = useState<Proposal[]>([]);
   const [aiConfigured, setAiConfigured] = useState(true);
   // Per-section readiness. We used to gate the whole page on a single
   // "loadedOnce || integrationsLoading" flag, which meant a slow SP call
@@ -39,6 +43,12 @@ export function DashboardPage() {
     spClient.getProposals(domain || 'owner')
       .then(v => { setProposals(v); setProposalsReady(true); })
       .catch(() => setProposalsReady(true));
+    // Phase 6: fetch approver inbox alongside the legacy domain proposals.
+    // Failure is non-fatal — older SP deployments without the endpoint
+    // simply leave this empty.
+    spClient.getProposalsForApprover()
+      .then(v => setApproverProposals(v))
+      .catch(() => setApproverProposals([]));
     spClient.getCredential('ai-config')
       .then(s => { setAiConfigured(s.configured); setAiReady(true); })
       .catch(() => setAiReady(true));
@@ -48,6 +58,8 @@ export function DashboardPage() {
   useSSEEvent('attestation-changed', refresh);
   useSSEEvent('proposal-added', refresh);
   useSSEEvent('proposal-resolved', refresh);
+  useSSEEvent('proposal-approved', refresh);
+  useSSEEvent('proposal-rejected', refresh);
   // Fallback full-sync every 5min in case of missed events (reconnect race, etc.).
   useVisiblePolling(refresh, 300_000, domain);
 
@@ -67,6 +79,17 @@ export function DashboardPage() {
 
   // Attention items
   const attentionItems: { label: string; detail: string; to: string; color: string }[] = [];
+
+  // Phase 6: above-cap actions awaiting my review (any team I'm in).
+  // One row per proposal so the admin / approver sees what's blocking.
+  for (const p of approverProposals) {
+    attentionItems.push({
+      label: 'Approval needed',
+      detail: `${p.tool} — above-cap action under ${shortProfile(p.profileId)}`,
+      to: '/proposals',
+      color: 'var(--warning)',
+    });
+  }
 
   for (const p of pendingProposals) {
     attentionItems.push({

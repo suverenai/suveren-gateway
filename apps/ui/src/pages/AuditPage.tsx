@@ -1,9 +1,10 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import { spClient, type ExecutionReceipt } from '../lib/sp-client';
 import { profileDisplayName } from '../lib/profile-display';
 import { ProfileBadge } from '../components/ProfileBadge';
 import { EmptyState } from '../components/EmptyState';
 import { useVisiblePolling } from '../hooks/useVisiblePolling';
+import { useAuth } from '../contexts/AuthContext';
 
 type TimeRange = '1d' | '7d' | '30d' | 'all';
 
@@ -33,8 +34,16 @@ function matchesSearch(receipt: ExecutionReceipt, query: string): boolean {
 }
 
 export function AuditPage() {
+  const { activeTeam, groupId } = useAuth();
+  const isAdmin = activeTeam?.isAdmin === true;
+
+  const [viewTab, setViewTab] = useState<'mine' | 'team'>('mine');
   const [receipts, setReceipts] = useState<ExecutionReceipt[]>([]);
   const [loading, setLoading] = useState(true);
+  // Lazy-loaded user directory keyed by userId for resolving owner names in
+  // the Team tab. Populated once on first switch to Team.
+  const [userById, setUserById] = useState<Record<string, { name: string; email: string }>>({});
+  const [ownerFilters, setOwnerFilters] = useState<Set<string>>(new Set());
 
   // Search & filter state
   const [search, setSearch] = useState('');
@@ -45,13 +54,33 @@ export function AuditPage() {
 
   const fetchReceipts = useCallback(() => {
     setLoading(true);
-    spClient.getMyReceipts({ limit: 200 })
-      .then(setReceipts)
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, []);
+    if (viewTab === 'team' && isAdmin && groupId) {
+      spClient.listTeamReceipts(groupId)
+        .then(setReceipts)
+        .catch(() => setReceipts([]))
+        .finally(() => setLoading(false));
+    } else {
+      spClient.getMyReceipts({ limit: 200 })
+        .then(setReceipts)
+        .catch(() => {})
+        .finally(() => setLoading(false));
+    }
+  }, [viewTab, isAdmin, groupId]);
 
   useVisiblePolling(fetchReceipts, 120_000);
+
+  // Pull user directory the first time the admin opens the Team tab so we can
+  // resolve owner names for the filter chips and per-row labels.
+  useEffect(() => {
+    if (viewTab !== 'team' || Object.keys(userById).length > 0) return;
+    spClient.listUsers()
+      .then(users => {
+        const map: Record<string, { name: string; email: string }> = {};
+        for (const u of users) map[u.id] = { name: u.name, email: u.email };
+        setUserById(map);
+      })
+      .catch(() => {});
+  }, [viewTab, userById]);
 
   // Derive available profiles and actions from data
   const availableProfiles = useMemo(() => {
@@ -66,18 +95,31 @@ export function AuditPage() {
     return [...set].sort();
   }, [receipts]);
 
+  // Owner list for the Team-tab filter — distinct userIds present on the
+  // currently-loaded receipts.
+  const availableOwners = useMemo(() => {
+    if (viewTab !== 'team') return [] as Array<{ id: string; label: string }>;
+    const ids = new Set<string>();
+    for (const r of receipts) if (r.userId) ids.add(r.userId);
+    return [...ids].map(id => ({
+      id,
+      label: userById[id]?.name ? `${userById[id].name} (${userById[id].email})` : id,
+    })).sort((a, b) => a.label.localeCompare(b.label));
+  }, [viewTab, receipts, userById]);
+
   // Apply all filters
   const filtered = useMemo(() => {
     return receipts.filter(r => {
       if (!matchesSearch(r, search)) return false;
       if (profileFilters.size > 0 && !profileFilters.has(profileDisplayName(r.profileId))) return false;
       if (actionFilters.size > 0 && !actionFilters.has(r.action)) return false;
+      if (ownerFilters.size > 0 && r.userId && !ownerFilters.has(r.userId)) return false;
       if (!isWithinTimeRange(r, timeRange)) return false;
       return true;
     });
-  }, [receipts, search, profileFilters, actionFilters, timeRange]);
+  }, [receipts, search, profileFilters, actionFilters, ownerFilters, timeRange]);
 
-  const hasActiveFilters = profileFilters.size > 0 || actionFilters.size > 0 || timeRange !== 'all';
+  const hasActiveFilters = profileFilters.size > 0 || actionFilters.size > 0 || ownerFilters.size > 0 || timeRange !== 'all';
 
   function toggleProfile(p: string) {
     setProfileFilters(prev => {
@@ -95,9 +137,18 @@ export function AuditPage() {
     });
   }
 
+  function toggleOwner(id: string) {
+    setOwnerFilters(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+
   function clearAllFilters() {
     setProfileFilters(new Set());
     setActionFilters(new Set());
+    setOwnerFilters(new Set());
     setTimeRange('all');
     setSearch('');
   }
@@ -108,6 +159,28 @@ export function AuditPage() {
         <h1 className="page-title">Receipts</h1>
         <p className="page-subtitle">Execution history for agent actions.</p>
       </div>
+
+      {/* Mine | Team tab strip — Team is admin-only */}
+      {isAdmin && (
+        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', borderBottom: '1px solid var(--border)' }}>
+          {(['mine', 'team'] as const).map(tab => (
+            <button
+              key={tab}
+              onClick={() => setViewTab(tab)}
+              className="btn btn-ghost"
+              style={{
+                borderRadius: 0,
+                padding: '0.5rem 0.875rem',
+                borderBottom: viewTab === tab ? '2px solid var(--accent)' : '2px solid transparent',
+                color: viewTab === tab ? 'var(--text-primary)' : 'var(--text-tertiary)',
+                fontWeight: viewTab === tab ? 600 : 500,
+              }}
+            >
+              {tab === 'mine' ? 'Mine' : 'Team'}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Search + Filter toggle row */}
       <div className="search-filter-bar">
@@ -173,6 +246,24 @@ export function AuditPage() {
             </div>
           )}
 
+          {/* Owner — Team tab only */}
+          {viewTab === 'team' && availableOwners.length > 1 && (
+            <div className="filter-section">
+              <div className="filter-label">Owner</div>
+              <div className="filter-chips">
+                {availableOwners.map(o => (
+                  <button
+                    key={o.id}
+                    className={`filter-chip${ownerFilters.has(o.id) ? ' selected' : ''}`}
+                    onClick={() => toggleOwner(o.id)}
+                  >
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Time range */}
           <div className="filter-section">
             <div className="filter-label">Time range</div>
@@ -204,6 +295,15 @@ export function AuditPage() {
               {a} <span className="chip-remove">&times;</span>
             </span>
           ))}
+          {[...ownerFilters].map(o => {
+            const u = userById[o];
+            const label = u ? u.name : o;
+            return (
+              <span key={o} className="active-chip" onClick={() => toggleOwner(o)}>
+                {label} <span className="chip-remove">&times;</span>
+              </span>
+            );
+          })}
           {timeRange !== 'all' && (
             <span className="active-chip" onClick={() => setTimeRange('all')}>
               {timeRange === '1d' ? 'Today' : timeRange === '7d' ? '7 days' : '30 days'} <span className="chip-remove">&times;</span>
@@ -244,6 +344,18 @@ export function AuditPage() {
                       {formatDate(receipt.timestamp)}
                     </span>
                   </div>
+
+                  {/* Owner label — only on Team tab so admins can see at a glance */}
+                  {viewTab === 'team' && receipt.userId && (
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginBottom: '0.375rem' }}>
+                      Owner:{' '}
+                      <span style={{ color: 'var(--text-secondary)' }}>
+                        {userById[receipt.userId]?.name
+                          ? `${userById[receipt.userId].name} (${userById[receipt.userId].email})`
+                          : receipt.userId}
+                      </span>
+                    </div>
+                  )}
 
                   {/* Execution context */}
                   {Object.keys(receipt.executionContext).length > 0 && (
