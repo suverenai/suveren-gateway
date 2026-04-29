@@ -31,8 +31,6 @@ export function GateWizardPage() {
   const [approverNames, setApproverNames] = useState<string[]>([]);
   // Display name of the team admin
   const [adminName, setAdminName] = useState<string | undefined>(undefined);
-  // Whether bounds are currently above cap with approvers (forced review)
-  const [forcedReview, setForcedReview] = useState(false);
 
   useEffect(() => {
     const stored = sessionStorage.getItem('agentAuth');
@@ -146,7 +144,7 @@ export function GateWizardPage() {
   const handleIntentNext = () => {
     const ttlConfig = profile?.ttl;
     const gateContent = { intent };
-    sessionStorage.setItem('agentGate', JSON.stringify({ bounds, context, gateContent, ttlConfig, forcedReview }));
+    sessionStorage.setItem('agentGate', JSON.stringify({ bounds, context, gateContent, ttlConfig }));
     navigate('/agent/review');
   };
 
@@ -172,7 +170,6 @@ export function GateWizardPage() {
           <BoundsEditor
             profile={profile}
             onConfirm={handleBoundsConfirm}
-            onForcedReviewChange={setForcedReview}
             onCancel={() => navigate('/agent/new')}
             initialBounds={bounds || undefined}
             initialContext={context || undefined}

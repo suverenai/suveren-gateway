@@ -307,6 +307,73 @@ describe('createGatedToolHandler — SP receipt integration', () => {
     expect(result.content[0].text).toContain('SP unavailable');
     expect(result.content[0].text).toContain('fetch failed');
   });
+
+  it('P8.2: submits proposal with creator+approvers when SP returns 409 approval_required', async () => {
+    const approvers = ['bob', 'carol'];
+    const postReceipt = vi.fn().mockRejectedValue(
+      new SPReceiptError('Approval required', 409, {
+        error: 'approval_required',
+        approvers,
+        frameHash: 'sha256:abc',
+        field: 'amount_daily_max',
+        cap: 1000,
+      }),
+    );
+    const submitProposal = vi.fn().mockResolvedValue({
+      proposal: { id: 'prop-123', status: 'pending' },
+    });
+    const getFrameMetadata = vi.fn().mockResolvedValue({
+      frameHash: 'sha256:abc',
+      profileId: 'github.com/humanagencyprotocol/hap-profiles/charge@0.3',
+      aboveCap: true,
+      approversFrozen: ['bob', 'carol'],
+      createdBy: 'alice',
+    });
+
+    const state = {
+      ...mockGatedState({ postReceipt }),
+      spClient: {
+        postReceipt,
+        submitProposal,
+        getFrameMetadata,
+      },
+    } as unknown as import('../src/lib/shared-state').SharedState;
+
+    const im = mockIntegrationManager();
+    const handler = createGatedToolHandler(mockTool('charge'), im, state);
+
+    const result = await handler({ amount: 50, currency: 'EUR' });
+
+    expect(postReceipt).toHaveBeenCalledOnce();
+    expect(submitProposal).toHaveBeenCalledOnce();
+    // pendingApprovers must include creator (alice) + approvers from 409 body
+    const submitCall = (submitProposal as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(submitCall.pendingApprovers).toContain('alice');
+    expect(submitCall.pendingApprovers).toContain('bob');
+    expect(submitCall.pendingApprovers).toContain('carol');
+    // Tool must NOT have been called
+    expect((im.callTool as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+    // Response should mention approval required
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0].text).toContain('Approval required');
+    expect(result.content[0].text).toContain('prop-123');
+  });
+
+  it('P8.2: returns hard error when SP returns 422 (no approver path)', async () => {
+    const postReceipt = vi.fn().mockRejectedValue(
+      new SPReceiptError('cap_exceeded', 422, { error: 'cap_exceeded', field: 'amount_max', cap: 500 }),
+    );
+    const state = mockGatedState({ postReceipt });
+    const im = mockIntegrationManager();
+    const handler = createGatedToolHandler(mockTool('charge'), im, state);
+
+    const result = await handler({ amount: 50, currency: 'EUR' });
+
+    expect(postReceipt).toHaveBeenCalledOnce();
+    expect((im.callTool as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('hard team ceiling');
+  });
 });
 
 // ─── buildProxiedToolDescription — gating tags ──────────────────────────────

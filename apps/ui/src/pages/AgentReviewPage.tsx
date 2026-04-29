@@ -32,8 +32,6 @@ export function AgentReviewPage() {
   const [gateData, setGateData] = useState<GateData | null>(null);
   const [profile, setProfile] = useState<AgentProfile | null>(null);
   const [commitMode, setCommitMode] = useState<'immediate' | 'per-action'>('immediate');
-  /** True when above-cap with approvers — review is forced, selector hidden. */
-  const [forcedReview, setForcedReview] = useState(false);
   const [ttlSeconds, setTtlSeconds] = useState(1800);
   const [ttlMax, setTtlMax] = useState(86400);
   const [customTtl, setCustomTtl] = useState('');
@@ -66,12 +64,6 @@ export function AgentReviewPage() {
 
     setAuthData(auth);
     setGateData(normalizedGate);
-
-    // Forced review: above-cap with approvers — override mode and hide selector
-    if (gate.forcedReview) {
-      setForcedReview(true);
-      setCommitMode('per-action');
-    }
 
     // Set TTL from profile config
     if (gate.ttlConfig) {
@@ -173,7 +165,7 @@ export function AgentReviewPage() {
       ]);
 
       // Phase 5 — Eager intent encryption.
-      // Fetch approver pubkeys regardless of forcedReview (eager: encrypt even
+      // Fetch approver pubkeys eagerly (encrypt even
       // within-cap when the profile has approvers, to handle "cap tightened later").
       // If empty array returned, skip encryption.
       let intentCiphertext: string | undefined;
@@ -277,6 +269,42 @@ export function AgentReviewPage() {
   const boundsEntries = Object.entries(gateData.bounds).filter(([k]) => k !== 'profile' && k !== 'path');
   const contextEntries = Object.entries(gateData.context);
 
+  // Pre-compute display strings — keeps all string interpolation out of JSX
+  // expression positions to stay clear of edge cases in the esbuild TSX parser.
+  const capKeys = profileConfig?.caps != null ? Object.keys(profileConfig.caps) : [];
+  const hasCaps = capKeys.length !== 0;
+  const approverNamesStr = approverNames.length > 0
+    ? approverNames.join(', ')
+    : (profileConfig?.approvers ?? []).join(', ');
+  const approversSubLine = hasCaps
+    ? `Within-cap actions run per the mode you choose above. Over-cap actions will require approval from you and ${approverNamesStr}, regardless of your mode.`
+    : `No caps set — they won't gate any action, but your intent is encrypted and shared with them as an accountability record.`;
+  const bottomNote = hasCaps
+    ? `Over-cap actions will be reviewed by you and ${approverNamesStr}. Within-cap actions run per the mode you chose above.`
+    : `Approvers ${approverNamesStr} can read your intent but won't gate any action — no caps configured on this profile.`;
+  const showBottomNote = !!(profileConfig?.approvers?.length);
+  const ttlExceedsMax = ttlSeconds > ttlMax;
+  const commitStyleImmediate = {
+    flex: 1,
+    padding: '0.75rem',
+    border: commitMode === 'immediate' ? '2px solid var(--accent)' : '1px solid var(--border)',
+    borderRadius: 'var(--radius)',
+    background: commitMode === 'immediate' ? 'var(--accent-subtle)' : 'var(--bg-elevated)',
+    cursor: 'pointer' as const,
+    textAlign: 'left' as const,
+    fontFamily: 'inherit',
+  };
+  const commitStylePerAction = {
+    flex: 1,
+    padding: '0.75rem',
+    border: commitMode === 'per-action' ? '2px solid var(--accent)' : '1px solid var(--border)',
+    borderRadius: 'var(--radius)',
+    background: commitMode === 'per-action' ? 'var(--accent-subtle)' : 'var(--bg-elevated)',
+    cursor: 'pointer' as const,
+    textAlign: 'left' as const,
+    fontFamily: 'inherit',
+  };
+
   return (
     <>
       <StepIndicator currentStep={4} onStepClick={s => {
@@ -321,13 +349,9 @@ export function AgentReviewPage() {
                   </>
                 ) : (
                   <>
-                    {approverNames.length > 0 ? approverNames.join(', ') : profileConfig?.approvers.join(', ')}
+                    {approverNamesStr}
                     <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: '0.125rem' }}>
-                      {forcedReview
-                        ? 'Will review every action under this authority — your intent is encrypted for them.'
-                        : (profileConfig?.caps && Object.keys(profileConfig.caps).length > 0)
-                          ? 'Will review actions that exceed the team cap — your intent is encrypted for them.'
-                          : 'No caps set — they won’t gate any action, but your intent is encrypted and shared with them as an accountability record.'}
+                      {approversSubLine}
                     </div>
                   </>
                 )}
@@ -338,7 +362,7 @@ export function AgentReviewPage() {
           <dd>30 minutes</dd>
         </dl>
 
-        {boundsEntries.length > 0 && (
+        {!!boundsEntries.length && (
           <>
             <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginTop: '1rem', marginBottom: '0.25rem' }}>
               Bounds
@@ -354,7 +378,7 @@ export function AgentReviewPage() {
           </>
         )}
 
-        {contextEntries.length > 0 && (
+        {!!contextEntries.length && (
           <>
             <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginTop: '1rem', marginBottom: '0.25rem' }}>
               Context
@@ -381,58 +405,20 @@ export function AgentReviewPage() {
         <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginTop: '1rem', marginBottom: '0.5rem' }}>
           Commitment
         </div>
-        {forcedReview ? (
-          <div style={{
-            padding: '0.65rem 0.875rem',
-            border: '1px solid var(--warning)',
-            borderRadius: '0.375rem',
-            fontSize: '0.82rem',
-            marginBottom: '1.25rem',
-            lineHeight: 1.5,
-          }}>
-            <span style={{ fontWeight: 600 }}>Review Each Action — forced.</span>{' '}
-            This authority is above team cap. Every action requires approval from you and all profile approvers before it executes.
-          </div>
-        ) : (
-          <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1.25rem' }}>
-            <button
-              onClick={() => setCommitMode('immediate')}
-              style={{
-                flex: 1,
-                padding: '0.75rem',
-                border: commitMode === 'immediate' ? '2px solid var(--accent)' : '1px solid var(--border)',
-                borderRadius: 'var(--radius)',
-                background: commitMode === 'immediate' ? 'var(--accent-subtle)' : 'var(--bg-elevated)',
-                cursor: 'pointer',
-                textAlign: 'left',
-                fontFamily: 'inherit',
-              }}
-            >
-              <div style={{ fontWeight: 600, fontSize: '0.85rem', marginBottom: '0.25rem', color: 'var(--text-primary)' }}>Automatic</div>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                Agent acts freely within your limits.
-              </div>
-            </button>
-            <button
-              onClick={() => setCommitMode('per-action')}
-              style={{
-                flex: 1,
-                padding: '0.75rem',
-                border: commitMode === 'per-action' ? '2px solid var(--accent)' : '1px solid var(--border)',
-                borderRadius: 'var(--radius)',
-                background: commitMode === 'per-action' ? 'var(--accent-subtle)' : 'var(--bg-elevated)',
-                cursor: 'pointer',
-                textAlign: 'left',
-                fontFamily: 'inherit',
-              }}
-            >
-              <div style={{ fontWeight: 600, fontSize: '0.85rem', marginBottom: '0.25rem', color: 'var(--text-primary)' }}>Review Each Action</div>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                You review and approve each action before it executes.
-              </div>
-            </button>
-          </div>
-        )}
+        <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1.25rem' }}>
+          <button onClick={() => setCommitMode('immediate')} style={commitStyleImmediate}>
+            <div style={{ fontWeight: 600, fontSize: '0.85rem', marginBottom: '0.25rem', color: 'var(--text-primary)' }}>Automatic</div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+              Agent acts freely within your limits.
+            </div>
+          </button>
+          <button onClick={() => setCommitMode('per-action')} style={commitStylePerAction}>
+            <div style={{ fontWeight: 600, fontSize: '0.85rem', marginBottom: '0.25rem', color: 'var(--text-primary)' }}>Review Each Action</div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+              You review and approve each action before it executes.
+            </div>
+          </button>
+        </div>
 
         {/* Duration selector */}
         <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.5rem' }}>
@@ -494,7 +480,7 @@ export function AgentReviewPage() {
               <option value="days">days</option>
             </select>
           </div>
-          {ttlSeconds > ttlMax && (
+          {ttlExceedsMax && (
             <span style={{ fontSize: '0.75rem', color: 'var(--danger)' }}>
               Maximum: {ttlMax >= 86400 ? `${Math.floor(ttlMax / 86400)} days` : `${Math.floor(ttlMax / 3600)} hours`}
             </span>
@@ -532,15 +518,9 @@ export function AgentReviewPage() {
           </button>
         </div>
 
-        {(profileConfig?.approvers?.length ?? 0) > 0 && (
-          <div style={{ marginTop: '1rem', fontSize: '0.75rem', color: 'var(--text-tertiary)', textAlign: 'center' }}>
-            {forcedReview
-              ? `Above team cap. Every action under this authority will be reviewed by you and ${approverNames.join(', ')}.`
-              : (profileConfig?.caps && Object.keys(profileConfig.caps).length > 0)
-                ? `Within team cap. ${approverNames.join(', ')} will review actions only if bounds are exceeded.`
-                : `Approvers ${approverNames.join(', ')} can read your intent but won’t gate any action — no caps configured on this profile.`}
-          </div>
-        )}
+        <div style={{ marginTop: '1rem', fontSize: '0.75rem', color: 'var(--text-tertiary)', textAlign: 'center', display: showBottomNote ? 'block' : 'none' }}>
+          {bottomNote}
+        </div>
       </div>
     </>
   );

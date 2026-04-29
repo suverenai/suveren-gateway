@@ -203,47 +203,7 @@ export function createGatedToolHandler(
       if (!result.approved) {
       }
       if (result.approved) {
-        // Phase 6: above-cap detection — check FrameMetadata for aboveCap flag.
-        // If the authority is above-cap and has frozen approvers, route to
-        // per-action multi-party approval instead of executing immediately.
         const authHash = auth.boundsHash ?? auth.frameHash;
-        try {
-          const frameMeta = await state.spClient.getFrameMetadata(authHash);
-          if (frameMeta?.aboveCap === true && (frameMeta.approversFrozen?.length ?? 0) > 0) {
-            const pendingApprovers = [
-              ...(frameMeta.createdBy ? [frameMeta.createdBy] : []),
-              ...frameMeta.approversFrozen!,
-            ];
-            // Deduplicate in case createdBy is also in approversFrozen.
-            const uniqueApprovers = [...new Set(pendingApprovers)];
-            const enrichedArgs = await attachImagePreview(args);
-            const { proposal } = await state.spClient.submitProposal({
-              frameHash: authHash,
-              profileId: auth.profileId,
-              path: auth.path,
-              pendingDomains: [],
-              tool: tool.namespacedName,
-              toolArgs: enrichedArgs,
-              executionContext: { ...execution },
-              pendingApprovers: uniqueApprovers,
-              createdBy: frameMeta.createdBy,
-            });
-            return {
-              content: [{
-                type: 'text',
-                text: `Action requires approval from ${uniqueApprovers.length} approver(s) — ` +
-                  `this authority is above its team cap.\n` +
-                  `Proposal ID: ${proposal.id}. Use check-pending-commitments to track status.`,
-              }],
-            };
-          }
-        } catch (err) {
-          // If the frame metadata fetch fails, log and continue with standard flow.
-          // This prevents a transient SP failure from blocking all above-cap actions
-          // without a clear error. Fail-closed: if we can't confirm above-cap status
-          // we log the problem but proceed (the SP receipt check will still enforce bounds).
-          console.error('[HAP MCP] Failed to fetch frame metadata for above-cap check:', err);
-        }
 
         // Check for deferred commitment domains — submit proposal instead of executing
         if ((auth.deferredCommitmentDomains ?? []).length > 0) {
@@ -308,6 +268,80 @@ export function createGatedToolHandler(
             amount: typeof execution.amount === 'number' ? execution.amount : undefined,
           });
         } catch (err) {
+          if (err instanceof SPReceiptError && err.statusCode === 409) {
+            // P8.2: SP returned approval_required — this action exceeds the team cap
+            // for an above-cap authority. Route to per-action multi-party approval:
+            // creator + all profile approvers must approve before execution.
+            const spBody = err.body as {
+              approvers?: string[];
+              frameHash?: string;
+              field?: string;
+              cap?: number;
+            };
+            // Prefer approvers from the 409 body; fall back to frameMeta frozen list.
+            let pendingApprovers: string[] = spBody.approvers ?? [];
+            if (pendingApprovers.length === 0) {
+              // Defensive fallback: fetch frameMeta to get approversFrozen
+              try {
+                const frameMeta = await state.spClient.getFrameMetadata(authHash);
+                if (frameMeta?.approversFrozen) {
+                  pendingApprovers = frameMeta.approversFrozen;
+                }
+                if (frameMeta?.createdBy) {
+                  pendingApprovers = [frameMeta.createdBy, ...pendingApprovers];
+                }
+              } catch {
+                // best effort
+              }
+            } else {
+              // Always include creator at the front — Decision #4: above-cap = everyone reviews,
+              // creator INCLUDED regardless of authority-level mode.
+              try {
+                const frameMeta = await state.spClient.getFrameMetadata(authHash);
+                if (frameMeta?.createdBy) {
+                  pendingApprovers = [frameMeta.createdBy, ...pendingApprovers];
+                }
+              } catch {
+                // best effort — proceed without creator in front
+              }
+            }
+            const uniqueApprovers = [...new Set(pendingApprovers)];
+
+            try {
+              const enrichedArgs = await attachImagePreview(args);
+              const { proposal } = await state.spClient.submitProposal({
+                frameHash: authHash,
+                profileId: auth.profileId,
+                path: auth.path,
+                pendingDomains: [],
+                tool: tool.namespacedName,
+                toolArgs: enrichedArgs,
+                executionContext: { ...execution },
+                pendingApprovers: uniqueApprovers,
+              });
+              return {
+                content: [{
+                  type: 'text',
+                  text: `Action exceeds team cap. Approval required from ${uniqueApprovers.length} reviewer(s).\n` +
+                    `Proposal ID: ${proposal.id}. Use check-pending-commitments to track status.`,
+                }],
+              };
+            } catch (proposalErr) {
+              return {
+                content: [{ type: 'text', text: `Failed to submit approval proposal: ${proposalErr instanceof Error ? proposalErr.message : String(proposalErr)}` }],
+                isError: true,
+              };
+            }
+          }
+
+          if (err instanceof SPReceiptError && err.statusCode === 422) {
+            // Hard ceiling — no approver path configured. Bubble as a hard error.
+            return {
+              content: [{ type: 'text', text: `Action blocked: ${err.message} (hard team ceiling — contact the team admin)` }],
+              isError: true,
+            };
+          }
+
           if (err instanceof SPReceiptError && err.statusCode === 403) {
             // SP rejected — limit exceeded or revoked. If revoked, purge the
             // cached attestation so list-authorizations/list-integrations

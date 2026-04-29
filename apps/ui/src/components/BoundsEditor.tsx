@@ -6,8 +6,6 @@ import { spClient, type IntegrationManifest, type ProfileConfig } from '../lib/s
 interface Props {
   profile: AgentProfile;
   onConfirm: (bounds: AgentBoundsParams, context: AgentContextParams) => void;
-  /** Called whenever the forced-review state changes (above cap with approvers). */
-  onForcedReviewChange?: (forced: boolean) => void;
   /** Called when user clicks Cancel in the hard-ceiling zone. */
   onCancel?: () => void;
   readOnly?: boolean;
@@ -483,7 +481,6 @@ function violatingKeys(
 export function BoundsEditor({
   profile,
   onConfirm,
-  onForcedReviewChange,
   onCancel,
   readOnly,
   initialBounds,
@@ -542,13 +539,7 @@ export function BoundsEditor({
 
   // Compute cap zone reactively from current bound values
   const zone = computeCapZone(boundsValues, profileConfig);
-  const forcedReview = zone === 'above-approvers';
   const violating = violatingKeys(boundsValues, profileConfig?.caps);
-
-  // Notify parent when forced-review state changes
-  useEffect(() => {
-    onForcedReviewChange?.(forcedReview);
-  }, [forcedReview, onForcedReviewChange]);
 
   const handleBoundsChange = (key: string, value: string) => {
     setBoundsValues(prev => ({ ...prev, [key]: value }));
@@ -702,8 +693,8 @@ export function BoundsEditor({
         }}>
           <div style={{ fontWeight: 600, color: 'var(--warning)', marginBottom: '0.25rem' }}>Above team cap.</div>
           <div>
-            Every action under this authority will require approval from you and {names}.
-            Forced review for everyone. Your intent will be visible to approvers at review time.
+            <strong>Over-cap actions</strong> will require approval from you and {names}.
+            Within-cap actions run per the mode you choose.
           </div>
         </div>
       );
