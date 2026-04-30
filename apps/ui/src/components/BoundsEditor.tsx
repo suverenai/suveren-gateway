@@ -57,9 +57,9 @@ function validateTag(value: string, format: string): boolean {
   return true;
 }
 
-// ─── NumberStepper ──────────────────────────────────────────────────────────
+// ─── BoundedNumberInput ─────────────────────────────────────────────────────
 
-/** Render a profile field's `unit` as a short human-readable suffix.
+/** Render a profile field's `unit` as a human-readable suffix.
  *  `count` returns empty string (the count is its own meaning). */
 function formatUnit(unit?: string): string {
   if (!unit || unit === 'count') return '';
@@ -71,7 +71,77 @@ function formatUnit(unit?: string): string {
   return unit;
 }
 
-function NumberStepper({
+/** Smart step size for +/- buttons based on the unit. */
+function stepFor(unit?: string): number {
+  if (!unit) return 1;
+  if (unit === 'minutes') return 15;
+  if (unit === 'percent') return 5;
+  if (unit.startsWith('currency:')) return 10;
+  return 1; // count, hours, days
+}
+
+/** Quick-preset chips beneath the input. Empty array → no presets row. */
+function presetsFor(unit?: string): Array<{ value: number; label: string }> {
+  if (!unit) return [];
+  if (unit === 'minutes') return [
+    { value: 15, label: '15m' },
+    { value: 30, label: '30m' },
+    { value: 60, label: '1h' },
+    { value: 120, label: '2h' },
+    { value: 240, label: '4h' },
+  ];
+  if (unit === 'hours') return [
+    { value: 1, label: '1h' },
+    { value: 4, label: '4h' },
+    { value: 8, label: '8h' },
+    { value: 24, label: '1d' },
+  ];
+  if (unit === 'days') return [
+    { value: 1, label: '1d' },
+    { value: 7, label: '1w' },
+    { value: 30, label: '1mo' },
+    { value: 90, label: '3mo' },
+  ];
+  if (unit === 'percent') return [
+    { value: 10, label: '10%' },
+    { value: 25, label: '25%' },
+    { value: 50, label: '50%' },
+    { value: 100, label: '100%' },
+  ];
+  if (unit.startsWith('currency:')) return [
+    { value: 10, label: '10' },
+    { value: 50, label: '50' },
+    { value: 100, label: '100' },
+    { value: 500, label: '500' },
+    { value: 1000, label: '1k' },
+  ];
+  return []; // count → no presets, +/- step 1 is enough
+}
+
+/** Friendly echo when a value crosses a unit boundary, e.g.
+ *  120 minutes → "≈ 2 hours". Returns '' when no useful echo. */
+function naturalEcho(value: string, unit?: string): string {
+  if (!value || !unit) return '';
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return '';
+  if (unit === 'minutes' && n >= 60) {
+    const h = Math.floor(n / 60);
+    const m = n % 60;
+    if (m === 0) return `${h} hour${h !== 1 ? 's' : ''}`;
+    return `${h}h ${m}m`;
+  }
+  if (unit === 'hours' && n >= 24 && n % 24 === 0) {
+    const d = n / 24;
+    return `${d} day${d !== 1 ? 's' : ''}`;
+  }
+  if (unit === 'days') {
+    if (n >= 30 && n % 30 === 0) return `${n / 30} month${n / 30 !== 1 ? 's' : ''}`;
+    if (n >= 7 && n % 7 === 0) return `${n / 7} week${n / 7 !== 1 ? 's' : ''}`;
+  }
+  return '';
+}
+
+function BoundedNumberInput({
   id,
   value,
   onChange,
@@ -86,50 +156,115 @@ function NumberStepper({
   placeholder?: string;
   unit?: string;
 }) {
-  const handleDecrement = () => {
-    const n = value === '' ? 0 : Number(value);
-    if (n > 0) onChange(String(n - 1));
-  };
+  const step = stepFor(unit);
+  const presets = presetsFor(unit);
+  const unitLabel = formatUnit(unit);
+  const echo = naturalEcho(value, unit);
+  const currentNum = value === '' ? null : Number(value);
 
+  /** Snap to the next/previous step boundary. */
   const handleIncrement = () => {
     const n = value === '' ? 0 : Number(value);
-    onChange(String(n + 1));
+    const remainder = n % step;
+    const next = remainder === 0 ? n + step : n + (step - remainder);
+    onChange(String(next));
+  };
+
+  const handleDecrement = () => {
+    const n = value === '' ? 0 : Number(value);
+    if (n <= 0) return;
+    const remainder = n % step;
+    const prev = remainder === 0 ? n - step : n - remainder;
+    onChange(String(Math.max(0, prev)));
   };
 
   return (
-    <div className="number-stepper">
-      <button
-        type="button"
-        className="stepper-btn stepper-decrement"
-        onClick={handleDecrement}
-        disabled={disabled || value === '' || Number(value) <= 0}
-        aria-label="Decrease"
-      >
-        −
-      </button>
-      <input
-        id={id}
-        className="stepper-input"
-        type="number"
-        min={0}
-        step={1}
-        value={value}
-        placeholder={placeholder ?? '0'}
-        onChange={e => onChange(e.target.value)}
-        onFocus={e => e.target.select()}
-        disabled={disabled}
-      />
-      <button
-        type="button"
-        className="stepper-btn stepper-increment"
-        onClick={handleIncrement}
-        disabled={disabled}
-        aria-label="Increase"
-      >
-        +
-      </button>
-      {formatUnit(unit) && (
-        <span className="stepper-unit" aria-hidden="true">{formatUnit(unit)}</span>
+    <div className="bounded-input">
+      <div className="bounded-input-field">
+        <button
+          type="button"
+          className="stepper-btn stepper-decrement"
+          onClick={handleDecrement}
+          disabled={disabled || value === '' || Number(value) <= 0}
+          aria-label="Decrease"
+        >
+          −
+        </button>
+        <input
+          id={id}
+          className="stepper-input"
+          type="number"
+          min={0}
+          step={step}
+          value={value}
+          placeholder={placeholder ?? '0'}
+          onChange={e => onChange(e.target.value)}
+          onFocus={e => e.target.select()}
+          disabled={disabled}
+        />
+        <button
+          type="button"
+          className="stepper-btn stepper-increment"
+          onClick={handleIncrement}
+          disabled={disabled}
+          aria-label="Increase"
+        >
+          +
+        </button>
+        {unitLabel && (
+          <span className="bounded-input-unit" aria-hidden="true">{unitLabel}</span>
+        )}
+      </div>
+      {presets.length > 0 && !disabled && (
+        <div className="bounded-input-presets" role="group" aria-label="Quick presets">
+          {presets.map(p => (
+            <button
+              key={p.value}
+              type="button"
+              className={`preset-chip${currentNum === p.value ? ' preset-chip-selected' : ''}`}
+              onClick={() => onChange(String(p.value))}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+      )}
+      {echo && <div className="bounded-input-echo">≈ {echo}</div>}
+    </div>
+  );
+}
+
+// ─── FieldLabel (label + tip popover) ──────────────────────────────────────
+
+function FieldLabel({
+  htmlFor,
+  label,
+  description,
+}: {
+  htmlFor: string;
+  label: string;
+  description?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="field-label-with-tip">
+      <label className="form-label" htmlFor={htmlFor}>{label}</label>
+      {description && (
+        <>
+          <button
+            type="button"
+            className="field-tip-trigger"
+            aria-label={`What does "${label}" mean?`}
+            aria-expanded={open}
+            onClick={() => setOpen(v => !v)}
+            onMouseEnter={() => setOpen(true)}
+            onMouseLeave={() => setOpen(false)}
+            onBlur={() => setOpen(false)}
+          >
+            i
+          </button>
+          {open && <div className="field-tip-bubble" role="tooltip">{description}</div>}
+        </>
       )}
     </div>
   );
@@ -349,7 +484,7 @@ function FieldRow({
           ))}
         </select>
       ) : fieldDef.type === 'number' ? (
-        <NumberStepper
+        <BoundedNumberInput
           id={fieldId}
           value={value}
           onChange={v => onChange(fieldKey, v)}
@@ -389,10 +524,7 @@ function FieldRow({
     return (
       <div className="bounds-field-row" key={`${prefix}-${fieldKey}`}>
         <div className="bounds-field-label">
-          <label className="form-label" htmlFor={fieldId}>{label}</label>
-          {fieldDef.description && (
-            <div className="hint-text field-description">{fieldDef.description}</div>
-          )}
+          <FieldLabel htmlFor={fieldId} label={label} description={fieldDef.description} />
         </div>
         <div className="bounds-field-input">{input}</div>
       </div>
@@ -401,10 +533,7 @@ function FieldRow({
 
   return (
     <div className="form-group" key={`${prefix}-${fieldKey}`}>
-      <label className="form-label" htmlFor={fieldId}>{label}</label>
-      {fieldDef.description && (
-        <div className="hint-text field-description">{fieldDef.description}</div>
-      )}
+      <FieldLabel htmlFor={fieldId} label={label} description={fieldDef.description} />
       {input}
     </div>
   );
