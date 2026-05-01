@@ -125,14 +125,6 @@ export function SettingsServicesPage() {
         <p className="page-subtitle">Advisory AI to help you think through intent when authorizing agents.</p>
       </div>
 
-      {/* Vault banner */}
-      <div className="status-banner status-banner-success">
-        <span className="status-banner-icon">{'\u{1F512}'}</span>
-        <span className="status-banner-text">
-          Vault is active. Credentials are encrypted locally before storage.
-        </span>
-      </div>
-
       {successMsg && <div className="alert alert-success">{successMsg}</div>}
 
       {/* AI Assistant card */}
@@ -230,6 +222,9 @@ export function SettingsServicesPage() {
         )}
       </div>
 
+      {/* Advanced — AI assistant prompts (collapsed by default) */}
+      <AdvancedAIPrompts />
+
       {/* Security guidance */}
       <div className="card" style={{ padding: '1.5rem', marginTop: '2rem' }}>
         <h2 style={{ fontSize: '1rem', fontWeight: 700, marginBottom: '1rem' }}>Security</h2>
@@ -255,5 +250,244 @@ export function SettingsServicesPage() {
         </div>
       </div>
     </>
+  );
+}
+
+// ─── Advanced — AI assistant prompts (collapsible) ──────────────────────
+
+type PromptKind = 'intent' | 'context';
+
+interface PromptState {
+  current: string;
+  default: string;
+  overridden: boolean;
+}
+
+function AdvancedAIPrompts() {
+  const [data, setData] = useState<Record<PromptKind, PromptState> | null>(null);
+  const [drafts, setDrafts] = useState<Record<PromptKind, string>>({ intent: '', context: '' });
+  const [saving, setSaving] = useState<PromptKind | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [savedKind, setSavedKind] = useState<PromptKind | null>(null);
+  const [loaded, setLoaded] = useState(false);
+
+  // Lazy-load the prompts the first time the user opens the card.
+  const loadIfNeeded = useCallback(async () => {
+    if (loaded) return;
+    try {
+      const resp = await spClient.getAIPrompts();
+      setData(resp);
+      setDrafts({ intent: resp.intent.current, context: resp.context.current });
+      setLoaded(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load prompts');
+    }
+  }, [loaded]);
+
+  const onSave = async (kind: PromptKind) => {
+    if (!data) return;
+    setSaving(kind);
+    setError(null);
+    try {
+      const value = drafts[kind];
+      // If the user saved exactly the default text, treat as revert.
+      const toStore = value.trim() === data[kind].default.trim() ? '' : value;
+      await spClient.setAIPrompt(kind, toStore);
+      const refreshed = await spClient.getAIPrompts();
+      setData(refreshed);
+      setDrafts({ intent: refreshed.intent.current, context: refreshed.context.current });
+      setSavedKind(kind);
+      setTimeout(() => setSavedKind(null), 2000);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Save failed');
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  const onRevert = async (kind: PromptKind) => {
+    if (!confirm(`Revert ${kind} prompt to the built-in default?`)) return;
+    setSaving(kind);
+    setError(null);
+    try {
+      await spClient.setAIPrompt(kind, '');
+      const refreshed = await spClient.getAIPrompts();
+      setData(refreshed);
+      setDrafts({ intent: refreshed.intent.current, context: refreshed.context.current });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Revert failed');
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  return (
+    <details
+      className="card"
+      style={{ padding: '1.5rem', marginTop: '1rem' }}
+      onToggle={(e) => { if ((e.currentTarget as HTMLDetailsElement).open) loadIfNeeded(); }}
+    >
+      <summary
+        style={{
+          fontSize: '1rem',
+          fontWeight: 700,
+          cursor: 'pointer',
+          listStyle: 'revert',
+          userSelect: 'none',
+        }}
+      >
+        Advanced — AI assistant prompts
+      </summary>
+
+      <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: '0.75rem 0 1rem 0', lineHeight: 1.55 }}>
+        These are the system prompts the AI assistant sees when helping you write
+        Intent (per-authorization) or Context (your standing-orders brief).
+        Edit with care — changes apply on the next chat turn.
+      </p>
+
+      {error && (
+        <div className="alert alert-error" style={{ marginBottom: '0.75rem' }}>{error}</div>
+      )}
+
+      {!loaded && !error && (
+        <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Loading prompts…</p>
+      )}
+
+      {data && (
+        <>
+          <PromptEditor
+            kind="intent"
+            label="Intent — per-authorization"
+            description="Used on the Intent gate when creating a new authorization."
+            state={data.intent}
+            draft={drafts.intent}
+            onChange={(v) => setDrafts((d) => ({ ...d, intent: v }))}
+            onSave={() => onSave('intent')}
+            onRevert={() => onRevert('intent')}
+            saving={saving === 'intent'}
+            justSaved={savedKind === 'intent'}
+          />
+
+          <PromptEditor
+            kind="context"
+            label="Context — standing-orders brief"
+            description="Used on the Brief page when refining your context.md."
+            state={data.context}
+            draft={drafts.context}
+            onChange={(v) => setDrafts((d) => ({ ...d, context: v }))}
+            onSave={() => onSave('context')}
+            onRevert={() => onRevert('context')}
+            saving={saving === 'context'}
+            justSaved={savedKind === 'context'}
+          />
+        </>
+      )}
+    </details>
+  );
+}
+
+function PromptEditor({
+  kind,
+  label,
+  description,
+  state,
+  draft,
+  onChange,
+  onSave,
+  onRevert,
+  saving,
+  justSaved,
+}: {
+  kind: PromptKind;
+  label: string;
+  description: string;
+  state: PromptState;
+  draft: string;
+  onChange: (v: string) => void;
+  onSave: () => void;
+  onRevert: () => void;
+  saving: boolean;
+  justSaved: boolean;
+}) {
+  const dirty = draft !== state.current;
+  return (
+    <section style={{ marginBottom: '1.5rem' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '0.25rem', gap: '1rem', flexWrap: 'wrap' }}>
+        <div>
+          <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{label}</div>
+          <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>{description}</div>
+        </div>
+        {state.overridden && (
+          <span style={{ fontSize: '0.7rem', color: 'var(--accent)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            Custom
+          </span>
+        )}
+      </div>
+
+      <textarea
+        className="form-textarea"
+        value={draft}
+        onChange={(e) => onChange(e.target.value)}
+        rows={12}
+        spellCheck={false}
+        style={{
+          width: '100%',
+          fontFamily: "'SF Mono', Monaco, 'Cascadia Code', monospace",
+          fontSize: '0.82rem',
+          lineHeight: 1.55,
+          resize: 'vertical',
+          minHeight: '14rem',
+          marginTop: '0.5rem',
+        }}
+        aria-label={`${label} system prompt`}
+      />
+
+      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginTop: '0.5rem', flexWrap: 'wrap' }}>
+        <button
+          type="button"
+          className="btn btn-primary btn-sm"
+          onClick={onSave}
+          disabled={saving || !dirty}
+        >
+          {saving ? 'Saving…' : 'Save'}
+        </button>
+        {state.overridden && (
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            onClick={onRevert}
+            disabled={saving}
+            title="Discard the override and use the built-in default"
+          >
+            Revert to default
+          </button>
+        )}
+        {justSaved && (
+          <span style={{ fontSize: '0.78rem', color: 'var(--success)' }}>Saved</span>
+        )}
+        {dirty && !saving && !justSaved && (
+          <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Unsaved changes</span>
+        )}
+      </div>
+
+      <details style={{ marginTop: '0.5rem' }}>
+        <summary style={{ fontSize: '0.78rem', color: 'var(--text-muted)', cursor: 'pointer' }}>
+          Show built-in default
+        </summary>
+        <pre style={{
+          marginTop: '0.5rem',
+          padding: '0.75rem 1rem',
+          background: 'var(--bg-main)',
+          border: '1px solid var(--border)',
+          borderRadius: '0.5rem',
+          fontSize: '0.78rem',
+          lineHeight: 1.55,
+          whiteSpace: 'pre-wrap',
+          maxHeight: '20rem',
+          overflowY: 'auto',
+        }}>{state.default}</pre>
+      </details>
+      <span style={{ display: 'none' }}>{kind}</span>
+    </section>
   );
 }

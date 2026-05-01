@@ -4,8 +4,18 @@ import { spClient, type ProfileConfig } from '../lib/sp-client';
 import { StepIndicator } from '../components/StepIndicator';
 import { ContextStrip } from '../components/ContextStrip';
 import { BoundsEditor } from '../components/BoundsEditor';
-import { AIChatPanel } from '../components/AIChatPanel';
+import { AssistantChatPanel } from '../components/AssistantChatPanel';
+import { BottomSheet } from '../components/BottomSheet';
 import type { AgentProfile, AgentBoundsParams, AgentContextParams } from '@hap/core';
+
+/** Initial textarea content for the Intent step. The user replaces
+ *  these prompt lines with their own words; the Continue button stays
+ *  disabled until the text differs from this template. */
+const INTENT_TEMPLATE = `Why — What's the situation? Why does this need to happen?
+
+Goal — What should the agent try to achieve?
+
+Watch out — What should the agent avoid or be careful about?`;
 
 interface AuthData {
   profileId: string;
@@ -23,7 +33,8 @@ export function GateWizardPage() {
   const [step, setStep] = useState(initialStep); // 2=scope+limits, 3=intent
   const [bounds, setBounds] = useState<AgentBoundsParams | null>(null);
   const [context, setContext] = useState<AgentContextParams | null>(null);
-  const [intent, setIntent] = useState('');
+  const [intent, setIntent] = useState(INTENT_TEMPLATE);
+  const [chatOpenMobile, setChatOpenMobile] = useState(false);
   const [loading, setLoading] = useState(true);
   // Team profile config — null when not in team mode or no config set
   const [profileConfig, setProfileConfig] = useState<ProfileConfig | null>(null);
@@ -100,45 +111,17 @@ export function GateWizardPage() {
   const handleBoundsConfirm = (b: AgentBoundsParams, c: AgentContextParams) => {
     setBounds(b);
     setContext(c);
-
-    // Suggest intent from selected scope + bounds
-    if (!intent.trim() && profile) {
-      const parts: string[] = [];
-
-      // Context fields (scope)
-      const contextSchema = profile.contextSchema;
-      if (contextSchema) {
-        for (const key of contextSchema.keyOrder) {
-          const val = c[key];
-          if (val !== undefined && val !== '') {
-            const field = contextSchema.fields[key];
-            const label = field?.displayName ?? key.replace(/_/g, ' ');
-            const values = String(val).split(',').map(s => s.trim()).filter(Boolean);
-            parts.push(`${label}: ${values.join(', ')}`);
-          }
-        }
-      }
-
-      // Bounds fields (limits)
-      const boundsSchema = profile.boundsSchema ?? profile.frameSchema;
-      if (boundsSchema) {
-        for (const key of boundsSchema.keyOrder) {
-          if (key === 'profile' || key === 'path') continue;
-          const val = b[key];
-          if (val !== undefined && val !== '' && val !== 0) {
-            const field = boundsSchema.fields[key];
-            const label = field?.displayName ?? key.replace(/_/g, ' ');
-            parts.push(`${label}: ${val}`);
-          }
-        }
-      }
-
-      if (parts.length > 0) {
-        setIntent(parts.join('. ') + '.');
-      }
-    }
-
     setStep(3);
+  };
+
+  /** True when the textarea has been edited away from the template
+   *  (and is non-empty). Gates the Continue button. */
+  const intentChanged =
+    intent.trim() !== INTENT_TEMPLATE.trim() && intent.trim() !== '';
+
+  const handleApplyDraft = (text: string) => {
+    if (intentChanged && !confirm('Replace your current intent with the AI draft?')) return;
+    setIntent(text);
   };
 
   const handleIntentNext = () => {
@@ -182,55 +165,76 @@ export function GateWizardPage() {
 
       {/* Step 3: Intent */}
       {step === 3 && (
-        <div className="card">
-          <h3 className="card-title" style={{ marginBottom: '0.25rem' }}>What should your agent know?</h3>
-          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-            Help your agent understand your intent. Consider:
-          </p>
-          <ul style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem', paddingLeft: '1.25rem', lineHeight: 1.7 }}>
-            <li><strong>Why</strong> — What's the situation? Why does this need to happen?</li>
-            <li><strong>Goal</strong> — What should the agent try to achieve?</li>
-            <li><strong>Watch out</strong> — What should the agent avoid or be careful about?</li>
-          </ul>
-
-          {/* Intent-encryption notice — shown whenever the profile has approvers configured.
-              Names the approvers explicitly so the creator knows exactly who can read this. */}
-          {(profileConfig?.approvers?.length ?? 0) > 0 && (
-            <div style={{
-              padding: '0.75rem 0.875rem',
-              border: '1px solid var(--accent)',
-              borderRadius: '0.375rem',
-              background: 'var(--bg-elevated)',
-              fontSize: '0.82rem',
-              marginBottom: '0.75rem',
-              lineHeight: 1.55,
-            }}>
-              <div style={{ fontWeight: 600, color: 'var(--accent)', marginBottom: '0.25rem' }}>
-                Visible to {approverNames.length > 0 ? approverNames.join(', ') : 'the configured approvers'}
-              </div>
-              Your intent will be encrypted and shared with{' '}
-              {approverNames.length > 0 ? approverNames.join(', ') : 'this profile\'s required approvers'}.
-              Only they can decrypt it &mdash; your Service Provider cannot.
-              Each approver stores a copy as their accountability record.
-            </div>
-          )}
-
-          <div className="form-group" style={{ marginBottom: '0.5rem' }}>
-            <textarea
-              className="form-textarea"
-              placeholder="e.g. We're running a spring promotion. Process customer refunds up to $50. Don't refund orders older than 30 days. Flag anything that looks unusual."
-              value={intent}
-              onChange={e => setIntent(e.target.value)}
-              style={{ minHeight: '160px' }}
+        <div className="intent-layout">
+          {/* LEFT — AI chat (hidden on ≤768px; reachable via floating button + bottom sheet) */}
+          <div className="card intent-pane chat">
+            <AssistantChatPanel
+              target={{
+                kind: 'intent',
+                profileId: authData.profileId,
+                bounds: boundsString || undefined,
+              }}
+              currentText={intent}
+              onApply={handleApplyDraft}
             />
           </div>
-          <div className="char-counter">
-            {intent.length} / 2000
+
+          {/* RIGHT — the document, the centerpiece */}
+          <div className="card intent-pane document">
+            <h3 className="card-title">What should your agent know?</h3>
+
+            <textarea
+              className="intent-textarea"
+              value={intent}
+              onChange={e => setIntent(e.target.value)}
+            />
+
+            <div className="char-counter">{intent.length} / 2000</div>
+
+            <div className="intent-footer">
+              <button className="btn btn-ghost" onClick={() => setStep(2)}>Back</button>
+              <button
+                className="btn btn-primary intent-continue-btn"
+                onClick={handleIntentNext}
+                disabled={!intentChanged}
+              >
+                Continue to Review
+              </button>
+            </div>
+
+            {/* Encryption notice — informational hint box below the action */}
+            {(profileConfig?.approvers?.length ?? 0) > 0 && (
+              <div className="hint-box" role="note">
+                <span className="hint-icon" aria-hidden="true">i</span>
+                <div className="hint-body">
+                  <div className="hint-head">
+                    Visible to {approverNames.length > 0 ? approverNames.join(', ') : 'the configured approvers'}
+                  </div>
+                  Your intent will be encrypted and shared with{' '}
+                  {approverNames.length > 0 ? approverNames.join(', ') : 'this profile\'s required approvers'}.
+                  Only they can decrypt it &mdash; your Service Provider cannot.
+                  Each approver stores a copy as their accountability record.
+                </div>
+              </div>
+            )}
           </div>
 
-          {/* AI chat — multi-turn refinement of this auth's Intent. */}
-          <div style={{ marginTop: '0.75rem' }}>
-            <AIChatPanel
+          {/* Mobile-only floating help button + bottom sheet */}
+          <button
+            type="button"
+            className="floating-help"
+            onClick={() => setChatOpenMobile(true)}
+            aria-label="Open intent assistant"
+          >
+            Get help with intent
+          </button>
+
+          <BottomSheet
+            open={chatOpenMobile}
+            onClose={() => setChatOpenMobile(false)}
+            ariaLabel="Intent assistant"
+          >
+            <AssistantChatPanel
               target={{
                 kind: 'intent',
                 profileId: authData.profileId,
@@ -238,27 +242,11 @@ export function GateWizardPage() {
               }}
               currentText={intent}
               onApply={(text) => {
-                if (intent.trim() && !confirm('Replace the current intent with the applied draft?')) return;
-                setIntent(text);
+                handleApplyDraft(text);
+                setChatOpenMobile(false);
               }}
-              title="Refine with AI — intent"
             />
-            <div style={{ fontSize: '0.7rem', color: 'var(--text-tertiary)', marginTop: '0.25rem' }}>
-              Advisory only — AI surfaces reality, you supply intent.
-            </div>
-          </div>
-
-          <div style={{ marginTop: '1rem', display: 'flex', gap: '0.5rem' }}>
-            <button className="btn btn-ghost" onClick={() => setStep(2)}>Back</button>
-            <button
-              className="btn btn-primary"
-              style={{ flex: 1 }}
-              onClick={handleIntentNext}
-              disabled={!intent.trim()}
-            >
-              Continue to Review
-            </button>
-          </div>
+          </BottomSheet>
         </div>
       )}
     </>

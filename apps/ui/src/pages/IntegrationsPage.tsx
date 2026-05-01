@@ -18,13 +18,6 @@ export function IntegrationsPage() {
         <p className="page-subtitle">Connect external services and manage MCP integrations.</p>
       </div>
 
-      <div className="status-banner status-banner-success">
-        <span className="status-banner-icon">{'\u{1F512}'}</span>
-        <span className="status-banner-text">
-          Vault is active. Credentials are encrypted locally before storage.
-        </span>
-      </div>
-
       {successMsg && <div className="alert alert-success">{successMsg}</div>}
 
       {loading ? (
@@ -38,13 +31,6 @@ export function IntegrationsPage() {
         </div>
       ) : (
         <>
-          <div className="status-banner status-banner-success" style={{ marginBottom: '1.5rem' }}>
-            <span className="status-banner-icon">{'✓'}</span>
-            <span className="status-banner-text">
-              MCP server is running. Tool availability is controlled by active attestations.
-            </span>
-          </div>
-
           {entries.map(entry => (
             <IntegrationCard
               key={entry.id}

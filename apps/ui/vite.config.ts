@@ -33,6 +33,10 @@ export default defineConfig({
         target: 'http://localhost:3402',
         changeOrigin: true,
       },
+      '/ai-prompts': {
+        target: 'http://localhost:3402',
+        changeOrigin: true,
+      },
       '/github': {
         target: 'http://localhost:3402',
         changeOrigin: true,

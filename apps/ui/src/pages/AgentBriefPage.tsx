@@ -1,6 +1,7 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { spClient } from '../lib/sp-client';
-import { AIChatPanel } from '../components/AIChatPanel';
+import { AssistantChatPanel } from '../components/AssistantChatPanel';
+import { BottomSheet } from '../components/BottomSheet';
 
 // Plain-spoken default brief for first-time users. Covers what HAP is,
 // how to behave under bounded authority, when to pull intent details on
@@ -46,11 +47,10 @@ executes. When you propose an action:
 export function AgentBriefPage() {
   const [context, setContext] = useState<string>('');
   const [originalContext, setOriginalContext] = useState<string>('');
-  const [preview, setPreview] = useState<string>('');
   const [loadingContext, setLoadingContext] = useState(true);
-  const [loadingPreview, setLoadingPreview] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
+  const [chatOpenMobile, setChatOpenMobile] = useState(false);
 
   const dirty = context !== originalContext;
   const byteLength = new Blob([context]).size;
@@ -124,16 +124,6 @@ export function AgentBriefPage() {
     return () => { cancelled = true; };
   }, []);
 
-  const refreshPreview = useCallback(() => {
-    setLoadingPreview(true);
-    spClient.getAgentBriefPreview()
-      .then(setPreview)
-      .catch(err => setPreview(`(preview unavailable: ${err instanceof Error ? err.message : 'unknown error'})`))
-      .finally(() => setLoadingPreview(false));
-  }, []);
-
-  useEffect(() => { refreshPreview(); }, [refreshPreview]);
-
   const handleSave = async () => {
     setSaving(true);
     setMessage(null);
@@ -141,7 +131,6 @@ export function AgentBriefPage() {
       await spClient.saveAgentContext(context);
       setOriginalContext(context);
       setMessage({ kind: 'ok', text: 'Saved. New MCP sessions will pick this up on next connect.' });
-      refreshPreview();
     } catch (err) {
       setMessage({ kind: 'error', text: err instanceof Error ? err.message : 'Save failed' });
     } finally {
@@ -189,93 +178,88 @@ export function AgentBriefPage() {
         </div>
       )}
 
-      <div className="card" style={{ marginBottom: '1rem' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem', gap: '0.5rem', flexWrap: 'wrap' }}>
-          <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-            context.md
+      <div className="intent-layout" style={{ marginBottom: '1rem' }}>
+        {/* LEFT — AI chat (hidden on ≤768px; reachable via floating button) */}
+        <div className="card intent-pane chat">
+          <AssistantChatPanel
+            target={{ kind: 'context' }}
+            currentText={context}
+            onApply={(text) => {
+              if (context.trim() && !confirm('Replace the current context with the applied draft?')) return;
+              setContext(text);
+            }}
+            greeting="Tell me what your agent should know — I'll help shape your standing orders. Or ask me to draft a full brief and we'll iterate."
+            placeholder="Ask for help with your brief…"
+          />
+        </div>
+
+        {/* RIGHT — context.md document, the centerpiece */}
+        <div className="card intent-pane document">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
+            <h3 className="card-title" style={{ marginBottom: 0 }}>context.md</h3>
+            <span style={{ fontSize: '0.75rem', color: byteLength > MAX_BYTES ? 'var(--danger)' : 'var(--text-muted)' }}>
+              {byteLength.toLocaleString()} / {MAX_BYTES.toLocaleString()} bytes
+            </span>
           </div>
-          <div style={{ fontSize: '0.75rem', color: byteLength > MAX_BYTES ? 'var(--danger)' : 'var(--text-tertiary)' }}>
-            {byteLength.toLocaleString()} / {MAX_BYTES.toLocaleString()} bytes
+
+          <textarea
+            className="form-textarea"
+            value={context}
+            onChange={e => setContext(e.target.value)}
+            placeholder={loadingContext ? 'Loading…' : 'Type your standing orders here, or click "Insert starter template" below.'}
+            disabled={loadingContext}
+            rows={18}
+            style={{ fontFamily: "'SF Mono', Monaco, monospace", fontSize: '0.85rem', lineHeight: 1.5, minHeight: '22rem' }}
+          />
+
+          <div className="intent-footer" style={{ marginTop: '0.75rem' }}>
+            <button
+              className="btn btn-ghost"
+              onClick={handleRevert}
+              disabled={saving || !dirty}
+            >
+              Revert
+            </button>
+            <button
+              className="btn btn-primary"
+              style={{ flex: 1 }}
+              onClick={handleSave}
+              disabled={saving || !dirty || byteLength > MAX_BYTES || loadingContext}
+            >
+              {saving ? 'Saving…' : 'Save'}
+            </button>
           </div>
         </div>
 
-        <textarea
-          className="form-input"
-          value={context}
-          onChange={e => setContext(e.target.value)}
-          placeholder={loadingContext ? 'Loading…' : 'Type your standing orders here, or click "Insert starter template" below.'}
-          disabled={loadingContext}
-          rows={18}
-          style={{ fontFamily: "'SF Mono', Monaco, monospace", fontSize: '0.85rem', lineHeight: 1.5, resize: 'vertical' }}
-        />
-
-        <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>
-          <button
-            className="btn btn-primary btn-sm"
-            onClick={handleSave}
-            disabled={saving || !dirty || byteLength > MAX_BYTES || loadingContext}
-          >
-            {saving ? 'Saving…' : 'Save'}
-          </button>
-          <button
-            className="btn btn-secondary btn-sm"
-            onClick={handleRevert}
-            disabled={saving || !dirty}
-          >
-            Revert
-          </button>
-        </div>
-      </div>
-
-      <div style={{ marginBottom: '1rem' }}>
-        <AIChatPanel
-          target={{ kind: 'context' }}
-          currentText={context}
-          onApply={(text) => {
-            if (context.trim() && !confirm('Replace the current context with the applied draft?')) return;
-            setContext(text);
-          }}
-          title="Refine with AI — context.md"
-        />
-      </div>
-
-      <div className="card">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem', gap: '0.5rem' }}>
-          <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-            Session preview — what the next MCP connection receives
-          </div>
-          <button
-            className="btn btn-ghost btn-sm"
-            onClick={refreshPreview}
-            disabled={loadingPreview}
-            style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem' }}
-          >
-            {loadingPreview ? 'Refreshing…' : 'Refresh'}
-          </button>
-        </div>
-        <pre
-          style={{
-            background: 'var(--bg-main)',
-            padding: '0.75rem',
-            borderRadius: '0.375rem',
-            fontSize: '0.8rem',
-            lineHeight: 1.5,
-            whiteSpace: 'pre-wrap',
-            wordBreak: 'break-word',
-            maxHeight: '28rem',
-            overflowY: 'auto',
-            margin: 0,
-            color: 'var(--text-primary)',
-          }}
+        {/* Mobile floating help + bottom-sheet drawer */}
+        <button
+          type="button"
+          className="floating-help"
+          onClick={() => setChatOpenMobile(true)}
+          aria-label="Open brief assistant"
         >
-          {preview || '(loading…)'}
-        </pre>
-        <p style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: '0.5rem', marginBottom: 0 }}>
-          This is the exact string sent as MCP <code>instructions</code> on
-          every new session. Intents are pulled on demand via
-          <code> list-authorizations(domain)</code>.
-        </p>
+          Get help with brief
+        </button>
+
+        <BottomSheet
+          open={chatOpenMobile}
+          onClose={() => setChatOpenMobile(false)}
+          ariaLabel="Brief assistant"
+        >
+          <AssistantChatPanel
+            target={{ kind: 'context' }}
+            currentText={context}
+            onApply={(text) => {
+              if (context.trim() && !confirm('Replace the current context with the applied draft?')) return;
+              setContext(text);
+              setChatOpenMobile(false);
+            }}
+            greeting="Tell me what your agent should know — I'll help shape your standing orders."
+            placeholder="Ask for help with your brief…"
+          />
+        </BottomSheet>
       </div>
+
     </>
   );
 }

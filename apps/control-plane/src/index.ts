@@ -18,8 +18,9 @@ import { Vault } from './lib/vault';
 import { createAuthRouter } from './routes/auth';
 import { createVaultRouter } from './routes/vault';
 import { createAIRouter } from './routes/ai';
+import { createAIPromptsRouter } from './routes/ai-prompts';
 import { requireAuth, requireAuthQueryOrHeader } from './middleware/auth';
-import { pushGateContent, pushServiceCredentials, setInternalSecret, getManifests, getGateContent, getBrief } from './lib/mcp-bridge';
+import { pushGateContent, pushServiceCredentials, setInternalSecret, getManifests, getGateContent } from './lib/mcp-bridge';
 import { createMCPRouter } from './routes/mcp';
 import { createEncryptIntentRouter } from './routes/encrypt-intent';
 import { createDecryptIntentRouter } from './routes/decrypt-intent';
@@ -238,6 +239,9 @@ app.use('/vault', jsonParser, authGuard, createVaultRouter(vault));
 
 // AI routes
 app.use('/ai', jsonParser, authGuard, createAIRouter(vault));
+
+// AI prompt overrides (Settings → Advanced)
+app.use('/ai-prompts', jsonParser, authGuard, createAIPromptsRouter());
 
 // MCP integration management routes
 app.use('/mcp', jsonParser, authGuard, createMCPRouter());
@@ -468,16 +472,6 @@ app.put('/agent-brief/context', jsonParser, authGuard, async (req: Request, res:
   } catch (err) {
     console.error('[Control Plane] agent-brief/context PUT failed:', err);
     res.status(500).json({ error: err instanceof Error ? err.message : 'Failed to write context' });
-  }
-});
-
-app.get('/agent-brief/preview', authGuard, async (_req: Request, res: Response) => {
-  try {
-    const data = await getBrief();
-    res.json(data);
-  } catch (err) {
-    console.error('[Control Plane] agent-brief/preview failed:', err);
-    res.status(500).json({ error: err instanceof Error ? err.message : 'Brief preview failed' });
   }
 });
 

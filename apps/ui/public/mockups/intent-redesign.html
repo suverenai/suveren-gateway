@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>HAP — Intent gate redesign mockup</title>
+<style>
+/* Gateway design tokens — dark theme, copied from design-system.css. */
+:root[data-theme="dark"] {
+  --text-primary: #ffffff;
+  --text-secondary: #ffffff;
+  --text-tertiary: #ffffff;
+  --text-muted: #888888;
+  --bg-main: #0a0a0a;
+  --bg-elevated: #1a1a1a;
+  --bg-input: #141414;
+  --accent: #888888;
+  --accent-subtle: #1f1f1f;
+  --accent-hover: #bbbbbb;
+  --border: #2a2a2a;
+  --btn-primary-bg: #ffffff;
+  --btn-primary-fg: #000000;
+  --btn-primary-bg-hover: #e5e5e5;
+  --btn-primary-bg-active: #c4c4c4;
+  --primary-glow: rgba(255, 255, 255, 0.25);
+  --radius: 0.75rem;
+  --radius-sm: 0.5rem;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--bg-main);
+  color: var(--text-primary);
+  font-size: 16px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+button { font-family: inherit; }
+textarea { font-family: inherit; }
+
+.page {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 1.5rem;
+}
+
+/* ── ContextStrip ─────────────────────────────────── */
+.context-strip {
+  display: flex;
+  gap: 2rem;
+  padding: 0.625rem 1rem;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 0.85rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+.context-strip .key { color: var(--text-muted); margin-right: 0.375rem; }
+
+/* ── Card (gateway style) ─────────────────────────── */
+.card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.5rem;
+}
+
+.card-title {
+  font-size: 1rem;
+  font-weight: 700;
+  margin: 0 0 0.75rem 0;
+  letter-spacing: -0.01em;
+}
+
+/* Document pane gets a slightly bigger title — the right side is the centerpiece */
+.intent-pane.document .card-title {
+  font-size: 1.25rem;
+  margin-bottom: 1rem;
+}
+
+/* ── Two-pane layout ──────────────────────────────── */
+.intent-layout {
+  display: grid;
+  grid-template-columns: minmax(320px, 1fr) minmax(420px, 1.4fr);
+  gap: 1.25rem;
+  align-items: start;
+}
+
+.intent-pane.chat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  position: sticky;
+  top: 1rem;
+  align-self: start;
+  max-height: calc(100vh - 4rem);
+}
+
+.intent-pane.document {
+  display: flex;
+  flex-direction: column;
+  gap: 0.875rem;
+}
+
+/* ── Chat panel ───────────────────────────────────── */
+.chat-header {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-muted);
+}
+
+/* ChatGPT-style: no frame around messages — they flow on the card */
+.chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 0.25rem 0;
+  min-height: 14rem;
+  max-height: 32rem;
+}
+
+.chat-msg {
+  display: flex;
+  max-width: 100%;
+}
+
+/* Assistant: left-aligned, full width, no bubble — just text */
+.chat-msg.assistant {
+  justify-content: flex-start;
+}
+.chat-msg.assistant .chat-msg-body {
+  max-width: 100%;
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* User: right-aligned, subtle pill bubble */
+.chat-msg.user {
+  justify-content: flex-end;
+}
+.chat-msg.user .chat-msg-body {
+  max-width: 85%;
+  background: var(--bg-main);
+  border: 1px solid var(--border);
+  border-radius: 1.125rem;
+  padding: 0.55rem 0.875rem;
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.chat-fenced-block {
+  display: block;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.625rem 0.75rem;
+  margin: 0.5rem 0;
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+  color: var(--text-primary);
+  line-height: 1.55;
+}
+
+.chat-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+
+/* Single rounded composer container — input + send sit inside the same pill */
+.chat-composer-pill {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.5rem;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 1.5rem;
+  padding: 0.5rem 0.5rem 0.5rem 1rem;
+  transition: border-color 0.15s;
+}
+.chat-composer-pill:focus-within { border-color: var(--text-primary); }
+
+.chat-input {
+  flex: 1;
+  resize: none;
+  background: transparent;
+  border: none;
+  padding: 0.375rem 0;
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  outline: none;
+  font-family: inherit;
+  max-height: 8rem;
+}
+
+.chat-send-btn {
+  flex-shrink: 0;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 999px;
+  background: var(--btn-primary-bg);
+  color: var(--btn-primary-fg);
+  border: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+  transition: background 0.15s;
+}
+.chat-send-btn:hover:not(:disabled) { background: var(--btn-primary-bg-hover); }
+.chat-send-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+.chat-composer-hint {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  padding-left: 0.5rem;
+}
+
+/* ── Buttons (gateway palette) ────────────────────── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.55rem 1.125rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btn-primary {
+  background: var(--btn-primary-bg);
+  color: var(--btn-primary-fg);
+  border-color: var(--btn-primary-bg);
+}
+.btn-primary:hover:not(:disabled) {
+  background: var(--btn-primary-bg-hover);
+  border-color: var(--btn-primary-bg-hover);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--text-primary);
+  border-color: var(--border);
+}
+.btn-ghost:hover:not(:disabled) {
+  background: var(--accent-subtle);
+  border-color: var(--accent-hover);
+}
+
+.btn-sm { padding: 0.35rem 0.75rem; font-size: 0.8rem; }
+
+/* ── Document right pane ──────────────────────────── */
+.intent-textarea {
+  width: 100%;
+  background: var(--bg-input);
+  border: 1px solid var(--text-primary);
+  border-radius: var(--radius);
+  padding: 1.25rem 1.375rem;
+  color: var(--text-primary);
+  font-size: 1.05rem;
+  line-height: 1.75;
+  letter-spacing: -0.005em;
+  resize: vertical;
+  min-height: 22rem;
+  outline: none;
+  transition: box-shadow 0.15s;
+  font-family: inherit;
+}
+.intent-textarea:focus {
+  box-shadow: 0 0 0 3px var(--primary-focus-ring);
+}
+.intent-textarea::placeholder {
+  color: var(--text-muted);
+  opacity: 0.7;
+}
+
+.intent-counter {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  text-align: right;
+}
+
+.intent-footer {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  margin-top: 0.5rem;
+}
+
+.btn-continue { flex: 1; }
+
+.continue-hint {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  text-align: right;
+  margin-top: -0.125rem;
+}
+
+/* ── Hint box (gateway style — grey accent, i-icon) ── */
+.hint-box {
+  display: flex;
+  gap: 0.625rem;
+  padding: 0.75rem 0.875rem;
+  background: var(--bg-main);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  color: var(--text-primary);
+  line-height: 1.55;
+  margin-top: 0.25rem;
+}
+
+.hint-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 1.125rem;
+  height: 1.125rem;
+  border-radius: 999px;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font-size: 0.7rem;
+  font-style: italic;
+  font-family: serif;
+  font-weight: 700;
+  line-height: 1;
+  margin-top: 0.125rem;
+}
+
+.hint-body { flex: 1; min-width: 0; }
+.hint-body .head { font-weight: 600; margin-bottom: 0.25rem; }
+
+.advisory {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  text-align: center;
+  margin-top: 0.25rem;
+}
+
+/* ── Responsive: stack at 1024 ─────────────────────── */
+@media (max-width: 1024px) {
+  .intent-layout { grid-template-columns: 1fr; }
+  .intent-pane.chat { position: static; max-height: none; }
+}
+
+/* ── Responsive: mobile / bottom sheet ─────────────── */
+@media (max-width: 768px) {
+  .intent-pane.chat { display: none; }
+  .floating-help { display: inline-flex; }
+  .page { padding: 1rem; }
+  .context-strip { font-size: 0.8rem; gap: 1rem; }
+}
+
+/* ── Floating help button (mobile only) ────────────── */
+.floating-help {
+  display: none;
+  align-items: center;
+  gap: 0.5rem;
+  position: fixed;
+  bottom: 1rem;
+  right: 1rem;
+  z-index: 5;
+  background: var(--btn-primary-bg);
+  color: var(--btn-primary-fg);
+  border: 2px solid var(--btn-primary-bg);
+  border-radius: 999px;
+  padding: 0.625rem 1.125rem;
+  font-weight: 700;
+  font-size: 0.85rem;
+  cursor: pointer;
+  box-shadow: 0 6px 18px var(--primary-glow);
+}
+.floating-help:hover { background: var(--btn-primary-bg-hover); border-color: var(--btn-primary-bg-hover); }
+
+/* ── Bottom sheet ──────────────────────────────────── */
+.bottom-sheet {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  height: 88vh;
+  background: var(--bg-elevated);
+  border-top: 1px solid var(--border);
+  border-radius: var(--radius) var(--radius) 0 0;
+  z-index: 11;
+  padding: 1rem 1rem 1.25rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  transform: translateY(100%);
+  transition: transform 0.25s ease-out;
+  box-shadow: 0 -8px 32px rgba(0,0,0,0.6);
+}
+.bottom-sheet.is-open { transform: translateY(0); }
+
+.bottom-sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.55);
+  z-index: 10;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s;
+}
+.bottom-sheet-backdrop.is-open { opacity: 1; pointer-events: auto; }
+
+.bottom-sheet-handle {
+  width: 2.5rem; height: 0.25rem;
+  background: var(--text-muted);
+  border-radius: 999px;
+  margin: 0 auto 0.5rem;
+}
+
+.bottom-sheet-close {
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 1.5rem;
+  position: absolute;
+  top: 0.5rem;
+  right: 0.875rem;
+  line-height: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bottom-sheet, .bottom-sheet-backdrop { transition: none; }
+}
+</style>
+</head>
+<body>
+
+<div class="page">
+
+  <!-- ContextStrip -->
+  <div class="context-strip">
+    <span><span class="key">Team:</span><strong>Spending Group</strong></span>
+    <span><span class="key">Profile:</span>Calendar</span>
+    <span><span class="key">Bounds:</span>booking_daily_max=8, booking_duration_max=120 min, lookahead_days_max=30 days</span>
+  </div>
+
+  <div class="intent-layout">
+    <!-- LEFT: chat -->
+    <div class="card intent-pane chat">
+      <div class="chat-header">AI Assistant</div>
+
+      <div class="chat-messages">
+        <div class="chat-msg assistant">
+          <div class="chat-msg-body">Tell me what your agent should do — I'll help shape it. Or ask me to draft a full intent and we'll iterate.</div>
+        </div>
+        <div class="chat-msg user">
+          <div class="chat-msg-body">draft a full intent for a calendar booking agent that handles incoming meeting requests up to 8/day, max 2h each, only for the next 30 days, and never on weekends</div>
+        </div>
+        <div class="chat-msg assistant">
+          <div class="chat-msg-body">Before I draft — your intent could include three things. Which do you want to cover?
+
+• <strong>Why</strong> — the situation that made you set this up
+• <strong>Goal</strong> — what the agent should try to achieve
+• <strong>Watch out</strong> — what the agent should avoid
+
+Pick any combination, or "all three", or skip any you'd rather leave out.</div>
+        </div>
+      </div>
+
+      <div class="chat-composer">
+        <div class="chat-composer-pill">
+          <textarea class="chat-input" rows="1" placeholder="Ask for help articulating the intent…"></textarea>
+          <button class="chat-send-btn" aria-label="Send">↑</button>
+        </div>
+        <div class="chat-composer-hint">Cmd/Ctrl+Enter to send</div>
+      </div>
+    </div>
+
+    <!-- RIGHT: document -->
+    <div class="card intent-pane document">
+      <h3 class="card-title">What should your agent know?</h3>
+
+      <textarea class="intent-textarea" id="intent">Why — What's the situation? Why does this need to happen?
+
+Goal — What should the agent try to achieve?
+
+Watch out — What should the agent avoid or be careful about?</textarea>
+
+      <div class="intent-counter">192 / 2000</div>
+
+      <div class="intent-footer">
+        <button class="btn btn-ghost">Back</button>
+        <button class="btn btn-primary btn-continue" id="continue-btn" disabled>Continue to Review</button>
+      </div>
+
+      <div class="hint-box">
+        <span class="hint-icon" aria-hidden="true">i</span>
+        <div class="hint-body">
+          <div class="head">Visible to Andi (andreas@sublin.app)</div>
+          Your intent will be encrypted and shared with Andi (andreas@sublin.app).
+          Only they can decrypt it — your Service Provider cannot.
+          Each approver stores a copy as their accountability record.
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Mobile-only floating help + bottom sheet -->
+<button class="floating-help" id="floating-help" aria-label="Open intent assistant">
+  Get help with intent
+</button>
+
+<aside class="bottom-sheet" id="bottom-sheet" role="dialog" aria-modal="true">
+  <div class="bottom-sheet-handle" aria-hidden="true"></div>
+  <button class="bottom-sheet-close" id="bottom-sheet-close" aria-label="Close">×</button>
+  <div class="chat-header">AI Assistant</div>
+  <div class="chat-messages" style="flex: 1;">
+    <div class="chat-msg assistant">
+      <div class="chat-msg-body">Tell me what your agent should do — I'll help shape it.</div>
+    </div>
+  </div>
+  <div class="chat-composer">
+    <div class="chat-composer-pill">
+      <textarea class="chat-input" rows="1" placeholder="Ask for help articulating the intent…"></textarea>
+      <button class="chat-send-btn" aria-label="Send">↑</button>
+    </div>
+    <div class="chat-composer-hint">Cmd/Ctrl+Enter to send</div>
+  </div>
+</aside>
+<div class="bottom-sheet-backdrop" id="bottom-sheet-backdrop"></div>
+
+<script>
+const intentEl = document.getElementById('intent');
+const continueBtn = document.getElementById('continue-btn');
+const initial = intentEl.value;
+function recompute() {
+  const changed = intentEl.value.trim() !== initial.trim() && intentEl.value.trim() !== '';
+  continueBtn.disabled = !changed;
+}
+intentEl.addEventListener('input', recompute);
+
+const sheet = document.getElementById('bottom-sheet');
+const backdrop = document.getElementById('bottom-sheet-backdrop');
+function openSheet() {
+  sheet.classList.add('is-open');
+  backdrop.classList.add('is-open');
+  document.body.style.overflow = 'hidden';
+}
+function closeSheet() {
+  sheet.classList.remove('is-open');
+  backdrop.classList.remove('is-open');
+  document.body.style.overflow = '';
+}
+document.getElementById('floating-help').addEventListener('click', openSheet);
+document.getElementById('bottom-sheet-close').addEventListener('click', closeSheet);
+backdrop.addEventListener('click', closeSheet);
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSheet(); });
+</script>
+</body>
+</html>

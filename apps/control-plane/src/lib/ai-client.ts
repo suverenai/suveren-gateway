@@ -194,7 +194,11 @@ export interface AIChatResponse {
   error?: string;
 }
 
-const CHAT_SYSTEM_PROMPTS: Record<ChatTarget['kind'], string> = {
+/** Default AI assistant system prompts.
+ *  An override stored in ~/.hap/ai-prompts.json (via ai-prompts-store)
+ *  wins per-kind when present. The defaults stay as the immutable
+ *  fallback — deleting the override file reverts behavior. */
+export const CHAT_SYSTEM_PROMPTS: Record<ChatTarget['kind'], string> = {
   context: `You help a human author "context.md" — the standing-orders brief that is prepended to every AI agent session under the Human Agency Protocol (HAP).
 
 This text goes straight into the system prompt of downstream agents. Keep it operational, concrete, and short. Favor examples the user would recognize from their work.
@@ -218,30 +222,42 @@ The Intent is read by two audiences:
 1. The agent, on demand via list-authorizations(domain), when it's about to act in this domain.
 2. Human reviewers, when the agent proposes an action that needs approval.
 
-A good Intent describes:
+A good Intent can describe:
 - Why this authorization exists (the situation).
 - What the agent should try to achieve (the goal).
 - Soft rules or watch-outs the agent must honor even inside bounds (e.g. "never publish on weekends", "only reply in German").
 
-Your role is to:
-- Ask clarifying questions when scope is unclear.
-- Surface edge cases the user hasn't thought about.
-- Propose concrete phrasings when asked.
+Your role is to coach: ask clarifying questions, reflect the user's words back, surface edge cases they haven't thought about. You may propose concrete phrasings on request.
 
-When you propose a complete draft of the Intent, wrap it in a fenced block:
+CRITICAL — ask before you draft.
+
+Before you produce ANY full-document draft (anything wrapped in a \`\`\`markdown fence), you MUST first ask the user which of the three things to cover:
+
+  • Why — the situation that made them set this up
+  • Goal — what the agent should try to achieve
+  • Watch out — what the agent should avoid
+
+Phrase the question briefly and let them pick any combination, "all three", or skip any they'd rather leave out. WAIT for their answer. Do not draft until they have answered. This rule is non-negotiable, even if the user's first message is "draft a full intent for X" — you still ask the clarifying question first, then draft on the next turn.
+
+Once they have answered, produce the draft inside a single fenced block:
 
 \`\`\`markdown
 ...
 \`\`\`
 
-Only use that fence for full-document drafts the user can click "Apply". For partial suggestions, comments, or questions, write prose without the fence.`,
+Only use the fence for full-document drafts the user can click "Apply". For partial suggestions, questions, comments, or reflections, write prose without the fence.`,
 };
 
 export async function getAIChatResponse(
   config: AIConfig,
   request: AIChatRequest,
 ): Promise<AIChatResponse> {
-  const systemPrompt = CHAT_SYSTEM_PROMPTS[request.target.kind];
+  // Prefer a stored override from ~/.hap/ai-prompts.json; fall back to
+  // the default constant. The store handles missing-file / empty-value
+  // gracefully so this is safe to call on every turn.
+  const { getPromptOverride } = await import('./ai-prompts-store');
+  const override = await getPromptOverride(request.target.kind);
+  const systemPrompt = override ?? CHAT_SYSTEM_PROMPTS[request.target.kind];
 
   // Build a grounding preamble so the model sees the current document and
   // any authorization context. This is injected as the first user turn so

@@ -984,13 +984,6 @@ class SPClient {
     }
   }
 
-  async getAgentBriefPreview(): Promise<string> {
-    const res = await this.fetch('/agent-brief/preview');
-    if (!res.ok) throw new Error(`Failed to fetch brief preview: ${res.status}`);
-    const data = await res.json() as { brief: string };
-    return data.brief;
-  }
-
   // ─── AI chat (multi-turn refinement of context.md or intent) ──────────
 
   async aiChat(request: {
@@ -1007,6 +1000,26 @@ class SPClient {
       return { success: false, error: (err as { error: string }).error || `Chat failed: ${res.status}` };
     }
     return res.json() as Promise<{ success: boolean; reply?: string; error?: string }>;
+  }
+
+  /** Read the current AI assistant system prompts (intent + context),
+   *  including immutable defaults so the UI can compare. */
+  async getAIPrompts(): Promise<Record<'intent' | 'context', { current: string; default: string; overridden: boolean }>> {
+    const res = await this.fetch('/ai-prompts');
+    if (!res.ok) throw new Error(`Failed to load AI prompts: ${res.status}`);
+    return res.json() as Promise<Record<'intent' | 'context', { current: string; default: string; overridden: boolean }>>;
+  }
+
+  /** Save (or revert with empty value) an override for one prompt kind. */
+  async setAIPrompt(kind: 'intent' | 'context', value: string): Promise<void> {
+    const res = await this.fetch(`/ai-prompts/${kind}`, {
+      method: 'PUT',
+      body: JSON.stringify({ value }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Save failed' }));
+      throw new Error((err as { error: string }).error || `Save failed: ${res.status}`);
+    }
   }
 }
 
