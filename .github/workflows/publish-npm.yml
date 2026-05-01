@@ -1,0 +1,65 @@
+name: Publish npm package
+
+# Publishes @humanagencyp/hap-gateway to the npm registry on tagged
+# releases. Runs in parallel with publish.yml (Docker image) so a single
+# `git tag vX.Y.Z && git push --tags` ships both distribution channels
+# in lockstep.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write    # for npm provenance
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: 'https://registry.npmjs.org'
+          cache: pnpm
+
+      - name: Install workspace deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Build apps
+        run: pnpm build
+
+      - name: Assemble bundle
+        run: node bundle/build.mjs
+
+      - name: Verify bundle version matches git tag
+        run: |
+          set -e
+          TAG="${GITHUB_REF_NAME#v}"
+          BUNDLE_VERSION=$(jq -r .version bundle/dist/package.json)
+          echo "git tag: v$TAG"
+          echo "bundle:  $BUNDLE_VERSION"
+          if [ "$TAG" != "$BUNDLE_VERSION" ]; then
+            echo "::error::Bundle version ($BUNDLE_VERSION) does not match git tag ($TAG)."
+            echo "::error::Update package.json (root) before tagging."
+            exit 1
+          fi
+
+      - name: Smoke-install bundle
+        # Confirms the published artifact is actually installable before
+        # we hand it to the registry.
+        working-directory: bundle/dist
+        run: npm install --omit=dev --no-audit --no-fund
+
+      - name: Publish to npm
+        working-directory: bundle/dist
+        run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

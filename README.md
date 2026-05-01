@@ -73,24 +73,50 @@ No credentials. No signing keys. Just the scope of what the agent is allowed to 
 
 ## Quick Start
 
+Pick whichever you have on hand — both produce the same gateway.
+
+### Option A — Docker
+
 Requires [Docker](https://docs.docker.com/get-docker/).
 
 ```bash
-docker run -d --name hap-gateway -p 7400:3000 -p 7430:3030 -v $HOME/.hap:/app/data ghcr.io/humanagencyprotocol/hap-gateway
+docker run -d --name hap-gateway \
+  -p 7400:3000 -p 7430:3030 \
+  -v $HOME/.hap:/app/data \
+  ghcr.io/humanagencyprotocol/hap-gateway
 ```
 
 Open `http://localhost:7400`. The MCP server is at `http://localhost:7430`.
 
-Any MCP-compatible client can connect:
+### Option B — npm
+
+Requires [Node.js 20+](https://nodejs.org/).
+
+```bash
+npm install -g @humanagencyp/hap-gateway
+hap-gateway start              # runs in foreground; Ctrl+C stops
+# or
+hap-gateway start --detach     # runs in the background; data + logs in ~/.hap/
+hap-gateway status             # check it's up
+hap-gateway stop               # stop a detached run
+```
+
+Open `http://localhost:3400`. The MCP server is at `http://localhost:3430`.
+
+To upgrade later: `npm install -g @humanagencyp/hap-gateway@latest && hap-gateway restart`.
+
+### Connecting an MCP client
+
+Either path exposes the same MCP transports — use the port from the path you chose (7430 for Docker, 3430 for npm):
 
 ```
-Streamable HTTP:  POST http://localhost:7430/mcp
-SSE transport:    GET  http://localhost:7430/sse
+Streamable HTTP:  POST http://localhost:<port>/mcp
+SSE transport:    GET  http://localhost:<port>/sse
 ```
 
 ### Local development
 
-Running from source (no Docker) gives you hot-reload across all three services:
+Running from source gives you hot-reload across all three services:
 
 ```bash
 pnpm install
