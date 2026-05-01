@@ -1,0 +1,94 @@
+name: Bundle smoke test
+
+# Runs the npm-distribution bundle (build → install → start → probe → stop)
+# on Linux, macOS, and Windows so we catch cross-platform regressions
+# before publishing @humanagencyp/hap-gateway.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'bundle/**'
+      - 'apps/**'
+      - 'packages/**'
+      - '.github/workflows/bundle-smoke.yml'
+  pull_request:
+    paths:
+      - 'bundle/**'
+      - 'apps/**'
+      - 'packages/**'
+      - '.github/workflows/bundle-smoke.yml'
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    name: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install workspace deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Build apps (UI, control-plane, MCP server)
+        run: pnpm build
+
+      - name: Assemble bundle
+        run: node bundle/build.mjs
+
+      - name: Install bundle runtime deps
+        working-directory: bundle/dist
+        run: npm install --omit=dev --no-audit --no-fund
+
+      - name: Start gateway, probe, stop
+        shell: bash
+        # bash on windows-latest = Git Bash, so the same script works
+        # on all three platforms.
+        run: |
+          set -e
+          export HAP_CP_PORT=3500
+          export HAP_MCP_PORT=3530
+          export HAP_DATA_DIR="${RUNNER_TEMP}/hap"
+
+          node bundle/dist/bin/hap-gateway.js start --detach
+          # Give both child processes time to bind their ports.
+          # On windows-latest the cold start is noticeably slower.
+          sleep 5
+
+          echo "::group::probes"
+          curl -fsS -o /dev/null -w 'GET /         -> %{http_code} (%{size_download} bytes)\n' http://localhost:3500/
+          curl -fsS    http://localhost:3500/health
+          echo
+          curl -fsS -o /dev/null -w 'GET /authorizations (SPA fallback) -> %{http_code}\n' http://localhost:3500/authorizations
+          echo "::endgroup::"
+
+          echo "::group::status"
+          node bundle/dist/bin/hap-gateway.js status
+          echo "::endgroup::"
+
+          echo "::group::stop"
+          node bundle/dist/bin/hap-gateway.js stop
+          echo "::endgroup::"
+
+      - name: Show gateway log on failure
+        if: failure()
+        shell: bash
+        run: |
+          echo "::group::gateway.log"
+          cat "${RUNNER_TEMP}/hap/gateway.log" 2>/dev/null || echo "(no log file)"
+          echo "::endgroup::"

@@ -5,6 +5,7 @@
  */
 
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { ExecutionMappingValue, ProfileToolGating } from '@hap/core';
 
@@ -71,7 +72,7 @@ interface IntegrationsFile {
   integrations: IntegrationConfig[];
 }
 
-const DEFAULT_DATA_DIR = process.env.HAP_DATA_DIR ?? `${process.env.HOME}/.hap`;
+const DEFAULT_DATA_DIR = process.env.HAP_DATA_DIR ?? join(homedir(), '.hap');
 
 export class IntegrationRegistry {
   private integrations = new Map<string, IntegrationConfig>();

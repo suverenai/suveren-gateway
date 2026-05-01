@@ -6,9 +6,10 @@
  */
 
 import { readFileSync, existsSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-const DEFAULT_DIR = process.env.HAP_DATA_DIR ?? `${process.env.HOME}/.hap`;
+const DEFAULT_DIR = process.env.HAP_DATA_DIR ?? join(homedir(), '.hap');
 
 /** Maximum chars to include in the mandate brief before truncating. */
 const BRIEF_MAX_CHARS = 1000;

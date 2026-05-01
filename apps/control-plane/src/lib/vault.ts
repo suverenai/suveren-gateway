@@ -7,6 +7,7 @@
 
 import { createHash, pbkdf2Sync, randomBytes, createCipheriv, createDecipheriv, timingSafeEqual } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync, existsSync, chmodSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 export interface EncryptedBlob {
@@ -44,7 +45,7 @@ export class Vault {
   private dataDir: string;
 
   constructor(dataDir?: string) {
-    this.dataDir = dataDir ?? (process.env.HAP_DATA_DIR ?? join(process.env.HOME ?? '~', '.hap'));
+    this.dataDir = dataDir ?? process.env.HAP_DATA_DIR ?? join(homedir(), '.hap');
   }
 
   // ─── Key management ─────────────────────────────────────────────────────

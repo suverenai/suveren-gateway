@@ -5,6 +5,7 @@
  * Each downstream server runs as a child process communicating via stdio.
  */
 
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { existsSync, writeFileSync, mkdirSync } from 'node:fs';
 import { execSync } from 'node:child_process';
@@ -14,7 +15,7 @@ import { getProfile } from '@hap/core';
 import type { ProfileToolGating } from '@hap/core';
 import type { IntegrationConfig, ToolGatingConfig } from './integration-registry';
 
-const DEFAULT_DATA_DIR = process.env.HAP_DATA_DIR ?? `${process.env.HOME}/.hap`;
+const DEFAULT_DATA_DIR = process.env.HAP_DATA_DIR ?? join(homedir(), '.hap');
 // Runtime INSTALL directory for downstream MCP npm packages (e.g. crm-mcp,
 // records-mcp). We write package.json here and run `npm install` to land
 // node_modules/.

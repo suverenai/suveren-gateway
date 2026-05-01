@@ -12,6 +12,7 @@
 import { randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { homedir } from 'node:os';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import { createProxyMiddleware } from 'http-proxy-middleware';
 import { Vault } from './lib/vault';
@@ -431,7 +432,7 @@ app.post('/gate-content', jsonParser, authGuard, async (req: Request, res: Respo
 // GET  /agent-brief/preview   → { brief: string }
 
 const AGENT_CONTEXT_MAX_BYTES = 16 * 1024; // 16 KB cap — plenty for standing orders.
-const HAP_DATA_DIR = process.env.HAP_DATA_DIR ?? `${process.env.HOME}/.hap`;
+const HAP_DATA_DIR = process.env.HAP_DATA_DIR ?? join(homedir(), '.hap');
 
 app.get('/agent-brief/context', authGuard, async (_req: Request, res: Response) => {
   try {

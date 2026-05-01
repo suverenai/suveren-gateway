@@ -12,6 +12,7 @@
  */
 
 import { mkdirSync, readFileSync, writeFileSync, existsSync, unlinkSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 
@@ -46,7 +47,7 @@ interface EncryptedGateFile {
   entries: Record<string, EncryptedBlob>;
 }
 
-const DEFAULT_DIR = process.env.HAP_DATA_DIR ?? `${process.env.HOME}/.hap`;
+const DEFAULT_DIR = process.env.HAP_DATA_DIR ?? join(homedir(), '.hap');
 
 export class GateStore {
   private entries = new Map<string, GateEntry>();

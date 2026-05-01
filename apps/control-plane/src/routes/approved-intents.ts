@@ -19,10 +19,11 @@
 
 import { Router, type Request, type Response } from 'express';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Vault, EncryptedBlob } from '../lib/vault';
 
-const HAP_DATA_DIR = process.env.HAP_DATA_DIR ?? join(process.env.HOME ?? '~', '.hap');
+const HAP_DATA_DIR = process.env.HAP_DATA_DIR ?? join(homedir(), '.hap');
 const FILE_PATH = join(HAP_DATA_DIR, 'approved-intents.enc.json');
 
 interface ApprovedIntentsFile {

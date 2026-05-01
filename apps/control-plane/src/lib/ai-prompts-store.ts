@@ -1,4 +1,5 @@
 import { promises as fs } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 /**
@@ -18,7 +19,7 @@ interface AIPromptsFile {
 }
 
 function dataDir(): string {
-  return process.env.HAP_DATA_DIR ?? join(process.env.HOME ?? '~', '.hap');
+  return process.env.HAP_DATA_DIR ?? join(homedir(), '.hap');
 }
 
 function filePath(): string {

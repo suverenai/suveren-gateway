@@ -1,0 +1,236 @@
+#!/usr/bin/env node
+/**
+ * hap-gateway CLI — wraps `node server.js` with start/stop/status/logs.
+ *
+ * Foreground by default (Ctrl+C stops). Pass --detach for a daemonized
+ * run that writes a PID file and a log file under ~/.hap/.
+ *
+ * Cross-platform: macOS, Linux, Windows. Uses os.homedir() everywhere
+ * (no $HOME dependency). Process-existence checks via process.kill(pid, 0)
+ * which Node implements consistently across platforms.
+ */
+
+import { spawn } from 'node:child_process';
+import { existsSync, mkdirSync, openSync, readFileSync, writeFileSync, unlinkSync, statSync } from 'node:fs';
+import { homedir, platform } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const PKG_ROOT = resolve(__dirname, '..');
+const SERVER_ENTRY = join(PKG_ROOT, 'server.js');
+
+const DATA_DIR = process.env.HAP_DATA_DIR ?? join(homedir(), '.hap');
+const PID_FILE = join(DATA_DIR, 'gateway.pid');
+const LOG_FILE = join(DATA_DIR, 'gateway.log');
+
+const HAP_PORT = process.env.HAP_CP_PORT ?? '3400';
+
+// ─── Subcommands ────────────────────────────────────────────────────────
+
+const argv = process.argv.slice(2);
+const cmd = argv[0] ?? 'help';
+
+switch (cmd) {
+  case 'start':   await start(argv.slice(1)); break;
+  case 'stop':    await stop(); break;
+  case 'status':  await status(); break;
+  case 'restart': await restart(); break;
+  case 'logs':    await logs(argv.slice(1)); break;
+  case 'help':
+  case '--help':
+  case '-h':
+    printHelp(); break;
+  default:
+    console.error(`Unknown command: ${cmd}\n`);
+    printHelp();
+    process.exit(2);
+}
+
+// ─── Implementations ────────────────────────────────────────────────────
+
+async function start(args) {
+  const detach = args.includes('--detach') || args.includes('-d');
+
+  if (await isAlreadyRunning()) {
+    console.error(`hap-gateway is already running (pid ${readPid()}). Use \`hap-gateway stop\` first or \`hap-gateway restart\`.`);
+    process.exit(1);
+  }
+
+  ensureDataDir();
+
+  if (detach) {
+    const out = openSync(LOG_FILE, 'a');
+    const child = spawn(process.execPath, [SERVER_ENTRY], {
+      detached: true,
+      stdio: ['ignore', out, out],
+      env: process.env,
+    });
+    writeFileSync(PID_FILE, String(child.pid), 'utf8');
+    child.unref();
+    console.log(`hap-gateway started (pid ${child.pid})`);
+    console.log(`  UI:    http://localhost:${HAP_PORT}`);
+    console.log(`  Logs:  ${LOG_FILE}`);
+    console.log(`  Stop:  hap-gateway stop`);
+  } else {
+    // Foreground — replace this CLI process with server.js's stdio.
+    const child = spawn(process.execPath, [SERVER_ENTRY], {
+      stdio: 'inherit',
+      env: process.env,
+    });
+    child.on('exit', (code, signal) => {
+      process.exit(code ?? (signal ? 1 : 0));
+    });
+    // Forward signals so Ctrl+C cleanly terminates the gateway.
+    for (const sig of ['SIGINT', 'SIGTERM']) {
+      process.on(sig, () => child.kill(sig));
+    }
+  }
+}
+
+async function stop() {
+  const pid = readPid();
+  if (!pid) {
+    console.error('hap-gateway is not running (no PID file).');
+    process.exit(1);
+  }
+  if (!isPidAlive(pid)) {
+    console.error(`Stale PID file (process ${pid} not running) — cleaning up.`);
+    safeUnlink(PID_FILE);
+    process.exit(0);
+  }
+  try {
+    process.kill(pid, 'SIGTERM');
+    // Give it up to 5s to exit cleanly.
+    for (let i = 0; i < 50; i++) {
+      await sleep(100);
+      if (!isPidAlive(pid)) break;
+    }
+    if (isPidAlive(pid)) {
+      console.error(`Process ${pid} did not exit after SIGTERM — sending SIGKILL.`);
+      process.kill(pid, 'SIGKILL');
+    }
+    safeUnlink(PID_FILE);
+    console.log(`hap-gateway stopped (pid ${pid}).`);
+  } catch (err) {
+    console.error(`Failed to stop pid ${pid}:`, err.message);
+    process.exit(1);
+  }
+}
+
+async function status() {
+  const pid = readPid();
+  if (!pid) {
+    console.log('hap-gateway: not running (no PID file).');
+    process.exit(3);
+  }
+  if (!isPidAlive(pid)) {
+    console.log(`hap-gateway: stale PID file (process ${pid} not running).`);
+    process.exit(3);
+  }
+  // Probe the health endpoint to confirm it's actually serving.
+  try {
+    const res = await fetch(`http://localhost:${HAP_PORT}/health`, {
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const body = await res.json();
+    console.log(`hap-gateway: running (pid ${pid})`);
+    console.log(`  UI:           http://localhost:${HAP_PORT}`);
+    console.log(`  Vault:        ${body.vaultUnlocked ? 'unlocked' : 'locked'}`);
+    console.log(`  Version:      ${body.version ?? 'unknown'}`);
+    if (body.updateAvailable) console.log(`  Update:       available — run \`hap-gateway upgrade\``);
+  } catch (err) {
+    console.log(`hap-gateway: pid ${pid} alive but /health unreachable (${err.message})`);
+    process.exit(2);
+  }
+}
+
+async function restart() {
+  if (readPid() && isPidAlive(readPid())) {
+    await stop();
+  }
+  await start(['--detach']);
+}
+
+async function logs(args) {
+  if (!existsSync(LOG_FILE)) {
+    console.error(`No log file at ${LOG_FILE}.`);
+    console.error(`Logs are only written when running with --detach. In foreground mode the gateway prints to the terminal.`);
+    process.exit(1);
+  }
+  if (args.includes('--tail') || args.includes('-f')) {
+    // Stream new lines as they arrive.
+    const proc = spawn(platform() === 'win32' ? 'powershell' : 'tail',
+      platform() === 'win32'
+        ? ['-Command', `Get-Content -Path '${LOG_FILE}' -Wait`]
+        : ['-f', LOG_FILE],
+      { stdio: 'inherit' });
+    process.on('SIGINT', () => proc.kill());
+  } else {
+    // Print entire log.
+    process.stdout.write(readFileSync(LOG_FILE, 'utf8'));
+  }
+}
+
+// ─── Helpers ────────────────────────────────────────────────────────────
+
+function ensureDataDir() {
+  if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
+}
+
+function readPid() {
+  if (!existsSync(PID_FILE)) return null;
+  const raw = readFileSync(PID_FILE, 'utf8').trim();
+  const pid = parseInt(raw, 10);
+  return Number.isFinite(pid) ? pid : null;
+}
+
+function isPidAlive(pid) {
+  if (!pid) return false;
+  try {
+    // Signal 0 doesn't kill, just probes existence + permissions.
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    // EPERM means it exists but we can't signal it; ESRCH means gone.
+    return err.code === 'EPERM';
+  }
+}
+
+async function isAlreadyRunning() {
+  const pid = readPid();
+  if (!pid) return false;
+  if (!isPidAlive(pid)) {
+    // Clean up stale PID file silently.
+    safeUnlink(PID_FILE);
+    return false;
+  }
+  return true;
+}
+
+function safeUnlink(path) {
+  try { unlinkSync(path); } catch { /* ignore */ }
+}
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function printHelp() {
+  console.log(`hap-gateway — Human Agency Protocol gateway
+
+Usage:
+  hap-gateway start [--detach]   Run the gateway (foreground by default)
+  hap-gateway stop               Stop a detached gateway
+  hap-gateway restart            Stop, then start --detach
+  hap-gateway status             Show running state + health
+  hap-gateway logs [--tail]      Print or tail ~/.hap/gateway.log
+  hap-gateway help               Print this help
+
+Environment:
+  HAP_CP_PORT     UI + API port  (default 3400)
+  HAP_MCP_PORT    MCP server port (default 3430)
+  HAP_DATA_DIR    Data directory (default ~/.hap)
+`);
+}
