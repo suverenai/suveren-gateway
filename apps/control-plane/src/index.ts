@@ -10,7 +10,7 @@
  */
 
 import { randomBytes } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import express, { type Request, type Response, type NextFunction } from 'express';
@@ -537,6 +537,40 @@ app.use(
 
 // ─── Health check (public) ──────────────────────────────────────────────
 
+/** Detect how the gateway was started so the UI can show the right
+ *  upgrade command. Docker → /.dockerenv exists. npm install -g →
+ *  control-plane resolves from inside a node_modules/@humanagencyp/
+ *  hap-gateway/ subtree. Anything else (workspace dev) → 'dev'. */
+function detectInstallMethod(): 'docker' | 'npm' | 'dev' {
+  if (existsSync('/.dockerenv')) return 'docker';
+  const dir = import.meta.dirname ?? __dirname;
+  if (dir.includes('/node_modules/@humanagencyp/hap-gateway/')) return 'npm';
+  return 'dev';
+}
+const INSTALL_METHOD = detectInstallMethod();
+
+/** Read the bundle's package.json#version when running under npm so
+ *  the update-checker can semver-compare against registry.npmjs.org.
+ *  Under Docker, fall back to HAP_BUILD_SHA (the git SHA stamped at
+ *  image build). Otherwise 'dev'. */
+function detectRunningVersion(): string {
+  const dir = import.meta.dirname ?? __dirname;
+  // npm install layout: dist/control-plane/index.mjs → bundle root is two up.
+  const bundlePkg = join(dir, '..', '..', 'package.json');
+  if (existsSync(bundlePkg)) {
+    try {
+      const pkg = JSON.parse(readFileSync(bundlePkg, 'utf8'));
+      if (pkg.name === '@humanagencyp/hap-gateway' && typeof pkg.version === 'string') {
+        return pkg.version;
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  return process.env.HAP_BUILD_SHA ?? 'dev';
+}
+const RUNNING_VERSION = detectRunningVersion();
+
 app.get('/health', async (req: Request, res: Response) => {
   // ?refresh=1 → force a GHCR re-check before responding. Used by the UI on
   // mount/login so a just-arrived user gets the true update state in the same
@@ -548,8 +582,10 @@ app.get('/health', async (req: Request, res: Response) => {
   res.json({
     status: 'ok',
     vaultUnlocked: vault.isUnlocked(),
-    version: update.runningSha,
+    version: RUNNING_VERSION,
+    latestVersion: update.latestVersion,
     updateAvailable: update.updateAvailable,
+    installMethod: INSTALL_METHOD,
     spUrl: SP_URL,
     security: {
       note: 'Gateway secures tool execution. Agent host isolation is the user\'s responsibility.',
@@ -580,5 +616,5 @@ app.listen(port, '0.0.0.0', () => {
   console.error(`[Control Plane]   SP proxy: ${SP_URL}`);
   console.error(`[Control Plane]   UI dist:  ${UI_DIST}`);
   console.error(`[Control Plane]   Internal secret: configured`);
-  startUpdateChecker();
+  startUpdateChecker(INSTALL_METHOD, RUNNING_VERSION);
 });

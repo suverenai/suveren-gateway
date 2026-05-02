@@ -2,8 +2,11 @@ import { useState, useEffect } from 'react';
 
 const CHECK_INTERVAL = 5 * 60 * 1000; // 5 minutes
 
+export type InstallMethod = 'docker' | 'npm' | 'dev';
+
 export function useUpdateCheck() {
   const [updateAvailable, setUpdateAvailable] = useState(false);
+  const [installMethod, setInstallMethod] = useState<InstallMethod>('docker');
   const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => {
@@ -14,7 +17,10 @@ export function useUpdateCheck() {
     const check = (forceRefresh = false) => {
       fetch(forceRefresh ? '/health?refresh=1' : '/health')
         .then(r => r.json())
-        .then(data => { if (data.updateAvailable) setUpdateAvailable(true); })
+        .then(data => {
+          if (data.updateAvailable) setUpdateAvailable(true);
+          if (data.installMethod) setInstallMethod(data.installMethod);
+        })
         .catch(() => {});
     };
 
@@ -25,6 +31,7 @@ export function useUpdateCheck() {
 
   return {
     updateAvailable: updateAvailable && !dismissed,
+    installMethod,
     dismiss: () => setDismissed(true),
   };
 }

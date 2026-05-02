@@ -1,12 +1,23 @@
 import { useEffect, useRef, useState } from 'react';
-import { useUpdateCheck } from '../hooks/useUpdateCheck';
+import { useUpdateCheck, type InstallMethod } from '../hooks/useUpdateCheck';
 
-// Clear any previous container by name AND by port (handles the case where
-// an older instance was started under a different name), then pull and run.
-const UPDATE_CMD = 'docker rm -f hap-gateway 2>/dev/null; docker ps -q --filter publish=7400 --filter publish=7430 | xargs -r docker rm -f; docker pull ghcr.io/humanagencyprotocol/hap-gateway:latest && docker run -d --name hap-gateway -p 7400:3000 -p 7430:3030 -v $HOME/.hap:/app/data ghcr.io/humanagencyprotocol/hap-gateway';
+/** Per-install-method upgrade command. The control-plane reports
+ *  `installMethod` on /health based on whether it sees /.dockerenv
+ *  (docker), a node_modules path (npm), or neither (dev). */
+function upgradeCommandFor(method: InstallMethod): string {
+  if (method === 'npm') {
+    return 'hap-gateway stop; npm install -g @humanagencyp/hap-gateway@latest && hap-gateway start --detach';
+  }
+  if (method === 'dev') {
+    return 'cd hap-gateway && git pull && pnpm install && pnpm dev';
+  }
+  // docker (default)
+  return 'docker rm -f hap-gateway 2>/dev/null; docker ps -q --filter publish=7400 --filter publish=7430 | xargs -r docker rm -f; docker pull ghcr.io/humanagencyprotocol/hap-gateway:latest && docker run -d --name hap-gateway -p 7400:3000 -p 7430:3030 -v $HOME/.hap:/app/data ghcr.io/humanagencyprotocol/hap-gateway';
+}
 
 export function UpdateBanner() {
-  const { updateAvailable } = useUpdateCheck();
+  const { updateAvailable, installMethod } = useUpdateCheck();
+  const updateCmd = upgradeCommandFor(installMethod);
   const show = updateAvailable;
   const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -39,7 +50,7 @@ export function UpdateBanner() {
 
   const handleCopy = async () => {
     try {
-      await navigator.clipboard.writeText(UPDATE_CMD);
+      await navigator.clipboard.writeText(updateCmd);
       setCopied(true);
       setTimeout(() => setCopied(false), 1800);
     } catch {
@@ -66,7 +77,7 @@ export function UpdateBanner() {
             Paste this into your terminal (Terminal on macOS/Linux, PowerShell on Windows) to update:
           </p>
           <div className="update-banner-row update-banner-cmd-row">
-            <code className="update-banner-cmd">{UPDATE_CMD}</code>
+            <code className="update-banner-cmd">{updateCmd}</code>
             <button
               type="button"
               className="btn btn-sm btn-primary"
