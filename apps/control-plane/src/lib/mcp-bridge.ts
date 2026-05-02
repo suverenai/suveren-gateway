@@ -174,19 +174,48 @@ export async function activateIntegration(manifest: {
   });
 }
 
-export async function stopAllIntegrations(): Promise<void> {
+/**
+ * Stop AND PERMANENTLY REMOVE every running integration from the registry.
+ *
+ * Use only when the registry's contents are no longer valid — the
+ * archetypal case is switching to a different user's API key on the
+ * same machine. Do NOT use this for logout: logout should leave the
+ * registry intact so the same user's next session resumes their setup
+ * (and so attestation-bounded agent work running in the background
+ * isn't disrupted).
+ */
+export async function stopAndRemoveAllIntegrations(): Promise<void> {
   const data = await getIntegrations() as { integrations?: Array<{ id: string; running: boolean }> };
   if (!data?.integrations) return;
   for (const integration of data.integrations) {
     if (integration.running) {
       try {
         await removeIntegration(integration.id);
-        console.error(`[MCP Bridge] Stopped integration: ${integration.id}`);
+        console.error(`[MCP Bridge] Removed integration: ${integration.id}`);
       } catch (err) {
-        console.error(`[MCP Bridge] Failed to stop ${integration.id}:`, err);
+        console.error(`[MCP Bridge] Failed to remove ${integration.id}:`, err);
       }
     }
   }
+}
+
+/**
+ * Stop every running integration without removing them from the
+ * registry. Future "Pause all" UI control. Not currently called by
+ * logout — logout deliberately leaves integrations untouched so
+ * agents acting under existing attestations continue working while
+ * the human is away from the UI.
+ */
+export async function stopAllRunning(): Promise<unknown> {
+  const res = await fetch(`${MCP_BASE}/internal/stop-all-running`, {
+    method: 'POST',
+    headers: internalHeaders(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+    throw new Error((err as { error: string }).error);
+  }
+  return res.json();
 }
 
 export async function getManifests(): Promise<unknown> {

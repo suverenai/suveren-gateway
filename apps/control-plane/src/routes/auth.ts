@@ -8,7 +8,7 @@
  */
 
 import { Router, type Request, type Response, type NextFunction } from 'express';
-import { configure, pushServiceCredentials, resyncGates, startPendingIntegrations, stopAllIntegrations } from '../lib/mcp-bridge';
+import { configure, pushServiceCredentials, resyncGates, startPendingIntegrations, stopAndRemoveAllIntegrations } from '../lib/mcp-bridge';
 import type { Vault } from '../lib/vault';
 import { loadOrGenerateKeyPair, getPublicKey } from '../lib/e2e-key-manager';
 
@@ -85,11 +85,14 @@ export function createAuthRouter(vault: Vault, logoutAuth: Middleware, loginRate
           });
           return;
         }
-        console.error('[Control Plane] Different user confirmed — wiping vault and stopping integrations');
+        console.error('[Control Plane] Different user confirmed — wiping vault and removing previous integrations');
+        // A different API key on this machine means a different person.
+        // Remove the prior user's integrations from the registry so their
+        // configuration doesn't leak into the new user's session.
         try {
-          await stopAllIntegrations();
+          await stopAndRemoveAllIntegrations();
         } catch (err) {
-          console.error('[Control Plane] Failed to stop integrations:', err);
+          console.error('[Control Plane] Failed to remove integrations:', err);
         }
         vault.wipe();
         // Re-derive key after wipe (wipe clears the salt, need a fresh one)
@@ -197,14 +200,16 @@ export function createAuthRouter(vault: Vault, logoutAuth: Middleware, loginRate
   /**
    * POST /auth/logout
    * Requires valid X-API-Key — prevents anonymous DoS.
-   * Clears vault key + SP cookie from memory.
+   *
+   * Clears the in-memory vault key + SP cookie. Deliberately leaves
+   * running integrations and the integration registry alone — agents
+   * acting under existing attestations continue working asynchronously
+   * regardless of whether the human is logged into the UI. That's the
+   * point of HAP's bounded-authority model. To halt all agent traffic,
+   * use `hap-gateway stop` (clean process shutdown) or revoke the
+   * relevant attestations (protocol-level, granular, audited).
    */
   router.post('/logout', logoutAuth, async (_req: Request, res: Response) => {
-    try {
-      await stopAllIntegrations();
-    } catch (err) {
-      console.error('[Control Plane] Failed to stop integrations on logout:', err);
-    }
     vault.clearKey();
     res.json({ ok: true });
   });

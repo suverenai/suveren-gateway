@@ -345,6 +345,29 @@ app.get('/internal/integrations', internalOnly, (_req: Request, res: Response) =
   res.json({ integrations: statuses });
 });
 
+/**
+ * Stop every running integration without removing them from the registry.
+ *
+ * Used by callers that want to halt agent traffic without forgetting which
+ * integrations the user has configured (e.g., a future "Pause all" UI
+ * button). Critically, this is NOT what runs on logout — logout leaves
+ * integrations alone so attestation-bounded agent work can continue
+ * asynchronously, which is the whole point of the protocol.
+ *
+ * For "stop and forget", use DELETE /internal/remove-integration/:id per
+ * id, or rebuild the registry from scratch.
+ */
+app.post('/internal/stop-all-running', internalOnly, async (_req: Request, res: Response) => {
+  try {
+    await integrationManager.shutdown();
+    console.error('[HAP MCP] All running integrations stopped (registry preserved)');
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[HAP MCP] stop-all-running failed:', err);
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Stop failed' });
+  }
+});
+
 // ─── SSE transport (for mcporter / OpenClaw) ────────────────────────────────
 
 const sseSessions = new Map<string, SSEServerTransport>();
