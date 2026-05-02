@@ -7,9 +7,15 @@
   "bin": {
     "hap-gateway": "bin/hap-gateway.js"
   },
+  "scripts": {
+    "postinstall": "node scripts/postinstall.js"
+  },
   "files": [
     "bin",
     "dist",
+    "scripts",
+    "content",
+    "profiles",
     "server.js",
     "README.md"
   ],

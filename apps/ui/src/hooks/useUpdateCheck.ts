@@ -7,6 +7,7 @@ export type InstallMethod = 'docker' | 'npm' | 'dev';
 export function useUpdateCheck() {
   const [updateAvailable, setUpdateAvailable] = useState(false);
   const [installMethod, setInstallMethod] = useState<InstallMethod>('docker');
+  const [version, setVersion] = useState<string>('');
   const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => {
@@ -20,6 +21,7 @@ export function useUpdateCheck() {
         .then(data => {
           if (data.updateAvailable) setUpdateAvailable(true);
           if (data.installMethod) setInstallMethod(data.installMethod);
+          if (data.version) setVersion(data.version);
         })
         .catch(() => {});
     };
@@ -32,6 +34,7 @@ export function useUpdateCheck() {
   return {
     updateAvailable: updateAvailable && !dismissed,
     installMethod,
+    version,
     dismiss: () => setDismissed(true),
   };
 }

@@ -99,9 +99,10 @@ if (existsSync(PROFILES_SRC)) {
   });
 }
 
-// Copy bundle scaffold (CLI + production entry).
+// Copy bundle scaffold (CLI + production entry + scripts).
 cpSync(join(__dirname, 'server.js'),         join(OUT, 'server.js'));
 cpSync(join(__dirname, 'bin', 'hap-gateway.js'), join(OUT, 'bin', 'hap-gateway.js'));
+cpSync(join(__dirname, 'scripts'), join(OUT, 'scripts'), { recursive: true });
 chmodSync(join(OUT, 'bin', 'hap-gateway.js'), 0o755);
 chmodSync(join(OUT, 'server.js'),                0o755);
 

@@ -26,6 +26,17 @@ const LOG_FILE = join(DATA_DIR, 'gateway.log');
 
 const HAP_PORT = process.env.HAP_CP_PORT ?? '3400';
 
+/** Version of THIS CLI (the binary on disk). Compared against the
+ *  running gateway's version inside `status` so users see a mismatch
+ *  after an upgrade and know to restart. */
+let CLI_VERSION = '';
+try {
+  const pkg = JSON.parse(readFileSync(join(PKG_ROOT, 'package.json'), 'utf8'));
+  CLI_VERSION = pkg.version ?? '';
+} catch {
+  /* package.json missing → leave empty, just skip the mismatch check */
+}
+
 // ─── Subcommands ────────────────────────────────────────────────────────
 
 const argv = process.argv.slice(2);
@@ -69,11 +80,15 @@ async function start(args) {
     writeFileSync(PID_FILE, String(child.pid), 'utf8');
     child.unref();
     console.log(`hap-gateway started (pid ${child.pid})`);
-    console.log(`  UI:    http://localhost:${HAP_PORT}`);
+    console.log(``);
+    console.log(`  → Open in your browser:  http://localhost:${HAP_PORT}`);
+    console.log(``);
     console.log(`  Logs:  ${LOG_FILE}`);
     console.log(`  Stop:  hap-gateway stop`);
   } else {
     // Foreground — replace this CLI process with server.js's stdio.
+    console.log(`Starting hap-gateway… open http://localhost:${HAP_PORT} once "up" appears below. Ctrl+C to stop.`);
+    console.log(``);
     const child = spawn(process.execPath, [SERVER_ENTRY], {
       stdio: 'inherit',
       env: process.env,
@@ -138,8 +153,17 @@ async function status() {
     console.log(`hap-gateway: running (pid ${pid})`);
     console.log(`  UI:           http://localhost:${HAP_PORT}`);
     console.log(`  Vault:        ${body.vaultUnlocked ? 'unlocked' : 'locked'}`);
-    console.log(`  Version:      ${body.version ?? 'unknown'}`);
-    if (body.updateAvailable) console.log(`  Update:       available — run \`hap-gateway upgrade\``);
+    console.log(`  Version:      ${body.version ?? 'unknown'} (running)`);
+    if (CLI_VERSION) console.log(`                ${CLI_VERSION} (installed CLI)`);
+    if (CLI_VERSION && body.version && body.version !== CLI_VERSION && body.version !== 'dev') {
+      console.log('');
+      console.log(`  ⚠  Running version differs from the installed CLI.`);
+      console.log(`     Restart to pick up the new code: hap-gateway restart`);
+    }
+    if (body.updateAvailable) {
+      console.log('');
+      console.log(`  Update available — see banner in the UI for the upgrade command.`);
+    }
   } catch (err) {
     console.log(`hap-gateway: pid ${pid} alive but /health unreachable (${err.message})`);
     process.exit(2);

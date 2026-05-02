@@ -1,5 +1,17 @@
 import { useAuth } from '../contexts/AuthContext';
 import { useTheme } from '../hooks/useTheme';
+import { useUpdateCheck } from '../hooks/useUpdateCheck';
+
+/** Render the gateway's running version compactly. Docker stamps a
+ *  full git SHA into HAP_BUILD_SHA — show the short 7-char form so it
+ *  fits in the nav. npm passes a semver string ("0.1.4") which is
+ *  already short. Empty until /health responds. */
+function formatVersion(v: string): string {
+  if (!v) return '';
+  if (v === 'dev') return 'dev';
+  if (/^[0-9a-f]{40}$/i.test(v)) return v.slice(0, 7); // git SHA
+  return v;
+}
 
 const THEME_ICONS: Record<string, string> = {
   system: '\u25D1',
@@ -21,6 +33,8 @@ interface TopNavProps {
 export function TopNav({ onMenuToggle }: TopNavProps) {
   const { user, logout } = useAuth();
   const { theme, toggle } = useTheme();
+  const { version } = useUpdateCheck();
+  const versionLabel = formatVersion(version);
 
   return (
     <nav className="top-nav">
@@ -45,10 +59,14 @@ export function TopNav({ onMenuToggle }: TopNavProps) {
             </>
           ) : (
             <>
-              <a href="https://humanagencyprotocol.org" target="_blank" rel="noopener noreferrer"
-                style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>
-                What is HAP?
-              </a>
+              {versionLabel && (
+                <span
+                  title="Running gateway version"
+                  style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', fontVariantNumeric: 'tabular-nums' }}
+                >
+                  v{versionLabel}
+                </span>
+              )}
               <button className="theme-toggle" onClick={toggle} title={`Theme: ${theme}`}>
                 {THEME_ICONS[theme]}
               </button>
