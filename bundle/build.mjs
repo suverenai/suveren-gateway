@@ -102,6 +102,11 @@ const mcpPkg  = JSON.parse(readFileSync(PKG_JSON.mcp, 'utf8'));
 // the published `@humanagencyp/hap-core`. That way the compiled
 // `import from '@hap/core'` lines resolve at runtime without rewriting
 // any JS — npm creates `node_modules/@hap/core` from the alias.
+//
+// We DO NOT also declare `@humanagencyp/hap-core` separately — the alias
+// already pulls the same package. Declaring both makes npm fetch the
+// manifest twice and resolve two trees for one package, wasting HTTPS
+// round-trips.
 const aggregate = {};
 const corePin = readHapCoreVersionPin(REPO_ROOT) ?? '*';
 for (const [name, ver] of Object.entries({ ...cpPkg.dependencies, ...mcpPkg.dependencies })) {
@@ -113,22 +118,36 @@ for (const [name, ver] of Object.entries({ ...cpPkg.dependencies, ...mcpPkg.depe
     aggregate[name] = ver;
   }
 }
-// Also declare the canonical name so it's installed under its real name
-// for any consumer that imports it directly.
-aggregate['@humanagencyp/hap-core'] = corePin;
 
 const tpl = JSON.parse(readFileSync(TPL, 'utf8'));
 tpl.version = rootPkg.version ?? '0.0.0';
 tpl.dependencies = aggregate;
+// Bundle every runtime dep into the published tarball. End users
+// running `npm install -g @humanagencyp/hap-gateway` then extract a
+// pre-populated node_modules without any further network fetches —
+// install survives bad/flaky networks and finishes in seconds.
+tpl.bundledDependencies = Object.keys(aggregate);
 
 writeFileSync(join(OUT, 'package.json'), JSON.stringify(tpl, null, 2) + '\n', 'utf8');
+
+// Pre-install the runtime deps so npm pack will include them via
+// bundledDependencies. Skip if the dist already has node_modules from
+// a prior smoke run (idempotent).
+if (!existsSync(join(OUT, 'node_modules'))) {
+  console.log('[bundle] installing runtime deps to embed in tarball …');
+  execSync('npm install --omit=dev --no-audit --no-fund', {
+    cwd: OUT,
+    stdio: 'inherit',
+  });
+}
 
 console.log(`[bundle] ✓ wrote ${OUT}`);
 console.log(`[bundle]   version:       ${tpl.version}`);
 console.log(`[bundle]   deps:          ${Object.keys(aggregate).join(', ')}`);
+console.log(`[bundle]   bundled:       yes (deps shipped inside the tarball)`);
 console.log(`[bundle]
-[bundle] To smoke-test:
-[bundle]   cd ${OUT} && npm install --omit=dev && node bin/hap-gateway.js start
+[bundle] To smoke-test (no install needed — deps already present):
+[bundle]   node ${OUT}/bin/hap-gateway.js start
 [bundle]
 [bundle] To publish:
 [bundle]   cd ${OUT} && npm publish --access public`);
