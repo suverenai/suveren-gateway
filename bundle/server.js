@@ -16,6 +16,12 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const CP_PORT = process.env.HAP_CP_PORT ?? '3400';
 const MCP_PORT = process.env.HAP_MCP_PORT ?? '3430';
 const UI_DIST = process.env.HAP_UI_DIST ?? join(__dirname, 'dist', 'ui');
+// Integration manifests + profile catalog ship inside the bundle so a
+// fresh `npm install -g` install has working integrations and profiles
+// without the user needing to clone anything. Env-var overrides still
+// win for advanced users / Docker.
+const MANIFESTS_DIR = process.env.HAP_MANIFESTS_DIR ?? join(__dirname, 'content', 'integrations');
+const PROFILES_DIR = process.env.HAP_PROFILES_DIR ?? join(__dirname, 'profiles');
 
 const env = {
   ...process.env,
@@ -23,6 +29,8 @@ const env = {
   HAP_CP_PORT: CP_PORT,
   HAP_MCP_PORT: MCP_PORT,
   HAP_UI_DIST: UI_DIST,
+  HAP_MANIFESTS_DIR: MANIFESTS_DIR,
+  HAP_PROFILES_DIR: PROFILES_DIR,
   // Single shared internal secret so CP↔MCP authenticate the bridge.
   HAP_INTERNAL_SECRET: process.env.HAP_INTERNAL_SECRET ?? randomHex(32),
 };

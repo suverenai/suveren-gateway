@@ -81,6 +81,24 @@ cpSync(SRC.ui,  join(OUT, 'dist', 'ui'),            { recursive: true });
 cpSync(SRC.cp,  join(OUT, 'dist', 'control-plane'), { recursive: true });
 cpSync(SRC.mcp, join(OUT, 'dist', 'mcp-server'),    { recursive: true });
 
+// Ship integration manifests so the UI's Integrations page works
+// out of the box (Docker copies these too via COPY content/integrations/).
+const MANIFESTS_SRC = join(REPO_ROOT, 'content/integrations');
+if (existsSync(MANIFESTS_SRC)) {
+  cpSync(MANIFESTS_SRC, join(OUT, 'content', 'integrations'), { recursive: true });
+}
+
+// Ship the profile catalog. Docker `git clone`s hap-profiles into
+// /hap-profiles; for the npm bundle we resolve it from a sibling
+// checkout (HAP_PROFILES_DIR override always wins at runtime).
+const PROFILES_SRC = join(REPO_ROOT, '..', 'hap-profiles');
+if (existsSync(PROFILES_SRC)) {
+  cpSync(PROFILES_SRC, join(OUT, 'profiles'), {
+    recursive: true,
+    filter: (src) => !src.includes('/.git') && !src.includes('/test-results'),
+  });
+}
+
 // Copy bundle scaffold (CLI + production entry).
 cpSync(join(__dirname, 'server.js'),         join(OUT, 'server.js'));
 cpSync(join(__dirname, 'bin', 'hap-gateway.js'), join(OUT, 'bin', 'hap-gateway.js'));
