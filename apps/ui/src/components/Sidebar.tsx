@@ -47,8 +47,12 @@ function useOtherNavStatus() {
       const next: Record<string, number> = {};
       if (aiStatus && !aiStatus.configured) next.assistant = 1;
       if (authData) {
+        // Revoked auths shouldn't ping the sidebar — the user already
+        // dealt with them. Mirror AuthorizationsPage `getStatus`: revoked
+        // wins over expired.
         const expired = authData.filter(
-          a => a.remaining_seconds === null || a.remaining_seconds <= 0,
+          a => a.sp_status !== 'revoked'
+            && (a.remaining_seconds === null || a.remaining_seconds <= 0),
         ).length;
         if (expired > 0) next.authorizations = expired;
       }

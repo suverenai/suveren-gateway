@@ -65,9 +65,12 @@ export function DashboardPage() {
 
   const allReady = authsReady && proposalsReady && aiReady && integrationsReady;
 
-  // Compute counts
-  const active = auths.filter(a => a.remaining_seconds !== null && a.remaining_seconds > 0);
-  const expired = auths.filter(a => a.remaining_seconds === null || a.remaining_seconds <= 0);
+  // Compute counts. Revoked auths must drop out of every bucket — they don't
+  // grant authority anymore, and the user already saw "Revoked" on the
+  // dedicated tab. Mirrors the AuthorizationsPage `getStatus` logic.
+  const live = auths.filter(a => a.sp_status !== 'revoked');
+  const active = live.filter(a => a.remaining_seconds !== null && a.remaining_seconds > 0);
+  const expired = live.filter(a => a.remaining_seconds === null || a.remaining_seconds <= 0);
   const soonExpiring = active.filter(a => a.remaining_seconds !== null && a.remaining_seconds <= EXPIRY_WARN_SECONDS);
   const pendingProposals = proposals.filter(p => p.status === 'pending');
   const runningIntegrations = integrationEntries.filter(e => e.state === 'running');

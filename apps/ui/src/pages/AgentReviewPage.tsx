@@ -39,7 +39,6 @@ export function AgentReviewPage() {
   const [authTitle, setAuthTitle] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
-  const [success, setSuccess] = useState<{ frameHash: string; status: string; commitment: string } | null>(null);
   // Profile-config + resolved approver display names — surfaced as a Review row
   // so the creator sees who the authority is being shared with before signing.
   const [profileConfig, setProfileConfig] = useState<ProfileConfig | null>(null);
@@ -226,18 +225,14 @@ export function AgentReviewPage() {
       } catch (pushErr) {
         // Gate content push failed — revoke the attestation so it doesn't orphan
         try {
-          await spClient.revokeAttestation(attestationHash, 'Auto-revoked: gate content push failed');
+          await spClient.revokeAttestation(storageHash, 'Auto-revoked: gate content push failed');
         } catch { /* best effort */ }
         throw new Error(`Authorization signed but gate content delivery failed. The attestation was revoked. Please try again. (${pushErr instanceof Error ? pushErr.message : 'Unknown error'})`);
       }
 
-      setSuccess({
-        frameHash: attestationHash,
-        status: result.status,
-        commitment: commitMode === 'per-action' ? 'per-action' : 'immediate',
-      });
       sessionStorage.removeItem('agentAuth');
       sessionStorage.removeItem('agentGate');
+      navigate(`/authorizations?highlight=${encodeURIComponent(storageHash)}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Attestation failed');
     } finally {
@@ -247,26 +242,6 @@ export function AgentReviewPage() {
 
   if (!authData || !gateData) {
     return <p style={{ color: 'var(--text-tertiary)' }}>Loading...</p>;
-  }
-
-  if (success) {
-    return (
-      <div className="success-card">
-        <div className="success-card-title">Authorization Created</div>
-        <div className="success-card-hash">{success.frameHash}</div>
-        <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-          Status: <strong>{success.status}</strong>
-          {success.commitment === 'per-action' && (
-            <div style={{ marginTop: '0.5rem' }}>
-              Commitment: <strong>Review Mode</strong> — you will review and commit to each agent action individually.
-            </div>
-          )}
-        </div>
-        <button className="btn btn-primary" onClick={() => navigate('/')}>
-          Back to Dashboard
-        </button>
-      </div>
-    );
   }
 
   const boundsEntries = Object.entries(gateData.bounds).filter(([k]) => k !== 'profile' && k !== 'path');

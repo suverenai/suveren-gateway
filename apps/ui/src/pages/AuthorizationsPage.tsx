@@ -26,21 +26,19 @@ function getStatus(item: PendingItem, revokedSet: Set<string>): Status {
   return 'active';
 }
 
-function sortItems(items: PendingItem[], revokedSet: Set<string>): PendingItem[] {
+function sortItems(items: PendingItem[], revokedSet: Set<string>, highlightHash?: string | null): PendingItem[] {
   return [...items].sort((a, b) => {
+    // Highlighted item always pinned to the top so the user lands on it.
+    if (highlightHash) {
+      if (a.frame_hash === highlightHash && b.frame_hash !== highlightHash) return -1;
+      if (b.frame_hash === highlightHash && a.frame_hash !== highlightHash) return 1;
+    }
     const sa = getStatus(a, revokedSet);
     const sb = getStatus(b, revokedSet);
     const order: Record<Status, number> = { active: 0, pending: 1, expired: 2, revoked: 3 };
     if (order[sa] !== order[sb]) return order[sa] - order[sb];
-    // Active: ascending by remaining TTL
-    if (sa === 'active' && sb === 'active') {
-      return (a.remaining_seconds ?? 0) - (b.remaining_seconds ?? 0);
-    }
-    // Expired: most recent first
-    if (sa === 'expired' && sb === 'expired') {
-      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
-    }
-    return 0;
+    // Within each status, most recent first.
+    return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
   });
 }
 
@@ -68,6 +66,7 @@ interface AuthCardProps {
   onCopy: (item: PendingItem) => void;
   onRevoke: (frameHash: string, ownerLabel?: string, profileShortName?: string) => void;
   onExtend: (item: PendingItem) => void;
+  highlightHash?: string | null;
 }
 
 function AuthCard({
@@ -88,6 +87,7 @@ function AuthCard({
   onCopy,
   onRevoke,
   onExtend,
+  highlightHash,
 }: AuthCardProps) {
   const status = getStatus(item, revokedSet);
   const isExpanded = expandedHash === item.frame_hash;
@@ -142,8 +142,14 @@ function AuthCard({
 
   const profileShortName = profileDisplayName(item.profile_id);
 
+  const isHighlighted = highlightHash != null && item.frame_hash === highlightHash;
+
   return (
-    <div className="card" key={item.frame_hash} style={{ marginBottom: 0 }}>
+    <div
+      className={`card${isHighlighted ? ' card-highlight' : ''}`}
+      key={item.frame_hash}
+      style={{ marginBottom: 0 }}
+    >
       {/* Team owner line */}
       {ownerLabel && (
         <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginBottom: '0.375rem' }}>
@@ -405,6 +411,9 @@ export function AuthorizationsPage() {
   const [modeFilter, setModeFilter] = useState<'auto' | 'review' | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const [showPicker, setShowPicker] = useState(() => searchParams.get('new') === '1');
+  // Captured at mount so the URL param can be stripped immediately without
+  // killing the highlight CSS animation. Stays in state for ~3s then clears.
+  const [highlightHash, setHighlightHash] = useState<string | null>(() => searchParams.get('highlight'));
   const [expandedHash, setExpandedHash] = useState<string | null>(null);
   const [gateCache, setGateCache] = useState<Record<string, GateContentEntry | null>>({});
   const [gateLoading, setGateLoading] = useState<string | null>(null);
@@ -444,6 +453,20 @@ export function AuthorizationsPage() {
     fetchMineItems();
     if (isAdmin && groupId) fetchTeamItems();
   });
+
+  // Strip ?highlight= from the URL on mount and clear the in-state highlight
+  // a moment after the animation has had time to play. The animation itself
+  // is one-shot CSS, so unmounting/clearing after it runs is purely cosmetic.
+  useEffect(() => {
+    if (!highlightHash) return;
+    if (searchParams.get('highlight')) {
+      searchParams.delete('highlight');
+      setSearchParams(searchParams, { replace: true });
+    }
+    const t = window.setTimeout(() => setHighlightHash(null), 3000);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // Fallback full-sync every 5min
   useVisiblePolling(fetchMineItems, 300_000);
 
@@ -605,6 +628,7 @@ export function AuthorizationsPage() {
       return true;
     }),
     revokedSet,
+    highlightHash,
   );
 
   const sharedCardProps = {
@@ -625,6 +649,7 @@ export function AuthorizationsPage() {
     onCopy: handleCopy,
     onRevoke: handleRevoke,
     onExtend: setExtendItem,
+    highlightHash,
   };
 
   return (

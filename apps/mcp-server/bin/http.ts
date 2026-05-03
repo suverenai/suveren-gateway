@@ -250,6 +250,7 @@ app.post('/internal/resync-gates', internalOnly, async (_req: Request, res: Resp
   }
 
   let synced = 0;
+  let orphaned = 0;
   for (const gate of gates) {
     try {
       // SP storage key is per-user. Use frameHash (storage key) when stored.
@@ -263,6 +264,20 @@ app.post('/internal/resync-gates', internalOnly, async (_req: Request, res: Resp
         });
         synced++;
         console.error(`[HAP MCP] Re-synced gate: ${gate.path}`);
+      } else {
+        // SP no longer has this attestation. The only path that produces
+        // this state is the SP's hard-delete flow, which the user
+        // initiated explicitly. Treat that as a positive signal that the
+        // local gate is no longer wanted: drop the cached entry AND the
+        // stored gate (encrypted intent), so the next login starts clean
+        // and the resync log doesn't keep complaining. Revoked or
+        // TTL-expired auths don't reach this branch — SP still holds
+        // their FrameMetadata row, so syncAuthorization succeeds and the
+        // local gate is preserved.
+        state.cache.invalidate(gate.path);
+        state.gateStore.delete(gate.path);
+        orphaned++;
+        console.error(`[HAP MCP] Orphan gate purged (SP attestation deleted): ${gate.path}`);
       }
     } catch (err) {
       console.error(`[HAP MCP] Failed to re-sync gate ${gate.path}:`, err);
@@ -278,7 +293,7 @@ app.post('/internal/resync-gates', internalOnly, async (_req: Request, res: Resp
     }
   }
 
-  res.json({ ok: true, synced });
+  res.json({ ok: true, synced, orphaned });
 });
 
 // ─── Integration management endpoints ──────────────────────────────────────

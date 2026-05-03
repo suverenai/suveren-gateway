@@ -622,6 +622,20 @@ code {
 
 .card + .card { margin-top: 1rem; }
 
+.card-highlight {
+  animation: hap-card-highlight 2.4s ease-out 1;
+}
+
+@keyframes hap-card-highlight {
+  0%   { box-shadow: 0 0 0 2px var(--accent), 0 0 24px var(--accent-subtle); border-color: var(--accent); }
+  60%  { box-shadow: 0 0 0 2px var(--accent), 0 0 24px var(--accent-subtle); border-color: var(--accent); }
+  100% { box-shadow: 0 0 0 0 transparent, 0 0 0 transparent; border-color: var(--border); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card-highlight { animation: none; border-color: var(--accent); }
+}
+
 .card-header {
   display: flex;
   justify-content: space-between;
