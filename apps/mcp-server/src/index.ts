@@ -1,8 +1,8 @@
 /**
- * HAP MCP Server — Tool provider for the agent with embedded Gatekeeper.
+ * Suveren MCP Server — Tool provider for the agent with embedded Gatekeeper.
  *
  * Registers:
- * - HAP admin tools: list-authorizations, check-pending-attestations
+ * - Suveren admin tools: list-authorizations, check-pending-attestations
  * - Proxied tools: discovered from downstream MCP servers via IntegrationManager
  *
  * Builds a mandate brief from enriched authorizations and sets it as MCP instructions.

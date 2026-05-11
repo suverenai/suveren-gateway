@@ -464,7 +464,7 @@ describe('createGatedToolHandler — mapping transforms', () => {
 });
 
 describe('buildProxiedToolDescription', () => {
-  it('returns [HAP: no gating config] for tools with no gating', () => {
+  it('returns [Suveren: no gating config] for tools with no gating', () => {
     const tool: DiscoveredTool = {
       originalName: 'list_products',
       namespacedName: 'stripe__list_products',
@@ -475,7 +475,7 @@ describe('buildProxiedToolDescription', () => {
     };
     const state = mockState();
     const desc = buildProxiedToolDescription(tool, state);
-    expect(desc).toBe('[HAP: no gating config] List all products');
+    expect(desc).toBe('[Suveren: no gating config] List all products');
   });
 
   it('returns gating tag with action type and checked fields for gated tool with auth', () => {
@@ -505,7 +505,7 @@ describe('buildProxiedToolDescription', () => {
     }]);
 
     const desc = buildProxiedToolDescription(tool, state);
-    expect(desc).toContain('[HAP: charge');
+    expect(desc).toContain('[Suveren: charge');
     expect(desc).toContain('charge');
     expect(desc).toContain('amount, currency checked');
     expect(desc).toContain('Create a payment link');
@@ -527,7 +527,7 @@ describe('buildProxiedToolDescription', () => {
     const state = mockState(); // no authorizations
 
     const desc = buildProxiedToolDescription(tool, state);
-    expect(desc).toContain('[HAP: charge — no active authorization]');
+    expect(desc).toContain('[Suveren: charge — no active authorization]');
     expect(desc).toContain('Create a payment link');
   });
 });

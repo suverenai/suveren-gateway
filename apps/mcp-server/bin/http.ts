@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * HAP MCP Server — HTTP entry point (supports both SSE and Streamable HTTP).
+ * Suveren MCP Server — HTTP entry point (supports both SSE and Streamable HTTP).
  *
  * Container mode: listens on 0.0.0.0:3030, accepts internal requests only
  * from the control-plane via loopback.
@@ -64,7 +64,7 @@ function refreshAllSessions() {
       session.registerProxiedTools();
       session.refreshTools();
     } catch (err) {
-      console.error(`[HAP MCP] Failed to refresh session ${sessionId}:`, err);
+      console.error(`[Suveren MCP] Failed to refresh session ${sessionId}:`, err);
     }
   }
 }
@@ -123,16 +123,16 @@ app.post('/internal/configure', internalOnly, (req: Request, res: Response) => {
     return;
   }
   state.spClient.setSessionCookie(sessionCookie);
-  console.error('[HAP MCP] Session cookie configured by control-plane');
+  console.error('[Suveren MCP] Session cookie configured by control-plane');
 
   if (vaultKeyHex) {
     state.gateStore.setVaultKey(Buffer.from(vaultKeyHex, 'hex'));
-    console.error('[HAP MCP] Vault key configured — gate store encryption active');
+    console.error('[Suveren MCP] Vault key configured — gate store encryption active');
   }
 
   if (apiKey) {
     state.spClient.setApiKey(apiKey);
-    console.error('[HAP MCP] SP API key configured by control-plane');
+    console.error('[Suveren MCP] SP API key configured by control-plane');
   }
 
   res.json({ ok: true });
@@ -184,20 +184,20 @@ app.post('/internal/gate-content', internalOnly, async (req: Request, res: Respo
     state.setGateContent(path, storageHash, auth.profileId, gateContent, {
       boundsHash, contextHash, context,
     });
-    console.error(`[HAP MCP] Gate content accepted for ${path}`);
+    console.error(`[Suveren MCP] Gate content accepted for ${path}`);
 
     // Refresh tools on all active MCP sessions
     for (const [sessionId, session] of activeSessions) {
       try {
         session.refreshTools();
       } catch (err) {
-        console.error(`[HAP MCP] Failed to refresh session ${sessionId}:`, err);
+        console.error(`[Suveren MCP] Failed to refresh session ${sessionId}:`, err);
       }
     }
 
     res.json({ ok: true, path });
   } catch (err) {
-    console.error('[HAP MCP] Error handling /internal/gate-content:', err);
+    console.error('[Suveren MCP] Error handling /internal/gate-content:', err);
     res.status(500).json({ error: 'Internal error' });
   }
 });
@@ -212,7 +212,7 @@ app.post('/internal/service-credentials', internalOnly, (req: Request, res: Resp
     return;
   }
   serviceCredentials.set(serviceId, credentials);
-  console.error(`[HAP MCP] Service credentials stored for ${serviceId}`);
+  console.error(`[Suveren MCP] Service credentials stored for ${serviceId}`);
 
   // Late-start: only the integration whose credentials just arrived, not
   // every enabled integration. Bulk-starting unrelated integrations surprises
@@ -237,7 +237,7 @@ app.post('/internal/start-pending-integrations', internalOnly, async (_req: Requ
     const running = integrationManager.getStatus().filter(s => s.running).map(s => s.id);
     res.json({ ok: true, running });
   } catch (err) {
-    console.error('[HAP MCP] start-pending-integrations failed:', err);
+    console.error('[Suveren MCP] start-pending-integrations failed:', err);
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });
@@ -263,7 +263,7 @@ app.post('/internal/resync-gates', internalOnly, async (_req: Request, res: Resp
           context: gate.context,
         });
         synced++;
-        console.error(`[HAP MCP] Re-synced gate: ${gate.path}`);
+        console.error(`[Suveren MCP] Re-synced gate: ${gate.path}`);
       } else {
         // SP no longer has this attestation. The only path that produces
         // this state is the SP's hard-delete flow, which the user
@@ -277,10 +277,10 @@ app.post('/internal/resync-gates', internalOnly, async (_req: Request, res: Resp
         state.cache.invalidate(gate.path);
         state.gateStore.delete(gate.path);
         orphaned++;
-        console.error(`[HAP MCP] Orphan gate purged (SP attestation deleted): ${gate.path}`);
+        console.error(`[Suveren MCP] Orphan gate purged (SP attestation deleted): ${gate.path}`);
       }
     } catch (err) {
-      console.error(`[HAP MCP] Failed to re-sync gate ${gate.path}:`, err);
+      console.error(`[Suveren MCP] Failed to re-sync gate ${gate.path}:`, err);
     }
   }
 
@@ -289,7 +289,7 @@ app.post('/internal/resync-gates', internalOnly, async (_req: Request, res: Resp
     try {
       session.refreshTools();
     } catch (err) {
-      console.error(`[HAP MCP] Failed to refresh session ${sessionId}:`, err);
+      console.error(`[Suveren MCP] Failed to refresh session ${sessionId}:`, err);
     }
   }
 
@@ -308,7 +308,7 @@ app.post('/internal/add-integration', internalOnly, async (req: Request, res: Re
 
     // Persist config
     integrationRegistry.add(config);
-    console.error(`[HAP MCP] Integration ${config.id} added to registry`);
+    console.error(`[Suveren MCP] Integration ${config.id} added to registry`);
 
     // Try to start if enabled and credentials are available
     if (config.enabled) {
@@ -319,12 +319,12 @@ app.post('/internal/add-integration', internalOnly, async (req: Request, res: Re
           return;
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
-          console.error(`[HAP MCP] Failed to start integration ${config.id}:`, message);
+          console.error(`[Suveren MCP] Failed to start integration ${config.id}:`, message);
           res.json({ ok: true, id: config.id, tools: [], warning: `Saved but failed to start: ${message}` });
           return;
         }
       } else {
-        console.error(`[HAP MCP] Integration ${config.id} saved but waiting for credentials`);
+        console.error(`[Suveren MCP] Integration ${config.id} saved but waiting for credentials`);
         res.json({ ok: true, id: config.id, tools: [], warning: 'Saved but waiting for service credentials' });
         return;
       }
@@ -332,7 +332,7 @@ app.post('/internal/add-integration', internalOnly, async (req: Request, res: Re
 
     res.json({ ok: true, id: config.id, tools: [] });
   } catch (err) {
-    console.error('[HAP MCP] Error adding integration:', err);
+    console.error('[Suveren MCP] Error adding integration:', err);
     res.status(500).json({ error: 'Internal error' });
   }
 });
@@ -350,7 +350,7 @@ app.delete('/internal/remove-integration/:id', internalOnly, async (req: Request
     return;
   }
 
-  console.error(`[HAP MCP] Integration ${id} removed`);
+  console.error(`[Suveren MCP] Integration ${id} removed`);
   res.json({ ok: true, id });
 });
 
@@ -375,10 +375,10 @@ app.get('/internal/integrations', internalOnly, (_req: Request, res: Response) =
 app.post('/internal/stop-all-running', internalOnly, async (_req: Request, res: Response) => {
   try {
     await integrationManager.shutdown();
-    console.error('[HAP MCP] All running integrations stopped (registry preserved)');
+    console.error('[Suveren MCP] All running integrations stopped (registry preserved)');
     res.json({ ok: true });
   } catch (err) {
-    console.error('[HAP MCP] stop-all-running failed:', err);
+    console.error('[Suveren MCP] stop-all-running failed:', err);
     res.status(500).json({ error: err instanceof Error ? err.message : 'Stop failed' });
   }
 });
@@ -395,12 +395,12 @@ app.get('/sse', async (_req: Request, res: Response) => {
   const sessionId = transport.sessionId;
   sseSessions.set(sessionId, transport);
   activeSessions.set(sessionId, { refreshTools, registerProxiedTools });
-  console.error(`[HAP MCP] SSE session ${sessionId} connected`);
+  console.error(`[Suveren MCP] SSE session ${sessionId} connected`);
 
   res.on('close', () => {
     sseSessions.delete(sessionId);
     activeSessions.delete(sessionId);
-    console.error(`[HAP MCP] SSE session ${sessionId} closed`);
+    console.error(`[Suveren MCP] SSE session ${sessionId} closed`);
   });
 
   // Debug: register a dummy tool to verify dynamic registration works
@@ -444,7 +444,7 @@ app.all('/mcp', async (req: Request, res: Response) => {
         if (transport.sessionId) {
           streamableSessions.delete(transport.sessionId);
           activeSessions.delete(transport.sessionId);
-          console.error(`[HAP MCP] Streamable session ${transport.sessionId} closed`);
+          console.error(`[Suveren MCP] Streamable session ${transport.sessionId} closed`);
         }
       };
 
@@ -456,7 +456,7 @@ app.all('/mcp', async (req: Request, res: Response) => {
       if (transport.sessionId && !streamableSessions.has(transport.sessionId)) {
         streamableSessions.set(transport.sessionId, transport);
         activeSessions.set(transport.sessionId, { refreshTools, registerProxiedTools });
-        console.error(`[HAP MCP] Streamable session ${transport.sessionId}`);
+        console.error(`[Suveren MCP] Streamable session ${transport.sessionId}`);
       }
       return;
     }
@@ -520,7 +520,7 @@ app.get('/internal/brief', internalOnly, (_req: Request, res: Response) => {
     });
     res.json({ brief });
   } catch (err) {
-    console.error('[HAP MCP] /internal/brief failed:', err);
+    console.error('[Suveren MCP] /internal/brief failed:', err);
     res.status(500).json({ error: err instanceof Error ? err.message : 'Brief preview failed' });
   }
 });
@@ -580,7 +580,7 @@ async function startOneIntegration(config: ReturnType<typeof integrationRegistry
       }
     }
     console.error(
-      `[HAP MCP] ${config.id} cannot start — missing credentials: ${missing.join(', ')}`,
+      `[Suveren MCP] ${config.id} cannot start — missing credentials: ${missing.join(', ')}`,
     );
     return;
   }
@@ -594,20 +594,20 @@ async function startOneIntegration(config: ReturnType<typeof integrationRegistry
   try {
     await integrationManager.startIntegration(effectiveConfig);
   } catch (err) {
-    console.error(`[HAP MCP] Failed to start integration ${config.id}:`, err);
+    console.error(`[Suveren MCP] Failed to start integration ${config.id}:`, err);
   }
 }
 
 // ─── Graceful shutdown ──────────────────────────────────────────────────────
 
 process.on('SIGTERM', async () => {
-  console.error('[HAP MCP] SIGTERM received, shutting down...');
+  console.error('[Suveren MCP] SIGTERM received, shutting down...');
   await integrationManager.shutdown();
   process.exit(0);
 });
 
 process.on('SIGINT', async () => {
-  console.error('[HAP MCP] SIGINT received, shutting down...');
+  console.error('[Suveren MCP] SIGINT received, shutting down...');
   await integrationManager.shutdown();
   process.exit(0);
 });
@@ -615,10 +615,10 @@ process.on('SIGINT', async () => {
 // ─── Start server ───────────────────────────────────────────────────────────
 
 app.listen(port, '0.0.0.0', () => {
-  console.error(`[HAP MCP] HTTP server listening on http://0.0.0.0:${port}`);
-  console.error(`[HAP MCP]   SSE:        http://0.0.0.0:${port}/sse`);
-  console.error(`[HAP MCP]   Streamable: http://0.0.0.0:${port}/mcp`);
-  console.error(`[HAP MCP]   SP server:  ${spUrl}`);
+  console.error(`[Suveren MCP] HTTP server listening on http://0.0.0.0:${port}`);
+  console.error(`[Suveren MCP]   SSE:        http://0.0.0.0:${port}/sse`);
+  console.error(`[Suveren MCP]   Streamable: http://0.0.0.0:${port}/mcp`);
+  console.error(`[Suveren MCP]   SP server:  ${spUrl}`);
 
   // Load profiles and integration manifests before starting integrations
   loadProfiles();
@@ -655,7 +655,7 @@ app.listen(port, '0.0.0.0', () => {
         npmPackage: manifest.npmPackage,
         enabled: true,
       });
-      console.error(`[HAP MCP] Auto-registered personal integration: ${manifest.id}`);
+      console.error(`[Suveren MCP] Auto-registered personal integration: ${manifest.id}`);
     }
   }
 
@@ -663,7 +663,7 @@ app.listen(port, '0.0.0.0', () => {
   startPendingIntegrations().then(() => {
     const running = integrationManager.getStatus().filter(s => s.running);
     if (running.length > 0) {
-      console.error(`[HAP MCP] Restored ${running.length} integration(s): ${running.map(s => s.id).join(', ')}`);
+      console.error(`[Suveren MCP] Restored ${running.length} integration(s): ${running.map(s => s.id).join(', ')}`);
     }
   });
 
@@ -691,14 +691,14 @@ app.listen(port, '0.0.0.0', () => {
           if (proposal.tool.includes('___')) {
             const parts = proposal.tool.split('___');
             if (parts.length !== 2) {
-              console.error(`[HAP MCP] Invalid tool name in proposal ${proposal.id}: ${proposal.tool}`);
+              console.error(`[Suveren MCP] Invalid tool name in proposal ${proposal.id}: ${proposal.tool}`);
               continue;
             }
             [integrationId, toolName] = parts;
           } else {
             const sep = proposal.tool.indexOf('__');
             if (sep < 0) {
-              console.error(`[HAP MCP] Invalid tool name in proposal ${proposal.id}: ${proposal.tool}`);
+              console.error(`[Suveren MCP] Invalid tool name in proposal ${proposal.id}: ${proposal.tool}`);
               continue;
             }
             integrationId = proposal.tool.slice(0, sep);
@@ -720,7 +720,7 @@ app.listen(port, '0.0.0.0', () => {
               : undefined;
           if (!proposalActionType) {
             console.error(
-              `[HAP MCP] Warning: proposal ${proposal.id} has no action_type in executionContext. ` +
+              `[Suveren MCP] Warning: proposal ${proposal.id} has no action_type in executionContext. ` +
                 `Bounds check may be skipped. Fix the integration manifest for ${proposal.tool}.`,
             );
           }
@@ -741,7 +741,7 @@ app.listen(port, '0.0.0.0', () => {
             });
           } catch (err) {
             // Includes PROPOSAL_ALREADY_EXECUTED races with check-pending-commitments
-            console.error(`[HAP MCP] Receipt failed for proposal ${proposal.id}:`, err instanceof Error ? err.message : err);
+            console.error(`[Suveren MCP] Receipt failed for proposal ${proposal.id}:`, err instanceof Error ? err.message : err);
             continue;
           }
 
@@ -750,7 +750,7 @@ app.listen(port, '0.0.0.0', () => {
           try {
             await integrationManager.callTool(integrationId, toolName, proposal.toolArgs);
           } catch (err) {
-            console.error(`[HAP MCP] Tool execution failed for proposal ${proposal.id} after receipt issued:`, err);
+            console.error(`[Suveren MCP] Tool execution failed for proposal ${proposal.id} after receipt issued:`, err);
             continue;
           }
 
@@ -762,9 +762,9 @@ app.listen(port, '0.0.0.0', () => {
             timestamp: Math.floor(Date.now() / 1000),
           });
 
-          console.error(`[HAP MCP] Auto-executed proposal ${proposal.id}: ${proposal.tool}`);
+          console.error(`[Suveren MCP] Auto-executed proposal ${proposal.id}: ${proposal.tool}`);
         } catch (err) {
-          console.error(`[HAP MCP] Failed to execute proposal ${proposal.id}:`, err);
+          console.error(`[Suveren MCP] Failed to execute proposal ${proposal.id}:`, err);
         }
       }
     } catch {

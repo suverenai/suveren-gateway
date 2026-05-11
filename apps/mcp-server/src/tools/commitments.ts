@@ -56,7 +56,7 @@ async function executeCommitted(
       : undefined;
   if (!proposalActionType) {
     console.error(
-      `[HAP MCP] Warning: proposal ${proposal.id} has no action_type in executionContext. ` +
+      `[Suveren MCP] Warning: proposal ${proposal.id} has no action_type in executionContext. ` +
         `Bounds check may be skipped. Fix the integration manifest for ${proposal.tool}.`,
     );
   }

@@ -1,5 +1,5 @@
 /**
- * Profile Loader — reads HAP profiles from disk and registers them.
+ * Profile Loader — reads Suveren profiles from disk and registers them.
  *
  * Reads hap-profiles/index.json, loads each profile JSON, and calls
  * registerProfile() from @hap/core.
@@ -23,7 +23,7 @@ interface ProfileIndex {
  * Returns the number of profiles loaded.
  */
 export function loadProfiles(profilesDir?: string): number {
-  // Default: ../../../../../hap-profiles relative to this file (src/lib → src → mcp-server → apps → hap-gateway → HAP/hap-profiles)
+  // Default: ../../../../../hap-profiles relative to this file (src/lib → src → mcp-server → apps → hap-gateway → Suveren/hap-profiles)
   const dir = resolve(profilesDir ?? process.env.HAP_PROFILES_DIR ?? join(import.meta.dirname ?? __dirname, '..', '..', '..', '..', '..', 'hap-profiles'));
   const indexPath = join(dir, 'index.json');
 

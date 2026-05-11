@@ -12,11 +12,11 @@ import type { ExecutionMappingValue, ProfileToolGating } from '@hap/core';
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 /**
- * How a tool's calls should be gated through HAP authorization.
+ * How a tool's calls should be gated through Suveren authorization.
  * This is the runtime-resolved form used by tool-proxy.ts.
  *
- * - profile: which HAP profile to match against (e.g., "charge").
- *   If null, tool calls are proxied without HAP gating.
+ * - profile: which Suveren profile to match against (e.g., "charge").
+ *   If null, tool calls are proxied without Suveren gating.
  * - executionMapping: maps tool argument names to execution context fields
  *   that the Gatekeeper checks against frame bounds.
  * - staticExecution: constant values merged into the execution context
@@ -55,7 +55,7 @@ export interface IntegrationConfig {
   optionalEnvKeys?: Record<string, string>;
   /** Static environment variables for the MCP process (e.g., { PORT: "0" }) */
   env?: Record<string, string>;
-  /** HAP profile ID for tool gating (e.g., "charge"). Null = ungated. */
+  /** Suveren profile ID for tool gating (e.g., "charge"). Null = ungated. */
   profile: string | null;
   /** Tool gating from integration manifest (preferred over profile's toolGating). */
   toolGating?: ProfileToolGating;

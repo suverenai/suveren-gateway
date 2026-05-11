@@ -1,7 +1,7 @@
 /**
- * Tool Proxy — HAP gating wrapper for proxied tool calls.
+ * Tool Proxy — Suveren gating wrapper for proxied tool calls.
  *
- * Wraps downstream MCP tool calls with HAP authorization verification.
+ * Wraps downstream MCP tool calls with Suveren authorization verification.
  * ALL tools require authorization — no ungated access.
  *
  * - Read-only tools (category: "read") require a matching authorization
@@ -109,7 +109,7 @@ type ToolResult = {
 };
 
 /**
- * Create a handler function for a proxied tool that gates calls through HAP.
+ * Create a handler function for a proxied tool that gates calls through Suveren.
  *
  * All tools require authorization:
  * - Read tools (category: "read") → need matching auth, no execution context checks
@@ -267,7 +267,7 @@ export function createGatedToolHandler(
             typeof execution.action_type === 'string' ? execution.action_type : undefined;
           if (!actionType) {
             console.error(
-              `[HAP MCP] Warning: tool ${tool.namespacedName} has no action_type in staticExecution. ` +
+              `[Suveren MCP] Warning: tool ${tool.namespacedName} has no action_type in staticExecution. ` +
                 `Bounds check may be skipped. Fix the integration manifest.`,
             );
           }
@@ -413,16 +413,16 @@ export function createGatedToolHandler(
  * Build a description for a proxied tool that includes a short gating tag.
  *
  * Tags:
- * - [HAP: charge — read] — read-only, requires authorization
- * - [HAP: charge — charge, amount checked] — gated with specific checks
- * - [HAP: charge — no active authorization] — gated but no auth available
+ * - [Suveren: charge — read] — read-only, requires authorization
+ * - [Suveren: charge — charge, amount checked] — gated with specific checks
+ * - [Suveren: charge — no active authorization] — gated but no auth available
  */
 export function buildProxiedToolDescription(
   tool: DiscoveredTool,
   state: SharedState,
 ): string {
   if (!tool.gating || !tool.gating.profile) {
-    return `[HAP: no gating config] ${tool.description}`;
+    return `[Suveren: no gating config] ${tool.description}`;
   }
 
   const profile = tool.gating.profile;
@@ -432,11 +432,11 @@ export function buildProxiedToolDescription(
   );
 
   if (!hasAuth) {
-    return `[HAP: ${profile} — no active authorization] ${tool.description}`;
+    return `[Suveren: ${profile} — no active authorization] ${tool.description}`;
   }
 
   if (tool.gating.category === 'read') {
-    return `[HAP: ${profile} — read] ${tool.description}`;
+    return `[Suveren: ${profile} — read] ${tool.description}`;
   }
 
   // Build a short tag describing what's checked
@@ -452,5 +452,5 @@ export function buildProxiedToolDescription(
   }
 
   const tag = parts.length > 0 ? parts.join(', ') : 'gated';
-  return `[HAP: ${profile} — ${tag}] ${tool.description}`;
+  return `[Suveren: ${profile} — ${tag}] ${tool.description}`;
 }

@@ -3,7 +3,7 @@ import { spClient } from '../lib/sp-client';
 import { AssistantChatPanel } from '../components/AssistantChatPanel';
 import { BottomSheet } from '../components/BottomSheet';
 
-// Plain-spoken default brief for first-time users. Covers what HAP is,
+// Plain-spoken default brief for first-time users. Covers what Suveren is,
 // how to behave under bounded authority, when to pull intent details on
 // demand, and a few example standing-orders. Intentionally generic — the
 // user tailors it for their actual workflow.

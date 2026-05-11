@@ -38,7 +38,7 @@ function mockLog(): ExecutionLog {
 }
 
 describe('buildMandateBrief', () => {
-  it('includes HAP preamble', () => {
+  it('includes Suveren preamble', () => {
     const brief = buildMandateBrief({ authorizations: [] });
     expect(brief).toContain('Human Agency Protocol');
     expect(brief).toContain('bounded authorities');

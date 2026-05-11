@@ -1,5 +1,5 @@
 /**
- * HAP Control Plane — Express server that:
+ * Suveren Control Plane — Express server that:
  * 1. Serves the built Vite UI
  * 2. Handles cookie-less API key authentication
  * 3. Proxies /api/* to the hosted SP (injecting server-side cookie, auth-guarded)

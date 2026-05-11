@@ -1,7 +1,7 @@
 /**
  * Gateway integration test.
  *
- * Starts the HAP MCP server, adds a test downstream MCP server via the
+ * Starts the Suveren MCP server, adds a test downstream MCP server via the
  * internal API, and verifies tools are discovered and callable.
  *
  * Run: npx vitest run test/gateway.test.ts
@@ -91,7 +91,7 @@ describe('MCP Gateway', () => {
       },
     }));
 
-    // Start the HAP MCP server on a test port
+    // Start the Suveren MCP server on a test port
     serverProcess = spawn('npx', ['tsx', 'bin/http.ts'], {
       cwd: resolve(__dirname, '..'),
       env: {
@@ -217,7 +217,7 @@ describe('MCP Gateway', () => {
       const { tools } = await client.listTools();
       const toolNames = tools.map(t => t.name);
       // Tools with profile: null are disabled — they won't appear in the list
-      // Only HAP admin tools should be visible
+      // Only Suveren admin tools should be visible
       expect(toolNames).toContain('list-authorizations');
       expect(toolNames).toContain('check-pending-attestations');
 

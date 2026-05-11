@@ -205,7 +205,7 @@ export function createAuthRouter(vault: Vault, logoutAuth: Middleware, loginRate
    * running integrations and the integration registry alone — agents
    * acting under existing attestations continue working asynchronously
    * regardless of whether the human is logged into the UI. That's the
-   * point of HAP's bounded-authority model. To halt all agent traffic,
+   * point of Suveren's bounded-authority model. To halt all agent traffic,
    * use `hap-gateway stop` (clean process shutdown) or revoke the
    * relevant attestations (protocol-level, granular, audited).
    */
