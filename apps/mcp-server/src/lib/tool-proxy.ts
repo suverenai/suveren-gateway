@@ -66,7 +66,18 @@ function applyMapping(
     execution[m.field] = numValue / m.divisor;
     return;
   }
-  const arr = Array.isArray(value) ? value.map(String) : [String(value)];
+  // Extract .email when the item is an attendee object — Google Calendar
+  // accepts attendees as `{ email, displayName?, ... }` objects, but the
+  // join / join_domains transforms only know how to read flat strings.
+  // Without this, an object stringifies to "[object Object]" and the
+  // gatekeeper rejects with "[object object] not in authorized set".
+  const coerce = (v: unknown): string => {
+    if (typeof v === 'object' && v !== null && 'email' in v) {
+      return String((v as { email: unknown }).email);
+    }
+    return String(v);
+  };
+  const arr = Array.isArray(value) ? value.map(coerce) : [coerce(value)];
   switch (m.transform) {
     case 'length':
       execution[m.field] = arr.length;

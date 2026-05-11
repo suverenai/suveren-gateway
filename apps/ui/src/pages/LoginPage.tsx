@@ -80,7 +80,7 @@ export function LoginPage() {
                 disabled={isLoading}
                 style={{ padding: '0.75rem' }}
               />
-              <div className="form-hint">From your HAP Service Provider account.</div>
+              <div className="form-hint">From your Suveren account.</div>
             </div>
 
             <button
@@ -96,10 +96,10 @@ export function LoginPage() {
 
             <div style={{ textAlign: 'center', marginBottom: '2.5rem' }}>
               <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '1rem', lineHeight: 1.5 }}>
-                Create an account on humanagencyprotocol.com,<br />then come back to sign in.
+                Create an account on Suveren.ai,<br />then come back to sign in.
               </p>
               <a
-                href="https://www.humanagencyprotocol.com/get-started"
+                href="https://suveren.ai/get-started"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="btn btn-secondary btn-full"
@@ -115,7 +115,7 @@ export function LoginPage() {
               </div>
               <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.8 }}>
                 {[
-                  <>Create an account at <a href="https://www.humanagencyprotocol.com/get-started" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>humanagencyprotocol.com</a></>,
+                  <>Create an account at <a href="https://suveren.ai/get-started" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>Suveren.ai</a></>,
                   'Join or create a team to get domain authority',
                   'Sign in here with your API key to start authorizing agents',
                 ].map((text, i) => (

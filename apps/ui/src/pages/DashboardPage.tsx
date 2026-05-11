@@ -7,6 +7,7 @@ import { useVisiblePolling } from '../hooks/useVisiblePolling';
 import { useSSEEvent } from '../contexts/EventSourceContext';
 import { useIntegrationStatus } from '../contexts/IntegrationStatusContext';
 import { Skeleton, SkeletonAttentionRow } from '../components/Skeleton';
+import { bucketAuths } from '../lib/auth-status';
 
 const EXPIRY_WARN_SECONDS = 30 * 60; // 30 minutes
 
@@ -65,12 +66,12 @@ export function DashboardPage() {
 
   const allReady = authsReady && proposalsReady && aiReady && integrationsReady;
 
-  // Compute counts. Revoked auths must drop out of every bucket — they don't
-  // grant authority anymore, and the user already saw "Revoked" on the
-  // dedicated tab. Mirrors the AuthorizationsPage `getStatus` logic.
-  const live = auths.filter(a => a.sp_status !== 'revoked');
-  const active = live.filter(a => a.remaining_seconds !== null && a.remaining_seconds > 0);
-  const expired = live.filter(a => a.remaining_seconds === null || a.remaining_seconds <= 0);
+  // Bucket through the shared helper so this surface, the Sidebar badge,
+  // and the Authorizations page never disagree on what counts as
+  // active / expired / revoked. See lib/auth-status.ts.
+  const buckets = bucketAuths(auths);
+  const active = buckets.active;
+  const expired = buckets.expired;
   const soonExpiring = active.filter(a => a.remaining_seconds !== null && a.remaining_seconds <= EXPIRY_WARN_SECONDS);
   const pendingProposals = proposals.filter(p => p.status === 'pending');
   const runningIntegrations = integrationEntries.filter(e => e.state === 'running');

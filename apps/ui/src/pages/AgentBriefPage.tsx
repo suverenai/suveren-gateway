@@ -161,7 +161,7 @@ export function AgentBriefPage() {
             className="btn btn-primary btn-sm"
             onClick={handleStarter}
             disabled={saving}
-            title="Insert a starter brief covering HAP basics and example standing orders"
+            title="Insert a starter brief covering Suveren basics and example standing orders"
             style={{ marginTop: '0.5rem' }}
           >
             Insert starter template

@@ -11,20 +11,12 @@ import { EmptyState } from '../components/EmptyState';
 import { ExtendAuthModal } from '../components/ExtendAuthModal';
 import { useVisiblePolling } from '../hooks/useVisiblePolling';
 import { useSSEEvent } from '../contexts/EventSourceContext';
+import { getAuthStatus, type AuthStatus } from '../lib/auth-status';
 
-type StatusFilter = 'active' | 'pending' | 'expired' | 'revoked';
-type Status = 'active' | 'pending' | 'expired' | 'revoked';
+type StatusFilter = AuthStatus;
 type ViewTab = 'mine' | 'team';
 
 type TeamItem = PendingItem & { owner: { userId: string; name?: string; email?: string } };
-
-function getStatus(item: PendingItem, revokedSet: Set<string>): Status {
-  if (revokedSet.has(item.frame_hash)) return 'revoked';
-  if (item.sp_status === 'revoked') return 'revoked';
-  if (item.remaining_seconds === null || item.remaining_seconds <= 0) return 'expired';
-  if (item.missing_domains.length > 0) return 'pending';
-  return 'active';
-}
 
 function sortItems(items: PendingItem[], revokedSet: Set<string>, highlightHash?: string | null): PendingItem[] {
   return [...items].sort((a, b) => {
@@ -33,9 +25,9 @@ function sortItems(items: PendingItem[], revokedSet: Set<string>, highlightHash?
       if (a.frame_hash === highlightHash && b.frame_hash !== highlightHash) return -1;
       if (b.frame_hash === highlightHash && a.frame_hash !== highlightHash) return 1;
     }
-    const sa = getStatus(a, revokedSet);
-    const sb = getStatus(b, revokedSet);
-    const order: Record<Status, number> = { active: 0, pending: 1, expired: 2, revoked: 3 };
+    const sa = getAuthStatus(a, { revokedSet });
+    const sb = getAuthStatus(b, { revokedSet });
+    const order: Record<AuthStatus, number> = { active: 0, pending: 1, expired: 2, revoked: 3 };
     if (order[sa] !== order[sb]) return order[sa] - order[sb];
     // Within each status, most recent first.
     return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
@@ -89,7 +81,7 @@ function AuthCard({
   onExtend,
   highlightHash,
 }: AuthCardProps) {
-  const status = getStatus(item, revokedSet);
+  const status = getAuthStatus(item, { revokedSet });
   const isExpanded = expandedHash === item.frame_hash;
   const gateEntry = gateCache[item.frame_hash || item.profile_id || item.path];
   const showExtend = status === 'active' || status === 'pending' || status === 'expired';
@@ -596,16 +588,16 @@ export function AuthorizationsPage() {
   const loading = viewTab === 'mine' ? mineLoading : teamLoading;
 
   const counts = {
-    active: activeItems.filter(i => getStatus(i, revokedSet) === 'active').length,
-    pending: activeItems.filter(i => getStatus(i, revokedSet) === 'pending').length,
-    expired: activeItems.filter(i => getStatus(i, revokedSet) === 'expired').length,
-    revoked: activeItems.filter(i => getStatus(i, revokedSet) === 'revoked').length,
+    active: activeItems.filter(i => getAuthStatus(i, { revokedSet }) === 'active').length,
+    pending: activeItems.filter(i => getAuthStatus(i, { revokedSet }) === 'pending').length,
+    expired: activeItems.filter(i => getAuthStatus(i, { revokedSet }) === 'expired').length,
+    revoked: activeItems.filter(i => getAuthStatus(i, { revokedSet }) === 'revoked').length,
   };
 
   const profileSummary = (() => {
     const map = new Map<string, { count: number; review: boolean }>();
     for (const item of activeItems) {
-      if (getStatus(item, revokedSet) !== activeFilter) continue;
+      if (getAuthStatus(item, { revokedSet }) !== activeFilter) continue;
       const entry = map.get(item.profile_id) ?? { count: 0, review: false };
       entry.count += 1;
       if (item.deferred_commitment_domains.length > 0) entry.review = true;
@@ -618,7 +610,7 @@ export function AuthorizationsPage() {
 
   const filtered = sortItems(
     activeItems.filter(i => {
-      if (getStatus(i, revokedSet) !== activeFilter) return false;
+      if (getAuthStatus(i, { revokedSet }) !== activeFilter) return false;
       if (profileFilter !== null && i.profile_id !== profileFilter) return false;
       if (modeFilter !== null) {
         const isReview = i.deferred_commitment_domains.length > 0;
@@ -809,9 +801,7 @@ export function AuthorizationsPage() {
         <EmptyState
           icon={'☰'}
           title="No authorizations"
-          text={activeFilter === 'all'
-            ? 'Authorization events will appear here after you authorize an agent.'
-            : `No ${activeFilter} authorizations found.`}
+          text={`No ${activeFilter} authorizations found.`}
         />
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>

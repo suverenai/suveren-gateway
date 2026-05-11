@@ -2,6 +2,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { spClient } from '../lib/sp-client';
+import { bucketAuths } from '../lib/auth-status';
 import { useVisiblePolling } from '../hooks/useVisiblePolling';
 import { useSSEEvent } from '../contexts/EventSourceContext';
 import { useIntegrationStatus } from '../contexts/IntegrationStatusContext';
@@ -47,13 +48,9 @@ function useOtherNavStatus() {
       const next: Record<string, number> = {};
       if (aiStatus && !aiStatus.configured) next.assistant = 1;
       if (authData) {
-        // Revoked auths shouldn't ping the sidebar — the user already
-        // dealt with them. Mirror AuthorizationsPage `getStatus`: revoked
-        // wins over expired.
-        const expired = authData.filter(
-          a => a.sp_status !== 'revoked'
-            && (a.remaining_seconds === null || a.remaining_seconds <= 0),
-        ).length;
+        // Bucket through the shared helper so this badge, the Dashboard
+        // counts, and the Authorizations page never disagree.
+        const expired = bucketAuths(authData).expired.length;
         if (expired > 0) next.authorizations = expired;
       }
       // Combine domain proposals (legacy) + above-cap approver proposals (Phase 6).
