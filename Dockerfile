@@ -7,7 +7,7 @@
 FROM node:22-slim AS build
 
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
-RUN corepack enable && corepack prepare pnpm@latest --activate
+RUN corepack enable && corepack prepare pnpm@9 --activate
 
 WORKDIR /build
 COPY package.json pnpm-workspace.yaml tsconfig.base.json ./
