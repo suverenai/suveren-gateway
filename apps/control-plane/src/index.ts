@@ -551,9 +551,15 @@ const INSTALL_METHOD = detectInstallMethod();
 
 /** Read the bundle's package.json#version when running under npm so
  *  the update-checker can semver-compare against registry.npmjs.org.
- *  Under Docker, fall back to HAP_BUILD_SHA (the git SHA stamped at
- *  image build). Otherwise 'dev'. */
+ *  Under Docker, prefer HAP_BUILD_SHA (the git SHA stamped at image
+ *  build) — the Docker image embeds the same bundle package.json, so
+ *  falling back to it would surface the npm version "0.1.5" against
+ *  the GHCR :sha tag and falsely report an update is available.
+ *  Otherwise 'dev'. */
 function detectRunningVersion(): string {
+  if (INSTALL_METHOD === 'docker') {
+    return process.env.HAP_BUILD_SHA ?? 'dev';
+  }
   const dir = import.meta.dirname ?? __dirname;
   // npm install layout: dist/control-plane/index.mjs → bundle root is two up.
   const bundlePkg = join(dir, '..', '..', 'package.json');
