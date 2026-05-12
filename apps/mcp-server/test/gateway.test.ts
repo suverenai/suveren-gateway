@@ -97,7 +97,7 @@ describe('MCP Gateway', () => {
       env: {
         ...process.env,
         HAP_MCP_PORT: String(MCP_PORT),
-        HAP_SP_URL: 'https://www.humanagencyprotocol.com',
+        HAP_SP_URL: 'https://www.suveren.ai',
         // Use a temp data dir so we don't pollute real config
         HAP_DATA_DIR: resolve(__dirname, '../.test-data'),
         HAP_PROFILES_DIR: TEST_PROFILES_DIR,

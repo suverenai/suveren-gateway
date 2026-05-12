@@ -30,7 +30,7 @@ import { startUpdateChecker, getUpdateStatus, forceCheck } from './lib/update-ch
 import { createEventsHandler } from './routes/events';
 import { eventBus } from './lib/event-bus';
 
-const SP_URL = process.env.HAP_SP_URL ?? 'https://www.humanagencyprotocol.com';
+const SP_URL = process.env.HAP_SP_URL ?? 'https://www.suveren.ai';
 const port = parseInt(process.env.HAP_CP_PORT ?? '3402', 10);
 const HAP_MODE = (process.env.HAP_MODE ?? 'personal') as 'personal' | 'team';
 

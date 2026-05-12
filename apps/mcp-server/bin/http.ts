@@ -7,7 +7,7 @@
  * from the control-plane via loopback.
  *
  * Environment variables:
- * - HAP_SP_URL — SP server URL (default: https://www.humanagencyprotocol.com)
+ * - HAP_SP_URL — SP server URL (default: https://www.suveren.ai)
  * - HAP_SP_API_KEY — SP API key for receipt requests (optional)
  * - HAP_MCP_PORT — HTTP port (default: 3030)
  */
@@ -27,7 +27,7 @@ import { loadProfiles } from '../src/lib/profile-loader';
 import { loadManifests, getAllManifests, getManifest } from '../src/lib/manifest-loader';
 import { buildMandateBrief } from '../src/lib/mandate-brief';
 
-const spUrl = process.env.HAP_SP_URL ?? 'https://www.humanagencyprotocol.com';
+const spUrl = process.env.HAP_SP_URL ?? 'https://www.suveren.ai';
 const port = parseInt(process.env.HAP_MCP_PORT ?? '3430', 10);
 
 // ─── Shared state (one instance for all connections) ───────────────────────

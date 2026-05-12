@@ -99,7 +99,7 @@ export function LoginPage() {
                 Create an account on Suveren.ai,<br />then come back to sign in.
               </p>
               <a
-                href="https://suveren.ai/get-started"
+                href="https://www.suveren.ai/get-started"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="btn btn-secondary btn-full"
@@ -115,7 +115,7 @@ export function LoginPage() {
               </div>
               <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.8 }}>
                 {[
-                  <>Create an account at <a href="https://suveren.ai/get-started" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>Suveren.ai</a></>,
+                  <>Create an account at <a href="https://www.suveren.ai/get-started" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>Suveren.ai</a></>,
                   'Join or create a team to get domain authority',
                   'Sign in here with your API key to start authorizing agents',
                 ].map((text, i) => (
