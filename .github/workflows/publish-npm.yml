@@ -59,7 +59,9 @@ jobs:
         run: npm install --omit=dev --no-audit --no-fund
 
       - name: Publish to npm
+        # Trusted Publishing via OIDC — no NPM_TOKEN secret. Configured at
+        # https://www.npmjs.com/package/@suveren/gateway (Trusted Publishers).
+        # The `id-token: write` permission on this job lets npm verify the
+        # OIDC claim that the publish is coming from this workflow file.
         working-directory: bundle/dist
         run: npm publish --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
