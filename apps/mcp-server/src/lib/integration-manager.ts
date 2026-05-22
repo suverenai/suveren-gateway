@@ -15,7 +15,7 @@ import { getProfile } from '@hap/core';
 import type { ProfileToolGating } from '@hap/core';
 import type { IntegrationConfig, ToolGatingConfig } from './integration-registry';
 
-const DEFAULT_DATA_DIR = process.env.HAP_DATA_DIR ?? join(homedir(), '.hap');
+const DEFAULT_DATA_DIR = process.env.SUVEREN_DATA_DIR ?? join(homedir(), '.suveren');
 // Runtime INSTALL directory for downstream MCP npm packages (e.g. crm-mcp,
 // records-mcp). We write package.json here and run `npm install` to land
 // node_modules/.
@@ -23,15 +23,15 @@ const DEFAULT_DATA_DIR = process.env.HAP_DATA_DIR ?? join(homedir(), '.hap');
 // Must NOT be pointed at the checked-in manifest source dir
 // (content/integrations/) — doing so leaks package.json, package-lock.json,
 // and ~53 MB of node_modules/ straight into the repo. The two concerns used
-// to share one env var; now manifest-loader uses HAP_MANIFESTS_DIR and this
-// module owns HAP_INTEGRATIONS_DIR exclusively.
+// to share one env var; now manifest-loader uses SUVEREN_MANIFESTS_DIR and this
+// module owns SUVEREN_INTEGRATIONS_DIR exclusively.
 //
 // Integration node_modules (native binaries like better-sqlite3) are arch-
-// specific. In docker, HAP_INTEGRATIONS_DIR should point outside the mounted
+// specific. In docker, SUVEREN_INTEGRATIONS_DIR should point outside the mounted
 // host volume so a macOS ↔ Linux host never sees the other's .node files.
-// Defaults to DEFAULT_DATA_DIR/integrations (~/.hap/integrations) for local
+// Defaults to DEFAULT_DATA_DIR/integrations (~/.suveren/integrations) for local
 // dev, which is fine because the host arch never changes.
-const INTEGRATIONS_DIR = process.env.HAP_INTEGRATIONS_DIR ?? join(DEFAULT_DATA_DIR, 'integrations');
+const INTEGRATIONS_DIR = process.env.SUVEREN_INTEGRATIONS_DIR ?? join(DEFAULT_DATA_DIR, 'integrations');
 const INTEGRATIONS_BIN = join(INTEGRATIONS_DIR, 'node_modules', '.bin');
 
 /**
@@ -52,7 +52,7 @@ function ensureIntegrationsDir(): void {
   }
   const pkgPath = join(INTEGRATIONS_DIR, 'package.json');
   if (!existsSync(pkgPath)) {
-    writeFileSync(pkgPath, JSON.stringify({ name: 'hap-integrations', version: '1.0.0', private: true }, null, 2));
+    writeFileSync(pkgPath, JSON.stringify({ name: 'suveren-integrations', version: '1.0.0', private: true }, null, 2));
   }
 }
 
@@ -148,10 +148,12 @@ export class IntegrationManager {
     const env = this.resolveEnvKeys(config);
 
     // Create stdio transport (spawns child process)
-    // PATH includes ~/.hap/integrations/node_modules/.bin for on-demand installed packages.
-    // HAP_DATA_DIR is forwarded so sub-MCPs (crm, records) write their SQLite DBs to
-    // the same directory the gateway uses — critical in docker where HOME=/root
-    // but the mounted volume is /app/data.
+    // PATH includes ~/.suveren/integrations/node_modules/.bin for on-demand installed packages.
+    // HAP_DATA_DIR is the contract sub-MCPs (crm, records, linkedin) read — they are
+    // HAP-tier reference integrations and don't know about the Suveren brand. We translate
+    // our internal SUVEREN_DATA_DIR to HAP_DATA_DIR here so all sub-MCPs write their
+    // SQLite DBs to the same directory the gateway uses — critical in docker where
+    // HOME=/root but the mounted volume is /app/data.
     const transport = new StdioClientTransport({
       command: config.command,
       args: config.args,
@@ -166,7 +168,7 @@ export class IntegrationManager {
 
     // Create MCP client
     const client = new Client(
-      { name: 'hap-gateway', version: '0.1.0' },
+      { name: 'suveren-gateway', version: '0.1.0' },
       { capabilities: {} },
     );
 

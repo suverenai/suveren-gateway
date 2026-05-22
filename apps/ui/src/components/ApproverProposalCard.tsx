@@ -11,7 +11,7 @@
  *  1. Calls POST /api/proposals/:id/approve (SP)
  *  2. Fetches intent from SP (GET /api/attestations/:hash/intent)
  *  3. Decrypts via POST /api/decrypt-intent (CP)
- *  4. Persists to ~/.hap/approved-intents.enc.json via POST /api/approved-intents (CP)
+ *  4. Persists to ~/.suveren/approved-intents.enc.json via POST /api/approved-intents (CP)
  */
 
 import { useState, Fragment } from 'react';

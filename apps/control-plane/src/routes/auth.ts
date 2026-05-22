@@ -12,7 +12,7 @@ import { configure, pushServiceCredentials, resyncGates, startPendingIntegration
 import type { Vault } from '../lib/vault';
 import { loadOrGenerateKeyPair, getPublicKey } from '../lib/e2e-key-manager';
 
-const SP_URL = process.env.HAP_SP_URL ?? 'https://www.suveren.ai';
+const SP_URL = process.env.SUVEREN_AS_URL ?? 'https://www.suveren.ai';
 
 type Middleware = (req: Request, res: Response, next: NextFunction) => void;
 

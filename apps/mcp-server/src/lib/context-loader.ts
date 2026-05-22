@@ -1,7 +1,7 @@
 /**
  * Context Loader — reads org/domain context from a user-maintained markdown file.
  *
- * The file at `${HAP_DATA_DIR}/context.md` (default: `~/.hap/context.md`) is written
+ * The file at `${SUVEREN_DATA_DIR}/context.md` (default: `~/.suveren/context.md`) is written
  * by the human decision owner and included in the agent's mandate brief.
  */
 
@@ -9,7 +9,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-const DEFAULT_DIR = process.env.HAP_DATA_DIR ?? join(homedir(), '.hap');
+const DEFAULT_DIR = process.env.SUVEREN_DATA_DIR ?? join(homedir(), '.suveren');
 
 /** Maximum chars to include in the mandate brief before truncating. */
 const BRIEF_MAX_CHARS = 1000;

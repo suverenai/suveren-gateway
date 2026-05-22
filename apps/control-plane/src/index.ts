@@ -10,9 +10,26 @@
  */
 
 import { randomBytes } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
+
+// ─── One-shot data directory migration (.hap → .suveren) ────────────────────
+// Run before anything that reads/writes the data dir.
+(function migrateDataDir() {
+  if (process.env.SUVEREN_DATA_DIR) return; // user explicitly set a path; skip
+  const oldDir = join(homedir(), '.hap');
+  const newDir = join(homedir(), '.suveren');
+  if (!existsSync(newDir) && existsSync(oldDir)) {
+    try {
+      renameSync(oldDir, newDir);
+      console.error(`[Control Plane] Migrated data directory: ${oldDir} → ${newDir}`);
+    } catch (err) {
+      console.error(`[Control Plane] FATAL: could not migrate data directory ${oldDir} → ${newDir}:`, err);
+      process.exit(1);
+    }
+  }
+})();
 import express, { type Request, type Response, type NextFunction } from 'express';
 import { createProxyMiddleware } from 'http-proxy-middleware';
 import { Vault } from './lib/vault';
@@ -30,8 +47,8 @@ import { startUpdateChecker, getUpdateStatus, forceCheck } from './lib/update-ch
 import { createEventsHandler } from './routes/events';
 import { eventBus } from './lib/event-bus';
 
-const SP_URL = process.env.HAP_SP_URL ?? 'https://www.suveren.ai';
-const port = parseInt(process.env.HAP_CP_PORT ?? '3402', 10);
+const SP_URL = process.env.SUVEREN_AS_URL ?? 'https://www.suveren.ai';
+const port = parseInt(process.env.SUVEREN_CP_PORT ?? '3402', 10);
 const HAP_MODE = (process.env.HAP_MODE ?? 'personal') as 'personal' | 'team';
 
 // UI dist path: in Docker it's /app/ui/dist, locally fall back to sibling
@@ -42,9 +59,9 @@ const UI_DIST = process.env.HAP_UI_DIST ?? join(import.meta.dirname ?? __dirname
 const vault = new Vault();
 
 // ─── CP↔MCP shared secret (generated once per process start) ────────────
-// In Docker, set HAP_INTERNAL_SECRET env var so both containers share it.
+// In Docker, set SUVEREN_INTERNAL_SECRET env var so both containers share it.
 
-const internalSecret = process.env.HAP_INTERNAL_SECRET ?? randomBytes(32).toString('hex');
+const internalSecret = process.env.SUVEREN_INTERNAL_SECRET ?? randomBytes(32).toString('hex');
 setInternalSecret(internalSecret);
 
 const app = express();
@@ -424,7 +441,7 @@ app.post('/gate-content', jsonParser, authGuard, async (req: Request, res: Respo
 // ─── Agent Brief (context.md + session-brief preview) ───────────────────
 //
 // User-authored standing orders for MCP-connecting agents. Plaintext on
-// disk at $HAP_DATA_DIR/context.md (default ~/.hap/context.md) — see
+// disk at $SUVEREN_DATA_DIR/context.md (default ~/.suveren/context.md) — see
 // context-loader.ts in the MCP server.
 //
 // GET  /agent-brief/context   → { content: string }
@@ -432,12 +449,12 @@ app.post('/gate-content', jsonParser, authGuard, async (req: Request, res: Respo
 // GET  /agent-brief/preview   → { brief: string }
 
 const AGENT_CONTEXT_MAX_BYTES = 16 * 1024; // 16 KB cap — plenty for standing orders.
-const HAP_DATA_DIR = process.env.HAP_DATA_DIR ?? join(homedir(), '.hap');
+const SUVEREN_DATA_DIR = process.env.SUVEREN_DATA_DIR ?? join(homedir(), '.suveren');
 
 app.get('/agent-brief/context', authGuard, async (_req: Request, res: Response) => {
   try {
     const { readFileSync, existsSync: fileExists } = await import('node:fs');
-    const filePath = join(HAP_DATA_DIR, 'context.md');
+    const filePath = join(SUVEREN_DATA_DIR, 'context.md');
     if (!fileExists(filePath)) {
       res.json({ content: '' });
       return;
@@ -462,10 +479,10 @@ app.put('/agent-brief/context', jsonParser, authGuard, async (req: Request, res:
       return;
     }
     const { mkdirSync, writeFileSync, renameSync } = await import('node:fs');
-    mkdirSync(HAP_DATA_DIR, { recursive: true });
+    mkdirSync(SUVEREN_DATA_DIR, { recursive: true });
     // Atomic write: tmp + rename, so a crash mid-save can't leave a half-written
     // file that the MCP loader would then broadcast to every agent.
-    const filePath = join(HAP_DATA_DIR, 'context.md');
+    const filePath = join(SUVEREN_DATA_DIR, 'context.md');
     const tmpPath = `${filePath}.tmp`;
     writeFileSync(tmpPath, content, 'utf-8');
     renameSync(tmpPath, filePath);
@@ -509,7 +526,7 @@ app.use(
         // Normalise URL to just the path (strip query string)
         const path = url.split('?')[0];
 
-        if (method === 'POST' && path === '/api/sp/attest') {
+        if (method === 'POST' && path === '/api/as/attest') {
           eventBus.emit('attestation-changed');
         } else if (method === 'POST' && /^\/api\/attestations\/[^/]+\/revoke$/.test(path)) {
           eventBus.emit('attestation-changed');

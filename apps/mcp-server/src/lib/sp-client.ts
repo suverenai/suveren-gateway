@@ -122,7 +122,7 @@ export class SPClient {
    * Get SP public key.
    */
   async getPublicKey(): Promise<string> {
-    const res = await this.fetch('/api/sp/pubkey');
+    const res = await this.fetch('/api/as/pubkey');
     if (!res.ok) throw new Error(`SP pubkey request failed: ${res.status}`);
     const data = await res.json() as { publicKey: string };
     return data.publicKey;
@@ -176,7 +176,7 @@ export class SPClient {
     proposalId?: string;
     toolArgs?: Record<string, unknown>;
   }): Promise<{ receipt: Record<string, unknown> }> {
-    const res = await this.fetch('/api/sp/receipt', {
+    const res = await this.fetch('/api/as/receipt', {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -241,7 +241,7 @@ export class SPClient {
    * Used to read aboveCap and approversFrozen at action time.
    */
   async getFrameMetadata(frameHash: string): Promise<SPFrameMetadata | null> {
-    const res = await this.fetch(`/api/sp/frame/${encodeURIComponent(frameHash)}`);
+    const res = await this.fetch(`/api/as/frame/${encodeURIComponent(frameHash)}`);
     if (res.status === 404) return null;
     if (!res.ok) return null;
     return res.json() as Promise<SPFrameMetadata>;

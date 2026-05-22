@@ -2,7 +2,7 @@
 
 ## System Overview
 
-The HAP Gateway is a local runtime that sits between AI agents and external tools. It enforces human-defined authorization bounds on every tool call through cryptographic verification and SP-issued receipts.
+The Suveren Gateway is a local runtime that sits between AI agents and external tools. It enforces human-defined authorization bounds on every tool call through cryptographic verification and AS-issued receipts.
 
 ```
 Human (Browser)                              AI Agent (MCP client)
@@ -57,13 +57,13 @@ These endpoints are restricted to `127.0.0.1` / `::1`. In Docker, both services 
 
 | What | Location | Encrypted | Persists |
 |------|----------|-----------|----------|
-| Gate content (problem, objective, tradeoffs) | `~/.hap/gates.json` or `gates.enc.json` | Yes (with vault key) | Yes |
-| Execution log (tool call history) | `~/.hap/execution-log.json` or `.enc.json` | Yes (with vault key) | Yes |
-| Integration configs (Mollie, etc.) | `~/.hap/integrations.json` | No | Yes |
-| Service credentials (API keys) | `~/.hap/vault.enc.json` | Yes (PBKDF2 from SP API key) | Yes |
+| Gate content (problem, objective, tradeoffs) | `~/.suveren/gates.json` or `gates.enc.json` | Yes (with vault key) | Yes |
+| Execution log (tool call history) | `~/.suveren/execution-log.json` or `.enc.json` | Yes (with vault key) | Yes |
+| Integration configs (Mollie, etc.) | `~/.suveren/integrations.json` | No | Yes |
+| Service credentials (API keys) | `~/.suveren/vault.enc.json` | Yes (PBKDF2 from SP API key) | Yes |
 | Attestation cache | In-memory | No | No (re-synced on login) |
 | Context content | In gate store | Yes (with vault key) | Yes |
-| Organization context | `~/.hap/context.md` | No (user-maintained) | Yes |
+| Organization context | `~/.suveren/context.md` | No (user-maintained) | Yes |
 
 ## Bounds and Context (v0.4)
 
@@ -133,7 +133,7 @@ This prevents wasting context tokens on domains irrelevant to the current task.
 ## Project Structure
 
 ```
-hap-gateway/
+suveren-gateway/
 +-- apps/
 |   +-- control-plane/          # Admin server (:3400)
 |   |   +-- src/
@@ -162,7 +162,7 @@ hap-gateway/
 |   |           +-- shared-state.ts     # Singleton: SP client, cache, gate store, log
 |   |           +-- mandate-brief.ts    # Builds compact agent system instructions
 |   |           +-- consumption.ts      # Resolves cumulative state from execution log
-|   |           +-- context-loader.ts   # Reads ~/.hap/context.md for org context
+|   |           +-- context-loader.ts   # Reads ~/.suveren/context.md for org context
 |   |           +-- integration-manager.ts  # Spawns/manages downstream MCP servers
 |   |           +-- integration-registry.ts # Persists integration configs
 |   |           +-- profile-loader.ts   # Loads profiles from hap-profiles directory

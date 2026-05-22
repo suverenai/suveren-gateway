@@ -45,7 +45,7 @@ export class Vault {
   private dataDir: string;
 
   constructor(dataDir?: string) {
-    this.dataDir = dataDir ?? process.env.HAP_DATA_DIR ?? join(homedir(), '.hap');
+    this.dataDir = dataDir ?? process.env.SUVEREN_DATA_DIR ?? join(homedir(), '.suveren');
   }
 
   // ─── Key management ─────────────────────────────────────────────────────

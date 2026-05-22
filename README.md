@@ -1,6 +1,8 @@
-# HAP Local Gateway
+# Suveren Gateway
 
-Part of [humanagencyprotocol.com](https://humanagencyprotocol.com) — applying the [Human Agency Protocol](https://humanagencyprotocol.org).
+**Suveren** is a commercial service built on the [Human Agency Protocol (HAP)](https://humanagencyprotocol.org) — the open protocol for bounded AI agent authority. The gateway is a Suveren product. The `@hap/core` protocol library inside this repo stays HAP-named because it re-exports the open HAP library. When you see "HAP-compliant" or references to the protocol spec, those describe the open standard, not the Suveren brand.
+
+Part of [suveren.ai](https://www.suveren.ai).
 
 Let your AI agents act — within bounds you control.
 
@@ -80,10 +82,10 @@ Pick whichever you have on hand — both produce the same gateway.
 Requires [Docker](https://docs.docker.com/get-docker/).
 
 ```bash
-docker run -d --name hap-gateway \
+docker run -d --name suveren-gateway \
   -p 7400:3000 -p 7430:3030 \
-  -v $HOME/.hap:/app/data \
-  ghcr.io/humanagencyprotocol/hap-gateway
+  -v $HOME/.suveren:/app/data \
+  ghcr.io/humanagencyprotocol/suveren-gateway
 ```
 
 Open `http://localhost:7400`. The MCP server is at `http://localhost:7430`.
@@ -119,6 +121,7 @@ SSE transport:    GET  http://localhost:<port>/sse
 Running from source gives you hot-reload across all three services:
 
 ```bash
+cd suveren-gateway
 pnpm install
 pnpm dev          # UI on :3400, control plane on :3402, MCP on :3430
 ```

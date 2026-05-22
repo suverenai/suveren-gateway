@@ -1,8 +1,8 @@
 {
-  "name": "@hap/mcp-server",
+  "name": "@suveren/mcp-server",
   "version": "0.1.0",
   "private": true,
-  "description": "HAP MCP Server — agent tool provider with embedded Gatekeeper",
+  "description": "Suveren MCP Server — agent tool provider with embedded Gatekeeper",
   "main": "./src/index.ts",
   "scripts": {
     "build": "tsup bin/http.ts --format esm --outDir dist",

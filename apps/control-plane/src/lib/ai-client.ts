@@ -195,7 +195,7 @@ export interface AIChatResponse {
 }
 
 /** Default AI assistant system prompts.
- *  An override stored in ~/.hap/ai-prompts.json (via ai-prompts-store)
+ *  An override stored in ~/.suveren/ai-prompts.json (via ai-prompts-store)
  *  wins per-kind when present. The defaults stay as the immutable
  *  fallback — deleting the override file reverts behavior. */
 export const CHAT_SYSTEM_PROMPTS: Record<ChatTarget['kind'], string> = {
@@ -252,7 +252,7 @@ export async function getAIChatResponse(
   config: AIConfig,
   request: AIChatRequest,
 ): Promise<AIChatResponse> {
-  // Prefer a stored override from ~/.hap/ai-prompts.json; fall back to
+  // Prefer a stored override from ~/.suveren/ai-prompts.json; fall back to
   // the default constant. The store handles missing-file / empty-value
   // gracefully so this is safe to call on every turn.
   const { getPromptOverride } = await import('./ai-prompts-store');

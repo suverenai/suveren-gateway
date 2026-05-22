@@ -23,7 +23,7 @@ export default defineConfig({
       reuseExistingServer: true,
       timeout: 30_000,
       env: {
-        HAP_SP_URL: 'http://localhost:4100',
+        SUVEREN_AS_URL: 'http://localhost:4100',
       },
     },
     {

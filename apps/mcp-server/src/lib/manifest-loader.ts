@@ -4,10 +4,10 @@
  * Reads content/integrations/index.json, loads each manifest JSON.
  * Pattern follows profile-loader.ts.
  *
- * Configurable via HAP_MANIFESTS_DIR env var (defaults to
+ * Configurable via SUVEREN_MANIFESTS_DIR env var (defaults to
  * ../../../../content/integrations relative to this file — the repo's
  * checked-in manifest directory). Kept intentionally separate from
- * HAP_INTEGRATIONS_DIR, which is the runtime install target for
+ * SUVEREN_INTEGRATIONS_DIR, which is the runtime install target for
  * downstream MCP npm packages — pointing that at the manifest dir used
  * to leak package.json + node_modules/ into the repo.
  */
@@ -101,7 +101,7 @@ export function loadManifests(integrationsDir?: string): number {
   // Default: ../../../../content/integrations relative to this file (src/lib/ → apps/mcp-server → hap-gateway/content/integrations)
   const dir = resolve(
     integrationsDir ??
-    process.env.HAP_MANIFESTS_DIR ??
+    process.env.SUVEREN_MANIFESTS_DIR ??
     join(import.meta.dirname ?? __dirname, '..', '..', '..', '..', 'content', 'integrations'),
   );
   const indexPath = join(dir, 'index.json');

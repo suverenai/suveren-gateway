@@ -202,7 +202,7 @@ export interface ExecutionReceipt {
 
 /**
  * Per-profile team configuration (admin-set).
- * Mirrors hap-sp/src/lib/profile-config-store.ts — do not import from there.
+ * Mirrors suveren-as/src/lib/profile-config-store.ts — do not import from there.
  */
 export interface DifferentAccountSummary {
   credentialCount: number;
@@ -349,7 +349,7 @@ class SPClient {
     encrypted_keys?: Record<string, { ct: string; enc: string }>;
     approvers_frozen?: string[];
   }): Promise<AttestResponse> {
-    const res = await this.fetch('/api/sp/attest', {
+    const res = await this.fetch('/api/as/attest', {
       method: 'POST',
       body: JSON.stringify(body),
     });

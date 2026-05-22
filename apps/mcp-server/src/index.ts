@@ -89,7 +89,7 @@ export function createMcpServer(
   });
 
   const server = new McpServer(
-    { name: 'hap-agent', version: '0.1.0' },
+    { name: 'suveren-gateway', version: '0.1.0' },
     { instructions },
   );
 

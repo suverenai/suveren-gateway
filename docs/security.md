@@ -70,7 +70,7 @@ The SP receives and stores:
 
 ### What stays local (MCP server)
 
-Stored on disk at `~/.hap/` (or `$HAP_DATA_DIR`), encrypted with vault key when available:
+Stored on disk at `~/.suveren/` (or `$SUVEREN_DATA_DIR`), encrypted with vault key when available:
 
 - Gate content plaintext (problem, objective, tradeoffs)
 - Context content (currency, action_type, target_env, etc.)

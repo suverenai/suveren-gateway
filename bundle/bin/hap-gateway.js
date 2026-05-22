@@ -20,11 +20,11 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const PKG_ROOT = resolve(__dirname, '..');
 const SERVER_ENTRY = join(PKG_ROOT, 'server.js');
 
-const DATA_DIR = process.env.HAP_DATA_DIR ?? join(homedir(), '.hap');
+const DATA_DIR = process.env.SUVEREN_DATA_DIR ?? join(homedir(), '.suveren');
 const PID_FILE = join(DATA_DIR, 'gateway.pid');
 const LOG_FILE = join(DATA_DIR, 'gateway.log');
 
-const HAP_PORT = process.env.HAP_CP_PORT ?? '3400';
+const HAP_PORT = process.env.SUVEREN_CP_PORT ?? '3400';
 
 /** Version of THIS CLI (the binary on disk). Compared against the
  *  running gateway's version inside `status` so users see a mismatch
@@ -249,12 +249,12 @@ Usage:
   hap-gateway stop               Stop a detached gateway
   hap-gateway restart            Stop, then start --detach
   hap-gateway status             Show running state + health
-  hap-gateway logs [--tail]      Print or tail ~/.hap/gateway.log
+  hap-gateway logs [--tail]      Print or tail ~/.suveren/gateway.log
   hap-gateway help               Print this help
 
 Environment:
-  HAP_CP_PORT     UI + API port  (default 3400)
-  HAP_MCP_PORT    MCP server port (default 3430)
-  HAP_DATA_DIR    Data directory (default ~/.hap)
+  SUVEREN_CP_PORT     UI + API port  (default 3400)
+  SUVEREN_MCP_PORT    MCP server port (default 3430)
+  SUVEREN_DATA_DIR    Data directory (default ~/.suveren)
 `);
 }

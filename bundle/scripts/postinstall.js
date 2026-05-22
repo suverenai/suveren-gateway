@@ -28,7 +28,7 @@ const version = pkg.version ?? '?';
 // previous version). If so, the user has just upgraded the binary on
 // disk but the running process still executes the OLD code — they
 // need `hap-gateway restart` to pick up this version.
-const DATA_DIR = process.env.HAP_DATA_DIR ?? join(homedir(), '.hap');
+const DATA_DIR = process.env.SUVEREN_DATA_DIR ?? join(homedir(), '.suveren');
 const PID_FILE = join(DATA_DIR, 'gateway.pid');
 function isRunning() {
   if (!existsSync(PID_FILE)) return false;

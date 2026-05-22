@@ -4,20 +4,20 @@
 
 - **Node.js 20+** — check with `node -v`
 - **pnpm 9+** — install with `corepack enable` (built into Node.js) or `npm install -g pnpm`
-- **hap-profiles** — must be cloned as a sibling directory (or set `HAP_PROFILES_DIR`)
+- **hap-profiles** — must be cloned as a sibling directory (or set `SUVEREN_PROFILES_DIR`)
 
 ```
 Development/
-├── hap-gateway/     ← you are here
+├── suveren-gateway/ ← you are here
 ├── hap-profiles/    ← must exist
-├── hap-sp/          ← optional, for local SP
+├── suveren-as/     ← optional, for local AS
 └── hap-e2e/         ← optional, for E2E tests
 ```
 
 ## First-Time Setup
 
 ```bash
-cd hap-gateway
+cd suveren-gateway
 pnpm install
 pnpm build
 ```
@@ -50,36 +50,36 @@ pnpm dev:control   # Control plane only (port 3402, auto-restart)
 pnpm dev:mcp       # MCP server only (port 3430, auto-restart)
 ```
 
-### With local SP
+### With local AS
 
-To run against a local Service Provider instead of production:
+To run against a local Authority Server instead of production:
 
 ```bash
-# Terminal 1 — start local SP
-cd ../hap-sp && pnpm dev
+# Terminal 1 — start local AS
+cd ../suveren-as && pnpm dev
 
-# Terminal 2 — start gateway pointing to local SP
-HAP_SP_URL=http://localhost:4100 pnpm dev
+# Terminal 2 — start gateway pointing to local AS
+SUVEREN_AS_URL=http://localhost:4100 pnpm dev
 ```
 
-### With live SP
+### With live AS
 
-By default, the gateway connects to `https://www.humanagencyprotocol.com`. Just run `pnpm dev` and log in with your SP API key.
+By default, the gateway connects to `https://www.suveren.ai`. Just run `pnpm dev` and log in with your AS API key.
 
 ## Environment Variables
 
 | Variable | Default | Description |
 |---|---|---|
-| `HAP_SP_URL` | `https://www.humanagencyprotocol.com` | Service Provider URL |
-| `HAP_CP_PORT` | `3402` | Control Plane port |
-| `HAP_MCP_PORT` | `3430` | MCP Server port |
-| `HAP_MCP_INTERNAL_URL` | `http://127.0.0.1:3430` | MCP internal endpoint (Control Plane → MCP) |
-| `HAP_INTERNAL_SECRET` | (empty = skip check) | Shared secret for internal endpoints |
+| `SUVEREN_AS_URL` | `https://www.suveren.ai` | Authority Server URL |
+| `SUVEREN_CP_PORT` | `3402` | Control Plane port |
+| `SUVEREN_MCP_PORT` | `3430` | MCP Server port |
+| `SUVEREN_MCP_INTERNAL_URL` | `http://127.0.0.1:3430` | MCP internal endpoint (Control Plane → MCP) |
+| `SUVEREN_INTERNAL_SECRET` | (empty = skip check) | Shared secret for internal endpoints |
 | `HAP_UI_DIST` | `../../ui/dist` | Path to built UI assets |
-| `HAP_DATA_DIR` | `~/.hap` | Persistent storage directory |
-| `HAP_PROFILES_DIR` | `../../hap-profiles` (relative to cwd) | HAP profiles directory |
-| `HAP_MANIFESTS_DIR` | `content/integrations` (resolved from repo) | Integration manifest JSON directory (read-only source) |
-| `HAP_INTEGRATIONS_DIR` | `~/.hap/integrations` | Runtime install target for on-demand MCP npm packages. Must NOT be the manifest dir — the installer writes `package.json` and `node_modules/` here. |
+| `SUVEREN_DATA_DIR` | `~/.suveren` | Persistent storage directory |
+| `SUVEREN_PROFILES_DIR` | `../../hap-profiles` (relative to cwd) | HAP profiles directory |
+| `SUVEREN_MANIFESTS_DIR` | `content/integrations` (resolved from repo) | Integration manifest JSON directory (read-only source) |
+| `SUVEREN_INTEGRATIONS_DIR` | `~/.suveren/integrations` | Runtime install target for on-demand MCP npm packages. Must NOT be the manifest dir — the installer writes `package.json` and `node_modules/` here. |
 
 ## Testing
 
@@ -89,10 +89,10 @@ pnpm test
 
 # Specific package
 pnpm --filter @hap/core test
-pnpm --filter @hap/mcp-server test
+pnpm --filter @suveren/mcp-server test
 
 # Watch mode
-pnpm --filter @hap/mcp-server test:watch
+pnpm --filter @suveren/mcp-server test:watch
 ```
 
 | Package | Tests | What |
@@ -120,11 +120,11 @@ docker compose up --build
 Or manually:
 
 ```bash
-docker build -t hap-gateway .
+docker build -t suveren-gateway .
 docker run -p 7400:3000 -p 7430:3030 \
-  -e HAP_SP_URL=https://www.humanagencyprotocol.com \
-  -v $HOME/.hap:/app/data \
-  hap-gateway
+  -e SUVEREN_AS_URL=https://www.suveren.ai \
+  -v $HOME/.suveren:/app/data \
+  suveren-gateway
 ```
 
 ## Login Re-sync
@@ -140,7 +140,7 @@ After restarting services, a single login in the UI restores the full state:
 | Repo | Purpose |
 |------|---------|
 | [hap-core](https://github.com/humanagencyprotocol/hap-core) | Shared protocol types, hashing, verification |
-| [hap-sp](https://github.com/humanagencyprotocol/hap-sp) | Service Provider (attestation signing, receipts, groups) |
+| [hap-sp](https://github.com/humanagencyprotocol/hap-sp) | Suveren Authority Server (attestation signing, receipts, groups) — local dir: `suveren-as/`, GitHub repo not yet renamed |
 | [hap-profiles](https://github.com/humanagencyprotocol/hap-profiles) | Profile definitions (spend, ship, data, publish, provision) |
 | [hap-e2e](https://github.com/humanagencyprotocol/hap-e2e) | Cross-service E2E test suite |
 | [hap-protocol](https://github.com/humanagencyprotocol/hap-protocol) | Protocol specification + website |

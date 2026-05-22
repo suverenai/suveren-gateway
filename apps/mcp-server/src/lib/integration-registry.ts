@@ -72,7 +72,7 @@ interface IntegrationsFile {
   integrations: IntegrationConfig[];
 }
 
-const DEFAULT_DATA_DIR = process.env.HAP_DATA_DIR ?? join(homedir(), '.hap');
+const DEFAULT_DATA_DIR = process.env.SUVEREN_DATA_DIR ?? join(homedir(), '.suveren');
 
 export class IntegrationRegistry {
   private integrations = new Map<string, IntegrationConfig>();

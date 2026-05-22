@@ -5,7 +5,7 @@ import { join } from 'node:path';
 /**
  * Persistent override for the AI assistant system prompts.
  *
- * Plain JSON file at `${HAP_DATA_DIR}/ai-prompts.json`. Missing file or
+ * Plain JSON file at `${SUVEREN_DATA_DIR}/ai-prompts.json`. Missing file or
  * missing key → fall through to the default constant in ai-client.ts.
  * Empty string ("") in a key is treated as "no override" so the
  * Settings UI can revert to default by saving an empty value.
@@ -19,7 +19,7 @@ interface AIPromptsFile {
 }
 
 function dataDir(): string {
-  return process.env.HAP_DATA_DIR ?? join(homedir(), '.hap');
+  return process.env.SUVEREN_DATA_DIR ?? join(homedir(), '.suveren');
 }
 
 function filePath(): string {

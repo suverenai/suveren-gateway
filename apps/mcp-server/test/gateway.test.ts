@@ -96,11 +96,11 @@ describe('MCP Gateway', () => {
       cwd: resolve(__dirname, '..'),
       env: {
         ...process.env,
-        HAP_MCP_PORT: String(MCP_PORT),
-        HAP_SP_URL: 'https://www.suveren.ai',
+        SUVEREN_MCP_PORT: String(MCP_PORT),
+        SUVEREN_AS_URL: 'https://www.suveren.ai',
         // Use a temp data dir so we don't pollute real config
-        HAP_DATA_DIR: resolve(__dirname, '../.test-data'),
-        HAP_PROFILES_DIR: TEST_PROFILES_DIR,
+        SUVEREN_DATA_DIR: resolve(__dirname, '../.test-data'),
+        SUVEREN_PROFILES_DIR: TEST_PROFILES_DIR,
       },
       stdio: ['pipe', 'pipe', 'pipe'],
     });

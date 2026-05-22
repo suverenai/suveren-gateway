@@ -1,5 +1,5 @@
 {
-  "name": "hap-platform",
+  "name": "suveren-gateway",
   "version": "0.1.5",
   "private": true,
   "pnpm": {
@@ -9,10 +9,10 @@
   },
   "scripts": {
     "build": "pnpm -r build",
-    "dev": "pnpm --filter @hap/ui dev & pnpm --filter @hap/control-plane dev & pnpm --filter @hap/mcp-server dev",
-    "dev:ui": "pnpm --filter @hap/ui dev",
-    "dev:mcp": "pnpm --filter @hap/mcp-server dev",
-    "dev:control": "pnpm --filter @hap/control-plane dev",
+    "dev": "pnpm --filter @suveren/ui dev & pnpm --filter @suveren/control-plane dev & pnpm --filter @suveren/mcp-server dev",
+    "dev:ui": "pnpm --filter @suveren/ui dev",
+    "dev:mcp": "pnpm --filter @suveren/mcp-server dev",
+    "dev:control": "pnpm --filter @suveren/control-plane dev",
     "test:e2e": "playwright test"
   },
   "dependencies": {

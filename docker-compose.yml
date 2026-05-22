@@ -1,12 +1,12 @@
 services:
-  hap:
+  suveren:
     build: .
     ports:
-      - "${HAP_UI_PORT:-7400}:3000"
-      - "${HAP_MCP_PORT:-7430}:3030"
+      - "${SUVEREN_UI_PORT:-7400}:3000"
+      - "${SUVEREN_MCP_PORT:-7430}:3030"
     volumes:
-      - ${HOME}/.hap:/app/data
+      - ${HOME}/.suveren:/app/data
     environment:
-      - HAP_SP_URL=https://www.humanagencyprotocol.com
+      - SUVEREN_AS_URL=https://www.suveren.ai
     network_mode: bridge
     restart: unless-stopped

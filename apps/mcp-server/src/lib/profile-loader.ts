@@ -4,7 +4,7 @@
  * Reads hap-profiles/index.json, loads each profile JSON, and calls
  * registerProfile() from @hap/core.
  *
- * Configurable via HAP_PROFILES_DIR env var (defaults to ../../hap-profiles
+ * Configurable via SUVEREN_PROFILES_DIR env var (defaults to ../../hap-profiles
  * relative to cwd).
  */
 
@@ -24,7 +24,7 @@ interface ProfileIndex {
  */
 export function loadProfiles(profilesDir?: string): number {
   // Default: ../../../../../hap-profiles relative to this file (src/lib → src → mcp-server → apps → hap-gateway → Suveren/hap-profiles)
-  const dir = resolve(profilesDir ?? process.env.HAP_PROFILES_DIR ?? join(import.meta.dirname ?? __dirname, '..', '..', '..', '..', '..', 'hap-profiles'));
+  const dir = resolve(profilesDir ?? process.env.SUVEREN_PROFILES_DIR ?? join(import.meta.dirname ?? __dirname, '..', '..', '..', '..', '..', 'hap-profiles'));
   const indexPath = join(dir, 'index.json');
 
   if (!existsSync(indexPath)) {

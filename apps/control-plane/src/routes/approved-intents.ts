@@ -8,7 +8,7 @@
  *   { authorityId: string, intent: string }
  *
  * Storage:
- *   ~/.hap/approved-intents.enc.json  — map of authorityId → EncryptedBlob
+ *   ~/.suveren/approved-intents.enc.json  — map of authorityId → EncryptedBlob
  *
  * Auth: session must be active (requireAuth middleware applied by caller in index.ts).
  *
@@ -23,8 +23,8 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Vault, EncryptedBlob } from '../lib/vault';
 
-const HAP_DATA_DIR = process.env.HAP_DATA_DIR ?? join(homedir(), '.hap');
-const FILE_PATH = join(HAP_DATA_DIR, 'approved-intents.enc.json');
+const SUVEREN_DATA_DIR = process.env.SUVEREN_DATA_DIR ?? join(homedir(), '.suveren');
+const FILE_PATH = join(SUVEREN_DATA_DIR, 'approved-intents.enc.json');
 
 interface ApprovedIntentsFile {
   version: 1;
@@ -43,7 +43,7 @@ function readFile(): ApprovedIntentsFile {
 }
 
 function writeFile(data: ApprovedIntentsFile): void {
-  mkdirSync(HAP_DATA_DIR, { recursive: true });
+  mkdirSync(SUVEREN_DATA_DIR, { recursive: true });
   writeFileSync(FILE_PATH, JSON.stringify(data, null, 2), 'utf-8');
 }
 

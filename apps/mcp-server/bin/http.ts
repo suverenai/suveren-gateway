@@ -7,9 +7,9 @@
  * from the control-plane via loopback.
  *
  * Environment variables:
- * - HAP_SP_URL — SP server URL (default: https://www.suveren.ai)
- * - HAP_SP_API_KEY — SP API key for receipt requests (optional)
- * - HAP_MCP_PORT — HTTP port (default: 3030)
+ * - SUVEREN_AS_URL — AS server URL (default: https://www.suveren.ai)
+ * - SUVEREN_AS_API_KEY — AS API key for receipt requests (optional)
+ * - SUVEREN_MCP_PORT — HTTP port (default: 3030)
  */
 
 import { randomUUID } from 'node:crypto';
@@ -27,14 +27,14 @@ import { loadProfiles } from '../src/lib/profile-loader';
 import { loadManifests, getAllManifests, getManifest } from '../src/lib/manifest-loader';
 import { buildMandateBrief } from '../src/lib/mandate-brief';
 
-const spUrl = process.env.HAP_SP_URL ?? 'https://www.suveren.ai';
-const port = parseInt(process.env.HAP_MCP_PORT ?? '3430', 10);
+const spUrl = process.env.SUVEREN_AS_URL ?? 'https://www.suveren.ai';
+const port = parseInt(process.env.SUVEREN_MCP_PORT ?? '3430', 10);
 
 // ─── Shared state (one instance for all connections) ───────────────────────
 
 const state = new SharedState(spUrl);
 
-const spApiKey = process.env.HAP_SP_API_KEY ?? '';
+const spApiKey = process.env.SUVEREN_AS_API_KEY ?? '';
 if (spApiKey) {
   state.spClient.setApiKey(spApiKey);
 }
@@ -92,7 +92,7 @@ app.use((_req, res, next) => {
 
 // ─── Internal-only middleware (loopback + shared secret) ──────────────────
 
-const INTERNAL_SECRET = process.env.HAP_INTERNAL_SECRET ?? '';
+const INTERNAL_SECRET = process.env.SUVEREN_INTERNAL_SECRET ?? '';
 
 function internalOnly(req: Request, res: Response, next: NextFunction): void {
   const ip = req.ip ?? req.socket.remoteAddress ?? '';

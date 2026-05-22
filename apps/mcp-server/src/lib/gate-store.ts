@@ -47,7 +47,7 @@ interface EncryptedGateFile {
   entries: Record<string, EncryptedBlob>;
 }
 
-const DEFAULT_DIR = process.env.HAP_DATA_DIR ?? join(homedir(), '.hap');
+const DEFAULT_DIR = process.env.SUVEREN_DATA_DIR ?? join(homedir(), '.suveren');
 
 export class GateStore {
   private entries = new Map<string, GateEntry>();

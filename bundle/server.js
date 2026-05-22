@@ -13,26 +13,26 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-const CP_PORT = process.env.HAP_CP_PORT ?? '3400';
-const MCP_PORT = process.env.HAP_MCP_PORT ?? '3430';
+const CP_PORT = process.env.SUVEREN_CP_PORT ?? '3400';
+const MCP_PORT = process.env.SUVEREN_MCP_PORT ?? '3430';
 const UI_DIST = process.env.HAP_UI_DIST ?? join(__dirname, 'dist', 'ui');
 // Integration manifests + profile catalog ship inside the bundle so a
 // fresh `npm install -g` install has working integrations and profiles
 // without the user needing to clone anything. Env-var overrides still
 // win for advanced users / Docker.
-const MANIFESTS_DIR = process.env.HAP_MANIFESTS_DIR ?? join(__dirname, 'content', 'integrations');
-const PROFILES_DIR = process.env.HAP_PROFILES_DIR ?? join(__dirname, 'profiles');
+const MANIFESTS_DIR = process.env.SUVEREN_MANIFESTS_DIR ?? join(__dirname, 'content', 'integrations');
+const PROFILES_DIR = process.env.SUVEREN_PROFILES_DIR ?? join(__dirname, 'profiles');
 
 const env = {
   ...process.env,
   NODE_ENV: 'production',
-  HAP_CP_PORT: CP_PORT,
-  HAP_MCP_PORT: MCP_PORT,
+  SUVEREN_CP_PORT: CP_PORT,
+  SUVEREN_MCP_PORT: MCP_PORT,
   HAP_UI_DIST: UI_DIST,
-  HAP_MANIFESTS_DIR: MANIFESTS_DIR,
-  HAP_PROFILES_DIR: PROFILES_DIR,
+  SUVEREN_MANIFESTS_DIR: MANIFESTS_DIR,
+  SUVEREN_PROFILES_DIR: PROFILES_DIR,
   // Single shared internal secret so CP↔MCP authenticate the bridge.
-  HAP_INTERNAL_SECRET: process.env.HAP_INTERNAL_SECRET ?? randomHex(32),
+  SUVEREN_INTERNAL_SECRET: process.env.SUVEREN_INTERNAL_SECRET ?? randomHex(32),
 };
 
 const cp = spawn(
@@ -56,7 +56,7 @@ const children = [
 // will then decide whether to restart us.
 for (const { name, proc } of children) {
   proc.on('exit', (code, signal) => {
-    console.error(`[hap-gateway] ${name} exited (code=${code} signal=${signal}); shutting down`);
+    console.error(`[suveren-gateway] ${name} exited (code=${code} signal=${signal}); shutting down`);
     for (const other of children) {
       if (other.proc !== proc && other.proc.exitCode === null) {
         other.proc.kill('SIGTERM');
@@ -74,7 +74,7 @@ for (const sig of ['SIGINT', 'SIGTERM']) {
   });
 }
 
-console.error(`[hap-gateway] up — UI+API: http://localhost:${CP_PORT}  ·  MCP: http://localhost:${MCP_PORT}`);
+console.error(`[suveren-gateway] up — UI+API: http://localhost:${CP_PORT}  ·  MCP: http://localhost:${MCP_PORT}`);
 
 function randomHex(bytes) {
   const arr = new Uint8Array(bytes);

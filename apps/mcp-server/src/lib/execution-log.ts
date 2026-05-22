@@ -29,7 +29,7 @@ interface EncryptedLogFile {
   blob: EncryptedBlob;
 }
 
-const DEFAULT_DIR = process.env.HAP_DATA_DIR ?? join(homedir(), '.hap');
+const DEFAULT_DIR = process.env.SUVEREN_DATA_DIR ?? join(homedir(), '.suveren');
 
 /** Max age for log entries — 31 days covers the longest window (monthly). */
 const MAX_AGE_SECONDS = 31 * 24 * 60 * 60;

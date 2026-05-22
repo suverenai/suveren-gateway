@@ -9,10 +9,10 @@ function upgradeCommandFor(method: InstallMethod): string {
     return 'hap-gateway stop; npm install -g @humanagencyp/hap-gateway@latest && hap-gateway start --detach';
   }
   if (method === 'dev') {
-    return 'cd hap-gateway && git pull && pnpm install && pnpm dev';
+    return 'cd suveren-gateway && git pull && pnpm install && pnpm dev';
   }
   // docker (default)
-  return 'docker rm -f hap-gateway 2>/dev/null; docker ps -q --filter publish=7400 --filter publish=7430 | xargs -r docker rm -f; docker pull ghcr.io/humanagencyprotocol/hap-gateway:latest && docker run -d --name hap-gateway -p 7400:3000 -p 7430:3030 -v $HOME/.hap:/app/data ghcr.io/humanagencyprotocol/hap-gateway';
+  return 'docker rm -f suveren-gateway 2>/dev/null; docker ps -q --filter publish=7400 --filter publish=7430 | xargs -r docker rm -f; docker pull ghcr.io/humanagencyprotocol/suveren-gateway:latest && docker run -d --name suveren-gateway -p 7400:3000 -p 7430:3030 -v $HOME/.suveren:/app/data ghcr.io/humanagencyprotocol/suveren-gateway';
 }
 
 export function UpdateBanner() {
