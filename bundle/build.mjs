@@ -10,14 +10,14 @@
  *   apps/mcp-server/package.json    (for runtime deps)
  *   bundle/package.json.tpl
  *   bundle/server.js
- *   bundle/bin/hap-gateway.js
+ *   bundle/bin/suveren-gateway.js
  *   package.json (root — for version)
  *
  * Writes:
  *   bundle/dist/
  *     ├── package.json
  *     ├── server.js
- *     ├── bin/hap-gateway.js
+ *     ├── bin/suveren-gateway.js
  *     ├── dist/ui/
  *     ├── dist/control-plane/
  *     └── dist/mcp-server/
@@ -27,7 +27,7 @@
  *   node bundle/build.mjs --build-apps      # also run pnpm build for each app
  *
  * From there:
- *   cd bundle/dist && npm install && node bin/hap-gateway.js start
+ *   cd bundle/dist && npm install && node bin/suveren-gateway.js start
  *   cd bundle/dist && npm publish --access public
  */
 
@@ -101,9 +101,9 @@ if (existsSync(PROFILES_SRC)) {
 
 // Copy bundle scaffold (CLI + production entry + scripts).
 cpSync(join(__dirname, 'server.js'),         join(OUT, 'server.js'));
-cpSync(join(__dirname, 'bin', 'hap-gateway.js'), join(OUT, 'bin', 'hap-gateway.js'));
+cpSync(join(__dirname, 'bin', 'suveren-gateway.js'), join(OUT, 'bin', 'suveren-gateway.js'));
 cpSync(join(__dirname, 'scripts'), join(OUT, 'scripts'), { recursive: true });
-chmodSync(join(OUT, 'bin', 'hap-gateway.js'), 0o755);
+chmodSync(join(OUT, 'bin', 'suveren-gateway.js'), 0o755);
 chmodSync(join(OUT, 'server.js'),                0o755);
 
 // Optional README pass-through.
@@ -142,7 +142,7 @@ const tpl = JSON.parse(readFileSync(TPL, 'utf8'));
 tpl.version = rootPkg.version ?? '0.0.0';
 tpl.dependencies = aggregate;
 // Bundle every runtime dep into the published tarball. End users
-// running `npm install -g @humanagencyp/hap-gateway` then extract a
+// running `npm install -g @suveren/gateway` then extract a
 // pre-populated node_modules without any further network fetches —
 // install survives bad/flaky networks and finishes in seconds.
 tpl.bundledDependencies = Object.keys(aggregate);
@@ -166,7 +166,7 @@ console.log(`[bundle]   deps:          ${Object.keys(aggregate).join(', ')}`);
 console.log(`[bundle]   bundled:       yes (deps shipped inside the tarball)`);
 console.log(`[bundle]
 [bundle] To smoke-test (no install needed — deps already present):
-[bundle]   node ${OUT}/bin/hap-gateway.js start
+[bundle]   node ${OUT}/bin/suveren-gateway.js start
 [bundle]
 [bundle] To publish:
 [bundle]   cd ${OUT} && npm publish --access public`);

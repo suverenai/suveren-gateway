@@ -206,7 +206,7 @@ export function createAuthRouter(vault: Vault, logoutAuth: Middleware, loginRate
    * acting under existing attestations continue working asynchronously
    * regardless of whether the human is logged into the UI. That's the
    * point of Suveren's bounded-authority model. To halt all agent traffic,
-   * use `hap-gateway stop` (clean process shutdown) or revoke the
+   * use `suveren-gateway stop` (clean process shutdown) or revoke the
    * relevant attestations (protocol-level, granular, audited).
    */
   router.post('/logout', logoutAuth, async (_req: Request, res: Response) => {

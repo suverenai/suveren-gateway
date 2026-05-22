@@ -1,11 +1,11 @@
 {
-  "name": "@humanagencyp/hap-gateway",
+  "name": "@suveren/gateway",
   "version": "__VERSION__",
-  "description": "Human Agency Protocol — local gateway for governing AI agent tool use. Runs the UI, control plane, and MCP server in one Node process.",
+  "description": "Suveren gateway — local agent gateway built in compliance with the Human Agency Protocol (HAP). Runs the UI, control plane, and MCP server in one Node process.",
   "type": "module",
   "main": "server.js",
   "bin": {
-    "hap-gateway": "bin/hap-gateway.js"
+    "suveren-gateway": "bin/suveren-gateway.js"
   },
   "scripts": {
     "postinstall": "node scripts/postinstall.js"
@@ -25,11 +25,12 @@
   "dependencies": {},
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/humanagencyprotocol/hap-gateway.git"
+    "url": "git+https://github.com/suverenai/suveren-gateway.git"
   },
-  "homepage": "https://www.humanagencyprotocol.com",
+  "homepage": "https://www.suveren.ai",
   "license": "MIT",
   "keywords": [
+    "suveren",
     "hap",
     "human-agency-protocol",
     "ai-agent",

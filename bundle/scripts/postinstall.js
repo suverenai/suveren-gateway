@@ -2,7 +2,7 @@
 /**
  * Post-install banner.
  *
- * Fires after `npm install -g @humanagencyp/hap-gateway`. Tells the
+ * Fires after `npm install -g @suveren/gateway`. Tells the
  * user how to start the gateway and where to point their browser, so
  * they don't have to dig through the README to find ports.
  *
@@ -27,7 +27,7 @@ const version = pkg.version ?? '?';
 // Detect whether a gateway is already running (left over from a
 // previous version). If so, the user has just upgraded the binary on
 // disk but the running process still executes the OLD code — they
-// need `hap-gateway restart` to pick up this version.
+// need `suveren-gateway restart` to pick up this version.
 const DATA_DIR = process.env.SUVEREN_DATA_DIR ?? join(homedir(), '.suveren');
 const PID_FILE = join(DATA_DIR, 'gateway.pid');
 function isRunning() {
@@ -57,7 +57,7 @@ const blank = ' '.repeat(W);
 const lines = [
   '',
   '  ╭' + '─'.repeat(W) + '╮',
-  '  │' + center(`Installed @humanagencyp/hap-gateway v${version}`) + '│',
+  '  │' + center(`Installed @suveren/gateway v${version}`) + '│',
   '  │' + blank + '│',
 ];
 
@@ -65,22 +65,22 @@ if (upgradeInPlace) {
   // Most important guidance — surface it first and unmissably.
   lines.push('  │' + left('   ⚠  A gateway is already running an older version.') + '│');
   lines.push('  │' + left('       Restart it now to pick up this update:') + '│');
-  lines.push('  │' + left('         $ hap-gateway restart') + '│');
+  lines.push('  │' + left('         $ suveren-gateway restart') + '│');
   lines.push('  │' + blank + '│');
   lines.push('  │' + left('   Already in a browser tab? Reload after restart.') + '│');
 } else {
   lines.push('  │' + left('   Start the gateway in this terminal:') + '│');
-  lines.push('  │' + left('     $ hap-gateway start') + '│');
+  lines.push('  │' + left('     $ suveren-gateway start') + '│');
   lines.push('  │' + blank + '│');
   lines.push('  │' + left('   Or run it in the background:') + '│');
-  lines.push('  │' + left('     $ hap-gateway start --detach') + '│');
+  lines.push('  │' + left('     $ suveren-gateway start --detach') + '│');
   lines.push('  │' + blank + '│');
   lines.push('  │' + left('   Then open the UI:') + '│');
   lines.push('  │' + left('     → http://localhost:3400') + '│');
 }
 
 lines.push('  │' + blank + '│');
-lines.push('  │' + left('   Other commands:  hap-gateway help') + '│');
+lines.push('  │' + left('   Other commands:  suveren-gateway help') + '│');
 lines.push('  ╰' + '─'.repeat(W) + '╯');
 lines.push('');
 console.log(lines.join('\n'));

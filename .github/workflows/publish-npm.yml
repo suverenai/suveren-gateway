@@ -1,6 +1,6 @@
 name: Publish npm package
 
-# Publishes @humanagencyp/hap-gateway to the npm registry on tagged
+# Publishes @suveren/gateway to the npm registry on tagged
 # releases. Runs in parallel with publish.yml (Docker image) so a single
 # `git tag vX.Y.Z && git push --tags` ships both distribution channels
 # in lockstep.

@@ -95,17 +95,17 @@ Open `http://localhost:7400`. The MCP server is at `http://localhost:7430`.
 Requires [Node.js 20+](https://nodejs.org/).
 
 ```bash
-npm install -g @humanagencyp/hap-gateway
-hap-gateway start              # runs in foreground; Ctrl+C stops
+npm install -g @suveren/gateway
+suveren-gateway start              # runs in foreground; Ctrl+C stops
 # or
-hap-gateway start --detach     # runs in the background; data + logs in ~/.hap/
-hap-gateway status             # check it's up
-hap-gateway stop               # stop a detached run
+suveren-gateway start --detach     # runs in the background; data + logs in ~/.suveren/
+suveren-gateway status             # check it's up
+suveren-gateway stop               # stop a detached run
 ```
 
 Open `http://localhost:3400`. The MCP server is at `http://localhost:3430`.
 
-To upgrade later: `npm install -g @humanagencyp/hap-gateway@latest && hap-gateway restart`.
+To upgrade later: `npm install -g @suveren/gateway@latest && suveren-gateway restart`.
 
 ### Connecting an MCP client
 

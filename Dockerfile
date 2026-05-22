@@ -33,8 +33,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends tini ca-certifi
 WORKDIR /app
 
 # The bundle assembled by the build stage is the entire production tree:
-#   /app/server.js            supervisor entry (== `node bin/hap-gateway.js`'s server)
-#   /app/bin/hap-gateway.js   CLI (unused inside Docker but harmless)
+#   /app/server.js                supervisor entry (== `node bin/suveren-gateway.js`'s server)
+#   /app/bin/suveren-gateway.js   CLI (unused inside Docker but harmless)
 #   /app/dist/ui/             static UI
 #   /app/dist/control-plane/  built CP
 #   /app/dist/mcp-server/     built MCP server

@@ -23,7 +23,7 @@ interface ProfileIndex {
  * Returns the number of profiles loaded.
  */
 export function loadProfiles(profilesDir?: string): number {
-  // Default: ../../../../../hap-profiles relative to this file (src/lib → src → mcp-server → apps → hap-gateway → Suveren/hap-profiles)
+  // Default: ../../../../../hap-profiles relative to this file (src/lib → src → mcp-server → apps → suveren-gateway → Development/hap-profiles)
   const dir = resolve(profilesDir ?? process.env.SUVEREN_PROFILES_DIR ?? join(import.meta.dirname ?? __dirname, '..', '..', '..', '..', '..', 'hap-profiles'));
   const indexPath = join(dir, 'index.json');
 

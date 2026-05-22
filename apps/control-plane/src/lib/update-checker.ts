@@ -2,7 +2,7 @@
  * Update checker — compares the running gateway against the latest
  * release in whichever registry distributed it.
  *
- *   docker  → GHCR manifest digest for ghcr.io/.../hap-gateway:latest
+ *   docker  → GHCR manifest digest for ghcr.io/.../suveren-gateway:latest
  *             vs. the running image's digest (looked up by short SHA).
  *   npm     → registry.npmjs.org "latest" version vs. the running
  *             bundle's package.json#version.
@@ -18,8 +18,8 @@
 
 export type InstallMethod = 'docker' | 'npm' | 'dev';
 
-const GHCR_IMAGE = 'humanagencyprotocol/hap-gateway';
-const NPM_PACKAGE = '@humanagencyp/hap-gateway';
+const GHCR_IMAGE = 'suverenai/suveren-gateway';
+const NPM_PACKAGE = '@suveren/gateway';
 const CHECK_INTERVAL = 60 * 60 * 1000; // 60 minutes
 const INITIAL_DELAY = 30_000; // 30 seconds after boot
 

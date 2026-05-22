@@ -556,12 +556,12 @@ app.use(
 
 /** Detect how the gateway was started so the UI can show the right
  *  upgrade command. Docker → /.dockerenv exists. npm install -g →
- *  control-plane resolves from inside a node_modules/@humanagencyp/
- *  hap-gateway/ subtree. Anything else (workspace dev) → 'dev'. */
+ *  control-plane resolves from inside a node_modules/@suveren/gateway/
+ *  subtree. Anything else (workspace dev) → 'dev'. */
 function detectInstallMethod(): 'docker' | 'npm' | 'dev' {
   if (existsSync('/.dockerenv')) return 'docker';
   const dir = import.meta.dirname ?? __dirname;
-  if (dir.includes('/node_modules/@humanagencyp/hap-gateway/')) return 'npm';
+  if (dir.includes('/node_modules/@suveren/gateway/')) return 'npm';
   return 'dev';
 }
 const INSTALL_METHOD = detectInstallMethod();
@@ -583,7 +583,7 @@ function detectRunningVersion(): string {
   if (existsSync(bundlePkg)) {
     try {
       const pkg = JSON.parse(readFileSync(bundlePkg, 'utf8'));
-      if (pkg.name === '@humanagencyp/hap-gateway' && typeof pkg.version === 'string') {
+      if (pkg.name === '@suveren/gateway' && typeof pkg.version === 'string') {
         return pkg.version;
       }
     } catch {

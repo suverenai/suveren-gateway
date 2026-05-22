@@ -6,13 +6,13 @@ import { useUpdateCheck, type InstallMethod } from '../hooks/useUpdateCheck';
  *  (docker), a node_modules path (npm), or neither (dev). */
 function upgradeCommandFor(method: InstallMethod): string {
   if (method === 'npm') {
-    return 'hap-gateway stop; npm install -g @humanagencyp/hap-gateway@latest && hap-gateway start --detach';
+    return 'suveren-gateway stop; npm install -g @suveren/gateway@latest && suveren-gateway start --detach';
   }
   if (method === 'dev') {
     return 'cd suveren-gateway && git pull && pnpm install && pnpm dev';
   }
   // docker (default)
-  return 'docker rm -f suveren-gateway 2>/dev/null; docker ps -q --filter publish=7400 --filter publish=7430 | xargs -r docker rm -f; docker pull ghcr.io/humanagencyprotocol/suveren-gateway:latest && docker run -d --name suveren-gateway -p 7400:3000 -p 7430:3030 -v $HOME/.suveren:/app/data ghcr.io/humanagencyprotocol/suveren-gateway';
+  return 'docker rm -f suveren-gateway 2>/dev/null; docker ps -q --filter publish=7400 --filter publish=7430 | xargs -r docker rm -f; docker pull ghcr.io/suverenai/suveren-gateway:latest && docker run -d --name suveren-gateway -p 7400:3000 -p 7430:3030 -v $HOME/.suveren:/app/data ghcr.io/suverenai/suveren-gateway';
 }
 
 export function UpdateBanner() {

@@ -2,7 +2,7 @@ name: Bundle smoke test
 
 # Runs the npm-distribution bundle (build → install → start → probe → stop)
 # on Linux, macOS, and Windows so we catch cross-platform regressions
-# before publishing @humanagencyp/hap-gateway.
+# before publishing @suveren/gateway.
 
 on:
   push:
@@ -65,7 +65,7 @@ jobs:
           export SUVEREN_MCP_PORT=3530
           export SUVEREN_DATA_DIR="${RUNNER_TEMP}/suveren"
 
-          node bundle/dist/bin/hap-gateway.js start --detach
+          node bundle/dist/bin/suveren-gateway.js start --detach
           # Give both child processes time to bind their ports.
           # On windows-latest the cold start is noticeably slower.
           sleep 5
@@ -78,11 +78,11 @@ jobs:
           echo "::endgroup::"
 
           echo "::group::status"
-          node bundle/dist/bin/hap-gateway.js status
+          node bundle/dist/bin/suveren-gateway.js status
           echo "::endgroup::"
 
           echo "::group::stop"
-          node bundle/dist/bin/hap-gateway.js stop
+          node bundle/dist/bin/suveren-gateway.js stop
           echo "::endgroup::"
 
       - name: Show gateway log on failure

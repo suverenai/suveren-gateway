@@ -98,7 +98,7 @@ const manifests = new Map<string, IntegrationManifest>();
  * Returns the number of manifests loaded.
  */
 export function loadManifests(integrationsDir?: string): number {
-  // Default: ../../../../content/integrations relative to this file (src/lib/ → apps/mcp-server → hap-gateway/content/integrations)
+  // Default: ../../../../content/integrations relative to this file (src/lib/ → apps/mcp-server → suveren-gateway/content/integrations)
   const dir = resolve(
     integrationsDir ??
     process.env.SUVEREN_MANIFESTS_DIR ??

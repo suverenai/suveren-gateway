@@ -7,7 +7,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: humanagencyprotocol/hap-gateway
+  IMAGE_NAME: suverenai/suveren-gateway
 
 jobs:
   publish:
@@ -50,7 +50,7 @@ jobs:
 
       - name: Make package public
         run: |
-          gh api orgs/humanagencyprotocol/packages/container/hap-gateway \
+          gh api orgs/suverenai/packages/container/suveren-gateway \
             --method PATCH --input - <<< '{"visibility":"public"}' \
             2>/dev/null || true
         env:

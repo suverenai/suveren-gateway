@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
- * hap-gateway CLI — wraps `node server.js` with start/stop/status/logs.
+ * suveren-gateway CLI — wraps `node server.js` with start/stop/status/logs.
  *
  * Foreground by default (Ctrl+C stops). Pass --detach for a daemonized
- * run that writes a PID file and a log file under ~/.hap/.
+ * run that writes a PID file and a log file under ~/.suveren/.
  *
  * Cross-platform: macOS, Linux, Windows. Uses os.homedir() everywhere
  * (no $HOME dependency). Process-existence checks via process.kill(pid, 0)
@@ -24,7 +24,7 @@ const DATA_DIR = process.env.SUVEREN_DATA_DIR ?? join(homedir(), '.suveren');
 const PID_FILE = join(DATA_DIR, 'gateway.pid');
 const LOG_FILE = join(DATA_DIR, 'gateway.log');
 
-const HAP_PORT = process.env.SUVEREN_CP_PORT ?? '3400';
+const SUVEREN_PORT = process.env.SUVEREN_CP_PORT ?? '3400';
 
 /** Version of THIS CLI (the binary on disk). Compared against the
  *  running gateway's version inside `status` so users see a mismatch
@@ -64,7 +64,7 @@ async function start(args) {
   const detach = args.includes('--detach') || args.includes('-d');
 
   if (await isAlreadyRunning()) {
-    console.error(`hap-gateway is already running (pid ${readPid()}). Use \`hap-gateway stop\` first or \`hap-gateway restart\`.`);
+    console.error(`suveren-gateway is already running (pid ${readPid()}). Use \`suveren-gateway stop\` first or \`suveren-gateway restart\`.`);
     process.exit(1);
   }
 
@@ -79,15 +79,15 @@ async function start(args) {
     });
     writeFileSync(PID_FILE, String(child.pid), 'utf8');
     child.unref();
-    console.log(`hap-gateway started (pid ${child.pid})`);
+    console.log(`suveren-gateway started (pid ${child.pid})`);
     console.log(``);
-    console.log(`  → Open in your browser:  http://localhost:${HAP_PORT}`);
+    console.log(`  → Open in your browser:  http://localhost:${SUVEREN_PORT}`);
     console.log(``);
     console.log(`  Logs:  ${LOG_FILE}`);
-    console.log(`  Stop:  hap-gateway stop`);
+    console.log(`  Stop:  suveren-gateway stop`);
   } else {
     // Foreground — replace this CLI process with server.js's stdio.
-    console.log(`Starting hap-gateway… open http://localhost:${HAP_PORT} once "up" appears below. Ctrl+C to stop.`);
+    console.log(`Starting suveren-gateway… open http://localhost:${SUVEREN_PORT} once "up" appears below. Ctrl+C to stop.`);
     console.log(``);
     const child = spawn(process.execPath, [SERVER_ENTRY], {
       stdio: 'inherit',
@@ -106,7 +106,7 @@ async function start(args) {
 async function stop() {
   const pid = readPid();
   if (!pid) {
-    console.error('hap-gateway is not running (no PID file).');
+    console.error('suveren-gateway is not running (no PID file).');
     process.exit(1);
   }
   if (!isPidAlive(pid)) {
@@ -126,7 +126,7 @@ async function stop() {
       process.kill(pid, 'SIGKILL');
     }
     safeUnlink(PID_FILE);
-    console.log(`hap-gateway stopped (pid ${pid}).`);
+    console.log(`suveren-gateway stopped (pid ${pid}).`);
   } catch (err) {
     console.error(`Failed to stop pid ${pid}:`, err.message);
     process.exit(1);
@@ -136,36 +136,36 @@ async function stop() {
 async function status() {
   const pid = readPid();
   if (!pid) {
-    console.log('hap-gateway: not running (no PID file).');
+    console.log('suveren-gateway: not running (no PID file).');
     process.exit(3);
   }
   if (!isPidAlive(pid)) {
-    console.log(`hap-gateway: stale PID file (process ${pid} not running).`);
+    console.log(`suveren-gateway: stale PID file (process ${pid} not running).`);
     process.exit(3);
   }
   // Probe the health endpoint to confirm it's actually serving.
   try {
-    const res = await fetch(`http://localhost:${HAP_PORT}/health`, {
+    const res = await fetch(`http://localhost:${SUVEREN_PORT}/health`, {
       signal: AbortSignal.timeout(3000),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const body = await res.json();
-    console.log(`hap-gateway: running (pid ${pid})`);
-    console.log(`  UI:           http://localhost:${HAP_PORT}`);
+    console.log(`suveren-gateway: running (pid ${pid})`);
+    console.log(`  UI:           http://localhost:${SUVEREN_PORT}`);
     console.log(`  Vault:        ${body.vaultUnlocked ? 'unlocked' : 'locked'}`);
     console.log(`  Version:      ${body.version ?? 'unknown'} (running)`);
     if (CLI_VERSION) console.log(`                ${CLI_VERSION} (installed CLI)`);
     if (CLI_VERSION && body.version && body.version !== CLI_VERSION && body.version !== 'dev') {
       console.log('');
       console.log(`  ⚠  Running version differs from the installed CLI.`);
-      console.log(`     Restart to pick up the new code: hap-gateway restart`);
+      console.log(`     Restart to pick up the new code: suveren-gateway restart`);
     }
     if (body.updateAvailable) {
       console.log('');
       console.log(`  Update available — see banner in the UI for the upgrade command.`);
     }
   } catch (err) {
-    console.log(`hap-gateway: pid ${pid} alive but /health unreachable (${err.message})`);
+    console.log(`suveren-gateway: pid ${pid} alive but /health unreachable (${err.message})`);
     process.exit(2);
   }
 }
@@ -242,15 +242,15 @@ function sleep(ms) {
 }
 
 function printHelp() {
-  console.log(`hap-gateway — Human Agency Protocol gateway
+  console.log(`suveren-gateway — Suveren gateway (Human Agency Protocol)
 
 Usage:
-  hap-gateway start [--detach]   Run the gateway (foreground by default)
-  hap-gateway stop               Stop a detached gateway
-  hap-gateway restart            Stop, then start --detach
-  hap-gateway status             Show running state + health
-  hap-gateway logs [--tail]      Print or tail ~/.suveren/gateway.log
-  hap-gateway help               Print this help
+  suveren-gateway start [--detach]   Run the gateway (foreground by default)
+  suveren-gateway stop               Stop a detached gateway
+  suveren-gateway restart            Stop, then start --detach
+  suveren-gateway status             Show running state + health
+  suveren-gateway logs [--tail]      Print or tail ~/.suveren/gateway.log
+  suveren-gateway help               Print this help
 
 Environment:
   SUVEREN_CP_PORT     UI + API port  (default 3400)
