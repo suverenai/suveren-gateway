@@ -34,20 +34,22 @@ This starts all three services concurrently with auto-reload:
 
 | Service | Port | What it does |
 |---------|------|-------------|
-| UI | 3400 | Vite dev server with hot module replacement |
-| Control Plane | 3402 | Auth, vault, SP proxy — auto-restarts on file changes |
-| MCP Server | 3430 | Gatekeeper, tool proxy — auto-restarts on file changes |
+| UI | 3401 | Vite dev server with hot module replacement |
+| Control Plane | 3402 | Auth, vault, AS proxy — auto-restarts on file changes |
+| MCP Server | 3431 | Gatekeeper, tool proxy — auto-restarts on file changes |
 
-Open `http://localhost:3400` for the UI (proxies API calls to the control plane).
+Open `http://localhost:3401` for the dev UI (proxies API calls to the control plane).
+
+Dev ports are deliberately offset by +1 from the npm-installed CLI's ports (3400/3430) so both can run in parallel — npm CLI on `:3400` + dev on `:3401`. The npm CLI's port set is reserved as the "official" install path.
 
 ### Individual services
 
 If you only need to work on one part:
 
 ```bash
-pnpm dev:ui        # UI only (port 3400, HMR)
+pnpm dev:ui        # UI only (port 3401, HMR)
 pnpm dev:control   # Control plane only (port 3402, auto-restart)
-pnpm dev:mcp       # MCP server only (port 3430, auto-restart)
+pnpm dev:mcp       # MCP server only (port 3431, auto-restart)
 ```
 
 ### With local AS
@@ -71,9 +73,9 @@ By default, the gateway connects to `https://www.suveren.ai`. Just run `pnpm dev
 | Variable | Default | Description |
 |---|---|---|
 | `SUVEREN_AS_URL` | `https://www.suveren.ai` | Authority Server URL |
-| `SUVEREN_CP_PORT` | `3402` | Control Plane port |
-| `SUVEREN_MCP_PORT` | `3430` | MCP Server port |
-| `SUVEREN_MCP_INTERNAL_URL` | `http://127.0.0.1:3430` | MCP internal endpoint (Control Plane → MCP) |
+| `SUVEREN_CP_PORT` | `3402` (dev) / `3400` (npm CLI) | Control Plane port |
+| `SUVEREN_MCP_PORT` | `3431` (dev) / `3430` (npm CLI) | MCP Server port |
+| `SUVEREN_MCP_INTERNAL_URL` | `http://127.0.0.1:3431` (dev) / `:3430` (npm CLI) | MCP internal endpoint (Control Plane → MCP) |
 | `SUVEREN_INTERNAL_SECRET` | (empty = skip check) | Shared secret for internal endpoints |
 | `HAP_UI_DIST` | `../../ui/dist` | Path to built UI assets |
 | `SUVEREN_DATA_DIR` | `~/.suveren` | Persistent storage directory |

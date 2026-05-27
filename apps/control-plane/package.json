@@ -6,7 +6,7 @@
   "scripts": {
     "build": "tsup src/index.ts --format esm --outDir dist",
     "start": "node dist/index.mjs",
-    "dev": "tsx --watch src/index.ts",
+    "dev": "SUVEREN_MCP_INTERNAL_URL=http://127.0.0.1:3431 tsx --watch src/index.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },

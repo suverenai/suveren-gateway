@@ -7,7 +7,7 @@
   "scripts": {
     "build": "tsup bin/http.ts --format esm --outDir dist",
     "start": "node dist/http.mjs",
-    "dev": "tsx --watch bin/http.ts",
+    "dev": "SUVEREN_MCP_PORT=3431 tsx --watch bin/http.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },

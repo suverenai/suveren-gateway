@@ -11,7 +11,9 @@ import react from '@vitejs/plugin-react';
 export default defineConfig({
   plugins: [react()],
   server: {
-    port: 3400,
+    // Dev UI port. The npm-installed CLI serves on 3400; dev runs on 3401
+    // so both can run in parallel. CP proxy targets stay at 3402 (dev CP).
+    port: 3401,
     proxy: {
       '/api': {
         target: 'http://localhost:3402',
