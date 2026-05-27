@@ -30,6 +30,12 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
           cache: pnpm
 
+      - name: Upgrade npm
+        # Node 20 ships with npm 10.x; Trusted Publishing (OIDC) requires
+        # npm 11.5+ for the publish flow to recognize the OIDC token
+        # instead of expecting a bearer token from .npmrc.
+        run: npm install -g npm@latest
+
       - name: Install workspace deps
         run: pnpm install --frozen-lockfile
 
