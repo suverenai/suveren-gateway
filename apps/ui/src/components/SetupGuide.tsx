@@ -11,16 +11,34 @@ interface SetupGuideProps {
 
 type StepStatus = 'done' | 'skipped' | 'pending';
 
-const LS_AI_SKIPPED = 'hap-setup-ai-skipped';
-const LS_AGENT_DONE = 'hap-setup-agent-done';
-const LS_DISMISSED = 'hap-setup-dismissed';
+const LS_AI_SKIPPED = 'suveren-setup-ai-skipped';
+const LS_AGENT_DONE = 'suveren-setup-agent-done';
+const LS_DISMISSED = 'suveren-setup-dismissed';
+
+// Legacy storage keys — migrated to `suveren-setup-*` on first read. Kept
+// here so the migration helper has a single source of truth.
+const LS_LEGACY_KEYS: Record<string, string> = {
+  'hap-setup-ai-skipped': LS_AI_SKIPPED,
+  'hap-setup-agent-done': LS_AGENT_DONE,
+  'hap-setup-dismissed': LS_DISMISSED,
+};
+function migrateLegacyLS() {
+  for (const [oldKey, newKey] of Object.entries(LS_LEGACY_KEYS)) {
+    const v = localStorage.getItem(oldKey);
+    if (v !== null && localStorage.getItem(newKey) === null) {
+      localStorage.setItem(newKey, v);
+    }
+    if (v !== null) localStorage.removeItem(oldKey);
+  }
+}
+migrateLegacyLS();
 
 const MCP_CONFIGS: Record<string, { label: string; snippet: (endpoint: string) => string }> = {
   'claude-code': {
     label: 'Claude Code',
     snippet: (ep) => JSON.stringify({
       mcpServers: {
-        hap: { url: `${ep}/sse` },
+        'suveren-gateway': { url: `${ep}/sse` },
       },
     }, null, 2),
   },
@@ -28,7 +46,7 @@ const MCP_CONFIGS: Record<string, { label: string; snippet: (endpoint: string) =
     label: 'Claude Desktop',
     snippet: (ep) => `Add to ~/Library/Application Support/Claude/claude_desktop_config.json:\n\n${JSON.stringify({
       mcpServers: {
-        hap: { url: `${ep}/sse` },
+        'suveren-gateway': { url: `${ep}/sse` },
       },
     }, null, 2)}`,
   },

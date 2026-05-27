@@ -1,4 +1,4 @@
-# HAP Local Gateway — TODO
+# Suveren gateway — TODO
 
 ## Security
 
