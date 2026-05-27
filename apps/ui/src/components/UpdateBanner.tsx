@@ -9,7 +9,10 @@ function upgradeCommandFor(method: InstallMethod): string {
     return 'suveren-gateway stop; npm install -g @suveren/gateway@latest && suveren-gateway start --detach';
   }
   if (method === 'dev') {
-    return 'cd suveren-gateway && git pull && pnpm install && pnpm dev';
+    // Assumes you run this from the suveren-gateway repo root (where
+    // pnpm dev was started). Doesn't auto-restart — Ctrl+C the running
+    // dev server and re-run `pnpm dev` afterwards.
+    return 'git pull && pnpm install';
   }
   // docker (default)
   return 'docker rm -f suveren-gateway 2>/dev/null; docker ps -q --filter publish=7400 --filter publish=7430 | xargs -r docker rm -f; docker pull ghcr.io/suverenai/suveren-gateway:latest && docker run -d --name suveren-gateway -p 7400:3000 -p 7430:3030 -v $HOME/.suveren:/app/data ghcr.io/suverenai/suveren-gateway';

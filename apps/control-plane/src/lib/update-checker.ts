@@ -6,8 +6,9 @@
  *             vs. the running image's digest (looked up by short SHA).
  *   npm     → registry.npmjs.org "latest" version vs. the running
  *             bundle's package.json#version.
- *   dev     → always reports update available (warns the developer
- *             to pull).
+ *   dev     → `git fetch origin` then count commits HEAD..origin/main;
+ *             update available iff behind. (Previously hardcoded true,
+ *             which cried wolf permanently.)
  *
  * Boots with a 30s initial delay to avoid hammering the registry on
  * every restart, then re-checks once per hour as a safety net for
@@ -15,6 +16,10 @@
  * the UI does this on every mount/login so users who just opened the
  * app get an accurate update status in the same response.
  */
+
+import { execSync } from 'node:child_process';
+import { dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 export type InstallMethod = 'docker' | 'npm' | 'dev';
 
@@ -105,13 +110,37 @@ function compareSemver(a: string, b: string): number {
   return 0;
 }
 
+// ─── Dev (git) check ────────────────────────────────────────────────────
+
+/** Runs `git fetch origin --quiet` then counts commits in origin/main
+ *  that aren't in HEAD. Quiet failure modes: not a git repo, no
+ *  network, missing origin — all return updateAvailable=false (silent
+ *  is better than crying wolf). */
+function checkDev(): void {
+  const cwd = dirname(fileURLToPath(import.meta.url));
+  try {
+    execSync('git fetch origin --quiet', { cwd, stdio: 'ignore', timeout: 15_000 });
+    const out = execSync('git rev-list HEAD..origin/main --count', {
+      cwd,
+      encoding: 'utf8',
+      timeout: 5_000,
+    }).trim();
+    const behind = parseInt(out, 10) || 0;
+    updateAvailable = behind > 0;
+    latestVersion = behind > 0 ? `${behind} commit${behind === 1 ? '' : 's'} behind origin/main` : null;
+  } catch {
+    updateAvailable = false;
+    latestVersion = null;
+  }
+  lastCheckedAt = Date.now();
+}
+
 // ─── Dispatcher ─────────────────────────────────────────────────────────
 
 async function check(): Promise<void> {
   try {
     if (installMethod === 'dev') {
-      updateAvailable = true;
-      lastCheckedAt = Date.now();
+      checkDev();
       return;
     }
     if (installMethod === 'npm') {
