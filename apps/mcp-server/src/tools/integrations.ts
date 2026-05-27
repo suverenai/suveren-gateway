@@ -47,7 +47,7 @@ export function listIntegrationsHandler(
           // Find soonest expiry
           const soonestExpiry = Math.min(
             ...matchingAuths.flatMap(a =>
-              a.attestations.map(att => att.expires_at)
+              a.attestations.map(att => att.expiresAt)
             ),
           );
           const remainingMs = soonestExpiry * 1000 - Date.now();
