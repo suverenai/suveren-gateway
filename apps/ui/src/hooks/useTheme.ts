@@ -2,14 +2,26 @@ import { useState, useEffect, useCallback } from 'react';
 
 type Theme = 'system' | 'light' | 'dark';
 
+const LS_THEME = 'suveren-theme';
+const LS_THEME_LEGACY = 'hap-theme';
+
 function getEffective(theme: Theme): 'light' | 'dark' {
   if (theme !== 'system') return theme;
   return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 }
 
+/** Migrate `hap-theme` → `suveren-theme` once. Runs at module import. */
+(function migrateLegacyTheme() {
+  const legacy = localStorage.getItem(LS_THEME_LEGACY);
+  if (legacy !== null && localStorage.getItem(LS_THEME) === null) {
+    localStorage.setItem(LS_THEME, legacy);
+  }
+  if (legacy !== null) localStorage.removeItem(LS_THEME_LEGACY);
+})();
+
 export function useTheme() {
   const [theme, setTheme] = useState<Theme>(() => {
-    const stored = localStorage.getItem('hap-theme');
+    const stored = localStorage.getItem(LS_THEME);
     return (stored === 'light' || stored === 'dark') ? stored : 'system';
   });
 
@@ -26,9 +38,9 @@ export function useTheme() {
     el.setAttribute('data-theme', eff);
 
     if (theme === 'system') {
-      localStorage.removeItem('hap-theme');
+      localStorage.removeItem(LS_THEME);
     } else {
-      localStorage.setItem('hap-theme', theme);
+      localStorage.setItem(LS_THEME, theme);
     }
 
     setEffectiveTheme(getEffective(theme));

@@ -65,7 +65,8 @@ export function buildMandateBrief(opts: MandateBriefOptions): string {
   const { authorizations, executionLog, integrationManager, contextDir } = opts;
 
   const lines: string[] = [
-    'You are an agent operating under the Human Agency Protocol (HAP).',
+    'You are connected to Suveren — the gateway that gates every privileged tool call you make.',
+    'Suveren implements the bounded-authority model from the open Human Agency Protocol (HAP).',
     'You have bounded authorities granted by human decision owners.',
     'You MUST stay within these bounds — the Gatekeeper will reject actions that exceed them.',
   ];

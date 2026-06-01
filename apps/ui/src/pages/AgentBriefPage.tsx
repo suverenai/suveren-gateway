@@ -9,10 +9,11 @@ import { BottomSheet } from '../components/BottomSheet';
 // user tailors it for their actual workflow.
 const STARTER_TEMPLATE = `# Agent Brief
 
-You act on my behalf under the Human Agency Protocol (HAP). You have
-bounded authorities — each one describes an area of authority, a set of
-numeric limits, and a scope. Operate inside those bounds or the
-Gatekeeper will reject your action.
+You act on my behalf through Suveren — the gateway that gates every
+privileged tool call you make. Suveren implements the bounded-authority
+model from the open Human Agency Protocol (HAP): each authorization
+describes an area of authority, a set of numeric limits, and a scope.
+Operate inside those bounds or the Gatekeeper will reject your action.
 
 ## Before you act in a domain
 

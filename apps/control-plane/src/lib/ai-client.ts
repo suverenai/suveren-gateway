@@ -199,7 +199,7 @@ export interface AIChatResponse {
  *  wins per-kind when present. The defaults stay as the immutable
  *  fallback — deleting the override file reverts behavior. */
 export const CHAT_SYSTEM_PROMPTS: Record<ChatTarget['kind'], string> = {
-  context: `You help a human author "context.md" — the standing-orders brief that is prepended to every AI agent session under the Human Agency Protocol (HAP).
+  context: `You help a human author "context.md" — the standing-orders brief that Suveren prepends to every AI agent session it gates.
 
 This text goes straight into the system prompt of downstream agents. Keep it operational, concrete, and short. Favor examples the user would recognize from their work.
 
@@ -216,7 +216,7 @@ When you propose a complete draft (or a full-document rewrite) of the context, w
 
 Only use that fence for full-document drafts the user can click "Apply". For partial suggestions, comments, or questions, write prose without the fence.`,
 
-  intent: `You help a human write an "Intent" paragraph for an AI agent authorization under the Human Agency Protocol (HAP).
+  intent: `You help a human write an "Intent" paragraph for an AI agent authorization issued by Suveren.
 
 The Intent is read by two audiences:
 1. The agent, on demand via list-authorizations(domain), when it's about to act in this domain.

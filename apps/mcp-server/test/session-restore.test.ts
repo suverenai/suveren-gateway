@@ -56,7 +56,7 @@ function makeLogEntry(overrides: Partial<ExecutionLogEntry> = {}): ExecutionLogE
 let testDir: string;
 
 beforeEach(() => {
-  testDir = mkdtempSync(join(tmpdir(), 'hap-session-restore-test-'));
+  testDir = mkdtempSync(join(tmpdir(), 'suveren-session-restore-test-'));
 });
 
 afterEach(() => {

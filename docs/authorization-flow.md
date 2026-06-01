@@ -155,7 +155,8 @@ If the SP rejects (limit exceeded, revoked) or is unreachable, the tool call is 
 ### Tier 1: Mandate Brief (loaded on connect)
 
 ```
-You are an agent operating under the Human Agency Protocol (HAP).
+You are connected to Suveren — the gateway that gates every privileged tool call you make.
+Suveren implements the bounded-authority model from the open Human Agency Protocol (HAP).
 You have bounded authorities granted by human decision owners.
 
 === ACTIVE AUTHORITIES ===

@@ -44,7 +44,7 @@ function makeEntry(overrides: Partial<GateEntry> = {}): GateEntry {
 let testDir: string;
 
 beforeEach(() => {
-  testDir = mkdtempSync(join(tmpdir(), 'hap-gate-test-'));
+  testDir = mkdtempSync(join(tmpdir(), 'suveren-gate-test-'));
 });
 
 afterEach(() => {

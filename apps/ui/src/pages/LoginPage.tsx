@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { TopNav } from '../components/TopNav';
 import { DifferentAccountError, type DifferentAccountSummary } from '../lib/sp-client';
@@ -7,15 +6,18 @@ import { DifferentAccountError, type DifferentAccountSummary } from '../lib/sp-c
 export function LoginPage() {
   const [apiKey, setApiKey] = useState('');
   const { login, isLoading, error, clearError } = useAuth();
-  const navigate = useNavigate();
   const [wipeWarning, setWipeWarning] = useState<DifferentAccountSummary | null>(null);
 
   const handleLogin = async () => {
     if (!apiKey.trim()) return;
     clearError();
     try {
+      // No explicit navigate('/') here: login() sets `user` partway through
+      // (before its getGroups/refreshGroups tail), at which point AppRoutes
+      // auto-redirects /login → /. An explicit navigate('/') after the full
+      // await would fire late and clobber any route the user reached in the
+      // meantime (e.g. bounce /integrations back to Dashboard).
       await login(apiKey);
-      navigate('/');
     } catch (e) {
       if (e instanceof DifferentAccountError) {
         setWipeWarning(e.summary);
@@ -29,8 +31,8 @@ export function LoginPage() {
     setWipeWarning(null);
     clearError();
     try {
+      // See handleLogin: AppRoutes redirects /login → / once `user` is set.
       await login(apiKey, { confirmWipe: true });
-      navigate('/');
     } catch {
       // error surfaced via context
     }

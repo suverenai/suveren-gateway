@@ -2,7 +2,7 @@
   "name": "@suveren/ui",
   "version": "0.1.0",
   "private": true,
-  "description": "HAP Authority UI — 6-gate authorization wizard",
+  "description": "Suveren gateway UI — bounded-authority wizard",
   "type": "module",
   "scripts": {
     "dev": "vite",

@@ -44,7 +44,7 @@ let testDir: string;
 let log: ExecutionLog;
 
 beforeEach(() => {
-  testDir = mkdtempSync(join(tmpdir(), 'hap-log-test-'));
+  testDir = mkdtempSync(join(tmpdir(), 'suveren-log-test-'));
   log = new ExecutionLog(testDir);
 });
 
