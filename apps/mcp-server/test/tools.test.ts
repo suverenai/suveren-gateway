@@ -270,8 +270,16 @@ describe('createGatedToolHandler — SP receipt integration', () => {
       attestationHash: 'sha256:abc',
       profileId: 'github.com/humanagencyprotocol/hap-profiles/charge@0.3',
       path: 'charge-routine',
-      action: 'charge',
+      // `action` is the namespaced tool name (the SP uses it for the review-mode
+      // PROPOSAL_MISMATCH equality check), not the short profile name.
+      action: 'stripe__stripe_charge',
     }));
+    // M3: every gated tool call must carry a stable idempotency key so the SP
+    // can dedup a retried receipt instead of double-counting. This is the
+    // production wiring at tool-proxy.ts — assert it actually happens.
+    const receiptArg = postReceipt.mock.calls[0][0] as { idempotencyKey?: unknown };
+    expect(typeof receiptArg.idempotencyKey).toBe('string');
+    expect((receiptArg.idempotencyKey as string).length).toBeGreaterThan(0);
     expect((im.callTool as ReturnType<typeof vi.fn>)).toHaveBeenCalledOnce();
     expect(result.content[0].text).toBe('Payment processed');
   });
