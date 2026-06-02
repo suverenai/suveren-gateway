@@ -14,6 +14,7 @@ import type { SharedState, EnrichedAuthorization } from './shared-state';
 import { SPReceiptError } from './sp-client';
 import { readFile } from 'node:fs/promises';
 import { extname } from 'node:path';
+import { randomUUID } from 'node:crypto';
 
 const IMAGE_MIME: Record<string, string> = {
   '.jpg': 'image/jpeg',
@@ -272,6 +273,11 @@ export function createGatedToolHandler(
             );
           }
 
+          // M3: one stable idempotency key per tool invocation, generated
+          // once here and reused across postReceipt's internal retries. If a
+          // transient failure hides the AS response after it already counted
+          // this execution, the retry returns the original receipt rather than
+          // double-counting against the authority's bounds.
           await state.spClient.postReceipt({
             attestationHash: authHash,
             profileId: auth.profileId,
@@ -280,6 +286,7 @@ export function createGatedToolHandler(
             actionType,
             executionContext: { ...execution },
             amount: typeof execution.amount === 'number' ? execution.amount : undefined,
+            idempotencyKey: randomUUID(),
           });
         } catch (err) {
           if (err instanceof SPReceiptError && err.statusCode === 409) {
