@@ -83,11 +83,39 @@ export class SPReceiptError extends Error {
   }
 }
 
+/**
+ * Retry policy for the receipt pre-flight. Only engaged when the caller
+ * supplies an `idempotencyKey` — retrying without one risks double-counting,
+ * so a missing key keeps the old single-attempt behaviour. Delays are kept
+ * small (this is on the hot path before every gated tool call) and are
+ * injectable so tests can run with zero backoff.
+ */
+export interface ReceiptRetryConfig {
+  /** Total attempts including the first. 1 disables retries. */
+  maxAttempts: number;
+  /** Backoff before attempt N (1-indexed for retries: delays[0] precedes attempt 2). */
+  delaysMs: number[];
+}
+
+const DEFAULT_RECEIPT_RETRY: ReceiptRetryConfig = {
+  maxAttempts: 3,
+  delaysMs: [100, 300],
+};
+
+const sleep = (ms: number): Promise<void> =>
+  ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
+
 export class SPClient {
   private sessionCookie = '';
   private apiKey = '';
+  private readonly receiptRetry: ReceiptRetryConfig;
 
-  constructor(private baseUrl: string) {}
+  constructor(
+    private baseUrl: string,
+    receiptRetry: Partial<ReceiptRetryConfig> = {},
+  ) {
+    this.receiptRetry = { ...DEFAULT_RECEIPT_RETRY, ...receiptRetry };
+  }
 
   setApiKey(key: string): void {
     this.apiKey = key;
@@ -175,25 +203,69 @@ export class SPClient {
     amount?: number;
     proposalId?: string;
     toolArgs?: Record<string, unknown>;
+    /**
+     * v0.4 M3 — replay protection. A stable key for THIS logical tool call,
+     * generated once by the caller and reused across retries. The AS dedups
+     * on it: if a transient failure hides a response after the AS already
+     * committed, the retry returns the original receipt instead of counting
+     * a second time. Supplying it also enables the retry loop below; without
+     * it we fall back to a single attempt (retrying blind would double-count).
+     */
+    idempotencyKey?: string;
   }): Promise<{ receipt: Record<string, unknown> }> {
-    const res = await this.fetch('/api/as/receipt', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
-    const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    const body = JSON.stringify(data);
+    // Retries are only safe when the AS can dedup them. No key → one shot.
+    const maxAttempts = data.idempotencyKey ? this.receiptRetry.maxAttempts : 1;
+    let lastError: unknown;
 
-    if (!res.ok || body.approved === false) {
-      // Extract first structured error for the message; keep full body on the error.
-      const errors = body.errors as Array<Record<string, unknown>> | undefined;
-      const first = errors?.[0];
-      const message =
-        (first?.message as string) ??
-        (first?.code as string) ??
-        (body.error as string) ??
-        `SP receipt request failed: ${res.status}`;
-      throw new SPReceiptError(message, res.status, body);
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const isLast = attempt === maxAttempts;
+
+      let res: Response;
+      try {
+        res = await this.fetch('/api/as/receipt', { method: 'POST', body });
+      } catch (err) {
+        // Network-level failure (connection refused, reset, DNS). The request
+        // may or may not have reached the AS — but because it carried the
+        // idempotency key, retrying is safe: a committed receipt comes back
+        // unchanged, an un-received one is processed for the first time.
+        lastError = err;
+        if (isLast) throw err;
+        await sleep(this.receiptRetry.delaysMs[attempt - 1] ?? 0);
+        continue;
+      }
+
+      const respBody = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+
+      // 5xx is a transient server fault — retry with the same key.
+      if (res.status >= 500 && !isLast) {
+        lastError = new SPReceiptError(
+          `SP receipt request failed: ${res.status}`,
+          res.status,
+          respBody,
+        );
+        await sleep(this.receiptRetry.delaysMs[attempt - 1] ?? 0);
+        continue;
+      }
+
+      // Any 4xx (limit exceeded, approval_required, mismatch, not-authorized)
+      // is a definitive answer from the AS — fail closed, never retry.
+      if (!res.ok || respBody.approved === false) {
+        const errors = respBody.errors as Array<Record<string, unknown>> | undefined;
+        const first = errors?.[0];
+        const message =
+          (first?.message as string) ??
+          (first?.code as string) ??
+          (respBody.error as string) ??
+          `SP receipt request failed: ${res.status}`;
+        throw new SPReceiptError(message, res.status, respBody);
+      }
+
+      return { receipt: respBody.receipt as Record<string, unknown> };
     }
-    return { receipt: body.receipt as Record<string, unknown> };
+
+    // Unreachable in practice — the loop either returns, throws, or continues.
+    throw lastError ?? new Error('postReceipt: retries exhausted');
   }
 
   /**
