@@ -38,7 +38,7 @@ import { createVaultRouter } from './routes/vault';
 import { createAIRouter } from './routes/ai';
 import { createAIPromptsRouter } from './routes/ai-prompts';
 import { requireAuth, requireAuthQueryOrHeader } from './middleware/auth';
-import { pushGateContent, pushServiceCredentials, setInternalSecret, getManifests, getGateContent } from './lib/mcp-bridge';
+import { pushGateContent, pushServiceCredentials, setInternalSecret, getManifests, getGateContent, MCP_BASE } from './lib/mcp-bridge';
 import { createMCPRouter } from './routes/mcp';
 import { createEncryptIntentRouter } from './routes/encrypt-intent';
 import { createDecryptIntentRouter } from './routes/decrypt-intent';
@@ -132,6 +132,20 @@ let manifestCache: Array<{
   } | null;
 }> | null = null;
 
+/** Extract the `email` claim from an OIDC id_token (unverified — display only). */
+function decodeJwtEmail(idToken?: string): string | undefined {
+  if (!idToken) return undefined;
+  try {
+    const payload = idToken.split('.')[1];
+    if (!payload) return undefined;
+    const json = Buffer.from(payload.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
+    const claims = JSON.parse(json) as { email?: string };
+    return typeof claims.email === 'string' ? claims.email : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 async function getOAuthManifest(integrationId: string) {
   if (!manifestCache) {
     try {
@@ -208,14 +222,23 @@ app.get('/auth/oauth/:integrationId/callback', async (req: Request, res: Respons
         grant_type: 'authorization_code',
       }),
     });
-    const tokens = await tokenRes.json() as { refresh_token?: string; access_token?: string; error?: string };
+    const tokens = await tokenRes.json() as { refresh_token?: string; access_token?: string; id_token?: string; error?: string };
     const tokenValue = tokens.refresh_token ?? tokens.access_token;
     if (tokens.error || !tokenValue) {
       res.status(400).send(`<html><body><h2>Token exchange failed</h2><p>${String(tokens.error || 'No token received')}</p><script>setTimeout(()=>window.close(),3000)</script></body></html>`);
       return;
     }
+    // Capture the connected account (email from the OIDC id_token) + timestamp so
+    // the Integrations UI can show *which* account is connected. Stored under
+    // reserved `_oauth*` keys; the vault route exposes them as `meta`.
+    const account = decodeJwtEmail(tokens.id_token);
     // Store token alongside existing credentials (refresh_token for Gmail, access_token for LinkedIn, etc.)
-    const updatedCreds = { ...creds, [oauth.tokenStorage]: tokenValue };
+    const updatedCreds: Record<string, string> = {
+      ...creds,
+      [oauth.tokenStorage]: tokenValue,
+      _oauthConnectedAt: new Date().toISOString(),
+    };
+    if (account) updatedCreds._oauthAccount = account;
     vault.setCredential(integrationId, updatedCreds);
     console.log(`[Control Plane] ${integrationId} OAuth tokens stored in vault`);
 
@@ -246,6 +269,54 @@ app.get('/auth/gmail/callback', (req: Request, res: Response) => {
 // ─── Protected routes — require X-API-Key ────────────────────────────────
 
 const authGuard = requireAuth(vault);
+
+/**
+ * Auth-health probe — the truthful "can this integration actually authenticate"
+ * signal for the Integrations UI. For refresh-token integrations (Google
+ * calendar/gmail) it attempts a real `refresh_token` grant against the
+ * provider; an `invalid_grant`/error means the saved token is dead → the UI
+ * shows Auth FAILED with a Reconnect action. The probe does not persist the new
+ * access token, so it doesn't mutate stored credentials (Google doesn't rotate
+ * the refresh token by default). Access-token-only integrations (LinkedIn)
+ * can't be refresh-probed, so they report `unverified`.
+ *
+ * Returns: { status: 'ok'|'failed'|'not_connected'|'not_configured'|'unverified', error?, account? }
+ */
+app.get('/auth/oauth/:integrationId/health', authGuard, async (req: Request, res: Response) => {
+  const integrationId = String(req.params.integrationId);
+  const manifest = await getOAuthManifest(integrationId);
+  if (!manifest?.oauth) { res.json({ status: 'not_configured' }); return; }
+  const oauth = manifest.oauth;
+  const creds = vault.getCredential(integrationId);
+  const clientIdKey = oauth.credentialKeys.clientId ?? 'clientId';
+  const clientSecretKey = oauth.credentialKeys.clientSecret ?? 'clientSecret';
+  const account = creds?._oauthAccount;
+  if (!creds?.[clientIdKey] || !creds?.[clientSecretKey]) { res.json({ status: 'not_configured', account }); return; }
+  const token = creds[oauth.tokenStorage];
+  if (!token) { res.json({ status: 'not_connected', account }); return; }
+
+  // Only a refresh token can be probed. Access-token storage (e.g. LinkedIn)
+  // has no refresh grant — report unverified rather than a false failure.
+  if (!/refresh/i.test(oauth.tokenStorage)) { res.json({ status: 'unverified', account }); return; }
+
+  try {
+    const r = await fetch(oauth.tokenUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'refresh_token',
+        refresh_token: token,
+        client_id: creds[clientIdKey],
+        client_secret: creds[clientSecretKey],
+      }),
+    });
+    const body = await r.json().catch(() => ({})) as { access_token?: string; error?: string; error_description?: string };
+    if (r.ok && body.access_token) { res.json({ status: 'ok', account }); return; }
+    res.json({ status: 'failed', account, error: body.error_description || body.error || `HTTP ${r.status}` });
+  } catch (err) {
+    res.json({ status: 'failed', account, error: err instanceof Error ? err.message : 'probe failed' });
+  }
+});
 
 // SSE event stream — auth-guarded, long-lived connection
 // /events is reached by EventSource which can't send custom headers — use the
@@ -639,5 +710,22 @@ app.listen(port, '0.0.0.0', () => {
   console.error(`[Control Plane]   SP proxy: ${SP_URL}`);
   console.error(`[Control Plane]   UI dist:  ${UI_DIST}`);
   console.error(`[Control Plane]   Internal secret: configured`);
+  console.error(`[Control Plane]   MCP server: ${MCP_BASE}`);
+  // Startup self-check: fail LOUD if we can't load integration manifests from
+  // the MCP server. Silent failure here (e.g. SUVEREN_MCP_INTERNAL_URL unset →
+  // defaulting to the npm port :3430, which 403s) is what makes the UI show an
+  // empty "No integrations" with no clue why.
+  getManifests()
+    .then((d) => {
+      const n = (d as { manifests?: unknown[] })?.manifests?.length ?? 0;
+      if (n === 0) {
+        console.error(`[Control Plane] ⚠ MCP server at ${MCP_BASE} returned 0 integration manifests — wrong SUVEREN_MCP_INTERNAL_URL? (dev MCP is :3431, npm is :3430)`);
+      } else {
+        console.error(`[Control Plane]   Integrations: ${n} manifests loaded from ${MCP_BASE}`);
+      }
+    })
+    .catch((err) => {
+      console.error(`[Control Plane] ⚠ Could not reach MCP server at ${MCP_BASE} for manifests — wrong SUVEREN_MCP_INTERNAL_URL? (dev=:3431, npm=:3430). ${err instanceof Error ? err.message : err}`);
+    });
   startUpdateChecker(INSTALL_METHOD, RUNNING_VERSION);
 });

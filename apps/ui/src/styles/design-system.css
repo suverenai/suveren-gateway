@@ -726,6 +726,35 @@ code {
 .status-expired { background: var(--bg-elevated); color: var(--text-tertiary); }
 .status-revoked { background: var(--danger-subtle); color: var(--danger); }
 
+/* Integration status chips — binary (ok/bad) + neutral (idle), with a dot.
+   Two are shown per integration: Process (running) and Auth (can authenticate). */
+.int-chip {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  padding: 0.2rem 0.6rem; border-radius: 9999px;
+  font-size: 0.7rem; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase;
+}
+.int-chip .int-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+.int-chip-ok   { background: var(--success-subtle); color: var(--success); }
+.int-chip-ok   .int-dot { background: var(--success); }
+.int-chip-bad  { background: var(--danger-subtle); color: var(--danger); }
+.int-chip-bad  .int-dot { background: var(--danger); }
+.int-chip-idle { background: var(--accent-subtle); color: var(--accent); }
+.int-chip-idle .int-dot { background: #bbb; }
+
+/* Collapsed detail disclosure on the integration card */
+.int-details { border-top: 1px solid var(--border); padding-top: 0.7rem; margin-top: 0.25rem; }
+.int-details > summary {
+  cursor: pointer; font-size: 0.78rem; color: var(--text-muted);
+  list-style: none; display: flex; align-items: center; gap: 0.35rem; user-select: none;
+}
+.int-details > summary::-webkit-details-marker { display: none; }
+.int-details > summary::before { content: "\25B8"; font-size: 0.7rem; transition: transform 0.15s; }
+.int-details[open] > summary::before { transform: rotate(90deg); }
+.int-meta { display: grid; grid-template-columns: auto 1fr; gap: 0.4rem 1rem; font-size: 0.8rem; margin-top: 0.7rem; }
+.int-meta .int-k { color: var(--text-muted); }
+.int-account { font-size: 0.85rem; display: flex; align-items: center; gap: 0.5rem; }
+.int-account .int-none { color: var(--text-muted); font-style: italic; }
+
 .domain-badge {
   display: inline-block;
   padding: 0.2rem 0.5rem;

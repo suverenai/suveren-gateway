@@ -535,7 +535,7 @@ class SPClient {
     return res.json();
   }
 
-  async getCredential(name: string): Promise<{ configured: boolean; fieldNames?: string[] }> {
+  async getCredential(name: string): Promise<{ configured: boolean; fieldNames?: string[]; fields?: Record<string, string> }> {
     const res = await this.fetch(`/vault/credentials/${encodeURIComponent(name)}`);
     if (!res.ok) throw new Error(`Failed to check credential: ${res.status}`);
     return res.json();
@@ -596,6 +596,25 @@ class SPClient {
     const res = await this.fetch('/mcp/integrations');
     if (!res.ok) throw new Error(`Failed to fetch integrations: ${res.status}`);
     return res.json();
+  }
+
+  /**
+   * Auth-health probe: attempts a real token refresh server-side so the UI can
+   * show whether the integration can actually authenticate (vs. just "a token
+   * exists"). `failed` = the provider rejected the token (e.g. invalid_grant).
+   */
+  async getOAuthHealth(integrationId: string): Promise<{
+    status: 'ok' | 'failed' | 'not_connected' | 'not_configured' | 'unverified';
+    error?: string;
+    account?: string;
+  }> {
+    try {
+      const res = await this.fetch(`/auth/oauth/${encodeURIComponent(integrationId)}/health`);
+      if (!res.ok) return { status: 'unverified' };
+      return await res.json();
+    } catch {
+      return { status: 'unverified' };
+    }
   }
 
   async getIntegrationManifests(): Promise<{ manifests: IntegrationManifest[] }> {

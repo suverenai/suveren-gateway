@@ -3,7 +3,7 @@ import { IntegrationCard } from '../components/IntegrationCard';
 import { useIntegrationStatus } from '../contexts/IntegrationStatusContext';
 
 export function IntegrationsPage() {
-  const { loading, mcpServerUp, entries, refresh } = useIntegrationStatus();
+  const { loading, mcpServerUp, manifestsError, entries, refresh } = useIntegrationStatus();
   const [successMsg, setSuccessMsg] = useState('');
 
   const showSuccess = useCallback((msg: string) => {
@@ -43,9 +43,20 @@ export function IntegrationsPage() {
           ))}
 
           {entries.length === 0 && (
-            <p style={{ color: 'var(--text-tertiary)', textAlign: 'center', marginTop: '2rem' }}>
-              No integration manifests found.
-            </p>
+            manifestsError ? (
+              <div className="status-banner status-banner-error">
+                <span className="status-banner-icon">!</span>
+                <span className="status-banner-text">
+                  Couldn't load integrations — the gateway can't reach its MCP server
+                  (or you're signed out). Check the control-plane's
+                  {' '}<code>SUVEREN_MCP_INTERNAL_URL</code> (dev MCP is :3431), then refresh.
+                </span>
+              </div>
+            ) : (
+              <p style={{ color: 'var(--text-tertiary)', textAlign: 'center', marginTop: '2rem' }}>
+                No integrations available yet.
+              </p>
+            )
           )}
         </>
       )}

@@ -7,7 +7,7 @@
  * Each request includes an X-Internal-Secret header for authentication.
  */
 
-const MCP_BASE = process.env.SUVEREN_MCP_INTERNAL_URL ?? 'http://127.0.0.1:3430';
+export const MCP_BASE = process.env.SUVEREN_MCP_INTERNAL_URL ?? 'http://127.0.0.1:3430';
 
 let internalSecret = '';
 

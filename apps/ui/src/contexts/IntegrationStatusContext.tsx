@@ -20,6 +20,8 @@ export interface IntegrationEntry {
 interface ContextValue {
   loading: boolean;
   mcpServerUp: boolean | null;
+  /** True when the manifests fetch itself failed (vs. genuinely zero manifests). */
+  manifestsError: boolean;
   entries: IntegrationEntry[];
   /** Count of entries that need user attention (not-running OR error). `starting` is excluded. */
   attentionCount: number;
@@ -40,6 +42,7 @@ interface RawState {
   integrations: McpIntegrationStatus[];
   activeSessions: number;
   mcpServerUp: boolean | null;
+  manifestsError: boolean;
   fetchCount: number;
 }
 
@@ -49,6 +52,7 @@ export function IntegrationStatusProvider({ children }: { children: ReactNode })
     integrations: [],
     activeSessions: 0,
     mcpServerUp: null,
+    manifestsError: false,
     fetchCount: 0,
   });
   // The first time we observed any not-running entry; used to decide
@@ -56,8 +60,9 @@ export function IntegrationStatusProvider({ children }: { children: ReactNode })
   const firstSeenStartingAt = useRef<number | null>(null);
 
   const refresh = useCallback(async () => {
+    let manifestsError = false;
     const [manifestsData, healthData] = await Promise.all([
-      spClient.getIntegrationManifests().catch(() => ({ manifests: [] })),
+      spClient.getIntegrationManifests().catch(() => { manifestsError = true; return { manifests: [] }; }),
       spClient.getMcpHealth().catch(() => null),
     ]);
     setRaw(prev => ({
@@ -65,6 +70,7 @@ export function IntegrationStatusProvider({ children }: { children: ReactNode })
       integrations: healthData?.integrations ?? prev.integrations,
       activeSessions: healthData?.activeSessions ?? prev.activeSessions,
       mcpServerUp: healthData ? true : false,
+      manifestsError,
       fetchCount: prev.fetchCount + 1,
     }));
   }, []);
@@ -125,6 +131,7 @@ export function IntegrationStatusProvider({ children }: { children: ReactNode })
   const value: ContextValue = {
     loading: raw.fetchCount === 0,
     mcpServerUp: raw.mcpServerUp,
+    manifestsError: raw.manifestsError,
     entries,
     attentionCount,
     activeSessions: raw.activeSessions,
