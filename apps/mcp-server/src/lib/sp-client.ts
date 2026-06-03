@@ -194,9 +194,11 @@ export class SPClient {
    * Errors throw SPReceiptError with the structured `errors` array in `body`.
    */
   async postReceipt(data: {
-    attestationHash: string;
+    /** v0.5: the bare content address. The AS scopes the per-user storage key
+     *  server-side from this + the authenticated user. (`attestationHash` and
+     *  `path` are retired and rejected by v0.5 ASs.) */
+    boundsHash: string;
     profileId: string;
-    path: string;
     action: string;
     actionType?: string;
     executionContext: Record<string, unknown>;

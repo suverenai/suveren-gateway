@@ -62,10 +62,14 @@ async function executeCommitted(
   }
 
   try {
+    // v0.5: the receipt request uses the bare content address. proposal.frameHash
+    // is the per-user storage key `${boundsHash}:${userId}` (boundsHash is
+    // `sha256:<hex>`, exactly one colon), so the first two colon-segments are the
+    // boundsHash; a legacy bare frameHash already equals boundsHash.
+    const boundsHash = proposal.frameHash.split(':').slice(0, 2).join(':');
     await state.spClient.postReceipt({
-      attestationHash: proposal.frameHash,
+      boundsHash,
       profileId: proposal.profileId,
-      path: proposal.path,
       action: proposal.tool,
       actionType: proposalActionType,
       executionContext: proposal.executionContext,

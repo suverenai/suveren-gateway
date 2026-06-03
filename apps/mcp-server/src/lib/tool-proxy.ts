@@ -279,9 +279,11 @@ export function createGatedToolHandler(
           // this execution, the retry returns the original receipt rather than
           // double-counting against the authority's bounds.
           await state.spClient.postReceipt({
-            attestationHash: authHash,
+            // v0.5: send the bare content address; the AS reconstructs the
+            // per-user storage key. Fall back to frameHash only for legacy
+            // (pre-v0.4) records that predate bounds_hash.
+            boundsHash: auth.boundsHash ?? authHash,
             profileId: auth.profileId,
-            path: auth.path,
             action: tool.namespacedName,
             actionType,
             executionContext: { ...execution },
