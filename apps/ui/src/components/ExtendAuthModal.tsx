@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { spClient, type PendingItem, type GateContentEntry } from '../lib/sp-client';
 import { computeBoundsHashBrowser, computeContextHashBrowser, hashGateContent } from '../lib/frame';
+import { buildGateForwardArgs } from '../lib/gate-forward';
 import { profileDisplayName } from '../lib/profile-display';
 import type { AgentProfile } from '@hap/core';
 
@@ -113,14 +114,19 @@ export function ExtendAuthModal({ item, onClose, onSuccess }: Props) {
         ttl: selectedTTL,
       });
 
-      // 5. Push gate content to MCP
-      await spClient.pushGateContent({
-        boundsHash: result.bounds_hash ?? boundsHash,
-        contextHash,
-        context,
-        path: item.path,
-        gateContent: gateEntry.gateContent,
-      });
+      // 5. Push gate content to MCP. buildGateForwardArgs guarantees frameHash
+      // is included — the MCP server resolves the attestation at the AS by its
+      // per-user storage key, and boundsHash alone 404s. Shared with the create
+      // flow so the two can't diverge (this flow once omitted frameHash).
+      await spClient.pushGateContent(
+        buildGateForwardArgs(result, {
+          boundsHash,
+          contextHash,
+          context,
+          path: item.path,
+          gateContent: gateEntry.gateContent,
+        }),
+      );
 
       onSuccess();
     } catch (e) {

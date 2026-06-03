@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { spClient } from '../lib/sp-client';
 import { computeBoundsHashBrowser, computeContextHashBrowser, hashGateContent } from '../lib/frame';
+import { buildGateForwardArgs } from '../lib/gate-forward';
 import { StepIndicator } from '../components/StepIndicator';
 import { DomainBadge } from '../components/DomainBadge';
 import { profileDisplayName } from '../lib/profile-display';
@@ -215,13 +216,14 @@ export function AgentReviewPage() {
       // SP lookups. bounds_hash is the content fingerprint — same across users.
       const storageHash = result.frame_hash ?? result.bounds_hash ?? boundsHash;
       try {
-        await spClient.pushGateContent({
-          frameHash: storageHash,
-          boundsHash,
-          contextHash,
-          context: gateData.context,
-          gateContent: gateData.gateContent,
-        });
+        await spClient.pushGateContent(
+          buildGateForwardArgs(result, {
+            boundsHash,
+            contextHash,
+            context: gateData.context,
+            gateContent: gateData.gateContent,
+          }),
+        );
       } catch (pushErr) {
         // Gate content push failed — revoke the attestation so it doesn't orphan
         try {
