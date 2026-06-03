@@ -2001,6 +2001,111 @@ body.has-update-banner .main-content {
   border-color: #fff;
 }
 
+/* Small × to dismiss either bar. */
+.update-banner-x {
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.85);
+  cursor: pointer;
+  font-size: 1.15rem;
+  line-height: 1;
+  padding: 0 0.25rem;
+}
+.update-banner-x:hover { color: #fff; }
+
+/* Green "you're on the latest version" confirmation, shown after the reload. */
+.update-banner.is-live {
+  background: var(--success);
+}
+
+/* ── Updating overlay (blur the chrome, wait for the restart) ── */
+body.is-updating .top-nav,
+body.is-updating .sidebar,
+body.is-updating .main-content,
+body.is-updating .update-banner {
+  filter: blur(5px);
+  pointer-events: none;
+  user-select: none;
+}
+.update-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(17, 17, 17, 0.35);
+  padding: 1rem;
+}
+.update-overlay-card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  padding: 2rem 2.25rem;
+  max-width: 460px;
+  width: 100%;
+  text-align: center;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
+}
+.update-overlay-card h2 { margin: 0 0 0.6rem; font-size: 1.15rem; }
+.update-overlay-card p {
+  margin: 0 0 0.5rem;
+  font-size: 0.88rem;
+  color: var(--text-muted);
+  line-height: 1.55;
+}
+.update-spinner {
+  width: 2.25rem;
+  height: 2.25rem;
+  border: 3px solid var(--border);
+  border-top-color: var(--text-primary);
+  border-radius: 50%;
+  margin: 0 auto 1.1rem;
+  animation: update-spin 1s linear infinite;
+}
+@keyframes update-spin { to { transform: rotate(360deg); } }
+.update-cmd-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+  margin: 0.9rem 0;
+  text-align: left;
+}
+.update-cmd {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.78rem;
+  padding: 0.6rem 0.75rem;
+  background: #111;
+  color: #fff;
+  border-radius: 0.45rem;
+  font-family: 'SF Mono', 'Fira Code', 'Fira Mono', Menlo, Consolas, monospace;
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+.update-status {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin: 0.4rem 0 1.1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+}
+.update-pulse {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: var(--success);
+  animation: update-pulse 1.2s ease infinite;
+}
+@keyframes update-pulse { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
+.update-overlay-actions {
+  display: flex;
+  gap: 0.6rem;
+  justify-content: center;
+}
+
 /* ══════════════════════════════════════════════
    SEARCH & FILTER
    ══════════════════════════════════════════════ */

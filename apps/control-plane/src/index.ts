@@ -690,10 +690,20 @@ app.get('/health', async (req: Request, res: Response) => {
 // ─── Serve built UI ────────────────────────────────────────────────────────
 
 if (existsSync(UI_DIST)) {
-  app.use(express.static(UI_DIST));
+  // Hashed assets (Vite fingerprints them) may cache; the app shell must NOT,
+  // or a reload after an upgrade can be served a stale index.html pointing at
+  // old asset filenames — defeating the auto-reload-on-update flow.
+  app.use(express.static(UI_DIST, {
+    setHeaders: (res, filePath) => {
+      if (filePath.endsWith('index.html')) {
+        res.setHeader('Cache-Control', 'no-store, must-revalidate');
+      }
+    },
+  }));
 
-  // SPA fallback — serve index.html for unmatched routes
+  // SPA fallback — serve index.html for unmatched routes (also never cached).
   app.get('*', (_req: Request, res: Response) => {
+    res.setHeader('Cache-Control', 'no-store, must-revalidate');
     res.sendFile(join(UI_DIST, 'index.html'));
   });
 } else {
