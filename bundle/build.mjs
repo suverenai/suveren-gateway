@@ -89,14 +89,34 @@ if (existsSync(MANIFESTS_SRC)) {
 }
 
 // Ship the profile catalog. Docker `git clone`s hap-profiles into
-// /hap-profiles; for the npm bundle we resolve it from a sibling
-// checkout (HAP_PROFILES_DIR override always wins at runtime).
-const PROFILES_SRC = join(REPO_ROOT, '..', 'hap-profiles');
+// /hap-profiles; for the npm bundle we resolve it from HAP_PROFILES_SRC
+// (set by CI) or a sibling checkout (local dev). Without profiles the
+// gateway registers ZERO profiles and every gated action fails with
+// "Unknown profile" — so the guard below makes a missing source a hard
+// build error instead of a silently-empty package (the 0.2.8 bug).
+const PROFILES_SRC = process.env.HAP_PROFILES_SRC ?? join(REPO_ROOT, '..', 'hap-profiles');
 if (existsSync(PROFILES_SRC)) {
   cpSync(PROFILES_SRC, join(OUT, 'profiles'), {
     recursive: true,
     filter: (src) => !src.includes('/.git') && !src.includes('/test-results'),
   });
+}
+
+// ─── Guard: essential catalogs MUST be present, or fail the build ──────────
+// These ship empty only when a CI input is missing; a silent skip here once
+// published a profile-less package. Fail loudly instead.
+for (const [label, indexPath, hint] of [
+  ['profiles', join(OUT, 'profiles', 'index.json'),
+    `set HAP_PROFILES_SRC or check out hap-profiles next to the gateway (looked in ${PROFILES_SRC})`],
+  ['integration manifests', join(OUT, 'content', 'integrations', 'index.json'),
+    `expected ${MANIFESTS_SRC} to exist in-repo`],
+]) {
+  if (!existsSync(indexPath)) {
+    throw new Error(
+      `[bundle] Missing ${label}: ${indexPath} not found. The bundle would ship ` +
+      `incomplete and the gateway would reject every gated action. Fix: ${hint}.`,
+    );
+  }
 }
 
 // Copy bundle scaffold (CLI + production entry + scripts).

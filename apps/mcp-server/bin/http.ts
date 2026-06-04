@@ -469,11 +469,16 @@ app.all('/mcp', async (req: Request, res: Response) => {
 
 // ─── Health check ───────────────────────────────────────────────────────────
 
+// Number of profiles registered at startup. 0 means the gateway will reject
+// every gated action with "Unknown profile" — surfaced here for observability.
+let profilesLoaded = 0;
+
 app.get('/health', (_req: Request, res: Response) => {
   res.json({
     status: 'ok',
     transports: ['sse', 'streamable-http'],
     sp: spUrl,
+    profilesLoaded,
     activeSessions: activeSessions.size,
     storedGates: state.gateStore.getAll().length,
     serviceCredentials: Array.from(serviceCredentials.keys()),
@@ -621,7 +626,7 @@ app.listen(port, '0.0.0.0', () => {
   console.error(`[Suveren MCP]   SP server:  ${spUrl}`);
 
   // Load profiles and integration manifests before starting integrations
-  loadProfiles();
+  profilesLoaded = loadProfiles();
   loadManifests();
 
   // Auto-register personalDefault integrations on first boot (no integrations registered yet)

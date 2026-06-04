@@ -28,7 +28,7 @@ export function loadProfiles(profilesDir?: string): number {
   const indexPath = join(dir, 'index.json');
 
   if (!existsSync(indexPath)) {
-    console.error(`[ProfileLoader] No index.json found at ${indexPath}, skipping profile loading`);
+    warnNoProfiles(`No index.json at ${indexPath}`);
     return 0;
   }
 
@@ -59,6 +59,29 @@ export function loadProfiles(profilesDir?: string): number {
     }
   }
 
-  console.error(`[ProfileLoader] Loaded ${loaded} profile(s) from ${dir}`);
+  if (loaded === 0) {
+    warnNoProfiles(`index.json at ${indexPath} registered 0 profiles`);
+  } else {
+    console.error(`[ProfileLoader] Loaded ${loaded} profile(s) from ${dir}`);
+  }
   return loaded;
+}
+
+/**
+ * Loud, unmistakable warning when no profiles are registered. With zero
+ * profiles the Gatekeeper rejects EVERY gated action with "Unknown profile"
+ * (the 0.2.8 packaging bug). Make that obvious at startup, not only when a
+ * user's first action is silently refused.
+ */
+function warnNoProfiles(reason: string): void {
+  console.error(
+    '\n' +
+    '╔════════════════════════════════════════════════════════════════════╗\n' +
+    '║  ⚠  NO PROFILES LOADED — every gated action will be REJECTED with   ║\n' +
+    '║     "Unknown profile". This gateway is misconfigured.               ║\n' +
+    `║     Reason: ${reason}\n` +
+    '║     Fix: install a build that bundles profiles, or set              ║\n' +
+    '║     SUVEREN_PROFILES_DIR to a hap-profiles checkout, then restart.  ║\n' +
+    '╚════════════════════════════════════════════════════════════════════╝\n',
+  );
 }

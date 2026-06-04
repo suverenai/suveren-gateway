@@ -33,6 +33,14 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # Profile catalog (single source of truth) — required for the bundle to
+      # ship a non-empty profiles/ dir; build.mjs hard-fails without it.
+      - name: Check out profile catalog
+        uses: actions/checkout@v6
+        with:
+          repository: humanagencyprotocol/hap-profiles
+          path: .hap-profiles
+
       - uses: pnpm/action-setup@v6
         with:
           version: 9
@@ -50,6 +58,8 @@ jobs:
 
       - name: Assemble bundle
         run: node bundle/build.mjs
+        env:
+          HAP_PROFILES_SRC: ${{ github.workspace }}/.hap-profiles
 
       - name: Install bundle runtime deps
         working-directory: bundle/dist
@@ -69,6 +79,17 @@ jobs:
           # Give both child processes time to bind their ports.
           # On windows-latest the cold start is noticeably slower.
           sleep 5
+
+          # Functional check: the started bundle must actually LOAD profiles.
+          # An installable-but-empty bundle (the 0.2.8 bug) would log
+          # "skipping profile loading" and silently reject every gated action.
+          echo "::group::profiles loaded"
+          if grep -q "NO PROFILES LOADED" "${SUVEREN_DATA_DIR}/gateway.log"; then
+            echo "::error::Gateway loaded ZERO profiles — the bundle is missing the profile catalog."
+            exit 1
+          fi
+          grep "Loaded .* profile(s)" "${SUVEREN_DATA_DIR}/gateway.log" || { echo "::error::No profile-load line in gateway.log"; exit 1; }
+          echo "::endgroup::"
 
           echo "::group::probes"
           curl -fsS -o /dev/null -w 'GET /         -> %{http_code} (%{size_download} bytes)\n' http://localhost:3500/

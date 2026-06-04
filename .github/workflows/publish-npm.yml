@@ -20,6 +20,15 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # The npm bundle ships the profile catalog from hap-profiles (the single
+      # source of truth — not vendored). Without this, build.mjs ships empty
+      # profiles and the gateway rejects every gated action (the 0.2.8 bug).
+      - name: Check out profile catalog
+        uses: actions/checkout@v6
+        with:
+          repository: humanagencyprotocol/hap-profiles
+          path: .hap-profiles
+
       - uses: pnpm/action-setup@v6
         with:
           version: 9
@@ -44,6 +53,8 @@ jobs:
 
       - name: Assemble bundle
         run: node bundle/build.mjs
+        env:
+          HAP_PROFILES_SRC: ${{ github.workspace }}/.hap-profiles
 
       - name: Verify bundle version matches git tag
         run: |
