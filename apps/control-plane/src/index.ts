@@ -38,7 +38,7 @@ import { createVaultRouter } from './routes/vault';
 import { createAIRouter } from './routes/ai';
 import { createAIPromptsRouter } from './routes/ai-prompts';
 import { requireAuth, requireAuthQueryOrHeader } from './middleware/auth';
-import { pushGateContent, pushServiceCredentials, setInternalSecret, getManifests, getGateContent, MCP_BASE } from './lib/mcp-bridge';
+import { pushGateContent, pushServiceCredentials, setInternalSecret, getManifests, getGateContent, MCP_BASE, runCommittedProposals } from './lib/mcp-bridge';
 import { createMCPRouter } from './routes/mcp';
 import { createEncryptIntentRouter } from './routes/encrypt-intent';
 import { createDecryptIntentRouter } from './routes/decrypt-intent';
@@ -605,6 +605,9 @@ app.use(
           eventBus.emit('proposal-added');
         } else if (method === 'POST' && /^\/api\/proposals\/[^/]+\/resolve$/.test(path)) {
           eventBus.emit('proposal-resolved');
+          // Nudge the MCP executor so an approval sends near-instantly instead of
+          // waiting for the poll loop. Fire-and-forget; the poll is the fallback.
+          void runCommittedProposals().catch(() => {});
         } else if (method === 'POST' && /^\/api\/proposals\/[^/]+\/approve$/.test(path)) {
           eventBus.emit('proposal-approved');
         } else if (method === 'POST' && /^\/api\/proposals\/[^/]+\/reject$/.test(path)) {

@@ -243,6 +243,16 @@ app.post('/internal/start-pending-integrations', internalOnly, async (_req: Requ
   }
 });
 
+// Handle to the committed-proposal executor (defined in the post-listen block).
+// The control-plane calls /internal/run-committed right after a proposal
+// resolves so approve→send is near-instant instead of waiting for the poll.
+let triggerCommittedExecution: () => void = () => {};
+
+app.post('/internal/run-committed', internalOnly, (_req: Request, res: Response) => {
+  triggerCommittedExecution();
+  res.json({ ok: true });
+});
+
 app.post('/internal/resync-gates', internalOnly, async (_req: Request, res: Response) => {
   const gates = state.gateStore.getAll();
   if (gates.length === 0) {
@@ -712,4 +722,6 @@ app.listen(port, '0.0.0.0', () => {
   }
 
   setInterval(executeCommittedProposals, PROPOSAL_POLL_INTERVAL);
+  // Expose the executor for the control-plane's post-resolve nudge (fire-and-forget).
+  triggerCommittedExecution = () => { void executeCommittedProposals(); };
 });

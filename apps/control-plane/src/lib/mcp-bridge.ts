@@ -107,6 +107,18 @@ export async function resyncGates(): Promise<{ synced: number }> {
   return res.json() as Promise<{ synced: number }>;
 }
 
+/**
+ * Nudge the MCP server to execute any just-committed proposals immediately,
+ * so a human approval turns into a send without waiting for the poll loop.
+ * Fire-and-forget: the poll remains the fallback, so failures are non-fatal.
+ */
+export async function runCommittedProposals(): Promise<void> {
+  await fetch(`${MCP_BASE}/internal/run-committed`, {
+    method: 'POST',
+    headers: internalHeaders(),
+  });
+}
+
 // ─── Integration management ──────────────────────────────────────────────
 
 export async function getIntegrations(): Promise<unknown> {
