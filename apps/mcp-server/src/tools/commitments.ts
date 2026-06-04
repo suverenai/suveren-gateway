@@ -19,13 +19,14 @@
 import type { SharedState } from '../lib/shared-state';
 import type { IntegrationManager } from '../lib/integration-manager';
 import { SPReceiptError, type SPProposal } from '../lib/sp-client';
+import { appendVerificationFooter, shouldAttachFooter } from '../lib/receipt-footer';
 
 /**
  * Ask the SP for a signed receipt bound to the committed proposal, then
  * execute the stored tool call. The SP does the atomic committed→executed
  * transition; the gateway runs the tool only if the receipt was issued.
  */
-async function executeCommitted(
+export async function executeCommitted(
   proposal: SPProposal,
   state: SharedState,
   integrationManager: IntegrationManager | undefined,
@@ -61,13 +62,16 @@ async function executeCommitted(
     );
   }
 
+  // Receipt id captured here so the verification footer (Category-A profiles)
+  // can be embedded on the review-mode send too — not just automatic sends.
+  let receiptId: string | undefined;
   try {
     // v0.5: the receipt request uses the bare content address. proposal.frameHash
     // is the per-user storage key `${boundsHash}:${userId}` (boundsHash is
     // `sha256:<hex>`, exactly one colon), so the first two colon-segments are the
     // boundsHash; a legacy bare frameHash already equals boundsHash.
     const boundsHash = proposal.frameHash.split(':').slice(0, 2).join(':');
-    await state.spClient.postReceipt({
+    const { receipt } = await state.spClient.postReceipt({
       boundsHash,
       profileId: proposal.profileId,
       action: proposal.tool,
@@ -79,6 +83,7 @@ async function executeCommitted(
       proposalId: proposal.id,
       toolArgs: proposal.toolArgs,
     });
+    receiptId = typeof receipt?.id === 'string' ? receipt.id : undefined;
   } catch (err) {
     if (err instanceof SPReceiptError) {
       const code = (err.body.errors as Array<{ code?: string }> | undefined)?.[0]?.code;
@@ -98,9 +103,26 @@ async function executeCommitted(
     };
   }
 
-  // Receipt issued — now execute the tool.
+  // Receipt issued — now execute the tool, appending the verification footer
+  // (Category-A profiles) just like the automatic-send path does.
   try {
-    const result = await integrationManager.callTool(integrationId, toolName, proposal.toolArgs);
+    let outgoingArgs = proposal.toolArgs;
+    if (shouldAttachFooter() && receiptId) {
+      const discovered = integrationManager
+        .getAllTools()
+        .find(t => t.integrationId === integrationId && t.originalName === toolName);
+      if (discovered) {
+        outgoingArgs = appendVerificationFooter(discovered, proposal.toolArgs, receiptId);
+      }
+    }
+    const result = await integrationManager.callTool(integrationId, toolName, outgoingArgs);
+    // Record locally for cumulative tracking (parity with the automatic path).
+    state.executionLog.record({
+      profileId: proposal.profileId,
+      path: proposal.path,
+      execution: proposal.executionContext,
+      timestamp: Math.floor(Date.now() / 1000),
+    });
     const resultText = (result.content as Array<{ text: string }>)?.[0]?.text ?? JSON.stringify(result);
     return { text: `Proposal ${proposal.id} committed and executed.\nResult: ${resultText}` };
   } catch (err) {

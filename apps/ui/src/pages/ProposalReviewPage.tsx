@@ -67,23 +67,21 @@ export function ProposalReviewPage() {
   useSSEEvent('proposal-resolved', fetchMyProposals);
   useVisiblePolling(fetchMyProposals, 30_000, domain);
 
-  // Awaiting others: proposals where I'm in pendingApprovers + have already approved,
-  // but other approvers haven't. Also show domain-based proposals I authored.
-  const awaitingOthers = useMemo(() => {
-    const result: Proposal[] = [];
-    // From domain proposals (legacy within-cap review mode).
-    for (const p of myProposals) {
-      if (p.status === 'pending') result.push(p);
-    }
-    // From above-cap proposals: I approved but others haven't.
-    for (const p of approverProposals) {
-      // approverProposals only contains proposals where I haven't approved yet.
-      // So "awaiting others" would be proposals not in this list where I'm in approvedBy.
-      // We fetch those via a separate scan below.
-      void p; // handled in awaitingOthersAboveCap below
-    }
-    return result;
-  }, [myProposals, approverProposals]);
+  // Review-mode (domain-scoped) proposals I'm responsible for approving: pending
+  // proposals in MY domain queue with no Phase-6 above-cap approver list — i.e.
+  // the "Send with Review" flow. These belong in "Awaiting me" (I'm the domain
+  // owner/reviewer), NOT "Awaiting others". Above-cap proposals (pendingApprovers
+  // set) are surfaced separately via approverProposals.
+  const pendingDomainProposals = useMemo(
+    () => myProposals.filter(
+      p => p.status === 'pending' && (p.pendingApprovers?.length ?? 0) === 0,
+    ),
+    [myProposals],
+  );
+  const awaitingMeDomainItems = useMemo(
+    () => aggregateThread(pendingDomainProposals, [], { status: 'pending' }),
+    [pendingDomainProposals],
+  );
 
   // Phase 6: Above-cap proposals where I already approved but others haven't yet.
   const [approvedByMeStillPending, setApprovedByMeStillPending] = useState<Proposal[]>([]);
@@ -160,7 +158,9 @@ export function ProposalReviewPage() {
       const resolveDomain = domain || 'owner';
       const result = await spClient.resolveProposal(id, action, resolveDomain);
       setMessage(action === 'commit' ? `Action approved. Status: ${result.status}` : 'Action rejected.');
-      await fetchThread();
+      // Refresh the All thread AND the awaiting-me domain queue so a just-approved
+      // review-mode proposal leaves the "Awaiting me" tab immediately.
+      await Promise.all([fetchThread(), fetchMyProposals()]);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : 'Failed');
     } finally {
@@ -191,20 +191,23 @@ export function ProposalReviewPage() {
   }, [fetchApproverProposals, fetchApprovedByMe]);
 
   // ─── Combined awaiting-others list ────────────────────────────────────
+  // Genuinely "awaiting others" = above-cap proposals I already approved that
+  // are still pending on other approvers. Review-mode domain proposals are NOT
+  // here — they're mine to approve and live under "Awaiting me".
   const awaitingOthersAll = useMemo(() => {
     const seen = new Set<string>();
     const result: Proposal[] = [];
-    for (const p of [...approvedByMeStillPending, ...awaitingOthers]) {
+    for (const p of approvedByMeStillPending) {
       if (!seen.has(p.id)) {
         seen.add(p.id);
         result.push(p);
       }
     }
     return result.sort((a, b) => b.createdAt - a.createdAt);
-  }, [approvedByMeStillPending, awaitingOthers]);
+  }, [approvedByMeStillPending]);
 
   // Badge counts for tab headers
-  const awaitingMeCount = approverProposals.length;
+  const awaitingMeCount = approverProposals.length + awaitingMeDomainItems.length;
   const awaitingOthersCount = awaitingOthersAll.length;
 
   return (
@@ -241,22 +244,33 @@ export function ProposalReviewPage() {
       {/* ─── Awaiting me ────────────────────────────────────────────── */}
       {queueTab === 'awaiting-me' && (
         <>
-          {approverLoading && approverProposals.length === 0 ? (
+          {approverLoading && awaitingMeCount === 0 ? (
             <p style={{ color: 'var(--text-tertiary)' }}>Loading...</p>
-          ) : approverProposals.length === 0 ? (
+          ) : awaitingMeCount === 0 ? (
             <div className="card" style={{ textAlign: 'center', padding: '2rem' }}>
               <p style={{ color: 'var(--text-tertiary)', marginBottom: '0.5rem' }}>
                 No actions awaiting your approval.
               </p>
               <p style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>
-                Above-cap actions under authorities you are an approver for will appear here.
+                Review-mode actions and above-cap actions you must approve will appear here.
               </p>
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              {approverMessage && (
-                <div className="alert alert-success">{approverMessage}</div>
+              {(approverMessage || message) && (
+                <div className="alert alert-success">{approverMessage || message}</div>
               )}
+              {/* Review-mode ("Send with Review") proposals I must approve. */}
+              {awaitingMeDomainItems.map(item => (
+                <ActionCard
+                  key={item.id}
+                  item={item}
+                  onApprove={(id) => handleResolve(id, 'commit')}
+                  onReject={(id) => handleResolve(id, 'reject')}
+                  resolving={resolving === item.id}
+                />
+              ))}
+              {/* Above-cap proposals where I'm a required approver. */}
               {approverProposals.map(proposal => (
                 <ApproverProposalCard
                   key={proposal.id}
