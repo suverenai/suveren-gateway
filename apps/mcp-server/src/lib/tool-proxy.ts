@@ -12,6 +12,7 @@
 import type { IntegrationManager, DiscoveredTool } from './integration-manager';
 import type { SharedState, EnrichedAuthorization } from './shared-state';
 import { SPReceiptError } from './sp-client';
+import { appendVerificationFooter, shouldAttachFooter } from './receipt-footer';
 import { readFile } from 'node:fs/promises';
 import { extname } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -263,6 +264,10 @@ export function createGatedToolHandler(
         // without action_type, we log a warning and send undefined; the
         // SP's generic action.split('_')[0] fallback is a last-resort
         // guard but is never expected to fire in practice.
+        // Receipt id captured pre-flight, used to embed a verification link in
+        // the outgoing content (Category-A profiles). Hoisted so it's in scope
+        // after the try/catch where the downstream call happens.
+        let receiptId: string | undefined;
         try {
           const actionType =
             typeof execution.action_type === 'string' ? execution.action_type : undefined;
@@ -278,7 +283,7 @@ export function createGatedToolHandler(
           // transient failure hides the AS response after it already counted
           // this execution, the retry returns the original receipt rather than
           // double-counting against the authority's bounds.
-          await state.spClient.postReceipt({
+          const { receipt } = await state.spClient.postReceipt({
             // v0.5: send the bare content address; the AS reconstructs the
             // per-user storage key. Fall back to frameHash only for legacy
             // (pre-v0.4) records that predate bounds_hash.
@@ -290,6 +295,7 @@ export function createGatedToolHandler(
             amount: typeof execution.amount === 'number' ? execution.amount : undefined,
             idempotencyKey: randomUUID(),
           });
+          receiptId = typeof receipt?.id === 'string' ? receipt.id : undefined;
         } catch (err) {
           if (err instanceof SPReceiptError && err.statusCode === 409) {
             // P8.2: SP returned approval_required — this action exceeds the team cap
@@ -392,8 +398,13 @@ export function createGatedToolHandler(
           timestamp: Math.floor(Date.now() / 1000),
         });
 
-        // Authorization verified — proxy the call
-        return integrationManager.callTool(tool.integrationId, tool.originalName, args);
+        // Authorization verified — append the verification footer (Category-A
+        // communicative profiles only) and proxy the call.
+        const outgoingArgs =
+          shouldAttachFooter() && receiptId
+            ? appendVerificationFooter(tool, args, receiptId)
+            : args;
+        return integrationManager.callTool(tool.integrationId, tool.originalName, outgoingArgs);
       }
 
       // Collect rejection reasons
