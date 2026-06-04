@@ -64,10 +64,8 @@ function stripFooter(value: string): string {
 
 /**
  * Return a copy of `args` with the verification footer appended to the detected
- * content field. Returns `args` unchanged when no footer applies:
- *  - the tool's profile isn't Category A, or
- *  - no content field is detected (e.g. `send_draft`), or
- *  - Gmail `raw` is present (it overrides the structured body — can't inject).
+ * content field. Returns `args` unchanged when no footer applies: the tool's
+ * profile isn't Category A, or no content field is detected (e.g. `send_draft`).
  */
 export function appendVerificationFooter(
   tool: DiscoveredTool,
@@ -76,14 +74,6 @@ export function appendVerificationFooter(
 ): Record<string, unknown> {
   const profile = tool.gating?.profile;
   if (!profile || !FOOTER_PROFILES.has(profile)) return args;
-
-  // Gmail `raw` (base64url RFC822) bypasses the structured body — skip + log.
-  if (typeof args.raw === 'string' && args.raw.trim().length > 0) {
-    console.error(
-      `[Suveren MCP] ${tool.namespacedName}: 'raw' message present — skipping verification footer.`,
-    );
-    return args;
-  }
 
   const field = detectContentField(tool);
   if (!field) return args;

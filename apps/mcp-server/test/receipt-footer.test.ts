@@ -73,10 +73,10 @@ describe('appendVerificationFooter', () => {
     }
   });
 
-  it('skips when Gmail `raw` is present (overrides the structured body)', () => {
-    const args = { raw: 'BASE64RFC822', body: 'ignored' };
-    const out = appendVerificationFooter(tool('email', { raw: STRING, body: STRING }), args, 'r7');
-    expect(out).toBe(args);
+  it('does not special-case Gmail `raw` — footer still appends to body (harmless: downstream ignores body when raw is set)', () => {
+    const out = appendVerificationFooter(tool('email', { raw: STRING, body: STRING }), { raw: 'BASE64RFC822', body: 'hi' }, 'r7');
+    expect(out.body).toContain(MARKER);
+    expect(out.raw).toBe('BASE64RFC822'); // raw untouched
   });
 
   it('no footer when there is no detectable content field (e.g. send_draft)', () => {
