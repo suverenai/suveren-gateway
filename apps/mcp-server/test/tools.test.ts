@@ -267,9 +267,11 @@ describe('createGatedToolHandler — SP receipt integration', () => {
 
     expect(postReceipt).toHaveBeenCalledOnce();
     expect(postReceipt).toHaveBeenCalledWith(expect.objectContaining({
-      attestationHash: 'sha256:abc',
+      // v0.5 wire contract: the lookup key is the bare `boundsHash` (falls back
+      // to the cached frameHash when no separate boundsHash is set).
+      // `attestationHash` and `path` are retired and MUST NOT be sent.
+      boundsHash: 'sha256:abc',
       profileId: 'github.com/humanagencyprotocol/hap-profiles/charge@0.3',
-      path: 'charge-routine',
       // `action` is the namespaced tool name (the SP uses it for the review-mode
       // PROPOSAL_MISMATCH equality check), not the short profile name.
       action: 'stripe__stripe_charge',

@@ -642,8 +642,10 @@ app.listen(port, '0.0.0.0', () => {
   profilesLoaded = loadProfiles();
   loadManifests();
 
-  // Auto-register personalDefault integrations on first boot (no integrations registered yet)
-  if (integrationRegistry.getEnabled().length === 0) {
+  // Auto-register personalDefault integrations on first boot (no integrations
+  // registered yet). SUVEREN_DISABLE_AUTO_INTEGRATIONS=1 skips it — tests want a
+  // clean slate without the npm-install cost of crm/records.
+  if (process.env.SUVEREN_DISABLE_AUTO_INTEGRATIONS !== '1' && integrationRegistry.getEnabled().length === 0) {
     const personalManifests = getAllManifests().filter(m => m.personalDefault);
     for (const manifest of personalManifests) {
       // Build envKeys / optionalEnvKeys from manifest credential fields

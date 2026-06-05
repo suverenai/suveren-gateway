@@ -101,6 +101,9 @@ describe('MCP Gateway', () => {
         // Use a temp data dir so we don't pollute real config
         SUVEREN_DATA_DIR: resolve(__dirname, '../.test-data'),
         SUVEREN_PROFILES_DIR: TEST_PROFILES_DIR,
+        // Clean slate: don't auto-register/install the crm+records personal
+        // defaults (the suite asserts an empty integration list and add/remove).
+        SUVEREN_DISABLE_AUTO_INTEGRATIONS: '1',
       },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -109,8 +112,11 @@ describe('MCP Gateway', () => {
       process.stderr.write(`  [server] ${data.toString()}`);
     });
 
-    await waitForServer(BASE_URL);
-  }, 15000);
+    await waitForServer(BASE_URL, 50000);
+    // Generous hook budget: spawning `npx tsx bin/http.ts` cold-starts tsx and
+    // boots the MCP server + integration manager, which can exceed a tight 15s
+    // on a loaded machine (the source of this suite's intermittent failures).
+  }, 60000);
 
   afterAll(async () => {
     if (serverProcess) {
