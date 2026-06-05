@@ -23,7 +23,6 @@ beforeAll(() => {
     requiredGates: [],
     ttl: { default: 1, max: 1 },
     retention_minimum: 1,
-    // @ts-expect-error installed @hap/core type predates content_binding (0.5.1)
     content_binding: { version: '1', kind: 'jcs' },
   });
   registerProfile(PLAIN_PROFILE, {
