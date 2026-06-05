@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect } from 'react';
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { spClient, type ExecutionReceipt } from '../lib/sp-client';
 import { profileDisplayName } from '../lib/profile-display';
 import { ProfileBadge } from '../components/ProfileBadge';
@@ -33,6 +33,14 @@ function matchesSearch(receipt: ExecutionReceipt, query: string): boolean {
   );
 }
 
+/** Merge receipts by id, newest first — so polling adds new receipts without
+ *  dropping older windows the user loaded via "Load older". */
+function mergeReceipts(prev: ExecutionReceipt[], incoming: ExecutionReceipt[]): ExecutionReceipt[] {
+  const byId = new Map(prev.map(r => [r.id, r]));
+  for (const r of incoming) byId.set(r.id, r);
+  return [...byId.values()].sort((a, b) => b.timestamp - a.timestamp);
+}
+
 export function AuditPage() {
   const { activeTeam, groupId } = useAuth();
   const isAdmin = activeTeam?.isAdmin === true;
@@ -52,20 +60,51 @@ export function AuditPage() {
   const [timeRange, setTimeRange] = useState<TimeRange>('all');
   const [filtersOpen, setFiltersOpen] = useState(false);
 
-  const fetchReceipts = useCallback(() => {
-    setLoading(true);
-    if (viewTab === 'team' && isAdmin && groupId) {
-      spClient.listTeamReceipts(groupId)
-        .then(setReceipts)
-        .catch(() => setReceipts([]))
-        .finally(() => setLoading(false));
-    } else {
-      spClient.getMyReceipts({ limit: 200 })
-        .then(setReceipts)
-        .catch(() => {})
-        .finally(() => setLoading(false));
-    }
+  // Pagination cursor for "Load older" (null = no older receipts within range).
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+  // Tracks the current tab/group so a context switch replaces (not merges) data.
+  const ctxRef = useRef<string>('');
+
+  const fetchPage = useCallback((before?: string) => {
+    return viewTab === 'team' && isAdmin && groupId
+      ? spClient.listTeamReceiptsPage(groupId, { before, limit: 200 })
+      : spClient.getMyReceiptsPage({ before, limit: 200 });
   }, [viewTab, isAdmin, groupId]);
+
+  const fetchReceipts = useCallback(() => {
+    const ctx = viewTab === 'team' ? `team:${groupId}` : 'mine';
+    const fresh = ctxRef.current !== ctx; // tab/group switch → replace, not merge
+    ctxRef.current = ctx;
+    setLoading(true);
+    setLoadError(false);
+    fetchPage()
+      .then(page => {
+        setReceipts(prev => (fresh ? page.receipts : mergeReceipts(prev, page.receipts)));
+        setCursor(prev => (fresh ? page.nextBefore : prev ?? page.nextBefore));
+      })
+      .catch(() => {
+        if (fresh) setReceipts([]);
+        // Surface the failure instead of rendering an empty list as if there
+        // were simply no receipts (the prior silent .catch hid auth/AS errors).
+        setLoadError(true);
+      })
+      .finally(() => setLoading(false));
+  }, [fetchPage, viewTab, groupId]);
+
+  const loadOlder = useCallback(() => {
+    if (!cursor || loadingMore) return;
+    setLoadingMore(true);
+    setLoadError(false);
+    fetchPage(cursor)
+      .then(page => {
+        setReceipts(prev => mergeReceipts(prev, page.receipts));
+        setCursor(page.nextBefore);
+      })
+      .catch(() => setLoadError(true))
+      .finally(() => setLoadingMore(false));
+  }, [cursor, loadingMore, fetchPage]);
 
   useVisiblePolling(fetchReceipts, 120_000);
 
@@ -315,14 +354,22 @@ export function AuditPage() {
         </div>
       )}
 
+      {loadError && (
+        <div className="card" style={{ borderColor: 'var(--danger, #c0392b)', marginBottom: '0.75rem' }}>
+          <span style={{ color: 'var(--danger, #c0392b)', fontSize: '0.85rem' }}>
+            Couldn&rsquo;t load receipts &mdash; your session may have expired. Try signing out and back in.
+          </span>
+        </div>
+      )}
+
       {loading && receipts.length === 0 ? (
         <p style={{ color: 'var(--text-tertiary)' }}>Loading...</p>
       ) : filtered.length === 0 ? (
         <EmptyState
           icon={'\u2315'}
-          title={receipts.length === 0 ? 'No receipts yet' : 'No matching receipts'}
+          title={receipts.length === 0 ? 'No receipts in the last 30 days' : 'No matching receipts'}
           text={receipts.length === 0
-            ? 'Execution receipts will appear here after an agent uses an authorized tool.'
+            ? 'Execution receipts appear here after an agent uses an authorized tool. Older receipts can be loaded below.'
             : 'Try adjusting your search or filters.'}
         />
       ) : (
@@ -380,6 +427,14 @@ export function AuditPage() {
             ))}
           </div>
         </>
+      )}
+
+      {cursor && (
+        <div style={{ textAlign: 'center', marginTop: '1rem' }}>
+          <button className="btn btn-secondary btn-sm" onClick={loadOlder} disabled={loadingMore}>
+            {loadingMore ? 'Loading…' : 'Load older'}
+          </button>
+        </div>
       )}
     </>
   );

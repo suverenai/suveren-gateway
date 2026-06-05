@@ -200,6 +200,13 @@ export interface ExecutionReceipt {
   proposalId?: string;
 }
 
+/** A window of receipts plus a cursor for loading the next (older) window. */
+export interface ReceiptPage {
+  receipts: ExecutionReceipt[];
+  /** Pass back as `before` to load older receipts; null when none remain. */
+  nextBefore: string | null;
+}
+
 /**
  * Per-profile team configuration (admin-set).
  * Mirrors suveren-as/src/lib/profile-config-store.ts — do not import from there.
@@ -913,6 +920,36 @@ class SPClient {
     if (!res.ok) throw new Error(`Failed to fetch team receipts: ${res.status}`);
     const data = await res.json();
     return data.receipts ?? [];
+  }
+
+  /**
+   * Paged receipts for the audit view. The SP walks a window of days backward
+   * from `before` (a YYYY-MM-DD cursor) and returns `nextBefore` for "Load
+   * older" — null once the history floor is reached. Without `before` it
+   * returns the most recent window.
+   */
+  async getMyReceiptsPage(options?: { before?: string; profile?: string; limit?: number }): Promise<ReceiptPage> {
+    const params = new URLSearchParams();
+    if (options?.before) params.set('before', options.before);
+    if (options?.profile) params.set('profile', options.profile);
+    if (options?.limit) params.set('limit', String(options.limit));
+    const qs = params.toString();
+    const res = await this.fetch(`/api/receipts/mine${qs ? '?' + qs : ''}`);
+    if (!res.ok) throw new Error(`Failed to fetch receipts: ${res.status}`);
+    const data = await res.json();
+    return { receipts: data.receipts ?? [], nextBefore: data.nextBefore ?? null };
+  }
+
+  async listTeamReceiptsPage(groupId: string, options?: { before?: string; profile?: string; limit?: number }): Promise<ReceiptPage> {
+    const params = new URLSearchParams();
+    if (options?.before) params.set('before', options.before);
+    if (options?.profile) params.set('profile', options.profile);
+    if (options?.limit) params.set('limit', String(options.limit));
+    const qs = params.toString();
+    const res = await this.fetch(`/api/groups/${encodeURIComponent(groupId)}/receipts${qs ? '?' + qs : ''}`);
+    if (!res.ok) throw new Error(`Failed to fetch team receipts: ${res.status}`);
+    const data = await res.json();
+    return { receipts: data.receipts ?? [], nextBefore: data.nextBefore ?? null };
   }
 
   // ─── Action Thread (homepage feed) ──────────────────────────────────────
