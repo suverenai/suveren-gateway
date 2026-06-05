@@ -47,6 +47,12 @@ describe('appendVerificationFooter', () => {
     expect(out.description).toBe('Article blurb'); // untouched
   });
 
+  it('falls back to `content` when no body/text/description (publish under a content-field tool)', () => {
+    const out = appendVerificationFooter(tool('publish', { content: STRING, title: STRING }, 'create_record'), { content: 'Body', title: 'T' }, 'r4b');
+    expect(out.content).toContain(`${MARKER}. Verify: https://www.suveren.ai/r/r4b`);
+    expect(out.title).toBe('T'); // untouched
+  });
+
   it('is idempotent — re-applying does not stack footers', () => {
     const t = tool('email', { body: STRING }, 'send_message');
     const once = appendVerificationFooter(t, { body: 'Hi' }, 'r5');

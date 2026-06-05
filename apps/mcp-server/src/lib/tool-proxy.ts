@@ -13,6 +13,7 @@ import type { IntegrationManager, DiscoveredTool } from './integration-manager';
 import type { SharedState, EnrichedAuthorization } from './shared-state';
 import { SPReceiptError } from './sp-client';
 import { appendVerificationFooter, shouldAttachFooter } from './receipt-footer';
+import { computeContentBinding, attachReceiptId } from './content-binding';
 import { readFile } from 'node:fs/promises';
 import { extname } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -283,6 +284,9 @@ export function createGatedToolHandler(
           // transient failure hides the AS response after it already counted
           // this execution, the retry returns the original receipt rather than
           // double-counting against the authority's bounds.
+          // v0.5 Content Provenance: if the profile declares content_binding,
+          // hash the agent's content (pre-footer `args`) and send the hash only.
+          const binding = computeContentBinding(auth.profileId, tool, args);
           const { receipt } = await state.spClient.postReceipt({
             // v0.5: send the bare content address; the AS reconstructs the
             // per-user storage key. Fall back to frameHash only for legacy
@@ -294,6 +298,7 @@ export function createGatedToolHandler(
             executionContext: { ...execution },
             amount: typeof execution.amount === 'number' ? execution.amount : undefined,
             idempotencyKey: randomUUID(),
+            ...(binding ?? {}),
           });
           receiptId = typeof receipt?.id === 'string' ? receipt.id : undefined;
         } catch (err) {
@@ -398,12 +403,14 @@ export function createGatedToolHandler(
           timestamp: Math.floor(Date.now() / 1000),
         });
 
-        // Authorization verified — append the verification footer (Category-A
-        // communicative profiles only) and proxy the call.
-        const outgoingArgs =
+        // Authorization verified. Append the verification footer (Category-A
+        // communicative profiles) and/or the store receipt_id (Category-B
+        // structured stores that declare the field) to the outgoing call.
+        let outgoingArgs =
           shouldAttachFooter() && receiptId
             ? appendVerificationFooter(tool, args, receiptId)
             : args;
+        if (receiptId) outgoingArgs = attachReceiptId(tool, outgoingArgs, receiptId);
         return integrationManager.callTool(tool.integrationId, tool.originalName, outgoingArgs);
       }
 

@@ -20,6 +20,7 @@ import type { SharedState } from '../lib/shared-state';
 import type { IntegrationManager } from '../lib/integration-manager';
 import { SPReceiptError, type SPProposal } from '../lib/sp-client';
 import { appendVerificationFooter, shouldAttachFooter } from '../lib/receipt-footer';
+import { computeContentBinding, attachReceiptId } from '../lib/content-binding';
 
 /**
  * Ask the SP for a signed receipt bound to the committed proposal, then
@@ -42,6 +43,12 @@ export async function executeCommitted(
   }
   const integrationId = proposal.tool.slice(0, sep);
   const toolName = proposal.tool.slice(sep + 2);
+
+  // Resolve the downstream tool once — used for the content binding (text kind
+  // needs the tool's schema) and the verification footer below.
+  const discovered = integrationManager
+    .getAllTools()
+    .find(t => t.integrationId === integrationId && t.originalName === toolName);
 
   // Request a signed receipt FIRST — this atomically transitions the
   // proposal to executed. If another path (e.g. the background loop) has
@@ -71,6 +78,9 @@ export async function executeCommitted(
     // `sha256:<hex>`, exactly one colon), so the first two colon-segments are the
     // boundsHash; a legacy bare frameHash already equals boundsHash.
     const boundsHash = proposal.frameHash.split(':').slice(0, 2).join(':');
+    // v0.5 Content Provenance: hash the approved content (proposal.toolArgs is
+    // the pre-footer content captured at proposal time) when the profile binds.
+    const binding = computeContentBinding(proposal.profileId, discovered, proposal.toolArgs);
     const { receipt } = await state.spClient.postReceipt({
       boundsHash,
       profileId: proposal.profileId,
@@ -82,6 +92,7 @@ export async function executeCommitted(
         : undefined,
       proposalId: proposal.id,
       toolArgs: proposal.toolArgs,
+      ...(binding ?? {}),
     });
     receiptId = typeof receipt?.id === 'string' ? receipt.id : undefined;
   } catch (err) {
@@ -107,13 +118,11 @@ export async function executeCommitted(
   // (Category-A profiles) just like the automatic-send path does.
   try {
     let outgoingArgs = proposal.toolArgs;
-    if (shouldAttachFooter() && receiptId) {
-      const discovered = integrationManager
-        .getAllTools()
-        .find(t => t.integrationId === integrationId && t.originalName === toolName);
-      if (discovered) {
-        outgoingArgs = appendVerificationFooter(discovered, proposal.toolArgs, receiptId);
+    if (discovered && receiptId) {
+      if (shouldAttachFooter()) {
+        outgoingArgs = appendVerificationFooter(discovered, outgoingArgs, receiptId);
       }
+      outgoingArgs = attachReceiptId(discovered, outgoingArgs, receiptId);
     }
     const result = await integrationManager.callTool(integrationId, toolName, outgoingArgs);
     // Record locally for cumulative tracking (parity with the automatic path).

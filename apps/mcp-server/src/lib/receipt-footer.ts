@@ -21,8 +21,13 @@ const AS_BASE = (process.env.SUVEREN_AS_URL ?? 'https://www.suveren.ai').replace
 /** Communicative profiles — the only ones that get a footer. */
 const FOOTER_PROFILES = new Set(['email', 'calendar', 'publish']);
 
-/** Content field auto-detection: first string property among these, in order. */
-const CONTENT_FIELD_CANDIDATES = ['body', 'text', 'description'];
+/**
+ * Content field auto-detection: first string property among these, in order.
+ * `body`/`text`/`description` cover the live Category-A integrations
+ * (gmail=body, linkedin=text, calendar=description); `content` is a common
+ * fallback name and is last so the more specific names always win.
+ */
+const CONTENT_FIELD_CANDIDATES = ['body', 'text', 'description', 'content'];
 
 /** Stable marker so a prior footer can be found and replaced. */
 const FOOTER_MARKER = '— Sent by an AI agent via Suveren';
@@ -44,8 +49,12 @@ function isStringType(t: unknown): boolean {
   return t === 'string' || (Array.isArray(t) && t.includes('string'));
 }
 
-/** The arg that holds user-facing content, from the tool's input schema. */
-function detectContentField(tool: DiscoveredTool): string | null {
+/**
+ * The arg that holds user-facing content, from the tool's input schema.
+ * Exported so content binding (`kind:"text"`) resolves the SAME field the
+ * footer appends to — one resolver, no drift between the two.
+ */
+export function detectContentField(tool: DiscoveredTool): string | null {
   const schema = tool.inputSchema as { properties?: Record<string, { type?: unknown }> } | undefined;
   const props = schema?.properties ?? {};
   for (const candidate of CONTENT_FIELD_CANDIDATES) {

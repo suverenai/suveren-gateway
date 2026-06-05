@@ -214,6 +214,15 @@ export class SPClient {
      * it we fall back to a single attempt (retrying blind would double-count).
      */
     idempotencyKey?: string;
+    /**
+     * v0.5 Content Provenance (optional). A content fingerprint the Gatekeeper
+     * computed from the action's content per the profile's content_binding. The
+     * AS signs it into the receipt verbatim and NEVER receives the content
+     * itself — only this hash. Omitted when the profile declares no binding.
+     */
+    contentHash?: string;
+    /** How to reproduce {@link contentHash}. Required iff contentHash is set. */
+    contentBinding?: { version: string; kind: 'jcs' | 'text' };
   }): Promise<{ receipt: Record<string, unknown> }> {
     const body = JSON.stringify(data);
     // Retries are only safe when the AS can dedup them. No key → one shot.
