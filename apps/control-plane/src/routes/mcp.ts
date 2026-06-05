@@ -68,7 +68,7 @@ export function createMCPRouter(): Router {
         res.status(404).json({ error: `No manifest found for integration "${req.params.id}"` });
         return;
       }
-      const data = await activateIntegration(manifest);
+      const data = await activateIntegration(manifest as Parameters<typeof activateIntegration>[0]);
       eventBus.emit('integration-changed');
       res.json(data);
     } catch (err) {

@@ -156,9 +156,11 @@ app.post('/internal/gate-content', internalOnly, async (req: Request, res: Respo
     // only for v0.3 compatibility where they're the same value.
     const storageHash = frameHash ?? boundsHash;
 
-    // v0.4: intent field. v0.3 compat: problem/objective/tradeoffs.
+    // v0.4: intent field. v0.3 compat: problem/objective/tradeoffs (not on the
+    // current GateContent type — read via a legacy cast).
     const hasIntent = !!gateContent?.intent;
-    const hasLegacy = !!gateContent?.problem && !!gateContent?.objective && !!gateContent?.tradeoffs;
+    const legacy = gateContent as { problem?: string; objective?: string; tradeoffs?: string } | undefined;
+    const hasLegacy = !!legacy?.problem && !!legacy?.objective && !!legacy?.tradeoffs;
     if (!storageHash || (!hasIntent && !hasLegacy)) {
       res.status(400).json({ error: 'Missing required fields: frameHash (or boundsHash), gateContent.{intent} or gateContent.{problem,objective,tradeoffs}' });
       return;

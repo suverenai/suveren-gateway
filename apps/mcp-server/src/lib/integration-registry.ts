@@ -130,16 +130,21 @@ export class IntegrationRegistry {
       // Migrate old format: toolGating.profile → profile
       const migrated = data.integrations.map(i => {
         if ('toolGating' in i && !('profile' in i)) {
-          const old = i as unknown as Record<string, unknown>;
-          const toolGating = old.toolGating as { profile?: string } | null;
+          // Legacy shape (pre-`profile`): the typed config narrows `i` to never
+          // in this branch, so read fields through a concrete legacy cast.
+          const old = i as unknown as {
+            id: string; name: string; command: string; args: string[];
+            envKeys: Record<string, string>; enabled: boolean;
+            toolGating?: { profile?: string } | null;
+          };
           const config: IntegrationConfig = {
-            id: i.id,
-            name: i.name,
-            command: i.command,
-            args: i.args,
-            envKeys: i.envKeys,
-            profile: toolGating?.profile ?? null,
-            enabled: i.enabled,
+            id: old.id,
+            name: old.name,
+            command: old.command,
+            args: old.args,
+            envKeys: old.envKeys,
+            profile: old.toolGating?.profile ?? null,
+            enabled: old.enabled,
           };
           return config;
         }

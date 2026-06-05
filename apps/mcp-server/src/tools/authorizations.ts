@@ -57,7 +57,9 @@ function buildCapabilityMap(
       const mappingDesc = Object.entries(override.executionMapping ?? {})
         .map(([arg, mapping]) => {
           if (typeof mapping === 'string') return `${mapping} from ${arg}`;
-          return `${mapping.field} from ${arg} (/${mapping.divisor})`;
+          if (Array.isArray(mapping)) return `${mapping.map(m => m.field).join('+')} from ${arg}`;
+          if ('divisor' in mapping) return `${mapping.field} from ${arg} (/${mapping.divisor})`;
+          return `${mapping.field} from ${arg}`;
         })
         .join(', ');
       const actionType = override.staticExecution?.action_type ?? 'unknown';

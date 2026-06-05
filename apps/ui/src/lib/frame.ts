@@ -24,6 +24,9 @@ export async function computeFrameHashBrowser(
   params: AgentFrameParams,
   profile: AgentProfile
 ): Promise<string> {
+  if (!profile.frameSchema) {
+    throw new Error('Profile is missing frameSchema; cannot compute frame hash');
+  }
   const lines = profile.frameSchema.keyOrder.map(
     (key) => `${key}=${String(params[key])}`
   );
