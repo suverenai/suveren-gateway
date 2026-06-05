@@ -10,20 +10,25 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ca-certific
 RUN corepack enable && corepack prepare pnpm@9 --activate
 
 WORKDIR /build
-COPY package.json pnpm-workspace.yaml tsconfig.base.json ./
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml tsconfig.base.json ./
 COPY packages/ packages/
 COPY apps/ apps/
 COPY bundle/ bundle/
+# Integration manifests — bundle/build.mjs bundles them (content/integrations).
+COPY content/ content/
 
-RUN pnpm install --frozen-lockfile 2>/dev/null || pnpm install
+RUN pnpm install --frozen-lockfile || pnpm install
 RUN pnpm build
 
-# Assemble the publishable bundle. Output: /build/bundle/dist/
-RUN node bundle/build.mjs
-
-# Pull profiles in the build stage so the production image needs no git.
+# Pull profiles BEFORE assembling the bundle — bundle/build.mjs copies the
+# profile catalog into the bundle, so /hap-profiles must already exist (else it
+# fails with "Missing profiles"). The clone is also reused by the production
+# stage, so the runtime image needs no git.
 RUN git clone --depth 1 https://github.com/humanagencyprotocol/hap-profiles.git /hap-profiles \
     && rm -rf /hap-profiles/.git
+
+# Assemble the publishable bundle, incl. the profile catalog. Output: /build/bundle/dist/
+RUN HAP_PROFILES_SRC=/hap-profiles node bundle/build.mjs
 
 # ─── Production stage ──────────────────────────────────────────────────────
 FROM node:22-slim AS production
