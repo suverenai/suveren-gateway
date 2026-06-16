@@ -159,6 +159,16 @@ export interface GateContentEntry {
   storedAt: string;
 }
 
+/** An active authorization enriched with its local context (scope). */
+export interface EnrichedAuthorizationEntry {
+  profileId: string;
+  frameHash: string;
+  bounds: Record<string, string | number>;
+  context: Record<string, string | number>;
+  intent: string | null;
+  deferredCommitmentDomains: string[];
+}
+
 export interface Proposal {
   id: string;
   frameHash: string;
@@ -1000,6 +1010,19 @@ class SPClient {
     if (!res.ok) throw new Error(`Failed to fetch gate content: ${res.status}`);
     const data = await res.json();
     return data.entry ?? null;
+  }
+
+  /**
+   * Enriched ACTIVE authorizations (the same set list-authorizations shows —
+   * cache-backed, no stale entries), each with its local context (scope). Used
+   * to compare a new grant's scope against existing grants at creation time.
+   * Context stays local (privacy-blind) — this never touches the AS.
+   */
+  async getEnrichedAuthorizations(): Promise<EnrichedAuthorizationEntry[]> {
+    const res = await this.fetch('/active-authorizations');
+    if (!res.ok) throw new Error(`Failed to fetch authorizations: ${res.status}`);
+    const data = await res.json();
+    return data.authorizations ?? [];
   }
 
   async pushGateContent(data: {

@@ -523,6 +523,22 @@ app.get('/internal/gate-content', internalOnly, (req: Request, res: Response) =>
   }
 });
 
+// Enriched active authorizations — the same active set list-authorizations
+// shows (cache-backed, so no stale gate entries), each carrying its local
+// context. Used by the UI to compare a new grant's scope against existing
+// ones at creation time. Context stays local — internalOnly, never the AS.
+app.get('/internal/authorizations', internalOnly, (_req: Request, res: Response) => {
+  const authorizations = state.getEnrichedAuthorizations().map(a => ({
+    profileId: a.profileId,
+    frameHash: a.frameHash,
+    bounds: a.frame,
+    context: a.context ?? {},
+    intent: a.gateContent?.intent ?? null,
+    deferredCommitmentDomains: a.deferredCommitmentDomains ?? [],
+  }));
+  res.json({ authorizations });
+});
+
 app.get('/internal/manifests', internalOnly, (_req: Request, res: Response) => {
   res.json({ manifests: getAllManifests() });
 });

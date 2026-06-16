@@ -38,7 +38,7 @@ import { createVaultRouter } from './routes/vault';
 import { createAIRouter } from './routes/ai';
 import { createAIPromptsRouter } from './routes/ai-prompts';
 import { requireAuth, requireAuthQueryOrHeader } from './middleware/auth';
-import { pushGateContent, pushServiceCredentials, setInternalSecret, getManifests, getGateContent, MCP_BASE, runCommittedProposals } from './lib/mcp-bridge';
+import { pushGateContent, pushServiceCredentials, setInternalSecret, getManifests, getGateContent, getEnrichedAuthorizations, MCP_BASE, runCommittedProposals } from './lib/mcp-bridge';
 import { createMCPRouter } from './routes/mcp';
 import { createEncryptIntentRouter } from './routes/encrypt-intent';
 import { createDecryptIntentRouter } from './routes/decrypt-intent';
@@ -486,6 +486,19 @@ app.get('/gate-content', authGuard, async (req: Request, res: Response) => {
   } catch (err) {
     console.error('[Control Plane] Gate content retrieval error:', err);
     res.status(500).json({ error: 'Failed to fetch gate content from MCP server' });
+  }
+});
+
+// Enriched active authorizations (with local context) — the UI uses this to
+// detect structural scope overlap when creating a grant. Path is deliberately
+// NOT `/authorizations` (that is the UI dashboard page route).
+app.get('/active-authorizations', authGuard, async (_req: Request, res: Response) => {
+  try {
+    const data = await getEnrichedAuthorizations();
+    res.json(data);
+  } catch (err) {
+    console.error('[Control Plane] Authorizations retrieval error:', err);
+    res.status(500).json({ error: 'Failed to fetch authorizations from MCP server' });
   }
 });
 
