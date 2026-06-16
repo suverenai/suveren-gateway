@@ -68,12 +68,14 @@ export class SharedState {
 
     return authorizations
       .map(auth => {
+        // Match gate content by the authorization's unique frameHash so two
+        // grants under the same profile keep their own intent. boundsHash and
+        // path are legacy (v0.3) fallbacks. The previous profileId-wide scan
+        // was removed — it cross-contaminated intent between grants.
         const gateEntry =
-          this.gateStore.get(auth.path) ??
-          this.gateStore.get(auth.profileId) ??
-          (auth.boundsHash ? this.gateStore.get(auth.boundsHash) : null) ??
           (auth.frameHash ? this.gateStore.get(auth.frameHash) : null) ??
-          this.gateStore.getAll().find(g => g.profileId === auth.profileId) ??
+          (auth.boundsHash ? this.gateStore.get(auth.boundsHash) : null) ??
+          this.gateStore.get(auth.path) ??
           null;
 
         return {

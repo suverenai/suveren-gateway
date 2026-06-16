@@ -180,8 +180,10 @@ app.post('/internal/gate-content', internalOnly, async (req: Request, res: Respo
       return;
     }
 
-    // Use provided path, or fall back to profile ID (v0.4: execution paths removed)
-    const path = rawPath || auth.profileId;
+    // Key gate content by frameHash (storageHash) so multiple grants under the
+    // same profile don't overwrite each other (v0.4 removed execution paths, so
+    // profileId is no longer a unique per-authorization key).
+    const path = rawPath || storageHash;
 
     // Store gate content (encrypted if vault key is set), passing v0.4 fields through
     state.setGateContent(path, storageHash, auth.profileId, gateContent, {
@@ -270,7 +272,7 @@ app.post('/internal/resync-gates', internalOnly, async (_req: Request, res: Resp
       const syncHash = gate.frameHash ?? gate.boundsHash;
       const auth = await state.cache.syncAuthorization(syncHash);
       if (auth) {
-        state.setGateContent(gate.path, syncHash, auth.profileId, gate.gateContent, {
+        state.setGateContent(syncHash, syncHash, auth.profileId, gate.gateContent, {
           boundsHash: gate.boundsHash,
           contextHash: gate.contextHash,
           context: gate.context,
@@ -287,8 +289,8 @@ app.post('/internal/resync-gates', internalOnly, async (_req: Request, res: Resp
         // TTL-expired auths don't reach this branch — SP still holds
         // their FrameMetadata row, so syncAuthorization succeeds and the
         // local gate is preserved.
-        state.cache.invalidate(gate.path);
-        state.gateStore.delete(gate.path);
+        state.cache.invalidate(syncHash);
+        state.gateStore.delete(syncHash);
         orphaned++;
         console.error(`[Suveren MCP] Orphan gate purged (SP attestation deleted): ${gate.path}`);
       }
