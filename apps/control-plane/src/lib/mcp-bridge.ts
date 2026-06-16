@@ -261,6 +261,14 @@ export async function getGateContent(path?: string): Promise<unknown> {
   return res.json();
 }
 
+export async function getEnrichedAuthorizations(): Promise<unknown> {
+  const res = await fetch(`${MCP_BASE}/internal/authorizations`, {
+    headers: internalHeaders(),
+  });
+  if (!res.ok) throw new Error('Failed to fetch authorizations');
+  return res.json();
+}
+
 export async function getMcpHealth(): Promise<unknown> {
   const res = await fetch(`${MCP_BASE}/health`);
   if (!res.ok) throw new Error('MCP server unreachable');

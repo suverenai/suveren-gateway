@@ -7,8 +7,16 @@ import { buildGateForwardArgs } from '../lib/gate-forward';
 import { StepIndicator } from '../components/StepIndicator';
 import { DomainBadge } from '../components/DomainBadge';
 import { profileDisplayName } from '../lib/profile-display';
+import { scopesOverlap } from '../lib/scope-overlap';
 import type { AgentProfile, AgentBoundsParams, AgentContextParams } from '@hap/core';
 import type { ProfileConfig } from '../lib/sp-client';
+
+/** An existing active grant under the same profile, with its local scope. */
+interface ExistingGrant {
+  bounds: Record<string, string | number>;
+  context: AgentContextParams;
+  intent: string | null;
+}
 
 interface GateData {
   bounds: AgentBoundsParams;
@@ -47,6 +55,10 @@ export function AgentReviewPage() {
   // Track whether the profile-config fetch has completed so the Approvers
   // row can distinguish "loading" from "no approvers configured".
   const [profileConfigLoaded, setProfileConfigLoaded] = useState(false);
+  // Structural-overlap warning: existing active grants under the same profile,
+  // enriched with their local context (scope) so we can compare scopes. Context
+  // stays local (privacy-blind) — read from the local gate store, never the AS.
+  const [existingSameProfile, setExistingSameProfile] = useState<ExistingGrant[]>([]);
 
   useEffect(() => {
     const authStored = sessionStorage.getItem('agentAuth');
@@ -137,6 +149,24 @@ export function AgentReviewPage() {
       setProfileConfigLoaded(true);
     }
   }, [navigate]);
+
+  // Load existing ACTIVE grants under the same profile, with their local scope.
+  // Source is the enriched authorizations endpoint — the same active set
+  // list-authorizations shows (cache-backed, so no stale gate entries, and each
+  // carries its real context). This avoids the fragile join that previously
+  // dropped context and made an empty scope read as a wildcard (false overlaps).
+  useEffect(() => {
+    if (!authData?.profileId) return;
+    const profileId = authData.profileId;
+    spClient.getEnrichedAuthorizations()
+      .then(auths => {
+        const grants: ExistingGrant[] = auths
+          .filter(a => a.profileId === profileId)
+          .map(a => ({ bounds: a.bounds, context: a.context ?? {}, intent: a.intent }));
+        setExistingSameProfile(grants);
+      })
+      .catch(() => setExistingSameProfile([]));
+  }, [authData?.profileId]);
 
   const handleCommit = async () => {
     if (!authData || !gateData || !profile || !user) return;
@@ -285,6 +315,26 @@ export function AgentReviewPage() {
     fontFamily: 'inherit',
   };
 
+  // ── Structural overlap ────────────────────────────────────────────────────
+  // Deterministic and profile-agnostic: two grants overlap iff their context
+  // scopes intersect (bounds are magnitudes, not partitions — see
+  // scope-overlap.ts). Driven entirely off the profile's context schema, so it
+  // works for any profile. Always advisory — never blocks signing. Disjoint
+  // scopes produce no warning. Semantic/intent overlap is the on-device AI
+  // (Phase 2).
+  const contextKeys = profile?.contextSchema?.keyOrder ?? [];
+  const overlappingGrants = existingSameProfile.filter(g =>
+    scopesOverlap(contextKeys, gateData.context, g.context),
+  );
+  const hasOverlap = overlappingGrants.length > 0;
+  const overlapProfileName = profileDisplayName(authData.profileId);
+  const describeScope = (ctx: AgentContextParams): string => {
+    const vals = Object.values(ctx).map(v => String(v).trim()).filter(Boolean);
+    return vals.length > 0 ? vals.join(', ') : 'all (unscoped)';
+  };
+  const overlapScopes = overlappingGrants.map(g => describeScope(g.context)).join('; ');
+  const overlapWarningText = `This grant's scope overlaps an existing grant on ${overlapProfileName} (scoped to: ${overlapScopes}). When two grants cover the same actions, the agent may act under either — the more permissive limits effectively apply. Confirm this is intended before authorizing.`;
+
   return (
     <>
       <StepIndicator currentStep={4} onStepClick={s => {
@@ -399,6 +449,25 @@ export function AgentReviewPage() {
             </div>
           </button>
         </div>
+
+        {/* Structural overlap — advisory; fires only on genuine scope overlap */}
+        {hasOverlap ? (
+          <div style={{
+            display: 'flex', gap: '0.625rem',
+            padding: '0.75rem 0.875rem', marginBottom: '1.25rem',
+            border: '1px solid var(--warning)', borderLeft: '3px solid var(--warning)',
+            borderRadius: '0.5rem', background: 'var(--bg-elevated)',
+            fontSize: '0.82rem', color: 'var(--text-primary)',
+          }}>
+            <span aria-hidden="true" style={{ color: 'var(--warning)', fontWeight: 700 }}>⚠</span>
+            <div>
+              <div style={{ fontWeight: 600, color: 'var(--warning)', marginBottom: '0.2rem' }}>
+                Overlapping scope
+              </div>
+              <div>{overlapWarningText}</div>
+            </div>
+          </div>
+        ) : null}
 
         {/* Duration selector */}
         <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.5rem' }}>

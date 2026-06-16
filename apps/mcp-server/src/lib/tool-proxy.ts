@@ -209,7 +209,7 @@ export function createGatedToolHandler(
     const errors: string[] = [];
     for (const auth of matchingAuths) {
       // Pass v0.4 enriched fields (bounds/context from gate store) to gatekeeper
-      const { result } = await state.gatekeeper.verifyExecution(auth.path, execution, {
+      const { result } = await state.gatekeeper.verifyExecution(auth.frameHash ?? auth.path, execution, {
         bounds: auth.bounds,
         context: auth.context,
       });
@@ -381,7 +381,7 @@ export function createGatedToolHandler(
             // cached attestation so list-authorizations/list-integrations
             // reflect reality instead of serving a stale "authorized" view.
             if (/revoked/i.test(err.message)) {
-              state.cache.invalidate(auth.path);
+              state.cache.invalidate(auth.frameHash ?? auth.path);
             }
             return {
               content: [{ type: 'text', text: `Blocked by SP: ${err.message}` }],

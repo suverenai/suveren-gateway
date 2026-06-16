@@ -102,7 +102,10 @@ export class AttestationCache {
       complete: result.complete,
     };
 
-    this.authorizations.set(auth.path, auth);
+    // Key by frameHash (unique per authorization) so multiple grants under the
+    // same profile coexist instead of overwriting each other. Fall back to path
+    // for legacy records that lack a frameHash.
+    this.authorizations.set(auth.frameHash ?? auth.path, auth);
     return auth;
   }
 
@@ -136,7 +139,10 @@ export class AttestationCache {
    * Cache an authorization directly (e.g., from SP response after creation).
    */
   cacheAuthorization(auth: CachedAuthorization): void {
-    this.authorizations.set(auth.path, auth);
+    // Key by frameHash (unique per authorization) so multiple grants under the
+    // same profile coexist instead of overwriting each other. Fall back to path
+    // for legacy records that lack a frameHash.
+    this.authorizations.set(auth.frameHash ?? auth.path, auth);
   }
 
   /**

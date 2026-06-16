@@ -150,6 +150,22 @@ export function listAuthorizationsHandler(
         output.push('');
         output.push(`  Bounds: ${boundsDesc}`);
 
+        // Commitment mode (automatic vs review) — previously only discoverable
+        // from the intent prose; surface it as structured output.
+        const reviewDomains = auth.deferredCommitmentDomains ?? [];
+        output.push(reviewDomains.length > 0
+          ? '  Mode: review — each action requires your approval before it runs (a proposal is created, not executed)'
+          : '  Mode: automatic — actions run immediately within bounds');
+
+        // Above team cap → actions require approval even within these bounds
+        // (Phase 6). Best-effort SP read; skipped silently if SP is unreachable.
+        try {
+          const meta = await state.spClient.getFrameMetadata(auth.frameHash ?? auth.boundsHash ?? auth.path);
+          if (meta?.aboveCap) {
+            output.push('  ⚠ Above team cap — actions here require approval even within these bounds.');
+          }
+        } catch { /* best-effort */ }
+
         // Full consumption detail
         const shortName = shortProfileName(auth.profileId);
         const profile = getProfile(auth.profileId) ?? getProfile(shortName);
@@ -224,6 +240,11 @@ export function listAuthorizationsHandler(
       if (auth.complete) {
         const lines = [`  [${auth.path}] ${auth.profileId} — ${remainingMin} min remaining`];
         lines.push(`    Bounds: ${boundsDesc}`);
+
+        // Flag review mode in the compact view (automatic is the unremarkable default)
+        if ((auth.deferredCommitmentDomains ?? []).length > 0) {
+          lines.push('    Mode: review (each action requires your approval)');
+        }
 
         // Compact consumption
         const shortName = shortProfileName(auth.profileId);

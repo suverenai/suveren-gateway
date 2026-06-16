@@ -27,6 +27,11 @@ export default defineConfig({
         target: 'http://localhost:3402',
         changeOrigin: true,
       },
+      // Bare path; NOTE: must NOT be `/authorizations` (the dashboard page route).
+      '/active-authorizations': {
+        target: 'http://localhost:3402',
+        changeOrigin: true,
+      },
       '/vault': {
         target: 'http://localhost:3402',
         changeOrigin: true,
