@@ -592,6 +592,30 @@ class SPClient {
     return res.json();
   }
 
+  /** On-demand semantic cross-check of a new grant's intent vs existing grants. */
+  async aiIntentReview(request: {
+    profileId: string;
+    newIntent: string;
+    context?: Record<string, string | number>;
+  }): Promise<{
+    success: boolean;
+    review?: string | null;
+    note?: string;
+    error?: string;
+    disclaimer?: string;
+    grants?: Array<{ scope: string; intent: string | null; bounds: Record<string, string | number> }>;
+  }> {
+    const res = await this.fetch('/ai/intent-review', {
+      method: 'POST',
+      body: JSON.stringify(request),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'AI request failed' }));
+      return { success: false, error: err.error };
+    }
+    return res.json();
+  }
+
   async aiTest(config?: { provider?: string; endpoint?: string; model?: string; apiKey?: string }): Promise<{ ok: boolean; message: string }> {
     const res = await this.fetch('/ai/test', {
       method: 'POST',
