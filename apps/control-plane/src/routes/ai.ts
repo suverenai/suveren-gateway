@@ -10,12 +10,26 @@ import type { Vault } from '../lib/vault';
 import {
   getAIAssistance,
   getAIChatResponse,
+  getIntentReview,
   testAIConnectivity,
   PROVIDER_PRESETS,
   type AIConfig,
   type AIAssistRequest,
   type AIChatRequest,
 } from '../lib/ai-client';
+import { getEnrichedAuthorizations } from '../lib/mcp-bridge';
+
+interface EnrichedAuth {
+  profileId: string;
+  bounds: Record<string, string | number>;
+  context: Record<string, string | number>;
+  intent: string | null;
+}
+
+const describeScope = (c: Record<string, string | number> = {}): string => {
+  const vals = Object.values(c).map(v => String(v).trim()).filter(Boolean);
+  return vals.length > 0 ? vals.join(', ') : 'all (unscoped)';
+};
 
 export function createAIRouter(vault: Vault): Router {
   const router = Router();
@@ -76,6 +90,63 @@ export function createAIRouter(vault: Vault): Router {
 
     const result = await getAIChatResponse(config, request);
     res.json(result);
+  });
+
+  /**
+   * POST /ai/intent-review — on-demand semantic cross-check of a new grant's
+   * intent against existing grants on the same profile. Existing intents are
+   * fetched server-side (never round-tripped through the browser).
+   * Body: { profileId, newIntent, bounds?, context? }
+   */
+  router.post('/intent-review', async (req: Request, res: Response) => {
+    const config = loadAIConfig();
+    if (!config) {
+      res.status(400).json({ error: 'AI not configured. Save AI settings in Settings > General.' });
+      return;
+    }
+
+    const { profileId, newIntent, context } = req.body as {
+      profileId?: string;
+      newIntent?: string;
+      context?: Record<string, string | number>;
+    };
+    if (!profileId) {
+      res.status(400).json({ error: 'Missing profileId' });
+      return;
+    }
+
+    let existing: EnrichedAuth[] = [];
+    try {
+      const data = await getEnrichedAuthorizations() as { authorizations?: EnrichedAuth[] };
+      existing = (data.authorizations ?? []).filter(a => a.profileId === profileId && !!a.intent?.trim());
+    } catch {
+      existing = [];
+    }
+
+    if (existing.length === 0) {
+      res.json({ success: true, review: null, note: 'No other authorizations on this profile to compare against.' });
+      return;
+    }
+
+    const result = await getIntentReview(config, {
+      profileName: profileId.split('/').pop() ?? profileId,
+      newIntent: newIntent ?? '',
+      scope: describeScope(context),
+      existingGrants: existing.map(a => ({
+        intent: a.intent ?? '',
+        scope: describeScope(a.context),
+      })),
+    });
+    // Include the structured grants the advisory refers to, so the UI can make
+    // the scope mentions clickable and show real content (not parsed from the LLM).
+    res.json({
+      ...result,
+      grants: existing.map(a => ({
+        scope: describeScope(a.context),
+        intent: a.intent,
+        bounds: a.bounds,
+      })),
+    });
   });
 
   /**

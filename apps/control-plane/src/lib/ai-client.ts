@@ -331,6 +331,125 @@ export async function getAIChatResponse(
   }
 }
 
+// ─── Intent cross-check (Phase 2) ──────────────────────────────────────────
+//
+// On-demand: compare a NEW authorization's intent against the user's EXISTING
+// authorizations on the same profile, and surface semantic contradictions /
+// overlaps the deterministic scope check can't see (conflicting soft rules,
+// natural-language scope, redundancy). Advisory only — surfaces, never decides.
+// Routes through the same user-configured assistant as the rest of the AI help.
+
+/** Shared model call used by the cross-check (mirrors the inline provider logic above). */
+async function callModel(
+  config: AIConfig,
+  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
+  opts: { temperature: number; maxTokens: number; timeoutMs: number },
+): Promise<string> {
+  if (config.provider === 'ollama') {
+    const response = await fetch(`${config.endpoint}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: config.model,
+        messages,
+        stream: false,
+        options: { temperature: opts.temperature, num_predict: opts.maxTokens },
+      }),
+      signal: AbortSignal.timeout(opts.timeoutMs),
+    });
+    if (!response.ok) throw new Error(`Ollama: ${response.status}`);
+    const data = await response.json() as { message?: { content?: string } };
+    return data.message?.content?.trim() || 'No response generated.';
+  }
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (config.apiKey) headers['Authorization'] = `Bearer ${config.apiKey}`;
+  const response = await fetch(`${config.endpoint}/chat/completions`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ model: config.model, messages, temperature: opts.temperature, max_tokens: opts.maxTokens }),
+    signal: AbortSignal.timeout(opts.timeoutMs),
+  });
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`AI provider: ${response.status} - ${errorText}`);
+  }
+  const data = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
+  return data.choices?.[0]?.message?.content?.trim() || 'No response generated.';
+}
+
+export interface IntentReviewGrant {
+  intent: string;
+  scope?: string;
+}
+
+export interface IntentReviewRequest {
+  profileName: string;
+  newIntent: string;
+  scope?: string;
+  existingGrants: IntentReviewGrant[];
+}
+
+export interface IntentReviewResponse {
+  success: boolean;
+  review?: string;
+  error?: string;
+  disclaimer: string;
+}
+
+export const INTENT_REVIEW_PROMPT = `You are a reviewing assistant for Suveren. A human is creating a NEW agent authorization. Compare the MEANING of its Intent against the Intent of their EXISTING authorizations on the same profile.
+
+Focus ONLY on the intent prose — the stated situation, goal, and soft rules / watch-outs. Surface:
+- Contradictions: a soft rule or goal in one intent that conflicts with another (e.g. one says "never email on weekends", the new one implies weekend sends; one says "formal tone only", another "keep it casual").
+- Tension: intent that works against, or ignores a caution stated in, another authorization.
+- Redundant purpose: the new intent describes essentially the same purpose as an existing one.
+
+Do NOT report:
+- That scopes/recipients overlap, or that numeric limits differ — those are detected separately and already shown to the user. Ignore them entirely.
+- Anything not grounded in the actual intent text.
+
+Use each authorization's scope ONLY to judge whether two intents' rules would actually collide in practice (overlapping targets) versus being independent — never report the scope overlap itself.
+
+Rules:
+- Be concise — a few short bullets at most.
+- If the new intent has no real content yet (just placeholder prompts like "Why — …", "Goal — …", "Watch out — …"), reply EXACTLY: "Not enough intent written yet to review."
+- If the intents are compatible, reply EXACTLY: "No intent conflicts found with your existing authorizations."
+- Refer to each existing authorization by its number in square brackets — e.g. [1], [2] — matching the numbered list provided, and you may also state its scope. Never invent names. Do NOT rewrite intent or make the decision — you surface; the human decides.`;
+
+export async function getIntentReview(
+  config: AIConfig,
+  request: IntentReviewRequest,
+): Promise<IntentReviewResponse> {
+  const disclaimer = 'AI surfaces reality. You decide.';
+
+  const lines: string[] = [];
+  lines.push(`NEW authorization on profile "${request.profileName}":`);
+  if (request.scope) lines.push(`  Scope (for context only): ${request.scope}`);
+  lines.push(`  Intent: ${request.newIntent.trim() || '(empty)'}`);
+  lines.push('');
+  lines.push('EXISTING authorizations on the same profile:');
+  request.existingGrants.forEach((g, i) => {
+    lines.push(`  [${i + 1}]`);
+    if (g.scope) lines.push(`    Scope (for context only): ${g.scope}`);
+    lines.push(`    Intent: ${g.intent.trim() || '(empty)'}`);
+  });
+
+  const messages = [
+    { role: 'system' as const, content: INTENT_REVIEW_PROMPT },
+    { role: 'user' as const, content: lines.join('\n') },
+  ];
+
+  try {
+    const review = await callModel(config, messages, { temperature: 0.2, maxTokens: 400, timeoutMs: 45_000 });
+    return { success: true, review, disclaimer };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+      disclaimer,
+    };
+  }
+}
+
 export async function testAIConnectivity(config: AIConfig): Promise<{ ok: boolean; message: string }> {
   try {
     if (config.provider === 'ollama') {

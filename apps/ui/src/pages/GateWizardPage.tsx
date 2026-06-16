@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { spClient, type ProfileConfig } from '../lib/sp-client';
 import { StepIndicator } from '../components/StepIndicator';
@@ -6,6 +6,8 @@ import { ContextStrip } from '../components/ContextStrip';
 import { BoundsEditor } from '../components/BoundsEditor';
 import { AssistantChatPanel } from '../components/AssistantChatPanel';
 import { BottomSheet } from '../components/BottomSheet';
+import { profileDisplayName } from '../lib/profile-display';
+import { resolveAdvisoryLinks, type AdvisoryGrant } from '../lib/advisory-links';
 import type { AgentProfile, AgentBoundsParams, AgentContextParams } from '@hap/core';
 
 /** Initial textarea content for the Intent step. The user replaces
@@ -22,6 +24,37 @@ interface AuthData {
   groupId?: string;
   groupName?: string;
   domain: string;
+}
+
+/** A grant the intent cross-check compared against (for the clickable popup). */
+type ComparedGrant = AdvisoryGrant;
+
+/** Render advisory text with clickable references to the grants it compared.
+ *  The resolution (which text becomes which link) is pure and unit-tested in
+ *  advisory-links.ts; here we only map the resolved segments to React nodes. */
+function renderAdvisory(
+  text: string,
+  grants: ComparedGrant[],
+  onOpen: (matched: ComparedGrant[]) => void,
+  profileLabel: string,
+): ReactNode {
+  return resolveAdvisoryLinks(text, grants, profileLabel).map((seg, i) => {
+    if (!seg.matched) return <span key={i}>{seg.text}</span>;
+    const list = seg.matched;
+    return (
+      <button
+        key={i}
+        type="button"
+        onClick={() => onOpen(list)}
+        style={{
+          background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+          color: 'var(--accent)', textDecoration: 'underline', font: 'inherit',
+        }}
+      >
+        {seg.label}
+      </button>
+    );
+  });
 }
 
 export function GateWizardPage() {
@@ -42,6 +75,13 @@ export function GateWizardPage() {
   const [approverNames, setApproverNames] = useState<string[]>([]);
   // Display name of the team admin
   const [adminName, setAdminName] = useState<string | undefined>(undefined);
+  // On-demand intent cross-check (Phase 2) — advisory result vs existing grants
+  const [reviewLoading, setReviewLoading] = useState(false);
+  const [reviewResult, setReviewResult] = useState<string | null>(null);
+  const [reviewNote, setReviewNote] = useState<string | null>(null);
+  const [reviewError, setReviewError] = useState<string | null>(null);
+  const [reviewGrants, setReviewGrants] = useState<ComparedGrant[]>([]);
+  const [popupGrants, setPopupGrants] = useState<ComparedGrant[] | null>(null);
 
   useEffect(() => {
     const stored = sessionStorage.getItem('agentAuth');
@@ -131,6 +171,43 @@ export function GateWizardPage() {
     navigate('/agent/review');
   };
 
+  const handleCheckIntent = async () => {
+    if (!authData) return;
+    setReviewLoading(true);
+    setReviewResult(null);
+    setReviewNote(null);
+    setReviewError(null);
+    setReviewGrants([]);
+    setPopupGrants(null);
+    try {
+      const r = await spClient.aiIntentReview({
+        profileId: authData.profileId,
+        newIntent: intent,
+        context: context ?? undefined,
+      });
+      setReviewGrants(r.grants ?? []);
+      if (!r.success) setReviewError(r.error ?? 'Check failed.');
+      else if (r.review) setReviewResult(r.review);
+      else setReviewNote(r.note ?? 'No other authorizations on this profile to compare against.');
+    } catch (e) {
+      setReviewError(e instanceof Error ? e.message : 'Check failed.');
+    } finally {
+      setReviewLoading(false);
+    }
+  };
+
+  // Editing the intent invalidates a prior review.
+  const handleIntentChange = (text: string) => {
+    setIntent(text);
+    if (reviewResult || reviewNote || reviewError) {
+      setReviewResult(null);
+      setReviewNote(null);
+      setReviewError(null);
+      setReviewGrants([]);
+      setPopupGrants(null);
+    }
+  };
+
   if (loading || !authData || !profile) {
     return <p style={{ color: 'var(--text-tertiary)' }}>Loading...</p>;
   }
@@ -186,10 +263,48 @@ export function GateWizardPage() {
             <textarea
               className="intent-textarea"
               value={intent}
-              onChange={e => setIntent(e.target.value)}
+              onChange={e => handleIntentChange(e.target.value)}
             />
 
             <div className="char-counter">{intent.length} / 2000</div>
+
+            {/* On-demand semantic cross-check against existing grants (Phase 2) */}
+            <div style={{ marginTop: '0.5rem' }}>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                style={{ fontSize: '0.8rem', padding: '0.4rem 0.75rem' }}
+                onClick={handleCheckIntent}
+                disabled={reviewLoading || !intentChanged}
+              >
+                {reviewLoading ? 'Checking…' : 'Check against my other grants'}
+              </button>
+
+              {reviewError && (
+                <div className="hint-box" role="note" style={{ marginTop: '0.5rem', borderLeftColor: 'var(--danger)' }}>
+                  <span className="hint-icon" aria-hidden="true">!</span>
+                  <div className="hint-body">{reviewError}</div>
+                </div>
+              )}
+              {reviewNote && (
+                <div className="hint-box" role="note" style={{ marginTop: '0.5rem' }}>
+                  <span className="hint-icon" aria-hidden="true">i</span>
+                  <div className="hint-body">{reviewNote}</div>
+                </div>
+              )}
+              {reviewResult && (
+                <div className="hint-box" role="note" style={{ marginTop: '0.5rem' }}>
+                  <span className="hint-icon" aria-hidden="true">i</span>
+                  <div className="hint-body">
+                    <div className="hint-head">Intent review (advisory)</div>
+                    <div style={{ whiteSpace: 'pre-wrap' }}>{renderAdvisory(reviewResult, reviewGrants, setPopupGrants, profileDisplayName(authData.profileId))}</div>
+                    <div style={{ fontSize: '0.7rem', color: 'var(--text-tertiary)', marginTop: '0.4rem' }}>
+                      Checked with your configured assistant. AI surfaces reality — you decide.
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
 
             <div className="intent-footer">
               <button className="btn btn-ghost" onClick={() => setStep(2)}>Back</button>
@@ -247,6 +362,57 @@ export function GateWizardPage() {
               }}
             />
           </BottomSheet>
+
+          {/* Popup: the existing authorization(s) the advisory refers to. A
+              scope can match more than one grant (scope is not unique), so we
+              show every match rather than guessing one. */}
+          {popupGrants && (
+            <div
+              className="modal-backdrop"
+              onClick={e => e.target === e.currentTarget && setPopupGrants(null)}
+            >
+              <div className="modal">
+                <div className="modal-header">
+                  <h3 className="modal-title">
+                    {popupGrants.length > 1
+                      ? `Existing authorizations (${popupGrants.length})`
+                      : 'Existing authorization'}
+                  </h3>
+                  <button className="modal-close" onClick={() => setPopupGrants(null)}>&times;</button>
+                </div>
+                <div className="modal-body">
+                  {popupGrants.map((g, gi) => (
+                    <div
+                      key={gi}
+                      style={{
+                        marginBottom: gi < popupGrants.length - 1 ? '1rem' : 0,
+                        paddingBottom: gi < popupGrants.length - 1 ? '1rem' : 0,
+                        borderBottom: gi < popupGrants.length - 1 ? '1px solid var(--border)' : 'none',
+                      }}
+                    >
+                      <div style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.25rem' }}>Scope</div>
+                      <div style={{ marginBottom: '0.75rem' }}>{g.scope}</div>
+
+                      <div style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.25rem' }}>Intent</div>
+                      <div style={{ whiteSpace: 'pre-wrap', marginBottom: '0.75rem' }}>{g.intent?.trim() || '(no intent recorded)'}</div>
+
+                      {Object.entries(g.bounds).filter(([k]) => k !== 'profile' && k !== 'path').length > 0 && (
+                        <>
+                          <div style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.25rem' }}>Limits</div>
+                          <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                            {Object.entries(g.bounds)
+                              .filter(([k]) => k !== 'profile' && k !== 'path')
+                              .map(([k, v]) => `${k}: ${v}`)
+                              .join(' · ')}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </>
