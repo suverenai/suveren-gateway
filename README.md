@@ -1,6 +1,20 @@
 # Suveren Gateway
 
-**Suveren** is a commercial service built on the [Human Agency Protocol (HAP)](https://humanagencyprotocol.org) — the open protocol for bounded AI agent authority. The gateway is a Suveren product. The `@hap/core` protocol library inside this repo stays HAP-named because it re-exports the open HAP library. When you see "HAP-compliant" or references to the protocol spec, those describe the open standard, not the Suveren brand.
+> **HAP is the protocol. Suveren is an implementation of it.**
+>
+> The Human Agency Protocol (HAP) is the open standard for bounded AI-agent
+> authority — it defines the roles (**Authority Server**, **Gatekeeper**,
+> **Executor**) and the concepts (profiles, gates, attestations, bounds,
+> context, receipts). **Suveren** implements them: this repo is the **Gateway**,
+> and [`suveren-as`](https://www.suveren.ai) is the **Authority Server**. The
+> protocol is open — anyone can build their own compliant gateway.
+
+This repository is the **Suveren Gateway** — Suveren's implementation of the HAP
+**Gatekeeper + Executor** roles. It runs locally and verifies every tool call
+against its authorization before the call reaches an external service. (The
+`@hap/core` library inside this repo keeps its HAP name because it re-exports the
+open protocol library — "HAP-compliant" and spec references describe the open
+standard, not the Suveren brand.)
 
 Part of [suveren.ai](https://www.suveren.ai).
 
@@ -16,11 +30,11 @@ Works with any MCP-compatible agent. Define and authorize what they're allowed t
 
 Set the threshold. Routine actions execute automatically within the bounds you defined. High-stakes actions pause for your review before the agent acts.
 
-**Automatic** — You commit to specific bounds upfront: max amounts, allowed actions, time windows. The agent executes autonomously within those bounds. Each tool call is verified against your authorization and produces a signed receipt.
+**Automatic** — You commit to specific bounds upfront: max amounts, allowed actions, time windows. The agent executes autonomously within those bounds. For each tool call the gateway verifies your authorization and requests a receipt from the Authority Server, which issues the signed receipt before the call runs — no receipt, no execution.
 
 **Review each action** — You define bounds but defer full commitment. When the agent proposes an action, you review it in the gateway UI — seeing exactly which tool, which arguments, which context. You approve or reject. Execution only proceeds after your decision.
 
-Both modes are bounded. Both produce receipts. Both create a full audit trail. The difference is whether you trust the bounds enough for autonomous execution, or want to review each action individually.
+Both modes are bounded. In both, the Authority Server issues a signed receipt before the action runs — no receipt, no execution — and that signed history is a full audit trail. The difference is whether you trust the bounds enough for autonomous execution, or want to review each action individually.
 
 ---
 
@@ -33,7 +47,7 @@ Human                                 AI Agent
   |    articulate direction,              |
   |    commit (or defer)                  |
   v                                       |
-Service Provider                          |
+Authority Server                          |
   | 2. Sign attestation (Ed25519)         |
   v                                       |
 Gateway                                   |
@@ -41,14 +55,14 @@ Gateway                                   |
   |              4. Tool call <-----------|
   |                                       |
   | 5. Fully committed:                   |
-  |    Gatekeeper verifies bounds         |
-  |    -> receipt issued, execute         |
+  |    Gatekeeper checks bounds, asks AS  |
+  |    -> AS issues receipt, execute      |
   |                                       |
   |    Deferred commitment:               |
   |    -> proposal created                |
   |    -> human reviews in UI             |
   |    -> commit or reject                |
-  |    -> execute on commit               |
+  |    -> on commit: AS receipt, execute  |
 ```
 
 The agent never holds credentials or signing authority. It acts within the bounds you set — high autonomy without losing accountability.
