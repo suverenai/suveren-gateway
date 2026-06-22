@@ -22,6 +22,7 @@ import {
   HkdfSha256,
   Aes256Gcm,
 } from '@hpke/core';
+import { canonicalizeText } from '@hap/core';
 
 // ─── Suite singleton ─────────────────────────────────────────────────────────
 
@@ -196,11 +197,17 @@ export async function decryptIntent(
 // ─── Intent hash ─────────────────────────────────────────────────────────────
 
 /**
- * SHA-256 hex digest of the intent string.
- * Used as the tamper-evident intent hash stored on receipts.
+ * SHA-256 hex digest of the canonical intent string.
+ * Applies canonicalizeText (Unicode NFC + LF endings + trailing-whitespace
+ * strip) before hashing, consistent with computeIntentHash in hap-core.
+ * Returns bare hex (no "sha256:" prefix) — preserved for callers.
+ *
+ * Note: this function is exported but has no callers in the gateway codebase
+ * outside of its own test. It is NOT used for gate_content_hashes.intent
+ * (that path goes through the UI's hashGateContent / MCP's computeIntentHash).
  */
 export async function intentHash(intent: string): Promise<string> {
-  const bytes = new TextEncoder().encode(intent);
+  const bytes = new TextEncoder().encode(canonicalizeText(intent));
   const hashBuf = await crypto.subtle.digest('SHA-256', bytes);
   return Array.from(new Uint8Array(hashBuf))
     .map(b => b.toString(16).padStart(2, '0'))

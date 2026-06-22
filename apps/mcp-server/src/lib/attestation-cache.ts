@@ -4,7 +4,22 @@
  * Fetches from SP on-demand and caches with TTL awareness.
  */
 
+import { decodeAttestationBlob } from '@hap/core';
 import { SPClient, type SPAttestationsResult, type SPPendingItem } from './sp-client';
+
+/**
+ * True when the SIGNED commitment_mode requires review but the AS supplied no
+ * pending approvers — an inconsistency between the signature and the AS's
+ * unsigned routing metadata (a possible commitment-mode downgrade). The
+ * Gatekeeper MUST refuse to auto-execute in this case (fail-closed).
+ */
+export function isCommitmentDowngrade(
+  auth: Pick<CachedAuthorization, 'signedCommitmentMode' | 'deferredCommitmentDomains'>,
+): boolean {
+  const requiresReview =
+    auth.signedCommitmentMode === 'review' || auth.signedCommitmentMode === 'review_above_cap';
+  return requiresReview && (auth.deferredCommitmentDomains ?? []).length === 0;
+}
 
 export interface CachedAuthorization {
   // SP storage key. v0.4 post-b228e58: per-user scoped (`${boundsHash}:${userId}`).
@@ -23,6 +38,14 @@ export interface CachedAuthorization {
   requiredDomains: string[];
   attestedDomains: string[];
   deferredCommitmentDomains: string[];
+  /**
+   * Commitment mode read from the SIGNED attestation payload — NOT from the
+   * AS's unsigned JSON. The routing decision (review vs automatic) is enforced
+   * against this so a compromised/buggy AS cannot downgrade 'review' →
+   * 'automatic' via inconsistent unsigned metadata. Undefined for legacy
+   * (v0.3/v0.4) attestations whose payload omits commitment_mode.
+   */
+  signedCommitmentMode?: 'automatic' | 'review' | 'review_above_cap';
   complete: boolean;
 }
 
@@ -83,6 +106,19 @@ export class AttestationCache {
     const storageHash = result.frame_hash ?? result.bounds_hash;
     const bounds = result.bounds ?? result.frame;
 
+    // Read the commitment mode from the SIGNED payload (all of an authorization's
+    // attestations share it). This — not the AS's unsigned deferred_commitment_domains
+    // — is the authoritative review-vs-automatic signal.
+    let signedCommitmentMode: CachedAuthorization['signedCommitmentMode'];
+    const firstBlob = result.attestations[0]?.blob;
+    if (firstBlob) {
+      try {
+        signedCommitmentMode = decodeAttestationBlob(firstBlob).payload.commitment_mode;
+      } catch {
+        signedCommitmentMode = undefined; // undecodable → no enforcement signal (treated as legacy)
+      }
+    }
+
     const auth: CachedAuthorization = {
       frameHash: storageHash,
       boundsHash: result.bounds_hash,  // content fingerprint (undefined for pre-v0.4 records)
@@ -99,6 +135,7 @@ export class AttestationCache {
       requiredDomains: result.required_domains ?? [],
       attestedDomains: result.attested_domains ?? [],
       deferredCommitmentDomains: result.deferred_commitment_domains ?? [],
+      signedCommitmentMode,
       complete: result.complete,
     };
 

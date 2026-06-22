@@ -365,6 +365,8 @@ class SPClient {
     intent_ciphertext?: string;
     encrypted_keys?: Record<string, { ct: string; enc: string }>;
     approvers_frozen?: string[];
+    // v0.5 — intent disclosure cross-check (defense-in-depth; AS recomputes and rejects mismatch)
+    intent_disclosure_hash?: string;
   }): Promise<AttestResponse> {
     const res = await this.fetch('/api/as/attest', {
       method: 'POST',
@@ -745,6 +747,7 @@ class SPClient {
     intentCiphertext: string;
     encryptedKeys: Record<string, { ct: string; enc: string }>;
     approversFrozen: string[];
+    intentDisclosureHash: string;
   }> {
     const res = await this.fetch('/api/encrypt-intent', {
       method: 'POST',

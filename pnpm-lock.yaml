@@ -18,6 +18,9 @@ importers:
 
   apps/control-plane:
     dependencies:
+      '@hap/core':
+        specifier: workspace:*
+        version: link:../../packages/hap-core
       '@hpke/core':
         specifier: ^1.9.0
         version: 1.9.0
@@ -121,8 +124,8 @@ importers:
   packages/hap-core:
     dependencies:
       '@humanagencyp/hap-core':
-        specifier: ^0.5.1
-        version: 0.5.1
+        specifier: ^0.5.2
+        version: 0.5.2
     devDependencies:
       tsup:
         specifier: ^8.0.0
@@ -524,8 +527,8 @@ packages:
     resolution: {integrity: sha512-pFxWl1nNJeQCSUFs7+GAblHvXBCjn9EPN65vdKlYQil2aURaRxfGMO6vBKGqm1YHTKwiAxJQNEI70PbSowMP9Q==}
     engines: {node: '>=16.0.0'}
 
-  '@humanagencyp/hap-core@0.5.1':
-    resolution: {integrity: sha512-xbRqwPNIgtLt5jo4t/Qb7ZVBoIO7kdx3Ml0Zz4U8c5Uef7K56E+ERfu+1F3OOztJUT5UI/VRlM2R4ob1jl5c7A==}
+  '@humanagencyp/hap-core@0.5.2':
+    resolution: {integrity: sha512-uGBVVladppWY/B4pbVBxRFJGWnwd5GoVCcI7l1vWfwaI6jXsmChqIskJDCiRqf0B5VJmwYQWYpdD/8iZzaYb/Q==}
 
   '@jest/schemas@29.6.3':
     resolution: {integrity: sha512-mo5j5X+jIZmJQveBKeS/clAueipV7KgiX1vMgCxam1RNYiqE1w62n0/tJJnHtjW8ZHcQco5gY85jA3mi0L+nSA==}
@@ -2121,7 +2124,7 @@ snapshots:
     dependencies:
       '@hpke/common': 1.10.1
 
-  '@humanagencyp/hap-core@0.5.1':
+  '@humanagencyp/hap-core@0.5.2':
     dependencies:
       '@noble/ed25519': 2.3.0
 

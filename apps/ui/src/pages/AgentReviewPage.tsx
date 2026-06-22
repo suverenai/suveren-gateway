@@ -201,6 +201,7 @@ export function AgentReviewPage() {
       let intentCiphertext: string | undefined;
       let encryptedKeys: Record<string, { ct: string; enc: string }> | undefined;
       let approversFrozen: string[] | undefined;
+      let intentDisclosureHash: string | undefined;
 
       if (authData.isTeam) {
         const approverPubkeys = await spClient.getApproversPubkeys(
@@ -215,6 +216,7 @@ export function AgentReviewPage() {
           intentCiphertext = encData.intentCiphertext;
           encryptedKeys = encData.encryptedKeys;
           approversFrozen = encData.approversFrozen;
+          intentDisclosureHash = encData.intentDisclosureHash;
         }
       }
 
@@ -239,6 +241,8 @@ export function AgentReviewPage() {
         intent_ciphertext: intentCiphertext,
         encrypted_keys: encryptedKeys,
         approvers_frozen: approversFrozen,
+        // v0.5 — disclosure cross-check (AS recomputes and rejects mismatch)
+        intent_disclosure_hash: intentDisclosureHash,
       });
 
       // Push gate content + context to MCP server (after attestation exists on SP).

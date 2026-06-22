@@ -2,20 +2,25 @@
  * Gate Content Hash Verification — ensures plaintext gate content matches attestation hashes.
  *
  * v0.4: single `intent` hash.
+ * v0.5: uses canonicalizeText (Unicode NFC + LF endings + trim trailing whitespace) before
+ *       hashing, matching the creation-time hash produced by the browser UI.
  */
 
-import { createHash } from 'node:crypto';
+import { computeIntentHash } from '@hap/core';
 import { decodeAttestationBlob } from '@hap/core';
 import type { GateContent } from './gate-store';
 import type { CachedAuthorization } from './attestation-cache';
 
 /**
- * Hash a gate content string using SHA-256.
+ * Hash a gate content string using SHA-256 over the canonical form.
  * Returns format: sha256:<hex>
+ *
+ * Delegates to hap-core's computeIntentHash which applies canonicalizeText
+ * (Unicode NFC + LF line endings + trailing-whitespace strip) before hashing.
+ * Must be byte-identical to the browser-side hashGateContent in apps/ui/src/lib/frame.ts.
  */
 export function hashGateContent(text: string): string {
-  const hex = createHash('sha256').update(text, 'utf-8').digest('hex');
-  return `sha256:${hex}`;
+  return computeIntentHash(text);
 }
 
 /**
