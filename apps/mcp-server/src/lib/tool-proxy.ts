@@ -12,6 +12,7 @@
 import type { IntegrationManager, DiscoveredTool } from './integration-manager';
 import type { SharedState, EnrichedAuthorization } from './shared-state';
 import { SPReceiptError } from './sp-client';
+import { isCommitmentDowngrade } from './attestation-cache';
 import { appendVerificationFooter, shouldAttachFooter } from './receipt-footer';
 import { computeContentBinding, attachReceiptId } from './content-binding';
 import { readFile } from 'node:fs/promises';
@@ -221,6 +222,25 @@ export function createGatedToolHandler(
         // frameHash is per-user scoped post-b228e58; boundsHash is the content
         // fingerprint and would miss on FrameMetadata reads.
         const authHash = auth.frameHash ?? auth.boundsHash;
+
+        // Enforce the SIGNED commitment_mode (defense against a downgrade via
+        // unsigned AS metadata). For an honest AS, commitment_mode === 'review'
+        // always comes with deferred commitment domains; if the signed payload
+        // says review/review_above_cap but the AS supplied none, the unsigned
+        // routing data contradicts the signature — fail closed rather than
+        // silently auto-executing an action that required approval.
+        if (isCommitmentDowngrade(auth)) {
+          return {
+            content: [{
+              type: 'text',
+              text: `Refusing to execute ${tool.originalName}: the signed authorization requires review ` +
+                `(commitment_mode="${auth.signedCommitmentMode}") but the Authority Server returned no pending ` +
+                `approvers. This inconsistency (a possible commitment-mode downgrade) is rejected fail-closed. ` +
+                `Re-fetch the authorization or contact the Authority Server operator.`,
+            }],
+            isError: true,
+          };
+        }
 
         // Check for deferred commitment domains — submit proposal instead of executing
         if ((auth.deferredCommitmentDomains ?? []).length > 0) {
