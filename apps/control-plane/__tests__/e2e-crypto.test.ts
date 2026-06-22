@@ -10,6 +10,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { computeIntentHash, computeIntentDisclosureHash } from '@hap/core';
 import {
   generateKeyPair,
   encryptForRecipients,
@@ -181,5 +182,48 @@ describe('intentHash', () => {
     // SHA-256 of empty string is known.
     const h = await intentHash('');
     expect(h).toBe('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855');
+  });
+});
+
+// ─── Full chain: encrypt → commitments → approver decrypt → re-derive ──────────
+//
+// Ties the REAL gateway crypto to the protocol commitments a verifier checks:
+// a second approver (distinct keypair, as if on another machine) recovers the
+// intent and reproduces both the signed gate_content_hashes.intent and the
+// intent_disclosure_hash the AS binds. The AS-side relay + C2 binding are
+// covered live in hap-e2e (team-approval); this closes the crypto end.
+describe('intent-disclosure full chain (real HPKE + protocol commitments)', () => {
+  it('approver decrypts and re-derives the signed intent + disclosure hashes', async () => {
+    const intent = 'Refund the customer, up to €50. Do not touch other invoices.';
+    const [kpAlice, kpBob] = await Promise.all([generateKeyPair(), generateKeyPair()]);
+    const approvers = ['alice', 'bob'];
+
+    // Attester encrypts for both approvers and computes the commitments.
+    const encrypted = await encryptForRecipients(intent, [
+      { userId: 'alice', publicKey: kpAlice.publicKey },
+      { userId: 'bob', publicKey: kpBob.publicKey },
+    ]);
+    const ctB64 = Buffer.from(encrypted.intentCiphertext).toString('base64');
+    const signedIntentHash = computeIntentHash(intent);                  // gate_content_hashes.intent
+    const disclosureHash = computeIntentDisclosureHash(ctB64, approvers); // the AS binds this
+
+    // Approver "bob" — only his private key — recovers the intent...
+    const decrypted = await decryptIntent(encrypted, 'bob', kpBob.privateKey);
+    expect(decrypted).toBe(intent);
+
+    // ...and independently reproduces BOTH signed commitments.
+    expect(computeIntentHash(decrypted)).toBe(signedIntentHash);
+    expect(computeIntentDisclosureHash(ctB64, approvers)).toBe(disclosureHash);
+  });
+
+  it('a tampered ciphertext breaks the disclosure-hash binding (detected)', async () => {
+    const kp = await generateKeyPair();
+    const encrypted = await encryptForRecipients('original intent', [
+      { userId: 'alice', publicKey: kp.publicKey },
+    ]);
+    const ctB64 = Buffer.from(encrypted.intentCiphertext).toString('base64');
+    const good = computeIntentDisclosureHash(ctB64, ['alice']);
+    const tamperedCt = ctB64.slice(0, -2) + (ctB64.endsWith('A') ? 'BB' : 'AA');
+    expect(computeIntentDisclosureHash(tamperedCt, ['alice'])).not.toBe(good);
   });
 });
