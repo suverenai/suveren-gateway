@@ -18,6 +18,7 @@
  *     intentCiphertext: string,                            // base64
  *     encryptedKeys: Record<string, { ct: string; enc: string }>,  // base64 values
  *     approversFrozen: string[],                           // userIds
+ *     intentDisclosureHash: string,                        // "sha256:<hex>" — C2 cross-check
  *   }
  *
  * Auth: requireAuth (session must be active).
@@ -25,6 +26,7 @@
 
 import { Router, type Request, type Response } from 'express';
 import { encryptForRecipients } from '../lib/e2e-crypto';
+import { computeIntentDisclosureHash } from '@hap/core';
 
 export function createEncryptIntentRouter(): Router {
   const router = Router();
@@ -88,10 +90,15 @@ export function createEncryptIntentRouter(): Router {
         };
       }
 
+      const intentCiphertextB64 = Buffer.from(encrypted.intentCiphertext).toString('base64');
+      const approversFrozen = parsed.map(r => r.userId);
+      const intentDisclosureHash = computeIntentDisclosureHash(intentCiphertextB64, approversFrozen);
+
       res.json({
-        intentCiphertext: Buffer.from(encrypted.intentCiphertext).toString('base64'),
+        intentCiphertext: intentCiphertextB64,
         encryptedKeys,
-        approversFrozen: parsed.map(r => r.userId),
+        approversFrozen,
+        intentDisclosureHash,
       });
     } catch (err) {
       console.error('[Control Plane] encrypt-intent error:', err);
