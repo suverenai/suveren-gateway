@@ -428,7 +428,7 @@ export function createGatedToolHandler(
         // structured stores that declare the field) to the outgoing call.
         let outgoingArgs =
           shouldAttachFooter() && receiptId
-            ? appendVerificationFooter(tool, args, receiptId)
+            ? appendVerificationFooter(tool, args, receiptId, auth.subjects?.[0])
             : args;
         if (receiptId) outgoingArgs = attachReceiptId(tool, outgoingArgs, receiptId);
         return integrationManager.callTool(tool.integrationId, tool.originalName, outgoingArgs);

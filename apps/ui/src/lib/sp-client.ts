@@ -367,6 +367,10 @@ class SPClient {
     approvers_frozen?: string[];
     // v0.5 — intent disclosure cross-check (defense-in-depth; AS recomputes and rejects mismatch)
     intent_disclosure_hash?: string;
+    // v0.6 — Identity Assurance: disclose the owner's verified name on this
+    // authority's actions. The AS stamps a signed `subjects` block only when this
+    // is true AND the account is `high`-verified; the name then shows in the footer.
+    disclose_identity?: boolean;
   }): Promise<AttestResponse> {
     const res = await this.fetch('/api/as/attest', {
       method: 'POST',

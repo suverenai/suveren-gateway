@@ -102,3 +102,32 @@ describe('shouldAttachFooter', () => {
     expect(shouldAttachFooter()).toBe(true);
   });
 });
+
+// ── v0.6 Identity Assurance — footer identity line ────────────────────────────
+
+import type { Subject } from '@hap/core';
+
+describe('appendVerificationFooter — identity (v0.6)', () => {
+  const asVouched: Subject = {
+    did: 'did:key:a', assurance: 'high', method: 'as_vouched', trust_root: 'as',
+    verifier: 'did:web:suveren.ai', disclose: { name: 'Andreas Schadauer' },
+  };
+
+  it('high/as_vouched footer shows "of «name» — verified by Suveren"', () => {
+    const out = appendVerificationFooter(tool('email', { body: STRING }), { body: 'Hi' }, 'rid', asVouched);
+    expect(out.body).toContain('of Andreas Schadauer — verified by Suveren');
+  });
+
+  it('no subject → "Sent by an AI agent via Suveren", no name', () => {
+    const out = appendVerificationFooter(tool('email', { body: STRING }), { body: 'Hi' }, 'rid');
+    expect(out.body).toContain('Sent by an AI agent via Suveren');
+    expect(out.body).not.toContain(' of ');
+  });
+
+  it('strip-and-replace works on a high footer too (no stacking)', () => {
+    const t = tool('email', { body: STRING });
+    const once = appendVerificationFooter(t, { body: 'Hi' }, 'r1', asVouched);
+    const twice = appendVerificationFooter(t, once, 'r2', asVouched);
+    expect((twice.body as string).match(/Sent by an AI agent/g)?.length).toBe(1);
+  });
+});
