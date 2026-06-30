@@ -24,6 +24,9 @@ export interface SPAttestationsResult {
   required_domains?: string[];
   attested_domains?: string[];
   deferred_commitment_domains?: string[];
+  /** v0.6 — true when the AS has revoked this attestation (drop it from the cache). */
+  revoked?: boolean;
+  revoked_at?: number;
 }
 
 export interface SPProposal {
