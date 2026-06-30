@@ -46,6 +46,7 @@ export function AgentReviewPage() {
   const [customTtl, setCustomTtl] = useState('');
   const [customTtlUnit, setCustomTtlUnit] = useState<'hours' | 'days'>('hours');
   const [authTitle, setAuthTitle] = useState('');
+  const [discloseIdentity, setDiscloseIdentity] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   // Profile-config + resolved approver display names — surfaced as a Review row
@@ -243,6 +244,8 @@ export function AgentReviewPage() {
         approvers_frozen: approversFrozen,
         // v0.5 — disclosure cross-check (AS recomputes and rejects mismatch)
         intent_disclosure_hash: intentDisclosureHash,
+        // v0.6 — disclose the owner's verified name (only stamped if high-verified)
+        disclose_identity: discloseIdentity,
       });
 
       // Push gate content + context to MCP server (after attestation exists on SP).
@@ -557,6 +560,24 @@ export function AgentReviewPage() {
           <div style={{ fontSize: '0.7rem', color: 'var(--text-tertiary)', marginTop: '0.25rem' }}>
             A short name to identify this authorization on your dashboard.
           </div>
+        </div>
+
+        <div style={{ marginBottom: '1.25rem' }}>
+          <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem', cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={discloseIdentity}
+              onChange={e => setDiscloseIdentity(e.target.checked)}
+              style={{ marginTop: '0.15rem' }}
+            />
+            <span style={{ fontSize: '0.8rem' }}>
+              Show my verified name on actions under this authority
+              <div style={{ fontSize: '0.7rem', color: 'var(--text-tertiary)', marginTop: '0.15rem' }}>
+                Adds "verified by Suveren" with your name to outgoing content. Takes effect
+                only if your identity is verified; otherwise actions stay pseudonymous.
+              </div>
+            </span>
+          </label>
         </div>
 
         <div style={{ display: 'flex', gap: '0.5rem' }}>
