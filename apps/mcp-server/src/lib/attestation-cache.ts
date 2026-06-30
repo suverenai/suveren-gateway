@@ -4,7 +4,7 @@
  * Fetches from SP on-demand and caches with TTL awareness.
  */
 
-import { decodeAttestationBlob } from '@hap/core';
+import { decodeAttestationBlob, type Subject } from '@hap/core';
 import { SPClient, type SPAttestationsResult, type SPPendingItem } from './sp-client';
 
 /**
@@ -46,6 +46,12 @@ export interface CachedAuthorization {
    * (v0.3/v0.4) attestations whose payload omits commitment_mode.
    */
   signedCommitmentMode?: 'automatic' | 'review' | 'review_above_cap';
+  /**
+   * v0.6 Identity Assurance — the signed verified-identity overlay from the
+   * attestation (one per owner). Used to render the verification footer's
+   * identity line. Absent ⇒ low/pseudonymous (no name).
+   */
+  subjects?: Subject[];
   complete: boolean;
 }
 
@@ -110,10 +116,13 @@ export class AttestationCache {
     // attestations share it). This — not the AS's unsigned deferred_commitment_domains
     // — is the authoritative review-vs-automatic signal.
     let signedCommitmentMode: CachedAuthorization['signedCommitmentMode'];
+    let subjects: CachedAuthorization['subjects'];
     const firstBlob = result.attestations[0]?.blob;
     if (firstBlob) {
       try {
-        signedCommitmentMode = decodeAttestationBlob(firstBlob).payload.commitment_mode;
+        const payload = decodeAttestationBlob(firstBlob).payload;
+        signedCommitmentMode = payload.commitment_mode;
+        subjects = payload.subjects; // v0.6 Identity Assurance — signed verified identity
       } catch {
         signedCommitmentMode = undefined; // undecodable → no enforcement signal (treated as legacy)
       }
@@ -136,6 +145,7 @@ export class AttestationCache {
       attestedDomains: result.attested_domains ?? [],
       deferredCommitmentDomains: result.deferred_commitment_domains ?? [],
       signedCommitmentMode,
+      subjects,
       complete: result.complete,
     };
 

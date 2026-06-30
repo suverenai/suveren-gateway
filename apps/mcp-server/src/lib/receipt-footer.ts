@@ -14,9 +14,13 @@
  *    new receipt (live content ↔ current receipt).
  */
 
+import { deriveIdentityLine, type Subject } from '@hap/core';
 import type { DiscoveredTool } from './integration-manager';
 
 const AS_BASE = (process.env.SUVEREN_AS_URL ?? 'https://www.suveren.ai').replace(/\/$/, '');
+
+/** Operator display name for the footer ("verified by «operator»"). */
+const OPERATOR_NAME = process.env.SUVEREN_OPERATOR_NAME ?? 'Suveren';
 
 /** Communicative profiles — the only ones that get a footer. */
 const FOOTER_PROFILES = new Set(['email', 'calendar', 'publish']);
@@ -29,8 +33,12 @@ const FOOTER_PROFILES = new Set(['email', 'calendar', 'publish']);
  */
 const CONTENT_FIELD_CANDIDATES = ['body', 'text', 'description', 'content'];
 
-/** Stable marker so a prior footer can be found and replaced. */
-const FOOTER_MARKER = '— Sent by an AI agent via Suveren';
+/**
+ * Stable strip anchor — the prefix common to every footer variant (low, and
+ * `high`'s "…of «name» — verified by …"), so a prior footer is found and
+ * replaced regardless of the identity disclosed.
+ */
+const FOOTER_MARKER = '— Sent by an AI agent';
 
 /** v1: footer on for everyone (free-tier behavior). Hook for paid opt-out later. */
 export function shouldAttachFooter(): boolean {
@@ -41,8 +49,11 @@ function verifyUrl(receiptId: string): string {
   return `${AS_BASE}/r/${receiptId}`;
 }
 
-function footerText(receiptId: string): string {
-  return `\n\n${FOOTER_MARKER}. Verify: ${verifyUrl(receiptId)}`;
+function footerText(receiptId: string, subject?: Subject): string {
+  // deriveIdentityLine is the single source of truth: "Sent by an AI agent via
+  // «operator»" at low, "…of «name» — verified by «operator»" at high.
+  const line = deriveIdentityLine(subject, { operatorName: OPERATOR_NAME });
+  return `\n\n— ${line}. Verify: ${verifyUrl(receiptId)}`;
 }
 
 function isStringType(t: unknown): boolean {
@@ -80,6 +91,7 @@ export function appendVerificationFooter(
   tool: DiscoveredTool,
   args: Record<string, unknown>,
   receiptId: string,
+  subject?: Subject,
 ): Record<string, unknown> {
   const profile = tool.gating?.profile;
   if (!profile || !FOOTER_PROFILES.has(profile)) return args;
@@ -88,5 +100,5 @@ export function appendVerificationFooter(
   if (!field) return args;
 
   const current = typeof args[field] === 'string' ? (args[field] as string) : '';
-  return { ...args, [field]: stripFooter(current) + footerText(receiptId) };
+  return { ...args, [field]: stripFooter(current) + footerText(receiptId, subject) };
 }
