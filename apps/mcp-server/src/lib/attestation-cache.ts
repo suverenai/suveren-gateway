@@ -106,6 +106,15 @@ export class AttestationCache {
     const result = await this.spClient.getAttestations(frameHash);
     if (!result.profile_id || !result.frame) return null;
 
+    // v0.6 — drop a REVOKED authorization so it is never listed or matched. A
+    // revoked-but-unexpired attestation can't issue a receipt, so matching it for
+    // a new action only produces dead proposals. Remove any cached copy too.
+    if (result.revoked) {
+      this.authorizations.delete(frameHash);
+      if (result.frame_hash) this.authorizations.delete(result.frame_hash);
+      return null;
+    }
+
     // SP returns frame_hash (storage key, per-user) and bounds_hash (content).
     // Track them separately. For v0.3 records that lack bounds_hash, fall back
     // to frame_hash for the content-equivalent.
