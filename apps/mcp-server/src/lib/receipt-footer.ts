@@ -22,6 +22,9 @@ const AS_BASE = (process.env.SUVEREN_AS_URL ?? 'https://www.suveren.ai').replace
 /** Operator display name for the footer ("verified by «operator»"). */
 const OPERATOR_NAME = process.env.SUVEREN_OPERATOR_NAME ?? 'Suveren';
 
+/** Canonical HAP site — the promotion link on every footer's second line. */
+const HAP_URL = 'https://www.humanagencyprotocol.org/';
+
 /** Communicative profiles — the only ones that get a footer. */
 const FOOTER_PROFILES = new Set(['email', 'calendar', 'publish']);
 
@@ -34,26 +37,47 @@ const FOOTER_PROFILES = new Set(['email', 'calendar', 'publish']);
 const CONTENT_FIELD_CANDIDATES = ['body', 'text', 'description', 'content'];
 
 /**
- * Stable strip anchor — the prefix common to every footer variant (low, and
- * `high`'s "…of «name» — verified by …"), so a prior footer is found and
- * replaced regardless of the identity disclosed.
+ * Strip anchor — matches an already-appended Suveren footer through the end of
+ * the content, regardless of identity variant, verb (Sent/Published), or
+ * separator (legacy em-dash "—" or the current ASCII "--"). Used to remove a
+ * prior footer before appending a fresh one (idempotent + regenerates on edit).
  */
-const FOOTER_MARKER = '— Sent by an AI agent';
+const FOOTER_RE = /\n*(?:—|--) (?:Sent|Published) by an AI agent[\s\S]*$/;
 
 /** v1: footer on for everyone (free-tier behavior). Hook for paid opt-out later. */
 export function shouldAttachFooter(): boolean {
   return true;
 }
 
-function verifyUrl(receiptId: string): string {
+function receiptUrl(receiptId: string): string {
   return `${AS_BASE}/r/${receiptId}`;
 }
 
-function footerText(receiptId: string, subject?: Subject): string {
-  // deriveIdentityLine is the single source of truth: "Sent by an AI agent via
-  // «operator»" at low, "…of «name» — verified by «operator»" at high.
-  const line = deriveIdentityLine(subject, { operatorName: OPERATOR_NAME });
-  return `\n\n— ${line}. Verify: ${verifyUrl(receiptId)}`;
+/**
+ * Presentation verb by profile: "Published" for the publish profile (a post is
+ * published, not sent), "Sent" for email/calendar. deriveIdentityLine always
+ * yields a "Sent …" line (the assurance wording is the protocol's); the verb is
+ * a channel presentation concern, so we swap the leading word here.
+ */
+export function verbForProfile(profile: string): string {
+  return profile === 'publish' ? 'Published' : 'Sent';
+}
+
+/**
+ * The HAP promotion line — constant across every footer (operator-branded so a
+ * white-labelled operator reads correctly). Plain full URL, no HTML anchor, so
+ * it renders clickable in email (HTML or plain), calendar, and publishing alike.
+ */
+function hapLine(): string {
+  return `-- ${OPERATOR_NAME} is an implementation of the Human Agency Protocol (HAP), an open protocol to delegate execution to AI agents under human authority. ${HAP_URL}`;
+}
+
+function footerText(receiptId: string, verb: string, subject?: Subject): string {
+  // deriveIdentityLine (hap-core) is the source of truth for the assurance
+  // wording. It leads with "Sent …"; swap the verb for the channel. Full plain
+  // URLs (no <a>) so links work across email / calendar / publishing.
+  const identity = deriveIdentityLine(subject, { operatorName: OPERATOR_NAME }).replace(/^Sent\b/, verb);
+  return `\n\n-- ${identity}. Receipt: ${receiptUrl(receiptId)}\n\n${hapLine()}`;
 }
 
 function isStringType(t: unknown): boolean {
@@ -77,9 +101,7 @@ export function detectContentField(tool: DiscoveredTool): string | null {
 
 /** Remove a previously-appended Suveren footer (back through preceding blank lines). */
 function stripFooter(value: string): string {
-  const i = value.indexOf(FOOTER_MARKER);
-  if (i === -1) return value;
-  return value.slice(0, i).replace(/\n+$/, '');
+  return value.replace(FOOTER_RE, '').replace(/\n+$/, '');
 }
 
 /**
@@ -100,5 +122,5 @@ export function appendVerificationFooter(
   if (!field) return args;
 
   const current = typeof args[field] === 'string' ? (args[field] as string) : '';
-  return { ...args, [field]: stripFooter(current) + footerText(receiptId, subject) };
+  return { ...args, [field]: stripFooter(current) + footerText(receiptId, verbForProfile(profile), subject) };
 }
