@@ -35,8 +35,18 @@ export interface AuthStatusOptions {
 
 export function getAuthStatus(item: PendingItem, opts?: AuthStatusOptions): AuthStatus {
   if (opts?.revokedSet?.has(item.frame_hash)) return 'revoked';
-  if (item.sp_status === 'revoked') return 'revoked';
-  if (item.sp_status === 'expired') return 'expired';
+  // The SP's verdict is authoritative for ALL statuses when present. The
+  // previous version let the time-based fallback below override
+  // sp_status === 'active': it re-derived a different answer from the same
+  // data (earliest-expiry heuristic vs the SP's any-live rule), so the
+  // gateway and SP dashboards disagreed about identical rows.
+  switch (item.sp_status) {
+    case 'revoked': return 'revoked';
+    case 'expired': return 'expired';
+    case 'active':  return 'active';
+    case 'pending': return 'pending';
+  }
+  // No sp_status (stale snapshot / older SP): derive locally as a fallback.
   if (item.remaining_seconds === null || item.remaining_seconds <= 0) return 'expired';
   if (item.missing_domains.length > 0) return 'pending';
   return 'active';
