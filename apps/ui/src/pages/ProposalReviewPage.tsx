@@ -92,7 +92,7 @@ export function ProposalReviewPage() {
       // We have no dedicated endpoint for this yet. Derive from domain proposals
       // that have pendingApprovers (above-cap) and userId in approvedBy.
       // For v1 this queries domain proposals — above-cap proposals also exist
-      // in the domain index (pendingDomains is [] but they're still by frameHash).
+      // in the domain index (pendingDomains is [] but they're still by authorizationId).
       // The simplest v1 approach: re-use getProposals + filter client-side.
       // This works because above-cap proposals are still stored per frame, not per domain.
       // The domain query may miss them — but the SP returns all pending proposals

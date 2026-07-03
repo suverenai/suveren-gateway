@@ -22,8 +22,8 @@ function sortItems(items: PendingItem[], revokedSet: Set<string>, highlightHash?
   return [...items].sort((a, b) => {
     // Highlighted item always pinned to the top so the user lands on it.
     if (highlightHash) {
-      if (a.frame_hash === highlightHash && b.frame_hash !== highlightHash) return -1;
-      if (b.frame_hash === highlightHash && a.frame_hash !== highlightHash) return 1;
+      if (a.authorization_id === highlightHash && b.authorization_id !== highlightHash) return -1;
+      if (b.authorization_id === highlightHash && a.authorization_id !== highlightHash) return 1;
     }
     const sa = getAuthStatus(a, { revokedSet });
     const sb = getAuthStatus(b, { revokedSet });
@@ -56,7 +56,7 @@ interface AuthCardProps {
   onExpand: (item: PendingItem) => void;
   onCopyHash: (hash: string) => void;
   onCopy: (item: PendingItem) => void;
-  onRevoke: (frameHash: string, ownerLabel?: string, profileShortName?: string) => void;
+  onRevoke: (authorizationId: string, ownerLabel?: string, profileShortName?: string) => void;
   onExtend: (item: PendingItem) => void;
   highlightHash?: string | null;
 }
@@ -82,8 +82,8 @@ function AuthCard({
   highlightHash,
 }: AuthCardProps) {
   const status = getAuthStatus(item, { revokedSet });
-  const isExpanded = expandedHash === item.frame_hash;
-  const gateEntry = gateCache[item.frame_hash || item.profile_id || item.path];
+  const isExpanded = expandedHash === item.authorization_id;
+  const gateEntry = gateCache[item.authorization_id];
   const showExtend = status === 'active' || status === 'pending' || status === 'expired';
   const boundsEntries = Object.entries(item.frame)
     .filter(([k]) => k !== 'profile' && k !== 'path');
@@ -134,12 +134,12 @@ function AuthCard({
 
   const profileShortName = profileDisplayName(item.profile_id);
 
-  const isHighlighted = highlightHash != null && item.frame_hash === highlightHash;
+  const isHighlighted = highlightHash != null && item.authorization_id === highlightHash;
 
   return (
     <div
       className={`card${isHighlighted ? ' card-highlight' : ''}`}
-      key={item.frame_hash}
+      key={item.authorization_id}
       style={{ marginBottom: 0 }}
     >
       {/* Team owner line */}
@@ -224,10 +224,10 @@ function AuthCard({
               lineHeight: 1.4,
             }}
             onClick={() => onCopy(item)}
-            disabled={copyingHash === item.frame_hash}
+            disabled={copyingHash === item.authorization_id}
             title="The approver list for this profile has changed since this authority was created. Copy to reissue with the current approvers."
           >
-            {copyingHash === item.frame_hash ? 'Copying...' : 'Approver list updated · Copy with new approvers'}
+            {copyingHash === item.authorization_id ? 'Copying...' : 'Approver list updated · Copy with new approvers'}
           </button>
         )}
       </div>
@@ -311,7 +311,7 @@ function AuthCard({
           <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginTop: '1rem', marginBottom: '0.25rem' }}>
             Intent
           </div>
-          {gateLoading === item.frame_hash ? (
+          {gateLoading === item.authorization_id ? (
             <p style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>Loading gate content...</p>
           ) : gateEntry ? (
             <div className="gate-content-block">
@@ -329,14 +329,14 @@ function AuthCard({
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.25rem' }}>
             <span style={{ fontSize: '0.7rem', color: 'var(--text-tertiary)', fontFamily: "'SF Mono', Monaco, monospace", wordBreak: 'break-all' }}>
-              {item.frame_hash}
+              {item.authorization_id}
             </span>
             <button
               className="btn btn-ghost btn-sm"
               style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem' }}
-              onClick={() => onCopyHash(item.frame_hash)}
+              onClick={() => onCopyHash(item.authorization_id)}
             >
-              {copiedHash === item.frame_hash ? 'copied' : 'copy'}
+              {copiedHash === item.authorization_id ? 'copied' : 'copy'}
             </button>
           </div>
 
@@ -347,10 +347,10 @@ function AuthCard({
               <button
                 className="btn btn-secondary btn-sm"
                 onClick={() => onCopy(item)}
-                disabled={copyingHash === item.frame_hash}
+                disabled={copyingHash === item.authorization_id}
                 title="Start a new authorization pre-filled with these bounds, context, and intent"
               >
-                {copyingHash === item.frame_hash ? 'Copying…' : '⧉ Copy'}
+                {copyingHash === item.authorization_id ? 'Copying…' : '⧉ Copy'}
               </button>
             )}
             {/* Extend only in Mine tab */}
@@ -366,18 +366,18 @@ function AuthCard({
             {ownerLabel && isAdmin && status !== 'revoked' ? (
               <button
                 className="btn btn-danger btn-sm"
-                onClick={() => onRevoke(item.frame_hash, ownerLabel, profileShortName)}
-                disabled={revokingHash === item.frame_hash}
+                onClick={() => onRevoke(item.authorization_id, ownerLabel, profileShortName)}
+                disabled={revokingHash === item.authorization_id}
               >
-                {revokingHash === item.frame_hash ? 'Revoking…' : 'Revoke'}
+                {revokingHash === item.authorization_id ? 'Revoking…' : 'Revoke'}
               </button>
             ) : !ownerLabel && (status === 'active' || status === 'pending') ? (
               <button
                 className="btn btn-danger btn-sm"
-                onClick={() => onRevoke(item.frame_hash)}
-                disabled={revokingHash === item.frame_hash}
+                onClick={() => onRevoke(item.authorization_id)}
+                disabled={revokingHash === item.authorization_id}
               >
-                {revokingHash === item.frame_hash ? 'Revoking…' : 'Revoke'}
+                {revokingHash === item.authorization_id ? 'Revoking…' : 'Revoke'}
               </button>
             ) : null}
           </div>
@@ -493,15 +493,15 @@ export function AuthorizationsPage() {
   }, [items, teamItems, viewTab, groupId, mode, profileConfigCache]);
 
   const handleExpand = async (item: PendingItem) => {
-    if (expandedHash === item.frame_hash) {
+    if (expandedHash === item.authorization_id) {
       setExpandedHash(null);
       return;
     }
-    setExpandedHash(item.frame_hash);
+    setExpandedHash(item.authorization_id);
 
-    const lookupKey = item.frame_hash || item.profile_id || item.path;
+    const lookupKey = item.authorization_id;
     if (!(lookupKey in gateCache)) {
-      setGateLoading(item.frame_hash);
+      setGateLoading(item.authorization_id);
       try {
         const entry = await spClient.getGateContent(lookupKey);
         setGateCache(prev => ({ ...prev, [lookupKey]: entry }));
@@ -525,9 +525,9 @@ export function AuthorizationsPage() {
       alert('No active group; cannot copy authorization.');
       return;
     }
-    setCopyingHash(item.frame_hash);
+    setCopyingHash(item.authorization_id);
     try {
-      const lookupKey = item.frame_hash || item.profile_id || item.path;
+      const lookupKey = item.authorization_id;
       let entry: GateContentEntry | null = gateCache[lookupKey] ?? null;
       if (!(lookupKey in gateCache)) {
         entry = await spClient.getGateContent(lookupKey);
@@ -563,15 +563,15 @@ export function AuthorizationsPage() {
     }
   };
 
-  const handleRevoke = async (frameHash: string, ownerLabel?: string, profileShortName?: string) => {
+  const handleRevoke = async (authorizationId: string, ownerLabel?: string, profileShortName?: string) => {
     const confirmMsg = ownerLabel && profileShortName
       ? `Revoke ${ownerLabel}'s ${profileShortName} authorization? This cannot be undone.`
       : 'Revoke this authorization? The agent will no longer be able to execute actions under this attestation.';
     if (!confirm(confirmMsg)) return;
-    setRevokingHash(frameHash);
+    setRevokingHash(authorizationId);
     try {
-      await spClient.revokeAttestation(frameHash);
-      setRevokedSet(prev => new Set(prev).add(frameHash));
+      await spClient.revokeAttestation(authorizationId);
+      setRevokedSet(prev => new Set(prev).add(authorizationId));
       // Refresh team list after admin revoke
       if (ownerLabel && groupId) {
         fetchTeamItems();
@@ -812,7 +812,7 @@ export function AuthorizationsPage() {
               : undefined;
             return (
               <AuthCard
-                key={item.frame_hash}
+                key={item.authorization_id}
                 item={item}
                 ownerLabel={ownerLabel}
                 isAdmin={isAdmin}

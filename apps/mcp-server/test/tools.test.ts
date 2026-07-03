@@ -62,7 +62,7 @@ describe('list-authorizations', () => {
     const now = Math.floor(Date.now() / 1000);
     const handler = listAuthorizationsHandler(mockState([
       {
-        frameHash: 'sha256:abc',
+        authorizationId: 'authz_00000000-0000-4000-8000-0000000000ab',
         profileId: 'charge@0.3',
         path: 'charge-routine',
         frame: {
@@ -91,7 +91,7 @@ describe('list-authorizations', () => {
     const now = Math.floor(Date.now() / 1000);
     const handler = listAuthorizationsHandler(mockState([
       {
-        frameHash: 'sha256:abc',
+        authorizationId: 'authz_00000000-0000-4000-8000-0000000000ab',
         profileId: 'charge@0.3',
         path: 'charge-reviewed',
         frame: {
@@ -118,7 +118,7 @@ describe('list-authorizations', () => {
     const now = Math.floor(Date.now() / 1000);
     const handler = listAuthorizationsHandler(mockState([
       {
-        frameHash: 'sha256:abc',
+        authorizationId: 'authz_00000000-0000-4000-8000-0000000000ab',
         profileId: 'charge@0.3',
         path: 'charge-routine',
         frame: {
@@ -150,7 +150,7 @@ describe('list-authorizations', () => {
     const now = Math.floor(Date.now() / 1000);
     const handler = listAuthorizationsHandler(mockState([
       {
-        frameHash: 'sha256:abc',
+        authorizationId: 'authz_00000000-0000-4000-8000-0000000000ab',
         profileId: 'charge@0.3',
         path: 'charge-routine',
         frame: { profile: 'charge@0.3', path: 'charge-routine', amount_max: 100, currency: 'USD', action_type: 'charge' },
@@ -171,7 +171,7 @@ describe('list-authorizations', () => {
     const now = Math.floor(Date.now() / 1000);
     const handler = listAuthorizationsHandler(mockState([
       {
-        frameHash: 'sha256:abc',
+        authorizationId: 'authz_00000000-0000-4000-8000-0000000000ab',
         profileId: 'charge@0.3',
         path: 'charge-routine',
         frame: { profile: 'charge@0.3', path: 'charge-routine', amount_max: 100, currency: 'USD', action_type: 'charge' },
@@ -204,7 +204,7 @@ function mockGatedState(opts: {
 } = {}): SharedState {
   const now = Math.floor(Date.now() / 1000);
   const auth: CachedAuthorization = {
-    frameHash: 'sha256:abc',
+    authorizationId: 'authz_00000000-0000-4000-8000-0000000000ab',
     profileId: 'github.com/humanagencyprotocol/hap-profiles/charge@0.3',
     path: 'charge-routine',
     frame: { profile: 'github.com/humanagencyprotocol/hap-profiles/charge@0.3', path: 'charge-routine', amount_max: 100, currency: 'EUR', action_type: 'charge' },
@@ -267,10 +267,9 @@ describe('createGatedToolHandler — SP receipt integration', () => {
 
     expect(postReceipt).toHaveBeenCalledOnce();
     expect(postReceipt).toHaveBeenCalledWith(expect.objectContaining({
-      // v0.5 wire contract: the lookup key is the bare `boundsHash` (falls back
-      // to the cached frameHash when no separate boundsHash is set).
-      // `attestationHash` and `path` are retired and MUST NOT be sent.
-      boundsHash: 'sha256:abc',
+      // The receipt references the grant by its per-ceremony id; boundsHash
+      // rides along as an optional cross-check.
+      authorizationId: 'authz_00000000-0000-4000-8000-0000000000ab',
       profileId: 'github.com/humanagencyprotocol/hap-profiles/charge@0.3',
       // `action` is the namespaced tool name (the SP uses it for the review-mode
       // PROPOSAL_MISMATCH equality check), not the short profile name.
@@ -324,7 +323,7 @@ describe('createGatedToolHandler — SP receipt integration', () => {
       new SPReceiptError('Approval required', 409, {
         error: 'approval_required',
         approvers,
-        frameHash: 'sha256:abc',
+        authorizationId: 'authz_00000000-0000-4000-8000-0000000000ab',
         field: 'amount_daily_max',
         cap: 1000,
       }),
@@ -332,12 +331,12 @@ describe('createGatedToolHandler — SP receipt integration', () => {
     const submitProposal = vi.fn().mockResolvedValue({
       proposal: { id: 'prop-123', status: 'pending' },
     });
-    const getFrameMetadata = vi.fn().mockResolvedValue({
-      frameHash: 'sha256:abc',
-      profileId: 'github.com/humanagencyprotocol/hap-profiles/charge@0.3',
-      aboveCap: true,
-      approversFrozen: ['bob', 'carol'],
-      createdBy: 'alice',
+    const getAuthorizationSummary = vi.fn().mockResolvedValue({
+      authorization_id: 'authz_00000000-0000-4000-8000-0000000000ab',
+      profile_id: 'github.com/humanagencyprotocol/hap-profiles/charge@0.3',
+      above_cap: true,
+      approvers_frozen: ['bob', 'carol'],
+      created_by: 'alice',
     });
 
     const state = {
@@ -345,7 +344,7 @@ describe('createGatedToolHandler — SP receipt integration', () => {
       spClient: {
         postReceipt,
         submitProposal,
-        getFrameMetadata,
+        getAuthorizationSummary,
       },
     } as unknown as import('../src/lib/shared-state').SharedState;
 
@@ -504,7 +503,7 @@ describe('buildProxiedToolDescription', () => {
       },
     };
     const state = mockState([{
-      frameHash: 'sha256:abc',
+      authorizationId: 'authz_00000000-0000-4000-8000-0000000000ab',
       profileId: fullProfileId,
       path: 'charge-routine',
       frame: { profile: fullProfileId, path: 'charge-routine', amount_max: 100, currency: 'USD', action_type: 'charge' },

@@ -1,18 +1,16 @@
 /**
  * Build the `/gate-content` forward payload from an attest result.
  *
- * The MCP server resolves the attestation at the Authority Server by its
- * **per-user storage key** (`frame_hash` = `${boundsHash}:${userId}`), so the
- * forward MUST carry `frameHash`. Sending only `boundsHash` (the bare content
- * fingerprint) fails the AS lookup → the forward 404s with
- * "Failed to forward gate content to MCP server".
+ * The MCP server resolves the authorization at the Authority Server by its
+ * **per-ceremony id** (`authorization_id`), and keys the local gate content by
+ * it — one grant, one entry, no fingerprint fallbacks (those were the
+ * cross-contamination vector between same-bounds twins).
  *
- * This is shared by the create flow (AgentReviewPage) and the extend flow
- * (ExtendAuthModal) precisely so they cannot diverge — the extend flow once
- * omitted `frameHash` and broke (the popup stuck on that error).
+ * Shared by the create flow (AgentReviewPage) and the extend/renew flow
+ * (ExtendAuthModal) precisely so they cannot diverge.
  */
 export interface AttestHashes {
-  frame_hash?: string;
+  authorization_id?: string;
   bounds_hash?: string;
 }
 
@@ -27,7 +25,7 @@ export interface GateForwardFields {
 }
 
 export interface GateForwardArgs {
-  frameHash: string;
+  authorizationId: string;
   boundsHash: string;
   contextHash: string;
   context: Record<string, string | number>;
@@ -36,10 +34,18 @@ export interface GateForwardArgs {
 }
 
 export function buildGateForwardArgs(result: AttestHashes, fields: GateForwardFields): GateForwardArgs {
+  // Lockstep guard: an attest result without an authorization_id means the
+  // Authority Server predates per-ceremony identity. Storing gate content
+  // under any other key would silently reintroduce the fingerprint-merge
+  // bug, so fail loudly instead.
+  if (!result.authorization_id) {
+    throw new Error(
+      'Attest result lacks authorization_id — the Authority Server predates ' +
+      'per-ceremony identity. Update the Authority Server (lockstep deploy).',
+    );
+  }
   return {
-    // The per-user storage key the AS lookup needs. Prefer the result's
-    // frame_hash; fall back to bounds_hash, then the locally computed hash.
-    frameHash: result.frame_hash ?? result.bounds_hash ?? fields.boundsHash,
+    authorizationId: result.authorization_id,
     boundsHash: result.bounds_hash ?? fields.boundsHash,
     contextHash: fields.contextHash,
     context: fields.context,

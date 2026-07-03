@@ -58,11 +58,8 @@ export function ExtendAuthModal({ item, onClose, onSuccess }: Props) {
     setError('');
 
     try {
-      // 1. Fetch gate content from MCP. The gate store keys under (in priority):
-      //    frame_hash / profile_id / path — v0.4 attestations have no `path`
-      //    so passing item.path alone returns null (which is what caused the
-      //    "Gate content not found locally" error users hit on extend).
-      const lookupKey = item.frame_hash || item.profile_id || item.path;
+      // 1. Fetch gate content from MCP — keyed by the per-ceremony id.
+      const lookupKey = item.authorization_id;
       const gateEntry: GateContentEntry | null = await spClient.getGateContent(lookupKey);
       if (!gateEntry) {
         throw new Error('Gate content not found locally. The MCP server may have restarted. Please re-authorize through the full wizard instead.');
@@ -99,9 +96,13 @@ export function ExtendAuthModal({ item, onClose, onSuccess }: Props) {
       const originalMode: 'automatic' | 'review' =
         (item.deferred_commitment_domains?.length ?? 0) > 0 ? 'review' : 'automatic';
 
+      // Extend = RENEW: the SAME per-ceremony id with renew:true. The AS locks
+      // the content (bounds/context/intent hashes must match) and only the
+      // expiry moves — changing anything else requires a new ceremony.
       const result = await spClient.attest({
+        authorization_id: item.authorization_id,
+        renew: true,
         profile_id: item.profile_id,
-        path: item.path,
         bounds,
         bounds_hash: boundsHash,
         context_hash: contextHash,
@@ -114,10 +115,8 @@ export function ExtendAuthModal({ item, onClose, onSuccess }: Props) {
         ttl: selectedTTL,
       });
 
-      // 5. Push gate content to MCP. buildGateForwardArgs guarantees frameHash
-      // is included — the MCP server resolves the attestation at the AS by its
-      // per-user storage key, and boundsHash alone 404s. Shared with the create
-      // flow so the two can't diverge (this flow once omitted frameHash).
+      // 5. Push gate content to MCP, keyed by the per-ceremony id. Shared with
+      // the create flow so the two cannot diverge.
       await spClient.pushGateContent(
         buildGateForwardArgs(result, {
           boundsHash,

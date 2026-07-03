@@ -505,8 +505,8 @@ app.get('/active-authorizations', authGuard, async (_req: Request, res: Response
 // Gate content forward — protected
 app.post('/gate-content', jsonParser, authGuard, async (req: Request, res: Response) => {
   try {
-    const { frameHash, boundsHash, contextHash, context, path, gateContent } = req.body as {
-      frameHash?: string;
+    const { authorizationId, boundsHash, contextHash, context, path, gateContent } = req.body as {
+      authorizationId?: string;
       boundsHash?: string;
       contextHash?: string;
       context?: Record<string, string | number>;
@@ -514,7 +514,7 @@ app.post('/gate-content', jsonParser, authGuard, async (req: Request, res: Respo
       gateContent: Record<string, string>;
     };
 
-    await pushGateContent({ frameHash, boundsHash, contextHash, context, path, gateContent });
+    await pushGateContent({ authorizationId, boundsHash, contextHash, context, path, gateContent });
     res.json({ ok: true });
   } catch (err) {
     console.error('[Control Plane] Gate content forward error:', err);

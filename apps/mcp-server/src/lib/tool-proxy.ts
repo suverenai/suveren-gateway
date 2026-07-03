@@ -210,7 +210,7 @@ export function createGatedToolHandler(
     const errors: string[] = [];
     for (const auth of matchingAuths) {
       // Pass v0.4 enriched fields (bounds/context from gate store) to gatekeeper
-      const { result } = await state.gatekeeper.verifyExecution(auth.frameHash ?? auth.path, execution, {
+      const { result } = await state.gatekeeper.verifyExecution(auth.authorizationId, execution, {
         bounds: auth.bounds,
         context: auth.context,
       });
@@ -218,10 +218,8 @@ export function createGatedToolHandler(
       if (!result.approved) {
       }
       if (result.approved) {
-        // SP read-by-hash lookups (receipt, proposals) require the storage key.
-        // frameHash is per-user scoped post-b228e58; boundsHash is the content
-        // fingerprint and would miss on FrameMetadata reads.
-        const authHash = auth.frameHash ?? auth.boundsHash;
+        // Every SP reference (receipt, proposals, summary) is the per-ceremony id.
+        const authzId = auth.authorizationId;
 
         // Enforce the SIGNED commitment_mode (defense against a downgrade via
         // unsigned AS metadata). For an honest AS, commitment_mode === 'review'
@@ -247,7 +245,7 @@ export function createGatedToolHandler(
           try {
             const enrichedArgs = await attachImagePreview(args);
             const { proposal } = await state.spClient.submitProposal({
-              frameHash: authHash,
+              authorizationId: authzId,
               profileId: auth.profileId,
               path: auth.path,
               pendingDomains: auth.deferredCommitmentDomains,
@@ -308,10 +306,9 @@ export function createGatedToolHandler(
           // hash the agent's content (pre-footer `args`) and send the hash only.
           const binding = computeContentBinding(auth.profileId, tool, args);
           const { receipt } = await state.spClient.postReceipt({
-            // v0.5: send the bare content address; the AS reconstructs the
-            // per-user storage key. Fall back to frameHash only for legacy
-            // (pre-v0.4) records that predate bounds_hash.
-            boundsHash: auth.boundsHash ?? authHash,
+            authorizationId: authzId,
+            // Optional cross-check — the AS fails closed on a mismatch.
+            boundsHash: auth.boundsHash,
             profileId: auth.profileId,
             action: tool.namespacedName,
             actionType,
@@ -328,7 +325,7 @@ export function createGatedToolHandler(
             // creator + all profile approvers must approve before execution.
             const spBody = err.body as {
               approvers?: string[];
-              frameHash?: string;
+              authorizationId?: string;
               field?: string;
               cap?: number;
             };
@@ -337,12 +334,12 @@ export function createGatedToolHandler(
             if (pendingApprovers.length === 0) {
               // Defensive fallback: fetch frameMeta to get approversFrozen
               try {
-                const frameMeta = await state.spClient.getFrameMetadata(authHash);
-                if (frameMeta?.approversFrozen) {
-                  pendingApprovers = frameMeta.approversFrozen;
+                const summary = await state.spClient.getAuthorizationSummary(authzId);
+                if (summary?.approvers_frozen) {
+                  pendingApprovers = summary.approvers_frozen;
                 }
-                if (frameMeta?.createdBy) {
-                  pendingApprovers = [frameMeta.createdBy, ...pendingApprovers];
+                if (summary?.created_by) {
+                  pendingApprovers = [summary.created_by, ...pendingApprovers];
                 }
               } catch {
                 // best effort
@@ -351,9 +348,9 @@ export function createGatedToolHandler(
               // Always include creator at the front — Decision #4: above-cap = everyone reviews,
               // creator INCLUDED regardless of authority-level mode.
               try {
-                const frameMeta = await state.spClient.getFrameMetadata(authHash);
-                if (frameMeta?.createdBy) {
-                  pendingApprovers = [frameMeta.createdBy, ...pendingApprovers];
+                const summary = await state.spClient.getAuthorizationSummary(authzId);
+                if (summary?.created_by) {
+                  pendingApprovers = [summary.created_by, ...pendingApprovers];
                 }
               } catch {
                 // best effort — proceed without creator in front
@@ -364,7 +361,7 @@ export function createGatedToolHandler(
             try {
               const enrichedArgs = await attachImagePreview(args);
               const { proposal } = await state.spClient.submitProposal({
-                frameHash: authHash,
+                authorizationId: authzId,
                 profileId: auth.profileId,
                 path: auth.path,
                 pendingDomains: [],
@@ -401,7 +398,7 @@ export function createGatedToolHandler(
             // cached attestation so list-authorizations/list-integrations
             // reflect reality instead of serving a stale "authorized" view.
             if (/revoked/i.test(err.message)) {
-              state.cache.invalidate(auth.frameHash ?? auth.path);
+              state.cache.invalidate(auth.authorizationId);
             }
             return {
               content: [{ type: 'text', text: `Blocked by SP: ${err.message}` }],

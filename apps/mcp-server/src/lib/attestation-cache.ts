@@ -22,11 +22,11 @@ export function isCommitmentDowngrade(
 }
 
 export interface CachedAuthorization {
-  // SP storage key. v0.4 post-b228e58: per-user scoped (`${boundsHash}:${userId}`).
-  // Use this for all SP read-by-hash lookups (revoke, intent, receipt, proposals).
-  frameHash: string;
-  // Content fingerprint. May collide across users with identical bounds.
-  // Use only for hash-equality checks and gate-store path-scoping fallback.
+  // Per-ceremony identity — THE key for every SP lookup (receipt, proposals,
+  // intent, revoke) and for joining local gate content.
+  authorizationId: string;
+  // Content fingerprint. May collide across grants with identical bounds.
+  // Use only for hash-equality checks (e.g. the receipt cross-check).
   boundsHash?: string;
   contextHash?: string;         // v0.4
   profileId: string;
@@ -102,24 +102,27 @@ export class AttestationCache {
   /**
    * Fetch attestation data from SP for a frame hash and cache it.
    */
-  async syncAuthorization(frameHash: string): Promise<CachedAuthorization | null> {
-    const result = await this.spClient.getAttestations(frameHash);
-    if (!result.profile_id || !result.frame) return null;
+  async syncAuthorization(authorizationId: string): Promise<CachedAuthorization | null> {
+    const result = await this.spClient.getAttestations(authorizationId);
+    if (!result.profile_id) return null;
 
     // v0.6 — drop a REVOKED authorization so it is never listed or matched. A
     // revoked-but-unexpired attestation can't issue a receipt, so matching it for
     // a new action only produces dead proposals. Remove any cached copy too.
     if (result.revoked) {
-      this.authorizations.delete(frameHash);
-      if (result.frame_hash) this.authorizations.delete(result.frame_hash);
+      this.authorizations.delete(authorizationId);
       return null;
     }
 
-    // SP returns frame_hash (storage key, per-user) and bounds_hash (content).
-    // Track them separately. For v0.3 records that lack bounds_hash, fall back
-    // to frame_hash for the content-equivalent.
-    const storageHash = result.frame_hash ?? result.bounds_hash;
-    const bounds = result.bounds ?? result.frame;
+    // Lockstep guard: an AS without per-ceremony identity would silently
+    // reintroduce fingerprint-merge behavior. Fail loudly, never quietly.
+    if (!result.authorization_id) {
+      throw new Error(
+        'Authority Server response lacks authorization_id — the AS predates ' +
+        'per-ceremony identity. Update the Authority Server (lockstep deploy).',
+      );
+    }
+    const bounds = result.bounds ?? result.frame ?? {};
 
     // Read the commitment mode from the SIGNED payload (all of an authorization's
     // attestations share it). This — not the AS's unsigned deferred_commitment_domains
@@ -138,11 +141,11 @@ export class AttestationCache {
     }
 
     const auth: CachedAuthorization = {
-      frameHash: storageHash,
+      authorizationId: result.authorization_id,
       boundsHash: result.bounds_hash,  // content fingerprint (undefined for pre-v0.4 records)
       contextHash: result.context_hash,
       profileId: result.profile_id,
-      path: result.path ?? result.profile_id,
+      path: result.profile_id,
       frame: bounds,                   // compat alias
       bounds: result.bounds,           // v0.4 (undefined for v0.3)
       attestations: result.attestations.map(a => ({
@@ -158,10 +161,8 @@ export class AttestationCache {
       complete: result.complete,
     };
 
-    // Key by frameHash (unique per authorization) so multiple grants under the
-    // same profile coexist instead of overwriting each other. Fall back to path
-    // for legacy records that lack a frameHash.
-    this.authorizations.set(auth.frameHash ?? auth.path, auth);
+    // Key by the per-ceremony id — grants can never merge or overwrite.
+    this.authorizations.set(auth.authorizationId, auth);
     return auth;
   }
 
@@ -195,10 +196,8 @@ export class AttestationCache {
    * Cache an authorization directly (e.g., from SP response after creation).
    */
   cacheAuthorization(auth: CachedAuthorization): void {
-    // Key by frameHash (unique per authorization) so multiple grants under the
-    // same profile coexist instead of overwriting each other. Fall back to path
-    // for legacy records that lack a frameHash.
-    this.authorizations.set(auth.frameHash ?? auth.path, auth);
+    // Key by the per-ceremony id — grants can never merge or overwrite.
+    this.authorizations.set(auth.authorizationId, auth);
   }
 
   /**

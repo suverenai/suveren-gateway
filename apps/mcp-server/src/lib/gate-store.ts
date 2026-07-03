@@ -21,7 +21,7 @@ export interface GateContent {
 }
 
 export interface GateEntry {
-  frameHash: string;
+  authorizationId: string;
   boundsHash?: string;         // v0.4
   contextHash?: string;        // v0.4
   path: string;

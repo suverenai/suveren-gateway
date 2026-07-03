@@ -77,7 +77,7 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
     setIntentLoading(true);
     setIntentError(null);
     try {
-      const intentData = await spClient.getAttestationIntent(proposal.frameHash);
+      const intentData = await spClient.getAttestationIntent(proposal.authorizationId);
       if (!intentData) {
         setIntentError('Intent not available or you are not an authorized approver.');
         return;
@@ -113,7 +113,7 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
       // Fetch + store the intent as accountability record (best-effort).
       try {
         if (intent === null) {
-          const intentData = await spClient.getAttestationIntent(proposal.frameHash);
+          const intentData = await spClient.getAttestationIntent(proposal.authorizationId);
           if (intentData) {
             const decrypted = await spClient.decryptIntent({
               intentCiphertext: intentData.intentCiphertext,
@@ -121,10 +121,10 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
               approverId: currentUserId,
             });
             setIntent(decrypted);
-            await spClient.storeApprovedIntent(proposal.frameHash, decrypted);
+            await spClient.storeApprovedIntent(proposal.authorizationId, decrypted);
           }
         } else {
-          await spClient.storeApprovedIntent(proposal.frameHash, intent);
+          await spClient.storeApprovedIntent(proposal.authorizationId, intent);
         }
       } catch {
         // Non-fatal: approval already recorded on SP; local store is best-effort.

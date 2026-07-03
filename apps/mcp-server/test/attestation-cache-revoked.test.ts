@@ -10,7 +10,7 @@ import { AttestationCache } from '../src/lib/attestation-cache';
 
 const future = Math.floor(Date.now() / 1000) + 3600;
 const baseResult = (revoked: boolean) => ({
-  frame_hash: revoked ? 'sha256:revoked' : 'sha256:active',
+  authorization_id: revoked ? 'authz_rev' : 'authz_act',
   profile_id: 'email@0.4',
   frame: { recipient_max: 1 },
   attestations: [{ domain: 'owner', blob: 'unparseable-blob', expires_at: future }],
@@ -27,13 +27,13 @@ describe('AttestationCache.syncAuthorization — revoked filtering', () => {
     const cache = new AttestationCache(fakeSP(baseResult(true)));
     const auth = await cache.syncAuthorization('sha256:revoked');
     expect(auth).toBeNull();
-    expect(cache.getAllAuthorizations().some(a => a.frameHash === 'sha256:revoked')).toBe(false);
+    expect(cache.getAllAuthorizations().some(a => a.authorizationId === 'authz_rev')).toBe(false);
   });
 
   it('caches a non-revoked authorization', async () => {
     const cache = new AttestationCache(fakeSP(baseResult(false)));
     const auth = await cache.syncAuthorization('sha256:active');
     expect(auth).not.toBeNull();
-    expect(cache.getAllAuthorizations().some(a => a.frameHash === 'sha256:active')).toBe(true);
+    expect(cache.getAllAuthorizations().some(a => a.authorizationId === 'authz_act')).toBe(true);
   });
 });

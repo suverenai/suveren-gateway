@@ -141,35 +141,29 @@ app.post('/internal/configure', internalOnly, (req: Request, res: Response) => {
 
 app.post('/internal/gate-content', internalOnly, async (req: Request, res: Response) => {
   try {
-    const { frameHash, boundsHash, contextHash, context, path: rawPath, gateContent } = req.body as {
-      frameHash?: string;
-      boundsHash?: string;      // v0.4
-      contextHash?: string;     // v0.4
-      context?: Record<string, string | number>;  // v0.4
-      path?: string;            // optional in v0.4 (execution paths removed)
+    const { authorizationId, boundsHash, contextHash, context, path: rawPath, gateContent } = req.body as {
+      authorizationId?: string;
+      boundsHash?: string;
+      contextHash?: string;
+      context?: Record<string, string | number>;
+      path?: string;
       gateContent: GateContent;
     };
-
-    // frameHash is the SP storage key (per-user scoped in v0.4 post-b228e58).
-    // boundsHash is the content fingerprint and may collide across users in
-    // the same team. Use frameHash for SP lookups; fall back to boundsHash
-    // only for v0.3 compatibility where they're the same value.
-    const storageHash = frameHash ?? boundsHash;
 
     // v0.4: intent field. v0.3 compat: problem/objective/tradeoffs (not on the
     // current GateContent type — read via a legacy cast).
     const hasIntent = !!gateContent?.intent;
     const legacy = gateContent as { problem?: string; objective?: string; tradeoffs?: string } | undefined;
     const hasLegacy = !!legacy?.problem && !!legacy?.objective && !!legacy?.tradeoffs;
-    if (!storageHash || (!hasIntent && !hasLegacy)) {
-      res.status(400).json({ error: 'Missing required fields: frameHash (or boundsHash), gateContent.{intent} or gateContent.{problem,objective,tradeoffs}' });
+    if (!authorizationId || (!hasIntent && !hasLegacy)) {
+      res.status(400).json({ error: 'Missing required fields: authorizationId, gateContent.{intent} or gateContent.{problem,objective,tradeoffs}' });
       return;
     }
 
-    // Sync attestation from SP so we can verify hashes
-    const auth = await state.cache.syncAuthorization(storageHash);
+    // Sync the authorization from the SP so we can verify hashes
+    const auth = await state.cache.syncAuthorization(authorizationId);
     if (!auth) {
-      res.status(404).json({ error: `No attestation found for frame hash ${storageHash}` });
+      res.status(404).json({ error: `No authorization found for ${authorizationId}` });
       return;
     }
 
@@ -180,13 +174,11 @@ app.post('/internal/gate-content', internalOnly, async (req: Request, res: Respo
       return;
     }
 
-    // Key gate content by frameHash (storageHash) so multiple grants under the
-    // same profile don't overwrite each other (v0.4 removed execution paths, so
-    // profileId is no longer a unique per-authorization key).
-    const path = rawPath || storageHash;
+    // Gate content is keyed by the per-ceremony id — twins can never collide.
+    const path = rawPath || authorizationId;
 
     // Store gate content (encrypted if vault key is set), passing v0.4 fields through
-    state.setGateContent(path, storageHash, auth.profileId, gateContent, {
+    state.setGateContent(path, authorizationId, auth.profileId, gateContent, {
       boundsHash, contextHash, context,
     });
     console.error(`[Suveren MCP] Gate content accepted for ${path}`);
@@ -268,11 +260,11 @@ app.post('/internal/resync-gates', internalOnly, async (_req: Request, res: Resp
   let orphaned = 0;
   for (const gate of gates) {
     try {
-      // SP storage key is per-user. Use frameHash (storage key) when stored.
-      const syncHash = gate.frameHash ?? gate.boundsHash;
-      const auth = await state.cache.syncAuthorization(syncHash);
+      // Re-sync each stored grant by its per-ceremony id.
+      const authzId = gate.authorizationId;
+      const auth = await state.cache.syncAuthorization(authzId);
       if (auth) {
-        state.setGateContent(syncHash, syncHash, auth.profileId, gate.gateContent, {
+        state.setGateContent(auth.path, authzId, auth.profileId, gate.gateContent, {
           boundsHash: gate.boundsHash,
           contextHash: gate.contextHash,
           context: gate.context,
@@ -289,8 +281,8 @@ app.post('/internal/resync-gates', internalOnly, async (_req: Request, res: Resp
         // TTL-expired auths don't reach this branch — SP still holds
         // their FrameMetadata row, so syncAuthorization succeeds and the
         // local gate is preserved.
-        state.cache.invalidate(syncHash);
-        state.gateStore.delete(syncHash);
+        state.cache.invalidate(authzId);
+        state.gateStore.delete(authzId);
         orphaned++;
         console.error(`[Suveren MCP] Orphan gate purged (SP attestation deleted): ${gate.path}`);
       }
@@ -502,21 +494,14 @@ app.get('/health', (_req: Request, res: Response) => {
 });
 
 app.get('/internal/gate-content', internalOnly, (req: Request, res: Response) => {
-  // Lookup accepts any identifier we may have stashed on a gate entry:
-  // the legacy v0.3 `path`, the v0.4 `profileId` fallback, the
-  // `boundsHash`, or the compat `frameHash` alias. Previously matched
-  // only on `path`, which is empty for v0.4 attestations — UIs
-  // passing `item.path` got "Gate content not available" even though
-  // the entry was safely stored under profileId / boundsHash.
+  // Lookup is exact-match on the per-ceremony `authorizationId` ONLY.
+  // The old multi-key fallback (path / profileId / boundsHash) returned
+  // the FIRST entry sharing a fingerprint — the same twin-merge vector
+  // per-ceremony identity exists to kill. One grant, one key.
   const path = req.query.path as string | undefined;
   const gates = state.gateStore.getAll();
   if (path) {
-    const entry = gates.find(g =>
-      g.path === path ||
-      g.profileId === path ||
-      g.boundsHash === path ||
-      g.frameHash === path,
-    );
+    const entry = gates.find(g => g.authorizationId === path);
     res.json({ entry: entry ?? null });
   } else {
     res.json({ entries: gates });
@@ -530,7 +515,7 @@ app.get('/internal/gate-content', internalOnly, (req: Request, res: Response) =>
 app.get('/internal/authorizations', internalOnly, (_req: Request, res: Response) => {
   const authorizations = state.getEnrichedAuthorizations().map(a => ({
     profileId: a.profileId,
-    frameHash: a.frameHash,
+    authorizationId: a.authorizationId,
     bounds: a.frame,
     context: a.context ?? {},
     intent: a.gateContent?.intent ?? null,

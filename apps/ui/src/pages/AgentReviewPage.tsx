@@ -60,6 +60,11 @@ export function AgentReviewPage() {
   // enriched with their local context (scope) so we can compare scopes. Context
   // stays local (privacy-blind) — read from the local gate store, never the AS.
   const [existingSameProfile, setExistingSameProfile] = useState<ExistingGrant[]>([]);
+  // Duplicate-bounds soft warning: count of existing active grants on this
+  // profile whose bounds hash exactly matches the one being created. Since
+  // identity is per-ceremony, a duplicate is safe (no silent merge) — but the
+  // user usually meant to Extend the existing grant, not mint a twin.
+  const [duplicateBoundsCount, setDuplicateBoundsCount] = useState(0);
 
   useEffect(() => {
     const authStored = sessionStorage.getItem('agentAuth');
@@ -169,6 +174,26 @@ export function AgentReviewPage() {
       .catch(() => setExistingSameProfile([]));
   }, [authData?.profileId]);
 
+  // Duplicate-bounds detection: hash the ceremony's bounds and each existing
+  // same-profile grant's bounds with the same canonicalization the attest
+  // flow uses, then count exact matches. Purely advisory — per-ceremony
+  // identity means a twin never merges with the original on the AS.
+  useEffect(() => {
+    if (!gateData || !profile || existingSameProfile.length === 0) {
+      setDuplicateBoundsCount(0);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const current = await computeBoundsHashBrowser(gateData.bounds, profile);
+      const hashes = await Promise.all(
+        existingSameProfile.map(g => computeBoundsHashBrowser(g.bounds, profile).catch(() => null)),
+      );
+      if (!cancelled) setDuplicateBoundsCount(hashes.filter(h => h === current).length);
+    })().catch(() => { if (!cancelled) setDuplicateBoundsCount(0); });
+    return () => { cancelled = true; };
+  }, [gateData, profile, existingSameProfile]);
+
   const handleCommit = async () => {
     if (!authData || !gateData || !profile || !user) return;
     if (!authData.groupId) {
@@ -222,10 +247,14 @@ export function AgentReviewPage() {
       }
 
       // Attest (creates the attestation on SP).
+      // Every ceremony mints its own per-ceremony identity — the AS enforces
+      // uniqueness (NX) and content-hash idempotency on it.
+      const authorizationId = `authz_${crypto.randomUUID()}`;
       // v0.4: commitment_mode is part of the signed payload. 'review' means
       // each action requires per-action human approval via a proposal;
       // 'automatic' lets the agent act within bounds without per-action review.
       const result = await spClient.attest({
+        authorization_id: authorizationId,
         profile_id: authData.profileId,
         bounds: gateData.bounds,
         bounds_hash: boundsHash,
@@ -249,9 +278,8 @@ export function AgentReviewPage() {
       });
 
       // Push gate content + context to MCP server (after attestation exists on SP).
-      // frame_hash is the SP storage key (per-user); use it for all downstream
-      // SP lookups. bounds_hash is the content fingerprint — same across users.
-      const storageHash = result.frame_hash ?? result.bounds_hash ?? boundsHash;
+      // All downstream references use the per-ceremony id.
+
       try {
         await spClient.pushGateContent(
           buildGateForwardArgs(result, {
@@ -264,14 +292,14 @@ export function AgentReviewPage() {
       } catch (pushErr) {
         // Gate content push failed — revoke the attestation so it doesn't orphan
         try {
-          await spClient.revokeAttestation(storageHash, 'Auto-revoked: gate content push failed');
+          await spClient.revokeAttestation(authorizationId, 'Auto-revoked: gate content push failed');
         } catch { /* best effort */ }
         throw new Error(`Authorization signed but gate content delivery failed. The attestation was revoked. Please try again. (${pushErr instanceof Error ? pushErr.message : 'Unknown error'})`);
       }
 
       sessionStorage.removeItem('agentAuth');
       sessionStorage.removeItem('agentGate');
-      navigate(`/authorizations?highlight=${encodeURIComponent(storageHash)}`);
+      navigate(`/authorizations?highlight=${encodeURIComponent(authorizationId)}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Attestation failed');
     } finally {
@@ -456,6 +484,34 @@ export function AgentReviewPage() {
             </div>
           </button>
         </div>
+
+        {/* Duplicate bounds — advisory; the user probably meant to Extend.
+            Per-ceremony identity makes a twin harmless on the AS, so this
+            never blocks — it just points at the cheaper path. */}
+        {duplicateBoundsCount > 0 ? (
+          <div style={{
+            display: 'flex', gap: '0.625rem',
+            padding: '0.75rem 0.875rem', marginBottom: '1.25rem',
+            border: '1px solid var(--warning)', borderLeft: '3px solid var(--warning)',
+            borderRadius: '0.5rem', background: 'var(--bg-elevated)',
+            fontSize: '0.82rem', color: 'var(--text-primary)',
+          }}>
+            <span aria-hidden="true" style={{ color: 'var(--warning)', fontWeight: 700 }}>⚠</span>
+            <div>
+              <div style={{ fontWeight: 600, color: 'var(--warning)', marginBottom: '0.2rem' }}>
+                Identical limits to an existing grant
+              </div>
+              <div>
+                {duplicateBoundsCount === 1
+                  ? `An active grant on ${overlapProfileName} already has exactly these limits.`
+                  : `${duplicateBoundsCount} active grants on ${overlapProfileName} already have exactly these limits.`}
+                {' '}If you meant to give the existing grant more time, use <strong>Extend</strong> on
+                the Authorizations page instead — authorizing here creates a separate,
+                independent grant with its own intent and usage counters.
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         {/* Structural overlap — advisory; fires only on genuine scope overlap */}
         {hasOverlap ? (

@@ -5,7 +5,7 @@ import type { Proposal, ExecutionReceipt } from './sp-client';
 function proposal(overrides: Partial<Proposal>): Proposal {
   return {
     id: 'p-' + Math.random().toString(36).slice(2, 8),
-    frameHash: 'f1',
+    authorizationId: 'f1',
     profileId: 'publish@0.4',
     path: 'owner',
     pendingDomains: ['owner'],

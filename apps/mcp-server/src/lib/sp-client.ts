@@ -12,7 +12,7 @@ export interface SPAttestationResponse {
 }
 
 export interface SPAttestationsResult {
-  frame_hash: string;
+  authorization_id: string;
   bounds_hash?: string;   // v0.4
   context_hash?: string;  // v0.4
   attestations: (SPAttestationResponse & { commitment?: string })[];
@@ -31,7 +31,7 @@ export interface SPAttestationsResult {
 
 export interface SPProposal {
   id: string;
-  frameHash: string;
+  authorizationId: string;
   profileId: string;
   path: string;
   pendingDomains: string[];
@@ -51,19 +51,21 @@ export interface SPProposal {
   createdBy?: string;
 }
 
-/** Phase 6: FrameMetadata as returned from SP, used for above-cap detection. */
-export interface SPFrameMetadata {
-  frameHash: string;
-  boundsHash?: string;
-  profileId: string;
-  aboveCap?: boolean;
-  approversFrozen?: string[];
-  createdBy?: string;
-  groupId?: string | null;
+/** Phase 6: authorization summary from the SP, used for above-cap detection. */
+export interface SPAuthorizationSummary {
+  authorization_id: string;
+  bounds_hash?: string;
+  profile_id: string;
+  above_cap?: boolean;
+  approvers_frozen?: string[];
+  created_by?: string;
+  group_id?: string | null;
+  commitment_mode?: 'automatic' | 'review' | null;
+  version?: number;
 }
 
 export interface SPPendingItem {
-  frame_hash: string;
+  authorization_id: string;
   profile_id: string;
   path: string;
   frame: Record<string, string | number>;
@@ -162,8 +164,8 @@ export class SPClient {
   /**
    * Get all attestations for a frame hash.
    */
-  async getAttestations(frameHash: string): Promise<SPAttestationsResult> {
-    const res = await this.fetch(`/api/attestations?frame_hash=${encodeURIComponent(frameHash)}`);
+  async getAttestations(authorizationId: string): Promise<SPAttestationsResult> {
+    const res = await this.fetch(`/api/attestations?authorization_id=${encodeURIComponent(authorizationId)}`);
     if (!res.ok) throw new Error(`SP attestations request failed: ${res.status}`);
     return res.json() as Promise<SPAttestationsResult>;
   }
@@ -197,10 +199,10 @@ export class SPClient {
    * Errors throw SPReceiptError with the structured `errors` array in `body`.
    */
   async postReceipt(data: {
-    /** v0.5: the bare content address. The AS scopes the per-user storage key
-     *  server-side from this + the authenticated user. (`attestationHash` and
-     *  `path` are retired and rejected by v0.5 ASs.) */
-    boundsHash: string;
+    /** The per-ceremony authorization id — the receipt's grant reference. */
+    authorizationId: string;
+    /** Optional cross-check: must match the record's fingerprint when sent. */
+    boundsHash?: string;
     profileId: string;
     action: string;
     actionType?: string;
@@ -287,7 +289,7 @@ export class SPClient {
    * Phase 6: accepts optional pendingApprovers and createdBy for above-cap routing.
    */
   async submitProposal(data: {
-    frameHash: string;
+    authorizationId: string;
     profileId: string;
     path: string;
     pendingDomains: string[];
@@ -301,7 +303,7 @@ export class SPClient {
     const res = await this.fetch('/api/proposals', {
       method: 'POST',
       body: JSON.stringify({
-        frame_hash: data.frameHash,
+        authorization_id: data.authorizationId,
         profile_id: data.profileId,
         path: data.path,
         pending_domains: data.pendingDomains,
@@ -323,14 +325,14 @@ export class SPClient {
   }
 
   /**
-   * Phase 6: Fetch frame metadata for an authority by its boundsHash / frameHash.
+   * Phase 6: Fetch the authorization summary by its per-ceremony id.
    * Used to read aboveCap and approversFrozen at action time.
    */
-  async getFrameMetadata(frameHash: string): Promise<SPFrameMetadata | null> {
-    const res = await this.fetch(`/api/as/frame/${encodeURIComponent(frameHash)}`);
+  async getAuthorizationSummary(authorizationId: string): Promise<SPAuthorizationSummary | null> {
+    const res = await this.fetch(`/api/authorizations/${encodeURIComponent(authorizationId)}`);
     if (res.status === 404) return null;
     if (!res.ok) return null;
-    return res.json() as Promise<SPFrameMetadata>;
+    return res.json() as Promise<SPAuthorizationSummary>;
   }
 
   /**

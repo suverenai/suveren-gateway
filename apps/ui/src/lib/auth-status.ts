@@ -25,7 +25,7 @@ export type AuthStatus = 'active' | 'pending' | 'expired' | 'revoked';
 export interface AuthStatusOptions {
   /**
    * Per-session optimistic revocations. When the user clicks "Revoke"
-   * in the gateway UI, we add the frame_hash to a local Set so the
+   * in the gateway UI, we add the authorization_id to a local Set so the
    * row flips to revoked immediately without waiting for the SSE
    * event. Other surfaces (Dashboard, Sidebar) don't need this — they
    * catch up on the next SSE refresh.
@@ -34,7 +34,7 @@ export interface AuthStatusOptions {
 }
 
 export function getAuthStatus(item: PendingItem, opts?: AuthStatusOptions): AuthStatus {
-  if (opts?.revokedSet?.has(item.frame_hash)) return 'revoked';
+  if (opts?.revokedSet?.has(item.authorization_id)) return 'revoked';
   // The SP's verdict is authoritative for ALL statuses when present. The
   // previous version let the time-based fallback below override
   // sp_status === 'active': it re-derived a different answer from the same

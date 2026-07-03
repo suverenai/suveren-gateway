@@ -73,16 +73,12 @@ export async function executeCommitted(
   // can be embedded on the review-mode send too — not just automatic sends.
   let receiptId: string | undefined;
   try {
-    // v0.5: the receipt request uses the bare content address. proposal.frameHash
-    // is the per-user storage key `${boundsHash}:${userId}` (boundsHash is
-    // `sha256:<hex>`, exactly one colon), so the first two colon-segments are the
-    // boundsHash; a legacy bare frameHash already equals boundsHash.
-    const boundsHash = proposal.frameHash.split(':').slice(0, 2).join(':');
+    // The receipt references the grant by its per-ceremony id — no hash surgery.
     // v0.5 Content Provenance: hash the approved content (proposal.toolArgs is
     // the pre-footer content captured at proposal time) when the profile binds.
     const binding = computeContentBinding(proposal.profileId, discovered, proposal.toolArgs);
     const { receipt } = await state.spClient.postReceipt({
-      boundsHash,
+      authorizationId: proposal.authorizationId,
       profileId: proposal.profileId,
       action: proposal.tool,
       actionType: proposalActionType,

@@ -13,7 +13,7 @@ import type { PendingItem } from './sp-client';
 
 function item(overrides: Partial<PendingItem>): PendingItem {
   return {
-    frame_hash: 'sha256:abc:group-1',
+    authorization_id: 'sha256:abc:group-1',
     profile_id: 'email@0.4',
     path: 'email',
     title: null,
@@ -52,7 +52,7 @@ describe('getAuthStatus — sp_status is authoritative when present', () => {
 
   it('optimistic local revoke (revokedSet) beats everything', () => {
     const it1 = item({ sp_status: 'active' });
-    expect(getAuthStatus(it1, { revokedSet: new Set([it1.frame_hash]) })).toBe('revoked');
+    expect(getAuthStatus(it1, { revokedSet: new Set([it1.authorization_id]) })).toBe('revoked');
   });
 });
 
@@ -78,14 +78,14 @@ describe('getAuthStatus — local fallback only when sp_status is absent', () =>
 describe('bucketAuths', () => {
   it('counts follow the same rules (no drift between counting and cards)', () => {
     const items = [
-      item({ frame_hash: 'a', sp_status: 'active', remaining_seconds: null }), // old bug: counted expired
-      item({ frame_hash: 'b', sp_status: 'expired' }),
-      item({ frame_hash: 'c', sp_status: 'revoked' }),
-      item({ frame_hash: 'd', sp_status: null, remaining_seconds: 100 }),
+      item({ authorization_id: 'a', sp_status: 'active', remaining_seconds: null }), // old bug: counted expired
+      item({ authorization_id: 'b', sp_status: 'expired' }),
+      item({ authorization_id: 'c', sp_status: 'revoked' }),
+      item({ authorization_id: 'd', sp_status: null, remaining_seconds: 100 }),
     ];
     const buckets = bucketAuths(items);
-    expect(buckets.active.map(i => i.frame_hash)).toEqual(['a', 'd']);
-    expect(buckets.expired.map(i => i.frame_hash)).toEqual(['b']);
-    expect(buckets.revoked.map(i => i.frame_hash)).toEqual(['c']);
+    expect(buckets.active.map(i => i.authorization_id)).toEqual(['a', 'd']);
+    expect(buckets.expired.map(i => i.authorization_id)).toEqual(['b']);
+    expect(buckets.revoked.map(i => i.authorization_id)).toEqual(['c']);
   });
 });

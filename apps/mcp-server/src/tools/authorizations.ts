@@ -160,8 +160,8 @@ export function listAuthorizationsHandler(
         // Above team cap → actions require approval even within these bounds
         // (Phase 6). Best-effort SP read; skipped silently if SP is unreachable.
         try {
-          const meta = await state.spClient.getFrameMetadata(auth.frameHash ?? auth.boundsHash ?? auth.path);
-          if (meta?.aboveCap) {
+          const meta = await state.spClient.getAuthorizationSummary(auth.authorizationId);
+          if (meta?.above_cap) {
             output.push('  ⚠ Above team cap — actions here require approval even within these bounds.');
           }
         } catch { /* best-effort */ }

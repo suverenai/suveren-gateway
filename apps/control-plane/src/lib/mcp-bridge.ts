@@ -42,7 +42,7 @@ export async function configure(sessionCookie: string, vaultKeyHex?: string): Pr
 }
 
 export async function pushGateContent(data: {
-  frameHash?: string;
+  authorizationId?: string;
   boundsHash?: string;
   contextHash?: string;
   context?: Record<string, string | number>;

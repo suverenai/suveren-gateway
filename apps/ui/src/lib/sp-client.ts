@@ -34,9 +34,10 @@ export interface GroupMember {
 }
 
 export interface AttestResponse {
+  /** Per-ceremony identity — REQUIRED; its absence means a pre-identity AS. */
+  authorization_id?: string;
   attestation_id: string;
-  frame_hash?: string;    // v0.3
-  bounds_hash?: string;   // v0.4
+  bounds_hash?: string;
   context_hash?: string;  // v0.4
   domain: string;
   blob: string;
@@ -55,7 +56,7 @@ export interface ProfileSummary {
 }
 
 export interface PendingItem {
-  frame_hash: string;
+  authorization_id: string;
   profile_id: string;
   path: string;
   title: string | null;
@@ -75,7 +76,7 @@ export interface PendingItem {
 }
 
 export interface AttestationsResult {
-  frame_hash: string;
+  authorization_id: string;
   attestations: Array<{ domain: string; blob: string; expires_at: number }>;
   complete: boolean;
   frame?: Record<string, string | number>;
@@ -149,7 +150,7 @@ export interface McpIntegrationStatus {
 }
 
 export interface GateContentEntry {
-  frameHash: string;
+  authorizationId: string;
   boundsHash?: string;
   contextHash?: string;
   path: string;
@@ -162,7 +163,7 @@ export interface GateContentEntry {
 /** An active authorization enriched with its local context (scope). */
 export interface EnrichedAuthorizationEntry {
   profileId: string;
-  frameHash: string;
+  authorizationId: string;
   bounds: Record<string, string | number>;
   context: Record<string, string | number>;
   intent: string | null;
@@ -171,7 +172,7 @@ export interface EnrichedAuthorizationEntry {
 
 export interface Proposal {
   id: string;
-  frameHash: string;
+  authorizationId: string;
   profileId: string;
   path: string;
   pendingDomains: string[];
@@ -344,6 +345,10 @@ class SPClient {
   }
 
   async attest(body: {
+    /** Per-ceremony identity, minted by the caller at ceremony start. */
+    authorization_id: string;
+    /** Renew an existing grant: same id, same content, extended expiry. */
+    renew?: boolean;
     profile_id: string;
     // v0.3
     frame?: Record<string, string | number>;
@@ -397,10 +402,7 @@ class SPClient {
     const data = await res.json();
     // Normalize mine response to PendingItem shape
     return (data.attestations ?? []).map((a: Record<string, unknown>) => ({
-      // frameHash is the SP storage key (per-user scoped in v0.4 post-b228e58).
-      // boundsHash is the content fingerprint and may collide across users.
-      // Always use frameHash for read-by-hash lookups (revoke, intent, extend).
-      frame_hash: a.frameHash ?? a.boundsHash,
+      authorization_id: a.authorization_id,
       profile_id: a.profileId,
       path: a.path,
       title: a.title ?? null,
@@ -436,8 +438,8 @@ class SPClient {
     return data.receipts ?? [];
   }
 
-  async revokeAttestation(frameHash: string, reason?: string): Promise<void> {
-    const res = await this.fetch(`/api/attestations/${encodeURIComponent(frameHash)}/revoke`, {
+  async revokeAttestation(authorizationId: string, reason?: string): Promise<void> {
+    const res = await this.fetch(`/api/authorizations/${encodeURIComponent(authorizationId)}/revoke`, {
       method: 'POST',
       body: JSON.stringify({ reason: reason ?? 'Revoked by user' }),
     });
@@ -447,8 +449,8 @@ class SPClient {
     }
   }
 
-  async getAttestations(frameHash: string): Promise<AttestationsResult> {
-    const res = await this.fetch(`/api/attestations?frame_hash=${encodeURIComponent(frameHash)}`);
+  async getAttestations(authorizationId: string): Promise<AttestationsResult> {
+    const res = await this.fetch(`/api/attestations?authorization_id=${encodeURIComponent(authorizationId)}`);
     if (!res.ok) throw new Error(`Failed to fetch attestations: ${res.status}`);
     return res.json();
   }
@@ -862,14 +864,14 @@ class SPClient {
   /**
    * Fetch E2EE encrypted intent for an authority.
    * Returns the bulk ciphertext + the caller's HPKE key wrap.
-   * SP endpoint: GET /api/attestations/:frameHash/intent
+   * SP endpoint: GET /api/authorizations/:id/intent
    */
-  async getAttestationIntent(frameHash: string): Promise<{
+  async getAttestationIntent(authorizationId: string): Promise<{
     intentCiphertext: string;
     encryptedKey: { ct: string; enc: string };
     approversFrozen: string[];
   } | null> {
-    const res = await this.fetch(`/api/attestations/${encodeURIComponent(frameHash)}/intent`);
+    const res = await this.fetch(`/api/authorizations/${encodeURIComponent(authorizationId)}/intent`);
     if (res.status === 404 || res.status === 403) return null;
     if (!res.ok) return null;
     return res.json();
@@ -925,7 +927,7 @@ class SPClient {
     return (data.items ?? []).map((a: Record<string, unknown>) => {
       const owner = (a.owner as { userId: string; name?: string; email?: string }) ?? { userId: '' };
       const item: PendingItem & { owner: { userId: string; name?: string; email?: string } } = {
-        frame_hash: (a.boundsHash ?? a.frameHash ?? a.frame_hash) as string,
+        authorization_id: (a.authorization_id ?? a.authorizationId) as string,
         profile_id: (a.profileId ?? a.profile_id) as string,
         path: (a.path ?? '') as string,
         title: (a.title ?? null) as string | null,
@@ -1057,8 +1059,8 @@ class SPClient {
   }
 
   async pushGateContent(data: {
-    frameHash?: string;     // v0.3
-    boundsHash?: string;    // v0.4
+    authorizationId?: string;
+    boundsHash?: string;
     contextHash?: string;   // v0.4
     context?: Record<string, string | number>;  // v0.4
     path?: string;

@@ -34,7 +34,7 @@ export class SharedState {
 
   setGateContent(
     path: string,
-    frameHash: string,
+    authorizationId: string,
     profileId: string,
     content: GateContent,
     opts?: {
@@ -43,8 +43,9 @@ export class SharedState {
       context?: Record<string, string | number>;
     },
   ): void {
-    this.gateStore.set(path, {
-      frameHash,
+    // Key the entry by the per-ceremony id — twins can never collide.
+    this.gateStore.set(authorizationId, {
+      authorizationId,
       boundsHash: opts?.boundsHash,
       contextHash: opts?.contextHash,
       path,
@@ -68,15 +69,10 @@ export class SharedState {
 
     return authorizations
       .map(auth => {
-        // Match gate content by the authorization's unique frameHash so two
-        // grants under the same profile keep their own intent. boundsHash and
-        // path are legacy (v0.3) fallbacks. The previous profileId-wide scan
-        // was removed — it cross-contaminated intent between grants.
-        const gateEntry =
-          (auth.frameHash ? this.gateStore.get(auth.frameHash) : null) ??
-          (auth.boundsHash ? this.gateStore.get(auth.boundsHash) : null) ??
-          this.gateStore.get(auth.path) ??
-          null;
+        // Gate content is keyed by the per-ceremony id — one grant, one entry,
+        // no fallbacks (fingerprint/path fallbacks were the cross-contamination
+        // vector between same-bounds twins).
+        const gateEntry = this.gateStore.get(auth.authorizationId) ?? null;
 
         return {
           ...auth,
