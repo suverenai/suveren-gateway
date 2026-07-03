@@ -272,15 +272,14 @@ app.post('/internal/resync-gates', internalOnly, async (_req: Request, res: Resp
         synced++;
         console.error(`[Suveren MCP] Re-synced gate: ${gate.path}`);
       } else {
-        // SP no longer has this attestation. The only path that produces
-        // this state is the SP's hard-delete flow, which the user
-        // initiated explicitly. Treat that as a positive signal that the
-        // local gate is no longer wanted: drop the cached entry AND the
-        // stored gate (encrypted intent), so the next login starts clean
-        // and the resync log doesn't keep complaining. Revoked or
-        // TTL-expired auths don't reach this branch — SP still holds
-        // their FrameMetadata row, so syncAuthorization succeeds and the
-        // local gate is preserved.
+        // The AS no longer serves this authorization: hard-deleted, or
+        // REVOKED (syncAuthorization drops revoked grants so they are
+        // never listed or matched). Both are explicit, permanent human
+        // decisions ending the grant, so drop the cached entry AND the
+        // stored gate (encrypted intent) — the next login starts clean
+        // and the resync log doesn't keep complaining. TTL-expired auths
+        // don't reach this branch: the AS still returns their record, so
+        // syncAuthorization succeeds and the local gate is preserved.
         state.cache.invalidate(authzId);
         state.gateStore.delete(authzId);
         orphaned++;
