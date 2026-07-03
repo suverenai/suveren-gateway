@@ -65,14 +65,16 @@ function isImageArg(key: string, value: unknown): value is string {
   return /^https?:\/\/.+\.(jpe?g|png|gif|webp|svg|avif)(\?|$)/i.test(value);
 }
 
+// NEVER truncate: this card is the review surface — the human approves
+// exactly what they can read here, so the full content must be visible at
+// once (an email body cut at 160 chars was approvable but not reviewable).
 function formatArgValue(v: unknown): string {
   if (v == null) return '—';
-  if (typeof v === 'string') return v.length > 160 ? v.slice(0, 157) + '…' : v;
+  if (typeof v === 'string') return v;
   if (typeof v === 'number' || typeof v === 'boolean') return String(v);
   if (Array.isArray(v)) return v.map((x) => formatArgValue(x)).join(', ');
   try {
-    const j = JSON.stringify(v);
-    return j.length > 160 ? j.slice(0, 157) + '…' : j;
+    return JSON.stringify(v, null, 2);
   } catch {
     return String(v);
   }
@@ -161,7 +163,7 @@ export function ActionCard({ item, onApprove, onReject, resolving }: Props) {
             {argEntries.map(([k, v]) => (
               <Fragment key={k}>
                 <dt style={{ color: 'var(--text-tertiary)', whiteSpace: 'nowrap', alignSelf: 'start' }}>{k}</dt>
-                <dd style={{ color: 'var(--text-primary)', margin: 0, wordBreak: 'break-word' }}>
+                <dd style={{ color: 'var(--text-primary)', margin: 0, wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}>
                   {isImageArg(k, v) ? (
                     <img
                       src={v}

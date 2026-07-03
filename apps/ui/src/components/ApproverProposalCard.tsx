@@ -23,14 +23,16 @@ const HIDDEN_ARG_KEYS = new Set([
   'password', 'secret', 'signature', '_imagePreview',
 ]);
 
+// NEVER truncate: approvers commit to exactly what they can read here, so
+// the full content must be visible at once (an email body cut at 200 chars
+// was approvable but not reviewable).
 function formatArgValue(v: unknown): string {
   if (v == null) return '—';
-  if (typeof v === 'string') return v.length > 200 ? v.slice(0, 197) + '...' : v;
+  if (typeof v === 'string') return v;
   if (typeof v === 'number' || typeof v === 'boolean') return String(v);
   if (Array.isArray(v)) return v.map((x) => formatArgValue(x)).join(', ');
   try {
-    const j = JSON.stringify(v);
-    return j.length > 200 ? j.slice(0, 197) + '...' : j;
+    return JSON.stringify(v, null, 2);
   } catch {
     return String(v);
   }
@@ -203,7 +205,7 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
             {argEntries.map(([k, v]) => (
               <Fragment key={k}>
                 <dt style={{ color: 'var(--text-tertiary)', whiteSpace: 'nowrap', alignSelf: 'start' }}>{k}</dt>
-                <dd style={{ color: 'var(--text-primary)', margin: 0, wordBreak: 'break-word' }}>{formatArgValue(v)}</dd>
+                <dd style={{ color: 'var(--text-primary)', margin: 0, wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}>{formatArgValue(v)}</dd>
               </Fragment>
             ))}
           </dl>
