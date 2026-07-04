@@ -17,6 +17,7 @@
 import { useState, Fragment } from 'react';
 import { spClient, type Proposal } from '../lib/sp-client';
 import { profileDisplayName } from '../lib/profile-display';
+import { formatTimeLeft } from '../lib/time-left';
 
 const HIDDEN_ARG_KEYS = new Set([
   'apiKey', 'api_key', 'accessToken', 'access_token',
@@ -169,8 +170,23 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
         <span style={{ fontSize: '0.65rem', padding: '0.15rem 0.4rem', borderRadius: '0.25rem', background: 'var(--accent-subtle)', color: 'var(--accent)', fontWeight: 600 }}>
           Above cap
         </span>
-        <span style={{ marginLeft: 'auto', fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
-          {formatAge(proposal.createdAt)}
+        <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          {(() => {
+            const left = formatTimeLeft(proposal.expiresAt, Date.now());
+            return (
+              <span style={{
+                fontSize: '0.72rem',
+                color: left.urgent ? 'var(--warning)' : 'var(--text-tertiary)',
+                fontWeight: left.urgent ? 600 : 400,
+                whiteSpace: 'nowrap',
+              }}>
+                {left.label}
+              </span>
+            );
+          })()}
+          <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
+            {formatAge(proposal.createdAt)}
+          </span>
         </span>
       </div>
 

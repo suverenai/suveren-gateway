@@ -1,6 +1,7 @@
 import { Fragment } from 'react';
 import type { ThreadItem } from '../lib/thread-aggregator';
 import { ProfileBadge } from './ProfileBadge';
+import { formatTimeLeft } from '../lib/time-left';
 
 type CardStatus = 'pending' | 'committed' | 'executed' | 'rejected' | 'expired';
 
@@ -114,6 +115,19 @@ export function ActionCard({ item, onApprove, onReject, resolving }: Props) {
           </span>
         )}
         <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          {isProposal && status === 'pending' && (() => {
+            const left = formatTimeLeft(item.proposal.expiresAt, Date.now());
+            return (
+              <span style={{
+                fontSize: '0.72rem',
+                color: left.urgent ? 'var(--warning)' : 'var(--text-tertiary)',
+                fontWeight: left.urgent ? 600 : 400,
+                whiteSpace: 'nowrap',
+              }}>
+                {left.label}
+              </span>
+            );
+          })()}
           <span className={`status-badge ${STATUS_CLASS[status]}`}>{STATUS_LABEL[status]}</span>
           <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
             {formatTimestamp(item.sortTimestamp)}
