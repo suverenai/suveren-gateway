@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { TopNav } from '../components/TopNav';
+import { UpdateBanner } from '../components/UpdateBanner';
 import { DifferentAccountError, type DifferentAccountSummary } from '../lib/sp-client';
 
 export function LoginPage() {
@@ -45,6 +46,10 @@ export function LoginPage() {
   return (
     <>
       <TopNav />
+      {/* Update check works pre-auth: /health is unauthenticated and the
+          banner only shows the copyable upgrade command — no reason to make
+          the user log in just to learn a new version exists. */}
+      <UpdateBanner />
       <div className="login-split">
         {/* LEFT: Protocol summary */}
         <div className="login-split-left">
