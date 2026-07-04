@@ -167,7 +167,13 @@ export function GateWizardPage() {
   const handleIntentNext = () => {
     const ttlConfig = profile?.ttl;
     const gateContent = { intent };
-    sessionStorage.setItem('agentGate', JSON.stringify({ bounds, context, gateContent, ttlConfig }));
+    // Spread the stored gate FIRST: templates and Copy/Edit stash pass-through
+    // fields there (templateMode, templateTtl) that the review step prefills
+    // from. Rebuilding the object from scratch here silently dropped them —
+    // review-mode templates and edited grants always landed as "automatic"
+    // with the default duration.
+    const stored = JSON.parse(sessionStorage.getItem('agentGate') ?? '{}') as Record<string, unknown>;
+    sessionStorage.setItem('agentGate', JSON.stringify({ ...stored, bounds, context, gateContent, ttlConfig }));
     navigate('/agent/review');
   };
 
@@ -243,8 +249,9 @@ export function GateWizardPage() {
       {/* Step 3: Intent */}
       {step === 3 && (
         <div className="intent-layout">
-          {/* LEFT — AI chat (hidden on ≤768px; reachable via floating button + bottom sheet) */}
-          <div className="card intent-pane chat">
+          {/* LEFT — AI chat (hidden on ≤768px; reachable via floating button + bottom sheet).
+              `tool` = dashed treatment: a helper, neither your content nor a record. */}
+          <div className="card intent-pane chat tool">
             <AssistantChatPanel
               target={{
                 kind: 'intent',
@@ -260,13 +267,15 @@ export function GateWizardPage() {
           <div className="card intent-pane document">
             <h3 className="card-title">What should your agent know?</h3>
 
-            <textarea
-              className="intent-textarea"
-              value={intent}
-              onChange={e => handleIntentChange(e.target.value)}
-            />
-
-            <div className="char-counter">{intent.length} / 2000</div>
+            <div className="field-editable" style={{ marginBottom: 0 }}>
+              <div className="field-label"><span className="pen">✎</span> Intent — your words, signed with the grant</div>
+              <textarea
+                className="intent-textarea"
+                value={intent}
+                onChange={e => handleIntentChange(e.target.value)}
+              />
+              <div className="char-counter">{intent.length} / 2000</div>
+            </div>
 
             {/* On-demand semantic cross-check against existing grants (Phase 2) */}
             <div style={{ marginTop: '0.5rem' }}>

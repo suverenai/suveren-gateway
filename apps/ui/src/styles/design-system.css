@@ -54,6 +54,7 @@
   --accent-subtle: #f0f0f0;
   --accent-hover: #555555;
   --border: #e5e5e5;
+  --edit-border: #c7c7c7;
   --danger: #dc2626;
   --danger-subtle: #fef2f2;
   --success: #16a34a;
@@ -94,6 +95,7 @@
   --accent-subtle: #1f1f1f;
   --accent-hover: #bbbbbb;
   --border: #2a2a2a;
+  --edit-border: #4a4a4a;
   --danger-subtle: #2a0a0a;
   --success-subtle: #0a2a0a;
   --btn-primary-bg: #ffffff;
@@ -2261,10 +2263,19 @@ body.is-updating .update-banner {
 .bounds-section,
 .context-section {
   background: var(--bg-elevated);
-  border: 1px solid var(--border);
+  /* Editable surface — the ceremony-wide cue (see .field-editable): a thick
+     border that darkens on hover means "you can change this here". */
+  border: 2px solid var(--edit-border);
   border-radius: 0.75rem;
   padding: 1.25rem;
   margin-bottom: 1.25rem;
+  transition: border-color 0.15s;
+}
+.bounds-section:hover,
+.bounds-section:focus-within,
+.context-section:hover,
+.context-section:focus-within {
+  border-color: var(--accent-hover);
 }
 
 .bounds-section-header {
@@ -3163,4 +3174,105 @@ body.is-updating .update-banner {
   .bottom-sheet, .bottom-sheet-backdrop {
     transition: none;
   }
+}
+
+/* ══════════════════════════════════════════════
+   Editable vs. information-only — the ceremony's visual language.
+   One binary cue, repeated on every page: a thick border means "you can
+   change this HERE"; a flat block with a thin left rule is a record of a
+   decision made elsewhere (with a link to the step that owns it). The AI
+   assistant gets a third, dashed treatment: a tool, neither content nor
+   record. See doc/mockups/editable-vs-info.html for the signed-off design.
+   ══════════════════════════════════════════════ */
+
+/* 1. Editable surface — section label INSIDE the box, border darkens on
+      hover/focus ("this reacts to you"). */
+.field-editable {
+  background: var(--bg-elevated);
+  border: 2px solid var(--edit-border);
+  border-radius: 0.5rem;
+  padding: 0.875rem 1rem;
+  margin-bottom: 1rem;
+  transition: border-color 0.15s;
+}
+.field-editable:hover,
+.field-editable:focus-within {
+  border-color: var(--accent-hover);
+}
+.field-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-tertiary);
+  margin-bottom: 0.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.field-label .pen {
+  opacity: 0.7;
+  font-size: 0.75rem;
+}
+
+/* 2. Information-only — the opposite of every editable cue: flat, muted,
+      smaller. The header's "edit in step N" link answers "then where DO I
+      change it?" exactly where the question arises. */
+.info-block {
+  background: var(--bg-main);
+  border-left: 3px solid var(--border);
+  border-radius: 0 0.375rem 0.375rem 0;
+  padding: 0.75rem 1rem;
+  margin-bottom: 0.75rem;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+.info-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 0.4rem;
+}
+.info-title {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-tertiary);
+}
+.info-edit {
+  font-size: 0.72rem;
+  color: var(--text-tertiary);
+  text-decoration: underline;
+  cursor: pointer;
+  background: none;
+  border: none;
+  font-family: inherit;
+  padding: 0;
+}
+.info-edit:hover { color: var(--accent-hover); }
+.info-kv {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.15rem 1rem;
+  margin: 0;
+}
+.info-kv dt { color: var(--text-tertiary); }
+.info-kv dd { margin: 0; color: var(--text-secondary); word-break: break-word; }
+
+/* Section divider above the info blocks on the review page. */
+.info-section-label {
+  margin: 1.25rem 0 0.5rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-tertiary);
+}
+
+/* 3. Assistant / tool — dashed: helps you author, is neither your content
+      nor a record. Applied as a modifier on the intent chat pane. */
+.intent-pane.chat.tool {
+  background: var(--bg-main);
+  border: 1px dashed var(--border);
 }

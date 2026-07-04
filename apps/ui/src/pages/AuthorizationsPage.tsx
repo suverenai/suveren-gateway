@@ -564,6 +564,14 @@ export function AuthorizationsPage() {
       const templateMode: 'automatic' | 'review' =
         item.deferred_commitment_domains.length > 0 ? 'review' : 'automatic';
       const domainForAuth = item.attested_domains[0] || activeDomain || 'owner';
+      // Original lifetime (expiry − creation) so the review step prefills the
+      // duration the human chose last time, not the profile default.
+      const createdMs = Date.parse(item.created_at);
+      const expiryMs = item.earliest_expiry ? Date.parse(item.earliest_expiry) : NaN;
+      const templateTtl =
+        Number.isFinite(createdMs) && Number.isFinite(expiryMs) && expiryMs > createdMs
+          ? Math.round((expiryMs - createdMs) / 1000)
+          : undefined;
 
       sessionStorage.setItem('agentAuth', JSON.stringify({
         profileId: item.profile_id,
@@ -576,6 +584,7 @@ export function AuthorizationsPage() {
         context,
         gateContent: { intent },
         templateMode,
+        templateTtl,
       }));
       if (opts?.asEdit) {
         sessionStorage.setItem('agentEditReplaces', item.authorization_id);

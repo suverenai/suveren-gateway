@@ -41,13 +41,18 @@ export function AgentReviewPage() {
   const [authData, setAuthData] = useState<AuthData | null>(null);
   const [gateData, setGateData] = useState<GateData | null>(null);
   const [profile, setProfile] = useState<AgentProfile | null>(null);
-  const [commitMode, setCommitMode] = useState<'immediate' | 'per-action'>('immediate');
+  // Review is the DEFAULT commitment mode: the agent proposes, the human
+  // approves. Automatic is the deliberate opt-in (or a template's choice).
+  const [commitMode, setCommitMode] = useState<'immediate' | 'per-action'>('per-action');
   const [ttlSeconds, setTtlSeconds] = useState(1800);
   const [ttlMax, setTtlMax] = useState(86400);
   const [customTtl, setCustomTtl] = useState('');
   const [customTtlUnit, setCustomTtlUnit] = useState<'hours' | 'days'>('hours');
   const [authTitle, setAuthTitle] = useState('');
-  const [discloseIdentity, setDiscloseIdentity] = useState(false);
+  // Default ON: "verified by Suveren + your name" only takes effect when the
+  // identity is actually verified (otherwise actions stay pseudonymous), so
+  // the safe-and-most-useful default is to disclose. Opt-out stays one click.
+  const [discloseIdentity, setDiscloseIdentity] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   // Profile-config + resolved approver display names — surfaced as a Review row
@@ -88,6 +93,36 @@ export function AgentReviewPage() {
     if (gate.ttlConfig) {
       setTtlSeconds(gate.ttlConfig.default ?? 1800);
       setTtlMax(gate.ttlConfig.max ?? 86400);
+    }
+
+    // Commitment mode chosen upstream — by a template (template.mode) or by
+    // the grant being copied/edited (its deferred-commitment state). Review
+    // is the page default, so only an explicit 'automatic' flips it. Without
+    // this read, review-mode templates and edited review grants always landed
+    // as "automatic".
+    if (gate.templateMode === 'automatic') {
+      setCommitMode('immediate');
+    } else if (gate.templateMode === 'review') {
+      setCommitMode('per-action');
+    }
+
+    // Duration chosen upstream — the template's ttl or the copied/edited
+    // grant's original lifetime. Clamped to the profile max; reflected in the
+    // custom input when it isn't one of the preset buttons.
+    const maxTtl = gate.ttlConfig?.max ?? 86400;
+    if (typeof gate.templateTtl === 'number' && gate.templateTtl > 0) {
+      const secs = Math.min(gate.templateTtl, maxTtl);
+      setTtlSeconds(secs);
+      const PRESETS = [3600, 86400, 604800, 2592000, 31536000];
+      if (!PRESETS.includes(secs)) {
+        if (secs % 86400 === 0) {
+          setCustomTtl(String(secs / 86400));
+          setCustomTtlUnit('days');
+        } else {
+          setCustomTtl(String(Math.max(1, Math.round(secs / 3600))));
+          setCustomTtlUnit('hours');
+        }
+      }
     }
 
     spClient.getProfile(auth.profileId)
@@ -411,159 +446,47 @@ export function AgentReviewPage() {
 
         {error && <div className="error-message">{error}</div>}
 
-        <dl className="review-grid">
-          <dt>Profile</dt>
-          <dd>
-            {profileDisplayName(authData.profileId)}
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: '0.125rem' }}>{authData.profileId}</div>
-          </dd>
-          {authData.groupName && (
-            <>
-              <dt>Team</dt>
-              <dd>{authData.groupName}</dd>
-            </>
-          )}
-          {/* Approvers row — always visible in team mode so the creator
-              knows whether anyone else can read their intent. Hidden only
-              for personal-mode (groupId absent) where it's never relevant. */}
-          {authData.groupId && (
-            <>
-              <dt>Approvers</dt>
-              <dd>
-                {!profileConfigLoaded ? (
-                  <span style={{ color: 'var(--text-tertiary)' }}>Loading…</span>
-                ) : (profileConfig?.approvers?.length ?? 0) === 0 ? (
-                  <>
-                    <span style={{ color: 'var(--text-tertiary)' }}>None &mdash; solo authorization</span>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: '0.125rem' }}>
-                      No approvers configured for this profile in this team. Your intent stays on your gateway.
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    {approverNamesStr}
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: '0.125rem' }}>
-                      {approversSubLine}
-                    </div>
-                  </>
-                )}
-              </dd>
-            </>
-          )}
-          <dt>TTL</dt>
-          <dd>30 minutes</dd>
-        </dl>
-
-        {!!boundsEntries.length && (
-          <>
-            <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginTop: '1rem', marginBottom: '0.25rem' }}>
-              Bounds
-            </div>
-            <dl className="review-grid">
-              {boundsEntries.map(([k, v]) => (
-                <span key={k} style={{ display: 'contents' }}>
-                  <dt>{k}</dt>
-                  <dd>{String(v)}</dd>
-                </span>
-              ))}
-            </dl>
-          </>
-        )}
-
-        {!!contextEntries.length && (
-          <>
-            <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginTop: '1rem', marginBottom: '0.25rem' }}>
-              Context
-            </div>
-            <dl className="review-grid">
-              {contextEntries.map(([k, v]) => (
-                <span key={k} style={{ display: 'contents' }}>
-                  <dt>{k}</dt>
-                  <dd>{String(v)}</dd>
-                </span>
-              ))}
-            </dl>
-          </>
-        )}
-
-        <div className="gate-content-block">
-          <div className="gate-content-item">
-            <div className="gate-content-label">Intent</div>
-            <div className="gate-content-text">{gateData.gateContent.intent}</div>
+        {/* Title — first: it names the decision everything below describes. */}
+        <div className="field-editable">
+          <div className="field-label"><span className="pen">✎</span> Title</div>
+          <input
+            type="text"
+            className="form-input"
+            placeholder={`e.g. ${profileDisplayName(authData.profileId)}: daily operations`}
+            value={authTitle}
+            onChange={e => setAuthTitle(e.target.value)}
+            maxLength={80}
+            style={{ fontSize: '0.9rem' }}
+          />
+          <div style={{ fontSize: '0.7rem', color: 'var(--text-tertiary)', marginTop: '0.25rem' }}>
+            A short name to identify this authorization on your dashboard.
           </div>
         </div>
 
-        {/* Commitment mode selection */}
-        <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginTop: '1rem', marginBottom: '0.5rem' }}>
-          Commitment
-        </div>
-        <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1.25rem' }}>
-          <button onClick={() => setCommitMode('immediate')} style={commitStyleImmediate}>
-            <div style={{ fontWeight: 600, fontSize: '0.85rem', marginBottom: '0.25rem', color: 'var(--text-primary)' }}>Automatic</div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-              Agent acts freely within your limits.
-            </div>
-          </button>
-          <button onClick={() => setCommitMode('per-action')} style={commitStylePerAction}>
-            <div style={{ fontWeight: 600, fontSize: '0.85rem', marginBottom: '0.25rem', color: 'var(--text-primary)' }}>Review Each Action</div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-              You review and approve each action before it executes.
-            </div>
-          </button>
-        </div>
-
-        {/* Duplicate bounds — advisory; the user probably meant to Extend.
-            Per-ceremony identity makes a twin harmless on the AS, so this
-            never blocks — it just points at the cheaper path. */}
-        {duplicateBoundsCount > 0 ? (
-          <div style={{
-            display: 'flex', gap: '0.625rem',
-            padding: '0.75rem 0.875rem', marginBottom: '1.25rem',
-            border: '1px solid var(--warning)', borderLeft: '3px solid var(--warning)',
-            borderRadius: '0.5rem', background: 'var(--bg-elevated)',
-            fontSize: '0.82rem', color: 'var(--text-primary)',
-          }}>
-            <span aria-hidden="true" style={{ color: 'var(--warning)', fontWeight: 700 }}>⚠</span>
-            <div>
-              <div style={{ fontWeight: 600, color: 'var(--warning)', marginBottom: '0.2rem' }}>
-                Identical limits to an existing grant
+        {/* Commitment mode — Review first and default: the agent proposes,
+            the human approves. Automatic is the deliberate opt-in. */}
+        <div className="field-editable">
+          <div className="field-label"><span className="pen">✎</span> Commitment</div>
+          <div style={{ display: 'flex', gap: '0.75rem' }}>
+            <button onClick={() => setCommitMode('per-action')} style={commitStylePerAction}>
+              <div style={{ fontWeight: 600, fontSize: '0.85rem', marginBottom: '0.25rem', color: 'var(--text-primary)' }}>Review Each Action</div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                You review and approve each action before it executes.
               </div>
-              <div>
-                {duplicateBoundsCount === 1
-                  ? `An active grant on ${overlapProfileName} already has exactly these limits.`
-                  : `${duplicateBoundsCount} active grants on ${overlapProfileName} already have exactly these limits.`}
-                {' '}If you meant to give the existing grant more time, use <strong>Extend</strong> on
-                the Authorizations page instead — authorizing here creates a separate,
-                independent grant with its own intent and usage counters.
+            </button>
+            <button onClick={() => setCommitMode('immediate')} style={commitStyleImmediate}>
+              <div style={{ fontWeight: 600, fontSize: '0.85rem', marginBottom: '0.25rem', color: 'var(--text-primary)' }}>Automatic</div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                Agent acts freely within your limits.
               </div>
-            </div>
+            </button>
           </div>
-        ) : null}
-
-        {/* Structural overlap — advisory; fires only on genuine scope overlap */}
-        {hasOverlap ? (
-          <div style={{
-            display: 'flex', gap: '0.625rem',
-            padding: '0.75rem 0.875rem', marginBottom: '1.25rem',
-            border: '1px solid var(--warning)', borderLeft: '3px solid var(--warning)',
-            borderRadius: '0.5rem', background: 'var(--bg-elevated)',
-            fontSize: '0.82rem', color: 'var(--text-primary)',
-          }}>
-            <span aria-hidden="true" style={{ color: 'var(--warning)', fontWeight: 700 }}>⚠</span>
-            <div>
-              <div style={{ fontWeight: 600, color: 'var(--warning)', marginBottom: '0.2rem' }}>
-                Overlapping scope
-              </div>
-              <div>{overlapWarningText}</div>
-            </div>
-          </div>
-        ) : null}
+        </div>
 
         {/* Duration selector */}
-        <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.5rem' }}>
-          Duration
-        </div>
-        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '1.25rem', alignItems: 'center' }}>
+        <div className="field-editable">
+        <div className="field-label"><span className="pen">✎</span> Duration</div>
+        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
           {[
             { label: '1 hour', seconds: 3600 },
             { label: '24 hours', seconds: 86400 },
@@ -625,27 +548,9 @@ export function AgentReviewPage() {
             </span>
           )}
         </div>
-
-        {/* Title */}
-        <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.5rem' }}>
-          Title
-        </div>
-        <div style={{ marginBottom: '1.25rem' }}>
-          <input
-            type="text"
-            className="form-input"
-            placeholder={`e.g. ${profileDisplayName(authData.profileId)}: daily operations`}
-            value={authTitle}
-            onChange={e => setAuthTitle(e.target.value)}
-            maxLength={80}
-            style={{ fontSize: '0.9rem' }}
-          />
-          <div style={{ fontSize: '0.7rem', color: 'var(--text-tertiary)', marginTop: '0.25rem' }}>
-            A short name to identify this authorization on your dashboard.
-          </div>
         </div>
 
-        <div style={{ marginBottom: '1.25rem' }}>
+        <div className="field-editable">
           <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem', cursor: 'pointer' }}>
             <input
               type="checkbox"
@@ -662,6 +567,134 @@ export function AgentReviewPage() {
             </span>
           </label>
         </div>
+
+        {/* ── The record: decisions made in steps 2–3, quiet by design.
+              Each block links back to the step that owns it. ── */}
+        <div className="info-section-label">What you are signing — set in previous steps</div>
+
+        <div className="info-block">
+          <div className="info-head">
+            <span className="info-title">Intent</span>
+            <button className="info-edit" onClick={() => navigate('/agent/gate?step=3')}>edit in step 3</button>
+          </div>
+          <div style={{ whiteSpace: 'pre-wrap' }}>{gateData.gateContent.intent}</div>
+        </div>
+
+        {(!!boundsEntries.length || !!contextEntries.length) && (
+          <div className="info-block">
+            <div className="info-head">
+              <span className="info-title">Scope &amp; Limits</span>
+              <button className="info-edit" onClick={() => navigate('/agent/gate?step=2')}>edit in step 2</button>
+            </div>
+            <dl className="info-kv">
+              {contextEntries.map(([k, v]) => (
+                <span key={k} style={{ display: 'contents' }}>
+                  <dt>{k}</dt>
+                  <dd>{String(v)}</dd>
+                </span>
+              ))}
+              {boundsEntries.map(([k, v]) => (
+                <span key={k} style={{ display: 'contents' }}>
+                  <dt>{k}</dt>
+                  <dd>{String(v)}</dd>
+                </span>
+              ))}
+            </dl>
+          </div>
+        )}
+
+        <div className="info-block">
+        <div className="info-head">
+          <span className="info-title">Authority</span>
+        </div>
+        <dl className="info-kv">
+          <dt>Profile</dt>
+          <dd>
+            {profileDisplayName(authData.profileId)}
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: '0.125rem' }}>{authData.profileId}</div>
+          </dd>
+          {authData.groupName && (
+            <>
+              <dt>Team</dt>
+              <dd>{authData.groupName}</dd>
+            </>
+          )}
+          {/* Approvers row — always visible in team mode so the creator
+              knows whether anyone else can read their intent. Hidden only
+              for personal-mode (groupId absent) where it's never relevant. */}
+          {authData.groupId && (
+            <>
+              <dt>Approvers</dt>
+              <dd>
+                {!profileConfigLoaded ? (
+                  <span style={{ color: 'var(--text-tertiary)' }}>Loading…</span>
+                ) : (profileConfig?.approvers?.length ?? 0) === 0 ? (
+                  <>
+                    <span style={{ color: 'var(--text-tertiary)' }}>None &mdash; solo authorization</span>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: '0.125rem' }}>
+                      No approvers configured for this profile in this team. Your intent stays on your gateway.
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    {approverNamesStr}
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: '0.125rem' }}>
+                      {approversSubLine}
+                    </div>
+                  </>
+                )}
+              </dd>
+            </>
+          )}
+        </dl>
+        </div>
+
+        {/* Duplicate bounds — advisory; the user probably meant to Extend.
+            Per-ceremony identity makes a twin harmless on the AS, so this
+            never blocks — it just points at the cheaper path. */}
+        {duplicateBoundsCount > 0 ? (
+          <div style={{
+            display: 'flex', gap: '0.625rem',
+            padding: '0.75rem 0.875rem', marginBottom: '1.25rem',
+            border: '1px solid var(--warning)', borderLeft: '3px solid var(--warning)',
+            borderRadius: '0.5rem', background: 'var(--bg-elevated)',
+            fontSize: '0.82rem', color: 'var(--text-primary)',
+          }}>
+            <span aria-hidden="true" style={{ color: 'var(--warning)', fontWeight: 700 }}>⚠</span>
+            <div>
+              <div style={{ fontWeight: 600, color: 'var(--warning)', marginBottom: '0.2rem' }}>
+                Identical limits to an existing grant
+              </div>
+              <div>
+                {duplicateBoundsCount === 1
+                  ? `An active grant on ${overlapProfileName} already has exactly these limits.`
+                  : `${duplicateBoundsCount} active grants on ${overlapProfileName} already have exactly these limits.`}
+                {' '}If you meant to give the existing grant more time, use <strong>Extend</strong> on
+                the Authorizations page instead — authorizing here creates a separate,
+                independent grant with its own intent and usage counters.
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {/* Structural overlap — advisory; fires only on genuine scope overlap */}
+        {hasOverlap ? (
+          <div style={{
+            display: 'flex', gap: '0.625rem',
+            padding: '0.75rem 0.875rem', marginBottom: '1.25rem',
+            border: '1px solid var(--warning)', borderLeft: '3px solid var(--warning)',
+            borderRadius: '0.5rem', background: 'var(--bg-elevated)',
+            fontSize: '0.82rem', color: 'var(--text-primary)',
+          }}>
+            <span aria-hidden="true" style={{ color: 'var(--warning)', fontWeight: 700 }}>⚠</span>
+            <div>
+              <div style={{ fontWeight: 600, color: 'var(--warning)', marginBottom: '0.2rem' }}>
+                Overlapping scope
+              </div>
+              <div>{overlapWarningText}</div>
+            </div>
+          </div>
+        ) : null}
 
         <div style={{ display: 'flex', gap: '0.5rem' }}>
           <button className="btn btn-ghost" onClick={() => navigate('/agent/gate')}>Back</button>
