@@ -38,7 +38,7 @@ import { createVaultRouter } from './routes/vault';
 import { createAIRouter } from './routes/ai';
 import { createAIPromptsRouter } from './routes/ai-prompts';
 import { requireAuth, requireAuthQueryOrHeader } from './middleware/auth';
-import { pushGateContent, pushServiceCredentials, setInternalSecret, getManifests, getGateContent, getEnrichedAuthorizations, MCP_BASE, runCommittedProposals } from './lib/mcp-bridge';
+import { pushGateContent, pushServiceCredentials, setInternalSecret, getManifests, getGateContent, getEnrichedAuthorizations, MCP_BASE, runCommittedProposals, resyncGates } from './lib/mcp-bridge';
 import { createMCPRouter } from './routes/mcp';
 import { createEncryptIntentRouter } from './routes/encrypt-intent';
 import { createDecryptIntentRouter } from './routes/decrypt-intent';
@@ -519,6 +519,21 @@ app.post('/gate-content', jsonParser, authGuard, async (req: Request, res: Respo
   } catch (err) {
     console.error('[Control Plane] Gate content forward error:', err);
     res.status(500).json({ error: 'Failed to forward gate content to MCP server' });
+  }
+});
+
+// Resync gates — re-syncs every stored grant with the AS so revoked/deleted
+// authorizations drop out of the MCP cache NOW instead of at next login.
+// The UI fires this right after a revoke (incl. the Edit flow's auto-revoke):
+// enforcement never depended on it (receipts are refused server-side), but
+// without it the dead grant lingered in list-authorizations until re-login.
+app.post('/resync-gates', authGuard, async (_req: Request, res: Response) => {
+  try {
+    const data = await resyncGates();
+    res.json(data);
+  } catch (err) {
+    console.error('[Control Plane] Gate resync error:', err);
+    res.status(500).json({ error: 'Failed to resync gates with MCP server' });
   }
 });
 

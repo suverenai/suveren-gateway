@@ -349,6 +349,8 @@ class SPClient {
     authorization_id: string;
     /** Renew an existing grant: same id, same content, extended expiry. */
     renew?: boolean;
+    /** Edit lineage: the authorization_id this ceremony supersedes (provenance only). */
+    replaces?: string;
     profile_id: string;
     // v0.3
     frame?: Record<string, string | number>;
@@ -1043,6 +1045,17 @@ class SPClient {
     if (!res.ok) throw new Error(`Failed to fetch gate content: ${res.status}`);
     const data = await res.json();
     return data.entry ?? null;
+  }
+
+  /**
+   * Re-sync every stored grant with the AS so revoked/deleted authorizations
+   * drop out of the MCP cache immediately (list-authorizations reflects
+   * reality). Enforcement never depends on this — a revoked grant is refused
+   * at the receipt gate regardless — so callers treat it as best-effort.
+   */
+  async resyncGates(): Promise<void> {
+    const res = await this.fetch('/resync-gates', { method: 'POST' });
+    if (!res.ok) throw new Error(`Failed to resync gates: ${res.status}`);
   }
 
   /**

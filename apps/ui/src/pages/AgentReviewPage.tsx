@@ -13,6 +13,7 @@ import type { ProfileConfig } from '../lib/sp-client';
 
 /** An existing active grant under the same profile, with its local scope. */
 interface ExistingGrant {
+  authorizationId: string;
   bounds: Record<string, string | number>;
   context: AgentContextParams;
   intent: string | null;
@@ -164,11 +165,14 @@ export function AgentReviewPage() {
   useEffect(() => {
     if (!authData?.profileId) return;
     const profileId = authData.profileId;
+    // Edit flow: the grant being replaced must not warn against itself —
+    // same bounds/scope as the prefill is the expected starting point.
+    const replacesId = sessionStorage.getItem('agentEditReplaces');
     spClient.getEnrichedAuthorizations()
       .then(auths => {
         const grants: ExistingGrant[] = auths
-          .filter(a => a.profileId === profileId)
-          .map(a => ({ bounds: a.bounds, context: a.context ?? {}, intent: a.intent }));
+          .filter(a => a.profileId === profileId && a.authorizationId !== replacesId)
+          .map(a => ({ authorizationId: a.authorizationId, bounds: a.bounds, context: a.context ?? {}, intent: a.intent }));
         setExistingSameProfile(grants);
       })
       .catch(() => setExistingSameProfile([]));
@@ -250,11 +254,16 @@ export function AgentReviewPage() {
       // Every ceremony mints its own per-ceremony identity — the AS enforces
       // uniqueness (NX) and content-hash idempotency on it.
       const authorizationId = `authz_${crypto.randomUUID()}`;
+      // Edit flow: this ceremony supersedes an existing grant. Grants are
+      // content-immutable (the attestation signature freezes bounds/scope/
+      // intent), so "edit" = sign a NEW grant, then revoke the old one below.
+      const replacesId = sessionStorage.getItem('agentEditReplaces') || undefined;
       // v0.4: commitment_mode is part of the signed payload. 'review' means
       // each action requires per-action human approval via a proposal;
       // 'automatic' lets the agent act within bounds without per-action review.
       const result = await spClient.attest({
         authorization_id: authorizationId,
+        replaces: replacesId,
         profile_id: authData.profileId,
         bounds: gateData.bounds,
         bounds_hash: boundsHash,
@@ -297,8 +306,26 @@ export function AgentReviewPage() {
         throw new Error(`Authorization signed but gate content delivery failed. The attestation was revoked. Please try again. (${pushErr instanceof Error ? pushErr.message : 'Unknown error'})`);
       }
 
+      // Edit flow: the new grant is signed AND delivered — retire the one it
+      // replaces. Order matters: revoke only after the replacement is fully
+      // live, so there is never a coverage gap (a brief twin overlap is safe —
+      // per-ceremony identity keeps them independent). The resync drops the
+      // revoked grant from the MCP cache immediately; enforcement doesn't
+      // depend on it (receipts for revoked grants are refused server-side).
+      if (replacesId) {
+        try {
+          await spClient.revokeAttestation(replacesId, `Replaced by ${authorizationId} (edit)`);
+          spClient.resyncGates().catch(() => {});
+        } catch {
+          // Old grant may already be revoked/expired — the new one is live
+          // either way; the Authorizations page still shows the old row for
+          // manual cleanup if this ever fails.
+        }
+      }
+
       sessionStorage.removeItem('agentAuth');
       sessionStorage.removeItem('agentGate');
+      sessionStorage.removeItem('agentEditReplaces');
       navigate(`/authorizations?highlight=${encodeURIComponent(authorizationId)}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Attestation failed');

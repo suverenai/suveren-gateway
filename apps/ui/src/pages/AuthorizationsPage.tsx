@@ -55,7 +55,7 @@ interface AuthCardProps {
   isAdmin?: boolean;
   onExpand: (item: PendingItem) => void;
   onCopyHash: (hash: string) => void;
-  onCopy: (item: PendingItem) => void;
+  onCopy: (item: PendingItem, opts?: { asEdit?: boolean }) => void;
   onRevoke: (authorizationId: string, ownerLabel?: string, profileShortName?: string) => void;
   onExtend: (item: PendingItem) => void;
   highlightHash?: string | null;
@@ -353,6 +353,19 @@ function AuthCard({
                 {copyingHash === item.authorization_id ? 'Copying…' : '⧉ Copy'}
               </button>
             )}
+            {/* Edit = replace: grants are content-immutable, so the wizard opens
+                pre-filled and signing the new grant auto-revokes this one. Only
+                for live grants — an expired one has nothing to revoke (use Copy). */}
+            {!ownerLabel && (status === 'active' || status === 'pending') && (
+              <button
+                className="btn btn-secondary btn-sm"
+                onClick={() => onCopy(item, { asEdit: true })}
+                disabled={copyingHash === item.authorization_id}
+                title="Adjust intent, bounds, or scope: opens the ceremony pre-filled; signing the new authorization revokes this one"
+              >
+                ✎ Edit
+              </button>
+            )}
             {/* Extend only in Mine tab */}
             {!ownerLabel && showExtend && (
               <button
@@ -520,7 +533,16 @@ export function AuthorizationsPage() {
     });
   };
 
-  const handleCopy = async (item: PendingItem) => {
+  /**
+   * Prefill the ceremony wizard from an existing grant. Two modes:
+   * - Copy (asEdit=false): plain prefill — a sibling grant.
+   * - Edit (asEdit=true): same prefill, plus `agentEditReplaces` so the review
+   *   step records lineage AND auto-revokes this grant once the new one is
+   *   signed and delivered. Grants are content-immutable (the attestation
+   *   signature freezes bounds/scope/intent), so "edit" is always
+   *   replace-then-revoke — never mutation.
+   */
+  const handleCopy = async (item: PendingItem, opts?: { asEdit?: boolean }) => {
     if (!groupId) {
       alert('No active group; cannot copy authorization.');
       return;
@@ -555,6 +577,11 @@ export function AuthorizationsPage() {
         gateContent: { intent },
         templateMode,
       }));
+      if (opts?.asEdit) {
+        sessionStorage.setItem('agentEditReplaces', item.authorization_id);
+      } else {
+        sessionStorage.removeItem('agentEditReplaces');
+      }
       navigate('/agent/gate');
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Failed to copy authorization');
@@ -572,6 +599,10 @@ export function AuthorizationsPage() {
     try {
       await spClient.revokeAttestation(authorizationId);
       setRevokedSet(prev => new Set(prev).add(authorizationId));
+      // Drop the revoked grant from the MCP cache NOW (list-authorizations
+      // reflects reality immediately). Best-effort: enforcement is server-side
+      // at the receipt gate either way; without this it lingers until re-login.
+      spClient.resyncGates().catch(() => {});
       // Refresh team list after admin revoke
       if (ownerLabel && groupId) {
         fetchTeamItems();
