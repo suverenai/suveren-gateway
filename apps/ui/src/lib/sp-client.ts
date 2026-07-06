@@ -157,6 +157,8 @@ export interface GateContentEntry {
   profileId: string;
   gateContent: { intent: string };
   context?: Record<string, string | number>;
+  /** Discovered display names per context field (value → label). */
+  contextLabels?: Record<string, Record<string, string>>;
   storedAt: string;
 }
 
@@ -1076,6 +1078,8 @@ class SPClient {
     boundsHash?: string;
     contextHash?: string;   // v0.4
     context?: Record<string, string | number>;  // v0.4
+    /** Discovered display names per context field (value → label). */
+    contextLabels?: Record<string, Record<string, string>>;
     path?: string;
     gateContent: Record<string, string>;
   }): Promise<void> {

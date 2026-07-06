@@ -8,6 +8,9 @@ interface Option {
 }
 
 interface Props {
+  /** Called once options load: full value→label map, so the ceremony can
+      store human-readable names alongside the enforced raw values. */
+  onLabels?: (labels: Record<string, string>) => void;
   integrationId: string;
   field: string;
   /** Comma-joined list of selected values (matches BoundsEditor's existing string-based value format). */
@@ -22,7 +25,7 @@ interface Props {
  * /integrations/:id/discover/:field endpoint on mount. Falls back to a plain
  * text input when discovery fails, so the wizard never blocks.
  */
-export function DiscoveredScopeField({ integrationId, field, value, onChange, disabled }: Props) {
+export function DiscoveredScopeField({ integrationId, field, value, onChange, disabled, onLabels }: Props) {
   const [options, setOptions] = useState<Option[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -30,7 +33,15 @@ export function DiscoveredScopeField({ integrationId, field, value, onChange, di
   useEffect(() => {
     let cancelled = false;
     spClient.discoverScopeField(integrationId, field)
-      .then(d => { if (!cancelled) { setOptions(d.options); setLoading(false); } })
+      .then(d => {
+        if (!cancelled) {
+          setOptions(d.options);
+          setLoading(false);
+          if (d.options?.length) {
+            onLabels?.(Object.fromEntries((d.options as Option[]).map(o => [o.value, o.label])));
+          }
+        }
+      })
       .catch(e => { if (!cancelled) { setError(e instanceof Error ? e.message : String(e)); setLoading(false); } });
     return () => { cancelled = true; };
   }, [integrationId, field]);

@@ -19,6 +19,8 @@ export interface GateForwardFields {
   boundsHash: string;
   contextHash: string;
   context: Record<string, string | number>;
+  /** Discovered display names per context field (value → label) — UI sugar. */
+  contextLabels?: Record<string, Record<string, string>>;
   gateContent: Record<string, string>;
   /** Optional; included only when present. */
   path?: string;
@@ -29,6 +31,7 @@ export interface GateForwardArgs {
   boundsHash: string;
   contextHash: string;
   context: Record<string, string | number>;
+  contextLabels?: Record<string, Record<string, string>>;
   gateContent: Record<string, string>;
   path?: string;
 }
@@ -49,6 +52,9 @@ export function buildGateForwardArgs(result: AttestHashes, fields: GateForwardFi
     boundsHash: result.bounds_hash ?? fields.boundsHash,
     contextHash: fields.contextHash,
     context: fields.context,
+    ...(fields.contextLabels && Object.keys(fields.contextLabels).length > 0
+      ? { contextLabels: fields.contextLabels }
+      : {}),
     gateContent: fields.gateContent,
     ...(fields.path ? { path: fields.path } : {}),
   };

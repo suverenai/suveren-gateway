@@ -41,6 +41,7 @@ export class SharedState {
       boundsHash?: string;
       contextHash?: string;
       context?: Record<string, string | number>;
+      contextLabels?: Record<string, Record<string, string>>;
     },
   ): void {
     // Key the entry by the per-ceremony id — twins can never collide.
@@ -52,6 +53,7 @@ export class SharedState {
       profileId,
       gateContent: content,
       context: opts?.context,
+      contextLabels: opts?.contextLabels,
       storedAt: new Date().toISOString(),
     });
   }

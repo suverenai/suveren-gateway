@@ -28,6 +28,8 @@ export interface GateEntry {
   profileId: string;
   gateContent: GateContent;
   context?: Record<string, string | number>;  // v0.4 context content (encrypted at rest)
+  /** Discovered display names per context field (value → label) — UI sugar, never enforced. */
+  contextLabels?: Record<string, Record<string, string>>;
   storedAt: string;
 }
 

@@ -66,6 +66,9 @@ export function GateWizardPage() {
   const [step, setStep] = useState(initialStep); // 2=scope+limits, 3=intent
   const [bounds, setBounds] = useState<AgentBoundsParams | null>(null);
   const [context, setContext] = useState<AgentContextParams | null>(null);
+  // Display names from scope discovery (value → label per context field);
+  // stored with the local gate entry so IDs render as names everywhere.
+  const [contextLabels, setContextLabels] = useState<Record<string, Record<string, string>>>({});
   const [intent, setIntent] = useState(INTENT_TEMPLATE);
   const [chatOpenMobile, setChatOpenMobile] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -148,9 +151,14 @@ export function GateWizardPage() {
         .join(', ')
     : '';
 
-  const handleBoundsConfirm = (b: AgentBoundsParams, c: AgentContextParams) => {
+  const handleBoundsConfirm = (
+    b: AgentBoundsParams,
+    c: AgentContextParams,
+    labels?: Record<string, Record<string, string>>,
+  ) => {
     setBounds(b);
     setContext(c);
+    if (labels) setContextLabels(labels);
     setStep(3);
   };
 
@@ -173,7 +181,7 @@ export function GateWizardPage() {
     // review-mode templates and edited grants always landed as "automatic"
     // with the default duration.
     const stored = JSON.parse(sessionStorage.getItem('agentGate') ?? '{}') as Record<string, unknown>;
-    sessionStorage.setItem('agentGate', JSON.stringify({ ...stored, bounds, context, gateContent, ttlConfig }));
+    sessionStorage.setItem('agentGate', JSON.stringify({ ...stored, bounds, context, contextLabels, gateContent, ttlConfig }));
     navigate('/agent/review');
   };
 

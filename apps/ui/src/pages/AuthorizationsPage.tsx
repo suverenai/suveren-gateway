@@ -9,6 +9,7 @@ import { DomainBadge } from '../components/DomainBadge';
 import { TTLBadge } from '../components/TTLBadge';
 import { EmptyState } from '../components/EmptyState';
 import { ExtendAuthModal } from '../components/ExtendAuthModal';
+import { formatScopeValue } from '../lib/scope-labels';
 import { useVisiblePolling } from '../hooks/useVisiblePolling';
 import { useSSEEvent } from '../contexts/EventSourceContext';
 import { getAuthStatus, type AuthStatus } from '../lib/auth-status';
@@ -301,7 +302,7 @@ function AuthCard({
                 {Object.entries(gateEntry.context).map(([k, v]) => (
                   <span key={k} style={{ display: 'contents' }}>
                     <dt>{k}</dt>
-                    <dd>{String(v)}</dd>
+                    <dd title={String(v)}>{formatScopeValue(k, v, gateEntry.contextLabels)}</dd>
                   </span>
                 ))}
               </dl>

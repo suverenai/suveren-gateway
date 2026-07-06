@@ -141,11 +141,12 @@ app.post('/internal/configure', internalOnly, (req: Request, res: Response) => {
 
 app.post('/internal/gate-content', internalOnly, async (req: Request, res: Response) => {
   try {
-    const { authorizationId, boundsHash, contextHash, context, path: rawPath, gateContent } = req.body as {
+    const { authorizationId, boundsHash, contextHash, context, contextLabels, path: rawPath, gateContent } = req.body as {
       authorizationId?: string;
       boundsHash?: string;
       contextHash?: string;
       context?: Record<string, string | number>;
+      contextLabels?: Record<string, Record<string, string>>;
       path?: string;
       gateContent: GateContent;
     };
@@ -179,7 +180,7 @@ app.post('/internal/gate-content', internalOnly, async (req: Request, res: Respo
 
     // Store gate content (encrypted if vault key is set), passing v0.4 fields through
     state.setGateContent(path, authorizationId, auth.profileId, gateContent, {
-      boundsHash, contextHash, context,
+      boundsHash, contextHash, context, contextLabels,
     });
     console.error(`[Suveren MCP] Gate content accepted for ${path}`);
 
@@ -268,6 +269,9 @@ app.post('/internal/resync-gates', internalOnly, async (_req: Request, res: Resp
           boundsHash: gate.boundsHash,
           contextHash: gate.contextHash,
           context: gate.context,
+          // Preserve discovered display names across resyncs — the AS never
+          // sees them, so the local copy is the only one.
+          contextLabels: gate.contextLabels,
         });
         synced++;
         console.error(`[Suveren MCP] Re-synced gate: ${gate.path}`);

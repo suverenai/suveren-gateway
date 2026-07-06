@@ -46,6 +46,7 @@ export async function pushGateContent(data: {
   boundsHash?: string;
   contextHash?: string;
   context?: Record<string, string | number>;
+  contextLabels?: Record<string, Record<string, string>>;
   path?: string;
   gateContent: Record<string, string>;
 }): Promise<void> {

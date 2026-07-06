@@ -5,7 +5,12 @@ import { spClient, type IntegrationManifest, type ProfileConfig } from '../lib/s
 
 interface Props {
   profile: AgentProfile;
-  onConfirm: (bounds: AgentBoundsParams, context: AgentContextParams) => void;
+  onConfirm: (
+    bounds: AgentBoundsParams,
+    context: AgentContextParams,
+    /** Discovered display names per context field: fieldKey → (value → label). */
+    contextLabels?: Record<string, Record<string, string>>,
+  ) => void;
   /** Called when user clicks Cancel in the hard-ceiling zone. */
   onCancel?: () => void;
   readOnly?: boolean;
@@ -429,6 +434,7 @@ function FieldRow({
   readOnly,
   twoColumn,
   discoveryIntegrationId,
+  onLabels,
 }: {
   fieldKey: string;
   fieldDef: FieldDef;
@@ -440,6 +446,8 @@ function FieldRow({
   /** When present AND prefix === 'context', this field uses live discovery
    * from the named integration. Overrides the plain-text-input fallback. */
   discoveryIntegrationId?: string;
+  /** Discovered value→label map for this field (display names). */
+  onLabels?: (fieldKey: string, labels: Record<string, string>) => void;
 }) {
   const label = humanizeFieldName(fieldKey, fieldDef);
   const fieldId = `${prefix}-field-${fieldKey}`;
@@ -506,6 +514,7 @@ function FieldRow({
           value={value}
           onChange={v => onChange(fieldKey, v)}
           disabled={readOnly}
+          onLabels={labels => onLabels?.(fieldKey, labels)}
         />
       ) : (
         <input
@@ -643,6 +652,9 @@ export function BoundsEditor({
 
   const [boundsValues, setBoundsValues] = useState<Record<string, string>>(initialBoundsValues);
   const [contextValues, setContextValues] = useState<Record<string, string>>(initialContextValues);
+  // Display names from scope discovery (e.g. calendar IDs → calendar names).
+  // Values stay the enforced truth; labels are UI sugar stored locally.
+  const [contextLabels, setContextLabels] = useState<Record<string, Record<string, string>>>({});
 
   // Find the integration manifest (if any) whose `profile` matches the profile
   // being authorized AND which declares contextDiscovery for one or more of
@@ -695,7 +707,7 @@ export function BoundsEditor({
 
   const handleConfirm = () => {
     const [bounds, context] = buildBoundsAndContext();
-    onConfirm(bounds, context);
+    onConfirm(bounds, context, contextLabels);
   };
 
   /** Clamp all violating bounds to their cap value, then proceed. */
@@ -726,7 +738,7 @@ export function BoundsEditor({
         context[key] = contextValues[key];
       }
     }
-    onConfirm(bounds, context);
+    onConfirm(bounds, context, contextLabels);
   };
 
   // ─── Render cap indicator for a single bound key ───────────────────────
@@ -894,6 +906,7 @@ export function BoundsEditor({
                 prefix="context"
                 readOnly={readOnly}
                 discoveryIntegrationId={hasDiscovery ? discoveryIntegration!.id : undefined}
+                onLabels={(fieldKey, labels) => setContextLabels(prev => ({ ...prev, [fieldKey]: labels }))}
               />
             );
           })}

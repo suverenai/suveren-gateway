@@ -8,6 +8,7 @@ import { StepIndicator } from '../components/StepIndicator';
 import { DomainBadge } from '../components/DomainBadge';
 import { profileDisplayName } from '../lib/profile-display';
 import { scopesOverlap } from '../lib/scope-overlap';
+import { formatScopeValue } from '../lib/scope-labels';
 import type { AgentProfile, AgentBoundsParams, AgentContextParams } from '@hap/core';
 import type { ProfileConfig } from '../lib/sp-client';
 
@@ -22,6 +23,8 @@ interface ExistingGrant {
 interface GateData {
   bounds: AgentBoundsParams;
   context: AgentContextParams;
+  /** Discovered display names per context field (value → label). */
+  contextLabels?: Record<string, Record<string, string>>;
   gateContent: { intent: string };
 }
 
@@ -83,6 +86,7 @@ export function AgentReviewPage() {
     const normalizedGate: GateData = {
       bounds: gate.bounds ?? {},
       context: gate.context ?? {},
+      contextLabels: gate.contextLabels ?? undefined,
       gateContent: gate.gateContent,
     };
 
@@ -330,6 +334,7 @@ export function AgentReviewPage() {
             boundsHash,
             contextHash,
             context: gateData.context,
+            contextLabels: gateData.contextLabels,
             gateContent: gateData.gateContent,
           }),
         );
@@ -590,7 +595,7 @@ export function AgentReviewPage() {
               {contextEntries.map(([k, v]) => (
                 <span key={k} style={{ display: 'contents' }}>
                   <dt>{k}</dt>
-                  <dd>{String(v)}</dd>
+                  <dd>{formatScopeValue(k, v, gateData.contextLabels)}</dd>
                 </span>
               ))}
               {boundsEntries.map(([k, v]) => (
