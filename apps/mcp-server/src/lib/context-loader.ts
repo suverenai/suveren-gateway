@@ -11,8 +11,15 @@ import { join } from 'node:path';
 
 const DEFAULT_DIR = process.env.SUVEREN_DATA_DIR ?? join(homedir(), '.suveren');
 
-/** Maximum chars to include in the mandate brief before truncating. */
-const BRIEF_MAX_CHARS = 1000;
+/**
+ * Maximum chars to include in the mandate brief before truncating.
+ * Aligned with the 16 KB cap the agent-brief editor and control-plane PUT
+ * enforce — a brief the human saved through the UI is always delivered
+ * whole. Truncation only guards against hand-edited oversized context.md
+ * files (the byte cap is checked on write; this char cap can only be
+ * exceeded by bypassing the UI).
+ */
+const BRIEF_MAX_CHARS = 16 * 1024;
 
 /**
  * Read the context file. Returns null if the file doesn't exist.

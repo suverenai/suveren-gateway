@@ -36,16 +36,29 @@ describe('context-loader', () => {
     cleanup();
   });
 
-  it('truncates long content in brief', () => {
+  it('truncates content beyond the 16 KB editor cap (hand-edited files only)', () => {
     cleanup();
     mkdirSync(TEST_DIR, { recursive: true });
-    const longContent = 'A'.repeat(1500);
+    const longContent = 'A'.repeat(17 * 1024);
     writeFileSync(join(TEST_DIR, 'context.md'), longContent);
 
     const { brief, truncated } = getContextForBrief(TEST_DIR);
     expect(truncated).toBe(true);
-    expect(brief!.length).toBeLessThan(1500);
+    expect(brief!.length).toBeLessThan(17 * 1024);
     expect(brief).toContain('truncated');
+
+    cleanup();
+  });
+
+  it('delivers a full-size UI-saved brief whole (16 KB, untruncated)', () => {
+    cleanup();
+    mkdirSync(TEST_DIR, { recursive: true });
+    const maxUiBrief = 'B'.repeat(16 * 1024);
+    writeFileSync(join(TEST_DIR, 'context.md'), maxUiBrief);
+
+    const { brief, truncated } = getContextForBrief(TEST_DIR);
+    expect(truncated).toBe(false);
+    expect(brief).toBe(maxUiBrief);
 
     cleanup();
   });
