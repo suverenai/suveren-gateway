@@ -42,7 +42,11 @@ const CONTENT_FIELD_CANDIDATES = ['body', 'text', 'description', 'content'];
  * separator (legacy em-dash "—" or the current ASCII "--"). Used to remove a
  * prior footer before appending a fresh one (idempotent + regenerates on edit).
  */
-const FOOTER_RE = /\n*(?:—|--) (?:Sent|Published) by an AI agent[\s\S]*$/;
+// Matches BOTH footer wordings so verification/strip works across versions
+// forever: v1 "…by an AI agent of «name»" (and the no-name "…by an AI agent
+// via …"), and v1.1 "…by «name»'s AI agent". Already-sent content keeps its
+// original footer; never retro-change it.
+const FOOTER_RE = /\n*(?:—|--) (?:Sent|Published) by (?:an AI agent|[^\n]+?'s AI agent)[\s\S]*$/;
 
 /** v1: footer on for everyone (free-tier behavior). Hook for paid opt-out later. */
 export function shouldAttachFooter(): boolean {
@@ -69,7 +73,7 @@ export function verbForProfile(profile: string): string {
  * it renders clickable in email (HTML or plain), calendar, and publishing alike.
  */
 function hapLine(): string {
-  return `-- ${OPERATOR_NAME} is an implementation of the Human Agency Protocol (HAP), an open protocol to delegate execution to AI agents under human authority. ${HAP_URL}`;
+  return `-- ${OPERATOR_NAME} implements HAP, the open Human Agency Protocol: ${HAP_URL}`;
 }
 
 function footerText(receiptId: string, verb: string, subject?: Subject): string {

@@ -16,8 +16,7 @@ import { appendVerificationFooter, shouldAttachFooter, verbForProfile } from '..
 import type { DiscoveredTool } from '../src/lib/integration-manager';
 
 const HAP_LINE =
-  '-- Suveren is an implementation of the Human Agency Protocol (HAP), an open protocol ' +
-  'to delegate execution to AI agents under human authority. https://www.humanagencyprotocol.org/';
+  '-- Suveren implements HAP, the open Human Agency Protocol: https://www.humanagencyprotocol.org/';
 
 function tool(profile: string | null, props: Record<string, { type?: unknown }>, name = 'send_message'): DiscoveredTool {
   return {
@@ -31,8 +30,8 @@ function tool(profile: string | null, props: Record<string, { type?: unknown }>,
 }
 
 const STRING = { type: 'string' };
-/** Count footers (verb-agnostic) to detect stacking. */
-const footerCount = (s: string) => (s.match(/by an AI agent/g) ?? []).length;
+/** Count footers (verb- and wording-agnostic: v1 "by an AI agent", v1.1 "'s AI agent") to detect stacking. */
+const footerCount = (s: string) => (s.match(/(?:by an AI agent|'s AI agent)/g) ?? []).length;
 
 describe('verbForProfile', () => {
   it('is "Published" for publish, "Sent" for email/calendar', () => {
@@ -154,7 +153,7 @@ describe('appendVerificationFooter — identity (v0.6)', () => {
 
   it('high/as_vouched footer discloses the name + operator (separator owned by hap-core)', () => {
     const out = appendVerificationFooter(tool('email', { body: STRING }), { body: 'Hi' }, 'rid', asVouched);
-    expect(out.body).toContain('of Andreas Schadauer');
+    expect(out.body).toContain("Andreas Schadauer's AI agent"); // v1.1 wording
     expect(out.body).toContain('verified by Suveren');
   });
 

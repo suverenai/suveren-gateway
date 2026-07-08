@@ -124,8 +124,8 @@ importers:
   packages/hap-core:
     dependencies:
       '@humanagencyp/hap-core':
-        specifier: ^0.6.1
-        version: 0.6.1
+        specifier: ^0.6.2
+        version: 0.6.2
     devDependencies:
       tsup:
         specifier: ^8.0.0
@@ -527,8 +527,8 @@ packages:
     resolution: {integrity: sha512-pFxWl1nNJeQCSUFs7+GAblHvXBCjn9EPN65vdKlYQil2aURaRxfGMO6vBKGqm1YHTKwiAxJQNEI70PbSowMP9Q==}
     engines: {node: '>=16.0.0'}
 
-  '@humanagencyp/hap-core@0.6.1':
-    resolution: {integrity: sha512-Tn8H/eXvo7GGjMPhF3daVew0Wx/hC4ce6mJ2QtV7gD1krw3iobJ/rKcU8P7SsG1GpSaMLMDoJcWQ583hK/fIog==}
+  '@humanagencyp/hap-core@0.6.2':
+    resolution: {integrity: sha512-CImuP5/waHZVRWf2uJYygbjizwPCCFqeg5H2BPfes0/KsUU4gk82lZqg1KkgKiLi1HxbIhWF3gBbH7ZUdL/5bw==}
 
   '@jest/schemas@29.6.3':
     resolution: {integrity: sha512-mo5j5X+jIZmJQveBKeS/clAueipV7KgiX1vMgCxam1RNYiqE1w62n0/tJJnHtjW8ZHcQco5gY85jA3mi0L+nSA==}
@@ -2124,7 +2124,7 @@ snapshots:
     dependencies:
       '@hpke/common': 1.10.1
 
-  '@humanagencyp/hap-core@0.6.1':
+  '@humanagencyp/hap-core@0.6.2':
     dependencies:
       '@noble/ed25519': 2.3.0
 
