@@ -141,6 +141,21 @@ export function DashboardPage() {
       color: 'var(--warning)',
     });
   }
+  // A running subprocess with a dead OAuth token (e.g. an expired LinkedIn
+  // access token): the process is fine, but nothing it does will work until
+  // the human reconnects. Not covered by attentionIntegrations (those are
+  // process-down); surface it as its own row. Skip already-down ones to
+  // avoid a duplicate row.
+  for (const e of integrationEntries) {
+    if (e.authStatus === 'failed' && e.state !== 'not-running' && e.state !== 'error') {
+      attentionItems.push({
+        label: 'Reconnect needed',
+        detail: `${e.manifest.name}: authorization expired — reconnect to restore access`,
+        to: '/integrations',
+        color: 'var(--danger)',
+      });
+    }
+  }
 
   if (!aiConfigured) {
     attentionItems.push({

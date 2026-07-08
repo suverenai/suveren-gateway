@@ -15,6 +15,11 @@ export interface IntegrationEntry {
   manifest: IntegrationManifest;
   integration?: McpIntegrationStatus;
   state: IntegrationState;
+  /** OAuth liveness for oauth integrations: 'failed' = token expired/revoked,
+   *  needs reconnect. Undefined for non-oauth or not-yet-probed. */
+  authStatus?: 'ok' | 'failed' | 'not_connected' | 'not_configured' | 'unverified';
+  authAccount?: string;
+  authError?: string;
 }
 
 interface ContextValue {
@@ -23,7 +28,8 @@ interface ContextValue {
   /** True when the manifests fetch itself failed (vs. genuinely zero manifests). */
   manifestsError: boolean;
   entries: IntegrationEntry[];
-  /** Count of entries that need user attention (not-running OR error). `starting` is excluded. */
+  /** Count of entries that need user attention (not-running, error, OR a failed
+   *  OAuth token that needs reconnect). `starting` is excluded. */
   attentionCount: number;
   /** Number of active MCP client sessions — exposed so Dashboard doesn't have to fetch /mcp/health separately. */
   activeSessions: number;
@@ -37,6 +43,12 @@ const IntegrationStatusContext = createContext<ContextValue | null>(null);
 // users aren't greeted with a red "not running" banner on every fresh boot.
 const STARTUP_WINDOW_MS = 30_000;
 
+interface AuthHealth {
+  status: 'ok' | 'failed' | 'not_connected' | 'not_configured' | 'unverified';
+  account?: string;
+  error?: string;
+}
+
 interface RawState {
   manifests: IntegrationManifest[];
   integrations: McpIntegrationStatus[];
@@ -44,6 +56,7 @@ interface RawState {
   mcpServerUp: boolean | null;
   manifestsError: boolean;
   fetchCount: number;
+  authHealth: Record<string, AuthHealth>;
 }
 
 export function IntegrationStatusProvider({ children }: { children: ReactNode }) {
@@ -54,6 +67,7 @@ export function IntegrationStatusProvider({ children }: { children: ReactNode })
     mcpServerUp: null,
     manifestsError: false,
     fetchCount: 0,
+    authHealth: {},
   });
   // The first time we observed any not-running entry; used to decide
   // when to stop calling things "starting" and admit they're stuck.
@@ -66,6 +80,7 @@ export function IntegrationStatusProvider({ children }: { children: ReactNode })
       spClient.getMcpHealth().catch(() => null),
     ]);
     setRaw(prev => ({
+      ...prev,
       manifests: manifestsData.manifests,
       integrations: healthData?.integrations ?? prev.integrations,
       activeSessions: healthData?.activeSessions ?? prev.activeSessions,
@@ -73,6 +88,17 @@ export function IntegrationStatusProvider({ children }: { children: ReactNode })
       manifestsError,
       fetchCount: prev.fetchCount + 1,
     }));
+
+    // OAuth liveness is an EXTERNAL probe (e.g. LinkedIn /v2/me) — layer it in
+    // after the fast local snapshot so its latency never delays process status.
+    // Best-effort: a probe failure just leaves the prior authHealth in place.
+    const oauthManifests = manifestsData.manifests.filter(m => m.oauth);
+    if (oauthManifests.length > 0) {
+      const results = await Promise.all(
+        oauthManifests.map(async m => [m.id, await spClient.getOAuthHealth(m.id)] as const),
+      );
+      setRaw(prev => ({ ...prev, authHealth: Object.fromEntries(results) }));
+    }
   }, []);
 
   // SSE-driven refresh: fire immediately when the server emits integration-changed.
@@ -119,12 +145,18 @@ export function IntegrationStatusProvider({ children }: { children: ReactNode })
         state = 'not-running';
       }
 
-      return { id: manifest.id, manifest, integration, state };
+      const ah = raw.authHealth[manifest.id];
+      return {
+        id: manifest.id, manifest, integration, state,
+        authStatus: ah?.status, authAccount: ah?.account, authError: ah?.error,
+      };
     });
   }, [raw]);
 
   const attentionCount = useMemo(
-    () => entries.filter(e => e.state === 'not-running' || e.state === 'error').length,
+    () => entries.filter(
+      e => e.state === 'not-running' || e.state === 'error' || e.authStatus === 'failed',
+    ).length,
     [entries],
   );
 
