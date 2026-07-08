@@ -24,13 +24,13 @@
   "oauth": {
     "authUrl": "https://www.linkedin.com/oauth/v2/authorization",
     "tokenUrl": "https://www.linkedin.com/oauth/v2/accessToken",
-    "scopes": ["w_member_social"],
+    "scopes": ["openid", "profile", "w_member_social"],
     "credentialKeys": { "clientId": "clientId", "clientSecret": "clientSecret" },
     "tokenStorage": "accessToken",
     "extraParams": {},
     "healthCheck": {
-      "url": "https://api.linkedin.com/v2/me",
-      "accountFields": ["localizedFirstName", "localizedLastName"]
+      "url": "https://api.linkedin.com/v2/userinfo",
+      "accountFields": ["name"]
     }
   },
   "toolGating": {
