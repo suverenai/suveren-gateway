@@ -129,8 +129,25 @@ let manifestCache: Array<{
     credentialKeys: Record<string, string>;
     tokenStorage: string;
     extraParams?: Record<string, string>;
+    // Optional liveness probe for access-token integrations that have no
+    // refresh grant (e.g. LinkedIn). A lightweight authenticated GET whose
+    // 200/401 tells us whether the stored token still works. accountFields
+    // (dot-paths into the JSON response, space-joined) name the display
+    // identity — e.g. LinkedIn's /v2/me → ["localizedFirstName","localizedLastName"].
+    healthCheck?: {
+      url: string;
+      accountFields?: string[];
+    };
   } | null;
 }> | null = null;
+
+/** Resolve a dot-path (e.g. "name.givenName") from a JSON object. */
+function resolvePath(obj: unknown, path: string): string | undefined {
+  const v = path.split('.').reduce<unknown>((acc, key) => {
+    return acc && typeof acc === 'object' ? (acc as Record<string, unknown>)[key] : undefined;
+  }, obj);
+  return v == null ? undefined : String(v);
+}
 
 /** Extract the `email` claim from an OIDC id_token (unverified — display only). */
 function decodeJwtEmail(idToken?: string): string | undefined {
@@ -295,9 +312,36 @@ app.get('/auth/oauth/:integrationId/health', authGuard, async (req: Request, res
   const token = creds[oauth.tokenStorage];
   if (!token) { res.json({ status: 'not_connected', account }); return; }
 
-  // Only a refresh token can be probed. Access-token storage (e.g. LinkedIn)
-  // has no refresh grant — report unverified rather than a false failure.
-  if (!/refresh/i.test(oauth.tokenStorage)) { res.json({ status: 'unverified', account }); return; }
+  // Access-token storage (e.g. LinkedIn) has no refresh grant to probe. If the
+  // manifest declares a liveness endpoint, hit it with the stored token: 200 =
+  // token works (and capture the display identity), 401/403 = token rejected
+  // (expired/revoked). Only a declared 5xx / network error stays "unverified"
+  // — we never cry wolf when the fault isn't the token's.
+  if (!/refresh/i.test(oauth.tokenStorage)) {
+    const hc = oauth.healthCheck;
+    if (!hc?.url) { res.json({ status: 'unverified', account }); return; }
+    try {
+      const r = await fetch(hc.url, { headers: { Authorization: `Bearer ${token}` } });
+      if (r.ok) {
+        const data = await r.json().catch(() => ({})) as Record<string, unknown>;
+        const probed = (hc.accountFields ?? [])
+          .map(f => resolvePath(data, f))
+          .filter((v): v is string => !!v)
+          .join(' ')
+          .trim();
+        res.json({ status: 'ok', account: probed || account });
+        return;
+      }
+      if (r.status === 401 || r.status === 403) {
+        res.json({ status: 'failed', account, error: `token rejected (HTTP ${r.status})` });
+        return;
+      }
+      res.json({ status: 'unverified', account });
+    } catch (err) {
+      res.json({ status: 'unverified', account, error: err instanceof Error ? err.message : 'probe failed' });
+    }
+    return;
+  }
 
   try {
     const r = await fetch(oauth.tokenUrl, {

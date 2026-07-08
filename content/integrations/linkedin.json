@@ -27,7 +27,11 @@
     "scopes": ["w_member_social"],
     "credentialKeys": { "clientId": "clientId", "clientSecret": "clientSecret" },
     "tokenStorage": "accessToken",
-    "extraParams": {}
+    "extraParams": {},
+    "healthCheck": {
+      "url": "https://api.linkedin.com/v2/me",
+      "accountFields": ["localizedFirstName", "localizedLastName"]
+    }
   },
   "toolGating": {
     "default": {
