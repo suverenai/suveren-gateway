@@ -313,10 +313,15 @@ app.get('/auth/oauth/:integrationId/health', authGuard, async (req: Request, res
   if (!token) { res.json({ status: 'not_connected', account }); return; }
 
   // Access-token storage (e.g. LinkedIn) has no refresh grant to probe. If the
-  // manifest declares a liveness endpoint, hit it with the stored token: 200 =
-  // token works (and capture the display identity), 401/403 = token rejected
-  // (expired/revoked). Only a declared 5xx / network error stays "unverified"
-  // — we never cry wolf when the fault isn't the token's.
+  // manifest declares a liveness endpoint, hit it with the stored token and
+  // read ONLY the authentication signal:
+  //   200 → token works; capture the display identity.
+  //   401 → unauthenticated → token expired/revoked → genuinely failed.
+  //   403 → authenticated but forbidden. The token is ALIVE; it just lacks
+  //         scope for THIS endpoint (LinkedIn's w_member_social can't read
+  //         /v2/me). Never "failed" — that would block a user who just
+  //         reconnected a perfectly valid token. Report unverified.
+  //   other / network → unverified (don't cry wolf on a non-token fault).
   if (!/refresh/i.test(oauth.tokenStorage)) {
     const hc = oauth.healthCheck;
     if (!hc?.url) { res.json({ status: 'unverified', account }); return; }
@@ -332,8 +337,8 @@ app.get('/auth/oauth/:integrationId/health', authGuard, async (req: Request, res
         res.json({ status: 'ok', account: probed || account });
         return;
       }
-      if (r.status === 401 || r.status === 403) {
-        res.json({ status: 'failed', account, error: `token rejected (HTTP ${r.status})` });
+      if (r.status === 401) {
+        res.json({ status: 'failed', account, error: 'token expired or revoked (HTTP 401)' });
         return;
       }
       res.json({ status: 'unverified', account });
