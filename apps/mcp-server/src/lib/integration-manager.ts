@@ -6,7 +6,7 @@
  */
 
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, delimiter } from 'node:path';
 import { existsSync, writeFileSync, mkdirSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -40,7 +40,11 @@ const INTEGRATIONS_BIN = join(INTEGRATIONS_DIR, 'node_modules', '.bin');
  */
 function buildPath(): string {
   const base = process.env.PATH ?? '';
-  return [INTEGRATIONS_BIN, base].join(':');
+  // Use the platform PATH separator (';' on Windows, ':' on POSIX). Hardcoding
+  // ':' mangled PATH on Windows — drive letters (C:) contain colons — so
+  // cross-spawn couldn't find the connector .cmd shims in the integrations
+  // .bin folder, and every "Activate" silently failed to spawn.
+  return [INTEGRATIONS_BIN, base].join(delimiter);
 }
 
 /**
