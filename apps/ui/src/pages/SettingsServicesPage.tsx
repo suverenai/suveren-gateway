@@ -198,6 +198,10 @@ export function SettingsServicesPage() {
           <input
             className="form-input"
             type="password"
+            // Service credential, not a login: stop the browser's password
+            // manager from autofilling the Suveren API key saved for this origin.
+            name="ai-provider-api-key-credential"
+            autoComplete="new-password"
             value={aiApiKey}
             onChange={e => setAiApiKey(e.target.value)}
             placeholder={aiConfigured ? '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022' : 'sk-... (not needed for Ollama)'}

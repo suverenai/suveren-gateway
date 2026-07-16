@@ -359,6 +359,13 @@ export function IntegrationCard({ manifest, integration, state, onStatusChange, 
                   <input
                     className="form-input"
                     type={showSecrets[field.key] ? 'text' : 'password'}
+                    // Service credential, not a login: block the browser's
+                    // password manager from autofilling the Suveren API key
+                    // saved for this origin. "new-password" is the only value
+                    // Chrome honors on password inputs; the neutral name
+                    // avoids heuristic matching.
+                    name={`${manifest.id}-${field.key}-credential`}
+                    autoComplete="new-password"
                     placeholder={field.placeholder}
                     value={credValues[field.key] || ''}
                     onChange={e => setCredValues(v => ({ ...v, [field.key]: e.target.value }))}
@@ -371,6 +378,8 @@ export function IntegrationCard({ manifest, integration, state, onStatusChange, 
                 <input
                   className="form-input"
                   type="text"
+                  name={`${manifest.id}-${field.key}-credential`}
+                  autoComplete="off"
                   placeholder={field.placeholder}
                   value={credValues[field.key] || ''}
                   onChange={e => setCredValues(v => ({ ...v, [field.key]: e.target.value }))}
@@ -475,6 +484,10 @@ export function IntegrationCard({ manifest, integration, state, onStatusChange, 
                     <input
                       className="form-input"
                       type={showSecrets[field.key] ? 'text' : 'password'}
+                      // Block password-manager autofill (Suveren API key) —
+                      // see the identical guard on the edit form above.
+                      name={`${manifest.id}-${field.key}-credential`}
+                      autoComplete="new-password"
                       placeholder={field.placeholder}
                       value={credValues[field.key] || ''}
                       onChange={e => setCredValues(v => ({ ...v, [field.key]: e.target.value }))}
@@ -490,6 +503,8 @@ export function IntegrationCard({ manifest, integration, state, onStatusChange, 
                   <input
                     className="form-input"
                     type="text"
+                    name={`${manifest.id}-${field.key}-credential`}
+                    autoComplete="off"
                     placeholder={field.placeholder}
                     value={credValues[field.key] || ''}
                     onChange={e => setCredValues(v => ({ ...v, [field.key]: e.target.value }))}
