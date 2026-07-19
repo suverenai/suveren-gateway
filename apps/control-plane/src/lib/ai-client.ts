@@ -450,6 +450,59 @@ export async function getIntentReview(
   }
 }
 
+/**
+ * List the models a provider actually offers, so the UI can present a live
+ * picker instead of a hardcoded list. OpenAI-compatible providers expose
+ * `GET /models` (OpenAI envelope: `{ data: [{ id }] }`); Ollama exposes
+ * `GET /api/tags` (`{ models: [{ name }] }`). Auth uses the same Bearer key
+ * as chat calls, so private/enabled models show up for keyed providers.
+ */
+export async function listAIModels(
+  config: AIConfig,
+): Promise<{ ok: boolean; models: string[]; message?: string }> {
+  try {
+    if (config.provider === 'ollama') {
+      const res = await fetch(`${config.endpoint}/api/tags`, {
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!res.ok) throw new Error(`Ollama: ${res.status}`);
+      const data = await res.json() as { models?: Array<{ name?: string }> };
+      const models = (data.models ?? [])
+        .map(m => m.name)
+        .filter((n): n is string => !!n)
+        .sort();
+      return { ok: true, models };
+    }
+
+    const headers: Record<string, string> = {};
+    if (config.apiKey) headers['Authorization'] = `Bearer ${config.apiKey}`;
+    const res = await fetch(`${config.endpoint}/models`, {
+      headers,
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) {
+      // Turn the common auth failures into a plain instruction — most users
+      // hit this by switching to a provider whose key they haven't entered.
+      if (res.status === 401 || res.status === 403) {
+        throw new Error('Enter this provider’s API key, then Refresh');
+      }
+      const text = await res.text().catch(() => '');
+      throw new Error(`AI provider: ${res.status}${text ? ` - ${text}` : ''}`);
+    }
+    // OpenAI/OpenRouter/Groq wrap the list as { data: [...] }; Together (and
+    // some proxies) return a bare array. Accept both.
+    const raw = await res.json() as { data?: Array<{ id?: string }> } | Array<{ id?: string }>;
+    const list = Array.isArray(raw) ? raw : (raw.data ?? []);
+    const models = list
+      .map(m => m.id)
+      .filter((n): n is string => !!n)
+      .sort();
+    return { ok: true, models };
+  } catch (err) {
+    return { ok: false, models: [], message: err instanceof Error ? err.message : 'Failed to list models' };
+  }
+}
+
 export async function testAIConnectivity(config: AIConfig): Promise<{ ok: boolean; message: string }> {
   try {
     if (config.provider === 'ollama') {

@@ -637,6 +637,17 @@ class SPClient {
     return res.json();
   }
 
+  /** Fetch the live model list from the provider. Omitting apiKey falls back
+   *  to the stored key server-side for the same endpoint. */
+  async aiModels(config?: { provider?: string; endpoint?: string; apiKey?: string }): Promise<{ ok: boolean; models: string[]; message?: string }> {
+    const res = await this.fetch('/ai/models', {
+      method: 'POST',
+      body: JSON.stringify(config ?? {}),
+    });
+    if (!res.ok) throw new Error(`Model list failed: ${res.status}`);
+    return res.json();
+  }
+
   // ─── MCP Integrations ──────────────────────────────────────────────────
 
   async getMcpHealth(): Promise<McpHealthResponse> {
