@@ -42,10 +42,39 @@ export function SettingsServicesPage() {
   const [aiSaving, setAiSaving] = useState(false);
   const [aiTesting, setAiTesting] = useState(false);
   const [aiTestResult, setAiTestResult] = useState<string | null>(null);
+  const [aiFetchedModels, setAiFetchedModels] = useState<string[]>([]);
+  const [aiLoadingModels, setAiLoadingModels] = useState(false);
+  const [aiModelsMsg, setAiModelsMsg] = useState<string | null>(null);
+  const [aiModelFilter, setAiModelFilter] = useState('');
 
   const showSuccess = useCallback((msg: string) => {
     setSuccessMsg(msg);
     setTimeout(() => setSuccessMsg(''), 3000);
+  }, []);
+
+  // Fetch the provider's live model list. Called automatically on mount and
+  // whenever the provider changes, plus manually via the refresh button.
+  // Takes explicit provider/endpoint so callers can pass just-changed values
+  // without waiting for React state to settle. Omitting apiKey lets the
+  // server fall back to the stored key for that endpoint.
+  const fetchModels = useCallback(async (provider: string, endpoint: string, apiKey?: string) => {
+    setAiLoadingModels(true);
+    setAiModelsMsg(null);
+    try {
+      const result = await spClient.aiModels({ provider, endpoint, ...(apiKey ? { apiKey } : {}) });
+      if (result.ok && result.models.length > 0) {
+        setAiFetchedModels(result.models);
+        setAiModelsMsg(`${result.models.length} models available`);
+      } else {
+        setAiFetchedModels([]);
+        setAiModelsMsg(result.message || 'No models returned — using defaults');
+      }
+    } catch (e) {
+      setAiFetchedModels([]);
+      setAiModelsMsg(e instanceof Error ? e.message : 'Failed to load models');
+    } finally {
+      setAiLoadingModels(false);
+    }
   }, []);
 
   const loadStatus = useCallback(async () => {
@@ -53,20 +82,24 @@ export function SettingsServicesPage() {
       const aiStatus = await spClient.getCredential('ai-config');
       setAiConfigured(aiStatus.configured);
       if (aiStatus.configured && aiStatus.fields) {
-        if (aiStatus.fields.provider) setAiProvider(aiStatus.fields.provider);
-        if (aiStatus.fields.endpoint) setAiEndpoint(aiStatus.fields.endpoint);
+        const provider = aiStatus.fields.provider || 'openai-compatible';
+        const endpoint = aiStatus.fields.endpoint || '';
+        if (aiStatus.fields.provider) setAiProvider(provider);
+        if (aiStatus.fields.endpoint) setAiEndpoint(endpoint);
         if (aiStatus.fields.model) setAiModel(aiStatus.fields.model);
-        const ep = aiStatus.fields.endpoint ?? '';
-        if (ep.includes('openai.com')) setAiPreset('openai');
-        else if (ep.includes('groq.com')) setAiPreset('groq');
-        else if (ep.includes('together.xyz')) setAiPreset('together');
-        else if (ep.includes('openrouter.ai')) setAiPreset('openrouter');
+        if (endpoint.includes('openai.com')) setAiPreset('openai');
+        else if (endpoint.includes('groq.com')) setAiPreset('groq');
+        else if (endpoint.includes('together.xyz')) setAiPreset('together');
+        else if (endpoint.includes('openrouter.ai')) setAiPreset('openrouter');
         else setAiPreset('ollama');
+        // Auto-populate the model list for the stored provider (uses the
+        // stored key server-side; no need to re-enter it here).
+        if (endpoint) void fetchModels(provider, endpoint);
       }
     } catch {
       // ignore
     }
-  }, []);
+  }, [fetchModels]);
 
   useEffect(() => {
     loadStatus();
@@ -74,13 +107,20 @@ export function SettingsServicesPage() {
 
   const handleAiPresetChange = (preset: string) => {
     setAiPreset(preset);
+    setAiFetchedModels([]); // model lists are provider-specific
+    setAiModelsMsg(null);
+    setAiModelFilter('');
     const cfg = PROVIDER_CONFIG[preset];
     if (cfg) {
       setAiProvider(cfg.provider);
       setAiEndpoint(cfg.endpoint);
-      setAiModel(cfg.models[0]);
+      setAiModel(''); // no hardcoded default; wait for the real /models list
+      // Auto-load this provider's catalog right away (needs a matching key).
+      void fetchModels(cfg.provider, cfg.endpoint, aiApiKey || undefined);
     }
   };
+
+  const loadModels = () => fetchModels(aiProvider, aiEndpoint, aiApiKey || undefined);
 
   const saveAiConfig = async () => {
     setAiSaving(true);
@@ -104,12 +144,15 @@ export function SettingsServicesPage() {
     setAiTesting(true);
     setAiTestResult(null);
     try {
-      const result = await spClient.aiTest(aiApiKey ? {
+      // Always test the on-screen selection (not the stored config), so the
+      // result reflects the provider the user is actually looking at. The
+      // server falls back to the stored key only when the endpoint matches.
+      const result = await spClient.aiTest({
         provider: aiProvider,
         endpoint: aiEndpoint,
         model: aiModel,
-        apiKey: aiApiKey,
-      } : {});
+        ...(aiApiKey ? { apiKey: aiApiKey } : {}),
+      });
       setAiTestResult(result.ok ? `OK: ${result.message}` : `Failed: ${result.message}`);
     } catch (e) {
       setAiTestResult(`Error: ${e instanceof Error ? e.message : 'Unknown'}`);
@@ -157,59 +200,100 @@ export function SettingsServicesPage() {
         </div>
 
         <div className="form-group" style={{ marginBottom: '0.75rem' }}>
-          <label className="form-label">Model</label>
-          {(() => {
-            const models = PROVIDER_CONFIG[aiPreset]?.models ?? [];
-            const isKnown = models.includes(aiModel);
-            return (
-              <>
-                <select
-                  className="form-input"
-                  value={isKnown ? aiModel : '__custom__'}
-                  onChange={e => {
-                    if (e.target.value === '__custom__') {
-                      setAiModel('');
-                    } else {
-                      setAiModel(e.target.value);
-                    }
-                  }}
-                  style={{ marginBottom: !isKnown ? '0.375rem' : undefined }}
-                >
-                  {models.map(m => (
-                    <option key={m} value={m}>{m}</option>
-                  ))}
-                  <option value="__custom__">Custom model...</option>
-                </select>
-                {!isKnown && (
-                  <input
-                    className="form-input"
-                    value={aiModel}
-                    onChange={e => setAiModel(e.target.value)}
-                    placeholder="Enter model name"
-                  />
-                )}
-              </>
-            );
-          })()}
-        </div>
-
-        <div className="form-group" style={{ marginBottom: '1rem' }}>
-          <label className="form-label">API Key (if required)</label>
+          <label className="form-label">API Key {aiProvider === 'ollama' ? '(not needed for Ollama)' : '(required to load models)'}</label>
           <input
             className="form-input"
             type="password"
             // Service credential, not a login: stop the browser's password
             // manager from autofilling the Suveren API key saved for this origin.
-            name="ai-provider-api-key-credential"
+            name="ai-provider-api-key-credential-top"
             autoComplete="new-password"
             value={aiApiKey}
             onChange={e => setAiApiKey(e.target.value)}
-            placeholder={aiConfigured ? '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022' : 'sk-... (not needed for Ollama)'}
+            onBlur={() => { if (aiApiKey.trim()) void fetchModels(aiProvider, aiEndpoint, aiApiKey.trim()); }}
+            placeholder={aiConfigured ? '••••••••••••••••' : 'sk-... (not needed for Ollama)'}
           />
+          <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', margin: '0.375rem 0 0' }}>
+            Each provider uses its own key — paste it and the model list loads automatically.
+          </p>
+        </div>
+
+        <div className="form-group" style={{ marginBottom: '0.75rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <label className="form-label">Model</label>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              style={{ fontSize: '0.75rem', padding: '0.125rem 0.5rem' }}
+              onClick={loadModels}
+              disabled={aiLoadingModels}
+              title="Re-fetch the model list from the provider"
+            >
+              {aiLoadingModels ? 'Loading…' : '↻ Refresh'}
+            </button>
+          </div>
+          {aiFetchedModels.length === 0 ? (
+            // No hardcoded fallback: if the provider's /models endpoint hasn't
+            // returned a real list, we show a prompt — never fake options.
+            <div
+              className="form-input"
+              style={{ display: 'flex', alignItems: 'center', minHeight: '2.5rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}
+            >
+              {aiLoadingModels
+                ? 'Loading models…'
+                : aiProvider === 'ollama'
+                  ? 'Start Ollama locally, then ↻ Refresh to load models.'
+                  : 'Enter a valid API key above to load available models.'}
+            </div>
+          ) : (() => {
+            const allModels = aiFetchedModels; // live list only
+            const isKnown = allModels.includes(aiModel);
+            const showFilter = allModels.length > 12;
+            const q = aiModelFilter.trim().toLowerCase();
+            let models = q ? allModels.filter(m => m.toLowerCase().includes(q)) : allModels;
+            // Keep the current selection selectable even if filtered out.
+            if (isKnown && !models.includes(aiModel)) models = [aiModel, ...models];
+            return (
+              <>
+                {showFilter && (
+                  <input
+                    className="form-input"
+                    value={aiModelFilter}
+                    onChange={e => setAiModelFilter(e.target.value)}
+                    placeholder="Filter models… (e.g. kimi)"
+                    style={{ marginBottom: '0.375rem' }}
+                  />
+                )}
+                <select
+                  className="form-input"
+                  value={isKnown ? aiModel : '__unset__'}
+                  onChange={e => setAiModel(e.target.value === '__unset__' ? '' : e.target.value)}
+                >
+                  <option value="__unset__" disabled>Select a model…</option>
+                  {models.map(m => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                  {q && models.length === 0 && (
+                    <option value="__unset__" disabled>No models match “{aiModelFilter}”</option>
+                  )}
+                </select>
+              </>
+            );
+          })()}
+          {aiModelsMsg && (
+            <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', margin: '0.375rem 0 0' }}>
+              {aiModelsMsg}
+            </p>
+          )}
         </div>
 
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-          <button className="btn btn-primary" onClick={saveAiConfig} disabled={aiSaving}>
+          <button
+            className="btn btn-primary"
+            onClick={saveAiConfig}
+            disabled={aiSaving || !aiModel.trim()}
+            title={!aiModel.trim() ? 'Select a model first' : undefined}
+          >
             {aiSaving ? 'Saving...' : 'Save & Encrypt'}
           </button>
           {aiConfigured && (

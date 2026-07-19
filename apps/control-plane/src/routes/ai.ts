@@ -12,6 +12,7 @@ import {
   getAIChatResponse,
   getIntentReview,
   testAIConnectivity,
+  listAIModels,
   PROVIDER_PRESETS,
   type AIConfig,
   type AIAssistRequest,
@@ -156,16 +157,20 @@ export function createAIRouter(vault: Vault): Router {
   router.post('/test', async (req: Request, res: Response) => {
     const body = req.body as Partial<AIConfig> | undefined;
 
+    const stored = loadAIConfig();
+
     let config: AIConfig;
     if (body?.endpoint) {
       config = {
-        provider: body.provider || 'ollama',
+        provider: body.provider || 'openai-compatible',
         endpoint: body.endpoint,
         model: body.model || '',
-        apiKey: body.apiKey,
+        // Fall back to the stored key only when it belongs to the SAME
+        // endpoint — so testing a different provider without its key fails
+        // honestly instead of passing on an unrelated stored key.
+        apiKey: body.apiKey || (stored && stored.endpoint === body.endpoint ? stored.apiKey : undefined),
       };
     } else {
-      const stored = loadAIConfig();
       if (!stored) {
         res.status(400).json({ ok: false, message: 'No AI config stored' });
         return;
@@ -174,6 +179,38 @@ export function createAIRouter(vault: Vault): Router {
     }
 
     const result = await testAIConnectivity(config);
+    res.json(result);
+  });
+
+  /**
+   * POST /ai/models — list the models a provider offers, for the picker.
+   * Body: optional { provider, endpoint, apiKey } — if endpoint is absent,
+   * uses stored config. If an endpoint is given without a key (e.g. the user
+   * picked a preset but hasn't re-typed their key), fall back to the stored
+   * key for that same endpoint so "Load models" works without re-entry.
+   */
+  router.post('/models', async (req: Request, res: Response) => {
+    const body = req.body as Partial<AIConfig> | undefined;
+    const stored = loadAIConfig();
+
+    let config: AIConfig | null;
+    if (body?.endpoint) {
+      config = {
+        provider: body.provider || 'openai-compatible',
+        endpoint: body.endpoint,
+        model: body.model || '',
+        apiKey: body.apiKey || (stored && stored.endpoint === body.endpoint ? stored.apiKey : undefined),
+      };
+    } else {
+      config = stored;
+    }
+
+    if (!config) {
+      res.status(400).json({ ok: false, models: [], message: 'AI not configured. Pick a provider first.' });
+      return;
+    }
+
+    const result = await listAIModels(config);
     res.json(result);
   });
 

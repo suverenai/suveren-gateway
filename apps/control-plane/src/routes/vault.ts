@@ -45,7 +45,21 @@ export function createVaultRouter(vault: Vault): Router {
    */
   router.put('/credentials/:name', async (req: Request, res: Response) => {
     const { name } = req.params;
-    const fields = req.body as Record<string, string>;
+    const incoming = req.body as Record<string, string>;
+
+    // Merge, don't replace: secret fields (API keys, PATs) are masked in the UI
+    // and can't be read back, so an edit that only changes non-secret fields
+    // (e.g. the AI model) omits the secret. A blind replace would silently wipe
+    // it — the exact "AI configured but 401" trap. Preserve any stored field the
+    // caller didn't send; a caller can still clear a field by sending "".
+    let fields = incoming;
+    try {
+      const existing = vault.getCredential(name);
+      if (existing) fields = { ...existing, ...incoming };
+    } catch {
+      // Vault locked / not decryptable — fall back to the incoming payload as-is
+      // (setCredential below will surface any real failure).
+    }
 
     vault.setCredential(name, fields);
 
