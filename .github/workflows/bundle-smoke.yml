@@ -28,7 +28,16 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
+    timeout-minutes: 20
+
+    env:
+      SUVEREN_CP_PORT: 3500
+      SUVEREN_MCP_PORT: 3530
+      SUVEREN_DATA_DIR: ${{ runner.temp }}/suveren
+      # Pre-set so the integration smoke test can call the MCP server's
+      # /internal API without an Authority Server account. server.js passes
+      # this through to both children instead of generating a random one.
+      SUVEREN_INTERNAL_SECRET: bundle-smoke-internal-secret
 
     steps:
       - uses: actions/checkout@v6
@@ -65,20 +74,24 @@ jobs:
         working-directory: bundle/dist
         run: npm install --omit=dev --no-audit --no-fund
 
-      - name: Start gateway, probe, stop
+      - name: Start gateway
+        shell: bash
+        run: node bundle/dist/bin/suveren-gateway.js start --detach
+
+      # Runs IMMEDIATELY after start — no sleep — because the window we care
+      # about is the one where the MCP server is bound but not answering.
+      # crm + records are personalDefault, so a fresh data dir makes the MCP
+      # server npm-install both inside its app.listen callback.
+      - name: Integration smoke (install, start, restart)
+        shell: bash
+        run: node scripts/integration-smoke.mjs
+
+      - name: Probe control plane, status
         shell: bash
         # bash on windows-latest = Git Bash, so the same script works
         # on all three platforms.
         run: |
           set -e
-          export SUVEREN_CP_PORT=3500
-          export SUVEREN_MCP_PORT=3530
-          export SUVEREN_DATA_DIR="${RUNNER_TEMP}/suveren"
-
-          node bundle/dist/bin/suveren-gateway.js start --detach
-          # Give both child processes time to bind their ports.
-          # On windows-latest the cold start is noticeably slower.
-          sleep 5
 
           # Functional check: the started bundle must actually LOAD profiles.
           # An installable-but-empty bundle (the 0.2.8 bug) would log
@@ -102,14 +115,17 @@ jobs:
           node bundle/dist/bin/suveren-gateway.js status
           echo "::endgroup::"
 
-          echo "::group::stop"
-          node bundle/dist/bin/suveren-gateway.js stop
-          echo "::endgroup::"
+      - name: Stop gateway
+        if: always()
+        shell: bash
+        run: node bundle/dist/bin/suveren-gateway.js stop || echo "(already stopped)"
 
-      - name: Show gateway log on failure
-        if: failure()
+      # Always — the integration timings in this log are the point of the run,
+      # not just failure forensics.
+      - name: Show gateway log
+        if: always()
         shell: bash
         run: |
           echo "::group::gateway.log"
-          cat "${RUNNER_TEMP}/suveren/gateway.log" 2>/dev/null || echo "(no log file)"
+          cat "${SUVEREN_DATA_DIR}/gateway.log" 2>/dev/null || echo "(no log file)"
           echo "::endgroup::"
