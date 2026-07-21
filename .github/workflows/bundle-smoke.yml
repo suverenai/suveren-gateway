@@ -33,7 +33,8 @@ jobs:
     env:
       SUVEREN_CP_PORT: 3500
       SUVEREN_MCP_PORT: 3530
-      SUVEREN_DATA_DIR: ${{ runner.temp }}/suveren
+      # runner.temp is not available in a job-level env block; workspace is.
+      SUVEREN_DATA_DIR: ${{ github.workspace }}/.suveren-smoke
       # Pre-set so the integration smoke test can call the MCP server's
       # /internal API without an Authority Server account. server.js passes
       # this through to both children instead of generating a random one.
