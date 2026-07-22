@@ -128,23 +128,47 @@ export class IntegrationManager {
 
     try {
       const pkg = JSON.parse(readFileSync(pkgJson, 'utf8')) as {
+        name?: string;
         bin?: string | Record<string, string>;
         main?: string;
       };
-      // Every declared bin target must exist on disk. npm writes the .bin
-      // shims from these, so a missing target means a broken install.
-      const binTargets = typeof pkg.bin === 'string'
-        ? [pkg.bin]
-        : Object.values(pkg.bin ?? {});
-      for (const target of binTargets) {
+
+      // A string bin is named after the package's last path segment.
+      const defaultBinName = (pkg.name ?? npmPackage).split('/').pop() ?? '';
+      const binMap: Record<string, string> = typeof pkg.bin === 'string'
+        ? { [defaultBinName]: pkg.bin }
+        : (pkg.bin ?? {});
+      const binEntries = Object.entries(binMap);
+
+      for (const [binName, target] of binEntries) {
+        // 1. The package's own bin target must exist...
         if (!existsSync(join(pkgDir, target))) return false;
+        // 2. ...AND so must the .bin shim npm links from it. The shim is what
+        //    the integration is actually spawned through (config.command is
+        //    resolved via PATH, which includes node_modules/.bin), so a missing
+        //    shim — the archetypal half-finished install — means the spawn
+        //    fails with ENOENT no matter how intact the package dir looks.
+        if (!this.binShimExists(binName)) return false;
       }
-      if (binTargets.length === 0 && pkg.main && !existsSync(join(pkgDir, pkg.main))) return false;
+      if (binEntries.length === 0 && pkg.main && !existsSync(join(pkgDir, pkg.main))) return false;
       return true;
     } catch {
       // Unparseable package.json — a truncated write. Reinstall.
       return false;
     }
+  }
+
+  /**
+   * Does the node_modules/.bin shim for `binName` exist? On Windows npm writes
+   * `<name>`, `<name>.cmd`, and `<name>.ps1`; the .cmd variant is what actually
+   * runs, so any of them present counts.
+   */
+  private binShimExists(binName: string): boolean {
+    if (!binName) return false;
+    const candidates = process.platform === 'win32'
+      ? [binName, `${binName}.cmd`, `${binName}.CMD`, `${binName}.ps1`]
+      : [binName];
+    return candidates.some(c => existsSync(join(INTEGRATIONS_BIN, c)));
   }
 
   /**
@@ -177,19 +201,30 @@ export class IntegrationManager {
       }
     }
 
+    // npm is a batch script (npm.cmd) on Windows. Since the Node fix for
+    // CVE-2024-27980, execFile refuses to spawn a .cmd without a shell and
+    // throws EINVAL — which is exactly how the first async attempt failed on
+    // windows-latest. So we run npm THROUGH a shell on Windows. That means the
+    // package name reaches a command line, so validate it against the npm
+    // package-name grammar first and refuse anything with shell metacharacters.
+    if (!/^(@[a-z0-9][\w.-]*\/)?[a-z0-9][\w.-]*$/i.test(npmPackage)) {
+      throw new Error(`Refusing to install unsafe package name: ${JSON.stringify(npmPackage)}`);
+    }
+
     console.error(`[IntegrationManager] Installing ${npmPackage}...`);
     const startedAt = Date.now();
+    const isWin = process.platform === 'win32';
 
     await new Promise<void>((resolve, reject) => {
-      // execFile, not exec: no shell, so the package name is an argument
-      // rather than something a shell could interpret. `npm` resolves to
-      // npm.cmd on Windows because shell:false + execFile still consults
-      // PATHEXT for the .cmd shim.
       const child = execFile(
-        process.platform === 'win32' ? 'npm.cmd' : 'npm',
+        'npm',
         ['install', '--no-fund', '--no-audit', npmPackage],
         {
           cwd: INTEGRATIONS_DIR,
+          // Windows: a shell so cmd.exe finds npm.cmd (see EINVAL note above).
+          // POSIX: no shell — npm is a normal executable and keeping shell off
+          // means the validated package name is still passed as a bare argv.
+          shell: isWin,
           // No timeout: a slow install on a machine with antivirus is not an
           // error, and killing it midway is what created broken installs in
           // the first place. Progress is visible in the log.
