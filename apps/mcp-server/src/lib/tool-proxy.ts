@@ -15,6 +15,23 @@ import { SPReceiptError } from './sp-client';
 import { isCommitmentDowngrade } from './attestation-cache';
 import { appendVerificationFooter, shouldAttachFooter } from './receipt-footer';
 import { computeContentBinding, attachReceiptId } from './content-binding';
+import { selectAuthorization } from './scope-specificity';
+import {
+  boundsSatisfyReadGate,
+  resolveAgeBoundField,
+  maxReadAgeDays,
+  parseMessageTimestamp,
+  isOlderThanMaxAge,
+  getByDottedPath,
+  resolveScopeFields,
+  authorityCoversParticipants,
+  extractParticipants,
+  buildScopeQuery,
+  composeReadQuery,
+  type BoundsSchemaLike,
+  type ContextSchemaLike,
+} from './read-gate';
+import { getProfile } from '@hap/core';
 import { readFile } from 'node:fs/promises';
 import { extname } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -113,6 +130,22 @@ type ToolResult = {
 };
 
 /**
+ * Parse the first JSON text block of a downstream tool result, for post-fetch
+ * read enforcement (age + coverage). MCP tools return their payload as JSON
+ * text. Returns undefined on any parse/shape failure so callers fail closed.
+ * The exact provider response shape is validated live on the gateway.
+ */
+function parseFirstJson(result: ToolResult): unknown {
+  const text = result.content?.find(c => c.type === 'text')?.text;
+  if (typeof text !== 'string') return undefined;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Create a handler function for a proxied tool that gates calls through Suveren.
  *
  * All tools require authorization:
@@ -139,8 +172,24 @@ export function createGatedToolHandler(
 
   const { profile, executionMapping, staticExecution, category } = tool.gating;
 
-  // Read-only tools: require matching authorization but skip execution context checks
+  // Tools the manifest declares unavailable are always blocked at the gate.
+  if (category === 'disabled') {
+    return async () => ({
+      content: [{
+        type: 'text',
+        text: `Tool "${tool.namespacedName}" is disabled by the integration manifest and cannot be used.`,
+      }],
+      isError: true,
+    });
+  }
+
+  // Read-only tools: require a matching authorization AND satisfaction of any
+  // declared read gate. (Previously the read path only checked that a matching
+  // authorization existed and proxied verbatim — so declared read gates like
+  // records' `read_access: unlimited` were never enforced. doc §1 F1.)
   if (category === 'read') {
+    const readGate = { boundField: tool.gating.boundField, requiredValue: tool.gating.requiredValue };
+    const readAdapter = tool.gating.read;
     return async (args: Record<string, unknown>) => {
       const auths = state.getEnrichedAuthorizations();
       const matchingAuths = auths.filter(
@@ -158,8 +207,125 @@ export function createGatedToolHandler(
         };
       }
 
-      // Authorization exists — proxy the read call (no execution context verification needed)
-      return integrationManager.callTool(tool.integrationId, tool.originalName, args);
+      // Enforce the static read gate: at least one matching authorization must
+      // grant the required bound (e.g. read_access:unlimited). Fail closed.
+      if (readGate.boundField) {
+        const permitted = matchingAuths.some(a =>
+          boundsSatisfyReadGate((a.bounds ?? a.frame) as Record<string, string | number> | undefined, readGate),
+        );
+        if (!permitted) {
+          return {
+            content: [{
+              type: 'text',
+              text: `Read blocked by Gatekeeper: using ${tool.originalName} requires an authorization with ` +
+                `"${readGate.boundField}: ${readGate.requiredValue}", but no active authorization grants it.`,
+            }],
+            isError: true,
+          };
+        }
+      }
+
+      // Per-item read enforcement — generic (doc §1, §3.0, §4 Option A):
+      //  • COVERAGE (scope): a read is permitted only if some matching authority
+      //    covers the correspondent (a specific grant naming them/their domain,
+      //    or an unscoped grant covering everyone). No covering authority ⇒ an
+      //    AUTHORIZATION denial — there is simply no grant that reaches them.
+      //  • AGE: within the covering authorities, the item must fall inside the
+      //    most-permissive read_max_age_days window.
+      // Bound field + scope-field kinds come from the profile SCHEMA; date /
+      // participant locations and query syntax come from the manifest ADAPTER.
+      const readProfile = readAdapter ? getProfile(matchingAuths[0].profileId) : undefined;
+      const boundsSchema = readProfile?.boundsSchema as BoundsSchemaLike | undefined;
+      const contextSchema = readProfile?.contextSchema as ContextSchemaLike | undefined;
+      const ageBoundField = readAdapter?.ageField ? resolveAgeBoundField(boundsSchema, readAdapter.ageField) : null;
+      const scopeFieldsFor = (a: EnrichedAuthorization) =>
+        resolveScopeFields(contextSchema, (a.context ?? {}) as Record<string, string | number>);
+
+      // Pre-fetch: AND age + correspondent-scope ceilings into the search query
+      // (list/search tools) so out-of-bounds items can't come back at all.
+      let outgoing = args;
+      if (readAdapter?.queryArg) {
+        const clauses: string[] = [];
+        if (ageBoundField && readAdapter.ageConstraint) {
+          const maxAge = maxReadAgeDays(
+            matchingAuths.map(a => (a.bounds ?? a.frame) as Record<string, string | number> | undefined),
+            ageBoundField,
+          );
+          if (maxAge !== null) clauses.push(readAdapter.ageConstraint.replace('{days}', String(maxAge)));
+        }
+        if (readAdapter.scopeTermTemplate) {
+          const scopeClause = buildScopeQuery(matchingAuths.map(scopeFieldsFor), readAdapter.scopeTermTemplate);
+          if (scopeClause) clauses.push(scopeClause);
+        }
+        if (clauses.length > 0) {
+          // F8: the agent's fragment must not be able to bind across the
+          // boundary and capture the injected clauses (a trailing `OR` turns
+          // the intended AND into a union). composeReadQuery validates and
+          // brackets; an unsafe fragment is a denial, never a silent rewrite.
+          const base = typeof args[readAdapter.queryArg] === 'string' ? (args[readAdapter.queryArg] as string) : '';
+          const composed = composeReadQuery(base, clauses);
+          if (!composed.ok) {
+            return {
+              content: [{ type: 'text', text:
+                `Read blocked by Gatekeeper: ${composed.reason}. The gateway must AND its ` +
+                `read limits onto your search, and this query could not be safely combined. ` +
+                `Re-send it without a trailing operator or unbalanced parenthesis.` }],
+              isError: true,
+            };
+          }
+          outgoing = { ...args, [readAdapter.queryArg]: composed.query };
+        }
+      }
+
+      const result = await integrationManager.callTool(tool.integrationId, tool.originalName, outgoing);
+
+      // Post-fetch (get-by-id tools): coverage, then age. Parse the response once.
+      if (readAdapter && (readAdapter.participantsPath || readAdapter.resultDatePath)) {
+        const parsed = parseFirstJson(result);
+        let ageAuths = matchingAuths;
+
+        if (readAdapter.participantsPath && readAdapter.participantHeaders) {
+          const participants = parsed === undefined
+            ? []
+            : extractParticipants(parsed, readAdapter.participantsPath, readAdapter.participantHeaders);
+          if (participants.length === 0) {
+            return {
+              content: [{ type: 'text', text:
+                `Read blocked by Gatekeeper: the correspondents of this item could not be determined, so ` +
+                `authorization coverage cannot be verified. Its contents were not returned.` }],
+              isError: true,
+            };
+          }
+          const covering = matchingAuths.filter(a => authorityCoversParticipants(participants, scopeFieldsFor(a)));
+          if (covering.length === 0) {
+            return {
+              content: [{ type: 'text', text:
+                `Read blocked by Gatekeeper: no authorization covers correspondence with ${participants.join(', ')}. ` +
+                `Grant an authority scoped to this correspondent to read it. Its contents were not returned.` }],
+              isError: true,
+            };
+          }
+          ageAuths = covering;
+        }
+
+        if (ageBoundField && readAdapter.resultDatePath) {
+          const maxAge = maxReadAgeDays(
+            ageAuths.map(a => (a.bounds ?? a.frame) as Record<string, string | number> | undefined),
+            ageBoundField,
+          );
+          const rawDate = parsed === undefined ? undefined : getByDottedPath(parsed, readAdapter.resultDatePath);
+          if (maxAge !== null && isOlderThanMaxAge(parseMessageTimestamp(rawDate), maxAge, Date.now())) {
+            return {
+              content: [{ type: 'text', text:
+                `Read blocked by Gatekeeper: this item is older than the ${maxAge}-day read window ` +
+                `your authorization grants (read_max_age_days). Its contents were not returned.` }],
+              isError: true,
+            };
+          }
+        }
+      }
+
+      return result;
     };
   }
 
@@ -206,18 +372,64 @@ export function createGatedToolHandler(
       };
     }
 
-    // Try each matching authorization until one passes verification
+    // Verify EVERY matching authorization and collect the ones that pass
+    // ("passers"). Selection among them is most-specific-wins + fail-safe
+    // (scope-specificity.ts / doc §7) — NOT first-pass-wins, which let an
+    // overlapping grant silently override a stricter one by cache order.
     const errors: string[] = [];
-    for (const auth of matchingAuths) {
+    const passers: EnrichedAuthorization[] = [];
+    for (const candidate of matchingAuths) {
       // Pass v0.4 enriched fields (bounds/context from gate store) to gatekeeper
-      const { result } = await state.gatekeeper.verifyExecution(auth.authorizationId, execution, {
-        bounds: auth.bounds,
-        context: auth.context,
+      const { result } = await state.gatekeeper.verifyExecution(candidate.authorizationId, execution, {
+        bounds: candidate.bounds,
+        context: candidate.context,
       });
-
-      if (!result.approved) {
-      }
       if (result.approved) {
+        passers.push(candidate);
+      } else {
+        const reasons = result.errors.map(e => {
+          if (e.code === 'BOUND_EXCEEDED') {
+            return `${candidate.path}: ${e.field}: ${e.message}`;
+          }
+          return `${candidate.path}: ${e.message}`;
+        });
+        errors.push(...reasons);
+      }
+    }
+
+    if (passers.length === 0) {
+      return {
+        content: [{
+          type: 'text',
+          text: `Tool call rejected by Gatekeeper. Tried ${matchingAuths.length} authorization(s):\n` +
+            errors.map(e => `  - ${e}`).join('\n'),
+        }],
+        isError: true,
+      };
+    }
+
+    // Most-specific-wins + fail-safe selection over the profile's context schema.
+    // Generic: specificity is set-containment over contextSchema.keyOrder — no
+    // per-profile code. A tie / partial overlap / no-scope profile falls back to
+    // requiring approval if any passer does (never a silent bypass).
+    const contextKeys = getProfile(passers[0].profileId)?.contextSchema?.keyOrder ?? [];
+    const selection = selectAuthorization(
+      contextKeys,
+      passers.map(a => ({
+        id: a.authorizationId,
+        auth: a,
+        context: a.context ?? {},
+        requiresApproval: (a.deferredCommitmentDomains ?? []).length > 0,
+      })),
+    );
+    const auth = selection.chosen.auth;
+    if (selection.superseded.length > 0) {
+      console.error(
+        `[Suveren MCP] selection(${tool.namespacedName}): chose ${auth.authorizationId} ` +
+          `(${selection.reason}) over [${selection.superseded.map(s => s.id).join(', ')}]`,
+      );
+    }
+    {
         // Every SP reference (receipt, proposals, summary) is the per-ceremony id.
         const authzId = auth.authorizationId;
 
@@ -430,26 +642,6 @@ export function createGatedToolHandler(
         if (receiptId) outgoingArgs = attachReceiptId(tool, outgoingArgs, receiptId);
         return integrationManager.callTool(tool.integrationId, tool.originalName, outgoingArgs);
       }
-
-      // Collect rejection reasons
-      const reasons = result.errors.map(e => {
-        if (e.code === 'BOUND_EXCEEDED') {
-          return `${auth.path}: ${e.field}: ${e.message}`;
-        }
-        return `${auth.path}: ${e.message}`;
-      });
-      errors.push(...reasons);
-    }
-
-    // All authorizations failed
-    return {
-      content: [{
-        type: 'text',
-        text: `Tool call rejected by Gatekeeper. Tried ${matchingAuths.length} authorization(s):\n` +
-          errors.map(e => `  - ${e}`).join('\n'),
-      }],
-      isError: true,
-    };
   };
 }
 

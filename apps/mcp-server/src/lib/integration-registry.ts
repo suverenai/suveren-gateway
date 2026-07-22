@@ -22,12 +22,44 @@ import type { ExecutionMappingValue, ProfileToolGating } from '@hap/core';
  * - staticExecution: constant values merged into the execution context
  *   (e.g., { scope: "external" } when no tool arg provides it).
  */
+/**
+ * Read adapter (manifest data) — how to enforce per-item read bounds for a
+ * given provider's read tool, without any provider/profile literal in code.
+ */
+export interface ReadAdapter {
+  /** Execution field the item's date maps to; ties to the profile's age bound via boundType.of. */
+  ageField?: string;
+  /** Dotted path to the item's timestamp in the provider response (get-by-id tools). */
+  resultDatePath?: string;
+  /** Search-query arg to inject age/scope ceilings into (list/search tools). */
+  queryArg?: string;
+  /** Provider template for the injected age clause, e.g. "newer_than:{days}d". */
+  ageConstraint?: string;
+  /** Dotted path to the participant headers array (`[{name,value}]`) in the response. */
+  participantsPath?: string;
+  /** Header names carrying correspondents, e.g. ["From","To"]. */
+  participantHeaders?: string[];
+  /** Provider template for a per-correspondent scope term, e.g. "(from:{v} OR to:{v})". */
+  scopeTermTemplate?: string;
+}
+
 export interface ToolGatingConfig {
   profile: string | null;
   executionMapping: Record<string, ExecutionMappingValue>;
   staticExecution?: Record<string, string | number>;
-  /** Read-only tools: require authorization but no execution context checks */
-  category?: 'read';
+  /**
+   * Tool category:
+   * - 'read'     — read-only; requires authorization + any declared read gate,
+   *                but no write execution-context verification.
+   * - 'disabled' — declared unavailable by the manifest; always blocked.
+   */
+  category?: 'read' | 'disabled';
+  /** Static read gate (manifest): the bound that must hold to use a read tool. */
+  boundField?: string;
+  /** The exact value `boundField` must have for the read to be permitted. */
+  requiredValue?: string;
+  /** Per-item read enforcement descriptor (age/scope) for read tools. */
+  read?: ReadAdapter;
 }
 
 /**
