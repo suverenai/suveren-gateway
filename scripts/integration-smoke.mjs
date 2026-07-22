@@ -129,9 +129,13 @@ async function checkResponsiveDuringInstall() {
         firstOkAt = Date.now();
         console.log(`  [${elapsed}s] first response (${r.ms}ms)`);
       }
-      // Once the integrations are up, we've covered the install window.
+      // Keep probing until the target reaches a TERMINAL state — running, or
+      // registered-with-an-error. Breaking merely on "registered" raced the
+      // install: check 2 then saw a still-installing integration as "not
+      // running" and failed spuriously.
       const status = await integrationStatus();
-      if (status?.some(s => s.id === TARGET)) break;
+      const entry = status?.find(s => s.id === TARGET);
+      if (entry && (entry.running || entry.error)) break;
     } else if (r.kind === 'timeout') {
       sawAccepted = true;
       timeouts.push({ elapsed, ms: r.ms });
@@ -181,26 +185,30 @@ async function integrationStatus() {
 
 async function checkTargetRunning() {
   group(`Check 2 — ${TARGET} integration is running`);
-  const status = await integrationStatus();
-  if (!status) {
-    fail('target-running', 'could not read /health');
-    endGroup();
-    return false;
+  // Poll to a deadline — a just-installed server's first handshake can lag a
+  // little behind the install finishing. Check 1 already waited for a terminal
+  // state, so this usually passes on the first read.
+  const deadline = Date.now() + 60_000;
+  let entry = null;
+  while (Date.now() < deadline) {
+    const status = await integrationStatus();
+    entry = status?.find(s => s.id === TARGET) ?? null;
+    if (entry?.running) {
+      pass('target-running', `${TARGET} running with ${entry.toolCount} tools`);
+      endGroup();
+      return true;
+    }
+    if (entry?.error) break; // terminal failure — no point waiting
+    await sleep(1000);
   }
-  const entry = status.find(s => s.id === TARGET);
+
   if (!entry) {
     fail('target-running', `${TARGET} is not in the registry — auto-registration did not happen`);
-    endGroup();
-    return false;
-  }
-  if (!entry.running) {
+  } else {
     fail('target-running', `${TARGET} is registered but NOT running${entry.error ? ` — ${entry.error}` : ''}`);
-    endGroup();
-    return false;
   }
-  pass('target-running', `${TARGET} running with ${entry.toolCount} tools`);
   endGroup();
-  return true;
+  return false;
 }
 
 // ─── Check 3: a broken install is detected and repaired, not skipped ───────
@@ -282,6 +290,9 @@ async function checkPartialInstallRecovery() {
 function checkManifestPortability() {
   group('Check 4 — manifests are spawnable on Windows');
   const dir = join(REPO_ROOT, 'content', 'integrations');
+  // Commands that require a shell interpreter absent (sh/bash) or differently
+  // behaved (cmd/powershell) on Windows. The gateway spawns manifests directly
+  // with shell:false, so a shell command can never be found.
   const shells = new Set(['sh', 'bash', 'zsh', '/bin/sh', '/bin/bash', 'cmd', 'cmd.exe', 'powershell']);
   let checked = 0;
 
@@ -299,13 +310,17 @@ function checkManifestPortability() {
         `Spawn the binary directly and pass arguments as an array instead.`,
       );
     }
+    // NOTE: ${VAR} in args is fine — the manager interpolates it from the
+    // resolved env before spawning (see startIntegration). We only flag BARE
+    // $VAR (shell-expansion syntax), which the manager does NOT interpolate and
+    // no shell is present to expand.
     const args = manifest?.mcp?.args ?? [];
-    const interpolated = args.filter(a => typeof a === 'string' && /\$\{?[A-Z_][A-Z0-9_]*\}?/.test(a));
-    if (interpolated.length > 0) {
+    const bareVar = args.filter(a => typeof a === 'string' && /(^|[^${])\$[A-Za-z_][A-Za-z0-9_]*/.test(a));
+    if (bareVar.length > 0) {
       fail(
         'manifest-portability',
-        `${file}: args use shell variable syntax (${interpolated.join(', ')}), which is not expanded by ` +
-        `cmd.exe. Build the value in code from the resolved env instead.`,
+        `${file}: args use bare shell-variable syntax (${bareVar.join(', ')}). ` +
+        `Nothing expands it without a shell — use \${VAR} so the manager interpolates it.`,
       );
     }
   }
