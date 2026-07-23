@@ -56,11 +56,11 @@
         "executionMapping": {},
         "staticExecution": { "contact_type": "customer", "action_type": "write" }
       },
-      "find_contacts": { "category": "read" },
-      "get_timeline": { "category": "read" },
-      "get_pipeline": { "category": "read" },
-      "list_tasks": { "category": "read" },
-      "export_crm": { "category": "read" }
+      "find_contacts": { "category": "read", "boundField": "read_access", "requiredValue": "unlimited" },
+      "get_timeline": { "category": "read", "boundField": "read_access", "requiredValue": "unlimited" },
+      "get_pipeline": { "category": "read", "boundField": "read_access", "requiredValue": "unlimited" },
+      "list_tasks": { "category": "read", "boundField": "read_access", "requiredValue": "unlimited" },
+      "export_crm": { "category": "read", "boundField": "read_access", "requiredValue": "unlimited" }
     }
   },
   "templates": [
@@ -69,7 +69,7 @@
       "description": "Search contacts, view pipeline and timeline, log activities. No creates or deletes.",
       "risk": "low",
       "mode": "automatic",
-      "bounds": { "write_daily_max": "50", "delete_daily_max": "0" },
+      "bounds": { "read_access": "unlimited", "write_daily_max": "50", "delete_daily_max": "0" },
       "context": { "contact_type": "customer,lead,partner,vendor" },
       "intent": "Allow the agent to browse CRM data and log activities. Read and log only — no creating, editing, or deleting records.",
       "ttl": 2592000,
@@ -80,7 +80,7 @@
       "description": "Create contacts, deals, and tasks. Update and delete records. Every write requires approval.",
       "risk": "high",
       "mode": "review",
-      "bounds": { "write_daily_max": "50", "delete_daily_max": "10" },
+      "bounds": { "read_access": "unlimited", "write_daily_max": "50", "delete_daily_max": "10" },
       "context": { "contact_type": "customer,lead,partner,vendor" },
       "intent": "Full CRM management — create, update, and delete contacts, deals, and tasks. Every write action requires my review before execution.",
       "ttl": 2592000,

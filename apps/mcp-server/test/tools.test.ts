@@ -1,4 +1,5 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
+import { registerProfile, clearProfiles } from '@hap/core';
 import { listAuthorizationsHandler } from '../src/tools/authorizations';
 import { checkPendingHandler } from '../src/tools/pending';
 import { createGatedToolHandler, buildProxiedToolDescription } from '../src/lib/tool-proxy';
@@ -538,5 +539,130 @@ describe('buildProxiedToolDescription', () => {
     const desc = buildProxiedToolDescription(tool, state);
     expect(desc).toContain('[Suveren: charge — no active authorization]');
     expect(desc).toContain('Create a payment link');
+  });
+});
+
+// ─── F9: an ungoverned read tool is denied at runtime ───────────────────────
+describe('createGatedToolHandler — F9 ungoverned read is denied', () => {
+  function mockReadTool(gating: Record<string, unknown>): DiscoveredTool {
+    return {
+      originalName: 'export_crm',
+      namespacedName: 'crm__export_crm',
+      integrationId: 'crm',
+      description: 'Export the CRM',
+      inputSchema: {},
+      gating: { profile: 'customers', executionMapping: {}, category: 'read', ...gating },
+    };
+  }
+
+  it('denies a read tool with no gate, no adapter, no exemption — before any downstream call', async () => {
+    const state = mockGatedState();
+    const im = mockIntegrationManager();
+    const handler = createGatedToolHandler(mockReadTool({}), im, state);
+
+    const result = await handler({});
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('declares no read governance');
+    // Fail closed BEFORE reaching the downstream integration.
+    expect((im.callTool as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+  });
+
+  it('allows a read tool once it declares an explicit exemption', async () => {
+    const state = mockGatedState();
+    const im = mockIntegrationManager();
+    // profile mismatch (customers vs the charge auth in mockGatedState) makes this
+    // stop at the auth check, NOT the F9 gate — proving governance passed.
+    const handler = createGatedToolHandler(
+      mockReadTool({ readGovernance: 'none', readGovernanceReason: 'test' }),
+      im,
+      state,
+    );
+
+    const result = await handler({});
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).not.toContain('declares no read governance');
+    expect(result.content[0].text).toContain('No active authorization');
+  });
+});
+
+// ─── Fail-closed on an unset read-age window (F11) ──────────────────────────
+describe('createGatedToolHandler — unset read-age window fails closed', () => {
+  // Minimal email-like profile: read_max_age_days is a per_transaction bound
+  // over the adapter's produced age field, and is OPTIONAL (a grant may omit it).
+  beforeAll(() => {
+    registerProfile('email-test', {
+      id: 'email-test', name: 'Email Test', version: '0',
+      boundsSchema: {
+        keyOrder: ['read_max_age_days'],
+        fields: { read_max_age_days: { type: 'number', boundType: { kind: 'per_transaction', of: 'read_age_days' } } },
+      },
+      contextSchema: { keyOrder: [], fields: {} },
+    } as unknown as Parameters<typeof registerProfile>[1]);
+  });
+  afterAll(() => clearProfiles());
+
+  function emailReadTool(): DiscoveredTool {
+    return {
+      originalName: 'list_messages',
+      namespacedName: 'gmail__list_messages',
+      integrationId: 'gmail',
+      description: 'List messages',
+      inputSchema: {},
+      gating: {
+        profile: 'email-test',
+        executionMapping: {},
+        category: 'read',
+        read: { ageField: 'read_age_days', queryArg: 'q', ageConstraint: 'newer_than:{days}d' },
+      } as unknown as DiscoveredTool['gating'],
+    };
+  }
+
+  function emailAuth(bounds: Record<string, string | number>): CachedAuthorization {
+    const now = Math.floor(Date.now() / 1000);
+    return {
+      authorizationId: 'authz_00000000-0000-4000-8000-0000000000cd',
+      profileId: 'email-test',
+      path: 'email-test',
+      frame: { profile: 'email-test', path: 'email-test', ...bounds },
+      attestations: [{ domain: 'communications', blob: 'blob', expiresAt: now + 3600 }],
+      requiredDomains: ['communications'],
+      attestedDomains: ['communications'],
+      complete: true,
+    } as unknown as CachedAuthorization;
+  }
+
+  it('DENIES the read when no grant sets read_max_age_days (unbounded window)', async () => {
+    const state = mockState([emailAuth({})]); // no read_max_age_days
+    const record = vi.fn();
+    (state as unknown as { denialLog: { record: typeof record } }).denialLog = { record };
+    const im = mockIntegrationManager();
+    const handler = createGatedToolHandler(emailReadTool(), im, state);
+
+    const result = await handler({ q: 'invoices' });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('no read-age window is set');
+    // Fail closed BEFORE any downstream fetch.
+    expect((im.callTool as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+    // And the block is RECORDED for the human (denial log), with no content.
+    expect(record).toHaveBeenCalledOnce();
+    const rec = record.mock.calls[0][0] as { reason: string; tool: string; detail: string };
+    expect(rec.reason).toBe('unset_age');
+    expect(rec.tool).toBe('list_messages');
+    expect(rec.detail).not.toContain('invoices'); // no agent query / content leaks in
+  });
+
+  it('proceeds (and injects the age ceiling) when a grant sets read_max_age_days', async () => {
+    const state = mockState([emailAuth({ read_max_age_days: 30 })]);
+    const im = mockIntegrationManager();
+    const handler = createGatedToolHandler(emailReadTool(), im, state);
+
+    await handler({ q: 'invoices' });
+
+    expect((im.callTool as ReturnType<typeof vi.fn>)).toHaveBeenCalledOnce();
+    const sentArgs = (im.callTool as ReturnType<typeof vi.fn>).mock.calls[0][2] as { q: string };
+    expect(sentArgs.q).toBe('(invoices) newer_than:30d');
   });
 });

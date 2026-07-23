@@ -467,6 +467,17 @@ export class IntegrationManager {
   }
 
   /**
+   * RESERVED / NOT YET WIRED (see IntegrationConfig.readAgeDays). The local
+   * read-age window (days) for a running integration, for a deferred feature
+   * that moves the read age off the signed grant. The read path does NOT call
+   * this yet — it still enforces the signed `read_max_age_days` bound.
+   */
+  getReadAgeDays(integrationId: string): number | null {
+    const days = this.running.get(integrationId)?.config.readAgeDays;
+    return typeof days === 'number' && Number.isFinite(days) ? days : null;
+  }
+
+  /**
    * Get status info for all known integrations.
    */
   getStatus(allConfigs?: IntegrationConfig[]): IntegrationStatus[] {
@@ -586,6 +597,8 @@ export class IntegrationManager {
         boundField?: string;
         requiredValue?: string;
         read?: import('./integration-registry').ReadAdapter;
+        readGovernance?: 'none';
+        readGovernanceReason?: string;
       };
       // 'disabled' = declared unavailable → block at the gating layer.
       if (ext.category === 'disabled') {
@@ -601,6 +614,8 @@ export class IntegrationManager {
           boundField: ext.boundField,
           requiredValue: ext.requiredValue,
           read: ext.read,
+          readGovernance: ext.readGovernance,
+          readGovernanceReason: ext.readGovernanceReason,
         };
       }
       return {

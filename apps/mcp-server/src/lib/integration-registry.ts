@@ -41,6 +41,24 @@ export interface ReadAdapter {
   participantHeaders?: string[];
   /** Provider template for a per-correspondent scope term, e.g. "(from:{v} OR to:{v})". */
   scopeTermTemplate?: string;
+  // ── Resource scope on reads (F7) — which container the read may touch ────────
+  /** Authority context field listing permitted container ids (e.g. "allowed_calendars"). */
+  resourceBound?: string;
+  /** Single-value tool arg naming the requested container (e.g. "calendarId"). */
+  resourceArg?: string;
+  /** Array-value tool arg naming requested containers (e.g. "calendarIds"). */
+  resourceArrayArg?: string;
+  /** Container value(s) the provider defaults to when the arg is omitted (e.g. "primary"). Still checked. */
+  resourceDefault?: string;
+  /** For enumeration tools: dotted path to each result item's container id (e.g. "id"). Post-filters results. */
+  resultResourcePath?: string;
+  // ── Fixed container exclusion (F7 interim — e.g. never read SPAM/TRASH) ──────
+  /** Args force-set on every call, overriding agent input (e.g. { "includeSpamTrash": false }). */
+  pinnedArgs?: Record<string, string | number | boolean>;
+  /** Forbidden values — a get-by-id whose item carries one (at `resultValuesPath`) is blocked. */
+  blockResultValues?: string[];
+  /** Dotted path to the item's value(s) checked against `blockResultValues` (e.g. "labelIds"). */
+  resultValuesPath?: string;
 }
 
 export interface ToolGatingConfig {
@@ -60,6 +78,16 @@ export interface ToolGatingConfig {
   requiredValue?: string;
   /** Per-item read enforcement descriptor (age/scope) for read tools. */
   read?: ReadAdapter;
+  /**
+   * Explicit read-governance exemption (F9). A `category:"read"` tool must be
+   * governed — a static gate, a read adapter, OR this exemption. `"none"`
+   * declares "this read carries no per-item limit, and that is intentional",
+   * and MUST be accompanied by `readGovernanceReason`. Absent all three, the
+   * read is DENIED (fail closed) — absence of config is never absence of intent.
+   */
+  readGovernance?: 'none';
+  /** Human-readable justification for a `readGovernance:"none"` exemption. */
+  readGovernanceReason?: string;
 }
 
 /**
@@ -95,6 +123,14 @@ export interface IntegrationConfig {
   npmPackage?: string;
   /** Whether this integration should be spawned on startup */
   enabled: boolean;
+  /**
+   * RESERVED / NOT YET WIRED. Scaffolding for a deferred feature: a LOCAL,
+   * live-editable per-integration read-age window (days), replacing the signed
+   * grant bound. PARKED because moving the value off the grant needs the
+   * control-plane + UI to set it, or reads fail-closed with no way to fix it.
+   * The read path still uses the signed `read_max_age_days` bound today.
+   */
+  readAgeDays?: number;
 }
 
 // ─── Persistence ────────────────────────────────────────────────────────────

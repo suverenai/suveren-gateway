@@ -9,9 +9,19 @@
  * predicates; they are PURE and PROFILE-AGNOSTIC — driven by manifest
  * descriptors + the authorization's own bounds, never by hardcoded field names.
  *
- * This slice implements the STATIC read gate (a required bound value, e.g.
- * `read_access == unlimited`) plus per-item age and correspondent-scope
- * enforcement (`read_max_age_days`, `allowed_recipients`/`allowed_domains`).
+ * Wired into the read path today: the STATIC read gate (a required bound value,
+ * e.g. `read_access == unlimited`) and per-item AGE enforcement
+ * (`read_max_age_days`) — the only two read-denial mechanisms. Correspondent
+ * COVERAGE denial (the superseded "authority scope binds reads" model) has been
+ * removed: grant scope no longer restricts reads. See the §4 supersession
+ * banner in doc/read-bounds-enforcement-plan.md.
+ *
+ * The participant/scope helpers below (`extractParticipants`, `emailDomain`,
+ * `buildScopeQuery`, the `ScopeField` type) are NOT called by the read path.
+ * They are the reserved substrate for the next slice — per-correspondent
+ * overrides that *raise* the age window (doc §7) and restrictive-mode list
+ * narrowing (doc §12) — kept and unit-tested so that slice reuses them intact
+ * rather than re-deriving them. They deliberately do NOT implement coverage.
  */
 
 import { tokenSet } from './scope-specificity';
@@ -39,6 +49,95 @@ export function boundsSatisfyReadGate(
   if (!gate.boundField) return true;
   const actual = bounds?.[gate.boundField];
   return actual !== undefined && String(actual) === gate.requiredValue;
+}
+
+// ── F9: read governance must be declared, never inferred from absence ────────
+//
+// A `category:"read"` tool is GOVERNED iff it declares at least one of:
+//   • a static read gate (`boundField`), OR
+//   • a per-item read adapter (`read`), OR
+//   • an explicit exemption (`readGovernance: "none"`).
+// Anything else is DENIED at call time. This is the single definition of
+// "governed" shared by the runtime read path and the manifest lint, so the two
+// can never disagree about what passes.
+
+/** Minimal view of a read tool's governance declaration (manifest or resolved gating). */
+export interface ReadGovernanceView {
+  boundField?: string;
+  read?: unknown;
+  readGovernance?: string;
+}
+
+/** True iff a read tool declares governance (gate, adapter, or explicit exemption). */
+export function readToolIsGoverned(g: ReadGovernanceView | undefined): boolean {
+  if (!g) return false;
+  return Boolean(g.boundField) || g.read != null || g.readGovernance === 'none';
+}
+
+// ── Resource scope on reads (F7) ─────────────────────────────────────────────
+//
+// A RESOURCE scope bounds *which container* a read may touch (calendar, mail
+// folder/label, drive, project) — as opposed to age (how old) or counterparty
+// (who is on it). The container the grant permits is a subset field on the
+// authority's context (e.g. `allowed_calendars`); the tool names the requested
+// container in an argument (`calendarId`) or returns it on each item
+// (`list_calendars` → `id`). All generic — the field/arg/path names are manifest
+// data, never literals here.
+//
+// FAIL-CLOSED: an empty allowed set (no grant lists any container) permits
+// NOTHING. This is deliberate and differs from the send-side "unscoped = all":
+// on reads, "unset" must not silently expose every container (that is the
+// family-calendar hole). Grants/templates must name the containers they permit.
+
+/**
+ * The union of permitted container ids across the matching authorities, read
+ * from each authority's context field `boundField`. Most-permissive semantics:
+ * a read is allowed if SOME grant permits the container, so the effective set is
+ * the union. Returns a (possibly empty) set — an empty set means DENY ALL.
+ */
+export function allowedResources(
+  contexts: Array<Record<string, string | number> | undefined>,
+  boundField: string,
+): Set<string> {
+  const out = new Set<string>();
+  for (const ctx of contexts) {
+    for (const v of tokenSet(ctx?.[boundField])) out.add(v);
+  }
+  return out;
+}
+
+/**
+ * Which of the requested containers are NOT permitted. Empty result ⇒ all
+ * permitted. `requested` empty ⇒ the caller substituted the tool's default
+ * before calling (an omitted arg still resolves to a concrete container, so it
+ * is still checked — never a bypass).
+ */
+export function deniedResources(requested: string[], allowed: Set<string>): string[] {
+  return requested.filter(r => !allowed.has(r));
+}
+
+/**
+ * Filter an array of result items to those whose container id (`idPath`, dotted)
+ * is in the allowed set. For enumeration tools (`list_calendars`) so an excluded
+ * container's very existence isn't disclosed.
+ */
+export function filterItemsByResource(items: unknown[], idPath: string, allowed: Set<string>): unknown[] {
+  return items.filter(it => {
+    const id = getByDottedPath(it, idPath);
+    return typeof id === 'string' && allowed.has(id);
+  });
+}
+
+/**
+ * True if a fetched item carries a forbidden value at `valuesPath` (dotted) —
+ * used to block a get-by-id whose item is in an excluded container (e.g. a Gmail
+ * message labelled SPAM/TRASH). Handles an array field (labelIds) or a scalar.
+ * Provider-agnostic: the path and the forbidden set are manifest data.
+ */
+export function hasBlockedValue(item: unknown, valuesPath: string, blocked: Set<string>): boolean {
+  const v = getByDottedPath(item, valuesPath);
+  const arr = Array.isArray(v) ? v : v != null ? [v] : [];
+  return arr.some(x => typeof x === 'string' && blocked.has(x));
 }
 
 // ── Age enforcement (read_max_age_days) ──────────────────────────────────────
@@ -209,15 +308,14 @@ export function getByDottedPath(obj: unknown, path: string): unknown {
   );
 }
 
-// ── Scope / coverage enforcement (Option A — reads bind to correspondent scope) ──
+// ── Participant / scope helpers (RESERVED for the overrides slice) ───────────
 //
-// A read of a correspondent is permitted only if SOME matching authority's scope
-// covers that correspondent — a specific grant naming them/their domain, or a
-// generic (unscoped) grant that covers everyone. Absent any covering authority,
-// the read is an AUTHORIZATION denial (not a bound denial): there is simply no
-// grant that reaches this correspondent. All predicates below are pure and
-// profile-agnostic — scope-field *kinds* come from the profile's contextSchema
-// (`format: email` / `format: domain`), values from the authority's context.
+// NOT wired into the read path — see the module header. These are pure,
+// profile-agnostic building blocks the per-correspondent-override slice will
+// consume: extract a message's participants, normalize addresses/domains, and
+// (for restrictive-mode list narrowing) union a set of identifiers into a
+// provider search clause. They do NOT decide read permission; age is the only
+// denial reason today.
 
 /** Extract email addresses from a raw header value (handles "Name <a@x>, b@y"). */
 export function extractEmails(headerValue: unknown): string[] {
@@ -232,50 +330,10 @@ export function emailDomain(email: string): string {
   return (at >= 0 ? email.slice(at + 1) : email).toLowerCase();
 }
 
-/** Minimal view of a profile's contextSchema needed to classify scope fields. */
-export interface ContextSchemaLike {
-  fields?: Record<string, { format?: string }>;
-}
-
-/** A correspondent-scope dimension of one authority: emails or domains. */
+/** A scope dimension: a set of emails or domains. */
 export interface ScopeField {
   kind: 'email' | 'domain';
   values: Set<string>;
-}
-
-/**
- * Build the correspondent-scope fields of one authority, generically: iterate
- * the profile's contextSchema, take fields declared `format: email` or
- * `format: domain`, and read the authority's values for them. No field-name
- * literal — a new profile with differently-named scope fields works unchanged.
- */
-export function resolveScopeFields(
-  contextSchema: ContextSchemaLike | undefined,
-  authContext: Record<string, string | number> | undefined,
-): ScopeField[] {
-  const fields = contextSchema?.fields;
-  if (!fields) return [];
-  const out: ScopeField[] = [];
-  for (const [name, def] of Object.entries(fields)) {
-    const kind = def?.format === 'email' ? 'email' : def?.format === 'domain' ? 'domain' : null;
-    if (kind) out.push({ kind, values: tokenSet(authContext?.[name]) });
-  }
-  return out;
-}
-
-/**
- * True if an authority (described by `scopeFields`) covers AT LEAST ONE of the
- * message participants. An authority with no constrained scope field (every
- * dimension empty) is UNSCOPED ⇒ covers everyone.
- */
-export function authorityCoversParticipants(participants: string[], scopeFields: ScopeField[]): boolean {
-  const constrained = scopeFields.filter(f => f.values.size > 0);
-  if (constrained.length === 0) return true; // unscoped ⇒ covers all correspondents
-  return participants.some(p => {
-    const email = p.toLowerCase();
-    const dom = emailDomain(email);
-    return constrained.some(f => (f.kind === 'email' ? f.values.has(email) : f.values.has(dom)));
-  });
 }
 
 /**
@@ -298,15 +356,18 @@ export function extractParticipants(response: unknown, participantsPath: string,
 }
 
 /**
- * Build a provider search clause restricting a list/search to covered
- * correspondents, from the UNION of the matching authorities' scopes. Returns ''
- * (no correspondent filter) when ANY authority is unscoped — an unscoped grant
- * permits all correspondents. `termTemplate` (manifest) is the provider syntax,
+ * Union a set of scope-field groups into one provider search clause, e.g.
+ * `((from:a@x OR to:a@x) OR (from:b@y OR to:b@y))`. Returns '' (no filter) when
+ * any group is unconstrained. `termTemplate` (manifest) is the provider syntax,
  * e.g. "(from:{v} OR to:{v})".
+ *
+ * RESERVED: the overrides slice will call this with the read-policy's override
+ * identifiers to narrow a restrictive-mode (`default = 0`) list query. It is not
+ * a coverage check — it only builds a query clause.
  */
-export function buildScopeQuery(perAuthScopeFields: ScopeField[][], termTemplate: string): string {
+export function buildScopeQuery(scopeFieldGroups: ScopeField[][], termTemplate: string): string {
   const values = new Set<string>();
-  for (const fields of perAuthScopeFields) {
+  for (const fields of scopeFieldGroups) {
     const constrained = fields.filter(f => f.values.size > 0);
     if (constrained.length === 0) return ''; // an unscoped authority ⇒ no filter
     for (const f of constrained) for (const v of f.values) values.add(v);

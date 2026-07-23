@@ -61,9 +61,21 @@
         "executionMapping": {},
         "staticExecution": { "allowed_platforms": "linkedin", "action_type": "delete" }
       },
-      "get_post": { "category": "read" },
-      "list_posts": { "category": "read" },
-      "get_profile": { "category": "read" }
+      "get_post": {
+        "category": "read",
+        "readGovernance": "none",
+        "readGovernanceReason": "Reads the account's own already-published posts — content the owner authored and made public. No third-party or private correspondence."
+      },
+      "list_posts": {
+        "category": "read",
+        "readGovernance": "none",
+        "readGovernanceReason": "Lists the account's own already-published posts. No third-party or private correspondence."
+      },
+      "get_profile": {
+        "category": "read",
+        "readGovernance": "none",
+        "readGovernanceReason": "Returns the account's own public profile — the connector's own identity."
+      }
     }
   },
   "templates": [

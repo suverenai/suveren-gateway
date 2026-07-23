@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import {
   boundsSatisfyReadGate,
+  readToolIsGoverned,
+  allowedResources,
+  deniedResources,
+  filterItemsByResource,
+  hasBlockedValue,
   parseMessageTimestamp,
   ageInDays,
   maxReadAgeDays,
@@ -10,8 +15,6 @@ import {
   getByDottedPath,
   extractEmails,
   emailDomain,
-  resolveScopeFields,
-  authorityCoversParticipants,
   extractParticipants,
   buildScopeQuery,
 } from '../src/lib/read-gate';
@@ -50,10 +53,74 @@ describe('boundsSatisfyReadGate', () => {
   });
 });
 
+describe('readToolIsGoverned (F9 — declare governance or be denied)', () => {
+  it('governed by a static gate', () => {
+    expect(readToolIsGoverned({ boundField: 'read_access' })).toBe(true);
+  });
+  it('governed by a read adapter', () => {
+    expect(readToolIsGoverned({ read: { ageField: 'read_age_days' } })).toBe(true);
+  });
+  it('governed by an explicit exemption', () => {
+    expect(readToolIsGoverned({ readGovernance: 'none' })).toBe(true);
+  });
+  it('UNGOVERNED when nothing is declared → will be denied', () => {
+    expect(readToolIsGoverned({})).toBe(false);
+    expect(readToolIsGoverned(undefined)).toBe(false);
+  });
+  it('a non-"none" readGovernance value does not count as an exemption', () => {
+    expect(readToolIsGoverned({ readGovernance: 'maybe' as unknown as string })).toBe(false);
+  });
+});
+
 // Fixed clock for deterministic age math.
 const NOW = 1_700_000_000_000; // arbitrary epoch ms
 const DAY = 24 * 60 * 60 * 1000;
 const daysAgo = (d: number): number => NOW - d * DAY;
+
+describe('resource scope on reads (F7 — allowedResources / deniedResources / filter)', () => {
+  it('unions permitted containers across grants (most-permissive)', () => {
+    const set = allowedResources(
+      [{ allowed_calendars: 'work@x, primary' }, { allowed_calendars: 'team@y' }],
+      'allowed_calendars',
+    );
+    expect([...set].sort()).toEqual(['primary', 'team@y', 'work@x']);
+  });
+  it('empty/unset ⇒ empty set (fail-closed: permits nothing)', () => {
+    expect(allowedResources([{ allowed_calendars: '' }, {}], 'allowed_calendars').size).toBe(0);
+    expect(allowedResources([undefined], 'allowed_calendars').size).toBe(0);
+  });
+  it('deniedResources returns requested containers outside the allowed set', () => {
+    const allowed = new Set(['primary', 'work@x']);
+    expect(deniedResources(['primary'], allowed)).toEqual([]);
+    expect(deniedResources(['family@z'], allowed)).toEqual(['family@z']);
+    expect(deniedResources(['primary', 'family@z'], allowed)).toEqual(['family@z']);
+  });
+  it('an empty allowed set denies everything (the family-calendar hole, closed)', () => {
+    expect(deniedResources(['primary'], new Set())).toEqual(['primary']);
+  });
+  it('filterItemsByResource keeps only items whose id is permitted', () => {
+    const items = [{ id: 'primary', summary: 'Work' }, { id: 'family@z', summary: 'Family' }];
+    expect(filterItemsByResource(items, 'id', new Set(['primary']))).toEqual([
+      { id: 'primary', summary: 'Work' },
+    ]);
+    expect(filterItemsByResource(items, 'id', new Set())).toEqual([]);
+  });
+});
+
+describe('hasBlockedValue (F7 — exclude spam/trash items on get-by-id)', () => {
+  const SPAMMY = new Set(['SPAM', 'TRASH']);
+  it('blocks when the labels array contains a forbidden value', () => {
+    expect(hasBlockedValue({ labelIds: ['INBOX', 'SPAM'] }, 'labelIds', SPAMMY)).toBe(true);
+    expect(hasBlockedValue({ message: { labelIds: ['TRASH'] } }, 'message.labelIds', SPAMMY)).toBe(true);
+  });
+  it('allows a normal inbox item', () => {
+    expect(hasBlockedValue({ labelIds: ['INBOX', 'IMPORTANT'] }, 'labelIds', SPAMMY)).toBe(false);
+  });
+  it('handles a scalar value and a missing path (missing ⇒ not blocked)', () => {
+    expect(hasBlockedValue({ folder: 'SPAM' }, 'folder', SPAMMY)).toBe(true);
+    expect(hasBlockedValue({}, 'labelIds', SPAMMY)).toBe(false);
+  });
+});
 
 describe('parseMessageTimestamp (provider-agnostic)', () => {
   it('parses Gmail string internalDate (epoch millis)', () => {
@@ -233,14 +300,6 @@ describe('getByDottedPath', () => {
   });
 });
 
-// email@0.4 contextSchema: allowed_recipients (format email), allowed_domains (format domain).
-const emailContextSchema = {
-  fields: {
-    allowed_recipients: { format: 'email' },
-    allowed_domains: { format: 'domain' },
-  },
-};
-
 describe('extractEmails / emailDomain', () => {
   it('pulls addresses out of a display-name header value', () => {
     expect(extractEmails('Oliver Kartak <hello@oliverkartak.com>')).toEqual(['hello@oliverkartak.com']);
@@ -278,33 +337,22 @@ describe('extractParticipants', () => {
   });
 });
 
-describe('authorityCoversParticipants + resolveScopeFields (the Oliver case)', () => {
-  const scope = (ctx: Record<string, string>) => resolveScopeFields(emailContextSchema, ctx);
-  const oliverThread = ['hello@oliverkartak.com', 'andreas.schadauer@gmail.com'];
+// NOTE: coverage denial (authorityCoversParticipants / resolveScopeFields) was
+// removed with the read-model rewrite — grant scope no longer restricts reads,
+// age is the only denial reason. See doc §4 supersession banner. The Oliver-case
+// coverage tests were deleted with it.
 
-  it('a Sonja-scoped authority does NOT cover an Oliver↔Andreas thread', () => {
-    expect(authorityCoversParticipants(oliverThread, scope({ allowed_recipients: 'gebertsonja@gmail.com' }))).toBe(false);
-  });
-  it('an andreas-scoped authority DOES cover it (Andreas is a participant)', () => {
-    expect(authorityCoversParticipants(oliverThread, scope({ allowed_recipients: 'andreas.schadauer@gmail.com' }))).toBe(true);
-  });
-  it('a domain-scoped authority covers by domain', () => {
-    expect(authorityCoversParticipants(['x@acme.com'], scope({ allowed_domains: 'acme.com' }))).toBe(true);
-    expect(authorityCoversParticipants(['x@other.com'], scope({ allowed_domains: 'acme.com' }))).toBe(false);
-  });
-  it('an unscoped authority covers everyone', () => {
-    expect(authorityCoversParticipants(oliverThread, scope({}))).toBe(true);
-  });
-});
-
-describe('buildScopeQuery', () => {
+// buildScopeQuery is RESERVED for the overrides slice (restrictive-mode list
+// narrowing). It only builds a query clause from ScopeField groups — no
+// coverage semantics — so it is tested against ScopeFields constructed directly.
+describe('buildScopeQuery (reserved: query-clause builder, not a coverage check)', () => {
   const TERM = '(from:{v} OR to:{v})';
-  const sf = (ctx: Record<string, string>) => resolveScopeFields(emailContextSchema, ctx);
-  it('unions scoped authorities into an OR clause', () => {
-    const q = buildScopeQuery([sf({ allowed_recipients: 'a@x.com' }), sf({ allowed_recipients: 'b@y.com' })], TERM);
+  const email = (...vs: string[]) => ({ kind: 'email' as const, values: new Set(vs) });
+  it('unions scope groups into an OR clause', () => {
+    const q = buildScopeQuery([[email('a@x.com')], [email('b@y.com')]], TERM);
     expect(q).toBe('((from:a@x.com OR to:a@x.com) OR (from:b@y.com OR to:b@y.com))');
   });
-  it('returns no filter when ANY authority is unscoped (covers all)', () => {
-    expect(buildScopeQuery([sf({ allowed_recipients: 'a@x.com' }), sf({})], TERM)).toBe('');
+  it('returns no filter when any group is unconstrained', () => {
+    expect(buildScopeQuery([[email('a@x.com')], []], TERM)).toBe('');
   });
 });

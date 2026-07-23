@@ -65,14 +65,64 @@
         "executionMapping": {},
         "staticExecution": { "recipient_count": 1, "action_type": "send" }
       },
-      "list_messages": { "category": "read" },
-      "get_message": { "category": "read" },
-      "get_attachment": { "category": "read" },
-      "list_drafts": { "category": "read" },
-      "get_draft": { "category": "read" },
-      "delete_draft": { "category": "read" },
-      "list_labels": { "category": "read" },
-      "get_profile": { "category": "read" }
+      "list_messages": {
+        "category": "read",
+        "read": {
+          "ageField": "read_age_days",
+          "queryArg": "q",
+          "ageConstraint": "newer_than:{days}d",
+          "scopeTermTemplate": "(from:{v} OR to:{v})",
+          "pinnedArgs": { "includeSpamTrash": false }
+        }
+      },
+      "get_message": {
+        "category": "read",
+        "read": {
+          "ageField": "read_age_days",
+          "resultDatePath": "internalDate",
+          "participantsPath": "payload.headers",
+          "participantHeaders": ["From", "To"],
+          "blockResultValues": ["SPAM", "TRASH"],
+          "resultValuesPath": "labelIds"
+        }
+      },
+      "list_drafts": {
+        "category": "read",
+        "read": {
+          "ageField": "read_age_days",
+          "queryArg": "q",
+          "ageConstraint": "newer_than:{days}d",
+          "pinnedArgs": { "includeSpamTrash": false }
+        }
+      },
+      "get_draft": {
+        "category": "read",
+        "read": {
+          "ageField": "read_age_days",
+          "resultDatePath": "message.internalDate",
+          "blockResultValues": ["SPAM", "TRASH"],
+          "resultValuesPath": "message.labelIds"
+        }
+      },
+      "delete_draft": {
+        "executionMapping": {},
+        "staticExecution": { "recipient_count": 0, "action_type": "delete" }
+      },
+      "get_attachment": {
+        "category": "read",
+        "readGovernance": "none",
+        "readGovernanceReason": "Transitively age-gated: an attachmentId is only obtainable from get_message, which enforces the read-age window. No independently addressable content."
+      },
+      "list_labels": {
+        "category": "read",
+        "readGovernance": "none",
+        "readGovernanceReason": "Enumerates label names/ids, not message content. Label names can be sensitive metadata; F7 will replace this exemption with a container allowlist filter (SPAM/TRASH stripped, then granted labels only)."
+      },
+      "get_profile": {
+        "category": "read",
+        "readGovernance": "none",
+        "readGovernanceReason": "Returns the account's own address and message counts — the connector's own identity, no correspondence content."
+      }
     }
   },
   "templates": [
