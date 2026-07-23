@@ -46,6 +46,7 @@ import { createApprovedIntentsRouter } from './routes/approved-intents';
 import { startUpdateChecker, getUpdateStatus, forceCheck } from './lib/update-checker';
 import { createEventsHandler } from './routes/events';
 import { eventBus } from './lib/event-bus';
+import { loadDenials, selectDenials } from './lib/denials-reader';
 
 const SP_URL = process.env.SUVEREN_AS_URL ?? 'https://www.suveren.ai';
 const port = parseInt(process.env.SUVEREN_CP_PORT ?? '3402', 10);
@@ -548,6 +549,26 @@ app.get('/active-authorizations', authGuard, async (_req: Request, res: Response
   } catch (err) {
     console.error('[Control Plane] Authorizations retrieval error:', err);
     res.status(500).json({ error: 'Failed to fetch authorizations from MCP server' });
+  }
+});
+
+// Read-denial log — protected. The MCP server (read path) WRITES
+// `denials.enc.json`; this reads + decrypts it for the "Recent blocks" UI so the
+// owner can tell a limit they set from a malfunction (read-denial-recording §4).
+// Records carry no message content — a reason, a sentence, and a coarse target.
+app.get('/denials', authGuard, (req: Request, res: Response) => {
+  try {
+    const dataDir = process.env.SUVEREN_DATA_DIR ?? join(homedir(), '.suveren');
+    const all = loadDenials(dataDir, blob => vault.decrypt(blob));
+    const since = Number(req.query.since);
+    const limit = Number(req.query.limit);
+    res.json(selectDenials(all, {
+      since: Number.isFinite(since) ? since : undefined,
+      limit: Number.isFinite(limit) ? limit : undefined,
+    }));
+  } catch (err) {
+    console.error('[Control Plane] Denial log read error:', err);
+    res.status(500).json({ error: 'Could not read the denial log' });
   }
 });
 
