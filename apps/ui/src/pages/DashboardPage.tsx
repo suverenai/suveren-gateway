@@ -7,6 +7,7 @@ import { useVisiblePolling } from '../hooks/useVisiblePolling';
 import { useSSEEvent } from '../contexts/EventSourceContext';
 import { useIntegrationStatus } from '../contexts/IntegrationStatusContext';
 import { Skeleton, SkeletonAttentionRow } from '../components/Skeleton';
+import { RecentBlocks } from '../components/RecentBlocks';
 import { bucketAuths } from '../lib/auth-status';
 
 const EXPIRY_WARN_SECONDS = 30 * 60; // 30 minutes
@@ -273,6 +274,9 @@ export function DashboardPage() {
           <SkeletonAttentionRow />
         </div>
       )}
+
+      {/* Recent read-blocks — the trust signal: a limit you set vs a malfunction */}
+      <RecentBlocks />
     </>
   );
 }

@@ -92,6 +92,19 @@ export interface VaultStatus {
   serviceCount: number;
 }
 
+/** A single read block from the Gatekeeper (no message content). */
+export type DenialReason =
+  | 'ungoverned' | 'read_gate' | 'unset_age' | 'age' | 'resource' | 'spam' | 'query_unsafe';
+export interface DenialRecord {
+  ts: number;
+  tool: string;
+  integrationId: string;
+  profile: string | null;
+  reason: DenialReason;
+  detail: string;
+  target?: string;
+}
+
 export interface AuthTemplate {
   name: string;
   description: string;
@@ -428,6 +441,20 @@ class SPClient {
         ? Math.max(0, Math.min(...(a.attestations as Array<{expiresAt: number}>).map(att => att.expiresAt)) - Math.floor(Date.now() / 1000))
         : null,
     }));
+  }
+
+  /**
+   * Read-denial log (control-plane `GET /denials`). Blocks the Gatekeeper made
+   * on reads — for the "Recent blocks" panel. Records carry no message content.
+   */
+  async getDenials(options?: { since?: number; limit?: number }): Promise<{ count: number; records: DenialRecord[] }> {
+    const params = new URLSearchParams();
+    if (options?.since) params.set('since', String(options.since));
+    if (options?.limit) params.set('limit', String(options.limit));
+    const qs = params.toString() ? `?${params.toString()}` : '';
+    const res = await this.fetch(`/denials${qs}`);
+    if (!res.ok) throw new Error(`Failed to fetch denials: ${res.status}`);
+    return res.json();
   }
 
   async getMyReceipts(options?: { date?: string; profile?: string; limit?: number }): Promise<ExecutionReceipt[]> {

@@ -435,7 +435,18 @@ export function AgentReviewPage() {
     return vals.length > 0 ? vals.join(', ') : 'all (unscoped)';
   };
   const overlapScopes = overlappingGrants.map(g => describeScope(g.context)).join('; ');
-  const overlapWarningText = `This grant's scope overlaps an existing grant on ${overlapProfileName} (scoped to: ${overlapScopes}). When two grants cover the same actions, the agent may act under either — the more permissive limits effectively apply. Confirm this is intended before authorizing.`;
+  // Copy must match the gateway's ACTUAL selection behaviour (scope-specificity.ts
+  // + tool-proxy.ts). Three distinct effects, and they don't all go the same way:
+  //   - per-action bounds: the stricter grant fails verification and drops out of
+  //     the candidate set, so the more permissive value effectively applies;
+  //   - cumulative bounds: each authorization carries its OWN counter, so an
+  //     exhausted grant drops out and the overlapping one takes over — the limits
+  //     ADD UP rather than the larger one winning;
+  //   - commitment mode: selection explicitly prefers an approver
+  //     ('fail-safe-approval'), so review is NOT weakened by an automatic twin.
+  // The earlier copy said "the more permissive limits effectively apply" for all
+  // three — understating the cumulative case and overstating the mode case.
+  const overlapWarningText = `This grant's scope overlaps an existing grant on ${overlapProfileName} (scoped to: ${overlapScopes}). The agent may act under either. Per-action limits take the more permissive value, and daily limits add together — two grants of 10/day allow 20/day. Approval is not weakened: if either grant requires review, review still applies. Confirm this is intended before authorizing.`;
 
   return (
     <>
