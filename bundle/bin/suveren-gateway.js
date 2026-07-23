@@ -10,7 +10,7 @@
  * which Node implements consistently across platforms.
  */
 
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, openSync, readFileSync, writeFileSync, unlinkSync, statSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -48,6 +48,7 @@ switch (cmd) {
   case 'status':  await status(); break;
   case 'restart': await restart(); break;
   case 'logs':    await logs(argv.slice(1)); break;
+  case 'service': await service(argv.slice(1)); break;
   case 'help':
   case '--help':
   case '-h':
@@ -197,6 +198,168 @@ async function logs(args) {
   }
 }
 
+// ─── service: install autostart-on-login (survives reboot) ──────────────
+//
+// Keeps the gateway PROCESS always running (starts on login, restarts on
+// crash). It boots LOCKED — you still enter your Suveren API key once per
+// reboot; nothing is persisted. See doc/gateway-always-on.md.
+// macOS (LaunchAgent) is implemented; Windows/Linux are the next increment.
+
+const LAUNCH_AGENT_LABEL = 'ai.suveren.gateway';
+
+async function service(args) {
+  const sub = args[0] ?? 'help';
+  const os = platform();
+
+  if (sub === 'help' || sub === '--help' || sub === '-h') { printServiceHelp(); return; }
+
+  if (os !== 'darwin') {
+    console.error(`\`suveren-gateway service\` is not available on ${os} yet (macOS first).`);
+    console.error(`For now, run it in the background with:  suveren-gateway start --detach`);
+    console.error(`(Note: --detach does NOT survive a reboot — the service command will.)`);
+    process.exit(2);
+  }
+
+  switch (sub) {
+    case 'install':   await serviceInstallMac(); break;
+    case 'uninstall': await serviceUninstallMac(); break;
+    case 'status':    await serviceStatusMac(); break;
+    default:
+      console.error(`Unknown: service ${sub}\n`);
+      printServiceHelp();
+      process.exit(2);
+  }
+}
+
+/** Pure: the LaunchAgent plist XML. Exported-in-spirit for testing/review. */
+function buildLaunchAgentPlist({ nodePath, serverEntry, label, logFile, dataDir }) {
+  // RunAtLoad → start at login; KeepAlive → restart on crash. The key is NEVER
+  // placed here (no args/env carry a secret) — the gateway boots locked.
+  const env = dataDir
+    ? `  <key>EnvironmentVariables</key>\n  <dict>\n    <key>SUVEREN_DATA_DIR</key>\n    <string>${dataDir}</string>\n  </dict>\n`
+    : '';
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>${label}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${nodePath}</string>
+    <string>${serverEntry}</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>${logFile}</string>
+  <key>StandardErrorPath</key>
+  <string>${logFile}</string>
+${env}</dict>
+</plist>
+`;
+}
+
+function launchAgentPath() {
+  return join(homedir(), 'Library', 'LaunchAgents', `${LAUNCH_AGENT_LABEL}.plist`);
+}
+
+async function serviceInstallMac() {
+  ensureDataDir();
+  const plistPath = launchAgentPath();
+  mkdirSync(dirname(plistPath), { recursive: true });
+
+  // If a manual/detached instance is running, stop it — the service will own it.
+  if (readPid() && isPidAlive(readPid())) {
+    console.log('Stopping the current instance so the service can take over…');
+    await stop();
+  }
+
+  const plist = buildLaunchAgentPlist({
+    nodePath: process.execPath,
+    serverEntry: SERVER_ENTRY,
+    label: LAUNCH_AGENT_LABEL,
+    logFile: LOG_FILE,
+    dataDir: process.env.SUVEREN_DATA_DIR ?? '',
+  });
+  writeFileSync(plistPath, plist, { encoding: 'utf8', mode: 0o644 });
+
+  const uid = process.getuid();
+  // Modern: bootout (ignore-if-absent) then bootstrap into the GUI session.
+  runQuiet('launchctl', ['bootout', `gui/${uid}/${LAUNCH_AGENT_LABEL}`]);
+  const boot = runQuiet('launchctl', ['bootstrap', `gui/${uid}`, plistPath]);
+  if (boot.status !== 0) {
+    // Fallback for older macOS.
+    runQuiet('launchctl', ['unload', plistPath]);
+    const load = runQuiet('launchctl', ['load', '-w', plistPath]);
+    if (load.status !== 0) {
+      console.error(`Installed the plist but launchctl could not load it.`);
+      console.error(load.stderr || boot.stderr || '');
+      console.error(`Plist: ${plistPath}`);
+      process.exit(1);
+    }
+  }
+
+  console.log(`✓ Suveren gateway installed as a login service.`);
+  console.log(``);
+  console.log(`  It now starts automatically when you log in, and restarts if it crashes.`);
+  console.log(`  After a reboot it comes up LOCKED — open http://localhost:${SUVEREN_PORT} and`);
+  console.log(`  enter your Suveren API key once to unlock it (your key is never stored).`);
+  console.log(``);
+  console.log(`  Plist:      ${plistPath}`);
+  console.log(`  Status:     suveren-gateway service status`);
+  console.log(`  Remove:     suveren-gateway service uninstall`);
+}
+
+async function serviceUninstallMac() {
+  const plistPath = launchAgentPath();
+  const uid = process.getuid();
+  runQuiet('launchctl', ['bootout', `gui/${uid}/${LAUNCH_AGENT_LABEL}`]);
+  runQuiet('launchctl', ['unload', plistPath]); // legacy fallback, harmless if already out
+  if (existsSync(plistPath)) safeUnlink(plistPath);
+  console.log(`✓ Login service removed. The gateway will no longer start on login.`);
+  console.log(`  (A currently-running instance keeps running until you \`suveren-gateway stop\`.)`);
+}
+
+async function serviceStatusMac() {
+  const plistPath = launchAgentPath();
+  const installed = existsSync(plistPath);
+  console.log(`Login service: ${installed ? 'installed' : 'not installed'}`);
+  if (installed) console.log(`  Plist:  ${plistPath}`);
+  const uid = process.getuid();
+  const p = runQuiet('launchctl', ['print', `gui/${uid}/${LAUNCH_AGENT_LABEL}`]);
+  if (p.status === 0) {
+    const state = /state = (\w+)/.exec(p.stdout || '');
+    console.log(`  launchd: loaded${state ? ` (${state[1]})` : ''}`);
+  } else if (installed) {
+    console.log(`  launchd: not loaded (run \`suveren-gateway service install\` to (re)load)`);
+  }
+  console.log('');
+  await status(); // process/health/vault line
+}
+
+/** Run a command capturing output, never throwing. */
+function runQuiet(bin, args) {
+  const r = spawnSync(bin, args, { encoding: 'utf8' });
+  return { status: r.status ?? 1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
+}
+
+function printServiceHelp() {
+  console.log(`suveren-gateway service — run the gateway as a login service (survives reboot)
+
+Usage:
+  suveren-gateway service install     Start on login + restart on crash (macOS)
+  suveren-gateway service uninstall   Remove the login service
+  suveren-gateway service status      Show whether it's installed + running
+
+The gateway boots LOCKED after a reboot — you enter your Suveren API key once
+to unlock it; the key is never stored. macOS is supported today; Windows and
+Linux are coming — use \`start --detach\` there for now.
+`);
+}
+
 // ─── Helpers ────────────────────────────────────────────────────────────
 
 function ensureDataDir() {
@@ -250,6 +413,8 @@ Usage:
   suveren-gateway restart            Stop, then start --detach
   suveren-gateway status             Show running state + health
   suveren-gateway logs [--tail]      Print or tail ~/.suveren/gateway.log
+  suveren-gateway service <cmd>      Run as a login service that survives reboot
+                                     (install | uninstall | status; macOS today)
   suveren-gateway help               Print this help
 
 Environment:
