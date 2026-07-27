@@ -78,11 +78,7 @@ export class MCPGatekeeper {
     // hap-core's checkContextConstraints compares execution values against it
     // to enforce subset/enum/pattern constraints. Required locally per spec —
     // the SP only holds context_hash and cannot enforce context constraints.
-    // `path` is widened locally so this compiles against the currently
-    // PUBLISHED hap-core. NOTE: the local cumulative gate stays inert until a
-    // hap-core carrying the request-path fix is published and consumed here —
-    // the older verify() simply ignores the field.
-    const request: GatekeeperRequest & { path?: string } = {
+    const request: GatekeeperRequest = {
       frame,
       attestations: auth.attestations.map(a => a.blob),
       execution,
