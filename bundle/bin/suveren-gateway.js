@@ -116,15 +116,37 @@ async function stop() {
     process.exit(0);
   }
   try {
-    process.kill(pid, 'SIGTERM');
-    // Give it up to 5s to exit cleanly.
-    for (let i = 0; i < 50; i++) {
-      await sleep(100);
-      if (!isPidAlive(pid)) break;
-    }
-    if (isPidAlive(pid)) {
-      console.error(`Process ${pid} did not exit after SIGTERM — sending SIGKILL.`);
-      process.kill(pid, 'SIGKILL');
+    if (platform() === 'win32') {
+      // Windows has no POSIX signals: process.kill(pid, 'SIGTERM') is mapped to
+      // TerminateProcess, so (a) server.js's shutdown handler never runs and
+      // (b) only the parent dies — the CP + MCP children, and every downstream
+      // MCP integration they spawned, are orphaned and keep holding the ports
+      // and the data dir. `taskkill /T` walks the whole tree; /F is required
+      // because a detached process has no console to receive a close event.
+      // Graceful shutdown is not reachable here, which is exactly why the tree
+      // kill is: nothing else will reap the children.
+      const res = spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], {
+        stdio: 'ignore',
+        windowsHide: true,
+      });
+      // taskkill exits 128 when the process is already gone — that is a
+      // successful stop, not a failure.
+      if (res.status !== 0 && isPidAlive(pid)) {
+        throw new Error(`taskkill exited ${res.status ?? res.error?.message}`);
+      }
+    } else {
+      process.kill(pid, 'SIGTERM');
+      // Give it up to 5s to exit cleanly. server.js's SIGTERM handler
+      // propagates to the CP + MCP children, which shut their integrations
+      // down — so on POSIX the tree unwinds itself.
+      for (let i = 0; i < 50; i++) {
+        await sleep(100);
+        if (!isPidAlive(pid)) break;
+      }
+      if (isPidAlive(pid)) {
+        console.error(`Process ${pid} did not exit after SIGTERM — sending SIGKILL.`);
+        process.kill(pid, 'SIGKILL');
+      }
     }
     safeUnlink(PID_FILE);
     console.log(`suveren-gateway stopped (pid ${pid}).`);
