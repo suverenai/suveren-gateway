@@ -27,6 +27,58 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Deliberately a SEPARATE job from `smoke`. The smoke job sets a fixed
+  # internal secret and a shared data dir at job level so its gateway can be
+  # driven end-to-end; both leak into every step in that job. Running the
+  # suites there made the /internal guard reject with 403 and would have had
+  # tests writing into the smoke gateway's state. Separate job = no coupling,
+  # and it runs in parallel so it costs wall-clock nothing.
+  #
+  # All three OSes because the suites are not OS-neutral: the denial log, gate
+  # store and vault write files, and the read path spawns real MCP servers, so
+  # path separators and the Windows .cmd shim are in scope. This is also the
+  # only place the F9 read-governance lint runs — without it, that regression
+  # guard guards nothing.
+  unit:
+    name: unit (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Check out profile catalog
+        uses: actions/checkout@v6
+        with:
+          repository: humanagencyprotocol/hap-profiles
+          path: .hap-profiles
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install workspace deps
+        run: pnpm install --frozen-lockfile
+
+      # MUST precede the tests: the @hap/core workspace wrapper resolves to
+      # ./dist/*, which only exists once tsup has run. A dev machine passes
+      # either way because a stale dist/ is lying around; a fresh checkout
+      # fails to resolve the package at all.
+      - name: Build
+        run: pnpm build
+
+      - name: Unit tests
+        run: pnpm -r test
+
   smoke:
     name: ${{ matrix.os }}
     strategy:
@@ -71,19 +123,6 @@ jobs:
 
       - name: Build apps (UI, control-plane, MCP server)
         run: pnpm build
-
-      # MUST run after the build: the @hap/core workspace wrapper resolves to
-      # ./dist/*, which only exists once tsup has run. A dev machine passes
-      # either way because a stale dist/ is lying around; a fresh checkout
-      # fails to resolve the package at all.
-      #
-      # Runs on all three OSes because the suites are not OS-neutral: the
-      # denial log, gate store and vault write files and the read path spawns
-      # real MCP servers, so path separators and the Windows .cmd shim are in
-      # scope. This is also the only place the F9 read-governance lint runs —
-      # without it, that regression guard guards nothing.
-      - name: Unit tests
-        run: pnpm -r test
 
       - name: Assemble bundle
         run: node bundle/build.mjs

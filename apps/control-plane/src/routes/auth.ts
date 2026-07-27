@@ -59,7 +59,7 @@ export function createAuthRouter(vault: Vault, logoutAuth: Middleware, loginRate
       vault.setSpCookie(sessionCookie);
 
       // Derive vault encryption key from API key
-      vault.deriveAndSetKey(apiKey);
+      await vault.deriveAndSetKey(apiKey);
 
       // Vault encryption key is derived from the API key. Logging in with a
       // different API key on the same gateway means the existing vault
@@ -96,7 +96,7 @@ export function createAuthRouter(vault: Vault, logoutAuth: Middleware, loginRate
         }
         vault.wipe();
         // Re-derive key after wipe (wipe clears the salt, need a fresh one)
-        vault.deriveAndSetKey(apiKey);
+        await vault.deriveAndSetKey(apiKey);
       }
 
       // Push session cookie + vault key to MCP server (must complete before responding)

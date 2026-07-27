@@ -38,10 +38,59 @@ interface ServicesFile {
   services: Record<string, ServiceDef>;
 }
 
+/** PBKDF2 parameters for every provider that derives from a passphrase-like secret. */
+const KDF_ITERATIONS = 100_000;
+const KDF_KEY_BYTES = 32;
+
+/**
+ * How the vault key comes into existence.
+ *
+ * Today there is exactly one provider: the user's API key, derived at login and
+ * never persisted, so the gateway always boots LOCKED. That is the right
+ * default on a laptop — nothing on disk or in the environment can unlock the
+ * vault without the person.
+ *
+ * It is a liveness problem on a server. A container restart at 03:00 brings the
+ * gateway up locked, and the agent silently cannot act until a human opens a
+ * browser — true for any unattended deployment, including one a customer runs
+ * in their own cloud. The fix there is a provider that derives from something
+ * the machine can present (a KMS unwrap, an instance identity), which is a
+ * deliberate weakening of the laptop guarantee and must be an explicit choice,
+ * not a default.
+ *
+ * This interface exists so that choice is a new class rather than a change to
+ * every call site. `deriveKey` may be async precisely because a KMS round-trip
+ * is: making it sync now would force exactly the cross-cutting refactor this
+ * seam is meant to avoid.
+ */
+export interface UnsealProvider {
+  /** Stable identifier for logs and diagnostics. Never the secret itself. */
+  readonly id: string;
+  /**
+   * Produce the 32-byte vault key from the vault's stored PBKDF2 salt, which is
+   * created on first unseal and reused for the life of the vault.
+   */
+  deriveKey(salt: Buffer): Buffer | Promise<Buffer>;
+}
+
+/**
+ * The only provider today: PBKDF2 over the user's Suveren API key. The key
+ * lives in memory for the session and is never written anywhere.
+ */
+export class ApiKeyUnsealProvider implements UnsealProvider {
+  readonly id = 'api-key';
+  constructor(private readonly apiKey: string) {}
+
+  deriveKey(salt: Buffer): Buffer {
+    return pbkdf2Sync(this.apiKey, salt, KDF_ITERATIONS, KDF_KEY_BYTES, 'sha256');
+  }
+}
+
 export class Vault {
   private vaultKey: Buffer | null = null;
   private apiKeyHash: string | null = null;
   private spSessionCookie: string | null = null;
+  private unsealedBy: string | null = null;
   private dataDir: string;
 
   constructor(dataDir?: string) {
@@ -50,19 +99,45 @@ export class Vault {
 
   // ─── Key management ─────────────────────────────────────────────────────
 
-  deriveAndSetKey(apiKey: string): void {
-    // Use a random salt stored in vault.enc.json (created on first login)
+  /**
+   * The vault's PBKDF2 salt, created on first unseal and stable thereafter.
+   * Every provider derives against the same salt, so swapping providers on an
+   * existing vault produces a different key — which is correct: a vault sealed
+   * by one authority is not readable by another.
+   */
+  private ensureSalt(): Buffer {
     const vaultData = this.readVaultFile();
-    let salt: string;
-    if (vaultData.salt) {
-      salt = vaultData.salt;
-    } else {
-      salt = randomBytes(32).toString('hex');
-      vaultData.salt = salt;
+    if (!vaultData.salt) {
+      vaultData.salt = randomBytes(32).toString('hex');
       this.writeVaultFile(vaultData);
     }
-    this.vaultKey = pbkdf2Sync(apiKey, Buffer.from(salt, 'hex'), 100_000, 32, 'sha256');
+    return Buffer.from(vaultData.salt, 'hex');
+  }
+
+  /**
+   * Unlock the vault using any UnsealProvider. Call sites should prefer this
+   * over the API-key-specific helper below; adding an unattended provider then
+   * requires no change here.
+   */
+  async unseal(provider: UnsealProvider): Promise<void> {
+    this.vaultKey = await provider.deriveKey(this.ensureSalt());
+    this.unsealedBy = provider.id;
+  }
+
+  /**
+   * Unlock from the user's API key. Also records the key's hash so subsequent
+   * requests can be validated (see validateApiKey) — that check is specific to
+   * a user-presented secret and has no meaning for a machine provider, which is
+   * why it lives here rather than on the interface.
+   */
+  async deriveAndSetKey(apiKey: string): Promise<void> {
+    await this.unseal(new ApiKeyUnsealProvider(apiKey));
     this.apiKeyHash = createHash('sha256').update(apiKey).digest('hex');
+  }
+
+  /** Which provider unlocked this vault, for diagnostics. Null while locked. */
+  unsealedByProvider(): string | null {
+    return this.vaultKey ? this.unsealedBy : null;
   }
 
   validateApiKey(apiKey: string): boolean {
@@ -78,6 +153,7 @@ export class Vault {
     this.vaultKey = null;
     this.apiKeyHash = null;
     this.spSessionCookie = null;
+    this.unsealedBy = null;
   }
 
   /**

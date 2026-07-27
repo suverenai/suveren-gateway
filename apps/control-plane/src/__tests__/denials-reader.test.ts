@@ -26,11 +26,11 @@ describe('loadDenials (control-plane reads what the MCP server wrote)', () => {
     expect(loadDenials(dir, () => { throw new Error('no'); })).toHaveLength(1);
   });
 
-  it('CROSS-APP crypto: decrypts what the MCP-server scheme encrypted, via the control-plane Vault', () => {
+  it('CROSS-APP crypto: decrypts what the MCP-server scheme encrypted, via the control-plane Vault', async () => {
     const dir = tmp();
     // The vault key is PBKDF2(apiKey, salt) — derive it the same way the gateway does.
     const vault = new Vault(dir);
-    vault.deriveAndSetKey('test-api-key');
+    await vault.deriveAndSetKey('test-api-key');
     const key = Buffer.from(vault.getVaultKeyHex(), 'hex');
 
     // Write denials.enc.json the way the MCP-server DenialLog would.

@@ -104,6 +104,12 @@ describe('MCP Gateway', () => {
         // Clean slate: don't auto-register/install the crm+records personal
         // defaults (the suite asserts an empty integration list and add/remove).
         SUVEREN_DISABLE_AUTO_INTEGRATIONS: '1',
+        // This suite calls /internal/* without an X-Internal-Secret header, so
+        // the guard must be off. It only engages for a NON-EMPTY secret — and
+        // env is inherited, so an ambient SUVEREN_INTERNAL_SECRET (CI sets one
+        // for the bundle smoke; a shell may export one) would otherwise turn
+        // every call into a 403 that looks like a gateway bug.
+        SUVEREN_INTERNAL_SECRET: '',
       },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
