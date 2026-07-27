@@ -69,6 +69,14 @@ jobs:
       - name: Install workspace deps
         run: pnpm install --frozen-lockfile
 
+      - name: Build apps (UI, control-plane, MCP server)
+        run: pnpm build
+
+      # MUST run after the build: the @hap/core workspace wrapper resolves to
+      # ./dist/*, which only exists once tsup has run. A dev machine passes
+      # either way because a stale dist/ is lying around; a fresh checkout
+      # fails to resolve the package at all.
+      #
       # Runs on all three OSes because the suites are not OS-neutral: the
       # denial log, gate store and vault write files and the read path spawns
       # real MCP servers, so path separators and the Windows .cmd shim are in
@@ -76,9 +84,6 @@ jobs:
       # without it, that regression guard guards nothing.
       - name: Unit tests
         run: pnpm -r test
-
-      - name: Build apps (UI, control-plane, MCP server)
-        run: pnpm build
 
       - name: Assemble bundle
         run: node bundle/build.mjs
