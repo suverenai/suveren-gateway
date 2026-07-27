@@ -32,6 +32,10 @@ export default defineConfig({
         target: 'http://localhost:3402',
         changeOrigin: true,
       },
+      '/denials': {
+        target: 'http://localhost:3402',
+        changeOrigin: true,
+      },
       '/vault': {
         target: 'http://localhost:3402',
         changeOrigin: true,

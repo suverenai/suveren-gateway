@@ -127,8 +127,10 @@ app.post('/internal/configure', internalOnly, (req: Request, res: Response) => {
   console.error('[Suveren MCP] Session cookie configured by control-plane');
 
   if (vaultKeyHex) {
-    state.gateStore.setVaultKey(Buffer.from(vaultKeyHex, 'hex'));
-    console.error('[Suveren MCP] Vault key configured — gate store encryption active');
+    const key = Buffer.from(vaultKeyHex, 'hex');
+    state.gateStore.setVaultKey(key);
+    state.denialLog.setVaultKey(key);
+    console.error('[Suveren MCP] Vault key configured — gate store + denial log encryption active');
   }
 
   if (apiKey) {

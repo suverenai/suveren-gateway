@@ -7,8 +7,8 @@
 
 import { homedir } from 'node:os';
 import { join, delimiter } from 'node:path';
-import { existsSync, writeFileSync, mkdirSync } from 'node:fs';
-import { execSync } from 'node:child_process';
+import { existsSync, writeFileSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { execFile } from 'node:child_process';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { getProfile } from '@hap/core';
@@ -91,6 +91,10 @@ interface RunningIntegration {
 
 const RESPAWN_DELAYS = [2000, 4000, 6000]; // backoff delays in ms
 const MAX_RESPAWN_ATTEMPTS = 3;
+// Upper bound on the MCP handshake. Generous because a just-installed server's
+// first run can be slow (native module load, cold caches), but finite so a
+// crashed child can't wedge the sequential boot loop forever.
+const CONNECT_TIMEOUT_MS = 30_000;
 
 export class IntegrationManager {
   private running = new Map<string, RunningIntegration>();
@@ -107,28 +111,189 @@ export class IntegrationManager {
   }
 
   /**
-   * Install an npm package into the managed integrations directory if not already present.
-   * Called automatically before spawning when config.npmPackage is set.
+   * Is `npmPackage` present AND usable?
+   *
+   * The directory existing is not enough: an install that was interrupted
+   * (timeout, Ctrl+C, antivirus lock) leaves the package directory behind
+   * with no package.json and no bin shim. Treating that as "installed" made
+   * every later start fail instantly on a missing binary, with no way to
+   * self-repair — the user saw "Not running" and a Start button that did
+   * nothing, forever. So we verify the manifest parses and its entry points
+   * exist, and treat anything else as not-installed (and reinstallable).
    */
-  private ensureInstalled(npmPackage: string): void {
+  private isUsableInstall(npmPackage: string): boolean {
+    const pkgDir = join(INTEGRATIONS_DIR, 'node_modules', ...npmPackage.split('/'));
+    const pkgJson = join(pkgDir, 'package.json');
+    if (!existsSync(pkgDir) || !existsSync(pkgJson)) return false;
+
+    try {
+      const pkg = JSON.parse(readFileSync(pkgJson, 'utf8')) as {
+        name?: string;
+        bin?: string | Record<string, string>;
+        main?: string;
+      };
+
+      // A string bin is named after the package's last path segment.
+      const defaultBinName = (pkg.name ?? npmPackage).split('/').pop() ?? '';
+      const binMap: Record<string, string> = typeof pkg.bin === 'string'
+        ? { [defaultBinName]: pkg.bin }
+        : (pkg.bin ?? {});
+      const binEntries = Object.entries(binMap);
+
+      for (const [binName, target] of binEntries) {
+        // 1. The package's own bin target must exist...
+        if (!existsSync(join(pkgDir, target))) return false;
+        // 2. ...AND so must the .bin shim npm links from it. The shim is what
+        //    the integration is actually spawned through (config.command is
+        //    resolved via PATH, which includes node_modules/.bin), so a missing
+        //    shim — the archetypal half-finished install — means the spawn
+        //    fails with ENOENT no matter how intact the package dir looks.
+        if (!this.binShimExists(binName)) return false;
+      }
+      if (binEntries.length === 0 && pkg.main && !existsSync(join(pkgDir, pkg.main))) return false;
+      return true;
+    } catch {
+      // Unparseable package.json — a truncated write. Reinstall.
+      return false;
+    }
+  }
+
+  /**
+   * Does the node_modules/.bin shim for `binName` exist? On Windows npm writes
+   * `<name>`, `<name>.cmd`, and `<name>.ps1`; the .cmd variant is what actually
+   * runs, so any of them present counts.
+   */
+  private binShimExists(binName: string): boolean {
+    if (!binName) return false;
+    const candidates = process.platform === 'win32'
+      ? [binName, `${binName}.cmd`, `${binName}.CMD`, `${binName}.ps1`]
+      : [binName];
+    return candidates.some(c => existsSync(join(INTEGRATIONS_BIN, c)));
+  }
+
+  /**
+   * Install an npm package into the managed integrations directory if not
+   * already present. Called automatically before spawning when
+   * config.npmPackage is set.
+   *
+   * Asynchronous ON PURPOSE. This used to be execSync, which blocked the MCP
+   * server's event loop for the entire install — the port stayed bound but
+   * nothing was answered, so the control plane's /internal/manifests call
+   * failed and the UI showed "Couldn't load integrations". Measured on clean
+   * CI runners: ~3.6s (Linux), ~5.4s (macOS), ~14s (Windows), and far worse
+   * on machines with real-time antivirus.
+   */
+  private async ensureInstalled(npmPackage: string): Promise<void> {
     ensureIntegrationsDir();
 
-    // Check if already installed
-    const binName = npmPackage.split('/').pop()?.replace(/^@/, '') ?? npmPackage;
-    const installed = existsSync(join(INTEGRATIONS_DIR, 'node_modules', ...npmPackage.split('/')));
-    if (installed) return;
+    if (this.isUsableInstall(npmPackage)) return;
+
+    // A previous attempt may have left a partial directory behind. Remove it
+    // so npm starts clean, otherwise the reinstall can fail on half-written
+    // files that are still locked.
+    const pkgDir = join(INTEGRATIONS_DIR, 'node_modules', ...npmPackage.split('/'));
+    if (existsSync(pkgDir)) {
+      console.error(`[IntegrationManager] Removing unusable install of ${npmPackage}`);
+      try {
+        rmSync(pkgDir, { recursive: true, force: true });
+      } catch (err) {
+        console.error(`[IntegrationManager] Could not clean ${pkgDir}:`, err);
+      }
+    }
+
+    // npm is a batch script (npm.cmd) on Windows. Since the Node fix for
+    // CVE-2024-27980, execFile refuses to spawn a .cmd without a shell and
+    // throws EINVAL — which is exactly how the first async attempt failed on
+    // windows-latest. So we run npm THROUGH a shell on Windows. That means the
+    // package name reaches a command line, so validate it against the npm
+    // package-name grammar first and refuse anything with shell metacharacters.
+    if (!/^(@[a-z0-9][\w.-]*\/)?[a-z0-9][\w.-]*$/i.test(npmPackage)) {
+      throw new Error(`Refusing to install unsafe package name: ${JSON.stringify(npmPackage)}`);
+    }
 
     console.error(`[IntegrationManager] Installing ${npmPackage}...`);
+    const startedAt = Date.now();
+    const isWin = process.platform === 'win32';
+
+    await new Promise<void>((resolve, reject) => {
+      const child = execFile(
+        'npm',
+        ['install', '--no-fund', '--no-audit', npmPackage],
+        {
+          cwd: INTEGRATIONS_DIR,
+          // Windows: a shell so cmd.exe finds npm.cmd (see EINVAL note above).
+          // POSIX: no shell — npm is a normal executable and keeping shell off
+          // means the validated package name is still passed as a bare argv.
+          shell: isWin,
+          // No timeout: a slow install on a machine with antivirus is not an
+          // error, and killing it midway is what created broken installs in
+          // the first place. Progress is visible in the log.
+          maxBuffer: 10 * 1024 * 1024,
+          windowsHide: true,
+        },
+        (err, _stdout, stderr) => {
+          if (err) {
+            reject(new Error(`Failed to install ${npmPackage}: ${err.message}${stderr ? ` — ${stderr.trim()}` : ''}`));
+            return;
+          }
+          resolve();
+        },
+      );
+      child.on('error', err => reject(new Error(`Failed to run npm for ${npmPackage}: ${err.message}`)));
+    });
+
+    if (!this.isUsableInstall(npmPackage)) {
+      throw new Error(
+        `Installed ${npmPackage} but it is not usable — package.json or its bin target is missing. ` +
+        `Check ${INTEGRATIONS_DIR} for a partial install.`,
+      );
+    }
+    console.error(`[IntegrationManager] Installed ${npmPackage} (${((Date.now() - startedAt) / 1000).toFixed(1)}s)`);
+  }
+
+  /**
+   * Connect a client to its transport, but never wait indefinitely. Resolves
+   * on a successful handshake; rejects if the transport errors (child crash /
+   * spawn failure) or the handshake exceeds CONNECT_TIMEOUT_MS. On failure the
+   * transport is closed so the child process can't linger.
+   */
+  private async connectWithGuard(
+    client: Client,
+    transport: StdioClientTransport,
+    config: IntegrationConfig,
+  ): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let settled = false;
+
+    const guard = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        if (settled) return;
+        reject(new Error(
+          `Timed out after ${CONNECT_TIMEOUT_MS}ms connecting to ${config.id} ` +
+          `(${config.command} ${config.args.join(' ')}) — the downstream server ` +
+          `did not complete the MCP handshake. It may have crashed on startup.`,
+        ));
+      }, CONNECT_TIMEOUT_MS);
+
+      // If the child dies mid-handshake, the transport emits an error instead
+      // of the connect promise ever resolving. Surface it as a rejection.
+      transport.onerror = err => {
+        if (settled) return;
+        reject(new Error(`Transport error while connecting to ${config.id}: ${err.message}`));
+      };
+    });
+
     try {
-      execSync(`npm install --no-fund --no-audit ${npmPackage}`, {
-        cwd: INTEGRATIONS_DIR,
-        stdio: ['pipe', 'pipe', 'pipe'],
-        timeout: 120_000,
-      });
-      console.error(`[IntegrationManager] Installed ${npmPackage}`);
+      await Promise.race([client.connect(transport), guard]);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      throw new Error(`Failed to install ${npmPackage}: ${message}`);
+      // Ensure the child is torn down on a failed/timed-out connect.
+      try { await transport.close(); } catch { /* already gone */ }
+      throw err;
+    } finally {
+      settled = true;
+      if (timer) clearTimeout(timer);
+      // Hand the crash watcher back over now that startup is done.
+      transport.onerror = undefined;
     }
   }
 
@@ -145,11 +310,21 @@ export class IntegrationManager {
 
     // Install npm package on-demand if specified
     if (config.npmPackage) {
-      this.ensureInstalled(config.npmPackage);
+      await this.ensureInstalled(config.npmPackage);
     }
 
     // Resolve environment variables from vault references
     const env = this.resolveEnvKeys(config);
+
+    // Interpolate ${VAR} references in args from the resolved env. This lets a
+    // manifest bake a credential into an argument (e.g. mcp-remote's
+    // "Authorization: Bearer ${MOLLIE_ACCESS_TOKEN}" header) WITHOUT a shell —
+    // the old approach spawned `sh -c "... $VAR"`, which doesn't exist on
+    // Windows and left Mollie unstartable there. We spawn the binary directly
+    // and do the substitution ourselves so it works on every platform.
+    const interpolate = (s: string): string =>
+      s.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_m, name) => env[name] ?? process.env[name] ?? '');
+    const args = config.args.map(interpolate);
 
     // Create stdio transport (spawns child process)
     // PATH includes ~/.suveren/integrations/node_modules/.bin for on-demand installed packages.
@@ -160,7 +335,7 @@ export class IntegrationManager {
     // HOME=/root but the mounted volume is /app/data.
     const transport = new StdioClientTransport({
       command: config.command,
-      args: config.args,
+      args,
       env: {
         ...process.env,
         PATH: buildPath(),
@@ -176,7 +351,14 @@ export class IntegrationManager {
       { capabilities: {} },
     );
 
-    await client.connect(transport);
+    // A downstream that dies DURING the handshake (e.g. the Windows EPIPE
+    // crash in @modelcontextprotocol/sdk's stdio server transport) can leave
+    // client.connect() awaiting forever. Because the boot loop starts
+    // integrations sequentially, one wedged connect blocks every integration
+    // after it — the user sees the first stuck on "Starting" and the rest
+    // permanently "Not running". Reject on transport error or timeout so the
+    // loop can move on and report a real failure.
+    await this.connectWithGuard(client, transport, config);
     console.error(`[IntegrationManager] Connected to ${config.id} (${config.command} ${config.args.join(' ')})`);
 
     // Discover tools and resolve gating — prefer manifest toolGating over profile's
@@ -282,6 +464,17 @@ export class IntegrationManager {
       tools.push(...entry.tools);
     }
     return tools;
+  }
+
+  /**
+   * RESERVED / NOT YET WIRED (see IntegrationConfig.readAgeDays). The local
+   * read-age window (days) for a running integration, for a deferred feature
+   * that moves the read age off the signed grant. The read path does NOT call
+   * this yet — it still enforces the signed `read_max_age_days` bound.
+   */
+  getReadAgeDays(integrationId: string): number | null {
+    const days = this.running.get(integrationId)?.config.readAgeDays;
+    return typeof days === 'number' && Number.isFinite(days) ? days : null;
   }
 
   /**
@@ -395,12 +588,34 @@ export class IntegrationManager {
     // Check overrides first
     if (profileGating.overrides && toolName in profileGating.overrides) {
       const override = profileGating.overrides[toolName];
-      // null override or { category: "read" } = read-only tool (still requires authorization)
-      if (override === null || (override as { category?: string }).category === 'read') {
+      // Manifest entries may carry read-gate descriptors (boundField/
+      // requiredValue) and a 'disabled' category that the base
+      // ProfileToolGatingEntry type doesn't declare — read them from a
+      // widened view (the base `override` keeps its type for the write return).
+      const ext = (override ?? {}) as {
+        category?: string;
+        boundField?: string;
+        requiredValue?: string;
+        read?: import('./integration-registry').ReadAdapter;
+        readGovernance?: 'none';
+        readGovernanceReason?: string;
+      };
+      // 'disabled' = declared unavailable → block at the gating layer.
+      if (ext.category === 'disabled') {
+        return { profile: profileId, executionMapping: {}, category: 'disabled' };
+      }
+      // null override or { category: "read" } = read-only tool (still requires
+      // authorization, plus any declared static read gate + per-item read adapter).
+      if (override === null || ext.category === 'read') {
         return {
           profile: profileId,
           executionMapping: {},
           category: 'read',
+          boundField: ext.boundField,
+          requiredValue: ext.requiredValue,
+          read: ext.read,
+          readGovernance: ext.readGovernance,
+          readGovernanceReason: ext.readGovernanceReason,
         };
       }
       return {

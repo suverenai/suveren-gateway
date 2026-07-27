@@ -56,10 +56,22 @@
       "staticExecution": { "duration": 0, "lookahead": 0 }
     },
     "overrides": {
-      "list_calendars": { "category": "read" },
-      "list_events": { "category": "read" },
-      "get_event": { "category": "read" },
-      "free_busy": { "category": "read" },
+      "list_calendars": {
+        "category": "read",
+        "read": { "resourceBound": "allowed_calendars", "resultResourcePath": "id" }
+      },
+      "list_events": {
+        "category": "read",
+        "read": { "resourceBound": "allowed_calendars", "resourceArg": "calendarId", "resourceDefault": "primary" }
+      },
+      "get_event": {
+        "category": "read",
+        "read": { "resourceBound": "allowed_calendars", "resourceArg": "calendarId", "resourceDefault": "primary" }
+      },
+      "free_busy": {
+        "category": "read",
+        "read": { "resourceBound": "allowed_calendars", "resourceArrayArg": "calendarIds", "resourceDefault": "primary" }
+      },
       "create_event": {
         "executionMapping": {
           "duration_minutes": "duration",
@@ -70,7 +82,7 @@
           ],
           "calendarId": "allowed_calendars"
         },
-        "staticExecution": { "action_type": "write" }
+        "staticExecution": { "action_type": "booking" }
       },
       "update_event": {
         "executionMapping": {
@@ -80,7 +92,7 @@
           ],
           "calendarId": "allowed_calendars"
         },
-        "staticExecution": { "action_type": "write", "duration": 0, "lookahead": 0 }
+        "staticExecution": { "action_type": "booking", "duration": 0, "lookahead": 0 }
       },
       "delete_event": {
         "executionMapping": {
@@ -97,8 +109,8 @@
       "risk": "low",
       "mode": "automatic",
       "bounds": { "booking_daily_max": "0", "booking_duration_max": "0", "lookahead_days_max": "0" },
-      "context": { "allowed_calendars": "", "allowed_attendees": "", "allowed_domains": "" },
-      "intent": "Allow the agent to list calendars and read events to help with scheduling suggestions. No create or modify.",
+      "context": { "allowed_calendars": "primary", "allowed_attendees": "", "allowed_domains": "" },
+      "intent": "Allow the agent to read the primary calendar (only) to help with scheduling suggestions. No create or modify. To read other calendars, add them to allowed_calendars.",
       "ttl": 2592000,
       "tags": ["read-only", "30 days"]
     },

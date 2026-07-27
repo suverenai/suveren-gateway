@@ -627,8 +627,13 @@ export function BoundsEditor({
   const contextSchema = profile.contextSchema;
 
   const boundsFields = boundsSchema
-    ? Object.entries(boundsSchema.fields).filter(([key]) => {
+    ? Object.entries(boundsSchema.fields).filter(([key, def]) => {
         if (key === 'profile' || key === 'path') return false;
+        // Hide bounds the profile declares as not enforced. Offering a control
+        // that nothing acts on is worse than omitting it: it reads as a working
+        // protection. Driven by the profile, not a hardcoded field list, so a
+        // bound becomes visible the moment enforcement lands.
+        if ((def as { enforced?: boolean }).enforced === false) return false;
         return true;
       })
     : [];

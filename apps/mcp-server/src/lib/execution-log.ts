@@ -237,13 +237,30 @@ export class ExecutionLog implements ExecutionLogQuery {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function windowCutoff(window: CumulativeWindow, now: number): number {
+/**
+ * Start of the window a cumulative bound is measured over.
+ *
+ * daily/weekly are ROLLING; monthly is the CALENDAR month, anchored to the 1st
+ * at 00:00 UTC. That asymmetry is not arbitrary — it mirrors what the Authority
+ * Server actually enforces (see receipts-store: "monthly → CALENDAR month,
+ * anchored to the 1st at 00:00 UTC").
+ *
+ * This used to be a rolling 30 days here while the AS reset on the 1st, so the
+ * two disagreed about what "monthly" meant. Just after a month boundary the
+ * agent could be told it had used 48 of 50 posts and hold back, while the AS
+ * had already reset it to zero — and near month end, the reverse. Nothing was
+ * unsafe (the enforcing side was the strict one), but the number reported did
+ * not describe the rule being applied.
+ */
+export function windowCutoff(window: CumulativeWindow, now: number): number {
   switch (window) {
     case 'daily':
       return now - 24 * 60 * 60;
     case 'weekly':
       return now - 7 * 24 * 60 * 60;
-    case 'monthly':
-      return now - 30 * 24 * 60 * 60;
+    case 'monthly': {
+      const d = new Date(now * 1000);
+      return Math.floor(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1, 0, 0, 0, 0) / 1000);
+    }
   }
 }

@@ -83,6 +83,14 @@ export class MCPGatekeeper {
       attestations: auth.attestations.map(a => a.blob),
       execution,
       context: resolvedContext,
+      // Scopes the local cumulative check to the same (profileId, path) key the
+      // ExecutionLog records under (see tool-proxy's record call). It cannot go
+      // inside `frame`: that is validated against the profile's boundsSchema,
+      // which declares no `path` field in any shipped profile, so an extra key
+      // there fails verification with "Unknown field". Omitting it entirely —
+      // the previous behaviour — made every cumulative lookup return zero, so
+      // the local gate never fired and the AS was doing all the enforcing.
+      path: auth.path,
     };
 
     const result = await verify(request, publicKeyHex, undefined, this.executionLog);

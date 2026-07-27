@@ -94,6 +94,12 @@ describe('MCP Gateway', () => {
     // Start the Suveren MCP server on a test port
     serverProcess = spawn('npx', ['tsx', 'bin/http.ts'], {
       cwd: resolve(__dirname, '..'),
+      // On Windows `npx` is npx.cmd, and spawn stopped resolving .cmd without a
+      // shell when the CVE-2024-27980 hardening landed — so this fails with
+      // ENOENT (spawn npx) and the suite times out waiting for a server that
+      // never started. Same fix as the shipping path in integration-manager.ts.
+      // Args are fixed literals, so there is nothing to interpolate.
+      shell: process.platform === 'win32',
       env: {
         ...process.env,
         SUVEREN_MCP_PORT: String(MCP_PORT),
@@ -104,6 +110,12 @@ describe('MCP Gateway', () => {
         // Clean slate: don't auto-register/install the crm+records personal
         // defaults (the suite asserts an empty integration list and add/remove).
         SUVEREN_DISABLE_AUTO_INTEGRATIONS: '1',
+        // This suite calls /internal/* without an X-Internal-Secret header, so
+        // the guard must be off. It only engages for a NON-EMPTY secret — and
+        // env is inherited, so an ambient SUVEREN_INTERNAL_SECRET (CI sets one
+        // for the bundle smoke; a shell may export one) would otherwise turn
+        // every call into a 403 that looks like a gateway bug.
+        SUVEREN_INTERNAL_SECRET: '',
       },
       stdio: ['pipe', 'pipe', 'pipe'],
     });

@@ -3276,3 +3276,55 @@ body.is-updating .update-banner {
   background: var(--bg-main);
   border: 1px dashed var(--border);
 }
+
+/* ── Recent blocks (read-denial log) ───────────────────────────────────────
+   Dashboard panel: read blocks the Gatekeeper made, so the owner can tell a
+   limit they set from a malfunction. See doc/read-denial-recording.md. */
+.recent-blocks .card-header { margin-bottom: 0.35rem; }
+.recent-blocks .rb-sub {
+  color: var(--text-muted); font-size: 0.8rem; margin: 0 0 1.1rem;
+  line-height: 1.45; max-width: 36ch;
+}
+.recent-blocks .rb-count {
+  flex: none; min-width: 1.6rem; height: 1.6rem; padding: 0 0.45rem;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 0.8rem; font-weight: 600; font-variant-numeric: tabular-nums;
+  background: color-mix(in srgb, var(--warning) 14%, transparent); color: var(--warning);
+  border: 1px solid color-mix(in srgb, var(--warning) 35%, transparent);
+  border-radius: 999px;
+}
+.recent-blocks .rb-rows { display: flex; flex-direction: column; }
+.recent-blocks .rb-row {
+  display: grid; grid-template-columns: auto 1fr auto; gap: 0.75rem 0.85rem;
+  align-items: start; padding: 0.85rem 0; border-top: 1px solid var(--border);
+}
+.recent-blocks .rb-row:first-child { border-top: none; }
+.recent-blocks .rb-dot { width: 0.5rem; height: 0.5rem; border-radius: 999px; margin-top: 0.35rem; background: var(--warning); }
+.recent-blocks .rb-dot.act { background: var(--danger); }
+.recent-blocks .rb-dot.info { background: var(--text-muted); }
+.recent-blocks .rb-body { min-width: 0; }
+.recent-blocks .rb-line { font-size: 0.86rem; line-height: 1.4; color: var(--text-primary); }
+.recent-blocks .rb-line b { font-weight: 600; }
+.recent-blocks .rb-meta { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.3rem; flex-wrap: wrap; }
+.recent-blocks .rb-chip {
+  font-size: 0.64rem; letter-spacing: 0.06em; text-transform: uppercase; font-weight: 600;
+  padding: 0.12rem 0.44rem; border-radius: 0.35rem;
+  background: var(--accent-subtle); color: var(--text-muted);
+}
+.recent-blocks .rb-chip.warn { background: color-mix(in srgb, var(--warning) 14%, transparent); color: var(--warning); }
+.recent-blocks .rb-chip.act  { background: var(--danger-subtle); color: var(--danger); }
+.recent-blocks .rb-via { font-size: 0.72rem; color: var(--text-muted); }
+.recent-blocks .rb-when { font-size: 0.74rem; color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; text-align: right; }
+.recent-blocks .rb-fix { display: inline-block; margin-top: 0.4rem; font-size: 0.76rem; color: var(--text-primary); text-underline-offset: 2px; }
+.recent-blocks .rb-foot { margin-top: 1rem; padding-top: 0.9rem; border-top: 1px solid var(--border); }
+.recent-blocks .rb-viewall {
+  font: inherit; font-size: 0.8rem; color: var(--text-primary); background: none; border: none;
+  padding: 0; cursor: pointer; text-decoration: underline; text-underline-offset: 3px;
+}
+.recent-blocks .rb-empty { text-align: center; padding: 1.25rem 1rem 0.25rem; }
+.recent-blocks .rb-mark {
+  width: 2.25rem; height: 2.25rem; border-radius: 999px; background: var(--success-subtle); color: var(--success);
+  display: inline-flex; align-items: center; justify-content: center; margin-bottom: 0.75rem;
+}
+.recent-blocks .rb-empty h3 { font-size: 0.9rem; margin: 0 0 0.3rem; }
+.recent-blocks .rb-empty p { font-size: 0.8rem; color: var(--text-muted); margin: 0 auto; max-width: 30ch; line-height: 1.45; }

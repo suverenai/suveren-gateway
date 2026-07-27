@@ -8,6 +8,7 @@ import { SPClient } from './sp-client';
 import { AttestationCache, type CachedAuthorization } from './attestation-cache';
 import { GateStore, type GateContent, type GateEntry } from './gate-store';
 import { ExecutionLog } from './execution-log';
+import { DenialLog } from './denial-log';
 import { MCPGatekeeper } from './gatekeeper';
 
 export interface EnrichedAuthorization extends CachedAuthorization {
@@ -22,6 +23,7 @@ export class SharedState {
   readonly cache: AttestationCache;
   readonly gateStore: GateStore;
   readonly executionLog: ExecutionLog;
+  readonly denialLog: DenialLog;
   readonly gatekeeper: MCPGatekeeper;
 
   constructor(spUrl: string, gateStorePath?: string) {
@@ -29,6 +31,7 @@ export class SharedState {
     this.cache = new AttestationCache(this.spClient);
     this.gateStore = new GateStore(gateStorePath);
     this.executionLog = new ExecutionLog(gateStorePath);
+    this.denialLog = new DenialLog(gateStorePath);
     this.gatekeeper = new MCPGatekeeper(this.cache, this.executionLog);
   }
 

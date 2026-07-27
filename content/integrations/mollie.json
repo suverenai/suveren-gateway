@@ -7,8 +7,8 @@
   "profile": "charge",
   "npmPackage": "mcp-remote",
   "mcp": {
-    "command": "sh",
-    "args": ["-c", "mcp-remote https://mcp.mollie.com/mcp --header \"Authorization: Bearer $MOLLIE_ACCESS_TOKEN\""]
+    "command": "mcp-remote",
+    "args": ["https://mcp.mollie.com/mcp", "--header", "Authorization: Bearer ${MOLLIE_ACCESS_TOKEN}"]
   },
   "credentials": {
     "fields": [

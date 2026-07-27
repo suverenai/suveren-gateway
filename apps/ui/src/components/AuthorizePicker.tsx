@@ -69,10 +69,24 @@ export function AuthorizePicker({ onDismiss }: Props) {
     if (manifest?.profile) profileIntegrationMap.set(manifest.profile, i);
   }
 
-  const visibleProfiles = profiles.filter(p => {
-    const shortId = p.id.replace(/@.*$/, '').split('/').pop() ?? p.id;
-    return profileManifestMap.has(shortId);
-  });
+  // Only profiles an installed manifest maps to, deduped to the HIGHEST version
+  // per short id. Several versions of one profile can be served at once (e.g.
+  // customers@0.4 kept for old grants + customers@0.5 with a read gate); the
+  // picker must offer exactly one — the newest — or the same integration lists
+  // twice. New grants are created under the newest version.
+  const shortOf = (id: string): string => id.replace(/@.*$/, '').split('/').pop() ?? id;
+  const versionOf = (id: string): string => id.split('@')[1] ?? '';
+  const latestByShort = new Map<string, ProfileSummary>();
+  for (const p of profiles) {
+    const shortId = shortOf(p.id);
+    if (!profileManifestMap.has(shortId)) continue;
+    const existing = latestByShort.get(shortId);
+    // Numeric-aware compare so 0.10 > 0.9; falls back to localeCompare.
+    if (!existing || versionOf(p.id).localeCompare(versionOf(existing.id), undefined, { numeric: true }) > 0) {
+      latestByShort.set(shortId, p);
+    }
+  }
+  const visibleProfiles = Array.from(latestByShort.values());
 
   const isTeamManaged = (profileId: string): boolean => profileId in teamProfiles;
 

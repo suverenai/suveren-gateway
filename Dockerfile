@@ -65,8 +65,8 @@ COPY content/integrations/ /app/content/integrations/
 # Profiles
 COPY --from=build /hap-profiles /hap-profiles
 
-# Mount points
-RUN mkdir -p /app/data /app/integrations
+# Mount points — owned by the unprivileged runtime user (see USER below).
+RUN mkdir -p /app/data /app/integrations && chown -R node:node /app/data /app/integrations
 
 ARG GIT_SHA=dev
 ENV HAP_BUILD_SHA=$GIT_SHA
@@ -81,6 +81,26 @@ ENV SUVEREN_PROFILES_DIR=/hap-profiles
 ENV NODE_ENV=production
 
 EXPOSE 3000 3030
+
+# The vault, gate store, denial log and execution log all live here. Declaring
+# it a volume stops a container replacement from silently discarding them into
+# a throwaway container layer. docker-compose.yml binds it to ~/.suveren;
+# Kubernetes ignores this line and uses its own volume spec.
+VOLUME ["/app/data"]
+
+# An orchestrator otherwise cannot tell a wedged gateway from a healthy one —
+# the "Starting… / Not running" failure mode is invisible without this.
+# start-period covers first boot, where the MCP server npm-installs the
+# personalDefault integrations inside its listen callback.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
+  CMD node -e "const p=process.env.SUVEREN_CP_PORT||3000;fetch('http://127.0.0.1:'+p+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+
+# Run unprivileged. Kubernetes clusters enforcing the restricted Pod Security
+# Standard reject root containers outright, and nothing here needs a privileged
+# capability. Linux bind mounts: the host dir mounted at /app/data must be
+# writable by uid 1000 (Docker Desktop on macOS/Windows maps this for you, so
+# docker-compose.yml works unchanged).
+USER node
 
 # tini handles PID 1 / signal forwarding; server.js supervises the two
 # child processes (CP + MCP) and propagates SIGINT/SIGTERM to them.

@@ -28,6 +28,12 @@ const env = {
   NODE_ENV: 'production',
   SUVEREN_CP_PORT: CP_PORT,
   SUVEREN_MCP_PORT: MCP_PORT,
+  // The control plane talks to the MCP server over this URL. It defaults to
+  // 127.0.0.1:3430 in mcp-bridge.ts, so if the user overrode SUVEREN_MCP_PORT
+  // without also setting this, every CP→MCP internal call hit the wrong port
+  // and failed — surfacing as "Couldn't load integrations". Derive it here so
+  // the two can never drift. An explicit override still wins (e.g. Docker).
+  SUVEREN_MCP_INTERNAL_URL: process.env.SUVEREN_MCP_INTERNAL_URL ?? `http://127.0.0.1:${MCP_PORT}`,
   HAP_UI_DIST: UI_DIST,
   SUVEREN_MANIFESTS_DIR: MANIFESTS_DIR,
   SUVEREN_PROFILES_DIR: PROFILES_DIR,

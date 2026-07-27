@@ -11,10 +11,28 @@
 
 import type { IntegrationManager, DiscoveredTool } from './integration-manager';
 import type { SharedState, EnrichedAuthorization } from './shared-state';
+import type { DenialReason } from './denial-log';
 import { SPReceiptError } from './sp-client';
 import { isCommitmentDowngrade } from './attestation-cache';
 import { appendVerificationFooter, shouldAttachFooter } from './receipt-footer';
 import { computeContentBinding, attachReceiptId } from './content-binding';
+import { selectAuthorization } from './scope-specificity';
+import {
+  boundsSatisfyReadGate,
+  resolveAgeBoundField,
+  maxReadAgeDays,
+  parseMessageTimestamp,
+  isOlderThanMaxAge,
+  getByDottedPath,
+  composeReadQuery,
+  readToolIsGoverned,
+  allowedResources,
+  deniedResources,
+  filterItemsByResource,
+  hasBlockedValue,
+  type BoundsSchemaLike,
+} from './read-gate';
+import { getProfile } from '@hap/core';
 import { readFile } from 'node:fs/promises';
 import { extname } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -113,6 +131,50 @@ type ToolResult = {
 };
 
 /**
+ * Parse the first JSON text block of a downstream tool result, for post-fetch
+ * read enforcement (age + coverage). MCP tools return their payload as JSON
+ * text. Returns undefined on any parse/shape failure so callers fail closed.
+ * The exact provider response shape is validated live on the gateway.
+ */
+function parseFirstJson(result: ToolResult): unknown {
+  const text = result.content?.find(c => c.type === 'text')?.text;
+  if (typeof text !== 'string') return undefined;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Deny a read: record the block (F7.4 denial log — for the human, never any
+ * content) and return the user-facing error. `detail` is the human sentence
+ * WITHOUT the "Read blocked by Gatekeeper:" prefix (added here). `target` is an
+ * optional coarse token (e.g. a calendar name) — never content. Recording never
+ * breaks the denial (denialLog may be absent in tests → optional-chain).
+ */
+function denyRead(
+  state: SharedState,
+  tool: DiscoveredTool,
+  reason: DenialReason,
+  detail: string,
+  target?: string,
+): ToolResult {
+  try {
+    state.denialLog?.record({
+      ts: Date.now(),
+      tool: tool.originalName,
+      integrationId: tool.integrationId,
+      profile: tool.gating?.profile ?? null,
+      reason,
+      detail,
+      target,
+    });
+  } catch { /* recording must never break the denial */ }
+  return { content: [{ type: 'text', text: `Read blocked by Gatekeeper: ${detail}` }], isError: true };
+}
+
+/**
  * Create a handler function for a proxied tool that gates calls through Suveren.
  *
  * All tools require authorization:
@@ -139,9 +201,35 @@ export function createGatedToolHandler(
 
   const { profile, executionMapping, staticExecution, category } = tool.gating;
 
-  // Read-only tools: require matching authorization but skip execution context checks
+  // Tools the manifest declares unavailable are always blocked at the gate.
+  if (category === 'disabled') {
+    return async () => ({
+      content: [{
+        type: 'text',
+        text: `Tool "${tool.namespacedName}" is disabled by the integration manifest and cannot be used.`,
+      }],
+      isError: true,
+    });
+  }
+
+  // Read-only tools: require a matching authorization AND satisfaction of any
+  // declared read gate. (Previously the read path only checked that a matching
+  // authorization existed and proxied verbatim — so declared read gates like
+  // records' `read_access: unlimited` were never enforced. doc §1 F1.)
   if (category === 'read') {
+    const readGate = { boundField: tool.gating.boundField, requiredValue: tool.gating.requiredValue };
+    const readAdapter = tool.gating.read;
+    // F9: a read tool MUST declare governance (gate, adapter, or explicit
+    // exemption). Absence of all three ⇒ deny. Decided once here, from the tool
+    // config, so an unconfigured read can never fall through to pass-through.
+    const governed = readToolIsGoverned(tool.gating);
     return async (args: Record<string, unknown>) => {
+      if (!governed) {
+        return denyRead(state, tool, 'ungoverned',
+          `${tool.originalName} declares no read governance (no static gate, no read adapter, ` +
+          `no explicit exemption), so the gateway cannot bound what it returns. This is a manifest ` +
+          `defect — the tool must declare how its reads are limited before it can be used.`);
+      }
       const auths = state.getEnrichedAuthorizations();
       const matchingAuths = auths.filter(
         a => a.complete && profileMatches(a.profileId, profile!),
@@ -158,8 +246,177 @@ export function createGatedToolHandler(
         };
       }
 
-      // Authorization exists — proxy the read call (no execution context verification needed)
-      return integrationManager.callTool(tool.integrationId, tool.originalName, args);
+      // Enforce the static read gate: at least one matching authorization must
+      // grant the required bound (e.g. read_access:unlimited). Fail closed.
+      if (readGate.boundField) {
+        const permitted = matchingAuths.some(a =>
+          boundsSatisfyReadGate((a.bounds ?? a.frame) as Record<string, string | number> | undefined, readGate),
+        );
+        if (!permitted) {
+          return denyRead(state, tool, 'read_gate',
+            `using ${tool.originalName} requires an authorization with ` +
+            `"${readGate.boundField}: ${readGate.requiredValue}", but no active authorization grants it.`);
+        }
+      }
+
+      // Per-item read enforcement — generic (doc §1, §3.0, and the read model in
+      // doc/read-authorization-identity-coverage.md):
+      //  • AGE: the item must fall inside the most-permissive read_max_age_days
+      //    window across matching authorizations.
+      // The only read-denial reason is AGE. Correspondent COVERAGE denial (the
+      // superseded "Option A / authority scope binds reads" model) is removed:
+      // grant scope no longer restricts reads. Per-correspondent overrides that
+      // *raise* the window are a future slice (doc §7) and will consume the
+      // participant helpers, not a coverage predicate. See the §4 supersession
+      // banner in read-bounds-enforcement-plan.md.
+      // Bound field comes from the profile SCHEMA; date location + query syntax
+      const readProfile = readAdapter ? getProfile(matchingAuths[0].profileId) : undefined;
+      const boundsSchema = readProfile?.boundsSchema as BoundsSchemaLike | undefined;
+      const ageBoundField = readAdapter?.ageField ? resolveAgeBoundField(boundsSchema, readAdapter.ageField) : null;
+
+      // FAIL-CLOSED on an unset read-age window (F11). A tool that declares an age
+      // dimension (ageField → a profile age bound) MUST be bounded by some grant's
+      // value. `read_max_age_days` is optional in the profile, so a grant can omit
+      // it — and an omitted window used to mean "read all history" (the pentest
+      // hole). Instead: if no matching grant sets the window, DENY. Resolved once
+      // here and reused by the pre-fetch and post-fetch checks.
+      //
+      // NOTE (deferred feature): a "local per-integration read age" was designed
+      // and scaffolded (IntegrationConfig.readAgeDays + IntegrationManager
+      // .getReadAgeDays) but PARKED — moving the value off the signed grant needs
+      // the control-plane + UI to set it, or reads fail-closed with no way to fix
+      // it. Until that ships, the age stays a signed grant bound (below).
+      let readMaxAge: number | null = null;
+      if (ageBoundField) {
+        readMaxAge = maxReadAgeDays(
+          matchingAuths.map(a => (a.bounds ?? a.frame) as Record<string, string | number> | undefined),
+          ageBoundField,
+        );
+        if (readMaxAge === null) {
+          return denyRead(state, tool, 'unset_age',
+            `no read-age window is set on your authorization (${ageBoundField}). Reads are not ` +
+            `permitted with an unbounded window — set how far back the agent may read, then try ` +
+            `again. Nothing was read.`);
+        }
+      }
+
+      // F7 — RESOURCE scope: which container this read may touch (calendar, mail
+      // folder, …). Pre-fetch, before any fetch: the requested container(s) must
+      // be inside the grant's permitted set, else DENY. Fail-closed — an empty
+      // permitted set allows nothing (that is the point: don't expose every
+      // container by default). The container id the agent asked for is PINNED
+      // into the outgoing args so the downstream can't reinterpret an omitted arg.
+      let outgoing = args;
+      if (readAdapter?.resourceBound && (readAdapter.resourceArg || readAdapter.resourceArrayArg)) {
+        const allowed = allowedResources(
+          matchingAuths.map(a => (a.context ?? {}) as Record<string, string | number>),
+          readAdapter.resourceBound,
+        );
+        const isArray = Boolean(readAdapter.resourceArrayArg);
+        const argName = (readAdapter.resourceArrayArg ?? readAdapter.resourceArg) as string;
+        const raw = args[argName];
+        // Resolve requested containers, substituting the provider default for an
+        // omitted arg (an omitted arg still resolves to a real container).
+        let requested: string[];
+        if (isArray) {
+          requested = Array.isArray(raw) && raw.length > 0
+            ? raw.map(String)
+            : readAdapter.resourceDefault ? [readAdapter.resourceDefault] : [];
+        } else {
+          requested = typeof raw === 'string' && raw.trim() !== ''
+            ? [raw]
+            : readAdapter.resourceDefault ? [readAdapter.resourceDefault] : [];
+        }
+        const denied = deniedResources(requested, allowed);
+        if (requested.length === 0 || denied.length > 0) {
+          const why = requested.length === 0
+            ? 'no container was resolved for this read'
+            : `not in your permitted set (${denied.join(', ')})`;
+          return denyRead(state, tool, 'resource',
+            `${tool.originalName} may only read the containers your authorization permits ` +
+            `(${readAdapter.resourceBound}); the requested one is ${why}. Nothing was read.`,
+            denied.length > 0 ? denied.join(', ') : undefined);
+        }
+        // Pin the validated container back onto the args so an omitted arg can't
+        // fall through to a wider provider default.
+        outgoing = { ...args, [argName]: isArray ? requested : requested[0] };
+      }
+
+      // F7 — PINNED args: force provider flags the agent must not control (e.g.
+      // includeSpamTrash:false), overriding whatever it sent. A widening arg is
+      // the gateway's to set, not the agent's.
+      if (readAdapter?.pinnedArgs) {
+        outgoing = { ...outgoing, ...readAdapter.pinnedArgs };
+      }
+
+      // Pre-fetch: AND the age ceiling into the search query (list/search tools)
+      // so out-of-window items can't come back at all.
+      if (readAdapter?.queryArg) {
+        const clauses: string[] = [];
+        if (ageBoundField && readAdapter.ageConstraint && readMaxAge !== null) {
+          clauses.push(readAdapter.ageConstraint.replace('{days}', String(readMaxAge)));
+        }
+        if (clauses.length > 0) {
+          // F8: the agent's fragment must not be able to bind across the
+          // boundary and capture the injected clauses (a trailing `OR` turns
+          // the intended AND into a union). composeReadQuery validates and
+          // brackets; an unsafe fragment is a denial, never a silent rewrite.
+          const base = typeof args[readAdapter.queryArg] === 'string' ? (args[readAdapter.queryArg] as string) : '';
+          const composed = composeReadQuery(base, clauses);
+          if (!composed.ok) {
+            return denyRead(state, tool, 'query_unsafe',
+              `${composed.reason}. The gateway must AND its read limits onto your search, and this ` +
+              `query could not be safely combined. Re-send it without a trailing operator or ` +
+              `unbalanced parenthesis.`);
+          }
+          outgoing = { ...outgoing, [readAdapter.queryArg]: composed.query };
+        }
+      }
+
+      const result = await integrationManager.callTool(tool.integrationId, tool.originalName, outgoing);
+
+      // F7 — post-fetch container exclusion: block a get-by-id whose item is in
+      // a forbidden container (e.g. a message labelled SPAM/TRASH), so it can't
+      // be fetched directly around the list-level pin.
+      if (readAdapter?.blockResultValues && readAdapter.resultValuesPath) {
+        const parsed = parseFirstJson(result);
+        const blocked = new Set(readAdapter.blockResultValues);
+        if (parsed !== undefined && hasBlockedValue(parsed, readAdapter.resultValuesPath, blocked)) {
+          return denyRead(state, tool, 'spam',
+            `this item is in a container your authorization excludes (e.g. spam/trash). ` +
+            `Its contents were not returned.`);
+        }
+      }
+
+      // Post-fetch (get-by-id tools): AGE only. Parse the response once.
+      // readMaxAge is guaranteed non-null here when ageBoundField is set (the
+      // unset case failed closed above).
+      if (readAdapter && ageBoundField && readAdapter.resultDatePath && readMaxAge !== null) {
+        const parsed = parseFirstJson(result);
+        const rawDate = parsed === undefined ? undefined : getByDottedPath(parsed, readAdapter.resultDatePath);
+        if (isOlderThanMaxAge(parseMessageTimestamp(rawDate), readMaxAge, Date.now())) {
+          return denyRead(state, tool, 'age',
+            `this item is older than the ${readMaxAge}-day read window your authorization grants ` +
+            `(read_max_age_days). Its contents were not returned.`);
+        }
+      }
+
+      // F7 — RESOURCE result filter (enumeration tools, e.g. list_calendars):
+      // drop items in containers the grant doesn't permit, so an excluded
+      // container's existence isn't disclosed. Fail closed: if the result can't
+      // be parsed as an array, return an empty list rather than the raw payload.
+      if (readAdapter?.resourceBound && readAdapter.resultResourcePath && !readAdapter.resourceArg && !readAdapter.resourceArrayArg) {
+        const allowed = allowedResources(
+          matchingAuths.map(a => (a.context ?? {}) as Record<string, string | number>),
+          readAdapter.resourceBound,
+        );
+        const parsed = parseFirstJson(result);
+        const items = Array.isArray(parsed) ? parsed : [];
+        const kept = filterItemsByResource(items, readAdapter.resultResourcePath, allowed);
+        return { ...result, content: [{ type: 'text', text: JSON.stringify(kept) }] };
+      }
+
+      return result;
     };
   }
 
@@ -206,18 +463,64 @@ export function createGatedToolHandler(
       };
     }
 
-    // Try each matching authorization until one passes verification
+    // Verify EVERY matching authorization and collect the ones that pass
+    // ("passers"). Selection among them is most-specific-wins + fail-safe
+    // (scope-specificity.ts / doc §7) — NOT first-pass-wins, which let an
+    // overlapping grant silently override a stricter one by cache order.
     const errors: string[] = [];
-    for (const auth of matchingAuths) {
+    const passers: EnrichedAuthorization[] = [];
+    for (const candidate of matchingAuths) {
       // Pass v0.4 enriched fields (bounds/context from gate store) to gatekeeper
-      const { result } = await state.gatekeeper.verifyExecution(auth.authorizationId, execution, {
-        bounds: auth.bounds,
-        context: auth.context,
+      const { result } = await state.gatekeeper.verifyExecution(candidate.authorizationId, execution, {
+        bounds: candidate.bounds,
+        context: candidate.context,
       });
-
-      if (!result.approved) {
-      }
       if (result.approved) {
+        passers.push(candidate);
+      } else {
+        const reasons = result.errors.map(e => {
+          if (e.code === 'BOUND_EXCEEDED') {
+            return `${candidate.path}: ${e.field}: ${e.message}`;
+          }
+          return `${candidate.path}: ${e.message}`;
+        });
+        errors.push(...reasons);
+      }
+    }
+
+    if (passers.length === 0) {
+      return {
+        content: [{
+          type: 'text',
+          text: `Tool call rejected by Gatekeeper. Tried ${matchingAuths.length} authorization(s):\n` +
+            errors.map(e => `  - ${e}`).join('\n'),
+        }],
+        isError: true,
+      };
+    }
+
+    // Most-specific-wins + fail-safe selection over the profile's context schema.
+    // Generic: specificity is set-containment over contextSchema.keyOrder — no
+    // per-profile code. A tie / partial overlap / no-scope profile falls back to
+    // requiring approval if any passer does (never a silent bypass).
+    const contextKeys = getProfile(passers[0].profileId)?.contextSchema?.keyOrder ?? [];
+    const selection = selectAuthorization(
+      contextKeys,
+      passers.map(a => ({
+        id: a.authorizationId,
+        auth: a,
+        context: a.context ?? {},
+        requiresApproval: (a.deferredCommitmentDomains ?? []).length > 0,
+      })),
+    );
+    const auth = selection.chosen.auth;
+    if (selection.superseded.length > 0) {
+      console.error(
+        `[Suveren MCP] selection(${tool.namespacedName}): chose ${auth.authorizationId} ` +
+          `(${selection.reason}) over [${selection.superseded.map(s => s.id).join(', ')}]`,
+      );
+    }
+    {
         // Every SP reference (receipt, proposals, summary) is the per-ceremony id.
         const authzId = auth.authorizationId;
 
@@ -430,26 +733,6 @@ export function createGatedToolHandler(
         if (receiptId) outgoingArgs = attachReceiptId(tool, outgoingArgs, receiptId);
         return integrationManager.callTool(tool.integrationId, tool.originalName, outgoingArgs);
       }
-
-      // Collect rejection reasons
-      const reasons = result.errors.map(e => {
-        if (e.code === 'BOUND_EXCEEDED') {
-          return `${auth.path}: ${e.field}: ${e.message}`;
-        }
-        return `${auth.path}: ${e.message}`;
-      });
-      errors.push(...reasons);
-    }
-
-    // All authorizations failed
-    return {
-      content: [{
-        type: 'text',
-        text: `Tool call rejected by Gatekeeper. Tried ${matchingAuths.length} authorization(s):\n` +
-          errors.map(e => `  - ${e}`).join('\n'),
-      }],
-      isError: true,
-    };
   };
 }
 

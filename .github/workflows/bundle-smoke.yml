@@ -11,16 +11,74 @@ on:
       - 'bundle/**'
       - 'apps/**'
       - 'packages/**'
+      # The F9 read-governance lint reads content/integrations — a manifest
+      # that ships an ungoverned read tool MUST fail a build.
+      - 'content/**'
+      - 'Dockerfile'
       - '.github/workflows/bundle-smoke.yml'
   pull_request:
     paths:
       - 'bundle/**'
       - 'apps/**'
       - 'packages/**'
+      - 'content/**'
+      - 'Dockerfile'
       - '.github/workflows/bundle-smoke.yml'
   workflow_dispatch:
 
 jobs:
+  # Deliberately a SEPARATE job from `smoke`. The smoke job sets a fixed
+  # internal secret and a shared data dir at job level so its gateway can be
+  # driven end-to-end; both leak into every step in that job. Running the
+  # suites there made the /internal guard reject with 403 and would have had
+  # tests writing into the smoke gateway's state. Separate job = no coupling,
+  # and it runs in parallel so it costs wall-clock nothing.
+  #
+  # All three OSes because the suites are not OS-neutral: the denial log, gate
+  # store and vault write files, and the read path spawns real MCP servers, so
+  # path separators and the Windows .cmd shim are in scope. This is also the
+  # only place the F9 read-governance lint runs — without it, that regression
+  # guard guards nothing.
+  unit:
+    name: unit (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Check out profile catalog
+        uses: actions/checkout@v6
+        with:
+          repository: humanagencyprotocol/hap-profiles
+          path: .hap-profiles
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install workspace deps
+        run: pnpm install --frozen-lockfile
+
+      # MUST precede the tests: the @hap/core workspace wrapper resolves to
+      # ./dist/*, which only exists once tsup has run. A dev machine passes
+      # either way because a stale dist/ is lying around; a fresh checkout
+      # fails to resolve the package at all.
+      - name: Build
+        run: pnpm build
+
+      - name: Unit tests
+        run: pnpm -r test
+
   smoke:
     name: ${{ matrix.os }}
     strategy:
@@ -28,7 +86,17 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
+    timeout-minutes: 20
+
+    env:
+      SUVEREN_CP_PORT: 3500
+      SUVEREN_MCP_PORT: 3530
+      # runner.temp is not available in a job-level env block; workspace is.
+      SUVEREN_DATA_DIR: ${{ github.workspace }}/.suveren-smoke
+      # Pre-set so the integration smoke test can call the MCP server's
+      # /internal API without an Authority Server account. server.js passes
+      # this through to both children instead of generating a random one.
+      SUVEREN_INTERNAL_SECRET: bundle-smoke-internal-secret
 
     steps:
       - uses: actions/checkout@v6
@@ -65,20 +133,24 @@ jobs:
         working-directory: bundle/dist
         run: npm install --omit=dev --no-audit --no-fund
 
-      - name: Start gateway, probe, stop
+      - name: Start gateway
+        shell: bash
+        run: node bundle/dist/bin/suveren-gateway.js start --detach
+
+      # Runs IMMEDIATELY after start — no sleep — because the window we care
+      # about is the one where the MCP server is bound but not answering.
+      # crm + records are personalDefault, so a fresh data dir makes the MCP
+      # server npm-install both inside its app.listen callback.
+      - name: Integration smoke (install, start, restart)
+        shell: bash
+        run: node scripts/integration-smoke.mjs
+
+      - name: Probe control plane, status
         shell: bash
         # bash on windows-latest = Git Bash, so the same script works
         # on all three platforms.
         run: |
           set -e
-          export SUVEREN_CP_PORT=3500
-          export SUVEREN_MCP_PORT=3530
-          export SUVEREN_DATA_DIR="${RUNNER_TEMP}/suveren"
-
-          node bundle/dist/bin/suveren-gateway.js start --detach
-          # Give both child processes time to bind their ports.
-          # On windows-latest the cold start is noticeably slower.
-          sleep 5
 
           # Functional check: the started bundle must actually LOAD profiles.
           # An installable-but-empty bundle (the 0.2.8 bug) would log
@@ -102,14 +174,134 @@ jobs:
           node bundle/dist/bin/suveren-gateway.js status
           echo "::endgroup::"
 
-          echo "::group::stop"
-          node bundle/dist/bin/suveren-gateway.js stop
-          echo "::endgroup::"
+      - name: Stop gateway
+        if: always()
+        shell: bash
+        run: node bundle/dist/bin/suveren-gateway.js stop || echo "(already stopped)"
 
-      - name: Show gateway log on failure
-        if: failure()
+      # Windows cannot shut down gracefully (no POSIX signals reach a detached
+      # process), so `stop` tree-kills there instead. Without this assertion the
+      # regression is invisible: `stop` reports success, the CP + MCP children
+      # and every integration they spawned keep running, and each start/stop
+      # cycle leaks another tree still holding the ports and the data dir.
+      - name: Assert no orphaned processes after stop
+        if: always()
+        shell: bash
+        run: |
+          list_procs() {
+            if [ "$RUNNER_OS" = "Windows" ]; then
+              powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { \$_.CommandLine } | ForEach-Object { \$_.CommandLine }" 2>/dev/null || true
+            else
+              ps -eo args= 2>/dev/null || true
+            fi
+          }
+          # Scope to THIS run: integration children carry the smoke data dir in
+          # their argv, so matching bare "crm-mcp" would also flag a developer's
+          # own gateway when the check is run locally. Windows paths use
+          # backslashes, hence the sed rather than basename.
+          marker=$(echo "$SUVEREN_DATA_DIR" | sed 's#.*[/\\]##')
+          orphans=""
+          for i in $(seq 1 10); do
+            # Snapshot FIRST, then match. Piping ps straight into grep makes the
+            # grep — whose own argv carries the pattern — show up in its own
+            # input and match itself, failing every run.
+            procs=$(list_procs)
+            orphans=$(printf '%s\n' "$procs" | grep -E "${marker}|bundle[/\\\\]dist[/\\\\]server\.js" || true)
+            [ -z "$orphans" ] && break
+            sleep 1
+          done
+          if [ -n "$orphans" ]; then
+            echo "::error::processes survived \`stop\` — the shutdown left orphans:"
+            echo "$orphans"
+            exit 1
+          fi
+          echo "clean: no gateway or integration processes survived stop"
+
+      # Always — the integration timings in this log are the point of the run,
+      # not just failure forensics.
+      - name: Show gateway log
+        if: always()
         shell: bash
         run: |
           echo "::group::gateway.log"
-          cat "${RUNNER_TEMP}/suveren/gateway.log" 2>/dev/null || echo "(no log file)"
+          cat "${SUVEREN_DATA_DIR}/gateway.log" 2>/dev/null || echo "(no log file)"
           echo "::endgroup::"
+
+  # The container image is the deployment artifact for anyone running the
+  # gateway on a server (their own cloud, a VM, k8s). publish.yml only builds
+  # it on a `v*` tag, so until now nothing verified it between releases —
+  # a broken image was discoverable only by cutting one.
+  docker:
+    name: docker image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: suveren-gateway:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Boot, probe, and assert the runtime posture
+        run: |
+          set -e
+          docker run -d --name suveren-ci -p 3000:3000 -p 3030:3030 suveren-gateway:ci
+
+          echo "::group::wait for HEALTHCHECK"
+          # Asserts the HEALTHCHECK itself, not just the endpoint: an
+          # orchestrator restarts on this signal, so it has to go green.
+          for i in $(seq 1 60); do
+            state=$(docker inspect --format '{{.State.Health.Status}}' suveren-ci)
+            echo "  [$i] health=$state"
+            [ "$state" = "healthy" ] && break
+            if [ "$state" = "unhealthy" ]; then
+              echo "::error::container reported unhealthy"; exit 1
+            fi
+            sleep 5
+          done
+          [ "$(docker inspect --format '{{.State.Health.Status}}' suveren-ci)" = "healthy" ] \
+            || { echo "::error::container never became healthy"; exit 1; }
+          echo "::endgroup::"
+
+          echo "::group::non-root"
+          uid=$(docker exec suveren-ci id -u)
+          echo "  running as uid $uid"
+          [ "$uid" != "0" ] || { echo "::error::container runs as root — clusters enforcing the restricted Pod Security Standard will reject it"; exit 1; }
+          echo "::endgroup::"
+
+          echo "::group::data dir is writable by the unprivileged user"
+          # Non-root + a chown that missed a mount point = a gateway that boots
+          # and then cannot persist the vault. Fail here, not in production.
+          docker exec suveren-ci sh -c 'touch /app/data/.ci-write && rm /app/data/.ci-write' \
+            || { echo "::error::/app/data is not writable as the runtime user"; exit 1; }
+          docker exec suveren-ci sh -c 'touch /app/integrations/.ci-write && rm /app/integrations/.ci-write' \
+            || { echo "::error::/app/integrations is not writable as the runtime user"; exit 1; }
+          echo "::endgroup::"
+
+          echo "::group::probes"
+          curl -fsS http://localhost:3000/health; echo
+          curl -fsS -o /dev/null -w 'GET /  -> %{http_code}\n' http://localhost:3000/
+          echo "::endgroup::"
+
+          echo "::group::profiles loaded"
+          docker logs suveren-ci 2>&1 | grep -q "NO PROFILES LOADED" \
+            && { echo "::error::image loaded ZERO profiles"; exit 1; }
+          docker logs suveren-ci 2>&1 | grep "Loaded .* profile(s)" \
+            || { echo "::error::no profile-load line in container logs"; exit 1; }
+          echo "::endgroup::"
+
+      - name: Container logs
+        if: always()
+        run: docker logs suveren-ci 2>&1 || echo "(no container)"
+
+      - name: Clean up
+        if: always()
+        run: docker rm -f suveren-ci || true
