@@ -78,11 +78,23 @@ export class MCPGatekeeper {
     // hap-core's checkContextConstraints compares execution values against it
     // to enforce subset/enum/pattern constraints. Required locally per spec —
     // the SP only holds context_hash and cannot enforce context constraints.
-    const request: GatekeeperRequest = {
+    // `path` is widened locally so this compiles against the currently
+    // PUBLISHED hap-core. NOTE: the local cumulative gate stays inert until a
+    // hap-core carrying the request-path fix is published and consumed here —
+    // the older verify() simply ignores the field.
+    const request: GatekeeperRequest & { path?: string } = {
       frame,
       attestations: auth.attestations.map(a => a.blob),
       execution,
       context: resolvedContext,
+      // Scopes the local cumulative check to the same (profileId, path) key the
+      // ExecutionLog records under (see tool-proxy's record call). It cannot go
+      // inside `frame`: that is validated against the profile's boundsSchema,
+      // which declares no `path` field in any shipped profile, so an extra key
+      // there fails verification with "Unknown field". Omitting it entirely —
+      // the previous behaviour — made every cumulative lookup return zero, so
+      // the local gate never fired and the AS was doing all the enforcing.
+      path: auth.path,
     };
 
     const result = await verify(request, publicKeyHex, undefined, this.executionLog);

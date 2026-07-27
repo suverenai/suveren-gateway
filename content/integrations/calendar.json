@@ -82,7 +82,7 @@
           ],
           "calendarId": "allowed_calendars"
         },
-        "staticExecution": { "action_type": "write" }
+        "staticExecution": { "action_type": "booking" }
       },
       "update_event": {
         "executionMapping": {
@@ -92,7 +92,7 @@
           ],
           "calendarId": "allowed_calendars"
         },
-        "staticExecution": { "action_type": "write", "duration": 0, "lookahead": 0 }
+        "staticExecution": { "action_type": "booking", "duration": 0, "lookahead": 0 }
       },
       "delete_event": {
         "executionMapping": {
