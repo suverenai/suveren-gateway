@@ -94,6 +94,12 @@ describe('MCP Gateway', () => {
     // Start the Suveren MCP server on a test port
     serverProcess = spawn('npx', ['tsx', 'bin/http.ts'], {
       cwd: resolve(__dirname, '..'),
+      // On Windows `npx` is npx.cmd, and spawn stopped resolving .cmd without a
+      // shell when the CVE-2024-27980 hardening landed — so this fails with
+      // ENOENT (spawn npx) and the suite times out waiting for a server that
+      // never started. Same fix as the shipping path in integration-manager.ts.
+      // Args are fixed literals, so there is nothing to interpolate.
+      shell: process.platform === 'win32',
       env: {
         ...process.env,
         SUVEREN_MCP_PORT: String(MCP_PORT),
