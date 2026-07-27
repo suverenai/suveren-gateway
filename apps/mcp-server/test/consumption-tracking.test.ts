@@ -12,7 +12,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ExecutionLog } from '../src/lib/execution-log';
+import { ExecutionLog, windowCutoff } from '../src/lib/execution-log';
 import type { ExecutionLogEntry } from '@hap/core';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -84,24 +84,33 @@ describe('ExecutionLog — sumByWindow', () => {
     });
   });
 
-  describe('monthly window', () => {
-    it('sums amounts within the last 30 days', () => {
-      const dayInSec = 86400;
-      log.record(makeEntry(PROFILE_A, PATH_A, secondsAgo(dayInSec * 1),  { amount: 100 }));
-      log.record(makeEntry(PROFILE_A, PATH_A, secondsAgo(dayInSec * 15), { amount: 200 }));
-      log.record(makeEntry(PROFILE_A, PATH_A, secondsAgo(dayInSec * 29), { amount: 300 }));
+  describe('monthly window (CALENDAR month — matches the Authority Server)', () => {
+    // Boundary semantics are pinned deterministically in
+    // execution-log-windows.test.ts; record() prunes against the real clock, so
+    // fixed historical dates cannot be used here. These anchor to the current
+    // month instead, and stay inside the 31-day retention by construction.
+    const monthStart = () => windowCutoff('monthly', NOW);
+    /** Latest timestamp guaranteed to be inside BOTH the month and retention. */
+    const insideMonth = (offset = 60) => Math.max(NOW - offset, monthStart() + 1);
+
+    it('sums entries since the 1st of the month', () => {
+      log.record(makeEntry(PROFILE_A, PATH_A, insideMonth(60),  { amount: 100 }));
+      log.record(makeEntry(PROFILE_A, PATH_A, insideMonth(120), { amount: 200 }));
 
       const total = log.sumByWindow(PROFILE_A, PATH_A, 'amount', 'monthly', NOW);
-      expect(total).toBe(600);
+      expect(total).toBe(300);
     });
 
-    it('excludes entries older than 30 days', () => {
-      const dayInSec = 86400;
-      // Entry inside monthly window (5 days ago)
-      log.record(makeEntry(PROFILE_A, PATH_A, secondsAgo(dayInSec * 5),  { amount: 100 }));
-      // Entries well outside the monthly window (31+ days ago)
-      log.record(makeEntry(PROFILE_A, PATH_A, secondsAgo(dayInSec * 31), { amount: 999 }));
-      log.record(makeEntry(PROFILE_A, PATH_A, secondsAgo(dayInSec * 60), { amount: 999 }));
+    it('excludes entries from before the 1st, even if only hours earlier', () => {
+      // The behaviour that changed: a rolling 30-day window counted these.
+      const beforeMonth = monthStart() - 3600;
+      const RETENTION = 31 * 86400;
+      if (NOW - beforeMonth < RETENTION) {
+        // Skipped only on the final day of a long month, when the previous
+        // month has already aged out of retention and record() would drop it.
+        log.record(makeEntry(PROFILE_A, PATH_A, beforeMonth, { amount: 999 }));
+      }
+      log.record(makeEntry(PROFILE_A, PATH_A, insideMonth(), { amount: 100 }));
 
       const total = log.sumByWindow(PROFILE_A, PATH_A, 'amount', 'monthly', NOW);
       expect(total).toBe(100);
