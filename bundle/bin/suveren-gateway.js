@@ -327,12 +327,18 @@ async function serviceInstallMac() {
 async function serviceUninstallMac() {
   const plistPath = launchAgentPath();
   const uid = process.getuid();
-  runQuiet('launchctl', ['bootout', `gui/${uid}/${LAUNCH_AGENT_LABEL}`]);
-  runQuiet('launchctl', ['unload', plistPath]); // legacy fallback, harmless if already out
+
+  // Deliberately NOT `launchctl bootout`: that unloads AND kills the job, so
+  // turning autostart off would destroy the running gateway — and from the UI
+  // that is catastrophic, because the page doing the asking dies with it and
+  // there is nothing left to start it again. Removing the plist is enough to
+  // stop it coming back at login; `disable` stops launchd resurrecting it via
+  // KeepAlive in the meantime. The instance you have keeps serving.
+  runQuiet('launchctl', ['disable', `gui/${uid}/${LAUNCH_AGENT_LABEL}`]);
   if (existsSync(plistPath)) safeUnlink(plistPath);
   console.log(`✓ Login service removed. The gateway will no longer start on login.`);
-  console.log('  The service-managed instance has been stopped too. Start it again with:');
-  console.log('    suveren-gateway start --detach');
+  console.log('  The running gateway keeps serving — only autostart is off, so it');
+  console.log('  will not come back by itself after a restart.');
 }
 
 async function serviceStatusMac() {
@@ -486,12 +492,15 @@ async function serviceInstallLinux() {
 
 async function serviceUninstallLinux() {
   const unitPath = systemdUnitPath();
-  runQuiet('systemctl', ['--user', 'disable', '--now', SYSTEMD_UNIT]);
+  // `disable` WITHOUT --now: stop it starting at login, but leave the running
+  // instance alone. --now would stop it, and from the UI that kills the page
+  // making the request with nothing left to restart it.
+  runQuiet('systemctl', ['--user', 'disable', SYSTEMD_UNIT]);
   if (existsSync(unitPath)) safeUnlink(unitPath);
   runQuiet('systemctl', ['--user', 'daemon-reload']);
   console.log('✓ User service removed. The gateway will no longer start on login.');
-  console.log('  The service-managed instance has been stopped too. Start it again with:');
-  console.log('    suveren-gateway start --detach');
+  console.log('  The running gateway keeps serving — only autostart is off, so it');
+  console.log('  will not come back by itself after a restart.');
 }
 
 async function serviceStatusLinux() {
