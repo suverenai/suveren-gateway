@@ -39,6 +39,10 @@ const env = {
   SUVEREN_PROFILES_DIR: PROFILES_DIR,
   // Single shared internal secret so CP↔MCP authenticate the bridge.
   SUVEREN_INTERNAL_SECRET: process.env.SUVEREN_INTERNAL_SECRET ?? randomHex(32),
+  // Passed by the login service (see bundle/lib/autostart-templates.mjs) so the
+  // control-plane knows a human is NOT sitting in front of a terminal watching
+  // it start — that is when a locked gateway needs to announce itself.
+  ...(process.argv.includes('--autostart') ? { SUVEREN_AUTOSTART: '1' } : {}),
 };
 
 const cp = spawn(

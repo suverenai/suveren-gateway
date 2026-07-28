@@ -41,6 +41,7 @@ import { requireAuth, requireAuthQueryOrHeader } from './middleware/auth';
 import { pushGateContent, pushServiceCredentials, setInternalSecret, getManifests, getGateContent, getEnrichedAuthorizations, MCP_BASE, runCommittedProposals, resyncGates } from './lib/mcp-bridge';
 import { createMCPRouter } from './routes/mcp';
 import { createAutostartRouter } from './routes/autostart';
+import { notify, lockedNotification } from './lib/desktop-notify';
 import { createEncryptIntentRouter } from './routes/encrypt-intent';
 import { createDecryptIntentRouter } from './routes/decrypt-intent';
 import { createApprovedIntentsRouter } from './routes/approved-intents';
@@ -824,6 +825,17 @@ if (existsSync(UI_DIST)) {
 
 app.listen(port, '0.0.0.0', () => {
   console.error(`[Control Plane] Listening on http://0.0.0.0:${port}`);
+
+  // Started by the login service ⇒ nobody is watching a terminal. The gateway
+  // is up and answering but the vault is locked, so the agent has no authority
+  // — and without this nothing says so until someone asks the agent to act and
+  // it reports being blocked, possibly hours later. Autostart made this failure
+  // quieter, so it has to announce itself.
+  if (process.env.SUVEREN_AUTOSTART === '1' && !vault.isUnlocked()) {
+    const { title, message } = lockedNotification(port);
+    notify(title, message);
+  }
+
   console.error(`[Control Plane]   SP proxy: ${SP_URL}`);
   console.error(`[Control Plane]   UI dist:  ${UI_DIST}`);
   console.error(`[Control Plane]   Internal secret: configured`);
