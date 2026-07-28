@@ -59,6 +59,12 @@ export function getConsumptionState(
     const bt = fieldDef.boundType;
     if (!bt) continue; // non-v0.4 bound or missing declaration
 
+    // A bound the profile declares unenforced has no consumption to report —
+    // nothing counts it. Reporting "0 / 7" for it tells the agent it has
+    // headroom under a limit that does not exist. The authorization editor
+    // already hides these; this is the other surface that must agree.
+    if ((fieldDef as { enforced?: boolean }).enforced === false) continue;
+
     // Only cumulative bounds have a "consumption" value to report.
     if (bt.kind !== 'cumulative_sum' && bt.kind !== 'cumulative_count') continue;
 
@@ -75,7 +81,10 @@ export function getConsumptionState(
     );
 
     entries.push({
-      label: fieldDef.description ?? fieldName,
+      // displayName FIRST: description is prose meant for a human reading the
+      // profile, and rendering it here produced a paragraph where a label
+      // belongs ("Not currently enforced: reads carry no receipt… : 0 / 7").
+      label: fieldDef.displayName ?? fieldDef.description ?? fieldName,
       current,
       limit,
       window: bt.window,
