@@ -51,6 +51,7 @@ export function AutostartToggle() {
 
   const toggle = useCallback(async () => {
     if (!state?.supported || busy) return;
+    const turningOn = !state.installed;
     setBusy(true);
     setError(null);
     try {
@@ -63,20 +64,34 @@ export function AutostartToggle() {
       const msg = err instanceof Error ? err.message : 'Failed';
       if (!/failed to fetch|networkerror|load failed/i.test(msg)) setError(msg);
     } finally {
-      // Wait for the gateway to come back, then read the REAL state. Never
-      // assume the toggle succeeded — that is the whole point of re-reading.
-      const deadline = Date.now() + 30_000;
-      for (;;) {
-        try {
-          setState(await spClient.getAutostart());
-          setError(null);
-          break;
-        } catch {
+      if (turningOn) {
+        // Turning it ON restarts the gateway so the login service can own it,
+        // and it comes back LOCKED. Every authenticated endpoint then answers
+        // 401, so polling for autostart state would fail forever and report a
+        // timeout even though the install worked.
+        //
+        // Poll /health instead — it needs no auth — then reload, which lands on
+        // the login screen. That is the truth: it worked, and you need to sign
+        // in again.
+        const deadline = Date.now() + 60_000;
+        for (;;) {
+          try {
+            const res = await fetch('/health', { signal: AbortSignal.timeout(2_000) });
+            if (res.ok) { window.location.reload(); return; }
+          } catch { /* still down */ }
           if (Date.now() > deadline) {
-            setError('The gateway did not come back within 30s. Check it is running.');
+            setError('Suveren is restarting under the login service. Reload this page in a moment and sign in again.');
             break;
           }
           await new Promise(r => setTimeout(r, 1_000));
+        }
+      } else {
+        // Turning it OFF leaves the gateway running, so state is readable.
+        try {
+          setState(await spClient.getAutostart());
+          setError(null);
+        } catch (err) {
+          setError(err instanceof Error ? err.message : 'Could not re-read state');
         }
       }
       setBusy(false);
@@ -120,7 +135,7 @@ export function AutostartToggle() {
             className={state.installed ? 'btn btn-secondary' : 'btn btn-primary'}
             style={{ whiteSpace: 'nowrap' }}
           >
-            {busy ? 'Restarting…' : state.installed ? 'Turn off' : 'Turn on'}
+            {busy ? (state.installed ? 'Turning off…' : 'Restarting…') : state.installed ? 'Turn off' : 'Turn on'}
           </button>
         )}
       </div>
