@@ -622,7 +622,10 @@ describe('createGatedToolHandler — unset read-age window fails closed', () => 
         profile: 'email-test',
         executionMapping: {},
         category: 'read',
-        read: { ageField: 'read_age_days', queryArg: 'q', ageConstraint: 'newer_than:{days}d' },
+        read: {
+          ageField: 'read_age_days', queryArg: 'q', ageConstraint: 'newer_than:{days}d',
+          ageConflictPattern: 'older_than:(\\d+)d',
+        },
       } as unknown as DiscoveredTool['gating'],
     };
   }
@@ -660,6 +663,43 @@ describe('createGatedToolHandler — unset read-age window fails closed', () => 
     expect(rec.reason).toBe('unset_age');
     expect(rec.tool).toBe('list_messages');
     expect(rec.detail).not.toContain('invoices'); // no agent query / content leaks in
+  });
+
+  it('REFUSES AUDIBLY when the agent asks for older data than the window allows', async () => {
+    // Observed live: "from:x older_than:90d newer_than:120d" under a 90-day
+    // window returned resultSizeEstimate 0, while the same query without dates
+    // returned 13 messages. ANDing the ceiling on produces a contradiction, and
+    // an empty set reads as "nothing exists" — so the agent reports there is no
+    // such mail when it simply cannot see that far back. A confident false
+    // answer is worse than a refusal.
+    const state = mockState([emailAuth({ read_max_age_days: 90 })]);
+    const record = vi.fn();
+    (state as unknown as { denialLog: { record: typeof record } }).denialLog = { record };
+    const im = mockIntegrationManager();
+    const handler = createGatedToolHandler(emailReadTool(), im, state);
+
+    const result = await handler({ q: 'from:x older_than:90d newer_than:120d' });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('older than 90 days');
+    expect(result.content[0].text).toContain('90 days');
+    // Never runs the search: a contradictory query is what produced the
+    // misleading empty result in the first place.
+    expect((im.callTool as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+    expect(record).toHaveBeenCalledOnce();
+    expect((record.mock.calls[0][0] as { reason: string }).reason).toBe('age_window');
+  });
+
+  it('still allows a request comfortably INSIDE the window', async () => {
+    const state = mockState([emailAuth({ read_max_age_days: 90 })]);
+    const im = mockIntegrationManager();
+    const handler = createGatedToolHandler(emailReadTool(), im, state);
+
+    await handler({ q: 'from:x older_than:10d' });
+
+    // Not every older_than is a conflict — only one that reaches past the
+    // ceiling. Over-refusing would make the window useless.
+    expect((im.callTool as ReturnType<typeof vi.fn>)).toHaveBeenCalledOnce();
   });
 
   it('proceeds (and injects the age ceiling) when a grant sets read_max_age_days', async () => {

@@ -273,6 +273,49 @@ export function composeReadQuery(agentQuery: string | undefined, clauses: string
   return { ok: true, query: `(${base}) ${injected.join(' ')}` };
 }
 
+
+/**
+ * Does the agent's own query ask for data OLDER than the window allows?
+ *
+ * The age ceiling is ANDed onto the agent's search, which is safe but silent:
+ * asking for mail 90-120 days old against a 90-day window produces
+ * `(older_than:90d newer_than:120d) newer_than:90d` — a contradiction that
+ * returns ZERO results with no indication the request was narrowed. The agent
+ * then reports "there are no such emails", which is false: they exist and are
+ * simply out of bounds. A confident wrong answer, which is worse than a
+ * refusal.
+ *
+ * Declarative rather than hardcoded: the manifest's read adapter supplies
+ * `ageConflictPattern`, a regex whose first capture group is a number of days.
+ * The engine never learns any provider's query syntax.
+ *
+ * Returns the requested age in days when it exceeds the ceiling, else null.
+ */
+export function detectAgeConflict(
+  agentQuery: string | undefined,
+  conflictPattern: string | undefined,
+  maxAgeDays: number | null,
+): number | null {
+  if (!agentQuery || !conflictPattern || maxAgeDays === null) return null;
+
+  let re: RegExp;
+  try {
+    re = new RegExp(conflictPattern, 'gi');
+  } catch {
+    return null; // a malformed pattern must not break reads
+  }
+
+  let worst: number | null = null;
+  for (const match of agentQuery.matchAll(re)) {
+    const days = Number(match[1]);
+    if (!Number.isFinite(days)) continue;
+    // `older_than:90d` against a 90-day ceiling can only ever match the empty
+    // set, so >= rather than >.
+    if (days >= maxAgeDays && (worst === null || days > worst)) worst = days;
+  }
+  return worst;
+}
+
 /** Minimal view of a profile's boundsSchema needed to resolve the age bound. */
 export interface BoundsSchemaLike {
   fields?: Record<string, { boundType?: { kind?: string; of?: string } }>;

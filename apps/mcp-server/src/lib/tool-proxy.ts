@@ -26,6 +26,7 @@ import {
   isOlderThanMaxAge,
   getByDottedPath,
   composeReadQuery,
+  detectAgeConflict,
   readToolIsGoverned,
   allowedResources,
   deniedResources,
@@ -378,6 +379,21 @@ export function createGatedToolHandler(
           // the intended AND into a union). composeReadQuery validates and
           // brackets; an unsafe fragment is a denial, never a silent rewrite.
           const base = typeof args[readAdapter.queryArg] === 'string' ? (args[readAdapter.queryArg] as string) : '';
+
+          // Refuse AUDIBLY when the agent asks for older data than the window
+          // allows. ANDing the ceiling on would produce a contradiction and
+          // return zero results, and an empty set reads as "nothing exists" —
+          // so the agent reports there is no such mail when in fact it is
+          // simply out of bounds. Silence here manufactures false answers.
+          const conflictDays = detectAgeConflict(base, readAdapter.ageConflictPattern, readMaxAge);
+          if (conflictDays !== null) {
+            return denyRead(state, tool, 'age_window',
+              `you asked for items older than ${conflictDays} days, but this authorization allows ` +
+              `${readMaxAge} days. Nothing outside that window can be read, so the search was not ` +
+              `run — it would have returned an empty result that looks like "none exist". Items ` +
+              `may well exist beyond ${readMaxAge} days; widen read_max_age_days if you need them.`);
+          }
+
           const composed = composeReadQuery(base, clauses);
           if (!composed.ok) {
             return denyRead(state, tool, 'query_unsafe',

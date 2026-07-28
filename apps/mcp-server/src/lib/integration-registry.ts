@@ -35,6 +35,14 @@ export interface ReadAdapter {
   queryArg?: string;
   /** Provider template for the injected age clause, e.g. "newer_than:{days}d". */
   ageConstraint?: string;
+  /**
+   * Regex (first capture group = days) matching an agent clause that asks for
+   * data OLDER than some age. Used to refuse audibly instead of ANDing the
+   * ceiling on and returning a contradictory empty set, which the agent would
+   * report as "nothing exists". Declared per manifest so the engine never
+   * learns any provider's query syntax.
+   */
+  ageConflictPattern?: string;
   /** Dotted path to the participant headers array (`[{name,value}]`) in the response. */
   participantsPath?: string;
   /** Header names carrying correspondents, e.g. ["From","To"]. */

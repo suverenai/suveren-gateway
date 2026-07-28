@@ -9,12 +9,24 @@
   "mcp": {
     "command": "gmail-mcp",
     "args": [],
-    "env": { "PORT": "0" }
+    "env": {
+      "PORT": "0"
+    }
   },
   "credentials": {
     "fields": [
-      { "key": "clientId", "label": "Client ID", "type": "text", "placeholder": "From Google Cloud Console" },
-      { "key": "clientSecret", "label": "Client Secret", "type": "password", "placeholder": "OAuth2 client secret" }
+      {
+        "key": "clientId",
+        "label": "Client ID",
+        "type": "text",
+        "placeholder": "From Google Cloud Console"
+      },
+      {
+        "key": "clientSecret",
+        "label": "Client Secret",
+        "type": "password",
+        "placeholder": "OAuth2 client secret"
+      }
     ],
     "envMapping": {
       "CLIENT_ID": "clientId",
@@ -31,39 +43,72 @@
       "https://www.googleapis.com/auth/gmail.modify",
       "https://www.googleapis.com/auth/gmail.send"
     ],
-    "credentialKeys": { "clientId": "clientId", "clientSecret": "clientSecret" },
+    "credentialKeys": {
+      "clientId": "clientId",
+      "clientSecret": "clientSecret"
+    },
     "tokenStorage": "refreshToken",
-    "extraParams": { "access_type": "offline", "prompt": "consent" }
+    "extraParams": {
+      "access_type": "offline",
+      "prompt": "consent"
+    }
   },
   "toolGating": {
     "default": {
       "executionMapping": {},
-      "staticExecution": { "recipient_count": 0 }
+      "staticExecution": {
+        "recipient_count": 0
+      }
     },
     "overrides": {
       "send_message": {
         "executionMapping": {
           "to": [
-            { "field": "recipient_count", "transform": "length" },
-            { "field": "allowed_recipients", "transform": "join" },
-            { "field": "allowed_domains", "transform": "join_domains" }
+            {
+              "field": "recipient_count",
+              "transform": "length"
+            },
+            {
+              "field": "allowed_recipients",
+              "transform": "join"
+            },
+            {
+              "field": "allowed_domains",
+              "transform": "join_domains"
+            }
           ]
         },
-        "staticExecution": { "action_type": "send" }
+        "staticExecution": {
+          "action_type": "send"
+        }
       },
       "create_draft": {
         "executionMapping": {
           "to": [
-            { "field": "recipient_count", "transform": "length" },
-            { "field": "allowed_recipients", "transform": "join" },
-            { "field": "allowed_domains", "transform": "join_domains" }
+            {
+              "field": "recipient_count",
+              "transform": "length"
+            },
+            {
+              "field": "allowed_recipients",
+              "transform": "join"
+            },
+            {
+              "field": "allowed_domains",
+              "transform": "join_domains"
+            }
           ]
         },
-        "staticExecution": { "action_type": "send" }
+        "staticExecution": {
+          "action_type": "send"
+        }
       },
       "send_draft": {
         "executionMapping": {},
-        "staticExecution": { "recipient_count": 1, "action_type": "send" }
+        "staticExecution": {
+          "recipient_count": 1,
+          "action_type": "send"
+        }
       },
       "list_messages": {
         "category": "read",
@@ -72,7 +117,10 @@
           "queryArg": "q",
           "ageConstraint": "newer_than:{days}d",
           "scopeTermTemplate": "(from:{v} OR to:{v})",
-          "pinnedArgs": { "includeSpamTrash": false }
+          "pinnedArgs": {
+            "includeSpamTrash": false
+          },
+          "ageConflictPattern": "older_than:(\\d+)d"
         }
       },
       "get_message": {
@@ -81,8 +129,14 @@
           "ageField": "read_age_days",
           "resultDatePath": "internalDate",
           "participantsPath": "payload.headers",
-          "participantHeaders": ["From", "To"],
-          "blockResultValues": ["SPAM", "TRASH"],
+          "participantHeaders": [
+            "From",
+            "To"
+          ],
+          "blockResultValues": [
+            "SPAM",
+            "TRASH"
+          ],
           "resultValuesPath": "labelIds"
         }
       },
@@ -92,7 +146,10 @@
           "ageField": "read_age_days",
           "queryArg": "q",
           "ageConstraint": "newer_than:{days}d",
-          "pinnedArgs": { "includeSpamTrash": false }
+          "pinnedArgs": {
+            "includeSpamTrash": false
+          },
+          "ageConflictPattern": "older_than:(\\d+)d"
         }
       },
       "get_draft": {
@@ -100,13 +157,19 @@
         "read": {
           "ageField": "read_age_days",
           "resultDatePath": "message.internalDate",
-          "blockResultValues": ["SPAM", "TRASH"],
+          "blockResultValues": [
+            "SPAM",
+            "TRASH"
+          ],
           "resultValuesPath": "message.labelIds"
         }
       },
       "delete_draft": {
         "executionMapping": {},
-        "staticExecution": { "recipient_count": 0, "action_type": "delete" }
+        "staticExecution": {
+          "recipient_count": 0,
+          "action_type": "delete"
+        }
       },
       "get_attachment": {
         "category": "read",
@@ -131,22 +194,46 @@
       "description": "Search and read emails. Cannot send, draft, or delete.",
       "risk": "low",
       "mode": "automatic",
-      "bounds": { "recipient_max": "0", "send_daily_max": "0", "read_max_age_days": "30", "read_daily_max": "100" },
-      "context": { "allowed_recipients": "", "allowed_domains": "" },
+      "bounds": {
+        "recipient_max": "0",
+        "send_daily_max": "0",
+        "read_max_age_days": "30",
+        "read_daily_max": "100"
+      },
+      "context": {
+        "allowed_recipients": "",
+        "allowed_domains": ""
+      },
       "intent": "Allow the agent to search and read my inbox (last 30 days). No sending or deleting.",
       "ttl": 2592000,
-      "tags": ["read-only", "30 days", "100 reads/day"]
+      "tags": [
+        "read-only",
+        "30 days",
+        "100 reads/day"
+      ]
     },
     {
       "name": "Send with Review",
       "description": "Read inbox and compose emails. Every outbound email requires your approval.",
       "risk": "high",
       "mode": "review",
-      "bounds": { "recipient_max": "5", "send_daily_max": "20", "read_max_age_days": "90", "read_daily_max": "200" },
-      "context": { "allowed_recipients": "", "allowed_domains": "" },
+      "bounds": {
+        "recipient_max": "5",
+        "send_daily_max": "20",
+        "read_max_age_days": "90",
+        "read_daily_max": "200"
+      },
+      "context": {
+        "allowed_recipients": "",
+        "allowed_domains": ""
+      },
       "intent": "Read my inbox and compose emails. Every send requires my review — I see the recipient, subject, and body before it goes out.",
       "ttl": 2592000,
-      "tags": ["5 recipients/email", "20 sends/day", "review mode"]
+      "tags": [
+        "5 recipients/email",
+        "20 sends/day",
+        "review mode"
+      ]
     }
   ],
   "setupHint": "Create OAuth credentials at Google Cloud Console.",
