@@ -289,6 +289,11 @@ async function serviceInstallMac() {
     label: LAUNCH_AGENT_LABEL,
     logFile: LOG_FILE,
     dataDir: process.env.SUVEREN_DATA_DIR ?? '',
+    // Captured now, while we are running from the user's shell. launchd would
+    // otherwise hand the gateway /usr/bin:/bin:/usr/sbin:/sbin, which has no
+    // npx and none of the integration shims — the gateway starts and then
+    // every integration silently fails to launch.
+    path: process.env.PATH ?? '',
   });
   writeFileSync(plistPath, plist, { encoding: 'utf8', mode: 0o644 });
 
@@ -451,6 +456,8 @@ async function serviceInstallLinux() {
     serverEntry: SERVER_ENTRY,
     logFile: LOG_FILE,
     dataDir: process.env.SUVEREN_DATA_DIR ?? '',
+    // See the macOS note: a systemd user unit inherits no usable PATH either.
+    path: process.env.PATH ?? '',
   }), { encoding: 'utf8', mode: 0o644 });
 
   runQuiet('systemctl', ['--user', 'daemon-reload']);

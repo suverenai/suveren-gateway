@@ -60,6 +60,15 @@ describe('findCli', () => {
     }
   });
 
+  it('works with NO argument — the only form production calls', () => {
+    // The original tests all passed an explicit directory, so the default
+    // parameter was never executed. It referenced __dirname, which does not
+    // exist in the ESM bundle, so the very first real request threw
+    // ReferenceError — and because the throw escaped an async Express handler
+    // it killed the control-plane and took the whole gateway down.
+    expect(() => findCli()).not.toThrow();
+  });
+
   it('returns an absolute path — it is spawned, so relative would be fragile', () => {
     const cpDir = bundledLayout();
     const found = findCli(cpDir);

@@ -14,7 +14,8 @@
 import { Router, type Request, type Response } from 'express';
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { dirname as pathDirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 const run = promisify(execFile);
@@ -32,7 +33,18 @@ const SUPPORTED = new Set(['darwin', 'win32', 'linux']);
  * Returns null when neither exists — running from source without a built
  * bundle, where autostart genuinely cannot be offered.
  */
-export function findCli(dirname: string = __dirname): string | null {
+/**
+ * Where this module lives.
+ *
+ * NOT __dirname: the control-plane is bundled to ESM (.mjs), where __dirname
+ * does not exist. Using it threw ReferenceError inside the route handler,
+ * which surfaced as an unhandled rejection and took the ENTIRE gateway down —
+ * control-plane exits, supervisor stops the MCP server, every integration dies.
+ * A settings page reading its own state must never be able to do that.
+ */
+const MODULE_DIR = pathDirname(fileURLToPath(import.meta.url));
+
+export function findCli(dirname: string = MODULE_DIR): string | null {
   // ORDER MATTERS. tsup flattens the control-plane into <root>/dist/control-plane/*.mjs,
   // so at runtime __dirname is that directory and the shipped CLI is exactly two
   // levels up. Checking a repo-relative path first would resolve to the SOURCE
@@ -69,11 +81,31 @@ async function cli(args: string[]): Promise<{ ok: boolean; output: string }> {
   }
 }
 
+/**
+ * Wrap an async handler so a thrown error becomes a 500 instead of an
+ * unhandled rejection.
+ *
+ * Express 4 does not catch rejections from async handlers, so one throw
+ * escapes to the process. Under Node's default that terminates the
+ * control-plane, the supervisor then stops the MCP server, and every
+ * integration dies — a settings page reading its own state took the whole
+ * gateway down exactly once, which was once too many.
+ */
+function safe(handler: (req: Request, res: Response) => Promise<void>) {
+  return (req: Request, res: Response): void => {
+    handler(req, res).catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('[Autostart] handler failed:', message);
+      if (!res.headersSent) res.status(500).json({ error: 'autostart_failed', message });
+    });
+  };
+}
+
 export function createAutostartRouter(): Router {
   const router = Router();
 
   /** Current state, so the UI can render truth rather than what it last set. */
-  router.get('/', async (_req: Request, res: Response) => {
+  router.get('/', safe(async (_req: Request, res: Response) => {
     const platform = process.platform;
     const supported = SUPPORTED.has(platform);
     const bin = findCli();
@@ -99,10 +131,10 @@ export function createAutostartRouter(): Router {
       platform,
       detail: output,
     });
-  });
+  }));
 
   /** Turn it on. Idempotent — the CLI overwrites an existing registration. */
-  router.post('/', async (_req: Request, res: Response) => {
+  router.post('/', safe(async (_req: Request, res: Response) => {
     if (!SUPPORTED.has(process.platform) || !findCli()) {
       res.status(400).json({ error: 'unsupported', message: 'Autostart is not available here.' });
       return;
@@ -113,10 +145,10 @@ export function createAutostartRouter(): Router {
       return;
     }
     res.json({ ok: true, installed: true, detail: output });
-  });
+  }));
 
   /** Turn it off. */
-  router.delete('/', async (_req: Request, res: Response) => {
+  router.delete('/', safe(async (_req: Request, res: Response) => {
     if (!SUPPORTED.has(process.platform) || !findCli()) {
       res.status(400).json({ error: 'unsupported', message: 'Autostart is not available here.' });
       return;
@@ -127,7 +159,7 @@ export function createAutostartRouter(): Router {
       return;
     }
     res.json({ ok: true, installed: false, detail: output });
-  });
+  }));
 
   return router;
 }

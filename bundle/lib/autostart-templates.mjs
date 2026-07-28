@@ -30,12 +30,19 @@ export function escapeXml(value) {
  * NEVER placed here: no argument or environment variable carries a secret, so
  * the gateway always boots locked.
  */
-export function buildLaunchAgentPlist({ nodePath, serverEntry, label, logFile, dataDir }) {
-  const env = dataDir
-    ? '  <key>EnvironmentVariables</key>\n' +
-      '  <dict>\n' +
-      '    <key>SUVEREN_DATA_DIR</key>\n' +
-      `    <string>${escapeXml(dataDir)}</string>\n` +
+export function buildLaunchAgentPlist({ nodePath, serverEntry, label, logFile, dataDir, path }) {
+  // launchd hands a process a MINIMAL PATH (/usr/bin:/bin:/usr/sbin:/sbin).
+  // The gateway itself still starts — its node path is absolute — but it then
+  // cannot find npx or the integration bin shims, so every integration silently
+  // fails to launch and the UI shows them all "Not running". Carry the PATH
+  // captured at install time, when it is the user's real one.
+  const entries = [];
+  if (dataDir) entries.push(['SUVEREN_DATA_DIR', dataDir]);
+  if (path) entries.push(['PATH', path]);
+
+  const env = entries.length
+    ? '  <key>EnvironmentVariables</key>\n  <dict>\n' +
+      entries.map(([k, v]) => `    <key>${escapeXml(k)}</key>\n    <string>${escapeXml(v)}</string>\n`).join('') +
       '  </dict>\n'
     : '';
 
@@ -73,8 +80,14 @@ ${env}</dict>
  * Environment values are quoted because systemd splits unquoted values on
  * whitespace — a data directory with a space would otherwise be truncated.
  */
-export function buildSystemdUnit({ nodePath, serverEntry, logFile, dataDir }) {
-  const envLine = dataDir ? `Environment="SUVEREN_DATA_DIR=${dataDir}"\n` : '';
+export function buildSystemdUnit({ nodePath, serverEntry, logFile, dataDir, path }) {
+  // Same problem as launchd: a systemd user unit does not inherit the shell's
+  // PATH, so npx and the integration shims go missing and every integration
+  // fails to start.
+  const envLines = [];
+  if (dataDir) envLines.push(`Environment="SUVEREN_DATA_DIR=${dataDir}"`);
+  if (path) envLines.push(`Environment="PATH=${path}"`);
+  const envLine = envLines.length ? envLines.join('\n') + '\n' : '';
   return `[Unit]
 Description=Suveren gateway (Human Agency Protocol)
 Documentation=https://www.suveren.ai

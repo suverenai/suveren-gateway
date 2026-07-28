@@ -163,3 +163,58 @@ describe('Windows Task Scheduler XML', () => {
     }
   });
 });
+
+describe('PATH is carried into the unit — integrations depend on it', () => {
+  // launchd hands a process /usr/bin:/bin:/usr/sbin:/sbin, and a systemd user
+  // unit inherits nothing useful. The gateway still starts (its node path is
+  // absolute) but cannot find npx or the integration bin shims, so every
+  // integration fails to launch and the UI shows them all "Not running" —
+  // silently, with no error anywhere.
+  const REAL_PATH = '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin';
+
+  it('macOS plist includes PATH', () => {
+    const p = buildLaunchAgentPlist({
+      nodePath: '/n', serverEntry: '/s', label: 'l', logFile: '/log',
+      dataDir: '/d', path: REAL_PATH,
+    });
+    expect(p).toContain('<key>PATH</key>');
+    expect(p).toContain(`<string>${REAL_PATH}</string>`);
+  });
+
+  it('macOS plist still emits the env block when ONLY a path is given', () => {
+    const p = buildLaunchAgentPlist({
+      nodePath: '/n', serverEntry: '/s', label: 'l', logFile: '/log',
+      dataDir: '', path: REAL_PATH,
+    });
+    expect(p).toContain('EnvironmentVariables');
+    expect(p).toContain('<key>PATH</key>');
+    expect(p).not.toContain('SUVEREN_DATA_DIR');
+  });
+
+  it('systemd unit includes a quoted PATH', () => {
+    const u = buildSystemdUnit({
+      nodePath: '/n', serverEntry: '/s', logFile: '/log',
+      dataDir: '/d', path: REAL_PATH,
+    });
+    expect(u).toContain(`Environment="PATH=${REAL_PATH}"`);
+  });
+
+  it('omits PATH when none is supplied, rather than writing an empty one', () => {
+    // An empty PATH would be WORSE than none: it overrides the default with
+    // nothing at all.
+    const p = buildLaunchAgentPlist({
+      nodePath: '/n', serverEntry: '/s', label: 'l', logFile: '/log', dataDir: '/d', path: '',
+    });
+    expect(p).not.toContain('<key>PATH</key>');
+    const u = buildSystemdUnit({ nodePath: '/n', serverEntry: '/s', logFile: '/l', dataDir: '/d', path: '' });
+    expect(u).not.toContain('PATH=');
+  });
+
+  it('escapes a hostile PATH', () => {
+    const p = buildLaunchAgentPlist({
+      nodePath: '/n', serverEntry: '/s', label: 'l', logFile: '/log',
+      dataDir: '', path: '/a&b:/c<d>',
+    });
+    expect(p).not.toMatch(/&(?!amp;|lt;|gt;|quot;|apos;)/);
+  });
+});

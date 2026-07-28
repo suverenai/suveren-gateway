@@ -1078,6 +1078,32 @@ class SPClient {
     return { proposals, receipts };
   }
 
+  // ─── Autostart ("Keep Suveren running") ─────────────────────────────────
+  //
+  // Goes through this client, not raw fetch: the control-plane authenticates
+  // with an X-API-Key header, so a bare fetch — even with credentials:
+  // 'include' — is rejected with 401.
+
+  async getAutostart(): Promise<{
+    supported: boolean;
+    installed: boolean;
+    platform: string;
+    reason?: string;
+    detail?: string;
+  }> {
+    const res = await this.fetch('/autostart');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async setAutostart(enabled: boolean): Promise<void> {
+    const res = await this.fetch('/autostart', { method: enabled ? 'POST' : 'DELETE' });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error((body as { message?: string }).message || `HTTP ${res.status}`);
+    }
+  }
+
   // ─── Gate Content ───────────────────────────────────────────────────────
 
   async getGateContent(path: string): Promise<GateContentEntry | null> {

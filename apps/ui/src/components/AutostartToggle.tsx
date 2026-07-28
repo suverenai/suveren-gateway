@@ -18,6 +18,7 @@
  *     not offering it.
  */
 import { useCallback, useEffect, useState } from 'react';
+import { spClient } from '../lib/sp-client';
 
 interface AutostartState {
   supported: boolean;
@@ -40,9 +41,7 @@ export function AutostartToggle() {
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch('/autostart', { credentials: 'include' });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      setState(await res.json());
+      setState(await spClient.getAutostart());
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not read autostart state');
     }
@@ -55,23 +54,48 @@ export function AutostartToggle() {
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch('/autostart', {
-        method: state.installed ? 'DELETE' : 'POST',
-        credentials: 'include',
-      });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(body.message || `HTTP ${res.status}`);
+      await spClient.setAutostart(!state.installed);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed');
+      // EXPECTED on install: the CLI stops the running gateway so the login
+      // service can take it over, which kills the very connection serving this
+      // request. The browser reports "Failed to fetch" — not a failure, a
+      // handover. Anything else is a real error.
+      const msg = err instanceof Error ? err.message : 'Failed';
+      if (!/failed to fetch|networkerror|load failed/i.test(msg)) setError(msg);
     } finally {
-      // Re-read regardless of outcome: the switch must reflect what the system
-      // actually did, not what we asked it to do.
-      await load();
+      // Wait for the gateway to come back, then read the REAL state. Never
+      // assume the toggle succeeded — that is the whole point of re-reading.
+      const deadline = Date.now() + 30_000;
+      for (;;) {
+        try {
+          setState(await spClient.getAutostart());
+          setError(null);
+          break;
+        } catch {
+          if (Date.now() > deadline) {
+            setError('The gateway did not come back within 30s. Check it is running.');
+            break;
+          }
+          await new Promise(r => setTimeout(r, 1_000));
+        }
+      }
       setBusy(false);
     }
   }, [state, busy, load]);
 
-  if (!state) return null;
+  // Never render nothing. An earlier version returned null whenever the state
+  // could not be read, which hid the card AND the error explaining why — so a
+  // failing endpoint looked identical to a feature that does not exist.
+  if (!state) {
+    return (
+      <div className="card" style={{ padding: '1.5rem', marginTop: '2rem' }}>
+        <h2 style={{ fontSize: '1rem', fontWeight: 700, margin: 0 }}>Keep Suveren running</h2>
+        <p role={error ? 'alert' : undefined} style={{ margin: '0.5rem 0 0', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+          {error ? `Could not read autostart state: ${error}` : 'Checking…'}
+        </p>
+      </div>
+    );
+  }
 
   const mechanism = PLATFORM_MECHANISM[state.platform] ?? 'a login service';
 
@@ -96,7 +120,7 @@ export function AutostartToggle() {
             className={state.installed ? 'btn btn-secondary' : 'btn btn-primary'}
             style={{ whiteSpace: 'nowrap' }}
           >
-            {busy ? 'Working…' : state.installed ? 'Turn off' : 'Turn on'}
+            {busy ? 'Restarting…' : state.installed ? 'Turn off' : 'Turn on'}
           </button>
         )}
       </div>
