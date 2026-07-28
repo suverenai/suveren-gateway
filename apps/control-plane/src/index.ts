@@ -40,6 +40,7 @@ import { createAIPromptsRouter } from './routes/ai-prompts';
 import { requireAuth, requireAuthQueryOrHeader } from './middleware/auth';
 import { pushGateContent, pushServiceCredentials, setInternalSecret, getManifests, getGateContent, getEnrichedAuthorizations, MCP_BASE, runCommittedProposals, resyncGates } from './lib/mcp-bridge';
 import { createMCPRouter } from './routes/mcp';
+import { createAutostartRouter } from './routes/autostart';
 import { createEncryptIntentRouter } from './routes/encrypt-intent';
 import { createDecryptIntentRouter } from './routes/decrypt-intent';
 import { createApprovedIntentsRouter } from './routes/approved-intents';
@@ -384,6 +385,10 @@ app.use('/ai-prompts', jsonParser, authGuard, createAIPromptsRouter());
 
 // MCP integration management routes
 app.use('/mcp', jsonParser, authGuard, createMCPRouter());
+
+// "Keep the gateway running" — the CLI's `service` command as an HTTP
+// surface, so the UI can offer it as a switch instead of a terminal command.
+app.use('/autostart', jsonParser, authGuard, createAutostartRouter());
 
 // E2EE intent encryption (P5.5)
 app.use('/api/encrypt-intent', jsonParser, authGuard, createEncryptIntentRouter());
