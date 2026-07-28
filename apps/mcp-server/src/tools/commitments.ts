@@ -17,6 +17,7 @@
  */
 
 import type { SharedState } from '../lib/shared-state';
+import { lockedNotice } from '../lib/locked-notice';
 import type { IntegrationManager } from '../lib/integration-manager';
 import { SPReceiptError, type SPProposal } from '../lib/sp-client';
 import { appendVerificationFooter, shouldAttachFooter } from '../lib/receipt-footer';
@@ -146,6 +147,9 @@ export function checkPendingCommitmentsHandler(
   integrationManager?: IntegrationManager,
 ) {
   return async (args: { proposal_id?: string }) => {
+    if (!state.spClient.isUnlocked()) {
+      return { content: [{ type: 'text' as const, text: lockedNotice('check commitments') }] };
+    }
     try {
       if (args.proposal_id) {
         const committed = await state.spClient.getCommittedProposals();

@@ -27,6 +27,10 @@ function mockState(authorizations: CachedAuthorization[] = []): SharedState {
 
   return {
     getEnrichedAuthorizations: () => enriched,
+    // Signed in. Without this the handlers short-circuit to the locked notice,
+    // which is correct behaviour but not what these cases are exercising —
+    // see locked-notice.test.ts for that path.
+    spClient: { isUnlocked: () => true },
     executionLog: mockExecutionLog(),
     cache: {
       getAllAuthorizations: () => authorizations,
@@ -221,6 +225,7 @@ function mockGatedState(opts: {
     getEnrichedAuthorizations: () => enriched,
     spClient: {
       postReceipt: opts.postReceipt ?? vi.fn().mockResolvedValue({ receipt: { id: 'r1' } }),
+      isUnlocked: () => true,
     },
     gatekeeper: {
       verifyExecution: vi.fn().mockResolvedValue({
@@ -346,6 +351,9 @@ describe('createGatedToolHandler — SP receipt integration', () => {
         postReceipt,
         submitProposal,
         getAuthorizationSummary,
+        // Overriding spClient wholesale drops mockGatedState's isUnlocked, so
+        // the handler would short-circuit to the locked notice.
+        isUnlocked: () => true,
       },
     } as unknown as import('../src/lib/shared-state').SharedState;
 

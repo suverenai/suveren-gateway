@@ -130,6 +130,20 @@ export class SPClient {
     this.sessionCookie = cookie;
   }
 
+  /**
+   * Has anyone signed in yet this run?
+   *
+   * The control-plane pushes the session cookie on login, so its absence means
+   * the vault is locked — the gateway is up and answering, but it cannot read
+   * authorizations or credentials. Callers MUST distinguish that from "this
+   * user has no authorizations": the two look identical from the outside, and
+   * reporting the latter sends someone off to create authorizations when all
+   * they needed to do was enter their API key.
+   */
+  isUnlocked(): boolean {
+    return this.sessionCookie !== '';
+  }
+
   private async fetch(path: string, init?: RequestInit): Promise<Response> {
     const url = `${this.baseUrl}${path}`;
     const headers: Record<string, string> = {

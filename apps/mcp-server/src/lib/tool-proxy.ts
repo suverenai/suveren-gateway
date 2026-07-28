@@ -11,6 +11,7 @@
 
 import type { IntegrationManager, DiscoveredTool } from './integration-manager';
 import type { SharedState, EnrichedAuthorization } from './shared-state';
+import { lockedNotice } from './locked-notice';
 import type { DenialReason } from './denial-log';
 import { SPReceiptError } from './sp-client';
 import { isCommitmentDowngrade } from './attestation-cache';
@@ -201,6 +202,21 @@ export function createGatedToolHandler(
 
   const { profile, executionMapping, staticExecution, category } = tool.gating;
 
+  // Locked ⇒ no authorization can be read, so every gated call fails. Say WHY
+  // before the gate reports the symptom ("no authorization grants it"), which
+  // would send the user off to create one they already have.
+  const lockedGuard = (inner: (args: Record<string, unknown>) => Promise<ToolResult>) =>
+    async (args: Record<string, unknown>): Promise<ToolResult> => {
+      if (!state.spClient.isUnlocked()) {
+        return {
+          content: [{ type: 'text', text: lockedNotice(`use ${tool.namespacedName}`) }],
+          isError: true,
+        };
+      }
+      return inner(args);
+    };
+
+
   // Tools the manifest declares unavailable are always blocked at the gate.
   if (category === 'disabled') {
     return async () => ({
@@ -223,7 +239,7 @@ export function createGatedToolHandler(
     // exemption). Absence of all three ⇒ deny. Decided once here, from the tool
     // config, so an unconfigured read can never fall through to pass-through.
     const governed = readToolIsGoverned(tool.gating);
-    return async (args: Record<string, unknown>) => {
+    return lockedGuard(async (args: Record<string, unknown>) => {
       if (!governed) {
         return denyRead(state, tool, 'ungoverned',
           `${tool.originalName} declares no read governance (no static gate, no read adapter, ` +
@@ -417,11 +433,11 @@ export function createGatedToolHandler(
       }
 
       return result;
-    };
+    });
   }
 
   // Write tools: full execution context verification
-  return async (args: Record<string, unknown>) => {
+  return lockedGuard(async (args: Record<string, unknown>) => {
     // Start with static values (e.g., scope: "external")
     const execution: Record<string, string | number> = { ...staticExecution };
 
@@ -733,7 +749,7 @@ export function createGatedToolHandler(
         if (receiptId) outgoingArgs = attachReceiptId(tool, outgoingArgs, receiptId);
         return integrationManager.callTool(tool.integrationId, tool.originalName, outgoingArgs);
       }
-  };
+  });
 }
 
 /**

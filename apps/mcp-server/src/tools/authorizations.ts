@@ -7,6 +7,7 @@
  */
 
 import type { SharedState } from '../lib/shared-state';
+import { lockedNotice } from '../lib/locked-notice';
 import type { IntegrationManager } from '../lib/integration-manager';
 import { getProfile } from '@hap/core';
 import type { ProfileToolGating } from '@hap/core';
@@ -104,6 +105,10 @@ export function listAuthorizationsHandler(
   contextDir?: string,
 ) {
   return async (args?: { domain?: string }) => {
+    // Running but locked reads as "no authorizations" unless we say so.
+    if (!state.spClient.isUnlocked()) {
+      return { content: [{ type: 'text' as const, text: lockedNotice('list authorizations') }] };
+    }
     const authorizations = state.getEnrichedAuthorizations();
     const now = Math.floor(Date.now() / 1000);
     const domain = args?.domain;
