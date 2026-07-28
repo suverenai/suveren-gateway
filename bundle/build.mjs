@@ -122,6 +122,9 @@ for (const [label, indexPath, hint] of [
 // Copy bundle scaffold (CLI + production entry + scripts).
 cpSync(join(__dirname, 'server.js'),         join(OUT, 'server.js'));
 cpSync(join(__dirname, 'bin', 'suveren-gateway.js'), join(OUT, 'bin', 'suveren-gateway.js'));
+// The CLI imports ../lib/autostart-templates.mjs — without this the bundled
+// binary throws ERR_MODULE_NOT_FOUND on startup.
+cpSync(join(__dirname, 'lib'), join(OUT, 'lib'), { recursive: true });
 cpSync(join(__dirname, 'scripts'), join(OUT, 'scripts'), { recursive: true });
 chmodSync(join(OUT, 'bin', 'suveren-gateway.js'), 0o755);
 chmodSync(join(OUT, 'server.js'),                0o755);

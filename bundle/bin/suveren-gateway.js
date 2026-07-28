@@ -15,6 +15,7 @@ import { existsSync, mkdirSync, openSync, readFileSync, writeFileSync, unlinkSyn
 import { homedir, platform } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { buildLaunchAgentPlist, buildSystemdUnit, buildWindowsTaskXml } from '../lib/autostart-templates.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PKG_ROOT = resolve(__dirname, '..');
@@ -39,25 +40,15 @@ try {
 
 // ─── Subcommands ────────────────────────────────────────────────────────
 
-const argv = process.argv.slice(2);
-const cmd = argv[0] ?? 'help';
-
-switch (cmd) {
-  case 'start':   await start(argv.slice(1)); break;
-  case 'stop':    await stop(); break;
-  case 'status':  await status(); break;
-  case 'restart': await restart(); break;
-  case 'logs':    await logs(argv.slice(1)); break;
-  case 'service': await service(argv.slice(1)); break;
-  case 'help':
-  case '--help':
-  case '-h':
-    printHelp(); break;
-  default:
-    console.error(`Unknown command: ${cmd}\n`);
-    printHelp();
-    process.exit(2);
-}
+/**
+ * Dispatch runs at the BOTTOM of this file, not here.
+ *
+ * Top-level `const` declarations are not hoisted, so dispatching from this
+ * point ran every subcommand before the constants below it were initialised.
+ * `service` referenced one and threw "Cannot access 'LAUNCH_AGENT_LABEL'
+ * before initialization" on every invocation — the feature had never worked on
+ * any platform, and nothing tested it. See main() at the end of the file.
+ */
 
 // ─── Implementations ────────────────────────────────────────────────────
 
@@ -225,7 +216,9 @@ async function logs(args) {
 // Keeps the gateway PROCESS always running (starts on login, restarts on
 // crash). It boots LOCKED — you still enter your Suveren API key once per
 // reboot; nothing is persisted. See doc/gateway-always-on.md.
-// macOS (LaunchAgent) is implemented; Windows/Linux are the next increment.
+// Implemented on all three: macOS LaunchAgent, Windows Task Scheduler (ONLOGON),
+// Linux systemd user unit. All USER-level — no admin, no root, no stored
+// password.
 
 const LAUNCH_AGENT_LABEL = 'ai.suveren.gateway';
 
@@ -235,53 +228,24 @@ async function service(args) {
 
   if (sub === 'help' || sub === '--help' || sub === '-h') { printServiceHelp(); return; }
 
-  if (os !== 'darwin') {
-    console.error(`\`suveren-gateway service\` is not available on ${os} yet (macOS first).`);
-    console.error(`For now, run it in the background with:  suveren-gateway start --detach`);
+  const impl = serviceImplFor(os);
+  if (!impl) {
+    console.error(`\`suveren-gateway service\` is not available on ${os}.`);
+    console.error(`Supported: macOS, Windows, Linux. Run in the background with:`);
+    console.error(`  suveren-gateway start --detach`);
     console.error(`(Note: --detach does NOT survive a reboot — the service command will.)`);
     process.exit(2);
   }
 
   switch (sub) {
-    case 'install':   await serviceInstallMac(); break;
-    case 'uninstall': await serviceUninstallMac(); break;
-    case 'status':    await serviceStatusMac(); break;
+    case 'install':   await impl.install(); break;
+    case 'uninstall': await impl.uninstall(); break;
+    case 'status':    await impl.status(); break;
     default:
       console.error(`Unknown: service ${sub}\n`);
       printServiceHelp();
       process.exit(2);
   }
-}
-
-/** Pure: the LaunchAgent plist XML. Exported-in-spirit for testing/review. */
-function buildLaunchAgentPlist({ nodePath, serverEntry, label, logFile, dataDir }) {
-  // RunAtLoad → start at login; KeepAlive → restart on crash. The key is NEVER
-  // placed here (no args/env carry a secret) — the gateway boots locked.
-  const env = dataDir
-    ? `  <key>EnvironmentVariables</key>\n  <dict>\n    <key>SUVEREN_DATA_DIR</key>\n    <string>${dataDir}</string>\n  </dict>\n`
-    : '';
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>${label}</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>${nodePath}</string>
-    <string>${serverEntry}</string>
-  </array>
-  <key>RunAtLoad</key>
-  <true/>
-  <key>KeepAlive</key>
-  <true/>
-  <key>StandardOutPath</key>
-  <string>${logFile}</string>
-  <key>StandardErrorPath</key>
-  <string>${logFile}</string>
-${env}</dict>
-</plist>
-`;
 }
 
 function launchAgentPath() {
@@ -362,6 +326,174 @@ async function serviceStatusMac() {
   await status(); // process/health/vault line
 }
 
+// ─── Windows: Task Scheduler (ONLOGON) ──────────────────────────────────
+
+const WIN_TASK_NAME = 'Suveren Gateway';
+
+async function serviceInstallWindows() {
+  ensureDataDir();
+
+  if (readPid() && isPidAlive(readPid())) {
+    console.log('Stopping the current instance so the task can take over…');
+    await stop();
+  }
+
+  // schtasks reads the XML from a file and requires UTF-16 LE with a BOM —
+  // it rejects UTF-8 with an unhelpful "The task XML is malformed".
+  const xml = buildWindowsTaskXml({
+    nodePath: process.execPath,
+    serverEntry: SERVER_ENTRY,
+    author: 'Suveren',
+    dataDir: process.env.SUVEREN_DATA_DIR ?? '',
+  });
+  const xmlPath = join(DATA_DIR, 'suveren-task.xml');
+  writeFileSync(xmlPath, '\ufeff' + xml, { encoding: 'utf16le' });
+
+  // /F overwrites an existing task, so install is idempotent.
+  const r = runQuiet('schtasks', ['/Create', '/TN', WIN_TASK_NAME, '/XML', xmlPath, '/F']);
+  safeUnlink(xmlPath);
+
+  if (r.status !== 0) {
+    console.error('Could not register the scheduled task.');
+    console.error(r.stderr || r.stdout || '');
+    process.exit(1);
+  }
+
+  // Registering does not start it — the trigger is next logon. Start now so
+  // the user does not have to log out to get what they just switched on.
+  runQuiet('schtasks', ['/Run', '/TN', WIN_TASK_NAME]);
+
+  console.log('✓ Suveren gateway installed as a login task.');
+  console.log('');
+  console.log('  It now starts automatically when you log in, and restarts if it crashes.');
+  console.log(`  After a reboot it comes up LOCKED — open http://localhost:${SUVEREN_PORT} and`);
+  console.log('  enter your Suveren API key once to unlock it (your key is never stored).');
+  console.log('');
+  console.log(`  Task:       ${WIN_TASK_NAME} (Task Scheduler, current user)`);
+  console.log('  Status:     suveren-gateway service status');
+  console.log('  Remove:     suveren-gateway service uninstall');
+}
+
+async function serviceUninstallWindows() {
+  const r = runQuiet('schtasks', ['/Delete', '/TN', WIN_TASK_NAME, '/F']);
+  if (r.status !== 0 && !/cannot find/i.test(r.stderr + r.stdout)) {
+    console.error('Could not remove the scheduled task.');
+    console.error(r.stderr || r.stdout || '');
+    process.exit(1);
+  }
+  console.log('✓ Login task removed. The gateway will no longer start on login.');
+  console.log('  (A currently-running instance keeps running until you `suveren-gateway stop`.)');
+}
+
+async function serviceStatusWindows() {
+  const r = runQuiet('schtasks', ['/Query', '/TN', WIN_TASK_NAME, '/FO', 'LIST']);
+  const installed = r.status === 0;
+  console.log(`Login service: ${installed ? 'installed' : 'not installed'}`);
+  if (installed) {
+    console.log(`  Task:   ${WIN_TASK_NAME}`);
+    const state = /Status:\s*(\S+)/.exec(r.stdout || '');
+    if (state) console.log(`  State:  ${state[1]}`);
+  }
+}
+
+// ─── Linux: systemd user unit ───────────────────────────────────────────
+
+const SYSTEMD_UNIT = 'suveren-gateway.service';
+
+function systemdUnitPath() {
+  const base = process.env.XDG_CONFIG_HOME || join(homedir(), '.config');
+  return join(base, 'systemd', 'user', SYSTEMD_UNIT);
+}
+
+function hasSystemd() {
+  return runQuiet('systemctl', ['--user', '--version']).status === 0;
+}
+
+async function serviceInstallLinux() {
+  ensureDataDir();
+
+  if (!hasSystemd()) {
+    console.error('systemd --user is not available on this system.');
+    console.error('Run it in the background instead:  suveren-gateway start --detach');
+    process.exit(1);
+  }
+
+  if (readPid() && isPidAlive(readPid())) {
+    console.log('Stopping the current instance so the service can take over…');
+    await stop();
+  }
+
+  const unitPath = systemdUnitPath();
+  mkdirSync(dirname(unitPath), { recursive: true });
+  writeFileSync(unitPath, buildSystemdUnit({
+    nodePath: process.execPath,
+    serverEntry: SERVER_ENTRY,
+    logFile: LOG_FILE,
+    dataDir: process.env.SUVEREN_DATA_DIR ?? '',
+  }), { encoding: 'utf8', mode: 0o644 });
+
+  runQuiet('systemctl', ['--user', 'daemon-reload']);
+  const en = runQuiet('systemctl', ['--user', 'enable', '--now', SYSTEMD_UNIT]);
+  if (en.status !== 0) {
+    console.error('Wrote the unit file but systemd could not enable it.');
+    console.error(en.stderr || en.stdout || '');
+    console.error(`Unit: ${unitPath}`);
+    process.exit(1);
+  }
+
+  console.log('✓ Suveren gateway installed as a user service.');
+  console.log('');
+  console.log('  It now starts automatically when you log in, and restarts if it crashes.');
+  console.log(`  After a reboot it comes up LOCKED — open http://localhost:${SUVEREN_PORT} and`);
+  console.log('  enter your Suveren API key once to unlock it (your key is never stored).');
+  console.log('');
+  console.log(`  Unit:       ${unitPath}`);
+  console.log('  Status:     suveren-gateway service status');
+  console.log('  Remove:     suveren-gateway service uninstall');
+  console.log('');
+  console.log('  A user service starts at LOGIN. To have it run from boot without');
+  console.log('  logging in, enable lingering once:');
+  console.log(`    loginctl enable-linger ${process.env.USER ?? '$USER'}`);
+}
+
+async function serviceUninstallLinux() {
+  const unitPath = systemdUnitPath();
+  runQuiet('systemctl', ['--user', 'disable', '--now', SYSTEMD_UNIT]);
+  if (existsSync(unitPath)) safeUnlink(unitPath);
+  runQuiet('systemctl', ['--user', 'daemon-reload']);
+  console.log('✓ User service removed. The gateway will no longer start on login.');
+  console.log('  (A currently-running instance keeps running until you `suveren-gateway stop`.)');
+}
+
+async function serviceStatusLinux() {
+  const unitPath = systemdUnitPath();
+  const installed = existsSync(unitPath);
+  console.log(`Login service: ${installed ? 'installed' : 'not installed'}`);
+  if (installed) console.log(`  Unit:   ${unitPath}`);
+  const active = runQuiet('systemctl', ['--user', 'is-active', SYSTEMD_UNIT]);
+  const enabled = runQuiet('systemctl', ['--user', 'is-enabled', SYSTEMD_UNIT]);
+  if (installed) {
+    console.log(`  systemd: ${(active.stdout || 'unknown').trim()} / ${(enabled.stdout || 'unknown').trim()}`);
+  }
+}
+
+/**
+ * Per-platform autostart; null ⇒ unsupported platform.
+ *
+ * A function, not a const object: the CLI dispatches at the top of this file,
+ * which runs BEFORE a top-level const is initialised (temporal dead zone), so
+ * an object here threw "Cannot access before initialization" on every
+ * `service` invocation. Function declarations are hoisted.
+ */
+function serviceImplFor(os) {
+  switch (os) {
+    case 'darwin': return { install: serviceInstallMac,     uninstall: serviceUninstallMac,     status: serviceStatusMac };
+    case 'win32':  return { install: serviceInstallWindows, uninstall: serviceUninstallWindows, status: serviceStatusWindows };
+    case 'linux':  return { install: serviceInstallLinux,   uninstall: serviceUninstallLinux,   status: serviceStatusLinux };
+    default:       return null;
+  }
+}
+
 /** Run a command capturing output, never throwing. */
 function runQuiet(bin, args) {
   const r = spawnSync(bin, args, { encoding: 'utf8' });
@@ -372,13 +504,19 @@ function printServiceHelp() {
   console.log(`suveren-gateway service — run the gateway as a login service (survives reboot)
 
 Usage:
-  suveren-gateway service install     Start on login + restart on crash (macOS)
+  suveren-gateway service install     Start on login + restart on crash
   suveren-gateway service uninstall   Remove the login service
   suveren-gateway service status      Show whether it's installed + running
 
-The gateway boots LOCKED after a reboot — you enter your Suveren API key once
-to unlock it; the key is never stored. macOS is supported today; Windows and
-Linux are coming — use \`start --detach\` there for now.
+Supported on macOS (LaunchAgent), Windows (Task Scheduler) and Linux (systemd
+user unit). All are USER-level — no admin rights, no root, no stored password.
+
+The gateway boots LOCKED after a reboot: you enter your Suveren API key once to
+unlock it, and the key is never stored. Autostart keeps the PROCESS alive; it
+cannot unlock your credentials for you.
+
+Linux: a user service starts at LOGIN. To run it from boot without logging in,
+enable lingering once:  loginctl enable-linger $USER
 `);
 }
 
@@ -445,3 +583,31 @@ Environment:
   SUVEREN_DATA_DIR    Data directory (default ~/.suveren)
 `);
 }
+
+// ─── Entry point ────────────────────────────────────────────────────────
+//
+// Called last so every declaration above is initialised first.
+
+async function main() {
+  const argv = process.argv.slice(2);
+  const cmd = argv[0] ?? 'help';
+
+  switch (cmd) {
+    case 'start':   await start(argv.slice(1)); break;
+    case 'stop':    await stop(); break;
+    case 'status':  await status(); break;
+    case 'restart': await restart(); break;
+    case 'logs':    await logs(argv.slice(1)); break;
+    case 'service': await service(argv.slice(1)); break;
+    case 'help':
+    case '--help':
+    case '-h':
+      printHelp(); break;
+    default:
+      console.error(`Unknown command: ${cmd}\n`);
+      printHelp();
+      process.exit(2);
+  }
+}
+
+await main();
