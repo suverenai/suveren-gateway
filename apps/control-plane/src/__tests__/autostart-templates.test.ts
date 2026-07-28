@@ -144,7 +144,13 @@ describe('Windows Task Scheduler XML', () => {
   });
 
   it('quotes the script path so "Program Files" style paths survive', () => {
-    expect(task()).toContain('<Arguments>&quot;C:\\Users\\a\\AppData\\suveren\\server.js&quot;</Arguments>');
+    expect(task()).toContain('<Arguments>&quot;C:\\Users\\a\\AppData\\suveren\\server.js&quot; --autostart</Arguments>');
+  });
+
+  it('passes --autostart, the only way Windows can mark a service start', () => {
+    // Task Scheduler XML has no environment block, so the marker that tells
+    // the gateway to announce being locked has to ride in the arguments.
+    expect(task()).toContain('--autostart');
   });
 
   it('escapes hostile paths', () => {
