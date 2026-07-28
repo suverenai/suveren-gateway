@@ -150,6 +150,26 @@ async function stop() {
 async function status() {
   const pid = readPid();
   if (!pid) {
+    // No PID file does NOT mean not running: when the login service owns the
+    // gateway, launchd/systemd/Task Scheduler spawn server.js directly and
+    // nothing writes one. Ask the port before declaring it dead — otherwise
+    // status contradicts a gateway that is plainly serving requests.
+    try {
+      const res = await fetch(`http://localhost:${SUVEREN_PORT}/health`, {
+        signal: AbortSignal.timeout(3000),
+      });
+      if (res.ok) {
+        const body = await res.json();
+        console.log('suveren-gateway: running (managed by the login service)');
+        console.log(`  UI:           http://localhost:${SUVEREN_PORT}`);
+        console.log(`  Vault:        ${body.vaultUnlocked ? 'unlocked' : 'locked'}`);
+        console.log(`  Version:      ${body.version ?? 'unknown'} (running)`);
+        console.log(`  Service:      suveren-gateway service status`);
+        return;
+      }
+    } catch {
+      /* nothing listening — genuinely not running */
+    }
     console.log('suveren-gateway: not running (no PID file).');
     process.exit(3);
   }
@@ -306,7 +326,8 @@ async function serviceUninstallMac() {
   runQuiet('launchctl', ['unload', plistPath]); // legacy fallback, harmless if already out
   if (existsSync(plistPath)) safeUnlink(plistPath);
   console.log(`✓ Login service removed. The gateway will no longer start on login.`);
-  console.log(`  (A currently-running instance keeps running until you \`suveren-gateway stop\`.)`);
+  console.log('  The service-managed instance has been stopped too. Start it again with:');
+  console.log('    suveren-gateway start --detach');
 }
 
 async function serviceStatusMac() {
@@ -462,7 +483,8 @@ async function serviceUninstallLinux() {
   if (existsSync(unitPath)) safeUnlink(unitPath);
   runQuiet('systemctl', ['--user', 'daemon-reload']);
   console.log('✓ User service removed. The gateway will no longer start on login.');
-  console.log('  (A currently-running instance keeps running until you `suveren-gateway stop`.)');
+  console.log('  The service-managed instance has been stopped too. Start it again with:');
+  console.log('    suveren-gateway start --detach');
 }
 
 async function serviceStatusLinux() {
