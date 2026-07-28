@@ -15,6 +15,7 @@ import { describe, it, expect } from 'vitest';
 import {
   escapeXml,
   buildLaunchAgentPlist,
+  buildMacLauncher,
   buildSystemdUnit,
   buildWindowsTaskXml,
 } from '../../../../bundle/lib/autostart-templates.mjs';
@@ -37,8 +38,7 @@ describe('escapeXml', () => {
 
 describe('macOS LaunchAgent plist', () => {
   const plist = () => buildLaunchAgentPlist({
-    nodePath: '/usr/local/bin/node',
-    serverEntry: '/opt/suveren/server.js',
+    launcherPath: '/Users/a/.suveren/Suveren',
     label: 'ai.suveren.gateway',
     logFile: '/Users/a/.suveren/gateway.log',
     dataDir: '/Users/a/.suveren',
@@ -59,14 +59,14 @@ describe('macOS LaunchAgent plist', () => {
 
   it('omits the environment block entirely when no data dir is set', () => {
     const p = buildLaunchAgentPlist({
-      nodePath: '/n', serverEntry: '/s', label: 'l', logFile: '/log', dataDir: '',
+      launcherPath: '/L', label: 'l', logFile: '/log', dataDir: '',
     });
     expect(p).not.toContain('EnvironmentVariables');
   });
 
   it('escapes hostile paths — the bug that shipped untested', () => {
     const p = buildLaunchAgentPlist({
-      nodePath: NASTY, serverEntry: NASTY, label: 'ai.suveren.gateway',
+      launcherPath: NASTY, label: 'ai.suveren.gateway',
       logFile: NASTY, dataDir: NASTY,
     });
     // Raw `&` or `<` would make the plist unparseable and launchctl would
@@ -174,7 +174,7 @@ describe('PATH is carried into the unit — integrations depend on it', () => {
 
   it('macOS plist includes PATH', () => {
     const p = buildLaunchAgentPlist({
-      nodePath: '/n', serverEntry: '/s', label: 'l', logFile: '/log',
+      launcherPath: '/L', label: 'l', logFile: '/log',
       dataDir: '/d', path: REAL_PATH,
     });
     expect(p).toContain('<key>PATH</key>');
@@ -183,7 +183,7 @@ describe('PATH is carried into the unit — integrations depend on it', () => {
 
   it('macOS plist still emits the env block when ONLY a path is given', () => {
     const p = buildLaunchAgentPlist({
-      nodePath: '/n', serverEntry: '/s', label: 'l', logFile: '/log',
+      launcherPath: '/L', label: 'l', logFile: '/log',
       dataDir: '', path: REAL_PATH,
     });
     expect(p).toContain('EnvironmentVariables');
@@ -203,7 +203,7 @@ describe('PATH is carried into the unit — integrations depend on it', () => {
     // An empty PATH would be WORSE than none: it overrides the default with
     // nothing at all.
     const p = buildLaunchAgentPlist({
-      nodePath: '/n', serverEntry: '/s', label: 'l', logFile: '/log', dataDir: '/d', path: '',
+      launcherPath: '/L', label: 'l', logFile: '/log', dataDir: '/d', path: '',
     });
     expect(p).not.toContain('<key>PATH</key>');
     const u = buildSystemdUnit({ nodePath: '/n', serverEntry: '/s', logFile: '/l', dataDir: '/d', path: '' });
@@ -212,9 +212,44 @@ describe('PATH is carried into the unit — integrations depend on it', () => {
 
   it('escapes a hostile PATH', () => {
     const p = buildLaunchAgentPlist({
-      nodePath: '/n', serverEntry: '/s', label: 'l', logFile: '/log',
+      launcherPath: '/L', label: 'l', logFile: '/log',
       dataDir: '', path: '/a&b:/c<d>',
     });
     expect(p).not.toMatch(/&(?!amp;|lt;|gt;|quot;|apos;)/);
+  });
+});
+
+describe('macOS launcher — what Login Items actually displays', () => {
+  // Pointing launchd at the node binary made System Settings show
+  // "node — Item from unidentified developer": unidentifiable, and alarming.
+  // The entry is the FILENAME of the program launchd runs, so it has to be a
+  // file called Suveren.
+  it('is a shell script that execs the gateway', () => {
+    const l = buildMacLauncher({ nodePath: '/opt/homebrew/bin/node', serverEntry: '/x/server.js' });
+    expect(l.startsWith('#!/bin/sh')).toBe(true);
+    expect(l).toContain("exec '/opt/homebrew/bin/node' '/x/server.js'");
+  });
+
+  it('quotes paths, so spaces and apostrophes cannot break it', () => {
+    const l = buildMacLauncher({
+      nodePath: "/Users/O'Brien/My Tools/node",
+      serverEntry: '/opt/My Server/server.js',
+    });
+    expect(l).toContain("'/opt/My Server/server.js'");
+    expect(l).toContain("O'\\''Brien");
+  });
+
+  it('execs rather than spawning — launchd must signal the gateway directly', () => {
+    // Without exec the launcher lingers as an extra process, and KeepAlive
+    // plus signal delivery would apply to the wrapper, not the gateway.
+    expect(buildMacLauncher({ nodePath: '/n', serverEntry: '/s' })).toContain('exec ');
+  });
+
+  it('the plist points at the launcher, not at node', () => {
+    const p = buildLaunchAgentPlist({
+      launcherPath: '/Users/a/.suveren/Suveren', label: 'l', logFile: '/log', dataDir: '', path: '',
+    });
+    expect(p).toContain('<string>/Users/a/.suveren/Suveren</string>');
+    expect(p).not.toContain('node');
   });
 });

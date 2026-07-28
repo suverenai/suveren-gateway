@@ -51,48 +51,21 @@ export function AutostartToggle() {
 
   const toggle = useCallback(async () => {
     if (!state?.supported || busy) return;
-    const turningOn = !state.installed;
     setBusy(true);
     setError(null);
     try {
       await spClient.setAutostart(!state.installed);
     } catch (err) {
-      // EXPECTED on install: the CLI stops the running gateway so the login
-      // service can take it over, which kills the very connection serving this
-      // request. The browser reports "Failed to fetch" — not a failure, a
-      // handover. Anything else is a real error.
-      const msg = err instanceof Error ? err.message : 'Failed';
-      if (!/failed to fetch|networkerror|load failed/i.test(msg)) setError(msg);
+      setError(err instanceof Error ? err.message : 'Failed');
     } finally {
-      if (turningOn) {
-        // Turning it ON restarts the gateway so the login service can own it,
-        // and it comes back LOCKED. Every authenticated endpoint then answers
-        // 401, so polling for autostart state would fail forever and report a
-        // timeout even though the install worked.
-        //
-        // Poll /health instead — it needs no auth — then reload, which lands on
-        // the login screen. That is the truth: it worked, and you need to sign
-        // in again.
-        const deadline = Date.now() + 60_000;
-        for (;;) {
-          try {
-            const res = await fetch('/health', { signal: AbortSignal.timeout(2_000) });
-            if (res.ok) { window.location.reload(); return; }
-          } catch { /* still down */ }
-          if (Date.now() > deadline) {
-            setError('Suveren is restarting under the login service. Reload this page in a moment and sign in again.');
-            break;
-          }
-          await new Promise(r => setTimeout(r, 1_000));
-        }
-      } else {
-        // Turning it OFF leaves the gateway running, so state is readable.
-        try {
-          setState(await spClient.getAutostart());
-          setError(null);
-        } catch (err) {
-          setError(err instanceof Error ? err.message : 'Could not re-read state');
-        }
+      // Nothing restarts any more — installing only REGISTERS autostart for the
+      // next login — so the state is readable immediately and there is no
+      // handover to ride out.
+      try {
+        setState(await spClient.getAutostart());
+        setError(null);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Could not re-read state');
       }
       setBusy(false);
     }
@@ -135,14 +108,14 @@ export function AutostartToggle() {
             className={state.installed ? 'btn btn-secondary' : 'btn btn-primary'}
             style={{ whiteSpace: 'nowrap' }}
           >
-            {busy ? (state.installed ? 'Turning off…' : 'Restarting…') : state.installed ? 'Turn off' : 'Turn on'}
+            {busy ? 'Working…' : state.installed ? 'Turn off' : 'Turn on'}
           </button>
         )}
       </div>
 
       {state.supported && (
         <p style={{ margin: '1rem 0 0', fontSize: '0.85rem', color: 'var(--text-tertiary)' }}>
-          Status: <strong>{state.installed ? 'Active — starts at login' : 'Off'}</strong>
+          Status: <strong>{state.installed ? 'On — starts from your next login' : 'Off'}</strong>
         </p>
       )}
 
@@ -151,8 +124,9 @@ export function AutostartToggle() {
         // credentials — saying so here is what stops "keep running" from
         // reading as "keep working".
         <p style={{ margin: '0.5rem 0 0', fontSize: '0.85rem', color: 'var(--text-tertiary)' }}>
-          After a restart Suveren comes back <strong>locked</strong>. You still enter your API key
-          once to unlock it — your key is never stored, so nothing on this machine can unlock it for you.
+          Turning this on doesn't interrupt the gateway you're using — it takes effect at your
+          next login. After any restart Suveren comes back <strong>locked</strong>: you enter your
+          API key once to unlock it, because nothing stored on this machine can unlock it for you.
         </p>
       )}
 

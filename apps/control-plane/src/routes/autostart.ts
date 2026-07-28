@@ -12,7 +12,7 @@
  * broken on every platform without anyone noticing.
  */
 import { Router, type Request, type Response } from 'express';
-import { execFile, spawn } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { dirname as pathDirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -139,24 +139,14 @@ export function createAutostartRouter(): Router {
       res.status(400).json({ error: 'unsupported', message: 'Autostart is not available here.' });
       return;
     }
-    // Installing STOPS the running gateway so launchd/systemd can take it
-    // over. This request is being served BY that gateway, and a normal
-    // execFile child belongs to it — so the child is killed the moment the
-    // gateway goes down, having stopped it but not yet registered the
-    // service. Net result: nothing running and autostart still off, which is
-    // precisely the failure this endpoint is meant to prevent.
-    //
-    // Detach it into its own session so it outlives us, and tell the UI to
-    // wait rather than pretending we know the outcome.
-    const bin = findCli()!;
-    const child = spawn(process.execPath, [bin, 'service', 'install'], {
-      detached: true,
-      stdio: 'ignore',
-      env: process.env,
-    });
-    child.unref();
-
-    res.status(202).json({ restarting: true, installed: true });
+    // Registering no longer touches the running gateway, so this is a plain
+    // synchronous call again — no detached spawn, no restart to survive.
+    const { ok, output } = await cli(['service', 'install']);
+    if (!ok) {
+      res.status(500).json({ error: 'install_failed', message: output });
+      return;
+    }
+    res.json({ ok: true, installed: true, detail: output });
   }));
 
   /** Turn it off. */

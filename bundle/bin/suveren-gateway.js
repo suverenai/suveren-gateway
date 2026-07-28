@@ -15,7 +15,7 @@ import { existsSync, mkdirSync, openSync, readFileSync, writeFileSync, unlinkSyn
 import { homedir, platform } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildLaunchAgentPlist, buildSystemdUnit, buildWindowsTaskXml } from '../lib/autostart-templates.mjs';
+import { buildLaunchAgentPlist, buildMacLauncher, buildSystemdUnit, buildWindowsTaskXml } from '../lib/autostart-templates.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PKG_ROOT = resolve(__dirname, '..');
@@ -272,20 +272,34 @@ function launchAgentPath() {
   return join(homedir(), 'Library', 'LaunchAgents', `${LAUNCH_AGENT_LABEL}.plist`);
 }
 
+/** Where the named launcher lives. Its FILENAME is the Login Items entry. */
+function macLauncherPath() {
+  return join(DATA_DIR, 'Suveren');
+}
+
 async function serviceInstallMac() {
   ensureDataDir();
   const plistPath = launchAgentPath();
   mkdirSync(dirname(plistPath), { recursive: true });
 
-  // If a manual/detached instance is running, stop it — the service will own it.
-  if (readPid() && isPidAlive(readPid())) {
-    console.log('Stopping the current instance so the service can take over…');
-    await stop();
-  }
+  // Deliberately does NOT stop the running gateway.
+  //
+  // Autostart is about FUTURE logins. Seizing the current instance forced a
+  // restart, the restart re-locked the vault, and the user was thrown back to
+  // the login screen with no idea whether it had worked. Register it and leave
+  // the running gateway alone; launchd picks the agent up at the next login,
+  // which is exactly when it is wanted.
 
-  const plist = buildLaunchAgentPlist({
+  // A launcher named `Suveren` so System Settings → Login Items shows that,
+  // rather than "node".
+  const launcherPath = macLauncherPath();
+  writeFileSync(launcherPath, buildMacLauncher({
     nodePath: process.execPath,
     serverEntry: SERVER_ENTRY,
+  }), { encoding: 'utf8', mode: 0o755 });
+
+  const plist = buildLaunchAgentPlist({
+    launcherPath,
     label: LAUNCH_AGENT_LABEL,
     logFile: LOG_FILE,
     dataDir: process.env.SUVEREN_DATA_DIR ?? '',
@@ -298,24 +312,15 @@ async function serviceInstallMac() {
   writeFileSync(plistPath, plist, { encoding: 'utf8', mode: 0o644 });
 
   const uid = process.getuid();
-  // Modern: bootout (ignore-if-absent) then bootstrap into the GUI session.
-  runQuiet('launchctl', ['bootout', `gui/${uid}/${LAUNCH_AGENT_LABEL}`]);
-  const boot = runQuiet('launchctl', ['bootstrap', `gui/${uid}`, plistPath]);
-  if (boot.status !== 0) {
-    // Fallback for older macOS.
-    runQuiet('launchctl', ['unload', plistPath]);
-    const load = runQuiet('launchctl', ['load', '-w', plistPath]);
-    if (load.status !== 0) {
-      console.error(`Installed the plist but launchctl could not load it.`);
-      console.error(load.stderr || boot.stderr || '');
-      console.error(`Plist: ${plistPath}`);
-      process.exit(1);
-    }
-  }
+  // Clear any prior "disabled" mark from a previous uninstall, so the agent is
+  // eligible again — but do NOT bootstrap it now: that would start a second
+  // gateway alongside the running one and fight over the port.
+  runQuiet('launchctl', ['enable', `gui/${uid}/${LAUNCH_AGENT_LABEL}`]);
 
   console.log(`✓ Suveren gateway installed as a login service.`);
   console.log(``);
-  console.log(`  It now starts automatically when you log in, and restarts if it crashes.`);
+  console.log(`  It starts automatically from your NEXT login, and restarts if it crashes.`);
+  console.log(`  Your current gateway keeps running — nothing was interrupted.`);
   console.log(`  After a reboot it comes up LOCKED — open http://localhost:${SUVEREN_PORT} and`);
   console.log(`  enter your Suveren API key once to unlock it (your key is never stored).`);
   console.log(``);
@@ -336,6 +341,7 @@ async function serviceUninstallMac() {
   // KeepAlive in the meantime. The instance you have keeps serving.
   runQuiet('launchctl', ['disable', `gui/${uid}/${LAUNCH_AGENT_LABEL}`]);
   if (existsSync(plistPath)) safeUnlink(plistPath);
+  if (existsSync(macLauncherPath())) safeUnlink(macLauncherPath());
   console.log(`✓ Login service removed. The gateway will no longer start on login.`);
   console.log('  The running gateway keeps serving — only autostart is off, so it');
   console.log('  will not come back by itself after a restart.');
@@ -360,15 +366,13 @@ async function serviceStatusMac() {
 
 // ─── Windows: Task Scheduler (ONLOGON) ──────────────────────────────────
 
-const WIN_TASK_NAME = 'Suveren Gateway';
+const WIN_TASK_NAME = 'Suveren';
 
 async function serviceInstallWindows() {
   ensureDataDir();
 
-  if (readPid() && isPidAlive(readPid())) {
-    console.log('Stopping the current instance so the task can take over…');
-    await stop();
-  }
+  // Deliberately does NOT stop the running gateway — see the macOS note.
+  // Registering is enough; Task Scheduler starts it at the next logon.
 
   // schtasks reads the XML from a file and requires UTF-16 LE with a BOM —
   // it rejects UTF-8 with an unhelpful "The task XML is malformed".
@@ -391,13 +395,10 @@ async function serviceInstallWindows() {
     process.exit(1);
   }
 
-  // Registering does not start it — the trigger is next logon. Start now so
-  // the user does not have to log out to get what they just switched on.
-  runQuiet('schtasks', ['/Run', '/TN', WIN_TASK_NAME]);
-
   console.log('✓ Suveren gateway installed as a login task.');
   console.log('');
-  console.log('  It now starts automatically when you log in, and restarts if it crashes.');
+  console.log('  It starts automatically from your NEXT logon, and restarts if it crashes.');
+  console.log('  Your current gateway keeps running — nothing was interrupted.');
   console.log(`  After a reboot it comes up LOCKED — open http://localhost:${SUVEREN_PORT} and`);
   console.log('  enter your Suveren API key once to unlock it (your key is never stored).');
   console.log('');
@@ -450,11 +451,7 @@ async function serviceInstallLinux() {
     process.exit(1);
   }
 
-  if (readPid() && isPidAlive(readPid())) {
-    console.log('Stopping the current instance so the service can take over…');
-    await stop();
-  }
-
+  // Deliberately does NOT stop the running gateway — see the macOS note.
   const unitPath = systemdUnitPath();
   mkdirSync(dirname(unitPath), { recursive: true });
   writeFileSync(unitPath, buildSystemdUnit({
@@ -467,7 +464,9 @@ async function serviceInstallLinux() {
   }), { encoding: 'utf8', mode: 0o644 });
 
   runQuiet('systemctl', ['--user', 'daemon-reload']);
-  const en = runQuiet('systemctl', ['--user', 'enable', '--now', SYSTEMD_UNIT]);
+  // `enable` WITHOUT --now: registered for the next login, running instance
+  // untouched. --now would start a second gateway and fight over the port.
+  const en = runQuiet('systemctl', ['--user', 'enable', SYSTEMD_UNIT]);
   if (en.status !== 0) {
     console.error('Wrote the unit file but systemd could not enable it.');
     console.error(en.stderr || en.stdout || '');
@@ -477,7 +476,8 @@ async function serviceInstallLinux() {
 
   console.log('✓ Suveren gateway installed as a user service.');
   console.log('');
-  console.log('  It now starts automatically when you log in, and restarts if it crashes.');
+  console.log('  It starts automatically from your NEXT login, and restarts if it crashes.');
+  console.log('  Your current gateway keeps running — nothing was interrupted.');
   console.log(`  After a reboot it comes up LOCKED — open http://localhost:${SUVEREN_PORT} and`);
   console.log('  enter your Suveren API key once to unlock it (your key is never stored).');
   console.log('');
