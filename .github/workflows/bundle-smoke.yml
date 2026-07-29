@@ -146,11 +146,14 @@ jobs:
         shell: bash
         run: |
           set -e
+          # RELATIVE paths throughout: on Windows RUNNER_TEMP is D:\a\_temp, and
+          # Git Bash's tar mangles the backslashes ("Cannot open D\:\a\\_temp").
+          rm -rf .packed && mkdir -p .packed
           cd bundle/dist
           TARBALL=$(npm pack --silent)
-          mkdir -p "${RUNNER_TEMP}/packed"
-          tar -xzf "$TARBALL" -C "${RUNNER_TEMP}/packed" --strip-components=1
-          cd "${RUNNER_TEMP}/packed"
+          tar -xzf "$TARBALL" -C ../../.packed --strip-components=1
+          rm -f "$TARBALL"
+          cd ../../.packed
           npm install --omit=dev --no-audit --no-fund
           echo "::group::CLI loads from the packed tarball"
           # Every subcommand must at least LOAD. A file missing from the
