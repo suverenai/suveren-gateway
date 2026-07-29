@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { spClient } from '../lib/sp-client';
 import { AutostartToggle } from '../components/AutostartToggle';
+import { VersionCard } from '../components/VersionCard';
 
 const PROVIDER_CONFIG: Record<string, { provider: string; endpoint: string; models: string[] }> = {
   ollama: {
@@ -316,6 +317,7 @@ export function SettingsServicesPage() {
 
       {/* Autostart — the CLI's `service` command as a switch */}
       <AutostartToggle />
+      <VersionCard />
 
       {/* Security guidance */}
       <div className="card" style={{ padding: '1.5rem', marginTop: '2rem' }}>

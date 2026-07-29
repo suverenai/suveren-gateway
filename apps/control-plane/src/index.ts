@@ -733,15 +733,44 @@ app.use(
 
 // ─── Health check (public) ──────────────────────────────────────────────
 
-/** Detect how the gateway was started so the UI can show the right
- *  upgrade command. Docker → /.dockerenv exists. npm install -g →
- *  control-plane resolves from inside a node_modules/@suveren/gateway/
- *  subtree. Anything else (workspace dev) → 'dev'. */
+/**
+ * Detect how the gateway was started, so the UI can show the right upgrade
+ * command and the checker can look in the right place.
+ *
+ *   Docker → /.dockerenv
+ *   npm    → resolves from inside a node_modules/@suveren/gateway/ subtree
+ *   dev    → a git checkout
+ *
+ * `dev` is claimed ONLY when there is actually a .git above us. It used to be
+ * the catch-all, and that made it the silent failure mode: dev checks how many
+ * commits behind origin/main you are, so in a directory with no git it finds
+ * nothing, reports no update, and never checks the registry again. An
+ * unrecognised layout would therefore stop hearing about releases — including
+ * security fixes — and look identical to being up to date.
+ *
+ * An unknown layout now falls back to the npm check. Being told about a
+ * version you cannot one-click upgrade to is a far smaller problem than never
+ * being told at all.
+ *
+ * Mirrored (with injected inputs) in __tests__/install-method.test.ts —
+ * importing this module starts a server, so the rule is duplicated there
+ * rather than imported. Keep the two in step.
+ */
 function detectInstallMethod(): 'docker' | 'npm' | 'dev' {
   if (existsSync('/.dockerenv')) return 'docker';
+
   const dir = import.meta.dirname ?? __dirname;
   if (dir.includes('/node_modules/@suveren/gateway/')) return 'npm';
-  return 'dev';
+
+  // Walk up looking for a .git — the only thing that makes the dev check meaningful.
+  let cursor = dir;
+  for (let i = 0; i < 8; i++) {
+    if (existsSync(join(cursor, '.git'))) return 'dev';
+    const parent = dirname(cursor);
+    if (parent === cursor) break;
+    cursor = parent;
+  }
+  return 'npm';
 }
 const INSTALL_METHOD = detectInstallMethod();
 
