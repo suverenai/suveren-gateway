@@ -2,14 +2,15 @@
   "name": "@suveren/mcp-server",
   "version": "0.1.0",
   "private": true,
-  "description": "Suveren MCP Server — agent tool provider with embedded Gatekeeper",
+  "description": "Suveren MCP Server \u2014 agent tool provider with embedded Gatekeeper",
   "main": "./src/index.ts",
   "scripts": {
-    "build": "tsup bin/http.ts --format esm --outDir dist",
+    "build": "tsc --noEmit -p tsconfig.json && tsup bin/http.ts --format esm --outDir dist",
     "start": "node dist/http.mjs",
     "dev": "SUVEREN_MCP_PORT=3431 tsx --watch bin/http.ts",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "@hap/core": "workspace:*",

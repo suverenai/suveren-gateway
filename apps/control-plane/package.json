@@ -2,13 +2,14 @@
   "name": "@suveren/control-plane",
   "version": "0.1.0",
   "private": true,
-  "description": "Suveren Control Plane — serves UI, proxies AS, handles auth + vault",
+  "description": "Suveren Control Plane \u2014 serves UI, proxies AS, handles auth + vault",
   "scripts": {
-    "build": "tsup src/index.ts --format esm --outDir dist",
+    "build": "tsc --noEmit -p tsconfig.json && tsup src/index.ts --format esm --outDir dist",
     "start": "node dist/index.mjs",
     "dev": "SUVEREN_MCP_INTERNAL_URL=http://127.0.0.1:3431 tsx --watch src/index.ts",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "@hap/core": "workspace:*",

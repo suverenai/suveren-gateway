@@ -23,7 +23,8 @@ export type DenialReason =
   | 'ungoverned'    // F9 — read tool declares no governance
   | 'read_gate'     // static gate (records/crm read_access) not satisfied
   | 'unset_age'     // F11 — no read-age window set on the grant
-  | 'age'           // item older than the read window
+  | 'age'           // item older than the read window (post-fetch)
+  | 'age_window'    // request itself reached past the window (pre-fetch refusal)
   | 'resource'      // container (calendar/…) not in the permitted set
   | 'spam'          // item in an excluded container (SPAM/TRASH)
   | 'query_unsafe'; // F8 — agent query couldn't be safely combined

@@ -11,7 +11,7 @@
 
 import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, renameSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 
 // ─── One-shot data directory migration (.hap → .suveren) ────────────────────
