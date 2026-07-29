@@ -1,7 +1,7 @@
 {
   "name": "@suveren/gateway",
   "version": "__VERSION__",
-  "description": "Suveren gateway — local agent gateway built in compliance with the Human Agency Protocol (HAP). Runs the UI, control plane, and MCP server in one Node process.",
+  "description": "Suveren gateway \u2014 local agent gateway built in compliance with the Human Agency Protocol (HAP). Runs the UI, control plane, and MCP server in one Node process.",
   "type": "module",
   "main": "server.js",
   "bin": {
@@ -12,6 +12,7 @@
   },
   "files": [
     "bin",
+    "lib",
     "dist",
     "scripts",
     "content",

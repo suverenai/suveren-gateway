@@ -133,6 +133,33 @@ jobs:
         working-directory: bundle/dist
         run: npm install --omit=dev --no-audit --no-fund
 
+      # Pack and run from the TARBALL, not from bundle/dist.
+      #
+      # `npm publish` honours the package's `files` whitelist, so the published
+      # artifact is a SUBSET of the build directory. v0.4.0 shipped a CLI that
+      # could not start at all — bin/ imported ../lib/autostart-templates.mjs
+      # and `lib` was missing from the whitelist. Every smoke leg passed,
+      # because they all ran bundle/dist, which had the file.
+      #
+      # This is the only step that sees what a user actually installs.
+      - name: Pack and verify the published file set
+        shell: bash
+        run: |
+          set -e
+          cd bundle/dist
+          TARBALL=$(npm pack --silent)
+          mkdir -p "${RUNNER_TEMP}/packed"
+          tar -xzf "$TARBALL" -C "${RUNNER_TEMP}/packed" --strip-components=1
+          cd "${RUNNER_TEMP}/packed"
+          npm install --omit=dev --no-audit --no-fund
+          echo "::group::CLI loads from the packed tarball"
+          # Every subcommand must at least LOAD. A file missing from the
+          # whitelist surfaces here as ERR_MODULE_NOT_FOUND, exactly as it did
+          # for users of 0.4.0.
+          node bin/suveren-gateway.js help
+          node bin/suveren-gateway.js service help
+          echo "::endgroup::"
+
       - name: Start gateway
         shell: bash
         run: node bundle/dist/bin/suveren-gateway.js start --detach
