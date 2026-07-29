@@ -11,6 +11,7 @@
  */
 
 import { spawn, spawnSync } from 'node:child_process';
+import { createConnection } from 'node:net';
 import { existsSync, mkdirSync, openSync, readFileSync, writeFileSync, unlinkSync, statSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -60,6 +61,24 @@ async function start(args) {
     process.exit(1);
   }
 
+  // The PID file only knows about instances THIS CLI started. A gateway
+  // started by the login service — or from another shell — leaves none, so the
+  // check above passes, we spawn, the child dies instantly with EADDRINUSE,
+  // and its error goes only to the log. The user gets "started (pid N)" for a
+  // process that is already dead. Ask the port, not just the file.
+  if (await isPortListening(SUVEREN_PORT)) {
+    console.error(`Port ${SUVEREN_PORT} is already in use.`);
+    console.error(``);
+    console.error(`Something is already serving there — most likely a gateway started by the`);
+    console.error(`login service or from another terminal, which leaves no PID file for this`);
+    console.error(`CLI to find.`);
+    console.error(``);
+    console.error(`  Check what it is:      suveren-gateway status`);
+    console.error(`  Stop a login service:  suveren-gateway service uninstall`);
+    console.error(`  Or use another port:   SUVEREN_CP_PORT=3410 suveren-gateway start`);
+    process.exit(1);
+  }
+
   ensureDataDir();
 
   if (detach) {
@@ -71,6 +90,24 @@ async function start(args) {
     });
     writeFileSync(PID_FILE, String(child.pid), 'utf8');
     child.unref();
+
+    // "started" must mean SERVING. A detached child that dies on startup takes
+    // its error to the log, so reporting success on spawn alone hands the user
+    // a pid that no longer exists and a browser tab that will not connect.
+    const serving = await waitForListening(SUVEREN_PORT, 20_000);
+    if (!serving) {
+      safeUnlink(PID_FILE);
+      console.error(`suveren-gateway failed to start — nothing is listening on ${SUVEREN_PORT}.`);
+      console.error(``);
+      console.error(`  Log:  ${LOG_FILE}`);
+      console.error(`  Last lines:`);
+      try {
+        const tail = readFileSync(LOG_FILE, 'utf8').trimEnd().split('\n').slice(-8);
+        for (const line of tail) console.error(`    ${line}`);
+      } catch { /* no log yet */ }
+      process.exit(1);
+    }
+
     console.log(`suveren-gateway started (pid ${child.pid})`);
     console.log(``);
     console.log(`  → Open in your browser:  http://localhost:${SUVEREN_PORT}`);
@@ -530,6 +567,28 @@ function serviceImplFor(os) {
     case 'linux':  return { install: serviceInstallLinux,   uninstall: serviceUninstallLinux,   status: serviceStatusLinux };
     default:       return null;
   }
+}
+
+/** Is something accepting TCP connections on this port? */
+function isPortListening(port, timeoutMs = 1_000) {
+  return new Promise(resolve => {
+    const socket = createConnection({ host: '127.0.0.1', port: Number(port) });
+    const done = (result) => { socket.destroy(); resolve(result); };
+    socket.setTimeout(timeoutMs);
+    socket.once('connect', () => done(true));
+    socket.once('timeout', () => done(false));
+    socket.once('error', () => done(false));
+  });
+}
+
+/** Poll until the port accepts connections, or give up. */
+async function waitForListening(port, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await isPortListening(port, 500)) return true;
+    await sleep(300);
+  }
+  return false;
 }
 
 /** Run a command capturing output, never throwing. */

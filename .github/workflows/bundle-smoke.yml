@@ -167,6 +167,25 @@ jobs:
         shell: bash
         run: node bundle/dist/bin/suveren-gateway.js start --detach
 
+      # `start` used to key only off the PID file, which knows about instances
+      # THIS CLI started. A gateway started by the login service leaves none, so
+      # start would spawn a second one, the child would die on EADDRINUSE with
+      # the error going only to the log, and the user got "started (pid N)" for
+      # a process that was already dead. Twice, in practice.
+      - name: Starting twice must fail loudly, not report success
+        shell: bash
+        run: |
+          set -e
+          # Hide the PID file to simulate a service-managed instance.
+          mv "${SUVEREN_DATA_DIR}/gateway.pid" "${SUVEREN_DATA_DIR}/gateway.pid.bak"
+          if node bundle/dist/bin/suveren-gateway.js start --detach; then
+            mv "${SUVEREN_DATA_DIR}/gateway.pid.bak" "${SUVEREN_DATA_DIR}/gateway.pid"
+            echo "::error::start succeeded while the port was already in use"
+            exit 1
+          fi
+          mv "${SUVEREN_DATA_DIR}/gateway.pid.bak" "${SUVEREN_DATA_DIR}/gateway.pid"
+          echo "refused a second start on an occupied port"
+
       # Runs IMMEDIATELY after start — no sleep — because the window we care
       # about is the one where the MCP server is bound but not answering.
       # crm + records are personalDefault, so a fresh data dir makes the MCP
