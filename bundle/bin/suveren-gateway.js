@@ -350,14 +350,30 @@ async function serviceInstallMac() {
 
   const uid = process.getuid();
   // Clear any prior "disabled" mark from a previous uninstall, so the agent is
-  // eligible again — but do NOT bootstrap it now: that would start a second
-  // gateway alongside the running one and fight over the port.
+  // eligible again.
   runQuiet('launchctl', ['enable', `gui/${uid}/${LAUNCH_AGENT_LABEL}`]);
+
+  // Bootstrap NOW only when nothing is already serving. With a gateway running,
+  // loading the agent starts a second one that loses the port race and then
+  // crash-loops under KeepAlive — so in that case the agent waits for the next
+  // login, when the manual instance is gone. With nothing running there is no
+  // conflict, and waiting would leave the user with a "service" that isn't
+  // running and no obvious reason why.
+  const running = await isAlreadyRunning();
+  let loadedNow = false;
+  if (!running) {
+    const r = runQuiet('launchctl', ['bootstrap', `gui/${uid}`, plistPath]);
+    loadedNow = r.status === 0;
+  }
 
   console.log(`✓ Suveren gateway installed as a login service.`);
   console.log(``);
-  console.log(`  It starts automatically from your NEXT login, and restarts if it crashes.`);
-  console.log(`  Your current gateway keeps running — nothing was interrupted.`);
+  if (loadedNow) {
+    console.log(`  It is running now, starts automatically at login, and restarts if it crashes.`);
+  } else {
+    console.log(`  It starts automatically from your NEXT login, and restarts if it crashes.`);
+    if (running) console.log(`  Your current gateway keeps running — nothing was interrupted.`);
+  }
   console.log(`  After a reboot it comes up LOCKED — open http://localhost:${SUVEREN_PORT} and`);
   console.log(`  enter your Suveren API key once to unlock it (your key is never stored).`);
   console.log(``);
@@ -395,7 +411,13 @@ async function serviceStatusMac() {
     const state = /state = (\w+)/.exec(p.stdout || '');
     console.log(`  launchd: loaded${state ? ` (${state[1]})` : ''}`);
   } else if (installed) {
-    console.log(`  launchd: not loaded (run \`suveren-gateway service install\` to (re)load)`);
+    // Do NOT point at `service install` here: install deliberately does not
+    // bootstrap while a gateway is already running (two would fight over the
+    // port), so re-running it would change nothing and the advice would be a
+    // dead end. Say plainly when it becomes active, and give the command that
+    // actually loads it now.
+    console.log(`  launchd: not loaded — starts at your next login`);
+    console.log(`           to activate now: suveren-gateway stop && launchctl bootstrap gui/$(id -u) "${plistPath}"`);
   }
   console.log('');
   await status(); // process/health/vault line
