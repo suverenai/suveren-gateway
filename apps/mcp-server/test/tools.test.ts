@@ -254,11 +254,17 @@ function mockTool(profile: string): DiscoveredTool {
   };
 }
 
-function mockIntegrationManager(): IntegrationManager {
+/**
+ * @param readAgeDays local per-integration read window. Defaults to null — "no
+ *   local setting" — so these tests keep exercising the signed grant bound
+ *   fallback, which is what they were written to cover.
+ */
+function mockIntegrationManager(readAgeDays: number | null = null): IntegrationManager {
   return {
     callTool: vi.fn().mockResolvedValue({
       content: [{ type: 'text', text: 'Payment processed' }],
     }),
+    getReadAgeDays: vi.fn().mockReturnValue(readAgeDays),
   } as unknown as IntegrationManager;
 }
 
@@ -712,5 +718,137 @@ describe('createGatedToolHandler — unset read-age window fails closed', () => 
     expect((im.callTool as ReturnType<typeof vi.fn>)).toHaveBeenCalledOnce();
     const sentArgs = (im.callTool as ReturnType<typeof vi.fn>).mock.calls[0][2] as { q: string };
     expect(sentArgs.q).toBe('(invoices) newer_than:30d');
+  });
+});
+
+describe('createGatedToolHandler — local read policy overrides the grant bound', () => {
+  // Read enforcement never reaches the Authority Server, so the window is LOCAL
+  // config on the integration (protocol.md → Bounds, Context, and Read Policy).
+  // Precedence: integration setting → signed grant bound → DENY.
+  beforeAll(() => {
+    registerProfile('email-local', {
+      id: 'email-local', name: 'Email Local', version: '0',
+      boundsSchema: {
+        keyOrder: ['read_max_age_days'],
+        fields: { read_max_age_days: { type: 'number', boundType: { kind: 'per_transaction', of: 'read_age_days' } } },
+      },
+      contextSchema: { keyOrder: [], fields: {} },
+    } as unknown as Parameters<typeof registerProfile>[1]);
+  });
+  afterAll(() => clearProfiles());
+
+  function tool(): DiscoveredTool {
+    return {
+      originalName: 'list_messages',
+      namespacedName: 'gmail__list_messages',
+      integrationId: 'gmail',
+      description: 'List messages',
+      inputSchema: {},
+      gating: {
+        profile: 'email-local',
+        executionMapping: {},
+        category: 'read',
+        read: {
+          ageField: 'read_age_days', queryArg: 'q', ageConstraint: 'newer_than:{days}d',
+          ageConflictPattern: 'older_than:(\\d+)d',
+        },
+      } as unknown as DiscoveredTool['gating'],
+    };
+  }
+
+  function auth(bounds: Record<string, string | number>): CachedAuthorization {
+    const now = Math.floor(Date.now() / 1000);
+    return {
+      authorizationId: 'authz_00000000-0000-4000-8000-0000000000ce',
+      profileId: 'email-local',
+      path: 'email-local',
+      frame: { profile: 'email-local', path: 'email-local', ...bounds },
+      attestations: [{ domain: 'communications', blob: 'blob', expiresAt: now + 3600 }],
+      requiredDomains: ['communications'],
+      attestedDomains: ['communications'],
+      complete: true,
+    } as unknown as CachedAuthorization;
+  }
+
+  const sentQuery = (im: IntegrationManager) =>
+    ((im.callTool as ReturnType<typeof vi.fn>).mock.calls[0][2] as { q: string }).q;
+
+  it('uses the integration setting instead of the grant bound', async () => {
+    // Grant says 90; the owner set 7 locally. The local setting is the one
+    // place they can change, so it must win — otherwise the control is a lie.
+    const state = mockState([auth({ read_max_age_days: 90 })]);
+    const im = mockIntegrationManager(7);
+    const handler = createGatedToolHandler(tool(), im, state);
+
+    await handler({ q: 'invoices' });
+
+    expect(sentQuery(im)).toBe('(invoices) newer_than:7d');
+  });
+
+  it('the local setting wins even when it is MORE permissive than the grant', async () => {
+    // Same rule in the other direction. Reads are the owner's own data on the
+    // owner's own Gatekeeper; a stale signed bound must not quietly cap the
+    // live setting, or "change it in one place" stops being true.
+    const state = mockState([auth({ read_max_age_days: 30 })]);
+    const im = mockIntegrationManager(365);
+    const handler = createGatedToolHandler(tool(), im, state);
+
+    await handler({ q: 'invoices' });
+
+    expect(sentQuery(im)).toBe('(invoices) newer_than:365d');
+  });
+
+  it('falls back to the grant bound when no local setting exists', async () => {
+    const state = mockState([auth({ read_max_age_days: 30 })]);
+    const im = mockIntegrationManager(null);
+    const handler = createGatedToolHandler(tool(), im, state);
+
+    await handler({ q: 'invoices' });
+
+    // Non-breaking: existing grants keep working untouched.
+    expect(sentQuery(im)).toBe('(invoices) newer_than:30d');
+  });
+
+  it('a local 0 means READ NOTHING — it is not treated as unset', async () => {
+    // The dangerous bug this guards: `readAgeDays || grantBound` would make 0
+    // fall through to the grant's 90 and read far MORE than the owner allowed.
+    const state = mockState([auth({ read_max_age_days: 90 })]);
+    const im = mockIntegrationManager(0);
+    const handler = createGatedToolHandler(tool(), im, state);
+
+    const result = await handler({ q: 'invoices' });
+
+    expect(sentQuery(im)).toBe('(invoices) newer_than:0d');
+    expect(result.isError).toBeFalsy();
+  });
+
+  it('still fails closed when NEITHER the integration nor the grant sets a window', async () => {
+    const state = mockState([auth({})]);
+    const record = vi.fn();
+    (state as unknown as { denialLog: { record: typeof record } }).denialLog = { record };
+    const im = mockIntegrationManager(null);
+    const handler = createGatedToolHandler(tool(), im, state);
+
+    const result = await handler({ q: 'invoices' });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('no read-age window is set');
+    expect((im.callTool as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+    expect((record.mock.calls[0][0] as { reason: string }).reason).toBe('unset_age');
+  });
+
+  it('enforces the local window against a conflicting older_than query', async () => {
+    // The conflict check must use the EFFECTIVE window, not the grant's.
+    const state = mockState([auth({ read_max_age_days: 365 })]);
+    const record = vi.fn();
+    (state as unknown as { denialLog: { record: typeof record } }).denialLog = { record };
+    const im = mockIntegrationManager(30);
+    const handler = createGatedToolHandler(tool(), im, state);
+
+    const result = await handler({ q: 'from:x older_than:60d' });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('30 days');
+    expect((im.callTool as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
   });
 });

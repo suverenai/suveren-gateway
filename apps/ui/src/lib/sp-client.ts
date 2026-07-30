@@ -160,6 +160,12 @@ export interface McpIntegrationStatus {
   running: boolean;
   toolCount: number;
   error?: string;
+  /**
+   * Local read-age window in days, or null when unset (reads then fall back to
+   * the signed grant bound). `0` means "read nothing" and is NOT the same as
+   * null — never collapse them with a truthiness check.
+   */
+  readAgeDays?: number | null;
 }
 
 export interface GateContentEntry {
@@ -745,6 +751,23 @@ class SPClient {
   async removeMcpIntegration(id: string): Promise<void> {
     const res = await this.fetch(`/mcp/integrations/${encodeURIComponent(id)}`, { method: 'DELETE' });
     if (!res.ok) throw new Error(`Failed to remove integration: ${res.status}`);
+  }
+
+  /**
+   * Set how far back the agent may read on this integration. `null` clears the
+   * local setting and falls back to the signed grant bound. Applies to the
+   * next read — no re-authorization needed.
+   */
+  async setReadPolicy(id: string, readAgeDays: number | null): Promise<void> {
+    const res = await this.fetch(`/integrations/${encodeURIComponent(id)}/read-policy`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ readAgeDays }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+      throw new Error((err as { error: string }).error);
+    }
   }
 
   // ─── Team Profile Config ────────────────────────────────────────────────

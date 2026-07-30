@@ -132,11 +132,18 @@ export interface IntegrationConfig {
   /** Whether this integration should be spawned on startup */
   enabled: boolean;
   /**
-   * RESERVED / NOT YET WIRED. Scaffolding for a deferred feature: a LOCAL,
-   * live-editable per-integration read-age window (days), replacing the signed
-   * grant bound. PARKED because moving the value off the grant needs the
-   * control-plane + UI to set it, or reads fail-closed with no way to fix it.
-   * The read path still uses the signed `read_max_age_days` bound today.
+   * LOCAL read-age window (days) — how far back the agent may read on this
+   * integration. Set here rather than in a signed grant because read policy is
+   * enforced only by the local Gatekeeper: a limit lives in the same trust
+   * domain as its enforcement (see `content/0.5/protocol.md` → *Bounds,
+   * Context, and Read Policy*). Being local, it is live-editable — a change
+   * applies to the next read, with no re-attestation.
+   *
+   * Undefined = not set here; the read path then falls back to the signed
+   * `read_max_age_days` grant bound. If NEITHER is set, reads fail closed
+   * (F11) — an unbounded read window is never inferred.
+   *
+   * 0 is meaningful and distinct from undefined: "read nothing".
    */
   readAgeDays?: number;
 }

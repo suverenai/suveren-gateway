@@ -253,6 +253,23 @@ export async function removeIntegration(id: string): Promise<unknown> {
   return res.json();
 }
 
+/**
+ * Set an integration's local read-age window (days), or null to clear it and
+ * fall back to the signed grant bound.
+ */
+export async function setReadPolicy(id: string, readAgeDays: number | null): Promise<unknown> {
+  const res = await fetch(`${MCP_BASE}/internal/integration/${encodeURIComponent(id)}/read-policy`, {
+    method: 'PATCH',
+    headers: { ...internalHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ readAgeDays }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+    throw new Error((err as { error: string }).error);
+  }
+  return res.json();
+}
+
 export async function getGateContent(path?: string): Promise<unknown> {
   const qs = path ? `?path=${encodeURIComponent(path)}` : '';
   const res = await fetch(`${MCP_BASE}/internal/gate-content${qs}`, {

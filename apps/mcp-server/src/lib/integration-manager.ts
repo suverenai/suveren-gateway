@@ -77,6 +77,24 @@ export interface IntegrationStatus {
   running: boolean;
   toolCount: number;
   error?: string;
+  /**
+   * Local read-age window (days), or null when unset (the read path then falls
+   * back to the signed grant bound). Null and 0 are different answers — 0 is
+   * "read nothing" — so the UI must not collapse them.
+   */
+  readAgeDays: number | null;
+}
+
+/**
+ * The one definition of "this config carries a usable local read age".
+ *
+ * Guards on type, not truthiness: `0` ("read nothing") is a real setting and
+ * must not be read as "unset", which would silently fall back to the grant
+ * bound and read MORE than the owner asked for.
+ */
+export function readAgeOf(config: Pick<IntegrationConfig, 'readAgeDays'>): number | null {
+  const days = config.readAgeDays;
+  return typeof days === 'number' && Number.isFinite(days) && days >= 0 ? days : null;
 }
 
 interface RunningIntegration {
@@ -467,14 +485,33 @@ export class IntegrationManager {
   }
 
   /**
-   * RESERVED / NOT YET WIRED (see IntegrationConfig.readAgeDays). The local
-   * read-age window (days) for a running integration, for a deferred feature
-   * that moves the read age off the signed grant. The read path does NOT call
-   * this yet — it still enforces the signed `read_max_age_days` bound.
+   * The LOCAL read-age window (days) for a running integration, or null when
+   * none is set here (the read path then falls back to the signed grant bound
+   * — see `IntegrationConfig.readAgeDays`).
+   *
+   * 0 is a real value ("read nothing") and MUST survive this call, so the
+   * guard tests the type, never truthiness.
    */
   getReadAgeDays(integrationId: string): number | null {
-    const days = this.running.get(integrationId)?.config.readAgeDays;
-    return typeof days === 'number' && Number.isFinite(days) ? days : null;
+    const config = this.running.get(integrationId)?.config;
+    return config ? readAgeOf(config) : null;
+  }
+
+  /**
+   * Apply a new local read-age window to the RUNNING snapshot, so the change
+   * takes effect on the next read without restarting the subprocess. Read
+   * policy is enforced gateway-side and never reaches the downstream MCP
+   * server, so nothing has to be re-spawned.
+   *
+   * Persistence is the registry's job — callers update both. Returns false if
+   * the integration is not running (registry-only update still applies).
+   */
+  setReadAgeDays(integrationId: string, days: number | null): boolean {
+    const entry = this.running.get(integrationId);
+    if (!entry) return false;
+    if (days === null) delete entry.config.readAgeDays;
+    else entry.config.readAgeDays = days;
+    return true;
   }
 
   /**
@@ -490,6 +527,7 @@ export class IntegrationManager {
         name: entry.config.name,
         running: true,
         toolCount: entry.tools.length,
+        readAgeDays: readAgeOf(entry.config),
       });
     }
 
@@ -502,6 +540,7 @@ export class IntegrationManager {
             name: config.name,
             running: false,
             toolCount: 0,
+            readAgeDays: readAgeOf(config),
           });
         }
       }

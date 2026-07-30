@@ -298,22 +298,38 @@ export function createGatedToolHandler(
       // hole). Instead: if no matching grant sets the window, DENY. Resolved once
       // here and reused by the pre-fetch and post-fetch checks.
       //
-      // NOTE (deferred feature): a "local per-integration read age" was designed
-      // and scaffolded (IntegrationConfig.readAgeDays + IntegrationManager
-      // .getReadAgeDays) but PARKED — moving the value off the signed grant needs
-      // the control-plane + UI to set it, or reads fail-closed with no way to fix
-      // it. Until that ships, the age stays a signed grant bound (below).
+      // WHERE THE WINDOW COMES FROM. Read policy is enforced only by this
+      // Gatekeeper — it never reaches the Authority Server and no receipt ever
+      // checks it — so the window belongs in LOCAL, live-editable config rather
+      // than in a signed grant ("a limit lives in the same trust domain as its
+      // enforcement", `content/0.5/protocol.md` → *Bounds, Context, and Read
+      // Policy*). Precedence, deliberately in this order:
+      //
+      //   1. the integration's local `readAgeDays` — the owner's live setting,
+      //      editable in one place and applying to the very next read;
+      //   2. else the signed `read_max_age_days` grant bound — the legacy
+      //      source, kept so existing grants keep working unchanged;
+      //   3. else DENY (F11).
+      //
+      // The local value WINS when set, rather than being min()'d with the
+      // grant: the whole point is one place to change it, and a grant silently
+      // overriding the owner's own setting would make the control a lie. It is
+      // the owner's data and the owner's Gatekeeper either way.
       let readMaxAge: number | null = null;
       if (ageBoundField) {
-        readMaxAge = maxReadAgeDays(
+        const localAge = integrationManager.getReadAgeDays(tool.integrationId);
+        readMaxAge = localAge ?? maxReadAgeDays(
           matchingAuths.map(a => (a.bounds ?? a.frame) as Record<string, string | number> | undefined),
           ageBoundField,
         );
+        // FAIL-CLOSED (F11): neither source set a window. An omitted window
+        // must never be read as "all history" — that was the pentest hole.
         if (readMaxAge === null) {
           return denyRead(state, tool, 'unset_age',
-            `no read-age window is set on your authorization (${ageBoundField}). Reads are not ` +
-            `permitted with an unbounded window — set how far back the agent may read, then try ` +
-            `again. Nothing was read.`);
+            `no read-age window is set for this integration (or on your authorization's ` +
+            `${ageBoundField}). Reads are not permitted with an unbounded window — set how far ` +
+            `back the agent may read under the integration's Read policy, then try again. ` +
+            `Nothing was read.`);
         }
       }
 
