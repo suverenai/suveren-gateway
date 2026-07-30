@@ -411,9 +411,11 @@ app.use('/api/approved-intents', jsonParser, authGuard, createApprovedIntentsRou
  * Auth: session-authenticated (gateway owner). NOT agent-reachable — an agent
  * must never be able to widen its own read window.
  */
-app.put('/integrations/:id/read-policy', authGuard, async (req: Request, res: Response) => {
+// `jsonParser` is per-route by design (see the note at its definition) — there
+// is no global body parser, so omitting it leaves `req.body` undefined.
+app.put('/integrations/:id/read-policy', jsonParser, authGuard, async (req: Request, res: Response) => {
   const id = req.params.id as string;
-  const { readAgeDays } = req.body as { readAgeDays?: unknown };
+  const { readAgeDays } = (req.body ?? {}) as { readAgeDays?: unknown };
   if (readAgeDays !== null && !(typeof readAgeDays === 'number' && Number.isInteger(readAgeDays) && readAgeDays >= 0)) {
     res.status(400).json({ error: 'readAgeDays must be a non-negative integer, or null to clear it' });
     return;
