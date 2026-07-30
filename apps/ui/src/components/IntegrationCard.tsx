@@ -24,8 +24,16 @@ export function declaresReadAge(toolGating: unknown): boolean {
   );
 }
 
-/** Preset windows offered in the UI, in days. */
-export const READ_AGE_PRESETS = [0, 7, 30, 90, 365] as const;
+/**
+ * Preset windows offered in the UI, in days.
+ *
+ * There is deliberately no "unlimited": an unbounded window is exactly the
+ * hole F11 closed, and supporting it would mean re-adding the "unset means
+ * read everything" branch as a feature. 3650 days is the practical
+ * "everything" — effectively the whole mailbox, but still a real ceiling the
+ * query can carry, needing no special case anywhere in the read path.
+ */
+export const READ_AGE_PRESETS = [0, 7, 30, 90, 365, 3650] as const;
 
 /**
  * Label for a read-age value. `null` means no local setting — the signed grant
@@ -37,6 +45,7 @@ export function readAgeLabel(days: number | null): string {
   if (days === 0) return 'Read nothing';
   if (days === 1) return '1 day back';
   if (days === 365) return '1 year back';
+  if (days % 365 === 0) return `${days / 365} years back`;
   return `${days} days back`;
 }
 

@@ -59,6 +59,9 @@ describe('readAgeLabel', () => {
     expect(readAgeLabel(1)).toBe('1 day back');
     expect(readAgeLabel(7)).toBe('7 days back');
     expect(readAgeLabel(365)).toBe('1 year back');
+    // The practical "everything" option — stated in years so nobody has to
+    // divide 3650 in their head.
+    expect(readAgeLabel(3650)).toBe('10 years back');
   });
 
   it('labels every preset distinctly', () => {
