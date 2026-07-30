@@ -158,6 +158,13 @@ export async function activateIntegration(manifest: {
   profile: string;
   toolGating?: unknown;
   npmPackage?: string;
+  /**
+   * Starting local read window for this integration. Declared by the manifest
+   * so the default is per-connector data, not a hardcoded provider rule in the
+   * gateway. Without it a fresh install would show "From your authorization",
+   * hiding where the limit actually lives.
+   */
+  readPolicy?: { defaultAgeDays?: number };
 }): Promise<unknown> {
   // Construct envKeys by prepending integration ID to each credential key.
   // Skip optional credential fields — the downstream server handles defaults.
@@ -185,6 +192,9 @@ export async function activateIntegration(manifest: {
     profile: manifest.profile,
     toolGating: manifest.toolGating,
     npmPackage: manifest.npmPackage,
+    ...(typeof manifest.readPolicy?.defaultAgeDays === 'number'
+      ? { readAgeDays: manifest.readPolicy.defaultAgeDays }
+      : {}),
     enabled: true,
   });
 }

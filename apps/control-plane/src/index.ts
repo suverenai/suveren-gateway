@@ -39,6 +39,7 @@ import { createAIRouter } from './routes/ai';
 import { createAIPromptsRouter } from './routes/ai-prompts';
 import { requireAuth, requireAuthQueryOrHeader } from './middleware/auth';
 import { pushGateContent, pushServiceCredentials, setInternalSecret, getManifests, getGateContent, getEnrichedAuthorizations, MCP_BASE, runCommittedProposals, resyncGates, setReadPolicy } from './lib/mcp-bridge';
+import { backfillReadPolicyDefaults } from './lib/read-policy-defaults';
 import { createMCPRouter } from './routes/mcp';
 import { createAutostartRouter } from './routes/autostart';
 import { notify, lockedNotification } from './lib/desktop-notify';
@@ -909,6 +910,7 @@ app.listen(port, '0.0.0.0', () => {
         console.error(`[Control Plane] ⚠ MCP server at ${MCP_BASE} returned 0 integration manifests — wrong SUVEREN_MCP_INTERNAL_URL? (dev MCP is :3431, npm is :3430)`);
       } else {
         console.error(`[Control Plane]   Integrations: ${n} manifests loaded from ${MCP_BASE}`);
+        void backfillReadPolicyDefaults(d as { manifests?: Array<Record<string, unknown>> });
       }
     })
     .catch((err) => {
