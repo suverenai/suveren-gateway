@@ -43,6 +43,30 @@ const IntegrationStatusContext = createContext<ContextValue | null>(null);
 // users aren't greeted with a red "not running" banner on every fresh boot.
 const STARTUP_WINDOW_MS = 30_000;
 
+/** Poll interval while something is still coming up, vs. the settled fallback. */
+export const POLL_MS_STARTING = 5_000;
+export const POLL_MS_SETTLED = 300_000;
+
+/**
+ * One integration's display state. Pure, so the precedence can be tested:
+ * `running` must beat everything (a running integration is never "Starting"),
+ * and a real `error` must beat the startup window rather than being hidden
+ * behind a hopeful "Starting…" until it expires.
+ */
+export function deriveIntegrationState(
+  integration: McpIntegrationStatus | undefined,
+  fetchCount: number,
+  withinStartupWindow: boolean,
+): IntegrationState {
+  if (fetchCount === 0) return 'loading';
+  if (integration?.running) return 'running';
+  if (integration?.error) return 'error';
+  if (integration && withinStartupWindow) return 'starting';
+  // Either registered-but-down past the window, or no entry at all (manifest
+  // exists, nothing registered) — both are "not running" to the user.
+  return 'not-running';
+}
+
 interface AuthHealth {
   status: 'ok' | 'failed' | 'not_connected' | 'not_configured' | 'unverified';
   account?: string;
@@ -101,10 +125,26 @@ export function IntegrationStatusProvider({ children }: { children: ReactNode })
     }
   }, []);
 
+  // Is anything not yet up? Computed here rather than inside the entries memo
+  // because it drives the poll rate, which must be decided before polling.
+  const anyNotRunning = raw.fetchCount > 0 && raw.manifests.some(m => {
+    const i = raw.integrations.find(x => x.id === m.id);
+    return i && !i.running;
+  });
+
   // SSE-driven refresh: fire immediately when the server emits integration-changed.
   useSSEEvent('integration-changed', refresh);
-  // Fallback full-sync every 5min — catches any events missed during reconnect races.
-  useVisiblePolling(refresh, 300_000);
+  // Poll fast while anything is still coming up, slowly once everything is
+  // healthy. Two reasons, both observed live:
+  //   • an SSE 'integration-changed' event missed during a gateway restart left
+  //     the page showing "Starting…" for a healthy gateway until the 5-minute
+  //     fallback fired — a working system looked broken;
+  //   • the startup window below is evaluated during render, so without a
+  //     refresh to re-render, `Date.now()` never advances and the window can
+  //     never expire. Polling is what lets the state settle at all.
+  // Cost is a local gateway call, not an SP/Redis read, and it stops as soon as
+  // everything reports running.
+  useVisiblePolling(refresh, anyNotRunning ? POLL_MS_STARTING : POLL_MS_SETTLED);
 
   const entries: IntegrationEntry[] = useMemo(() => {
     const byId = new Map(raw.integrations.map(i => [i.id, i]));
@@ -112,10 +152,6 @@ export function IntegrationStatusProvider({ children }: { children: ReactNode })
 
     // Track when we first saw any integration in a not-running state.
     // We reset this if no integrations are non-running (everything healthy).
-    const anyNotRunning = raw.fetchCount > 0 && raw.manifests.some(m => {
-      const i = byId.get(m.id);
-      return i && !i.running;
-    });
     if (anyNotRunning && firstSeenStartingAt.current === null) {
       firstSeenStartingAt.current = now;
     } else if (!anyNotRunning) {
@@ -129,21 +165,7 @@ export function IntegrationStatusProvider({ children }: { children: ReactNode })
     return raw.manifests.map(manifest => {
       const integration = byId.get(manifest.id);
 
-      let state: IntegrationState;
-      if (raw.fetchCount === 0) {
-        state = 'loading';
-      } else if (integration?.running) {
-        state = 'running';
-      } else if (integration?.error) {
-        state = 'error';
-      } else if (integration && withinStartupWindow) {
-        state = 'starting';
-      } else if (integration) {
-        state = 'not-running';
-      } else {
-        // No integration entry at all — manifest exists but nothing registered.
-        state = 'not-running';
-      }
+      const state = deriveIntegrationState(integration, raw.fetchCount, withinStartupWindow);
 
       const ah = raw.authHealth[manifest.id];
       return {
@@ -151,7 +173,7 @@ export function IntegrationStatusProvider({ children }: { children: ReactNode })
         authStatus: ah?.status, authAccount: ah?.account, authError: ah?.error,
       };
     });
-  }, [raw]);
+  }, [raw, anyNotRunning]);
 
   const attentionCount = useMemo(
     () => entries.filter(
