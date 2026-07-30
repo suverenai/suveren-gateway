@@ -366,6 +366,45 @@ app.delete('/internal/remove-integration/:id', internalOnly, async (req: Request
   res.json({ ok: true, id });
 });
 
+/**
+ * Set the LOCAL read-age window for an integration — how far back the agent
+ * may read. Local and live: read policy is enforced only by the Gatekeeper, so
+ * it needs no re-attestation and takes effect on the next read (see
+ * `content/0.5/protocol.md` → *Bounds, Context, and Read Policy*).
+ *
+ * Body: `{ readAgeDays: number | null }` — a non-negative integer, or null to
+ * clear the local setting and fall back to the signed grant bound.
+ */
+app.patch('/internal/integration/:id/read-policy', internalOnly, (req: Request, res: Response) => {
+  const id = req.params.id as string;
+  const raw = (req.body as { readAgeDays?: unknown }).readAgeDays;
+
+  // Validate before touching state. `null` clears; anything else must be a
+  // non-negative integer — reject NaN/Infinity/negatives/strings rather than
+  // persisting a value the read path would treat as "unset" and silently
+  // fall back on.
+  let readAgeDays: number | null;
+  if (raw === null) {
+    readAgeDays = null;
+  } else if (typeof raw === 'number' && Number.isInteger(raw) && raw >= 0) {
+    readAgeDays = raw;
+  } else {
+    res.status(400).json({ error: 'readAgeDays must be a non-negative integer, or null to clear it' });
+    return;
+  }
+
+  const updated = integrationRegistry.update(id, { readAgeDays: readAgeDays ?? undefined });
+  if (!updated) {
+    res.status(404).json({ error: `Integration "${id}" not found` });
+    return;
+  }
+  // Keep the running snapshot in step so the change applies without a restart.
+  integrationManager.setReadAgeDays(id, readAgeDays);
+
+  console.error(`[Suveren MCP] Read policy for ${id}: ${readAgeDays === null ? 'cleared' : `${readAgeDays}d`}`);
+  res.json({ ok: true, id, readAgeDays });
+});
+
 app.get('/internal/integrations', internalOnly, (_req: Request, res: Response) => {
   const configs = integrationRegistry.getAll();
   const statuses = integrationManager.getStatus(configs);

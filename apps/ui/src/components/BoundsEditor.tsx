@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, type KeyboardEvent, type ClipboardEvent } from 'react';
+import { Link } from 'react-router-dom';
 import type { AgentProfile, AgentBoundsParams, AgentContextParams, AgentFrameParams, ProfileBoundsField, ProfileContextField } from '@hap/core';
 import { DiscoveredScopeField } from './DiscoveredScopeField';
 import { spClient, type IntegrationManifest, type ProfileConfig } from '../lib/sp-client';
@@ -634,8 +635,24 @@ export function BoundsEditor({
         // protection. Driven by the profile, not a hardcoded field list, so a
         // bound becomes visible the moment enforcement lands.
         if ((def as { enforced?: boolean }).enforced === false) return false;
+        // Hide bounds the Authority Server does not enforce. This section is
+        // titled "Enforced by the Service Provider", and for a locally-enforced
+        // limit that claim is simply false — reads carry no receipt, so no
+        // signed check ever reads the value. Those limits live on the
+        // integration, where they are live-editable; the grant keeps its copy
+        // only as a fallback for authorizations issued before that existed.
+        // Profile-driven, so any bound can declare where it is enforced.
+        if ((def as { enforcedBy?: string }).enforcedBy === 'gatekeeper') return false;
         return true;
       })
+    : [];
+
+  /** Locally-enforced bounds, hidden above — surfaced as a pointer, not a control. */
+  const localBoundNames = boundsSchema
+    ? Object.entries(boundsSchema.fields)
+        .filter(([, def]) => (def as { enforcedBy?: string }).enforcedBy === 'gatekeeper')
+        .filter(([, def]) => (def as { enforced?: boolean }).enforced !== false)
+        .map(([key, def]) => (def as { displayName?: string }).displayName ?? key)
     : [];
 
   const contextFields = contextSchema && contextSchema.keyOrder.length > 0
@@ -951,6 +968,19 @@ export function BoundsEditor({
 
           {/* Zone footer */}
           {renderZoneFooter()}
+
+          {/* Locally-enforced limits are not shown as controls here (this
+              section is Authority-Server-enforced), but the user must still
+              know they exist and where to change them — otherwise the limit
+              just disappears from the product. */}
+          {localBoundNames.length > 0 && (
+            <div className="bounds-local-note" style={{ marginTop: '0.75rem', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+              {localBoundNames.join(', ')}{' '}
+              {localBoundNames.length === 1 ? 'is' : 'are'} set on the integration, not here — reads are
+              checked on this device, so the limit applies immediately and can be changed any time under{' '}
+              <Link to="/integrations">Integrations</Link>.
+            </div>
+          )}
         </div>
       )}
 

@@ -25,6 +25,9 @@ import {
   parseMessageTimestamp,
   isOlderThanMaxAge,
   getByDottedPath,
+  firstParsableDate,
+  renderAgeConstraint,
+  clampAgeFloor,
   composeReadQuery,
   detectAgeConflict,
   readToolIsGoverned,
@@ -298,22 +301,48 @@ export function createGatedToolHandler(
       // hole). Instead: if no matching grant sets the window, DENY. Resolved once
       // here and reused by the pre-fetch and post-fetch checks.
       //
-      // NOTE (deferred feature): a "local per-integration read age" was designed
-      // and scaffolded (IntegrationConfig.readAgeDays + IntegrationManager
-      // .getReadAgeDays) but PARKED — moving the value off the signed grant needs
-      // the control-plane + UI to set it, or reads fail-closed with no way to fix
-      // it. Until that ships, the age stays a signed grant bound (below).
+      // WHERE THE WINDOW COMES FROM. Read policy is enforced only by this
+      // Gatekeeper — it never reaches the Authority Server and no receipt ever
+      // checks it — so the window belongs in LOCAL, live-editable config rather
+      // than in a signed grant ("a limit lives in the same trust domain as its
+      // enforcement", `content/0.5/protocol.md` → *Bounds, Context, and Read
+      // Policy*). Precedence, deliberately in this order:
+      //
+      //   1. the integration's local `readAgeDays` — the owner's live setting,
+      //      editable in one place and applying to the very next read;
+      //   2. else the signed `read_max_age_days` grant bound — the legacy
+      //      source, kept so existing grants keep working unchanged;
+      //   3. else DENY (F11).
+      //
+      // The local value WINS when set, rather than being min()'d with the
+      // grant: the whole point is one place to change it, and a grant silently
+      // overriding the owner's own setting would make the control a lie. It is
+      // the owner's data and the owner's Gatekeeper either way.
+      // A tool HAS an age dimension when its manifest adapter declares one.
+      // Whether the profile also carries a signed bound is a separate, optional
+      // question: read policy is local, so a signed read bound is a fallback
+      // for older grants, not a precondition for enforcing anything. Gating on
+      // the bound instead would mean a connector could declare an age-bounded
+      // read and silently get NO enforcement because its profile happened not
+      // to list one — fail-open by omission, the exact shape of the original
+      // hole.
+      const hasAgeDimension = Boolean(readAdapter?.ageField);
       let readMaxAge: number | null = null;
-      if (ageBoundField) {
-        readMaxAge = maxReadAgeDays(
-          matchingAuths.map(a => (a.bounds ?? a.frame) as Record<string, string | number> | undefined),
-          ageBoundField,
-        );
+      if (hasAgeDimension) {
+        const localAge = integrationManager.getReadAgeDays(tool.integrationId);
+        readMaxAge = localAge ?? (ageBoundField
+          ? maxReadAgeDays(
+              matchingAuths.map(a => (a.bounds ?? a.frame) as Record<string, string | number> | undefined),
+              ageBoundField,
+            )
+          : null);
+        // FAIL-CLOSED (F11): no window from either source. An omitted window
+        // must never be read as "all history" — that was the pentest hole.
         if (readMaxAge === null) {
           return denyRead(state, tool, 'unset_age',
-            `no read-age window is set on your authorization (${ageBoundField}). Reads are not ` +
-            `permitted with an unbounded window — set how far back the agent may read, then try ` +
-            `again. Nothing was read.`);
+            `no read-age window is set for this integration${ageBoundField ? ` (or on your authorization's ${ageBoundField})` : ''}. ` +
+            `Reads are not permitted with an unbounded window — set how far back the agent may ` +
+            `read under the integration's Read policy, then try again. Nothing was read.`);
         }
       }
 
@@ -366,12 +395,30 @@ export function createGatedToolHandler(
         outgoing = { ...outgoing, ...readAdapter.pinnedArgs };
       }
 
+      // Pre-fetch: clamp the read's lower time bound (time-range tools — a
+      // calendar's `timeMin`, a chat history's `oldest`). Same job the query
+      // ceiling does below, for providers that take a range instead of a
+      // search string. Applied even when the agent omitted the argument: at
+      // most providers an absent lower bound means all history.
+      if (readAdapter?.ageFloorArg && hasAgeDimension && readMaxAge !== null) {
+        outgoing = {
+          ...outgoing,
+          [readAdapter.ageFloorArg]: clampAgeFloor(
+            outgoing[readAdapter.ageFloorArg],
+            readMaxAge,
+            Date.now(),
+            readAdapter.ageFloorFormat,
+          ),
+        };
+      }
+
       // Pre-fetch: AND the age ceiling into the search query (list/search tools)
       // so out-of-window items can't come back at all.
       if (readAdapter?.queryArg) {
         const clauses: string[] = [];
-        if (ageBoundField && readAdapter.ageConstraint && readMaxAge !== null) {
-          clauses.push(readAdapter.ageConstraint.replace('{days}', String(readMaxAge)));
+        if (hasAgeDimension && readAdapter.ageConstraint && readMaxAge !== null) {
+          // {days} for relative syntax (Gmail), {date} for absolute (Slack).
+          clauses.push(renderAgeConstraint(readAdapter.ageConstraint, readMaxAge, Date.now()));
         }
         if (clauses.length > 0) {
           // F8: the agent's fragment must not be able to bind across the
@@ -421,12 +468,18 @@ export function createGatedToolHandler(
       }
 
       // Post-fetch (get-by-id tools): AGE only. Parse the response once.
-      // readMaxAge is guaranteed non-null here when ageBoundField is set (the
+      // readMaxAge is guaranteed non-null here when the tool has an age
+      // dimension (the
       // unset case failed closed above).
-      if (readAdapter && ageBoundField && readAdapter.resultDatePath && readMaxAge !== null) {
+      if (readAdapter && hasAgeDimension && readAdapter.resultDatePath && readMaxAge !== null) {
         const parsed = parseFirstJson(result);
-        const rawDate = parsed === undefined ? undefined : getByDottedPath(parsed, readAdapter.resultDatePath);
-        if (isOlderThanMaxAge(parseMessageTimestamp(rawDate), readMaxAge, Date.now())) {
+        // Candidate paths, first parseable wins — a provider may carry the date
+        // in more than one shape (timed vs all-day events). Unparseable stays
+        // fail-closed: null reads as "older than the window".
+        const itemDate = parsed === undefined
+          ? null
+          : firstParsableDate(parsed, readAdapter.resultDatePath);
+        if (isOlderThanMaxAge(itemDate, readMaxAge, Date.now())) {
           return denyRead(state, tool, 'age',
             `this item is older than the ${readMaxAge}-day read window your authorization grants ` +
             `(read_max_age_days). Its contents were not returned.`);

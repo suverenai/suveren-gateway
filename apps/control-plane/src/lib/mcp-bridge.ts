@@ -158,6 +158,13 @@ export async function activateIntegration(manifest: {
   profile: string;
   toolGating?: unknown;
   npmPackage?: string;
+  /**
+   * Starting local read window for this integration. Declared by the manifest
+   * so the default is per-connector data, not a hardcoded provider rule in the
+   * gateway. Without it a fresh install would show "From your authorization",
+   * hiding where the limit actually lives.
+   */
+  readPolicy?: { defaultAgeDays?: number };
 }): Promise<unknown> {
   // Construct envKeys by prepending integration ID to each credential key.
   // Skip optional credential fields — the downstream server handles defaults.
@@ -185,6 +192,9 @@ export async function activateIntegration(manifest: {
     profile: manifest.profile,
     toolGating: manifest.toolGating,
     npmPackage: manifest.npmPackage,
+    ...(typeof manifest.readPolicy?.defaultAgeDays === 'number'
+      ? { readAgeDays: manifest.readPolicy.defaultAgeDays }
+      : {}),
     enabled: true,
   });
 }
@@ -245,6 +255,23 @@ export async function removeIntegration(id: string): Promise<unknown> {
   const res = await fetch(`${MCP_BASE}/internal/remove-integration/${encodeURIComponent(id)}`, {
     method: 'DELETE',
     headers: internalHeaders(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+    throw new Error((err as { error: string }).error);
+  }
+  return res.json();
+}
+
+/**
+ * Set an integration's local read-age window (days), or null to clear it and
+ * fall back to the signed grant bound.
+ */
+export async function setReadPolicy(id: string, readAgeDays: number | null): Promise<unknown> {
+  const res = await fetch(`${MCP_BASE}/internal/integration/${encodeURIComponent(id)}/read-policy`, {
+    method: 'PATCH',
+    headers: { ...internalHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ readAgeDays }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: 'Unknown error' }));

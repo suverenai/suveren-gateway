@@ -5,6 +5,9 @@
   "description": "List, create, update, and delete events in Google Calendar",
   "icon": "calendar",
   "profile": "calendar",
+  "readPolicy": {
+    "defaultAgeDays": 30
+  },
   "npmPackage": "@humanagencyp/google-calendar-mcp",
   "mcp": {
     "command": "google-calendar-mcp",
@@ -12,8 +15,18 @@
   },
   "credentials": {
     "fields": [
-      { "key": "clientId", "label": "Client ID", "type": "text", "placeholder": "From Google Cloud Console" },
-      { "key": "clientSecret", "label": "Client Secret", "type": "password", "placeholder": "OAuth2 client secret" }
+      {
+        "key": "clientId",
+        "label": "Client ID",
+        "type": "text",
+        "placeholder": "From Google Cloud Console"
+      },
+      {
+        "key": "clientSecret",
+        "label": "Client Secret",
+        "type": "password",
+        "placeholder": "OAuth2 client secret"
+      }
     ],
     "envMapping": {
       "GOOGLE_CLIENT_ID": "clientId",
@@ -30,9 +43,15 @@
       "https://www.googleapis.com/auth/calendar.events",
       "https://www.googleapis.com/auth/calendar.readonly"
     ],
-    "credentialKeys": { "clientId": "clientId", "clientSecret": "clientSecret" },
+    "credentialKeys": {
+      "clientId": "clientId",
+      "clientSecret": "clientSecret"
+    },
     "tokenStorage": "refreshToken",
-    "extraParams": { "access_type": "offline", "prompt": "consent" }
+    "extraParams": {
+      "access_type": "offline",
+      "prompt": "consent"
+    }
   },
   "contextDiscovery": {
     "allowed_calendars": {
@@ -53,52 +72,103 @@
   "toolGating": {
     "default": {
       "executionMapping": {},
-      "staticExecution": { "duration": 0, "lookahead": 0 }
+      "staticExecution": {
+        "duration": 0,
+        "lookahead": 0
+      }
     },
     "overrides": {
       "list_calendars": {
         "category": "read",
-        "read": { "resourceBound": "allowed_calendars", "resultResourcePath": "id" }
+        "read": {
+          "resourceBound": "allowed_calendars",
+          "resultResourcePath": "id"
+        }
       },
       "list_events": {
         "category": "read",
-        "read": { "resourceBound": "allowed_calendars", "resourceArg": "calendarId", "resourceDefault": "primary" }
+        "read": {
+          "resourceBound": "allowed_calendars",
+          "resourceArg": "calendarId",
+          "resourceDefault": "primary",
+          "ageField": "read_age_days",
+          "ageFloorArg": "timeMin",
+          "ageFloorFormat": "iso"
+        }
       },
       "get_event": {
         "category": "read",
-        "read": { "resourceBound": "allowed_calendars", "resourceArg": "calendarId", "resourceDefault": "primary" }
+        "read": {
+          "resourceBound": "allowed_calendars",
+          "resourceArg": "calendarId",
+          "resourceDefault": "primary",
+          "ageField": "read_age_days",
+          "resultDatePath": [
+            "start.dateTime",
+            "start.date"
+          ]
+        }
       },
       "free_busy": {
         "category": "read",
-        "read": { "resourceBound": "allowed_calendars", "resourceArrayArg": "calendarIds", "resourceDefault": "primary" }
+        "read": {
+          "resourceBound": "allowed_calendars",
+          "resourceArrayArg": "calendarIds",
+          "resourceDefault": "primary",
+          "ageField": "read_age_days",
+          "ageFloorArg": "timeMin",
+          "ageFloorFormat": "iso"
+        }
       },
       "create_event": {
         "executionMapping": {
           "duration_minutes": "duration",
           "lookahead_days": "lookahead",
           "attendees": [
-            { "field": "allowed_attendees", "transform": "join" },
-            { "field": "allowed_domains", "transform": "join_domains" }
+            {
+              "field": "allowed_attendees",
+              "transform": "join"
+            },
+            {
+              "field": "allowed_domains",
+              "transform": "join_domains"
+            }
           ],
           "calendarId": "allowed_calendars"
         },
-        "staticExecution": { "action_type": "booking" }
+        "staticExecution": {
+          "action_type": "booking"
+        }
       },
       "update_event": {
         "executionMapping": {
           "attendees": [
-            { "field": "allowed_attendees", "transform": "join" },
-            { "field": "allowed_domains", "transform": "join_domains" }
+            {
+              "field": "allowed_attendees",
+              "transform": "join"
+            },
+            {
+              "field": "allowed_domains",
+              "transform": "join_domains"
+            }
           ],
           "calendarId": "allowed_calendars"
         },
-        "staticExecution": { "action_type": "booking", "duration": 0, "lookahead": 0 }
+        "staticExecution": {
+          "action_type": "booking",
+          "duration": 0,
+          "lookahead": 0
+        }
       },
       "delete_event": {
         "executionMapping": {
           "calendarId": "allowed_calendars"
         },
-        "staticExecution": { "action_type": "delete", "duration": 0, "lookahead": 0 }
+        "staticExecution": {
+          "action_type": "delete",
+          "duration": 0,
+          "lookahead": 0
+        }
       }
     }
   },
@@ -108,22 +178,46 @@
       "description": "List and read events, check free/busy. No create, update, or delete.",
       "risk": "low",
       "mode": "automatic",
-      "bounds": { "booking_daily_max": "0", "booking_duration_max": "0", "lookahead_days_max": "0" },
-      "context": { "allowed_calendars": "primary", "allowed_attendees": "", "allowed_domains": "" },
+      "bounds": {
+        "booking_daily_max": "0",
+        "booking_duration_max": "0",
+        "lookahead_days_max": "0"
+      },
+      "context": {
+        "allowed_calendars": "primary",
+        "allowed_attendees": "",
+        "allowed_domains": ""
+      },
       "intent": "Allow the agent to read the primary calendar (only) to help with scheduling suggestions. No create or modify. To read other calendars, add them to allowed_calendars.",
       "ttl": 2592000,
-      "tags": ["read-only", "30 days"]
+      "tags": [
+        "read-only",
+        "30 days"
+      ]
     },
     {
       "name": "Book with Review",
       "description": "Read events and propose new bookings. Every create/update/delete requires your approval.",
       "risk": "high",
       "mode": "review",
-      "bounds": { "booking_daily_max": "3", "booking_duration_max": "120", "lookahead_days_max": "30" },
-      "context": { "allowed_calendars": "primary", "allowed_attendees": "", "allowed_domains": "" },
+      "bounds": {
+        "booking_daily_max": "3",
+        "booking_duration_max": "120",
+        "lookahead_days_max": "30"
+      },
+      "context": {
+        "allowed_calendars": "primary",
+        "allowed_attendees": "",
+        "allowed_domains": ""
+      },
       "intent": "Read my calendar and propose bookings. Every create, update, or delete requires my review — I see the title, time, duration, and attendees before it goes through.",
       "ttl": 2592000,
-      "tags": ["3 bookings/day", "2h max", "30d lookahead", "review mode"]
+      "tags": [
+        "3 bookings/day",
+        "2h max",
+        "30d lookahead",
+        "review mode"
+      ]
     }
   ],
   "setupHint": "Create OAuth credentials at Google Cloud Console and enable the Google Calendar API.",

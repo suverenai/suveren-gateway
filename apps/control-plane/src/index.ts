@@ -38,7 +38,8 @@ import { createVaultRouter } from './routes/vault';
 import { createAIRouter } from './routes/ai';
 import { createAIPromptsRouter } from './routes/ai-prompts';
 import { requireAuth, requireAuthQueryOrHeader } from './middleware/auth';
-import { pushGateContent, pushServiceCredentials, setInternalSecret, getManifests, getGateContent, getEnrichedAuthorizations, MCP_BASE, runCommittedProposals, resyncGates } from './lib/mcp-bridge';
+import { pushGateContent, pushServiceCredentials, setInternalSecret, getManifests, getGateContent, getEnrichedAuthorizations, MCP_BASE, runCommittedProposals, resyncGates, setReadPolicy } from './lib/mcp-bridge';
+import { backfillReadPolicyDefaults } from './lib/read-policy-defaults';
 import { createMCPRouter } from './routes/mcp';
 import { createAutostartRouter } from './routes/autostart';
 import { notify, lockedNotification } from './lib/desktop-notify';
@@ -399,6 +400,35 @@ app.use('/api/decrypt-intent', jsonParser, authGuard, createDecryptIntentRouter(
 
 // Approved intents local store (P6.4) — approver accountability record
 app.use('/api/approved-intents', jsonParser, authGuard, createApprovedIntentsRouter(vault));
+
+/**
+ * PUT /integrations/:id/read-policy — set how far back the agent may read.
+ *
+ * Local, live policy: read enforcement never reaches the Authority Server, so
+ * this needs no re-attestation and applies to the next read. Body:
+ * `{ readAgeDays: number | null }` (null clears it → the signed grant bound
+ * applies again).
+ *
+ * Auth: session-authenticated (gateway owner). NOT agent-reachable — an agent
+ * must never be able to widen its own read window.
+ */
+// `jsonParser` is per-route by design (see the note at its definition) — there
+// is no global body parser, so omitting it leaves `req.body` undefined.
+app.put('/integrations/:id/read-policy', jsonParser, authGuard, async (req: Request, res: Response) => {
+  const id = req.params.id as string;
+  const { readAgeDays } = (req.body ?? {}) as { readAgeDays?: unknown };
+  if (readAgeDays !== null && !(typeof readAgeDays === 'number' && Number.isInteger(readAgeDays) && readAgeDays >= 0)) {
+    res.status(400).json({ error: 'readAgeDays must be a non-negative integer, or null to clear it' });
+    return;
+  }
+  try {
+    const result = await setReadPolicy(id, readAgeDays as number | null);
+    res.json(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    res.status(502).json({ error: `Could not set read policy: ${message}` });
+  }
+});
 
 /**
  * GET /integrations/:id/discover/:field — wizard-only resource discovery.
@@ -880,6 +910,7 @@ app.listen(port, '0.0.0.0', () => {
         console.error(`[Control Plane] ⚠ MCP server at ${MCP_BASE} returned 0 integration manifests — wrong SUVEREN_MCP_INTERNAL_URL? (dev MCP is :3431, npm is :3430)`);
       } else {
         console.error(`[Control Plane]   Integrations: ${n} manifests loaded from ${MCP_BASE}`);
+        void backfillReadPolicyDefaults(d as { manifests?: Array<Record<string, unknown>> });
       }
     })
     .catch((err) => {

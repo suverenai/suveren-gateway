@@ -351,6 +351,74 @@ export function getByDottedPath(obj: unknown, path: string): unknown {
   );
 }
 
+/**
+ * First parseable timestamp among candidate paths, or null.
+ *
+ * A provider may return the same logical date in more than one shape — a
+ * calendar's timed events carry `start.dateTime`, all-day events `start.date`.
+ * Declaring both keeps the engine provider-agnostic; trying them in order
+ * keeps the answer deterministic. Null when none parses, so callers fail
+ * closed exactly as they do for a missing path.
+ */
+export function firstParsableDate(obj: unknown, paths: string | string[]): number | null {
+  for (const path of Array.isArray(paths) ? paths : [paths]) {
+    const parsed = parseMessageTimestamp(getByDottedPath(obj, path));
+    if (parsed !== null) return parsed;
+  }
+  return null;
+}
+
+/**
+ * Render a provider's age clause. `{days}` gives the window as a day count
+ * (Gmail: "newer_than:30d"); `{date}` gives the absolute UTC floor as
+ * YYYY-MM-DD (Slack: "after:2026-06-30"). Both are substituted, so a template
+ * may use either without the engine knowing which provider it serves.
+ */
+export function renderAgeConstraint(template: string, maxAgeDays: number, nowMs: number): string {
+  const floorIso = new Date(nowMs - maxAgeDays * MS_PER_DAY).toISOString();
+  return template
+    .replace(/\{days\}/g, String(maxAgeDays))
+    .replace(/\{date\}/g, floorIso.slice(0, 10));
+}
+
+/**
+ * The earliest instant a read may reach, rendered for the provider's argument.
+ *
+ * `epoch_s` is emitted as a string because the providers that use it (Slack's
+ * `oldest`) specify a string-encoded epoch; sending a bare number is rejected.
+ */
+export function ageFloorValue(
+  maxAgeDays: number,
+  nowMs: number,
+  format: 'iso' | 'epoch_ms' | 'epoch_s' = 'iso',
+): string | number {
+  const floorMs = nowMs - maxAgeDays * MS_PER_DAY;
+  if (format === 'epoch_ms') return floorMs;
+  if (format === 'epoch_s') return String(Math.floor(floorMs / 1000));
+  return new Date(floorMs).toISOString();
+}
+
+/**
+ * Clamp a caller-supplied lower time bound so it never reaches past the
+ * window. Returns the value to send.
+ *
+ * Only ever NARROWS: an agent asking for a tighter range keeps it. An omitted
+ * bound is replaced, because at most providers "no lower bound" means all
+ * history — the case the window exists to stop. An unparseable bound is also
+ * replaced rather than forwarded, so junk cannot wash out the ceiling.
+ */
+export function clampAgeFloor(
+  requested: unknown,
+  maxAgeDays: number,
+  nowMs: number,
+  format: 'iso' | 'epoch_ms' | 'epoch_s' = 'iso',
+): string | number {
+  const floorMs = nowMs - maxAgeDays * MS_PER_DAY;
+  const asked = parseMessageTimestamp(requested);
+  if (asked !== null && asked >= floorMs) return requested as string | number;
+  return ageFloorValue(maxAgeDays, nowMs, format);
+}
+
 // ── Participant / scope helpers (RESERVED for the overrides slice) ───────────
 //
 // NOT wired into the read path — see the module header. These are pure,

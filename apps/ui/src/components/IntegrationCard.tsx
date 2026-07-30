@@ -8,6 +8,47 @@ const ICON_MAP: Record<string, string> = {
   mail: '\u2709\uFE0F',
 };
 
+/**
+ * Does this integration read anything with an age dimension?
+ *
+ * Generic — derived from the manifest's own read adapters (`read.ageField`),
+ * never from an integration id. An integration that declares no age-bounded
+ * read tool gets no Read-policy control, because the window would govern
+ * nothing.
+ */
+export function declaresReadAge(toolGating: unknown): boolean {
+  const overrides = (toolGating as { overrides?: Record<string, unknown> } | null)?.overrides;
+  if (!overrides || typeof overrides !== 'object') return false;
+  return Object.values(overrides).some(
+    o => typeof (o as { read?: { ageField?: unknown } })?.read?.ageField === 'string',
+  );
+}
+
+/**
+ * Preset windows offered in the UI, in days.
+ *
+ * There is deliberately no "unlimited": an unbounded window is exactly the
+ * hole F11 closed, and supporting it would mean re-adding the "unset means
+ * read everything" branch as a feature. 3650 days is the practical
+ * "everything" — effectively the whole mailbox, but still a real ceiling the
+ * query can carry, needing no special case anywhere in the read path.
+ */
+export const READ_AGE_PRESETS = [0, 7, 30, 90, 365, 3650] as const;
+
+/**
+ * Label for a read-age value. `null` means no local setting — the signed grant
+ * bound applies instead. `0` is a real choice ("read nothing"), so it must be
+ * tested before any truthiness check.
+ */
+export function readAgeLabel(days: number | null): string {
+  if (days === null) return 'From your authorization';
+  if (days === 0) return 'Read nothing';
+  if (days === 1) return '1 day back';
+  if (days === 365) return '1 year back';
+  if (days % 365 === 0) return `${days / 365} years back`;
+  return `${days} days back`;
+}
+
 interface Props {
   manifest: IntegrationManifest;
   integration: McpIntegrationStatus | undefined;
@@ -37,6 +78,14 @@ export function IntegrationCard({ manifest, integration, state, onStatusChange, 
   // an integration is running/auth-failed).
   const [editingCreds, setEditingCreds] = useState(false);
   const [showSecrets, setShowSecrets] = useState<Record<string, boolean>>({});
+  // Read-age window. Deliberately NOT mirrored into state: the integration
+  // status is the source of truth, so the control renders straight from it and
+  // a failed save can never leave a value on screen the gateway doesn't hold.
+  // `pending` is shown only while a save is in flight — wrapped in an object
+  // because `null` ("no local setting") is itself a legal value.
+  const [pending, setPending] = useState<{ value: number | null } | null>(null);
+  const [savingReadAge, setSavingReadAge] = useState(false);
+  const [readAgeError, setReadAgeError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -65,6 +114,34 @@ export function IntegrationCard({ manifest, integration, state, onStatusChange, 
     }).catch(() => {/* ignore */});
     return () => { cancelled = true; };
   }, [manifest.id, manifest.oauth]);
+
+  const hasReadAge = declaresReadAge(manifest.toolGating);
+  // `undefined` = status not loaded yet (don't render the control at all);
+  // `null` = loaded, no local setting → the signed grant bound applies.
+  const storedReadAge = integration ? integration.readAgeDays ?? null : undefined;
+  // While saving, show the value being written; otherwise always backend truth.
+  const readAge = savingReadAge && pending ? pending.value : storedReadAge;
+
+  const saveReadAge = async (days: number | null) => {
+    setPending({ value: days });
+    setSavingReadAge(true);
+    setReadAgeError(null);
+    try {
+      await spClient.setReadPolicy(manifest.id, days);
+      onSuccess(
+        days === null
+          ? `${manifest.name} read window now follows your authorization`
+          : `${manifest.name} read window set to ${readAgeLabel(days).toLowerCase()}`,
+      );
+      // Refetch: the panel goes back to rendering whatever the gateway reports.
+      onStatusChange();
+    } catch (err) {
+      setReadAgeError(err instanceof Error ? err.message : 'Could not save');
+    } finally {
+      setSavingReadAge(false);
+      setPending(null);
+    }
+  };
 
   // Does this integration require auth at all? OAuth or any non-optional field.
   // CRM/Records have only optional fields → no auth needed, run out of the box.
@@ -429,6 +506,66 @@ export function IntegrationCard({ manifest, integration, state, onStatusChange, 
               Disable
             </button>
           </div>
+
+          {/* Read policy — local, live, one place. Read enforcement never
+              reaches the Authority Server, so this needs no re-authorization
+              and applies to the next read. Only shown for integrations whose
+              manifest actually declares an age-bounded read. */}
+          {hasReadAge && readAge !== undefined && (
+            <div style={{ marginTop: '0.9rem', paddingTop: '0.85rem', borderTop: '1px solid var(--border)' }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem', marginBottom: '0.35rem' }}>
+                <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>Read policy</span>
+                <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                  How far back your agent may read
+                </span>
+              </div>
+              <p style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)', margin: '0 0 0.55rem' }}>
+                Applies immediately — no new authorization needed.
+              </p>
+              <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+                {READ_AGE_PRESETS.map(days => {
+                  const active = readAge === days;
+                  return (
+                    <button
+                      key={days}
+                      className={`btn btn-sm ${active ? 'btn-primary' : 'btn-secondary'}`}
+                      aria-pressed={active}
+                      disabled={savingReadAge}
+                      onClick={() => saveReadAge(days)}
+                    >
+                      {readAgeLabel(days)}
+                    </button>
+                  );
+                })}
+                <button
+                  className={`btn btn-sm ${readAge === null ? 'btn-primary' : 'btn-ghost'}`}
+                  aria-pressed={readAge === null}
+                  disabled={savingReadAge}
+                  onClick={() => saveReadAge(null)}
+                  title="Clear the local setting and use the read window from your signed authorization instead."
+                >
+                  {readAgeLabel(null)}
+                </button>
+              </div>
+              <div style={{ fontSize: '0.78rem', marginTop: '0.5rem' }}>
+                {readAgeError ? (
+                  <span style={{ color: 'var(--danger)' }}>{readAgeError}</span>
+                ) : savingReadAge ? (
+                  <span style={{ color: 'var(--text-muted)' }}>Saving…</span>
+                ) : readAge === null ? (
+                  <span style={{ color: 'var(--text-muted)' }}>
+                    Using the window from your authorization. If none is set there, reads are blocked.
+                  </span>
+                ) : readAge === 0 ? (
+                  <span style={{ color: 'var(--text-muted)' }}>Your agent cannot read any mail.</span>
+                ) : (
+                  <span style={{ color: 'var(--text-muted)' }}>
+                    Anything older than {readAge} days is blocked, whoever it is from.
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* (legacy authorize link kept hidden — replaced by the button above) */}
           <div style={{ display: 'none' }}>
