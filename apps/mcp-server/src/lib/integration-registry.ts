@@ -29,11 +29,41 @@ import type { ExecutionMappingValue, ProfileToolGating } from '@hap/core';
 export interface ReadAdapter {
   /** Execution field the item's date maps to; ties to the profile's age bound via boundType.of. */
   ageField?: string;
-  /** Dotted path to the item's timestamp in the provider response (get-by-id tools). */
-  resultDatePath?: string;
+  /**
+   * Dotted path to the item's timestamp in the provider response (get-by-id
+   * tools). Accepts a LIST when a provider returns the date in more than one
+   * shape — e.g. a calendar's timed events carry `start.dateTime` while
+   * all-day events carry `start.date`. The first path yielding a parseable
+   * date wins; if none does the read fails closed, because an unreadable date
+   * must never be treated as "inside the window".
+   */
+  resultDatePath?: string | string[];
+  /**
+   * Tool argument holding the EARLIEST point a read may reach, clamped to
+   * (now − window) before the call goes out. Does for time-range APIs
+   * (calendar, chat history, logs) what `ageConstraint` does for search
+   * strings.
+   *
+   * Applied whether or not the agent supplied the argument: at most providers
+   * an omitted lower bound means "all history", which is exactly what the
+   * window exists to prevent. An agent-supplied bound that is already tighter
+   * is left alone — the clamp only ever narrows.
+   */
+  ageFloorArg?: string;
+  /**
+   * How to render the clamped floor into `ageFloorArg`: RFC3339 (default), or
+   * epoch numbers. Provider data — the engine learns no provider's time
+   * format. Slack's `oldest`, for instance, is epoch seconds.
+   */
+  ageFloorFormat?: 'iso' | 'epoch_ms' | 'epoch_s';
   /** Search-query arg to inject age/scope ceilings into (list/search tools). */
   queryArg?: string;
-  /** Provider template for the injected age clause, e.g. "newer_than:{days}d". */
+  /**
+   * Provider template for the injected age clause. Two placeholders, so both
+   * families of query syntax are declarable without engine changes:
+   *   `{days}` — relative age, e.g. Gmail's "newer_than:{days}d"
+   *   `{date}` — absolute YYYY-MM-DD floor, e.g. Slack's "after:{date}"
+   */
   ageConstraint?: string;
   /**
    * Regex (first capture group = days) matching an agent clause that asks for

@@ -721,6 +721,112 @@ describe('createGatedToolHandler — unset read-age window fails closed', () => 
   });
 });
 
+describe('createGatedToolHandler — time-range reads (ageFloorArg)', () => {
+  // A provider whose read is a time RANGE, not a search string — a calendar's
+  // timeMin, a chat history's oldest. Deliberately declares NO age bound in the
+  // profile: read policy is local, so the window comes from the integration and
+  // enforcement must not depend on a signed bound existing.
+  beforeAll(() => {
+    registerProfile('range-test', {
+      id: 'range-test', name: 'Range Test', version: '0',
+      boundsSchema: { keyOrder: [], fields: {} },
+      contextSchema: { keyOrder: [], fields: {} },
+    } as unknown as Parameters<typeof registerProfile>[1]);
+  });
+  afterAll(() => clearProfiles());
+
+  function rangeTool(): DiscoveredTool {
+    return {
+      originalName: 'list_events',
+      namespacedName: 'cal__list_events',
+      integrationId: 'cal',
+      description: 'List events',
+      inputSchema: {},
+      gating: {
+        profile: 'range-test',
+        executionMapping: {},
+        category: 'read',
+        read: { ageField: 'read_age_days', ageFloorArg: 'timeMin', ageFloorFormat: 'iso' },
+      } as unknown as DiscoveredTool['gating'],
+    };
+  }
+
+  function auth(): CachedAuthorization {
+    const now = Math.floor(Date.now() / 1000);
+    return {
+      authorizationId: 'authz_00000000-0000-4000-8000-0000000000cf',
+      profileId: 'range-test',
+      path: 'range-test',
+      frame: { profile: 'range-test', path: 'range-test' },
+      attestations: [{ domain: 'owner', blob: 'blob', expiresAt: now + 3600 }],
+      requiredDomains: ['owner'],
+      attestedDomains: ['owner'],
+      complete: true,
+    } as unknown as CachedAuthorization;
+  }
+
+  const sentArgs = (im: IntegrationManager) =>
+    (im.callTool as ReturnType<typeof vi.fn>).mock.calls[0][2] as Record<string, unknown>;
+
+  it('injects a lower bound when the agent omitted one', async () => {
+    // Without this an omitted timeMin means "all history" at the provider —
+    // exactly the unbounded read the window exists to prevent.
+    const im = mockIntegrationManager(30);
+    const handler = createGatedToolHandler(rangeTool(), im, mockState([auth()]));
+
+    await handler({ calendarId: 'primary' });
+
+    const floor = Date.parse(sentArgs(im).timeMin as string);
+    const expected = Date.now() - 30 * 86_400_000;
+    expect(Math.abs(floor - expected)).toBeLessThan(5_000);
+  });
+
+  it('clamps a bound that reaches past the window', async () => {
+    const im = mockIntegrationManager(7);
+    const handler = createGatedToolHandler(rangeTool(), im, mockState([auth()]));
+
+    await handler({ timeMin: '2015-01-01T00:00:00.000Z' });
+
+    expect(Date.parse(sentArgs(im).timeMin as string)).toBeGreaterThan(Date.parse('2026-01-01T00:00:00.000Z'));
+  });
+
+  it('leaves a tighter bound the agent asked for', async () => {
+    const tight = new Date(Date.now() - 2 * 86_400_000).toISOString();
+    const im = mockIntegrationManager(90);
+    const handler = createGatedToolHandler(rangeTool(), im, mockState([auth()]));
+
+    await handler({ timeMin: tight });
+
+    expect(sentArgs(im).timeMin).toBe(tight);
+  });
+
+  it('enforces with NO signed age bound in the profile — local policy is enough', async () => {
+    // The decoupling that lets a connector declare an age-bounded read without
+    // its profile carrying a signed bound. Gating on the bound would silently
+    // disable enforcement here: fail-open by omission.
+    const im = mockIntegrationManager(30);
+    const handler = createGatedToolHandler(rangeTool(), im, mockState([auth()]));
+
+    await handler({});
+
+    expect((im.callTool as ReturnType<typeof vi.fn>)).toHaveBeenCalledOnce();
+    expect(sentArgs(im).timeMin).toBeDefined();
+  });
+
+  it('DENIES when the tool declares an age dimension but nothing sets a window', async () => {
+    const im = mockIntegrationManager(null);
+    const state = mockState([auth()]);
+    (state as unknown as { denialLog: { record: () => void } }).denialLog = { record: vi.fn() };
+    const handler = createGatedToolHandler(rangeTool(), im, state);
+
+    const result = await handler({});
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('no read-age window is set');
+    expect((im.callTool as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+  });
+});
+
 describe('createGatedToolHandler — local read policy overrides the grant bound', () => {
   // Read enforcement never reaches the Authority Server, so the window is LOCAL
   // config on the integration (protocol.md → Bounds, Context, and Read Policy).
