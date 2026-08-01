@@ -5,6 +5,7 @@
     "crm": "crm.json",
     "records": "records.json",
     "linkedin": "linkedin.json",
-    "calendar": "calendar.json"
+    "calendar": "calendar.json",
+    "deploy-github": "deploy-github.json"
   }
 }

@@ -1,0 +1,154 @@
+{
+  "id": "deploy-github",
+  "name": "Deploy (GitHub)",
+  "version": "1.0.0",
+  "description": "Run deployment pipelines under signed human authority",
+  "icon": "wrench",
+  "profile": "deploy",
+  "npmPackage": "@humanagencyp/deploy-mcp",
+  "mcp": {
+    "command": "npx",
+    "args": [
+      "-y",
+      "@humanagencyp/deploy-mcp@latest"
+    ]
+  },
+  "credentials": {
+    "fields": [
+      {
+        "key": "githubToken",
+        "label": "GitHub token",
+        "type": "password",
+        "placeholder": "github_pat_..."
+      }
+    ],
+    "envMapping": {
+      "GITHUB_TOKEN": "githubToken"
+    }
+  },
+  "oauth": null,
+  "toolGating": {
+    "default": {
+      "executionMapping": {},
+      "staticExecution": {},
+      "category": "disabled"
+    },
+    "overrides": {
+      "resolve_ref": {
+        "category": "read",
+        "readGovernance": "none",
+        "read": {
+          "resourceBound": "allowed_repos",
+          "resourceArg": "repo"
+        },
+        "readGovernanceReason": "Returns a commit pointer only \u2014 SHA, subject line, author, date. Repository metadata, not user content, and scoped to permitted repos. An age window over 'what commit is main' would govern nothing."
+      },
+      "list_deployments": {
+        "category": "read",
+        "readGovernance": "none",
+        "read": {
+          "resourceBound": "allowed_repos",
+          "resourceArg": "repo"
+        },
+        "readGovernanceReason": "Returns run metadata only \u2014 id, status, commit, timestamp. No build output and no user content. Scoped to permitted repos. Build logs, which CAN carry secrets and content, are a separate tool and will be age-bounded when added."
+      },
+      "get_deployment": {
+        "category": "read",
+        "readGovernance": "none",
+        "read": {
+          "resourceBound": "allowed_repos",
+          "resourceArg": "repo"
+        },
+        "readGovernanceReason": "Returns run metadata only \u2014 id, status, commit, timestamp. No build output. Scoped to permitted repos."
+      },
+      "list_environments": {
+        "category": "read",
+        "readGovernance": "none",
+        "read": {
+          "resourceBound": "allowed_repos",
+          "resourceArg": "repo"
+        },
+        "readGovernanceReason": "Returns environment names only. Repository configuration, not content, and needed so the owner can choose a target that actually exists."
+      },
+      "deploy": {
+        "executionMapping": {
+          "repo": "allowed_repos",
+          "environment": "allowed_environments",
+          "workflow": "allowed_workflows"
+        },
+        "staticExecution": {
+          "action_type": "deploy"
+        },
+        "resourceBound": "allowed_environments",
+        "resourceArg": "environment"
+      }
+    }
+  },
+  "templates": [
+    {
+      "name": "Watch deploys",
+      "description": "Read deployment status and history. Cannot deploy anything.",
+      "risk": "low",
+      "mode": "automatic",
+      "bounds": {
+        "deploy_daily_max": "0",
+        "rollback_allowed": "no"
+      },
+      "context": {
+        "allowed_repos": "",
+        "allowed_environments": "",
+        "allowed_workflows": "",
+        "allowed_branches": ""
+      },
+      "intent": "Let the agent see what has been deployed and whether a release succeeded. It may not deploy: a daily maximum of zero is a real limit, not an unset one. Fill in allowed_repos with the repositories it may look at.",
+      "ttl": 2592000,
+      "tags": [
+        "read-only",
+        "30 days"
+      ]
+    },
+    {
+      "name": "Deploy production, review",
+      "description": "Deploy a specific commit after approval. Three per day, no rollback.",
+      "risk": "high",
+      "mode": "review",
+      "bounds": {
+        "deploy_daily_max": "3",
+        "rollback_allowed": "no"
+      },
+      "context": {
+        "allowed_repos": "",
+        "allowed_environments": "production",
+        "allowed_workflows": "deploy.yml",
+        "allowed_branches": "main"
+      },
+      "intent": "The agent may propose deploying a specific commit to production; nothing runs until I approve it. Always resolve the branch to a commit first \u2014 I approve a commit, not a branch, so that what I reviewed is what ships. Fill in allowed_repos, and check that allowed_environments matches what the host actually calls it (GitHub uses the names you defined, Vercel uses production and preview).",
+      "ttl": 2592000,
+      "tags": [
+        "review",
+        "production",
+        "30 days"
+      ]
+    }
+  ],
+  "setupHint": "Create a fine-grained token scoped to ONE repository. The agent deploys commits that already exist \u2014 it never needs permission to write code.",
+  "setupGuide": [
+    {
+      "title": "Create a fine-grained token",
+      "description": "On GitHub go to Settings, Developer settings, Personal access tokens, Fine-grained tokens. Do not use a classic token: those grant access to everything you own, which is the standing-authority problem this integration exists to remove.",
+      "link": "https://github.com/settings/personal-access-tokens/new"
+    },
+    {
+      "title": "Scope it to one repository",
+      "description": "Under Repository access choose Only select repositories, and pick the single repository you want the agent to deploy."
+    },
+    {
+      "title": "Grant three permissions",
+      "description": "Actions: Read and write (to start the pipeline). Environments: Read (to see which environments exist). Contents: Read (to turn a branch into a commit). Do NOT grant Contents: Write \u2014 the agent ships commits that exist, it never writes them."
+    },
+    {
+      "title": "Paste the token below",
+      "description": "It is encrypted in your local vault. The agent never sees it: the gateway uses it on the agent's behalf, and only after checking the deploy against your signed limits."
+    }
+  ]
+}
