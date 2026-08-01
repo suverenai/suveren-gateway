@@ -79,8 +79,6 @@
         "staticExecution": {
           "action_type": "deploy"
         },
-        "resourceBound": "allowed_environments",
-        "resourceArg": "environment",
         "contentField": "sha"
       }
     }

@@ -64,9 +64,19 @@ describe('deploy-github manifest', () => {
     });
   });
 
-  it('scopes the deploy to permitted environments', () => {
-    expect(deploy().resourceBound).toBe('allowed_environments');
-    expect(deploy().resourceArg).toBe('environment');
+  it('scopes the deploy through the EXECUTION CONTEXT, not a read adapter', () => {
+    // Originally written as `resourceBound: allowed_environments` on this
+    // consequential tool. That is dead config: resourceBound is only ever read
+    // from `tool.gating.read`, i.e. the read path. It looked like environment
+    // scoping and enforced nothing — and a test asserting its presence
+    // manufactured confidence in a control that was not running.
+    //
+    // The mechanism that actually holds is the execution-context mapping below,
+    // checked against the authorization's `allowed_environments`. Assert that,
+    // and assert the dead config stays gone.
+    expect(deploy().executionMapping?.environment).toBe('allowed_environments');
+    expect(deploy(), 'resourceBound does nothing on a non-read tool').not.toHaveProperty('resourceBound');
+    expect(deploy()).not.toHaveProperty('resourceArg');
   });
 
   it('scopes every read tool to permitted repositories', () => {
