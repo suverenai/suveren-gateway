@@ -1,0 +1,69 @@
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { getProfile, clearProfiles } from '@hap/core';
+import { loadProfiles } from '../src/lib/profile-loader';
+import { join } from 'node:path';
+
+/**
+ * The deploy profile has to survive the real loader, not just `JSON.parse`.
+ * A profile that parses but exposes the wrong shape fails at the first gated
+ * call — which is a bad place to discover a typo in `boundType`.
+ */
+const PROFILE_ID = 'github.com/humanagencyprotocol/hap-profiles/deploy@0.6';
+const PROFILES_DIR = join(import.meta.dirname, '..', '..', '..', '..', 'hap-profiles');
+
+beforeAll(() => { loadProfiles(PROFILES_DIR); });
+afterAll(() => clearProfiles());
+
+describe('deploy@0.6', () => {
+  const p = () => getProfile(PROFILE_ID) as unknown as {
+    id: string; version: string;
+    boundsSchema: { keyOrder: string[]; fields: Record<string, { boundType?: { kind: string; window?: string } }> };
+    contextSchema: { keyOrder: string[]; fields: Record<string, { constraint?: { enforceable?: string[] } }> };
+    content_binding?: { version: string; kind: string };
+  };
+
+  it('loads through the profile loader', () => {
+    expect(p()).toBeTruthy();
+    expect(p().id).toBe('deploy');
+    expect(p().version).toBe('0.6');
+  });
+
+  it('counts deploys cumulatively — the Authority Server enforces this one', () => {
+    // A per_transaction bound here would mean the daily cap was never counted
+    // across calls, which is the difference between a limit and a suggestion.
+    expect(p().boundsSchema.fields.deploy_daily_max.boundType)
+      .toEqual({ kind: 'cumulative_count', window: 'daily' });
+  });
+
+  it('keeps scope in context, not in bounds', () => {
+    // Repos, environments and workflows are scope. Putting them in bounds would
+    // ship their values to the Authority Server and make them look like
+    // AS-enforced limits, which they are not.
+    for (const k of ['allowed_repos', 'allowed_environments', 'allowed_workflows', 'allowed_branches']) {
+      expect(p().contextSchema.fields).toHaveProperty(k);
+      expect(p().boundsSchema.fields).not.toHaveProperty(k);
+    }
+  });
+
+  it('every scope field is subset-enforceable', () => {
+    for (const k of p().contextSchema.keyOrder) {
+      expect(p().contextSchema.fields[k].constraint?.enforceable).toContain('subset');
+    }
+  });
+
+  it('does NOT pin environment names to an enum', () => {
+    // Hosts disagree: GitHub names are user-defined, Vercel has production and
+    // preview, Netlify has deploy-preview. An enum here would bake one vendor's
+    // vocabulary into the protocol and immediately misfit the others.
+    expect(p().contextSchema.fields.allowed_environments).not.toHaveProperty('enum');
+  });
+
+  it('declares content binding, so a receipt can commit to a specific commit', () => {
+    expect(p().content_binding).toEqual({ version: '1', kind: 'text' });
+  });
+
+  it('keyOrder covers exactly the declared fields — hashes depend on it', () => {
+    expect(new Set(p().boundsSchema.keyOrder)).toEqual(new Set(Object.keys(p().boundsSchema.fields)));
+    expect(new Set(p().contextSchema.keyOrder)).toEqual(new Set(Object.keys(p().contextSchema.fields)));
+  });
+});
