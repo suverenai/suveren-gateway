@@ -15,11 +15,18 @@
  * start needs no notification — you are already looking at the terminal — and
  * firing on every one would be noise.
  */
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 
 export interface NotifyCommand {
   cmd: string;
   args: string[];
+}
+
+export interface NotifyOptions {
+  /** Where the notification should take the user when clicked, if the platform can. */
+  url?: string;
+  /** Whether `terminal-notifier` is on PATH — the only macOS route to a clickable notification. */
+  hasTerminalNotifier?: boolean;
 }
 
 /** AppleScript string literal: backslashes first, then quotes. */
@@ -43,9 +50,28 @@ export function buildNotifyCommand(
   platform: NodeJS.Platform,
   title: string,
   message: string,
+  options: NotifyOptions = {},
 ): NotifyCommand | null {
+  const { url, hasTerminalNotifier = false } = options;
+
   switch (platform) {
     case 'darwin':
+      // AppleScript's `display notification` CANNOT carry a click action. macOS
+      // therefore activates whatever it decides posted the notification, which
+      // for a script spawned by a launch agent resolves to Finder — clicking
+      // the "you must unlock me" notice opens a file browser, which is worse
+      // than useless because it looks like the product did something.
+      //
+      // terminal-notifier can attach a URL, so use it when it happens to be
+      // installed. It stays OPTIONAL: a notification that arrives is worth more
+      // than a clickable one that requires everybody to install a dependency
+      // before the gateway can warn them about anything.
+      if (url && hasTerminalNotifier) {
+        return {
+          cmd: 'terminal-notifier',
+          args: ['-title', title, '-message', message, '-open', url, '-group', 'ai.suveren.gateway'],
+        };
+      }
       return {
         cmd: 'osascript',
         args: ['-e', `display notification ${osaQuote(message)} with title ${osaQuote(title)}`],
@@ -77,13 +103,34 @@ export function buildNotifyCommand(
 }
 
 /** The message itself — one place, so the agent notice and this one agree. */
-export function lockedNotification(port: string | number): { title: string; message: string } {
+export function lockedNotification(port: string | number): { title: string; message: string; url: string } {
+  const url = `http://localhost:${port}`;
   return {
     title: 'Suveren is running but locked',
     message:
       `Your agent has no authority until you unlock it. ` +
-      `Open http://localhost:${port} and enter your API key.`,
+      `Open ${url} and enter your API key.`,
+    url,
   };
+}
+
+/**
+ * Is `terminal-notifier` on PATH? Cached: the answer cannot change within a
+ * process, and this runs on the startup path.
+ *
+ * `spawnSync` rather than `which` on a shell — no shell means no quoting
+ * surface, and a missing binary is an exit code rather than a thrown error.
+ */
+let terminalNotifierCache: boolean | null = null;
+export function hasTerminalNotifier(): boolean {
+  if (terminalNotifierCache !== null) return terminalNotifierCache;
+  try {
+    const probe = spawnSync('terminal-notifier', ['-help'], { stdio: 'ignore' });
+    terminalNotifierCache = probe.error === undefined;
+  } catch {
+    terminalNotifierCache = false;
+  }
+  return terminalNotifierCache;
 }
 
 /**
@@ -91,8 +138,17 @@ export function lockedNotification(port: string | number): { title: string; mess
  * notify-send, a locked-down PowerShell policy or a denied permission must not
  * stop the gateway from serving.
  */
-export function notify(title: string, message: string, platform: NodeJS.Platform = process.platform): void {
-  const command = buildNotifyCommand(platform, title, message);
+export function notify(
+  title: string,
+  message: string,
+  platform: NodeJS.Platform = process.platform,
+  url?: string,
+): void {
+  const command = buildNotifyCommand(platform, title, message, {
+    url,
+    // Only probe when a URL could actually be attached.
+    hasTerminalNotifier: url !== undefined && platform === 'darwin' ? hasTerminalNotifier() : false,
+  });
   if (!command) return;
   try {
     const child = spawn(command.cmd, command.args, { detached: true, stdio: 'ignore' });

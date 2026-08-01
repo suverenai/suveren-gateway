@@ -73,3 +73,61 @@ describe('lockedNotification', () => {
     expect(lockedNotification(7400).message).toContain('http://localhost:7400');
   });
 });
+
+describe('buildNotifyCommand — clickable notification (macOS)', () => {
+  // Why this exists: AppleScript's `display notification` cannot carry a click
+  // action, so macOS activates whatever it thinks posted it. From a launch
+  // agent that resolves to Finder — clicking "Suveren is locked" opened a file
+  // browser. terminal-notifier is the only route to attaching the URL.
+
+  it('uses terminal-notifier with -open when a URL is given and the binary exists', () => {
+    const c = buildNotifyCommand('darwin', 'Title', 'Body', {
+      url: 'http://localhost:3400',
+      hasTerminalNotifier: true,
+    })!;
+    expect(c.cmd).toBe('terminal-notifier');
+    expect(c.args).toContain('-open');
+    expect(c.args[c.args.indexOf('-open') + 1]).toBe('http://localhost:3400');
+  });
+
+  it('passes title and message as ARGUMENTS, not interpolated script', () => {
+    // terminal-notifier takes argv directly, so hostile text cannot escape into
+    // a shell or a script the way it could with osascript.
+    const c = buildNotifyCommand('darwin', 'A "quoted" title', 'back\\slash', {
+      url: 'http://localhost:3400',
+      hasTerminalNotifier: true,
+    })!;
+    expect(c.args).toContain('A "quoted" title');
+    expect(c.args).toContain('back\\slash');
+  });
+
+  it('falls back to osascript when terminal-notifier is absent', () => {
+    // A notification that arrives beats a clickable one that requires everyone
+    // to install a dependency first.
+    const c = buildNotifyCommand('darwin', 'Title', 'Body', {
+      url: 'http://localhost:3400',
+      hasTerminalNotifier: false,
+    })!;
+    expect(c.cmd).toBe('osascript');
+  });
+
+  it('falls back to osascript when no URL is supplied', () => {
+    const c = buildNotifyCommand('darwin', 'Title', 'Body', { hasTerminalNotifier: true })!;
+    expect(c.cmd).toBe('osascript');
+  });
+
+  it('leaves the other platforms unchanged', () => {
+    const opts = { url: 'http://localhost:3400', hasTerminalNotifier: true };
+    expect(buildNotifyCommand('win32', 'T', 'B', opts)!.cmd).toBe('powershell');
+    expect(buildNotifyCommand('linux', 'T', 'B', opts)!.cmd).toBe('notify-send');
+    expect(buildNotifyCommand('freebsd' as NodeJS.Platform, 'T', 'B', opts)).toBeNull();
+  });
+});
+
+describe('lockedNotification', () => {
+  it('exposes the URL it tells the user to open, so both can never disagree', () => {
+    const n = lockedNotification(3400);
+    expect(n.url).toBe('http://localhost:3400');
+    expect(n.message).toContain(n.url);
+  });
+});

@@ -891,8 +891,10 @@ app.listen(port, '0.0.0.0', () => {
   // it reports being blocked, possibly hours later. Autostart made this failure
   // quieter, so it has to announce itself.
   if (process.env.SUVEREN_AUTOSTART === '1' && !vault.isUnlocked()) {
-    const { title, message } = lockedNotification(port);
-    notify(title, message);
+    const { title, message, url } = lockedNotification(port);
+    // Pass the URL so the notification is clickable where the platform allows
+    // it — otherwise clicking the "unlock me" notice opens Finder.
+    notify(title, message, process.platform, url);
   }
 
   console.error(`[Control Plane]   SP proxy: ${SP_URL}`);

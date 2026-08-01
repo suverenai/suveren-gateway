@@ -118,11 +118,26 @@ describe('ExecutionLog — sumByWindow', () => {
 
     it('monthly window is wider than daily window', () => {
       const dayInSec = 86400;
-      // This entry is >24h but <30d — should appear in monthly but not daily
-      log.record(makeEntry(PROFILE_A, PATH_A, secondsAgo(dayInSec * 3), { amount: 50 }));
+      // The month window is a CALENDAR month, so "three days ago" is only
+      // inside it from the 4th onwards. Against the real clock this test failed
+      // on the 1st, 2nd and 3rd of every month — and on the 1st its premise is
+      // impossible, because no time older than 24h is in the current month yet.
+      // Pin a mid-month "now" so the relationship under test (monthly ⊃ daily)
+      // is what decides the result, not today's date.
+      // Two constraints, both real: the reference point needs several days of
+      // its OWN calendar month behind it, and the entry must stay inside the
+      // log's 31-day retention or record() prunes it on the way in. So derive
+      // from the real clock rather than hardcoding a date that ages out.
+      const real = new Date(NOW * 1000);
+      const monthStart = Date.UTC(real.getUTCFullYear(), real.getUTCMonth(), 1, 12);
+      const pinnedNow = real.getUTCDate() >= 5
+        ? NOW                                              // safely mid-month already
+        : Math.floor(monthStart / 1000) - dayInSec * 3;    // step back into the previous month
+      // >24h old, and inside the same calendar month as pinnedNow.
+      log.record(makeEntry(PROFILE_A, PATH_A, pinnedNow - dayInSec * 3, { amount: 50 }));
 
-      const daily = log.sumByWindow(PROFILE_A, PATH_A, 'amount', 'daily', NOW);
-      const monthly = log.sumByWindow(PROFILE_A, PATH_A, 'amount', 'monthly', NOW);
+      const daily = log.sumByWindow(PROFILE_A, PATH_A, 'amount', 'daily', pinnedNow);
+      const monthly = log.sumByWindow(PROFILE_A, PATH_A, 'amount', 'monthly', pinnedNow);
 
       expect(daily).toBe(0);
       expect(monthly).toBe(50);
