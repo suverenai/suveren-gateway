@@ -126,6 +126,24 @@ export interface ToolGatingConfig {
   readGovernance?: 'none';
   /** Human-readable justification for a `readGovernance:"none"` exemption. */
   readGovernanceReason?: string;
+  /**
+   * Which argument carries the content the receipt binds to, for a profile
+   * declaring `content_binding` with `kind:"text"`.
+   *
+   * Without this the field is auto-detected from a fixed prose vocabulary
+   * (`body`/`text`/`description`/`content`). That works for a message and fails
+   * SILENTLY for everything else: a deploy binds a commit SHA, an
+   * infrastructure change binds a plan hash, a record binds an id. None is
+   * called "body", so no hash is produced, no binding reaches the receipt, and
+   * nothing reports a problem — the receipt simply proves less than it appears
+   * to.
+   *
+   * Deliberately separate from the FOOTER's content field. The footer appends
+   * a verification line to prose; appending it to a commit SHA would corrupt
+   * the value being deployed. Binding and footer are different questions about
+   * the same call, and conflating them breaks non-prose connectors.
+   */
+  contentField?: string;
 }
 
 /**

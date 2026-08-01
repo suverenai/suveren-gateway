@@ -80,7 +80,8 @@
           "action_type": "deploy"
         },
         "resourceBound": "allowed_environments",
-        "resourceArg": "environment"
+        "resourceArg": "environment",
+        "contentField": "sha"
       }
     }
   },

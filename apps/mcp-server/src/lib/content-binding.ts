@@ -47,10 +47,26 @@ export function computeContentBinding(
   if (binding.kind === 'jcs') {
     contentHash = computeContentHash(binding, toolArgs); // whole record payload
   } else {
-    // text: hash only the user-facing content field, pre-footer.
-    const field = tool ? detectContentField(tool) : null;
-    if (!field) return undefined; // no text field on this tool → nothing to bind
+    // text: hash the bound field, pre-footer.
+    //
+    // A manifest-declared `contentField` wins over auto-detection. Detection
+    // only knows a prose vocabulary (body/text/description/content), so a
+    // connector binding something else — a commit SHA, a plan hash, a record id
+    // — would produce NO hash and no binding, silently. The receipt would still
+    // be issued and would simply prove less than it appears to, which is the
+    // worst way for this to fail.
+    //
+    // Note this is NOT the footer's content field: the footer appends a
+    // verification line to prose, and appending it to a commit SHA would
+    // corrupt the value being deployed.
+    const declared = tool?.gating?.contentField;
+    const field = declared ?? (tool ? detectContentField(tool) : null);
+    if (!field) return undefined; // nothing on this tool to bind
     const raw = typeof toolArgs[field] === 'string' ? (toolArgs[field] as string) : '';
+    // A declared field that is absent or non-string at call time is a manifest
+    // bug, not "nothing to bind" — binding to the empty string would look like
+    // a valid binding while committing to nothing.
+    if (declared && raw === '') return undefined;
     contentHash = computeContentHash(binding, raw);
   }
 
