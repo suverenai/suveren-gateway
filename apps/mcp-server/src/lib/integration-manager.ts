@@ -97,6 +97,32 @@ export function readAgeOf(config: Pick<IntegrationConfig, 'readAgeDays'>): numbe
   return typeof days === 'number' && Number.isFinite(days) && days >= 0 ? days : null;
 }
 
+/**
+ * A copy of `schema` with `blocked` properties removed, including any mention
+ * in `required`. Non-destructive: the original belongs to the downstream
+ * server, and a leftover `required` entry naming a property that no longer
+ * exists makes the schema invalid for strict clients.
+ */
+export function withoutBlockedArgs(
+  schema: Record<string, unknown>,
+  blocked: string[] | undefined,
+): Record<string, unknown> {
+  if (!blocked?.length) return schema;
+
+  const props = schema.properties as Record<string, unknown> | undefined;
+  if (!props) return schema;
+
+  const kept = Object.fromEntries(Object.entries(props).filter(([k]) => !blocked.includes(k)));
+  const out: Record<string, unknown> = { ...schema, properties: kept };
+
+  if (Array.isArray(schema.required)) {
+    out.required = (schema.required as unknown[]).filter(
+      r => typeof r !== 'string' || !blocked.includes(r),
+    );
+  }
+  return out;
+}
+
 interface RunningIntegration {
   config: IntegrationConfig;
   client: Client;
@@ -392,7 +418,14 @@ export class IntegrationManager {
         namespacedName: `${config.id}__${tool.name}`,
         integrationId: config.id,
         description: tool.description ?? '',
-        inputSchema: (tool.inputSchema ?? {}) as Record<string, unknown>,
+        // A downstream schema otherwise reaches the agent verbatim, so a
+        // connector can offer a control-bypassing argument and we would pass it
+        // straight on. Anything the manifest blocks is removed here, before the
+        // agent ever sees it exists.
+        inputSchema: withoutBlockedArgs(
+          (tool.inputSchema ?? {}) as Record<string, unknown>,
+          gating?.blockedArgs,
+        ),
         gating,
       };
     });
@@ -639,6 +672,7 @@ export class IntegrationManager {
         readGovernance?: 'none';
         readGovernanceReason?: string;
         contentField?: string;
+        blockedArgs?: string[];
       };
       // 'disabled' = declared unavailable → block at the gating layer.
       if (ext.category === 'disabled') {
@@ -656,6 +690,7 @@ export class IntegrationManager {
           read: ext.read,
           readGovernance: ext.readGovernance,
           readGovernanceReason: ext.readGovernanceReason,
+          blockedArgs: ext.blockedArgs,
         };
       }
       return {
@@ -667,6 +702,7 @@ export class IntegrationManager {
         // copied here is silently dropped — the receipt is still issued and
         // simply carries no binding, which only surfaces when a verifier asks.
         contentField: ext.contentField,
+        blockedArgs: ext.blockedArgs,
       };
     }
 

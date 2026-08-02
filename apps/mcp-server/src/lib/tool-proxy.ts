@@ -186,7 +186,48 @@ function denyRead(
  * - Read tools (category: "read") → need matching auth, no execution context checks
  * - Write tools → full execution context verification against bounds
  */
+/**
+ * Refuse arguments the manifest blocks — on every path, before any other gate.
+ *
+ * They are already stripped from the schema the agent sees, but a schema is
+ * advice an agent may ignore, so hiding is prevention and refusing is the
+ * control. Wrapping rather than checking inside means no gating path can
+ * forget it: disabled, read and write are all covered by construction.
+ *
+ * The motivating case is Gmail's `raw` — a whole pre-encoded message whose own
+ * description says it causes to/cc/subject/body to be ignored. Every control
+ * reads those fields, so such a call cannot be scope-checked, cannot be content
+ * bound, and cannot be shown to a human in any form they could judge.
+ */
 export function createGatedToolHandler(
+  tool: DiscoveredTool,
+  integrationManager: IntegrationManager,
+  state: SharedState,
+): (args: Record<string, unknown>) => Promise<ToolResult> {
+  const inner = createGatedToolHandlerInner(tool, integrationManager, state);
+  const blocked = tool.gating?.blockedArgs ?? [];
+  if (blocked.length === 0) return inner;
+
+  return async (args: Record<string, unknown>) => {
+    const present = blocked.filter(a => a in (args ?? {}));
+    if (present.length === 0) return inner(args);
+    return {
+      content: [{
+        type: 'text',
+        text:
+          `Refused: "${tool.namespacedName}" was called with ${present.map(b => `"${b}"`).join(', ')}, ` +
+          `which the integration manifest blocks. That argument carries the whole ` +
+          `request in one opaque value, so the recipients, the content and the ` +
+          `limits on this authorization cannot be read from it — the call could ` +
+          `not be shown to stay in scope, and could not be shown to a human for ` +
+          `approval in any form they could judge. Use the individual arguments instead.`,
+      }],
+      isError: true,
+    };
+  };
+}
+
+function createGatedToolHandlerInner(
   tool: DiscoveredTool,
   integrationManager: IntegrationManager,
   state: SharedState,

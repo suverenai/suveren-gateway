@@ -144,6 +144,28 @@ export interface ToolGatingConfig {
    * the same call, and conflating them breaks non-prose connectors.
    */
   contentField?: string;
+
+  /**
+   * Arguments this tool must not accept, removed from the schema the agent
+   * sees and refused if sent anyway.
+   *
+   * A downstream server's schema reaches the agent unchanged, so a connector
+   * can hand out a bypass simply by offering one. Gmail's `send_message` takes
+   * `raw` — a whole pre-encoded message — and its own description states that
+   * raw causes to/cc/subject/body to be ignored. Every control we have reads
+   * those fields: the recipient scope, the content binding, the approval card.
+   * A call using `raw` carried its recipients and its text somewhere none of
+   * them looked.
+   *
+   * Blocking is the narrow half of the defence: exact, but only for holes we
+   * already know about. The general half is `requiredFor` in the profile, which
+   * refuses any call hiding a dimension the grant constrains — including the
+   * next escape hatch, which will not be called `raw`.
+   *
+   * Removing the argument is prevention, not enforcement: a schema is advice an
+   * agent may ignore, so the call is refused as well.
+   */
+  blockedArgs?: string[];
 }
 
 /**
