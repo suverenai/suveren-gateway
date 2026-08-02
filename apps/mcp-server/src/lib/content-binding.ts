@@ -66,7 +66,17 @@ export function computeContentBinding(
     // A declared field that is absent or non-string at call time is a manifest
     // bug, not "nothing to bind" — binding to the empty string would look like
     // a valid binding while committing to nothing.
-    if (declared && raw === '') return undefined;
+    //
+    // This guard once applied only to manifest-declared fields. Auto-detected
+    // ones need it more, not less — nothing reviewed them. Gmail's
+    // `send_message` is the live case: pass `raw` and its own schema says
+    // to/cc/subject/body are ignored, so the message travels in a field this
+    // binding never sees while `body` is simply absent. Hashing '' there is the
+    // worst available outcome — a content hash that commits to nothing, reads
+    // exactly like one that binds the message, and is IDENTICAL for every such
+    // call, so a receipt for one message verifies against another. Emitting no
+    // binding is honest: the receipt then claims only what it can support.
+    if (raw === '') return undefined;
     contentHash = computeContentHash(binding, raw);
   }
 

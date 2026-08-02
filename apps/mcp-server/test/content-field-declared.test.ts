@@ -131,11 +131,30 @@ describe('existing connectors are unaffected', () => {
     expect(a.contentHash).toBe(b.contentHash);
   });
 
-  it('an EMPTY prose field still binds — only a DECLARED field refuses', () => {
-    // The new empty-check must not leak into the auto-detected path: an empty
-    // post body is a legitimate (if odd) thing to bind, and refusing would drop
-    // binding from calls that have it today.
-    const result = computeContentBinding(PROFILE, proseTool({ text: { type: 'string' } }), { text: '' });
-    expect(result?.contentHash).toBeTruthy();
+  it('an EMPTY prose field does NOT bind, declared or auto-detected', () => {
+    // REVERSED from the original assertion, which held that an empty prose
+    // field should still bind because "an empty post body is a legitimate (if
+    // odd) thing to bind". The reasoning does not survive contact with a tool
+    // that has a second content field.
+    //
+    // Gmail's send_message takes `raw`, and its schema says `raw` causes
+    // to/cc/subject/body to be ignored. Hashing an empty `body` there yields a
+    // content hash over nothing: it reads like a real binding and is IDENTICAL
+    // for every such call, so a receipt for one message verifies against any
+    // other. Binding the empty string commits to nothing while appearing to
+    // commit to something — strictly worse than no binding at all.
+    //
+    // Refusing only when the field is ABSENT would preserve the old case, but
+    // it is bypassable: send `raw` alongside an explicit `body: ''` and the
+    // false binding returns. So the rule has to be the value, not its presence.
+    //
+    // What is given up is small and honest: a genuinely empty post now carries
+    // no content binding, and the receipt claims nothing about content it does
+    // not have. Binding an image-only post needs the declared-field mechanism
+    // in review.md, not a hash of "".
+    for (const args of [{ text: '' }, { }]) {
+      const result = computeContentBinding(PROFILE, proseTool({ text: { type: 'string' } }), args);
+      expect(result).toBeUndefined();
+    }
   });
 });
