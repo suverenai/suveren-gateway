@@ -638,6 +638,7 @@ export class IntegrationManager {
         read?: import('./integration-registry').ReadAdapter;
         readGovernance?: 'none';
         readGovernanceReason?: string;
+        contentField?: string;
       };
       // 'disabled' = declared unavailable → block at the gating layer.
       if (ext.category === 'disabled') {
@@ -661,6 +662,11 @@ export class IntegrationManager {
         profile: profileId,
         executionMapping: override.executionMapping,
         staticExecution: override.staticExecution,
+        // Which argument the receipt binds to. This resolver is an explicit
+        // whitelist, so a field added to the manifest and the type but not
+        // copied here is silently dropped — the receipt is still issued and
+        // simply carries no binding, which only surfaces when a verifier asks.
+        contentField: ext.contentField,
       };
     }
 

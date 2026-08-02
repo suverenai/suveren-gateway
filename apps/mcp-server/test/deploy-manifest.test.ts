@@ -116,3 +116,36 @@ describe('deploy-github manifest', () => {
     }
   });
 });
+
+/**
+ * The manifest declaration must survive the RESOLVER, not merely exist.
+ *
+ * `resolveToolGating` builds tool gating from an explicit whitelist of fields.
+ * `contentField` was added to the manifest and to the type but not to that
+ * whitelist, so it was silently dropped: the deploy ran, a receipt was issued,
+ * and it carried no commit binding at all. The failure only surfaced when a
+ * verifier asked — in CI, on a real deploy.
+ *
+ * The existing tests passed because they hand-built a DiscoveredTool with
+ * contentField already set, which is precisely the step that was broken. A test
+ * that constructs the input it is meant to be checking cannot catch this.
+ */
+describe('manifest declarations survive gating resolution', () => {
+  it('deploy carries contentField through to the resolved gating', async () => {
+    const { IntegrationManager } = await import('../src/lib/integration-manager');
+    const mgr = new IntegrationManager() as unknown as {
+      resolveToolGating: (p: string | null, g: unknown, tool: string) => { contentField?: string } | null;
+    };
+    const resolved = mgr.resolveToolGating('deploy', MANIFEST.toolGating, 'deploy');
+    expect(resolved?.contentField, 'contentField was dropped by resolveToolGating').toBe('sha');
+  });
+
+  it('every manifest field the engine reads is carried, not just declared', () => {
+    // Guards the class rather than the instance: anything the manifest declares
+    // for `deploy` should be reachable from resolved gating.
+    const declared = Object.keys(MANIFEST.toolGating.overrides.deploy);
+    expect(declared).toContain('contentField');
+    expect(declared).toContain('executionMapping');
+    expect(declared).toContain('staticExecution');
+  });
+});
