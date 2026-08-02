@@ -130,24 +130,24 @@
       ]
     }
   ],
-  "setupHint": "Create a fine-grained token scoped to ONE repository. The agent deploys commits that already exist \u2014 it never needs permission to write code.",
+  "setupHint": "Use a fine-grained token, scoped to one repository.",
   "setupGuide": [
     {
       "title": "Create a fine-grained token",
-      "description": "On GitHub go to Settings, Developer settings, Personal access tokens, Fine-grained tokens. Do not use a classic token: those grant access to everything you own, which is the standing-authority problem this integration exists to remove.",
+      "description": "GitHub Settings, Developer settings, Personal access tokens, Fine-grained. Not a classic token \u2014 those reach everything you own.",
       "link": "https://github.com/settings/personal-access-tokens/new"
     },
     {
       "title": "Scope it to one repository",
-      "description": "Under Repository access choose Only select repositories, and pick the single repository you want the agent to deploy."
+      "description": "Under Repository access pick Only select repositories, then the repo to deploy."
     },
     {
       "title": "Grant three permissions",
-      "description": "Actions: Read and write (to start the pipeline). Environments: Read (to see which environments exist). Contents: Read (to turn a branch into a commit). Do NOT grant Contents: Write \u2014 the agent ships commits that exist, it never writes them."
+      "description": "Actions: Read and write. Environments: Read. Contents: Read. Not Contents: Write \u2014 the agent ships commits, it never writes them."
     },
     {
       "title": "Paste the token below",
-      "description": "It is encrypted in your local vault. The agent never sees it: the gateway uses it on the agent's behalf, and only after checking the deploy against your signed limits."
+      "description": "Encrypted in your local vault. The agent never sees it."
     }
   ]
 }
