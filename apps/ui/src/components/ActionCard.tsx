@@ -1,4 +1,5 @@
 import { Fragment } from 'react';
+import { resolveProposalLinks, type ProposalLink } from '../lib/proposal-links';
 import type { ThreadItem } from '../lib/thread-aggregator';
 import { ProfileBadge } from './ProfileBadge';
 import { formatTimeLeft } from '../lib/time-left';
@@ -83,12 +84,14 @@ function formatArgValue(v: unknown): string {
 
 interface Props {
   item: ThreadItem;
+  /** Declared by the acting integration's manifest — see resolveProposalLinks. */
+  proposalLinks?: ProposalLink[];
   onApprove?: (id: string) => void;
   onReject?: (id: string) => void;
   resolving?: boolean;
 }
 
-export function ActionCard({ item, onApprove, onReject, resolving }: Props) {
+export function ActionCard({ item, onApprove, onReject, resolving, proposalLinks }: Props) {
   const isProposal = item.kind === 'proposal';
   const status: CardStatus = isProposal ? item.proposal.status : 'executed';
   const toolFull = isProposal ? item.proposal.tool : item.receipt.action;
@@ -99,6 +102,10 @@ export function ActionCard({ item, onApprove, onReject, resolving }: Props) {
   const executionContext = isProposal ? item.proposal.executionContext : item.receipt.executionContext;
   const cumulative = !isProposal ? item.receipt.cumulativeState : null;
 
+  // Links the reviewer can open. This is the card review mode actually uses —
+  // ApproverProposalCard is only for above-cap approvals — so a link wired only
+  // there never reaches the person deciding.
+  const inspectLinks = isProposal ? resolveProposalLinks(proposalLinks, item.proposal.toolArgs) : [];
   const argEntries = args
     ? Object.entries(args).filter(([k]) => !HIDDEN_ARG_KEYS.has(k))
     : [];
@@ -165,6 +172,26 @@ export function ActionCard({ item, onApprove, onReject, resolving }: Props) {
               border: '1px solid var(--border)',
             }}
           />
+        </div>
+      )}
+
+      {/* Above the arguments on purpose: what can be looked at should come
+          before what can only be read. */}
+      {inspectLinks.length > 0 && (
+        <div style={{ marginBottom: '0.75rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+          {inspectLinks.map(l => (
+            <a
+              key={l.label}
+              href={l.href}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn btn-secondary btn-sm"
+              style={{ textDecoration: 'none' }}
+              title={l.description ?? l.href}
+            >
+              {l.label} &#8599;
+            </a>
+          ))}
         </div>
       )}
 

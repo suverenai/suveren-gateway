@@ -279,6 +279,7 @@ export function ProposalReviewPage() {
               {awaitingMeDomainItems.map(item => (
                 <ActionCard
                   key={item.id}
+                  proposalLinks={item.kind === 'proposal' ? linksForTool(item.proposal.tool) : undefined}
                   item={item}
                   onApprove={(id) => handleResolve(id, 'commit')}
                   onReject={(id) => handleResolve(id, 'reject')}
@@ -403,6 +404,7 @@ export function ProposalReviewPage() {
               {items.map((item) => (
                 <ActionCard
                   key={item.id}
+                  proposalLinks={item.kind === 'proposal' ? linksForTool(item.proposal.tool) : undefined}
                   item={item}
                   onApprove={(id) => handleResolve(id, 'commit')}
                   onReject={(id) => handleResolve(id, 'reject')}
