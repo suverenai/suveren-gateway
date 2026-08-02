@@ -8,7 +8,7 @@ import { join } from 'node:path';
  * A profile that parses but exposes the wrong shape fails at the first gated
  * call — which is a bad place to discover a typo in `boundType`.
  */
-const PROFILE_ID = 'github.com/humanagencyprotocol/hap-profiles/deploy@0.6';
+const PROFILE_ID = 'github.com/humanagencyprotocol/hap-profiles/deploy@0.7';
 const PROFILES_DIR = join(import.meta.dirname, '..', '..', '..', '..', 'hap-profiles');
 
 beforeAll(() => { loadProfiles(PROFILES_DIR); });
@@ -24,7 +24,7 @@ describe('deploy@0.6', () => {
 
   it('loads through the profile loader', () => {
     expect(p()).toBeTruthy();
-    expect(p().version).toBe('0.6');
+    expect(p().version).toBe('0.7');
   });
 
   it('carries the FULLY QUALIFIED id, like every other profile', () => {
@@ -36,11 +36,18 @@ describe('deploy@0.6', () => {
     expect(p().id).toBe(PROFILE_ID);
   });
 
-  it('counts deploys cumulatively — the Authority Server enforces this one', () => {
+  it('counts PROMOTIONS cumulatively — the Authority Server enforces this one', () => {
     // A per_transaction bound here would mean the daily cap was never counted
     // across calls, which is the difference between a limit and a suggestion.
-    expect(p().boundsSchema.fields.deploy_daily_max.boundType)
+    expect(p().boundsSchema.fields.promote_daily_max.boundType)
       .toEqual({ kind: 'cumulative_count', window: 'daily' });
+  });
+
+  it('does NOT limit builds — only publication', () => {
+    // deploy_daily_max is deliberately gone. Creating a preview harms nobody;
+    // spending a publication limit on it would make the cap mean two different
+    // things and run out before anything went live.
+    expect(p().boundsSchema.fields).not.toHaveProperty('deploy_daily_max');
   });
 
   it('keeps scope in context, not in bounds', () => {
