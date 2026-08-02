@@ -96,3 +96,46 @@ describe('manifest-declared content field', () => {
     expect(out.sha).toBe('abc123');
   });
 });
+
+/**
+ * Regression cover for the SHARED code path. `computeContentBinding` is used by
+ * every profile declaring content_binding — publish, email, records, customers
+ * — and the `kind:"text"` branch had no test before this change touched it.
+ *
+ * The property that must hold: a manifest that declares NO contentField behaves
+ * exactly as it did before, because that is every existing connector.
+ */
+describe('existing connectors are unaffected', () => {
+  const proseTool = (props: Record<string, { type: string }>) => tool(props);
+
+  it('auto-detection still binds a prose field when nothing is declared', () => {
+    const result = computeContentBinding(PROFILE, proseTool({ text: { type: 'string' } }), { text: 'a post' });
+    expect(result?.contentHash).toBeTruthy();
+  });
+
+  it('binds the same value it did before — detection order is unchanged', () => {
+    // body wins over text, text over description, description over content.
+    // A reordering would silently change every published post's fingerprint and
+    // invalidate receipts issued before the change.
+    const all = { body: { type: 'string' }, text: { type: 'string' }, description: { type: 'string' }, content: { type: 'string' } };
+    const detected = computeContentBinding(PROFILE, proseTool(all), { body: 'B', text: 'T', description: 'D', content: 'C' })!;
+    const bodyOnly = computeContentBinding(PROFILE, proseTool({ body: { type: 'string' } }), { body: 'B' })!;
+    expect(detected.contentHash).toBe(bodyOnly.contentHash);
+  });
+
+  it('an unrelated extra argument does not change the hash', () => {
+    // Only the bound field is hashed. If the whole args object were hashed, an
+    // injected receipt_id or footer would change the fingerprint after signing.
+    const a = computeContentBinding(PROFILE, proseTool({ text: { type: 'string' } }), { text: 'a post' })!;
+    const b = computeContentBinding(PROFILE, proseTool({ text: { type: 'string' } }), { text: 'a post', sha: 'abc123', receipt_id: 'rct_1' })!;
+    expect(a.contentHash).toBe(b.contentHash);
+  });
+
+  it('an EMPTY prose field still binds — only a DECLARED field refuses', () => {
+    // The new empty-check must not leak into the auto-detected path: an empty
+    // post body is a legitimate (if odd) thing to bind, and refusing would drop
+    // binding from calls that have it today.
+    const result = computeContentBinding(PROFILE, proseTool({ text: { type: 'string' } }), { text: '' });
+    expect(result?.contentHash).toBeTruthy();
+  });
+});
