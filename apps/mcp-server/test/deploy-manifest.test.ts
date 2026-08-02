@@ -19,7 +19,7 @@ const MANIFEST = JSON.parse(
   templates: Array<{ name: string; mode: string; bounds: Record<string, string>; context: Record<string, string> }>;
 };
 
-const deploy = () => MANIFEST.toolGating.overrides.deploy as {
+const deploy = () => MANIFEST.toolGating.overrides.release as {
   category?: string;
   staticExecution?: Record<string, string>;
   executionMapping?: Record<string, string>;
@@ -28,6 +28,19 @@ const deploy = () => MANIFEST.toolGating.overrides.deploy as {
 };
 
 describe('deploy-github manifest', () => {
+  it('binds the RECEIPT to the build being made live, not the commit', () => {
+    // Binding the commit would prove only which SOURCE was approved. A rebuild
+    // could diverge from it; promoting an existing build cannot.
+    expect(deploy().contentField).toBe('deployment_url');
+  });
+
+  it('offers the reviewer something to open', () => {
+    // The whole point of reviewing a release rather than a commit. Without a
+    // link the approver sees an opaque URL string and approves on faith.
+    const links = (MANIFEST as unknown as { proposalLinks?: Array<{ template: string }> }).proposalLinks ?? [];
+    expect(links.some(l => l.template.includes('{deployment_url}'))).toBe(true);
+  });
+
   it('binds to the deploy profile', () => {
     expect(MANIFEST.profile).toBe('deploy');
   });
@@ -39,11 +52,11 @@ describe('deploy-github manifest', () => {
     expect(MANIFEST.toolGating.default.category).toBe('disabled');
   });
 
-  it('deploy is consequential — never categorised as a read', () => {
+  it('release is consequential — never categorised as a read', () => {
     // A read never requests a receipt. Mislabelling deploy would remove the
     // entire authority check while leaving the tool working.
     expect(deploy().category).not.toBe('read');
-    expect(deploy().staticExecution?.action_type).toBe('deploy');
+    expect(deploy().staticExecution?.action_type).toBe('release');
   });
 
   it('action_type is STATIC, never taken from an agent argument', () => {
@@ -64,7 +77,7 @@ describe('deploy-github manifest', () => {
     });
   });
 
-  it('scopes the deploy through the EXECUTION CONTEXT, not a read adapter', () => {
+  it('scopes the release through the EXECUTION CONTEXT, not a read adapter', () => {
     // Originally written as `resourceBound: allowed_environments` on this
     // consequential tool. That is dead config: resourceBound is only ever read
     // from `tool.gating.read`, i.e. the read path. It looked like environment
@@ -94,15 +107,15 @@ describe('deploy-github manifest', () => {
   it('the read-only template really cannot deploy', () => {
     // Zero is a real limit. If this ever became "" or absent, the template
     // would stop bounding anything and the reads-only promise would be false.
-    const watch = MANIFEST.templates.find(t => t.name === 'Watch deploys')!;
-    expect(watch.bounds.deploy_daily_max).toBe('0');
+    const watch = MANIFEST.templates.find(t => t.name === 'Watch deployments')!;
+    expect(watch.bounds.release_daily_max).toBe('0');
     expect(watch.bounds.rollback_allowed).toBe('no');
   });
 
   it('the production template waits for a human', () => {
-    const prod = MANIFEST.templates.find(t => t.name === 'Deploy production, review')!;
+    const prod = MANIFEST.templates.find(t => t.name === 'Release to production, review')!;
     expect(prod.mode).toBe('review');
-    expect(Number(prod.bounds.deploy_daily_max)).toBeGreaterThan(0);
+    expect(Number(prod.bounds.release_daily_max)).toBeGreaterThan(0);
     expect(prod.context.allowed_workflows).toBeTruthy();
   });
 
@@ -136,14 +149,14 @@ describe('manifest declarations survive gating resolution', () => {
     const mgr = new IntegrationManager() as unknown as {
       resolveToolGating: (p: string | null, g: unknown, tool: string) => { contentField?: string } | null;
     };
-    const resolved = mgr.resolveToolGating('deploy', MANIFEST.toolGating, 'deploy');
-    expect(resolved?.contentField, 'contentField was dropped by resolveToolGating').toBe('sha');
+    const resolved = mgr.resolveToolGating('deploy', MANIFEST.toolGating, 'release');
+    expect(resolved?.contentField, 'contentField was dropped by resolveToolGating').toBe('deployment_url');
   });
 
   it('every manifest field the engine reads is carried, not just declared', () => {
     // Guards the class rather than the instance: anything the manifest declares
     // for `deploy` should be reachable from resolved gating.
-    const declared = Object.keys(MANIFEST.toolGating.overrides.deploy);
+    const declared = Object.keys(MANIFEST.toolGating.overrides.release);
     expect(declared).toContain('contentField');
     expect(declared).toContain('executionMapping');
     expect(declared).toContain('staticExecution');

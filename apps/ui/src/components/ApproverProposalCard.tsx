@@ -15,6 +15,7 @@
  */
 
 import { useState, Fragment } from 'react';
+import { resolveProposalLinks, type ProposalLink } from '../lib/proposal-links';
 import { spClient, type Proposal } from '../lib/sp-client';
 import { profileDisplayName } from '../lib/profile-display';
 import { formatTimeLeft } from '../lib/time-left';
@@ -50,12 +51,14 @@ function formatAge(unixSeconds: number): string {
 
 interface Props {
   proposal: Proposal;
+  /** Declared by the acting integration's manifest — see resolveProposalLinks. */
+  proposalLinks?: ProposalLink[];
   currentUserId: string;
   onAction: () => void;
   onMessage: (msg: string) => void;
 }
 
-export function ApproverProposalCard({ proposal, currentUserId, onAction, onMessage }: Props) {
+export function ApproverProposalCard({ proposal, currentUserId, onAction, onMessage, proposalLinks }: Props) {
   const [approving, setApproving] = useState(false);
   const [rejecting, setRejecting] = useState(false);
   const [intent, setIntent] = useState<string | null>(null);
@@ -66,6 +69,7 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
   const toolShort = proposal.tool.split('__').pop() ?? proposal.tool;
   const argEntries = Object.entries(proposal.toolArgs).filter(([k]) => !HIDDEN_ARG_KEYS.has(k));
   const boundsEntries = Object.entries(proposal.executionContext);
+  const inspectLinks = resolveProposalLinks(proposalLinks, proposal.toolArgs);
 
   const pendingApprovers = proposal.pendingApprovers ?? [];
   const approvedBy = proposal.approvedBy ?? {};
@@ -210,6 +214,27 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
         </div>
         <code style={{ fontSize: '0.85rem' }}>{toolShort}</code>
       </div>
+
+      {/* Inspection links — ABOVE the arguments on purpose. The point of
+          review mode is judging the action, and an identifier cannot be judged.
+          Whatever can actually be looked at has to come before the raw values. */}
+      {inspectLinks.length > 0 && (
+        <div style={{ marginBottom: '0.75rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+          {inspectLinks.map(l => (
+            <a
+              key={l.label}
+              href={l.href}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn btn-secondary btn-sm"
+              style={{ textDecoration: 'none' }}
+              title={l.description ?? l.href}
+            >
+              {l.label} &#8599;
+            </a>
+          ))}
+        </div>
+      )}
 
       {/* Arguments */}
       {argEntries.length > 0 && (

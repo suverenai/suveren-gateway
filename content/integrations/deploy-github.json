@@ -2,7 +2,7 @@
   "id": "deploy-github",
   "name": "Deploy (GitHub)",
   "version": "1.0.0",
-  "description": "Run deployment pipelines under signed human authority",
+  "description": "Make an already-built version live, under signed authority",
   "icon": "wrench",
   "profile": "deploy",
   "npmPackage": "@humanagencyp/deploy-mcp",
@@ -34,63 +34,63 @@
       "category": "disabled"
     },
     "overrides": {
-      "resolve_ref": {
-        "category": "read",
-        "readGovernance": "none",
-        "read": {
-          "resourceBound": "allowed_repos",
-          "resourceArg": "repo"
-        },
-        "readGovernanceReason": "Returns a commit pointer only \u2014 SHA, subject line, author, date. Repository metadata, not user content, and scoped to permitted repos. An age window over 'what commit is main' would govern nothing."
-      },
       "list_deployments": {
         "category": "read",
         "readGovernance": "none",
+        "readGovernanceReason": "Returns build metadata and the host's own deployment URLs. No source, no build output, no user content. Scoped to permitted repositories.",
         "read": {
           "resourceBound": "allowed_repos",
           "resourceArg": "repo"
-        },
-        "readGovernanceReason": "Returns run metadata only \u2014 id, status, commit, timestamp. No build output and no user content. Scoped to permitted repos. Build logs, which CAN carry secrets and content, are a separate tool and will be age-bounded when added."
+        }
       },
       "get_deployment": {
         "category": "read",
         "readGovernance": "none",
+        "readGovernanceReason": "Returns metadata for one build — state, commit, URL. No build output.",
         "read": {
           "resourceBound": "allowed_repos",
           "resourceArg": "repo"
-        },
-        "readGovernanceReason": "Returns run metadata only \u2014 id, status, commit, timestamp. No build output. Scoped to permitted repos."
+        }
+      },
+      "resolve_ref": {
+        "category": "read",
+        "readGovernance": "none",
+        "readGovernanceReason": "Returns a commit pointer only. Repository metadata, not user content.",
+        "read": {
+          "resourceBound": "allowed_repos",
+          "resourceArg": "repo"
+        }
       },
       "list_environments": {
         "category": "read",
         "readGovernance": "none",
+        "readGovernanceReason": "Returns environment names only. Repository configuration, needed so the owner can pick a target that exists.",
         "read": {
           "resourceBound": "allowed_repos",
           "resourceArg": "repo"
-        },
-        "readGovernanceReason": "Returns environment names only. Repository configuration, not content, and needed so the owner can choose a target that actually exists."
+        }
       },
-      "deploy": {
+      "release": {
         "executionMapping": {
           "repo": "allowed_repos",
           "environment": "allowed_environments",
           "workflow": "allowed_workflows"
         },
         "staticExecution": {
-          "action_type": "deploy"
+          "action_type": "release"
         },
-        "contentField": "sha"
+        "contentField": "deployment_url"
       }
     }
   },
   "templates": [
     {
-      "name": "Watch deploys",
-      "description": "Read deployment status and history. Cannot deploy anything.",
+      "name": "Watch deployments",
+      "description": "See builds and their URLs. Cannot make anything live.",
       "risk": "low",
       "mode": "automatic",
       "bounds": {
-        "deploy_daily_max": "0",
+        "release_daily_max": "0",
         "rollback_allowed": "no"
       },
       "context": {
@@ -99,7 +99,7 @@
         "allowed_workflows": "",
         "allowed_branches": ""
       },
-      "intent": "Let the agent see what has been deployed and whether a release succeeded. It may not deploy: a daily maximum of zero is a real limit, not an unset one. Fill in allowed_repos with the repositories it may look at.",
+      "intent": "Let the agent see what has been built and whether it succeeded. It may not make anything live: a daily maximum of zero is a real limit, not an unset one. Fill in allowed_repos with the repositories it may look at.",
       "ttl": 2592000,
       "tags": [
         "read-only",
@@ -107,21 +107,21 @@
       ]
     },
     {
-      "name": "Deploy production, review",
-      "description": "Deploy a specific commit after approval. Three per day, no rollback.",
+      "name": "Release to production, review",
+      "description": "Make an existing build live after approval. Three a day, no rollback.",
       "risk": "high",
       "mode": "review",
       "bounds": {
-        "deploy_daily_max": "3",
+        "release_daily_max": "3",
         "rollback_allowed": "no"
       },
       "context": {
         "allowed_repos": "",
         "allowed_environments": "production",
-        "allowed_workflows": "deploy.yml",
+        "allowed_workflows": "deploy-website.yml",
         "allowed_branches": "main"
       },
-      "intent": "The agent may propose deploying a specific commit to production; nothing runs until I approve it. Always resolve the branch to a commit first \u2014 I approve a commit, not a branch, so that what I reviewed is what ships. Fill in allowed_repos, and check that allowed_environments matches what the host actually calls it (GitHub uses the names you defined, Vercel uses production and preview).",
+      "intent": "The agent may propose making a specific build live; nothing runs until I approve it. Open the build URL in the proposal and look at it before approving — that is the point of reviewing a release rather than a commit. Fill in allowed_repos, and check allowed_environments matches what the host actually calls it.",
       "ttl": 2592000,
       "tags": [
         "review",
@@ -134,7 +134,7 @@
   "setupGuide": [
     {
       "title": "Create a fine-grained token",
-      "description": "GitHub Settings, Developer settings, Personal access tokens, Fine-grained. Not a classic token \u2014 those reach everything you own.",
+      "description": "GitHub Settings, Developer settings, Personal access tokens, Fine-grained. Not a classic token — those reach everything you own.",
       "link": "https://github.com/settings/personal-access-tokens/new"
     },
     {
@@ -143,11 +143,22 @@
     },
     {
       "title": "Grant three permissions",
-      "description": "Actions: Read and write. Environments: Read. Contents: Read. Not Contents: Write \u2014 the agent ships commits, it never writes them."
+      "description": "Actions: Read and write. Environments: Read. Contents: Read. Not Contents: Write — the agent ships commits, it never writes them."
     },
     {
       "title": "Paste the token below",
       "description": "Encrypted in your local vault. The agent never sees it."
+    }
+  ],
+  "proposalLinks": [
+    {
+      "label": "Open this build",
+      "template": "{deployment_url}",
+      "description": "Look at exactly what would go live"
+    },
+    {
+      "label": "View repository",
+      "template": "https://github.com/{repo}"
     }
   ]
 }
