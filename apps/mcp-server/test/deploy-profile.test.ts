@@ -17,7 +17,7 @@ afterAll(() => clearProfiles());
 describe('deploy@0.6', () => {
   const p = () => getProfile(PROFILE_ID) as unknown as {
     id: string; version: string;
-    boundsSchema: { keyOrder: string[]; fields: Record<string, { boundType?: { kind: string; window?: string } }> };
+    boundsSchema: { keyOrder: string[]; fields: Record<string, { boundType?: { kind: string; window?: string }; displayName?: string }> };
     contextSchema: { keyOrder: string[]; fields: Record<string, { constraint?: { enforceable?: string[] } }> };
     content_binding?: { version: string; kind: string };
   };
@@ -36,18 +36,26 @@ describe('deploy@0.6', () => {
     expect(p().id).toBe(PROFILE_ID);
   });
 
-  it('counts PROMOTIONS cumulatively — the Authority Server enforces this one', () => {
+  it('counts RELEASES cumulatively — the Authority Server enforces this one', () => {
     // A per_transaction bound here would mean the daily cap was never counted
     // across calls, which is the difference between a limit and a suggestion.
-    expect(p().boundsSchema.fields.promote_daily_max.boundType)
+    expect(p().boundsSchema.fields.release_daily_max.boundType)
       .toEqual({ kind: 'cumulative_count', window: 'daily' });
   });
 
-  it('does NOT limit builds — only publication', () => {
-    // deploy_daily_max is deliberately gone. Creating a preview harms nobody;
-    // spending a publication limit on it would make the cap mean two different
-    // things and run out before anything went live.
+  it('names the limit in words a non-engineer can act on', () => {
+    // The person approving may not be an engineer. "Daily promotion limit"
+    // invites the question "promoted to what?"; the label has to answer it
+    // without a follow-up.
+    expect(p().boundsSchema.fields.release_daily_max.displayName).toMatch(/go live/i);
+  });
+
+  it('does NOT limit builds — only going live', () => {
+    // Both older names are gone. Creating a preview harms nobody; charging it
+    // against this limit would make the cap mean two different things and
+    // exhaust it before anything reached anyone.
     expect(p().boundsSchema.fields).not.toHaveProperty('deploy_daily_max');
+    expect(p().boundsSchema.fields).not.toHaveProperty('promote_daily_max');
   });
 
   it('keeps scope in context, not in bounds', () => {
