@@ -24,8 +24,16 @@ describe('deploy@0.6', () => {
 
   it('loads through the profile loader', () => {
     expect(p()).toBeTruthy();
-    expect(p().id).toBe('deploy');
     expect(p().version).toBe('0.6');
+  });
+
+  it('carries the FULLY QUALIFIED id, like every other profile', () => {
+    // The Authority Server serves its profile list from this field. A bare
+    // 'deploy' here made the authorization wizard store that as the profile id,
+    // fail to fetch it, and bounce the user back to the start with no error
+    // shown. The original version of this test asserted the bare name, so it
+    // confirmed the bug instead of catching it.
+    expect(p().id).toBe(PROFILE_ID);
   });
 
   it('counts deploys cumulatively — the Authority Server enforces this one', () => {
