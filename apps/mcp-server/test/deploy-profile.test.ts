@@ -70,6 +70,20 @@ describe('deploy@0.6', () => {
     expect(p().content_binding).toEqual({ version: '1', kind: 'text' });
   });
 
+  it('EVERY bound declares a boundType — undefined semantics fail closed', () => {
+    // The Gatekeeper refuses any bound whose enforcement semantics are
+    // undefined, so a missing boundType blocks every action under the profile.
+    // rollback_allowed shipped without one: the profile loaded, had the right
+    // shape, and passed eight tests, because they all asked whether bounds were
+    // PRESENT and none asked whether they were ENFORCEABLE.
+    for (const [name, def] of Object.entries(p().boundsSchema.fields)) {
+      if (name === 'profile') continue; // the profile pointer is not a limit
+      expect(def.boundType, `bound "${name}" has no boundType — the Gatekeeper will reject every call`)
+        .toBeTruthy();
+      expect(typeof def.boundType?.kind).toBe('string');
+    }
+  });
+
   it('keyOrder covers exactly the declared fields — hashes depend on it', () => {
     expect(new Set(p().boundsSchema.keyOrder)).toEqual(new Set(Object.keys(p().boundsSchema.fields)));
     expect(new Set(p().contextSchema.keyOrder)).toEqual(new Set(Object.keys(p().contextSchema.fields)));
