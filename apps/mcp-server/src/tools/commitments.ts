@@ -169,41 +169,84 @@ export function checkPendingCommitmentsHandler(
     }
     try {
       if (args.proposal_id) {
-        const committed = await state.spClient.getCommittedProposals();
-        const match = committed.find(p => p.id === args.proposal_id);
-        if (match) {
-          if (match.status === 'executed' && match.executionResult) {
-            return {
-              content: [{
-                type: 'text' as const,
-                text: `Proposal ${match.id} committed and executed.\nResult: ${JSON.stringify(match.executionResult, null, 2)}`,
-              }],
-            };
-          }
+        // Look the proposal up BY ID, not through the committed list. The old
+        // path searched only `status=committed`, so pending, executed,
+        // rejected, expired and a mistyped id all produced the same "still
+        // pending or not found" — four states, one answer, useful for at most
+        // one of them. An agent reads this and decides whether to wait, retry,
+        // or stop; the ambiguity invited retrying work that had already run.
+        const match = await state.spClient.getProposalById(args.proposal_id);
 
-          // Status is 'committed' — execute now
-          if (match.status === 'committed') {
-            const { text, isError } = await executeCommitted(match, state, integrationManager);
-            return {
-              content: [{ type: 'text' as const, text }],
-              ...(isError ? { isError: true } : {}),
-            };
-          }
-
+        if (!match) {
           return {
             content: [{
               type: 'text' as const,
-              text: `Proposal ${match.id}: status=${match.status}, ` +
-                `committed by: [${Object.keys(match.committedBy).join(', ')}], ` +
-                `remaining: [${match.pendingDomains.filter(d => !(d in match.committedBy)).join(', ')}]`,
+              text: `No proposal with id ${args.proposal_id} — check the id. ` +
+                `Do NOT retry the original tool call: if a proposal was created, it still exists ` +
+                `under its own id, and calling the tool again would create a second one.`,
             }],
           };
         }
 
+        // Ready to run — this call is what executes it.
+        if (match.status === 'committed') {
+          const { text, isError } = await executeCommitted(match, state, integrationManager);
+          return {
+            content: [{ type: 'text' as const, text }],
+            ...(isError ? { isError: true } : {}),
+          };
+        }
+
+        if (match.status === 'executed') {
+          const result = match.executionResult
+            ? `\nResult: ${JSON.stringify(match.executionResult, null, 2)}`
+            : ' The action ran; the gateway did not retain its output.';
+          return {
+            content: [{
+              type: 'text' as const,
+              text: `Proposal ${match.id} was approved and has already been EXECUTED — ` +
+                `it is finished, do not call the tool again.${result}`,
+            }],
+          };
+        }
+
+        if (match.status === 'rejected') {
+          const by = match.approverRejectedBy ?? match.rejectedBy;
+          const reason = match.approverRejectedBy?.reason;
+          return {
+            content: [{
+              type: 'text' as const,
+              text: `Proposal ${match.id} was REJECTED${by ? ` by ${by.userId}` : ''}` +
+                `${reason ? `: ${reason}` : '.'} The action did not run and must not be retried — ` +
+                `a decision owner declined it. Ask before proposing anything similar.`,
+            }],
+          };
+        }
+
+        if (match.status === 'expired') {
+          return {
+            content: [{
+              type: 'text' as const,
+              text: `Proposal ${match.id} EXPIRED before it was approved, so the action never ran. ` +
+                `Re-submit the tool call if it is still wanted.`,
+            }],
+          };
+        }
+
+        // pending — say precisely who is still outstanding.
+        const waitingOn = (match.pendingApprovers?.length ?? 0) > 0
+          ? match.pendingApprovers!.filter(u => !(u in (match.approvedBy ?? {})))
+          : match.pendingDomains.filter(d => !(d in match.committedBy));
+        const done = (match.pendingApprovers?.length ?? 0) > 0
+          ? Object.keys(match.approvedBy ?? {})
+          : Object.keys(match.committedBy);
         return {
           content: [{
             type: 'text' as const,
-            text: `Proposal ${args.proposal_id} is still pending or not found. Domain owners have not yet committed.`,
+            text: `Proposal ${match.id} is PENDING — awaiting approval, nothing has run.\n` +
+              `Approved by: [${done.join(', ') || 'nobody yet'}]\n` +
+              `Still waiting on: [${waitingOn.join(', ')}]\n` +
+              `Wait for the human to approve; do not re-submit the tool call.`,
           }],
         };
       }

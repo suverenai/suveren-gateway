@@ -359,6 +359,23 @@ export class SPClient {
     return data.proposals;
   }
 
+  /**
+   * Look up ONE proposal by id, whatever its status. `null` when the AS has no
+   * such proposal (or the caller may not see it).
+   *
+   * Distinct from {@link getCommittedProposals}, which answers only "is this
+   * ready to execute?". Asking "what happened to this proposal?" through that
+   * list makes pending, executed, rejected and a wrong id look identical —
+   * which is how a caller ends up retrying work that already ran.
+   */
+  async getProposalById(id: string): Promise<SPProposal | null> {
+    const res = await this.fetch(`/api/proposals/${encodeURIComponent(id)}`);
+    if (res.status === 404 || res.status === 403) return null;
+    if (!res.ok) throw new Error(`SP proposal request failed: ${res.status}`);
+    const data = await res.json() as { proposal: SPProposal };
+    return data.proposal ?? null;
+  }
+
   // NOTE: v0.3 used POST /api/proposals/{id}/resolve with action: 'executed'
   // to mark a proposal as executed after the gateway ran the tool. In v0.4
   // the committed→executed transition is atomic with receipt issuance, so

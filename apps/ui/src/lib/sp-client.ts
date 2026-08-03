@@ -53,6 +53,8 @@ export interface ProfileSummary {
   version: string;
   description: string;
   paths: string[];
+  /** One line on what this version changed — shown to owners still on an older one. */
+  whatsNew?: string;
 }
 
 export interface PendingItem {

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { spClient, type PendingItem, type GateContentEntry, type ProfileConfig } from '../lib/sp-client';
+import { spClient, type PendingItem, type GateContentEntry, type ProfileConfig, type ProfileSummary } from '../lib/sp-client';
 import { profileDisplayName } from '../lib/profile-display';
 import { AuthorizePicker } from '../components/AuthorizePicker';
 import { useSearchParams, useNavigate } from 'react-router-dom';
@@ -47,6 +47,8 @@ interface AuthCardProps {
   revokingHash: string | null;
   copyingHash: string | null;
   profileConfigCache: Map<string, ProfileConfig | null>;
+  /** Newest available version for this grant's profile, when it is newer than the pinned one. */
+  newerProfile?: ProfileSummary;
   mode: string;
   activeDomain: string;
   group: { name: string } | null;
@@ -64,6 +66,7 @@ interface AuthCardProps {
 
 function AuthCard({
   item,
+  newerProfile,
   revokedSet,
   expandedHash,
   gateCache,
@@ -135,6 +138,26 @@ function AuthCard({
 
   const profileShortName = profileDisplayName(item.profile_id);
 
+  // A newer version of this profile exists. Stated, not nagged: the grant is
+  // still valid and still enforced — it is simply pinned to older terms, and
+  // only a new authorization can move it (the profile id is inside the signed
+  // attestation, so this can never be an in-place edit).
+  const upgradeHint = newerProfile ? (
+    <div
+      style={{
+        fontSize: '0.75rem', color: 'var(--text-tertiary)', marginBottom: '0.5rem',
+        padding: '0.4rem 0.6rem', border: '1px solid var(--border)', borderRadius: 6,
+      }}
+    >
+      <strong style={{ color: 'var(--text-secondary)' }}>
+        {profileShortName}@{newerProfile.version} available
+      </strong>
+      {newerProfile.whatsNew ? <> — {newerProfile.whatsNew}</> : null}
+      <br />
+      <span>This authority stays on {item.profile_id.split('@')[1] ?? 'its pinned version'}; authorize again to move it.</span>
+    </div>
+  ) : null;
+
   const isHighlighted = highlightHash != null && item.authorization_id === highlightHash;
 
   return (
@@ -143,6 +166,8 @@ function AuthCard({
       key={item.authorization_id}
       style={{ marginBottom: 0 }}
     >
+      {upgradeHint}
+
       {/* Team owner line */}
       {ownerLabel && (
         <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginBottom: '0.375rem' }}>
@@ -410,6 +435,18 @@ export function AuthorizationsPage() {
   const [teamItems, setTeamItems] = useState<TeamItem[]>([]);
   const [teamLoading, setTeamLoading] = useState(false);
 
+  /**
+   * Newest available version per profile short name, plus its `whatsNew`.
+   *
+   * A grant pins the profile version it was signed against, so an authority
+   * issued before a newer version keeps the older terms forever and nothing
+   * says so. After email@0.5 that is not cosmetic: a 0.4 grant binds the
+   * message body and NOT the recipients, so its receipts prove less than the
+   * owner would assume. Surfacing it here — where the grant is displayed — is
+   * the only place the comparison is meaningful.
+   */
+  const [latestProfiles, setLatestProfiles] = useState<Map<string, ProfileSummary>>(new Map());
+
   // Shared UI state
   const [viewTab, setViewTab] = useState<ViewTab>('mine');
   const [activeFilter, setActiveFilter] = useState<StatusFilter>('active');
@@ -482,6 +519,47 @@ export function AuthorizationsPage() {
       fetchTeamItems();
     }
   }, [viewTab, isAdmin, groupId, teamItems.length, teamLoading, fetchTeamItems]);
+
+  // Which profile version is newest, per short name. Numeric-aware compare so
+  // 0.10 beats 0.9; mirrors AuthorizePicker, which offers the newest for NEW
+  // grants — this tells owners of OLD grants that the offer moved on.
+  useEffect(() => {
+    let cancelled = false;
+    spClient.listProfiles().then(profiles => {
+      if (cancelled) return;
+      const shortOf = (id: string) => id.replace(/@.*$/, '').split('/').pop() ?? id;
+      const versionOf = (id: string) => id.split('@')[1] ?? '';
+      const latest = new Map<string, ProfileSummary>();
+      for (const p of profiles) {
+        const key = shortOf(p.id);
+        const held = latest.get(key);
+        if (!held || versionOf(p.id).localeCompare(versionOf(held.id), undefined, { numeric: true }) > 0) {
+          latest.set(key, p);
+        }
+      }
+      setLatestProfiles(latest);
+    }).catch(() => {
+      // Non-critical: without this the cards simply show no upgrade hint.
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  /**
+   * The newest profile for this grant's short name, but ONLY when it is
+   * actually newer than the version the grant pinned. Returns undefined for
+   * grants already on the newest version, so the hint appears exactly where
+   * there is something to say.
+   */
+  const newerProfileFor = useCallback((profileId: string): ProfileSummary | undefined => {
+    const shortOf = (id: string) => id.replace(/@.*$/, '').split('/').pop() ?? id;
+    const versionOf = (id: string) => id.split('@')[1] ?? '';
+    const latest = latestProfiles.get(shortOf(profileId));
+    if (!latest) return undefined;
+    const held = versionOf(profileId);
+    const newest = versionOf(latest.id);
+    if (!held || !newest) return undefined;
+    return newest.localeCompare(held, undefined, { numeric: true }) > 0 ? latest : undefined;
+  }, [latestProfiles]);
 
   // Profile config cache — fetch for items we haven't resolved yet (team mode only)
   useEffect(() => {
@@ -855,6 +933,7 @@ export function AuthorizationsPage() {
               <AuthCard
                 key={item.authorization_id}
                 item={item}
+                newerProfile={newerProfileFor(item.profile_id)}
                 ownerLabel={ownerLabel}
                 isAdmin={isAdmin}
                 {...sharedCardProps}

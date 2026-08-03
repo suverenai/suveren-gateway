@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mockup — header + receipts</title>
+<link rel="stylesheet" href="/src/styles/design-system.css">
+<style>
+  /* Tokens mirrored so the mockup renders standalone if the stylesheet 404s. */
+  :root[data-theme="dark"]{
+    --text-primary:#fff; --text-secondary:#fff; --text-tertiary:#fff; --text-muted:#888;
+    --bg-main:#0a0a0a; --bg-elevated:#1a1a1a; --bg-input:#141414;
+    --accent:#888; --accent-subtle:#1f1f1f; --accent-hover:#bbb;
+    --border:#2a2a2a; --danger:#dc2626; --success:#16a34a; --warning:#d97706;
+  }
+  body{background:var(--bg-main);color:var(--text-primary);font-family:Inter,-apple-system,system-ui,sans-serif;margin:0;padding:0 0 4rem}
+  .wrap{max-width:920px;margin:0 auto;padding:0 1.5rem}
+  h2.section{font-size:.8rem;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted);
+    margin:2.5rem 0 .75rem;font-weight:600}
+  .note{font-size:.82rem;color:var(--text-muted);line-height:1.6;margin:0 0 1rem;max-width:70ch}
+  .note strong{color:var(--text-secondary)}
+
+  /* ── top nav ── */
+  .top-nav{background:rgba(10,10,10,.92);border-bottom:1px solid var(--border);
+    backdrop-filter:blur(8px);position:sticky;top:0;z-index:10}
+  .top-nav-inner{max-width:100%;padding:0 1.5rem;height:3.5rem;display:flex;align-items:center;gap:.6rem}
+  .logo{font-weight:700;font-size:1.05rem;letter-spacing:-.02em}
+  .version-badge{font-size:.7rem;padding:.15rem .45rem;border:1px solid var(--border);
+    border-radius:5px;color:var(--text-muted);letter-spacing:.02em}
+  .ver{font-size:.72rem;color:var(--text-muted);font-variant-numeric:tabular-nums;
+    padding:.15rem .4rem;border-radius:5px;background:var(--accent-subtle)}
+  .ver.stale{color:var(--warning);border:1px solid rgba(217,119,6,.35);background:transparent}
+  .nav-spacer{flex:1}
+  .user-chip{display:flex;align-items:center;gap:.4rem;font-size:.85rem;color:var(--text-secondary)}
+  .icon-btn{background:none;border:1px solid var(--border);color:var(--text-secondary);
+    border-radius:6px;padding:.28rem .5rem;cursor:pointer;font-size:.85rem}
+
+  /* ── receipt card ── */
+  .card{background:var(--bg-elevated);border:1px solid var(--border);border-radius:10px;
+    padding:.85rem 1rem;margin-bottom:.6rem}
+  .r-top{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap}
+  .r-what{font-size:.95rem;font-weight:600;letter-spacing:-.01em}
+  .r-time{margin-left:auto;font-size:.75rem;color:var(--text-muted);white-space:nowrap}
+  .r-sub{font-size:.82rem;color:var(--text-muted);margin-top:.2rem}
+  .r-sub b{color:var(--text-secondary);font-weight:500}
+  .badge{font-size:.68rem;padding:.12rem .4rem;border-radius:4px;border:1px solid var(--border);
+    color:var(--text-muted);white-space:nowrap}
+  .badge.mode{border-color:rgba(136,136,136,.4)}
+  .badge.bound{color:var(--success);border-color:rgba(22,163,74,.4)}
+  .r-foot{display:flex;align-items:center;gap:.75rem;margin-top:.55rem;
+    padding-top:.55rem;border-top:1px solid var(--border);flex-wrap:wrap}
+  .r-link{font-size:.78rem;color:var(--text-secondary);text-decoration:none;
+    border-bottom:1px solid var(--border)}
+  .r-link:hover{color:var(--accent-hover);border-color:var(--accent-hover)}
+  .r-id{font-family:'SF Mono',Monaco,monospace;font-size:.7rem;color:var(--text-muted)}
+  details.more{margin-top:.5rem}
+  details.more summary{cursor:pointer;font-size:.75rem;color:var(--text-muted);list-style:none}
+  details.more summary::-webkit-details-marker{display:none}
+  details.more summary::before{content:'▸ ';}
+  details.more[open] summary::before{content:'▾ ';}
+  .kv{font-size:.75rem;color:var(--text-muted);margin-top:.4rem;line-height:1.7;
+    font-family:'SF Mono',Monaco,monospace;word-break:break-all}
+  .old{opacity:.75}
+  .old .mono{font-family:'SF Mono',Monaco,monospace;font-size:.7rem;color:var(--text-muted);word-break:break-all}
+</style>
+</head>
+<body>
+
+<!-- ══ HEADER ══ -->
+<nav class="top-nav">
+  <div class="top-nav-inner">
+    <span class="logo">Suveren</span>
+    <span class="version-badge">Local Gateway</span>
+    <span class="ver" title="Running gateway version">v0.6.3</span>
+    <span class="nav-spacer"></span>
+    <span class="user-chip"><strong>Andreas</strong></span>
+    <button class="icon-btn">☾</button>
+    <button class="icon-btn">Logout</button>
+  </div>
+</nav>
+
+<div class="wrap">
+
+  <h2 class="section">1 · Header</h2>
+  <p class="note">
+    The group/domain pair is gone — it was duplicated verbatim in the sidebar's <b>Active context</b>,
+    and the raw UUID was the least readable thing on the page. The version badge moves up beside
+    <strong>Local Gateway</strong> and now shows while signed <em>in</em> (today it only renders when
+    signed out, which is backwards — you need it when you're working, not on the login screen).
+    <br><br>
+    Bonus: the update checker already knows when a newer gateway exists, so the badge can carry that
+    for free — <span class="ver stale">v0.6.3 → 0.6.4</span> instead of a silent stale install.
+  </p>
+
+  <h2 class="section">2 · Receipts — now</h2>
+  <div class="card old">
+    <div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">
+      <span class="badge">Email</span>
+      <span class="mono">github.com/humanagencyprotocol/hap-profiles/email@0.5</span>
+      <span class="badge">gmail__send_message</span>
+      <span class="r-time">3 Aug, 13:50</span>
+    </div>
+    <div class="kv">action_type=send · recipient_count=2 · allowed_recipients=andreas@sublin.app,andreasschadauer@googlemail.com · allowed_domains=googlemail.com,sublin.app</div>
+    <div style="display:flex;gap:1rem;font-size:.75rem;color:var(--text-muted);margin-top:.4rem">
+      <span>Daily: 2 calls, $0</span><span>Monthly: 2 calls, $0</span>
+    </div>
+    <div class="mono" style="margin-top:.4rem">sha256:3efa65406502c45973935a4a6433fe7af97dc6f862891b6105e481361239ba33</div>
+  </div>
+  <p class="note">
+    Three of the four most prominent things are machine identifiers. The profile URL is the widest
+    element on the row, the same on every card, and tells you nothing. Nowhere does it say
+    <strong>an email went to these two people</strong> — and there's no way to reach the receipt.
+  </p>
+
+  <h2 class="section">3 · Receipts — proposed</h2>
+
+  <div class="card">
+    <div class="r-top">
+      <span class="r-what">Email sent</span>
+      <span class="badge mode">review</span>
+      <span class="badge bound">content bound</span>
+      <span class="r-time">today, 13:50</span>
+    </div>
+    <div class="r-sub">to <b>andreas@sublin.app</b>, <b>andreasschadauer@googlemail.com</b></div>
+    <div class="r-foot">
+      <a class="r-link" href="#">View receipt ↗</a>
+      <span class="r-id">14415e75</span>
+      <span class="badge">email@0.5</span>
+    </div>
+    <details class="more">
+      <summary>Technical</summary>
+      <div class="kv">
+        action · gmail__send_message<br>
+        profile · github.com/humanagencyprotocol/hap-profiles/email@0.5<br>
+        context · recipient_count=2 · allowed_domains=googlemail.com,sublin.app<br>
+        usage · daily 2 calls · monthly 2 calls<br>
+        authorization · sha256:3efa6540…1239ba33
+      </div>
+    </details>
+  </div>
+
+  <div class="card">
+    <div class="r-top">
+      <span class="r-what">Record created</span>
+      <span class="badge mode">automatic</span>
+      <span class="badge bound">content bound</span>
+      <span class="r-time">today, 11:02</span>
+    </div>
+    <div class="r-sub"><b>Q3 Strategy</b> · note</div>
+    <div class="r-foot">
+      <a class="r-link" href="#">View receipt ↗</a>
+      <span class="r-id">8c21b40e</span>
+      <span class="badge">records@0.4</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="r-top">
+      <span class="r-what">Deployment released</span>
+      <span class="badge mode">review</span>
+      <span class="r-time">2 Aug, 16:20</span>
+    </div>
+    <div class="r-sub">to <b>production</b> · humanagencyprotocol/hap-protocol</div>
+    <div class="r-foot">
+      <a class="r-link" href="#">View receipt ↗</a>
+      <span class="r-id">c9f01a77</span>
+      <span class="badge">deploy@0.7</span>
+    </div>
+  </div>
+
+  <p class="note">
+    <strong>What changed.</strong> The headline is the <em>action in plain words</em>, derived from
+    the profile plus action type — not the tool name. The one line under it is the thing you'd
+    actually want to check: who it went to, what was written, where it deployed. Machine identifiers
+    move into a collapsed <em>Technical</em> block, and the profile version survives as a small badge
+    because after today it tells you whether recipients were bound.
+    <br><br>
+    <strong>View receipt</strong> links to <code>{spUrl}/r/{id}</code> — the AS already publishes
+    <code>spUrl</code> on <code>/health</code>, so nothing new is needed. <strong>content bound</strong>
+    appears when the receipt carries a content hash, which is the difference between "this happened"
+    and "this exact content was approved".
+  </p>
+
+  <p class="note">
+    <strong>One thing I'd flag:</strong> "Email sent" for a <code>create_draft</code> call would be a
+    lie. The plain-language label has to come from the manifest's <code>action_type</code>, not be
+    guessed from the profile — otherwise this trades an ugly card for a misleading one.
+  </p>
+
+</div>
+</body>
+</html>
