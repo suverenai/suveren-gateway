@@ -89,7 +89,8 @@
         ],
         "argEncoding": {
           "subject": "rfc2047"
-        }
+        },
+        "actionLabel": "Email sent"
       },
       "create_draft": {
         "executionMapping": {
@@ -116,14 +117,16 @@
         ],
         "argEncoding": {
           "subject": "rfc2047"
-        }
+        },
+        "actionLabel": "Email drafted"
       },
       "send_draft": {
         "executionMapping": {},
         "staticExecution": {
           "recipient_count": 1,
           "action_type": "send"
-        }
+        },
+        "actionLabel": "Draft sent"
       },
       "list_messages": {
         "category": "read",
@@ -184,7 +187,8 @@
         "staticExecution": {
           "recipient_count": 0,
           "action_type": "delete"
-        }
+        },
+        "actionLabel": "Draft deleted"
       },
       "get_attachment": {
         "category": "read",

@@ -19,13 +19,6 @@ const THEME_ICONS: Record<string, string> = {
   dark: '\u263E',
 };
 
-function ContextLabel() {
-  const { mode, group, domain } = useAuth();
-  if (mode === 'personal') return <span>personal</span>;
-  if (group) return <span>{group.name} / {domain}</span>;
-  return <span>{domain}</span>;
-}
-
 interface TopNavProps {
   onMenuToggle?: () => void;
 }
@@ -33,15 +26,35 @@ interface TopNavProps {
 export function TopNav({ onMenuToggle }: TopNavProps) {
   const { user, logout } = useAuth();
   const { theme, toggle } = useTheme();
-  const { version } = useUpdateCheck();
+  const { version, updateAvailable, latestVersion } = useUpdateCheck();
   const versionLabel = formatVersion(version);
 
   return (
     <nav className="top-nav">
       <div className="top-nav-inner">
+        {/* The running version sits with the product name, not in the actions
+            cluster, and shows whether or not anyone is signed in — it is a
+            property of this gateway, and it is most useful WHILE working (the
+            old placement showed it only on the login screen).
+
+            The group/domain pair that used to live in the user chip is gone: it
+            was repeated verbatim in the sidebar's "Active context", and the
+            second copy was a raw UUID, which is the least readable thing that
+            was on the page. */}
         <div className="logo-group">
           <span className="logo">Suveren</span>
           <span className="version-badge">Local Gateway</span>
+          {versionLabel && (
+            <span
+              className="gw-version"
+              title={updateAvailable && latestVersion
+                ? `Running v${versionLabel} — v${latestVersion} is available`
+                : 'Running gateway version'}
+              data-stale={updateAvailable ? 'true' : undefined}
+            >
+              v{versionLabel}{updateAvailable && latestVersion ? ` → ${latestVersion}` : ''}
+            </span>
+          )}
         </div>
         <div className="nav-spacer" />
         <div className="nav-actions nav-actions-desktop">
@@ -49,8 +62,6 @@ export function TopNav({ onMenuToggle }: TopNavProps) {
             <>
               <span className="user-chip">
                 <strong>{user.name}</strong>
-                <span className="dot" />
-                <ContextLabel />
               </span>
               <button className="theme-toggle" onClick={toggle} title={`Theme: ${theme}`}>
                 {THEME_ICONS[theme]}
@@ -58,19 +69,9 @@ export function TopNav({ onMenuToggle }: TopNavProps) {
               <button className="nav-logout" onClick={logout}>Logout</button>
             </>
           ) : (
-            <>
-              {versionLabel && (
-                <span
-                  title="Running gateway version"
-                  style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', fontVariantNumeric: 'tabular-nums' }}
-                >
-                  v{versionLabel}
-                </span>
-              )}
-              <button className="theme-toggle" onClick={toggle} title={`Theme: ${theme}`}>
-                {THEME_ICONS[theme]}
-              </button>
-            </>
+            <button className="theme-toggle" onClick={toggle} title={`Theme: ${theme}`}>
+              {THEME_ICONS[theme]}
+            </button>
           )}
         </div>
         {user && onMenuToggle && (

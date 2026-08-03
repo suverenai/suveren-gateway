@@ -79,7 +79,8 @@
         "staticExecution": {
           "action_type": "release"
         },
-        "contentField": "deployment_url"
+        "contentField": "deployment_url",
+        "actionLabel": "Deployment released"
       }
     }
   },

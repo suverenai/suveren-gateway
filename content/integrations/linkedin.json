@@ -12,8 +12,18 @@
   },
   "credentials": {
     "fields": [
-      { "key": "clientId", "label": "Client ID", "type": "text", "placeholder": "From LinkedIn Developer Portal" },
-      { "key": "clientSecret", "label": "Client Secret", "type": "password", "placeholder": "OAuth2 client secret" }
+      {
+        "key": "clientId",
+        "label": "Client ID",
+        "type": "text",
+        "placeholder": "From LinkedIn Developer Portal"
+      },
+      {
+        "key": "clientSecret",
+        "label": "Client Secret",
+        "type": "password",
+        "placeholder": "OAuth2 client secret"
+      }
     ],
     "envMapping": {
       "LINKEDIN_CLIENT_ID": "clientId",
@@ -24,42 +34,72 @@
   "oauth": {
     "authUrl": "https://www.linkedin.com/oauth/v2/authorization",
     "tokenUrl": "https://www.linkedin.com/oauth/v2/accessToken",
-    "scopes": ["openid", "profile", "w_member_social"],
-    "credentialKeys": { "clientId": "clientId", "clientSecret": "clientSecret" },
+    "scopes": [
+      "openid",
+      "profile",
+      "w_member_social"
+    ],
+    "credentialKeys": {
+      "clientId": "clientId",
+      "clientSecret": "clientSecret"
+    },
     "tokenStorage": "accessToken",
     "extraParams": {},
     "healthCheck": {
       "url": "https://api.linkedin.com/v2/userinfo",
-      "accountFields": ["name"]
+      "accountFields": [
+        "name"
+      ]
     }
   },
   "toolGating": {
     "default": {
       "executionMapping": {},
-      "staticExecution": { "allowed_platforms": "linkedin" }
+      "staticExecution": {
+        "allowed_platforms": "linkedin"
+      }
     },
     "overrides": {
       "create_post": {
         "executionMapping": {
           "visibility": "audience"
         },
-        "staticExecution": { "allowed_platforms": "linkedin", "content_type": "text", "action_type": "post" }
+        "staticExecution": {
+          "allowed_platforms": "linkedin",
+          "content_type": "text",
+          "action_type": "post"
+        },
+        "actionLabel": "Post published"
       },
       "create_image_post": {
         "executionMapping": {
           "visibility": "audience"
         },
-        "staticExecution": { "allowed_platforms": "linkedin", "content_type": "image", "action_type": "post" }
+        "staticExecution": {
+          "allowed_platforms": "linkedin",
+          "content_type": "image",
+          "action_type": "post"
+        },
+        "actionLabel": "Image post published"
       },
       "create_article_post": {
         "executionMapping": {
           "visibility": "audience"
         },
-        "staticExecution": { "allowed_platforms": "linkedin", "content_type": "article", "action_type": "post" }
+        "staticExecution": {
+          "allowed_platforms": "linkedin",
+          "content_type": "article",
+          "action_type": "post"
+        },
+        "actionLabel": "Article published"
       },
       "delete_post": {
         "executionMapping": {},
-        "staticExecution": { "allowed_platforms": "linkedin", "action_type": "delete" }
+        "staticExecution": {
+          "allowed_platforms": "linkedin",
+          "action_type": "delete"
+        },
+        "actionLabel": "Post deleted"
       },
       "get_post": {
         "category": "read",
@@ -84,22 +124,41 @@
       "description": "View your profile and list existing posts. Cannot publish or delete.",
       "risk": "low",
       "mode": "automatic",
-      "bounds": { "post_daily_max": "0", "post_monthly_max": "0" },
-      "context": { "allowed_platforms": "linkedin", "content_type": "text", "audience": "public" },
+      "bounds": {
+        "post_daily_max": "0",
+        "post_monthly_max": "0"
+      },
+      "context": {
+        "allowed_platforms": "linkedin",
+        "content_type": "text",
+        "audience": "public"
+      },
       "intent": "Allow the agent to read my LinkedIn profile and list existing posts. No publishing or deleting.",
       "ttl": 2592000,
-      "tags": ["read-only"]
+      "tags": [
+        "read-only"
+      ]
     },
     {
       "name": "Publish with Review",
       "description": "Create and delete posts. Every action requires your approval first.",
       "risk": "high",
       "mode": "review",
-      "bounds": { "post_daily_max": "5", "post_monthly_max": "30" },
-      "context": { "allowed_platforms": "linkedin", "content_type": "text,image,article", "audience": "public" },
+      "bounds": {
+        "post_daily_max": "5",
+        "post_monthly_max": "30"
+      },
+      "context": {
+        "allowed_platforms": "linkedin",
+        "content_type": "text,image,article",
+        "audience": "public"
+      },
       "intent": "Allow the agent to create and manage LinkedIn posts. Every publish or delete action requires my review before it goes live.",
       "ttl": 2592000,
-      "tags": ["5 posts/day", "review mode"]
+      "tags": [
+        "5 posts/day",
+        "review mode"
+      ]
     }
   ],
   "setupHint": "Requires a LinkedIn App with 'Share on LinkedIn' product.",

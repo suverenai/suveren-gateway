@@ -13,9 +13,17 @@
   },
   "credentials": {
     "fields": [
-      { "key": "databaseUrl", "label": "Database URL (optional)", "type": "text", "placeholder": "Leave empty for local SQLite", "optional": true }
+      {
+        "key": "databaseUrl",
+        "label": "Database URL (optional)",
+        "type": "text",
+        "placeholder": "Leave empty for local SQLite",
+        "optional": true
+      }
     ],
-    "envMapping": { "DATABASE_URL": "databaseUrl" }
+    "envMapping": {
+      "DATABASE_URL": "databaseUrl"
+    }
   },
   "oauth": null,
   "toolGating": {
@@ -24,14 +32,53 @@
       "staticExecution": {}
     },
     "overrides": {
-      "list_records": { "category": "read", "boundField": "read_access", "requiredValue": "unlimited" },
-      "get_record": { "category": "read", "boundField": "read_access", "requiredValue": "unlimited" },
-      "search_records": { "category": "read", "boundField": "read_access", "requiredValue": "unlimited" },
-      "export_records": { "category": "disabled" },
-      "create_record": { "executionMapping": {}, "staticExecution": { "action_type": "write" } },
-      "archive_record": { "boundField": "archive_access", "requiredValue": "allowed", "executionMapping": {}, "staticExecution": { "action_type": "archive" } },
-      "update_record": { "category": "disabled" },
-      "delete_record": { "boundField": "delete_access", "requiredValue": "allowed", "executionMapping": {}, "staticExecution": { "action_type": "delete" } }
+      "list_records": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "get_record": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "search_records": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "export_records": {
+        "category": "disabled"
+      },
+      "create_record": {
+        "executionMapping": {},
+        "staticExecution": {
+          "action_type": "write"
+        },
+        "actionLabel": "Record created"
+      },
+      "archive_record": {
+        "boundField": "archive_access",
+        "requiredValue": "allowed",
+        "executionMapping": {},
+        "staticExecution": {
+          "action_type": "archive"
+        },
+        "actionLabel": "Record archived"
+      },
+      "update_record": {
+        "category": "disabled",
+        "actionLabel": "Record updated"
+      },
+      "delete_record": {
+        "boundField": "delete_access",
+        "requiredValue": "allowed",
+        "executionMapping": {},
+        "staticExecution": {
+          "action_type": "delete"
+        },
+        "actionLabel": "Record deleted"
+      }
     }
   },
   "templates": [
@@ -40,22 +87,37 @@
       "description": "List, search, and read records. Cannot create, modify, delete, or export.",
       "risk": "low",
       "mode": "automatic",
-      "bounds": { "read_access": "true", "write_daily_max": "0", "delete_access": "false", "archive_access": "false" },
+      "bounds": {
+        "read_access": "true",
+        "write_daily_max": "0",
+        "delete_access": "false",
+        "archive_access": "false"
+      },
       "context": {},
       "intent": "Allow the agent to search and read records. Read-only — no modifications.",
       "ttl": 2592000,
-      "tags": ["read-only"]
+      "tags": [
+        "read-only"
+      ]
     },
     {
       "name": "Manage with Review",
       "description": "Create, update, archive, delete, and export records. Every write requires approval.",
       "risk": "high",
       "mode": "review",
-      "bounds": { "read_access": "true", "write_daily_max": "50", "delete_access": "true", "archive_access": "true" },
+      "bounds": {
+        "read_access": "true",
+        "write_daily_max": "50",
+        "delete_access": "true",
+        "archive_access": "true"
+      },
       "context": {},
       "intent": "Full records management. Every write, delete, and export action requires my review before execution.",
       "ttl": 2592000,
-      "tags": ["50 writes/day", "review mode"]
+      "tags": [
+        "50 writes/day",
+        "review mode"
+      ]
     }
   ],
   "setupHint": "No configuration needed — works out of the box.",

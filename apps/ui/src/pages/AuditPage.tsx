@@ -1,5 +1,6 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import { spClient, type ExecutionReceipt } from '../lib/sp-client';
+import { spClient, type ExecutionReceipt, type IntegrationManifest } from '../lib/sp-client';
+import { actionLabel, scopeSummary, wasReviewed, profileVersionLabel } from '../lib/receipt-summary';
 import { profileDisplayName } from '../lib/profile-display';
 import { ProfileBadge } from '../components/ProfileBadge';
 import { EmptyState } from '../components/EmptyState';
@@ -47,6 +48,10 @@ export function AuditPage() {
 
   const [viewTab, setViewTab] = useState<'mine' | 'team'>('mine');
   const [receipts, setReceipts] = useState<ExecutionReceipt[]>([]);
+  // Connector manifests name their own actions ("Email sent"); /health carries
+  // the Authority Server's base URL so each row can link to its receipt.
+  const [manifests, setManifests] = useState<IntegrationManifest[]>([]);
+  const [spUrl, setSpUrl] = useState('');
   const [loading, setLoading] = useState(true);
   // Lazy-loaded user directory keyed by userId for resolving owner names in
   // the Team tab. Populated once on first switch to Team.
@@ -107,6 +112,20 @@ export function AuditPage() {
   }, [cursor, loadingMore, fetchPage]);
 
   useVisiblePolling(fetchReceipts, 120_000);
+
+  // Manifests (for action labels) and the AS base URL (for receipt links).
+  // Both are cosmetic: if either fails the rows still render, just duller —
+  // an unlabelled action falls back to "<Profile> · <action_type>", and the
+  // "View receipt" link is omitted rather than pointing somewhere wrong.
+  useEffect(() => {
+    spClient.getIntegrationManifests()
+      .then(({ manifests }) => setManifests(manifests))
+      .catch(() => {});
+    fetch('/health')
+      .then(r => r.json())
+      .then(d => { if (typeof d.spUrl === 'string') setSpUrl(d.spUrl.replace(/\/$/, '')); })
+      .catch(() => {});
+  }, []);
 
   // Pull user directory the first time the admin opens the Team tab so we can
   // resolve owner names for the filter chips and per-row labels.
@@ -383,14 +402,32 @@ export function AuditPage() {
             {filtered.map(receipt => (
               <div className="timeline-event" key={receipt.id}>
                 <div className="card" style={{ marginBottom: 0 }}>
-                  <div className="auth-card-header">
-                    <ProfileBadge profileId={receipt.profileId} />
-                    <span className="auth-card-path">{receipt.path}</span>
-                    <span className="receipt-action">{receipt.action}</span>
-                    <span className="auth-card-time">
-                      {formatDate(receipt.timestamp)}
-                    </span>
+                  {/* Headline: what happened, in words. Everything that is an
+                      identifier moved into "Technical" below — it was three of
+                      the four most prominent things on this card, and none of
+                      it answers the question people open this page with. */}
+                  <div className="receipt-head">
+                    <span className="receipt-what">{actionLabel(receipt, manifests)}</span>
+                    <span className="receipt-tag">{wasReviewed(receipt) ? 'review' : 'automatic'}</span>
+                    {receipt.contentHash && (
+                      <span
+                        className="receipt-tag receipt-tag-bound"
+                        title={receipt.contentBinding?.fields
+                          ? `The receipt binds: ${receipt.contentBinding.fields.join(', ')}`
+                          : 'This exact content was authorized'}
+                      >
+                        content bound
+                      </span>
+                    )}
+                    <span className="auth-card-time">{formatDate(receipt.timestamp)}</span>
                   </div>
+
+                  {/* Scope the Gatekeeper checked — recipients, environment.
+                      A receipt never carries content, so this is as specific as
+                      it can honestly get. */}
+                  {scopeSummary(receipt) && (
+                    <div className="receipt-scope">{scopeSummary(receipt)}</div>
+                  )}
 
                   {/* Owner label — only on Team tab so admins can see at a glance */}
                   {viewTab === 'team' && receipt.userId && (
@@ -404,24 +441,45 @@ export function AuditPage() {
                     </div>
                   )}
 
-                  {/* Execution context */}
-                  {Object.keys(receipt.executionContext).length > 0 && (
-                    <div style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginBottom: '0.375rem' }}>
-                      {Object.entries(receipt.executionContext)
-                        .map(([k, v]) => `${k}=${v}`)
-                        .join(' \u00B7 ')}
+                  {/* The receipt itself — the point of the page, and until now
+                      unreachable from it. `spUrl` is published on /health. */}
+                  <div className="receipt-foot">
+                    {spUrl && (
+                      <a
+                        className="receipt-link"
+                        href={`${spUrl}/r/${receipt.id}`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        View receipt &#8599;
+                      </a>
+                    )}
+                    <span className="receipt-id">{receipt.id.slice(0, 8)}</span>
+                    <span className="receipt-tag">{profileVersionLabel(receipt.profileId)}</span>
+                  </div>
+
+                  <details className="receipt-more">
+                    <summary>Technical</summary>
+                    <div className="receipt-kv">
+                      <div>action &middot; {receipt.action}</div>
+                      <div>profile &middot; {receipt.profileId}</div>
+                      {Object.keys(receipt.executionContext).length > 0 && (
+                        <div>
+                          context &middot;{' '}
+                          {Object.entries(receipt.executionContext)
+                            .map(([k, v]) => `${k}=${v}`)
+                            .join(' \u00B7 ')}
+                        </div>
+                      )}
+                      <div>
+                        usage &middot; daily {receipt.cumulativeState.daily.count} calls,
+                        ${receipt.cumulativeState.daily.amount} &middot; monthly{' '}
+                        {receipt.cumulativeState.monthly.count} calls, ${receipt.cumulativeState.monthly.amount}
+                      </div>
+                      {receipt.contentHash && <div>content &middot; {receipt.contentHash}</div>}
+                      <div>authorization &middot; {receipt.attestationHash}</div>
                     </div>
-                  )}
-
-                  {/* Cumulative state */}
-                  <div style={{ display: 'flex', gap: '1rem', fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
-                    <span>Daily: {receipt.cumulativeState.daily.count} calls, ${receipt.cumulativeState.daily.amount}</span>
-                    <span>Monthly: {receipt.cumulativeState.monthly.count} calls, ${receipt.cumulativeState.monthly.amount}</span>
-                  </div>
-
-                  <div style={{ fontSize: '0.7rem', color: 'var(--text-tertiary)', fontFamily: "'SF Mono', Monaco, monospace", wordBreak: 'break-all', marginTop: '0.375rem' }}>
-                    {receipt.attestationHash}
-                  </div>
+                  </details>
                 </div>
               </div>
             ))}

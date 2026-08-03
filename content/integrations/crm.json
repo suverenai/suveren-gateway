@@ -40,21 +40,24 @@
         },
         "staticExecution": {
           "action_type": "write"
-        }
+        },
+        "actionLabel": "Contact created"
       },
       "update_contact": {
         "executionMapping": {},
         "staticExecution": {
           "contact_type": "customer",
           "action_type": "write"
-        }
+        },
+        "actionLabel": "Contact updated"
       },
       "delete_contact": {
         "executionMapping": {},
         "staticExecution": {
           "contact_type": "customer",
           "action_type": "delete"
-        }
+        },
+        "actionLabel": "Contact deleted"
       },
       "log_activity": {
         "executionMapping": {},

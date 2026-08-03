@@ -139,7 +139,11 @@ export interface IntegrationManifest {
     tokenStorage: string;
     extraParams?: Record<string, string>;
   } | null;
-  toolGating: unknown;
+  /** Per-tool gating. Typed only where the UI reads it — `actionLabel` names
+   *  what a tool DOES, in words, for the receipts list. */
+  toolGating?: {
+    overrides?: Record<string, { actionLabel?: string } | null>;
+  } | null;
   /** Links the approval card offers so a reviewer can inspect the action. */
   proposalLinks?: Array<{ label: string; template: string; description?: string }>;
   templates?: AuthTemplate[];
@@ -234,6 +238,9 @@ export interface ExecutionReceipt {
   signature: string;
   /** Present only on receipts produced via a committed proposal (review mode). */
   proposalId?: string;
+  /** Level-2 content proof. Present only when the profile declares content_binding. */
+  contentHash?: string;
+  contentBinding?: { version: string; kind: 'jcs' | 'text'; fields?: string[] };
 }
 
 /** A window of receipts plus a cursor for loading the next (older) window. */

@@ -210,6 +210,24 @@ code {
   border-radius: 0.25rem;
 }
 
+/* Running gateway version, beside the product name. Quiet by default; when a
+   newer release exists it borrows the warning colour so a stale install is
+   visible without becoming a banner. */
+.gw-version {
+  font-size: 0.7rem;
+  padding: 0.15rem 0.4rem;
+  border-radius: 0.25rem;
+  color: var(--text-muted);
+  background: var(--accent-subtle);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.gw-version[data-stale='true'] {
+  color: var(--warning);
+  background: transparent;
+  border: 1px solid var(--warning);
+}
+
 .nav-spacer { flex: 1; }
 
 .nav-actions {
@@ -3328,3 +3346,38 @@ body.is-updating .update-banner {
 }
 .recent-blocks .rb-empty h3 { font-size: 0.9rem; margin: 0 0 0.3rem; }
 .recent-blocks .rb-empty p { font-size: 0.8rem; color: var(--text-muted); margin: 0 auto; max-width: 30ch; line-height: 1.45; }
+
+/* ── Receipt rows (audit) ──────────────────────────────────────────────────
+   Leads with what happened in words; identifiers live in the collapsed
+   "Technical" block. */
+.receipt-head { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.receipt-what { font-size: 0.95rem; font-weight: 600; letter-spacing: -0.01em; color: var(--text-primary); }
+.receipt-tag {
+  font-size: 0.68rem; padding: 0.12rem 0.4rem; border-radius: 4px;
+  border: 1px solid var(--border); color: var(--text-muted); white-space: nowrap;
+}
+.receipt-tag-bound { color: var(--success); border-color: var(--success); }
+.receipt-scope { font-size: 0.82rem; color: var(--text-muted); margin-top: 0.2rem; }
+.receipt-foot {
+  display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;
+  margin-top: 0.55rem; padding-top: 0.55rem; border-top: 1px solid var(--border);
+}
+.receipt-link {
+  font-size: 0.78rem; color: var(--text-secondary); text-decoration: none;
+  border-bottom: 1px solid var(--border);
+}
+.receipt-link:hover { color: var(--accent-hover); border-color: var(--accent-hover); }
+.receipt-id {
+  font-family: 'SF Mono', Monaco, monospace; font-size: 0.7rem; color: var(--text-muted);
+}
+.receipt-more { margin-top: 0.5rem; }
+.receipt-more summary {
+  cursor: pointer; font-size: 0.75rem; color: var(--text-muted); list-style: none;
+}
+.receipt-more summary::-webkit-details-marker { display: none; }
+.receipt-more summary::before { content: '\25B8 '; }
+.receipt-more[open] summary::before { content: '\25BE '; }
+.receipt-kv {
+  font-size: 0.72rem; color: var(--text-muted); margin-top: 0.4rem; line-height: 1.7;
+  font-family: 'SF Mono', Monaco, monospace; word-break: break-all;
+}
