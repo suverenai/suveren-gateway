@@ -22,6 +22,7 @@ import type { IntegrationManager } from '../lib/integration-manager';
 import { SPReceiptError, type SPProposal } from '../lib/sp-client';
 import { appendVerificationFooter, shouldAttachFooter } from '../lib/receipt-footer';
 import { computeContentBinding, attachReceiptId } from '../lib/content-binding';
+import { encodeOutgoingArgs } from '../lib/arg-encoding';
 import { ContentBindingError } from '@hap/core';
 
 /**
@@ -134,6 +135,8 @@ export async function executeCommitted(
         outgoingArgs = appendVerificationFooter(discovered, outgoingArgs, receiptId);
       }
       outgoingArgs = attachReceiptId(discovered, outgoingArgs, receiptId);
+      // LAST: transport encoding — see arg-encoding.ts for why order matters.
+      outgoingArgs = encodeOutgoingArgs(discovered, outgoingArgs);
     }
     const result = await integrationManager.callTool(integrationId, toolName, outgoingArgs);
     // Record locally for cumulative tracking (parity with the automatic path).

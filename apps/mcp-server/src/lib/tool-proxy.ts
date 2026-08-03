@@ -17,6 +17,7 @@ import { SPReceiptError } from './sp-client';
 import { isCommitmentDowngrade } from './attestation-cache';
 import { appendVerificationFooter, shouldAttachFooter } from './receipt-footer';
 import { computeContentBinding, attachReceiptId } from './content-binding';
+import { encodeOutgoingArgs } from './arg-encoding';
 import { selectAuthorization } from './scope-specificity';
 import {
   boundsSatisfyReadGate,
@@ -870,6 +871,9 @@ function createGatedToolHandlerInner(
             ? appendVerificationFooter(tool, args, receiptId, auth.subjects?.[0])
             : args;
         if (receiptId) outgoingArgs = attachReceiptId(tool, outgoingArgs, receiptId);
+        // LAST: transport encoding. After the hash and the footer, so the
+        // binding stays over what was approved rather than over the wire form.
+        outgoingArgs = encodeOutgoingArgs(tool, outgoingArgs);
         return integrationManager.callTool(tool.integrationId, tool.originalName, outgoingArgs);
       }
   });

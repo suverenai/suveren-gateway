@@ -86,7 +86,10 @@
         },
         "blockedArgs": [
           "raw"
-        ]
+        ],
+        "argEncoding": {
+          "subject": "rfc2047"
+        }
       },
       "create_draft": {
         "executionMapping": {
@@ -110,7 +113,10 @@
         },
         "blockedArgs": [
           "raw"
-        ]
+        ],
+        "argEncoding": {
+          "subject": "rfc2047"
+        }
       },
       "send_draft": {
         "executionMapping": {},
@@ -193,7 +199,7 @@
       "get_profile": {
         "category": "read",
         "readGovernance": "none",
-        "readGovernanceReason": "Returns the account's own address and message counts \u2014 the connector's own identity, no correspondence content."
+        "readGovernanceReason": "Returns the account's own address and message counts — the connector's own identity, no correspondence content."
       }
     }
   },
@@ -236,7 +242,7 @@
         "allowed_recipients": "",
         "allowed_domains": ""
       },
-      "intent": "Read my inbox and compose emails. Every send requires my review \u2014 I see the recipient, subject, and body before it goes out.",
+      "intent": "Read my inbox and compose emails. Every send requires my review — I see the recipient, subject, and body before it goes out.",
       "ttl": 2592000,
       "tags": [
         "5 recipients/email",

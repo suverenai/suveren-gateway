@@ -673,6 +673,7 @@ export class IntegrationManager {
         readGovernanceReason?: string;
         contentField?: string;
         blockedArgs?: string[];
+        argEncoding?: Record<string, string>;
       };
       // 'disabled' = declared unavailable → block at the gating layer.
       if (ext.category === 'disabled') {
@@ -703,6 +704,7 @@ export class IntegrationManager {
         // simply carries no binding, which only surfaces when a verifier asks.
         contentField: ext.contentField,
         blockedArgs: ext.blockedArgs,
+        argEncoding: ext.argEncoding,
       };
     }
 

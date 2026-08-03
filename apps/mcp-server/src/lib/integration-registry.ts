@@ -166,6 +166,27 @@ export interface ToolGatingConfig {
    * agent may ignore, so the call is refused as well.
    */
   blockedArgs?: string[];
+
+  /**
+   * Transport encoding to apply to an outgoing argument, per field.
+   *
+   * A content binding hashes what the human approved. If the transport mangles
+   * a BOUND value on the way out, the receipt still verifies against the
+   * approved bytes while the recipient — holding the mangled copy — cannot
+   * reproduce it. The binding then cries wolf on honest mail, which is worse
+   * than no binding.
+   *
+   * Live case: RFC 5322 headers are ASCII-only. Gmail's connector writes
+   * `Subject: <raw utf-8>`, so an em-dash arrived as `Ã¢Â€Â”` and the subject
+   * could not be verified. Declaring `{ subject: "rfc2047" }` makes the
+   * gateway emit a proper encoded-word.
+   *
+   * The engine owns the encodings; the manifest only says which argument needs
+   * which one — so a new connector with the same problem is a manifest line,
+   * not a code change. Applied LAST, after the hash and the footer: encoding
+   * before hashing would bind the wire form instead of what was approved.
+   */
+  argEncoding?: Record<string, string>;
 }
 
 /**
