@@ -12,7 +12,14 @@
  * NFC/LF/trim for `kind:"text"`.
  */
 
-import { computeContentHash, getProfile, type ContentBinding } from '@hap/core';
+import {
+  computeContentHash,
+  computeFieldsContentHash,
+  isFieldBinding,
+  bindingAppliesTo,
+  getProfile,
+  type ContentBinding,
+} from '@hap/core';
 import type { DiscoveredTool } from './integration-manager';
 import { detectContentField } from './receipt-footer';
 
@@ -23,7 +30,7 @@ function getContentBinding(profileId: string): ContentBinding | undefined {
 
 export interface ComputedContentHash {
   contentHash: string;
-  contentBinding: { version: string; kind: 'jcs' | 'text' };
+  contentBinding: { version: string; kind: 'jcs' | 'text'; fields?: string[] };
 }
 
 /**
@@ -32,16 +39,51 @@ export interface ComputedContentHash {
  * later the communicative profiles, opt in).
  *
  * `toolArgs` MUST be the agent's content BEFORE any footer is appended:
- *  - jcs  → the whole record payload is hashed (structured writes have no body).
- *  - text → the auto-detected content field is hashed pre-footer.
+ *  - v2 fields → the declared subset is hashed (see below).
+ *  - jcs       → the whole record payload is hashed (structured writes have no body).
+ *  - text      → the auto-detected content field is hashed pre-footer.
+ *
+ * `actionType` comes from the manifest's staticExecution and scopes a v2
+ * binding via the profile's `appliesTo`. It is ignored by v1 bindings.
+ *
+ * THROWS `ContentBindingError` when a v2 binding applies but cannot be
+ * computed — a missing required field is a refusal, not a downgrade. Callers
+ * must surface it as a blocked call rather than proceeding without a binding.
  */
 export function computeContentBinding(
   profileId: string,
   tool: DiscoveredTool | undefined,
   toolArgs: Record<string, unknown>,
+  actionType?: string,
 ): ComputedContentHash | undefined {
   const binding = getContentBinding(profileId);
   if (!binding) return undefined;
+
+  // v0.6 declared-field binding. Binds several things — an email's recipients
+  // as well as its prose — while omitting what the intended verifier cannot
+  // see (a recipient does not know `bcc`, so binding it would make the receipt
+  // uncheckable by the very person it exists to serve).
+  if (isFieldBinding(binding)) {
+    if (!bindingAppliesTo(binding, actionType)) {
+      // Not a content-bearing action under this profile (a delete carries an
+      // id and nothing else). `bindingAppliesTo` reads `appliesTo` strictly, so
+      // an UNDECLARED action type lands here too — that is a manifest bug and
+      // gets the same warning the bounds path gives it, because the receipt
+      // will be issued carrying no content binding.
+      if (!actionType && binding.appliesTo) {
+        console.error(
+          `[Suveren MCP] Warning: ${tool?.namespacedName ?? profileId} has no action_type in ` +
+            `staticExecution, so the ${profileId} content binding (${binding.appliesTo.join(', ')}) ` +
+            `does not apply and the receipt will bind no content. Fix the integration manifest.`,
+        );
+      }
+      return undefined;
+    }
+    return {
+      contentHash: computeFieldsContentHash(binding, toolArgs),
+      contentBinding: { version: binding.version, kind: binding.kind, fields: binding.fields },
+    };
+  }
 
   let contentHash: string;
   if (binding.kind === 'jcs') {

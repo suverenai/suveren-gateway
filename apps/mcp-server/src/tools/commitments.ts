@@ -22,6 +22,7 @@ import type { IntegrationManager } from '../lib/integration-manager';
 import { SPReceiptError, type SPProposal } from '../lib/sp-client';
 import { appendVerificationFooter, shouldAttachFooter } from '../lib/receipt-footer';
 import { computeContentBinding, attachReceiptId } from '../lib/content-binding';
+import { ContentBindingError } from '@hap/core';
 
 /**
  * Ask the SP for a signed receipt bound to the committed proposal, then
@@ -77,7 +78,12 @@ export async function executeCommitted(
     // The receipt references the grant by its per-ceremony id — no hash surgery.
     // v0.5 Content Provenance: hash the approved content (proposal.toolArgs is
     // the pre-footer content captured at proposal time) when the profile binds.
-    const binding = computeContentBinding(proposal.profileId, discovered, proposal.toolArgs);
+    const binding = computeContentBinding(
+      proposal.profileId,
+      discovered,
+      proposal.toolArgs,
+      proposalActionType,
+    );
     const { receipt } = await state.spClient.postReceipt({
       authorizationId: proposal.authorizationId,
       profileId: proposal.profileId,
@@ -93,6 +99,14 @@ export async function executeCommitted(
     });
     receiptId = typeof receipt?.id === 'string' ? receipt.id : undefined;
   } catch (err) {
+    // Approved content that cannot be bound. Refuse rather than execute on a
+    // receipt that would verify while committing to less than the approver saw.
+    if (err instanceof ContentBindingError) {
+      return {
+        text: `Proposal ${proposal.id}: blocked — the approved content cannot be bound to the receipt. ${err.message}`,
+        isError: true,
+      };
+    }
     if (err instanceof SPReceiptError) {
       const code = (err.body.errors as Array<{ code?: string }> | undefined)?.[0]?.code;
       if (code === 'PROPOSAL_ALREADY_EXECUTED') {

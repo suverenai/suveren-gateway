@@ -37,7 +37,7 @@ import {
   hasBlockedValue,
   type BoundsSchemaLike,
 } from './read-gate';
-import { getProfile } from '@hap/core';
+import { getProfile, ContentBindingError } from '@hap/core';
 import { readFile } from 'node:fs/promises';
 import { extname } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -733,7 +733,7 @@ function createGatedToolHandlerInner(
           // double-counting against the authority's bounds.
           // v0.5 Content Provenance: if the profile declares content_binding,
           // hash the agent's content (pre-footer `args`) and send the hash only.
-          const binding = computeContentBinding(auth.profileId, tool, args);
+          const binding = computeContentBinding(auth.profileId, tool, args, actionType);
           const { receipt } = await state.spClient.postReceipt({
             authorizationId: authzId,
             // Optional cross-check — the AS fails closed on a mismatch.
@@ -748,6 +748,19 @@ function createGatedToolHandlerInner(
           });
           receiptId = typeof receipt?.id === 'string' ? receipt.id : undefined;
         } catch (err) {
+          // The profile binds a declared field set and this call cannot supply
+          // it. Refuse: issuing the receipt anyway would produce one that
+          // verifies while committing to less than it appears to.
+          if (err instanceof ContentBindingError) {
+            return {
+              content: [{
+                type: 'text',
+                text: `Blocked: this action's content cannot be bound to the receipt — ${err.message}`,
+              }],
+              isError: true,
+            };
+          }
+
           if (err instanceof SPReceiptError && err.statusCode === 409) {
             // P8.2: SP returned approval_required — this action exceeds the team cap
             // for an above-cap authority. Route to per-action multi-party approval:
