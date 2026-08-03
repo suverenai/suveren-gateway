@@ -9,7 +9,12 @@ import { join } from 'node:path';
  * call — which is a bad place to discover a typo in `boundType`.
  */
 const PROFILE_ID = 'github.com/humanagencyprotocol/hap-profiles/deploy@0.7';
-const PROFILES_DIR = join(import.meta.dirname, '..', '..', '..', '..', 'hap-profiles');
+// Honour SUVEREN_PROFILES_DIR — the same variable the loader itself reads —
+// before falling back to the sibling checkout. The relative path alone is the
+// maintainer's folder layout, not a fact about the project: CI clones the
+// catalog INSIDE the workspace, so this test could only ever pass locally.
+const PROFILES_DIR = process.env.SUVEREN_PROFILES_DIR
+  ?? join(import.meta.dirname, '..', '..', '..', '..', 'hap-profiles');
 
 beforeAll(() => { loadProfiles(PROFILES_DIR); });
 afterAll(() => clearProfiles());
