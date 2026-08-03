@@ -13,6 +13,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { withoutBlockedArgs } from '../src/lib/integration-manager';
+import { createGatedToolHandler } from '../src/lib/tool-proxy';
 
 const GMAIL_SEND = {
   type: 'object',
@@ -65,5 +66,50 @@ describe('the gmail manifest', () => {
 
     expect(overrides.send_message.blockedArgs).toContain('raw');
     expect(overrides.create_draft.blockedArgs).toContain('raw');
+  });
+});
+
+describe('the refusal itself', () => {
+  // The layer that matters, and the one a well-behaved client hides. A live
+  // send with `raw` proved only that the MCP client drops unknown arguments
+  // before the gateway sees them — the guard never fired, so nothing about it
+  // was demonstrated. It exists for clients that do NOT validate, which is
+  // exactly the case no manual test can produce.
+  const tool = {
+    namespacedName: 'gmail__send_message',
+    originalName: 'send_message',
+    integrationId: 'gmail',
+    description: '',
+    inputSchema: {},
+    gating: { profile: 'email@0.4', executionMapping: {}, blockedArgs: ['raw'] },
+  } as unknown as Parameters<typeof createGatedToolHandler>[0];
+
+  /** Reaching either of these means the guard did not short-circuit. */
+  const explode = new Proxy({}, { get() { throw new Error('guard did not short-circuit'); } });
+
+  it('refuses the call when a blocked argument is present', async () => {
+    const handler = createGatedToolHandler(tool, explode as never, explode as never);
+    const result = await handler({ to: ['a@example.com'], raw: 'blob' });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/refused/i);
+    expect(result.content[0].text).toContain('"raw"');
+  });
+
+  it('refuses before any authorization work happens', async () => {
+    // The stubs throw on any property access, so this passing IS the assertion:
+    // nothing downstream was consulted. A blocked argument means we cannot
+    // reason about the call at all, so there is nothing later worth running.
+    const handler = createGatedToolHandler(tool, explode as never, explode as never);
+    await expect(handler({ raw: 'blob' })).resolves.toBeDefined();
+  });
+
+  it('leaves an ordinary call alone', async () => {
+    // Without the blocked argument the wrapper must delegate — if it swallowed
+    // every call the tool would be dead rather than guarded.
+    const handler = createGatedToolHandler(tool, explode as never, explode as never);
+    await expect(handler({ to: ['a@example.com'], body: 'hi' })).rejects.toThrow(
+      'guard did not short-circuit',
+    );
   });
 });
