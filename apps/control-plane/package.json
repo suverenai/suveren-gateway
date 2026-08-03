@@ -6,7 +6,7 @@
   "scripts": {
     "build": "tsc --noEmit -p tsconfig.json && tsup src/index.ts --format esm --outDir dist",
     "start": "node dist/index.mjs",
-    "dev": "SUVEREN_DATA_DIR=${SUVEREN_DATA_DIR:-$HOME/.suveren-dev} SUVEREN_MCP_INTERNAL_URL=http://127.0.0.1:3431 tsx --watch src/index.ts",
+    "dev": "SUVEREN_DATA_DIR=${SUVEREN_DATA_DIR:-$HOME/.suveren} SUVEREN_MCP_INTERNAL_URL=http://127.0.0.1:3431 tsx --watch src/index.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit -p tsconfig.json"
