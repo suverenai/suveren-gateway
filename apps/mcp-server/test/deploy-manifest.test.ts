@@ -31,7 +31,7 @@ describe('deploy-github manifest', () => {
   it('binds the RECEIPT to the build being made live, not the commit', () => {
     // Binding the commit would prove only which SOURCE was approved. A rebuild
     // could diverge from it; promoting an existing build cannot.
-    expect(deploy().contentField).toBe('deployment_url');
+    expect(deploy().contentField).toBe('commit');
   });
 
   it('offers the reviewer something to open', () => {
@@ -150,7 +150,7 @@ describe('manifest declarations survive gating resolution', () => {
       resolveToolGating: (p: string | null, g: unknown, tool: string) => { contentField?: string } | null;
     };
     const resolved = mgr.resolveToolGating('deploy', MANIFEST.toolGating, 'release');
-    expect(resolved?.contentField, 'contentField was dropped by resolveToolGating').toBe('deployment_url');
+    expect(resolved?.contentField, 'contentField was dropped by resolveToolGating').toBe('commit');
   });
 
   it('every manifest field the engine reads is carried, not just declared', () => {

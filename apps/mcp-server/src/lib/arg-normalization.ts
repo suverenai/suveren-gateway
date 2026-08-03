@@ -33,7 +33,7 @@
 import type { DiscoveredTool } from './integration-manager';
 
 /** Normal forms the engine knows. Named by a manifest, per argument. */
-export type ArgNormalization = 'url';
+export type ArgNormalization = 'url' | 'sha';
 
 /**
  * The stated normal form for a URL that identifies a THING rather than a page:
@@ -81,8 +81,22 @@ export function normalizeUrl(value: string): string {
   return `${scheme}://${host}${port}`;
 }
 
+/**
+ * A hex digest — a commit sha, an image digest. Lowercased and trimmed.
+ *
+ * Git renders shas lowercase but accepts either case, so `ABC123…` and
+ * `abc123…` name one commit and would otherwise hash to two bindings. Same
+ * failure as the trailing slash on a URL: the receipt becomes unfindable, and
+ * unfindable reads as never-approved.
+ */
+export function normalizeSha(value: string): string {
+  const trimmed = value.trim();
+  return /^[0-9a-fA-F]{7,64}$/.test(trimmed) ? trimmed.toLowerCase() : value;
+}
+
 const NORMALIZERS: Record<ArgNormalization, (value: string) => string> = {
   url: normalizeUrl,
+  sha: normalizeSha,
 };
 
 /**

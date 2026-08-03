@@ -79,10 +79,10 @@
         "staticExecution": {
           "action_type": "release"
         },
-        "contentField": "deployment_url",
+        "contentField": "commit",
         "actionLabel": "Deployment released",
         "argNormalization": {
-          "deployment_url": "url"
+          "commit": "sha"
         }
       }
     }

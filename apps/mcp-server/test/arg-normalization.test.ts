@@ -13,7 +13,7 @@
  * the outcome this exists to stop.
  */
 import { describe, it, expect } from 'vitest';
-import { normalizeUrl, normalizeIncomingArgs } from '../src/lib/arg-normalization';
+import { normalizeUrl, normalizeSha, normalizeIncomingArgs } from '../src/lib/arg-normalization';
 import type { DiscoveredTool } from '../src/lib/integration-manager';
 
 const toolWith = (argNormalization?: Record<string, string>) =>
@@ -66,6 +66,29 @@ describe('normalizeUrl — the stated normal form', () => {
   });
 });
 
+describe('normalizeSha — one spelling per commit', () => {
+  const SHA = '485c2255aabbccddeeff00112233445566778899';
+
+  it('lowercases and trims — git accepts either case, a hash does not', () => {
+    expect(normalizeSha(SHA.toUpperCase())).toBe(SHA);
+    expect(normalizeSha(`  ${SHA}  `)).toBe(SHA);
+    expect(normalizeSha(SHA)).toBe(SHA);
+  });
+
+  it('is idempotent', () => {
+    expect(normalizeSha(normalizeSha(SHA.toUpperCase()))).toBe(normalizeSha(SHA.toUpperCase()));
+  });
+
+  it('distinct commits stay distinct', () => {
+    expect(normalizeSha(SHA)).not.toBe(normalizeSha('9'.repeat(40)));
+  });
+
+  it('leaves a non-sha alone, so the connector gives its own error', () => {
+    expect(normalizeSha('not-a-sha')).toBe('not-a-sha');
+    expect(normalizeSha('')).toBe('');
+  });
+});
+
 describe('normalizeIncomingArgs — declared per connector', () => {
   it('normalizes only the declared field', () => {
     const out = normalizeIncomingArgs(toolWith({ deployment_url: 'url' }), {
@@ -109,15 +132,15 @@ describe('normalizeIncomingArgs — declared per connector', () => {
 });
 
 describe('the shipped deploy manifest declares it', () => {
-  it('release normalizes deployment_url — the field its receipt binds', async () => {
+  it('release normalizes commit — the field its receipt binds', async () => {
     const { readFileSync } = await import('node:fs');
     const { join } = await import('node:path');
     const manifest = JSON.parse(readFileSync(
       join(import.meta.dirname, '..', '..', '..', 'content', 'integrations', 'deploy-github.json'), 'utf-8',
     ));
     const release = manifest.toolGating.overrides.release;
-    expect(release.argNormalization).toEqual({ deployment_url: 'url' });
+    expect(release.argNormalization).toEqual({ commit: 'sha' });
     // The normalized field MUST be the bound one, or approval and binding drift.
-    expect(release.contentField).toBe('deployment_url');
+    expect(release.contentField).toBe('commit');
   });
 });
