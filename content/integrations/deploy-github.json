@@ -80,7 +80,10 @@
           "action_type": "release"
         },
         "contentField": "deployment_url",
-        "actionLabel": "Deployment released"
+        "actionLabel": "Deployment released",
+        "argNormalization": {
+          "deployment_url": "url"
+        }
       }
     }
   },

@@ -187,6 +187,18 @@ export interface ToolGatingConfig {
    * before hashing would bind the wire form instead of what was approved.
    */
   argEncoding?: Record<string, string>;
+
+  /**
+   * Normal form for an incoming argument, per field. Applied FIRST — before
+   * bounds mapping, before a proposal, before hashing — so the value approved,
+   * bound and sent downstream is one string.
+   *
+   * A content binding hashes an exact string, so two spellings of one identifier
+   * are two bindings: `https://x.app` and `https://x.app/` name the same build
+   * and produce different hashes, and the receipt then cannot be found. That
+   * failure is indistinguishable from "this went live unapproved".
+   */
+  argNormalization?: Record<string, string>;
 }
 
 /**

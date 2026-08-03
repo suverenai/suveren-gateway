@@ -674,6 +674,7 @@ export class IntegrationManager {
         contentField?: string;
         blockedArgs?: string[];
         argEncoding?: Record<string, string>;
+        argNormalization?: Record<string, string>;
       };
       // 'disabled' = declared unavailable → block at the gating layer.
       if (ext.category === 'disabled') {
@@ -705,6 +706,7 @@ export class IntegrationManager {
         contentField: ext.contentField,
         blockedArgs: ext.blockedArgs,
         argEncoding: ext.argEncoding,
+        argNormalization: ext.argNormalization,
       };
     }
 

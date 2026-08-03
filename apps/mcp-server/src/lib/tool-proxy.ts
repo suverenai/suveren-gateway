@@ -18,6 +18,7 @@ import { isCommitmentDowngrade } from './attestation-cache';
 import { appendVerificationFooter, shouldAttachFooter } from './receipt-footer';
 import { computeContentBinding, attachReceiptId } from './content-binding';
 import { encodeOutgoingArgs } from './arg-encoding';
+import { normalizeIncomingArgs } from './arg-normalization';
 import { selectAuthorization } from './scope-specificity';
 import {
   boundsSatisfyReadGate,
@@ -205,7 +206,15 @@ export function createGatedToolHandler(
   integrationManager: IntegrationManager,
   state: SharedState,
 ): (args: Record<string, unknown>) => Promise<ToolResult> {
-  const inner = createGatedToolHandlerInner(tool, integrationManager, state);
+  const gated = createGatedToolHandlerInner(tool, integrationManager, state);
+
+  // Normalize declared identifier arguments FIRST, so every later stage — the
+  // approval card, the bounds check, the content hash, the downstream call —
+  // sees one spelling. Normalizing after the proposal would bind a string the
+  // approver never saw.
+  const inner = async (args: Record<string, unknown>) =>
+    gated(normalizeIncomingArgs(tool, args));
+
   const blocked = tool.gating?.blockedArgs ?? [];
   if (blocked.length === 0) return inner;
 
