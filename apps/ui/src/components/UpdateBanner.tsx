@@ -10,7 +10,12 @@ const JUST_UPDATED_KEY = 'suveren:updatedTo';
  *  (docker), a node_modules path (npm), or neither (dev). */
 function upgradeCommandFor(method: InstallMethod): string {
   if (method === 'npm') {
-    return 'suveren-gateway stop; npm install -g @suveren/gateway@latest && suveren-gateway start --detach';
+    // `restart`, not stop-then-start. Once the login service is installed —
+    // which the CLI itself offers — stop/start no longer manage the process:
+    // stop finds no PID file and start hits a port it cannot see. `restart`
+    // drives whichever service manager owns the gateway, and falls back to the
+    // manual path when there is none, so it is correct either way.
+    return 'npm install -g @suveren/gateway@latest && suveren-gateway restart';
   }
   if (method === 'dev') {
     return 'git pull && pnpm install';
