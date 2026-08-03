@@ -69,13 +69,22 @@ async function start(args) {
   if (await isPortListening(SUVEREN_PORT)) {
     console.error(`Port ${SUVEREN_PORT} is already in use.`);
     console.error(``);
-    console.error(`Something is already serving there — most likely a gateway started by the`);
-    console.error(`login service or from another terminal, which leaves no PID file for this`);
-    console.error(`CLI to find.`);
-    console.error(``);
-    console.error(`  Check what it is:      suveren-gateway status`);
-    console.error(`  Stop a login service:  suveren-gateway service uninstall`);
-    console.error(`  Or use another port:   SUVEREN_CP_PORT=3410 suveren-gateway start`);
+    if (serviceRunning()) {
+      // Do not suggest uninstalling autostart: that removes a feature the user
+      // asked for in order to solve a problem that needs a restart. After an
+      // upgrade the files on disk are new and the running process is not.
+      console.error(`The login service is already running the gateway, so there is nothing to start.`);
+      console.error(``);
+      console.error(`  Pick up an update:     suveren-gateway restart`);
+      console.error(`  Check what is running: suveren-gateway status`);
+      console.error(`  Remove autostart:      suveren-gateway service uninstall`);
+    } else {
+      console.error(`Something is already serving there — most likely a gateway started from`);
+      console.error(`another terminal, which leaves no PID file for this CLI to find.`);
+      console.error(``);
+      console.error(`  Check what it is:      suveren-gateway status`);
+      console.error(`  Or use another port:   SUVEREN_CP_PORT=3410 suveren-gateway start`);
+    }
     process.exit(1);
   }
 
@@ -134,6 +143,16 @@ async function start(args) {
 
 async function stop() {
   const pid = readPid();
+  // A service-managed gateway writes no PID file. Reporting "not running" while
+  // it serves requests is the most misleading thing this CLI can say, and it is
+  // what sent an upgrade into a port conflict it could not explain.
+  if (!pid && serviceRunning()) {
+    console.error('suveren-gateway is running under the login service, which this command does not manage.');
+    console.error('');
+    console.error('  To pick up an update:   suveren-gateway restart');
+    console.error('  To stop it for good:    suveren-gateway service uninstall');
+    process.exit(1);
+  }
   if (!pid) {
     console.error('suveren-gateway is not running (no PID file).');
     process.exit(1);
@@ -242,6 +261,14 @@ async function status() {
 }
 
 async function restart() {
+  // The service manager owns the process when autostart is installed, and it
+  // leaves no PID file — so this must be asked FIRST or the checks below all
+  // conclude, wrongly, that nothing is running.
+  if (serviceRestart()) {
+    console.log('suveren-gateway: restarted via the login service.');
+    console.log(`  The vault is locked after a restart — unlock at http://localhost:${SUVEREN_PORT}`);
+    return;
+  }
   if (readPid() && isPidAlive(readPid())) {
     await stop();
   }
@@ -278,6 +305,52 @@ async function logs(args) {
 // password.
 
 const LAUNCH_AGENT_LABEL = 'ai.suveren.gateway';
+
+/**
+ * Is the login service currently running the gateway?
+ *
+ * `stop`, `start` and `restart` were all written before autostart existed and
+ * all reason from the PID file — which a service-managed gateway never writes.
+ * The result was that installing autostart silently broke the update path:
+ * `stop` reported "not running", and `start` then hit a port held by a process
+ * it could not see. Every command has to know about the service the same CLI
+ * installs.
+ */
+function serviceRunning() {
+  const os = platform();
+  if (os === 'darwin') {
+    const p = runQuiet('launchctl', ['print', `gui/${process.getuid()}/${LAUNCH_AGENT_LABEL}`]);
+    return p.status === 0 && /state = running/.test(p.stdout || '');
+  }
+  if (os === 'win32') {
+    const p = runQuiet('schtasks', ['/Query', '/TN', WIN_TASK_NAME, '/FO', 'LIST']);
+    return p.status === 0 && /Status:\s+Running/i.test(p.stdout || '');
+  }
+  const p = runQuiet('systemctl', ['--user', 'is-active', SYSTEMD_UNIT]);
+  return (p.stdout || '').trim() === 'active';
+}
+
+/**
+ * Restart through whichever service manager owns the process.
+ *
+ * Returns false when no service is running, so callers fall back to the manual
+ * path. Restarting is what an upgrade needs: npm replaces the files on disk,
+ * but the running process loaded them once at start and keeps serving the old
+ * code until it is replaced.
+ */
+function serviceRestart() {
+  if (!serviceRunning()) return false;
+  const os = platform();
+  if (os === 'darwin') {
+    runQuiet('launchctl', ['kickstart', '-k', `gui/${process.getuid()}/${LAUNCH_AGENT_LABEL}`]);
+  } else if (os === 'win32') {
+    runQuiet('schtasks', ['/End', '/TN', WIN_TASK_NAME]);
+    runQuiet('schtasks', ['/Run', '/TN', WIN_TASK_NAME]);
+  } else {
+    runQuiet('systemctl', ['--user', 'restart', SYSTEMD_UNIT]);
+  }
+  return true;
+}
 
 async function service(args) {
   const sub = args[0] ?? 'help';
