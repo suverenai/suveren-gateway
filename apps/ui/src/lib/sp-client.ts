@@ -138,6 +138,8 @@ export interface IntegrationManifest {
     extraParams?: Record<string, string>;
   } | null;
   toolGating: unknown;
+  /** Links the approval card offers so a reviewer can inspect the action. */
+  proposalLinks?: Array<{ label: string; template: string; description?: string }>;
   templates?: AuthTemplate[];
   setupHint?: string;
   setupGuide?: Array<{ title: string; description: string; link?: string }>;

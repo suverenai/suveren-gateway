@@ -47,10 +47,36 @@ export function computeContentBinding(
   if (binding.kind === 'jcs') {
     contentHash = computeContentHash(binding, toolArgs); // whole record payload
   } else {
-    // text: hash only the user-facing content field, pre-footer.
-    const field = tool ? detectContentField(tool) : null;
-    if (!field) return undefined; // no text field on this tool → nothing to bind
+    // text: hash the bound field, pre-footer.
+    //
+    // A manifest-declared `contentField` wins over auto-detection. Detection
+    // only knows a prose vocabulary (body/text/description/content), so a
+    // connector binding something else — a commit SHA, a plan hash, a record id
+    // — would produce NO hash and no binding, silently. The receipt would still
+    // be issued and would simply prove less than it appears to, which is the
+    // worst way for this to fail.
+    //
+    // Note this is NOT the footer's content field: the footer appends a
+    // verification line to prose, and appending it to a commit SHA would
+    // corrupt the value being deployed.
+    const declared = tool?.gating?.contentField;
+    const field = declared ?? (tool ? detectContentField(tool) : null);
+    if (!field) return undefined; // nothing on this tool to bind
     const raw = typeof toolArgs[field] === 'string' ? (toolArgs[field] as string) : '';
+    // A declared field that is absent or non-string at call time is a manifest
+    // bug, not "nothing to bind" — binding to the empty string would look like
+    // a valid binding while committing to nothing.
+    //
+    // This guard once applied only to manifest-declared fields. Auto-detected
+    // ones need it more, not less — nothing reviewed them. Gmail's
+    // `send_message` is the live case: pass `raw` and its own schema says
+    // to/cc/subject/body are ignored, so the message travels in a field this
+    // binding never sees while `body` is simply absent. Hashing '' there is the
+    // worst available outcome — a content hash that commits to nothing, reads
+    // exactly like one that binds the message, and is IDENTICAL for every such
+    // call, so a receipt for one message verifies against another. Emitting no
+    // binding is honest: the receipt then claims only what it can support.
+    if (raw === '') return undefined;
     contentHash = computeContentHash(binding, raw);
   }
 

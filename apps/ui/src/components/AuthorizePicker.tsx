@@ -9,7 +9,6 @@ import {
   type AuthTemplate,
   type ProfileConfig,
 } from '../lib/sp-client';
-import { profileDisplayName } from '../lib/profile-display';
 
 interface Props {
   onDismiss?: () => void;
@@ -59,14 +58,13 @@ export function AuthorizePicker({ onDismiss }: Props) {
     }).finally(() => setLoading(false));
   }, [groupId]);
 
+  // Which profiles have an installed connector at all. Only used to filter the
+  // profile list below; the integration itself is resolved per entry, because a
+  // profile-keyed integration map cannot represent two connectors sharing one
+  // profile — the defect this component was fixed for.
   const profileManifestMap = new Map<string, IntegrationManifest>();
-  const profileIntegrationMap = new Map<string, McpIntegrationStatus>();
   for (const m of manifests) {
     if (m.profile) profileManifestMap.set(m.profile, m);
-  }
-  for (const i of integrations) {
-    const manifest = manifests.find(m => m.id === i.id);
-    if (manifest?.profile) profileIntegrationMap.set(manifest.profile, i);
   }
 
   // Only profiles an installed manifest maps to, deduped to the HIGHEST version
@@ -86,7 +84,26 @@ export function AuthorizePicker({ onDismiss }: Props) {
       latestByShort.set(shortId, p);
     }
   }
-  const visibleProfiles = Array.from(latestByShort.values());
+
+  /**
+   * One entry per INSTALLED INTEGRATION, not per profile.
+   *
+   * This list used to be keyed by profile, which silently lost integrations:
+   * several connectors legitimately share one profile — a deploy profile serves
+   * a GitHub/Vercel connector and a Kubernetes one, an email profile would serve
+   * Gmail and Outlook — and a profile-keyed map keeps only whichever was
+   * processed last. The user saw a single card, named after the profile, with no
+   * way to tell which connector they were authorising.
+   *
+   * Keying by integration also lets the card say "Deploy (GitHub)" rather than
+   * "Deploy", which is the name the person actually recognises.
+   */
+  const entries = manifests
+    .map(manifest => {
+      const profile = manifest.profile ? latestByShort.get(manifest.profile) : undefined;
+      return profile ? { manifest, profile, integration: integrations.find(i => i.id === manifest.id) } : null;
+    })
+    .filter((e): e is NonNullable<typeof e> => e !== null);
 
   const isTeamManaged = (profileId: string): boolean => profileId in teamProfiles;
 
@@ -120,10 +137,11 @@ export function AuthorizePicker({ onDismiss }: Props) {
     navigate('/agent/gate');
   };
 
-  const handleCreate = (profileId: string) => {
+  // Takes the manifest directly. Resolving it from the profile id would hit the
+  // same collision the entry list exists to avoid: two connectors, one profile,
+  // and a lookup that can only return one of them.
+  const handleCreate = (profileId: string, manifest: IntegrationManifest) => {
     if (!groupId) return;
-    const shortId = profileId.replace(/@.*$/, '').split('/').pop() ?? profileId;
-    const manifest = profileManifestMap.get(shortId);
 
     if (manifest?.templates && manifest.templates.length > 0) {
       setModalProfile({ profileId, manifest });
@@ -213,7 +231,7 @@ export function AuthorizePicker({ onDismiss }: Props) {
 
       {loading ? (
         <p style={{ color: 'var(--text-tertiary)', fontSize: '0.9rem' }}>Loading...</p>
-      ) : visibleProfiles.length === 0 ? (
+      ) : entries.length === 0 ? (
         <div className="card" style={{ padding: '2rem', textAlign: 'center' }}>
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '1rem' }}>
             No integrations set up yet. Connect a service first.
@@ -224,18 +242,18 @@ export function AuthorizePicker({ onDismiss }: Props) {
         </div>
       ) : (
         <div className="profile-grid">
-          {visibleProfiles.map(p => {
+          {entries.map(({ manifest, profile: p, integration }) => {
             const isTeam = isTeamManaged(p.id);
-            const shortId = p.id.replace(/@.*$/, '').split('/').pop() ?? p.id;
-            const manifest = profileManifestMap.get(shortId);
-            const integration = profileIntegrationMap.get(shortId);
             const isRunning = integration?.running === true;
 
             return (
-              <div className="card" key={p.id} style={!isRunning ? { opacity: 0.7 } : undefined}>
+              <div className="card" key={manifest.id} style={!isRunning ? { opacity: 0.7 } : undefined}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.125rem' }}>
+                  {/* The INTEGRATION's name — "Deploy (GitHub)", not "Deploy".
+                      Several connectors can share one profile, so the profile
+                      name cannot identify what is being authorised. */}
                   <h3 className="card-title" style={{ margin: 0 }}>
-                    {profileDisplayName(p.id, p.name)}
+                    {manifest.name}
                   </h3>
                   {isTeam ? (
                     <span style={{
@@ -251,11 +269,11 @@ export function AuthorizePicker({ onDismiss }: Props) {
                   )}
                 </div>
                 <p style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginBottom: '1rem', flex: 1 }}>
-                  {p.description}
+                  {manifest.description || p.description}
                 </p>
 
                 {isRunning ? (
-                  <button className="btn btn-primary btn-sm" onClick={() => handleCreate(p.id)}>
+                  <button className="btn btn-primary btn-sm" onClick={() => handleCreate(p.id, manifest)}>
                     Authorize
                   </button>
                 ) : (

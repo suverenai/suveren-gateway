@@ -1,0 +1,164 @@
+{
+  "id": "deploy-github",
+  "name": "Deploy (GitHub)",
+  "version": "1.0.0",
+  "description": "Make an already-built version live, under signed authority",
+  "icon": "wrench",
+  "profile": "deploy",
+  "npmPackage": "@humanagencyp/deploy-mcp",
+  "mcp": {
+    "command": "npx",
+    "args": [
+      "-y",
+      "@humanagencyp/deploy-mcp@latest"
+    ]
+  },
+  "credentials": {
+    "fields": [
+      {
+        "key": "githubToken",
+        "label": "GitHub token",
+        "type": "password",
+        "placeholder": "github_pat_..."
+      }
+    ],
+    "envMapping": {
+      "GITHUB_TOKEN": "githubToken"
+    }
+  },
+  "oauth": null,
+  "toolGating": {
+    "default": {
+      "executionMapping": {},
+      "staticExecution": {},
+      "category": "disabled"
+    },
+    "overrides": {
+      "list_deployments": {
+        "category": "read",
+        "readGovernance": "none",
+        "readGovernanceReason": "Returns build metadata and the host's own deployment URLs. No source, no build output, no user content. Scoped to permitted repositories.",
+        "read": {
+          "resourceBound": "allowed_repos",
+          "resourceArg": "repo"
+        }
+      },
+      "get_deployment": {
+        "category": "read",
+        "readGovernance": "none",
+        "readGovernanceReason": "Returns metadata for one build — state, commit, URL. No build output.",
+        "read": {
+          "resourceBound": "allowed_repos",
+          "resourceArg": "repo"
+        }
+      },
+      "resolve_ref": {
+        "category": "read",
+        "readGovernance": "none",
+        "readGovernanceReason": "Returns a commit pointer only. Repository metadata, not user content.",
+        "read": {
+          "resourceBound": "allowed_repos",
+          "resourceArg": "repo"
+        }
+      },
+      "list_environments": {
+        "category": "read",
+        "readGovernance": "none",
+        "readGovernanceReason": "Returns environment names only. Repository configuration, needed so the owner can pick a target that exists.",
+        "read": {
+          "resourceBound": "allowed_repos",
+          "resourceArg": "repo"
+        }
+      },
+      "release": {
+        "executionMapping": {
+          "repo": "allowed_repos",
+          "environment": "allowed_environments",
+          "workflow": "allowed_workflows"
+        },
+        "staticExecution": {
+          "action_type": "release"
+        },
+        "contentField": "deployment_url"
+      }
+    }
+  },
+  "templates": [
+    {
+      "name": "Watch deployments",
+      "description": "See builds and their URLs. Cannot make anything live.",
+      "risk": "low",
+      "mode": "automatic",
+      "bounds": {
+        "release_daily_max": "0",
+        "rollback_allowed": "no"
+      },
+      "context": {
+        "allowed_repos": "",
+        "allowed_environments": "",
+        "allowed_workflows": "",
+        "allowed_branches": ""
+      },
+      "intent": "Let the agent see what has been built and whether it succeeded. It may not make anything live: a daily maximum of zero is a real limit, not an unset one. Fill in allowed_repos with the repositories it may look at.",
+      "ttl": 2592000,
+      "tags": [
+        "read-only",
+        "30 days"
+      ]
+    },
+    {
+      "name": "Release to production, review",
+      "description": "Make an existing build live after approval. Three a day, no rollback.",
+      "risk": "high",
+      "mode": "review",
+      "bounds": {
+        "release_daily_max": "3",
+        "rollback_allowed": "no"
+      },
+      "context": {
+        "allowed_repos": "",
+        "allowed_environments": "production",
+        "allowed_workflows": "deploy-website.yml",
+        "allowed_branches": "main"
+      },
+      "intent": "The agent may propose making a specific build live; nothing runs until I approve it. Open the build URL in the proposal and look at it before approving — that is the point of reviewing a release rather than a commit. Fill in allowed_repos, and check allowed_environments matches what the host actually calls it.",
+      "ttl": 2592000,
+      "tags": [
+        "review",
+        "production",
+        "30 days"
+      ]
+    }
+  ],
+  "setupHint": "Use a fine-grained token, scoped to one repository.",
+  "setupGuide": [
+    {
+      "title": "Create a fine-grained token",
+      "description": "GitHub Settings, Developer settings, Personal access tokens, Fine-grained. Not a classic token — those reach everything you own.",
+      "link": "https://github.com/settings/personal-access-tokens/new"
+    },
+    {
+      "title": "Scope it to one repository",
+      "description": "Under Repository access pick Only select repositories, then the repo to deploy."
+    },
+    {
+      "title": "Grant three permissions",
+      "description": "Actions: Read and write. Environments: Read. Contents: Read. Not Contents: Write — the agent ships commits, it never writes them."
+    },
+    {
+      "title": "Paste the token below",
+      "description": "Encrypted in your local vault. The agent never sees it."
+    }
+  ],
+  "proposalLinks": [
+    {
+      "label": "Open this build",
+      "template": "{deployment_url}",
+      "description": "Look at exactly what would go live"
+    },
+    {
+      "label": "View repository",
+      "template": "https://github.com/{repo}"
+    }
+  ]
+}
