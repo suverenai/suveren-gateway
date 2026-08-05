@@ -117,6 +117,7 @@ describe('Windows Task Scheduler XML', () => {
     serverEntry: 'C:\\Users\\a\\AppData\\suveren\\server.js',
     author: 'Suveren',
     dataDir: 'C:\\Users\\a\\.suveren',
+    userId: 'LAPTOP-HP\\Hans-Peter',
   });
 
   it('is UTF-16 declared — schtasks /Create /XML rejects other encodings', () => {
@@ -133,6 +134,46 @@ describe('Windows Task Scheduler XML', () => {
     const t = task();
     expect(t).toContain('<LogonType>InteractiveToken</LogonType>');
     expect(t).toContain('<RunLevel>LeastPrivilege</RunLevel>');
+  });
+
+  // The bug this suite missed: every assertion above passed while the task was
+  // unregistrable. A LogonTrigger without a UserId means "at ANY user's logon",
+  // which requires admin — schtasks answered "Zugriff verweigert" and autostart
+  // was impossible for a standard user.
+  it('names the user in BOTH the trigger and the principal — the admin trap', () => {
+    const t = task();
+    expect(t).toContain('<UserId>LAPTOP-HP\\Hans-Peter</UserId>');
+    // Once in <LogonTrigger>, once in <Principal>. One alone is not enough:
+    // the trigger decides whose logon fires it, the principal whose account
+    // it runs as.
+    expect(t.match(/<UserId>/g)).toHaveLength(2);
+  });
+
+  it('places UserId where the XSD requires it — schtasks rejects any other order', () => {
+    const t = task();
+    // Principal: UserId precedes LogonType.
+    expect(t).toMatch(/<UserId>[^<]+<\/UserId>\s*<LogonType>/);
+    // LogonTrigger: UserId follows Enabled.
+    expect(t).toMatch(/<LogonTrigger>\s*<Enabled>true<\/Enabled>\s*<UserId>/);
+  });
+
+  it('omits UserId rather than emitting an empty one when no user is known', () => {
+    // An empty <UserId></UserId> is a malformed principal; leaving it out at
+    // least keeps the old (admin-only) behaviour instead of failing to parse.
+    const t = buildWindowsTaskXml({
+      nodePath: 'C:\\node.exe', serverEntry: 'C:\\server.js',
+      author: 'Suveren', dataDir: '', userId: '',
+    });
+    expect(t).not.toContain('<UserId>');
+  });
+
+  it('escapes a hostile user name', () => {
+    const t = buildWindowsTaskXml({
+      nodePath: 'C:\\node.exe', serverEntry: 'C:\\server.js',
+      author: 'Suveren', dataDir: '', userId: 'DOM\\a&b',
+    });
+    expect(t).toContain('<UserId>DOM\\a&amp;b</UserId>');
+    expect(t).not.toMatch(/&(?!amp;|lt;|gt;|quot;|apos;)/);
   });
 
   it('never expires — the default 72h execution limit would kill the gateway', () => {

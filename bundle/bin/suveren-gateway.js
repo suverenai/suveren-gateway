@@ -13,7 +13,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { createConnection } from 'node:net';
 import { existsSync, mkdirSync, openSync, readFileSync, writeFileSync, unlinkSync, statSync } from 'node:fs';
-import { homedir, platform } from 'node:os';
+import { homedir, platform, userInfo } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildLaunchAgentPlist, buildMacLauncher, buildSystemdUnit, buildWindowsTaskXml } from '../lib/autostart-templates.mjs';
@@ -500,6 +500,22 @@ async function serviceStatusMac() {
 
 const WIN_TASK_NAME = 'Suveren';
 
+/**
+ * Who the login task runs as, as `DOMAIN\user` when a domain is known.
+ *
+ * Without this the task is registered for ANY user's logon, which Windows only
+ * lets an administrator do — a standard user just saw "Zugriff verweigert" and
+ * had no way to install autostart at all. USERDOMAIN is the machine name on a
+ * local account and the AD domain on a joined one; both are correct here.
+ * Falling back to the bare username is fine — Task Scheduler resolves it
+ * against the local machine.
+ */
+function windowsUserId() {
+  const name = process.env.USERNAME || userInfo().username;
+  const domain = process.env.USERDOMAIN;
+  return domain ? `${domain}\\${name}` : name;
+}
+
 async function serviceInstallWindows() {
   ensureDataDir();
 
@@ -513,6 +529,7 @@ async function serviceInstallWindows() {
     serverEntry: SERVER_ENTRY,
     author: 'Suveren',
     dataDir: process.env.SUVEREN_DATA_DIR ?? '',
+    userId: windowsUserId(),
   });
   const xmlPath = join(DATA_DIR, 'suveren-task.xml');
   writeFileSync(xmlPath, '\ufeff' + xml, { encoding: 'utf16le' });
@@ -766,7 +783,7 @@ Usage:
   suveren-gateway status             Show running state + health
   suveren-gateway logs [--tail]      Print or tail ~/.suveren/gateway.log
   suveren-gateway service <cmd>      Run as a login service that survives reboot
-                                     (install | uninstall | status; macOS today)
+                                     (install | uninstall | status)
   suveren-gateway help               Print this help
 
 Environment:

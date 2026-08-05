@@ -148,14 +148,27 @@ WantedBy=default.target
  * LogonType=InteractiveToken keeps it in the user's own session with no stored
  * password and no admin rights. Hidden + no execution time limit stop it
  * flashing a console window or being killed after the default 72 hours.
+ *
+ * `userId` is what makes it unprivileged, and leaving it out is not a cosmetic
+ * omission: a LogonTrigger with no UserId means "at ANY user's logon", which
+ * only an administrator may register. A standard user got `Zugriff verweigert`
+ * from schtasks — the install was impossible for exactly the audience the
+ * user-level design was for. Naming the user scopes both the trigger and the
+ * principal to that account, which needs no elevation.
  */
-export function buildWindowsTaskXml({ nodePath, serverEntry, author, dataDir }) {
+export function buildWindowsTaskXml({ nodePath, serverEntry, author, dataDir, userId }) {
   // Task Scheduler requires \Command to be the executable and \Arguments the
   // rest; quoting the script path handles spaces (e.g. under "Program Files").
   // Task Scheduler XML carries no environment block, so the marker that this
   // was a service start has to ride in the arguments.
   const args = `"${serverEntry}" --autostart`;
   const envNote = dataDir ? `Suveren data directory: ${dataDir}` : 'Suveren gateway';
+
+  // Element order is fixed by the Task Scheduler XSD, and schtasks rejects the
+  // file outright when it is wrong: inside Principal, UserId precedes LogonType;
+  // inside LogonTrigger it follows Enabled.
+  const principalUser = userId ? `      <UserId>${escapeXml(userId)}</UserId>\n` : '';
+  const triggerUser = userId ? `      <UserId>${escapeXml(userId)}</UserId>\n` : '';
 
   return `<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
@@ -166,11 +179,11 @@ export function buildWindowsTaskXml({ nodePath, serverEntry, author, dataDir }) 
   <Triggers>
     <LogonTrigger>
       <Enabled>true</Enabled>
-    </LogonTrigger>
+${triggerUser}    </LogonTrigger>
   </Triggers>
   <Principals>
     <Principal id="Author">
-      <LogonType>InteractiveToken</LogonType>
+${principalUser}      <LogonType>InteractiveToken</LogonType>
       <RunLevel>LeastPrivilege</RunLevel>
     </Principal>
   </Principals>
