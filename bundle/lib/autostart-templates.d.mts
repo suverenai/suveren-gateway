@@ -34,4 +34,6 @@ export declare function buildWindowsTaskXml(opts: {
   serverEntry: string;
   author: string;
   dataDir?: string;
+  /** `DOMAIN\\user`. Omitting it registers an any-user task, which needs admin. */
+  userId?: string;
 }): string;
