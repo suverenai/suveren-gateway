@@ -1,6 +1,7 @@
 import { useAuth } from '../contexts/AuthContext';
 import { useTheme } from '../hooks/useTheme';
 import { useUpdateCheck } from '../hooks/useUpdateCheck';
+import { BrandMark } from './BrandMark';
 
 /** Render the gateway's running version compactly. Docker stamps a
  *  full git SHA into HAP_BUILD_SHA — show the short 7-char form so it
@@ -42,6 +43,7 @@ export function TopNav({ onMenuToggle }: TopNavProps) {
             second copy was a raw UUID, which is the least readable thing that
             was on the page. */}
         <div className="logo-group">
+          <BrandMark size={20} />
           <span className="logo">Suveren</span>
           <span className="version-badge">Local Gateway</span>
           {versionLabel && (

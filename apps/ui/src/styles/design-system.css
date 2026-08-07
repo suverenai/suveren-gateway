@@ -191,6 +191,11 @@ code {
   gap: 0.5rem;
   flex-shrink: 0;
 }
+/* The brand mark sits in a nav that squeezes on narrow viewports; without this
+   it is the first thing flexbox shrinks into an ellipse. */
+.logo-group svg {
+  flex-shrink: 0;
+}
 
 .logo {
   font-weight: 700;

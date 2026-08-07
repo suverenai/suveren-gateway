@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none">
+  <path class="mark" d="M 104.94 61.85 A 41 41 0 1 1 45.39 27.47"/>
+  <line class="mark" x1="74.54" y1="22.74" x2="94.46" y2="34.24"/>
+  <style>
+    .mark { stroke: #111111; stroke-width: 14; fill: none; stroke-linecap: round; }
+    @media (prefers-color-scheme: dark) { .mark { stroke: #ffffff; stroke-width: 13.3; } }
+  </style>
+</svg>
