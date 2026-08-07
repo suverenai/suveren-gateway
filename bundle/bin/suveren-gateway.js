@@ -323,8 +323,14 @@ function serviceRunning() {
     return p.status === 0 && /state = running/.test(p.stdout || '');
   }
   if (os === 'win32') {
-    const p = runQuiet('schtasks', ['/Query', '/TN', WIN_TASK_NAME, '/FO', 'LIST']);
-    return p.status === 0 && /Status:\s+Running/i.test(p.stdout || '');
+    // NOT schtasks /Query: its LIST output is localized — a German Windows
+    // prints "Wird ausgeführt", so matching the English word "Running" reports
+    // every non-English machine as stopped, and restart silently falls back to
+    // the manual path. Get-ScheduledTask's State is a .NET enum; its name is
+    // English on every locale.
+    const p = runQuiet('powershell', ['-NoProfile', '-NonInteractive', '-Command',
+      `(Get-ScheduledTask -TaskName '${WIN_TASK_NAME}' -ErrorAction Stop).State`]);
+    return p.status === 0 && /^Running/m.test((p.stdout || '').trim());
   }
   const p = runQuiet('systemctl', ['--user', 'is-active', SYSTEMD_UNIT]);
   return (p.stdout || '').trim() === 'active';
@@ -344,7 +350,16 @@ function serviceRestart() {
   if (os === 'darwin') {
     runQuiet('launchctl', ['kickstart', '-k', `gui/${process.getuid()}/${LAUNCH_AGENT_LABEL}`]);
   } else if (os === 'win32') {
-    runQuiet('schtasks', ['/End', '/TN', WIN_TASK_NAME]);
+    // NOT schtasks /End: it TerminateProcess()es only the task's ROOT process
+    // (node server.js). No signal is delivered, so the shutdown handlers never
+    // run and the control-plane / MCP children survive — still holding ports
+    // 3400/3430, which makes the relaunched instance die on EADDRINUSE and
+    // "restart" quietly become "stop". taskkill /T takes the whole tree.
+    const like = SERVER_ENTRY.replace(/'/g, "''").replace(/([\[\]*?])/g, '`$1');
+    runQuiet('powershell', ['-NoProfile', '-NonInteractive', '-Command',
+      `Get-CimInstance Win32_Process -Filter "Name='node.exe'" | ` +
+      `Where-Object { $_.CommandLine -like '*${like}*' } | ` +
+      `ForEach-Object { taskkill.exe /PID $_.ProcessId /T /F } | Out-Null`]);
     runQuiet('schtasks', ['/Run', '/TN', WIN_TASK_NAME]);
   } else {
     runQuiet('systemctl', ['--user', 'restart', SYSTEMD_UNIT]);
@@ -573,8 +588,12 @@ async function serviceStatusWindows() {
   console.log(`Login service: ${installed ? 'installed' : 'not installed'}`);
   if (installed) {
     console.log(`  Task:   ${WIN_TASK_NAME}`);
-    const state = /Status:\s*(\S+)/.exec(r.stdout || '');
-    if (state) console.log(`  State:  ${state[1]}`);
+    // Locale-independent state (see serviceRunning): the schtasks LIST value
+    // is localized; the PowerShell enum name is not.
+    const st = runQuiet('powershell', ['-NoProfile', '-NonInteractive', '-Command',
+      `(Get-ScheduledTask -TaskName '${WIN_TASK_NAME}' -ErrorAction Stop).State`]);
+    const state = (st.stdout || '').trim();
+    if (st.status === 0 && state) console.log(`  State:  ${state}`);
   }
 }
 
