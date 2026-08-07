@@ -608,6 +608,25 @@ class SPClient {
     return res.json();
   }
 
+  // ─── Local gateway preferences (control plane, not the Authority Server) ───
+
+  async getGatewaySettings(): Promise<{ desktopNotifications: boolean }> {
+    const res = await this.fetch('/api/gateway-settings');
+    if (!res.ok) throw new Error(`Failed to load settings: ${res.status}`);
+    return res.json();
+  }
+
+  /** Returns the PERSISTED state, so callers render backend truth. */
+  async setGatewaySettings(patch: { desktopNotifications?: boolean }): Promise<{ desktopNotifications: boolean }> {
+    const res = await this.fetch('/api/gateway-settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    });
+    if (!res.ok) throw new Error(`Failed to save settings: ${res.status}`);
+    return res.json();
+  }
+
   async getCredential(name: string): Promise<{ configured: boolean; fieldNames?: string[]; fields?: Record<string, string> }> {
     const res = await this.fetch(`/vault/credentials/${encodeURIComponent(name)}`);
     if (!res.ok) throw new Error(`Failed to check credential: ${res.status}`);

@@ -5,6 +5,7 @@ import { spClient, type PendingItem, type Proposal } from '../lib/sp-client';
 import { SetupGuide } from '../components/SetupGuide';
 import { useVisiblePolling } from '../hooks/useVisiblePolling';
 import { useSSEEvent } from '../contexts/EventSourceContext';
+import { isPendingProposal } from '../lib/pending';
 import { useIntegrationStatus } from '../contexts/IntegrationStatusContext';
 import { Skeleton, SkeletonAttentionRow } from '../components/Skeleton';
 import { RecentBlocks } from '../components/RecentBlocks';
@@ -74,7 +75,7 @@ export function DashboardPage() {
   const active = buckets.active;
   const expired = buckets.expired;
   const soonExpiring = active.filter(a => a.remaining_seconds !== null && a.remaining_seconds <= EXPIRY_WARN_SECONDS);
-  const pendingProposals = proposals.filter(p => p.status === 'pending');
+  const pendingProposals = proposals.filter(isPendingProposal);
   const runningIntegrations = integrationEntries.filter(e => e.state === 'running');
   const startingIntegrations = integrationEntries.filter(e => e.state === 'starting');
   const attentionIntegrations = integrationEntries.filter(

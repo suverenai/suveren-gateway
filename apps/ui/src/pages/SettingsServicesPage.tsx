@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { spClient } from '../lib/sp-client';
 import { AutostartToggle } from '../components/AutostartToggle';
+import { NotificationsToggle } from '../components/NotificationsToggle';
 import { VersionCard } from '../components/VersionCard';
 
 const PROVIDER_CONFIG: Record<string, { provider: string; endpoint: string; models: string[] }> = {
@@ -317,6 +318,7 @@ export function SettingsServicesPage() {
 
       {/* Autostart — the CLI's `service` command as a switch */}
       <AutostartToggle />
+      <NotificationsToggle />
       <VersionCard />
 
       {/* Security guidance */}

@@ -38,6 +38,7 @@ import { createVaultRouter } from './routes/vault';
 import { createAIRouter } from './routes/ai';
 import { createAIPromptsRouter } from './routes/ai-prompts';
 import { requireAuth, requireAuthQueryOrHeader } from './middleware/auth';
+import { requireAllowedHost } from './middleware/host-guard';
 import { pushGateContent, pushServiceCredentials, setInternalSecret, getManifests, getGateContent, getEnrichedAuthorizations, MCP_BASE, runCommittedProposals, resyncGates, setReadPolicy } from './lib/mcp-bridge';
 import { backfillReadPolicyDefaults } from './lib/read-policy-defaults';
 import { createMCPRouter } from './routes/mcp';
@@ -48,6 +49,8 @@ import { createDecryptIntentRouter } from './routes/decrypt-intent';
 import { createApprovedIntentsRouter } from './routes/approved-intents';
 import { startUpdateChecker, getUpdateStatus, forceCheck } from './lib/update-checker';
 import { createEventsHandler } from './routes/events';
+import { createGatewaySettingsRouter } from './routes/gateway-settings';
+import { startNotificationDispatcher } from './lib/notification-dispatcher';
 import { eventBus } from './lib/event-bus';
 import { loadDenials, selectDenials } from './lib/denials-reader';
 
@@ -374,7 +377,9 @@ app.get('/auth/oauth/:integrationId/health', authGuard, async (req: Request, res
 // SSE event stream — auth-guarded, long-lived connection
 // /events is reached by EventSource which can't send custom headers — use the
 // query-string variant of the auth middleware so the API key can ride in ?key=.
-app.get('/events', requireAuthQueryOrHeader(vault), createEventsHandler());
+// The host guard runs FIRST: a DNS-rebinding attempt should be refused before
+// the API key in ?key= is even looked at.
+app.get('/events', requireAllowedHost, requireAuthQueryOrHeader(vault), createEventsHandler());
 
 // Vault routes
 app.use('/vault', jsonParser, authGuard, createVaultRouter(vault));
@@ -393,6 +398,9 @@ app.use('/mcp', jsonParser, authGuard, createMCPRouter());
 app.use('/autostart', jsonParser, authGuard, createAutostartRouter());
 
 // E2EE intent encryption (P5.5)
+// Local display preferences (desktop notifications). Never holds secrets.
+app.use('/api/gateway-settings', jsonParser, authGuard, createGatewaySettingsRouter());
+
 app.use('/api/encrypt-intent', jsonParser, authGuard, createEncryptIntentRouter());
 
 // E2EE intent decryption (P6.4) — approver-side, uses vault private key
@@ -896,6 +904,10 @@ app.listen(port, '0.0.0.0', () => {
     // it — otherwise clicking the "unlock me" notice opens Finder.
     notify(title, message, process.platform, url);
   }
+
+  // Doorbell for pending reviews. Content-free and action-free by design — see
+  // lib/notification-dispatcher.ts. Fires at most once a minute.
+  startNotificationDispatcher({ url: `http://localhost:${port}` });
 
   console.error(`[Control Plane]   SP proxy: ${SP_URL}`);
   console.error(`[Control Plane]   UI dist:  ${UI_DIST}`);
