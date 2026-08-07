@@ -143,6 +143,10 @@ export class NotificationDispatcher {
       enabled = true; // a broken preferences file must not silence the doorbell
     }
 
+    console.error(
+      `[Control Plane] Review pending — desktop notification ${enabled ? 'sent' : 'suppressed (turned off)'}`,
+    );
+
     if (enabled) {
       const message = count >= FLOOD_THRESHOLD ? floodMessage(count) : WAITING_MESSAGE;
       // notify() never throws and never blocks: a missing notify-send, a denied

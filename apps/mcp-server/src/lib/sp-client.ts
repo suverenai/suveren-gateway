@@ -5,6 +5,8 @@
  * via the internal /internal/configure endpoint. All SP requests include this cookie.
  */
 
+import { notifyControlPlane } from './cp-notify';
+
 export interface SPAttestationResponse {
   domain: string;
   blob: string;
@@ -335,6 +337,14 @@ export class SPClient {
       const body = await res.json().catch(() => ({})) as Record<string, unknown>;
       throw new Error((body.error as string) ?? `SP proposal submission failed: ${res.status}`);
     }
+
+    // A proposal now exists and a human has to act on it — but this process
+    // talks to the Authority Server directly, so the control plane (which owns
+    // the tab badge and the desktop notification) would otherwise never know.
+    // Content-free, fire-and-forget: the ping must never delay or fail a
+    // proposal that was created successfully.
+    void notifyControlPlane('proposal-added');
+
     return res.json() as Promise<{ proposal: SPProposal }>;
   }
 

@@ -50,6 +50,7 @@ import { createApprovedIntentsRouter } from './routes/approved-intents';
 import { startUpdateChecker, getUpdateStatus, forceCheck } from './lib/update-checker';
 import { createEventsHandler } from './routes/events';
 import { createGatewaySettingsRouter } from './routes/gateway-settings';
+import { createInternalEventsRouter } from './routes/internal-events';
 import { startNotificationDispatcher } from './lib/notification-dispatcher';
 import { eventBus } from './lib/event-bus';
 import { loadDenials, selectDenials } from './lib/denials-reader';
@@ -380,6 +381,11 @@ app.get('/auth/oauth/:integrationId/health', authGuard, async (req: Request, res
 // The host guard runs FIRST: a DNS-rebinding attempt should be refused before
 // the API key in ?key= is even looked at.
 app.get('/events', requireAllowedHost, requireAuthQueryOrHeader(vault), createEventsHandler());
+
+// Sibling-process events (MCP server → control plane). Authenticated by the
+// shared internal secret, NOT by a user session: the MCP server has none.
+// Carries an event type and nothing else.
+app.use('/internal', jsonParser, createInternalEventsRouter(() => internalSecret));
 
 // Vault routes
 app.use('/vault', jsonParser, authGuard, createVaultRouter(vault));
