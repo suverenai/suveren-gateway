@@ -6,7 +6,7 @@
  * assertions here are deliberately strict about the full command.
  */
 import { describe, it, expect } from 'vitest';
-import { buildNotifyCommand, lockedNotification, WINDOWS_AUMID } from '../lib/desktop-notify';
+import { buildNotifyCommand, lockedNotification, WINDOWS_AUMID, notifySpawnOptions } from '../lib/desktop-notify';
 
 describe('buildNotifyCommand — macOS', () => {
   it('uses osascript with both strings quoted and an audible sound', () => {
@@ -112,5 +112,25 @@ describe('lockedNotification', () => {
     const n = lockedNotification(3400);
     expect(n.url).toBe('http://localhost:3400');
     expect(n.message).toContain('http://localhost:3400');
+  });
+});
+
+describe('notifySpawnOptions', () => {
+  it('does NOT detach on Windows', () => {
+    // Verified on Windows 11: a toast posted from a DETACHED_PROCESS is
+    // accepted (PowerShell exits 0, stderr empty) and never delivered. This
+    // one flag silently swallowed every Windows notification the gateway sent.
+    expect(notifySpawnOptions('win32').detached).toBe(false);
+  });
+
+  it('detaches elsewhere, so a notification outlives a gateway restart', () => {
+    expect(notifySpawnOptions('darwin').detached).toBe(true);
+    expect(notifySpawnOptions('linux').detached).toBe(true);
+  });
+
+  it('pipes stderr on every platform - discarding it is how the bug hid', () => {
+    for (const p of ['win32', 'darwin', 'linux'] as NodeJS.Platform[]) {
+      expect(notifySpawnOptions(p).stdio[2]).toBe('pipe');
+    }
   });
 });

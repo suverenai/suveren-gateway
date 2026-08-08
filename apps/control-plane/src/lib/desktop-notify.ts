@@ -207,6 +207,34 @@ export function hasTerminalNotifier(): boolean {
 }
 
 /**
+ * How the notifier process is spawned. Pure and exported so the one setting
+ * that silently broke every Windows notification is covered by a test.
+ *
+ * **Not detached on Windows.** Node's `detached` sets the DETACHED_PROCESS
+ * creation flag there, and a toast posted from such a process is accepted —
+ * PowerShell exits 0, writes nothing to stderr — and then never delivered.
+ * Verified on Windows 11 (2026-08-08): the identical script shows a toast
+ * spawned without the flag and shows nothing with it. That is why every
+ * notification the gateway posted on Windows vanished while the same script
+ * run by hand worked, and why it took five diagnostics to find: the failure
+ * produces no error anywhere.
+ *
+ * Elsewhere it stays detached, so a notification outlives a gateway restart.
+ * `unref()` is what actually keeps the event loop free, on every platform.
+ *
+ * stderr is piped rather than ignored: discarding it is how this hid.
+ */
+export function notifySpawnOptions(platform: NodeJS.Platform): {
+  detached: boolean;
+  stdio: ['ignore', 'ignore', 'pipe'];
+} {
+  return {
+    detached: platform !== 'win32',
+    stdio: ['ignore', 'ignore', 'pipe'],
+  };
+}
+
+/**
  * Fire and forget. Never throws and never blocks startup: a missing
  * notify-send, a locked-down PowerShell policy or a denied permission must not
  * stop the gateway from serving.
@@ -226,7 +254,16 @@ export function notify(
   });
   if (!command) return;
   try {
-    const child = spawn(command.cmd, command.args, { detached: true, stdio: 'ignore' });
+    const child = spawn(command.cmd, command.args, notifySpawnOptions(platform));
+    // Keep the failure audible. Silently discarding this is exactly how the
+    // above went unnoticed. Fixed literals only, so nothing sensitive is logged.
+    let stderr = '';
+    child.stderr?.on('data', (d: Buffer) => { stderr += d.toString().slice(0, 500); });
+    child.on('close', code => {
+      if (code !== 0) {
+        console.error(`[notify] ${command.cmd} exited ${code}${stderr ? `: ${stderr.trim()}` : ''}`);
+      }
+    });
     child.on('error', () => { /* no mechanism available — stay quiet */ });
     child.unref();
   } catch {
