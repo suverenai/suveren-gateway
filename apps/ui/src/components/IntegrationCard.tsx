@@ -67,7 +67,11 @@ export function IntegrationCard({ manifest, integration, state, onStatusChange, 
   const [credValues, setCredValues] = useState<Record<string, string>>({});
   const [credConfigured, setCredConfigured] = useState(false);
   const [credsOnFile, setCredsOnFile] = useState(false); // vault has credentials stored
-  const [existingCreds, setExistingCreds] = useState<Record<string, string>>({}); // current manifest-field values, for the edit panel
+  const [existingCreds, setExistingCreds] = useState<Record<string, string>>({}); // current TEXT-field values, for the edit panel
+  // Recognition hints for secret fields ("GOCSPX-…a3f9" / null) and the last
+  // write time — all the browser ever learns about a stored secret.
+  const [secretHints, setSecretHints] = useState<Record<string, { preview: string | null }>>({});
+  const [credUpdatedAt, setCredUpdatedAt] = useState<string | undefined>(undefined);
   const [oauthConnected, setOauthConnected] = useState(false);
   const [authHealth, setAuthHealth] = useState<{ status: string; error?: string; account?: string } | null>(null);
   const [saving, setSaving] = useState(false);
@@ -86,6 +90,10 @@ export function IntegrationCard({ manifest, integration, state, onStatusChange, 
   const [pending, setPending] = useState<{ value: number | null } | null>(null);
   const [savingReadAge, setSavingReadAge] = useState(false);
   const [readAgeError, setReadAgeError] = useState<string | null>(null);
+  // Collapsed by default: the seven preset pills were permanent clutter for a
+  // setting most people touch once. Collapsed shows the choice; Edit shows the
+  // choices. Pills still apply on click (backend truth, no fake Save).
+  const [editingReadAge, setEditingReadAge] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -103,6 +111,8 @@ export function IntegrationCard({ manifest, integration, state, onStatusChange, 
         }
         setExistingCreds(current);
       }
+      setSecretHints(status.secrets ?? {});
+      setCredUpdatedAt(status.updatedAt);
       // Check if OAuth token exists, then probe whether it actually authenticates.
       if (manifest.oauth) {
         const connected = status.fieldNames?.includes(manifest.oauth.tokenStorage) ?? false;
@@ -191,15 +201,35 @@ export function IntegrationCard({ manifest, integration, state, onStatusChange, 
     }
   };
 
+  /**
+   * Only what actually changed. Untouched text fields are omitted (the server
+   * merge keeps them), and an untyped password field is NOT sent as "" — an
+   * empty string means "clear this" to the server, and an edit that only
+   * changed the client ID must never wipe the secret.
+   */
+  const changedCredFields = (): Record<string, string> => {
+    const out: Record<string, string> = {};
+    for (const f of manifest.credentials.fields) {
+      const typed = credValues[f.key];
+      if (f.type === 'password') {
+        if (typed?.trim()) out[f.key] = typed;
+      } else if (typed != null && typed !== (existingCreds[f.key] ?? '')) {
+        out[f.key] = typed;
+      }
+    }
+    return out;
+  };
+  const credsDirty = Object.keys(changedCredFields()).length > 0;
+
   // Save new credentials from the "Change credentials" edit panel (running
   // integration). For OAuth we stay in edit mode so the user can Connect with
   // the new client; for non-OAuth we restart with the new creds and exit.
   const saveCredsEdit = async () => {
-    const hasValues = manifest.credentials.fields.some(f => credValues[f.key]?.trim());
-    if (!hasValues) return;
+    const changed = changedCredFields();
+    if (Object.keys(changed).length === 0) return;
     setSaving(true);
     try {
-      await spClient.setCredential(manifest.id, credValues);
+      await spClient.setCredential(manifest.id, changed);
       setCredValues({});
       setCredConfigured(true);
       if (manifest.oauth) {
@@ -320,18 +350,39 @@ export function IntegrationCard({ manifest, integration, state, onStatusChange, 
         </div>
       )}
 
-      {/* Auth actually broken (e.g. Google invalid_grant) — surface + recover. */}
+      {/* Auth actually broken (e.g. Google invalid_grant). The refusal is the
+          product, so this box works harder than the success path: what failed,
+          why, what it blocks, and the one action that fixes it. */}
       {authFailed && !editingCreds && (
-        <div style={{ marginTop: '0.7rem' }}>
-          <div className="status-banner status-banner-error" style={{ marginBottom: '0.6rem' }}>
-            <span className="status-banner-icon">!</span>
-            <span className="status-banner-text">
-              Authentication failed{authHealth?.error ? ` — ${authHealth.error}` : ''}. Reconnect to restore access.
-            </span>
+        <div style={{
+          marginTop: '0.7rem',
+          border: '1px solid var(--danger)',
+          borderRadius: '10px',
+          padding: '0.8rem 0.95rem',
+          background: 'color-mix(in srgb, var(--danger) 5%, var(--bg-elevated))',
+        }}>
+          <div style={{ fontSize: '0.86rem', fontWeight: 700 }}>
+            {manifest.name} stopped accepting the stored credentials
           </div>
-          <button className="btn btn-primary btn-sm" onClick={startOAuth}>
-            Reconnect {manifest.name}
-          </button>
+          <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: '0.3rem 0 0', lineHeight: 1.55 }}>
+            {authHealth?.error === 'invalid_grant'
+              ? <>The refresh token was revoked (<code>invalid_grant</code>) — this usually follows a password change or a security checkup on the provider's side.</>
+              : authHealth?.error
+                ? <>The provider reported <code>{authHealth.error}</code>.</>
+                : <>The provider rejected the stored authentication.</>}{' '}
+            Your agent's {manifest.name} actions are <b>blocked</b>, not failing silently.
+          </p>
+          <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.6rem' }}>
+            <button className="btn btn-primary btn-sm" onClick={startOAuth}>
+              Reconnect {manifest.name}
+            </button>
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={() => { setCredValues({ ...existingCreds }); setEditingCreds(true); }}
+            >
+              Edit credentials
+            </button>
+          </div>
         </div>
       )}
 
@@ -425,7 +476,8 @@ export function IntegrationCard({ manifest, integration, state, onStatusChange, 
           <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.5rem' }}>Change credentials</div>
           {credsOnFile && (
             <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.6rem' }}>
-              Your current values are filled in below (secret hidden — click {'“'}show{'”'}). Edit them, then{manifest.oauth ? ' Save and Connect to re-link the account.' : ' Save to apply.'}
+              Leaving a secret blank keeps the stored one — editing other fields can never
+              silently wipe it.{manifest.oauth ? ' Save, then Connect to re-link the account.' : ''}
             </p>
           )}
           {manifest.credentials.fields.map(field => (
@@ -443,7 +495,9 @@ export function IntegrationCard({ manifest, integration, state, onStatusChange, 
                     // avoids heuristic matching.
                     name={`${manifest.id}-${field.key}-credential`}
                     autoComplete="new-password"
-                    placeholder={field.placeholder}
+                    placeholder={secretHints[field.key]?.preview
+                      ? `Unchanged — ends in ${secretHints[field.key].preview}`
+                      : credsOnFile ? 'Unchanged — paste a new value to replace' : field.placeholder}
                     value={credValues[field.key] || ''}
                     onChange={e => setCredValues(v => ({ ...v, [field.key]: e.target.value }))}
                   />
@@ -465,9 +519,14 @@ export function IntegrationCard({ manifest, integration, state, onStatusChange, 
             </div>
           ))}
           <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.25rem' }}>
-            <button className="btn btn-primary btn-sm" onClick={saveCredsEdit} disabled={saving}>
+            <button className="btn btn-primary btn-sm" onClick={saveCredsEdit} disabled={saving || !credsDirty}>
               {saving ? 'Saving…' : 'Save'}
             </button>
+            {!credsDirty && !saving && (
+              <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)', alignSelf: 'center' }}>
+                No changes yet
+              </span>
+            )}
             {manifest.oauth && (
               <button className="btn btn-secondary btn-sm" onClick={startOAuth}>
                 Connect {manifest.name}
@@ -483,6 +542,32 @@ export function IntegrationCard({ manifest, integration, state, onStatusChange, 
       {/* Running state — status shown by the chips above; just the actions here */}
       {!editingCreds && cardState === 'running' && integration && (
         <>
+          {/* What is stored, without storing it in the browser: text fields as
+              values, secrets as recognition hints. Enough to tell WHICH key is
+              in the vault; whether it works is what the health probe answers. */}
+          {(Object.keys(existingCreds).length > 0 || Object.keys(secretHints).length > 0) && (
+            <div style={{ display: 'grid', gap: '0.3rem', margin: '0.15rem 0 0.7rem', fontSize: '0.82rem' }}>
+              {manifest.credentials.fields.map(f => {
+                const isSecret = f.type === 'password';
+                const hint = secretHints[f.key];
+                if (!isSecret && existingCreds[f.key] == null) return null;
+                if (isSecret && hint == null) return null;
+                return (
+                  <div key={f.key} style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem' }}>
+                    <span style={{ color: 'var(--text-muted)' }}>{f.label}</span>
+                    <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: '0.78rem', textAlign: 'right', wordBreak: 'break-all' }}>
+                      {isSecret ? (hint.preview ?? 'set') : existingCreds[f.key]}
+                      {isSecret && credUpdatedAt && (
+                        <span style={{ color: 'var(--text-muted)', fontFamily: 'inherit' }}>
+                          {' '}· added {new Date(credUpdatedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             <Link to="/agent/new" className="btn btn-primary btn-sm" style={{ textDecoration: 'none' }}>
               Authorize agent
@@ -493,7 +578,7 @@ export function IntegrationCard({ manifest, integration, state, onStatusChange, 
                 onClick={() => { setCredValues({ ...existingCreds }); setEditingCreds(true); }}
                 title="Re-enter client ID / secret (e.g. a new OAuth client)."
               >
-                Change credentials
+                Edit credentials
               </button>
             )}
             <span style={{ flex: 1 }} />
@@ -511,16 +596,33 @@ export function IntegrationCard({ manifest, integration, state, onStatusChange, 
               reaches the Authority Server, so this needs no re-authorization
               and applies to the next read. Only shown for integrations whose
               manifest actually declares an age-bounded read. */}
-          {hasReadAge && readAge !== undefined && (
+          {hasReadAge && readAge !== undefined && !editingReadAge && (
             <div style={{ marginTop: '0.9rem', paddingTop: '0.85rem', borderTop: '1px solid var(--border)' }}>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem', marginBottom: '0.35rem' }}>
-                <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>Read policy</span>
-                <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-                  How far back your agent may read
-                </span>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.6rem' }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem', minWidth: 0 }}>
+                  <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>Reads</span>
+                  <span style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+                    {readAge === null ? 'window from your authorization' : readAgeLabel(readAge).toLowerCase()}
+                  </span>
+                  {savingReadAge && <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>saving…</span>}
+                  {readAgeError && <span style={{ fontSize: '0.78rem', color: 'var(--danger)' }}>{readAgeError}</span>}
+                </div>
+                <button className="btn btn-sm btn-secondary" onClick={() => setEditingReadAge(true)}>
+                  Edit
+                </button>
+              </div>
+            </div>
+          )}
+          {hasReadAge && readAge !== undefined && editingReadAge && (
+            <div style={{ marginTop: '0.9rem', paddingTop: '0.85rem', borderTop: '1px solid var(--border)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.6rem', marginBottom: '0.35rem' }}>
+                <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>How far back may your agent read?</span>
+                <button className="btn btn-sm btn-ghost" onClick={() => setEditingReadAge(false)}>
+                  Done
+                </button>
               </div>
               <p style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)', margin: '0 0 0.55rem' }}>
-                Applies immediately — no new authorization needed.
+                Applies immediately — no Save, no new authorization.
               </p>
               <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
                 {READ_AGE_PRESETS.map(days => {

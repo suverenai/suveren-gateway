@@ -2,12 +2,36 @@
  * Vault routes — encrypted credential and service management.
  *
  * All routes are protected by requireAuth middleware (applied in index.ts).
- * Never returns decrypted secret values — only masked versions or {configured: true}.
+ *
+ * Secret values never leave this process. GET returns declared-`text` fields
+ * as values and everything else as recognition hints (see credential-meta.ts).
+ * This claim used to be false — the old GET returned every decrypted field and
+ * the "masking" was CSS in the browser.
  */
 
 import { Router, type Request, type Response } from 'express';
 import type { Vault, ServiceDef } from '../lib/vault';
-import { pushServiceCredentials } from '../lib/mcp-bridge';
+import { getManifests, pushServiceCredentials } from '../lib/mcp-bridge';
+import { credentialView, textFieldsFor, META_KEY } from '../lib/credential-meta';
+
+/**
+ * Manifests decide which credential fields are `text` (returned as values)
+ * versus secret (returned as hints). They come from the MCP server and change
+ * only on install/uninstall — a short cache keeps the settings page from
+ * costing an internal round-trip per card, and an UNREACHABLE MCP degrades to
+ * "no manifest" = every field secret, never to leaking.
+ */
+let manifestCache: { at: number; value: unknown } | null = null;
+async function cachedManifests(): Promise<unknown> {
+  if (manifestCache && Date.now() - manifestCache.at < 60_000) return manifestCache.value;
+  try {
+    const m = await getManifests();
+    manifestCache = { at: Date.now(), value: (m as { manifests?: unknown })?.manifests ?? m };
+  } catch {
+    manifestCache = { at: Date.now(), value: [] };
+  }
+  return manifestCache.value;
+}
 
 export function createVaultRouter(vault: Vault): Router {
   const router = Router();
@@ -29,14 +53,18 @@ export function createVaultRouter(vault: Vault): Router {
    * GET /vault/credentials/:name
    * Returns { configured: true, fieldNames: [...] } — never the actual values.
    */
-  router.get('/credentials/:name', (req: Request, res: Response) => {
+  router.get('/credentials/:name', async (req: Request, res: Response) => {
     const { name } = req.params;
     const cred = vault.getCredential(name);
     if (!cred) {
       res.json({ configured: false });
       return;
     }
-    res.json({ configured: true, fieldNames: Object.keys(cred), fields: cred });
+    // Metadata by default: declared-text fields as values, everything else as
+    // recognition hints (prefix + last 4, nothing at all for short secrets).
+    // The full value exists only inside the gateway; there is deliberately no
+    // endpoint that returns it.
+    res.json(credentialView(cred, textFieldsFor(name, await cachedManifests())));
   });
 
   /**
@@ -60,6 +88,11 @@ export function createVaultRouter(vault: Vault): Router {
       // Vault locked / not decryptable — fall back to the incoming payload as-is
       // (setCredential below will surface any real failure).
     }
+
+    // Write-time metadata, stored inside the blob under a reserved key. It is
+    // what lets the UI say "added Aug 1" next to a hint — often the only way
+    // to tell two rotations of the same secret apart. Never client-supplied.
+    fields = { ...fields, [META_KEY]: new Date().toISOString() };
 
     vault.setCredential(name, fields);
 

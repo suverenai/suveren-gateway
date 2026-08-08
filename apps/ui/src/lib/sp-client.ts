@@ -627,7 +627,19 @@ class SPClient {
     return res.json();
   }
 
-  async getCredential(name: string): Promise<{ configured: boolean; fieldNames?: string[]; fields?: Record<string, string> }> {
+  /**
+   * Credential metadata. `fields` carries only manifest-declared `text` values;
+   * secret fields arrive as recognition hints (prefix + last 4, or null for
+   * short secrets) in `secrets`. The full values never reach the browser, and
+   * there is deliberately no endpoint that returns them.
+   */
+  async getCredential(name: string): Promise<{
+    configured: boolean;
+    fieldNames?: string[];
+    fields?: Record<string, string>;
+    secrets?: Record<string, { preview: string | null }>;
+    updatedAt?: string;
+  }> {
     const res = await this.fetch(`/vault/credentials/${encodeURIComponent(name)}`);
     if (!res.ok) throw new Error(`Failed to check credential: ${res.status}`);
     return res.json();
