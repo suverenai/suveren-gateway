@@ -119,7 +119,16 @@ suveren-gateway stop               # stop a detached run
 
 Open `http://localhost:3400`. The MCP server is at `http://localhost:3430`.
 
-To upgrade later: `npm install -g @suveren/gateway@latest && suveren-gateway restart`.
+To upgrade later, run these two commands:
+
+```
+npm install -g @suveren/gateway@latest
+suveren-gateway restart
+```
+
+(Written as two lines on purpose: `&&` is not a valid separator in Windows
+PowerShell 5.1, which is what ships with Windows. Use `;` there if you want
+them on one line.)
 
 ### Connecting an MCP client
 
