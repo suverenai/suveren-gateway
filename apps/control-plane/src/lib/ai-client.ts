@@ -8,6 +8,9 @@
  * Key difference: runs server-side, keys never sent to browser.
  */
 
+/** Shared with the reasoning-budget explanation, so the number in the error is the real one. */
+export const CHAT_TOKEN_BUDGET = 4000;
+
 export interface AIConfig {
   provider: 'ollama' | 'openai-compatible';
   endpoint: string;
@@ -42,6 +45,63 @@ export const PROVIDER_PRESETS: Record<string, AIConfig> = {
     model: 'meta-llama/Llama-3-8b-chat-hf',
   },
 };
+
+
+/**
+ * Why an OpenAI-compatible call returned 200 with no visible text.
+ *
+ * "No response generated." was the answer to every one of these, which told
+ * nobody anything. The provider does say why — in `finish_reason`, in `usage`,
+ * and (for reasoning models) in a separate reasoning field — so say it.
+ *
+ * The common case is a reasoning model: reasoning tokens are charged against
+ * the SAME budget as the answer, so a small max_tokens can be consumed
+ * entirely by thinking, leaving `content` empty and `finish_reason: "length"`.
+ */
+export interface OpenAIChoiceLike {
+  finish_reason?: string;
+  message?: { content?: string; reasoning_content?: string; reasoning?: string; tool_calls?: unknown[] };
+}
+export interface OpenAIUsageLike {
+  completion_tokens?: number;
+  completion_tokens_details?: { reasoning_tokens?: number };
+}
+
+export function explainEmptyReply(
+  choice: OpenAIChoiceLike | undefined,
+  usage: OpenAIUsageLike | undefined,
+  budget: number,
+): string {
+  const reasoningTokens = usage?.completion_tokens_details?.reasoning_tokens ?? 0;
+  const finish = choice?.finish_reason;
+  const hadReasoning = reasoningTokens > 0
+    || Boolean(choice?.message?.reasoning_content || choice?.message?.reasoning);
+
+  if (finish === 'length' && hadReasoning) {
+    return `The model is a reasoning model and spent its whole ${budget}-token budget`
+      + (reasoningTokens ? ` (${reasoningTokens} tokens)` : '')
+      + ' thinking, leaving nothing for the answer. Raise the token limit or choose a'
+      + ' non-reasoning model in Settings.';
+  }
+  if (finish === 'length') {
+    return `The model hit the ${budget}-token limit before writing any answer.`;
+  }
+  if (hadReasoning) {
+    return 'The model returned only internal reasoning and no answer — it may not be'
+      + ' compatible with this endpoint. Try a different model in Settings.';
+  }
+  if (finish === 'content_filter') {
+    return "The provider's content filter blocked the response.";
+  }
+  if (choice?.message?.tool_calls?.length) {
+    return 'The model tried to call a tool instead of answering. Choose a model without'
+      + ' forced tool use.';
+  }
+  if (!choice) {
+    return 'The provider returned no choices. Check the model name in Settings.';
+  }
+  return `The model returned an empty answer${finish ? ` (finish_reason: ${finish})` : ''}.`;
+}
 
 export interface AIAssistRequest {
   gate: 'intent';
@@ -292,13 +352,22 @@ export async function getAIChatResponse(
           model: config.model,
           messages,
           stream: false,
-          options: { temperature: 0.3, num_predict: 600 },
+          options: { temperature: 0.3, num_predict: CHAT_TOKEN_BUDGET },
         }),
         signal: AbortSignal.timeout(60_000),
       });
       if (!response.ok) throw new Error(`Ollama: ${response.status}`);
-      const data = await response.json() as { message?: { content?: string } };
-      reply = data.message?.content?.trim() || 'No response generated.';
+      const data = await response.json() as { message?: { content?: string; thinking?: string } };
+      const content = data.message?.content?.trim();
+      if (!content) {
+        return {
+          success: false,
+          error: data.message?.thinking
+            ? 'The model returned only internal reasoning and no answer. Try a non-thinking model.'
+            : `The model returned an empty answer. Check that "${config.model}" is pulled and running in Ollama.`,
+        };
+      }
+      reply = content;
     } else {
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (config.apiKey) headers['Authorization'] = `Bearer ${config.apiKey}`;
@@ -310,7 +379,10 @@ export async function getAIChatResponse(
           model: config.model,
           messages,
           temperature: 0.3,
-          max_tokens: 600,
+          // Reasoning models charge their thinking against this same budget,
+          // so a small number here produces an empty answer rather than a
+          // short one. 4000 leaves room to think AND reply.
+          max_tokens: CHAT_TOKEN_BUDGET,
         }),
         signal: AbortSignal.timeout(60_000),
       });
@@ -318,8 +390,20 @@ export async function getAIChatResponse(
         const errorText = await response.text();
         throw new Error(`AI provider: ${response.status} - ${errorText}`);
       }
-      const data = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
-      reply = data.choices?.[0]?.message?.content?.trim() || 'No response generated.';
+      const data = await response.json() as {
+        choices?: OpenAIChoiceLike[];
+        usage?: OpenAIUsageLike;
+      };
+      const content = data.choices?.[0]?.message?.content?.trim();
+      if (!content) {
+        // A 200 with no text is a failure, not an answer. Surfacing it as an
+        // error puts the reason in front of the person who can act on it.
+        return {
+          success: false,
+          error: explainEmptyReply(data.choices?.[0], data.usage, CHAT_TOKEN_BUDGET),
+        };
+      }
+      reply = content;
     }
 
     return { success: true, reply };
