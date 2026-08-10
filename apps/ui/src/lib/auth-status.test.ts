@@ -8,7 +8,7 @@
  * time/completeness derivation applies only to snapshots lacking sp_status.
  */
 import { describe, it, expect } from 'vitest';
-import { getAuthStatus, bucketAuths } from './auth-status';
+import { getAuthStatus, statusTimestamp, bucketAuths } from './auth-status';
 import type { PendingItem } from './sp-client';
 
 function item(overrides: Partial<PendingItem>): PendingItem {
@@ -87,5 +87,32 @@ describe('bucketAuths', () => {
     expect(buckets.active.map(i => i.authorization_id)).toEqual(['a', 'd']);
     expect(buckets.expired.map(i => i.authorization_id)).toEqual(['b']);
     expect(buckets.revoked.map(i => i.authorization_id)).toEqual(['c']);
+  });
+});
+
+describe('statusTimestamp', () => {
+  const item = {
+    created_at: '2026-07-03T10:00:00.000Z',
+    earliest_expiry: '2026-08-09T10:00:00.000Z',
+  };
+
+  it('shows the EXPIRY date for expired rows, not the creation date', () => {
+    // The bug: created_at was rendered beside the "Expired" badge, so this row
+    // read "Expired · Jul 3" while it actually expired Aug 9.
+    const ts = statusTimestamp(item, 'expired');
+    expect(ts).toEqual({ iso: '2026-08-09T10:00:00.000Z', meaning: 'expired' });
+  });
+
+  it('shows the creation date for every other status', () => {
+    for (const s of ['active', 'pending', 'revoked'] as const) {
+      expect(statusTimestamp(item, s)?.meaning).toBe('created');
+      expect(statusTimestamp(item, s)?.iso).toBe('2026-07-03T10:00:00.000Z');
+    }
+  });
+
+  it('returns null rather than substituting the other date', () => {
+    // Falling back to created_at "so the row is not empty" is how the original
+    // bug shipped. An unknown expiry shows nothing.
+    expect(statusTimestamp({ ...item, earliest_expiry: null }, 'expired')).toBeNull();
   });
 });

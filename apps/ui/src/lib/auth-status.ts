@@ -66,3 +66,24 @@ export function bucketAuths(items: PendingItem[], opts?: AuthStatusOptions): Aut
   }
   return buckets;
 }
+
+/**
+ * Which timestamp belongs next to a status badge, and what it means.
+ *
+ * Extracted because getting it wrong is invisible: the Authorizations page
+ * rendered `created_at` beside the "Expired" badge, so an authority created
+ * on Jul 3 and expired on Aug 9 read as "Expired · Jul 3" — weeks off, and
+ * indistinguishable from a correct date unless you knew the creation date.
+ *
+ * Returns null when the meaningful timestamp is unknown; showing the other
+ * one "so the row isn't empty" is exactly how that bug happened.
+ */
+export function statusTimestamp(
+  item: Pick<PendingItem, 'created_at' | 'earliest_expiry'>,
+  status: AuthStatus,
+): { iso: string; meaning: 'expired' | 'created' } | null {
+  if (status === 'expired') {
+    return item.earliest_expiry ? { iso: item.earliest_expiry, meaning: 'expired' } : null;
+  }
+  return item.created_at ? { iso: item.created_at, meaning: 'created' } : null;
+}

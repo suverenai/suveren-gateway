@@ -12,7 +12,7 @@ import { ExtendAuthModal } from '../components/ExtendAuthModal';
 import { formatScopeValue } from '../lib/scope-labels';
 import { useVisiblePolling } from '../hooks/useVisiblePolling';
 import { useSSEEvent } from '../contexts/EventSourceContext';
-import { getAuthStatus, type AuthStatus } from '../lib/auth-status';
+import { getAuthStatus, statusTimestamp, type AuthStatus } from '../lib/auth-status';
 
 type StatusFilter = AuthStatus;
 type ViewTab = 'mine' | 'team';
@@ -196,11 +196,22 @@ function AuthCard({
         {status === 'active' && item.earliest_expiry && (
           <TTLBadge expiresAt={new Date(item.earliest_expiry).getTime() / 1000} />
         )}
-        {status === 'expired' && (
-          <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
-            {new Date(item.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
-          </span>
-        )}
+        {/* The date beside "Expired" must be the EXPIRY, not the creation date.
+            It rendered created_at, so an authority created Jul 3 and expired
+            Aug 9 read as "Expired · Jul 3" — over a month wrong, and only
+            noticeable if you happened to know when you created it. */}
+        {status === 'expired' && (() => {
+          const ts = statusTimestamp(item, status);
+          if (!ts) return null;
+          return (
+            <span
+              style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}
+              title={`Expired ${new Date(ts.iso).toLocaleString()}`}
+            >
+              {new Date(ts.iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+            </span>
+          );
+        })()}
       </div>
 
       <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.5rem', alignItems: 'center' }}>
