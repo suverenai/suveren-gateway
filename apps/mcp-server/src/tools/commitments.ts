@@ -72,6 +72,14 @@ export async function executeCommitted(
     );
   }
 
+  // Look up the cached authorization for this grant — parity with the
+  // automatic path, which sends the boundsHash cross-check and the subject
+  // for the footer's identity line. Absent (e.g. cache evicted) is fine:
+  // both are optional, and the SP still enforces bounds from its own record.
+  const cachedAuth = state.cache
+    .getAllAuthorizations()
+    .find(a => a.authorizationId === proposal.authorizationId);
+
   // Receipt id captured here so the verification footer (Category-A profiles)
   // can be embedded on the review-mode send too — not just automatic sends.
   let receiptId: string | undefined;
@@ -87,6 +95,9 @@ export async function executeCommitted(
     );
     const { receipt } = await state.spClient.postReceipt({
       authorizationId: proposal.authorizationId,
+      // Optional cross-check — the AS fails closed on a mismatch. Parity
+      // with the automatic path (tool-proxy.ts).
+      boundsHash: cachedAuth?.boundsHash,
       profileId: proposal.profileId,
       action: proposal.tool,
       actionType: proposalActionType,
@@ -96,6 +107,13 @@ export async function executeCommitted(
         : undefined,
       proposalId: proposal.id,
       toolArgs: proposal.toolArgs,
+      // Deliberately NO idempotencyKey: the spec has review-mode commits carry
+      // a proposalId INSTEAD of a key — the proposal's committed→executed
+      // transition is their replay protection, and the AS replays the ORIGINAL
+      // receipt to the same caller if a retry arrives after it committed.
+      // SPClient therefore treats proposalId as retry-safe on its own; a
+      // PROPOSAL_ALREADY_EXECUTED answer is still a definitive rejection
+      // (never retried) and means a *different* caller consumed the proposal.
       ...(binding ?? {}),
     });
     receiptId = typeof receipt?.id === 'string' ? receipt.id : undefined;
@@ -132,7 +150,10 @@ export async function executeCommitted(
     let outgoingArgs = proposal.toolArgs;
     if (discovered && receiptId) {
       if (shouldAttachFooter()) {
-        outgoingArgs = appendVerificationFooter(discovered, outgoingArgs, receiptId);
+        // Parity with the automatic path: pass the cached authorization's
+        // subject so an approved send footers with the verified identity
+        // line instead of always footering as anonymous.
+        outgoingArgs = appendVerificationFooter(discovered, outgoingArgs, receiptId, cachedAuth?.subjects?.[0]);
       }
       outgoingArgs = attachReceiptId(discovered, outgoingArgs, receiptId);
       // LAST: transport encoding — see arg-encoding.ts for why order matters.

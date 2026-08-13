@@ -136,6 +136,18 @@ describe('M3 gateway — receipt retry + idempotency', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it('retries on the review path: a proposalId without a key still activates the retry (the AS replays the original receipt to the same caller)', async () => {
+    fetchMock
+      .mockRejectedValueOnce(new TypeError('socket hang up'))
+      .mockResolvedValueOnce(jsonResponse(200, RECEIPT('R-proposal', true)));
+
+    const out = await client().postReceipt({ ...baseArgs, proposalId: 'prop-1' });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(keyOf(fetchMock.mock.calls[1])).toBeUndefined(); // spec: review commits omit the key
+    expect(out.receipt.id).toBe('R-proposal');
+  });
+
   it('makes exactly ONE attempt when no idempotencyKey is supplied', async () => {
     fetchMock.mockRejectedValueOnce(new TypeError('network down'));
 

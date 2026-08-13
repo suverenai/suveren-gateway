@@ -216,8 +216,7 @@
       "bounds": {
         "recipient_max": "0",
         "send_daily_max": "0",
-        "read_max_age_days": "30",
-        "read_daily_max": "100"
+        "read_max_age_days": "30"
       },
       "context": {
         "allowed_recipients": "",
@@ -227,8 +226,7 @@
       "ttl": 2592000,
       "tags": [
         "read-only",
-        "30 days",
-        "100 reads/day"
+        "30 days"
       ]
     },
     {
@@ -239,8 +237,7 @@
       "bounds": {
         "recipient_max": "5",
         "send_daily_max": "20",
-        "read_max_age_days": "90",
-        "read_daily_max": "200"
+        "read_max_age_days": "90"
       },
       "context": {
         "allowed_recipients": "",

@@ -5,6 +5,7 @@
  * via the internal /internal/configure endpoint. All SP requests include this cookie.
  */
 
+import type { ContentBinding } from '@hap/core';
 import { notifyControlPlane } from './cp-notify';
 
 export interface SPAttestationResponse {
@@ -91,9 +92,11 @@ export class SPReceiptError extends Error {
 }
 
 /**
- * Retry policy for the receipt pre-flight. Only engaged when the caller
- * supplies an `idempotencyKey` — retrying without one risks double-counting,
- * so a missing key keeps the old single-attempt behaviour. Delays are kept
+ * Retry policy for the receipt pre-flight. Only engaged when the AS can dedup
+ * a retried request: an `idempotencyKey` (synchronous path) or a `proposalId`
+ * (review path — the AS replays the original receipt to the same caller once
+ * the proposal committed). Retrying without either risks double-counting, so
+ * their absence keeps the old single-attempt behaviour. Delays are kept
  * small (this is on the hot path before every gated tool call) and are
  * injectable so tests can run with zero backoff.
  */
@@ -242,12 +245,22 @@ export class SPClient {
      * itself — only this hash. Omitted when the profile declares no binding.
      */
     contentHash?: string;
-    /** How to reproduce {@link contentHash}. Required iff contentHash is set. */
-    contentBinding?: { version: string; kind: 'jcs' | 'text' };
+    /**
+     * How to reproduce {@link contentHash}. Required iff contentHash is set.
+     * Mirrors the wire payload actually sent (and signed verbatim by the AS,
+     * see `receiptData.contentBinding` in the AS's receipt route): v2 field
+     * bindings carry `fields`/`required_fields`/`appliesTo` alongside
+     * `version`/`kind`, not just the two v1 properties.
+     */
+    contentBinding?: Pick<ContentBinding, 'version' | 'kind' | 'fields' | 'required_fields' | 'appliesTo'>;
   }): Promise<{ receipt: Record<string, unknown> }> {
     const body = JSON.stringify(data);
-    // Retries are only safe when the AS can dedup them. No key → one shot.
-    const maxAttempts = data.idempotencyKey ? this.receiptRetry.maxAttempts : 1;
+    // Retries are only safe when the AS can dedup them: an idempotencyKey on
+    // the synchronous path, or a proposalId on the review path (the AS replays
+    // the original receipt to the same caller after the proposal committed).
+    // Neither → one shot.
+    const maxAttempts =
+      data.idempotencyKey || data.proposalId ? this.receiptRetry.maxAttempts : 1;
     let lastError: unknown;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
