@@ -657,7 +657,12 @@ async function startOneIntegration(config: ReturnType<typeof integrationRegistry
     : config;
 
   try {
-    await integrationManager.startIntegration(effectiveConfig);
+    // skipIfRunning: this path is opportunistic (boot restore / credential
+    // arrival). If an explicit add-integration start is in flight or already
+    // won, this call must not restart the integration with the manifest
+    // config — doing so replaced a stricter explicit gating with the
+    // manifest's and made the read gate nondeterministically fail open.
+    await integrationManager.startIntegration(effectiveConfig, { skipIfRunning: true });
   } catch (err) {
     console.error(`[Suveren MCP] Failed to start integration ${config.id}:`, err);
   }

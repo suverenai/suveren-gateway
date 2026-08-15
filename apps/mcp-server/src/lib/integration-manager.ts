@@ -140,11 +140,44 @@ const MAX_RESPAWN_ATTEMPTS = 3;
 // crashed child can't wedge the sequential boot loop forever.
 const CONNECT_TIMEOUT_MS = 30_000;
 
+/** Options for {@link IntegrationManager.startIntegration}. */
+export interface StartIntegrationOptions {
+  /**
+   * When the queued start actually executes and the integration is ALREADY
+   * running, keep the running instance (return its tools) instead of
+   * restarting it. For opportunistic callers — boot restore, credential
+   * arrival, crash respawn — whose config may be staler than whatever start
+   * won the queue. An explicit start (add-integration, manual Start) omits
+   * this and always wins by restarting.
+   */
+  skipIfRunning?: boolean;
+}
+
 export class IntegrationManager {
   private running = new Map<string, RunningIntegration>();
   private onToolsChanged: (() => void) | null = null;
+  /**
+   * Per-integration operation queue. Start/stop for one id are serialized
+   * through here; without it, a second start issued while the first is still
+   * installing/handshaking sees `running.has(id) === false`, skips the stop,
+   * and both children come up — last `running.set` wins, the loser's process
+   * leaks, and the surviving GATING is whichever start happened to finish
+   * last. That last-writer-wins gating is a fail-open: a permissive manifest
+   * config can silently replace a stricter explicit one (observed as the
+   * read-gate value-mismatch flake).
+   */
+  private opQueues = new Map<string, Promise<unknown>>();
 
   constructor(private serviceCredentials: Map<string, Record<string, string>>) {}
+
+  /** Run `task` after every previously queued operation for `id` has settled. */
+  private runExclusive<T>(id: string, task: () => Promise<T>): Promise<T> {
+    const prev = this.opQueues.get(id) ?? Promise.resolve();
+    const run = prev.then(task, task);
+    // Store a settled-safe tail so one failed operation never wedges the queue.
+    this.opQueues.set(id, run.then(() => undefined, () => undefined));
+    return run;
+  }
 
   /**
    * Register a callback invoked when the tool set changes
@@ -345,11 +378,28 @@ export class IntegrationManager {
    * Start a downstream MCP server integration.
    * Installs npm package on-demand if needed, resolves envKeys,
    * spawns the process, connects as MCP client, and discovers tools.
+   *
+   * Serialized per id: a start issued while another start/stop for the same
+   * id is in flight waits for it, then applies its own semantics (restart, or
+   * keep-if-running with `skipIfRunning`). See `opQueues`.
    */
-  async startIntegration(config: IntegrationConfig): Promise<DiscoveredTool[]> {
-    // Stop if already running
-    if (this.running.has(config.id)) {
-      await this.stopIntegration(config.id);
+  async startIntegration(
+    config: IntegrationConfig,
+    opts: StartIntegrationOptions = {},
+  ): Promise<DiscoveredTool[]> {
+    return this.runExclusive(config.id, () => this.startIntegrationLocked(config, opts));
+  }
+
+  private async startIntegrationLocked(
+    config: IntegrationConfig,
+    opts: StartIntegrationOptions,
+  ): Promise<DiscoveredTool[]> {
+    const existing = this.running.get(config.id);
+    if (existing) {
+      if (opts.skipIfRunning) return existing.tools;
+      // Stop directly (not via the public queued method — that would deadlock
+      // behind this very operation).
+      await this.stopIntegrationLocked(config.id);
     }
 
     // Install npm package on-demand if specified
@@ -441,8 +491,12 @@ export class IntegrationManager {
     };
     this.running.set(config.id, entry);
 
-    // Watch for crashes
+    // Watch for crashes. Guard on transport identity: only the CURRENT
+    // entry's transport may trigger crash handling — a replaced or stopped
+    // child closing later must never tear down (or respawn over) its
+    // successor.
     transport.onclose = () => {
+      if (this.running.get(config.id)?.transport !== transport) return;
       console.error(`[IntegrationManager] Transport closed for ${config.id}`);
       this.handleCrash(config.id);
     };
@@ -453,8 +507,16 @@ export class IntegrationManager {
 
   /**
    * Stop a running integration, closing its transport and removing its tools.
+   *
+   * Serialized per id: a stop issued while a start is in flight waits and
+   * then stops the just-started instance, instead of silently doing nothing
+   * because the entry wasn't in `running` yet.
    */
   async stopIntegration(id: string): Promise<void> {
+    return this.runExclusive(id, () => this.stopIntegrationLocked(id));
+  }
+
+  private async stopIntegrationLocked(id: string): Promise<void> {
     const entry = this.running.get(id);
     if (!entry) return;
 
@@ -739,7 +801,10 @@ export class IntegrationManager {
 
     setTimeout(async () => {
       try {
-        await this.startIntegration(entry.config);
+        // skipIfRunning: if a newer explicit start brought the integration
+        // back while we waited, the respawn must not restart it with this
+        // (possibly stale) config snapshot.
+        await this.startIntegration(entry.config, { skipIfRunning: true });
         // Carry forward the respawn counter
         const newEntry = this.running.get(id);
         if (newEntry) {

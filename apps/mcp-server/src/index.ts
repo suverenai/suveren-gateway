@@ -166,7 +166,16 @@ export function createMcpServer(
 
     // Register new tools
     for (const tool of allTools) {
-      if (proxiedTools.has(tool.namespacedName)) continue;
+      // Same name but a different DiscoveredTool object means the integration
+      // restarted — possibly with different gating. The registered handler
+      // closed over the OLD tool (and its gating), so it must be replaced;
+      // keeping it would enforce a gating config the backend no longer has.
+      const existing = proxiedTools.get(tool.namespacedName);
+      if (existing) {
+        if (existing.tool === tool) continue;
+        existing.registered.remove();
+        proxiedTools.delete(tool.namespacedName);
+      }
 
       const handler = createGatedToolHandler(tool, integrationManager, state);
       const zodShape = jsonSchemaToZodShape(tool.inputSchema);
