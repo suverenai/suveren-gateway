@@ -582,6 +582,48 @@ function createGatedToolHandlerInner(
       }
     }
 
+    // v0.5+ actionType discipline (protocol.md → Tool-Gating Manifests). A
+    // write whose manifest declares no action_type used to log a warning and
+    // proceed with an undefined actionType — indistinguishable from unenforced
+    // bounds, and the AS would have had to guess the cumulative bucket. Fail
+    // closed instead: the manifest is the only legitimate source of actionType
+    // (never the tool name), so a missing declaration is a manifest bug the
+    // human must fix, not a condition to execute through.
+    const declaredActionType =
+      typeof execution.action_type === 'string' && execution.action_type.length > 0
+        ? execution.action_type
+        : undefined;
+    if (!declaredActionType) {
+      return {
+        content: [{
+          type: 'text',
+          text: `Blocked by Gatekeeper: tool ${tool.namespacedName} declares no action_type in its ` +
+            `manifest's staticExecution. A write cannot be bounds-checked without its action type — ` +
+            `fix the integration manifest.`,
+        }],
+        isError: true,
+      };
+    }
+    // When the profile declares an actionTypes registry (v0.5+ profiles), the
+    // manifest's action_type must be a member — an unregistered value would
+    // land in a cumulative bucket no bound governs. Profiles published before
+    // the registry declare none; membership is then uncheckable and skipped.
+    {
+      const profileDef = getProfile(profile!);
+      const registry = (profileDef?.boundsSchema as { actionTypes?: unknown } | undefined)
+        ?.actionTypes;
+      if (Array.isArray(registry) && registry.length > 0 && !registry.includes(declaredActionType)) {
+        return {
+          content: [{
+            type: 'text',
+            text: `Blocked by Gatekeeper: action_type "${declaredActionType}" is not in profile ` +
+              `${profile}'s actionTypes registry (${registry.join(', ')}). Fix the integration manifest.`,
+          }],
+          isError: true,
+        };
+      }
+    }
+
     // Find all active authorizations matching this profile
     const auths = state.getEnrichedAuthorizations();
     const matchingAuths = auths.filter(
@@ -718,23 +760,16 @@ function createGatedToolHandlerInner(
         // `actionType` tells the SP which bounds field to enforce
         // (e.g. write_daily_max vs delete_daily_max vs post_daily_max).
         // It MUST come from the integration manifest's staticExecution —
-        // no prefix-based fallbacks. If a manifest declares a write tool
-        // without action_type, we log a warning and send undefined; the
-        // SP's generic action.split('_')[0] fallback is a last-resort
-        // guard but is never expected to fire in practice.
+        // no prefix-based fallbacks. Presence and registry membership were
+        // validated fail-closed above (declaredActionType), and the AS
+        // rejects requests without it (INVALID_ACTION_TYPE) — its old
+        // name-derived fallback is deleted.
         // Receipt id captured pre-flight, used to embed a verification link in
         // the outgoing content (Category-A profiles). Hoisted so it's in scope
         // after the try/catch where the downstream call happens.
         let receiptId: string | undefined;
         try {
-          const actionType =
-            typeof execution.action_type === 'string' ? execution.action_type : undefined;
-          if (!actionType) {
-            console.error(
-              `[Suveren MCP] Warning: tool ${tool.namespacedName} has no action_type in staticExecution. ` +
-                `Bounds check may be skipped. Fix the integration manifest.`,
-            );
-          }
+          const actionType = declaredActionType;
 
           // M3: one stable idempotency key per tool invocation, generated
           // once here and reused across postReceipt's internal retries. If a
@@ -757,6 +792,23 @@ function createGatedToolHandlerInner(
             ...(binding ?? {}),
           });
           receiptId = typeof receipt?.id === 'string' ? receipt.id : undefined;
+
+          // Subject custody: keep the complete signed receipt (+ attestation
+          // blobs) locally so the evidence stays verifiable without the AS.
+          // Best-effort — never blocks the execution the AS just authorized.
+          await state.archiveReceipt(receipt, {
+            authorizationId: authzId,
+            profileId: auth.profileId,
+            boundsHash: auth.boundsHash,
+            contextHash: auth.contextHash,
+            bounds: auth.bounds ?? auth.frame,
+            context: auth.context,
+            intent: auth.gateContent?.intent,
+            attestations: auth.attestations,
+            // Automatic path has no proposal, so without this the archive
+            // would hold a hash of content it cannot reproduce.
+            boundContent: binding?.boundContent,
+          });
         } catch (err) {
           // The profile binds a declared field set and this call cannot supply
           // it. Refuse: issuing the receipt anyway would produce one that

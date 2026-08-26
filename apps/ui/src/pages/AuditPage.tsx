@@ -1,8 +1,16 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import { spClient, type ExecutionReceipt, type IntegrationManifest } from '../lib/sp-client';
+import {
+  spClient,
+  type ExecutionReceipt,
+  type IntegrationManifest,
+  type LocalAuthorization,
+  type SignatureStatus,
+} from '../lib/sp-client';
 import { actionLabel, scopeSummary, wasReviewed, profileVersionLabel } from '../lib/receipt-summary';
 import { profileDisplayName } from '../lib/profile-display';
 import { ProfileBadge } from '../components/ProfileBadge';
+import { ReceiptCard } from '../components/ReceiptCard';
+import { ReceiptCompleteDialog } from '../components/ReceiptCompleteDialog';
 import { EmptyState } from '../components/EmptyState';
 import { useVisiblePolling } from '../hooks/useVisiblePolling';
 import { useAuth } from '../contexts/AuthContext';
@@ -65,6 +73,24 @@ export function AuditPage() {
   const [timeRange, setTimeRange] = useState<TimeRange>('all');
   const [filtersOpen, setFiltersOpen] = useState(false);
 
+  // Evidence download (local archive + best-effort AS export).
+  const [exporting, setExporting] = useState(false);
+  const [exportNote, setExportNote] = useState<string | null>(null);
+
+  // Local mandate data (context, intent, bounds), keyed by authorizationId.
+  // The AS holds only hashes of these, so the card's mandate rows come from
+  // here or not at all.
+  const [localAuths, setLocalAuths] = useState<Record<string, LocalAuthorization>>({});
+  // Could the local store be read at all? "Unreachable" and "this grant has no
+  // local copy" are different facts and must not render as the same sentence.
+  const [localUnavailable, setLocalUnavailable] = useState(false);
+  // Local signature-verification result per receipt id.
+  const [signatures, setSignatures] = useState<Record<string, SignatureStatus>>({});
+  // Grant titles, from the AS attestation records, keyed by authorizationId.
+  const [grantTitles, setGrantTitles] = useState<Record<string, string>>({});
+  // Which receipt's complete record is open, if any.
+  const [openReceipt, setOpenReceipt] = useState<ExecutionReceipt | null>(null);
+
   // Pagination cursor for "Load older" (null = no older receipts within range).
   const [cursor, setCursor] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -124,6 +150,30 @@ export function AuditPage() {
     fetch('/health')
       .then(r => r.json())
       .then(d => { if (typeof d.spUrl === 'string') setSpUrl(d.spUrl.replace(/\/$/, '')); })
+      .catch(() => {});
+  }, []);
+
+  // The readable mandate behind each receipt. Context and intent live ONLY on
+  // this machine (the AS stores their hashes), and the grant's human name lives
+  // only at the AS — so the card joins both. Each is best-effort: a missing
+  // source degrades a row to a stated absence, never to a blank that would read
+  // as "there was no intent".
+  useEffect(() => {
+    spClient.getLocalAuthorizations()
+      .then(({ authorizations, signatures: sigs }) => {
+        setLocalAuths(authorizations);
+        setSignatures(sigs);
+        setLocalUnavailable(false);
+      })
+      .catch(() => { setLocalAuths({}); setSignatures({}); setLocalUnavailable(true); });
+    spClient.getMyAttestations()
+      .then(items => {
+        const titles: Record<string, string> = {};
+        for (const item of items) {
+          if (item.authorization_id && item.title) titles[item.authorization_id] = item.title;
+        }
+        setGrantTitles(titles);
+      })
       .catch(() => {});
   }, []);
 
@@ -211,12 +261,57 @@ export function AuditPage() {
     setSearch('');
   }
 
+  /**
+   * Download the evidence bundle: the LOCAL receipt archive (works even if the
+   * AS is gone) merged with a best-effort AS export. The control-plane states
+   * which sources contributed; surface a partial-source note rather than
+   * pretending the file is complete.
+   */
+  async function downloadEvidence() {
+    setExporting(true);
+    setExportNote(null);
+    try {
+      const { bundle, filename } = await spClient.fetchEvidenceBundle();
+      const url = URL.createObjectURL(
+        new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' }),
+      );
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+      const src = (bundle.sources ?? {}) as { local?: boolean; authorityServer?: boolean; localError?: string; asError?: string };
+      if (!src.authorityServer) {
+        setExportNote(`Downloaded local evidence only — ${src.asError ?? 'Authority Server export unavailable.'}`);
+      } else if (!src.local) {
+        setExportNote(`Downloaded Authority Server history only — ${src.localError ?? 'local archive unavailable.'}`);
+      }
+    } catch (err) {
+      setExportNote(`Export failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setExporting(false);
+    }
+  }
+
   return (
     <>
-      <div className="page-header">
-        <h1 className="page-title">Receipts</h1>
-        <p className="page-subtitle">Execution history for agent actions.</p>
+      <div
+        className="page-header"
+        style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem', flexWrap: 'wrap' }}
+      >
+        <div>
+          <h1 className="page-title">Receipts</h1>
+          <p className="page-subtitle">Execution history for agent actions.</p>
+        </div>
+        <button className="btn btn-secondary" onClick={downloadEvidence} disabled={exporting}>
+          {exporting ? 'Preparing…' : 'Download evidence'}
+        </button>
       </div>
+      {exportNote && (
+        <div style={{ marginBottom: '1rem', color: 'var(--text-tertiary)', fontSize: '0.875rem' }}>
+          {exportNote}
+        </div>
+      )}
 
       {/* Mine | Team tab strip — Team is admin-only */}
       {isAdmin && (
@@ -399,92 +494,35 @@ export function AuditPage() {
               : `${filtered.length} of ${receipts.length} receipts`}
           </div>
           <div className="timeline">
-            {filtered.map(receipt => (
-              <div className="timeline-event" key={receipt.id}>
-                <div className="card" style={{ marginBottom: 0 }}>
-                  {/* Headline: what happened, in words. Everything that is an
-                      identifier moved into "Technical" below — it was three of
-                      the four most prominent things on this card, and none of
-                      it answers the question people open this page with. */}
-                  <div className="receipt-head">
-                    <span className="receipt-what">{actionLabel(receipt, manifests)}</span>
-                    <span className="receipt-tag">{wasReviewed(receipt) ? 'review' : 'automatic'}</span>
-                    {receipt.contentHash && (
-                      <span
-                        className="receipt-tag receipt-tag-bound"
-                        title={receipt.contentBinding?.fields
-                          ? `The receipt binds: ${receipt.contentBinding.fields.join(', ')}`
-                          : 'This exact content was authorized'}
-                      >
-                        content bound
-                      </span>
-                    )}
-                    <span className="auth-card-time">{formatDate(receipt.timestamp)}</span>
-                  </div>
-
-                  {/* Scope the Gatekeeper checked — recipients, environment.
-                      A receipt never carries content, so this is as specific as
-                      it can honestly get. */}
-                  {scopeSummary(receipt) && (
-                    <div className="receipt-scope">{scopeSummary(receipt)}</div>
-                  )}
-
-                  {/* Owner label — only on Team tab so admins can see at a glance */}
-                  {viewTab === 'team' && receipt.userId && (
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginBottom: '0.375rem' }}>
-                      Owner:{' '}
-                      <span style={{ color: 'var(--text-secondary)' }}>
-                        {userById[receipt.userId]?.name
-                          ? `${userById[receipt.userId].name} (${userById[receipt.userId].email})`
-                          : receipt.userId}
-                      </span>
-                    </div>
-                  )}
-
-                  {/* The receipt itself — the point of the page, and until now
-                      unreachable from it. `spUrl` is published on /health. */}
-                  <div className="receipt-foot">
-                    {spUrl && (
-                      <a
-                        className="receipt-link"
-                        href={`${spUrl}/r/${receipt.id}`}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        View receipt &#8599;
-                      </a>
-                    )}
-                    <span className="receipt-id">{receipt.id.slice(0, 8)}</span>
-                    <span className="receipt-tag">{profileVersionLabel(receipt.profileId)}</span>
-                  </div>
-
-                  <details className="receipt-more">
-                    <summary>Technical</summary>
-                    <div className="receipt-kv">
-                      <div>action &middot; {receipt.action}</div>
-                      <div>profile &middot; {receipt.profileId}</div>
-                      {Object.keys(receipt.executionContext).length > 0 && (
-                        <div>
-                          context &middot;{' '}
-                          {Object.entries(receipt.executionContext)
-                            .map(([k, v]) => `${k}=${v}`)
-                            .join(' \u00B7 ')}
-                        </div>
-                      )}
-                      <div>
-                        usage &middot; daily {receipt.cumulativeState.daily.count} calls,
-                        ${receipt.cumulativeState.daily.amount} &middot; monthly{' '}
-                        {receipt.cumulativeState.monthly.count} calls, ${receipt.cumulativeState.monthly.amount}
-                      </div>
-                      {receipt.contentHash && <div>content &middot; {receipt.contentHash}</div>}
-                      <div>authorization &middot; {receipt.attestationHash}</div>
-                    </div>
-                  </details>
+            {filtered.map(receipt => {
+              const owner = receipt.userId ? userById[receipt.userId] : undefined;
+              return (
+                <div className="timeline-event" key={receipt.id}>
+                  <ReceiptCard
+                    receipt={receipt}
+                    manifests={manifests}
+                    localAuth={receipt.authorizationId ? localAuths[receipt.authorizationId] : undefined}
+                    localUnavailable={localUnavailable}
+                    signature={signatures[receipt.id]}
+                    grantTitle={receipt.authorizationId ? grantTitles[receipt.authorizationId] : null}
+                    ownerLabel={
+                      viewTab === 'team' && receipt.userId
+                        ? (owner ? `${owner.name} (${owner.email})` : receipt.userId)
+                        : null
+                    }
+                    spUrl={spUrl}
+                    formatDate={formatDate}
+                    onOpenComplete={() => setOpenReceipt(receipt)}
+                  />
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </>
+      )}
+
+      {openReceipt && (
+        <ReceiptCompleteDialog receipt={openReceipt} onClose={() => setOpenReceipt(null)} />
       )}
 
       {cursor && (

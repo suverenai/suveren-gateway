@@ -78,6 +78,77 @@ export function scopeSummary(receipt: ExecutionReceipt): string {
   return parts.join(' · ');
 }
 
+/**
+ * What the GRANT permits — as opposed to `scopeSummary`, which reports what
+ * this one call touched. Built from the grant's local context values, which
+ * exist only on this machine (the AS holds `context_hash` alone).
+ *
+ * `action_type` is dropped: it is the bounds category, already carried by the
+ * headline, and reads as noise next to the dimensions a person chose.
+ */
+export function allowedSummary(context: Record<string, string | number> | undefined): string {
+  if (!context) return '';
+  const parts: string[] = [];
+  for (const [key, value] of Object.entries(context)) {
+    if (key === 'action_type') continue;
+    const text = String(value ?? '').trim();
+    if (!text) continue;
+    const label = key.replace(/^allowed_/, '').replace(/_/g, ' ');
+    parts.push(`${label} ${text.split(',').map(v => v.trim()).filter(Boolean).join(', ')}`);
+  }
+  return parts.join(' · ');
+}
+
+/**
+ * Consumption paired with the limit it consumes — "2 of 5 today", never a bare
+ * "2 calls". A count on its own says nothing about how close the agent is to
+ * the ceiling the human set, which is the only reason to show it.
+ *
+ * Which bound governs is read from the bounds keys, preferring one that starts
+ * with this receipt's `actionType` (a grant may carry several windows, e.g.
+ * `release_daily_max` beside `write_daily_max`). Amount-shaped bounds pair with
+ * the summed amount; everything else counts calls. With no matching bound the
+ * raw count is shown rather than a fabricated denominator.
+ */
+export function usageSummary(
+  receipt: ExecutionReceipt,
+  bounds: Record<string, string | number> | undefined,
+): string {
+  const windows: Array<{ window: 'daily' | 'monthly'; label: string }> = [
+    { window: 'daily', label: 'today' },
+    { window: 'monthly', label: 'this month' },
+  ];
+  const actionType =
+    receipt.actionType ??
+    (typeof receipt.executionContext?.action_type === 'string'
+      ? (receipt.executionContext.action_type as string)
+      : undefined);
+
+  const parts: string[] = [];
+  for (const { window, label } of windows) {
+    const state = receipt.cumulativeState?.[window];
+    if (!state) continue;
+
+    const suffix = `_${window}_max`;
+    const keys = Object.keys(bounds ?? {}).filter(k => k.endsWith(suffix));
+    // Prefer the bound for THIS action type; otherwise the only one present.
+    const key =
+      (actionType && keys.find(k => k.startsWith(`${actionType}_`))) ??
+      (keys.length === 1 ? keys[0] : undefined);
+
+    const isAmount = key ? /^(amount|spend)_/.test(key) : false;
+    const used = isAmount ? state.amount : state.count;
+    const limit = key ? Number(bounds?.[key]) : NaN;
+
+    if (key && Number.isFinite(limit)) {
+      parts.push(`${used} of ${limit} ${label}`);
+    } else {
+      parts.push(`${state.count} ${state.count === 1 ? 'call' : 'calls'} ${label}`);
+    }
+  }
+  return parts.join(' · ');
+}
+
 /** Review-mode receipts reference the proposal a human approved. */
 export function wasReviewed(receipt: ExecutionReceipt): boolean {
   return typeof receipt.proposalId === 'string' && receipt.proposalId.length > 0;

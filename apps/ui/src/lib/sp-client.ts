@@ -226,9 +226,15 @@ export interface ExecutionReceipt {
   groupId: string;
   userId: string;
   attestationHash: string;
+  /** Per-ceremony grant id — the key for joining local context/intent. */
+  authorizationId?: string;
   profileId: string;
   path: string;
   action: string;
+  /** Bounds-level category driving cumulative bucketing. */
+  actionType?: string;
+  /** Effective limits at issuance — pairs with cumulativeState for "2 of 5". */
+  limits?: Record<string, string | number>;
   executionContext: Record<string, unknown>;
   cumulativeState: {
     daily: { amount: number; count: number };
@@ -241,6 +247,47 @@ export interface ExecutionReceipt {
   /** Level-2 content proof. Present only when the profile declares content_binding. */
   contentHash?: string;
   contentBinding?: { version: string; kind: 'jcs' | 'text'; fields?: string[] };
+}
+
+/**
+ * Per-grant values held locally (never at the Authority Server, which has
+ * only their hashes). `archived` distinguishes the durable evidence copy from
+ * the live gate store.
+ */
+export interface LocalAuthorization {
+  authorizationId: string;
+  profileId?: string;
+  boundsHash?: string;
+  contextHash?: string;
+  bounds?: Record<string, string | number>;
+  context?: Record<string, string | number>;
+  intent?: string;
+  archived: boolean;
+}
+
+/**
+ * Whether a receipt's Ed25519 signature checked out ON THIS MACHINE, against
+ * the issuer key archived when it was issued.
+ *
+ * `unverifiable` (no archived key) is kept distinct from `invalid` (the check
+ * ran and failed): showing "no key" as a failure would cry tamper, and showing
+ * a failure as "no key" would hide one.
+ */
+export type SignatureStatus = 'valid' | 'invalid' | 'unverifiable';
+
+/** One receipt-archive entry: the signed receipt as issued, plus its grant. */
+export interface LocalReceiptEntry {
+  entry: {
+    archivedAt: number;
+    authorizationId: string;
+    asUrl: string;
+    asPublicKey?: string;
+    receipt: Record<string, unknown>;
+    proposal?: Record<string, unknown>;
+    boundContent?: Record<string, unknown> | string;
+  };
+  authorization: LocalAuthorization | null;
+  signature: SignatureStatus;
 }
 
 /** A window of receipts plus a cursor for loading the next (older) window. */
@@ -484,6 +531,51 @@ class SPClient {
     if (!res.ok) throw new Error(`Failed to fetch receipts: ${res.status}`);
     const data = await res.json();
     return data.receipts ?? [];
+  }
+
+  /**
+   * Fetch the evidence bundle from the control-plane: the LOCAL receipt
+   * archive (complete signed receipts + attestation blobs + intent/context)
+   * merged with a best-effort AS export. Authenticated — goes through
+   * this.fetch so the X-API-Key header is attached.
+   */
+  async fetchEvidenceBundle(): Promise<{ bundle: Record<string, unknown>; filename: string }> {
+    const res = await this.fetch('/api/evidence-export');
+    const bundle = (await res.json()) as Record<string, unknown>;
+    if (!res.ok) {
+      throw new Error((bundle as { error?: string }).error ?? `Export failed (${res.status})`);
+    }
+    const filename =
+      /filename="([^"]+)"/.exec(res.headers.get('content-disposition') ?? '')?.[1] ??
+      'suveren-evidence.json';
+    return { bundle, filename };
+  }
+
+  /**
+   * Per-grant LOCAL values (context, intent, bounds) held on this machine.
+   * The AS has only their hashes, so this is the only source for the readable
+   * mandate on a receipt card. Keyed by authorizationId.
+   */
+  async getLocalAuthorizations(): Promise<{
+    authorizations: Record<string, LocalAuthorization>;
+    signatures: Record<string, SignatureStatus>;
+  }> {
+    const res = await this.fetch('/api/evidence/authorizations');
+    if (!res.ok) throw new Error(`Local evidence unavailable (${res.status})`);
+    const data = await res.json();
+    return { authorizations: data.authorizations ?? {}, signatures: data.signatures ?? {} };
+  }
+
+  /**
+   * The verbatim archive entry for one receipt — the complete signed receipt
+   * plus the attestation blobs and issuer key held on this device. Returns
+   * null when no local copy exists (older receipt, or another device).
+   */
+  async getArchivedReceipt(receiptId: string): Promise<LocalReceiptEntry | null> {
+    const res = await this.fetch(`/api/evidence/receipt/${encodeURIComponent(receiptId)}`);
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`Local evidence unavailable (${res.status})`);
+    return (await res.json()) as LocalReceiptEntry;
   }
 
   async revokeAttestation(authorizationId: string, reason?: string): Promise<void> {

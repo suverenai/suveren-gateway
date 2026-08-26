@@ -297,6 +297,19 @@ export async function getEnrichedAuthorizations(): Promise<unknown> {
   return res.json();
 }
 
+/**
+ * Fetch the local evidence bundle: receipt archive (complete signed receipts,
+ * attestation blobs, issuer keys) + gate entries (intent, context). This is
+ * the copy that must survive the AS disappearing.
+ */
+export async function getLocalEvidence(): Promise<Record<string, unknown>> {
+  const res = await fetch(`${MCP_BASE}/internal/evidence`, {
+    headers: internalHeaders(),
+  });
+  if (!res.ok) throw new Error(`Failed to fetch local evidence: ${res.status}`);
+  return res.json() as Promise<Record<string, unknown>>;
+}
+
 export async function getMcpHealth(): Promise<unknown> {
   const res = await fetch(`${MCP_BASE}/health`);
   if (!res.ok) throw new Error('MCP server unreachable');

@@ -9,6 +9,7 @@ import { AttestationCache, type CachedAuthorization } from './attestation-cache'
 import { GateStore, type GateContent, type GateEntry } from './gate-store';
 import { ExecutionLog } from './execution-log';
 import { DenialLog } from './denial-log';
+import { ReceiptArchive, type ArchivedAttestation } from './receipt-archive';
 import { MCPGatekeeper } from './gatekeeper';
 
 export interface EnrichedAuthorization extends CachedAuthorization {
@@ -24,6 +25,7 @@ export class SharedState {
   readonly gateStore: GateStore;
   readonly executionLog: ExecutionLog;
   readonly denialLog: DenialLog;
+  readonly receiptArchive: ReceiptArchive;
   readonly gatekeeper: MCPGatekeeper;
 
   constructor(spUrl: string, gateStorePath?: string) {
@@ -32,7 +34,70 @@ export class SharedState {
     this.gateStore = new GateStore(gateStorePath);
     this.executionLog = new ExecutionLog(gateStorePath);
     this.denialLog = new DenialLog(gateStorePath);
+    this.receiptArchive = new ReceiptArchive(gateStorePath);
     this.gatekeeper = new MCPGatekeeper(this.cache, this.executionLog);
+  }
+
+  /**
+   * Archive a signed receipt into the local receipt archive — the subject's
+   * own durable copy of the evidence (see receipt-archive.ts).
+   *
+   * Best-effort by contract: the AS has already issued the receipt and holds
+   * the authoritative copy, so an archive failure logs loudly but MUST NOT
+   * block the execution it documents.
+   */
+  async archiveReceipt(
+    receipt: Record<string, unknown>,
+    opts: {
+      authorizationId: string;
+      profileId?: string;
+      boundsHash?: string;
+      contextHash?: string;
+      bounds?: Record<string, string | number>;
+      context?: Record<string, string | number>;
+      intent?: string;
+      attestations?: ArchivedAttestation[];
+      /** Review path — the proposal this receipt executed (what was approved). */
+      proposal?: Record<string, unknown>;
+      /** The preimage of the receipt's contentHash — what actually ran. */
+      boundContent?: Record<string, unknown> | string;
+    },
+  ): Promise<void> {
+    try {
+      // Store the AS pubkey alongside so the entry verifies offline even if
+      // the AS later disappears. Best-effort: cached 5 min, usually free.
+      let asPublicKey: string | undefined;
+      try {
+        asPublicKey = await this.cache.getPublicKey();
+      } catch { /* archive without it — still verifiable via any saved key */ }
+
+      this.receiptArchive.record({
+        receipt,
+        authorizationId: opts.authorizationId,
+        asUrl: this.spClient.url,
+        asPublicKey,
+        proposal: opts.proposal,
+        boundContent: opts.boundContent,
+        authorization: opts.profileId
+          ? {
+              profileId: opts.profileId,
+              boundsHash: opts.boundsHash,
+              contextHash: opts.contextHash ?? this.gateStore.get(opts.authorizationId)?.contextHash,
+              bounds: opts.bounds,
+              context: opts.context,
+              // Fall back to the gate store — the review path's cached auth
+              // carries no gate content.
+              intent: opts.intent ?? this.gateStore.get(opts.authorizationId)?.gateContent?.intent,
+              attestations: opts.attestations ?? [],
+            }
+          : undefined,
+      });
+    } catch (err) {
+      console.error(
+        '[Suveren MCP] Receipt archive write failed (execution proceeds — AS retains authoritative copy):',
+        err,
+      );
+    }
   }
 
   setGateContent(
