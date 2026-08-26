@@ -236,6 +236,7 @@ function mockGatedState(opts: {
     executionLog: {
       record: vi.fn(),
     },
+    archiveReceipt: vi.fn().mockResolvedValue(undefined),
   } as unknown as SharedState;
 }
 
@@ -327,6 +328,48 @@ describe('createGatedToolHandler — SP receipt integration', () => {
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('SP unavailable');
     expect(result.content[0].text).toContain('fetch failed');
+  });
+
+  it('A1: blocks a write whose manifest declares no action_type (fail closed, no receipt request)', async () => {
+    const postReceipt = vi.fn();
+    const state = mockGatedState({ postReceipt });
+    const im = mockIntegrationManager();
+    const tool = mockTool('charge');
+    tool.gating!.staticExecution = {}; // manifest bug: write tool without action_type
+    const handler = createGatedToolHandler(tool, im, state);
+
+    const result = await handler({ amount: 50, currency: 'EUR' });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('no action_type');
+    expect(postReceipt).not.toHaveBeenCalled();
+    expect((im.callTool as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+  });
+
+  it('A1: blocks a write whose action_type is not in the profile actionTypes registry', async () => {
+    // Profile declares a registry that does NOT contain the manifest's
+    // action_type ('charge') — the Gatekeeper must refuse locally before
+    // any receipt round-trip (an unregistered actionType would land in a
+    // cumulative bucket no bound governs).
+    registerProfile('charge-registry-test', {
+      id: 'charge-registry-test',
+      boundsSchema: { actionTypes: ['refund'], fields: {}, keyOrder: [] },
+    } as unknown as Parameters<typeof registerProfile>[1]);
+    try {
+      const postReceipt = vi.fn();
+      const state = mockGatedState({ postReceipt });
+      const im = mockIntegrationManager();
+      const handler = createGatedToolHandler(mockTool('charge-registry-test'), im, state);
+
+      const result = await handler({ amount: 50, currency: 'EUR' });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('actionTypes registry');
+      expect(postReceipt).not.toHaveBeenCalled();
+      expect((im.callTool as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+    } finally {
+      clearProfiles();
+    }
   });
 
   it('P8.2: submits proposal with creator+approvers when SP returns 409 approval_required', async () => {
@@ -421,7 +464,9 @@ describe('createGatedToolHandler — mapping transforms', () => {
             { field: 'allowed_domains', transform: 'join_domains' },
           ],
         },
-        staticExecution: {},
+        // action_type is required on writes since A1 (fail-closed); these
+        // cases exercise the mapping transforms, not the actionType policy.
+        staticExecution: { action_type: 'send' },
       },
     };
   }

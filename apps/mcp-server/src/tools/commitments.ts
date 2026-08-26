@@ -117,6 +117,23 @@ export async function executeCommitted(
       ...(binding ?? {}),
     });
     receiptId = typeof receipt?.id === 'string' ? receipt.id : undefined;
+
+    // Subject custody: archive the complete signed receipt locally (parity
+    // with the automatic path). cachedAuth may be evicted — archive the
+    // receipt anyway; the attestation blobs merge in on a later call.
+    await state.archiveReceipt(receipt, {
+      authorizationId: proposal.authorizationId,
+      profileId: proposal.profileId,
+      boundsHash: cachedAuth?.boundsHash,
+      contextHash: cachedAuth?.contextHash,
+      bounds: cachedAuth?.bounds ?? cachedAuth?.frame,
+      context: cachedAuth?.context,
+      attestations: cachedAuth?.attestations,
+      // What the human actually approved, kept next to the receipt that cites
+      // it — otherwise `proposalId` is a pointer to a server we may not have.
+      proposal: proposal as unknown as Record<string, unknown>,
+      boundContent: binding?.boundContent,
+    });
   } catch (err) {
     // Approved content that cannot be bound. Refuse rather than execute on a
     // receipt that would verify while committing to less than the approver saw.

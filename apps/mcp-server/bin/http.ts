@@ -26,6 +26,7 @@ import { IntegrationManager } from '../src/lib/integration-manager';
 import { loadProfiles } from '../src/lib/profile-loader';
 import { loadManifests, getAllManifests, getManifest } from '../src/lib/manifest-loader';
 import { buildMandateBrief } from '../src/lib/mandate-brief';
+import { decodeAttestationBlob } from '@hap/core';
 import { executeCommitted } from '../src/tools/commitments';
 
 const spUrl = process.env.SUVEREN_AS_URL ?? 'https://www.suveren.ai';
@@ -130,7 +131,8 @@ app.post('/internal/configure', internalOnly, (req: Request, res: Response) => {
     const key = Buffer.from(vaultKeyHex, 'hex');
     state.gateStore.setVaultKey(key);
     state.denialLog.setVaultKey(key);
-    console.error('[Suveren MCP] Vault key configured — gate store + denial log encryption active');
+    state.receiptArchive.setVaultKey(key);
+    console.error('[Suveren MCP] Vault key configured — gate store + denial log + receipt archive encryption active');
   }
 
   if (apiKey) {
@@ -570,6 +572,41 @@ app.get('/internal/authorizations', internalOnly, (_req: Request, res: Response)
 
 app.get('/internal/manifests', internalOnly, (_req: Request, res: Response) => {
   res.json({ manifests: getAllManifests() });
+});
+
+// Local evidence — everything this machine holds that proves what ran and
+// under which mandate: the receipt archive (complete signed receipts +
+// attestation blobs + issuer keys, append-only, never pruned) joined with the
+// gate store (intent text, local context — whose hashes the signed attestation
+// commits to). Serves the control-plane's evidence-download route. The
+// archive works even when the AS is gone; that is its reason to exist.
+app.get('/internal/evidence', internalOnly, (_req: Request, res: Response) => {
+  // An encrypted archive with no vault key must refuse, not serve [] — an
+  // empty answer over unreadable evidence would read as "nothing happened".
+  if (state.receiptArchive.isLocked()) {
+    res.status(503).json({ error: 'Vault locked — the evidence archive is encrypted until sign-in.' });
+    return;
+  }
+  // Each attestation gets a best-effort `decoded` view next to its blob: the
+  // blob is the verification material (opaque base64), the decoded payload is
+  // what a human reads — bounds_hash, commitment_mode, gate_content_hashes,
+  // owners. The blob stays the source of truth; `decoded` is a convenience
+  // projection and is omitted (never guessed) when the blob won't parse.
+  const authorizations = state.receiptArchive.getAuthorizations().map(a => ({
+    ...a,
+    attestations: a.attestations.map(att => {
+      try {
+        return { ...att, decoded: decodeAttestationBlob(att.blob) };
+      } catch {
+        return att;
+      }
+    }),
+  }));
+  res.json({
+    receipts: state.receiptArchive.getReceipts(),
+    authorizations,
+    gates: state.gateStore.getAll(),
+  });
 });
 
 // Agent Brief preview — returns the exact string the next MCP session will

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { spClient, type PendingItem, type GateContentEntry } from '../lib/sp-client';
 import { computeBoundsHashBrowser, computeContextHashBrowser, hashGateContent } from '../lib/frame';
@@ -36,16 +36,42 @@ interface Props {
 export function ExtendAuthModal({ item, onClose, onSuccess }: Props) {
   const { user, activeDomain, groupId } = useAuth();
 
+  // The profile's max TTL caps what the AS will sign — it now REJECTS (not
+  // clamps) a TTL above profile.ttl.max, so options above the cap must not be
+  // offered. Loaded async; until known, all options show (the AS still fails
+  // closed with a clear error if a stale selection slips through).
+  const [profileTtlMax, setProfileTtlMax] = useState<number | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    spClient.getProfile(item.profile_id)
+      .then((p: AgentProfile) => { if (!cancelled) setProfileTtlMax(p?.ttl?.max ?? null); })
+      .catch(() => { /* unknown max — leave options unfiltered */ });
+    return () => { cancelled = true; };
+  }, [item.profile_id]);
+
   // Filter out durations that would SHORTEN the authorization. Extending to
   // less than the remaining TTL is nonsense — the attestation's existing TTL
-  // is already longer. Keep options strictly greater than remaining.
+  // is already longer. Keep options strictly greater than remaining, and
+  // within the profile's max once known.
   const remaining = item.remaining_seconds ?? 0;
-  const usableOptions = TTL_OPTIONS.filter(o => o.seconds > remaining);
+  const usableOptions = TTL_OPTIONS.filter(
+    o => o.seconds > remaining && (profileTtlMax === null || o.seconds <= profileTtlMax),
+  );
 
   // Default selection: smallest usable option (nearest useful bump), or 30d if
   // the list is empty because the auth is already on a multi-year TTL.
   const defaultTTL = usableOptions[0]?.seconds ?? 2592000;
   const [selectedTTL, setSelectedTTL] = useState(defaultTTL);
+
+  // If the profile max loads after a default above it was selected, snap the
+  // selection back into the permitted range.
+  useEffect(() => {
+    if (profileTtlMax !== null && selectedTTL > profileTtlMax) {
+      const largest = usableOptions[usableOptions.length - 1]?.seconds;
+      if (largest) setSelectedTTL(largest);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileTtlMax]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 

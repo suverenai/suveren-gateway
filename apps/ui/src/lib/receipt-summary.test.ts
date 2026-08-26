@@ -8,7 +8,7 @@
  * back to something flat and true.
  */
 import { describe, it, expect } from 'vitest';
-import { actionLabel, scopeSummary, wasReviewed, profileVersionLabel, splitAction } from './receipt-summary';
+import { actionLabel, scopeSummary, wasReviewed, profileVersionLabel, splitAction, usageSummary, allowedSummary } from './receipt-summary';
 import type { ExecutionReceipt, IntegrationManifest } from './sp-client';
 
 const GMAIL = {
@@ -107,5 +107,58 @@ describe('supporting bits', () => {
   it('splits a namespaced tool name', () => {
     expect(splitAction('gmail__send_message')).toEqual({ integrationId: 'gmail', toolName: 'send_message' });
     expect(splitAction('bare')).toEqual({ integrationId: '', toolName: 'bare' });
+  });
+});
+
+describe('usageSummary — consumption paired with its limit', () => {
+  it('pairs the count with the bound for THIS action type', () => {
+    const r = receipt({
+      actionType: 'release',
+      cumulativeState: { daily: { amount: 0, count: 2 }, monthly: { amount: 0, count: 9 } },
+    });
+    // Two windows AND a decoy bound for a different action type.
+    const bounds = { release_daily_max: 5, release_monthly_max: 30, write_daily_max: 99 };
+    expect(usageSummary(r, bounds)).toBe('2 of 5 today · 9 of 30 this month');
+  });
+
+  it('uses the summed amount for amount-shaped bounds, not the call count', () => {
+    const r = receipt({
+      actionType: 'charge',
+      cumulativeState: { daily: { amount: 45, count: 3 }, monthly: { amount: 45, count: 3 } },
+    });
+    expect(usageSummary(r, { amount_daily_max: 100 })).toContain('45 of 100 today');
+  });
+
+  it('never invents a denominator when no bound matches', () => {
+    const r = receipt({
+      actionType: 'release',
+      cumulativeState: { daily: { amount: 0, count: 2 }, monthly: { amount: 0, count: 2 } },
+    });
+    // Ambiguous: two bounds, neither for this action type → no guessing.
+    const out = usageSummary(r, { write_daily_max: 5, post_daily_max: 7 });
+    expect(out).toContain('2 calls today');
+    expect(out).not.toContain('of 5');
+    expect(out).not.toContain('of 7');
+  });
+
+  it('falls back to a bare count when bounds are unknown (off-device grant)', () => {
+    const r = receipt({ cumulativeState: { daily: { amount: 0, count: 1 }, monthly: { amount: 0, count: 4 } } });
+    expect(usageSummary(r, undefined)).toBe('1 call today · 4 calls this month');
+  });
+});
+
+describe('allowedSummary — what the grant permits', () => {
+  it('renders local context values, dropping the bounds category', () => {
+    const out = allowedSummary({
+      action_type: 'release',
+      allowed_repos: 'org/repo',
+      allowed_environments: 'production',
+    });
+    expect(out).toBe('repos org/repo · environments production');
+    expect(out).not.toContain('action_type');
+  });
+
+  it('is empty when no local context is held, rather than inventing scope', () => {
+    expect(allowedSummary(undefined)).toBe('');
   });
 });

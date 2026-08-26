@@ -45,6 +45,8 @@ import { createMCPRouter } from './routes/mcp';
 import { createAutostartRouter } from './routes/autostart';
 import { notify, lockedNotification } from './lib/desktop-notify';
 import { createEncryptIntentRouter } from './routes/encrypt-intent';
+import { createEvidenceExportRouter } from './routes/evidence-export';
+import { createEvidenceRouter } from './routes/evidence';
 import { createDecryptIntentRouter } from './routes/decrypt-intent';
 import { createApprovedIntentsRouter } from './routes/approved-intents';
 import { startUpdateChecker, getUpdateStatus, forceCheck } from './lib/update-checker';
@@ -409,6 +411,14 @@ app.use('/api/gateway-settings', jsonParser, authGuard, createGatewaySettingsRou
 
 app.use('/api/encrypt-intent', jsonParser, authGuard, createEncryptIntentRouter());
 
+// Evidence download — local receipt archive + gate store, merged with a
+// best-effort AS export. Mounted BEFORE the /api proxy so it wins the route.
+app.use('/api/evidence-export', authGuard, createEvidenceExportRouter(SP_URL, vault));
+
+// Local evidence for the Receipts page (grant context/intent, archived
+// receipts). Mounted BEFORE the /api proxy so it wins the route.
+app.use('/api/evidence', authGuard, createEvidenceRouter());
+
 // E2EE intent decryption (P6.4) — approver-side, uses vault private key
 app.use('/api/decrypt-intent', jsonParser, authGuard, createDecryptIntentRouter(vault));
 
@@ -746,10 +756,27 @@ app.use(
         // Normalise URL to just the path (strip query string)
         const path = url.split('?')[0];
 
-        if (method === 'POST' && path === '/api/as/attest') {
+        if (
+          (method === 'POST' && path === '/api/as/attest') ||
+          (method === 'POST' && /^\/api\/attestations\/[^/]+\/revoke$/.test(path)) ||
+          (method === 'POST' && /^\/api\/authorizations\/[^/]+\/delete$/.test(path))
+        ) {
           eventBus.emit('attestation-changed');
-        } else if (method === 'POST' && /^\/api\/attestations\/[^/]+\/revoke$/.test(path)) {
-          eventBus.emit('attestation-changed');
+          // Re-sync the MCP server's attestation cache against the AS.
+          //
+          // That cache is in-memory with no background refresh, so a grant that
+          // the AS has just superseded, revoked or deleted keeps being listed —
+          // and, worse, keeps being MATCHED. Editing a grant creates a new
+          // authorization and ends the old one, so without this the gateway
+          // holds both: `list-authorizations` advertises authority that no
+          // longer exists, and selection can route a call through the dead
+          // twin. (Nothing unauthorized executes — the AS refuses a receipt
+          // under a revoked grant, so it fails closed — but the agent is being
+          // told something untrue about what it may do.)
+          //
+          // Fire-and-forget, exactly like the committed-proposal nudge below:
+          // login's resync remains the fallback if this call is lost.
+          void resyncGates().catch(() => {});
         } else if (method === 'POST' && path === '/api/proposals') {
           eventBus.emit('proposal-added');
         } else if (method === 'POST' && /^\/api\/proposals\/[^/]+\/resolve$/.test(path)) {

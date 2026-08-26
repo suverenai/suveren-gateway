@@ -14,7 +14,7 @@
 
 import {
   computeContentHash,
-  computeFieldsContentHash,
+  selectBoundFields,
   isFieldBinding,
   bindingAppliesTo,
   getProfile,
@@ -31,6 +31,22 @@ function getContentBinding(profileId: string): ContentBinding | undefined {
 export interface ComputedContentHash {
   contentHash: string;
   contentBinding: { version: string; kind: 'jcs' | 'text'; fields?: string[] };
+  /**
+   * EXACTLY the value that was hashed — the declared field subset, the whole
+   * record payload, or the single bound string.
+   *
+   * Kept so the local archive can hold the content the receipt commits to.
+   * A `contentHash` alone refutes a forged artifact (their copy will not
+   * match) but cannot reproduce what was actually sent, and the artifact's
+   * other home — a Sent folder on an employer's laptop — is exactly what the
+   * archive exists to survive. Storing the bound value and nothing else keeps
+   * the copy checkable by construction: it is the hash's preimage, so it can
+   * never drift from what the receipt attests, and it deliberately excludes
+   * what the binding excludes (an email's `bcc` is never bound, never stored).
+   *
+   * This never leaves the machine — the AS receives the hash only.
+   */
+  boundContent: Record<string, unknown> | string;
 }
 
 /**
@@ -79,15 +95,21 @@ export function computeContentBinding(
       }
       return undefined;
     }
+    // Select once and hash the selection, so the stored content and the hash
+    // are provably the same object rather than two independent derivations.
+    const bound = selectBoundFields(binding, toolArgs);
     return {
-      contentHash: computeFieldsContentHash(binding, toolArgs),
+      contentHash: computeContentHash(binding, bound),
       contentBinding: { version: binding.version, kind: binding.kind, fields: binding.fields },
+      boundContent: bound,
     };
   }
 
   let contentHash: string;
+  let boundContent: Record<string, unknown> | string;
   if (binding.kind === 'jcs') {
     contentHash = computeContentHash(binding, toolArgs); // whole record payload
+    boundContent = toolArgs;
   } else {
     // text: hash the bound field, pre-footer.
     //
@@ -120,11 +142,13 @@ export function computeContentBinding(
     // binding is honest: the receipt then claims only what it can support.
     if (raw === '') return undefined;
     contentHash = computeContentHash(binding, raw);
+    boundContent = raw;
   }
 
   return {
     contentHash,
     contentBinding: { version: binding.version, kind: binding.kind },
+    boundContent,
   };
 }
 

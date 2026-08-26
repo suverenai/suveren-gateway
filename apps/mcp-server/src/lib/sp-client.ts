@@ -127,6 +127,11 @@ export class SPClient {
     this.receiptRetry = { ...DEFAULT_RECEIPT_RETRY, ...receiptRetry };
   }
 
+  /** The AS base URL this client talks to (for provenance records). */
+  get url(): string {
+    return this.baseUrl;
+  }
+
   setApiKey(key: string): void {
     this.apiKey = key;
   }

@@ -47,22 +47,32 @@ function writeFile(data: ApprovedIntentsFile): void {
   writeFileSync(FILE_PATH, JSON.stringify(data, null, 2), 'utf-8');
 }
 
+/**
+ * Read and decrypt all approved-intent records. Shared by the GET route and
+ * the evidence-export bundle — this store is the APPROVER's accountability
+ * record (what text they saw when they approved), which is evidence in its
+ * own right. Entries the vault can no longer decrypt are skipped.
+ */
+export function readApprovedIntents(vault: Vault): Record<string, string> {
+  const file = readFile();
+  const result: Record<string, string> = {};
+  for (const [authorityId, blob] of Object.entries(file.entries)) {
+    try {
+      result[authorityId] = vault.decrypt(blob);
+    } catch {
+      // If decryption fails (vault re-keyed), skip this entry silently.
+    }
+  }
+  return result;
+}
+
 export function createApprovedIntentsRouter(vault: Vault): Router {
   const router = Router();
 
   // GET /api/approved-intents — return all stored intents (decrypted plaintext)
   router.get('/', (req: Request, res: Response) => {
     try {
-      const file = readFile();
-      const result: Record<string, string> = {};
-      for (const [authorityId, blob] of Object.entries(file.entries)) {
-        try {
-          result[authorityId] = vault.decrypt(blob);
-        } catch {
-          // If decryption fails (vault re-keyed), skip this entry silently.
-        }
-      }
-      res.json({ intents: result });
+      res.json({ intents: readApprovedIntents(vault) });
     } catch (err) {
       console.error('[Control Plane] approved-intents GET error:', err);
       res.status(500).json({ error: 'Failed to read approved intents' });
