@@ -32,6 +32,39 @@ const DEFAULT_DATA_DIR = process.env.SUVEREN_DATA_DIR ?? join(homedir(), '.suver
 // Defaults to DEFAULT_DATA_DIR/integrations (~/.suveren/integrations) for local
 // dev, which is fine because the host arch never changes.
 const INTEGRATIONS_DIR = process.env.SUVEREN_INTEGRATIONS_DIR ?? join(DEFAULT_DATA_DIR, 'integrations');
+
+/**
+ * Serializes npm installs across ALL integrations.
+ *
+ * Every integration installs into the SAME prefix (`INTEGRATIONS_DIR`), and
+ * `npm install` is not safe to run twice in one prefix: it rewrites the
+ * dependency tree and the `node_modules/.bin` shims for the whole directory.
+ * Two installs racing there means one can prune or relink the other's files
+ * while that other package is being spawned.
+ *
+ * The per-id operation queue does not help — it serializes operations for one
+ * integration, and this is a collision between DIFFERENT integrations.
+ *
+ * Observed as two faces of the same bug in CI: `Cannot find module
+ * '…/node_modules/.bin/crm-mcp'` (the shim vanished mid-flight), and a
+ * connector that connected, was restarted, and never came back
+ * (`Connection closed`) while a second integration was installing. It hides
+ * on a developer machine because the packages are usually already installed
+ * and the fast path never reaches an install at all — the race needs a cold
+ * directory, which is the state a real user's FIRST run is in, with boot
+ * auto-restore starting several integrations at once.
+ *
+ * Module-scoped rather than instance-scoped because the directory is
+ * process-wide: two managers in one process would still collide.
+ */
+let installLock: Promise<unknown> = Promise.resolve();
+
+export function withInstallLock<T>(task: () => Promise<T>): Promise<T> {
+  const run = installLock.then(task, task);
+  // Settled-safe tail, so one failed install never wedges every later one.
+  installLock = run.then(() => undefined, () => undefined);
+  return run;
+}
 const INTEGRATIONS_BIN = join(INTEGRATIONS_DIR, 'node_modules', '.bin');
 
 /**
@@ -263,8 +296,20 @@ export class IntegrationManager {
   private async ensureInstalled(npmPackage: string): Promise<void> {
     ensureIntegrationsDir();
 
+    // Fast path: already installed. Deliberately outside the lock — the common
+    // case must not queue behind an unrelated install.
     if (this.isUsableInstall(npmPackage)) return;
 
+    return withInstallLock(async () => {
+      // Re-check inside the lock: a concurrent call for the SAME package may
+      // have installed it while this one waited.
+      if (this.isUsableInstall(npmPackage)) return;
+      await this.installNow(npmPackage);
+    });
+  }
+
+  /** The actual install. Callers MUST hold the install lock. */
+  private async installNow(npmPackage: string): Promise<void> {
     // A previous attempt may have left a partial directory behind. Remove it
     // so npm starts clean, otherwise the reinstall can fail on half-written
     // files that are still locked.
