@@ -8,19 +8,32 @@
   "npmPackage": "mcp-remote",
   "mcp": {
     "command": "mcp-remote",
-    "args": ["https://mcp.mollie.com/mcp", "--header", "Authorization: Bearer ${MOLLIE_ACCESS_TOKEN}"]
+    "args": [
+      "https://mcp.mollie.com/mcp",
+      "--header",
+      "Authorization: Bearer ${MOLLIE_ACCESS_TOKEN}"
+    ]
   },
   "credentials": {
     "fields": [
-      { "key": "accessToken", "label": "Access Token", "type": "password", "placeholder": "access_org_..." }
+      {
+        "key": "accessToken",
+        "label": "Access Token",
+        "type": "password",
+        "placeholder": "access_org_..."
+      }
     ],
-    "envMapping": { "MOLLIE_ACCESS_TOKEN": "accessToken" }
+    "envMapping": {
+      "MOLLIE_ACCESS_TOKEN": "accessToken"
+    }
   },
   "oauth": null,
   "toolGating": {
     "default": {
       "executionMapping": {},
-      "staticExecution": { "action_type": "read" }
+      "staticExecution": {
+        "action_type": "unclassified"
+      }
     },
     "overrides": {
       "CreatePayment": {
@@ -28,67 +41,93 @@
           "amount": "amount",
           "currency": "currency"
         },
-        "staticExecution": { "action_type": "charge" }
+        "staticExecution": {
+          "action_type": "charge"
+        }
       },
       "CreatePaymentForCustomer": {
         "executionMapping": {
           "amount": "amount",
           "currency": "currency"
         },
-        "staticExecution": { "action_type": "charge" }
+        "staticExecution": {
+          "action_type": "charge"
+        }
       },
       "CreatePaymentLink": {
         "executionMapping": {
           "amount": "amount",
           "currency": "currency"
         },
-        "staticExecution": { "action_type": "charge" }
+        "staticExecution": {
+          "action_type": "charge"
+        }
       },
       "CreateCapture": {
         "executionMapping": {
           "amount_value": "amount",
           "amount_currency": "currency"
         },
-        "staticExecution": { "action_type": "charge" }
+        "staticExecution": {
+          "action_type": "charge"
+        }
       },
       "CreateSubscription": {
         "executionMapping": {
           "amount_value": "amount",
           "amount_currency": "currency"
         },
-        "staticExecution": { "action_type": "subscribe" }
+        "staticExecution": {
+          "action_type": "subscribe"
+        }
       },
       "UpdateSubscription": {
         "executionMapping": {},
-        "staticExecution": { "action_type": "subscribe" }
+        "staticExecution": {
+          "action_type": "subscribe"
+        }
       },
       "CancelSubscription": {
         "executionMapping": {},
-        "staticExecution": { "action_type": "subscribe" }
+        "staticExecution": {
+          "action_type": "subscribe"
+        }
       },
       "CreateCustomer": {
         "executionMapping": {},
-        "staticExecution": { "action_type": "charge" }
+        "staticExecution": {
+          "action_type": "charge"
+        }
       },
       "UpdateCustomer": {
         "executionMapping": {},
-        "staticExecution": { "action_type": "charge" }
+        "staticExecution": {
+          "action_type": "charge"
+        }
       },
       "CreateMandate": {
         "executionMapping": {},
-        "staticExecution": { "action_type": "charge" }
+        "staticExecution": {
+          "action_type": "charge"
+        }
       },
       "RevokeMandate": {
         "executionMapping": {},
-        "staticExecution": { "action_type": "charge" }
+        "staticExecution": {
+          "action_type": "charge"
+        }
       },
       "CreateWebhook": {
         "executionMapping": {},
-        "staticExecution": { "action_type": "charge" }
+        "staticExecution": {
+          "action_type": "charge"
+        }
       },
       "UpdateWebhook": {
         "executionMapping": {},
-        "staticExecution": { "action_type": "charge" }
+        "staticExecution": {
+          "action_type": "charge"
+        }
       }
     }
   },
@@ -98,33 +137,69 @@
       "description": "Read-only. View payments, balances, invoices, and transaction history.",
       "risk": "low",
       "mode": "automatic",
-      "bounds": { "amount_max": "0", "amount_daily_max": "0", "amount_monthly_max": "0", "transaction_count_daily_max": "100" },
-      "context": { "currency": "EUR", "action_type": "charge" },
+      "bounds": {
+        "amount_max": "0",
+        "amount_daily_max": "0",
+        "amount_monthly_max": "0",
+        "transaction_count_daily_max": "100"
+      },
+      "context": {
+        "currency": "EUR",
+        "action_type": "charge"
+      },
       "intent": "Allow the agent to monitor payments and view transaction history. Read-only — no payments are created or modified.",
       "ttl": 2592000,
-      "tags": ["read-only", "EUR", "100 ops/day"]
+      "tags": [
+        "read-only",
+        "EUR",
+        "100 ops/day"
+      ]
     },
     {
       "name": "Small Payments",
-      "description": "Create payment links and process charges up to \u20ac50 per transaction.",
+      "description": "Create payment links and process charges up to €50 per transaction.",
       "risk": "medium",
       "mode": "automatic",
-      "bounds": { "amount_max": "50", "amount_daily_max": "200", "amount_monthly_max": "2000", "transaction_count_daily_max": "20" },
-      "context": { "currency": "EUR", "action_type": "charge" },
-      "intent": "Allow the agent to create payment links and process small charges for routine invoicing. Max \u20ac50 per transaction, \u20ac200 per day.",
+      "bounds": {
+        "amount_max": "50",
+        "amount_daily_max": "200",
+        "amount_monthly_max": "2000",
+        "transaction_count_daily_max": "20"
+      },
+      "context": {
+        "currency": "EUR",
+        "action_type": "charge"
+      },
+      "intent": "Allow the agent to create payment links and process small charges for routine invoicing. Max €50 per transaction, €200 per day.",
       "ttl": 2592000,
-      "tags": ["\u20ac50/tx", "\u20ac200/day", "20 ops/day"]
+      "tags": [
+        "€50/tx",
+        "€200/day",
+        "20 ops/day"
+      ]
     },
     {
       "name": "Full Payment Management",
       "description": "Payments, refunds, and subscriptions. Every action requires your approval.",
       "risk": "high",
       "mode": "review",
-      "bounds": { "amount_max": "1000", "amount_daily_max": "5000", "amount_monthly_max": "20000", "transaction_count_daily_max": "50" },
-      "context": { "currency": "EUR", "action_type": "charge,refund,subscribe" },
+      "bounds": {
+        "amount_max": "1000",
+        "amount_daily_max": "5000",
+        "amount_monthly_max": "20000",
+        "transaction_count_daily_max": "50"
+      },
+      "context": {
+        "currency": "EUR",
+        "action_type": "charge,refund,subscribe"
+      },
       "intent": "Full payment management — create payments, issue refunds, manage subscriptions. Every write action requires human review before execution.",
       "ttl": 2592000,
-      "tags": ["\u20ac1,000/tx", "\u20ac5,000/day", "review mode"]
+      "tags": [
+        "€1,000/tx",
+        "€5,000/day",
+        "review mode"
+      ]
     }
   ],
   "setupHint": "Use a test token (test_...) for development.",
