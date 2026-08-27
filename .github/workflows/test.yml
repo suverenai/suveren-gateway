@@ -1,0 +1,50 @@
+name: Unit tests
+
+# The workspace's 739 unit cases had no CI of their own: bundle-smoke.yml
+# proves the distribution starts and probes clean, publish workflows ship it,
+# but nothing ran `pnpm -r test` on a push. That suite is where the
+# Gatekeeper's enforcement lives — read governance, content binding, receipt
+# retry, commitment-mode downgrade, fail-closed behaviour — so it should not
+# depend on someone remembering to run it locally.
+#
+# Note the root package.json has no `test` script by design; `-r` is required
+# to reach the per-app suites.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: unit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # Build first: the workspace's hap-core wrapper re-exports the published
+      # package, and several suites import from built output. A test run over a
+      # stale graph passes for the wrong reason.
+      - name: Build
+        run: pnpm build
+
+      - name: Unit tests
+        run: pnpm -r test
