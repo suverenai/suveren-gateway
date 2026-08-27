@@ -7,6 +7,7 @@
 
 import type { ContentBinding } from '@hap/core';
 import { notifyControlPlane } from './cp-notify';
+import { clientVersionHeaders } from './client-version';
 
 export interface SPAttestationResponse {
   domain: string;
@@ -158,6 +159,11 @@ export class SPClient {
     const url = `${this.baseUrl}${path}`;
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
+      // Identify the caller so the AS can answer "what is deployed against
+      // me?" and name a version in an upgrade instruction. Advisory only —
+      // never used for authorization. Sent on every call, not just receipts,
+      // so the picture is not skewed toward one endpoint.
+      ...clientVersionHeaders(),
       ...(init?.headers as Record<string, string>),
     };
 
