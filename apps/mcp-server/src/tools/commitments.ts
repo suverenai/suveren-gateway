@@ -114,7 +114,12 @@ export async function executeCommitted(
       // SPClient therefore treats proposalId as retry-safe on its own; a
       // PROPOSAL_ALREADY_EXECUTED answer is still a definitive rejection
       // (never retried) and means a *different* caller consumed the proposal.
-      ...(binding ?? {}),
+      // Privacy: hash + how to reproduce it only. `binding.boundContent` is
+      // the plaintext preimage (what the human approved) and never leaves
+      // this machine — see the archive call below.
+      ...(binding
+        ? { contentHash: binding.contentHash, contentBinding: binding.contentBinding }
+        : {}),
     });
     receiptId = typeof receipt?.id === 'string' ? receipt.id : undefined;
 

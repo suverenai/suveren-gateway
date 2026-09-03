@@ -789,7 +789,14 @@ function createGatedToolHandlerInner(
             executionContext: { ...execution },
             amount: typeof execution.amount === 'number' ? execution.amount : undefined,
             idempotencyKey: randomUUID(),
-            ...(binding ?? {}),
+            // Privacy: send the hash and how to reproduce it — never the
+            // preimage. `binding` also carries `boundContent`, the plaintext
+            // that was hashed (an email's to/cc/subject/body); it stays on
+            // this machine for the local archive, so it must be picked out
+            // field by field rather than spread.
+            ...(binding
+              ? { contentHash: binding.contentHash, contentBinding: binding.contentBinding }
+              : {}),
           });
           receiptId = typeof receipt?.id === 'string' ? receipt.id : undefined;
 
