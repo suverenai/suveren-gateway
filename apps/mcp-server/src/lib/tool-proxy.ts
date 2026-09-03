@@ -272,12 +272,20 @@ function createGatedToolHandlerInner(
     };
 
 
-  // Tools the manifest declares unavailable are always blocked at the gate.
+  // Tools the manifest declares unavailable — and tools it does not describe
+  // at all — are always blocked at the gate.
   if (category === 'disabled') {
+    const reason = tool.gating.disabledReason;
     return async () => ({
       content: [{
         type: 'text',
-        text: `Tool "${tool.namespacedName}" is disabled by the integration manifest and cannot be used.`,
+        text: reason
+          ? `Tool "${tool.namespacedName}" is refused: ${reason}. A tool that no manifest entry ` +
+            `describes cannot be gated — there is nothing declaring which action type it performs ` +
+            `or how its arguments map to the bounds. Add an entry for "${tool.originalName}" under ` +
+            `this integration's toolGating.overrides (with "category": "read" for a read-only tool) ` +
+            `before it can be used.`
+          : `Tool "${tool.namespacedName}" is disabled by the integration manifest and cannot be used.`,
       }],
       isError: true,
     });

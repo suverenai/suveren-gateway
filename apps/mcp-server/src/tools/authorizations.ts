@@ -35,7 +35,8 @@ function buildCapabilityMap(
 
   const gated: string[] = [];
   const readOnly: string[] = [];
-  const defaultGated: string[] = [];
+  /** Discovered but described by no manifest entry ⇒ refused at the gate. */
+  const undescribed: string[] = [];
 
   for (const tool of allTools) {
     if (!tool.gating || !tool.gating.profile) {
@@ -66,13 +67,10 @@ function buildCapabilityMap(
       const actionType = override.staticExecution?.action_type ?? 'unknown';
       gated.push(`      - ${tool.originalName}: ${actionType}${mappingDesc ? `, ${mappingDesc}` : ''}`);
     } else {
-      // Falls through to default gating
-      const defaultAction = toolGating.default.staticExecution?.action_type;
-      if (defaultAction === 'read' && Object.keys(toolGating.default.executionMapping ?? {}).length === 0) {
-        defaultGated.push(tool.originalName);
-      } else {
-        gated.push(`      - ${tool.originalName}: ${defaultAction ?? 'default'} (default gating)`);
-      }
+      // No entry describes this tool, so the gate refuses it (there is no
+      // permissive default). Listing it as gated or default-gated would tell
+      // the agent it may call something every call of which is refused.
+      undescribed.push(tool.originalName);
     }
   }
 
@@ -88,11 +86,13 @@ function buildCapabilityMap(
     lines.push(`    Read-only (no authorization needed): ${readOnly.join(', ')}`);
   }
 
-  if (defaultGated.length > 0) {
-    lines.push(`    Default-gated (action_type: ${toolGating.default.staticExecution?.action_type ?? 'read'}): ${defaultGated.join(', ')}`);
+  if (undescribed.length > 0) {
+    lines.push(
+      `    Refused (no manifest entry — do not call): ${undescribed.join(', ')}`,
+    );
   }
 
-  if (gated.length === 0 && readOnly.length === 0 && defaultGated.length === 0) {
+  if (gated.length === 0 && readOnly.length === 0 && undescribed.length === 0) {
     lines.push('    No tools discovered for this profile.');
   }
 

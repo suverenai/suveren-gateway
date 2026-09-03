@@ -110,6 +110,13 @@ export interface ToolGatingConfig {
    * - 'disabled' — declared unavailable by the manifest; always blocked.
    */
   category?: 'read' | 'disabled';
+  /**
+   * Why a `category:'disabled'` tool is blocked, shown to the caller. The
+   * manifest's own `disabled` declaration needs no reason (it IS the reason);
+   * this exists for a tool the manifest does not describe at all, where the
+   * operator has to be told what to add.
+   */
+  disabledReason?: string;
   /** Static read gate (manifest): the bound that must hold to use a read tool. */
   boundField?: string;
   /** The exact value `boundField` must have for the read to be permitted. */

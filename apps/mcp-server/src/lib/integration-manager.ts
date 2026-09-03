@@ -817,11 +817,25 @@ export class IntegrationManager {
       };
     }
 
-    // Fall back to default
+    // No manifest entry ⇒ REFUSED. protocol.md → Tool-Gating Manifests: "The
+    // Gatekeeper MUST refuse any tool that is not described in a loaded
+    // manifest. There is no 'permissive default' and no ungated read access."
+    //
+    // `toolGating.default` used to answer here, which made it exactly that
+    // permissive default: any tool a downstream server happened to expose —
+    // including one added by a remote server after this manifest was written —
+    // was gated by a generic entry nobody wrote for it. Its executionMapping is
+    // empty by construction, so the call's real parameters (amount, recipient,
+    // resource) mapped into nothing and were checked against nothing.
+    //
+    // `default` is NOT an inheritance template either: the override branch
+    // above reads each entry's own executionMapping/staticExecution and merges
+    // nothing. So nothing consumes it as a gate any more.
     return {
       profile: profileId,
-      executionMapping: profileGating.default.executionMapping,
-      staticExecution: profileGating.default.staticExecution,
+      executionMapping: {},
+      category: 'disabled',
+      disabledReason: 'not described in manifest',
     };
   }
 
