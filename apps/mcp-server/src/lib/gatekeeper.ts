@@ -2,7 +2,7 @@
  * MCP Gatekeeper Wrapper — integrates hap-core Gatekeeper with attestation cache and execution log.
  */
 
-import { verify, type GatekeeperRequest, type GatekeeperResult, type ExecutionLogQuery } from '@hap/core';
+import { verify, type GatekeeperRequest, type GatekeeperResult } from '@hap/core';
 import { AttestationCache, type CachedAuthorization } from './attestation-cache';
 
 /** Minimal subset of CachedAuthorization / EnrichedAuthorization needed for context override. */
@@ -12,10 +12,15 @@ interface AuthContextOverride {
 }
 
 export class MCPGatekeeper {
-  constructor(
-    private cache: AttestationCache,
-    private executionLog?: ExecutionLogQuery,
-  ) {}
+  /**
+   * No ExecutionLog dependency by construction. The local record is
+   * display-only (protocol.md → "Executor Gating, Context vs Bounds,
+   * Display-Only Logs"), so the Gatekeeper must not be able to read it: with
+   * no log in scope, a local cumulative check cannot be reintroduced by
+   * accident. `SharedState.executionLog` stays — it feeds the UI's consumption
+   * display and nothing else.
+   */
+  constructor(private cache: AttestationCache) {}
 
   /**
    * Verify an execution request against a cached authorization.
@@ -83,17 +88,35 @@ export class MCPGatekeeper {
       attestations: auth.attestations.map(a => a.blob),
       execution,
       context: resolvedContext,
-      // Scopes the local cumulative check to the same (profileId, path) key the
-      // ExecutionLog records under (see tool-proxy's record call). It cannot go
-      // inside `frame`: that is validated against the profile's boundsSchema,
-      // which declares no `path` field in any shipped profile, so an extra key
-      // there fails verification with "Unknown field". Omitting it entirely —
-      // the previous behaviour — made every cumulative lookup return zero, so
-      // the local gate never fired and the AS was doing all the enforcing.
+      // Identifies the grant whose bounds are being checked. hap-core reads it
+      // only to scope a cumulative lookup, which no longer happens here (see
+      // below); it is kept because it belongs to the request, not to the
+      // dropped check. It cannot go inside `frame`: that is validated against
+      // the profile's boundsSchema, which declares no `path` field in any
+      // shipped profile, so an extra key there fails with "Unknown field".
       path: auth.path,
     };
 
-    const result = await verify(request, publicKeyHex, undefined, this.executionLog);
+    // NO execution log is passed, deliberately — so hap-core runs the local
+    // checks and skips the cumulative ones.
+    //
+    // Per-transaction bounds, enum bounds and context constraints are enforced
+    // here (the AS holds only `context_hash` and cannot inspect plaintext
+    // context, so the last of those is ours alone). Cumulative bounds
+    // (`cumulative_sum`, `cumulative_count`) are the AS's job ALONE: it holds
+    // the receipt history, and it is the only party that can refuse before a
+    // receipt exists. Our 31-day local log is display-only — checking it here
+    // would be a second, drifting copy of the source of truth, and it fails in
+    // both directions (a pruned or fresh log under-counts; a log holding
+    // executions the AS never counted over-counts and blocks work the grant
+    // allows). protocol.md → "Executor Gating, Context vs Bounds, Display-Only
+    // Logs": "v0.4 reference implementations that re-checked cumulative bounds
+    // locally before calling the AS MUST drop the local check."
+    //
+    // hap-core skips a cumulative bound when no log is supplied (it `break`s
+    // out of the case) — it does not fail closed on the missing log, so the
+    // call proceeds to the AS pre-flight, which is what refuses it.
+    const result = await verify(request, publicKeyHex);
     return { result, authorization: auth };
   }
 }
