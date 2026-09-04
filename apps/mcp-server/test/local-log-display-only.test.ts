@@ -28,9 +28,10 @@
  */
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
+import { generateKeyPairSync, sign as edSign } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { registerProfile, clearProfiles, verify } from '@hap/core';
+import { registerProfile, clearProfiles, verify, canonicalize, computeBoundsHash } from '@hap/core';
 import { MCPGatekeeper } from '../src/lib/gatekeeper';
 import { ExecutionLog } from '../src/lib/execution-log';
 import { getConsumptionState } from '../src/lib/consumption';
@@ -80,13 +81,48 @@ const PROFILE = {
   retention_minimum: 1,
 };
 
+const NOW = Math.floor(Date.now() / 1000);
+
+/**
+ * A genuinely signed attestation, because `verify()` fails closed on an empty
+ * attestation list (hap-core 0.10.0) — as it must: a call with nothing to
+ * verify is not a call that was authorised. An earlier version of this file
+ * passed `attestations: []` and reached the bounds logic anyway, which was the
+ * fail-open bug rather than a shortcut. Signing here costs ten lines and makes
+ * every assertion below run against a mandate that actually verifies.
+ */
+const { privateKey: AS_PRIVATE, publicKey: AS_PUBLIC } = generateKeyPairSync('ed25519');
+const AS_PUBLIC_HEX = AS_PUBLIC.export({ format: 'der', type: 'spki' }).subarray(-32).toString('hex');
+
+function signedAttestationBlob(): string {
+  const payload = {
+    attestation_id: '00000000-0000-4000-8000-0000000000cc',
+    version: '0.5' as const,
+    profile_id: PROFILE_ID,
+    bounds_hash: computeBoundsHash(BOUNDS, PROFILE as never),
+    context_hash: 'sha256:' + 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+    execution_context_hash: 'sha256:' + '00'.repeat(32),
+    resolved_owners: ['did:key:test-owner'],
+    gate_content_hashes: { intent: 'sha256:' + '11'.repeat(32) },
+    commitment_mode: 'automatic' as const,
+    issued_at: NOW - 60,
+    expires_at: NOW + 3600,
+  };
+  const signature = edSign(null, Buffer.from(canonicalize(payload), 'utf8'), AS_PRIVATE)
+    .toString('base64url');
+  return Buffer.from(
+    JSON.stringify({ header: { typ: 'HAP-attestation', alg: 'EdDSA' }, payload, signature }),
+    'utf8',
+  ).toString('base64');
+}
+
 const AUTH: CachedAuthorization = {
   authorizationId: 'authz_00000000-0000-4000-8000-0000000000cc',
   profileId: PROFILE_ID,
   path: PATH,
   frame: { ...BOUNDS },
   bounds: { ...BOUNDS },
-  attestations: [],
+  attestations: [{ domain: 'finance', blob: signedAttestationBlob(), expiresAt: NOW + 3600 }],
   requiredDomains: [],
   attestedDomains: [],
   complete: true,
@@ -94,15 +130,12 @@ const AUTH: CachedAuthorization = {
 
 /**
  * Cache stub. Returns the grant by its per-ceremony id, exactly as the real
- * cache keys it. No attestations, so `verify` has no signatures to check and
- * the test exercises the bounds logic it is about.
+ * cache keys it, and the public key that verifies the blob above.
  */
 const cache = {
   getAuthorization: (id: string) => (id === AUTH.authorizationId ? AUTH : null),
-  getPublicKey: async () => '00'.repeat(32),
+  getPublicKey: async () => AS_PUBLIC_HEX,
 } as unknown as AttestationCache;
-
-const NOW = Math.floor(Date.now() / 1000);
 
 let logDir: string;
 let log: ExecutionLog;
@@ -159,11 +192,11 @@ describe('MCPGatekeeper — cumulative bounds are NOT enforced locally', () => {
     const result = await verify(
       {
         frame: { ...BOUNDS },
-        attestations: [],
+        attestations: [signedAttestationBlob()],
         execution: { amount: 50, action_type: 'charge' },
         path: PATH,
       },
-      '00'.repeat(32),
+      AS_PUBLIC_HEX,
       NOW,
       log,
     );
