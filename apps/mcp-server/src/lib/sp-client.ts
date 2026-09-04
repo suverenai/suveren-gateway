@@ -258,12 +258,14 @@ export class SPClient {
     contentHash?: string;
     /**
      * How to reproduce {@link contentHash}. Required iff contentHash is set.
-     * Mirrors the wire payload actually sent (and signed verbatim by the AS,
-     * see `receiptData.contentBinding` in the AS's receipt route): v2 field
-     * bindings carry `fields`/`required_fields`/`appliesTo` alongside
-     * `version`/`kind`, not just the two v1 properties.
+     * This is the whole wire payload for the binding (the AS signs it verbatim
+     * into the receipt, see `receiptData.contentBinding` in its receipt route):
+     * `{version, kind}` for a v1 binding, plus `fields` for a v0.6 declared-
+     * field binding — that is exactly what `computeContentBinding` produces.
+     * A verifier reads `required_fields`/`appliesTo` from the published
+     * profile, so they are not sent, and the hash preimage never is.
      */
-    contentBinding?: Pick<ContentBinding, 'version' | 'kind' | 'fields' | 'required_fields' | 'appliesTo'>;
+    contentBinding?: Pick<ContentBinding, 'version' | 'kind' | 'fields'>;
   }): Promise<{ receipt: Record<string, unknown> }> {
     const body = JSON.stringify(data);
     // Retries are only safe when the AS can dedup them: an idempotencyKey on

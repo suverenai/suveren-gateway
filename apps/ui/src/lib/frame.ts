@@ -1,7 +1,19 @@
 /**
- * Frame hash computation for the Authority UI.
+ * Frame / bounds / context hash computation for the Authority UI.
  *
  * Uses SubtleCrypto (browser) instead of Node crypto.
+ *
+ * This file is a DUPLICATE CANONICALIZER. The UI signs a bounds_hash and a
+ * context_hash that the Authority Server (hap-core, Node) recomputes and
+ * verifies, so the two must produce identical bytes for identical input — a
+ * one-character disagreement means nothing the human authorizes here will ever
+ * verify there. It exists because the @hap/core ESM bundle imports node:crypto
+ * at module level (computeIntentHash and friends), which Vite rejects in a
+ * browser build; only its TYPES are imported below. Keep the logic in
+ * `canonicalRecords` byte-identical to hap-core's `canonicalRecords` in
+ * src/frame.ts, and keep both aligned with protocol.md → *Bounds & Scope
+ * Canonicalization*. The shared answer key is
+ * content/0.7/vectors/canonical-bounds-and-scope.json (see frame.test.ts).
  */
 
 import type { AgentProfile, AgentFrameParams, AgentBoundsParams, AgentContextParams } from '@hap/core';
@@ -50,8 +62,95 @@ export async function computeFrameHashBrowser(
 }
 
 /**
+ * Thrown when a value cannot be canonicalized at all — currently only a raw
+ * LF/CR inside a value. Mirrors hap-core's `CanonicalValueError`, including the
+ * protocol error code, so the UI refuses the same input the AS would refuse
+ * instead of signing a hash the AS will reject.
+ */
+export class CanonicalValueError extends Error {
+  readonly code: 'BOUNDS_INVALID_VALUE' | 'CONTEXT_INVALID_VALUE';
+  readonly field: string;
+
+  constructor(code: 'BOUNDS_INVALID_VALUE' | 'CONTEXT_INVALID_VALUE', field: string, message: string) {
+    super(message);
+    this.name = 'CanonicalValueError';
+    this.code = code;
+    this.field = field;
+  }
+}
+
+/**
+ * Percent-encode a value per protocol.md → *Value encoding*.
+ *
+ * Over the value's UTF-8 bytes, as `%` + two UPPERCASE hex digits:
+ *   - `=` (0x3D) — otherwise it would be read as the key/value separator
+ *   - `%` (0x25) — so the encoding is self-inverse
+ *   - every byte outside printable ASCII 0x20–0x7E
+ *
+ * LF and CR are deliberately NOT in this list: they are refused below, so
+ * encoding them is unreachable.
+ *
+ * Encoding happens at canonicalization time only — what the UI stores and
+ * displays stays the human's original bytes.
+ */
+function percentEncodeCanonicalValue(raw: string): string {
+  const bytes = new TextEncoder().encode(raw);
+  let out = '';
+  for (const b of bytes) {
+    if (b === 0x3d || b === 0x25 || b < 0x20 || b > 0x7e) {
+      out += '%' + b.toString(16).toUpperCase().padStart(2, '0');
+    } else {
+      out += String.fromCharCode(b);
+    }
+  }
+  return out;
+}
+
+/**
+ * The one place `key=value` records are built for bounds and context.
+ * Byte-for-byte mirror of hap-core's `canonicalRecords`:
+ *   - keys in the schema's keyOrder, never alphabetical
+ *   - a value carrying a raw LF/CR is REFUSED (never stripped or encoded)
+ *   - `=`, `%`, and any byte outside 0x20–0x7E are percent-encoded (UPPERCASE)
+ *   - numbers use `String()`, the shortest round-trippable form (`String(20.0)`
+ *     === "20")
+ *   - a key with no value is OMITTED entirely — it emits no record, so an
+ *     optional bound the human never set (the UI hides several) never hashes
+ *     the JavaScript artifact "undefined", and "no limit set" stays distinct
+ *     from an empty value, which renders as `key=`
+ */
+function canonicalRecords(
+  params: Record<string, string | number | undefined>,
+  keyOrder: string[],
+  code: 'BOUNDS_INVALID_VALUE' | 'CONTEXT_INVALID_VALUE',
+): string {
+  const lines: string[] = [];
+
+  for (const key of keyOrder) {
+    const value = params[key];
+    if (value === undefined || value === null) continue;
+
+    const raw = String(value);
+    if (raw.includes('\n') || raw.includes('\r')) {
+      throw new CanonicalValueError(
+        code,
+        key,
+        `Value for "${key}" contains a raw newline or carriage return. ` +
+          'Refusing: a hash over stripped or normalized input would not represent what was authorized.',
+      );
+    }
+
+    lines.push(`${key}=${percentEncodeCanonicalValue(raw)}`);
+  }
+
+  return lines.join('\n');
+}
+
+/**
  * Compute bounds hash client-side (v0.4).
  * Falls back to frameSchema if boundsSchema is not present.
+ *
+ * @throws CanonicalValueError (BOUNDS_INVALID_VALUE) if a value carries a raw LF/CR
  */
 export async function computeBoundsHashBrowser(
   params: AgentBoundsParams,
@@ -59,8 +158,11 @@ export async function computeBoundsHashBrowser(
 ): Promise<string> {
   const schema = profile.boundsSchema ?? profile.frameSchema;
   if (!schema) throw new Error('Profile has no boundsSchema or frameSchema');
-  const lines = schema.keyOrder.map(key => `${key}=${String(params[key])}`);
-  const canonical = lines.join('\n');
+  const canonical = canonicalRecords(
+    params as Record<string, string | number | undefined>,
+    schema.keyOrder,
+    'BOUNDS_INVALID_VALUE',
+  );
   const hash = await sha256(canonical);
   return `sha256:${hash}`;
 }
@@ -68,17 +170,20 @@ export async function computeBoundsHashBrowser(
 /**
  * Compute context hash client-side (v0.4).
  * If the profile has no contextSchema or it has no keys, hashes the empty string.
+ *
+ * @throws CanonicalValueError (CONTEXT_INVALID_VALUE) if a value carries a raw LF/CR
  */
 export async function computeContextHashBrowser(
   params: AgentContextParams,
   profile: AgentProfile
 ): Promise<string> {
-  if (!profile.contextSchema || profile.contextSchema.keyOrder.length === 0) {
-    const hash = await sha256('');
-    return `sha256:${hash}`;
-  }
-  const lines = profile.contextSchema.keyOrder.map(key => `${key}=${String(params[key])}`);
-  const canonical = lines.join('\n');
+  const canonical = profile.contextSchema
+    ? canonicalRecords(
+        params as Record<string, string | number | undefined>,
+        profile.contextSchema.keyOrder,
+        'CONTEXT_INVALID_VALUE',
+      )
+    : '';
   const hash = await sha256(canonical);
   return `sha256:${hash}`;
 }

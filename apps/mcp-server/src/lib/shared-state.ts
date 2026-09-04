@@ -35,7 +35,10 @@ export class SharedState {
     this.executionLog = new ExecutionLog(gateStorePath);
     this.denialLog = new DenialLog(gateStorePath);
     this.receiptArchive = new ReceiptArchive(gateStorePath);
-    this.gatekeeper = new MCPGatekeeper(this.cache, this.executionLog);
+    // The execution log is deliberately NOT handed to the Gatekeeper: it is a
+    // display-only record (see gatekeeper.ts), and the AS is the sole
+    // cumulative enforcer.
+    this.gatekeeper = new MCPGatekeeper(this.cache);
   }
 
   /**
