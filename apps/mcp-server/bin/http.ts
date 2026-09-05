@@ -27,7 +27,11 @@ import { loadProfiles } from '../src/lib/profile-loader';
 import { loadManifests, getAllManifests, getManifest } from '../src/lib/manifest-loader';
 import { buildMandateBrief } from '../src/lib/mandate-brief';
 import { decodeAttestationBlob } from '@hap/core';
-import { executeCommitted } from '../src/tools/commitments';
+import { executeCommitted, installCommittedExecutor } from '../src/tools/commitments';
+import { CommittedExecutor, ExecutorLock } from '../src/lib/committed-executor';
+import type { SPProposal } from '../src/lib/sp-client';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 
 const spUrl = process.env.SUVEREN_AS_URL ?? 'https://www.suveren.ai';
 const port = parseInt(process.env.SUVEREN_MCP_PORT ?? '3430', 10);
@@ -788,18 +792,45 @@ app.listen(port, '0.0.0.0', () => {
 
   const PROPOSAL_POLL_INTERVAL = 5_000;
 
+  // ONE executor for every trigger (poll, nudge, agent's check-pending call).
+  // On 2026-09-04 the nudge and the poll ran the same proposal concurrently;
+  // the AS correctly replayed the ticket to the second caller and the tool
+  // ran twice. See committed-executor.ts and execution-journal.ts.
+  const committedExecutor = new CommittedExecutor<SPProposal>(
+    proposal => executeCommitted(proposal, state, integrationManager),
+  );
+  installCommittedExecutor(committedExecutor);
+
+  // Only one process per data directory auto-executes. The dev and npm
+  // gateways share ~/.suveren and the same AS credentials; without this both
+  // would poll and both would run. Not holding the lock disables the loop and
+  // the nudge in this process — tool calls and proposals still work.
+  const dataDir = process.env.SUVEREN_DATA_DIR ?? join(homedir(), '.suveren');
+  const executorLock = new ExecutorLock(dataDir);
+  const lock = executorLock.acquire();
+  if (!lock.held) {
+    console.error(
+      `[Suveren MCP] Committed-proposal execution is DISABLED in this process: pid ${lock.holderPid} ` +
+        `holds ${dataDir}/executor.lock. Approved proposals will run there. ` +
+        'Stop that gateway if this one should execute.',
+    );
+  }
+  for (const sig of ['SIGINT', 'SIGTERM', 'exit'] as const) {
+    process.once(sig, () => executorLock.release());
+  }
+
+  let draining = false;
   async function executeCommittedProposals(): Promise<void> {
+    if (!executorLock.isHeld()) return;
+    // Overlapping ticks would only re-fetch the same list; the executor
+    // already dedups per proposal, so this is economy, not correctness.
+    if (draining) return;
+    draining = true;
     try {
       const committed = await state.spClient.getCommittedProposals();
       for (const proposal of committed) {
-        // Use the shared, v0.5-correct executor (boundsHash receipt + verification
-        // footer + execution-log record). The previous inline copy here still
-        // sent the retired attestationHash/path fields, which v0.5 ASs reject —
-        // so this loop silently never executed anything and review-mode approvals
-        // only ran when check-pending-commitments was triggered manually.
-        // PROPOSAL_ALREADY_EXECUTED races are handled inside executeCommitted.
         try {
-          const { text, isError } = await executeCommitted(proposal, state, integrationManager);
+          const { text, isError } = await committedExecutor.execute(proposal);
           console.error(
             isError
               ? `[Suveren MCP] Auto-exec proposal ${proposal.id}: ${text}`
@@ -811,6 +842,8 @@ app.listen(port, '0.0.0.0', () => {
       }
     } catch {
       // SP unreachable or no session — skip this cycle
+    } finally {
+      draining = false;
     }
   }
 

@@ -237,6 +237,7 @@ function mockGatedState(opts: {
       record: vi.fn(),
     },
     archiveReceipt: vi.fn().mockResolvedValue(undefined),
+    executionJournal: { begin: () => ({ ok: true }), complete: () => {} },
   } as unknown as SharedState;
 }
 

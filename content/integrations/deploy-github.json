@@ -20,10 +20,19 @@
         "label": "GitHub token",
         "type": "password",
         "placeholder": "github_pat_..."
+      },
+      {
+        "key": "artifactPath",
+        "label": "Artifact directory (optional)",
+        "type": "text",
+        "optional": true,
+        "placeholder": "website/dist",
+        "description": "Repository-relative directory the host serves as-is, if the built artifact is committed. Lets get_deployment report a digest of the served bytes and derive the source commit from git, so a private staged build can still be released."
       }
     ],
     "envMapping": {
-      "GITHUB_TOKEN": "githubToken"
+      "GITHUB_TOKEN": "githubToken",
+      "HAP_DEPLOY_ARTIFACT_PATH": "artifactPath"
     }
   },
   "oauth": null,

@@ -23,7 +23,31 @@ import { SPReceiptError, type SPProposal } from '../lib/sp-client';
 import { appendVerificationFooter, shouldAttachFooter } from '../lib/receipt-footer';
 import { computeContentBinding, attachReceiptId } from '../lib/content-binding';
 import { encodeOutgoingArgs } from '../lib/arg-encoding';
+import { hashToolArgs } from '../lib/execution-journal';
+import type { CommittedExecutor, ExecutionResult } from '../lib/committed-executor';
 import { ContentBindingError } from '@hap/core';
+
+// ─── The one executor ────────────────────────────────────────────────────────
+// Installed by the HTTP entrypoint once the integration manager exists. Every
+// trigger — poll loop, control-plane nudge, agent's check-pending call — goes
+// through it so the same proposal cannot run twice in this process. Absent
+// (a test harness, or an entrypoint that never installed one), execution is
+// direct; the execution journal still refuses a repeat.
+let installedExecutor: CommittedExecutor<SPProposal> | null = null;
+
+export function installCommittedExecutor(executor: CommittedExecutor<SPProposal>): void {
+  installedExecutor = executor;
+}
+
+function runCommitted(
+  proposal: SPProposal,
+  state: SharedState,
+  integrationManager: IntegrationManager | undefined,
+): Promise<ExecutionResult> {
+  return installedExecutor
+    ? installedExecutor.execute(proposal)
+    : executeCommitted(proposal, state, integrationManager);
+}
 
 /**
  * Ask the SP for a signed receipt bound to the committed proposal, then
@@ -83,6 +107,11 @@ export async function executeCommitted(
   // Receipt id captured here so the verification footer (Category-A profiles)
   // can be embedded on the review-mode send too — not just automatic sends.
   let receiptId: string | undefined;
+  // True when the AS replayed a ticket it had already issued for this
+  // proposal instead of minting one — i.e. someone (possibly this process,
+  // moments ago) already got this far. Not by itself proof the tool ran;
+  // the execution journal below is.
+  let replayed = false;
   try {
     // The receipt references the grant by its per-ceremony id — no hash surgery.
     // v0.5 Content Provenance: hash the approved content (proposal.toolArgs is
@@ -93,7 +122,7 @@ export async function executeCommitted(
       proposal.toolArgs,
       proposalActionType,
     );
-    const { receipt } = await state.spClient.postReceipt({
+    const { receipt, idempotent } = await state.spClient.postReceipt({
       authorizationId: proposal.authorizationId,
       // Optional cross-check — the AS fails closed on a mismatch. Parity
       // with the automatic path (tool-proxy.ts).
@@ -122,6 +151,7 @@ export async function executeCommitted(
         : {}),
     });
     receiptId = typeof receipt?.id === 'string' ? receipt.id : undefined;
+    replayed = idempotent;
 
     // Subject custody: archive the complete signed receipt locally (parity
     // with the automatic path). cachedAuth may be evicted — archive the
@@ -166,6 +196,56 @@ export async function executeCommitted(
     };
   }
 
+  // A ticket without an id cannot be journaled, so it cannot be proven to have
+  // run once. Refuse rather than execute unrecorded.
+  if (!receiptId) {
+    return {
+      text: `Proposal ${proposal.id}: the ticket carries no id — refusing to execute an action that could not be recorded.`,
+      isError: true,
+    };
+  }
+
+  // ── One execution per ticket ──────────────────────────────────────────────
+  // The AS guarantees one ticket per execution; this journal row is what
+  // guarantees one execution per ticket. Written BEFORE the tool is called.
+  const begun = state.executionJournal.begin({
+    ticketId: receiptId,
+    proposalId: proposal.id,
+    tool: proposal.tool,
+    argsHash: hashToolArgs(proposal.toolArgs),
+  });
+  if (!begun.ok) {
+    const prior = begun.existing;
+    const when = new Date(prior.startedAt * 1000).toISOString();
+    if (prior.state === 'done') {
+      return {
+        text:
+          `Proposal ${proposal.id} was already executed under ticket ${receiptId} at ${when}. ` +
+          'Not running it again.',
+      };
+    }
+    // `intent` or `failed`: an earlier attempt got as far as calling the tool
+    // and this process cannot know whether the effect happened. Guessing
+    // either way is wrong; the person who approved it has to look.
+    return {
+      text:
+        `Proposal ${proposal.id}: an execution under ticket ${receiptId} started at ${when} ` +
+        `(pid ${prior.pid}) and ${prior.state === 'failed' ? 'reported failure' : 'never reported completion'}. ` +
+        'Not re-running: the action may already have taken effect. Check the downstream system before deciding.',
+      isError: true,
+    };
+  }
+  if (replayed) {
+    // The AS replayed the ticket but we hold no record of executing under it:
+    // an earlier attempt lost the AS response before it could record intent.
+    // Executing now is the recovery the replay exists for — and it is the
+    // only case in which a replayed ticket is allowed to run anything.
+    console.error(
+      `[Suveren MCP] Proposal ${proposal.id}: ticket ${receiptId} was replayed by the AS with no local ` +
+        'execution record — executing once (lost-response recovery).',
+    );
+  }
+
   // Receipt issued — now execute the tool, appending the verification footer
   // (Category-A profiles) just like the automatic-send path does.
   try {
@@ -181,8 +261,18 @@ export async function executeCommitted(
       // LAST: transport encoding — see arg-encoding.ts for why order matters.
       outgoingArgs = encodeOutgoingArgs(discovered, outgoingArgs);
     }
-    const result = await integrationManager.callTool(integrationId, toolName, outgoingArgs);
+    let result;
+    try {
+      result = await integrationManager.callTool(integrationId, toolName, outgoingArgs);
+    } catch (err) {
+      // The tool threw. Whether the effect happened is unknown — record that
+      // honestly so no later trigger re-runs it on the same ticket.
+      state.executionJournal.complete(receiptId, 'failed');
+      throw err;
+    }
+    state.executionJournal.complete(receiptId, 'done');
     // Record locally for cumulative tracking (parity with the automatic path).
+    // Reached once per ticket, by construction of the journal above.
     state.executionLog.record({
       profileId: proposal.profileId,
       path: proposal.path,
@@ -233,7 +323,7 @@ export function checkPendingCommitmentsHandler(
 
         // Ready to run — this call is what executes it.
         if (match.status === 'committed') {
-          const { text, isError } = await executeCommitted(match, state, integrationManager);
+          const { text, isError } = await runCommitted(match, state, integrationManager);
           return {
             content: [{ type: 'text' as const, text }],
             ...(isError ? { isError: true } : {}),
