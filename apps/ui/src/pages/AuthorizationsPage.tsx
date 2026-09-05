@@ -781,7 +781,7 @@ export function AuthorizationsPage() {
         style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem', flexWrap: 'wrap' }}
       >
         <div>
-          <h1 className="page-title">Authorizations</h1>
+          <h1 className="page-title">Mandates</h1>
           <p className="page-subtitle">Active, pending, and expired agent authorizations.</p>
         </div>
         <button className="btn btn-primary" onClick={() => setShowPicker(true)}>

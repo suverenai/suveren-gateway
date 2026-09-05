@@ -300,7 +300,7 @@ export function AuditPage() {
         style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem', flexWrap: 'wrap' }}
       >
         <div>
-          <h1 className="page-title">Receipts</h1>
+          <h1 className="page-title">Tickets</h1>
           <p className="page-subtitle">Execution history for agent actions.</p>
         </div>
         <button className="btn btn-secondary" onClick={downloadEvidence} disabled={exporting}>
