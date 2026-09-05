@@ -69,6 +69,7 @@ function buildState(opts: { boundsHash?: string; subjects?: Subject[] }) {
     },
     executionLog: { record: vi.fn() },
     archiveReceipt: vi.fn().mockResolvedValue(undefined),
+    executionJournal: { begin: () => ({ ok: true }), complete: () => {} },
   } as unknown as SharedState;
   return { state, postReceipt };
 }

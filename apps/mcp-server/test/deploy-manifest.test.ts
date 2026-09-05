@@ -101,7 +101,17 @@ describe('deploy-github manifest', () => {
   });
 
   it('takes the token from the environment, never as a tool argument', () => {
-    expect(MANIFEST.credentials.envMapping).toEqual({ GITHUB_TOKEN: 'githubToken' });
+    expect(MANIFEST.credentials.envMapping.GITHUB_TOKEN).toBe('githubToken');
+    // The artifact directory is the only other thing the environment carries —
+    // optional, and a path, never a secret. Nothing else may be added here
+    // without a reason written next to it.
+    expect(MANIFEST.credentials.envMapping).toEqual({
+      GITHUB_TOKEN: 'githubToken',
+      HAP_DEPLOY_ARTIFACT_PATH: 'artifactPath',
+    });
+    const artifact = MANIFEST.credentials.fields.find((f: { key: string }) => f.key === 'artifactPath');
+    expect(artifact?.optional).toBe(true);
+    expect(artifact?.type).toBe('text');
   });
 
   it('the read-only template really cannot deploy', () => {

@@ -10,6 +10,7 @@ import { GateStore, type GateContent, type GateEntry } from './gate-store';
 import { ExecutionLog } from './execution-log';
 import { DenialLog } from './denial-log';
 import { ReceiptArchive, type ArchivedAttestation } from './receipt-archive';
+import { ExecutionJournal } from './execution-journal';
 import { MCPGatekeeper } from './gatekeeper';
 
 export interface EnrichedAuthorization extends CachedAuthorization {
@@ -26,6 +27,8 @@ export class SharedState {
   readonly executionLog: ExecutionLog;
   readonly denialLog: DenialLog;
   readonly receiptArchive: ReceiptArchive;
+  /** Which tickets this Gatekeeper has executed — the "one execution per ticket" half of exactly-once. */
+  readonly executionJournal: ExecutionJournal;
   readonly gatekeeper: MCPGatekeeper;
 
   constructor(spUrl: string, gateStorePath?: string) {
@@ -35,6 +38,7 @@ export class SharedState {
     this.executionLog = new ExecutionLog(gateStorePath);
     this.denialLog = new DenialLog(gateStorePath);
     this.receiptArchive = new ReceiptArchive(gateStorePath);
+    this.executionJournal = new ExecutionJournal(gateStorePath);
     // The execution log is deliberately NOT handed to the Gatekeeper: it is a
     // display-only record (see gatekeeper.ts), and the AS is the sole
     // cumulative enforcer.

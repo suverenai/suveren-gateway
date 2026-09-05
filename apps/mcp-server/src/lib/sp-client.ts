@@ -266,7 +266,7 @@ export class SPClient {
      * profile, so they are not sent, and the hash preimage never is.
      */
     contentBinding?: Pick<ContentBinding, 'version' | 'kind' | 'fields'>;
-  }): Promise<{ receipt: Record<string, unknown> }> {
+  }): Promise<{ receipt: Record<string, unknown>; idempotent: boolean }> {
     const body = JSON.stringify(data);
     // Retries are only safe when the AS can dedup them: an idempotencyKey on
     // the synchronous path, or a proposalId on the review path (the AS replays
@@ -319,7 +319,14 @@ export class SPClient {
         throw new SPReceiptError(message, res.status, respBody);
       }
 
-      return { receipt: respBody.receipt as Record<string, unknown> };
+      // `idempotent: true` means the AS did NOT issue a new ticket — it
+      // replayed the original for a request it had already served (same
+      // idempotencyKey, or a proposal already `executed`). The caller must
+      // treat that as "you may already have run this", not as a fresh grant.
+      return {
+        receipt: respBody.receipt as Record<string, unknown>,
+        idempotent: respBody.idempotent === true,
+      };
     }
 
     // Unreachable in practice — the loop either returns, throws, or continues.

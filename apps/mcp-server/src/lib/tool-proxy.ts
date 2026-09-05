@@ -17,6 +17,7 @@ import { SPReceiptError } from './sp-client';
 import { isCommitmentDowngrade } from './attestation-cache';
 import { appendVerificationFooter, shouldAttachFooter } from './receipt-footer';
 import { computeContentBinding, attachReceiptId } from './content-binding';
+import { hashToolArgs } from './execution-journal';
 import { encodeOutgoingArgs } from './arg-encoding';
 import { normalizeIncomingArgs } from './arg-normalization';
 import { selectAuthorization } from './scope-specificity';
@@ -950,6 +951,37 @@ function createGatedToolHandlerInner(
         // LAST: transport encoding. After the hash and the footer, so the
         // binding stays over what was approved rather than over the wire form.
         outgoingArgs = encodeOutgoingArgs(tool, outgoingArgs);
+
+        // One execution per ticket (see execution-journal.ts). On this path
+        // the ticket was minted for this very invocation, so an existing row
+        // means a retry re-entered here with a replayed ticket — the tool must
+        // not run again on it. Read-only calls carry no ticket and no journal.
+        if (receiptId) {
+          const begun = state.executionJournal.begin({
+            ticketId: receiptId,
+            tool: tool.namespacedName,
+            argsHash: hashToolArgs(args),
+          });
+          if (!begun.ok) {
+            return {
+              content: [{
+                type: 'text',
+                text:
+                  `Blocked: ticket ${receiptId} was already used to execute ${tool.namespacedName} ` +
+                  `(state: ${begun.existing.state}). Not running it again.`,
+              }],
+              isError: true,
+            };
+          }
+          try {
+            const result = await integrationManager.callTool(tool.integrationId, tool.originalName, outgoingArgs);
+            state.executionJournal.complete(receiptId, 'done');
+            return result;
+          } catch (err) {
+            state.executionJournal.complete(receiptId, 'failed');
+            throw err;
+          }
+        }
         return integrationManager.callTool(tool.integrationId, tool.originalName, outgoingArgs);
       }
   });

@@ -246,6 +246,7 @@ describe('the gated write path — the AS gets asked', () => {
       gatekeeper: new MCPGatekeeper(cache),
       executionLog: log,
       archiveReceipt: vi.fn().mockResolvedValue(undefined),
+      executionJournal: { begin: () => ({ ok: true }), complete: () => {} },
     } as unknown as SharedState;
     return { state, postReceipt };
   }

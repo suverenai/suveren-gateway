@@ -112,6 +112,7 @@ function buildState() {
       }),
     },
     executionLog: { record: vi.fn() },
+    executionJournal: { begin: () => ({ ok: true }), complete: () => {} },
     archiveReceipt,
   } as unknown as SharedState;
   return { state, postReceipt, archiveReceipt };
