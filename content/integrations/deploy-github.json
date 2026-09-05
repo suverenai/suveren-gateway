@@ -103,8 +103,7 @@
       "risk": "low",
       "mode": "automatic",
       "bounds": {
-        "release_daily_max": "0",
-        "rollback_allowed": "no"
+        "release_daily_max": "0"
       },
       "context": {
         "allowed_repos": "",
@@ -121,12 +120,11 @@
     },
     {
       "name": "Release to production, review",
-      "description": "Make an existing build live after approval. Three a day, no rollback.",
+      "description": "Make an existing build live after approval. Three a day.",
       "risk": "high",
       "mode": "review",
       "bounds": {
-        "release_daily_max": "3",
-        "rollback_allowed": "no"
+        "release_daily_max": "3"
       },
       "context": {
         "allowed_repos": "",

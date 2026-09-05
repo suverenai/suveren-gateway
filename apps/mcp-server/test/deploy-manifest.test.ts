@@ -119,7 +119,10 @@ describe('deploy-github manifest', () => {
     // would stop bounding anything and the reads-only promise would be false.
     const watch = MANIFEST.templates.find(t => t.name === 'Watch deployments')!;
     expect(watch.bounds.release_daily_max).toBe('0');
-    expect(watch.bounds.rollback_allowed).toBe('no');
+    // rollback_allowed is unenforced since deploy@0.10 (no executor emits a
+    // rollback action type), so the template must not set it: a value nothing
+    // checks would read as a decision the human never got to make.
+    expect(watch.bounds.rollback_allowed).toBeUndefined();
   });
 
   it('the production template waits for a human', () => {
