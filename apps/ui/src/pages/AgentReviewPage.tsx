@@ -395,6 +395,12 @@ export function AgentReviewPage() {
     ? `Over-cap actions will be reviewed by you and ${approverNamesStr}. Within-cap actions run per the mode you chose above.`
     : `Approvers ${approverNamesStr} can read your intent but won't gate any action — no caps configured on this profile.`;
   const showBottomNote = !!(profileConfig?.approvers?.length);
+  // In a team, a profile with no approvers is not enabled: the AS refuses the
+  // grant (PROFILE_NOT_ENABLED_FOR_GROUP). Say so here and block the button,
+  // instead of calling it a "solo authorization" and letting the user sign
+  // into a refusal. Personal mode has no groupId and is never blocked.
+  const blockedByTeamGate =
+    !!authData.groupId && profileConfigLoaded && (profileConfig?.approvers?.length ?? 0) === 0;
   const ttlExceedsMax = ttlSeconds > ttlMax;
   const commitStyleImmediate = {
     flex: 1,
@@ -646,9 +652,10 @@ export function AgentReviewPage() {
                   <span style={{ color: 'var(--text-tertiary)' }}>Loading…</span>
                 ) : (profileConfig?.approvers?.length ?? 0) === 0 ? (
                   <>
-                    <span style={{ color: 'var(--text-tertiary)' }}>None &mdash; solo authorization</span>
+                    <span style={{ color: 'var(--danger)', fontWeight: 600 }}>Not enabled for {authData.groupName ?? 'this team'}</span>
                     <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: '0.125rem' }}>
-                      No approvers configured for this profile in this team. Your intent stays on your gateway.
+                      A team admin must name at least one approver for this profile on the Authority Server
+                      (team → Profiles) before anyone can grant under it. Personal use is unaffected.
                     </div>
                   </>
                 ) : (
@@ -718,7 +725,7 @@ export function AgentReviewPage() {
             className="btn btn-primary btn-lg"
             style={{ flex: 1 }}
             onClick={handleCommit}
-            disabled={submitting || !authTitle.trim()}
+            disabled={submitting || !authTitle.trim() || blockedByTeamGate}
           >
             {submitting ? 'Signing...' : commitMode === 'immediate' ? 'Authorize' : 'Authorize (Review Mode)'}
           </button>
