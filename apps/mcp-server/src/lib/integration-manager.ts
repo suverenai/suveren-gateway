@@ -14,6 +14,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { getProfile } from '@hap/core';
 import type { ProfileToolGating } from '@hap/core';
 import type { IntegrationConfig, ToolGatingConfig } from './integration-registry';
+import { getManifest } from './manifest-loader';
 
 const DEFAULT_DATA_DIR = process.env.SUVEREN_DATA_DIR ?? join(homedir(), '.suveren');
 // Runtime INSTALL directory for downstream MCP npm packages (e.g. crm-mcp,
@@ -748,6 +749,24 @@ export class IntegrationManager {
       const creds = this.serviceCredentials.get(serviceId);
       if (creds && key in creds) {
         env[envVar] = creds[key];
+      }
+    }
+    // The registry entry is a snapshot of the manifest taken when the
+    // integration was activated. A credential field added to the manifest
+    // later (deploy-github gained HAP_DEPLOY_ARTIFACT_PATH on 2026-09-05) is
+    // therefore absent from envKeys/optionalEnvKeys on every existing install,
+    // and the value the user saves in the vault never reaches the process —
+    // silently, with the UI reporting "saved". So the CURRENT manifest's
+    // mapping is consulted too, best-effort, for any env var the snapshot does
+    // not already name. Required-ness is still judged from the snapshot
+    // (canResolveEnvKeys), so this can only add variables, never block a start.
+    const manifest = getManifest(config.id);
+    for (const [envVar, credKey] of Object.entries(manifest?.credentials?.envMapping ?? {})) {
+      if (envVar in env) continue;
+      if (envVar in config.envKeys || envVar in (config.optionalEnvKeys ?? {})) continue;
+      const creds = this.serviceCredentials.get(config.id);
+      if (creds && credKey in creds) {
+        env[envVar] = creds[credKey];
       }
     }
     return env;
