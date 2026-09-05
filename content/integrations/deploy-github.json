@@ -26,8 +26,8 @@
         "label": "Artifact directory (optional)",
         "type": "text",
         "optional": true,
-        "placeholder": "website/dist",
-        "description": "Repository-relative directory the host serves as-is, if the built artifact is committed. Lets get_deployment report a digest of the served bytes and derive the source commit from git, so a private staged build can still be released."
+        "placeholder": "e.g. dist",
+        "description": "Repository-relative directory the host serves as-is, if the built artifact is committed (for the HAP website: website/dist). Lets get_deployment report a digest of the served bytes and derive the source commit from git, so a private staged build can still be released. Leave empty if the host builds from source."
       }
     ],
     "envMapping": {
