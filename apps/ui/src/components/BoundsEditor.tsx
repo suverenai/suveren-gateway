@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import type { AgentProfile, AgentBoundsParams, AgentContextParams, AgentFrameParams, ProfileBoundsField, ProfileContextField } from '@hap/core';
 import { DiscoveredScopeField } from './DiscoveredScopeField';
 import { spClient, type IntegrationManifest, type ProfileConfig } from '../lib/sp-client';
+import { minForBound, seedForBound, numericBoundValue } from '../lib/bound-defaults';
 
 interface Props {
   profile: AgentProfile;
@@ -154,6 +155,7 @@ function BoundedNumberInput({
   disabled,
   placeholder,
   unit,
+  min = 0,
 }: {
   id: string;
   value: string;
@@ -161,6 +163,8 @@ function BoundedNumberInput({
   disabled?: boolean;
   placeholder?: string;
   unit?: string;
+  /** Floor for the value — see bound-defaults.ts. */
+  min?: 0 | 1;
 }) {
   const step = stepFor(unit);
   const presets = presetsFor(unit);
@@ -178,10 +182,10 @@ function BoundedNumberInput({
 
   const handleDecrement = () => {
     const n = value === '' ? 0 : Number(value);
-    if (n <= 0) return;
+    if (n <= min) return;
     const remainder = n % step;
     const prev = remainder === 0 ? n - step : n - remainder;
-    onChange(String(Math.max(0, prev)));
+    onChange(String(Math.max(min, prev)));
   };
 
   return (
@@ -191,7 +195,7 @@ function BoundedNumberInput({
           type="button"
           className="stepper-btn stepper-decrement"
           onClick={handleDecrement}
-          disabled={disabled || value === '' || Number(value) <= 0}
+          disabled={disabled || value === '' || Number(value) <= min}
           aria-label="Decrease"
         >
           −
@@ -200,10 +204,10 @@ function BoundedNumberInput({
           id={id}
           className="stepper-input"
           type="number"
-          min={0}
+          min={min}
           step={step}
           value={value}
-          placeholder={placeholder ?? '0'}
+          placeholder={placeholder ?? String(min)}
           onChange={e => onChange(e.target.value)}
           onFocus={e => e.target.select()}
           disabled={disabled}
@@ -499,6 +503,7 @@ function FieldRow({
           onChange={v => onChange(fieldKey, v)}
           disabled={readOnly}
           unit={(fieldDef as { unit?: string }).unit}
+          min={minForBound(fieldDef)}
         />
       ) : isTagField(fieldDef) ? (
         <TagInput
@@ -663,8 +668,8 @@ export function BoundsEditor({
   const seedContext = initialContext ?? {};
 
   const initialBoundsValues: Record<string, string> = {};
-  for (const [key] of boundsFields) {
-    initialBoundsValues[key] = seedBounds[key] !== undefined ? String(seedBounds[key]) : '';
+  for (const [key, fieldDef] of boundsFields) {
+    initialBoundsValues[key] = seedForBound(fieldDef, seedBounds[key]);
   }
 
   const initialContextValues: Record<string, string> = {};
@@ -711,7 +716,7 @@ export function BoundsEditor({
     const bounds: AgentBoundsParams = { profile: profile.id };
     for (const [key, fieldDef] of boundsFields) {
       if (fieldDef.type === 'number') {
-        bounds[key] = boundsValues[key] === '' ? 0 : Number(boundsValues[key]);
+        bounds[key] = numericBoundValue(fieldDef, boundsValues[key]);
       } else {
         bounds[key] = boundsValues[key];
       }
@@ -746,8 +751,7 @@ export function BoundsEditor({
     const bounds: AgentBoundsParams = { profile: profile.id };
     for (const [key, fieldDef] of boundsFields) {
       if (fieldDef.type === 'number') {
-        const raw = clamped[key] ?? '';
-        bounds[key] = raw === '' ? 0 : Number(raw);
+        bounds[key] = numericBoundValue(fieldDef, clamped[key] ?? '');
       } else {
         bounds[key] = clamped[key] ?? '';
       }
@@ -941,7 +945,7 @@ export function BoundsEditor({
             <span className="bounds-section-icon">&#x1F512;</span>
             <div>
               <div className="bounds-section-title">Limits</div>
-              <div className="bounds-section-subtitle">Enforced by the Service Provider</div>
+              <div className="bounds-section-subtitle">Enforced by the Authority Server</div>
             </div>
           </div>
           <div className="bounds-fields-grid">

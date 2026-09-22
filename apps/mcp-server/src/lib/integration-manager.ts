@@ -15,6 +15,7 @@ import { getProfile } from '@hap/core';
 import type { ProfileToolGating } from '@hap/core';
 import type { IntegrationConfig, ToolGatingConfig } from './integration-registry';
 import { getManifest } from './manifest-loader';
+import { remotePreflightTarget, preflightRemoteAuth } from './remote-auth-preflight';
 
 const DEFAULT_DATA_DIR = process.env.SUVEREN_DATA_DIR ?? join(homedir(), '.suveren');
 // Runtime INSTALL directory for downstream MCP npm packages (e.g. crm-mcp,
@@ -465,6 +466,15 @@ export class IntegrationManager {
     const interpolate = (s: string): string =>
       s.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_m, name) => env[name] ?? process.env[name] ?? '');
     const args = config.args.map(interpolate);
+
+    // A remote connector whose credential the remote rejects must not be
+    // spawned: mcp-remote answers a 401 by opening the system browser on the
+    // remote's login page (see remote-auth-preflight.ts). Fail here, named.
+    const remote = remotePreflightTarget(config.command, args);
+    if (remote) {
+      const verdict = await preflightRemoteAuth(remote);
+      if (!verdict.ok) throw new Error(`${config.id}: ${verdict.reason}`);
+    }
 
     // Create stdio transport (spawns child process)
     // PATH includes ~/.suveren/integrations/node_modules/.bin for on-demand installed packages.

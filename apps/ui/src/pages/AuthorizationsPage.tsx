@@ -668,6 +668,7 @@ export function AuthorizationsPage() {
         groupId,
         groupName: group?.name ?? null,
         domain: domainForAuth,
+        isPersonal: !!group?.isPersonal,
       }));
       sessionStorage.setItem('agentGate', JSON.stringify({
         bounds,

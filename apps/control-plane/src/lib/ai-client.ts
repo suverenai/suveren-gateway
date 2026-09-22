@@ -246,6 +246,12 @@ export interface AIChatRequest {
   target: ChatTarget;
   currentText: string;
   messages: ChatMessage[];
+  /**
+   * The Agent Brief (context.md), supplied server-side by the route — never
+   * by the browser. Grounds the `intent` chat; ignored for `context`, where
+   * the brief is the document being edited.
+   */
+  agentBrief?: string;
 }
 
 export interface AIChatResponse {
@@ -287,6 +293,8 @@ A good Intent can describe:
 - What the agent should try to achieve (the goal).
 - Soft rules or watch-outs the agent must honor even inside bounds (e.g. "never publish on weekends", "only reply in German").
 
+If an Agent Brief is provided, it is the user's standing orders that every agent already receives before any Intent. Use it to answer the user's questions and to keep the Intent consistent with it; do not repeat rules the brief already states — the Intent should add what is specific to this authorization.
+
 Your role is to coach: ask clarifying questions, reflect the user's words back, surface edge cases they haven't thought about. You may propose concrete phrasings on request.
 
 CRITICAL — ask before you draft.
@@ -308,6 +316,40 @@ Once they have answered, produce the draft inside a single fenced block:
 Only use the fence for full-document drafts the user can click "Apply". For partial suggestions, questions, comments, or reflections, write prose without the fence.`,
 };
 
+/**
+ * Grounding preamble for the chat assistant: the current document plus any
+ * authorization context. Injected as the first user turn so it survives
+ * message-history truncation by the provider.
+ *
+ * For `intent`, the Agent Brief is included when present — the Intent is
+ * read *on top of* the brief, so the assistant must see the brief to answer
+ * "is this already covered?" and to avoid drafting rules the brief already
+ * has. For `context` the brief IS the current draft, so it is not repeated.
+ */
+export function buildChatGrounding(
+  target: ChatTarget,
+  currentText: string,
+  agentBrief?: string,
+): string {
+  const parts: string[] = [];
+  if (target.kind === 'intent') {
+    if (target.profileId) parts.push(`Profile: ${target.profileId}`);
+    if (target.path) parts.push(`Path: ${target.path}`);
+    if (target.bounds) parts.push(`Bounds: ${target.bounds}`);
+    if (agentBrief?.trim()) {
+      parts.push(
+        `Agent Brief (standing orders every agent already receives; the Intent builds on this, it does not repeat it):\n"""\n${agentBrief.trim()}\n"""`,
+      );
+    }
+  }
+  parts.push(
+    currentText.trim()
+      ? `Current draft:\n"""\n${currentText}\n"""`
+      : 'Current draft is empty.',
+  );
+  return parts.join('\n');
+}
+
 export async function getAIChatResponse(
   config: AIConfig,
   request: AIChatRequest,
@@ -319,21 +361,7 @@ export async function getAIChatResponse(
   const override = await getPromptOverride(request.target.kind);
   const systemPrompt = override ?? CHAT_SYSTEM_PROMPTS[request.target.kind];
 
-  // Build a grounding preamble so the model sees the current document and
-  // any authorization context. This is injected as the first user turn so
-  // it survives message-history truncation by the provider.
-  const groundingParts: string[] = [];
-  if (request.target.kind === 'intent') {
-    if (request.target.profileId) groundingParts.push(`Profile: ${request.target.profileId}`);
-    if (request.target.path) groundingParts.push(`Path: ${request.target.path}`);
-    if (request.target.bounds) groundingParts.push(`Bounds: ${request.target.bounds}`);
-  }
-  groundingParts.push(
-    request.currentText.trim()
-      ? `Current draft:\n"""\n${request.currentText}\n"""`
-      : 'Current draft is empty.',
-  );
-  const grounding = groundingParts.join('\n');
+  const grounding = buildChatGrounding(request.target, request.currentText, request.agentBrief);
 
   const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
     { role: 'system', content: systemPrompt },

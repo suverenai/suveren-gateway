@@ -19,6 +19,7 @@ import {
   type AIChatRequest,
 } from '../lib/ai-client';
 import { getEnrichedAuthorizations } from '../lib/mcp-bridge';
+import { readAgentBrief } from '../lib/agent-brief-store';
 
 interface EnrichedAuth {
   profileId: string;
@@ -89,7 +90,9 @@ export function createAIRouter(vault: Vault): Router {
       return;
     }
 
-    const result = await getAIChatResponse(config, request);
+    // The Agent Brief is read server-side and overrides anything the client
+    // sent: the assistant grounds on the brief in force, not on a copy.
+    const result = await getAIChatResponse(config, { ...request, agentBrief: readAgentBrief() });
     res.json(result);
   });
 

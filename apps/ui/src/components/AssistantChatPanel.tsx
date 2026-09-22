@@ -71,10 +71,23 @@ export function AssistantChatPanel({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const lastMsgRef = useRef<HTMLDivElement>(null);
 
+  // Where to scroll after the list changes:
+  //  - a new assistant reply → its FIRST line at the top of the list. Replies
+  //    are long and read top-down; landing at the bottom made the user
+  //    scroll back up to find where the answer starts.
+  //  - the user's own message / "Thinking…" → the bottom, so what they just
+  //    sent (and the pending state) stays in view.
   useEffect(() => {
-    if (listRef.current) {
-      listRef.current.scrollTop = listRef.current.scrollHeight;
+    const list = listRef.current;
+    if (!list) return;
+    const last = messages[messages.length - 1];
+    const lastEl = lastMsgRef.current;
+    if (!loading && last?.role === 'assistant' && messages.length > 1 && lastEl) {
+      list.scrollTop = lastEl.offsetTop; // list is position: relative → offsetTop is list-local
+    } else {
+      list.scrollTop = list.scrollHeight;
     }
   }, [messages, loading]);
 
@@ -124,7 +137,7 @@ export function AssistantChatPanel({
           const draft = m.role === 'assistant' ? extractDraft(m.content) : null;
           const prose = draft ? stripFencedBlock(m.content) : m.content;
           return (
-            <div key={i} className={`chat-msg ${m.role}`}>
+            <div key={i} className={`chat-msg ${m.role}`} ref={i === messages.length - 1 ? lastMsgRef : undefined}>
               <div className="chat-msg-body">
                 {prose && <div className="chat-msg-prose">{prose}</div>}
                 {draft !== null && (

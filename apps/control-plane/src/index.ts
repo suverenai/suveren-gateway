@@ -56,6 +56,7 @@ import { createInternalEventsRouter } from './routes/internal-events';
 import { startNotificationDispatcher } from './lib/notification-dispatcher';
 import { eventBus } from './lib/event-bus';
 import { loadDenials, selectDenials } from './lib/denials-reader';
+import { AGENT_CONTEXT_MAX_BYTES, agentBriefPath, readAgentBrief } from './lib/agent-brief-store';
 
 const SP_URL = process.env.SUVEREN_AS_URL ?? 'https://www.suveren.ai';
 const port = parseInt(process.env.SUVEREN_CP_PORT ?? '3402', 10);
@@ -672,25 +673,15 @@ app.post('/resync-gates', authGuard, async (_req: Request, res: Response) => {
 //
 // User-authored standing orders for MCP-connecting agents. Plaintext on
 // disk at $SUVEREN_DATA_DIR/context.md (default ~/.suveren/context.md) — see
-// context-loader.ts in the MCP server.
+// context-loader.ts in the MCP server and agent-brief-store.ts here.
 //
 // GET  /agent-brief/context   → { content: string }
 // PUT  /agent-brief/context   (body: { content: string }) → { ok: true }
 // GET  /agent-brief/preview   → { brief: string }
 
-const AGENT_CONTEXT_MAX_BYTES = 16 * 1024; // 16 KB cap — plenty for standing orders.
-const SUVEREN_DATA_DIR = process.env.SUVEREN_DATA_DIR ?? join(homedir(), '.suveren');
-
 app.get('/agent-brief/context', authGuard, async (_req: Request, res: Response) => {
   try {
-    const { readFileSync, existsSync: fileExists } = await import('node:fs');
-    const filePath = join(SUVEREN_DATA_DIR, 'context.md');
-    if (!fileExists(filePath)) {
-      res.json({ content: '' });
-      return;
-    }
-    const content = readFileSync(filePath, 'utf-8');
-    res.json({ content });
+    res.json({ content: readAgentBrief() });
   } catch (err) {
     console.error('[Control Plane] agent-brief/context GET failed:', err);
     res.status(500).json({ error: err instanceof Error ? err.message : 'Failed to read context' });
@@ -709,10 +700,10 @@ app.put('/agent-brief/context', jsonParser, authGuard, async (req: Request, res:
       return;
     }
     const { mkdirSync, writeFileSync, renameSync } = await import('node:fs');
-    mkdirSync(SUVEREN_DATA_DIR, { recursive: true });
+    const filePath = agentBriefPath();
+    mkdirSync(dirname(filePath), { recursive: true });
     // Atomic write: tmp + rename, so a crash mid-save can't leave a half-written
     // file that the MCP loader would then broadcast to every agent.
-    const filePath = join(SUVEREN_DATA_DIR, 'context.md');
     const tmpPath = `${filePath}.tmp`;
     writeFileSync(tmpPath, content, 'utf-8');
     renameSync(tmpPath, filePath);

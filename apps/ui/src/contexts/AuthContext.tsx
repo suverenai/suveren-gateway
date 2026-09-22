@@ -6,11 +6,14 @@ export type GatewayMode = 'personal' | 'team';
 interface AuthContextValue {
   user: SPUser | null;
   mode: GatewayMode;
-  /** In team mode: the user's group. In personal mode: null. */
+  /** In team mode: the user's team. In personal mode: the auto-provisioned
+   *  personal workspace (`isPersonal: true`) — never null once logged in. */
   group: SPGroup | null;
   /** The user's active domain. Personal: 'owner'. Team: from group membership. */
   domain: string;
-  /** In team mode: the group ID. Personal: null. */
+  /** The active group's ID — the personal workspace's in personal mode. It is
+   *  required on every attestation, so it is NOT a "this is a team" signal;
+   *  use `mode` or `group.isPersonal` for that. */
   groupId: string | null;
   /** The active team group (null for personal-only users). */
   activeTeam: SPGroup | null;

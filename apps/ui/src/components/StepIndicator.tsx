@@ -3,61 +3,56 @@ import { useNavigate } from 'react-router-dom';
 const STEP_LABELS = ['Scope & Limits', 'Intent', 'Authorize'];
 
 interface Props {
-  currentStep: number; // 2-7
+  currentStep: number; // 2-4: scope+limits, intent, authorize
   onStepClick?: (step: number) => void;
 }
 
+/**
+ * Wizard progress: equal-width columns, circle + label centred in each,
+ * connector drawn as a pseudo-element at circle-centre height and stopping
+ * short of the circle rings (see .wizard-step::before). The previous
+ * inline-flex version centred the connector on circle+label and hung it off
+ * the label's edge, so it sat too low and ran into the current step's ring.
+ */
 export function StepIndicator({ currentStep, onStepClick }: Props) {
   const navigate = useNavigate();
 
   return (
-    <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem', marginBottom: '2.5rem' }}>
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        flex: 1,
-        overflow: 'hidden',
-      }}>
+    <div className="wizard-progress">
+      <ol className="wizard-steps">
         {STEP_LABELS.map((label, i) => {
           const step = i + 2;
           const isCompleted = step < currentStep;
           const isCurrent = step === currentStep;
+          // The connector into this step is "done" once the previous step is.
+          const reached = step - 1 < currentStep;
+          const clickable = isCompleted && !!onStepClick;
           return (
-            <div key={step} style={{ display: 'flex', alignItems: 'center' }}>
-              {i > 0 && (
-                <div style={{
-                  width: '1.5rem',
-                  height: '2px',
-                  background: isCompleted ? 'var(--accent)' : 'var(--border)',
-                  flexShrink: 1,
-                }} />
-              )}
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
-                <div
-                  className={`step-circle${isCompleted ? ' completed' : ''}${isCurrent ? ' current' : ''}`}
-                  onClick={isCompleted && onStepClick ? () => onStepClick(step) : undefined}
-                  style={isCompleted && onStepClick ? { cursor: 'pointer' } : undefined}
-                >
-                  {isCompleted ? '\u2713' : i + 1}
-                </div>
-                <span className="step-label-text" style={{
-                  fontSize: '0.6rem',
-                  marginTop: '0.3rem',
-                  color: isCurrent ? 'var(--accent)' : isCompleted ? 'var(--text-secondary)' : 'var(--text-tertiary)',
-                  fontWeight: isCurrent ? 600 : 400,
-                  textAlign: 'center',
-                }}>
-                  {label}
-                </span>
-              </div>
-            </div>
+            <li
+              key={step}
+              className={`wizard-step${reached ? ' reached' : ''}`}
+              aria-current={isCurrent ? 'step' : undefined}
+            >
+              <button
+                type="button"
+                className={`step-circle${isCompleted ? ' completed' : ''}${isCurrent ? ' current' : ''}`}
+                onClick={clickable ? () => onStepClick(step) : undefined}
+                disabled={!clickable}
+                aria-label={`${label}${isCompleted ? ' (done)' : isCurrent ? ' (current)' : ''}`}
+              >
+                {isCompleted ? '✓' : i + 1}
+              </button>
+              <span className={`step-label-text${isCurrent ? ' current' : isCompleted ? ' completed' : ''}`}>
+                {label}
+              </span>
+            </li>
           );
         })}
-      </div>
+      </ol>
       <button
-        className="btn btn-ghost btn-sm"
+        type="button"
+        className="btn btn-ghost btn-sm wizard-cancel"
         onClick={() => navigate('/agent/new')}
-        style={{ flexShrink: 0, fontSize: '0.8rem', marginTop: '0.15rem' }}
       >
         Cancel
       </button>

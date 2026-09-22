@@ -9,6 +9,7 @@ import { DomainBadge } from '../components/DomainBadge';
 import { profileDisplayName } from '../lib/profile-display';
 import { scopesOverlap } from '../lib/scope-overlap';
 import { formatScopeValue } from '../lib/scope-labels';
+import { teamGateBlocked } from '../lib/team-gate';
 import type { AgentProfile, AgentBoundsParams, AgentContextParams } from '@hap/core';
 import type { ProfileConfig } from '../lib/sp-client';
 
@@ -31,11 +32,17 @@ interface GateData {
 interface AuthData {
   profileId: string;
   // v0.4: every attestation requires a group_id. AgentNewPage always sets
-  // this to the user's active group (personal or team).
+  // this to the user's active group (personal or team) — so its presence
+  // says nothing about team vs personal. Use `isPersonal` for that.
   groupId: string;
   groupName?: string;
   domain: string;
   isTeam?: boolean;
+  /** True when groupId is the auto-provisioned personal workspace — the same
+   *  flag the AS uses to skip the approver requirement. Absent in snapshots
+   *  written before this flag existed; treated as "team" (the safe side —
+   *  it can only block a ceremony the AS would refuse anyway, never unblock). */
+  isPersonal?: boolean;
 }
 
 export function AgentReviewPage() {
@@ -157,7 +164,7 @@ export function AgentReviewPage() {
     // Resolve profile-config + approver display names for the Review surface.
     // Mirrors GateWizardPage so the creator sees the same people named both
     // when they author the intent and when they sign.
-    if (auth.groupId) {
+    if (!auth.isPersonal) {
       Promise.all([
         spClient.getTeamProfileConfig(auth.groupId, auth.profileId).catch(() => null),
         spClient.getGroupById(auth.groupId).catch(() => null),
@@ -398,9 +405,10 @@ export function AgentReviewPage() {
   // In a team, a profile with no approvers is not enabled: the AS refuses the
   // grant (PROFILE_NOT_ENABLED_FOR_GROUP). Say so here and block the button,
   // instead of calling it a "solo authorization" and letting the user sign
-  // into a refusal. Personal mode has no groupId and is never blocked.
-  const blockedByTeamGate =
-    !!authData.groupId && profileConfigLoaded && (profileConfig?.approvers?.length ?? 0) === 0;
+  // into a refusal. Personal workspaces are exempt on the AS (attest gates on
+  // !group.isPersonal), so they are exempt here — by the same flag, not by
+  // the absence of a groupId, which the personal workspace also has.
+  const blockedByTeamGate = teamGateBlocked(authData, profileConfigLoaded, profileConfig?.approvers);
   const ttlExceedsMax = ttlSeconds > ttlMax;
   const commitStyleImmediate = {
     flex: 1,
@@ -635,16 +643,16 @@ export function AgentReviewPage() {
             {profileDisplayName(authData.profileId)}
             <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: '0.125rem' }}>{authData.profileId}</div>
           </dd>
-          {authData.groupName && (
+          {!authData.isPersonal && authData.groupName && (
             <>
               <dt>Team</dt>
               <dd>{authData.groupName}</dd>
             </>
           )}
           {/* Approvers row — always visible in team mode so the creator
-              knows whether anyone else can read their intent. Hidden only
-              for personal-mode (groupId absent) where it's never relevant. */}
-          {authData.groupId && (
+              knows whether anyone else can read their intent. Hidden for a
+              personal workspace, where approvers are never required. */}
+          {!authData.isPersonal && (
             <>
               <dt>Approvers</dt>
               <dd>

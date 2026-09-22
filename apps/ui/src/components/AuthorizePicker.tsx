@@ -6,7 +6,6 @@ import {
   type ProfileSummary,
   type IntegrationManifest,
   type McpIntegrationStatus,
-  type AuthTemplate,
   type ProfileConfig,
 } from '../lib/sp-client';
 
@@ -28,7 +27,6 @@ export function AuthorizePicker({ onDismiss }: Props) {
   const [integrations, setIntegrations] = useState<McpIntegrationStatus[]>([]);
   const [loading, setLoading] = useState(true);
   const [teamProfiles, setTeamProfiles] = useState<Record<string, ProfileConfig>>({});
-  const [modalProfile, setModalProfile] = useState<{ profileId: string; manifest: IntegrationManifest } | null>(null);
 
   useEffect(() => {
     Promise.all([
@@ -107,7 +105,11 @@ export function AuthorizePicker({ onDismiss }: Props) {
 
   const isTeamManaged = (profileId: string): boolean => profileId in teamProfiles;
 
-  const storeAuthAndNavigate = (profileId: string, template?: AuthTemplate) => {
+  // Straight into Scope & Limits. The manifest "Quick start" templates used
+  // to be offered here first; they confused more than they helped and were
+  // dropped from the flow (2026-09-22). Templates stay in the manifests for
+  // the Copy/Edit prefill path only.
+  const storeAuthAndNavigate = (profileId: string) => {
     if (!groupId) {
       console.error('No active group when creating authorization');
       return;
@@ -119,106 +121,19 @@ export function AuthorizePicker({ onDismiss }: Props) {
       groupName: group?.name ?? null,
       domain,
       isTeam,
+      // The AS's own discriminator (attest gates approvers on !group.isPersonal).
+      // groupId is NOT a team signal — the personal workspace has one too.
+      isPersonal: !!group?.isPersonal,
     }));
-    if (template) {
-      sessionStorage.setItem('agentGate', JSON.stringify({
-        bounds: template.bounds,
-        context: template.context,
-        gateContent: { intent: template.intent },
-        ttlConfig: { max: template.ttl },
-        templateMode: template.mode,
-        templateTtl: template.ttl,
-      }));
-    } else {
-      sessionStorage.removeItem('agentGate');
-    }
-    setModalProfile(null);
+    sessionStorage.removeItem('agentGate');
     onDismiss?.();
     navigate('/agent/gate');
   };
 
-  // Takes the manifest directly. Resolving it from the profile id would hit the
-  // same collision the entry list exists to avoid: two connectors, one profile,
-  // and a lookup that can only return one of them.
-  const handleCreate = (profileId: string, manifest: IntegrationManifest) => {
+  const handleCreate = (profileId: string) => {
     if (!groupId) return;
-
-    if (manifest?.templates && manifest.templates.length > 0) {
-      setModalProfile({ profileId, manifest });
-    } else {
-      storeAuthAndNavigate(profileId);
-    }
+    storeAuthAndNavigate(profileId);
   };
-
-  // Step 2 — template picker for a selected profile. Rendered inline in the
-  // same modal so the flow is Profile → Template without stacked modals.
-  if (modalProfile) {
-    const tpls = modalProfile.manifest.templates ?? [];
-    return (
-      <>
-        <button
-          className="btn btn-ghost btn-sm"
-          style={{ marginBottom: '1rem' }}
-          onClick={() => setModalProfile(null)}
-        >
-          &larr; Back to profiles
-        </button>
-
-        <h3 style={{ margin: '0 0 0.25rem 0', fontSize: '1rem' }}>
-          Set up {modalProfile.manifest.name} authorization
-        </h3>
-
-        <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '0.5rem', marginBottom: '0.75rem', fontWeight: 600 }}>
-          Quick start
-        </p>
-        <div style={{
-          display: 'grid',
-          gap: '0.75rem',
-          gridTemplateColumns: `repeat(${Math.min(tpls.length, 3)}, 1fr)`,
-        }}>
-          {tpls.map((tpl) => (
-            <button
-              key={tpl.name}
-              className="template-card"
-              onClick={() => storeAuthAndNavigate(modalProfile.profileId, tpl)}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.375rem' }}>
-                <span className={`template-mode template-mode-${tpl.mode === 'automatic' ? 'auto' : 'review'}`}>
-                  {tpl.mode === 'automatic' ? 'Auto' : 'Review'}
-                </span>
-                <span className="template-risk" data-risk={tpl.risk}>{tpl.risk}</span>
-              </div>
-              <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.25rem' }}>
-                {tpl.name}
-              </div>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', lineHeight: 1.45, marginBottom: '0.5rem' }}>
-                {tpl.description}
-              </div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem' }}>
-                {tpl.tags.map(tag => (
-                  <span key={tag} className="template-tag">{tag}</span>
-                ))}
-              </div>
-            </button>
-          ))}
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', margin: '1.5rem 0' }}>
-          <div style={{ flex: 1, height: '1px', background: 'var(--border)' }} />
-          <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>or</span>
-          <div style={{ flex: 1, height: '1px', background: 'var(--border)' }} />
-        </div>
-
-        <button
-          className="btn btn-primary"
-          style={{ width: '100%', textAlign: 'center', padding: '0.75rem' }}
-          onClick={() => storeAuthAndNavigate(modalProfile.profileId)}
-        >
-          Custom — define your own limits and scope
-        </button>
-      </>
-    );
-  }
 
   return (
     <>
@@ -273,7 +188,7 @@ export function AuthorizePicker({ onDismiss }: Props) {
                 </p>
 
                 {isRunning ? (
-                  <button className="btn btn-primary btn-sm" onClick={() => handleCreate(p.id, manifest)}>
+                  <button className="btn btn-primary btn-sm" onClick={() => handleCreate(p.id)}>
                     Authorize
                   </button>
                 ) : (
