@@ -719,6 +719,23 @@ class SPClient {
     return res.json();
   }
 
+  // ─── Archived mandates (local display flag; deletes nothing) ───
+
+  async getArchivedMandates(): Promise<string[]> {
+    const res = await this.fetch('/api/archived-mandates');
+    if (!res.ok) throw new Error(`Failed to load archived mandates: ${res.status}`);
+    return ((await res.json()) as { archived: string[] }).archived;
+  }
+
+  /** Returns the PERSISTED list, so callers render backend truth. */
+  async setMandateArchived(authorizationId: string, archived: boolean): Promise<string[]> {
+    const res = await this.fetch(`/api/archived-mandates/${encodeURIComponent(authorizationId)}`, {
+      method: archived ? 'PUT' : 'DELETE',
+    });
+    if (!res.ok) throw new Error(`Failed to ${archived ? 'archive' : 'unarchive'} mandate: ${res.status}`);
+    return ((await res.json()) as { archived: string[] }).archived;
+  }
+
   /**
    * Credential metadata. `fields` carries only manifest-declared `text` values;
    * secret fields arrive as recognition hints (prefix + last 4, or null for

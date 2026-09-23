@@ -8,7 +8,7 @@
  * time/completeness derivation applies only to snapshots lacking sp_status.
  */
 import { describe, it, expect } from 'vitest';
-import { getAuthStatus, statusTimestamp, bucketAuths } from './auth-status';
+import { getAuthStatus, statusTimestamp, bucketAuths, isArchived, getAuthView } from './auth-status';
 import type { PendingItem } from './sp-client';
 
 function item(overrides: Partial<PendingItem>): PendingItem {
@@ -87,6 +87,40 @@ describe('bucketAuths', () => {
     expect(buckets.active.map(i => i.authorization_id)).toEqual(['a', 'd']);
     expect(buckets.expired.map(i => i.authorization_id)).toEqual(['b']);
     expect(buckets.revoked.map(i => i.authorization_id)).toEqual(['c']);
+  });
+});
+
+describe('archived (local display flag)', () => {
+  const archivedSet = new Set(['b', 'c', 'a']);
+
+  it('archives only expired or revoked mandates', () => {
+    expect(isArchived(item({ authorization_id: 'b', sp_status: 'expired' }), { archivedSet })).toBe(true);
+    expect(isArchived(item({ authorization_id: 'c', sp_status: 'revoked' }), { archivedSet })).toBe(true);
+  });
+
+  it('never hides live authority: a flagged mandate that is active again shows as active', () => {
+    // Extended after it was archived: same id, live again.
+    const extended = item({ authorization_id: 'a', sp_status: 'active' });
+    expect(isArchived(extended, { archivedSet })).toBe(false);
+    expect(getAuthView(extended, { archivedSet })).toBe('active');
+  });
+
+  it('buckets archived mandates apart, so the badge stops counting them', () => {
+    const items = [
+      item({ authorization_id: 'a', sp_status: 'active' }),
+      item({ authorization_id: 'b', sp_status: 'expired' }),
+      item({ authorization_id: 'c', sp_status: 'revoked' }),
+      item({ authorization_id: 'e', sp_status: 'expired' }),
+    ];
+    const buckets = bucketAuths(items, { archivedSet });
+    expect(buckets.active.map(i => i.authorization_id)).toEqual(['a']);
+    expect(buckets.expired.map(i => i.authorization_id)).toEqual(['e']);
+    expect(buckets.revoked).toEqual([]);
+    expect(buckets.archived.map(i => i.authorization_id)).toEqual(['b', 'c']);
+  });
+
+  it('without an archived set, nothing is archived', () => {
+    expect(bucketAuths([item({ sp_status: 'expired' })]).archived).toEqual([]);
   });
 });
 

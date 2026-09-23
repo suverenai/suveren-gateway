@@ -40,12 +40,13 @@ function useOtherNavStatus() {
 
   const poll = useCallback(async () => {
     try {
-      const [aiStatus, authData, proposalData, approverProposals, briefText] = await Promise.all([
+      const [aiStatus, authData, proposalData, approverProposals, briefText, archivedIds] = await Promise.all([
         spClient.getCredential('ai-config').catch(() => null),
         spClient.getMyAttestations().catch(() => null),
         spClient.getProposals(activeDomain || 'owner').catch(() => null),
         spClient.getProposalsForApprover().catch(() => null),
         spClient.getAgentContext().catch(() => ''),
+        spClient.getArchivedMandates().catch(() => [] as string[]),
       ]);
 
       const next: Record<string, number> = {};
@@ -53,7 +54,9 @@ function useOtherNavStatus() {
       if (authData) {
         // Bucket through the shared helper so this badge, the Dashboard
         // counts, and the Authorizations page never disagree.
-        const expired = bucketAuths(authData).expired.length;
+        // Archived mandates are out of the badge: they are finished and the
+        // owner has seen them. A failed archive load counts them (safe side).
+        const expired = bucketAuths(authData, { archivedSet: new Set(archivedIds) }).expired.length;
         if (expired > 0) next.authorizations = expired;
       }
       // Combine domain proposals (legacy) + above-cap approver proposals (Phase 6).
@@ -78,6 +81,11 @@ function useOtherNavStatus() {
   useSSEEvent('proposal-approved', poll);
   useSSEEvent('proposal-rejected', poll);
   useSSEEvent('team-membership-changed', poll);
+  // Archive is a local flag (no SSE event): the Mandates page announces it.
+  useEffect(() => {
+    window.addEventListener('suveren:archived-changed', poll);
+    return () => window.removeEventListener('suveren:archived-changed', poll);
+  }, [poll]);
   // Fallback full-sync every 5min in case of missed events.
   useVisiblePolling(poll, 300_000, activeDomain);
   return counts;

@@ -3285,7 +3285,7 @@ body.is-updating .update-banner {
   color: var(--text-muted); font-size: 0.8rem; margin: 0 0 1.1rem;
   line-height: 1.45; max-width: 36ch;
 }
-.recent-blocks .rb-count {
+.recent-blocks .rb-count, .attention .rb-count {
   flex: none; min-width: 1.6rem; height: 1.6rem; padding: 0 0.45rem;
   display: inline-flex; align-items: center; justify-content: center;
   font-size: 0.8rem; font-weight: 600; font-variant-numeric: tabular-nums;
@@ -3321,13 +3321,28 @@ body.is-updating .update-banner {
   font: inherit; font-size: 0.8rem; color: var(--text-primary); background: none; border: none;
   padding: 0; cursor: pointer; text-decoration: underline; text-underline-offset: 3px;
 }
+/* Shared "all good" empty state: Recent blocks card and the dashboard's
+   "All clear" attention box use the same green check, heading and line. */
 .recent-blocks .rb-empty { text-align: center; padding: 1.25rem 1rem 0.25rem; }
-.recent-blocks .rb-mark {
+.all-clear { text-align: center; padding: 1.25rem 1rem 0.25rem; }
+
+/* Dashboard "Needs your attention" card: rows separated by hairlines. */
+.attention .card-header { margin-bottom: 0.5rem; }
+.attention-rows { display: flex; flex-direction: column; }
+.attention-row {
+  display: flex; align-items: center; gap: 0.75rem; padding: 0.7rem 0;
+  border-top: 1px solid var(--border); text-decoration: none; color: inherit;
+}
+.attention-row:first-child { border-top: none; }
+.attention-row:hover { background: var(--accent-subtle); }
+.attention-row:focus-visible { outline: 2px solid var(--primary-focus-ring); outline-offset: 2px; }
+.attention-dot { width: 0.5rem; height: 0.5rem; border-radius: 50%; flex-shrink: 0; }
+.recent-blocks .rb-mark, .all-clear .rb-mark {
   width: 2.25rem; height: 2.25rem; border-radius: 999px; background: var(--success-subtle); color: var(--success);
   display: inline-flex; align-items: center; justify-content: center; margin-bottom: 0.75rem;
 }
-.recent-blocks .rb-empty h3 { font-size: 0.9rem; margin: 0 0 0.3rem; }
-.recent-blocks .rb-empty p { font-size: 0.8rem; color: var(--text-muted); margin: 0 auto; max-width: 30ch; line-height: 1.45; }
+.recent-blocks .rb-empty h3, .all-clear h3 { font-size: 0.9rem; margin: 0 0 0.3rem; }
+.recent-blocks .rb-empty p, .all-clear p { font-size: 0.8rem; color: var(--text-muted); margin: 0 auto; max-width: 30ch; line-height: 1.45; }
 
 /* ── Receipt rows (audit) ──────────────────────────────────────────────────
    Leads with what happened in words; identifiers live in the collapsed

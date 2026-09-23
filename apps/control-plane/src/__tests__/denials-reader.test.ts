@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createCipheriv, randomBytes } from 'node:crypto';
 import { Vault } from '../lib/vault';
-import { loadDenials, selectDenials, type DenialRecordView } from '../lib/denials-reader';
+import { loadDenials, selectDenials, DENIAL_MAX_AGE_MS, type DenialRecordView } from '../lib/denials-reader';
 
 const dirs: string[] = [];
 function tmp(): string { const d = mkdtempSync(join(tmpdir(), 'cp-denials-')); dirs.push(d); return d; }
@@ -52,18 +52,27 @@ describe('loadDenials (control-plane reads what the MCP server wrote)', () => {
 describe('selectDenials', () => {
   const recs = [rec({ ts: 1000 }), rec({ ts: 3000 }), rec({ ts: 2000 })];
   it('sorts newest-first and reports the full count', () => {
-    const { count, records } = selectDenials(recs);
+    const { count, records } = selectDenials(recs, { now: 3000 });
     expect(count).toBe(3);
     expect(records.map(r => r.ts)).toEqual([3000, 2000, 1000]);
   });
   it('applies since (ms) and reports pre-limit count', () => {
-    const { count, records } = selectDenials(recs, { since: 2000 });
+    const { count, records } = selectDenials(recs, { since: 2000, now: 3000 });
     expect(records.map(r => r.ts)).toEqual([3000, 2000]);
     expect(count).toBe(2);
   });
   it('applies limit but count is the full total', () => {
-    const { count, records } = selectDenials(recs, { limit: 1 });
+    const { count, records } = selectDenials(recs, { limit: 1, now: 3000 });
     expect(records.map(r => r.ts)).toEqual([3000]);
     expect(count).toBe(3);
+  });
+  it('drops records older than the retention window, even when nothing new was written', () => {
+    const DAY = 24 * 60 * 60 * 1000;
+    const now = 100 * DAY;
+    const aged = [rec({ ts: now - 54 * DAY }), rec({ ts: now - 29 * DAY }), rec({ ts: now - 1 * DAY })];
+    const { count, records } = selectDenials(aged, { now });
+    expect(count).toBe(2);
+    expect(records.map(r => (now - r.ts) / DAY)).toEqual([1, 29]);
+    expect(DENIAL_MAX_AGE_MS).toBe(30 * DAY);
   });
 });

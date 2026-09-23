@@ -35,12 +35,25 @@ export function loadDenials(dataDir: string, decrypt: (blob: EncBlob) => string)
   return [];
 }
 
-/** Newest-first, optional `since` (ms) and `limit`. Returns the full count before limiting. */
+/**
+ * Retention, applied on READ. The MCP server's DenialLog prunes to the same
+ * window, but only when it writes a new denial — so with no new blocks, old
+ * records stayed on disk and on the dashboard indefinitely (a 54-day-old block
+ * under "Recent blocks"). Filtering here makes the window hold regardless.
+ * Keep equal to MAX_AGE_MS in apps/mcp-server/src/lib/denial-log.ts.
+ */
+export const DENIAL_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * Newest-first, never older than DENIAL_MAX_AGE_MS, optional `since` (ms) and
+ * `limit`. Returns the full count before limiting. `now` is injectable for tests.
+ */
 export function selectDenials(
   records: DenialRecordView[],
-  opts: { since?: number; limit?: number } = {},
+  opts: { since?: number; limit?: number; now?: number } = {},
 ): { count: number; records: DenialRecordView[] } {
-  let out = [...records].sort((a, b) => b.ts - a.ts);
+  const cutoff = (opts.now ?? Date.now()) - DENIAL_MAX_AGE_MS;
+  let out = records.filter(r => r.ts >= cutoff).sort((a, b) => b.ts - a.ts);
   if (opts.since !== undefined && Number.isFinite(opts.since)) out = out.filter(r => r.ts >= opts.since!);
   const count = out.length;
   if (opts.limit !== undefined && Number.isFinite(opts.limit) && opts.limit > 0) out = out.slice(0, opts.limit);

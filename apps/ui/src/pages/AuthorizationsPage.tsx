@@ -12,23 +12,23 @@ import { ExtendAuthModal } from '../components/ExtendAuthModal';
 import { formatScopeValue } from '../lib/scope-labels';
 import { useVisiblePolling } from '../hooks/useVisiblePolling';
 import { useSSEEvent } from '../contexts/EventSourceContext';
-import { getAuthStatus, statusTimestamp, type AuthStatus } from '../lib/auth-status';
+import { getAuthStatus, getAuthView, isArchivable, isArchived, statusTimestamp, type AuthStatusOptions, type AuthView } from '../lib/auth-status';
 
-type StatusFilter = AuthStatus;
+type StatusFilter = AuthView;
 type ViewTab = 'mine' | 'team';
 
 type TeamItem = PendingItem & { owner: { userId: string; name?: string; email?: string } };
 
-function sortItems(items: PendingItem[], revokedSet: Set<string>, highlightHash?: string | null): PendingItem[] {
+function sortItems(items: PendingItem[], statusOpts: AuthStatusOptions, highlightHash?: string | null): PendingItem[] {
   return [...items].sort((a, b) => {
     // Highlighted item always pinned to the top so the user lands on it.
     if (highlightHash) {
       if (a.authorization_id === highlightHash && b.authorization_id !== highlightHash) return -1;
       if (b.authorization_id === highlightHash && a.authorization_id !== highlightHash) return 1;
     }
-    const sa = getAuthStatus(a, { revokedSet });
-    const sb = getAuthStatus(b, { revokedSet });
-    const order: Record<AuthStatus, number> = { active: 0, pending: 1, expired: 2, revoked: 3 };
+    const sa = getAuthView(a, statusOpts);
+    const sb = getAuthView(b, statusOpts);
+    const order: Record<AuthView, number> = { active: 0, pending: 1, expired: 2, revoked: 3, archived: 4 };
     if (order[sa] !== order[sb]) return order[sa] - order[sb];
     // Within each status, most recent first.
     return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
@@ -61,6 +61,10 @@ interface AuthCardProps {
   onCopy: (item: PendingItem, opts?: { asEdit?: boolean }) => void;
   onRevoke: (authorizationId: string, ownerLabel?: string, profileShortName?: string) => void;
   onExtend: (item: PendingItem) => void;
+  /** Mine tab only: archive/unarchive a finished mandate (local display flag). */
+  archivedSet?: Set<string>;
+  archivingHash?: string | null;
+  onArchive?: (authorizationId: string, archived: boolean) => void;
   highlightHash?: string | null;
 }
 
@@ -83,9 +87,14 @@ function AuthCard({
   onCopy,
   onRevoke,
   onExtend,
+  archivedSet,
+  archivingHash,
+  onArchive,
   highlightHash,
 }: AuthCardProps) {
   const status = getAuthStatus(item, { revokedSet });
+  const archived = isArchived(item, { revokedSet, archivedSet });
+  const canArchive = !ownerLabel && !!onArchive && isArchivable(status);
   const isExpanded = expandedHash === item.authorization_id;
   const gateEntry = gateCache[item.authorization_id];
   const showExtend = status === 'active' || status === 'pending' || status === 'expired';
@@ -302,6 +311,23 @@ function AuthCard({
       )}
 
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '0.5rem' }}>
+        {/* Archive: a local display flag for finished mandates. Deletes
+            nothing — the mandate and every ticket issued under it stay
+            stored and verifiable. Never offered for live authority. */}
+        {canArchive && (
+          <button
+            className="btn btn-secondary btn-sm"
+            onClick={() => onArchive!(item.authorization_id, !archived)}
+            disabled={archivingHash === item.authorization_id}
+            title={archived
+              ? 'Move back to the Expired or Revoked list'
+              : 'Hide from the list and the nav badge. Nothing is deleted: the mandate and its tickets stay stored and verifiable.'}
+          >
+            {archivingHash === item.authorization_id
+              ? (archived ? 'Unarchiving…' : 'Archiving…')
+              : (archived ? '↩ Unarchive' : '⊟ Archive')}
+          </button>
+        )}
         <button
           className="btn btn-ghost btn-sm"
           onClick={() => onExpand(item)}
@@ -475,6 +501,8 @@ export function AuthorizationsPage() {
   const [copiedHash, setCopiedHash] = useState<string | null>(null);
   const [revokedSet, setRevokedSet] = useState<Set<string>>(new Set());
   const [revokingHash, setRevokingHash] = useState<string | null>(null);
+  const [archivedSet, setArchivedSet] = useState<Set<string>>(new Set());
+  const [archivingHash, setArchivingHash] = useState<string | null>(null);
   const [copyingHash, setCopyingHash] = useState<string | null>(null);
 
   const navigate = useNavigate();
@@ -492,6 +520,29 @@ export function AuthorizationsPage() {
       .catch(() => {})
       .finally(() => setMineLoading(false));
   }, []);
+
+  // Local archive flag (control plane). A failed load leaves nothing
+  // archived — everything shows, which is the safe direction.
+  const fetchArchived = useCallback(() => {
+    spClient.getArchivedMandates()
+      .then(ids => setArchivedSet(new Set(ids)))
+      .catch(() => {});
+  }, []);
+  useEffect(() => { fetchArchived(); }, [fetchArchived]);
+
+  const handleArchive = async (authorizationId: string, archived: boolean) => {
+    setArchivingHash(authorizationId);
+    try {
+      // Render the PERSISTED list, not the request.
+      const ids = await spClient.setMandateArchived(authorizationId, archived);
+      setArchivedSet(new Set(ids));
+      window.dispatchEvent(new Event('suveren:archived-changed'));
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to update archive');
+    } finally {
+      setArchivingHash(null);
+    }
+  };
 
   const fetchTeamItems = useCallback(() => {
     if (!groupId) return;
@@ -718,17 +769,21 @@ export function AuthorizationsPage() {
   const activeItems = viewTab === 'mine' ? items : teamItems;
   const loading = viewTab === 'mine' ? mineLoading : teamLoading;
 
-  const counts = {
-    active: activeItems.filter(i => getAuthStatus(i, { revokedSet }) === 'active').length,
-    pending: activeItems.filter(i => getAuthStatus(i, { revokedSet }) === 'pending').length,
-    expired: activeItems.filter(i => getAuthStatus(i, { revokedSet }) === 'expired').length,
-    revoked: activeItems.filter(i => getAuthStatus(i, { revokedSet }) === 'revoked').length,
-  };
+  // Archive is a Mine-tab concept (it's this owner's local view); the Team
+  // tab ignores it so an admin always sees every teammate's mandate.
+  const statusOpts: AuthStatusOptions = viewTab === 'mine' ? { revokedSet, archivedSet } : { revokedSet };
+  const viewOf = (i: PendingItem) => getAuthView(i, statusOpts);
+
+  const counts: Record<AuthView, number> = { active: 0, pending: 0, expired: 0, revoked: 0, archived: 0 };
+  for (const i of activeItems) counts[viewOf(i)] += 1;
+  const filterTabs: AuthView[] = viewTab === 'mine'
+    ? ['active', 'pending', 'expired', 'revoked', 'archived']
+    : ['active', 'pending', 'expired', 'revoked'];
 
   const profileSummary = (() => {
     const map = new Map<string, { count: number; review: boolean }>();
     for (const item of activeItems) {
-      if (getAuthStatus(item, { revokedSet }) !== activeFilter) continue;
+      if (viewOf(item) !== activeFilter) continue;
       const entry = map.get(item.profile_id) ?? { count: 0, review: false };
       entry.count += 1;
       if (item.deferred_commitment_domains.length > 0) entry.review = true;
@@ -741,7 +796,7 @@ export function AuthorizationsPage() {
 
   const filtered = sortItems(
     activeItems.filter(i => {
-      if (getAuthStatus(i, { revokedSet }) !== activeFilter) return false;
+      if (viewOf(i) !== activeFilter) return false;
       if (profileFilter !== null && i.profile_id !== profileFilter) return false;
       if (modeFilter !== null) {
         const isReview = i.deferred_commitment_domains.length > 0;
@@ -750,7 +805,7 @@ export function AuthorizationsPage() {
       }
       return true;
     }),
-    revokedSet,
+    statusOpts,
     highlightHash,
   );
 
@@ -774,6 +829,7 @@ export function AuthorizationsPage() {
     onExtend: setExtendItem,
     highlightHash,
   };
+  const mineCardProps = { ...sharedCardProps, archivedSet, archivingHash, onArchive: handleArchive };
 
   return (
     <>
@@ -783,7 +839,7 @@ export function AuthorizationsPage() {
       >
         <div>
           <h1 className="page-title">Mandates</h1>
-          <p className="page-subtitle">Active, pending, and expired agent authorizations.</p>
+          <p className="page-subtitle">Active, pending, expired, and archived agent authorizations.</p>
         </div>
         <button className="btn btn-primary" onClick={() => setShowPicker(true)}>
           + New authorization
@@ -863,7 +919,7 @@ export function AuthorizationsPage() {
 
       {/* Status filter tabs */}
       <div className="nav-tabs">
-        {(['active', 'pending', 'expired', 'revoked'] as const).map(tab => (
+        {filterTabs.map(tab => (
           <button
             key={tab}
             className={`nav-tab${activeFilter === tab ? ' active' : ''}`}
@@ -932,7 +988,9 @@ export function AuthorizationsPage() {
         <EmptyState
           icon={'☰'}
           title="No authorizations"
-          text={`No ${activeFilter} authorizations found.`}
+          text={activeFilter === 'archived'
+            ? 'Nothing archived. Archive an expired or revoked mandate to move it here.'
+            : `No ${activeFilter} authorizations found.`}
         />
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
@@ -948,7 +1006,7 @@ export function AuthorizationsPage() {
                 newerProfile={newerProfileFor(item.profile_id)}
                 ownerLabel={ownerLabel}
                 isAdmin={isAdmin}
-                {...sharedCardProps}
+                {...(viewTab === 'mine' ? mineCardProps : sharedCardProps)}
               />
             );
           })}

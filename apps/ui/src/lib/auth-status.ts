@@ -31,6 +31,12 @@ export interface AuthStatusOptions {
    * catch up on the next SSE refresh.
    */
   revokedSet?: Set<string>;
+  /**
+   * Mandates the owner archived on this gateway (a local display flag, see
+   * the control plane's archived-mandates-store). Only honoured for expired
+   * or revoked mandates — see `isArchived`.
+   */
+  archivedSet?: Set<string>;
 }
 
 export function getAuthStatus(item: PendingItem, opts?: AuthStatusOptions): AuthStatus {
@@ -52,17 +58,40 @@ export function getAuthStatus(item: PendingItem, opts?: AuthStatusOptions): Auth
   return 'active';
 }
 
+/** Only finished mandates can be archived: live authority is never hidden. */
+export function isArchivable(status: AuthStatus): boolean {
+  return status === 'expired' || status === 'revoked';
+}
+
+/**
+ * Archived = flagged by the owner AND no longer live. A flag on a mandate
+ * that is live again (extended after it was archived) is ignored, so a stale
+ * flag can never hide authority the AI can still act under.
+ */
+export function isArchived(item: PendingItem, opts?: AuthStatusOptions): boolean {
+  return !!opts?.archivedSet?.has(item.authorization_id) && isArchivable(getAuthStatus(item, opts));
+}
+
+/** What a list view files the mandate under: its status, or 'archived'. */
+export type AuthView = AuthStatus | 'archived';
+
+export function getAuthView(item: PendingItem, opts?: AuthStatusOptions): AuthView {
+  return isArchived(item, opts) ? 'archived' : getAuthStatus(item, opts);
+}
+
 export interface AuthBuckets {
   active: PendingItem[];
   pending: PendingItem[];
   expired: PendingItem[];
   revoked: PendingItem[];
+  /** Expired or revoked mandates the owner archived; excluded from `expired`/`revoked`. */
+  archived: PendingItem[];
 }
 
 export function bucketAuths(items: PendingItem[], opts?: AuthStatusOptions): AuthBuckets {
-  const buckets: AuthBuckets = { active: [], pending: [], expired: [], revoked: [] };
+  const buckets: AuthBuckets = { active: [], pending: [], expired: [], revoked: [], archived: [] };
   for (const item of items) {
-    buckets[getAuthStatus(item, opts)].push(item);
+    buckets[getAuthView(item, opts)].push(item);
   }
   return buckets;
 }

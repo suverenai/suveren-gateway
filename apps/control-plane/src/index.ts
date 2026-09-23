@@ -52,6 +52,7 @@ import { createApprovedIntentsRouter } from './routes/approved-intents';
 import { startUpdateChecker, getUpdateStatus, forceCheck } from './lib/update-checker';
 import { createEventsHandler } from './routes/events';
 import { createGatewaySettingsRouter } from './routes/gateway-settings';
+import { createArchivedMandatesRouter } from './routes/archived-mandates';
 import { createInternalEventsRouter } from './routes/internal-events';
 import { startNotificationDispatcher } from './lib/notification-dispatcher';
 import { eventBus } from './lib/event-bus';
@@ -409,6 +410,9 @@ app.use('/autostart', jsonParser, authGuard, createAutostartRouter());
 // E2EE intent encryption (P5.5)
 // Local display preferences (desktop notifications). Never holds secrets.
 app.use('/api/gateway-settings', jsonParser, authGuard, createGatewaySettingsRouter());
+
+// Archived mandates: a local display flag (hides expired/revoked mandates; deletes nothing)
+app.use('/api/archived-mandates', jsonParser, authGuard, createArchivedMandatesRouter());
 
 app.use('/api/encrypt-intent', jsonParser, authGuard, createEncryptIntentRouter());
 

@@ -32,6 +32,7 @@ export function DashboardPage() {
   // local integration data was ready in ~100ms. Each card now reveals
   // itself as soon as its own source resolves.
   const [authsReady, setAuthsReady] = useState(false);
+  const [archivedIds, setArchivedIds] = useState<string[]>([]);
   const [proposalsReady, setProposalsReady] = useState(false);
   const [aiReady, setAiReady] = useState(false);
   const { entries: integrationEntries, activeSessions, loading: integrationsLoading } = useIntegrationStatus();
@@ -43,6 +44,9 @@ export function DashboardPage() {
     spClient.getMyAttestations()
       .then(v => { setAuths(v); setAuthsReady(true); })
       .catch(() => setAuthsReady(true));
+    spClient.getArchivedMandates()
+      .then(setArchivedIds)
+      .catch(() => setArchivedIds([]));
     spClient.getProposals(domain || 'owner')
       .then(v => { setProposals(v); setProposalsReady(true); })
       .catch(() => setProposalsReady(true));
@@ -71,7 +75,7 @@ export function DashboardPage() {
   // Bucket through the shared helper so this surface, the Sidebar badge,
   // and the Authorizations page never disagree on what counts as
   // active / expired / revoked. See lib/auth-status.ts.
-  const buckets = bucketAuths(auths);
+  const buckets = bucketAuths(auths, { archivedSet: new Set(archivedIds) });
   const active = buckets.active;
   const expired = buckets.expired;
   const soonExpiring = active.filter(a => a.remaining_seconds !== null && a.remaining_seconds <= EXPIRY_WARN_SECONDS);
@@ -242,39 +246,42 @@ export function DashboardPage() {
         </Link>
       </div>
 
-      {/* Attention required */}
-      {attentionItems.length > 0 ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-          {attentionItems.map((item, i) => (
-            <Link key={i} to={item.to} style={{ textDecoration: 'none' }}>
-              <div className="card" style={{ padding: '0.75rem 1rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                <span style={{
-                  width: '0.5rem',
-                  height: '0.5rem',
-                  borderRadius: '50%',
-                  background: item.color,
-                  flexShrink: 0,
-                }} />
+      {/* Needs your attention — same shape as Recent blocks: the heading names
+          the category, the rows or the green "All clear" give the answer. */}
+      <section className="card attention" aria-label="Needs your attention">
+        <div className="card-header">
+          <h2 className="card-title">Needs your attention</h2>
+          {attentionItems.length > 0 && <span className="rb-count">{attentionItems.length}</span>}
+        </div>
+        {attentionItems.length > 0 ? (
+          <div className="attention-rows">
+            {attentionItems.map((item, i) => (
+              <Link key={i} to={item.to} className="attention-row">
+                <span className="attention-dot" style={{ background: item.color }} aria-hidden="true" />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-primary)' }}>{item.label}</div>
                   <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.detail}</div>
                 </div>
                 <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>{'\u203A'}</span>
-              </div>
-            </Link>
-          ))}
-        </div>
-      ) : allReady ? (
-        <div className="card" style={{ padding: '2rem', textAlign: 'center' }}>
-          <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>All clear. Nothing needs your attention.</div>
-        </div>
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-          <SkeletonAttentionRow />
-          <SkeletonAttentionRow />
-          <SkeletonAttentionRow />
-        </div>
-      )}
+              </Link>
+            ))}
+          </div>
+        ) : allReady ? (
+          <div className="all-clear">
+            <span className="rb-mark" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+            </span>
+            <h3>All clear</h3>
+            <p>Nothing needs your attention.</p>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            <SkeletonAttentionRow />
+            <SkeletonAttentionRow />
+            <SkeletonAttentionRow />
+          </div>
+        )}
+      </section>
 
       {/* Recent read-blocks — the trust signal: a limit you set vs a malfunction */}
       <RecentBlocks />

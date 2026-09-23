@@ -45,6 +45,8 @@ interface EncryptedLogFile { version: 1; blob: EncryptedBlob; }
 
 const DEFAULT_DIR = process.env.SUVEREN_DATA_DIR ?? join(homedir(), '.suveren');
 const MAX_RECORDS = 200;
+// Keep equal to DENIAL_MAX_AGE_MS in apps/control-plane/src/lib/denials-reader.ts,
+// which applies the same window on read (this prune only runs on write).
 const MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
 export class DenialLog {

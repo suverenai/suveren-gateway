@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { denialView, sourceName, relativeTime, type Severity } from './RecentBlocks';
+import { denialView, sourceName, relativeTime, type Severity, splitRecent, RECENT_DAYS } from './RecentBlocks';
 import type { DenialReason } from '../lib/sp-client';
 
 // Pure logic only (the JSX sentence is presentation, verified in the browser
@@ -64,5 +64,20 @@ describe('relativeTime', () => {
   });
   it('never returns a negative/future time', () => {
     expect(relativeTime(NOW + 5 * min, NOW)).toBe('Just now');
+  });
+});
+
+describe('splitRecent — the dashboard shows 7 days, "View all" shows the retained 30', () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  const now = 100 * DAY;
+  const recs = [{ ts: now - 1 * DAY }, { ts: now - 6.9 * DAY }, { ts: now - 8 * DAY }, { ts: now - 29 * DAY }];
+  it('keeps only the last RECENT_DAYS in the recent window', () => {
+    const { recent, all } = splitRecent(recs, now);
+    expect(RECENT_DAYS).toBe(7);
+    expect(recent).toHaveLength(2);
+    expect(all).toHaveLength(4);
+  });
+  it('an old block alone leaves the recent window empty', () => {
+    expect(splitRecent([{ ts: now - 8 * DAY }], now).recent).toEqual([]);
   });
 });
