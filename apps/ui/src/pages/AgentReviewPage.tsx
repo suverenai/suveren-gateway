@@ -85,7 +85,7 @@ export function AgentReviewPage() {
   useEffect(() => {
     const authStored = sessionStorage.getItem('agentAuth');
     const gateStored = sessionStorage.getItem('agentGate');
-    if (!authStored || !gateStored) { navigate('/agent/new'); return; }
+    if (!authStored || !gateStored) { navigate('/mandates?new=1'); return; }
 
     const auth: AuthData = JSON.parse(authStored);
     const gate = JSON.parse(gateStored);
@@ -247,7 +247,7 @@ export function AgentReviewPage() {
   const handleCommit = async () => {
     if (!authData || !gateData || !profile || !user) return;
     if (!authData.groupId) {
-      setError('No active group; cannot create authorization.');
+      setError('No active group; cannot create mandate.');
       return;
     }
     setSubmitting(true);
@@ -350,7 +350,7 @@ export function AgentReviewPage() {
         try {
           await spClient.revokeAttestation(authorizationId, 'Auto-revoked: gate content push failed');
         } catch { /* best effort */ }
-        throw new Error(`Authorization signed but gate content delivery failed. The attestation was revoked. Please try again. (${pushErr instanceof Error ? pushErr.message : 'Unknown error'})`);
+        throw new Error(`Mandate signed but gate content delivery failed. The mandate was revoked. Please try again. (${pushErr instanceof Error ? pushErr.message : 'Unknown error'})`);
       }
 
       // Edit flow: the new grant is signed AND delivered — retire the one it
@@ -373,9 +373,9 @@ export function AgentReviewPage() {
       sessionStorage.removeItem('agentAuth');
       sessionStorage.removeItem('agentGate');
       sessionStorage.removeItem('agentEditReplaces');
-      navigate(`/authorizations?highlight=${encodeURIComponent(authorizationId)}`);
+      navigate(`/mandates?highlight=${encodeURIComponent(authorizationId)}`);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Attestation failed');
+      setError(e instanceof Error ? e.message : 'Signing the mandate failed');
     } finally {
       setSubmitting(false);
     }
@@ -465,13 +465,13 @@ export function AgentReviewPage() {
   return (
     <>
       <StepIndicator currentStep={4} onStepClick={s => {
-        if (s <= 3) navigate(`/agent/gate?step=${s}`);
+        if (s <= 3) navigate(`/mandates/new/intent?step=${s}`);
       }} />
 
       <div className="card">
         <h3 className="card-title" style={{ marginBottom: '0.25rem' }}>Review &amp; Commit</h3>
         <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
-          Review your authorization details before signing.
+          Review your mandate details before signing.
         </p>
 
         {error && <div className="error-message">{error}</div>}
@@ -489,7 +489,7 @@ export function AgentReviewPage() {
             style={{ fontSize: '0.9rem' }}
           />
           <div style={{ fontSize: '0.7rem', color: 'var(--text-tertiary)', marginTop: '0.25rem' }}>
-            A short name to identify this authorization on your dashboard.
+            A short name to identify this mandate on your dashboard.
           </div>
         </div>
 
@@ -589,7 +589,7 @@ export function AgentReviewPage() {
               style={{ marginTop: '0.15rem' }}
             />
             <span style={{ fontSize: '0.8rem' }}>
-              Show my verified name on actions under this authority
+              Show my verified name on actions under this mandate
               <div style={{ fontSize: '0.7rem', color: 'var(--text-tertiary)', marginTop: '0.15rem' }}>
                 Adds "verified by Suveren" with your name to outgoing content. Takes effect
                 only if your identity is verified; otherwise actions stay pseudonymous.
@@ -605,7 +605,7 @@ export function AgentReviewPage() {
         <div className="info-block">
           <div className="info-head">
             <span className="info-title">Intent</span>
-            <button className="info-edit" onClick={() => navigate('/agent/gate?step=3')}>edit in step 3</button>
+            <button className="info-edit" onClick={() => navigate('/mandates/new/intent?step=3')}>edit in step 3</button>
           </div>
           <div style={{ whiteSpace: 'pre-wrap' }}>{gateData.gateContent.intent}</div>
         </div>
@@ -614,7 +614,7 @@ export function AgentReviewPage() {
           <div className="info-block">
             <div className="info-head">
               <span className="info-title">Scope &amp; Limits</span>
-              <button className="info-edit" onClick={() => navigate('/agent/gate?step=2')}>edit in step 2</button>
+              <button className="info-edit" onClick={() => navigate('/mandates/new/intent?step=2')}>edit in step 2</button>
             </div>
             <dl className="info-kv">
               {contextEntries.map(([k, v]) => (
@@ -701,7 +701,7 @@ export function AgentReviewPage() {
                   ? `An active grant on ${overlapProfileName} already has exactly these limits.`
                   : `${duplicateBoundsCount} active grants on ${overlapProfileName} already have exactly these limits.`}
                 {' '}If you meant to give the existing grant more time, use <strong>Extend</strong> on
-                the Authorizations page instead — authorizing here creates a separate,
+                the Mandates page instead — authorizing here creates a separate,
                 independent grant with its own intent and usage counters.
               </div>
             </div>
@@ -728,14 +728,14 @@ export function AgentReviewPage() {
         ) : null}
 
         <div style={{ display: 'flex', gap: '0.5rem' }}>
-          <button className="btn btn-ghost" onClick={() => navigate('/agent/gate')}>Back</button>
+          <button className="btn btn-ghost" onClick={() => navigate('/mandates/new/intent')}>Back</button>
           <button
             className="btn btn-primary btn-lg"
             style={{ flex: 1 }}
             onClick={handleCommit}
             disabled={submitting || !authTitle.trim() || blockedByTeamGate}
           >
-            {submitting ? 'Signing...' : commitMode === 'immediate' ? 'Authorize' : 'Authorize (Review Mode)'}
+            {submitting ? 'Signing...' : commitMode === 'immediate' ? 'Sign mandate' : 'Sign mandate (asks first)'}
           </button>
         </div>
 

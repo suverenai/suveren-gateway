@@ -96,7 +96,7 @@ export function DashboardPage() {
     attentionItems.push({
       label: 'Approval needed',
       detail: `${p.tool} — above-cap action under ${shortProfile(p.profileId)}`,
-      to: '/proposals',
+      to: '/approvals',
       color: 'var(--warning)',
     });
   }
@@ -105,7 +105,7 @@ export function DashboardPage() {
     attentionItems.push({
       label: 'Approval pending',
       detail: `${p.tool} awaiting your approval`,
-      to: '/proposals',
+      to: '/approvals',
       color: 'var(--warning)',
     });
   }
@@ -115,7 +115,7 @@ export function DashboardPage() {
     attentionItems.push({
       label: 'Expiring soon',
       detail: `${a.title ?? shortProfile(a.profile_id)} — ${mins} min remaining`,
-      to: '/authorizations',
+      to: '/mandates',
       color: 'var(--warning)',
     });
   }
@@ -124,7 +124,7 @@ export function DashboardPage() {
     attentionItems.push({
       label: 'Expired',
       detail: a.title ?? shortProfile(a.profile_id),
-      to: '/authorizations',
+      to: '/mandates',
       color: 'var(--danger)',
     });
   }
@@ -196,7 +196,7 @@ export function DashboardPage() {
 
       {/* Status bar */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(8rem, 1fr))', gap: '0.75rem', marginBottom: '1.5rem' }}>
-        <Link to="/authorizations" style={{ textDecoration: 'none' }}>
+        <Link to="/mandates" style={{ textDecoration: 'none' }}>
           <div className="card" style={{ padding: '1rem', textAlign: 'center' }}>
             {authsReady ? (
               <div style={{ fontSize: '1.5rem', fontWeight: 700, color: active.length > 0 ? 'var(--success)' : 'var(--text-tertiary)' }}>
@@ -208,7 +208,7 @@ export function DashboardPage() {
             <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Active</div>
           </div>
         </Link>
-        <Link to="/proposals" style={{ textDecoration: 'none' }}>
+        <Link to="/approvals" style={{ textDecoration: 'none' }}>
           <div className="card" style={{ padding: '1rem', textAlign: 'center' }}>
             {proposalsReady ? (
               <div style={{ fontSize: '1.5rem', fontWeight: 700, color: pendingProposals.length > 0 ? 'var(--warning)' : 'var(--text-tertiary)' }}>
@@ -220,7 +220,7 @@ export function DashboardPage() {
             <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Pending Approvals</div>
           </div>
         </Link>
-        <Link to="/authorizations" style={{ textDecoration: 'none' }}>
+        <Link to="/mandates" style={{ textDecoration: 'none' }}>
           <div className="card" style={{ padding: '1rem', textAlign: 'center' }}>
             {authsReady ? (
               <div style={{ fontSize: '1.5rem', fontWeight: 700, color: expired.length > 0 ? 'var(--danger)' : 'var(--text-tertiary)' }}>

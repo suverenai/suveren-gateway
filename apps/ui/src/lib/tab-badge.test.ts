@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatTabTitle, normalizeCount, badgedFaviconHref } from './tab-badge';
+import { formatTabTitle, normalizeCount, badgedFaviconHref, applyAppBadge } from './tab-badge';
 
 /**
  * DOM-free by design: this package's tests run without a DOM environment, so
@@ -58,5 +58,43 @@ describe('badged favicon', () => {
     // Would taint a canvas, and is the usual reason an SVG favicon renders
     // blank in some browsers.
     expect(decodeURIComponent(href)).not.toContain('foreignObject');
+  });
+});
+
+describe('applyAppBadge (Dock / taskbar badge)', () => {
+  const fakeNav = () => {
+    const calls: string[] = [];
+    return {
+      calls,
+      nav: {
+        setAppBadge: (n?: number) => { calls.push(`set:${n}`); return Promise.resolve(); },
+        clearAppBadge: () => { calls.push('clear'); return Promise.resolve(); },
+      },
+    };
+  };
+
+  it('shows the count as a number, and nothing else', () => {
+    const { calls, nav } = fakeNav();
+    applyAppBadge(3, nav);
+    expect(calls).toEqual(['set:3']);
+  });
+
+  it('clears at zero and for counts that mean "no badge"', () => {
+    const { calls, nav } = fakeNav();
+    applyAppBadge(0, nav);
+    applyAppBadge(-2, nav);
+    applyAppBadge(Number.NaN, nav);
+    expect(calls).toEqual(['clear', 'clear', 'clear']);
+  });
+
+  it('does nothing where the Badging API is missing', () => {
+    expect(() => applyAppBadge(2, {})).not.toThrow();
+    expect(() => applyAppBadge(2, undefined)).not.toThrow();
+  });
+
+  it('swallows a rejected call (Safari without notification permission)', async () => {
+    const nav = { setAppBadge: () => Promise.reject(new Error('NotAllowedError')) };
+    expect(() => applyAppBadge(1, nav)).not.toThrow();
+    await Promise.resolve();
   });
 });

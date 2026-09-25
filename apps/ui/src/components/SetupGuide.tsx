@@ -67,7 +67,7 @@ export function SetupGuide({ aiConfigured, hasRunningIntegration, hasActiveAuth,
   const steps: { label: string; detail?: string; to?: string; status: StepStatus; optional?: boolean }[] = [
     {
       label: 'AI Assistant',
-      detail: 'A trusted AI helps you think through authorizations — surfacing risks and asking the right questions.',
+      detail: 'A trusted AI helps you think through mandates — surfacing risks and asking the right questions.',
       to: '/settings',
       status: aiConfigured ? 'done' : aiSkipped ? 'skipped' : 'pending',
       optional: true,
@@ -78,8 +78,8 @@ export function SetupGuide({ aiConfigured, hasRunningIntegration, hasActiveAuth,
       status: hasRunningIntegration ? 'done' : 'pending',
     },
     {
-      label: 'Authorize your agent',
-      to: '/agent/new',
+      label: 'Give your agent a mandate',
+      to: '/mandates?new=1',
       status: hasActiveAuth ? 'done' : 'pending',
     },
     {

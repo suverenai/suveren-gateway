@@ -395,7 +395,7 @@ export function ProposalReviewPage() {
               </p>
               <p style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>
                 {statusFilter === 'pending'
-                  ? 'Your agents are operating within their authorizations. Switch to All to see recent activity.'
+                  ? 'Your agents are operating within their mandates. Switch to All to see recent activity.'
                   : 'When an agent calls a gated tool, activity will appear here.'}
               </p>
             </div>

@@ -7,6 +7,12 @@
          16px rasterization. Follows the OS scheme, not the app's theme toggle,
          because tab chrome does. -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <!-- Installable as an app (Safari "Add to Dock", Chrome/Edge "Install app"),
+         so the pending-approvals count can show on the Dock / taskbar icon. -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-title" content="Suveren" />
+    <meta name="theme-color" content="#111111" />
     <title>Suveren</title>
   </head>
   <body>

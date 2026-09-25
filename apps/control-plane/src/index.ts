@@ -606,7 +606,7 @@ app.get('/gate-content', authGuard, async (req: Request, res: Response) => {
 
 // Enriched active authorizations (with local context) — the UI uses this to
 // detect structural scope overlap when creating a grant. Path is deliberately
-// NOT `/authorizations` (that is the UI dashboard page route).
+// NOT `/mandates` or `/authorizations` (UI page routes; the latter forwards).
 app.get('/active-authorizations', authGuard, async (_req: Request, res: Response) => {
   try {
     const data = await getEnrichedAuthorizations();

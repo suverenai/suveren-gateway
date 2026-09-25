@@ -41,7 +41,7 @@ export const READ_AGE_PRESETS = [0, 7, 30, 90, 365, 3650] as const;
  * tested before any truthiness check.
  */
 export function readAgeLabel(days: number | null): string {
-  if (days === null) return 'From your authorization';
+  if (days === null) return 'From your mandate';
   if (days === 0) return 'Read nothing';
   if (days === 1) return '1 day back';
   if (days === 365) return '1 year back';
@@ -140,7 +140,7 @@ export function IntegrationCard({ manifest, integration, state, onStatusChange, 
       await spClient.setReadPolicy(manifest.id, days);
       onSuccess(
         days === null
-          ? `${manifest.name} read window now follows your authorization`
+          ? `${manifest.name} read window now follows your mandate`
           : `${manifest.name} read window set to ${readAgeLabel(days).toLowerCase()}`,
       );
       // Refetch: the panel goes back to rendering whatever the gateway reports.
@@ -569,8 +569,8 @@ export function IntegrationCard({ manifest, integration, state, onStatusChange, 
             </div>
           )}
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <Link to="/agent/new" className="btn btn-primary btn-sm" style={{ textDecoration: 'none' }}>
-              Authorize agent
+            <Link to="/mandates?new=1" className="btn btn-primary btn-sm" style={{ textDecoration: 'none' }}>
+              Give a mandate
             </Link>
             {(manifest.credentials.fields.length > 0 || manifest.oauth) && (
               <button
@@ -602,7 +602,7 @@ export function IntegrationCard({ manifest, integration, state, onStatusChange, 
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem', minWidth: 0 }}>
                   <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>Reads</span>
                   <span style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
-                    {readAge === null ? 'window from your authorization' : readAgeLabel(readAge).toLowerCase()}
+                    {readAge === null ? 'window from your mandate' : readAgeLabel(readAge).toLowerCase()}
                   </span>
                   {savingReadAge && <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>saving…</span>}
                   {readAgeError && <span style={{ fontSize: '0.78rem', color: 'var(--danger)' }}>{readAgeError}</span>}
@@ -622,7 +622,7 @@ export function IntegrationCard({ manifest, integration, state, onStatusChange, 
                 </button>
               </div>
               <p style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)', margin: '0 0 0.55rem' }}>
-                Applies immediately — no Save, no new authorization.
+                Applies immediately — no Save, no new mandate.
               </p>
               <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
                 {READ_AGE_PRESETS.map(days => {
@@ -644,7 +644,7 @@ export function IntegrationCard({ manifest, integration, state, onStatusChange, 
                   aria-pressed={readAge === null}
                   disabled={savingReadAge}
                   onClick={() => saveReadAge(null)}
-                  title="Clear the local setting and use the read window from your signed authorization instead."
+                  title="Clear the local setting and use the read window from your signed mandate instead."
                 >
                   {readAgeLabel(null)}
                 </button>
@@ -656,7 +656,7 @@ export function IntegrationCard({ manifest, integration, state, onStatusChange, 
                   <span style={{ color: 'var(--text-muted)' }}>Saving…</span>
                 ) : readAge === null ? (
                   <span style={{ color: 'var(--text-muted)' }}>
-                    Using the window from your authorization. If none is set there, reads are blocked.
+                    Using the window from your mandate. If none is set there, reads are blocked.
                   </span>
                 ) : readAge === 0 ? (
                   <span style={{ color: 'var(--text-muted)' }}>Your agent cannot read any mail.</span>
@@ -671,8 +671,8 @@ export function IntegrationCard({ manifest, integration, state, onStatusChange, 
 
           {/* (legacy authorize link kept hidden — replaced by the button above) */}
           <div style={{ display: 'none' }}>
-            <Link to="/agent/new" className="btn btn-ghost btn-sm" style={{ textDecoration: 'none', display: 'block', textAlign: 'center' }}>
-              Authorize your agent
+            <Link to="/mandates?new=1" className="btn btn-ghost btn-sm" style={{ textDecoration: 'none', display: 'block', textAlign: 'center' }}>
+              Give your agent a mandate
             </Link>
           </div>
         </>

@@ -818,7 +818,7 @@ export function BoundsEditor({
           </div>
           <div>
             No caps are set on this profile, so {names} won&apos;t gate any
-            action under this authority. Your intent will still be encrypted
+            action under this mandate. Your intent will still be encrypted
             and shared with them as an accountability record &mdash; they can
             read what you authorised, even though they aren&apos;t reviewing
             individual actions.
@@ -917,7 +917,7 @@ export function BoundsEditor({
             <span className="bounds-section-icon">&#x1F6E1;</span>
             <div>
               <div className="bounds-section-title">Allowed scope</div>
-              <div className="bounds-section-subtitle">Encrypted on your device, never sent to the SP</div>
+              <div className="bounds-section-subtitle">Encrypted on your device, never sent to the Authority Server</div>
             </div>
           </div>
           {contextFields.map(([key, fieldDef]) => {

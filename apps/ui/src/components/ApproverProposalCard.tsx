@@ -278,7 +278,7 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
             ) : intent !== null ? (
               <p style={{ fontSize: '0.85rem', margin: 0, whiteSpace: 'pre-wrap', color: 'var(--text-primary)' }}>{intent}</p>
             ) : (
-              <p style={{ color: 'var(--text-tertiary)', fontSize: '0.8rem', margin: 0 }}>No intent available for this authority.</p>
+              <p style={{ color: 'var(--text-tertiary)', fontSize: '0.8rem', margin: 0 }}>No intent available for this mandate.</p>
             )}
           </div>
         )}

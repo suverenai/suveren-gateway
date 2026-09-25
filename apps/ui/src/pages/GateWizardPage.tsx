@@ -88,7 +88,7 @@ export function GateWizardPage() {
 
   useEffect(() => {
     const stored = sessionStorage.getItem('agentAuth');
-    if (!stored) { navigate('/agent/new'); return; }
+    if (!stored) { navigate('/mandates?new=1'); return; }
     const data: AuthData = JSON.parse(stored);
     setAuthData(data);
 
@@ -103,7 +103,7 @@ export function GateWizardPage() {
 
     spClient.getProfile(data.profileId)
       .then(p => setProfile(p))
-      .catch(() => navigate('/agent/new'))
+      .catch(() => navigate('/mandates?new=1'))
       .finally(() => setLoading(false));
 
     // Fetch team profile config when in team mode
@@ -182,7 +182,7 @@ export function GateWizardPage() {
     // with the default duration.
     const stored = JSON.parse(sessionStorage.getItem('agentGate') ?? '{}') as Record<string, unknown>;
     sessionStorage.setItem('agentGate', JSON.stringify({ ...stored, bounds, context, contextLabels, gateContent, ttlConfig }));
-    navigate('/agent/review');
+    navigate('/mandates/new/sign');
   };
 
   const handleCheckIntent = async () => {
@@ -202,7 +202,7 @@ export function GateWizardPage() {
       setReviewGrants(r.grants ?? []);
       if (!r.success) setReviewError(r.error ?? 'Check failed.');
       else if (r.review) setReviewResult(r.review);
-      else setReviewNote(r.note ?? 'No other authorizations on this profile to compare against.');
+      else setReviewNote(r.note ?? 'No other mandates on this profile to compare against.');
     } catch (e) {
       setReviewError(e instanceof Error ? e.message : 'Check failed.');
     } finally {
@@ -244,7 +244,7 @@ export function GateWizardPage() {
           <BoundsEditor
             profile={profile}
             onConfirm={handleBoundsConfirm}
-            onCancel={() => navigate('/agent/new')}
+            onCancel={() => navigate('/mandates?new=1')}
             initialBounds={bounds || undefined}
             initialContext={context || undefined}
             profileConfig={profileConfig}
@@ -344,7 +344,7 @@ export function GateWizardPage() {
                   </div>
                   Your intent will be encrypted and shared with{' '}
                   {approverNames.length > 0 ? approverNames.join(', ') : 'this profile\'s required approvers'}.
-                  Only they can decrypt it &mdash; your Service Provider cannot.
+                  Only they can decrypt it &mdash; your Authority Server cannot.
                   Each approver stores a copy as their accountability record.
                 </div>
               </div>
@@ -392,8 +392,8 @@ export function GateWizardPage() {
                 <div className="modal-header">
                   <h3 className="modal-title">
                     {popupGrants.length > 1
-                      ? `Existing authorizations (${popupGrants.length})`
-                      : 'Existing authorization'}
+                      ? `Existing mandates (${popupGrants.length})`
+                      : 'Existing mandate'}
                   </h3>
                   <button className="modal-close" onClick={() => setPopupGrants(null)}>&times;</button>
                 </div>

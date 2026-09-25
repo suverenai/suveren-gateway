@@ -67,7 +67,7 @@ export function ReceiptCompleteDialog({ receipt, onClose }: Props) {
     const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
     const a = document.createElement('a');
     a.href = url;
-    a.download = `suveren-receipt-${receipt.id.slice(0, 8)}.json`;
+    a.download = `suveren-ticket-${receipt.id.slice(0, 8)}.json`;
     a.click();
     URL.revokeObjectURL(url);
   }
@@ -86,7 +86,7 @@ export function ReceiptCompleteDialog({ receipt, onClose }: Props) {
     <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && onClose()}>
       <div className="modal" style={{ maxWidth: '44rem' }}>
         <div className="modal-header">
-          <h3 className="modal-title">Complete receipt</h3>
+          <h3 className="modal-title">Complete ticket</h3>
           <button className="modal-close" onClick={onClose} aria-label="Close">&times;</button>
         </div>
 
@@ -94,20 +94,20 @@ export function ReceiptCompleteDialog({ receipt, onClose }: Props) {
           {signature === 'valid' && (
             <p className="receipt-verified" style={{ margin: '0 0 0.5rem', fontSize: '0.8rem' }}>
               &#10003; Ed25519 signature verified on this device, against the issuer key archived
-              when this receipt was issued.
+              when this ticket was issued.
             </p>
           )}
           {signature === 'invalid' && (
             <p className="receipt-tamper" style={{ margin: '0 0 0.5rem', fontSize: '0.8rem' }}>
-              &#9888; Signature check FAILED — the stored receipt does not match what was signed.
+              &#9888; Signature check FAILED — the stored ticket does not match what was signed.
             </p>
           )}
           <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: '0 0 0.75rem' }}>
             {loading
               ? 'Loading…'
               : source === 'local'
-                ? 'Held on this device — the signed receipt, the attestation it ran under, and the issuer key. Anyone with this file and that key can verify it offline, without Suveren.'
-                : 'No local copy of this receipt (it predates local archiving, or ran on another device). Shown from the Authority Server — complete and signed, but it needs the server to retrieve.'}
+                ? 'Held on this device — the signed ticket, the mandate it ran under, and the issuer key. Anyone with this file and that key can verify it offline, without Suveren.'
+                : 'No local copy of this ticket (it predates local archiving, or ran on another device). Shown from the Authority Server — complete and signed, but it needs the server to retrieve.'}
           </p>
 
           <pre

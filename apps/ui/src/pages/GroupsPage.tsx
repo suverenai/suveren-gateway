@@ -115,7 +115,7 @@ export function GroupsPage() {
         <div>
           <h1 className="page-title">Team</h1>
           <p className="page-subtitle">
-            Your current team context. Team management lives in your Service Provider dashboard.
+            Your current team context. Team management lives in your Authority Server dashboard.
           </p>
         </div>
       </div>
@@ -157,10 +157,10 @@ export function GroupsPage() {
                 target="_blank"
                 rel="noopener noreferrer"
               >
-                Manage this team in your Service Provider &rarr;
+                Manage this team in your Authority Server &rarr;
               </a>
             )}
-            <span title={isSoleAdmin ? 'You are the only admin. Transfer admin to another member in your Service Provider dashboard before leaving.' : undefined} style={{ marginLeft: 'auto' }}>
+            <span title={isSoleAdmin ? 'You are the only admin. Transfer admin to another member in your Authority Server dashboard before leaving.' : undefined} style={{ marginLeft: 'auto' }}>
               <button
                 className="btn btn-ghost btn-sm"
                 style={{ color: 'var(--text-tertiary)' }}
@@ -176,8 +176,8 @@ export function GroupsPage() {
         <div className="card" style={{ textAlign: 'center', padding: '2rem 1.5rem' }}>
           <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '1rem' }}>You are working solo.</h3>
           <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '1rem', maxWidth: 480, marginLeft: 'auto', marginRight: 'auto' }}>
-            Every authorization you create here is in your personal context. You can join an existing
-            team or create a new one in your Service Provider dashboard.
+            Every mandate you create here is in your personal context. You can join an existing
+            team or create a new one in your Authority Server dashboard.
           </p>
           {browseTeamsHref && (
             <a
@@ -186,7 +186,7 @@ export function GroupsPage() {
               target="_blank"
               rel="noopener noreferrer"
             >
-              Open Service Provider dashboard &rarr;
+              Open Authority Server dashboard &rarr;
             </a>
           )}
         </div>
@@ -216,12 +216,12 @@ export function GroupsPage() {
               Leaving will:
             </p>
             <ul style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '1rem', paddingLeft: '1.25rem', lineHeight: 1.6 }}>
-              <li>Revoke all authorizations you created in this team's context</li>
+              <li>Revoke all mandates you created in this team's context</li>
               <li>Reject any pending action proposals you authored</li>
               <li>Disable your membership — rejoining requires admin reactivation</li>
             </ul>
             <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-              Your <strong>personal</strong> authorizations are not affected.
+              Your <strong>personal</strong> mandates are not affected.
             </p>
             <div className="form-group">
               <label htmlFor="leave-confirm-input" style={{ fontSize: '0.825rem', display: 'block', marginBottom: '0.375rem' }}>

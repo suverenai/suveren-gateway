@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 
-const STEP_LABELS = ['Scope & Limits', 'Intent', 'Authorize'];
+const STEP_LABELS = ['Scope & Limits', 'Intent', 'Sign'];
 
 interface Props {
   currentStep: number; // 2-4: scope+limits, intent, authorize
@@ -52,7 +52,7 @@ export function StepIndicator({ currentStep, onStepClick }: Props) {
       <button
         type="button"
         className="btn btn-ghost btn-sm wizard-cancel"
-        onClick={() => navigate('/agent/new')}
+        onClick={() => navigate('/mandates?new=1')}
       >
         Cancel
       </button>

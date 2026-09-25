@@ -58,7 +58,7 @@ export function LoginPage() {
               Your agents, your intent, your rules.
             </h1>
             <p style={{ fontSize: '1.125rem', color: 'var(--text-secondary)', lineHeight: 1.6, marginBottom: '3rem' }}>
-              The gateway runs on your machine, between your agents and the tools they use. Your signature. Your bounds. Your receipts.
+              The gateway runs on your machine, between your agents and the tools they use. Your signature. Your bounds. Your tickets.
             </p>
           </div>
         </div>
@@ -69,7 +69,7 @@ export function LoginPage() {
             <div style={{ textAlign: 'center', marginBottom: '2.5rem' }}>
               <div style={{ fontSize: '1.75rem', fontWeight: 700, marginBottom: '0.5rem' }}>Sign In</div>
               <div style={{ fontSize: '0.95rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-                Enter your API key to manage authorizations.
+                Enter your API key to manage mandates.
               </div>
             </div>
 
@@ -124,7 +124,7 @@ export function LoginPage() {
                 {[
                   <>Create an account at <a href="https://www.suveren.ai/get-started" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>Suveren</a></>,
                   'Join or create a team to get domain authority',
-                  'Sign in here with your API key to start authorizing agents',
+                  'Sign in here with your API key to start giving mandates',
                 ].map((text, i) => (
                   <div key={i} style={{ display: 'flex', gap: '0.625rem', alignItems: 'baseline', marginBottom: i < 2 ? '0.5rem' : 0 }}>
                     <span style={{ color: 'var(--accent)', fontWeight: 700, fontSize: '0.95rem' }}>{i + 1}.</span>
@@ -176,7 +176,7 @@ export function LoginPage() {
               <li>Any unsynchronised gate content stored locally</li>
             </ul>
             <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-              Authorizations and receipts on the Service Provider are NOT affected
+              Mandates and tickets on the Authority Server are NOT affected
               — only this gateway's local state is wiped.
             </p>
             <p style={{ fontSize: '0.825rem', color: 'var(--text-tertiary)', marginBottom: '1rem' }}>

@@ -17,14 +17,14 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { to: '/', icon: '□', label: 'Dashboard' },
-  { to: '/proposals', icon: '▷', label: 'Pending Approvals', statusKey: 'proposals' },
+  { to: '/approvals', icon: '▷', label: 'Pending Approvals', statusKey: 'proposals' },
   // v0.7 vocabulary at the level a buyer reads (nav + page titles). Routes,
   // deep strings, tool names and the wire keep their names until the full
   // rename — see doc/v07/homepage-0.7-proposal.md §0.1.
-  { to: '/authorizations', icon: '☰', label: 'Mandates', statusKey: 'authorizations' },
+  { to: '/mandates', icon: '☰', label: 'Mandates', statusKey: 'authorizations' },
   { to: '/agent-brief', icon: '▤', label: 'Agent Brief', statusKey: 'brief' },
-  { to: '/audit', icon: '▣', label: 'Tickets' },
-  { to: '/groups', icon: '◉', label: 'Team', teamOnly: true },
+  { to: '/tickets', icon: '▣', label: 'Tickets' },
+  { to: '/team', icon: '◉', label: 'Team', teamOnly: true },
   { to: '/integrations', icon: '⧗', label: 'Integrations', statusKey: 'integrations' },
   { to: '/settings', icon: '⚙', label: 'AI Assistant', statusKey: 'assistant' },
 ];

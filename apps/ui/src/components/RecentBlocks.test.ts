@@ -12,7 +12,7 @@ describe('denialView — reason → chip / severity / fix route', () => {
     ['spam',         'Spam / Trash',  'info', undefined],
     ['age',          'Too old',       'warn', undefined],
     ['unset_age',    'Needs setup',   'act',  '/integrations'],
-    ['read_gate',    'Not granted',   'act',  '/authorizations'],
+    ['read_gate',    'Not granted',   'act',  '/mandates'],
     ['ungoverned',   'Unconfigured',  'act',  undefined],
     ['query_unsafe', 'Unsafe search', 'info', undefined],
   ];

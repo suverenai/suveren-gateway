@@ -142,8 +142,8 @@ function AuthCard({
   const capPillTooltip = !isAboveCap
     ? undefined
     : hasApprovers
-      ? `Above-cap actions under this authority require per-action approval from the profile's approvers. Bounds remain authorized at their original values.`
-      : `No approvers are configured for this profile, so the team cap is a hard ceiling. Bounds above the cap are effectively reduced to the cap. Ask the admin to raise the cap or add approvers, or copy this authorization to reissue within the cap.`;
+      ? `Above-cap actions under this mandate require per-action approval from the profile's approvers. Bounds remain authorized at their original values.`
+      : `No approvers are configured for this profile, so the team cap is a hard ceiling. Bounds above the cap are effectively reduced to the cap. Ask the admin to raise the cap or add approvers, or copy this mandate to reissue within the cap.`;
 
   const profileShortName = profileDisplayName(item.profile_id);
 
@@ -163,7 +163,7 @@ function AuthCard({
       </strong>
       {newerProfile.whatsNew ? <> — {newerProfile.whatsNew}</> : null}
       <br />
-      <span>This authority stays on {item.profile_id.split('@')[1] ?? 'its pinned version'}; authorize again to move it.</span>
+      <span>This mandate stays on {item.profile_id.split('@')[1] ?? 'its pinned version'}; authorize again to move it.</span>
     </div>
   ) : null;
 
@@ -271,7 +271,7 @@ function AuthCard({
             }}
             onClick={() => onCopy(item)}
             disabled={copyingHash === item.authorization_id}
-            title="The approver list for this profile has changed since this authority was created. Copy to reissue with the current approvers."
+            title="The approver list for this profile has changed since this mandate was created. Copy to reissue with the current approvers."
           >
             {copyingHash === item.authorization_id ? 'Copying...' : 'Approver list updated · Copy with new approvers'}
           </button>
@@ -358,7 +358,7 @@ function AuthCard({
           {gateEntry?.context && Object.keys(gateEntry.context).length > 0 && (
             <>
               <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginTop: '1rem', marginBottom: '0.25rem' }}>
-                Context
+                Scope
               </div>
               <dl className="review-grid">
                 {Object.entries(gateEntry.context).map(([k, v]) => (
@@ -411,7 +411,7 @@ function AuthCard({
                 className="btn btn-secondary btn-sm"
                 onClick={() => onCopy(item)}
                 disabled={copyingHash === item.authorization_id}
-                title="Start a new authorization pre-filled with these bounds, context, and intent"
+                title="Start a new mandate pre-filled with these bounds, scope, and intent"
               >
                 {copyingHash === item.authorization_id ? 'Copying…' : '⧉ Copy'}
               </button>
@@ -424,7 +424,7 @@ function AuthCard({
                 className="btn btn-secondary btn-sm"
                 onClick={() => onCopy(item, { asEdit: true })}
                 disabled={copyingHash === item.authorization_id}
-                title="Adjust intent, bounds, or scope: opens the ceremony pre-filled; signing the new authorization revokes this one"
+                title="Adjust intent, bounds, or scope: opens the ceremony pre-filled; signing the new mandate revokes this one"
               >
                 ✎ Edit
               </button>
@@ -685,7 +685,7 @@ export function AuthorizationsPage() {
    */
   const handleCopy = async (item: PendingItem, opts?: { asEdit?: boolean }) => {
     if (!groupId) {
-      alert('No active group; cannot copy authorization.');
+      alert('No active group; cannot copy mandate.');
       return;
     }
     setCopyingHash(item.authorization_id);
@@ -733,9 +733,9 @@ export function AuthorizationsPage() {
       } else {
         sessionStorage.removeItem('agentEditReplaces');
       }
-      navigate('/agent/gate');
+      navigate('/mandates/new/intent');
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Failed to copy authorization');
+      alert(err instanceof Error ? err.message : 'Failed to copy mandate');
     } finally {
       setCopyingHash(null);
     }
@@ -743,8 +743,8 @@ export function AuthorizationsPage() {
 
   const handleRevoke = async (authorizationId: string, ownerLabel?: string, profileShortName?: string) => {
     const confirmMsg = ownerLabel && profileShortName
-      ? `Revoke ${ownerLabel}'s ${profileShortName} authorization? This cannot be undone.`
-      : 'Revoke this authorization? The agent will no longer be able to execute actions under this attestation.';
+      ? `Revoke ${ownerLabel}'s ${profileShortName} mandate? This cannot be undone.`
+      : 'Revoke this mandate? The agent will no longer be able to execute actions under it.';
     if (!confirm(confirmMsg)) return;
     setRevokingHash(authorizationId);
     try {
@@ -759,7 +759,7 @@ export function AuthorizationsPage() {
         fetchTeamItems();
       }
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Failed to revoke authorization');
+      alert(err instanceof Error ? err.message : 'Failed to revoke mandate');
     } finally {
       setRevokingHash(null);
     }
@@ -839,10 +839,10 @@ export function AuthorizationsPage() {
       >
         <div>
           <h1 className="page-title">Mandates</h1>
-          <p className="page-subtitle">Active, pending, expired, and archived agent authorizations.</p>
+          <p className="page-subtitle">Active, pending, expired, and archived agent mandates.</p>
         </div>
         <button className="btn btn-primary" onClick={() => setShowPicker(true)}>
-          + New authorization
+          + New mandate
         </button>
       </div>
 
@@ -863,7 +863,7 @@ export function AuthorizationsPage() {
             style={{ maxWidth: '960px', width: '90vw' }}
           >
             <div className="modal-header">
-              <h2 className="modal-title">New authorization</h2>
+              <h2 className="modal-title">New mandate</h2>
               <button
                 className="modal-close"
                 onClick={() => {
@@ -987,10 +987,10 @@ export function AuthorizationsPage() {
       ) : filtered.length === 0 ? (
         <EmptyState
           icon={'☰'}
-          title="No authorizations"
+          title="No mandates"
           text={activeFilter === 'archived'
             ? 'Nothing archived. Archive an expired or revoked mandate to move it here.'
-            : `No ${activeFilter} authorizations found.`}
+            : `No ${activeFilter} mandates found.`}
         />
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>

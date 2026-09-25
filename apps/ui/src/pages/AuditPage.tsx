@@ -471,7 +471,7 @@ export function AuditPage() {
       {loadError && (
         <div className="card" style={{ borderColor: 'var(--danger, #c0392b)', marginBottom: '0.75rem' }}>
           <span style={{ color: 'var(--danger, #c0392b)', fontSize: '0.85rem' }}>
-            Couldn&rsquo;t load receipts &mdash; your session may have expired. Try signing out and back in.
+            Couldn&rsquo;t load tickets &mdash; your session may have expired. Try signing out and back in.
           </span>
         </div>
       )}
@@ -481,17 +481,17 @@ export function AuditPage() {
       ) : filtered.length === 0 ? (
         <EmptyState
           icon={'\u2315'}
-          title={receipts.length === 0 ? 'No receipts in the last 30 days' : 'No matching receipts'}
+          title={receipts.length === 0 ? 'No tickets in the last 30 days' : 'No matching tickets'}
           text={receipts.length === 0
-            ? 'Execution receipts appear here after an agent uses an authorized tool. Older receipts can be loaded below.'
+            ? 'Tickets appear here after an agent uses an authorized tool. Older tickets can be loaded below.'
             : 'Try adjusting your search or filters.'}
         />
       ) : (
         <>
           <div style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginBottom: '0.75rem' }}>
             {filtered.length === receipts.length
-              ? `${receipts.length} receipt${receipts.length !== 1 ? 's' : ''}`
-              : `${filtered.length} of ${receipts.length} receipts`}
+              ? `${receipts.length} ticket${receipts.length !== 1 ? 's' : ''}`
+              : `${filtered.length} of ${receipts.length} tickets`}
           </div>
           <div className="timeline">
             {filtered.map(receipt => {

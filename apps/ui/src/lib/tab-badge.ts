@@ -69,6 +69,7 @@ export function setTabBadge(count: number): void {
   const n = normalizeCount(count);
 
   document.title = formatTabTitle(n);
+  applyAppBadge(n);
 
   const link = iconLink();
   if (!link) return;
@@ -80,4 +81,27 @@ export function setTabBadge(count: number): void {
 /** Back to a clean tab — on logout, or when the count can no longer be trusted. */
 export function clearTabBadge(): void {
   setTabBadge(0);
+}
+
+/**
+ * The same count on the app icon, when the gateway runs as an installed web app:
+ * the Dock on macOS (Safari "Add to Dock", Chrome/Edge "Install app") and the
+ * taskbar on Windows (Edge/Chrome). Uses the Badging API; a browser without it,
+ * or a plain tab, does nothing. Presence only, like the tab: a number, never
+ * content. Safari additionally needs notification permission (see
+ * DockBadgePrompt); until then its call rejects, which is swallowed here.
+ *
+ * `nav` is injectable so the rule is testable without a DOM.
+ */
+export type BadgeNavigator = {
+  setAppBadge?: (n?: number) => Promise<void>;
+  clearAppBadge?: () => Promise<void>;
+};
+
+export function applyAppBadge(count: number, nav: BadgeNavigator | undefined = globalThis.navigator as BadgeNavigator | undefined): void {
+  if (!nav || typeof nav.setAppBadge !== 'function') return;
+  const n = normalizeCount(count);
+  const done = n > 0 ? nav.setAppBadge(n) : (nav.clearAppBadge ? nav.clearAppBadge() : nav.setAppBadge(0));
+  // NotAllowedError (Safari without permission) or a missing install: not our problem to surface.
+  done?.catch?.(() => {});
 }

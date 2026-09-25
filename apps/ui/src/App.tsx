@@ -1,4 +1,10 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+
+/** Forward a pre-v0.7 address to its new path, keeping the query string (e.g. ?highlight=, ?step=). */
+function Forward({ to }: { to: string }) {
+  const { search, hash } = useLocation();
+  return <Navigate to={`${to}${search}${hash}`} replace />;
+}
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { EventSourceProvider } from './contexts/EventSourceContext';
 import { AppShell } from './components/AppShell';
@@ -37,14 +43,21 @@ function AppRoutes() {
         </AuthGuard>
       }>
         <Route path="/" element={<DashboardPage />} />
-        <Route path="/agent/new" element={<Navigate to="/authorizations?new=1" replace />} />
-        <Route path="/agent/gate" element={<GateWizardPage />} />
-        <Route path="/agent/review" element={<AgentReviewPage />} />
+        <Route path="/mandates" element={<AuthorizationsPage />} />
+        <Route path="/mandates/new/intent" element={<GateWizardPage />} />
+        <Route path="/mandates/new/sign" element={<AgentReviewPage />} />
         <Route path="/integrations" element={<IntegrationsPage />} />
-        <Route path="/groups" element={<GroupsPage />} />
-        <Route path="/authorizations" element={<AuthorizationsPage />} />
-        <Route path="/audit" element={<AuditPage />} />
-        <Route path="/proposals" element={<ProposalReviewPage />} />
+        <Route path="/team" element={<GroupsPage />} />
+        <Route path="/tickets" element={<AuditPage />} />
+        <Route path="/approvals" element={<ProposalReviewPage />} />
+        {/* Pre-v0.7 addresses: bookmarks and links already sent keep working. */}
+        <Route path="/agent/new" element={<Navigate to="/mandates?new=1" replace />} />
+        <Route path="/agent/gate" element={<Forward to="/mandates/new/intent" />} />
+        <Route path="/agent/review" element={<Forward to="/mandates/new/sign" />} />
+        <Route path="/authorizations" element={<Forward to="/mandates" />} />
+        <Route path="/groups" element={<Forward to="/team" />} />
+        <Route path="/audit" element={<Forward to="/tickets" />} />
+        <Route path="/proposals" element={<Forward to="/approvals" />} />
         <Route path="/agent-brief" element={<AgentBriefPage />} />
         <Route path="/settings" element={<SettingsServicesPage />} />
         {/* Redirect old routes */}

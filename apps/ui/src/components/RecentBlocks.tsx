@@ -29,7 +29,7 @@ const REASON: Record<DenialReason, { chip: string; sev: Severity; fixTo?: string
   spam:         { chip: 'Spam / Trash', sev: 'info' },
   age:          { chip: 'Too old',      sev: 'warn' },
   unset_age:    { chip: 'Needs setup',  sev: 'act', fixTo: '/integrations' },
-  read_gate:    { chip: 'Not granted',  sev: 'act', fixTo: '/authorizations' },
+  read_gate:    { chip: 'Not granted',  sev: 'act', fixTo: '/mandates' },
   ungoverned:   { chip: 'Unconfigured', sev: 'act' },
   query_unsafe: { chip: 'Unsafe search', sev: 'info' },
 };
@@ -48,7 +48,7 @@ function lineFor(r: DenialRecord): React.ReactNode {
     case 'spam':         return <>Tried to open a message in <b>spam or trash</b></>;
     case 'age':          return <>Tried to read {src} older than your read window</>;
     case 'unset_age':    return <>Your {src} has <b>no read window set</b>, so reads are blocked</>;
-    case 'read_gate':    return <>Read access isn't granted on your {src} authorization</>;
+    case 'read_gate':    return <>Read access isn't granted on your {src} mandate</>;
     case 'ungoverned':   return <>A {src} tool isn't configured for safe reading</>;
     case 'query_unsafe': return <>A search couldn't be safely limited and was refused</>;
     default:             return <>{r.detail}</>;

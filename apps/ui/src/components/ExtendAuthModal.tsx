@@ -117,7 +117,7 @@ export function ExtendAuthModal({ item, onClose, onSuccess }: Props) {
       // checking deferred_commitment_domains — the original was 'review'
       // iff that array is non-empty.
       if (!groupId) {
-        throw new Error('No active group; cannot extend authorization.');
+        throw new Error('No active group; cannot extend mandate.');
       }
       const originalMode: 'automatic' | 'review' =
         (item.deferred_commitment_domains?.length ?? 0) > 0 ? 'review' : 'automatic';
@@ -165,7 +165,7 @@ export function ExtendAuthModal({ item, onClose, onSuccess }: Props) {
     <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && onClose()}>
       <div className="modal">
         <div className="modal-header">
-          <h3 className="modal-title">Extend Authorization</h3>
+          <h3 className="modal-title">Extend mandate</h3>
           <button className="modal-close" onClick={onClose}>&times;</button>
         </div>
 
@@ -193,7 +193,7 @@ export function ExtendAuthModal({ item, onClose, onSuccess }: Props) {
             <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
               {usableOptions.length === 0 ? (
                 <div style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>
-                  This authorization is already on the longest available duration. Nothing to extend.
+                  This mandate is already on the longest available duration. Nothing to extend.
                 </div>
               ) : (
                 usableOptions.map(opt => (
@@ -211,7 +211,7 @@ export function ExtendAuthModal({ item, onClose, onSuccess }: Props) {
           </div>
 
           <div style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginBottom: '0.5rem' }}>
-            Same bounds, context, and gate content will be re-attested with a new TTL (measured from now).
+            Same bounds, scope, and gate content will be re-signed with a new TTL (measured from now).
           </div>
 
           {error && <div className="error-message">{error}</div>}

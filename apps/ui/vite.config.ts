@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react';
 
 // Vite proxy keys are prefix-string matches (dev-only). Where a prefix
 // would otherwise swallow a UI page path, we require a trailing slash:
-//   - `/auth/`         so it doesn't catch `/authorizations`
+//   - `/auth/`         so it doesn't catch `/authorizations` (legacy page address, forwards to /mandates)
 //   - `/integrations/` so it doesn't catch the integrations page
 //   - `/agent-brief/`  so it doesn't catch the agent-brief page
 // Other keys stay bare because no UI route collides with them, and some
@@ -27,7 +27,7 @@ export default defineConfig({
         target: 'http://localhost:3402',
         changeOrigin: true,
       },
-      // Bare path; NOTE: must NOT be `/authorizations` (the dashboard page route).
+      // Bare path; NOTE: must NOT be `/mandates` or `/authorizations` (UI page routes).
       '/active-authorizations': {
         target: 'http://localhost:3402',
         changeOrigin: true,

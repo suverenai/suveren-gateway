@@ -93,7 +93,7 @@ export function ReceiptCard({
           <span
             className="receipt-tag receipt-tag-bound"
             title={receipt.contentBinding?.fields
-              ? `The receipt binds: ${receipt.contentBinding.fields.join(', ')}`
+              ? `The ticket binds: ${receipt.contentBinding.fields.join(', ')}`
               : 'This exact content was authorized'}
           >
             content bound
@@ -107,7 +107,7 @@ export function ReceiptCard({
 
       {/* The record, as stored. */}
       <dl className="receipt-rows">
-        <Row label="authorization">
+        <Row label="mandate">
           <strong>{grantTitle || profileVersionLabel(receipt.profileId)}</strong>
         </Row>
 
@@ -131,17 +131,17 @@ export function ReceiptCard({
       {/* Evidence: the complete record vs the shareable redacted view. */}
       <div className="receipt-foot">
         {signature === 'valid' && (
-          <span className="receipt-verified" title="Ed25519 signature checked on this device against the issuer key archived when the receipt was issued — no Authority Server involved.">
+          <span className="receipt-verified" title="Ed25519 signature checked on this device against the issuer key archived when the ticket was issued — no Authority Server involved.">
             &#10003; Verified on this device
           </span>
         )}
         {signature === 'invalid' && (
-          <span className="receipt-tamper" title="The stored receipt does not match what was signed.">
+          <span className="receipt-tamper" title="The stored ticket does not match what was signed.">
             &#9888; Signature check FAILED
           </span>
         )}
         <button type="button" className="receipt-evidence-link" onClick={onOpenComplete}>
-          Complete receipt
+          Complete ticket
         </button>
         {spUrl && (
           <span className="receipt-public">
@@ -161,20 +161,20 @@ export function ReceiptCard({
       <details className="receipt-more">
         <summary>Raw</summary>
         <div className="receipt-kv">
-          <div>receipt &middot; {receipt.id}</div>
+          <div>ticket &middot; {receipt.id}</div>
           <div>action &middot; {receipt.action}</div>
           <div>profile &middot; {receipt.profileId}</div>
-          {receipt.authorizationId && <div>authorization &middot; {receipt.authorizationId}</div>}
+          {receipt.authorizationId && <div>mandate &middot; {receipt.authorizationId}</div>}
           {Object.keys(receipt.executionContext ?? {}).length > 0 && (
             <div>
-              context &middot;{' '}
+              scope &middot;{' '}
               {Object.entries(receipt.executionContext)
                 .map(([k, v]) => `${k}=${v}`)
                 .join(' · ')}
             </div>
           )}
           {localAuth?.boundsHash && <div>bounds hash &middot; {localAuth.boundsHash}</div>}
-          {localAuth?.contextHash && <div>context hash &middot; {localAuth.contextHash}</div>}
+          {localAuth?.contextHash && <div>scope hash &middot; {localAuth.contextHash}</div>}
           {receipt.contentHash && <div>content &middot; {receipt.contentHash}</div>}
           {receipt.proposalId && <div>proposal &middot; {receipt.proposalId}</div>}
           <div>signature &middot; {receipt.signature}</div>

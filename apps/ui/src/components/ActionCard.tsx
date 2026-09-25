@@ -275,7 +275,7 @@ export function ActionCard({ item, onApprove, onReject, resolving, proposalLinks
       )}
 
       <div style={{ marginTop: '0.5rem', fontSize: '0.7rem', color: 'var(--text-tertiary)' }}>
-        {isProposal ? 'Proposal' : 'Receipt'}: {item.id}
+        {isProposal ? 'Proposal' : 'Ticket'}: {item.id}
       </div>
     </div>
   );

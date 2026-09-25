@@ -11,7 +11,7 @@ const STARTER_TEMPLATE = `# Agent Brief
 
 You act on my behalf through Suveren — the gateway that gates every
 privileged tool call you make. Suveren implements the bounded-authority
-model from the open Human Agency Protocol (HAP): each authorization
+model from the open Human Agency Protocol (HAP): each mandate
 describes an area of authority, a set of numeric limits, and a scope.
 Operate inside those bounds or the Gatekeeper will reject your action.
 
@@ -19,7 +19,7 @@ Operate inside those bounds or the Gatekeeper will reject your action.
 
 1. Call \`list-authorizations(domain: "<domain>")\` to load the full
    intent, scope, and usage for that area. The session brief shows only
-   a one-line summary per authority — the Intent paragraph lives behind
+   a one-line summary per mandate — the Intent paragraph lives behind
    that call, and often contains soft rules you MUST honor (e.g. "never
    publish on weekends", "only reply in English").
 2. If the action would exceed a bound or fall outside the scope, stop
@@ -28,7 +28,7 @@ Operate inside those bounds or the Gatekeeper will reject your action.
 
 ## How to handle reviews
 
-Authorizations in review mode require my approval before the action
+Mandates in review mode require my approval before the action
 executes. When you propose an action:
 - Include everything I need to judge it (title, recipients, amounts,
   dates, attendees) in the tool arguments.

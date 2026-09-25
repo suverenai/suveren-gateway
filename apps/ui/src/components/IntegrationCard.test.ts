@@ -50,7 +50,7 @@ describe('readAgeLabel', () => {
     // The whole bug class this guards: null and 0 are different answers, and
     // collapsing them would let a 0 ("read nothing") read as a fallback to the
     // grant bound — reading MORE than the owner allowed.
-    expect(readAgeLabel(null)).toBe('From your authorization');
+    expect(readAgeLabel(null)).toBe('From your mandate');
     expect(readAgeLabel(0)).toBe('Read nothing');
     expect(readAgeLabel(null)).not.toBe(readAgeLabel(0));
   });

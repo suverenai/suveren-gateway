@@ -168,7 +168,7 @@ export function SettingsServicesPage() {
     <>
       <div className="page-header">
         <h1 className="page-title">AI Assistant</h1>
-        <p className="page-subtitle">Advisory AI to help you think through intent when authorizing agents.</p>
+        <p className="page-subtitle">Advisory AI to help you think through intent when giving mandates.</p>
       </div>
 
       {successMsg && <div className="alert alert-success">{successMsg}</div>}
@@ -177,7 +177,7 @@ export function SettingsServicesPage() {
       <div className="card">
         <h3 className="card-title">Configuration</h3>
         <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-          Connect a trusted AI model that has access to your intent — problem, objective, and tradeoffs — to help you think through authorizations. Keys are encrypted in your vault.
+          Connect a trusted AI model that has access to your intent — problem, objective, and tradeoffs — to help you think through mandates. Keys are encrypted in your vault.
         </p>
 
         {aiConfigured && (
@@ -329,9 +329,9 @@ export function SettingsServicesPage() {
           <div style={{ marginBottom: '1rem' }}>
             <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.375rem' }}>What the gateway protects</div>
             <ul style={{ margin: 0, paddingLeft: '1.25rem' }}>
-              <li>Every tool call verified against your authorization bounds</li>
+              <li>Every tool call verified against your mandate bounds</li>
               <li>Credentials never exposed to agents through MCP</li>
-              <li>Every action produces a signed receipt</li>
+              <li>Every action produces a signed ticket</li>
             </ul>
           </div>
 
@@ -437,7 +437,7 @@ function AdvancedAIPrompts() {
 
       <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: '0.75rem 0 1rem 0', lineHeight: 1.55 }}>
         These are the system prompts the AI assistant sees when helping you write
-        Intent (per-authorization) or Context (your standing-orders brief).
+        Intent (per-mandate) or Context (your standing-orders brief).
         Edit with care — changes apply on the next chat turn.
       </p>
 
@@ -453,8 +453,8 @@ function AdvancedAIPrompts() {
         <>
           <PromptEditor
             kind="intent"
-            label="Intent — per-authorization"
-            description="Used on the Intent gate when creating a new authorization."
+            label="Intent — per-mandate"
+            description="Used on the Intent gate when creating a new mandate."
             state={data.intent}
             draft={drafts.intent}
             onChange={(v) => setDrafts((d) => ({ ...d, intent: v }))}

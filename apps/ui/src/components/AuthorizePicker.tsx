@@ -127,7 +127,7 @@ export function AuthorizePicker({ onDismiss }: Props) {
     }));
     sessionStorage.removeItem('agentGate');
     onDismiss?.();
-    navigate('/agent/gate');
+    navigate('/mandates/new/intent');
   };
 
   const handleCreate = (profileId: string) => {
@@ -189,7 +189,7 @@ export function AuthorizePicker({ onDismiss }: Props) {
 
                 {isRunning ? (
                   <button className="btn btn-primary btn-sm" onClick={() => handleCreate(p.id)}>
-                    Authorize
+                    Give a mandate
                   </button>
                 ) : (
                   <Link
