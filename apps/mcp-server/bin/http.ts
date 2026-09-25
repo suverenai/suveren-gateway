@@ -147,6 +147,19 @@ app.post('/internal/configure', internalOnly, (req: Request, res: Response) => {
   res.json({ ok: true });
 });
 
+/**
+ * Push the "session ended" state to this process. Called by the control
+ * plane's own session-lock procedure — whether IT detected the 401 (its own
+ * AS proxy call) or a sibling MCP process did (via /internal/event →
+ * session-expired). Idempotent: a client that already cleared itself on its
+ * own 401 just gets the same state written again.
+ */
+app.post('/internal/clear-session', internalOnly, (_req: Request, res: Response) => {
+  state.spClient.clearSession();
+  console.error('[Suveren MCP] Session cleared by control-plane (AS session ended)');
+  res.json({ ok: true });
+});
+
 app.post('/internal/gate-content', internalOnly, async (req: Request, res: Response) => {
   try {
     const { authorizationId, boundsHash, contextHash, context, contextLabels, path: rawPath, gateContent } = req.body as {

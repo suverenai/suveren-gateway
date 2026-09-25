@@ -28,6 +28,16 @@ import { eventBus, type EventType } from '../lib/event-bus';
  */
 const ALLOWED: readonly EventType[] = ['proposal-added', 'action-approval-needed'] as const;
 
+/**
+ * Not a bus event — a command. The MCP server sends this the instant one of
+ * ITS calls to the Authority Server comes back 401, meaning the session
+ * ended. It does not get forwarded to the UI verbatim (there is no
+ * 'session-expired' SSE event); it triggers the actual lock procedure, which
+ * decides for itself whether to notify (and emits its OWN 'session-locked'
+ * event once it has actually locked — see session-lock.ts).
+ */
+const SESSION_EXPIRED = 'session-expired';
+
 function secretMatches(provided: string | undefined, expected: string): boolean {
   if (!expected) return false; // never accept when no secret is configured
   if (!provided) return false;
@@ -39,7 +49,10 @@ function secretMatches(provided: string | undefined, expected: string): boolean 
   return timingSafeEqual(a, b);
 }
 
-export function createInternalEventsRouter(getSecret: () => string): Router {
+export function createInternalEventsRouter(
+  getSecret: () => string,
+  onSessionExpired?: () => void,
+): Router {
   const router = Router();
 
   router.post('/event', (req, res) => {
@@ -49,6 +62,13 @@ export function createInternalEventsRouter(getSecret: () => string): Router {
     }
 
     const type = (req.body ?? {}).type as unknown;
+
+    if (type === SESSION_EXPIRED) {
+      onSessionExpired?.();
+      res.json({ ok: true });
+      return;
+    }
+
     if (typeof type !== 'string' || !ALLOWED.includes(type as EventType)) {
       res.status(400).json({ error: 'Unsupported event type' });
       return;

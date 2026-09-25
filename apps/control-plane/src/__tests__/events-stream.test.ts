@@ -45,6 +45,20 @@ describe('/events SSE stream', () => {
     close();
   });
 
+  it('DOES carry the payload for session-locked — the one explicit allowlist entry', () => {
+    const { res, writes } = fakeRes();
+    const { req, close } = fakeReq('localhost:3402');
+    createEventsHandler()(req, res);
+
+    eventBus.emit('session-locked', { reason: 'expired', message: 'Your sign-in ended after 30 days or was revoked. Sign in again.' });
+
+    const frame = writes.join('');
+    expect(frame).toContain('event: session-locked');
+    expect(frame).toContain('"reason":"expired"');
+    expect(frame).toContain('Your sign-in ended after 30 days or was revoked');
+    close();
+  });
+
   it('sets no CORS header — the absence is what blocks cross-origin reads', () => {
     const { res, headers } = fakeRes();
     const { req, close } = fakeReq('localhost:3402');

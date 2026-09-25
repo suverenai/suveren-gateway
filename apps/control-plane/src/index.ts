@@ -56,6 +56,9 @@ import { createArchivedMandatesRouter } from './routes/archived-mandates';
 import { createInternalEventsRouter } from './routes/internal-events';
 import { startNotificationDispatcher } from './lib/notification-dispatcher';
 import { eventBus } from './lib/event-bus';
+import { createSessionLock } from './lib/session-lock';
+import { SessionExpiryScheduler } from './lib/session-expiry-scheduler';
+import { buildSessionHealth } from './lib/session-health';
 import { loadDenials, selectDenials } from './lib/denials-reader';
 import { AGENT_CONTEXT_MAX_BYTES, agentBriefPath, readAgentBrief } from './lib/agent-brief-store';
 
@@ -106,9 +109,25 @@ function loginRateLimit(req: Request, res: Response, next: NextFunction): void {
   next();
 }
 
+// ─── Session-end handling: the gateway locks itself, visibly, exactly like
+// logout — when the AS session ends (30-day expiry, or revoked earlier on
+// suspension/deletion/key change), not just when nobody ever logged in.
+// See lib/session-lock.ts and lib/session-expiry-scheduler.ts. ────────────
+
+const lockExpiredSession = createSessionLock({ vault, port });
+const sessionExpiryScheduler = new SessionExpiryScheduler(
+  () => vault.getSessionExpiresAt(),
+  lockExpiredSession,
+);
+
 // ─── Auth routes (/auth/*) ──────────────────────────────────────────────
 
-app.use('/auth', jsonParser, createAuthRouter(vault, requireAuth(vault), loginRateLimit));
+app.use('/auth', jsonParser, createAuthRouter(
+  vault,
+  requireAuth(vault),
+  loginRateLimit,
+  () => sessionExpiryScheduler.reschedule(),
+));
 
 // ─── Origin helper (respects proxy headers) ─────────────────────────────
 
@@ -389,7 +408,7 @@ app.get('/events', requireAllowedHost, requireAuthQueryOrHeader(vault), createEv
 // Sibling-process events (MCP server → control plane). Authenticated by the
 // shared internal secret, NOT by a user session: the MCP server has none.
 // Carries an event type and nothing else.
-app.use('/internal', jsonParser, createInternalEventsRouter(() => internalSecret));
+app.use('/internal', jsonParser, createInternalEventsRouter(() => internalSecret, lockExpiredSession));
 
 // Vault routes
 app.use('/vault', jsonParser, authGuard, createVaultRouter(vault));
@@ -738,9 +757,20 @@ app.use(
         }
       },
       proxyRes: (proxyRes, req) => {
+        const status = proxyRes.statusCode ?? 0;
+
+        // A 401 through this proxy, while we THOUGHT we were signed in, means
+        // the AS session ended (30-day expiry, or revoked) — not a bad
+        // request. We only inject a cookie when the vault holds one, so a 401
+        // while locked (no cookie sent) is just "not signed in" and must not
+        // re-trigger the lock procedure (it already no-ops via
+        // vault.isUnlocked(), but checking here avoids the pointless work).
+        if (status === 401 && vault.isUnlocked()) {
+          lockExpiredSession();
+        }
+
         // Emit bus events for mutating SP calls so SSE clients get push updates.
         // Only fire on successful (2xx) responses.
-        const status = proxyRes.statusCode ?? 0;
         if (status < 200 || status >= 300) return;
 
         const method = (req as Request).method?.toUpperCase();
@@ -884,6 +914,7 @@ app.get('/health', async (req: Request, res: Response) => {
     updateAvailable: update.updateAvailable,
     installMethod: INSTALL_METHOD,
     spUrl: SP_URL,
+    session: buildSessionHealth(vault),
     security: {
       note: 'Gateway secures tool execution. Agent host isolation is the user\'s responsibility.',
     },
@@ -936,6 +967,11 @@ app.listen(port, '0.0.0.0', () => {
   // Doorbell for pending reviews. Content-free and action-free by design — see
   // lib/notification-dispatcher.ts. Fires at most once a minute.
   startNotificationDispatcher({ url: `http://localhost:${port}` });
+
+  // Session-expiry watchdog — locks the gateway at sessionExpiresAt even if
+  // no 401 happens to arrive first (e.g. the agent simply isn't calling
+  // anything right as the session ends). See lib/session-expiry-scheduler.ts.
+  sessionExpiryScheduler.start();
 
   console.error(`[Control Plane]   SP proxy: ${SP_URL}`);
   console.error(`[Control Plane]   UI dist:  ${UI_DIST}`);

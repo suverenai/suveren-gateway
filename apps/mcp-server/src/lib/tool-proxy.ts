@@ -265,7 +265,7 @@ function createGatedToolHandlerInner(
     async (args: Record<string, unknown>): Promise<ToolResult> => {
       if (!state.spClient.isUnlocked()) {
         return {
-          content: [{ type: 'text', text: lockedNotice(`use ${tool.namespacedName}`) }],
+          content: [{ type: 'text', text: lockedNotice(`use ${tool.namespacedName}`, state.spClient.getLockReason() ?? 'restart') }],
           isError: true,
         };
       }
@@ -752,6 +752,15 @@ function createGatedToolHandlerInner(
               }],
             };
           } catch (err) {
+            // The submission's 401 (if that's what it was) already cleared our
+            // session inside SPClient.fetch() — check the RESULT, not the error
+            // shape, so this catches it regardless of how submitProposal threw.
+            if (!state.spClient.isUnlocked()) {
+              return {
+                content: [{ type: 'text', text: lockedNotice(`use ${tool.namespacedName}`, 'expired') }],
+                isError: true,
+              };
+            }
             return {
               content: [{ type: 'text', text: `Failed to submit proposal: ${err instanceof Error ? err.message : String(err)}` }],
               isError: true,
@@ -898,6 +907,12 @@ function createGatedToolHandlerInner(
                 }],
               };
             } catch (proposalErr) {
+              if (!state.spClient.isUnlocked()) {
+                return {
+                  content: [{ type: 'text', text: lockedNotice(`use ${tool.namespacedName}`, 'expired') }],
+                  isError: true,
+                };
+              }
               return {
                 content: [{ type: 'text', text: `Failed to submit approval proposal: ${proposalErr instanceof Error ? proposalErr.message : String(proposalErr)}` }],
                 isError: true,
@@ -922,6 +937,16 @@ function createGatedToolHandlerInner(
             }
             return {
               content: [{ type: 'text', text: `Blocked by SP: ${err.message}` }],
+              isError: true,
+            };
+          }
+          // A 401 here means the AS session ended (30-day expiry, or revoked)
+          // — SPClient.fetch() already cleared it fail-fast for every other
+          // in-flight call. Report the reason, not a bare "Authentication
+          // required" that reads like a transient SP fault.
+          if (!state.spClient.isUnlocked()) {
+            return {
+              content: [{ type: 'text', text: lockedNotice(`use ${tool.namespacedName}`, 'expired') }],
               isError: true,
             };
           }

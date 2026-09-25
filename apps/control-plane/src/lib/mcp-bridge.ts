@@ -41,6 +41,25 @@ export async function configure(sessionCookie: string, vaultKeyHex?: string): Pr
   }
 }
 
+/**
+ * Push "the AS session ended" to the MCP server. Called by the control
+ * plane's session-lock procedure so `spClient.isUnlocked()` there becomes
+ * false too — needed when the CONTROL PLANE is what learned it ended (its
+ * own /api proxy saw the 401), since the MCP server has no other way to
+ * find out. When the MCP server detected it first (one of ITS calls 401ed),
+ * it already cleared its own cookie synchronously before this even fires —
+ * this call is then a harmless no-op there.
+ */
+export async function unconfigureSession(): Promise<void> {
+  const res = await fetch(`${MCP_BASE}/internal/clear-session`, {
+    method: 'POST',
+    headers: internalHeaders(),
+  });
+  if (!res.ok) {
+    throw new Error(`MCP clear-session failed: ${res.status}`);
+  }
+}
+
 export async function pushGateContent(data: {
   authorizationId?: string;
   boundsHash?: string;

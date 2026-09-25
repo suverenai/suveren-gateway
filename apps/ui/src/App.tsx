@@ -6,7 +6,7 @@ function Forward({ to }: { to: string }) {
   return <Navigate to={`${to}${search}${hash}`} replace />;
 }
 import { AuthProvider, useAuth } from './contexts/AuthContext';
-import { EventSourceProvider } from './contexts/EventSourceContext';
+import { EventSourceProvider, useSSEEvent } from './contexts/EventSourceContext';
 import { AppShell } from './components/AppShell';
 import { LoginPage } from './pages/LoginPage';
 import { OnboardingPage } from './pages/OnboardingPage';
@@ -31,7 +31,16 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
 }
 
 function AppRoutes() {
-  const { user } = useAuth();
+  const { user, handleSessionLocked } = useAuth();
+
+  // The gateway locked ITSELF (AS session ended: 30-day expiry, or revoked)
+  // — return to the sign-in screen with a reason, exactly like the UI
+  // already does for a plain logout, but without calling /auth/logout
+  // (the session that call would use is the one that just ended).
+  useSSEEvent('session-locked', (payload) => {
+    const message = (payload as { message?: string } | null)?.message;
+    handleSessionLocked(message);
+  });
 
   return (
     <Routes>

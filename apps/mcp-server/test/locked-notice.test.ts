@@ -28,7 +28,7 @@ describe('lockedNotice', () => {
 
   it('explicitly denies the wrong conclusion', () => {
     // Without this the agent may still infer "nothing is set up".
-    expect(lockedNotice()).toContain('not the same as having no authorizations');
+    expect(lockedNotice()).toContain('not the same as having no mandates');
   });
 
   it('tells the agent to pass it on — the agent cannot fix this itself', () => {
@@ -64,5 +64,38 @@ describe('lockedNotice', () => {
   it('explains that locking on restart is deliberate, not a fault', () => {
     // Otherwise it reads as a bug and gets reported as one.
     expect(lockedNotice()).toContain('boots locked by design');
+  });
+});
+
+describe('lockedNotice(action, "expired")', () => {
+  it('says the sign-in ended, not that the gateway just booted', () => {
+    const notice = lockedNotice(undefined, 'expired');
+    expect(notice).toContain('LOCKED');
+    expect(notice).toContain("sign-in has ended");
+    expect(notice).toContain('30 days');
+    expect(notice).not.toContain('boots locked by design');
+  });
+
+  it('names the blocked action', () => {
+    const notice = lockedNotice('use gmail__send_message', 'expired');
+    expect(notice).toContain(
+      "Cannot use gmail__send_message: the Suveren gateway's sign-in has ended",
+    );
+  });
+
+  it('reassures that nothing ran and mandates are intact', () => {
+    const notice = lockedNotice(undefined, 'expired');
+    expect(notice).toContain('Your mandates are safe; nothing ran');
+  });
+
+  it('tells the agent to relay the fix, with the URL', () => {
+    const notice = lockedNotice(undefined, 'expired');
+    expect(notice).toContain('TELL THE USER');
+    expect(notice).toContain('http://localhost:3400');
+    expect(notice).toMatch(/API key/i);
+  });
+
+  it('defaults to the restart notice when no reason is given', () => {
+    expect(lockedNotice()).toBe(lockedNotice(undefined, 'restart'));
   });
 });

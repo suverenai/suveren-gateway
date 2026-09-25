@@ -6,9 +6,12 @@ import { eventBus } from '../lib/event-bus';
 
 const SECRET = 'test-internal-secret-0123456789';
 
-function startServer(secret = SECRET): Promise<{ url: string; close: () => Promise<void> }> {
+function startServer(
+  secret = SECRET,
+  onSessionExpired?: () => void,
+): Promise<{ url: string; close: () => Promise<void> }> {
   const app = express();
-  app.use('/internal', express.json(), createInternalEventsRouter(() => secret));
+  app.use('/internal', express.json(), createInternalEventsRouter(() => secret, onSessionExpired));
   return new Promise(resolve => {
     const server: Server = app.listen(0, '127.0.0.1', () => {
       const addr = server.address();
@@ -98,5 +101,44 @@ describe('POST /internal/event', () => {
     const { url, close } = await startServer(); stop = close;
     const res = await post(url, { type: { evil: true } }, SECRET);
     expect(res.status).toBe(400);
+  });
+});
+
+describe('POST /internal/event — session-expired (the MCP server -> control plane lock signal)', () => {
+  let stop: (() => Promise<void>) | null = null;
+  afterEach(async () => { await stop?.(); stop = null; });
+
+  it('invokes the lock callback instead of forwarding to the SSE bus', async () => {
+    const onSessionExpired = vi.fn();
+    const { url, close } = await startServer(SECRET, onSessionExpired); stop = close;
+    const seen: string[] = [];
+    const off = eventBus.subscribe(e => seen.push(e.type));
+
+    const res = await post(url, { type: 'session-expired' }, SECRET);
+    off();
+
+    expect(res.status).toBe(200);
+    expect(onSessionExpired).toHaveBeenCalledOnce();
+    // Not a bus event under this name — session-lock.ts emits its OWN
+    // 'session-locked' event once it has actually locked, not this one.
+    expect(seen).not.toContain('session-expired');
+  });
+
+  it('still requires the shared secret', async () => {
+    const onSessionExpired = vi.fn();
+    const { url, close } = await startServer(SECRET, onSessionExpired); stop = close;
+
+    const res = await post(url, { type: 'session-expired' }, 'wrong-secret-0123456789012345');
+
+    expect(res.status).toBe(401);
+    expect(onSessionExpired).not.toHaveBeenCalled();
+  });
+
+  it('is a 400 (unsupported) when no callback is wired — never silently accepted', async () => {
+    const { url, close } = await startServer(SECRET); stop = close; // no onSessionExpired
+    const res = await post(url, { type: 'session-expired' }, SECRET);
+    // No callback wired means the caller wanted 200 with a no-op, which is
+    // fine for a sibling process that cannot tell — but MUST not 500.
+    expect(res.status).toBe(200);
   });
 });

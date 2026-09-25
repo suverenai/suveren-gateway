@@ -107,7 +107,7 @@ export function listAuthorizationsHandler(
   return async (args?: { domain?: string }) => {
     // Running but locked reads as "no authorizations" unless we say so.
     if (!state.spClient.isUnlocked()) {
-      return { content: [{ type: 'text' as const, text: lockedNotice('list authorizations') }] };
+      return { content: [{ type: 'text' as const, text: lockedNotice('list authorizations', state.spClient.getLockReason() ?? 'restart') }] };
     }
     const authorizations = state.getEnrichedAuthorizations();
     const now = Math.floor(Date.now() / 1000);

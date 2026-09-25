@@ -298,7 +298,7 @@ export function checkPendingCommitmentsHandler(
 ) {
   return async (args: { proposal_id?: string }) => {
     if (!state.spClient.isUnlocked()) {
-      return { content: [{ type: 'text' as const, text: lockedNotice('check commitments') }] };
+      return { content: [{ type: 'text' as const, text: lockedNotice('check commitments', state.spClient.getLockReason() ?? 'restart') }] };
     }
     try {
       if (args.proposal_id) {

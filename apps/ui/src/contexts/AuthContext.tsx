@@ -30,6 +30,15 @@ interface AuthContextValue {
   login: (apiKey: string, opts?: { confirmWipe?: boolean }) => Promise<void>;
   logout: () => Promise<void>;
   clearError: () => void;
+  /**
+   * The gateway locked ITSELF because the Authority Server session ended
+   * (30-day expiry, or revoked) — signalled by the 'session-locked' SSE
+   * event. Unlike logout(), the server side is already locked; this only
+   * resets local UI state (no /auth/logout call — the API key that call
+   * would use is itself now invalid) and surfaces `message` as the reason
+   * so the sign-in screen can explain why the user landed there.
+   */
+  handleSessionLocked: (message?: string) => void;
 
   // Kept for backward compat — components that haven't been updated yet
   /** @deprecated Use group */
@@ -155,6 +164,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setError('');
   }, []);
 
+  const handleSessionLocked = useCallback((message?: string) => {
+    spClient.clearApiKey();
+    hasApiKey.current = false;
+    userIdRef.current = null;
+    setUser(null);
+    setGroup(null);
+    setDomain('');
+    setActiveTeam(null);
+    setActiveMembership(null);
+    setMode('personal');
+    setError(message ?? 'Your sign-in ended after 30 days or was revoked. Sign in again.');
+  }, []);
+
   const clearError = useCallback(() => setError(''), []);
 
   // Backward compat
@@ -169,7 +191,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       groupId: group?.id ?? null,
       activeTeam,
       activeMembership,
-      isLoading, error, login, logout, clearError,
+      isLoading, error, login, logout, clearError, handleSessionLocked,
       // Backward compat aliases
       activeGroup: group,
       activeDomain: domain,

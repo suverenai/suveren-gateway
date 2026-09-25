@@ -10,9 +10,19 @@
  */
 
 import type { Request, Response } from 'express';
-import { eventBus } from '../lib/event-bus';
+import { eventBus, type EventType } from '../lib/event-bus';
 
 const KEEPALIVE_INTERVAL_MS = 25_000;
+
+/**
+ * The ONLY event types allowed to carry their payload to the wire. Every
+ * other type stays "data: null" regardless of what the emitter passed — see
+ * the sanitizer below. 'session-locked' carries `{ reason, message }`: a
+ * fixed literal the emitter controls (session-lock.ts), never agent- or
+ * user-authored text, so it does not reopen the "presence, never content"
+ * rule this stream is built on.
+ */
+const PAYLOAD_ALLOWED: ReadonlySet<EventType> = new Set(['session-locked']);
 
 export function createEventsHandler() {
   return function eventsHandler(_req: Request, res: Response): void {
@@ -39,7 +49,8 @@ export function createEventsHandler() {
     // If a future feature genuinely needs payload data in the browser, add an
     // explicit per-type allowlist HERE. Do not remove the sanitizer.
     const unsubscribe = eventBus.subscribe(event => {
-      res.write(`event: ${event.type}\ndata: null\n\n`);
+      const data = PAYLOAD_ALLOWED.has(event.type) ? JSON.stringify(event.payload ?? null) : 'null';
+      res.write(`event: ${event.type}\ndata: ${data}\n\n`);
     });
 
     // Keepalive — SSE comment syntax (lines starting with ':' are ignored by clients).

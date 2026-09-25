@@ -9,6 +9,10 @@ import type { ContentBinding } from '@hap/core';
 import { notifyControlPlane } from './cp-notify';
 import { clientVersionHeaders } from './client-version';
 
+/** Why the client currently has no session — distinguishes the default
+ *  boot-locked state from one that WAS active and ended. */
+export type SPLockReason = 'expired' | null;
+
 export interface SPAttestationResponse {
   domain: string;
   blob: string;
@@ -120,6 +124,13 @@ export class SPClient {
   private sessionCookie = '';
   private apiKey = '';
   private readonly receiptRetry: ReceiptRetryConfig;
+  /** Set when a call comes back 401 while we held a session — distinct from
+   *  never having logged in. Cleared the moment a fresh cookie is configured. */
+  private lockReason: SPLockReason = null;
+  /** Single-flight per client instance: only the FIRST 401 after a session
+   *  was active tells the control plane. Concurrent in-flight calls that were
+   *  all sent under the same now-dead cookie would otherwise all report it. */
+  private sessionExpiredNotified = false;
 
   constructor(
     private baseUrl: string,
@@ -139,6 +150,26 @@ export class SPClient {
 
   setSessionCookie(cookie: string): void {
     this.sessionCookie = cookie;
+    // A freshly configured cookie means the control plane just (re)authenticated
+    // us — any prior "the session ended" state no longer applies.
+    this.lockReason = null;
+    this.sessionExpiredNotified = false;
+  }
+
+  /**
+   * Drop the session because the control plane learned (by whatever path —
+   * one of OUR calls 401ing, or its own AS proxy 401ing) that it ended.
+   * Idempotent: safe to call redundantly from the control-plane's push.
+   */
+  clearSession(): void {
+    this.sessionCookie = '';
+    this.lockReason = 'expired';
+  }
+
+  /** Why we are currently locked, if known. `null` means the default
+   *  boot-locked case (nobody has signed in yet this run). */
+  getLockReason(): SPLockReason {
+    return this.sessionCookie === '' ? this.lockReason : null;
   }
 
   /**
@@ -175,10 +206,30 @@ export class SPClient {
       headers['X-API-Key'] = this.apiKey;
     }
 
-    return globalThis.fetch(url, {
+    const hadSession = this.sessionCookie !== '';
+    const res = await globalThis.fetch(url, {
       ...init,
       headers,
     });
+
+    // The AS answering 401 to a request WE sent under an active session means
+    // the session ended server-side (30-day expiry, or revoked on
+    // suspension/deletion/key change) — never that we were never logged in
+    // (that case has no cookie to lose). Clear our copy immediately so every
+    // OTHER in-flight or subsequent call also reads "locked" without waiting
+    // for the control plane's round trip, and tell the control plane once so
+    // it can lock the whole gateway and tell the human. A network error or a
+    // 5xx never reaches here as a 401 — those stay fail-closed but NOT locked.
+    if (res.status === 401 && hadSession) {
+      this.sessionCookie = '';
+      this.lockReason = 'expired';
+      if (!this.sessionExpiredNotified) {
+        this.sessionExpiredNotified = true;
+        void notifyControlPlane('session-expired');
+      }
+    }
+
+    return res;
   }
 
   /**

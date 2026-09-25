@@ -188,6 +188,21 @@ export function lockedNotification(port: string | number): { title: string; mess
 }
 
 /**
+ * The OTHER lock case: a session that WAS active ended (30-day expiry, or
+ * revoked server-side) rather than the gateway simply having just booted.
+ * Distinct copy on purpose — "is running but locked" reads as the normal
+ * boot state; this one has to say something changed.
+ */
+export function sessionExpiredNotification(port: string | number): { title: string; message: string; url: string } {
+  const url = `http://localhost:${port}`;
+  return {
+    title: 'Suveren Gateway locked',
+    message: 'Your sign-in has ended. Sign in again so your agents can act.',
+    url,
+  };
+}
+
+/**
  * Is `terminal-notifier` on PATH? Cached: the answer cannot change within a
  * process, and this runs on the startup path.
  *

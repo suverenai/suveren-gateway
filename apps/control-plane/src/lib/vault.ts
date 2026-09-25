@@ -86,12 +86,24 @@ export class ApiKeyUnsealProvider implements UnsealProvider {
   }
 }
 
+/** Why the vault is currently locked, beyond "nobody has unlocked it yet". */
+export type VaultLockReason = 'expired';
+
 export class Vault {
   private vaultKey: Buffer | null = null;
   private apiKeyHash: string | null = null;
   private spSessionCookie: string | null = null;
   private unsealedBy: string | null = null;
   private dataDir: string;
+  /**
+   * When the AS session (captured at login into `spSessionCookie`) is due to
+   * end — unix seconds, from the login response's `sessionExpiresAt`. Held in
+   * memory only, exactly like the vault key and the cookie: never written to
+   * disk, gone the moment the process restarts or the vault locks.
+   */
+  private spSessionExpiresAt: number | null = null;
+  /** Set by lockExpired(); cleared by any fresh unseal (a new login). */
+  private lockedReason: VaultLockReason | null = null;
 
   constructor(dataDir?: string) {
     this.dataDir = dataDir ?? process.env.SUVEREN_DATA_DIR ?? join(homedir(), '.suveren');
@@ -122,6 +134,9 @@ export class Vault {
   async unseal(provider: UnsealProvider): Promise<void> {
     this.vaultKey = await provider.deriveKey(this.ensureSalt());
     this.unsealedBy = provider.id;
+    // A fresh unseal (a new login) means whatever locked the vault before —
+    // if anything — no longer explains its current state.
+    this.lockedReason = null;
   }
 
   /**
@@ -154,6 +169,37 @@ export class Vault {
     this.apiKeyHash = null;
     this.spSessionCookie = null;
     this.unsealedBy = null;
+    this.spSessionExpiresAt = null;
+    this.lockedReason = null;
+  }
+
+  /**
+   * Lock because the AS session ended — a 401 surfaced it, or the scheduled
+   * expiry arrived. Distinct from logout/clearKey() only in that it records
+   * WHY, so the next `/health` call and the next locked-tool notice can say
+   * something better than "boots locked by design" when that is not what
+   * happened.
+   */
+  lockExpired(): void {
+    this.clearKey();
+    this.lockedReason = 'expired';
+  }
+
+  /** What locked the vault, if known. `null` covers both "still unlocked"
+   *  and the default boot-locked case — callers that care about the
+   *  difference should check `isUnlocked()` first. */
+  getLockedReason(): VaultLockReason | null {
+    return this.lockedReason;
+  }
+
+  /** unix seconds the current AS session is due to end, or null (locked, or
+   *  the AS didn't report one — a pre-30-day-rollout server). Never persisted. */
+  setSessionExpiresAt(expiresAt: number | null): void {
+    this.spSessionExpiresAt = expiresAt;
+  }
+
+  getSessionExpiresAt(): number | null {
+    return this.spSessionExpiresAt;
   }
 
   /**

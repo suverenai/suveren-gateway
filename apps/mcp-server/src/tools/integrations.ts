@@ -24,7 +24,7 @@ export function listIntegrationsHandler(
 ) {
   return async () => {
     if (!state.spClient.isUnlocked()) {
-      return { content: [{ type: 'text' as const, text: lockedNotice('list integrations') }] };
+      return { content: [{ type: 'text' as const, text: lockedNotice('list integrations', state.spClient.getLockReason() ?? 'restart') }] };
     }
     if (!integrationManager) {
       return { content: [{ type: 'text' as const, text: 'No integration manager available.' }] };

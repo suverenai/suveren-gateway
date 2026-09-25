@@ -8,15 +8,26 @@
  */
 
 import { Router, type Request, type Response, type NextFunction } from 'express';
-import { configure, pushServiceCredentials, resyncGates, startPendingIntegrations, stopAndRemoveAllIntegrations } from '../lib/mcp-bridge';
+import { configure, unconfigureSession, pushServiceCredentials, resyncGates, startPendingIntegrations, stopAndRemoveAllIntegrations } from '../lib/mcp-bridge';
 import type { Vault } from '../lib/vault';
 import { loadOrGenerateKeyPair, getPublicKey } from '../lib/e2e-key-manager';
+import { clientVersionHeaders } from '../lib/client-version';
 
 const SP_URL = process.env.SUVEREN_AS_URL ?? 'https://www.suveren.ai';
 
 type Middleware = (req: Request, res: Response, next: NextFunction) => void;
 
-export function createAuthRouter(vault: Vault, logoutAuth: Middleware, loginRateLimit: Middleware): Router {
+export function createAuthRouter(
+  vault: Vault,
+  logoutAuth: Middleware,
+  loginRateLimit: Middleware,
+  /**
+   * Called right after a successful login sets `vault.setSessionExpiresAt`,
+   * so the expiry scheduler can re-arm its timer against the NEW value
+   * immediately rather than on its next coarse tick.
+   */
+  onSessionEstablished?: () => void,
+): Router {
   const router = Router();
 
   /**
@@ -44,6 +55,10 @@ export function createAuthRouter(vault: Vault, logoutAuth: Middleware, loginRate
         headers: {
           'Content-Type': 'application/json',
           'X-API-Key': apiKey,
+          // The AS grants a 30-day gateway session ONLY to a login that
+          // identifies itself this way; without it, a 24-hour browser
+          // session (see doc at the top of this file).
+          ...clientVersionHeaders(),
         },
       });
 
@@ -52,6 +67,10 @@ export function createAuthRouter(vault: Vault, logoutAuth: Middleware, loginRate
         res.status(spRes.status).json(err);
         return;
       }
+
+      // Read the body once — reused below both for sessionExpiresAt and as
+      // the response returned to the browser.
+      const data = (await spRes.json()) as { sessionExpiresAt?: number } & Record<string, unknown>;
 
       // Capture SP session cookie — store server-side, never send to browser
       const setCookieHeaders = spRes.headers.getSetCookie?.() ?? [];
@@ -99,6 +118,13 @@ export function createAuthRouter(vault: Vault, logoutAuth: Middleware, loginRate
         await vault.deriveAndSetKey(apiKey);
       }
 
+      // Session length: the AS reports when THIS session ends (30 days, given
+      // the version header above; older/unpatched AS deployments may omit
+      // it). Held in memory only — see vault.ts's doc on spSessionExpiresAt.
+      const sessionExpiresAt = typeof data.sessionExpiresAt === 'number' ? data.sessionExpiresAt : null;
+      vault.setSessionExpiresAt(sessionExpiresAt);
+      onSessionEstablished?.();
+
       // Push session cookie + vault key to MCP server (must complete before responding)
       if (sessionCookie) {
         try {
@@ -109,7 +135,6 @@ export function createAuthRouter(vault: Vault, logoutAuth: Middleware, loginRate
       }
 
       // Return user data
-      const data = await spRes.json();
       res.json(data);
 
       // Background: re-push credentials, trigger a pending-integrations retry,
@@ -210,7 +235,23 @@ export function createAuthRouter(vault: Vault, logoutAuth: Middleware, loginRate
    * relevant attestations (protocol-level, granular, audited).
    */
   router.post('/logout', logoutAuth, async (_req: Request, res: Response) => {
+    // Signing out must stop the agent too. Clearing only the vault key left the
+    // MCP server holding the AS session, so tickets kept being issued after the
+    // UI showed "signed out". End the session everywhere: here, in the MCP
+    // server, and on the Authority Server (a 30-day session must not outlive
+    // the sign-out). The last two are best effort: the local lock is what counts.
+    const cookie = vault.getSpCookie();
     vault.clearKey();
+    await Promise.allSettled([
+      unconfigureSession(),
+      cookie
+        ? fetch(`${SP_URL}/api/auth/logout`, {
+            method: 'POST',
+            headers: { cookie, ...clientVersionHeaders() },
+            redirect: 'manual',
+          })
+        : Promise.resolve(),
+    ]);
     res.json({ ok: true });
   });
 

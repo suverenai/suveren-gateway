@@ -18,7 +18,8 @@ export type EventType =
   | 'action-approval-needed'   // Phase 6
   | 'action-resolved'          // Phase 6
   | 'proposal-approved'        // Phase 6: one approver signed off (not yet committed)
-  | 'proposal-rejected';       // Phase 6: one approver rejected
+  | 'proposal-rejected'        // Phase 6: one approver rejected
+  | 'session-locked';          // The AS session ended (expiry or revocation) — gateway just locked
 
 export interface BusEvent {
   type: EventType;
