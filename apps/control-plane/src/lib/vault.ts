@@ -86,8 +86,14 @@ export class ApiKeyUnsealProvider implements UnsealProvider {
   }
 }
 
-/** Why the vault is currently locked, beyond "nobody has unlocked it yet". */
-export type VaultLockReason = 'expired';
+/** Why the vault is currently locked, beyond "nobody has unlocked it yet".
+ *  'expired' — the AS session ended (30-day expiry, or revoked).
+ *  'as-key-mismatch' — the AS at the configured URL presented a signing key
+ *    that does not match the one pinned at pairing (see as-pairing.ts).
+ *  'as-url-changed' — the resolved Authority Server URL differs from the one
+ *    this gateway was last paired with (boot-time only; re-pairing is
+ *    required — see as-config.ts / as-pairing.ts). */
+export type VaultLockReason = 'expired' | 'as-key-mismatch' | 'as-url-changed';
 
 export class Vault {
   private vaultKey: Buffer | null = null;
@@ -183,6 +189,26 @@ export class Vault {
   lockExpired(): void {
     this.clearKey();
     this.lockedReason = 'expired';
+  }
+
+  /** Lock because the live Authority Server key no longer matches the one
+   *  pinned at pairing — see as-pairing.ts / gatekeeper.ts. Mirrors
+   *  lockExpired() exactly; the only difference callers care about is WHY. */
+  lockAsKeyMismatch(): void {
+    this.clearKey();
+    this.lockedReason = 'as-key-mismatch';
+  }
+
+  /**
+   * Boot-time only: record that the gateway starts locked because the
+   * resolved Authority Server URL differs from the one it was last paired
+   * with. Deliberately does NOT call clearKey() — the vault always boots
+   * locked already (nothing has been unlocked yet in this process), so there
+   * is no session to end; this only attaches the reason so /health and the
+   * locked-agent notice can explain it instead of defaulting to "restart".
+   */
+  markBootLockedAsUrlChanged(): void {
+    this.lockedReason = 'as-url-changed';
   }
 
   /** What locked the vault, if known. `null` covers both "still unlocked"

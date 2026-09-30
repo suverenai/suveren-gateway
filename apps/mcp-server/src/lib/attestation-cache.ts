@@ -6,6 +6,21 @@
 
 import { decodeAttestationBlob, type Subject } from '@hap/core';
 import { SPClient, type SPAttestationsResult, type SPPendingItem } from './sp-client';
+import { readPairing, fingerprintOf } from './as-pairing';
+
+/**
+ * Thrown by {@link AttestationCache.getPublicKey} when the Authority Server
+ * at the pinned URL presents a signing key that does not match the one
+ * pinned at pairing. Callers MUST treat this as a fail-closed refusal, not a
+ * transient fetch error — see gatekeeper.ts, which turns it into a denied
+ * `GatekeeperResult` and locks the gateway.
+ */
+export class AsKeyMismatchError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'AsKeyMismatchError';
+  }
+}
 
 /**
  * True when the SIGNED commitment_mode requires review but the AS supplied no
@@ -64,19 +79,46 @@ export class AttestationCache {
   private authorizations = new Map<string, CachedAuthorization>();
   private lastSync = 0;
 
-  constructor(private spClient: SPClient) {}
+  /**
+   * @param dataDir Where to look for a pinned key (as-pairing.json). Optional
+   *   and defaults to "no pin enforced" — kept optional so existing
+   *   constructions (and this class's own unit tests) that pass only an
+   *   SPClient keep working unpinned, exactly as before pinning existed.
+   */
+  constructor(private spClient: SPClient, private dataDir?: string) {}
 
   /**
-   * Get the SP public key, fetching from SP if not cached or expired.
+   * Get the SP public key, fetching from SP if not cached or expired, then —
+   * when a pin exists for this exact AS URL — verifying the live key still
+   * matches it.
+   *
+   * Trust-on-first-use before any pairing exists (or when no `dataDir` was
+   * given): the fetched key is cached and returned, same as before pinning.
+   * Once paired, a live key that differs from the pin throws
+   * {@link AsKeyMismatchError} — fail closed, never silently re-pin.
    */
   async getPublicKey(): Promise<string> {
     const now = Math.floor(Date.now() / 1000);
-    if (this.spPublicKey && (now - this.spPublicKeyFetchedAt) < this.SP_PUBKEY_TTL) {
-      return this.spPublicKey;
+    if (!(this.spPublicKey && (now - this.spPublicKeyFetchedAt) < this.SP_PUBKEY_TTL)) {
+      this.spPublicKey = await this.spClient.getPublicKey();
+      this.spPublicKeyFetchedAt = now;
     }
 
-    this.spPublicKey = await this.spClient.getPublicKey();
-    this.spPublicKeyFetchedAt = now;
+    if (this.dataDir) {
+      const pin = readPairing(this.dataDir);
+      // Only enforced when the pin is FOR THIS URL — a pin from a
+      // since-abandoned AS is handled by the AS-URL-change boot check
+      // (shared-state.ts / http.ts), which clears the pin entirely; it is
+      // never compared here.
+      if (pin && pin.asUrl === this.spClient.url && pin.publicKeyHex !== this.spPublicKey) {
+        throw new AsKeyMismatchError(
+          `The Authority Server at ${this.spClient.url} presented a signing key that does not match ` +
+          `the one pinned at pairing (pinned fingerprint ${fingerprintOf(pin.publicKeyHex)}). ` +
+          'Refusing to trust it. Re-pair (sign in again) only if you expect this key to have changed.',
+        );
+      }
+    }
+
     return this.spPublicKey;
   }
 

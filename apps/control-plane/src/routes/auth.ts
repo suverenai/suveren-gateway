@@ -12,10 +12,64 @@ import { configure, unconfigureSession, pushServiceCredentials, resyncGates, sta
 import type { Vault } from '../lib/vault';
 import { loadOrGenerateKeyPair, getPublicKey } from '../lib/e2e-key-manager';
 import { clientVersionHeaders } from '../lib/client-version';
+import { readPairing, writePairing, fingerprintOf } from '../lib/as-pairing';
 
-const SP_URL = process.env.SUVEREN_AS_URL ?? 'https://www.suveren.ai';
+const DEFAULT_SP_URL = process.env.SUVEREN_AS_URL ?? 'https://www.suveren.ai';
 
 type Middleware = (req: Request, res: Response, next: NextFunction) => void;
+
+export interface AuthRouterPairingOptions {
+  /** The resolved Authority Server URL this process is using (as-config.ts). */
+  asUrl: string;
+  /** Where as-pairing.json lives. */
+  dataDir: string;
+}
+
+/**
+ * At sign-in, pin the AS's public key to the URL we just authenticated
+ * against (see as-pairing.ts). Best-effort and NEVER blocks a login on its
+ * own failure (a pubkey fetch glitch must not lock someone out): the only
+ * case that refuses login is a live key that contradicts an EXISTING pin for
+ * this exact URL, which is exactly the scenario pinning exists to catch.
+ *
+ * Returns an error message to send back to the caller instead of completing
+ * login, or null to proceed normally.
+ */
+async function pinAsKeyAtLogin(asUrl: string, dataDir: string): Promise<string | null> {
+  let publicKeyHex: string;
+  try {
+    const res = await fetch(`${asUrl}/api/as/pubkey`, { signal: AbortSignal.timeout(5000) });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { publicKey?: string };
+    if (!body.publicKey) return null;
+    publicKeyHex = body.publicKey;
+  } catch (err) {
+    console.error('[Control Plane] Could not fetch AS pubkey for pairing (login proceeds unpinned):', err);
+    return null;
+  }
+
+  const existing = readPairing(dataDir);
+  if (existing && existing.asUrl === asUrl && existing.publicKeyHex !== publicKeyHex) {
+    // A pinned key exists for THIS URL and the live key disagrees — either a
+    // deliberate (unsupported today) key rotation on the customer's AS, or
+    // something else answering at this URL. Refuse rather than silently
+    // re-pin: see doc/self-hosted-as.md §10, "Replacement only by re-pairing"
+    // — and there is no re-pairing UX yet beyond clearing the pairing record
+    // by hand (rotation via a signature from the old key is future work).
+    return (
+      `The Authority Server at ${asUrl} presented a signing key that does not match the one ` +
+      `pinned when this gateway last signed in (pinned fingerprint ${fingerprintOf(existing.publicKeyHex)}, ` +
+      `now seeing ${fingerprintOf(publicKeyHex)}). Refusing to sign in. If the AS's key changed ` +
+      `intentionally, an operator must clear the old pairing before signing in again.`
+    );
+  }
+
+  if (!existing || existing.asUrl !== asUrl) {
+    writePairing(dataDir, asUrl, publicKeyHex);
+    console.error(`[Control Plane] Paired with Authority Server ${asUrl} (fingerprint ${fingerprintOf(publicKeyHex)})`);
+  }
+  return null;
+}
 
 export function createAuthRouter(
   vault: Vault,
@@ -27,8 +81,14 @@ export function createAuthRouter(
    * immediately rather than on its next coarse tick.
    */
   onSessionEstablished?: () => void,
+  /**
+   * Optional so existing callers (and this router's own tests) keep working
+   * unpinned. Real production wiring (index.ts) always supplies it.
+   */
+  pairing?: AuthRouterPairingOptions,
 ): Router {
   const router = Router();
+  const SP_URL = pairing?.asUrl ?? DEFAULT_SP_URL;
 
   /**
    * POST /auth/login
@@ -66,6 +126,19 @@ export function createAuthRouter(
         const err = await spRes.json().catch(() => ({ error: 'Invalid API key' }));
         res.status(spRes.status).json(err);
         return;
+      }
+
+      // Pin (or verify against the existing pin for) the AS's signing key
+      // BEFORE establishing anything — see pinAsKeyAtLogin. Credentials are
+      // already known good at this point (the session call above succeeded),
+      // so this is the earliest point a key mismatch can be caught, and the
+      // right one: nothing about this session exists yet to unwind.
+      if (pairing) {
+        const mismatch = await pinAsKeyAtLogin(pairing.asUrl, pairing.dataDir);
+        if (mismatch) {
+          res.status(409).json({ error: 'as_key_mismatch', message: mismatch });
+          return;
+        }
       }
 
       // Read the body once — reused below both for sessionExpiresAt and as

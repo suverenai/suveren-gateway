@@ -10,8 +10,47 @@
 import { spawn } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { homedir } from 'node:os';
+import { resolveCaFile } from './lib/config.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const THIS_FILE = fileURLToPath(import.meta.url);
+
+// ─── Internal CA bundle (--ca-file / `config set ca-file`) ─────────────────
+//
+// `NODE_EXTRA_CA_CERTS` is read by Node ONLY at process start, before any of
+// our own code runs — setting `process.env.NODE_EXTRA_CA_CERTS` here would be
+// too late to affect THIS process's own TLS. It still needs to reach the
+// control-plane and MCP-server children below (those are fresh processes, so
+// setting it in the `env` object we spawn them with DOES work), but this
+// process itself also makes its own outbound calls in a few paths.
+//
+// This is the ONE place that has to handle it for every way the gateway can
+// start: `suveren-gateway start` (the CLI just spawns this same file),
+// autostart (launchd/systemd/Task Scheduler spawn this file DIRECTLY,
+// bypassing the CLI's own flag handling), and Docker (`CMD node server.js`).
+// Re-exec once, here, before anything network-related happens, rather than
+// have three separate top-level entry points each remember to do it.
+const DATA_DIR = process.env.SUVEREN_DATA_DIR ?? join(homedir(), '.suveren');
+const savedCaFile = resolveCaFile(DATA_DIR);
+if (savedCaFile && process.env.NODE_EXTRA_CA_CERTS !== savedCaFile) {
+  const child = spawn(
+    process.execPath,
+    [THIS_FILE, ...process.argv.slice(2)],
+    { env: { ...process.env, NODE_EXTRA_CA_CERTS: savedCaFile }, stdio: 'inherit' },
+  );
+  child.on('exit', (code, signal) => process.exit(code ?? (signal ? 1 : 0)));
+  for (const sig of ['SIGINT', 'SIGTERM']) {
+    process.on(sig, () => child.kill(sig));
+  }
+  // Stop here — the re-executed child (which now has NODE_EXTRA_CA_CERTS set
+  // from its own start) is the one that spawns control-plane + mcp-server;
+  // this parent's only job from here is to relay its exit code and signals,
+  // both wired above. Top-level await pauses the rest of THIS module's
+  // evaluation (the spawns below) until that promise settles, which only
+  // happens via the exit handler calling process.exit().
+  await new Promise(() => {});
+}
 
 const CP_PORT = process.env.SUVEREN_CP_PORT ?? '3400';
 const MCP_PORT = process.env.SUVEREN_MCP_PORT ?? '3430';

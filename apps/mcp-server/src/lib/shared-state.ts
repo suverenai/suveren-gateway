@@ -31,9 +31,15 @@ export class SharedState {
   readonly executionJournal: ExecutionJournal;
   readonly gatekeeper: MCPGatekeeper;
 
-  constructor(spUrl: string, gateStorePath?: string) {
+  /**
+   * @param dataDir Passed to the AttestationCache so it can enforce AS key
+   *   pinning (as-pairing.ts). Optional for backward compat with existing
+   *   constructions/tests that pass only a URL — those get unpinned
+   *   trust-on-first-use behavior, same as before pinning existed.
+   */
+  constructor(spUrl: string, gateStorePath?: string, dataDir?: string) {
     this.spClient = new SPClient(spUrl);
-    this.cache = new AttestationCache(this.spClient);
+    this.cache = new AttestationCache(this.spClient, dataDir);
     this.gateStore = new GateStore(gateStorePath);
     this.executionLog = new ExecutionLog(gateStorePath);
     this.denialLog = new DenialLog(gateStorePath);

@@ -486,6 +486,11 @@ export class IntegrationManager {
     const transport = new StdioClientTransport({
       command: config.command,
       args,
+      // `...process.env` is also how a saved `--ca-file` reaches an
+      // integration: NODE_EXTRA_CA_CERTS (read by Node only at process
+      // start) is already set on THIS process by bundle/server.js before
+      // the MCP server ever starts, so every integration this manager spawns
+      // inherits it here for free — no separate handling needed.
       env: {
         ...process.env,
         PATH: buildPath(),

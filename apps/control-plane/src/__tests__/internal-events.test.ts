@@ -9,9 +9,10 @@ const SECRET = 'test-internal-secret-0123456789';
 function startServer(
   secret = SECRET,
   onSessionExpired?: () => void,
+  onAsKeyMismatch?: () => void,
 ): Promise<{ url: string; close: () => Promise<void> }> {
   const app = express();
-  app.use('/internal', express.json(), createInternalEventsRouter(() => secret, onSessionExpired));
+  app.use('/internal', express.json(), createInternalEventsRouter(() => secret, onSessionExpired, onAsKeyMismatch));
   return new Promise(resolve => {
     const server: Server = app.listen(0, '127.0.0.1', () => {
       const addr = server.address();
@@ -140,5 +141,44 @@ describe('POST /internal/event — session-expired (the MCP server -> control pl
     // No callback wired means the caller wanted 200 with a no-op, which is
     // fine for a sibling process that cannot tell — but MUST not 500.
     expect(res.status).toBe(200);
+  });
+});
+
+describe('POST /internal/event — as-key-mismatch (the MCP server -> control plane lock signal)', () => {
+  let stop: (() => Promise<void>) | null = null;
+  afterEach(async () => { await stop?.(); stop = null; });
+
+  it('invokes the mismatch lock callback instead of forwarding to the SSE bus', async () => {
+    const onAsKeyMismatch = vi.fn();
+    const { url, close } = await startServer(SECRET, undefined, onAsKeyMismatch); stop = close;
+    const seen: string[] = [];
+    const off = eventBus.subscribe(e => seen.push(e.type));
+
+    const res = await post(url, { type: 'as-key-mismatch' }, SECRET);
+    off();
+
+    expect(res.status).toBe(200);
+    expect(onAsKeyMismatch).toHaveBeenCalledOnce();
+    expect(seen).not.toContain('as-key-mismatch');
+  });
+
+  it('still requires the shared secret', async () => {
+    const onAsKeyMismatch = vi.fn();
+    const { url, close } = await startServer(SECRET, undefined, onAsKeyMismatch); stop = close;
+
+    const res = await post(url, { type: 'as-key-mismatch' }, 'wrong-secret-0123456789012345');
+
+    expect(res.status).toBe(401);
+    expect(onAsKeyMismatch).not.toHaveBeenCalled();
+  });
+
+  it('does not invoke the session-expired callback for this type, and vice versa', async () => {
+    const onSessionExpired = vi.fn();
+    const onAsKeyMismatch = vi.fn();
+    const { url, close } = await startServer(SECRET, onSessionExpired, onAsKeyMismatch); stop = close;
+
+    await post(url, { type: 'as-key-mismatch' }, SECRET);
+    expect(onAsKeyMismatch).toHaveBeenCalledOnce();
+    expect(onSessionExpired).not.toHaveBeenCalled();
   });
 });

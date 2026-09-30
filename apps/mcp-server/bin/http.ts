@@ -32,13 +32,48 @@ import { CommittedExecutor, ExecutorLock } from '../src/lib/committed-executor';
 import type { SPProposal } from '../src/lib/sp-client';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { resolveAsUrl } from '../src/lib/as-config';
+import { readPairing, clearPairing } from '../src/lib/as-pairing';
+import { setAsBaseUrl } from '../src/lib/receipt-footer';
 
-const spUrl = process.env.SUVEREN_AS_URL ?? 'https://www.suveren.ai';
+// Same default every stateful module in this codebase uses (GateStore,
+// ReceiptArchive, …) — see as-config.ts's doc comment.
+const dataDir = process.env.SUVEREN_DATA_DIR ?? join(homedir(), '.suveren');
+
+// Resolution order: env SUVEREN_AS_URL > saved <dataDir>/config.json >
+// default suveren.ai. Throws (refusing to start) if an explicitly set source
+// is malformed.
+const spUrl = resolveAsUrl(dataDir);
 const port = parseInt(process.env.SUVEREN_MCP_PORT ?? '3430', 10);
+
+// The receipt footer's link uses the SAME resolved URL — see receipt-footer.ts.
+setAsBaseUrl(spUrl);
 
 // ─── Shared state (one instance for all connections) ───────────────────────
 
-const state = new SharedState(spUrl);
+const state = new SharedState(spUrl, undefined, dataDir);
+
+// ─── Re-pair when the Authority Server URL changes ──────────────────────
+//
+// Boot-time only, mirrors the control plane's own check (index.ts) — the two
+// processes share the same data dir but each independently notices the
+// change, since either can start first. Clearing the pairing record and the
+// gate store here is idempotent: whichever process gets there first wins,
+// the other finds nothing left to clear.
+//
+// Kept: vault credentials (owned by the control plane, untouched here) and
+// the local receipt archive (each entry already stores its own asUrl).
+(function repairIfAsUrlChanged() {
+  const pairing = readPairing(dataDir);
+  if (pairing && pairing.asUrl !== spUrl) {
+    console.error(
+      `[Suveren MCP] Authority Server changed (${pairing.asUrl} → ${spUrl}) — ` +
+        'clearing cached mandates. Sign in again to re-pair.',
+    );
+    clearPairing(dataDir);
+    state.gateStore.clearAll();
+  }
+})();
 
 const spApiKey = process.env.SUVEREN_AS_API_KEY ?? '';
 if (spApiKey) {

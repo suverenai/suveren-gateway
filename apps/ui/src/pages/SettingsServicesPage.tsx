@@ -3,6 +3,7 @@ import { spClient } from '../lib/sp-client';
 import { AutostartToggle } from '../components/AutostartToggle';
 import { NotificationsToggle } from '../components/NotificationsToggle';
 import { VersionCard } from '../components/VersionCard';
+import { AuthorityServerCard } from '../components/AuthorityServerCard';
 
 const PROVIDER_CONFIG: Record<string, { provider: string; endpoint: string; models: string[] }> = {
   ollama: {
@@ -319,6 +320,7 @@ export function SettingsServicesPage() {
       {/* Autostart — the CLI's `service` command as a switch */}
       <AutostartToggle />
       <NotificationsToggle />
+      <AuthorityServerCard />
       <VersionCard />
 
       {/* Security guidance */}

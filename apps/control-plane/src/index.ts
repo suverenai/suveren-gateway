@@ -56,13 +56,23 @@ import { createArchivedMandatesRouter } from './routes/archived-mandates';
 import { createInternalEventsRouter } from './routes/internal-events';
 import { startNotificationDispatcher } from './lib/notification-dispatcher';
 import { eventBus } from './lib/event-bus';
-import { createSessionLock } from './lib/session-lock';
+import { createSessionLock, createAsKeyMismatchLock } from './lib/session-lock';
 import { SessionExpiryScheduler } from './lib/session-expiry-scheduler';
 import { buildSessionHealth } from './lib/session-health';
 import { loadDenials, selectDenials } from './lib/denials-reader';
 import { AGENT_CONTEXT_MAX_BYTES, agentBriefPath, readAgentBrief } from './lib/agent-brief-store';
+import { resolveAsUrl } from './lib/as-config';
+import { readPairing, clearPairing, fingerprintOf } from './lib/as-pairing';
 
-const SP_URL = process.env.SUVEREN_AS_URL ?? 'https://www.suveren.ai';
+// Same default every stateful module in this codebase uses (Vault, GateStore,
+// …) — see as-config.ts's doc comment on why `resolveAsUrl` takes it
+// explicitly rather than reading the env var itself.
+const DATA_DIR = process.env.SUVEREN_DATA_DIR ?? join(homedir(), '.suveren');
+
+// Resolution order: env SUVEREN_AS_URL > saved <dataDir>/config.json > default
+// suveren.ai. Throws (refusing to start) if an EXPLICITLY set source is
+// malformed — see as-config.ts.
+const SP_URL = resolveAsUrl(DATA_DIR);
 const port = parseInt(process.env.SUVEREN_CP_PORT ?? '3402', 10);
 const HAP_MODE = (process.env.HAP_MODE ?? 'personal') as 'personal' | 'team';
 
@@ -71,7 +81,30 @@ const UI_DIST = process.env.HAP_UI_DIST ?? join(import.meta.dirname ?? __dirname
 
 // ─── Shared vault instance ───────────────────────────────────────────────
 
-const vault = new Vault();
+const vault = new Vault(DATA_DIR);
+
+// ─── Re-pair when the Authority Server URL changes ──────────────────────
+//
+// Boot-time only — the vault always boots locked, so there is no live
+// session to end here; this just makes sure nothing cached from a
+// since-abandoned AS survives to be trusted after the human signs back in.
+// Clearing the pairing record is idempotent, so it's safe if the MCP server
+// (started separately, sharing the same data dir) gets there first.
+//
+// What is KEPT, deliberately: vault credentials (service credentials aren't
+// tied to the AS) and the local receipt archive (each entry already stores
+// its own asUrl — see receipt-archive.ts).
+(function repairIfAsUrlChanged() {
+  const pairing = readPairing(DATA_DIR);
+  if (pairing && pairing.asUrl !== SP_URL) {
+    console.error(
+      `[Control Plane] Authority Server changed (${pairing.asUrl} → ${SP_URL}) — ` +
+        'clearing the old pairing. Sign in again to re-pair.',
+    );
+    clearPairing(DATA_DIR);
+    vault.markBootLockedAsUrlChanged();
+  }
+})();
 
 // ─── CP↔MCP shared secret (generated once per process start) ────────────
 // In Docker, set SUVEREN_INTERNAL_SECRET env var so both containers share it.
@@ -115,6 +148,7 @@ function loginRateLimit(req: Request, res: Response, next: NextFunction): void {
 // See lib/session-lock.ts and lib/session-expiry-scheduler.ts. ────────────
 
 const lockExpiredSession = createSessionLock({ vault, port });
+const lockAsKeyMismatch = createAsKeyMismatchLock({ vault, port });
 const sessionExpiryScheduler = new SessionExpiryScheduler(
   () => vault.getSessionExpiresAt(),
   lockExpiredSession,
@@ -127,6 +161,7 @@ app.use('/auth', jsonParser, createAuthRouter(
   requireAuth(vault),
   loginRateLimit,
   () => sessionExpiryScheduler.reschedule(),
+  { asUrl: SP_URL, dataDir: DATA_DIR },
 ));
 
 // ─── Origin helper (respects proxy headers) ─────────────────────────────
@@ -408,7 +443,7 @@ app.get('/events', requireAllowedHost, requireAuthQueryOrHeader(vault), createEv
 // Sibling-process events (MCP server → control plane). Authenticated by the
 // shared internal secret, NOT by a user session: the MCP server has none.
 // Carries an event type and nothing else.
-app.use('/internal', jsonParser, createInternalEventsRouter(() => internalSecret, lockExpiredSession));
+app.use('/internal', jsonParser, createInternalEventsRouter(() => internalSecret, lockExpiredSession, lockAsKeyMismatch));
 
 // Vault routes
 app.use('/vault', jsonParser, authGuard, createVaultRouter(vault));
@@ -634,6 +669,22 @@ app.get('/active-authorizations', authGuard, async (_req: Request, res: Response
     console.error('[Control Plane] Authorizations retrieval error:', err);
     res.status(500).json({ error: 'Failed to fetch authorizations from MCP server' });
   }
+});
+
+// Authority Server pairing info — protected. Read-only: the fingerprint is
+// shown in Settings so an admin can compare it, over a second channel, with
+// the one the AS admin page reports (see doc/self-hosted-as.md §9.3). There
+// is deliberately no route to SET the pin from here — it is only ever
+// established at sign-in (auth.ts) and only ever cleared by an AS-URL change
+// or by re-pairing.
+app.get('/as-pairing', authGuard, (_req: Request, res: Response) => {
+  const pairing = readPairing(DATA_DIR);
+  res.json({
+    asUrl: SP_URL,
+    paired: pairing !== null && pairing.asUrl === SP_URL,
+    fingerprint: pairing && pairing.asUrl === SP_URL ? fingerprintOf(pairing.publicKeyHex) : null,
+    pairedAt: pairing && pairing.asUrl === SP_URL ? pairing.pairedAt : null,
+  });
 });
 
 // Read-denial log — protected. The MCP server (read path) WRITES

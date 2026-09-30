@@ -1278,6 +1278,19 @@ class SPClient {
     }
   }
 
+  // ─── Authority Server pairing (as-url + pinned key fingerprint) ─────────
+
+  async getAsPairing(): Promise<{
+    asUrl: string;
+    paired: boolean;
+    fingerprint: string | null;
+    pairedAt: string | null;
+  }> {
+    const res = await this.fetch('/as-pairing');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
+  }
+
   // ─── Gate Content ───────────────────────────────────────────────────────
 
   async getGateContent(path: string): Promise<GateContentEntry | null> {

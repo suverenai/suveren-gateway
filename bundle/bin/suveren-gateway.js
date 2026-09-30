@@ -17,6 +17,7 @@ import { homedir, platform, userInfo } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildLaunchAgentPlist, buildMacLauncher, buildSystemdUnit, buildWindowsTaskXml } from '../lib/autostart-templates.mjs';
+import { DEFAULT_AS_URL, readConfig, writeConfig, validateAsUrl, validateCaFile, resolveAsUrl } from '../lib/config.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PKG_ROOT = resolve(__dirname, '..');
@@ -53,8 +54,44 @@ try {
 
 // ─── Implementations ────────────────────────────────────────────────────
 
+/** Value following a `--flag` in an argv array, or undefined if absent. */
+function flagValue(args, name) {
+  const i = args.indexOf(name);
+  if (i === -1 || i === args.length - 1) return undefined;
+  return args[i + 1];
+}
+
 async function start(args) {
   const detach = args.includes('--detach') || args.includes('-d');
+
+  // --as-url / --ca-file: validate, SAVE (so a later `start` with no flag
+  // keeps using it — see config.mjs / doc/self-hosted-as.md §10), and for
+  // --as-url also override process.env for the child we are about to spawn.
+  // That override is what makes "flag > env" actually true: without it, a
+  // pre-existing SUVEREN_AS_URL in the caller's shell would still win inside
+  // the child, since the resolver there reads env before saved config.
+  const asUrlFlag = flagValue(args, '--as-url');
+  if (asUrlFlag) {
+    const v = validateAsUrl(asUrlFlag);
+    if (!v.ok) {
+      console.error(`Invalid --as-url: ${v.error}`);
+      process.exit(1);
+    }
+    writeConfig(DATA_DIR, { asUrl: v.url });
+    process.env.SUVEREN_AS_URL = v.url;
+    console.log(`Authority Server: ${v.url} (saved — future \`start\` calls keep this without the flag)`);
+  }
+
+  const caFileFlag = flagValue(args, '--ca-file');
+  if (caFileFlag) {
+    const v = validateCaFile(caFileFlag);
+    if (!v.ok) {
+      console.error(`Invalid --ca-file: ${v.error}`);
+      process.exit(1);
+    }
+    writeConfig(DATA_DIR, { caFile: v.path });
+    console.log(`CA file: ${v.path} (saved — applied to every process this gateway starts)`);
+  }
 
   if (await isAlreadyRunning()) {
     console.error(`suveren-gateway is already running (pid ${readPid()}). Use \`suveren-gateway stop\` first or \`suveren-gateway restart\`.`);
@@ -293,6 +330,85 @@ async function logs(args) {
     // Print entire log.
     process.stdout.write(readFileSync(LOG_FILE, 'utf8'));
   }
+}
+
+// ─── config: read/save saved settings (as-url, ca-file) ─────────────────
+
+function printConfigHelp() {
+  console.log(`suveren-gateway config — read or save gateway settings
+
+Usage:
+  suveren-gateway config get [as-url|ca-file]   Print the resolved value(s)
+  suveren-gateway config set as-url <url>       Save the Authority Server URL
+  suveren-gateway config set ca-file <path>     Save a CA bundle for internal TLS
+
+Saved in ${join(DATA_DIR, 'config.json')}.
+Precedence at start: --as-url flag > env SUVEREN_AS_URL > saved as-url >
+default (${DEFAULT_AS_URL}).
+
+Changes take effect on the next \`suveren-gateway start\` / \`restart\` — a
+running gateway keeps using what it already resolved at its own startup.
+`);
+}
+
+async function config(args) {
+  const sub = args[0];
+
+  if (sub === 'get') {
+    const key = args[1];
+    const saved = readConfig(DATA_DIR);
+    if (!key) {
+      console.log(`as-url:  ${resolveAsUrl(DATA_DIR)}`);
+      console.log(`ca-file: ${saved.caFile ?? '(not set)'}`);
+      return;
+    }
+    if (key === 'as-url') { console.log(resolveAsUrl(DATA_DIR)); return; }
+    if (key === 'ca-file') { console.log(saved.caFile ?? ''); return; }
+    console.error(`Unknown config key: ${key}\n`);
+    printConfigHelp();
+    process.exit(2);
+  }
+
+  if (sub === 'set') {
+    const key = args[1];
+    const value = args[2];
+    if (key === 'as-url') {
+      if (!value) {
+        console.error('Usage: suveren-gateway config set as-url <url>');
+        process.exit(2);
+      }
+      const v = validateAsUrl(value);
+      if (!v.ok) {
+        console.error(`Invalid as-url: ${v.error}`);
+        process.exit(1);
+      }
+      writeConfig(DATA_DIR, { asUrl: v.url });
+      console.log(`Saved as-url: ${v.url}`);
+      console.log('Restart to pick it up: suveren-gateway restart');
+      return;
+    }
+    if (key === 'ca-file') {
+      if (!value) {
+        console.error('Usage: suveren-gateway config set ca-file <path>');
+        process.exit(2);
+      }
+      const v = validateCaFile(value);
+      if (!v.ok) {
+        console.error(`Invalid ca-file: ${v.error}`);
+        process.exit(1);
+      }
+      writeConfig(DATA_DIR, { caFile: v.path });
+      console.log(`Saved ca-file: ${v.path}`);
+      console.log('Restart to pick it up: suveren-gateway restart');
+      return;
+    }
+    console.error(`Unknown config key: ${key}\n`);
+    printConfigHelp();
+    process.exit(2);
+  }
+
+  printConfigHelp();
+  if (sub !== undefined && sub !== 'help' && sub !== '--help' && sub !== '-h') process.exit(2);
 }
 
 // ─── service: install autostart-on-login (survives reboot) ──────────────
@@ -796,19 +912,28 @@ function printHelp() {
   console.log(`suveren-gateway — Suveren gateway (Human Agency Protocol)
 
 Usage:
-  suveren-gateway start [--detach]   Run the gateway (foreground by default)
-  suveren-gateway stop               Stop a detached gateway
-  suveren-gateway restart            Stop, then start --detach
-  suveren-gateway status             Show running state + health
-  suveren-gateway logs [--tail]      Print or tail ~/.suveren/gateway.log
-  suveren-gateway service <cmd>      Run as a login service that survives reboot
-                                     (install | uninstall | status)
-  suveren-gateway help               Print this help
+  suveren-gateway start [--detach]           Run the gateway (foreground by default)
+    [--as-url <url>]                         Authority Server URL (saved for next time)
+    [--ca-file <path>]                       Internal CA bundle (saved for next time)
+  suveren-gateway stop                       Stop a detached gateway
+  suveren-gateway restart                    Stop, then start --detach
+  suveren-gateway status                     Show running state + health
+  suveren-gateway logs [--tail]               Print or tail ~/.suveren/gateway.log
+  suveren-gateway service <cmd>               Run as a login service that survives reboot
+                                              (install | uninstall | status)
+  suveren-gateway config get [as-url|ca-file] Print the resolved value(s)
+  suveren-gateway config set as-url <url>     Save the Authority Server URL
+  suveren-gateway config set ca-file <path>   Save a CA bundle for internal TLS
+  suveren-gateway help                        Print this help
 
 Environment:
   SUVEREN_CP_PORT     UI + API port  (default 3400)
   SUVEREN_MCP_PORT    MCP server port (default 3430)
   SUVEREN_DATA_DIR    Data directory (default ~/.suveren)
+  SUVEREN_AS_URL      Authority Server URL — overrides the saved as-url
+
+Authority Server resolution order: --as-url flag > SUVEREN_AS_URL env >
+saved as-url (\`config set as-url\`) > default (${DEFAULT_AS_URL}).
 `);
 }
 
@@ -827,6 +952,7 @@ async function main() {
     case 'restart': await restart(); break;
     case 'logs':    await logs(argv.slice(1)); break;
     case 'service': await service(argv.slice(1)); break;
+    case 'config':  await config(argv.slice(1)); break;
     case 'help':
     case '--help':
     case '-h':
