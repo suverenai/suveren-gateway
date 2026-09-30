@@ -27,6 +27,8 @@ import type { SharedState, EnrichedAuthorization } from '../src/lib/shared-state
 import type { CachedAuthorization } from '../src/lib/attestation-cache';
 import type { IntegrationManager, DiscoveredTool } from '../src/lib/integration-manager';
 import type { SPProposal } from '../src/lib/sp-client';
+import { hashToolArgs } from '../src/lib/execution-journal';
+import { testReceiptKeypair, makeSignedReceipt } from './helpers/real-receipt';
 
 const PROFILE_ID = 'github.com/humanagencyprotocol/hap-profiles/email-privacy-test@0.5';
 const SHORT = 'email-privacy-test';
@@ -98,13 +100,59 @@ const AUTH: CachedAuthorization = {
 } as unknown as CachedAuthorization;
 
 function buildState() {
-  const postReceipt = vi.fn().mockResolvedValue({ receipt: { id: 'rcpt-1' } });
+  // A REAL Ed25519 keypair and a REAL signed receipt — ticket-verify.ts now
+  // checks every receipt's signature against the pinned key, its bound
+  // fields (action/executionContext/authorizationId/profileId/proposalId),
+  // its contentHash/contentBinding, and its timestamp before trusting it for
+  // anything (including archiving it). The fix here is the fixture, not a
+  // weaker check: this echoes back exactly what tool-proxy.ts / commitments.ts
+  // actually sent, signed, so both paths' full request shape is exercised for
+  // real rather than assuming away the verification this file predates.
+  const kp = testReceiptKeypair();
+  const postReceipt = vi.fn().mockImplementation(async (req: {
+    action: string;
+    executionContext?: Record<string, unknown>;
+    authorizationId?: string;
+    profileId?: string;
+    contentHash?: string;
+    contentBinding?: { version: string; kind: string; fields?: string[] };
+    proposalId?: string;
+  }) => ({
+    receipt: makeSignedReceipt(kp, {
+      id: 'rcpt-1',
+      action: req.action,
+      executionContext: req.executionContext ?? {},
+      authorizationId: req.authorizationId,
+      profileId: req.profileId,
+      contentHash: req.contentHash,
+      contentBinding: req.contentBinding,
+      proposalId: req.proposalId,
+    }),
+  }));
   const archiveReceipt = vi.fn().mockResolvedValue(undefined);
   const enriched: EnrichedAuthorization[] = [{ ...AUTH, gateContent: null } as EnrichedAuthorization];
   const state = {
     getEnrichedAuthorizations: () => enriched,
     spClient: { postReceipt, isUnlocked: () => true },
-    cache: { getAllAuthorizations: () => [AUTH] },
+    cache: { getAllAuthorizations: () => [AUTH], getPublicKey: async () => kp.publicKeyHex },
+    // The review path (commitments.ts) requires a matching local submission
+    // record before it will even request a ticket — PROPOSAL (declared
+    // below) is what the review-path tests execute, so this is its record.
+    proposalSubmissions: {
+      get: (id: string) =>
+        id === PROPOSAL.id
+          ? {
+              proposalId: PROPOSAL.id,
+              tool: PROPOSAL.tool,
+              toolArgsHash: hashToolArgs(PROPOSAL.toolArgs),
+              executionContextHash: hashToolArgs(PROPOSAL.executionContext),
+              authorizationId: PROPOSAL.authorizationId,
+              profileId: PROPOSAL.profileId,
+              submittedAt: Math.floor(Date.now() / 1000),
+            }
+          : undefined,
+      record: vi.fn(),
+    },
     gatekeeper: {
       verifyExecution: vi.fn().mockResolvedValue({
         result: { approved: true, errors: [] },
