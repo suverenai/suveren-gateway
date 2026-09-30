@@ -81,6 +81,11 @@ export class ExecutionLog implements ExecutionLogQuery {
    * @param field - The execution field to sum ("_count" for plain counting)
    * @param window - Time window (daily, weekly, monthly)
    * @param now - Current timestamp in seconds (for testing)
+   * @param actionTypes - Only count entries whose `execution.action_type` is one
+   *   of these (omitted → all). Consumption is partitioned by action type, as at
+   *   the Authority Server: without it, the usage shown for sales' "orders per
+   *   day" counted every quote and send. An entry with no action_type counts against every filter —
+   *   an unknown action is not evidence of headroom.
    */
   sumByWindow(
     profileId: string,
@@ -88,6 +93,7 @@ export class ExecutionLog implements ExecutionLogQuery {
     field: string,
     window: CumulativeWindow,
     now: number = Math.floor(Date.now() / 1000),
+    actionTypes?: readonly string[],
   ): number {
     const cutoff = windowCutoff(window, now);
 
@@ -96,6 +102,10 @@ export class ExecutionLog implements ExecutionLogQuery {
       if (entry.profileId !== profileId) continue;
       if (entry.path !== path) continue;
       if (entry.timestamp < cutoff) continue;
+      if (actionTypes) {
+        const at = entry.execution.action_type;
+        if (typeof at === 'string' && !actionTypes.includes(at)) continue;
+      }
 
       if (field === '_count') {
         total += 1;
