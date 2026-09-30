@@ -1,0 +1,184 @@
+{
+  "id": "erp",
+  "name": "ERP",
+  "version": "1.0.0",
+  "description": "Quote-to-order — items, customers, quotes, orders",
+  "icon": "briefcase",
+  "profile": "sales",
+  "npmPackage": "@humanagencyp/erp-mcp",
+  "mcp": {
+    "command": "erp-mcp",
+    "args": []
+  },
+  "credentials": {
+    "fields": [
+      {
+        "key": "databaseUrl",
+        "label": "Database URL (optional)",
+        "type": "text",
+        "placeholder": "Leave empty for local SQLite",
+        "optional": true
+      }
+    ],
+    "envMapping": {
+      "DATABASE_URL": "databaseUrl"
+    }
+  },
+  "personalDefault": true,
+  "oauth": null,
+  "toolGating": {
+    "default": {
+      "executionMapping": {},
+      "staticExecution": {}
+    },
+    "overrides": {
+      "list_items": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "get_item": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "find_customers": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "get_customer": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "list_quotes": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "get_quote": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "list_orders": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "get_order": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "create_quote": {
+        "executionMapping": {
+          "value": "value",
+          "discount_pct": "discount_pct",
+          "currency": "currency"
+        },
+        "staticExecution": {
+          "action_type": "quote"
+        },
+        "actionLabel": "Quote drafted"
+      },
+      "update_quote": {
+        "executionMapping": {
+          "value": "value",
+          "discount_pct": "discount_pct",
+          "currency": "currency"
+        },
+        "staticExecution": {
+          "action_type": "quote"
+        },
+        "actionLabel": "Quote updated"
+      },
+      "send_quote": {
+        "executionMapping": {
+          "value": "value",
+          "discount_pct": "discount_pct",
+          "currency": "currency"
+        },
+        "staticExecution": {
+          "action_type": "send"
+        },
+        "actionLabel": "Quote sent"
+      },
+      "convert_quote_to_order": {
+        "executionMapping": {
+          "value": "value",
+          "discount_pct": "discount_pct",
+          "currency": "currency"
+        },
+        "staticExecution": {
+          "action_type": "order"
+        },
+        "actionLabel": "Quote converted to order"
+      }
+    }
+  },
+  "templates": [
+    {
+      "name": "Draft quotes",
+      "description": "Look up items and customers, create and edit draft quotes. Nothing is sent to a customer or converted to an order.",
+      "risk": "low",
+      "mode": "automatic",
+      "bounds": {
+        "read_access": "unlimited",
+        "value_max": "5000",
+        "discount_max": "15",
+        "order_value_daily_max": "0",
+        "quote_daily_max": "20",
+        "send_daily_max": "0",
+        "order_daily_max": "0"
+      },
+      "context": {
+        "currency": "EUR"
+      },
+      "intent": "Allow the agent to browse items and customers and prepare draft quotes for my review. It cannot send a quote to a customer or convert one into an order.",
+      "ttl": 2592000,
+      "tags": [
+        "drafts only",
+        "no sends",
+        "no orders"
+      ]
+    },
+    {
+      "name": "Send and confirm with review above limit",
+      "description": "Draft, send, and convert quotes into orders. Every send and every order requires your approval.",
+      "risk": "high",
+      "mode": "review",
+      "bounds": {
+        "read_access": "unlimited",
+        "value_max": "20000",
+        "discount_max": "20",
+        "order_value_daily_max": "50000",
+        "quote_daily_max": "50",
+        "send_daily_max": "20",
+        "order_daily_max": "10"
+      },
+      "context": {
+        "currency": "EUR"
+      },
+      "intent": "Allow the agent to draft, send, and convert quotes into orders. Every quote sent to a customer and every order requires my review before it happens.",
+      "ttl": 2592000,
+      "tags": [
+        "20k EUR/document",
+        "review mode",
+        "10 orders/day"
+      ]
+    }
+  ],
+  "setupHint": "No configuration needed — works out of the box.",
+  "setupGuide": [
+    {
+      "title": "Ready to use",
+      "description": "The ERP connector stores data locally on your machine, seeded with a small demo catalog and customer list. No external account or API key needed."
+    },
+    {
+      "title": "Optional: use a shared database",
+      "description": "For team use, provide a PostgreSQL connection string in the Database URL field. Otherwise, leave it empty to use local SQLite storage."
+    }
+  ]
+}
