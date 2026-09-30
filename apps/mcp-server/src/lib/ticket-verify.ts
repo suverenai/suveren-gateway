@@ -35,7 +35,10 @@
  * What this does NOT do: cross-check a review-mode proposal's tool/args
  * against what THIS gateway itself submitted, when it was the submitter —
  * that is proposal-submission-store.ts, used by commitments.ts alongside
- * this module (and required, not merely cross-checked: see its own docs).
+ * this module. When this gateway was NOT the submitter (no local record),
+ * commitments.ts skips the proposal quietly rather than executing OR
+ * refusing-as-an-attack — see its own docs for why (a genuine AS legitimately
+ * lists proposals submitted by the same operator's other gateways too).
  */
 import { verifyReceiptSignature, type ReceiptPayload } from '@hap/core';
 import { AttestationCache, AsKeyMismatchError } from './attestation-cache';

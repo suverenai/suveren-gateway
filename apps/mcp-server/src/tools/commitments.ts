@@ -112,33 +112,40 @@ export async function executeCommitted(
   // alone" for the review path, where everything (tool, args, "committed"
   // status) comes from the server.
   //
-  // REQUIRED, not best-effort: a proposal with no local submission record is
-  // refused outright, even though the ticket-verify.ts check below still
-  // applies too. Without this, an impostor sitting where the gateway reaches
-  // the AS can inject a "committed" proposal for arbitrary tool/args and pair
-  // it with a genuine ticket minted (with the real API key) for some OTHER,
-  // differently-shaped request — ticket-verify.ts's action/executionContext
-  // check can be satisfied by choosing a proposal whose shape matches a
-  // ticket the impostor can obtain (see hap-e2e's as-impostor-relay suite).
-  // Only a local record proves THIS gateway is the one that asked for this
-  // exact proposal to exist.
+  // No local record → SKIP, quietly, not an attack. A genuine Authority
+  // Server legitimately lists every committed proposal for the operator, no
+  // matter which of their gateways submitted it — the SAME person's laptop
+  // and desktop both poll the same list. Refusing-and-locking here would fire
+  // on that completely ordinary case every time, a false alarm that locks the
+  // second gateway on every poll tick. So this gateway leaves a proposal it
+  // never submitted for whichever one DID to pick up: no receipt is
+  // requested (nothing is marked executed OR failed on the AS), nothing is
+  // journaled, and the human is not interrupted.
   //
-  // Known regression this creates: a proposal submitted by a DIFFERENT
-  // gateway/device (approve-on-phone, execute-on-laptop) can no longer be
-  // executed here — that flow needs its own design (e.g. the Authority
-  // Server itself attesting who submitted a proposal) before it can be
-  // un-refused safely; see doc/self-hosted-as.md's gateway section for where
-  // that would land.
+  // This does NOT weaken the impostor defense: an injected proposal has no
+  // local record on ANY real gateway either, so it is skipped here exactly
+  // the same way — it simply never gets a receipt requested for it, which is
+  // what stops it from running. What DOES still refuse-and-lock is a local
+  // record that EXISTS but disagrees with the proposal (below), and a ticket
+  // whose signature or bound fields don't check out (further down) — those
+  // are the cases that are never legitimate.
+  //
+  // Known gap this leaves open: this gateway has no way to tell "a proposal
+  // legitimately submitted by my other device" apart from "an impostor's
+  // injected proposal" other than by looking for its OWN record — so it
+  // treats both identically (skip). A proposal genuinely meant for a
+  // different device of the SAME operator is not executed here even after
+  // approval; the operator has to wait for the submitting device, or
+  // re-submit the same tool call from this one. Closing that gap for real
+  // needs the Authority Server itself to attest who submitted a proposal.
   const submitted = state.proposalSubmissions.get(proposal.id);
   if (!submitted) {
-    void notifyControlPlane('as-key-mismatch');
-    return {
-      text:
-        `Blocked: proposal ${proposal.id} was not submitted by this gateway (no local record) — ` +
-        `refusing to execute. If it was submitted from another device, re-submit the same tool ` +
-        `call from this one so it can be approved and executed here.`,
-      isError: true,
-    };
+    console.error(
+      `[Suveren MCP] Proposal ${proposal.id} is committed but has no local submission record on this ` +
+        'gateway — leaving it for whichever gateway submitted it (this is normal for a different device ' +
+        'of the same operator, or the AS lists a proposal we never submitted).',
+    );
+    return { text: `Proposal ${proposal.id} was not submitted by this gateway — leaving it for the one that did.` };
   }
   {
     const mismatches: string[] = [];
