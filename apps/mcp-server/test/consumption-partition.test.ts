@@ -23,8 +23,13 @@ import { ExecutionLog } from '../src/lib/execution-log';
 import { getConsumptionState } from '../src/lib/consumption';
 import type { EnrichedAuthorization } from '../src/lib/shared-state';
 
+// CI checks out hap-profiles to its own path and says so via SUVEREN_PROFILES_DIR,
+// exactly as the gateway itself resolves it; locally, the sibling checkout.
+const profilesDir =
+  process.env.SUVEREN_PROFILES_DIR ??
+  join(import.meta.dirname, '..', '..', '..', '..', 'hap-profiles');
 const profile = JSON.parse(
-  readFileSync(join(__dirname, '..', '..', '..', '..', 'hap-profiles', 'sales', '0.1.profile.json'), 'utf8'),
+  readFileSync(join(profilesDir, 'sales', '0.1.profile.json'), 'utf8'),
 ) as AgentProfile;
 const PATH = 'sales-path';
 
