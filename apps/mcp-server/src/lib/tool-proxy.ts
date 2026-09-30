@@ -843,6 +843,8 @@ function createGatedToolHandlerInner(
             executionContext: { ...execution },
             authorizationId: authzId,
             profileId: auth.profileId,
+            contentHash: binding?.contentHash,
+            contentBinding: binding?.contentBinding,
           });
 
           // Subject custody: keep the complete signed receipt (+ attestation

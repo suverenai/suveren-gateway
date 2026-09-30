@@ -30,6 +30,26 @@ import { AsKeyMismatchError } from '../lib/attestation-cache';
 import { verifyTicket, TicketBindingMismatchError } from '../lib/ticket-verify';
 import { notifyControlPlane } from '../lib/cp-notify';
 
+/**
+ * The message shown for a committed proposal this gateway has no local
+ * submission record for — used both when an agent asks about it directly
+ * (executeCommitted's skip path, below) and when listing every committed
+ * proposal (checkPendingCommitmentsHandler), so the wording is the same
+ * everywhere a human or agent might see it.
+ *
+ * Deliberately says "approved" up front: from the human's point of view they
+ * DID approve the action, and nothing happening looks exactly like a bug
+ * unless the reason is stated plainly. "Re-run the request here" is the only
+ * recovery available today (see the design gap noted in executeCommitted).
+ */
+export function buildSkippedProposalNote(proposalId: string): string {
+  return (
+    `Proposal ${proposalId} was approved, but was submitted from another device/installation of ` +
+    `this operator (or one whose local record is gone) — this gateway will not execute it. ` +
+    `Re-run the same request here to execute it from this gateway.`
+  );
+}
+
 // ─── The one executor ────────────────────────────────────────────────────────
 // Installed by the HTTP entrypoint once the integration manager exists. Every
 // trigger — poll loop, control-plane nudge, agent's check-pending call — goes
@@ -145,7 +165,9 @@ export async function executeCommitted(
         'gateway — leaving it for whichever gateway submitted it (this is normal for a different device ' +
         'of the same operator, or the AS lists a proposal we never submitted).',
     );
-    return { text: `Proposal ${proposal.id} was not submitted by this gateway — leaving it for the one that did.` };
+    // Visible, not silent: the human approved this, and nothing ran — see
+    // buildSkippedProposalNote's doc comment for why the wording matters.
+    return { text: buildSkippedProposalNote(proposal.id) };
   }
   {
     const mismatches: string[] = [];
@@ -230,6 +252,8 @@ export async function executeCommitted(
       authorizationId: proposal.authorizationId,
       profileId: proposal.profileId,
       proposalId: proposal.id,
+      contentHash: binding?.contentHash,
+      contentBinding: binding?.contentBinding,
     });
 
     // Subject custody: archive the complete signed receipt locally (parity
@@ -485,9 +509,17 @@ export function checkPendingCommitmentsHandler(
         };
       }
 
-      const lines = committed.map(p =>
-        `${p.id}: tool=${p.tool}, status=${p.status}, committed=[${Object.keys(p.committedBy).join(',')}]`
-      );
+      // A committed proposal with no local submission record will not be
+      // executed here (see executeCommitted's skip path) — visible in the
+      // list so an approved-but-nothing-happened proposal is never a silent
+      // mystery to whoever is watching for it.
+      const lines = committed.map(p => {
+        const base = `${p.id}: tool=${p.tool}, status=${p.status}, committed=[${Object.keys(p.committedBy).join(',')}]`;
+        if (p.status === 'committed' && !state.proposalSubmissions.get(p.id)) {
+          return `${base} — SKIPPED HERE: ${buildSkippedProposalNote(p.id)}`;
+        }
+        return base;
+      });
 
       return {
         content: [{

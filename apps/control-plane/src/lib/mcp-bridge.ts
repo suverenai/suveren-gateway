@@ -324,6 +324,19 @@ export async function getEnrichedAuthorizations(): Promise<unknown> {
 }
 
 /**
+ * Committed proposals this gateway will not execute (no local submission
+ * record) — see tools/commitments.ts's skip path. The UI's counterpart to
+ * check-pending-commitments' list view.
+ */
+export async function getSkippedCommitments(): Promise<unknown> {
+  const res = await fetch(`${MCP_BASE}/internal/skipped-commitments`, {
+    headers: internalHeaders(),
+  });
+  if (!res.ok) throw new Error('Failed to fetch skipped commitments');
+  return res.json();
+}
+
+/**
  * Fetch the local evidence bundle: receipt archive (complete signed receipts,
  * attestation blobs, issuer keys) + gate entries (intent, context). This is
  * the copy that must survive the AS disappearing.

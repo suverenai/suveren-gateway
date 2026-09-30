@@ -1291,6 +1291,14 @@ class SPClient {
     return res.json();
   }
 
+  // ─── Skipped commitments (approved, but not submitted by this gateway) ──
+
+  async getSkippedCommitments(): Promise<{ skipped: Array<{ id: string; tool: string; note: string }> }> {
+    const res = await this.fetch('/skipped-commitments');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
+  }
+
   // ─── Gate Content ───────────────────────────────────────────────────────
 
   async getGateContent(path: string): Promise<GateContentEntry | null> {

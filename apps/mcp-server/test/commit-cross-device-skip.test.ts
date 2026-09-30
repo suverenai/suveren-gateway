@@ -112,6 +112,11 @@ describe('executeCommitted — a proposal submitted by a DIFFERENT gateway (same
     expect(postReceipt, 'requested a ticket for a proposal this gateway never submitted').not.toHaveBeenCalled();
     expect(notifyControlPlane, 'locked the gateway over another device\'s legitimate proposal').not.toHaveBeenCalled();
     expect((state.executionJournal.begin as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+    // Visible, not silent: says the proposal WAS approved and gives the
+    // recovery ("re-run the request here") — an approval that produces
+    // nothing must never read as a bug with no explanation.
+    expect(result.text).toMatch(/approved/i);
+    expect(result.text).toMatch(/re-run/i);
   });
 
   it('an impostor-injected proposal (no record on ANY real gateway) is skipped the same way, not executed', async () => {

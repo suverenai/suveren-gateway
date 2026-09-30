@@ -27,7 +27,7 @@ import { loadProfiles } from '../src/lib/profile-loader';
 import { loadManifests, getAllManifests, getManifest } from '../src/lib/manifest-loader';
 import { buildMandateBrief } from '../src/lib/mandate-brief';
 import { decodeAttestationBlob } from '@hap/core';
-import { executeCommitted, installCommittedExecutor } from '../src/tools/commitments';
+import { executeCommitted, installCommittedExecutor, buildSkippedProposalNote } from '../src/tools/commitments';
 import { CommittedExecutor, ExecutorLock } from '../src/lib/committed-executor';
 import type { SPProposal } from '../src/lib/sp-client';
 import { homedir } from 'node:os';
@@ -72,20 +72,18 @@ const state = new SharedState(spUrl, undefined, dataDir);
 // the local receipt archive (each entry already stores its own asUrl).
 (function repairIfAsUrlChanged() {
   const lastKnown = readMcpPairedAsUrl(dataDir);
-  if (lastKnown === null) {
-    // No tracker record at all — either a genuinely fresh data dir (the gate
-    // store is already empty, so clearing is a costless no-op) OR an upgrade
-    // from a version that predates this tracker file, where the gate store
-    // may hold mandates cached against an AS we have no record of ever
-    // having checked against. Seeding the tracker WITHOUT clearing here would
-    // silently trust whatever is already on disk on that upgrade path — fail
-    // closed instead, exactly as a genuine URL change would.
-    console.error(
-      '[Suveren MCP] No Authority Server pairing record found — clearing any cached mandates ' +
-        '(fresh data dir, or an upgrade from a version that predates this check).',
-    );
-    state.gateStore.clearAll();
-  } else if (lastKnown !== spUrl) {
+  // No tracker record at all (lastKnown === null) is deliberately NOT treated
+  // as a change: every 0.8.7-and-earlier data dir has none, so clearing here
+  // wiped every grant's intent/scope (the only copy of it — the AS never
+  // holds it) on the first boot after upgrading, even when the Authority
+  // Server never changed. That is a strictly worse outcome than the gap it
+  // tried to close: an upgrade that ALSO switches the AS in the same restart
+  // is still caught — not here, but by the existing post-sign-in resync
+  // (mcp-bridge.ts's resyncGates / the /internal/resync-gates handler), which
+  // already drops any gate whose authorizationId the new AS doesn't
+  // recognize. Only a KNOWN prior URL that disagrees with the current one is
+  // grounds to clear at boot.
+  if (lastKnown !== null && lastKnown !== spUrl) {
     console.error(
       `[Suveren MCP] Authority Server changed (${lastKnown} → ${spUrl}) — ` +
         'clearing cached mandates. Sign in again to re-pair.',
@@ -652,6 +650,25 @@ app.get('/internal/authorizations', internalOnly, (_req: Request, res: Response)
 
 app.get('/internal/manifests', internalOnly, (_req: Request, res: Response) => {
   res.json({ manifests: getAllManifests() });
+});
+
+/**
+ * Committed proposals this gateway will NOT execute because it holds no
+ * local submission record for them (see tools/commitments.ts's skip path
+ * and buildSkippedProposalNote) — the UI's counterpart to
+ * check-pending-commitments' list view, so an approved-but-nothing-happened
+ * proposal is visible there too, not just to an agent that happens to ask.
+ */
+app.get('/internal/skipped-commitments', internalOnly, async (_req: Request, res: Response) => {
+  try {
+    const committed = await state.spClient.getCommittedProposals();
+    const skipped = committed
+      .filter(p => !state.proposalSubmissions.get(p.id))
+      .map(p => ({ id: p.id, tool: p.tool, note: buildSkippedProposalNote(p.id) }));
+    res.json({ skipped });
+  } catch (err) {
+    res.status(502).json({ error: err instanceof Error ? err.message : 'Could not reach the Authority Server' });
+  }
 });
 
 // Local evidence — everything this machine holds that proves what ran and

@@ -25,7 +25,11 @@
  *     accepted just because its action/executionContext happen to line up;
  *     see the impostor-relay e2e suite, "cannot make the gateway run a
  *     proposal the AS never saw, by pairing it with a genuine ticket".
- *  3. The receipt's signed `timestamp` must be recent — see
+ *  3. The receipt's `contentHash`/`contentBinding` — when the profile binds
+ *     content — must match what THIS gateway computed for this call. The AS
+ *     never sees the content, only the hash; a mismatch means a different
+ *     artifact was approved, or the hash was swapped in transit.
+ *  4. The receipt's signed `timestamp` must be recent — see
  *     TICKET_MAX_AGE_SECONDS / TICKET_MAX_CLOCK_SKEW_SECONDS below. This is
  *     hardening, not full replay protection: a genuinely fresh, genuinely
  *     signed ticket handed back for a DIFFERENT call of the same shape is a
@@ -93,6 +97,18 @@ export interface ExpectedTicket {
    * executed.
    */
   proposalId?: string;
+  /**
+   * The content hash THIS gateway computed for this call (computeContentBinding
+   * in content-binding.ts), present iff the profile declares a content_binding.
+   * The AS copies it into the signed receipt verbatim without ever seeing the
+   * content — so a receipt whose `contentHash` disagrees means either a
+   * different artifact was approved, or the AS/relay swapped it in transit.
+   */
+  contentHash?: string;
+  /** How `contentHash` above was computed — echoed into the signed receipt
+   *  alongside it; must match exactly (same version/kind/fields) so a
+   *  verifier downstream knows what the hash actually covers. */
+  contentBinding?: { version: string; kind: string; fields?: string[] };
 }
 
 /**
@@ -169,6 +185,28 @@ export async function verifyTicket(
       `Ticket proposalId "${String(receipt.proposalId)}" does not match the proposal being executed ` +
         `"${expected.proposalId}" — refusing to execute.`,
     );
+  }
+
+  // Content binding: present only for profiles that declare one (records,
+  // customers, and — later — the communicative profiles). Checked whenever
+  // THIS call computed a contentHash, regardless of whether the receipt
+  // carries one at all: an absent or mismatched contentHash on a call that
+  // was supposed to bind content is exactly as dangerous as a wrong one —
+  // it means the receipt does not actually commit to what is about to run.
+  if (expected.contentHash !== undefined) {
+    if (receipt.contentHash !== expected.contentHash) {
+      throw new TicketBindingMismatchError(
+        'Ticket contentHash does not match the content this call is bound to — refusing to execute.',
+      );
+    }
+    if (
+      expected.contentBinding !== undefined &&
+      hashToolArgs(receipt.contentBinding ?? {}) !== hashToolArgs(expected.contentBinding)
+    ) {
+      throw new TicketBindingMismatchError(
+        'Ticket contentBinding does not match what this call requested — refusing to execute.',
+      );
+    }
   }
 
   const timestamp = receipt.timestamp;
