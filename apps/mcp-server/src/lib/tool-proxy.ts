@@ -832,15 +832,17 @@ function createGatedToolHandlerInner(
           receiptId = typeof receipt?.id === 'string' ? receipt.id : undefined;
 
           // Verify the ticket BEFORE trusting it for anything — signature
-          // against the PINNED key, and its own action/executionContext
-          // against what was just requested. "No ticket, no execution" is
-          // meaningless if the ticket itself is never checked. Fail closed:
-          // this throws (caught below) rather than returning a result, so
-          // there is no path from here to the downstream tool call on a
-          // ticket that didn't verify.
+          // against the PINNED key, and its own bound fields against what
+          // was just requested. "No ticket, no execution" is meaningless if
+          // the ticket itself is never checked. Fail closed: this throws
+          // (caught below) rather than returning a result, so there is no
+          // path from here to the downstream tool call on a ticket that
+          // didn't verify.
           await verifyTicket(state.cache, receipt, {
             action: tool.namespacedName,
             executionContext: { ...execution },
+            authorizationId: authzId,
+            profileId: auth.profileId,
           });
 
           // Subject custody: keep the complete signed receipt (+ attestation

@@ -11,7 +11,7 @@ import { spawn } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir, tmpdir, constants as osConstants } from 'node:os';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { resolveCaFile } from './lib/config.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -57,6 +57,9 @@ const DATA_DIR = process.env.SUVEREN_DATA_DIR ?? join(homedir(), '.suveren');
 const savedCaFile = resolveCaFile(DATA_DIR);
 if (savedCaFile && !process.env.SUVEREN_CA_REEXEC_DONE) {
   let effectiveCaFile = savedCaFile;
+  /** Set only when a combined-CA temp dir was actually created, so it can be
+   *  cleaned up on exit rather than left behind on every restart. */
+  let combinedDirToClean = null;
   const existingCaFile = process.env.NODE_EXTRA_CA_CERTS;
   if (existingCaFile && existingCaFile !== savedCaFile && existsSync(existingCaFile)) {
     try {
@@ -66,6 +69,7 @@ if (savedCaFile && !process.env.SUVEREN_CA_REEXEC_DONE) {
       const combinedPath = join(combinedDir, 'combined-ca-certs.pem');
       writeFileSync(combinedPath, combined, 'utf8');
       effectiveCaFile = combinedPath;
+      combinedDirToClean = combinedDir;
       console.error(
         `[suveren-gateway] Merged --ca-file with the existing NODE_EXTRA_CA_CERTS (${existingCaFile}) ` +
           `so neither trust source is lost.`,
@@ -83,7 +87,12 @@ if (savedCaFile && !process.env.SUVEREN_CA_REEXEC_DONE) {
     [THIS_FILE, ...process.argv.slice(2)],
     { env: { ...process.env, NODE_EXTRA_CA_CERTS: effectiveCaFile, SUVEREN_CA_REEXEC_DONE: '1' }, stdio: 'inherit' },
   );
-  child.on('exit', (code, signal) => exitLikeChild(code, signal));
+  child.on('exit', (code, signal) => {
+    if (combinedDirToClean) {
+      try { rmSync(combinedDirToClean, { recursive: true, force: true }); } catch { /* best-effort */ }
+    }
+    exitLikeChild(code, signal);
+  });
   for (const sig of ['SIGINT', 'SIGTERM']) {
     process.on(sig, () => child.kill(sig));
   }
@@ -95,6 +104,13 @@ if (savedCaFile && !process.env.SUVEREN_CA_REEXEC_DONE) {
   // happens via the exit handler calling process.exit().
   await new Promise(() => {});
 }
+
+// Reached only in the re-executed child (or when no --ca-file is set at
+// all). SUVEREN_CA_REEXEC_DONE is bookkeeping for the block above — internal
+// to this file, and meaningless (worse, confusing) to anything downstream —
+// so it must not ride along in the env every child process below inherits
+// via `...process.env`, all the way down to individual integrations.
+delete process.env.SUVEREN_CA_REEXEC_DONE;
 
 const CP_PORT = process.env.SUVEREN_CP_PORT ?? '3400';
 const MCP_PORT = process.env.SUVEREN_MCP_PORT ?? '3430';

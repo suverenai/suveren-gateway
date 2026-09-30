@@ -10,29 +10,40 @@
  *    not, could hand the gateway a proposal for a tool call it never
  *    approved and have it run, as long as it also minted a receipt.
  *
- * Two checks, both fail-closed:
+ * Checks, all fail-closed:
  *
  *  1. The receipt's Ed25519 signature must verify against the PINNED
  *     Authority Server key (attestation-cache.ts) — not whatever key a live
  *     `/api/as/pubkey` happens to answer with right now. A signature that
  *     doesn't verify means this is not the server the gateway paired with,
  *     or the receipt was tampered with in transit.
- *  2. The receipt's own `action` and `executionContext` — the fields the AS
- *     itself signed — must match what this call is about to execute. This
- *     catches a same-key AS (or a bug) handing back a receipt for one action
- *     while asking the gateway to run another.
+ *  2. The receipt's own `action`, `executionContext`, `authorizationId` and
+ *     `profileId` — fields the AS itself signed — must match what this call
+ *     is about to execute. `proposalId` is required to match too when the
+ *     caller is executing a specific proposal (the review path) — a receipt
+ *     minted for some OTHER request (or for no proposal at all) must not be
+ *     accepted just because its action/executionContext happen to line up;
+ *     see the impostor-relay e2e suite, "cannot make the gateway run a
+ *     proposal the AS never saw, by pairing it with a genuine ticket".
+ *  3. The receipt's signed `timestamp` must be recent — see
+ *     TICKET_MAX_AGE_SECONDS / TICKET_MAX_CLOCK_SKEW_SECONDS below. This is
+ *     hardening, not full replay protection: a genuinely fresh, genuinely
+ *     signed ticket handed back for a DIFFERENT call of the same shape is a
+ *     known open gap (the idempotency key is not part of what the AS signs)
+ *     — tracked separately, needs an Authority Server change.
  *
- * What this does NOT do (yet): cross-check a review-mode proposal's
- * tool/args against what THIS gateway itself submitted, when it was the
- * submitter — see proposal-submission-store.ts, used by commitments.ts
- * alongside this module.
+ * What this does NOT do: cross-check a review-mode proposal's tool/args
+ * against what THIS gateway itself submitted, when it was the submitter —
+ * that is proposal-submission-store.ts, used by commitments.ts alongside
+ * this module (and required, not merely cross-checked: see its own docs).
  */
 import { verifyReceiptSignature, type ReceiptPayload } from '@hap/core';
 import { AttestationCache, AsKeyMismatchError } from './attestation-cache';
 import { hashToolArgs } from './execution-journal';
 
 /** Thrown when the ticket's signature verifies but its own bound fields
- *  (action / executionContext) disagree with what the caller asked for. */
+ *  (action / executionContext / authorizationId / profileId / proposalId /
+ *  timestamp) disagree with what the caller asked for. */
 export class TicketBindingMismatchError extends Error {
   constructor(message: string) {
     super(message);
@@ -40,18 +51,53 @@ export class TicketBindingMismatchError extends Error {
   }
 }
 
+/**
+ * How long a signed ticket is trusted after it was minted. Deliberately
+ * short: the whole flow between requesting a receipt and acting on it is
+ * synchronous and normally completes in well under a second, even with the
+ * receipt-request retry backoff (sp-client.ts's ReceiptRetryConfig tops out
+ * at a few hundred ms). Five minutes is generous headroom for real-world
+ * clock drift and network latency between a gateway and a self-hosted AS on
+ * a different machine, while still bounding how long a stolen or replayed
+ * ticket stays usable. This is a hardening measure, NOT full replay
+ * protection on its own — see the module doc comment.
+ */
+export const TICKET_MAX_AGE_SECONDS = 5 * 60;
+
+/**
+ * How far in the FUTURE a ticket's timestamp may be before it's refused.
+ * Real clock skew between two machines is normally low single-digit seconds;
+ * this leaves headroom for that without accepting a timestamp that's
+ * obviously fabricated or from a clock set wrong.
+ */
+export const TICKET_MAX_CLOCK_SKEW_SECONDS = 30;
+
 export interface ExpectedTicket {
   /** The namespaced tool name this call requested a ticket for. */
   action: string;
   /** The executionContext sent in the receipt request, if any. */
   executionContext?: Record<string, unknown>;
+  /** The per-ceremony grant id this call requested a ticket against. */
+  authorizationId?: string;
+  /** The profile id this call requested a ticket against. */
+  profileId?: string;
+  /**
+   * The proposal id this call is executing — review path only. When set,
+   * the receipt MUST carry the same `proposalId`: a receipt minted for a
+   * different (or no) proposal must never be accepted just because its
+   * action/executionContext happen to match, or a proposal the Authority
+   * Server never saw could be paired with an unrelated genuine ticket and
+   * executed.
+   */
+  proposalId?: string;
 }
 
 /**
  * @throws AsKeyMismatchError when the pinned key rejects the signature (or
  *   is itself unavailable/mismatched — see attestation-cache.ts).
  * @throws TicketBindingMismatchError when the signature is fine but the
- *   ticket's own action/executionContext disagree with what was requested.
+ *   ticket's own bound fields disagree with what was requested, or its
+ *   timestamp is stale or implausibly in the future.
  */
 export async function verifyTicket(
   cache: AttestationCache,
@@ -92,6 +138,51 @@ export async function verifyTicket(
   ) {
     throw new TicketBindingMismatchError(
       'Ticket executionContext does not match what this call requested — refusing to execute.',
+    );
+  }
+
+  if (expected.authorizationId !== undefined && receipt.authorizationId !== expected.authorizationId) {
+    throw new TicketBindingMismatchError(
+      `Ticket authorizationId "${String(receipt.authorizationId)}" does not match the requested ` +
+        `grant "${expected.authorizationId}" — refusing to execute.`,
+    );
+  }
+
+  if (expected.profileId !== undefined && receipt.profileId !== expected.profileId) {
+    throw new TicketBindingMismatchError(
+      `Ticket profileId "${String(receipt.profileId)}" does not match the requested profile ` +
+        `"${expected.profileId}" — refusing to execute.`,
+    );
+  }
+
+  // Required to match whenever the caller IS executing a specific proposal
+  // (the review path always passes this). A receipt with no proposalId at
+  // all (e.g. a plain automatic-mode ticket) — or one for a DIFFERENT
+  // proposal — must never authorize this one, however well its other fields
+  // line up: that is exactly the "pair a genuine ticket with an injected
+  // proposal" attack the impostor-relay e2e suite exercises.
+  if (expected.proposalId !== undefined && receipt.proposalId !== expected.proposalId) {
+    throw new TicketBindingMismatchError(
+      `Ticket proposalId "${String(receipt.proposalId)}" does not match the proposal being executed ` +
+        `"${expected.proposalId}" — refusing to execute.`,
+    );
+  }
+
+  const timestamp = receipt.timestamp;
+  if (typeof timestamp !== 'number' || !Number.isFinite(timestamp)) {
+    throw new TicketBindingMismatchError('Ticket carries no valid timestamp — refusing to execute.');
+  }
+  const nowSec = Math.floor(Date.now() / 1000);
+  const ageSec = nowSec - timestamp;
+  if (ageSec > TICKET_MAX_AGE_SECONDS) {
+    throw new TicketBindingMismatchError(
+      `Ticket is ${ageSec}s old, older than the ${TICKET_MAX_AGE_SECONDS}s freshness window — refusing to execute.`,
+    );
+  }
+  if (ageSec < -TICKET_MAX_CLOCK_SKEW_SECONDS) {
+    throw new TicketBindingMismatchError(
+      `Ticket is timestamped ${-ageSec}s in the future, beyond the ${TICKET_MAX_CLOCK_SKEW_SECONDS}s clock-skew ` +
+        `tolerance — refusing to execute.`,
     );
   }
 }

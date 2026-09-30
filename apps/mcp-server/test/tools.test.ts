@@ -231,8 +231,19 @@ function mockGatedState(opts: {
   // — a well-behaved AS does the same (the receipt is bound to the request).
   // This exercises the real verification logic without hardcoding the exact
   // executionContext shape tool-proxy.ts's execution-mapping produces.
-  const defaultPostReceipt = vi.fn().mockImplementation(async (req: { action: string; executionContext?: Record<string, unknown> }) => ({
-    receipt: makeSignedReceipt(kp, { id: 'r1', action: req.action, executionContext: req.executionContext ?? {} }),
+  const defaultPostReceipt = vi.fn().mockImplementation(async (req: {
+    action: string;
+    executionContext?: Record<string, unknown>;
+    authorizationId?: string;
+    profileId?: string;
+  }) => ({
+    receipt: makeSignedReceipt(kp, {
+      id: 'r1',
+      action: req.action,
+      executionContext: req.executionContext ?? {},
+      authorizationId: req.authorizationId,
+      profileId: req.profileId,
+    }),
   }));
 
   return {
@@ -289,8 +300,19 @@ function mockIntegrationManager(readAgeDays: number | null = null): IntegrationM
 describe('createGatedToolHandler — SP receipt integration', () => {
   it('proxies tool call when SP returns receipt', async () => {
     const kp = testReceiptKeypair();
-    const postReceipt = vi.fn().mockImplementation(async (req: { action: string; executionContext?: Record<string, unknown> }) => ({
-      receipt: makeSignedReceipt(kp, { id: 'r1', action: req.action, executionContext: req.executionContext ?? {} }),
+    const postReceipt = vi.fn().mockImplementation(async (req: {
+      action: string;
+      executionContext?: Record<string, unknown>;
+      authorizationId?: string;
+      profileId?: string;
+    }) => ({
+      receipt: makeSignedReceipt(kp, {
+        id: 'r1',
+        action: req.action,
+        executionContext: req.executionContext ?? {},
+        authorizationId: req.authorizationId,
+        profileId: req.profileId,
+      }),
     }));
     const state = { ...mockGatedState({ postReceipt }), cache: { getPublicKey: async () => kp.publicKeyHex } } as unknown as SharedState;
     const im = mockIntegrationManager();

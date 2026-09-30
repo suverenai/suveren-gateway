@@ -19,7 +19,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CommittedExecutor, ExecutorLock } from '../src/lib/committed-executor';
-import { ExecutionJournal } from '../src/lib/execution-journal';
+import { ExecutionJournal, hashToolArgs } from '../src/lib/execution-journal';
 import { executeCommitted } from '../src/tools/commitments';
 import type { SharedState } from '../src/lib/shared-state';
 import type { IntegrationManager, DiscoveredTool } from '../src/lib/integration-manager';
@@ -142,9 +142,17 @@ const TOOL: DiscoveredTool = {
 // checks every receipt's signature against the pinned key (cache.getPublicKey())
 // before executeCommitted trusts it for anything.
 const kp = testReceiptKeypair();
-/** A validly-signed receipt bound to PROPOSAL's own tool/executionContext. */
+/** A validly-signed receipt bound to PROPOSAL's own tool/executionContext/
+ *  authorizationId/profileId/proposalId — everything ticket-verify.ts checks. */
 function receiptFor(id: string): Record<string, unknown> {
-  return makeSignedReceipt(kp, { id, action: PROPOSAL.tool, executionContext: PROPOSAL.executionContext });
+  return makeSignedReceipt(kp, {
+    id,
+    action: PROPOSAL.tool,
+    executionContext: PROPOSAL.executionContext,
+    authorizationId: PROPOSAL.authorizationId,
+    profileId: PROPOSAL.profileId,
+    proposalId: PROPOSAL.id,
+  });
 }
 
 function buildState(dir: string, postReceipt: ReturnType<typeof vi.fn>) {
@@ -152,7 +160,20 @@ function buildState(dir: string, postReceipt: ReturnType<typeof vi.fn>) {
   const state = {
     spClient: { postReceipt },
     cache: { getAllAuthorizations: () => [], getPublicKey: async () => kp.publicKeyHex },
-    proposalSubmissions: { get: () => undefined, record: vi.fn() },
+    // A local record matching PROPOSAL exactly — commitments.ts now REFUSES
+    // to execute a proposal with no matching local submission record.
+    proposalSubmissions: {
+      get: () => ({
+        proposalId: PROPOSAL.id,
+        tool: PROPOSAL.tool,
+        toolArgsHash: hashToolArgs(PROPOSAL.toolArgs),
+        executionContextHash: hashToolArgs(PROPOSAL.executionContext),
+        authorizationId: PROPOSAL.authorizationId,
+        profileId: PROPOSAL.profileId,
+        submittedAt: Math.floor(Date.now() / 1000),
+      }),
+      record: vi.fn(),
+    },
     executionLog: { record },
     executionJournal: new ExecutionJournal(dir),
     archiveReceipt: vi.fn().mockResolvedValue(undefined),
@@ -233,10 +254,18 @@ describe('executeCommitted × ExecutionJournal', () => {
   });
 
   it('a ticket without an id is refused before anything runs', async () => {
-    // Validly signed (so this exercises the "no id" refusal specifically, not
-    // ticket-verify.ts's signature check, which would otherwise catch a bare
-    // `{}` first for a different reason).
-    const idlessReceipt = signTestReceipt({ action: PROPOSAL.tool, executionContext: PROPOSAL.executionContext }, kp.privateKey);
+    // Validly signed and otherwise fully bound to PROPOSAL (so this exercises
+    // the "no id" refusal specifically, not one of ticket-verify.ts's other
+    // checks, which would otherwise catch a bare `{}` first for a different
+    // reason).
+    const idlessReceipt = signTestReceipt({
+      action: PROPOSAL.tool,
+      executionContext: PROPOSAL.executionContext,
+      authorizationId: PROPOSAL.authorizationId,
+      profileId: PROPOSAL.profileId,
+      proposalId: PROPOSAL.id,
+      timestamp: Math.floor(Date.now() / 1000),
+    }, kp.privateKey);
     const postReceipt = vi.fn().mockResolvedValue({ receipt: idlessReceipt, idempotent: false });
     const { state } = buildState(dir, postReceipt);
     const { im, callTool } = buildIntegrationManager();

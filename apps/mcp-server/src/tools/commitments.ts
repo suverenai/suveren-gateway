@@ -107,15 +107,40 @@ export async function executeCommitted(
     .getAllAuthorizations()
     .find(a => a.authorizationId === proposal.authorizationId);
 
-  // Cross-check against what THIS gateway itself submitted, when it was the
-  // submitter (proposal-submission-store.ts) — "never trust AS-supplied
-  // tool/args alone" for the review path, where everything (tool, args,
-  // "committed" status) comes from the server. Skipped, not refused, when no
-  // local record exists: a different device may have submitted this proposal
-  // (an intentional, supported multi-device review flow) — the ticket
-  // signature check below is the defense that still applies unconditionally.
+  // Cross-check against what THIS gateway itself submitted
+  // (proposal-submission-store.ts) — "never trust AS-supplied tool/args
+  // alone" for the review path, where everything (tool, args, "committed"
+  // status) comes from the server.
+  //
+  // REQUIRED, not best-effort: a proposal with no local submission record is
+  // refused outright, even though the ticket-verify.ts check below still
+  // applies too. Without this, an impostor sitting where the gateway reaches
+  // the AS can inject a "committed" proposal for arbitrary tool/args and pair
+  // it with a genuine ticket minted (with the real API key) for some OTHER,
+  // differently-shaped request — ticket-verify.ts's action/executionContext
+  // check can be satisfied by choosing a proposal whose shape matches a
+  // ticket the impostor can obtain (see hap-e2e's as-impostor-relay suite).
+  // Only a local record proves THIS gateway is the one that asked for this
+  // exact proposal to exist.
+  //
+  // Known regression this creates: a proposal submitted by a DIFFERENT
+  // gateway/device (approve-on-phone, execute-on-laptop) can no longer be
+  // executed here — that flow needs its own design (e.g. the Authority
+  // Server itself attesting who submitted a proposal) before it can be
+  // un-refused safely; see doc/self-hosted-as.md's gateway section for where
+  // that would land.
   const submitted = state.proposalSubmissions.get(proposal.id);
-  if (submitted) {
+  if (!submitted) {
+    void notifyControlPlane('as-key-mismatch');
+    return {
+      text:
+        `Blocked: proposal ${proposal.id} was not submitted by this gateway (no local record) — ` +
+        `refusing to execute. If it was submitted from another device, re-submit the same tool ` +
+        `call from this one so it can be approved and executed here.`,
+      isError: true,
+    };
+  }
+  {
     const mismatches: string[] = [];
     if (submitted.tool !== proposal.tool) mismatches.push('tool');
     if (submitted.toolArgsHash !== hashToolArgs(proposal.toolArgs)) mismatches.push('arguments');
@@ -183,15 +208,21 @@ export async function executeCommitted(
     replayed = idempotent;
 
     // Verify the ticket BEFORE trusting it for anything — signature against
-    // the PINNED key, and its own action/executionContext against the
-    // proposal. This is the review path's whole defense against a server
-    // that hands the gateway a tool call it never approved: everything else
-    // here (tool name, arguments, "committed" status) comes from the AS, so
-    // without this check a receipt minted by ANY key at all — valid or
-    // not — would be enough to make the gateway run it.
+    // the PINNED key, and its own bound fields against the proposal,
+    // INCLUDING proposalId: a receipt minted for some other request (or for
+    // no proposal — a plain automatic-mode ticket) must never be accepted
+    // just because its action/executionContext happen to match. This is the
+    // review path's whole defense against a server that hands the gateway a
+    // tool call it never approved: everything else here (tool name,
+    // arguments, "committed" status) comes from the AS, so without this
+    // check a receipt minted by ANY key at all — valid or not — would be
+    // enough to make the gateway run it.
     await verifyTicket(state.cache, receipt, {
       action: proposal.tool,
       executionContext: proposal.executionContext,
+      authorizationId: proposal.authorizationId,
+      profileId: proposal.profileId,
+      proposalId: proposal.id,
     });
 
     // Subject custody: archive the complete signed receipt locally (parity

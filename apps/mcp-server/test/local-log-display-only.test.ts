@@ -240,8 +240,20 @@ describe('the gated write path — the AS gets asked', () => {
     // the pinned key (cache.getPublicKey(), stubbed above to AS_PUBLIC_HEX)
     // before trusting it. Echoes back the request's action/executionContext,
     // as a well-behaved AS does — its receipt is bound to what was asked.
-    const postReceipt = vi.fn().mockImplementation(async (req: { action: string; executionContext?: Record<string, unknown> }) => {
-      const payload = { id: 'rcpt-1', action: req.action, executionContext: req.executionContext ?? {} };
+    const postReceipt = vi.fn().mockImplementation(async (req: {
+      action: string;
+      executionContext?: Record<string, unknown>;
+      authorizationId?: string;
+      profileId?: string;
+    }) => {
+      const payload = {
+        id: 'rcpt-1',
+        action: req.action,
+        executionContext: req.executionContext ?? {},
+        authorizationId: req.authorizationId,
+        profileId: req.profileId,
+        timestamp: Math.floor(Date.now() / 1000),
+      };
       const signature = edSign(null, Buffer.from(canonicalize(payload), 'utf8'), AS_PRIVATE).toString('base64url');
       return { receipt: { ...payload, signature } };
     });

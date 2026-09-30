@@ -72,15 +72,26 @@ const state = new SharedState(spUrl, undefined, dataDir);
 // the local receipt archive (each entry already stores its own asUrl).
 (function repairIfAsUrlChanged() {
   const lastKnown = readMcpPairedAsUrl(dataDir);
-  if (lastKnown && lastKnown !== spUrl) {
+  if (lastKnown === null) {
+    // No tracker record at all — either a genuinely fresh data dir (the gate
+    // store is already empty, so clearing is a costless no-op) OR an upgrade
+    // from a version that predates this tracker file, where the gate store
+    // may hold mandates cached against an AS we have no record of ever
+    // having checked against. Seeding the tracker WITHOUT clearing here would
+    // silently trust whatever is already on disk on that upgrade path — fail
+    // closed instead, exactly as a genuine URL change would.
+    console.error(
+      '[Suveren MCP] No Authority Server pairing record found — clearing any cached mandates ' +
+        '(fresh data dir, or an upgrade from a version that predates this check).',
+    );
+    state.gateStore.clearAll();
+  } else if (lastKnown !== spUrl) {
     console.error(
       `[Suveren MCP] Authority Server changed (${lastKnown} → ${spUrl}) — ` +
         'clearing cached mandates. Sign in again to re-pair.',
     );
     state.gateStore.clearAll();
   }
-  // Always record the CURRENT url — first boot (lastKnown === null) just
-  // seeds it, so it costs nothing to also do on the unpaired path.
   writeMcpPairedAsUrl(dataDir, spUrl);
 })();
 
