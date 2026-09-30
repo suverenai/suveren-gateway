@@ -14,7 +14,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 
 export const DEFAULT_AS_URL = 'https://www.suveren.ai';
 
@@ -35,6 +35,27 @@ export function readConfig(dataDir) {
   } catch {
     return {};
   }
+}
+
+/**
+ * Strict counterpart used only by resolveAsUrl: distinguishes "genuinely
+ * absent" (fine — falls through to the default) from "present but
+ * unparsable" (must refuse to start, not silently behave like an empty
+ * file — see resolveAsUrl's doc comment).
+ */
+function readConfigStrict(dataDir) {
+  const path = configPath(dataDir);
+  if (!existsSync(path)) return {};
+  let data;
+  try {
+    data = JSON.parse(readFileSync(path, 'utf8'));
+  } catch (err) {
+    throw new Error(`Could not parse ${path}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  const out = {};
+  if (typeof data.asUrl === 'string') out.asUrl = data.asUrl;
+  if (typeof data.caFile === 'string') out.caFile = data.caFile;
+  return out;
 }
 
 export function writeConfig(dataDir, patch) {
@@ -80,19 +101,32 @@ export function validateAsUrl(candidate) {
   return { ok: true, url: normalized };
 }
 
-/** Validate a candidate CA file path: must exist and be readable. Does not
- *  check that it PARSES as PEM — Node reports that itself, loudly, at TLS
- *  handshake time if it's wrong, which is soon enough for a rare setup step. */
+/**
+ * Validate a candidate CA file path: must exist and be readable. Returns an
+ * ABSOLUTE path (resolved against the CURRENT working directory) — a
+ * relative one saved as-is would resolve differently depending on where a
+ * later `start`/autostart happens to run from (a login service's cwd is
+ * rarely the directory someone typed the flag from). Does not check that it
+ * PARSES as PEM — Node reports that itself, loudly, at TLS handshake time if
+ * it's wrong, which is soon enough for a rare setup step.
+ */
 export function validateCaFile(candidate) {
   const trimmed = (candidate ?? '').trim();
   if (!trimmed) return { ok: false, error: 'The CA file path is empty.' };
-  if (!existsSync(trimmed)) return { ok: false, error: `No file at "${trimmed}".` };
-  return { ok: true, path: trimmed };
+  const absolute = resolve(process.cwd(), trimmed);
+  if (!existsSync(absolute)) return { ok: false, error: `No file at "${absolute}".` };
+  return { ok: true, path: absolute };
 }
 
-/** Resolution order: env SUVEREN_AS_URL > saved config > default. Throws on
- *  an explicitly-set-but-invalid env var (fail closed, audibly); a bad SAVED
- *  value only warns and falls back, since it was validated when written. */
+/**
+ * Resolution order: env SUVEREN_AS_URL > saved config > default. Throws on
+ * an explicitly-set-but-invalid env var, AND on a saved value that is
+ * present but invalid or on a config.json that won't parse — fail closed,
+ * audibly. For a self-hosted customer, silently falling back to the public
+ * default here would mean their real API key gets sent to suveren.ai instead
+ * of their own server. Only a genuinely ABSENT saved value (nothing was ever
+ * set) falls through to the default.
+ */
 export function resolveAsUrl(dataDir) {
   const envUrl = process.env.SUVEREN_AS_URL;
   if (envUrl) {
@@ -100,11 +134,11 @@ export function resolveAsUrl(dataDir) {
     if (!v.ok) throw new Error(`Invalid SUVEREN_AS_URL: ${v.error}`);
     return v.url;
   }
-  const saved = readConfig(dataDir).asUrl;
+  const saved = readConfigStrict(dataDir).asUrl;
   if (saved) {
     const v = validateAsUrl(saved);
-    if (v.ok) return v.url;
-    console.error(`[suveren-gateway] Ignoring saved as-url "${saved}" — ${v.error}`);
+    if (!v.ok) throw new Error(`Invalid saved as-url "${saved}" in ${dataDir}/config.json: ${v.error}`);
+    return v.url;
   }
   return DEFAULT_AS_URL;
 }

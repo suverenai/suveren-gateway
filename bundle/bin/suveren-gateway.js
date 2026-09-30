@@ -64,33 +64,33 @@ function flagValue(args, name) {
 async function start(args) {
   const detach = args.includes('--detach') || args.includes('-d');
 
-  // --as-url / --ca-file: validate, SAVE (so a later `start` with no flag
-  // keeps using it — see config.mjs / doc/self-hosted-as.md §10), and for
-  // --as-url also override process.env for the child we are about to spawn.
-  // That override is what makes "flag > env" actually true: without it, a
-  // pre-existing SUVEREN_AS_URL in the caller's shell would still win inside
-  // the child, since the resolver there reads env before saved config.
+  // --as-url / --ca-file: VALIDATE now (fail fast on bad input regardless of
+  // whether a start would even be possible), but do not SAVE yet — see below,
+  // after the already-running / port-in-use checks. Saving here unconditionally
+  // meant `start --as-url X` against an already-running gateway silently
+  // overwrote the saved config for an instance that never actually started
+  // with it, which is confusing to unwind (the saved value looks right, but
+  // nothing running reflects it).
   const asUrlFlag = flagValue(args, '--as-url');
+  let asUrlToSave = null;
   if (asUrlFlag) {
     const v = validateAsUrl(asUrlFlag);
     if (!v.ok) {
       console.error(`Invalid --as-url: ${v.error}`);
       process.exit(1);
     }
-    writeConfig(DATA_DIR, { asUrl: v.url });
-    process.env.SUVEREN_AS_URL = v.url;
-    console.log(`Authority Server: ${v.url} (saved — future \`start\` calls keep this without the flag)`);
+    asUrlToSave = v.url;
   }
 
   const caFileFlag = flagValue(args, '--ca-file');
+  let caFileToSave = null;
   if (caFileFlag) {
     const v = validateCaFile(caFileFlag);
     if (!v.ok) {
       console.error(`Invalid --ca-file: ${v.error}`);
       process.exit(1);
     }
-    writeConfig(DATA_DIR, { caFile: v.path });
-    console.log(`CA file: ${v.path} (saved — applied to every process this gateway starts)`);
+    caFileToSave = v.path;
   }
 
   if (await isAlreadyRunning()) {
@@ -126,6 +126,21 @@ async function start(args) {
   }
 
   ensureDataDir();
+
+  // NOW save — a start we know is actually going to happen. Also override
+  // process.env for the child we're about to spawn: that's what makes
+  // "flag > env" actually true (without it, a pre-existing SUVEREN_AS_URL in
+  // the caller's shell would still win inside the child, since the resolver
+  // there reads env before saved config).
+  if (asUrlToSave) {
+    writeConfig(DATA_DIR, { asUrl: asUrlToSave });
+    process.env.SUVEREN_AS_URL = asUrlToSave;
+    console.log(`Authority Server: ${asUrlToSave} (saved — future \`start\` calls keep this without the flag)`);
+  }
+  if (caFileToSave) {
+    writeConfig(DATA_DIR, { caFile: caFileToSave });
+    console.log(`CA file: ${caFileToSave} (saved — applied to every process this gateway starts)`);
+  }
 
   if (detach) {
     const out = openSync(LOG_FILE, 'a');
@@ -229,7 +244,22 @@ async function stop() {
       }
       if (isPidAlive(pid)) {
         console.error(`Process ${pid} did not exit after SIGTERM — sending SIGKILL.`);
-        process.kill(pid, 'SIGKILL');
+        // The WHOLE GROUP (negative pid), not just this one process: `pid`
+        // here is always a `--detach`-spawned process, which Node makes the
+        // leader of a new process group (`detached: true`). SIGKILL cannot be
+        // caught or relayed — sending it to just the top pid (which, with a
+        // saved --ca-file, is the re-exec parent from server.js) killed it
+        // instantly with no chance to forward the signal, orphaning the
+        // re-exec'd child and everything IT spawned (control-plane, MCP
+        // server, every integration). `-pid` reaches all of them in one shot.
+        try {
+          process.kill(-pid, 'SIGKILL');
+        } catch {
+          // ESRCH (group already gone) or an environment where group-kill
+          // isn't permitted — fall back to the single pid so this can't throw
+          // its way out of stop() entirely.
+          process.kill(pid, 'SIGKILL');
+        }
       }
     }
     safeUnlink(PID_FILE);

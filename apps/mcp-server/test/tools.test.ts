@@ -7,6 +7,7 @@ import { SPReceiptError } from '../src/lib/sp-client';
 import type { AttestationCache, CachedAuthorization } from '../src/lib/attestation-cache';
 import type { SharedState, EnrichedAuthorization } from '../src/lib/shared-state';
 import type { IntegrationManager, DiscoveredTool } from '../src/lib/integration-manager';
+import { testReceiptKeypair, makeSignedReceipt } from './helpers/real-receipt';
 
 // ─── Mock factories ──────────────────────────────────────────────────────────
 
@@ -221,12 +222,27 @@ function mockGatedState(opts: {
 
   const enriched: EnrichedAuthorization[] = [{ ...auth, gateContent: null }];
 
+  // A REAL Ed25519 keypair — ticket-verify.ts now checks every receipt's
+  // signature against the pinned key (state.cache.getPublicKey()) before
+  // trusting it for anything, so a mock receipt needs a real signature to
+  // exercise the same path a real gateway run does.
+  const kp = testReceiptKeypair();
+  // Echoes back whatever `action`/`executionContext` the caller sent, signed
+  // — a well-behaved AS does the same (the receipt is bound to the request).
+  // This exercises the real verification logic without hardcoding the exact
+  // executionContext shape tool-proxy.ts's execution-mapping produces.
+  const defaultPostReceipt = vi.fn().mockImplementation(async (req: { action: string; executionContext?: Record<string, unknown> }) => ({
+    receipt: makeSignedReceipt(kp, { id: 'r1', action: req.action, executionContext: req.executionContext ?? {} }),
+  }));
+
   return {
     getEnrichedAuthorizations: () => enriched,
     spClient: {
-      postReceipt: opts.postReceipt ?? vi.fn().mockResolvedValue({ receipt: { id: 'r1' } }),
+      postReceipt: opts.postReceipt ?? defaultPostReceipt,
       isUnlocked: () => true,
     },
+    cache: { getPublicKey: async () => kp.publicKeyHex },
+    proposalSubmissions: { record: vi.fn(), get: () => undefined },
     gatekeeper: {
       verifyExecution: vi.fn().mockResolvedValue({
         result: opts.verifyResult ?? { approved: true, errors: [] },
@@ -272,8 +288,11 @@ function mockIntegrationManager(readAgeDays: number | null = null): IntegrationM
 
 describe('createGatedToolHandler — SP receipt integration', () => {
   it('proxies tool call when SP returns receipt', async () => {
-    const postReceipt = vi.fn().mockResolvedValue({ receipt: { id: 'r1' } });
-    const state = mockGatedState({ postReceipt });
+    const kp = testReceiptKeypair();
+    const postReceipt = vi.fn().mockImplementation(async (req: { action: string; executionContext?: Record<string, unknown> }) => ({
+      receipt: makeSignedReceipt(kp, { id: 'r1', action: req.action, executionContext: req.executionContext ?? {} }),
+    }));
+    const state = { ...mockGatedState({ postReceipt }), cache: { getPublicKey: async () => kp.publicKeyHex } } as unknown as SharedState;
     const im = mockIntegrationManager();
     const handler = createGatedToolHandler(mockTool('charge'), im, state);
 

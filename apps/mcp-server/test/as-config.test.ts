@@ -8,7 +8,7 @@
  * localhost) from ever becoming "the server that issues tickets".
  */
 import { describe, it, expect, afterEach } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -99,13 +99,20 @@ describe('resolveAsUrl — precedence', () => {
     expect(() => resolveAsUrl(dir, 'ftp://nope')).toThrow(/Invalid --as-url/);
   });
 
-  it('a corrupt saved config degrades to the default rather than throwing', () => {
+  it('REFUSAL: an invalid saved as-url throws — never falls back to the public default', () => {
+    // For a self-hosted customer, silently falling back to suveren.ai means
+    // their real API key would be sent to the wrong (public) server.
     const dir = dataDir();
-    writeAsConfig(dir, {});
     // Hand-corrupt: an invalid URL saved directly (bypassing validation),
     // simulating a hand-edited file.
     writeAsConfig(dir, { asUrl: 'not-a-url' });
-    expect(resolveAsUrl(dir)).toBe(DEFAULT_AS_URL);
+    expect(() => resolveAsUrl(dir)).toThrow(/Invalid saved as-url/);
+  });
+
+  it('REFUSAL: a config.json that is not valid JSON throws — never treated as "nothing saved"', () => {
+    const dir = dataDir();
+    writeFileSync(join(dir, 'config.json'), '{ not json', 'utf-8');
+    expect(() => resolveAsUrl(dir)).toThrow(/Could not parse/);
   });
 });
 

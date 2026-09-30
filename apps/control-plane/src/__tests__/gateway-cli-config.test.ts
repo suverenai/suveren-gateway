@@ -79,6 +79,19 @@ describe('bundle/lib/config.mjs — resolveAsUrl / resolveCaFile precedence', ()
     expect(() => resolveAsUrl(dir)).toThrow(/Invalid SUVEREN_AS_URL/);
   });
 
+  it('REFUSAL: throws on an invalid saved as-url — never falls back to the public default', () => {
+    const dir = tmp(); dirs.push(dir);
+    writeConfig(dir, { asUrl: 'not-a-url' });
+    expect(() => resolveAsUrl(dir)).toThrow(/Invalid saved as-url/);
+  });
+
+  it('REFUSAL: throws on a config.json that is not valid JSON', () => {
+    const dir = tmp(); dirs.push(dir);
+    writeConfig(dir, {}); // create the dir
+    writeFileSync(join(dir, 'config.json'), '{ not json', 'utf-8');
+    expect(() => resolveAsUrl(dir)).toThrow(/Could not parse/);
+  });
+
   it('round-trips a saved ca-file', () => {
     const dir = tmp(); dirs.push(dir);
     writeConfig(dir, { caFile: '/etc/ssl/company-ca.pem' });

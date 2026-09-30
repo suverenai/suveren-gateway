@@ -50,10 +50,17 @@ export async function configure(sessionCookie: string, vaultKeyHex?: string): Pr
  * it already cleared its own cookie synchronously before this even fires —
  * this call is then a harmless no-op there.
  */
-export async function unconfigureSession(): Promise<void> {
+/**
+ * @param reason The REAL reason this process is locking (session-lock.ts) —
+ *   forwarded so the MCP server's `spClient.getLockReason()` (and thus what
+ *   an agent is told, see locked-notice.ts) says why, instead of always
+ *   defaulting to "your sign-in ended" regardless of the actual cause.
+ */
+export async function unconfigureSession(reason?: 'as-key-mismatch' | 'as-url-changed'): Promise<void> {
   const res = await fetch(`${MCP_BASE}/internal/clear-session`, {
     method: 'POST',
     headers: internalHeaders(),
+    body: JSON.stringify({ reason }),
   });
   if (!res.ok) {
     throw new Error(`MCP clear-session failed: ${res.status}`);

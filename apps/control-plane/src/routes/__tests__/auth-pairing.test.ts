@@ -143,11 +143,15 @@ describe('POST /auth/login — AS key pairing', () => {
     expect(readPairing(dataDir)?.publicKeyHex).toBe(pinnedKey);
   });
 
-  it('a pubkey fetch failure does not block sign-in (best-effort pairing)', async () => {
+  it('REFUSAL: a pubkey fetch failure blocks sign-in — never proceeds unpinned', async () => {
     // An AS that 500s on /api/as/pubkey but still answers /api/auth/session.
+    // A pubkey glitch must not be a way to bypass pinning by making just
+    // that one call fail (accidentally or on purpose).
+    let sessionCallReached = false;
     const server: Server = createServer((req, res) => {
       if (req.url === '/api/as/pubkey') { res.writeHead(500); res.end(); return; }
       if (req.url === '/api/auth/session' && req.method === 'POST') {
+        sessionCallReached = true;
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ user: { id: 'u1' }, sessionExpiresAt: 1_800_000_000 }));
         return;
@@ -168,7 +172,11 @@ describe('POST /auth/login — AS key pairing', () => {
     const { url: gwUrl, close: c2 } = await startGateway(new Vault(dataDir), asUrl, dataDir); stopGw = c2;
 
     const res = await fetch(`${gwUrl}/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-API-Key': 'hap_test' } });
-    expect(res.status).toBe(200);
-    expect(readPairing(dataDir)).toBeNull(); // no pin recorded — nothing to compare next time
+    expect(res.status).not.toBe(200);
+    const body = await res.json() as { error?: string };
+    expect(body.error).toBe('as_unreachable');
+    expect(readPairing(dataDir)).toBeNull();
+    // The API key must never have been sent — the key check runs first.
+    expect(sessionCallReached, 'the API key was sent to the AS before the key check refused it').toBe(false);
   });
 });

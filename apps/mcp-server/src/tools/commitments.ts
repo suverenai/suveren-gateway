@@ -26,6 +26,9 @@ import { encodeOutgoingArgs } from '../lib/arg-encoding';
 import { hashToolArgs } from '../lib/execution-journal';
 import type { CommittedExecutor, ExecutionResult } from '../lib/committed-executor';
 import { ContentBindingError } from '@hap/core';
+import { AsKeyMismatchError } from '../lib/attestation-cache';
+import { verifyTicket, TicketBindingMismatchError } from '../lib/ticket-verify';
+import { notifyControlPlane } from '../lib/cp-notify';
 
 // ─── The one executor ────────────────────────────────────────────────────────
 // Installed by the HTTP entrypoint once the integration manager exists. Every
@@ -104,6 +107,32 @@ export async function executeCommitted(
     .getAllAuthorizations()
     .find(a => a.authorizationId === proposal.authorizationId);
 
+  // Cross-check against what THIS gateway itself submitted, when it was the
+  // submitter (proposal-submission-store.ts) — "never trust AS-supplied
+  // tool/args alone" for the review path, where everything (tool, args,
+  // "committed" status) comes from the server. Skipped, not refused, when no
+  // local record exists: a different device may have submitted this proposal
+  // (an intentional, supported multi-device review flow) — the ticket
+  // signature check below is the defense that still applies unconditionally.
+  const submitted = state.proposalSubmissions.get(proposal.id);
+  if (submitted) {
+    const mismatches: string[] = [];
+    if (submitted.tool !== proposal.tool) mismatches.push('tool');
+    if (submitted.toolArgsHash !== hashToolArgs(proposal.toolArgs)) mismatches.push('arguments');
+    if (submitted.executionContextHash !== hashToolArgs(proposal.executionContext)) mismatches.push('executionContext');
+    if (submitted.authorizationId !== proposal.authorizationId) mismatches.push('authorizationId');
+    if (submitted.profileId !== proposal.profileId) mismatches.push('profileId');
+    if (mismatches.length > 0) {
+      void notifyControlPlane('as-key-mismatch');
+      return {
+        text:
+          `Blocked: proposal ${proposal.id} no longer matches what this gateway submitted ` +
+          `(${mismatches.join(', ')} differ) — refusing to execute.`,
+        isError: true,
+      };
+    }
+  }
+
   // Receipt id captured here so the verification footer (Category-A profiles)
   // can be embedded on the review-mode send too — not just automatic sends.
   let receiptId: string | undefined;
@@ -153,6 +182,18 @@ export async function executeCommitted(
     receiptId = typeof receipt?.id === 'string' ? receipt.id : undefined;
     replayed = idempotent;
 
+    // Verify the ticket BEFORE trusting it for anything — signature against
+    // the PINNED key, and its own action/executionContext against the
+    // proposal. This is the review path's whole defense against a server
+    // that hands the gateway a tool call it never approved: everything else
+    // here (tool name, arguments, "committed" status) comes from the AS, so
+    // without this check a receipt minted by ANY key at all — valid or
+    // not — would be enough to make the gateway run it.
+    await verifyTicket(state.cache, receipt, {
+      action: proposal.tool,
+      executionContext: proposal.executionContext,
+    });
+
     // Subject custody: archive the complete signed receipt locally (parity
     // with the automatic path). cachedAuth may be evicted — archive the
     // receipt anyway; the attestation blobs merge in on a later call.
@@ -170,6 +211,17 @@ export async function executeCommitted(
       boundContent: binding?.boundContent,
     });
   } catch (err) {
+    // The ticket didn't verify — signature disagrees with the pinned
+    // Authority Server key, or its own bound fields disagree with the
+    // proposal. Refuse AND lock: a server that can do this is exactly what
+    // pinning exists to catch, on the path with the least other protection.
+    if (err instanceof AsKeyMismatchError || err instanceof TicketBindingMismatchError) {
+      void notifyControlPlane('as-key-mismatch');
+      return {
+        text: `Proposal ${proposal.id}: blocked — ${err.message}`,
+        isError: true,
+      };
+    }
     // Approved content that cannot be bound. Refuse rather than execute on a
     // receipt that would verify while committing to less than the approver saw.
     if (err instanceof ContentBindingError) {

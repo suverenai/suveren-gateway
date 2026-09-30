@@ -85,7 +85,7 @@ export function createAsKeyMismatchLock(deps: SessionLockDeps): () => void {
 
     console.error('[Control Plane] Authority Server key mismatch — gateway LOCKED');
 
-    void unconfigureSessionFn().catch(err => {
+    void unconfigureSessionFn('as-key-mismatch').catch(err => {
       console.error('[Control Plane] Failed to push cleared session to MCP:', err);
     });
 

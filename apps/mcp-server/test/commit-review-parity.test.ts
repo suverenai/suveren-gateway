@@ -14,6 +14,7 @@ import type { SharedState } from '../src/lib/shared-state';
 import type { IntegrationManager, DiscoveredTool } from '../src/lib/integration-manager';
 import type { SPProposal } from '../src/lib/sp-client';
 import type { Subject } from '@hap/core';
+import { testReceiptKeypair, makeSignedReceipt } from './helpers/real-receipt';
 
 const SUBJECT: Subject = {
   did: 'did:key:a', assurance: 'high', method: 'as_vouched', trust_root: 'as',
@@ -47,10 +48,17 @@ const TOOL: DiscoveredTool = {
 };
 
 function buildState(opts: { boundsHash?: string; subjects?: Subject[] }) {
-  const postReceipt = vi.fn().mockResolvedValue({ receipt: { id: 'rcpt-1' } });
+  const kp = testReceiptKeypair();
+  // Echoes the request's action/executionContext, signed — ticket-verify.ts
+  // (used by commitments.ts) now checks every receipt before trusting it.
+  const postReceipt = vi.fn().mockImplementation(async (req: { action: string; executionContext?: Record<string, unknown> }) => ({
+    receipt: makeSignedReceipt(kp, { id: 'rcpt-1', action: req.action, executionContext: req.executionContext ?? {} }),
+  }));
   const state = {
     spClient: { postReceipt },
+    proposalSubmissions: { get: () => undefined, record: vi.fn() },
     cache: {
+      getPublicKey: async () => kp.publicKeyHex,
       getAllAuthorizations: () => [
         {
           authorizationId: 'authz_1',

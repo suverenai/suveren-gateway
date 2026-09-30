@@ -25,50 +25,75 @@ export interface AuthRouterPairingOptions {
   dataDir: string;
 }
 
+interface AsKeyCheckResult {
+  ok: boolean;
+  publicKeyHex?: string;
+  /** Machine-readable reason, present iff !ok. */
+  error?: 'as_unreachable' | 'as_key_mismatch';
+  message?: string;
+}
+
 /**
- * At sign-in, pin the AS's public key to the URL we just authenticated
- * against (see as-pairing.ts). Best-effort and NEVER blocks a login on its
- * own failure (a pubkey fetch glitch must not lock someone out): the only
- * case that refuses login is a live key that contradicts an EXISTING pin for
- * this exact URL, which is exactly the scenario pinning exists to catch.
+ * Fetch the AS's public key and check it against any EXISTING pin for this
+ * URL — BEFORE the API key is sent anywhere. Two fail-closed rules:
  *
- * Returns an error message to send back to the caller instead of completing
- * login, or null to proceed normally.
+ *  1. The pubkey fetch must succeed and return a well-formed key. An
+ *     unreachable or malformed AS is refused, not silently trusted unpinned
+ *     — otherwise pinning could be bypassed simply by making the pubkey
+ *     endpoint fail (or by an on-path attacker dropping just that one call).
+ *  2. A pinned key that disagrees with the live one for the SAME URL refuses
+ *     the sign-in outright — see doc/self-hosted-as.md §10, "Replacement
+ *     only by re-pairing" (rotation via a signature from the old key is
+ *     future work; there is no re-pairing UX yet beyond clearing the pairing
+ *     record by hand).
+ *
+ * Deliberately does NOT touch the API key: this runs before the caller sends
+ * it to `/api/auth/session`, so an impostor server never sees credentials
+ * before this check can refuse it.
  */
-async function pinAsKeyAtLogin(asUrl: string, dataDir: string): Promise<string | null> {
+async function checkAsKeyBeforeLogin(asUrl: string, dataDir: string): Promise<AsKeyCheckResult> {
   let publicKeyHex: string;
   try {
     const res = await fetch(`${asUrl}/api/as/pubkey`, { signal: AbortSignal.timeout(5000) });
-    if (!res.ok) return null;
-    const body = (await res.json()) as { publicKey?: string };
-    if (!body.publicKey) return null;
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: 'as_unreachable',
+        message: `Could not reach the Authority Server at ${asUrl} to verify its signing key (HTTP ${res.status}). Refusing to sign in.`,
+      };
+    }
+    const body = (await res.json().catch(() => null)) as { publicKey?: unknown } | null;
+    if (!body || typeof body.publicKey !== 'string' || !body.publicKey) {
+      return {
+        ok: false,
+        error: 'as_unreachable',
+        message: `The Authority Server at ${asUrl} returned a malformed signing key. Refusing to sign in.`,
+      };
+    }
     publicKeyHex = body.publicKey;
   } catch (err) {
-    console.error('[Control Plane] Could not fetch AS pubkey for pairing (login proceeds unpinned):', err);
-    return null;
+    return {
+      ok: false,
+      error: 'as_unreachable',
+      message: `Could not reach the Authority Server at ${asUrl} to verify its signing key — ` +
+        `${err instanceof Error ? err.message : String(err)}. Refusing to sign in.`,
+    };
   }
 
   const existing = readPairing(dataDir);
   if (existing && existing.asUrl === asUrl && existing.publicKeyHex !== publicKeyHex) {
-    // A pinned key exists for THIS URL and the live key disagrees — either a
-    // deliberate (unsupported today) key rotation on the customer's AS, or
-    // something else answering at this URL. Refuse rather than silently
-    // re-pin: see doc/self-hosted-as.md §10, "Replacement only by re-pairing"
-    // — and there is no re-pairing UX yet beyond clearing the pairing record
-    // by hand (rotation via a signature from the old key is future work).
-    return (
-      `The Authority Server at ${asUrl} presented a signing key that does not match the one ` +
-      `pinned when this gateway last signed in (pinned fingerprint ${fingerprintOf(existing.publicKeyHex)}, ` +
-      `now seeing ${fingerprintOf(publicKeyHex)}). Refusing to sign in. If the AS's key changed ` +
-      `intentionally, an operator must clear the old pairing before signing in again.`
-    );
+    return {
+      ok: false,
+      error: 'as_key_mismatch',
+      message:
+        `The Authority Server at ${asUrl} presented a signing key that does not match the one ` +
+        `pinned when this gateway last signed in (pinned fingerprint ${fingerprintOf(existing.publicKeyHex)}, ` +
+        `now seeing ${fingerprintOf(publicKeyHex)}). Refusing to sign in. If the AS's key changed ` +
+        `intentionally, an operator must clear the old pairing before signing in again.`,
+    };
   }
 
-  if (!existing || existing.asUrl !== asUrl) {
-    writePairing(dataDir, asUrl, publicKeyHex);
-    console.error(`[Control Plane] Paired with Authority Server ${asUrl} (fingerprint ${fingerprintOf(publicKeyHex)})`);
-  }
-  return null;
+  return { ok: true, publicKeyHex };
 }
 
 export function createAuthRouter(
@@ -110,6 +135,23 @@ export function createAuthRouter(
     }
 
     try {
+      // Check the AS's signing key BEFORE the API key is sent anywhere — an
+      // impostor server must not receive real credentials just to be told
+      // "no" a moment later. See checkAsKeyBeforeLogin: this also refuses
+      // outright (rather than proceeding unpinned) when the key can't be
+      // fetched or is malformed.
+      let keyCheck: AsKeyCheckResult | null = null;
+      if (pairing) {
+        keyCheck = await checkAsKeyBeforeLogin(pairing.asUrl, pairing.dataDir);
+        if (!keyCheck.ok) {
+          res.status(keyCheck.error === 'as_key_mismatch' ? 409 : 502).json({
+            error: keyCheck.error,
+            message: keyCheck.message,
+          });
+          return;
+        }
+      }
+
       const spRes = await fetch(`${SP_URL}/api/auth/session`, {
         method: 'POST',
         headers: {
@@ -128,16 +170,15 @@ export function createAuthRouter(
         return;
       }
 
-      // Pin (or verify against the existing pin for) the AS's signing key
-      // BEFORE establishing anything — see pinAsKeyAtLogin. Credentials are
-      // already known good at this point (the session call above succeeded),
-      // so this is the earliest point a key mismatch can be caught, and the
-      // right one: nothing about this session exists yet to unwind.
-      if (pairing) {
-        const mismatch = await pinAsKeyAtLogin(pairing.asUrl, pairing.dataDir);
-        if (mismatch) {
-          res.status(409).json({ error: 'as_key_mismatch', message: mismatch });
-          return;
+      // Pin the key now that the credentials are known good AND the key
+      // check above already passed (fresh pairing, or matching an existing
+      // pin — a mismatch already returned above). Only a fresh pairing needs
+      // a write; matching an existing pin is a no-op.
+      if (pairing && keyCheck?.publicKeyHex) {
+        const existing = readPairing(pairing.dataDir);
+        if (!existing || existing.asUrl !== pairing.asUrl) {
+          writePairing(pairing.dataDir, pairing.asUrl, keyCheck.publicKeyHex);
+          console.error(`[Control Plane] Paired with Authority Server ${pairing.asUrl} (fingerprint ${fingerprintOf(keyCheck.publicKeyHex)})`);
         }
       }
 

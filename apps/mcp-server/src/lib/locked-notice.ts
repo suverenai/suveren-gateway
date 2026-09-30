@@ -1,7 +1,7 @@
 /**
  * What an agent is told when the gateway is running but LOCKED.
  *
- * Two ways to end up here, and they need different explanations:
+ * Four ways to end up here, and they need different explanations:
  *
  *  - **'restart' (default)** — the gateway always boots locked; nothing on
  *    the machine can decrypt the vault without the person. Autostart makes
@@ -13,8 +13,17 @@
  *    change). The gateway locks itself the moment it learns this, exactly
  *    like logout — so the agent must never keep reporting "no authority" in
  *    words that suggest nothing was ever granted.
+ *  - **'as-key-mismatch'** — the Authority Server at the configured URL
+ *    presented a signing key that does not match the one pinned at pairing
+ *    (as-pairing.ts). Telling the agent "your sign-in ended, sign in again"
+ *    here would be actively misleading: signing in again is REFUSED (409) —
+ *    see auth.ts — until an operator resolves the mismatch.
+ *  - **'as-url-changed'** — the resolved Authority Server URL no longer
+ *    matches the one this gateway was paired with; re-pairing (a fresh
+ *    sign-in against the new server) is exactly what's needed here, unlike
+ *    the key-mismatch case.
  *
- * Before either existed, this state was reported as "No authorizations
+ * Before any of these existed, this state was reported as "No authorizations
  * found" — indistinguishable from a correctly configured gateway belonging to
  * someone who has not set anything up. The agent would confidently tell the
  * user they had no authority, and the user would go and create one, when
@@ -28,7 +37,7 @@
  */
 
 /** Why the gateway is locked right now. */
-export type LockedReason = 'restart' | 'expired';
+export type LockedReason = 'restart' | 'expired' | 'as-key-mismatch' | 'as-url-changed';
 
 /** Address the person should open. Honours a non-default control-plane port. */
 function uiUrl(): string {
@@ -57,6 +66,29 @@ function expiredSessionNotice(what: string): string {
   );
 }
 
+function asKeyMismatchNotice(what: string): string {
+  return (
+    `${what} Suveren gateway is LOCKED because the Authority Server it is ` +
+    `configured to use presented a signing key that does not match the one ` +
+    `pinned when this gateway last signed in. This is NOT an ended sign-in — ` +
+    `signing in again will be refused until the mismatch is resolved.\n\n` +
+    `TELL THE USER: this needs an operator to check whether the Authority ` +
+    `Server's key changed intentionally (e.g. a reinstall) or something else ` +
+    `is answering at that address, at ${uiUrl()}. Nothing ran under the ` +
+    `unrecognized key.`
+  );
+}
+
+function asUrlChangedNotice(what: string): string {
+  return (
+    `${what} Suveren gateway is LOCKED because the Authority Server it points ` +
+    `at has changed since it last signed in. Cached mandates from the old ` +
+    `server were cleared.\n\n` +
+    `TELL THE USER: open ${uiUrl()} and sign in again to pair with the new ` +
+    `Authority Server.`
+  );
+}
+
 /**
  * The notice, addressed to the AGENT but written to be relayed verbatim to the
  * person — the agent is the only thing that can see this state, and the person
@@ -64,5 +96,10 @@ function expiredSessionNotice(what: string): string {
  */
 export function lockedNotice(action?: string, reason: LockedReason = 'restart'): string {
   const what = action ? `Cannot ${action}: the` : 'The';
-  return reason === 'expired' ? expiredSessionNotice(what) : bootLockedNotice(what);
+  switch (reason) {
+    case 'expired': return expiredSessionNotice(what);
+    case 'as-key-mismatch': return asKeyMismatchNotice(what);
+    case 'as-url-changed': return asUrlChangedNotice(what);
+    default: return bootLockedNotice(what);
+  }
 }

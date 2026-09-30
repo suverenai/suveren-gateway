@@ -36,6 +36,30 @@ function configPath(dataDir: string): string {
   return join(dataDir, 'config.json');
 }
 
+/**
+ * Read the saved config file, distinguishing "genuinely absent" from
+ * "present but unparsable" — resolveAsUrl needs that distinction (a corrupt
+ * file must refuse to start, not silently behave like an empty one; see its
+ * own doc comment). Other callers that don't care use readAsConfig below,
+ * which flattens both cases to `{}`.
+ */
+function readAsConfigStrict(dataDir: string): AsConfig {
+  const path = configPath(dataDir);
+  if (!existsSync(path)) return {};
+  let data: Record<string, unknown>;
+  try {
+    data = JSON.parse(readFileSync(path, 'utf-8')) as Record<string, unknown>;
+  } catch (err) {
+    throw new Error(
+      `Could not parse ${path}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  const out: AsConfig = {};
+  if (typeof data.asUrl === 'string') out.asUrl = data.asUrl;
+  if (typeof data.caFile === 'string') out.caFile = data.caFile;
+  return out;
+}
+
 /** Read the saved config file. Tolerant of a missing or corrupt file — both
  *  degrade to "nothing saved", never to a thrown error. */
 export function readAsConfig(dataDir: string): AsConfig {
@@ -122,13 +146,16 @@ export function validateAsUrl(candidate: string): AsUrlValidation {
  * runs — kept here so the precedence chain is documented in one place and
  * testable directly).
  *
- * Throws if an EXPLICITLY given source (flag or env) is invalid — an
- * operator who typed a bad URL must be told loudly, not silently redirected
- * to the public default (see doc/engineering.md, "fail closed, and audibly").
- * A bad SAVED value is downgraded to a warning instead: it was validated when
- * it was written, so a bad value there means the file was hand-edited or
- * corrupted, and refusing to start on that is a worse failure mode than
- * falling back to the default.
+ * Throws if ANY explicitly-set source — flag, env, OR a saved value that is
+ * present but invalid/corrupt — is bad. An operator who typed a bad URL, or
+ * whose config.json got hand-edited or corrupted, must be told loudly, never
+ * silently redirected to the public default (see doc/engineering.md, "fail
+ * closed, and audibly") — for a self-hosted customer, silently falling back
+ * to `https://www.suveren.ai` means their real API key gets sent to the
+ * public SaaS instead of their own server. Only a genuinely ABSENT saved
+ * value (no config.json, or no `asUrl` key in it — nothing was ever set)
+ * falls through to the default; that is the one case with nothing to have
+ * gotten wrong.
  */
 export function resolveAsUrl(dataDir: string, flag?: string): string {
   if (flag) {
@@ -144,11 +171,13 @@ export function resolveAsUrl(dataDir: string, flag?: string): string {
     return v.url!;
   }
 
-  const saved = readAsConfig(dataDir).asUrl;
+  // Strict: a config.json that exists but won't parse must not be treated
+  // as "nothing saved" — see readAsConfigStrict's doc comment.
+  const saved = readAsConfigStrict(dataDir).asUrl;
   if (saved) {
     const v = validateAsUrl(saved);
-    if (v.ok) return v.url!;
-    console.error(`[as-config] Ignoring saved as-url "${saved}" — ${v.error}`);
+    if (!v.ok) throw new Error(`Invalid saved as-url "${saved}" in ${dataDir}/config.json: ${v.error}`);
+    return v.url!;
   }
 
   return DEFAULT_AS_URL;

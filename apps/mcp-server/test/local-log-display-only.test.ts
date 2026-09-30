@@ -236,7 +236,15 @@ describe('the gated write path — the AS gets asked', () => {
   };
 
   function buildState() {
-    const postReceipt = vi.fn().mockResolvedValue({ receipt: { id: 'rcpt-1' } });
+    // A real signature — ticket-verify.ts now checks every receipt against
+    // the pinned key (cache.getPublicKey(), stubbed above to AS_PUBLIC_HEX)
+    // before trusting it. Echoes back the request's action/executionContext,
+    // as a well-behaved AS does — its receipt is bound to what was asked.
+    const postReceipt = vi.fn().mockImplementation(async (req: { action: string; executionContext?: Record<string, unknown> }) => {
+      const payload = { id: 'rcpt-1', action: req.action, executionContext: req.executionContext ?? {} };
+      const signature = edSign(null, Buffer.from(canonicalize(payload), 'utf8'), AS_PRIVATE).toString('base64url');
+      return { receipt: { ...payload, signature } };
+    });
     const enriched: EnrichedAuthorization[] = [{ ...AUTH, gateContent: null } as EnrichedAuthorization];
     const state = {
       getEnrichedAuthorizations: () => enriched,

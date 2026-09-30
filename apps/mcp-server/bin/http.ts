@@ -33,7 +33,7 @@ import type { SPProposal } from '../src/lib/sp-client';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { resolveAsUrl } from '../src/lib/as-config';
-import { readPairing, clearPairing } from '../src/lib/as-pairing';
+import { readMcpPairedAsUrl, writeMcpPairedAsUrl } from '../src/lib/mcp-as-tracker';
 import { setAsBaseUrl } from '../src/lib/receipt-footer';
 
 // Same default every stateful module in this codebase uses (GateStore,
@@ -57,22 +57,31 @@ const state = new SharedState(spUrl, undefined, dataDir);
 //
 // Boot-time only, mirrors the control plane's own check (index.ts) — the two
 // processes share the same data dir but each independently notices the
-// change, since either can start first. Clearing the pairing record and the
-// gate store here is idempotent: whichever process gets there first wins,
-// the other finds nothing left to clear.
+// change, since bundle/server.js starts them concurrently and either can come
+// up first.
+//
+// Deliberately reads/writes mcp-as-tracker.ts's OWN file, not the control
+// plane's `as-pairing.json` — reading that shared file here would race it:
+// whichever process booted first and deleted it (see index.ts) would leave
+// the other with nothing to compare against, and it would skip clearing
+// stale mandates. This file is written and read ONLY by the MCP server, so
+// neither process's timing can affect the other's decision, in either boot
+// order.
 //
 // Kept: vault credentials (owned by the control plane, untouched here) and
 // the local receipt archive (each entry already stores its own asUrl).
 (function repairIfAsUrlChanged() {
-  const pairing = readPairing(dataDir);
-  if (pairing && pairing.asUrl !== spUrl) {
+  const lastKnown = readMcpPairedAsUrl(dataDir);
+  if (lastKnown && lastKnown !== spUrl) {
     console.error(
-      `[Suveren MCP] Authority Server changed (${pairing.asUrl} → ${spUrl}) — ` +
+      `[Suveren MCP] Authority Server changed (${lastKnown} → ${spUrl}) — ` +
         'clearing cached mandates. Sign in again to re-pair.',
     );
-    clearPairing(dataDir);
     state.gateStore.clearAll();
   }
+  // Always record the CURRENT url — first boot (lastKnown === null) just
+  // seeds it, so it costs nothing to also do on the unpaired path.
+  writeMcpPairedAsUrl(dataDir, spUrl);
 })();
 
 const spApiKey = process.env.SUVEREN_AS_API_KEY ?? '';
@@ -185,13 +194,21 @@ app.post('/internal/configure', internalOnly, (req: Request, res: Response) => {
 /**
  * Push the "session ended" state to this process. Called by the control
  * plane's own session-lock procedure — whether IT detected the 401 (its own
- * AS proxy call) or a sibling MCP process did (via /internal/event →
- * session-expired). Idempotent: a client that already cleared itself on its
- * own 401 just gets the same state written again.
+ * AS proxy call), a sibling MCP process did (via /internal/event →
+ * session-expired), or an AS key mismatch. Idempotent: a client that already
+ * cleared itself on its own 401 just gets the same state written again.
+ *
+ * `reason`, when sent, is the REAL reason the control plane locked (see
+ * session-lock.ts) — carried through so the agent is told the truth instead
+ * of always hearing "your sign-in ended" (sp-client.ts's clearSession()
+ * default), which for an AS key mismatch or URL change would send it toward
+ * a sign-in that is itself refused.
  */
-app.post('/internal/clear-session', internalOnly, (_req: Request, res: Response) => {
-  state.spClient.clearSession();
-  console.error('[Suveren MCP] Session cleared by control-plane (AS session ended)');
+app.post('/internal/clear-session', internalOnly, (req: Request, res: Response) => {
+  const reason = (req.body as { reason?: unknown })?.reason;
+  const validReason = reason === 'as-key-mismatch' || reason === 'as-url-changed' ? reason : undefined;
+  state.spClient.clearSession(validReason);
+  console.error(`[Suveren MCP] Session cleared by control-plane (${validReason ?? 'expired'})`);
   res.json({ ok: true });
 });
 
