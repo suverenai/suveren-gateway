@@ -14,7 +14,7 @@
  * Used by mandate-brief (compact) and list-authorizations (full detail).
  */
 
-import type { AgentProfile, ProfileBoundsField, CumulativeWindow } from '@hap/core';
+import { boundActionTypes, type AgentProfile, type ProfileBoundsField, type CumulativeWindow } from '@hap/core';
 import type { ExecutionLog } from './execution-log';
 import type { EnrichedAuthorization } from './shared-state';
 
@@ -72,12 +72,15 @@ export function getConsumptionState(
     const limit = typeof boundValue === 'number' ? boundValue : null;
 
     const cumulativeField = bt.kind === 'cumulative_count' ? '_count' : bt.of;
+    // Same partition the gate enforces: a bound's usage is made of the action
+    // types it governs, not every execution under the profile.
     const current = executionLog.sumByWindow(
       auth.profileId,
       auth.path,
       cumulativeField,
       bt.window,
       now,
+      boundActionTypes(fieldName, fieldDef),
     );
 
     entries.push({
