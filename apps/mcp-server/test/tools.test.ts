@@ -236,6 +236,7 @@ function mockGatedState(opts: {
     executionContext?: Record<string, unknown>;
     authorizationId?: string;
     profileId?: string;
+    idempotencyKey?: string;
   }) => ({
     receipt: makeSignedReceipt(kp, {
       id: 'r1',
@@ -243,6 +244,9 @@ function mockGatedState(opts: {
       executionContext: req.executionContext ?? {},
       authorizationId: req.authorizationId,
       profileId: req.profileId,
+      // G4: a well-behaved (upgraded) AS echoes the idempotency key back
+      // into the signed receipt whenever the request carried one.
+      idempotencyKey: req.idempotencyKey,
     }),
   }));
 
@@ -305,6 +309,7 @@ describe('createGatedToolHandler — SP receipt integration', () => {
       executionContext?: Record<string, unknown>;
       authorizationId?: string;
       profileId?: string;
+      idempotencyKey?: string;
     }) => ({
       receipt: makeSignedReceipt(kp, {
         id: 'r1',
@@ -312,6 +317,7 @@ describe('createGatedToolHandler — SP receipt integration', () => {
         executionContext: req.executionContext ?? {},
         authorizationId: req.authorizationId,
         profileId: req.profileId,
+        idempotencyKey: req.idempotencyKey,
       }),
     }));
     const state = { ...mockGatedState({ postReceipt }), cache: { getPublicKey: async () => kp.publicKeyHex } } as unknown as SharedState;

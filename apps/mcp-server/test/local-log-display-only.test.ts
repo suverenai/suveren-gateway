@@ -245,6 +245,7 @@ describe('the gated write path — the AS gets asked', () => {
       executionContext?: Record<string, unknown>;
       authorizationId?: string;
       profileId?: string;
+      idempotencyKey?: string;
     }) => {
       const payload = {
         id: 'rcpt-1',
@@ -252,6 +253,8 @@ describe('the gated write path — the AS gets asked', () => {
         executionContext: req.executionContext ?? {},
         authorizationId: req.authorizationId,
         profileId: req.profileId,
+        // G4: echo the idempotency key back, as a well-behaved AS does.
+        idempotencyKey: req.idempotencyKey,
         timestamp: Math.floor(Date.now() / 1000),
       };
       const signature = edSign(null, Buffer.from(canonicalize(payload), 'utf8'), AS_PRIVATE).toString('base64url');

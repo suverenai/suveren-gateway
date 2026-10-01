@@ -810,6 +810,11 @@ function createGatedToolHandlerInner(
           // v0.5 Content Provenance: if the profile declares content_binding,
           // hash the agent's content (pre-footer `args`) and send the hash only.
           const binding = computeContentBinding(auth.profileId, tool, args, actionType);
+          // G4: generated once here, sent on every postReceipt attempt
+          // (including its internal retries) AND checked below against the
+          // ticket the AS signs — binding the ticket to THIS invocation, not
+          // just to "a call shaped like this one". See ticket-verify.ts.
+          const idempotencyKey = randomUUID();
           const { receipt } = await state.spClient.postReceipt({
             authorizationId: authzId,
             // Optional cross-check — the AS fails closed on a mismatch.
@@ -819,7 +824,7 @@ function createGatedToolHandlerInner(
             actionType,
             executionContext: { ...execution },
             amount: typeof execution.amount === 'number' ? execution.amount : undefined,
-            idempotencyKey: randomUUID(),
+            idempotencyKey,
             // Privacy: send the hash and how to reproduce it — never the
             // preimage. `binding` also carries `boundContent`, the plaintext
             // that was hashed (an email's to/cc/subject/body); it stays on
@@ -843,6 +848,7 @@ function createGatedToolHandlerInner(
             executionContext: { ...execution },
             authorizationId: authzId,
             profileId: auth.profileId,
+            idempotencyKey,
             contentHash: binding?.contentHash,
             contentBinding: binding?.contentBinding,
           });

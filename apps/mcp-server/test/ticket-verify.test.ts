@@ -151,6 +151,48 @@ describe('verifyTicket', () => {
     });
   });
 
+  describe('idempotencyKey (G4 — binds the ticket to the request)', () => {
+    it('accepts a receipt whose idempotencyKey matches what this call sent', async () => {
+      const kp = testReceiptKeypair();
+      const receipt = makeSignedReceipt(kp, { id: 'r1', ...BASE, idempotencyKey: 'idem-1' });
+      await expect(verifyTicket(cacheWithKey(kp.publicKeyHex), receipt, { ...BASE, idempotencyKey: 'idem-1' }))
+        .resolves.toBeUndefined();
+    });
+
+    it('rejects a receipt whose idempotencyKey differs from what this call sent', async () => {
+      const kp = testReceiptKeypair();
+      const receipt = makeSignedReceipt(kp, { id: 'r1', ...BASE, idempotencyKey: 'idem-other' });
+      await expect(verifyTicket(cacheWithKey(kp.publicKeyHex), receipt, { ...BASE, idempotencyKey: 'idem-1' }))
+        .rejects.toBeInstanceOf(TicketBindingMismatchError);
+    });
+
+    it('rejects a receipt with NO idempotencyKey when this call sent one — fail closed, missing counts as mismatch', async () => {
+      const kp = testReceiptKeypair();
+      const receipt = makeSignedReceipt(kp, { id: 'r1', ...BASE }); // no idempotencyKey at all
+      await expect(verifyTicket(cacheWithKey(kp.publicKeyHex), receipt, { ...BASE, idempotencyKey: 'idem-1' }))
+        .rejects.toBeInstanceOf(TicketBindingMismatchError);
+    });
+
+    it('is not checked at all when this call sent no idempotencyKey (the review path — proposalId is its binding instead)', async () => {
+      const kp = testReceiptKeypair();
+      // Receipt happens to carry SOME idempotencyKey (e.g. left over from a
+      // differently-shaped request) — irrelevant when this call never sent one.
+      const receipt = makeSignedReceipt(kp, { id: 'r1', ...BASE, idempotencyKey: 'whatever' });
+      await expect(verifyTicket(cacheWithKey(kp.publicKeyHex), receipt, BASE)).resolves.toBeUndefined();
+    });
+
+    it('idempotent replay of the same key against the same ticket still passes', async () => {
+      const kp = testReceiptKeypair();
+      const receipt = makeSignedReceipt(kp, { id: 'r1', ...BASE, idempotencyKey: 'idem-1' });
+      const expected = { ...BASE, idempotencyKey: 'idem-1' };
+      // Call twice — exactly what a retried postReceipt + a retried
+      // verifyTicket would look like when the AS replays the original
+      // ticket for the same key. Nothing here is stateful, so both pass.
+      await expect(verifyTicket(cacheWithKey(kp.publicKeyHex), receipt, expected)).resolves.toBeUndefined();
+      await expect(verifyTicket(cacheWithKey(kp.publicKeyHex), receipt, expected)).resolves.toBeUndefined();
+    });
+  });
+
   describe('timestamp freshness', () => {
     it('rejects a ticket older than the freshness window', async () => {
       const kp = testReceiptKeypair();

@@ -117,6 +117,7 @@ function buildState() {
     contentHash?: string;
     contentBinding?: { version: string; kind: string; fields?: string[] };
     proposalId?: string;
+    idempotencyKey?: string;
   }) => ({
     receipt: makeSignedReceipt(kp, {
       id: 'rcpt-1',
@@ -127,6 +128,9 @@ function buildState() {
       contentHash: req.contentHash,
       contentBinding: req.contentBinding,
       proposalId: req.proposalId,
+      // G4: echo the idempotency key back (automatic path sends one; the
+      // review path below does not, so this is undefined there — fine).
+      idempotencyKey: req.idempotencyKey,
     }),
   }));
   const archiveReceipt = vi.fn().mockResolvedValue(undefined);
