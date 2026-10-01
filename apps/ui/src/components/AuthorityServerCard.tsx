@@ -67,20 +67,39 @@ export function AuthorityServerCard() {
               Not yet paired — sign in once to pin this server's key.
             </p>
           )}
-          {state.pinTlsEnabled && (
+          {/* Shown ALWAYS once captured, not just when pin-tls is on: the
+              fingerprint is captured at every sign-in regardless (see
+              as-tls-pin.ts), so turning pin-tls on later enforces a pin
+              already on file rather than a fresh trust-on-first-use
+              moment — this is the out-of-band check for that pin, same as
+              the key fingerprint above, and worth comparing before relying
+              on it either way. */}
+          {(state.tlsPinFingerprint || state.pinTlsEnabled) && (
             <p style={{ margin: '0.5rem 0 0', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
               <strong>TLS certificate pin:</strong>{' '}
               {state.tlsPinFingerprint ? (
                 <code>{state.tlsPinFingerprint}</code>
               ) : (
-                <span style={{ color: 'var(--text-tertiary)' }}>not yet captured — sign in once more</span>
+                <span style={{ color: 'var(--text-tertiary)' }}>
+                  not yet captured — this URL has no recorded pairing over TLS
+                  {state.pinTlsEnabled ? '; sign in to establish one (re-pairing required)' : ''}
+                </span>
               )}
               <br />
               <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>
-                TLS pinning is ON (<code>config set pin-tls on</code>). Every connection to the
-                Authority Server must present this certificate's public key, or the gateway
-                refuses it and locks. A certificate renewal with the SAME key keeps this pin; a
-                NEW key needs re-pairing.
+                {state.pinTlsEnabled ? (
+                  <>
+                    TLS pinning is ON (<code>config set pin-tls on</code>). Every connection to the
+                    Authority Server must present this certificate's public key, or the gateway
+                    refuses it and locks.
+                  </>
+                ) : (
+                  <>
+                    Captured at sign-in; not currently enforced (<code>config set pin-tls on</code>{' '}
+                    to require it on every connection).
+                  </>
+                )}{' '}
+                A certificate renewal with the SAME key keeps this pin; a NEW key needs re-pairing.
               </span>
             </p>
           )}

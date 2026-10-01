@@ -8,19 +8,33 @@
  * every request, including the challenge, to the genuine Authority Server:
  * TLS itself is what's supposed to prevent that, via certificate validation.
  * Pin-tls hardens exactly that: it pins the AS TLS leaf certificate's public
- * key (SPKI, SHA-256 — the same value HPKP called `pin-sha256`) at pairing,
- * and refuses every later connection whose certificate doesn't carry that
- * same key, even one a locally-trusted CA (e.g. a custom `--ca-file`) would
- * otherwise accept. This is independent of certificate validity/expiry: a
- * renewed certificate for the SAME key keeps the pin; a NEW key needs
- * re-pairing (clear the pin, sign in again) — the same replacement rule as
- * the Ed25519 signing-key pin in as-pairing.ts.
+ * key (SPKI, SHA-256 — the same value HPKP called `pin-sha256`) and refuses
+ * every later connection whose certificate doesn't carry that same key, even
+ * one a locally-trusted CA (e.g. a custom `--ca-file`) would otherwise
+ * accept. This is independent of certificate validity/expiry: a renewed
+ * certificate for the SAME key keeps the pin; a NEW key needs re-pairing
+ * (clear the pin, sign in again) — the same replacement rule as the Ed25519
+ * signing-key pin in as-pairing.ts.
+ *
+ * Pinned connections trust Node's OWN bundled root certificates plus
+ * `--ca-file` / `NODE_EXTRA_CA_CERTS` (see {@link effectiveCa}) — NOT the
+ * operating system's trust store. A certificate your OS trusts (e.g. one
+ * added to the macOS/Windows keychain) is not automatically trusted here;
+ * use `--ca-file` for a self-hosted AS's internal CA.
+ *
+ * The pin is CAPTURED at every verified sign-in challenge (as-challenge.ts),
+ * independent of whether pin-tls is currently on — so turning pin-tls on
+ * later uses a pin already captured at a past pairing, never a fresh
+ * trust-on-first-use moment while enforcement is active. Enforcement
+ * (refusing a mismatch, or refusing to connect at all when no pin is on
+ * file) only ever applies when pin-tls is on; see {@link AsFetchPinning}.
  *
  * Mirrors `apps/mcp-server/src/lib/as-tls-pin.ts`. Keep the two in step.
  */
 import { createHash } from 'node:crypto';
 import { checkServerIdentity as defaultCheckServerIdentity, rootCertificates } from 'node:tls';
 import type { PeerCertificate } from 'node:tls';
+import { Agent as HttpsAgent } from 'node:https';
 import { readFileSync } from 'node:fs';
 import { Agent, fetch as undiciFetch, type Dispatcher } from 'undici';
 
@@ -39,6 +53,9 @@ import { Agent, fetch as undiciFetch, type Dispatcher } from 'undici';
  * together with pin-tls. Read fresh on every call (cheap; a handful of PEM
  * certs) rather than cached, so a changed env takes effect immediately, same
  * reasoning as re-reading the pin itself on every call.
+ *
+ * Deliberately NOT the OS trust store (there is no portable, dependency-free
+ * way to read it from Node) — see the module doc comment.
  */
 function effectiveCa(): string[] | undefined {
   const path = process.env.NODE_EXTRA_CA_CERTS;
@@ -50,12 +67,42 @@ function effectiveCa(): string[] | undefined {
   }
 }
 
-/** Thrown whenever a pin-tls-enforced connection's certificate does not
- *  carry the pinned SPKI — including when the underlying `fetch` call
- *  itself failed for some other reason while a dispatcher built by
- *  {@link buildPinnedDispatcher} was in use, so callers don't have to
- *  separately unwrap undici's connection-error wrapping to tell a pin
- *  failure apart from an ordinary network error. */
+/**
+ * Marks an `Error` as having come from INSIDE a `checkServerIdentity`
+ * rejection (ours, or Node's own default hostname check) — as opposed to an
+ * ordinary connection failure (DNS, ECONNREFUSED, timeout, TLS handshake
+ * failure for an unrelated reason such as an untrusted/expired certificate
+ * chain). `fetchAs` uses this to decide whether an Authority Server OUTAGE
+ * gets misreported as a certificate-pin security event: only a tagged error
+ * becomes {@link AsTlsMismatchError}; everything else passes through
+ * unchanged for the caller's normal "AS unreachable" handling.
+ */
+const PIN_CHECK_ERROR_CODE = 'EAS_TLS_PIN_CHECK';
+
+function taggedCheckError(err: Error): Error {
+  (err as NodeJS.ErrnoException).code = PIN_CHECK_ERROR_CODE;
+  return err;
+}
+
+/** True when `err` (or anything in its `.cause` chain) was tagged by
+ *  {@link taggedCheckError} — i.e. genuinely came from a checkServerIdentity
+ *  rejection, not from an unrelated network failure. Exported for the
+ *  control-plane's `/api` proxy (index.ts), whose `on.error` handler needs
+ *  the same distinction to decide whether to lock the gateway. */
+export function isPinCheckError(err: unknown): boolean {
+  let cur: unknown = err;
+  for (let i = 0; i < 5 && cur; i++) {
+    if (cur instanceof Error && (cur as NodeJS.ErrnoException).code === PIN_CHECK_ERROR_CODE) return true;
+    cur = cur instanceof Error ? (cur as { cause?: unknown }).cause : undefined;
+  }
+  return false;
+}
+
+/** Thrown when a pin-tls-enforced connection must be refused: the
+ *  certificate's SPKI doesn't match the pin, the default hostname check
+ *  itself failed, or pin-tls is on but no pin is on file yet (re-pairing
+ *  required). Never thrown for an ordinary network failure — see
+ *  {@link isPinCheckError}. */
 export class AsTlsMismatchError extends Error {
   constructor(message: string) {
     super(message);
@@ -86,42 +133,48 @@ export function formatPinFingerprint(hex: string): string {
 }
 
 /**
- * An undici Agent whose TLS `checkServerIdentity`:
- *  1. Runs Node's DEFAULT hostname check first (so ordinary certificate and
- *     hostname validation still applies — including trust via a custom
- *     `--ca-file`, which Node threads into the CA store this check runs
- *     against).
- *  2. Then ALSO requires the leaf certificate's SPKI SHA-256 to equal
- *     `pinnedSpkiHex`.
- * Returning an `Error` from `checkServerIdentity` aborts the TLS handshake
- * itself — before any request headers or body are sent, and before any
- * response is read — not merely after the fact.
+ * Checks a peer certificate against `pinnedSpkiHex` — Node's DEFAULT
+ * hostname check first, then the SPKI SHA-256 compare. Shared by every
+ * dispatcher/agent this module builds (undici `Agent` below, and the native
+ * `https.Agent` for the control-plane's `/api` proxy) so the two can never
+ * drift. Every error returned is tagged (see {@link taggedCheckError}).
+ */
+function pinnedCheckServerIdentity(pinnedSpkiHex: string) {
+  const wantHex = pinnedSpkiHex.toLowerCase();
+  return (hostname: string, cert: PeerCertificate): Error | undefined => {
+    const defaultErr = defaultCheckServerIdentity(hostname, cert);
+    if (defaultErr) return taggedCheckError(defaultErr);
+    let actualHex: string;
+    try {
+      actualHex = spkiSha256Hex(cert);
+    } catch (err) {
+      return taggedCheckError(new Error(
+        `could not read the server certificate's public key to check the TLS pin — ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+      ));
+    }
+    if (actualHex !== wantHex) {
+      return taggedCheckError(new Error(
+        `TLS certificate pin mismatch for ${hostname}: expected SPKI sha256 ` +
+          `${formatPinFingerprint(wantHex)}, got ${formatPinFingerprint(actualHex)}.`,
+      ));
+    }
+    return undefined;
+  };
+}
+
+/**
+ * An undici Agent whose TLS `checkServerIdentity` enforces `pinnedSpkiHex`
+ * (see {@link pinnedCheckServerIdentity}). Returning an `Error` from
+ * `checkServerIdentity` aborts the TLS handshake itself — before any request
+ * headers or body are sent, and before any response is read — not merely
+ * after the fact.
  */
 export function buildPinnedDispatcher(pinnedSpkiHex: string): Dispatcher {
-  const wantHex = pinnedSpkiHex.toLowerCase();
   return new Agent({
     connect: {
       ca: effectiveCa(),
-      checkServerIdentity: (hostname: string, cert: PeerCertificate) => {
-        const defaultErr = defaultCheckServerIdentity(hostname, cert);
-        if (defaultErr) return defaultErr;
-        let actualHex: string;
-        try {
-          actualHex = spkiSha256Hex(cert);
-        } catch (err) {
-          return new Error(
-            `could not read the server certificate's public key to check the TLS pin — ` +
-              `${err instanceof Error ? err.message : String(err)}`,
-          );
-        }
-        if (actualHex !== wantHex) {
-          return new Error(
-            `TLS certificate pin mismatch for ${hostname}: expected SPKI sha256 ` +
-              `${formatPinFingerprint(wantHex)}, got ${formatPinFingerprint(actualHex)}.`,
-          );
-        }
-        return undefined;
-      },
+      checkServerIdentity: pinnedCheckServerIdentity(pinnedSpkiHex),
     },
   });
 }
@@ -130,8 +183,8 @@ export function buildPinnedDispatcher(pinnedSpkiHex: string): Dispatcher {
  * An undici Agent that runs ONLY the default hostname/trust check (no pin
  * enforcement — there is nothing to enforce yet) and records the detailed
  * certificate of the first connection it makes, for the caller to pin.
- * Used exactly once per gateway, at the moment pin-tls has just been turned
- * on and no pin exists yet for this Authority Server URL.
+ * Used by the verified sign-in challenge (as-challenge.ts) to capture — or,
+ * with pin-tls off, refresh — the pin on every successful sign-in.
  */
 export function buildCapturingDispatcher(): { dispatcher: Dispatcher; getCapturedCert: () => PeerCertificate | undefined } {
   let captured: PeerCertificate | undefined;
@@ -140,67 +193,130 @@ export function buildCapturingDispatcher(): { dispatcher: Dispatcher; getCapture
       ca: effectiveCa(),
       checkServerIdentity: (hostname: string, cert: PeerCertificate) => {
         captured = cert;
-        return defaultCheckServerIdentity(hostname, cert);
+        const defaultErr = defaultCheckServerIdentity(hostname, cert);
+        return defaultErr ? taggedCheckError(defaultErr) : undefined;
       },
     },
   });
   return { dispatcher, getCapturedCert: () => captured };
 }
 
+/**
+ * A native `https.Agent` enforcing the SAME pin check as the undici-based
+ * dispatchers above, for callers that hand an agent to Node's own
+ * `http(s).request` rather than calling `fetch` — namely the control-plane's
+ * long-lived `/api` proxy (http-proxy-middleware → node-http-proxy →
+ * `https.request({ agent, ... })`), which cannot be expressed as a single
+ * `fetchAs` call. `getPinning` is called on EVERY new connection (not
+ * cached), so a pin captured by this SAME process moments ago (or a
+ * live-edited pin-tls setting) takes effect on the very next connection —
+ * existing keep-alive sockets are not retroactively re-checked, same as any
+ * TLS pin.
+ */
+export function buildPinnedHttpsAgent(getPinning: () => AsFetchPinning): HttpsAgent {
+  return new HttpsAgent({
+    checkServerIdentity: (hostname: string, cert: PeerCertificate) => {
+      const pinning = getPinning();
+      if (!pinning.enforce) return defaultCheckServerIdentity(hostname, cert);
+      if (!pinning.pinnedSpkiHex) {
+        return taggedCheckError(new Error(
+          `pin-tls is on but no certificate is pinned yet for ${hostname} — sign in again to establish ` +
+            `it (re-pairing required).`,
+        ));
+      }
+      return pinnedCheckServerIdentity(pinning.pinnedSpkiHex)(hostname, cert);
+    },
+    ca: effectiveCa(),
+  });
+}
+
 export interface AsFetchPinning {
-  /** `config set pin-tls on` / `--pin-tls` — the saved setting. */
-  enabled: boolean;
-  /** The pinned SPKI hash for this exact Authority Server URL, if one has
-   *  already been captured. */
+  /**
+   * Refuse a MISMATCH, and refuse to connect at all when no pin is on file
+   * — true only when `config set pin-tls on` / `--pin-tls`. When false, a
+   * missing or differing pin is never refused by this call: either it is
+   * being captured/refreshed (see `capture`), or the call simply proceeds
+   * unpinned, exactly like a bare `fetch`.
+   */
+  enforce: boolean;
+  /** The pin on file for this Authority Server URL, if any — independent
+   *  of `enforce` (see the module doc comment: capture always happens, at
+   *  every verified sign-in, whether or not pin-tls is currently on). */
   pinnedSpkiHex?: string;
   /**
-   * Allow CAPTURING a new pin from this call when `pinnedSpkiHex` is unset.
-   * Only ever true for the challenge/sign-in exchange (as-challenge.ts) —
-   * every other AS call must either enforce an existing pin or refuse, never
-   * silently adopt whatever certificate answers it. Ignored once a pin
-   * already exists: that path always enforces, never re-captures — pin
-   * replacement is only by re-pairing (clear the pin, sign in again).
+   * Only ever set by the verified sign-in challenge (as-challenge.ts) —
+   * every OTHER AS call must leave this unset. Permits (re)capturing:
+   *  - `enforce: false` → the live certificate's SPKI is captured/returned
+   *    UNCONDITIONALLY, overwriting whatever was on file — pinning is off,
+   *    so there is nothing to betray, and this is what keeps the pin fresh
+   *    for whenever it's later turned on.
+   *  - `enforce: true` → captured ONLY when `pinnedSpkiHex` is unset (a
+   *    genuine first-ever pairing with pin-tls already on — trust-on-
+   *    first-use at the one moment that's legitimate). An EXISTING pin is
+   *    enforced instead and never silently replaced.
    */
-  captureIfUnpinned?: boolean;
+  capture?: boolean;
 }
 
 export interface AsFetchResult {
   res: Response;
-  /** Set only when pinning was enabled, no pin existed yet, capture was
-   *  allowed, and the connection succeeded — the SPKI hash of the leaf
-   *  certificate that answered THIS call. The caller persists it (see
-   *  as-pairing.ts's `writePairing` / `recordTlsPin`) only once the rest of
-   *  the exchange it was captured from (the Ed25519 challenge) has verified. */
+  /** Set only when `capture` was requested and the connection succeeded —
+   *  the SPKI hash of the leaf certificate that answered THIS call. The
+   *  caller persists it (as-pairing.ts's `writePairing` / `recordTlsPin`)
+   *  only once the rest of the exchange it was captured from (the Ed25519
+   *  challenge) has verified. */
   capturedSpkiHex?: string;
 }
 
 /**
  * The ONE place every Authority Server HTTP call in this process must go
  * through once pin-tls is a concern — see as-challenge.ts, routes/auth.ts,
- * routes/evidence-export.ts. Not wired into bare `fetch()` globally (that
- * would also catch unrelated calls, e.g. the AI proxy, GitHub, npm registry)
- * — every AS call site imports this explicitly instead.
+ * routes/evidence-export.ts (the control-plane's `/api` proxy is the one
+ * exception that cannot use `fetch` at all; see {@link buildPinnedHttpsAgent}
+ * for its equivalent). Not wired into bare `fetch()` globally (that would
+ * also catch unrelated calls, e.g. the AI proxy, GitHub, npm registry) —
+ * every AS call site imports this explicitly instead.
  *
- * @throws AsTlsMismatchError when pinning is enabled and either (a) a pin
- *   exists but the live certificate's SPKI doesn't match it, or (b) no pin
- *   exists yet and this call isn't allowed to capture one.
+ * @throws AsTlsMismatchError when `pinning.enforce` and either (a) a pin
+ *   exists but the live certificate's SPKI (or hostname) doesn't check out,
+ *   or (b) no pin exists yet and this call isn't the capturing challenge.
+ *   Never thrown for an ordinary connection failure (DNS, ECONNREFUSED,
+ *   timeout, an untrusted certificate chain) — those propagate as-is so an
+ *   Authority Server OUTAGE is never misreported as a pin mismatch.
  */
 export async function fetchAs(
   url: string,
   init: RequestInit | undefined,
   pinning: AsFetchPinning,
 ): Promise<AsFetchResult> {
-  if (!pinning.enabled) {
+  // Ordinary call (not the capturing challenge), pin-tls off: nothing to
+  // enforce and nothing to capture — exactly a bare fetch.
+  if (!pinning.enforce && !pinning.capture) {
     const res = await fetch(url, init);
     return { res };
   }
 
-  if (pinning.pinnedSpkiHex) {
+  // Ordinary call, pin-tls on, but nothing is pinned yet (an old pairing
+  // from before pin-tls existed, or before this process ever reached a
+  // verified sign-in) — refuse outright. Re-pairing (a fresh sign-in, which
+  // IS allowed to capture) is required; this call never trusts on first use.
+  if (pinning.enforce && !pinning.capture && !pinning.pinnedSpkiHex) {
+    throw new AsTlsMismatchError(
+      `pin-tls is on but no certificate is pinned yet for ${url} — sign in again to establish it ` +
+        `(re-pairing required).`,
+    );
+  }
+
+  // An existing pin is enforced whenever one is on file — whether this is
+  // an ordinary call, or the challenge call finding a pin already there
+  // (never silently replaced, even though `capture` is set).
+  if (pinning.pinnedSpkiHex && (pinning.enforce || !pinning.capture)) {
     const dispatcher = buildPinnedDispatcher(pinning.pinnedSpkiHex);
     try {
       const res = (await undiciFetch(url, { ...(init as Record<string, unknown>), dispatcher })) as unknown as Response;
       return { res };
     } catch (err) {
+      if (!isPinCheckError(err)) throw err; // an AS outage, not a pin mismatch — pass through unchanged
       throw new AsTlsMismatchError(
         `TLS pin check failed for ${url} — ${describeFetchError(err)}. Refusing the connection; the API ` +
           `key / session cookie were never sent. If the Authority Server's certificate changed ` +
@@ -210,15 +326,20 @@ export async function fetchAs(
     }
   }
 
-  if (!pinning.captureIfUnpinned) {
+  // Capturing: the verified challenge, with either pin-tls off (always
+  // captures/refreshes) or pin-tls on and genuinely nothing pinned yet
+  // (first-ever pairing — trust-on-first-use at the one legitimate moment).
+  const { dispatcher, getCapturedCert } = buildCapturingDispatcher();
+  let res: Response;
+  try {
+    res = (await undiciFetch(url, { ...(init as Record<string, unknown>), dispatcher })) as unknown as Response;
+  } catch (err) {
+    if (!isPinCheckError(err)) throw err; // an ordinary connection failure — not a pin/hostname rejection
     throw new AsTlsMismatchError(
-      `TLS pinning is enabled but no certificate is pinned yet for ${url} — sign in once to establish ` +
-        `the pin before this call can be trusted.`,
+      `could not verify the Authority Server at ${url} while establishing its TLS pin — ` +
+        `${describeFetchError(err)}.`,
     );
   }
-
-  const { dispatcher, getCapturedCert } = buildCapturingDispatcher();
-  const res = (await undiciFetch(url, { ...(init as Record<string, unknown>), dispatcher })) as unknown as Response;
   const cert = getCapturedCert();
   return { res, capturedSpkiHex: cert ? spkiSha256Hex(cert) : undefined };
 }

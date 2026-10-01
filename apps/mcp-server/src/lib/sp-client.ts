@@ -158,14 +158,11 @@ export class SPClient {
    *  allowed to CAPTURE a new pin here — only the control plane's sign-in
    *  exchange (as-challenge.ts) does that; this client only enforces. */
   private tlsPinning(): AsFetchPinning {
-    if (!this.dataDir) return { enabled: false };
-    const enabled = resolvePinTls(this.dataDir);
-    if (!enabled) return { enabled: false };
+    if (!this.dataDir) return { enforce: false };
     const pin = readPairing(this.dataDir);
     return {
-      enabled: true,
+      enforce: resolvePinTls(this.dataDir),
       pinnedSpkiHex: pin && pin.asUrl === this.baseUrl ? pin.tlsSpkiPinHex : undefined,
-      captureIfUnpinned: false,
     };
   }
 
@@ -181,9 +178,15 @@ export class SPClient {
   setSessionCookie(cookie: string): void {
     this.sessionCookie = cookie;
     // A freshly configured cookie means the control plane just (re)authenticated
-    // us — any prior "the session ended" state no longer applies.
+    // us — any prior "the session ended" state no longer applies. Both
+    // single-flight notify flags reset here: without resetting
+    // tlsMismatchNotified, a SECOND relay episode after re-signing-in never
+    // notified the control plane again (it had already fired once, in a
+    // process that never restarts), so the UI kept showing "signed in" while
+    // every gated call was silently refusing.
     this.lockReason = null;
     this.sessionExpiredNotified = false;
+    this.tlsMismatchNotified = false;
   }
 
   /**

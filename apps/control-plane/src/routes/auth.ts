@@ -32,11 +32,15 @@ interface AsKeyCheckResult {
   ok: boolean;
   publicKeyHex?: string;
   /**
-   * The TLS SPKI pin now in EFFECT for this URL, when pin-tls is enabled —
-   * whichever of "already pinned" or "just captured on this call" applies.
-   * The caller persists it (writePairing / recordTlsPin, both no-ops when
-   * already set) and reuses it to enforce pinning on every subsequent AS
-   * call this request makes (the session POST, then onward).
+   * The TLS SPKI pin captured/refreshed by THIS verified challenge, or the
+   * one already on file — captured at EVERY sign-in regardless of whether
+   * pin-tls is on (see as-tls-pin.ts's module doc comment), so Settings
+   * always has a fingerprint to show and turning pin-tls on later never
+   * needs a fresh trust-on-first-use moment. The caller persists it
+   * (writePairing / recordTlsPin) and reuses it to enforce pinning (only
+   * when pin-tls is actually on) on every subsequent AS call this request
+   * makes (the session POST, then onward). Undefined only for a plain
+   * http:// Authority Server, which has no certificate to capture.
    */
   tlsSpkiPinHex?: string;
   /** Machine-readable reason, present iff !ok. */
@@ -107,9 +111,10 @@ async function fetchAsPublicKey(
  * particular: it is not a substitute for TLS against an on-path relay that
  * forwards every request, including the challenge, to the genuine Authority
  * Server). Closing THAT gap is opt-in TLS pinning (`config set pin-tls on`,
- * default off) — see as-tls-pin.ts: when enabled, the challenge call below
- * also captures (first pairing) or enforces (every sign-in after) a pin on
- * the AS TLS certificate's public key, independently of the Ed25519 check.
+ * default off) — see as-tls-pin.ts: the challenge call below captures (or
+ * refreshes) a pin on the AS TLS certificate's public key at EVERY sign-in,
+ * independently of the Ed25519 check and of whether pin-tls is currently
+ * on; only `enforce` (pin-tls on) ever turns a mismatch into a refusal.
  *
  * Deliberately does NOT touch the API key: this runs before the caller sends
  * it to `/api/auth/session`, so a server that fails this check never
@@ -131,13 +136,15 @@ async function checkAsKeyBeforeLogin(asUrl: string, dataDir: string): Promise<As
     candidateKey = fetched.publicKeyHex;
   }
 
-  // Opt-in TLS pinning (`config set pin-tls on`) — see as-tls-pin.ts. Only
-  // the challenge call below is ever allowed to CAPTURE a new pin; every
-  // other AS call in this file only enforces whatever is already pinned.
+  // Opt-in TLS pinning (`config set pin-tls on`) — see as-tls-pin.ts. This
+  // challenge call ALWAYS captures/refreshes the pin once it verifies,
+  // regardless of `enforce` — only `enforce` (pin-tls on) makes a mismatch
+  // (or a missing pin) a refusal; every other AS call in this file only
+  // ever enforces whatever is already on file, never captures.
   const pinning: AsFetchPinning = {
-    enabled: resolvePinTls(dataDir),
+    enforce: resolvePinTls(dataDir),
     pinnedSpkiHex: existingTlsPin,
-    captureIfUnpinned: true,
+    capture: true,
   };
 
   let capturedTlsSpkiHex: string | undefined;
@@ -180,7 +187,10 @@ async function checkAsKeyBeforeLogin(asUrl: string, dataDir: string): Promise<As
   return {
     ok: true,
     publicKeyHex: candidateKey,
-    tlsSpkiPinHex: pinning.enabled ? (existingTlsPin ?? capturedTlsSpkiHex) : undefined,
+    // A fresh capture (always present for https, unless pin-tls is on and
+    // an existing pin was enforced instead — see fetchAs) wins; otherwise
+    // whatever was already on file carries through unchanged.
+    tlsSpkiPinHex: capturedTlsSpkiHex ?? existingTlsPin,
   };
 }
 
@@ -251,13 +261,14 @@ export function createAuthRouter(
       }
 
       // The EFFECTIVE TLS pin for this request (as established by the check
-      // above — already pinned, or just captured) — enforced on every AS
-      // call this handler makes from here on. `enabled: false` (pin-tls off)
-      // makes fetchAs behave exactly like a bare `fetch`.
+      // above — already pinned, or just captured/refreshed) — enforced on
+      // every AS call this handler makes from here on, but ONLY when
+      // pin-tls is actually on (`enforce: false` makes fetchAs behave
+      // exactly like a bare `fetch`). Never captures — that's the challenge
+      // call's job alone.
       const sessionPinning: AsFetchPinning = {
-        enabled: Boolean(pairing && resolvePinTls(pairing.dataDir)),
+        enforce: Boolean(pairing && resolvePinTls(pairing.dataDir)),
         pinnedSpkiHex: keyCheck?.tlsSpkiPinHex,
-        captureIfUnpinned: false,
       };
 
       // NOT `Response` bare — that identifier in this file resolves to
@@ -303,11 +314,12 @@ export function createAuthRouter(
       // Pin the key now that the credentials are known good AND the key
       // check above already passed (fresh pairing, or matching an existing
       // pin — a mismatch already returned above). Only a fresh pairing needs
-      // a write; matching an existing pin is a no-op. The TLS pin (if any)
-      // rides along with a fresh pairing, or is attached separately via
-      // recordTlsPin when the signing-key pin already existed but pin-tls
-      // was turned on more recently (no TLS pin yet for an otherwise-paired
-      // URL).
+      // a write for the SIGNING key; matching an existing one is a no-op.
+      // The TLS pin is different: it is captured/refreshed at EVERY verified
+      // sign-in (as-tls-pin.ts's module doc comment), so recordTlsPin always
+      // overwrites — whether this is a fresh pairing, pin-tls was just
+      // turned on for an already-paired AS, or the certificate legitimately
+      // rotated while pin-tls stayed off.
       if (pairing && keyCheck?.publicKeyHex) {
         const existing = readPairing(pairing.dataDir);
         if (!existing || existing.asUrl !== pairing.asUrl) {
@@ -315,9 +327,9 @@ export function createAuthRouter(
             tlsSpkiPinHex: keyCheck.tlsSpkiPinHex,
           });
           console.error(`[Control Plane] Paired with Authority Server ${pairing.asUrl} (fingerprint ${fingerprintOf(keyCheck.publicKeyHex)})`);
-        } else if (keyCheck.tlsSpkiPinHex && !existing.tlsSpkiPinHex) {
+        } else if (keyCheck.tlsSpkiPinHex && keyCheck.tlsSpkiPinHex !== existing.tlsSpkiPinHex) {
           recordTlsPin(pairing.dataDir, pairing.asUrl, keyCheck.tlsSpkiPinHex);
-          console.error(`[Control Plane] Captured TLS pin for Authority Server ${pairing.asUrl} (pin-tls just enabled).`);
+          console.error(`[Control Plane] TLS pin for Authority Server ${pairing.asUrl} captured/updated.`);
         }
       }
 
@@ -511,8 +523,8 @@ export function createAuthRouter(
     // locally), and failing to tell a possibly-hostile network party "log me
     // out" is not a problem worth surfacing to the user as an error.
     const logoutPinning: AsFetchPinning = pairing
-      ? { enabled: resolvePinTls(pairing.dataDir), pinnedSpkiHex: readPairing(pairing.dataDir)?.tlsSpkiPinHex, captureIfUnpinned: false }
-      : { enabled: false };
+      ? { enforce: resolvePinTls(pairing.dataDir), pinnedSpkiHex: readPairing(pairing.dataDir)?.tlsSpkiPinHex }
+      : { enforce: false };
     await Promise.allSettled([
       unconfigureSession(),
       cookie

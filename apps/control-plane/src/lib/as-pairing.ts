@@ -80,16 +80,21 @@ export function writePairing(
 }
 
 /**
- * Attach a newly-captured TLS SPKI pin to the EXISTING pairing record for
- * `asUrl`, without touching the signing-key pin or `pairedAt` — the case
- * where pin-tls is turned on for an AS this gateway already paired with
- * (the signing-key pin exists; the TLS pin doesn't yet). A no-op when there
- * is no existing pairing for this URL to attach to, or when one is already
- * set (replacement is only by re-pairing — i.e. by clearing it first).
+ * Attach/REFRESH the captured TLS SPKI pin on the EXISTING pairing record
+ * for `asUrl`, without touching the signing-key pin or `pairedAt`. Called
+ * after every verified sign-in challenge that captured one — see
+ * as-challenge.ts / as-tls-pin.ts's module doc comment: capture happens at
+ * EVERY pairing, pin-tls on or off, so this always overwrites rather than
+ * only filling a gap. (The caller — auth.ts's checkAsKeyBeforeLogin — is
+ * what enforces "never silently replace an ENFORCED pin": when pin-tls is
+ * on and a pin already existed, a mismatch is refused before this is ever
+ * reached, so by the time this runs under enforcement the value passed in
+ * is unchanged anyway.) A no-op when there is no existing pairing for this
+ * URL to attach to.
  */
 export function recordTlsPin(dataDir: string, asUrl: string, tlsSpkiPinHex: string): void {
   const existing = readPairing(dataDir);
-  if (!existing || existing.asUrl !== asUrl || existing.tlsSpkiPinHex) return;
+  if (!existing || existing.asUrl !== asUrl) return;
   const path = pairingPath(dataDir);
   writeFileSync(
     path,

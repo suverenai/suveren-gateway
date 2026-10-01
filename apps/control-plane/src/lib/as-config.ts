@@ -204,3 +204,24 @@ export function resolveCaFile(dataDir: string): string | undefined {
 export function resolvePinTls(dataDir: string): boolean {
   return readAsConfig(dataDir).pinTls === true;
 }
+
+/**
+ * Refuse to proceed (throws) when `pinTls` is on for a non-https Authority
+ * Server URL — there is no TLS certificate to pin. Called at process
+ * startup (control-plane's index.ts, mcp-server's bin/http.ts) so a
+ * hand-edited config.json (not just the CLI's own `--pin-tls` / `config
+ * set` validation, which only ever sees a value the USER just typed) is
+ * caught too, loudly, before the gateway starts believing it is pinning
+ * something it never checks.
+ */
+export function validatePinTlsForUrl(pinTls: boolean, asUrl: string): void {
+  if (!pinTls) return;
+  if (!asUrl.startsWith('https:')) {
+    throw new Error(
+      `config.json sets "pinTls": true, but the Authority Server URL (${asUrl}) is not https:// — ` +
+        `there is no TLS certificate to pin. Fix the saved as-url, or turn pin-tls off: ` +
+        `\`suveren-gateway config set pin-tls off\`.`,
+    );
+  }
+}
+

@@ -61,9 +61,9 @@ import { SessionExpiryScheduler } from './lib/session-expiry-scheduler';
 import { buildSessionHealth } from './lib/session-health';
 import { loadDenials, selectDenials } from './lib/denials-reader';
 import { AGENT_CONTEXT_MAX_BYTES, agentBriefPath, readAgentBrief } from './lib/agent-brief-store';
-import { resolveAsUrl, resolvePinTls } from './lib/as-config';
+import { resolveAsUrl, resolvePinTls, validatePinTlsForUrl } from './lib/as-config';
 import { readPairing, clearPairing, fingerprintOf } from './lib/as-pairing';
-import { formatPinFingerprint } from './lib/as-tls-pin';
+import { formatPinFingerprint, buildPinnedHttpsAgent, isPinCheckError, type AsFetchPinning } from './lib/as-tls-pin';
 
 // Same default every stateful module in this codebase uses (Vault, GateStore,
 // …) — see as-config.ts's doc comment on why `resolveAsUrl` takes it
@@ -74,6 +74,9 @@ const DATA_DIR = process.env.SUVEREN_DATA_DIR ?? join(homedir(), '.suveren');
 // suveren.ai. Throws (refusing to start) if an EXPLICITLY set source is
 // malformed — see as-config.ts.
 const SP_URL = resolveAsUrl(DATA_DIR);
+// Refuses to start (throws) when pinTls is on for a non-https AS URL — not
+// just a CLI-flag-time check, so a hand-edited config.json is caught too.
+validatePinTlsForUrl(resolvePinTls(DATA_DIR), SP_URL);
 const port = parseInt(process.env.SUVEREN_CP_PORT ?? '3402', 10);
 const HAP_MODE = (process.env.HAP_MODE ?? 'personal') as 'personal' | 'team';
 
@@ -816,18 +819,51 @@ app.put('/agent-brief/context', jsonParser, authGuard, async (req: Request, res:
 // Auth guard for /api — runs first, rejects with 401 if unauthorized
 app.use('/api', authGuard);
 
+// Opt-in TLS pinning (as-tls-pin.ts) for this proxy's own https.Agent — the
+// UI's own path to the AS, and the one that carries the server-side session
+// cookie on every call. http-proxy-middleware hands `options.agent` straight
+// to Node's `https.request`, so a single long-lived Agent (NOT `fetchAs`,
+// which can't express a persistent proxy) is the equivalent here. `getPinning`
+// is read fresh on every NEW connection (see buildPinnedHttpsAgent), so a pin
+// captured moments ago by THIS same sign-in already applies.
+const pinnedProxyAgent = SP_URL.startsWith('https:')
+  ? buildPinnedHttpsAgent((): AsFetchPinning => {
+      const pin = readPairing(DATA_DIR);
+      return {
+        enforce: resolvePinTls(DATA_DIR),
+        pinnedSpkiHex: pin && pin.asUrl === SP_URL ? pin.tlsSpkiPinHex : undefined,
+      };
+    })
+  : undefined;
+
 // Proxy /api/* to SP — mounted at root so http-proxy-middleware sees the full path
 app.use(
   createProxyMiddleware({
     target: SP_URL,
     changeOrigin: true,
     pathFilter: '/api',
+    ...(pinnedProxyAgent ? { agent: pinnedProxyAgent } : {}),
     on: {
       proxyReq: (proxyReq) => {
         // Inject server-side SP session cookie instead of forwarding browser cookies
         const cookie = vault.getSpCookie();
         if (cookie) {
           proxyReq.setHeader('Cookie', cookie);
+        }
+      },
+      // A pin check failure means the connection never completed its TLS
+      // handshake — nothing (not even this call's own cookie) reached the
+      // network. Lock the gateway with the real reason, loudly; an ordinary
+      // network error (AS outage) is NOT a pin failure (see isPinCheckError
+      // / as-tls-pin.ts's module doc comment on outage misclassification)
+      // and falls through to http-proxy-middleware's default error handling.
+      error: (err, _req, res) => {
+        if (!isPinCheckError(err)) return;
+        console.error('[Control Plane] /api proxy: TLS pin mismatch — gateway LOCKED:', err.message);
+        lockAsTlsMismatch();
+        if (res && 'writeHead' in res && !res.headersSent) {
+          res.writeHead(502, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'as_tls_mismatch', message: err.message }));
         }
       },
       proxyRes: (proxyRes, req) => {

@@ -121,13 +121,15 @@ export function verifyChallengeSignature(
 /** What {@link verifyAsHoldsKey} learned beyond "the signature verified". */
 export interface VerifyAsHoldsKeyResult {
   /**
-   * Set only when pin-tls is enabled, no TLS pin existed yet for this URL,
-   * and this call's own connection succeeded — the SPKI hash of the leaf
-   * certificate that answered THIS (now-verified) challenge. The caller
-   * (auth.ts) persists it next to the signing-key pin once this function
-   * has returned successfully — i.e. only once the Ed25519 signature over
-   * THIS SAME connection's response has verified, never from an
-   * unauthenticated connection.
+   * The SPKI hash of the leaf certificate that answered THIS (now-verified)
+   * challenge — set whenever this call's own connection succeeded, over
+   * TLS, regardless of whether pin-tls is currently on (see as-tls-pin.ts's
+   * module doc comment: capture happens at EVERY verified pairing). Absent
+   * for a plain http:// Authority Server, which has no certificate to
+   * capture. The caller (auth.ts) persists it next to the signing-key pin
+   * only once this function has returned successfully — i.e. only once the
+   * Ed25519 signature over THIS SAME connection's response has verified,
+   * never from an unauthenticated connection.
    */
   capturedTlsSpkiHex?: string;
 }
@@ -141,7 +143,7 @@ export interface VerifyAsHoldsKeyResult {
  * @throws AsChallengeInvalidError when the response doesn't check out: wrong
  *   `typ`, a `nonce` that doesn't match what was sent, a stale/future
  *   `issuedAt`, or a signature that fails to verify under `publicKeyHex`.
- * @throws AsTlsMismatchError when `pinning.enabled` and the connection's
+ * @throws AsTlsMismatchError when `pinning.enforce` and the connection's
  *   certificate doesn't carry the pinned SPKI (see as-tls-pin.ts) — this
  *   check runs BEFORE any of the application-level checks above, at the TLS
  *   layer, so a mismatch means no HTTP exchange happened on this call at all.
@@ -149,7 +151,9 @@ export interface VerifyAsHoldsKeyResult {
 export async function verifyAsHoldsKey(
   asUrl: string,
   publicKeyHex: string,
-  pinning: AsFetchPinning = { enabled: false },
+  // `capture: true` by default: this IS the verified challenge call — the
+  // only one ever allowed to capture/refresh the pin (as-tls-pin.ts).
+  pinning: AsFetchPinning = { enforce: false, capture: true },
 ): Promise<VerifyAsHoldsKeyResult> {
   const nonce = randomBytes(32).toString('base64url');
 

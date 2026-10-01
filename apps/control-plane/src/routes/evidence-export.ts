@@ -63,11 +63,10 @@ export function createEvidenceExportRouter(
           `${spUrl}/api/receipts/export`,
           { headers: { Cookie: cookie }, signal: controller.signal },
           {
-            enabled: resolvePinTls(dataDir),
+            enforce: resolvePinTls(dataDir),
             pinnedSpkiHex: pin && pin.asUrl === spUrl ? pin.tlsSpkiPinHex : undefined,
-            // Never capture here — only the sign-in challenge establishes a
-            // new pin (as-challenge.ts).
-            captureIfUnpinned: false,
+            // Never capture here — only the sign-in challenge establishes or
+            // refreshes a pin (as-challenge.ts).
           },
         );
         if (asRes.ok) {
