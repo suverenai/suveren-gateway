@@ -144,6 +144,8 @@ export interface IntegrationManifest {
   toolGating?: {
     overrides?: Record<string, { actionLabel?: string } | null>;
   } | null;
+  /** Declares a simulation mode: the credential field holding it and its default. Drives the "Simulation" badge. */
+  simulation?: { field: string; default: string } | null;
   /** Links the approval card offers so a reviewer can inspect the action. */
   proposalLinks?: Array<{ label: string; template: string; description?: string }>;
   templates?: AuthTemplate[];

@@ -1,0 +1,34 @@
+/**
+ * The "Simulation" badge must be truthful in both directions: shown whenever the
+ * connector answers from its simulated system (including the unset default), and
+ * never on a connector that declares nothing or is set to live.
+ */
+import { describe, it, expect } from 'vitest';
+import { isSimulated } from './simulation';
+
+const erp = { simulation: { field: 'mode', default: 'simulation' } };
+
+describe('isSimulated', () => {
+  it('unset mode falls back to the declared default — simulation', () => {
+    expect(isSimulated(erp, {})).toBe(true);
+    expect(isSimulated(erp, undefined)).toBe(true);
+    expect(isSimulated(erp, { mode: '   ' })).toBe(true);
+  });
+
+  it('explicit simulation, any case', () => {
+    expect(isSimulated(erp, { mode: 'Simulation' })).toBe(true);
+  });
+
+  it('live is not simulated', () => {
+    expect(isSimulated(erp, { mode: 'live' })).toBe(false);
+  });
+
+  it('a connector that declares no simulation is never badged', () => {
+    expect(isSimulated({ simulation: null }, { mode: 'simulation' })).toBe(false);
+    expect(isSimulated({}, { mode: 'simulation' })).toBe(false);
+  });
+
+  it('a default of live means unset is live', () => {
+    expect(isSimulated({ simulation: { field: 'mode', default: 'live' } }, {})).toBe(false);
+  });
+});

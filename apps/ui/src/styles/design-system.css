@@ -771,6 +771,9 @@ code {
 .int-chip-bad  .int-dot { background: var(--danger); }
 .int-chip-idle { background: var(--accent-subtle); color: var(--accent); }
 .int-chip-idle .int-dot { background: #bbb; }
+/* Connector answers from a simulated system (test data) — not an error, but never silent. */
+.int-chip-sim  { background: color-mix(in srgb, var(--warning) 14%, transparent); color: var(--warning); }
+.int-chip-sim  .int-dot { background: var(--warning); }
 
 /* Collapsed detail disclosure on the integration card */
 .int-details { border-top: 1px solid var(--border); padding-top: 0.7rem; margin-top: 0.25rem; }

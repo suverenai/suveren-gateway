@@ -18,11 +18,23 @@
         "type": "text",
         "placeholder": "Leave empty for local SQLite",
         "optional": true
+      },
+      {
+        "key": "mode",
+        "label": "Mode (optional)",
+        "type": "text",
+        "placeholder": "simulation (default) — live needs an adapter for your ERP",
+        "optional": true
       }
     ],
     "envMapping": {
-      "DATABASE_URL": "databaseUrl"
+      "DATABASE_URL": "databaseUrl",
+      "ERP_MODE": "mode"
     }
+  },
+  "simulation": {
+    "field": "mode",
+    "default": "simulation"
   },
   "personalDefault": true,
   "oauth": null,

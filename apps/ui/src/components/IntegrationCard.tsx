@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { spClient, type IntegrationManifest, type McpIntegrationStatus } from '../lib/sp-client';
 import type { IntegrationState } from '../contexts/IntegrationStatusContext';
+import { isSimulated } from '../lib/simulation';
 
 const ICON_MAP: Record<string, string> = {
   card: '\u{1F4B3}',
@@ -337,6 +338,14 @@ export function IntegrationCard({ manifest, integration, state, onStatusChange, 
             <span className={`int-chip ${procChip.c}`}><span className="int-dot" />{procChip.t}</span>
           )}
           <span className={`int-chip ${authChip.c}`}><span className="int-dot" />{authChip.t}</span>
+          {isSimulated(manifest, existingCreds) && (
+            <span
+              className="int-chip int-chip-sim"
+              title="This connector answers from a simulated system with test data. Nothing reaches your real systems."
+            >
+              <span className="int-dot" />Simulation
+            </span>
+          )}
         </div>
       </div>
 
