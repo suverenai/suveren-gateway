@@ -50,8 +50,6 @@ afterEach(() => {
 });
 
 const certDir = mkdtempSync(join(tmpdir(), 'sp-client-tls-notify-certs-'));
-const PORT = 18545;
-const AS_URL = `https://127.0.0.1:${PORT}`;
 
 beforeAll(() => {
   execFileSync('openssl', [
@@ -73,12 +71,21 @@ afterEach(async () => {
   }
 });
 
-function startServer(): Promise<void> {
+/** Listens on port 0 (OS-assigned) — this suite runs alongside other
+ *  workspaces' own TLS test servers under `pnpm -r test`; a fixed port
+ *  collided with one of theirs (EADDRINUSE, CI macOS). */
+function startServer(): Promise<{ url: string }> {
   server = createServer(
     { cert: readFileSync(join(certDir, 'cert.pem')), key: readFileSync(join(certDir, 'cert.key')) },
     (_req, res) => res.end(JSON.stringify({ publicKey: 'aa' })),
   );
-  return new Promise((resolve) => server!.listen(PORT, '127.0.0.1', () => resolve()));
+  return new Promise((resolve) => {
+    server!.listen(0, '127.0.0.1', () => {
+      const addr = server!.address();
+      const port = typeof addr === 'object' && addr ? addr.port : 0;
+      resolve({ url: `https://127.0.0.1:${port}` });
+    });
+  });
 }
 
 function tmp(): string {
@@ -88,14 +95,14 @@ function tmp(): string {
 describe('SPClient — TLS mismatch notify flag resets on a fresh session', () => {
   it('notifies again on a SECOND mismatch episode after setSessionCookie (re-sign-in)', async () => {
     process.env.NODE_EXTRA_CA_CERTS = join(certDir, 'cert.pem'); // the relay's cert IS CA-trusted
-    await startServer();
+    const { url: asUrl } = await startServer();
 
     const dataDir = tmp();
     writeFileSync(join(dataDir, 'config.json'), JSON.stringify({ pinTls: true }));
     // A pin that will NEVER match this server's real certificate.
-    writePairing(dataDir, AS_URL, 'deadbeef', { tlsSpkiPinHex: '0'.repeat(64) });
+    writePairing(dataDir, asUrl, 'deadbeef', { tlsSpkiPinHex: '0'.repeat(64) });
 
-    const client = new SPClient(AS_URL, { maxAttempts: 1, delaysMs: [] }, dataDir);
+    const client = new SPClient(asUrl, { maxAttempts: 1, delaysMs: [] }, dataDir);
     client.setSessionCookie('hap-session=abc');
 
     // Episode 1, call 1: mismatch, notified once.

@@ -33,6 +33,12 @@
  *  - pin-tls off → today's behaviour (covered already by
  *    auth-pairing.test.ts / auth-challenge.test.ts over plain HTTP; not
  *    repeated here).
+ *
+ * The fake AS listens on port 0 (OS-assigned) — this suite runs alongside
+ * other workspaces' own TLS test servers under `pnpm -r test`, and a FIXED
+ * port here collided with one of theirs (EADDRINUSE, CI macOS). "Same URL"
+ * cert-swap tests capture the first server's assigned port and explicitly
+ * rebind the SECOND server to that exact number after closing the first.
  */
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import express from 'express';
@@ -70,7 +76,6 @@ function signChallenge(nonce: string, privateKey: KeyObject): Record<string, unk
 }
 
 const certDir = mkdtempSync(join(tmpdir(), 'auth-pin-tls-certs-'));
-const PORT = 18544;
 
 interface Cert {
   certFile: string;
@@ -118,6 +123,7 @@ const originalExtraCa = process.env.NODE_EXTRA_CA_CERTS;
 
 interface FakeHttpsAs {
   url: string;
+  port: number;
   close: () => Promise<void>;
   sessionCalls: Array<{ apiKey: string | undefined }>;
 }
@@ -125,8 +131,13 @@ interface FakeHttpsAs {
 /** A real HTTPS server, standing in for the Authority Server, implementing
  *  the two routes a sign-in with an already-pinned signing key touches
  *  (`/api/as/challenge`, `/api/auth/session`) — `/api/as/pubkey` is
- *  deliberately NOT needed here (see module doc comment). */
-function startFakeHttpsAs(cert: Cert, getKeypair: () => SigningKeypair): Promise<FakeHttpsAs> {
+ *  deliberately NOT needed here (see module doc comment).
+ *
+ *  @param port 0 (default) lets the OS assign a free port — read back via
+ *  the resolved `port`/`url`. Pass an explicit port to rebind the SAME
+ *  number a prior (now-closed) server in this test was assigned, for the
+ *  "same URL, different certificate" shape. */
+function startFakeHttpsAs(cert: Cert, getKeypair: () => SigningKeypair, port = 0): Promise<FakeHttpsAs> {
   const sessionCalls: Array<{ apiKey: string | undefined }> = [];
   const app = express();
   app.use(express.json());
@@ -145,9 +156,12 @@ function startFakeHttpsAs(cert: Cert, getKeypair: () => SigningKeypair): Promise
     app,
   );
   return new Promise((resolve) => {
-    server.listen(PORT, '127.0.0.1', () => {
+    server.listen(port, '127.0.0.1', () => {
+      const addr = server.address();
+      const assigned = typeof addr === 'object' && addr ? addr.port : port;
       resolve({
-        url: `https://127.0.0.1:${PORT}`,
+        url: `https://127.0.0.1:${assigned}`,
+        port: assigned,
         close: () => new Promise<void>((r) => server.close(() => r())),
         sessionCalls,
       });
@@ -229,7 +243,7 @@ describe('POST /auth/login — opt-in TLS pinning (config set pin-tls on), real 
       // No `servername` — Node rejects an IP literal there (SNI is a
       // hostname concept); this connects to 127.0.0.1 directly.
       const socket = tlsConnect(
-        { host: '127.0.0.1', port: PORT, ca: readFileSync(certA.certFile) },
+        { host: '127.0.0.1', port: as.port, ca: readFileSync(certA.certFile) },
         () => { resolve(socket.getPeerCertificate(true)); socket.end(); },
       );
       socket.on('error', reject);
@@ -260,7 +274,7 @@ describe('POST /auth/login — opt-in TLS pinning (config set pin-tls on), real 
     // with the SAME Ed25519 key (kp), to isolate that it is specifically the
     // TLS pin (not the Ed25519 challenge) that catches this.
     process.env.NODE_EXTRA_CA_CERTS = certB.certFile;
-    const as2 = await startFakeHttpsAs(certB, () => kp); cleanups.push(as2.close);
+    const as2 = await startFakeHttpsAs(certB, () => kp, as1.port); cleanups.push(as2.close);
     const gw2 = await startGateway(new Vault(dataDir), as1.url, dataDir); cleanups.push(gw2.close);
 
     const second = await login(gw2.url);
@@ -292,7 +306,7 @@ describe('POST /auth/login — opt-in TLS pinning (config set pin-tls on), real 
     // Renewed certificate, SAME private key — a different cert file/serial,
     // identical SPKI.
     process.env.NODE_EXTRA_CA_CERTS = certARenewed.certFile;
-    const as2 = await startFakeHttpsAs(certARenewed, () => kp); cleanups.push(as2.close);
+    const as2 = await startFakeHttpsAs(certARenewed, () => kp, as1.port); cleanups.push(as2.close);
     const gw2 = await startGateway(new Vault(dataDir), as1.url, dataDir); cleanups.push(gw2.close);
 
     const second = await login(gw2.url);
@@ -324,7 +338,7 @@ describe('pin-tls on: a fingerprint staged via --expect-fingerprint (config.json
     const kp = realEd25519Keypair();
     process.env.NODE_EXTRA_CA_CERTS = certA.certFile;
     const as = await startFakeHttpsAs(certA, () => kp); cleanups.push(as.close);
-    const realHex = await liveSpkiHex(certA.certFile, PORT);
+    const realHex = await liveSpkiHex(certA.certFile, as.port);
 
     const dataDir = tmp();
     // Signing-key pairing already exists (see the module doc comment for
