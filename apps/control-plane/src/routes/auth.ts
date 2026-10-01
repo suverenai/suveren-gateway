@@ -13,6 +13,7 @@ import type { Vault } from '../lib/vault';
 import { loadOrGenerateKeyPair, getPublicKey } from '../lib/e2e-key-manager';
 import { clientVersionHeaders } from '../lib/client-version';
 import { readPairing, writePairing, fingerprintOf } from '../lib/as-pairing';
+import { verifyAsHoldsKey, AsChallengeUnreachableError, AsChallengeInvalidError } from '../lib/as-challenge';
 
 const DEFAULT_SP_URL = process.env.SUVEREN_AS_URL ?? 'https://www.suveren.ai';
 
@@ -29,71 +30,119 @@ interface AsKeyCheckResult {
   ok: boolean;
   publicKeyHex?: string;
   /** Machine-readable reason, present iff !ok. */
-  error?: 'as_unreachable' | 'as_key_mismatch';
+  error?: 'as_unreachable' | 'as_unverified' | 'as_key_mismatch';
   message?: string;
 }
 
 /**
- * Fetch the AS's public key and check it against any EXISTING pin for this
- * URL — BEFORE the API key is sent anywhere. Two fail-closed rules:
- *
- *  1. The pubkey fetch must succeed and return a well-formed key. An
- *     unreachable or malformed AS is refused, not silently trusted unpinned
- *     — otherwise pinning could be bypassed simply by making the pubkey
- *     endpoint fail (or by an on-path attacker dropping just that one call).
- *  2. A pinned key that disagrees with the live one for the SAME URL refuses
- *     the sign-in outright — see doc/self-hosted-as.md §10, "Replacement
- *     only by re-pairing" (rotation via a signature from the old key is
- *     future work; there is no re-pairing UX yet beyond clearing the pairing
- *     record by hand).
- *
- * Deliberately does NOT touch the API key: this runs before the caller sends
- * it to `/api/auth/session`, so an impostor server never sees credentials
- * before this check can refuse it.
+ * Fetch the AS's reported public key — used ONLY as the trust-on-first-use
+ * candidate for a URL that has no pin yet. Reporting a key proves nothing by
+ * itself (see as-challenge.ts); {@link checkAsKeyBeforeLogin} only trusts
+ * whatever this returns once the challenge below proves the AS actually
+ * holds it.
  */
-async function checkAsKeyBeforeLogin(asUrl: string, dataDir: string): Promise<AsKeyCheckResult> {
-  let publicKeyHex: string;
+async function fetchAsPublicKey(
+  asUrl: string,
+): Promise<{ ok: true; publicKeyHex: string } | { ok: false; message: string }> {
   try {
     const res = await fetch(`${asUrl}/api/as/pubkey`, { signal: AbortSignal.timeout(5000) });
     if (!res.ok) {
       return {
         ok: false,
-        error: 'as_unreachable',
-        message: `Could not reach the Authority Server at ${asUrl} to verify its signing key (HTTP ${res.status}). Refusing to sign in.`,
+        message: `Could not reach the Authority Server at ${asUrl} to read its signing key (HTTP ${res.status}). Refusing to sign in.`,
       };
     }
     const body = (await res.json().catch(() => null)) as { publicKey?: unknown } | null;
     if (!body || typeof body.publicKey !== 'string' || !body.publicKey) {
       return {
         ok: false,
-        error: 'as_unreachable',
         message: `The Authority Server at ${asUrl} returned a malformed signing key. Refusing to sign in.`,
       };
     }
-    publicKeyHex = body.publicKey;
+    return { ok: true, publicKeyHex: body.publicKey };
   } catch (err) {
     return {
       ok: false,
-      error: 'as_unreachable',
-      message: `Could not reach the Authority Server at ${asUrl} to verify its signing key — ` +
+      message: `Could not reach the Authority Server at ${asUrl} to read its signing key — ` +
         `${err instanceof Error ? err.message : String(err)}. Refusing to sign in.`,
     };
   }
+}
 
+/**
+ * Verify the Authority Server at `asUrl` actually HOLDS its signing key —
+ * BEFORE the API key is sent anywhere. Fail-closed rules:
+ *
+ *  1. When a pin already exists for this exact URL, the challenge
+ *     (as-challenge.ts) is checked against the PINNED key, never against a
+ *     freshly-fetched `/api/as/pubkey` value — a live answer that merely
+ *     matches the pin string proves nothing (see as-challenge.ts); only a
+ *     valid signature under the pin does. A pin that fails the challenge
+ *     refuses sign-in outright (409 `as_key_mismatch`) — see
+ *     doc/self-hosted-as.md §10, "Replacement only by re-pairing" (rotation
+ *     via a signature from the old key is future work; there is no
+ *     re-pairing UX yet beyond clearing the pairing record by hand).
+ *  2. First pairing (no pin yet): the live `/api/as/pubkey` value is only a
+ *     CANDIDATE — trust-on-first-use is conditioned on it passing the same
+ *     challenge. The fingerprint shown in Settings (AuthorityServerCard.tsx)
+ *     is the out-of-band check for this first pairing: compare it against
+ *     the Authority Server operator's published fingerprint before trusting
+ *     it. Any failure here (unreachable, malformed, or an invalid challenge)
+ *     refuses sign-in (502 `as_unreachable` / `as_unverified`) rather than
+ *     proceeding unpinned.
+ *
+ * Deliberately does NOT touch the API key: this runs before the caller sends
+ * it to `/api/auth/session`, so an impostor server never sees credentials
+ * before this check can refuse it.
+ */
+async function checkAsKeyBeforeLogin(asUrl: string, dataDir: string): Promise<AsKeyCheckResult> {
   const existing = readPairing(dataDir);
-  if (existing && existing.asUrl === asUrl && existing.publicKeyHex !== publicKeyHex) {
-    return {
-      ok: false,
-      error: 'as_key_mismatch',
-      message:
-        `The Authority Server at ${asUrl} presented a signing key that does not match the one ` +
-        `pinned when this gateway last signed in (pinned fingerprint ${fingerprintOf(existing.publicKeyHex)}, ` +
-        `now seeing ${fingerprintOf(publicKeyHex)}). Refusing to sign in. If the AS's key changed ` +
-        `intentionally, an operator must clear the old pairing before signing in again.`,
-    };
+  const pinnedKey = existing && existing.asUrl === asUrl ? existing.publicKeyHex : undefined;
+
+  let candidateKey: string;
+  if (pinnedKey) {
+    candidateKey = pinnedKey;
+  } else {
+    const fetched = await fetchAsPublicKey(asUrl);
+    if (!fetched.ok) {
+      return { ok: false, error: 'as_unreachable', message: fetched.message };
+    }
+    candidateKey = fetched.publicKeyHex;
   }
 
-  return { ok: true, publicKeyHex };
+  try {
+    await verifyAsHoldsKey(asUrl, candidateKey);
+  } catch (err) {
+    if (err instanceof AsChallengeUnreachableError) {
+      // Network/5xx on the challenge itself — refuse fail-closed regardless
+      // of whether a pin exists; this says nothing about a mismatch, only
+      // that nothing could be verified.
+      return { ok: false, error: 'as_unverified', message: `${err.message}. Refusing to sign in.` };
+    }
+    if (err instanceof AsChallengeInvalidError) {
+      if (pinnedKey) {
+        return {
+          ok: false,
+          error: 'as_key_mismatch',
+          message:
+            `The Authority Server at ${asUrl} does not match the one pinned when this gateway last ` +
+            `signed in (pinned fingerprint ${fingerprintOf(pinnedKey)}) — its signing-key challenge did ` +
+            `not verify (${err.message}). Refusing to sign in. If the AS's key changed intentionally, ` +
+            `an operator must clear the old pairing before signing in again.`,
+        };
+      }
+      return {
+        ok: false,
+        error: 'as_unverified',
+        message:
+          `The Authority Server at ${asUrl} could not prove it holds the signing key it presented — ` +
+          `${err.message}. Refusing to sign in.`,
+      };
+    }
+    throw err;
+  }
+
+  return { ok: true, publicKeyHex: candidateKey };
 }
 
 export function createAuthRouter(
