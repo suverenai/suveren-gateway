@@ -35,6 +35,15 @@ export interface AsConfig {
    *  false/absent. Refused at `config set pin-tls on` / `start --pin-tls`
    *  for an http:// AS URL, since there is no TLS to pin. */
   pinTls?: boolean;
+  /** A fingerprint confirmed via `--expect-fingerprint` (the mandatory
+   *  out-of-band check — see bundle/bin/suveren-gateway.js) BEFORE any
+   *  signing-key pairing exists yet, so there is no as-pairing.json to
+   *  attach a TLS pin to. Staged here until the first verified sign-in
+   *  challenge, which MUST match it (enforced exactly like an
+   *  already-stored pin — see auth.ts's checkAsKeyBeforeLogin); once it
+   *  does, the value moves into as-pairing.json and this field is cleared.
+   *  Never consulted once a real pairing with a TLS pin exists. */
+  pinTlsExpectedFingerprint?: string;
 }
 
 function configPath(dataDir: string): string {
@@ -63,6 +72,7 @@ function readAsConfigStrict(dataDir: string): AsConfig {
   if (typeof data.asUrl === 'string') out.asUrl = data.asUrl;
   if (typeof data.caFile === 'string') out.caFile = data.caFile;
   if (typeof data.pinTls === 'boolean') out.pinTls = data.pinTls;
+  if (typeof data.pinTlsExpectedFingerprint === 'string') out.pinTlsExpectedFingerprint = data.pinTlsExpectedFingerprint;
   return out;
 }
 
@@ -77,6 +87,7 @@ export function readAsConfig(dataDir: string): AsConfig {
     if (typeof data.asUrl === 'string') out.asUrl = data.asUrl;
     if (typeof data.caFile === 'string') out.caFile = data.caFile;
     if (typeof data.pinTls === 'boolean') out.pinTls = data.pinTls;
+    if (typeof data.pinTlsExpectedFingerprint === 'string') out.pinTlsExpectedFingerprint = data.pinTlsExpectedFingerprint;
     return out;
   } catch {
     return {};
@@ -223,5 +234,21 @@ export function validatePinTlsForUrl(pinTls: boolean, asUrl: string): void {
         `\`suveren-gateway config set pin-tls off\`.`,
     );
   }
+}
+
+/** Resolve the staged, not-yet-verified fingerprint, if any — see
+ *  `AsConfig.pinTlsExpectedFingerprint`'s doc comment. Already lowercase,
+ *  no separators (the CLI normalizes before saving). */
+export function resolvePinTlsExpectedFingerprint(dataDir: string): string | undefined {
+  return readAsConfig(dataDir).pinTlsExpectedFingerprint;
+}
+
+/** Remove the staged fingerprint once it has been captured into
+ *  as-pairing.json for real (see auth.ts's checkAsKeyBeforeLogin) — a no-op
+ *  when none is staged. `undefined` in the patch drops the key entirely
+ *  (JSON.stringify omits undefined-valued properties). */
+export function clearPinTlsExpectedFingerprint(dataDir: string): void {
+  if (readAsConfig(dataDir).pinTlsExpectedFingerprint === undefined) return;
+  writeAsConfig(dataDir, { pinTlsExpectedFingerprint: undefined });
 }
 

@@ -17,7 +17,8 @@ import { homedir, platform, userInfo } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildLaunchAgentPlist, buildMacLauncher, buildSystemdUnit, buildWindowsTaskXml } from '../lib/autostart-templates.mjs';
-import { DEFAULT_AS_URL, readConfig, writeConfig, validateAsUrl, validateCaFile, validatePinTls, resolveAsUrl, resolvePinTls } from '../lib/config.mjs';
+import { DEFAULT_AS_URL, readConfig, writeConfig, validateAsUrl, validateCaFile, validatePinTls, resolveAsUrl, resolvePinTls, resolvePinTlsExpectedFingerprint } from '../lib/config.mjs';
+import { readPairing as readAsPairing, recordTlsPin, formatFingerprint, normalizeFingerprint } from '../lib/as-pairing.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PKG_ROOT = resolve(__dirname, '..');
@@ -61,6 +62,101 @@ function flagValue(args, name) {
   return args[i + 1];
 }
 
+/**
+ * The TLS SPKI fingerprint currently on file for `asUrl`, if any — either a
+ * real, verified pin (as-pairing.json, captured at a past sign-in) or a
+ * staged-but-not-yet-verified one (config.json's `pinTlsExpectedFingerprint`
+ * — set by a PRIOR `--expect-fingerprint` run before any pairing existed).
+ * The pairing value always wins when both are present.
+ */
+function currentTlsFingerprintHex(dataDir, asUrl) {
+  const pairing = readAsPairing(dataDir);
+  if (pairing && pairing.asUrl === asUrl && pairing.tlsSpkiPinHex) return pairing.tlsSpkiPinHex;
+  return resolvePinTlsExpectedFingerprint(dataDir);
+}
+
+function printFingerprintHowTo(asUrl) {
+  let host = asUrl;
+  try { host = new URL(asUrl).host; } catch { /* keep the raw string */ }
+  console.error(`Obtain the Authority Server's OWN fingerprint independently — e.g. ask the operator over`);
+  console.error(`the phone, or run this yourself on a network you already trust:`);
+  console.error(``);
+  console.error(`  openssl s_client -connect ${host} </dev/null 2>/dev/null \\`);
+  console.error(`    | openssl x509 -pubkey -noout \\`);
+  console.error(`    | openssl pkey -pubin -outform der \\`);
+  console.error(`    | openssl dgst -sha256`);
+  console.error(``);
+  console.error(`Compare it against the value shown above (if any) BEFORE re-running this with --expect-fingerprint.`);
+}
+
+/**
+ * Mandatory out-of-band check for enabling pin-tls (opt-in TLS certificate
+ * pinning) — shared by `start --pin-tls` and `config set pin-tls on`.
+ * Without this, turning pin-tls on would either silently trust whatever
+ * certificate the Authority Server happens to present at the next sign-in
+ * (defeating the whole point of pinning) or require a SEPARATE manual
+ * verification step a script could skip. `--expect-fingerprint` makes the
+ * operator state, on the command line, the value they already checked
+ * out-of-band — refusing outright when it's missing or doesn't match
+ * whatever is already on file.
+ *
+ * Returns the normalized (lowercase, no separators) hex fingerprint to
+ * commit, or exits the process (code 1) having already printed why.
+ */
+function requireConfirmedFingerprint(args, asUrl) {
+  const flag = flagValue(args, '--expect-fingerprint');
+  const existingHex = currentTlsFingerprintHex(DATA_DIR, asUrl);
+
+  if (!flag) {
+    console.error(`--expect-fingerprint is required to enable pin-tls — this is the Authority Server's TLS`);
+    console.error(`certificate public-key fingerprint (SHA-256 of the leaf SPKI), checked over a second`);
+    console.error(`channel BEFORE trusting it, not just whatever this gateway happens to see on the wire.`);
+    console.error(``);
+    if (existingHex) {
+      console.error(`Currently on file for ${asUrl}:`);
+      console.error(`  ${formatFingerprint(existingHex)}`);
+      console.error(``);
+    }
+    printFingerprintHowTo(asUrl);
+    process.exit(1);
+  }
+
+  const norm = normalizeFingerprint(flag);
+  if (!norm.ok) {
+    console.error(`Invalid --expect-fingerprint: ${norm.error}`);
+    process.exit(1);
+  }
+
+  if (existingHex && existingHex !== norm.hex) {
+    console.error(`--expect-fingerprint does not match the fingerprint already on file for ${asUrl}:`);
+    console.error(`  on file:  ${formatFingerprint(existingHex)}`);
+    console.error(`  provided: ${formatFingerprint(norm.hex)}`);
+    console.error(``);
+    console.error(`If the Authority Server's certificate changed INTENTIONALLY (a new key, not just a`);
+    console.error(`renewal), clear the pairing (${join(DATA_DIR, 'as-pairing.json')}) and sign in again to`);
+    console.error(`re-pin it, then re-run this command with the new fingerprint.`);
+    process.exit(1);
+  }
+
+  return norm.hex;
+}
+
+/**
+ * Commit a confirmed fingerprint: into the existing pairing record
+ * (as-pairing.json) when one exists for this URL, so it is enforced from
+ * the very next connection on — or, when no pairing exists yet (nothing to
+ * attach a TLS pin to), staged in config.json's `pinTlsExpectedFingerprint`
+ * for the control plane to enforce at the NEXT sign-in's challenge (see
+ * checkAsKeyBeforeLogin in apps/control-plane/src/routes/auth.ts), which
+ * moves it into as-pairing.json and clears the staging field once it
+ * verifies.
+ */
+function commitConfirmedFingerprint(dataDir, asUrl, hex) {
+  if (recordTlsPin(dataDir, asUrl, hex)) return 'pinned';
+  writeConfig(dataDir, { pinTlsExpectedFingerprint: hex });
+  return 'staged';
+}
+
 async function start(args) {
   const detach = args.includes('--detach') || args.includes('-d');
 
@@ -97,9 +193,12 @@ async function start(args) {
   // no `start --pin-tls off`; use `config set pin-tls off` for that).
   // Validated against the EFFECTIVE as-url for this very start (the flag
   // above, if given, wins over whatever is saved) — enabling it for an
-  // http:// Authority Server has nothing to pin.
+  // http:// Authority Server has nothing to pin. Also requires
+  // --expect-fingerprint (the mandatory out-of-band check — see
+  // requireConfirmedFingerprint) before it can be turned on at all.
   const pinTlsFlag = args.includes('--pin-tls');
   let pinTlsToSave = null;
+  let confirmedFingerprintHex = null;
   if (pinTlsFlag) {
     const effectiveAsUrl = asUrlToSave ?? resolveAsUrl(DATA_DIR);
     const v = validatePinTls(effectiveAsUrl);
@@ -107,6 +206,7 @@ async function start(args) {
       console.error(`Invalid --pin-tls: ${v.error}`);
       process.exit(1);
     }
+    confirmedFingerprintHex = requireConfirmedFingerprint(args, effectiveAsUrl);
     pinTlsToSave = true;
   }
 
@@ -159,8 +259,15 @@ async function start(args) {
     console.log(`CA file: ${caFileToSave} (saved — applied to every process this gateway starts)`);
   }
   if (pinTlsToSave) {
+    const effectiveAsUrl = asUrlToSave ?? resolveAsUrl(DATA_DIR);
+    const committed = commitConfirmedFingerprint(DATA_DIR, effectiveAsUrl, confirmedFingerprintHex);
     writeConfig(DATA_DIR, { pinTls: true });
-    console.log(`TLS pinning: ON (saved — the certificate pin is captured at your next sign-in)`);
+    console.log(`TLS pinning: ON (fingerprint ${formatFingerprint(confirmedFingerprintHex)} confirmed)`);
+    console.log(
+      committed === 'pinned'
+        ? `  Enforced from your next connection on.`
+        : `  Staged — the first sign-in's challenge must match it (refused otherwise); it then becomes the permanent pin.`,
+    );
   }
 
   if (detach) {
@@ -392,19 +499,42 @@ Usage:
   suveren-gateway config get [as-url|ca-file|pin-tls]  Print the resolved value(s)
   suveren-gateway config set as-url <url>              Save the Authority Server URL
   suveren-gateway config set ca-file <path>            Save a CA bundle for internal TLS
-  suveren-gateway config set pin-tls on|off            Pin the Authority Server's TLS certificate
+  suveren-gateway config set pin-tls on --expect-fingerprint <sha256-hex>
+                                                        Pin the Authority Server's TLS certificate
+  suveren-gateway config set pin-tls off               Stop enforcing the TLS certificate pin
 
 Saved in ${join(DATA_DIR, 'config.json')}.
 Precedence at start: --as-url flag > env SUVEREN_AS_URL > saved as-url >
 default (${DEFAULT_AS_URL}).
 
-pin-tls (default off) requires https:// and pins the Authority Server's TLS
-certificate public key at your NEXT sign-in; every connection after that must
-present the same key, or the gateway refuses it and locks. Turning it on for
-an already-paired Authority Server captures the pin on the next sign-in too
-— no need to re-pair the signing key, just restart and sign in again. A
-certificate RENEWAL (same key) keeps the pin; a NEW key needs re-pairing —
-clear <dataDir>/as-pairing.json and sign in again.
+pin-tls (default off, self-hosted Authority Servers with a stable signing
+key) requires https:// and pins the Authority Server's TLS certificate
+public key; every connection after it's established must present that same
+key, or the gateway refuses it and locks (reason: as-tls-mismatch) until an
+operator resolves it. It protects against a party on the network between
+this gateway and the Authority Server presenting its OWN certificate — but
+ONLY from the moment the fingerprint has actually been checked over a
+second channel (phone, a separate trusted connection), which is why
+--expect-fingerprint is mandatory: it is not optional confirmation, it IS
+the check. Recommended: enable it once, right after pairing, from a network
+you already trust.
+
+--expect-fingerprint <sha256-hex>  The Authority Server's own TLS leaf
+  certificate public-key fingerprint (SHA-256 of the SPKI — colons/spacing
+  accepted, case-insensitive), confirmed over a second channel BEFORE
+  running this command. Without it, this command refuses and prints how to
+  obtain the fingerprint yourself.
+  - If a pin is already on file and it DIFFERS, this refuses outright —
+    clear the pairing first if the certificate changed intentionally (a
+    NEW key; a renewal with the SAME key never needs this).
+  - If none is on file yet, the value is trusted immediately if a
+    signing-key pairing already exists, or staged for the very next
+    sign-in's challenge to match (refused otherwise) if it doesn't.
+
+Renewing the certificate under the SAME key (e.g. \`certbot renew
+--reuse-key\`) keeps the pin working with no action needed; a renewal under
+a NEW key locks the gateway until an operator re-pairs (clears
+<dataDir>/as-pairing.json and signs in again).
 
 Changes take effect on the next \`suveren-gateway start\` / \`restart\` — a
 running gateway keeps using what it already resolved at its own startup.
@@ -466,22 +596,32 @@ async function config(args) {
     }
     if (key === 'pin-tls') {
       if (value !== 'on' && value !== 'off') {
-        console.error('Usage: suveren-gateway config set pin-tls on|off');
+        console.error('Usage: suveren-gateway config set pin-tls on|off [--expect-fingerprint <sha256-hex>]');
         process.exit(2);
       }
-      if (value === 'on') {
-        const v = validatePinTls(resolveAsUrl(DATA_DIR));
-        if (!v.ok) {
-          console.error(`Invalid pin-tls: ${v.error}`);
-          process.exit(1);
-        }
+      if (value === 'off') {
+        writeConfig(DATA_DIR, { pinTls: false });
+        console.log('Saved pin-tls: off');
+        console.log('Restart to pick it up: suveren-gateway restart');
+        return;
       }
-      writeConfig(DATA_DIR, { pinTls: value === 'on' });
-      console.log(`Saved pin-tls: ${value}`);
+      // value === 'on': requires the out-of-band fingerprint check (see
+      // requireConfirmedFingerprint) — never trusts whatever the AS
+      // happens to present at the next sign-in without one.
+      const effectiveAsUrl = resolveAsUrl(DATA_DIR);
+      const v = validatePinTls(effectiveAsUrl);
+      if (!v.ok) {
+        console.error(`Invalid pin-tls: ${v.error}`);
+        process.exit(1);
+      }
+      const hex = requireConfirmedFingerprint(args, effectiveAsUrl);
+      const committed = commitConfirmedFingerprint(DATA_DIR, effectiveAsUrl, hex);
+      writeConfig(DATA_DIR, { pinTls: true });
+      console.log(`Saved pin-tls: on (fingerprint ${formatFingerprint(hex)} confirmed)`);
       console.log(
-        value === 'on'
-          ? 'Restart and sign in again to capture the certificate pin: suveren-gateway restart'
-          : 'Restart to pick it up: suveren-gateway restart',
+        committed === 'pinned'
+          ? 'Restart to pick it up: suveren-gateway restart'
+          : 'Restart and sign in again — the first challenge must match this fingerprint: suveren-gateway restart',
       );
       return;
     }
@@ -998,7 +1138,7 @@ Usage:
   suveren-gateway start [--detach]           Run the gateway (foreground by default)
     [--as-url <url>]                         Authority Server URL (saved for next time)
     [--ca-file <path>]                       Internal CA bundle (saved for next time)
-    [--pin-tls]                              Pin the Authority Server's TLS certificate (saved; https:// only)
+    [--pin-tls --expect-fingerprint <hex>]   Pin the AS TLS certificate (saved; https:// only — see below)
   suveren-gateway stop                       Stop a detached gateway
   suveren-gateway restart                    Stop, then start --detach
   suveren-gateway status                     Show running state + health
@@ -1008,7 +1148,10 @@ Usage:
   suveren-gateway config get [as-url|ca-file|pin-tls]  Print the resolved value(s)
   suveren-gateway config set as-url <url>     Save the Authority Server URL
   suveren-gateway config set ca-file <path>   Save a CA bundle for internal TLS
-  suveren-gateway config set pin-tls on|off   Pin the Authority Server's TLS certificate
+  suveren-gateway config set pin-tls on --expect-fingerprint <hex>
+                                              Pin the Authority Server's TLS certificate
+                                              (see \`suveren-gateway config help\` for the fingerprint check)
+  suveren-gateway config set pin-tls off      Stop enforcing the TLS certificate pin
   suveren-gateway help                        Print this help
 
 Environment:

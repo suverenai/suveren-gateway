@@ -14,7 +14,7 @@ import { loadOrGenerateKeyPair, getPublicKey } from '../lib/e2e-key-manager';
 import { clientVersionHeaders } from '../lib/client-version';
 import { readPairing, writePairing, recordTlsPin, fingerprintOf } from '../lib/as-pairing';
 import { verifyAsHoldsKey, AsChallengeUnreachableError, AsChallengeInvalidError, AsTlsMismatchError } from '../lib/as-challenge';
-import { resolvePinTls } from '../lib/as-config';
+import { resolvePinTls, resolvePinTlsExpectedFingerprint, clearPinTlsExpectedFingerprint } from '../lib/as-config';
 import { fetchAs, type AsFetchPinning } from '../lib/as-tls-pin';
 
 const DEFAULT_SP_URL = process.env.SUVEREN_AS_URL ?? 'https://www.suveren.ai';
@@ -123,7 +123,14 @@ async function fetchAsPublicKey(
 async function checkAsKeyBeforeLogin(asUrl: string, dataDir: string): Promise<AsKeyCheckResult> {
   const existing = readPairing(dataDir);
   const pinnedKey = existing && existing.asUrl === asUrl ? existing.publicKeyHex : undefined;
-  const existingTlsPin = existing && existing.asUrl === asUrl ? existing.tlsSpkiPinHex : undefined;
+  // A real, already-captured pin wins; otherwise fall back to a fingerprint
+  // CONFIRMED via `--expect-fingerprint` before any pairing existed (see
+  // as-config.ts's `pinTlsExpectedFingerprint` doc comment) — staged
+  // specifically so THIS challenge enforces it rather than trusting
+  // whatever certificate happens to answer (mandatory out-of-band check).
+  const existingTlsPin =
+    (existing && existing.asUrl === asUrl ? existing.tlsSpkiPinHex : undefined) ??
+    resolvePinTlsExpectedFingerprint(dataDir);
 
   let candidateKey: string;
   if (pinnedKey) {
@@ -331,6 +338,12 @@ export function createAuthRouter(
           recordTlsPin(pairing.dataDir, pairing.asUrl, keyCheck.tlsSpkiPinHex);
           console.error(`[Control Plane] TLS pin for Authority Server ${pairing.asUrl} captured/updated.`);
         }
+        // A fingerprint staged via `--expect-fingerprint` before any
+        // pairing existed (as-config.ts's `pinTlsExpectedFingerprint`) has
+        // now either been verified and moved into as-pairing.json above, or
+        // was never set — either way it has no further job. Clearing it is
+        // a no-op in the latter case.
+        clearPinTlsExpectedFingerprint(pairing.dataDir);
       }
 
       // Read the body once — reused below both for sessionExpiresAt and as

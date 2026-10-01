@@ -32,6 +32,7 @@ export function readConfig(dataDir) {
     if (typeof data.asUrl === 'string') out.asUrl = data.asUrl;
     if (typeof data.caFile === 'string') out.caFile = data.caFile;
     if (typeof data.pinTls === 'boolean') out.pinTls = data.pinTls;
+    if (typeof data.pinTlsExpectedFingerprint === 'string') out.pinTlsExpectedFingerprint = data.pinTlsExpectedFingerprint;
     return out;
   } catch {
     return {};
@@ -57,6 +58,7 @@ function readConfigStrict(dataDir) {
   if (typeof data.asUrl === 'string') out.asUrl = data.asUrl;
   if (typeof data.caFile === 'string') out.caFile = data.caFile;
   if (typeof data.pinTls === 'boolean') out.pinTls = data.pinTls;
+  if (typeof data.pinTlsExpectedFingerprint === 'string') out.pinTlsExpectedFingerprint = data.pinTlsExpectedFingerprint;
   return out;
 }
 
@@ -178,4 +180,19 @@ export function validatePinTls(effectiveAsUrl) {
  *  never silently on. */
 export function resolvePinTls(dataDir) {
   return readConfig(dataDir).pinTls === true;
+}
+
+/**
+ * A fingerprint confirmed via `--expect-fingerprint` BEFORE any signing-key
+ * pairing exists yet (so there is no as-pairing.json to attach a TLS pin
+ * to — see as-pairing.mjs's `recordTlsPin`, which needs an existing record).
+ * Staged here until the first verified sign-in challenge: that challenge
+ * MUST match this value (enforced exactly like an already-stored pin — see
+ * the control plane's checkAsKeyBeforeLogin), and once it does, the value
+ * moves into as-pairing.json and this staging field is cleared. Absent in
+ * every other case — once a real pairing with a TLS pin exists, that record
+ * is authoritative and this is never consulted again.
+ */
+export function resolvePinTlsExpectedFingerprint(dataDir) {
+  return readConfig(dataDir).pinTlsExpectedFingerprint;
 }

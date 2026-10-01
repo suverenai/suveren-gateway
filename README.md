@@ -106,7 +106,7 @@ Open `http://localhost:7400`. The MCP server is at `http://localhost:7430`.
 
 ### Option B — npm
 
-Requires [Node.js 20+](https://nodejs.org/).
+Requires [Node.js 20.18.1+](https://nodejs.org/).
 
 ```bash
 npm install -g @suveren/gateway
@@ -150,6 +150,38 @@ pnpm dev          # UI on :3400, control plane on :3402, MCP on :3430
 ```
 
 See [`docs/development.md`](docs/development.md) for environment variables, testing, and per-service dev commands.
+
+---
+
+## Pinning the Authority Server's TLS certificate
+
+Opt-in, for self-hosted Authority Servers with a stable signing key — not needed against the hosted `suveren.ai`, and off by default.
+
+The gateway already verifies the Authority Server can *sign* under the right key before it ever sends an API key or session cookie. What that alone does not cover: something sitting on the network path between the gateway and the Authority Server, presenting its own TLS certificate, that a locally-trusted CA (e.g. a custom `--ca-file`) would otherwise accept. TLS certificate pinning closes that gap by pinning the Authority Server's certificate public key (SPKI, SHA-256) — every connection after that must present the same key, or the gateway refuses it and locks.
+
+**Pinning only protects from the moment the fingerprint has actually been checked over a second channel** — a phone call, a video call, a separate trusted connection. That is why enabling it requires `--expect-fingerprint`: not an optional confirmation step, but the check itself. Recommended: enable it once, right after pairing, from a network you already trust.
+
+```bash
+# Get the Authority Server's own fingerprint independently — ask the operator,
+# or run this yourself on a trusted network:
+openssl s_client -connect your-as-host:443 </dev/null 2>/dev/null \
+  | openssl x509 -pubkey -noout \
+  | openssl pkey -pubin -outform der \
+  | openssl dgst -sha256
+
+# Compare it against what you were told out-of-band, THEN enable:
+suveren-gateway config set pin-tls on --expect-fingerprint <the-sha256-you-just-confirmed>
+suveren-gateway restart
+```
+
+A few things worth knowing before turning it on:
+
+- **Certificate renewal with the SAME key keeps the pin working** — nothing to do. Renew with the same key where your tooling supports it (e.g. `certbot renew --reuse-key`).
+- **A renewal under a NEW key locks the gateway** (`as-tls-mismatch`) until an operator re-pairs — this is deliberate fail-closed behavior, not a bug. Re-pairing means clearing `<dataDir>/as-pairing.json` and signing in again.
+- Pinned connections trust Node's own bundled root certificates plus `--ca-file` / `NODE_EXTRA_CA_CERTS` — **not** your operating system's trust store.
+- `suveren-gateway config set pin-tls off` disables enforcement at any time; the stored fingerprint stays on file, so turning it back on later with the SAME `--expect-fingerprint` value succeeds immediately (it is still required every time — stating it again is cheap, and the command refuses outright if it doesn't match what's on file).
+
+See `suveren-gateway config help` for the full command reference.
 
 ---
 

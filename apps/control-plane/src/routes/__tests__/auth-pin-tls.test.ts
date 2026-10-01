@@ -304,3 +304,67 @@ describe('POST /auth/login — opt-in TLS pinning (config set pin-tls on), real 
     expect(readPairing(dataDir)?.tlsSpkiPinHex).toBe(pinnedHex);
   });
 });
+
+/** The live SPKI SHA-256 of whatever's listening at `port`, trusting
+ *  `caFile` — used to build the EXACT value an operator's out-of-band
+ *  `--expect-fingerprint` check would have produced. */
+async function liveSpkiHex(caFile: string, port: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const socket = tlsConnect({ host: '127.0.0.1', port, ca: readFileSync(caFile) }, () => {
+      const hex = spkiSha256Hex(socket.getPeerCertificate(true));
+      socket.end();
+      resolve(hex);
+    });
+    socket.on('error', reject);
+  });
+}
+
+describe('pin-tls on: a fingerprint staged via --expect-fingerprint (config.json, before any TLS pin exists)', () => {
+  it('matches the first verified challenge — accepted, and promoted into as-pairing.json', async () => {
+    const kp = realEd25519Keypair();
+    process.env.NODE_EXTRA_CA_CERTS = certA.certFile;
+    const as = await startFakeHttpsAs(certA, () => kp); cleanups.push(as.close);
+    const realHex = await liveSpkiHex(certA.certFile, PORT);
+
+    const dataDir = tmp();
+    // Signing-key pairing already exists (see the module doc comment for
+    // why — the bare pubkey fetch can't trust a self-signed cert mid-test),
+    // but NO TLS pin yet: exactly what `bundle/bin/suveren-gateway.js`'s
+    // `config set pin-tls on --expect-fingerprint` stages when it can't
+    // write straight into as-pairing.json.
+    writePairing(dataDir, as.url, kp.publicKeyHex);
+    writeFileSync(join(dataDir, 'config.json'), JSON.stringify({ pinTls: true, pinTlsExpectedFingerprint: realHex }));
+    setInternalSecret('test-secret');
+    const gw = await startGateway(new Vault(dataDir), as.url, dataDir); cleanups.push(gw.close);
+
+    const res = await login(gw.url);
+
+    expect(res.status).toBe(200);
+    expect(readPairing(dataDir)?.tlsSpkiPinHex).toBe(realHex);
+    // The staging field's job is done — cleared, not left stale.
+    expect(JSON.parse(readFileSync(join(dataDir, 'config.json'), 'utf-8')).pinTlsExpectedFingerprint).toBeUndefined();
+  });
+
+  it("REFUSAL: does NOT match the first verified challenge's live certificate — refused, never promoted, never silently accepted", async () => {
+    const kp = realEd25519Keypair();
+    process.env.NODE_EXTRA_CA_CERTS = certA.certFile;
+    const as = await startFakeHttpsAs(certA, () => kp); cleanups.push(as.close);
+
+    const dataDir = tmp();
+    writePairing(dataDir, as.url, kp.publicKeyHex);
+    const wrongHex = '0'.repeat(64); // what the operator typed does NOT match certA
+    writeFileSync(join(dataDir, 'config.json'), JSON.stringify({ pinTls: true, pinTlsExpectedFingerprint: wrongHex }));
+    setInternalSecret('test-secret');
+    const gw = await startGateway(new Vault(dataDir), as.url, dataDir); cleanups.push(gw.close);
+
+    const res = await login(gw.url);
+
+    expect(res.status).toBe(409);
+    const body = await res.json() as { error?: string };
+    expect(body.error).toBe('as_tls_mismatch');
+    expect(readPairing(dataDir)?.tlsSpkiPinHex).toBeUndefined();
+    // The staged (wrong) value is left alone — not silently cleared or
+    // replaced by whatever the live certificate actually is.
+    expect(JSON.parse(readFileSync(join(dataDir, 'config.json'), 'utf-8')).pinTlsExpectedFingerprint).toBe(wrongHex);
+  });
+});
