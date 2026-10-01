@@ -118,6 +118,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => document.removeEventListener('visibilitychange', onVisibilityChange);
   }, [refreshGroups]);
 
+  // Boot-time-only counterpart to handleSessionLocked's runtime message: an
+  // AS-URL change is detected while the gateway is starting (index.ts), so
+  // there is no live session to interrupt with an SSE event — the vault is
+  // already locked by the time anyone can connect. /health is unauthenticated
+  // (see UpdateBanner, which already relies on this), so this can run before
+  // login without an API key.
+  useEffect(() => {
+    fetch('/health')
+      .then(res => res.json())
+      .then((health: { spUrl?: string; session?: { lockedReason?: string } }) => {
+        if (health.session?.lockedReason === 'as-url-changed') {
+          setError(`Authority Server changed to ${health.spUrl ?? 'a new server'} — sign in again.`);
+        }
+      })
+      .catch(() => { /* health unreachable — the rest of the app already surfaces this */ });
+    // Once only, on mount — a runtime change is covered by the 'session-locked'
+    // SSE event (see App.tsx), not this effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const login = useCallback(async (apiKey: string, opts: { confirmWipe?: boolean } = {}) => {
     setIsLoading(true);
     setError('');

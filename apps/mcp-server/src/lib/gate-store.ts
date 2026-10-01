@@ -103,6 +103,25 @@ export class GateStore {
     this.persist();
   }
 
+  /**
+   * Wipe every locally cached gate. Used when the Authority Server this
+   * gateway points at changes (re-pairing, see as-pairing.ts): a stored
+   * authorization id and its intent/context are meaningless against a
+   * different AS's grants, and keeping them around risks a `getAll()` caller
+   * (e.g. list-authorizations) advertising authority that no longer exists.
+   *
+   * Removes BOTH the plaintext and encrypted files, not just the one
+   * currently active — this runs at boot, before any vault key is set, so
+   * `persist()` would otherwise only touch `gates.json` and leave a stale
+   * `gates.enc.json` in place for `setVaultKey()` to resurrect on the next
+   * unlock.
+   */
+  clearAll(): void {
+    this.entries = new Map();
+    try { if (existsSync(this.plaintextFilePath)) unlinkSync(this.plaintextFilePath); } catch { /* ignore */ }
+    try { if (existsSync(this.encryptedFilePath)) unlinkSync(this.encryptedFilePath); } catch { /* ignore */ }
+  }
+
   // ─── Encryption helpers ─────────────────────────────────────────────────
 
   private encrypt(plaintext: string): EncryptedBlob {

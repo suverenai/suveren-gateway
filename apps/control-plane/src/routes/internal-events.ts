@@ -38,6 +38,14 @@ const ALLOWED: readonly EventType[] = ['proposal-added', 'action-approval-needed
  */
 const SESSION_EXPIRED = 'session-expired';
 
+/**
+ * Another command, same shape as SESSION_EXPIRED: the MCP server's Gatekeeper
+ * found the AS's live signing key no longer matches the one pinned at
+ * pairing (attestation-cache.ts / gatekeeper.ts) and asks this process to
+ * lock — see createAsKeyMismatchLock in session-lock.ts.
+ */
+const AS_KEY_MISMATCH = 'as-key-mismatch';
+
 function secretMatches(provided: string | undefined, expected: string): boolean {
   if (!expected) return false; // never accept when no secret is configured
   if (!provided) return false;
@@ -52,6 +60,7 @@ function secretMatches(provided: string | undefined, expected: string): boolean 
 export function createInternalEventsRouter(
   getSecret: () => string,
   onSessionExpired?: () => void,
+  onAsKeyMismatch?: () => void,
 ): Router {
   const router = Router();
 
@@ -65,6 +74,12 @@ export function createInternalEventsRouter(
 
     if (type === SESSION_EXPIRED) {
       onSessionExpired?.();
+      res.json({ ok: true });
+      return;
+    }
+
+    if (type === AS_KEY_MISMATCH) {
+      onAsKeyMismatch?.();
       res.json({ ok: true });
       return;
     }

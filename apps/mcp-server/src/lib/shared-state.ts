@@ -5,12 +5,13 @@
  */
 
 import { SPClient } from './sp-client';
-import { AttestationCache, type CachedAuthorization } from './attestation-cache';
+import { AttestationCache, AsKeyMismatchError, type CachedAuthorization } from './attestation-cache';
 import { GateStore, type GateContent, type GateEntry } from './gate-store';
 import { ExecutionLog } from './execution-log';
 import { DenialLog } from './denial-log';
 import { ReceiptArchive, type ArchivedAttestation } from './receipt-archive';
 import { ExecutionJournal } from './execution-journal';
+import { ProposalSubmissionStore } from './proposal-submission-store';
 import { MCPGatekeeper } from './gatekeeper';
 
 export interface EnrichedAuthorization extends CachedAuthorization {
@@ -29,16 +30,26 @@ export class SharedState {
   readonly receiptArchive: ReceiptArchive;
   /** Which tickets this Gatekeeper has executed — the "one execution per ticket" half of exactly-once. */
   readonly executionJournal: ExecutionJournal;
+  /** What THIS gateway submitted for each review-mode proposal it created —
+   *  see ticket-verify.ts / commitments.ts. */
+  readonly proposalSubmissions: ProposalSubmissionStore;
   readonly gatekeeper: MCPGatekeeper;
 
-  constructor(spUrl: string, gateStorePath?: string) {
+  /**
+   * @param dataDir Passed to the AttestationCache so it can enforce AS key
+   *   pinning (as-pairing.ts). Optional for backward compat with existing
+   *   constructions/tests that pass only a URL — those get unpinned
+   *   trust-on-first-use behavior, same as before pinning existed.
+   */
+  constructor(spUrl: string, gateStorePath?: string, dataDir?: string) {
     this.spClient = new SPClient(spUrl);
-    this.cache = new AttestationCache(this.spClient);
+    this.cache = new AttestationCache(this.spClient, dataDir);
     this.gateStore = new GateStore(gateStorePath);
     this.executionLog = new ExecutionLog(gateStorePath);
     this.denialLog = new DenialLog(gateStorePath);
     this.receiptArchive = new ReceiptArchive(gateStorePath);
     this.executionJournal = new ExecutionJournal(gateStorePath);
+    this.proposalSubmissions = new ProposalSubmissionStore(gateStorePath);
     // The execution log is deliberately NOT handed to the Gatekeeper: it is a
     // display-only record (see gatekeeper.ts), and the AS is the sole
     // cumulative enforcer.
@@ -72,11 +83,20 @@ export class SharedState {
   ): Promise<void> {
     try {
       // Store the AS pubkey alongside so the entry verifies offline even if
-      // the AS later disappears. Best-effort: cached 5 min, usually free.
+      // the AS later disappears. Best-effort: cached 5 min, usually free —
+      // EXCEPT a pin mismatch, which must not be swallowed here. By the time
+      // archiveReceipt runs, ticket-verify.ts has already required a clean
+      // getPublicKey() to get this far in the normal call path; a mismatch
+      // surfacing here regardless means something call this out of order,
+      // and archiving a receipt from a server whose key we no longer trust
+      // silently would misrepresent it as verified evidence.
       let asPublicKey: string | undefined;
       try {
         asPublicKey = await this.cache.getPublicKey();
-      } catch { /* archive without it — still verifiable via any saved key */ }
+      } catch (err) {
+        if (err instanceof AsKeyMismatchError) throw err;
+        /* any other failure — archive without it, still verifiable via any saved key */
+      }
 
       this.receiptArchive.record({
         receipt,
@@ -100,6 +120,11 @@ export class SharedState {
           : undefined,
       });
     } catch (err) {
+      // AsKeyMismatchError is not an archive-write failure — it means the
+      // gateway no longer trusts this Authority Server's key, which callers
+      // (tool-proxy.ts, commitments.ts) must react to (refuse + lock), so it
+      // must not be swallowed into a log line like a disk-write hiccup.
+      if (err instanceof AsKeyMismatchError) throw err;
       console.error(
         '[Suveren MCP] Receipt archive write failed (execution proceeds — AS retains authoritative copy):',
         err,

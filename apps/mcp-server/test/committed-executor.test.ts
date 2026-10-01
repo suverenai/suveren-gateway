@@ -19,11 +19,12 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CommittedExecutor, ExecutorLock } from '../src/lib/committed-executor';
-import { ExecutionJournal } from '../src/lib/execution-journal';
+import { ExecutionJournal, hashToolArgs } from '../src/lib/execution-journal';
 import { executeCommitted } from '../src/tools/commitments';
 import type { SharedState } from '../src/lib/shared-state';
 import type { IntegrationManager, DiscoveredTool } from '../src/lib/integration-manager';
 import type { SPProposal } from '../src/lib/sp-client';
+import { testReceiptKeypair, makeSignedReceipt, signTestReceipt } from './helpers/real-receipt';
 
 // ─── 1. Executor ────────────────────────────────────────────────────────────
 
@@ -137,11 +138,42 @@ const TOOL: DiscoveredTool = {
   gating: { profile: 'deploy', executionMapping: {}, staticExecution: {} } as unknown as DiscoveredTool['gating'],
 };
 
+// A real Ed25519 keypair, shared by every test in this file — ticket-verify.ts
+// checks every receipt's signature against the pinned key (cache.getPublicKey())
+// before executeCommitted trusts it for anything.
+const kp = testReceiptKeypair();
+/** A validly-signed receipt bound to PROPOSAL's own tool/executionContext/
+ *  authorizationId/profileId/proposalId — everything ticket-verify.ts checks. */
+function receiptFor(id: string): Record<string, unknown> {
+  return makeSignedReceipt(kp, {
+    id,
+    action: PROPOSAL.tool,
+    executionContext: PROPOSAL.executionContext,
+    authorizationId: PROPOSAL.authorizationId,
+    profileId: PROPOSAL.profileId,
+    proposalId: PROPOSAL.id,
+  });
+}
+
 function buildState(dir: string, postReceipt: ReturnType<typeof vi.fn>) {
   const record = vi.fn();
   const state = {
     spClient: { postReceipt },
-    cache: { getAllAuthorizations: () => [] },
+    cache: { getAllAuthorizations: () => [], getPublicKey: async () => kp.publicKeyHex },
+    // A local record matching PROPOSAL exactly — commitments.ts now REFUSES
+    // to execute a proposal with no matching local submission record.
+    proposalSubmissions: {
+      get: () => ({
+        proposalId: PROPOSAL.id,
+        tool: PROPOSAL.tool,
+        toolArgsHash: hashToolArgs(PROPOSAL.toolArgs),
+        executionContextHash: hashToolArgs(PROPOSAL.executionContext),
+        authorizationId: PROPOSAL.authorizationId,
+        profileId: PROPOSAL.profileId,
+        submittedAt: Math.floor(Date.now() / 1000),
+      }),
+      record: vi.fn(),
+    },
     executionLog: { record },
     executionJournal: new ExecutionJournal(dir),
     archiveReceipt: vi.fn().mockResolvedValue(undefined),
@@ -164,8 +196,8 @@ describe('executeCommitted × ExecutionJournal', () => {
     // First call: AS mints. Second call: AS replays the same ticket.
     const postReceipt = vi
       .fn()
-      .mockResolvedValueOnce({ receipt: { id: 'rcpt-1' }, idempotent: false })
-      .mockResolvedValueOnce({ receipt: { id: 'rcpt-1' }, idempotent: true });
+      .mockResolvedValueOnce({ receipt: receiptFor('rcpt-1'), idempotent: false })
+      .mockResolvedValueOnce({ receipt: receiptFor('rcpt-1'), idempotent: true });
     const { state, record } = buildState(dir, postReceipt);
     const { im, callTool } = buildIntegrationManager();
 
@@ -180,7 +212,7 @@ describe('executeCommitted × ExecutionJournal', () => {
   });
 
   it('a replayed ticket with NO journal row is lost-response recovery: runs once', async () => {
-    const postReceipt = vi.fn().mockResolvedValue({ receipt: { id: 'rcpt-1' }, idempotent: true });
+    const postReceipt = vi.fn().mockResolvedValue({ receipt: receiptFor('rcpt-1'), idempotent: true });
     const { state } = buildState(dir, postReceipt);
     const { im, callTool } = buildIntegrationManager();
     const r = await executeCommitted(PROPOSAL, state, im);
@@ -189,7 +221,7 @@ describe('executeCommitted × ExecutionJournal', () => {
   });
 
   it('an intent row with no completion (crash window) is surfaced, never re-run', async () => {
-    const postReceipt = vi.fn().mockResolvedValue({ receipt: { id: 'rcpt-1' }, idempotent: true });
+    const postReceipt = vi.fn().mockResolvedValue({ receipt: receiptFor('rcpt-1'), idempotent: true });
     const { state } = buildState(dir, postReceipt);
     const { im, callTool } = buildIntegrationManager();
     // Someone got as far as calling the tool and vanished.
@@ -203,7 +235,7 @@ describe('executeCommitted × ExecutionJournal', () => {
   });
 
   it('a tool that throws leaves a `failed` row, and a retry on the same ticket is refused', async () => {
-    const postReceipt = vi.fn().mockResolvedValue({ receipt: { id: 'rcpt-1' }, idempotent: false });
+    const postReceipt = vi.fn().mockResolvedValue({ receipt: receiptFor('rcpt-1'), idempotent: false });
     const { state, record } = buildState(dir, postReceipt);
     const callTool = vi.fn().mockRejectedValueOnce(new Error('network')).mockResolvedValue({ content: [] });
     const im = { getAllTools: () => [TOOL], callTool } as unknown as IntegrationManager;
@@ -214,7 +246,7 @@ describe('executeCommitted × ExecutionJournal', () => {
     expect(state.executionJournal.get('rcpt-1')?.state).toBe('failed');
     expect(record).not.toHaveBeenCalled();
 
-    postReceipt.mockResolvedValue({ receipt: { id: 'rcpt-1' }, idempotent: true });
+    postReceipt.mockResolvedValue({ receipt: receiptFor('rcpt-1'), idempotent: true });
     const second = await executeCommitted(PROPOSAL, state, im);
     expect(second.isError).toBe(true);
     expect(second.text).toMatch(/reported failure/);
@@ -222,7 +254,19 @@ describe('executeCommitted × ExecutionJournal', () => {
   });
 
   it('a ticket without an id is refused before anything runs', async () => {
-    const postReceipt = vi.fn().mockResolvedValue({ receipt: {}, idempotent: false });
+    // Validly signed and otherwise fully bound to PROPOSAL (so this exercises
+    // the "no id" refusal specifically, not one of ticket-verify.ts's other
+    // checks, which would otherwise catch a bare `{}` first for a different
+    // reason).
+    const idlessReceipt = signTestReceipt({
+      action: PROPOSAL.tool,
+      executionContext: PROPOSAL.executionContext,
+      authorizationId: PROPOSAL.authorizationId,
+      profileId: PROPOSAL.profileId,
+      proposalId: PROPOSAL.id,
+      timestamp: Math.floor(Date.now() / 1000),
+    }, kp.privateKey);
+    const postReceipt = vi.fn().mockResolvedValue({ receipt: idlessReceipt, idempotent: false });
     const { state } = buildState(dir, postReceipt);
     const { im, callTool } = buildIntegrationManager();
     const r = await executeCommitted(PROPOSAL, state, im);

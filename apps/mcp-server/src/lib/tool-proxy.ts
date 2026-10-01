@@ -14,10 +14,12 @@ import type { SharedState, EnrichedAuthorization } from './shared-state';
 import { lockedNotice } from './locked-notice';
 import type { DenialReason } from './denial-log';
 import { SPReceiptError } from './sp-client';
-import { isCommitmentDowngrade } from './attestation-cache';
+import { isCommitmentDowngrade, AsKeyMismatchError } from './attestation-cache';
 import { appendVerificationFooter, shouldAttachFooter } from './receipt-footer';
 import { computeContentBinding, attachReceiptId } from './content-binding';
 import { hashToolArgs } from './execution-journal';
+import { verifyTicket, TicketBindingMismatchError } from './ticket-verify';
+import { notifyControlPlane } from './cp-notify';
 import { encodeOutgoingArgs } from './arg-encoding';
 import { normalizeIncomingArgs } from './arg-normalization';
 import { selectAuthorization } from './scope-specificity';
@@ -743,6 +745,17 @@ function createGatedToolHandlerInner(
               toolArgs: enrichedArgs,
               executionContext: { ...execution },
             });
+            // Record what WE submitted — ticket-verify.ts / commitments.ts
+            // compares against this at execution time rather than trusting
+            // the AS's echoed-back tool/args at face value.
+            state.proposalSubmissions.record({
+              proposalId: proposal.id,
+              tool: tool.namespacedName,
+              toolArgs: enrichedArgs,
+              executionContext: { ...execution },
+              authorizationId: authzId,
+              profileId: auth.profileId,
+            });
             return {
               content: [{
                 type: 'text',
@@ -818,6 +831,22 @@ function createGatedToolHandlerInner(
           });
           receiptId = typeof receipt?.id === 'string' ? receipt.id : undefined;
 
+          // Verify the ticket BEFORE trusting it for anything — signature
+          // against the PINNED key, and its own bound fields against what
+          // was just requested. "No ticket, no execution" is meaningless if
+          // the ticket itself is never checked. Fail closed: this throws
+          // (caught below) rather than returning a result, so there is no
+          // path from here to the downstream tool call on a ticket that
+          // didn't verify.
+          await verifyTicket(state.cache, receipt, {
+            action: tool.namespacedName,
+            executionContext: { ...execution },
+            authorizationId: authzId,
+            profileId: auth.profileId,
+            contentHash: binding?.contentHash,
+            contentBinding: binding?.contentBinding,
+          });
+
           // Subject custody: keep the complete signed receipt (+ attestation
           // blobs) locally so the evidence stays verifiable without the AS.
           // Best-effort — never blocks the execution the AS just authorized.
@@ -835,6 +864,19 @@ function createGatedToolHandlerInner(
             boundContent: binding?.boundContent,
           });
         } catch (err) {
+          // The ticket didn't verify — either its signature disagrees with
+          // the pinned Authority Server key, or its own bound fields
+          // disagree with what was just requested. Refuse AND lock: this is
+          // exactly the "different server / tampered ticket" case pinning
+          // exists to catch, so a human must notice, not just this one call.
+          if (err instanceof AsKeyMismatchError || err instanceof TicketBindingMismatchError) {
+            void notifyControlPlane('as-key-mismatch');
+            return {
+              content: [{ type: 'text', text: `Blocked: ${err.message}` }],
+              isError: true,
+            };
+          }
+
           // The profile binds a declared field set and this call cannot supply
           // it. Refuse: issuing the receipt anyway would produce one that
           // verifies while committing to less than it appears to.
@@ -898,6 +940,14 @@ function createGatedToolHandlerInner(
                 toolArgs: enrichedArgs,
                 executionContext: { ...execution },
                 pendingApprovers: uniqueApprovers,
+              });
+              state.proposalSubmissions.record({
+                proposalId: proposal.id,
+                tool: tool.namespacedName,
+                toolArgs: enrichedArgs,
+                executionContext: { ...execution },
+                authorizationId: authzId,
+                profileId: auth.profileId,
               });
               return {
                 content: [{

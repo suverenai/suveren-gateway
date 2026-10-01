@@ -17,7 +17,26 @@
 import { deriveIdentityLine, type Subject } from '@hap/core';
 import type { DiscoveredTool } from './integration-manager';
 
-const AS_BASE = (process.env.SUVEREN_AS_URL ?? 'https://www.suveren.ai').replace(/\/$/, '');
+// Env-only default so this module stays disk-free and independently
+// testable (see receipt-footer.test.ts, which never sets SUVEREN_DATA_DIR
+// and must not go looking for a real ~/.suveren/config.json). The real
+// process (bin/http.ts) resolves the full precedence chain — env > saved
+// config > default — via as-config.ts ONCE at startup and injects it here
+// with setAsBaseUrl, so the footer's link and the resolver never disagree.
+let AS_BASE = (process.env.SUVEREN_AS_URL ?? 'https://www.suveren.ai').replace(/\/$/, '');
+
+/** Set once at process startup (bin/http.ts) to the fully-resolved AS URL. */
+export function setAsBaseUrl(url: string): void {
+  AS_BASE = url.replace(/\/$/, '');
+}
+
+// TODO(public-verification): once suveren.ai's public check page ships (see
+// doc/self-hosted-as.md §9), the footer's link should switch from
+// `<AS>/r/<id>` to the public-stamp form (`https://suveren.ai/v#<stamp>`) so
+// a self-hosted customer's internal AS URL is never handed to an outside
+// recipient who can't reach it. That is a separate, later step — not this
+// one — and needs the AS to seal a redacted "public stamp" alongside the
+// receipt (§9.1). Leaving today's `<AS>/r/<id>` link in place until then.
 
 /** Operator display name for the footer ("verified by «operator»"). */
 const OPERATOR_NAME = process.env.SUVEREN_OPERATOR_NAME ?? 'Suveren';

@@ -27,18 +27,71 @@ import { loadProfiles } from '../src/lib/profile-loader';
 import { loadManifests, getAllManifests, getManifest } from '../src/lib/manifest-loader';
 import { buildMandateBrief } from '../src/lib/mandate-brief';
 import { decodeAttestationBlob } from '@hap/core';
-import { executeCommitted, installCommittedExecutor } from '../src/tools/commitments';
+import { executeCommitted, installCommittedExecutor, buildSkippedProposalNote } from '../src/tools/commitments';
 import { CommittedExecutor, ExecutorLock } from '../src/lib/committed-executor';
 import type { SPProposal } from '../src/lib/sp-client';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { resolveAsUrl } from '../src/lib/as-config';
+import { readMcpPairedAsUrl, writeMcpPairedAsUrl } from '../src/lib/mcp-as-tracker';
+import { setAsBaseUrl } from '../src/lib/receipt-footer';
 
-const spUrl = process.env.SUVEREN_AS_URL ?? 'https://www.suveren.ai';
+// Same default every stateful module in this codebase uses (GateStore,
+// ReceiptArchive, …) — see as-config.ts's doc comment.
+const dataDir = process.env.SUVEREN_DATA_DIR ?? join(homedir(), '.suveren');
+
+// Resolution order: env SUVEREN_AS_URL > saved <dataDir>/config.json >
+// default suveren.ai. Throws (refusing to start) if an explicitly set source
+// is malformed.
+const spUrl = resolveAsUrl(dataDir);
 const port = parseInt(process.env.SUVEREN_MCP_PORT ?? '3430', 10);
+
+// The receipt footer's link uses the SAME resolved URL — see receipt-footer.ts.
+setAsBaseUrl(spUrl);
 
 // ─── Shared state (one instance for all connections) ───────────────────────
 
-const state = new SharedState(spUrl);
+const state = new SharedState(spUrl, undefined, dataDir);
+
+// ─── Re-pair when the Authority Server URL changes ──────────────────────
+//
+// Boot-time only, mirrors the control plane's own check (index.ts) — the two
+// processes share the same data dir but each independently notices the
+// change, since bundle/server.js starts them concurrently and either can come
+// up first.
+//
+// Deliberately reads/writes mcp-as-tracker.ts's OWN file, not the control
+// plane's `as-pairing.json` — reading that shared file here would race it:
+// whichever process booted first and deleted it (see index.ts) would leave
+// the other with nothing to compare against, and it would skip clearing
+// stale mandates. This file is written and read ONLY by the MCP server, so
+// neither process's timing can affect the other's decision, in either boot
+// order.
+//
+// Kept: vault credentials (owned by the control plane, untouched here) and
+// the local receipt archive (each entry already stores its own asUrl).
+(function repairIfAsUrlChanged() {
+  const lastKnown = readMcpPairedAsUrl(dataDir);
+  // No tracker record at all (lastKnown === null) is deliberately NOT treated
+  // as a change: every 0.8.7-and-earlier data dir has none, so clearing here
+  // wiped every grant's intent/scope (the only copy of it — the AS never
+  // holds it) on the first boot after upgrading, even when the Authority
+  // Server never changed. That is a strictly worse outcome than the gap it
+  // tried to close: an upgrade that ALSO switches the AS in the same restart
+  // is still caught — not here, but by the existing post-sign-in resync
+  // (mcp-bridge.ts's resyncGates / the /internal/resync-gates handler), which
+  // already drops any gate whose authorizationId the new AS doesn't
+  // recognize. Only a KNOWN prior URL that disagrees with the current one is
+  // grounds to clear at boot.
+  if (lastKnown !== null && lastKnown !== spUrl) {
+    console.error(
+      `[Suveren MCP] Authority Server changed (${lastKnown} → ${spUrl}) — ` +
+        'clearing cached mandates. Sign in again to re-pair.',
+    );
+    state.gateStore.clearAll();
+  }
+  writeMcpPairedAsUrl(dataDir, spUrl);
+})();
 
 const spApiKey = process.env.SUVEREN_AS_API_KEY ?? '';
 if (spApiKey) {
@@ -150,13 +203,21 @@ app.post('/internal/configure', internalOnly, (req: Request, res: Response) => {
 /**
  * Push the "session ended" state to this process. Called by the control
  * plane's own session-lock procedure — whether IT detected the 401 (its own
- * AS proxy call) or a sibling MCP process did (via /internal/event →
- * session-expired). Idempotent: a client that already cleared itself on its
- * own 401 just gets the same state written again.
+ * AS proxy call), a sibling MCP process did (via /internal/event →
+ * session-expired), or an AS key mismatch. Idempotent: a client that already
+ * cleared itself on its own 401 just gets the same state written again.
+ *
+ * `reason`, when sent, is the REAL reason the control plane locked (see
+ * session-lock.ts) — carried through so the agent is told the truth instead
+ * of always hearing "your sign-in ended" (sp-client.ts's clearSession()
+ * default), which for an AS key mismatch or URL change would send it toward
+ * a sign-in that is itself refused.
  */
-app.post('/internal/clear-session', internalOnly, (_req: Request, res: Response) => {
-  state.spClient.clearSession();
-  console.error('[Suveren MCP] Session cleared by control-plane (AS session ended)');
+app.post('/internal/clear-session', internalOnly, (req: Request, res: Response) => {
+  const reason = (req.body as { reason?: unknown })?.reason;
+  const validReason = reason === 'as-key-mismatch' || reason === 'as-url-changed' ? reason : undefined;
+  state.spClient.clearSession(validReason);
+  console.error(`[Suveren MCP] Session cleared by control-plane (${validReason ?? 'expired'})`);
   res.json({ ok: true });
 });
 
@@ -589,6 +650,25 @@ app.get('/internal/authorizations', internalOnly, (_req: Request, res: Response)
 
 app.get('/internal/manifests', internalOnly, (_req: Request, res: Response) => {
   res.json({ manifests: getAllManifests() });
+});
+
+/**
+ * Committed proposals this gateway will NOT execute because it holds no
+ * local submission record for them (see tools/commitments.ts's skip path
+ * and buildSkippedProposalNote) — the UI's counterpart to
+ * check-pending-commitments' list view, so an approved-but-nothing-happened
+ * proposal is visible there too, not just to an agent that happens to ask.
+ */
+app.get('/internal/skipped-commitments', internalOnly, async (_req: Request, res: Response) => {
+  try {
+    const committed = await state.spClient.getCommittedProposals();
+    const skipped = committed
+      .filter(p => !state.proposalSubmissions.get(p.id))
+      .map(p => ({ id: p.id, tool: p.tool, note: buildSkippedProposalNote(p.id) }));
+    res.json({ skipped });
+  } catch (err) {
+    res.status(502).json({ error: err instanceof Error ? err.message : 'Could not reach the Authority Server' });
+  }
 });
 
 // Local evidence — everything this machine holds that proves what ran and

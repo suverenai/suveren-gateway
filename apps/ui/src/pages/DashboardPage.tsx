@@ -9,6 +9,7 @@ import { isPendingProposal } from '../lib/pending';
 import { useIntegrationStatus } from '../contexts/IntegrationStatusContext';
 import { Skeleton, SkeletonAttentionRow } from '../components/Skeleton';
 import { RecentBlocks } from '../components/RecentBlocks';
+import { SkippedCommitmentsCard } from '../components/SkippedCommitmentsCard';
 import { bucketAuths } from '../lib/auth-status';
 
 const EXPIRY_WARN_SECONDS = 30 * 60; // 30 minutes
@@ -282,6 +283,9 @@ export function DashboardPage() {
           </div>
         )}
       </section>
+
+      {/* Approved commitments this gateway won't execute (submitted elsewhere) */}
+      <SkippedCommitmentsCard />
 
       {/* Recent read-blocks — the trust signal: a limit you set vs a malfunction */}
       <RecentBlocks />

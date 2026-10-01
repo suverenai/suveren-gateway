@@ -26,6 +26,29 @@ import { encodeOutgoingArgs } from '../lib/arg-encoding';
 import { hashToolArgs } from '../lib/execution-journal';
 import type { CommittedExecutor, ExecutionResult } from '../lib/committed-executor';
 import { ContentBindingError } from '@hap/core';
+import { AsKeyMismatchError } from '../lib/attestation-cache';
+import { verifyTicket, TicketBindingMismatchError } from '../lib/ticket-verify';
+import { notifyControlPlane } from '../lib/cp-notify';
+
+/**
+ * The message shown for a committed proposal this gateway has no local
+ * submission record for — used both when an agent asks about it directly
+ * (executeCommitted's skip path, below) and when listing every committed
+ * proposal (checkPendingCommitmentsHandler), so the wording is the same
+ * everywhere a human or agent might see it.
+ *
+ * Deliberately says "approved" up front: from the human's point of view they
+ * DID approve the action, and nothing happening looks exactly like a bug
+ * unless the reason is stated plainly. "Re-run the request here" is the only
+ * recovery available today (see the design gap noted in executeCommitted).
+ */
+export function buildSkippedProposalNote(proposalId: string): string {
+  return (
+    `Proposal ${proposalId} was approved, but was submitted from another device/installation of ` +
+    `this operator (or one whose local record is gone) — this gateway will not execute it. ` +
+    `Re-run the same request here to execute it from this gateway.`
+  );
+}
 
 // ─── The one executor ────────────────────────────────────────────────────────
 // Installed by the HTTP entrypoint once the integration manager exists. Every
@@ -104,6 +127,66 @@ export async function executeCommitted(
     .getAllAuthorizations()
     .find(a => a.authorizationId === proposal.authorizationId);
 
+  // Cross-check against what THIS gateway itself submitted
+  // (proposal-submission-store.ts) — "never trust AS-supplied tool/args
+  // alone" for the review path, where everything (tool, args, "committed"
+  // status) comes from the server.
+  //
+  // No local record → SKIP, quietly, not an attack. A genuine Authority
+  // Server legitimately lists every committed proposal for the operator, no
+  // matter which of their gateways submitted it — the SAME person's laptop
+  // and desktop both poll the same list. Refusing-and-locking here would fire
+  // on that completely ordinary case every time, a false alarm that locks the
+  // second gateway on every poll tick. So this gateway leaves a proposal it
+  // never submitted for whichever one DID to pick up: no receipt is
+  // requested (nothing is marked executed OR failed on the AS), nothing is
+  // journaled, and the human is not interrupted.
+  //
+  // This does NOT weaken the impostor defense: an injected proposal has no
+  // local record on ANY real gateway either, so it is skipped here exactly
+  // the same way — it simply never gets a receipt requested for it, which is
+  // what stops it from running. What DOES still refuse-and-lock is a local
+  // record that EXISTS but disagrees with the proposal (below), and a ticket
+  // whose signature or bound fields don't check out (further down) — those
+  // are the cases that are never legitimate.
+  //
+  // Known gap this leaves open: this gateway has no way to tell "a proposal
+  // legitimately submitted by my other device" apart from "an impostor's
+  // injected proposal" other than by looking for its OWN record — so it
+  // treats both identically (skip). A proposal genuinely meant for a
+  // different device of the SAME operator is not executed here even after
+  // approval; the operator has to wait for the submitting device, or
+  // re-submit the same tool call from this one. Closing that gap for real
+  // needs the Authority Server itself to attest who submitted a proposal.
+  const submitted = state.proposalSubmissions.get(proposal.id);
+  if (!submitted) {
+    console.error(
+      `[Suveren MCP] Proposal ${proposal.id} is committed but has no local submission record on this ` +
+        'gateway — leaving it for whichever gateway submitted it (this is normal for a different device ' +
+        'of the same operator, or the AS lists a proposal we never submitted).',
+    );
+    // Visible, not silent: the human approved this, and nothing ran — see
+    // buildSkippedProposalNote's doc comment for why the wording matters.
+    return { text: buildSkippedProposalNote(proposal.id) };
+  }
+  {
+    const mismatches: string[] = [];
+    if (submitted.tool !== proposal.tool) mismatches.push('tool');
+    if (submitted.toolArgsHash !== hashToolArgs(proposal.toolArgs)) mismatches.push('arguments');
+    if (submitted.executionContextHash !== hashToolArgs(proposal.executionContext)) mismatches.push('executionContext');
+    if (submitted.authorizationId !== proposal.authorizationId) mismatches.push('authorizationId');
+    if (submitted.profileId !== proposal.profileId) mismatches.push('profileId');
+    if (mismatches.length > 0) {
+      void notifyControlPlane('as-key-mismatch');
+      return {
+        text:
+          `Blocked: proposal ${proposal.id} no longer matches what this gateway submitted ` +
+          `(${mismatches.join(', ')} differ) — refusing to execute.`,
+        isError: true,
+      };
+    }
+  }
+
   // Receipt id captured here so the verification footer (Category-A profiles)
   // can be embedded on the review-mode send too — not just automatic sends.
   let receiptId: string | undefined;
@@ -153,6 +236,26 @@ export async function executeCommitted(
     receiptId = typeof receipt?.id === 'string' ? receipt.id : undefined;
     replayed = idempotent;
 
+    // Verify the ticket BEFORE trusting it for anything — signature against
+    // the PINNED key, and its own bound fields against the proposal,
+    // INCLUDING proposalId: a receipt minted for some other request (or for
+    // no proposal — a plain automatic-mode ticket) must never be accepted
+    // just because its action/executionContext happen to match. This is the
+    // review path's whole defense against a server that hands the gateway a
+    // tool call it never approved: everything else here (tool name,
+    // arguments, "committed" status) comes from the AS, so without this
+    // check a receipt minted by ANY key at all — valid or not — would be
+    // enough to make the gateway run it.
+    await verifyTicket(state.cache, receipt, {
+      action: proposal.tool,
+      executionContext: proposal.executionContext,
+      authorizationId: proposal.authorizationId,
+      profileId: proposal.profileId,
+      proposalId: proposal.id,
+      contentHash: binding?.contentHash,
+      contentBinding: binding?.contentBinding,
+    });
+
     // Subject custody: archive the complete signed receipt locally (parity
     // with the automatic path). cachedAuth may be evicted — archive the
     // receipt anyway; the attestation blobs merge in on a later call.
@@ -170,6 +273,17 @@ export async function executeCommitted(
       boundContent: binding?.boundContent,
     });
   } catch (err) {
+    // The ticket didn't verify — signature disagrees with the pinned
+    // Authority Server key, or its own bound fields disagree with the
+    // proposal. Refuse AND lock: a server that can do this is exactly what
+    // pinning exists to catch, on the path with the least other protection.
+    if (err instanceof AsKeyMismatchError || err instanceof TicketBindingMismatchError) {
+      void notifyControlPlane('as-key-mismatch');
+      return {
+        text: `Proposal ${proposal.id}: blocked — ${err.message}`,
+        isError: true,
+      };
+    }
     // Approved content that cannot be bound. Refuse rather than execute on a
     // receipt that would verify while committing to less than the approver saw.
     if (err instanceof ContentBindingError) {
@@ -395,9 +509,17 @@ export function checkPendingCommitmentsHandler(
         };
       }
 
-      const lines = committed.map(p =>
-        `${p.id}: tool=${p.tool}, status=${p.status}, committed=[${Object.keys(p.committedBy).join(',')}]`
-      );
+      // A committed proposal with no local submission record will not be
+      // executed here (see executeCommitted's skip path) — visible in the
+      // list so an approved-but-nothing-happened proposal is never a silent
+      // mystery to whoever is watching for it.
+      const lines = committed.map(p => {
+        const base = `${p.id}: tool=${p.tool}, status=${p.status}, committed=[${Object.keys(p.committedBy).join(',')}]`;
+        if (p.status === 'committed' && !state.proposalSubmissions.get(p.id)) {
+          return `${base} — SKIPPED HERE: ${buildSkippedProposalNote(p.id)}`;
+        }
+        return base;
+      });
 
       return {
         content: [{

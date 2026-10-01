@@ -10,7 +10,7 @@ import type { Vault } from './vault';
 export interface SessionHealth {
   state: 'active' | 'locked';
   expiresAt: number | null;
-  lockedReason?: 'expired';
+  lockedReason?: 'expired' | 'as-key-mismatch' | 'as-url-changed';
 }
 
 export function buildSessionHealth(vault: Vault): SessionHealth {

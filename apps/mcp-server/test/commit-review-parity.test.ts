@@ -14,6 +14,8 @@ import type { SharedState } from '../src/lib/shared-state';
 import type { IntegrationManager, DiscoveredTool } from '../src/lib/integration-manager';
 import type { SPProposal } from '../src/lib/sp-client';
 import type { Subject } from '@hap/core';
+import { testReceiptKeypair, makeSignedReceipt } from './helpers/real-receipt';
+import { hashToolArgs } from '../src/lib/execution-journal';
 
 const SUBJECT: Subject = {
   did: 'did:key:a', assurance: 'high', method: 'as_vouched', trust_root: 'as',
@@ -47,10 +49,44 @@ const TOOL: DiscoveredTool = {
 };
 
 function buildState(opts: { boundsHash?: string; subjects?: Subject[] }) {
-  const postReceipt = vi.fn().mockResolvedValue({ receipt: { id: 'rcpt-1' } });
+  const kp = testReceiptKeypair();
+  // Echoes the request's bound fields, signed — ticket-verify.ts (used by
+  // commitments.ts) now checks every receipt's action/executionContext/
+  // authorizationId/profileId/proposalId before trusting it.
+  const postReceipt = vi.fn().mockImplementation(async (req: {
+    action: string;
+    executionContext?: Record<string, unknown>;
+    authorizationId?: string;
+    profileId?: string;
+    proposalId?: string;
+  }) => ({
+    receipt: makeSignedReceipt(kp, {
+      id: 'rcpt-1',
+      action: req.action,
+      executionContext: req.executionContext ?? {},
+      authorizationId: req.authorizationId,
+      profileId: req.profileId,
+      proposalId: req.proposalId,
+    }),
+  }));
   const state = {
     spClient: { postReceipt },
+    // A local record matching PROPOSAL exactly — commitments.ts now REFUSES
+    // to execute a proposal with no matching local submission record.
+    proposalSubmissions: {
+      get: () => ({
+        proposalId: PROPOSAL.id,
+        tool: PROPOSAL.tool,
+        toolArgsHash: hashToolArgs(PROPOSAL.toolArgs),
+        executionContextHash: hashToolArgs(PROPOSAL.executionContext),
+        authorizationId: PROPOSAL.authorizationId,
+        profileId: PROPOSAL.profileId,
+        submittedAt: Math.floor(Date.now() / 1000),
+      }),
+      record: vi.fn(),
+    },
     cache: {
+      getPublicKey: async () => kp.publicKeyHex,
       getAllAuthorizations: () => [
         {
           authorizationId: 'authz_1',

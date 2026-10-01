@@ -10,8 +10,107 @@
 import { spawn } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { homedir, tmpdir, constants as osConstants } from 'node:os';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { resolveCaFile } from './lib/config.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const THIS_FILE = fileURLToPath(import.meta.url);
+
+/** Exit this process the way a shell reports a signal-terminated child: 128
+ *  plus the signal number, so a caller (or a test) can tell "exited cleanly
+ *  with code N" from "was killed by signal N" instead of both collapsing to
+ *  a bare exit(1). */
+function exitLikeChild(code, signal) {
+  if (signal) {
+    const num = osConstants.signals?.[signal];
+    process.exit(128 + (typeof num === 'number' ? num : 0));
+  }
+  process.exit(code ?? 0);
+}
+
+// ─── Internal CA bundle (--ca-file / `config set ca-file`) ─────────────────
+//
+// `NODE_EXTRA_CA_CERTS` is read by Node ONLY at process start, before any of
+// our own code runs — setting `process.env.NODE_EXTRA_CA_CERTS` here would be
+// too late to affect THIS process's own TLS. It still needs to reach the
+// control-plane and MCP-server children below (those are fresh processes, so
+// setting it in the `env` object we spawn them with DOES work), but this
+// process itself also makes its own outbound calls in a few paths.
+//
+// This is the ONE place that has to handle it for every way the gateway can
+// start: `suveren-gateway start` (the CLI just spawns this same file),
+// autostart (launchd/systemd/Task Scheduler spawn this file DIRECTLY,
+// bypassing the CLI's own flag handling), and Docker (`CMD node server.js`).
+// Re-exec once, here, before anything network-related happens, rather than
+// have three separate top-level entry points each remember to do it.
+//
+// Guarded by SUVEREN_CA_REEXEC_DONE, not by comparing NODE_EXTRA_CA_CERTS to
+// the saved path: when the caller's shell already has its OWN
+// NODE_EXTRA_CA_CERTS set (a corporate proxy CA, say), overwriting it would
+// silently break trust for everything else this process does (npm registry
+// fetches for on-demand integrations, other HTTPS calls) — so the two are
+// MERGED into one combined PEM file instead. Comparing against that combined
+// path would never match the saved path alone, so the guard has to be a
+// dedicated marker, not a value comparison (which would also re-exec forever).
+const DATA_DIR = process.env.SUVEREN_DATA_DIR ?? join(homedir(), '.suveren');
+const savedCaFile = resolveCaFile(DATA_DIR);
+if (savedCaFile && !process.env.SUVEREN_CA_REEXEC_DONE) {
+  let effectiveCaFile = savedCaFile;
+  /** Set only when a combined-CA temp dir was actually created, so it can be
+   *  cleaned up on exit rather than left behind on every restart. */
+  let combinedDirToClean = null;
+  const existingCaFile = process.env.NODE_EXTRA_CA_CERTS;
+  if (existingCaFile && existingCaFile !== savedCaFile && existsSync(existingCaFile)) {
+    try {
+      const combined =
+        readFileSync(existingCaFile, 'utf8').trimEnd() + '\n' + readFileSync(savedCaFile, 'utf8').trimEnd() + '\n';
+      const combinedDir = mkdtempSync(join(tmpdir(), 'suveren-ca-'));
+      const combinedPath = join(combinedDir, 'combined-ca-certs.pem');
+      writeFileSync(combinedPath, combined, 'utf8');
+      effectiveCaFile = combinedPath;
+      combinedDirToClean = combinedDir;
+      console.error(
+        `[suveren-gateway] Merged --ca-file with the existing NODE_EXTRA_CA_CERTS (${existingCaFile}) ` +
+          `so neither trust source is lost.`,
+      );
+    } catch (err) {
+      console.error(
+        `[suveren-gateway] Could not merge NODE_EXTRA_CA_CERTS with the saved --ca-file (${err.message}); ` +
+          `using the saved --ca-file alone, which may break other HTTPS calls that relied on the existing one.`,
+      );
+    }
+  }
+
+  const child = spawn(
+    process.execPath,
+    [THIS_FILE, ...process.argv.slice(2)],
+    { env: { ...process.env, NODE_EXTRA_CA_CERTS: effectiveCaFile, SUVEREN_CA_REEXEC_DONE: '1' }, stdio: 'inherit' },
+  );
+  child.on('exit', (code, signal) => {
+    if (combinedDirToClean) {
+      try { rmSync(combinedDirToClean, { recursive: true, force: true }); } catch { /* best-effort */ }
+    }
+    exitLikeChild(code, signal);
+  });
+  for (const sig of ['SIGINT', 'SIGTERM']) {
+    process.on(sig, () => child.kill(sig));
+  }
+  // Stop here — the re-executed child (which now has NODE_EXTRA_CA_CERTS set
+  // from its own start) is the one that spawns control-plane + mcp-server;
+  // this parent's only job from here is to relay its exit code and signals,
+  // both wired above. Top-level await pauses the rest of THIS module's
+  // evaluation (the spawns below) until that promise settles, which only
+  // happens via the exit handler calling process.exit().
+  await new Promise(() => {});
+}
+
+// Reached only in the re-executed child (or when no --ca-file is set at
+// all). SUVEREN_CA_REEXEC_DONE is bookkeeping for the block above — internal
+// to this file, and meaningless (worse, confusing) to anything downstream —
+// so it must not ride along in the env every child process below inherits
+// via `...process.env`, all the way down to individual integrations.
+delete process.env.SUVEREN_CA_REEXEC_DONE;
 
 const CP_PORT = process.env.SUVEREN_CP_PORT ?? '3400';
 const MCP_PORT = process.env.SUVEREN_MCP_PORT ?? '3430';

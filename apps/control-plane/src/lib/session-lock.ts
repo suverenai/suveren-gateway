@@ -34,6 +34,10 @@ export interface SessionLockDeps {
 /** The one-line reason relayed to the browser over SSE (payload, not the event name). */
 export const SESSION_LOCKED_MESSAGE = 'Your sign-in ended after 30 days or was revoked. Sign in again.';
 
+/** Same channel, for the pinned-key mismatch case (see as-pairing.ts). */
+export const AS_KEY_MISMATCH_MESSAGE =
+  'The Authority Server presented a signing key that does not match the one pinned at pairing. Sign in again to review.';
+
 export function createSessionLock(deps: SessionLockDeps): () => void {
   const { vault, port } = deps;
   const notifyFn = deps.notifyFn ?? notify;
@@ -56,5 +60,38 @@ export function createSessionLock(deps: SessionLockDeps): () => void {
 
     const { title, message, url } = sessionExpiredNotification(port);
     notifyFn(title, message, process.platform, url);
+  };
+}
+
+/**
+ * Mirrors {@link createSessionLock} for the AS-key-mismatch case: the MCP
+ * server's Gatekeeper found the AS's live signing key no longer matches the
+ * one pinned at pairing (gatekeeper.ts) and told this process over
+ * `/internal/event` (internal-events.ts). Every gated call already refuses
+ * itself on this condition (attestation-cache.ts keeps throwing as long as
+ * the mismatch persists); this additionally locks the whole gateway so a
+ * human notices even between tool calls, instead of the agent silently
+ * hitting refusals one at a time.
+ */
+export function createAsKeyMismatchLock(deps: SessionLockDeps): () => void {
+  const { vault, port } = deps;
+  const notifyFn = deps.notifyFn ?? notify;
+  const unconfigureSessionFn = deps.unconfigureSessionFn ?? unconfigureSession;
+  const emit = deps.emit ?? eventBus.emit.bind(eventBus);
+
+  return function lockOnAsKeyMismatch(): void {
+    if (!vault.isUnlocked()) return; // already locked — nothing to do (single-flight)
+    vault.lockAsKeyMismatch();
+
+    console.error('[Control Plane] Authority Server key mismatch — gateway LOCKED');
+
+    void unconfigureSessionFn('as-key-mismatch').catch(err => {
+      console.error('[Control Plane] Failed to push cleared session to MCP:', err);
+    });
+
+    emit('session-locked', { reason: 'as-key-mismatch', message: AS_KEY_MISMATCH_MESSAGE });
+
+    const { title, url } = sessionExpiredNotification(port);
+    notifyFn(title, AS_KEY_MISMATCH_MESSAGE, process.platform, url);
   };
 }

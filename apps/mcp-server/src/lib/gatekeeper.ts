@@ -3,7 +3,8 @@
  */
 
 import { verify, type GatekeeperRequest, type GatekeeperResult } from '@hap/core';
-import { AttestationCache, type CachedAuthorization } from './attestation-cache';
+import { AttestationCache, AsKeyMismatchError, type CachedAuthorization } from './attestation-cache';
+import { notifyControlPlane } from './cp-notify';
 
 /** Minimal subset of CachedAuthorization / EnrichedAuthorization needed for context override. */
 interface AuthContextOverride {
@@ -69,8 +70,32 @@ export class MCPGatekeeper {
       };
     }
 
-    // Get SP public key
-    const publicKeyHex = await this.cache.getPublicKey();
+    // Get SP public key — pinned at pairing (see as-pairing.ts). A mismatch
+    // here means the AS this URL now resolves to is not the one we paired
+    // with, which is exactly the case pinning exists to catch: refuse this
+    // action AND lock the gateway, the same fail-closed shape as a session
+    // that ended mid-flight (session-lock.ts), rather than quietly trusting
+    // whatever key just answered.
+    let publicKeyHex: string;
+    try {
+      publicKeyHex = await this.cache.getPublicKey();
+    } catch (err) {
+      if (err instanceof AsKeyMismatchError) {
+        void notifyControlPlane('as-key-mismatch');
+        return {
+          result: {
+            approved: false,
+            // No dedicated GatekeeperError code exists for this (hap-core's
+            // union predates gateway-side key pinning) — INVALID_SIGNATURE is
+            // the closest fit: it's exactly the claim being made here ("we
+            // will not trust a signature made under this key").
+            errors: [{ code: 'INVALID_SIGNATURE', message: err.message }],
+          },
+          authorization: auth,
+        };
+      }
+      throw err;
+    }
 
     const resolvedBounds = override?.bounds ?? auth.bounds ?? auth.frame;
     const resolvedContext = override?.context ?? auth.context;

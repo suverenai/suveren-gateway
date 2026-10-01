@@ -10,8 +10,10 @@ import { notifyControlPlane } from './cp-notify';
 import { clientVersionHeaders } from './client-version';
 
 /** Why the client currently has no session — distinguishes the default
- *  boot-locked state from one that WAS active and ended. */
-export type SPLockReason = 'expired' | null;
+ *  boot-locked state from one that WAS active and ended, and carries the
+ *  REAL reason (not always 'expired') so the agent is told the truth — see
+ *  locked-notice.ts. */
+export type SPLockReason = 'expired' | 'as-key-mismatch' | 'as-url-changed' | null;
 
 export interface SPAttestationResponse {
   domain: string;
@@ -158,12 +160,19 @@ export class SPClient {
 
   /**
    * Drop the session because the control plane learned (by whatever path —
-   * one of OUR calls 401ing, or its own AS proxy 401ing) that it ended.
-   * Idempotent: safe to call redundantly from the control-plane's push.
+   * one of OUR calls 401ing, its own AS proxy 401ing, or an AS key mismatch)
+   * that it ended. Idempotent: safe to call redundantly from the
+   * control-plane's push.
+   *
+   * @param reason Defaults to 'expired' for the original caller (a 401 really
+   *   does mean the session ended) — but the control plane's own lock
+   *   procedures (session-lock.ts) know the REAL reason and must pass it, or
+   *   an agent told "your sign-in ended, sign in again" for an AS key
+   *   mismatch would be sent to a sign-in that is itself refused.
    */
-  clearSession(): void {
+  clearSession(reason: Exclude<SPLockReason, null> = 'expired'): void {
     this.sessionCookie = '';
-    this.lockReason = 'expired';
+    this.lockReason = reason;
   }
 
   /** Why we are currently locked, if known. `null` means the default

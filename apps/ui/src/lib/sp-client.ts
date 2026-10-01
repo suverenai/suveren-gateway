@@ -1278,6 +1278,27 @@ class SPClient {
     }
   }
 
+  // ─── Authority Server pairing (as-url + pinned key fingerprint) ─────────
+
+  async getAsPairing(): Promise<{
+    asUrl: string;
+    paired: boolean;
+    fingerprint: string | null;
+    pairedAt: string | null;
+  }> {
+    const res = await this.fetch('/as-pairing');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
+  }
+
+  // ─── Skipped commitments (approved, but not submitted by this gateway) ──
+
+  async getSkippedCommitments(): Promise<{ skipped: Array<{ id: string; tool: string; note: string }> }> {
+    const res = await this.fetch('/skipped-commitments');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
+  }
+
   // ─── Gate Content ───────────────────────────────────────────────────────
 
   async getGateContent(path: string): Promise<GateContentEntry | null> {
