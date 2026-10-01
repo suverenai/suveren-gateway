@@ -56,6 +56,22 @@ export default defineConfig({
         target: 'http://localhost:3402',
         changeOrigin: true,
       },
+      '/as-pairing': {
+        target: 'http://localhost:3402',
+        changeOrigin: true,
+      },
+      '/skipped-commitments': {
+        target: 'http://localhost:3402',
+        changeOrigin: true,
+      },
+      '/autostart': {
+        target: 'http://localhost:3402',
+        changeOrigin: true,
+      },
+      '/resync-gates': {
+        target: 'http://localhost:3402',
+        changeOrigin: true,
+      },
       '/mcp': {
         target: 'http://localhost:3402',
         changeOrigin: true,
