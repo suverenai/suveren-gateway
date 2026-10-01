@@ -6,6 +6,7 @@
     "records": "records.json",
     "linkedin": "linkedin.json",
     "calendar": "calendar.json",
-    "deploy-github": "deploy-github.json"
+    "deploy-github": "deploy-github.json",
+    "erp": "erp.json"
   }
 }
