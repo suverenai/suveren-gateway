@@ -10,7 +10,17 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { createServer, type Server } from 'node:http';
 import { generateKeyPairSync, sign as cryptoSign, type KeyObject } from 'node:crypto';
 import { canonicalize } from '@hap/core';
-import { verifyAsHoldsKey, AsChallengeUnreachableError, AsChallengeInvalidError } from '../lib/as-challenge';
+import {
+  verifyAsHoldsKey,
+  verifyChallengeSignature,
+  AsChallengeUnreachableError,
+  AsChallengeInvalidError,
+} from '../lib/as-challenge';
+
+/** The real domain-separation prefix as-challenge.ts signs under — kept
+ *  independent of the module's own (unexported) constant so a change to one
+ *  without the other breaks this test, not just production. */
+const CHALLENGE_DOMAIN_PREFIX = 'hap-as-challenge\u0000';
 
 function realEd25519Keypair(): { publicKeyHex: string; privateKey: KeyObject } {
   const { publicKey, privateKey } = generateKeyPairSync('ed25519');
@@ -47,8 +57,24 @@ function fakeChallengeServer(respond: Responder): Promise<{ url: string; close: 
   });
 }
 
+/** Sign the way the (real) Authority Server does: the domain prefix
+ *  followed by JCS of the unsigned object — see CHALLENGE_DOMAIN_PREFIX in
+ *  as-challenge.ts. */
 function sign(unsigned: Record<string, unknown>, privateKey: KeyObject): string {
-  return cryptoSign(null, Buffer.from(canonicalize(unsigned), 'utf-8'), privateKey).toString('base64url');
+  const bytes = Buffer.concat([
+    Buffer.from(CHALLENGE_DOMAIN_PREFIX, 'utf-8'),
+    Buffer.from(canonicalize(unsigned), 'utf-8'),
+  ]);
+  return cryptoSign(null, bytes, privateKey).toString('base64url');
+}
+
+/** Sign PLAIN JCS with no domain prefix at all — the old (now-replaced)
+ *  scheme, and incidentally also the scheme ticket/receipt signatures use
+ *  (hap-core's verifyReceiptSignature). Used to prove the two signing
+ *  domains don't collide: neither a plain-JCS signature nor a real ticket
+ *  signature should verify as a challenge signature. */
+function signPlainJcs(payload: Record<string, unknown>, privateKey: KeyObject): string {
+  return cryptoSign(null, Buffer.from(canonicalize(payload), 'utf-8'), privateKey).toString('base64url');
 }
 
 let stop: (() => Promise<void>) | null = null;
@@ -164,5 +190,56 @@ describe('verifyAsHoldsKey', () => {
     });
     stop = () => new Promise<void>((r) => server.close(() => r()));
     await expect(verifyAsHoldsKey(url, kp.publicKeyHex)).rejects.toBeInstanceOf(AsChallengeUnreachableError);
+  });
+});
+
+describe('verifyChallengeSignature — domain separation', () => {
+  const unsigned = { typ: 'hap-as-challenge', nonce: 'a-real-nonce', issuedAt: 1_700_000_000 };
+
+  it('accepts a signature made over the domain-separated message', () => {
+    const kp = realEd25519Keypair();
+    const signature = sign(unsigned, kp.privateKey);
+    expect(verifyChallengeSignature(kp.publicKeyHex, unsigned, signature)).toBe(true);
+  });
+
+  it('rejects a signature over plain JCS with no domain prefix — the superseded scheme', () => {
+    // Before this fix, a signature over plain JCS(unsigned) (no prefix) was
+    // accepted — exactly what this guards against regressing to.
+    const kp = realEd25519Keypair();
+    const signature = signPlainJcs(unsigned, kp.privateKey);
+    expect(verifyChallengeSignature(kp.publicKeyHex, unsigned, signature)).toBe(false);
+  });
+
+  it('rejects a genuine ticket (receipt) signature presented as a challenge signature', () => {
+    // A real receipt payload, signed the way hap-core's verifyReceiptSignature
+    // signs tickets: plain JCS, no domain prefix, different field set
+    // entirely. Must not verify as a challenge signature under the same key —
+    // the two signing domains must not collide.
+    const kp = realEd25519Keypair();
+    const receiptLikePayload = {
+      id: 'r1',
+      boundsHash: 'sha256:test',
+      profileId: 'test-profile',
+      action: 'charge__create',
+      actionType: 'charge',
+      executionContext: { amount: 1 },
+      timestamp: 1_700_000_000,
+    };
+    const ticketSignature = signPlainJcs(receiptLikePayload, kp.privateKey);
+    expect(verifyChallengeSignature(kp.publicKeyHex, unsigned, ticketSignature)).toBe(false);
+  });
+
+  it('rejects a signature from a different key entirely', () => {
+    const kp = realEd25519Keypair();
+    const otherKp = realEd25519Keypair();
+    const signature = sign(unsigned, otherKp.privateKey);
+    expect(verifyChallengeSignature(kp.publicKeyHex, unsigned, signature)).toBe(false);
+  });
+
+  it('accepts standard base64 as well as base64url (same encoding tickets accept)', () => {
+    const kp = realEd25519Keypair();
+    const bytes = Buffer.concat([Buffer.from(CHALLENGE_DOMAIN_PREFIX, 'utf-8'), Buffer.from(canonicalize(unsigned), 'utf-8')]);
+    const standardBase64 = cryptoSign(null, bytes, kp.privateKey).toString('base64');
+    expect(verifyChallengeSignature(kp.publicKeyHex, unsigned, standardBase64)).toBe(true);
   });
 });

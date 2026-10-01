@@ -91,9 +91,16 @@ async function fetchAsPublicKey(
  *     refuses sign-in (502 `as_unreachable` / `as_unverified`) rather than
  *     proceeding unpinned.
  *
+ * Scope: this refuses a server that cannot produce a valid signature under
+ * the key being checked (the pin, or the first-pairing candidate) — see
+ * as-challenge.ts for exactly what that does and does not cover (in
+ * particular: it is not a substitute for TLS against an on-path relay that
+ * forwards every request, including the challenge, to the genuine Authority
+ * Server).
+ *
  * Deliberately does NOT touch the API key: this runs before the caller sends
- * it to `/api/auth/session`, so an impostor server never sees credentials
- * before this check can refuse it.
+ * it to `/api/auth/session`, so a server that fails this check never
+ * receives credentials.
  */
 async function checkAsKeyBeforeLogin(asUrl: string, dataDir: string): Promise<AsKeyCheckResult> {
   const existing = readPairing(dataDir);

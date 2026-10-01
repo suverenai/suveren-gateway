@@ -1,21 +1,23 @@
 /**
- * Proof that the Authority Server at a URL actually HOLDS the Ed25519
- * signing key it presents — not just that it can answer a plain GET with a
- * public key.
+ * Checks that the Authority Server at a URL can produce a signature under
+ * the Ed25519 key being checked (the pin, or — on first pairing — the
+ * candidate key `/api/as/pubkey` just reported) — not just that it can
+ * answer a plain GET with a public key, which proves nothing about holding
+ * the matching private key.
  *
- * Before this existed, pairing/pinning (as-pairing.ts) only compared a
- * REPORTED public key against the pin. `GET /api/as/pubkey` is a cheap,
- * non-secret read: something that merely relays that one call to the real
- * Authority Server — without holding its private key itself — would pass
- * that comparison every time it ran, because reporting a key proves nothing
- * about possessing it. A fresh, server-signed nonce closes that gap: only
- * something holding the matching private key can produce a signature that
- * verifies under it.
+ * Scope: this refuses a server that cannot sign under the expected key
+ * before any credential is sent. It does NOT protect against an on-path
+ * relay that transparently forwards every request — including the
+ * challenge itself — to the real Authority Server and relays back its
+ * genuine answer; against that, only TLS (certificate validation) protects.
+ * What this catches is a response that could not have come from whoever
+ * holds the real signing key: e.g. a cached/stale public key answer paired
+ * with a signature nobody with that key actually produced.
  *
  * Called from auth.ts BEFORE the API key is sent anywhere.
  */
-import { randomBytes } from 'node:crypto';
-import { verifyReceiptSignature, type ReceiptPayload } from '@hap/core';
+import { createPublicKey, randomBytes, verify as cryptoVerify } from 'node:crypto';
+import { canonicalize } from '@hap/core';
 
 /** The challenge endpoint is unreachable, answered with an error status, or
  *  replied with something that isn't a well-formed challenge object at all.
@@ -48,6 +50,70 @@ export class AsChallengeInvalidError extends Error {
 export const CHALLENGE_MAX_SKEW_SECONDS = 300;
 
 const CHALLENGE_TYPE = 'hap-as-challenge';
+
+/**
+ * Domain-separation prefix for the challenge signature — a literal byte
+ * string (NOT part of the JCS-canonicalized object), terminated with a NUL
+ * byte. Deliberately NOT the same scheme as ticket (receipt) signatures,
+ * which sign plain `JCS(unsigned)` with no prefix (see hap-core's
+ * `verifyReceiptSignature` / the MCP server's ticket-verify.ts): reusing
+ * that exact scheme here would mean a signature over a challenge object and
+ * a signature over some other JCS-canonicalized object of the same shape
+ * are the same bytes if the fields happened to coincide — i.e. a ticket
+ * signature could be replayed as a challenge signature, or vice versa. The
+ * prefix makes the two signing domains unambiguously different messages
+ * under the same key.
+ */
+const CHALLENGE_DOMAIN_PREFIX = 'hap-as-challenge\u0000';
+
+interface UnsignedChallenge {
+  typ: unknown;
+  nonce: unknown;
+  issuedAt: unknown;
+}
+
+/** The exact bytes the Authority Server signs: the domain prefix followed by
+ *  `JCS({ typ, nonce, issuedAt })` — exactly those three fields, nothing
+ *  reshaped or reordered by hand. */
+function challengeSigningBytes(unsigned: UnsignedChallenge): Buffer {
+  return Buffer.concat([
+    Buffer.from(CHALLENGE_DOMAIN_PREFIX, 'utf-8'),
+    Buffer.from(canonicalize({ typ: unsigned.typ, nonce: unsigned.nonce, issuedAt: unsigned.issuedAt }), 'utf-8'),
+  ]);
+}
+
+/** Decode a hex-encoded raw Ed25519 public key (the shape `/api/as/pubkey`
+ *  and the pin both use) into a usable node:crypto key object. */
+function publicKeyFromHex(publicKeyHex: string) {
+  const raw = Buffer.from(publicKeyHex, 'hex');
+  return createPublicKey({ key: { kty: 'OKP', crv: 'Ed25519', x: raw.toString('base64url') }, format: 'jwk' });
+}
+
+/**
+ * Verify an Ed25519 signature over the domain-separated challenge message
+ * (see {@link CHALLENGE_DOMAIN_PREFIX}) under `publicKeyHex`. Encoded like
+ * ticket signatures: standard base64, but base64url is accepted too (the
+ * `-`/`_` → `+`/`/` remap below, same as hap-core's receipt verification).
+ *
+ * Returns `false` rather than throwing on any malformed input (bad hex,
+ * bad base64, wrong-length signature) — the caller treats "doesn't verify"
+ * and "couldn't even be checked" identically (both refuse).
+ */
+export function verifyChallengeSignature(
+  publicKeyHex: string,
+  unsigned: UnsignedChallenge,
+  signature: string,
+): boolean {
+  try {
+    const base64 = signature.replace(/-/g, '+').replace(/_/g, '/');
+    const padding = base64.length % 4 === 0 ? '' : '='.repeat(4 - (base64.length % 4));
+    const sigBytes = Buffer.from(base64 + padding, 'base64');
+    const key = publicKeyFromHex(publicKeyHex);
+    return cryptoVerify(null, challengeSigningBytes(unsigned), key, sigBytes);
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Ask the Authority Server at `asUrl` to sign a fresh nonce, then verify the
@@ -114,19 +180,15 @@ export async function verifyAsHoldsKey(asUrl: string, publicKeyHex: string): Pro
     throw new AsChallengeInvalidError('the challenge response carries no signature');
   }
 
-  // Same hap-core primitive used to verify ticket (receipt) signatures:
-  // strip `signature`, JCS-canonicalize the rest, verify Ed25519 — see
-  // ticket-verify.ts in the MCP server. Passed through UNMODIFIED (not
-  // reshaped into {typ, nonce, issuedAt} by hand) so this checks the EXACT
-  // bytes the Authority Server signed. The function's type parameter names
-  // it for receipts, but it operates on whatever object shape it is given.
-  try {
-    await verifyReceiptSignature(body as unknown as ReceiptPayload, publicKeyHex);
-  } catch (err) {
+  // Domain-separated verification (see CHALLENGE_DOMAIN_PREFIX) — deliberately
+  // NOT hap-core's verifyReceiptSignature, which signs plain JCS with no
+  // prefix: using that here would make a challenge signature verifiable as a
+  // plain-JCS signature (and vice versa), collapsing two signing domains that
+  // must stay distinct under the same key.
+  if (!verifyChallengeSignature(publicKeyHex, { typ: body.typ, nonce: body.nonce, issuedAt: body.issuedAt }, body.signature)) {
     throw new AsChallengeInvalidError(
-      'the challenge signature does not verify under the key being checked — ' +
-        `${err instanceof Error ? err.message : String(err)}. This is exactly what the challenge exists ` +
-        'to catch: something answered the request but does not hold the matching private key.',
+      'the challenge signature does not verify under the key being checked — this is exactly what the ' +
+        'challenge exists to catch: something answered the request but does not hold the matching private key.',
     );
   }
 }

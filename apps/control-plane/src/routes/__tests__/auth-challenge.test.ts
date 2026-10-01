@@ -33,11 +33,17 @@ function realEd25519Keypair(): TestKeypair {
   return { publicKeyHex: Buffer.from(jwk.x!, 'base64url').toString('hex'), privateKey };
 }
 
+/** Signs the domain-separated scheme as-challenge.ts verifies: the literal
+ *  prefix "hap-as-challenge\0" followed by JCS of `unsigned` — NOT the
+ *  plain-JCS scheme ticket/receipt signatures use (see
+ *  CHALLENGE_DOMAIN_PREFIX in as-challenge.ts, and the domain-separation
+ *  tests in __tests__/as-challenge.test.ts). */
 function signedChallengeBody(
   unsigned: { typ?: string; nonce?: string; issuedAt?: number },
   privateKey: KeyObject,
 ): Record<string, unknown> {
-  const signature = cryptoSign(null, Buffer.from(canonicalize(unsigned), 'utf-8'), privateKey).toString('base64url');
+  const bytes = Buffer.concat([Buffer.from('hap-as-challenge\u0000', 'utf-8'), Buffer.from(canonicalize(unsigned), 'utf-8')]);
+  const signature = cryptoSign(null, bytes, privateKey).toString('base64url');
   return { ...unsigned, signature };
 }
 

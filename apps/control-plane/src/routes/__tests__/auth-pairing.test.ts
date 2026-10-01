@@ -37,13 +37,16 @@ function realEd25519Keypair(): TestKeypair {
 }
 
 /** Sign a real `/api/as/challenge` response for `nonce`, using `privateKey` —
- *  the same Ed25519 + JCS scheme hap-core's verifyReceiptSignature checks
- *  (see as-challenge.ts). Used by `fakeAs` below so sign-in's new G2 holds-
- *  its-key check (checkAsKeyBeforeLogin → verifyAsHoldsKey) has something
- *  real to verify, not a stub of the verification itself. */
+ *  the domain-separated scheme as-challenge.ts verifies (the literal prefix
+ *  "hap-as-challenge\0" followed by JCS of {typ, nonce, issuedAt} — NOT the
+ *  plain-JCS scheme ticket/receipt signatures use). Used by `fakeAs` below
+ *  so sign-in's G2 holds-its-key check (checkAsKeyBeforeLogin →
+ *  verifyAsHoldsKey) has something real to verify, not a stub of the
+ *  verification itself. */
 function signChallenge(nonce: string, privateKey: KeyObject): Record<string, unknown> {
   const unsigned = { typ: 'hap-as-challenge', nonce, issuedAt: Math.floor(Date.now() / 1000) };
-  const signature = cryptoSign(null, Buffer.from(canonicalize(unsigned), 'utf-8'), privateKey).toString('base64url');
+  const bytes = Buffer.concat([Buffer.from('hap-as-challenge\u0000', 'utf-8'), Buffer.from(canonicalize(unsigned), 'utf-8')]);
+  const signature = cryptoSign(null, bytes, privateKey).toString('base64url');
   return { ...unsigned, signature };
 }
 
