@@ -127,6 +127,13 @@
           "action_type": "order"
         },
         "actionLabel": "Quote converted to order"
+      },
+      "load_simulation": {
+        "executionMapping": {},
+        "staticExecution": {
+          "action_type": "setup"
+        },
+        "actionLabel": "Test data loaded"
       }
     }
   },
@@ -143,7 +150,8 @@
         "order_value_daily_max": "0",
         "quote_daily_max": "20",
         "send_daily_max": "0",
-        "order_daily_max": "0"
+        "order_daily_max": "0",
+        "setup_daily_max": "0"
       },
       "context": {
         "currency": "EUR"
@@ -168,7 +176,8 @@
         "order_value_daily_max": "50000",
         "quote_daily_max": "50",
         "send_daily_max": "20",
-        "order_daily_max": "10"
+        "order_daily_max": "10",
+        "setup_daily_max": "0"
       },
       "context": {
         "currency": "EUR"
@@ -179,6 +188,32 @@
         "20k EUR/document",
         "review mode",
         "10 orders/day"
+      ]
+    },
+    {
+      "name": "Load test data (with approval)",
+      "description": "Load a simulation package (customers and products) into the simulated ERP, for setting up a three-week test. No quoting, sending, or ordering — this template grants nothing but the one-time test-data load, and it still requires your approval.",
+      "risk": "high",
+      "mode": "review",
+      "bounds": {
+        "read_access": "none",
+        "value_max": "0",
+        "discount_max": "0",
+        "order_value_daily_max": "0",
+        "quote_daily_max": "0",
+        "send_daily_max": "0",
+        "order_daily_max": "0",
+        "setup_daily_max": "1"
+      },
+      "context": {
+        "currency": "EUR"
+      },
+      "intent": "Allow the agent to load one simulation package of test data into the simulated ERP, for my review before it happens. No other ERP action is granted by this mandate — set up test data separately from the mandate the agent uses for its actual work.",
+      "ttl": 2592000,
+      "tags": [
+        "setup only",
+        "review mode",
+        "1 load"
       ]
     }
   ],
