@@ -31,6 +31,7 @@ export function readConfig(dataDir) {
     const out = {};
     if (typeof data.asUrl === 'string') out.asUrl = data.asUrl;
     if (typeof data.caFile === 'string') out.caFile = data.caFile;
+    if (typeof data.pinTls === 'boolean') out.pinTls = data.pinTls;
     return out;
   } catch {
     return {};
@@ -55,6 +56,7 @@ function readConfigStrict(dataDir) {
   const out = {};
   if (typeof data.asUrl === 'string') out.asUrl = data.asUrl;
   if (typeof data.caFile === 'string') out.caFile = data.caFile;
+  if (typeof data.pinTls === 'boolean') out.pinTls = data.pinTls;
   return out;
 }
 
@@ -147,4 +149,33 @@ export function resolveAsUrl(dataDir) {
  *  the one place that reads and acts on it). */
 export function resolveCaFile(dataDir) {
   return readConfig(dataDir).caFile;
+}
+
+/**
+ * Validate a candidate --pin-tls value against the EFFECTIVE Authority
+ * Server URL: TLS pinning on an http:// AS (only ever localhost/127.0.0.1 —
+ * see validateAsUrl) has nothing to pin, so enabling it there is refused
+ * rather than silently accepted and then doing nothing.
+ */
+export function validatePinTls(effectiveAsUrl) {
+  let parsed;
+  try {
+    parsed = new URL(effectiveAsUrl);
+  } catch {
+    return { ok: false, error: `"${effectiveAsUrl}" is not a valid URL.` };
+  }
+  if (parsed.protocol !== 'https:') {
+    return {
+      ok: false,
+      error: `--pin-tls requires an https:// Authority Server URL (currently "${effectiveAsUrl}") — there is no TLS certificate to pin.`,
+    };
+  }
+  return { ok: true };
+}
+
+/** The saved pin-tls setting. No env/flag tier — only ever set through
+ *  `--pin-tls` / `config set pin-tls on|off`. Default false: opt-in,
+ *  never silently on. */
+export function resolvePinTls(dataDir) {
+  return readConfig(dataDir).pinTls === true;
 }

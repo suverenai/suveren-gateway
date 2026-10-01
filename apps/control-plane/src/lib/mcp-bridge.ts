@@ -56,7 +56,7 @@ export async function configure(sessionCookie: string, vaultKeyHex?: string): Pr
  *   an agent is told, see locked-notice.ts) says why, instead of always
  *   defaulting to "your sign-in ended" regardless of the actual cause.
  */
-export async function unconfigureSession(reason?: 'as-key-mismatch' | 'as-url-changed'): Promise<void> {
+export async function unconfigureSession(reason?: 'as-key-mismatch' | 'as-tls-mismatch' | 'as-url-changed'): Promise<void> {
   const res = await fetch(`${MCP_BASE}/internal/clear-session`, {
     method: 'POST',
     headers: internalHeaders(),

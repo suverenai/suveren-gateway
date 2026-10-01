@@ -12,8 +12,10 @@ import { configure, unconfigureSession, pushServiceCredentials, resyncGates, sta
 import type { Vault } from '../lib/vault';
 import { loadOrGenerateKeyPair, getPublicKey } from '../lib/e2e-key-manager';
 import { clientVersionHeaders } from '../lib/client-version';
-import { readPairing, writePairing, fingerprintOf } from '../lib/as-pairing';
-import { verifyAsHoldsKey, AsChallengeUnreachableError, AsChallengeInvalidError } from '../lib/as-challenge';
+import { readPairing, writePairing, recordTlsPin, fingerprintOf } from '../lib/as-pairing';
+import { verifyAsHoldsKey, AsChallengeUnreachableError, AsChallengeInvalidError, AsTlsMismatchError } from '../lib/as-challenge';
+import { resolvePinTls } from '../lib/as-config';
+import { fetchAs, type AsFetchPinning } from '../lib/as-tls-pin';
 
 const DEFAULT_SP_URL = process.env.SUVEREN_AS_URL ?? 'https://www.suveren.ai';
 
@@ -29,8 +31,16 @@ export interface AuthRouterPairingOptions {
 interface AsKeyCheckResult {
   ok: boolean;
   publicKeyHex?: string;
+  /**
+   * The TLS SPKI pin now in EFFECT for this URL, when pin-tls is enabled —
+   * whichever of "already pinned" or "just captured on this call" applies.
+   * The caller persists it (writePairing / recordTlsPin, both no-ops when
+   * already set) and reuses it to enforce pinning on every subsequent AS
+   * call this request makes (the session POST, then onward).
+   */
+  tlsSpkiPinHex?: string;
   /** Machine-readable reason, present iff !ok. */
-  error?: 'as_unreachable' | 'as_unverified' | 'as_key_mismatch';
+  error?: 'as_unreachable' | 'as_unverified' | 'as_key_mismatch' | 'as_tls_mismatch';
   message?: string;
 }
 
@@ -96,7 +106,10 @@ async function fetchAsPublicKey(
  * as-challenge.ts for exactly what that does and does not cover (in
  * particular: it is not a substitute for TLS against an on-path relay that
  * forwards every request, including the challenge, to the genuine Authority
- * Server).
+ * Server). Closing THAT gap is opt-in TLS pinning (`config set pin-tls on`,
+ * default off) — see as-tls-pin.ts: when enabled, the challenge call below
+ * also captures (first pairing) or enforces (every sign-in after) a pin on
+ * the AS TLS certificate's public key, independently of the Ed25519 check.
  *
  * Deliberately does NOT touch the API key: this runs before the caller sends
  * it to `/api/auth/session`, so a server that fails this check never
@@ -105,6 +118,7 @@ async function fetchAsPublicKey(
 async function checkAsKeyBeforeLogin(asUrl: string, dataDir: string): Promise<AsKeyCheckResult> {
   const existing = readPairing(dataDir);
   const pinnedKey = existing && existing.asUrl === asUrl ? existing.publicKeyHex : undefined;
+  const existingTlsPin = existing && existing.asUrl === asUrl ? existing.tlsSpkiPinHex : undefined;
 
   let candidateKey: string;
   if (pinnedKey) {
@@ -117,9 +131,23 @@ async function checkAsKeyBeforeLogin(asUrl: string, dataDir: string): Promise<As
     candidateKey = fetched.publicKeyHex;
   }
 
+  // Opt-in TLS pinning (`config set pin-tls on`) — see as-tls-pin.ts. Only
+  // the challenge call below is ever allowed to CAPTURE a new pin; every
+  // other AS call in this file only enforces whatever is already pinned.
+  const pinning: AsFetchPinning = {
+    enabled: resolvePinTls(dataDir),
+    pinnedSpkiHex: existingTlsPin,
+    captureIfUnpinned: true,
+  };
+
+  let capturedTlsSpkiHex: string | undefined;
   try {
-    await verifyAsHoldsKey(asUrl, candidateKey);
+    const result = await verifyAsHoldsKey(asUrl, candidateKey, pinning);
+    capturedTlsSpkiHex = result.capturedTlsSpkiHex;
   } catch (err) {
+    if (err instanceof AsTlsMismatchError) {
+      return { ok: false, error: 'as_tls_mismatch', message: err.message };
+    }
     if (err instanceof AsChallengeUnreachableError) {
       // Network/5xx on the challenge itself — refuse fail-closed regardless
       // of whether a pin exists; this says nothing about a mismatch, only
@@ -149,7 +177,11 @@ async function checkAsKeyBeforeLogin(asUrl: string, dataDir: string): Promise<As
     throw err;
   }
 
-  return { ok: true, publicKeyHex: candidateKey };
+  return {
+    ok: true,
+    publicKeyHex: candidateKey,
+    tlsSpkiPinHex: pinning.enabled ? (existingTlsPin ?? capturedTlsSpkiHex) : undefined,
+  };
 }
 
 export function createAuthRouter(
@@ -167,6 +199,15 @@ export function createAuthRouter(
    * unpinned. Real production wiring (index.ts) always supplies it.
    */
   pairing?: AuthRouterPairingOptions,
+  /**
+   * Called on a TLS pin mismatch (as-tls-pin.ts) discovered on an AS call
+   * made AFTER a session was already established (the background E2EE sweep,
+   * logout) — the ongoing-session counterpart to the login-time refusal
+   * below. Optional so existing callers/tests keep working; index.ts always
+   * supplies it. Defaults to a no-op, not to the real lock, so a test that
+   * doesn't pass one can't accidentally touch global state.
+   */
+  lockAsTlsMismatch: () => void = () => {},
 ): Router {
   const router = Router();
   const SP_URL = pairing?.asUrl ?? DEFAULT_SP_URL;
@@ -200,7 +241,8 @@ export function createAuthRouter(
       if (pairing) {
         keyCheck = await checkAsKeyBeforeLogin(pairing.asUrl, pairing.dataDir);
         if (!keyCheck.ok) {
-          res.status(keyCheck.error === 'as_key_mismatch' ? 409 : 502).json({
+          const status = keyCheck.error === 'as_key_mismatch' || keyCheck.error === 'as_tls_mismatch' ? 409 : 502;
+          res.status(status).json({
             error: keyCheck.error,
             message: keyCheck.message,
           });
@@ -208,17 +250,49 @@ export function createAuthRouter(
         }
       }
 
-      const spRes = await fetch(`${SP_URL}/api/auth/session`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-API-Key': apiKey,
-          // The AS grants a 30-day gateway session ONLY to a login that
-          // identifies itself this way; without it, a 24-hour browser
-          // session (see doc at the top of this file).
-          ...clientVersionHeaders(),
-        },
-      });
+      // The EFFECTIVE TLS pin for this request (as established by the check
+      // above — already pinned, or just captured) — enforced on every AS
+      // call this handler makes from here on. `enabled: false` (pin-tls off)
+      // makes fetchAs behave exactly like a bare `fetch`.
+      const sessionPinning: AsFetchPinning = {
+        enabled: Boolean(pairing && resolvePinTls(pairing.dataDir)),
+        pinnedSpkiHex: keyCheck?.tlsSpkiPinHex,
+        captureIfUnpinned: false,
+      };
+
+      // NOT `Response` bare — that identifier in this file resolves to
+      // Express's type (imported above for `res`), not the Fetch API one
+      // `fetchAs` actually returns.
+      let spRes: Awaited<ReturnType<typeof fetchAs>>['res'];
+      try {
+        const result = await fetchAs(
+          `${SP_URL}/api/auth/session`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-API-Key': apiKey,
+              // The AS grants a 30-day gateway session ONLY to a login that
+              // identifies itself this way; without it, a 24-hour browser
+              // session (see doc at the top of this file).
+              ...clientVersionHeaders(),
+            },
+          },
+          sessionPinning,
+        );
+        spRes = result.res;
+      } catch (err) {
+        if (err instanceof AsTlsMismatchError) {
+          // No session exists yet at this point (the API key hasn't even
+          // been accepted) — nothing to lock, just refuse, same shape as the
+          // challenge-time refusal above. The API key was already written
+          // into the request this handler built, but fetchAs aborts the TLS
+          // handshake before Node ever writes a byte of it to the wire.
+          res.status(409).json({ error: 'as_tls_mismatch', message: err.message });
+          return;
+        }
+        throw err;
+      }
 
       if (!spRes.ok) {
         const err = await spRes.json().catch(() => ({ error: 'Invalid API key' }));
@@ -229,12 +303,21 @@ export function createAuthRouter(
       // Pin the key now that the credentials are known good AND the key
       // check above already passed (fresh pairing, or matching an existing
       // pin — a mismatch already returned above). Only a fresh pairing needs
-      // a write; matching an existing pin is a no-op.
+      // a write; matching an existing pin is a no-op. The TLS pin (if any)
+      // rides along with a fresh pairing, or is attached separately via
+      // recordTlsPin when the signing-key pin already existed but pin-tls
+      // was turned on more recently (no TLS pin yet for an otherwise-paired
+      // URL).
       if (pairing && keyCheck?.publicKeyHex) {
         const existing = readPairing(pairing.dataDir);
         if (!existing || existing.asUrl !== pairing.asUrl) {
-          writePairing(pairing.dataDir, pairing.asUrl, keyCheck.publicKeyHex);
+          writePairing(pairing.dataDir, pairing.asUrl, keyCheck.publicKeyHex, {
+            tlsSpkiPinHex: keyCheck.tlsSpkiPinHex,
+          });
           console.error(`[Control Plane] Paired with Authority Server ${pairing.asUrl} (fingerprint ${fingerprintOf(keyCheck.publicKeyHex)})`);
+        } else if (keyCheck.tlsSpkiPinHex && !existing.tlsSpkiPinHex) {
+          recordTlsPin(pairing.dataDir, pairing.asUrl, keyCheck.tlsSpkiPinHex);
+          console.error(`[Control Plane] Captured TLS pin for Authority Server ${pairing.asUrl} (pin-tls just enabled).`);
         }
       }
 
@@ -325,10 +408,11 @@ export function createAuthRouter(
 
           // Fetch currently registered key from SP and compare.
           const spCookie = vault.getSpCookie();
-          const meKeyRes = await fetch(`${SP_URL}/api/users/me/pubkey`, {
-            headers: spCookie ? { Cookie: spCookie } : {},
-            signal: AbortSignal.timeout(5000),
-          });
+          const { res: meKeyRes } = await fetchAs(
+            `${SP_URL}/api/users/me/pubkey`,
+            { headers: spCookie ? { Cookie: spCookie } : {}, signal: AbortSignal.timeout(5000) },
+            sessionPinning,
+          );
 
           let needsUpdate = false;
           if (meKeyRes.status === 404) {
@@ -339,15 +423,19 @@ export function createAuthRouter(
           }
 
           if (needsUpdate) {
-            const putRes = await fetch(`${SP_URL}/api/users/me/pubkey`, {
-              method: 'PUT',
-              headers: {
-                'Content-Type': 'application/json',
-                ...(spCookie ? { Cookie: spCookie } : {}),
+            const { res: putRes } = await fetchAs(
+              `${SP_URL}/api/users/me/pubkey`,
+              {
+                method: 'PUT',
+                headers: {
+                  'Content-Type': 'application/json',
+                  ...(spCookie ? { Cookie: spCookie } : {}),
+                },
+                body: JSON.stringify({ pubkey: localPubkeyB64 }),
+                signal: AbortSignal.timeout(5000),
               },
-              body: JSON.stringify({ pubkey: localPubkeyB64 }),
-              signal: AbortSignal.timeout(5000),
-            });
+              sessionPinning,
+            );
             if (!putRes.ok) {
               console.error(`[Control Plane] E2EE pubkey registration failed: ${putRes.status}`);
             } else {
@@ -357,7 +445,12 @@ export function createAuthRouter(
             console.error('[Control Plane] E2EE pubkey already up to date');
           }
         } catch (err) {
-          console.error('[Control Plane] E2EE pubkey auto-register failed:', err);
+          if (err instanceof AsTlsMismatchError) {
+            console.error('[Control Plane] E2EE pubkey auto-register aborted — TLS pin mismatch:', err.message);
+            lockAsTlsMismatch();
+          } else {
+            console.error('[Control Plane] E2EE pubkey auto-register failed:', err);
+          }
         }
 
         for (const credId of vault.listCredentials()) {
@@ -412,13 +505,28 @@ export function createAuthRouter(
     // the sign-out). The last two are best effort: the local lock is what counts.
     const cookie = vault.getSpCookie();
     vault.clearKey();
+    // Enforce the TLS pin here too, for the same reason as every other AS
+    // call in this file — but a mismatch on LOGOUT must never block it: the
+    // vault key is already cleared above (that's what actually matters
+    // locally), and failing to tell a possibly-hostile network party "log me
+    // out" is not a problem worth surfacing to the user as an error.
+    const logoutPinning: AsFetchPinning = pairing
+      ? { enabled: resolvePinTls(pairing.dataDir), pinnedSpkiHex: readPairing(pairing.dataDir)?.tlsSpkiPinHex, captureIfUnpinned: false }
+      : { enabled: false };
     await Promise.allSettled([
       unconfigureSession(),
       cookie
-        ? fetch(`${SP_URL}/api/auth/logout`, {
-            method: 'POST',
-            headers: { cookie, ...clientVersionHeaders() },
-            redirect: 'manual',
+        ? fetchAs(
+            `${SP_URL}/api/auth/logout`,
+            { method: 'POST', headers: { cookie, ...clientVersionHeaders() }, redirect: 'manual' },
+            logoutPinning,
+          ).catch(err => {
+            if (err instanceof AsTlsMismatchError) {
+              console.error('[Control Plane] Logout: TLS pin mismatch talking to the Authority Server — local sign-out still applied:', err.message);
+              lockAsTlsMismatch();
+            } else {
+              throw err;
+            }
           })
         : Promise.resolve(),
     ]);

@@ -38,6 +38,13 @@ export const SESSION_LOCKED_MESSAGE = 'Your sign-in ended after 30 days or was r
 export const AS_KEY_MISMATCH_MESSAGE =
   'The Authority Server presented a signing key that does not match the one pinned at pairing. Sign in again to review.';
 
+/** Same channel, for the TLS pin mismatch case (see as-tls-pin.ts) — only
+ *  reachable when `config set pin-tls on` is enabled. */
+export const AS_TLS_MISMATCH_MESSAGE =
+  'A connection to the Authority Server presented a TLS certificate that does not match the one pinned ' +
+  'at pairing. The connection was refused before anything was sent. If the certificate changed ' +
+  'intentionally (a new key, not just renewal), clear the pairing and sign in again to re-pin it.';
+
 export function createSessionLock(deps: SessionLockDeps): () => void {
   const { vault, port } = deps;
   const notifyFn = deps.notifyFn ?? notify;
@@ -93,5 +100,36 @@ export function createAsKeyMismatchLock(deps: SessionLockDeps): () => void {
 
     const { title, url } = sessionExpiredNotification(port);
     notifyFn(title, AS_KEY_MISMATCH_MESSAGE, process.platform, url);
+  };
+}
+
+/**
+ * Mirrors {@link createAsKeyMismatchLock} for the TLS pin mismatch case
+ * (as-tls-pin.ts, opt-in via `config set pin-tls on`): a connection to the
+ * Authority Server — from either process — presented a certificate whose
+ * public key doesn't match the one pinned at pairing. Caught at the
+ * transport layer, before any application-level signature check, so this
+ * can fire even for calls that never reach the Ed25519 ticket/receipt logic.
+ */
+export function createAsTlsMismatchLock(deps: SessionLockDeps): () => void {
+  const { vault, port } = deps;
+  const notifyFn = deps.notifyFn ?? notify;
+  const unconfigureSessionFn = deps.unconfigureSessionFn ?? unconfigureSession;
+  const emit = deps.emit ?? eventBus.emit.bind(eventBus);
+
+  return function lockOnAsTlsMismatch(): void {
+    if (!vault.isUnlocked()) return; // already locked — nothing to do (single-flight)
+    vault.lockAsTlsMismatch();
+
+    console.error('[Control Plane] Authority Server TLS pin mismatch — gateway LOCKED');
+
+    void unconfigureSessionFn('as-tls-mismatch').catch(err => {
+      console.error('[Control Plane] Failed to push cleared session to MCP:', err);
+    });
+
+    emit('session-locked', { reason: 'as-tls-mismatch', message: AS_TLS_MISMATCH_MESSAGE });
+
+    const { title, url } = sessionExpiredNotification(port);
+    notifyFn(title, AS_TLS_MISMATCH_MESSAGE, process.platform, url);
   };
 }

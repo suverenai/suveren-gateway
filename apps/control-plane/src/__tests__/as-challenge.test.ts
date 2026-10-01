@@ -90,7 +90,8 @@ describe('verifyAsHoldsKey', () => {
       return { status: 200, body: { ...unsigned, signature: sign(unsigned, kp.privateKey) } };
     });
     stop = close;
-    await expect(verifyAsHoldsKey(url, kp.publicKeyHex)).resolves.toBeUndefined();
+    // pin-tls is off by default (no pinning object passed) — nothing captured.
+    await expect(verifyAsHoldsKey(url, kp.publicKeyHex)).resolves.toEqual({ capturedTlsSpkiHex: undefined });
   });
 
   it('rejects when the response echoes a different nonce than the one sent', async () => {

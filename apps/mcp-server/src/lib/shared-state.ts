@@ -37,12 +37,13 @@ export class SharedState {
 
   /**
    * @param dataDir Passed to the AttestationCache so it can enforce AS key
-   *   pinning (as-pairing.ts). Optional for backward compat with existing
-   *   constructions/tests that pass only a URL — those get unpinned
-   *   trust-on-first-use behavior, same as before pinning existed.
+   *   pinning (as-pairing.ts), and to the SPClient so it can enforce opt-in
+   *   TLS pinning (as-tls-pin.ts). Optional for backward compat with
+   *   existing constructions/tests that pass only a URL — those get
+   *   unpinned trust-on-first-use behavior, same as before pinning existed.
    */
   constructor(spUrl: string, gateStorePath?: string, dataDir?: string) {
-    this.spClient = new SPClient(spUrl);
+    this.spClient = new SPClient(spUrl, undefined, dataDir);
     this.cache = new AttestationCache(this.spClient, dataDir);
     this.gateStore = new GateStore(gateStorePath);
     this.executionLog = new ExecutionLog(gateStorePath);

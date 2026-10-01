@@ -17,7 +17,7 @@ import { homedir, platform, userInfo } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildLaunchAgentPlist, buildMacLauncher, buildSystemdUnit, buildWindowsTaskXml } from '../lib/autostart-templates.mjs';
-import { DEFAULT_AS_URL, readConfig, writeConfig, validateAsUrl, validateCaFile, resolveAsUrl } from '../lib/config.mjs';
+import { DEFAULT_AS_URL, readConfig, writeConfig, validateAsUrl, validateCaFile, validatePinTls, resolveAsUrl, resolvePinTls } from '../lib/config.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PKG_ROOT = resolve(__dirname, '..');
@@ -93,6 +93,23 @@ async function start(args) {
     caFileToSave = v.path;
   }
 
+  // --pin-tls: a boolean flag (turns TLS certificate pinning ON — there is
+  // no `start --pin-tls off`; use `config set pin-tls off` for that).
+  // Validated against the EFFECTIVE as-url for this very start (the flag
+  // above, if given, wins over whatever is saved) — enabling it for an
+  // http:// Authority Server has nothing to pin.
+  const pinTlsFlag = args.includes('--pin-tls');
+  let pinTlsToSave = null;
+  if (pinTlsFlag) {
+    const effectiveAsUrl = asUrlToSave ?? resolveAsUrl(DATA_DIR);
+    const v = validatePinTls(effectiveAsUrl);
+    if (!v.ok) {
+      console.error(`Invalid --pin-tls: ${v.error}`);
+      process.exit(1);
+    }
+    pinTlsToSave = true;
+  }
+
   if (await isAlreadyRunning()) {
     console.error(`suveren-gateway is already running (pid ${readPid()}). Use \`suveren-gateway stop\` first or \`suveren-gateway restart\`.`);
     process.exit(1);
@@ -140,6 +157,10 @@ async function start(args) {
   if (caFileToSave) {
     writeConfig(DATA_DIR, { caFile: caFileToSave });
     console.log(`CA file: ${caFileToSave} (saved — applied to every process this gateway starts)`);
+  }
+  if (pinTlsToSave) {
+    writeConfig(DATA_DIR, { pinTls: true });
+    console.log(`TLS pinning: ON (saved — the certificate pin is captured at your next sign-in)`);
   }
 
   if (detach) {
@@ -368,13 +389,22 @@ function printConfigHelp() {
   console.log(`suveren-gateway config — read or save gateway settings
 
 Usage:
-  suveren-gateway config get [as-url|ca-file]   Print the resolved value(s)
-  suveren-gateway config set as-url <url>       Save the Authority Server URL
-  suveren-gateway config set ca-file <path>     Save a CA bundle for internal TLS
+  suveren-gateway config get [as-url|ca-file|pin-tls]  Print the resolved value(s)
+  suveren-gateway config set as-url <url>              Save the Authority Server URL
+  suveren-gateway config set ca-file <path>            Save a CA bundle for internal TLS
+  suveren-gateway config set pin-tls on|off            Pin the Authority Server's TLS certificate
 
 Saved in ${join(DATA_DIR, 'config.json')}.
 Precedence at start: --as-url flag > env SUVEREN_AS_URL > saved as-url >
 default (${DEFAULT_AS_URL}).
+
+pin-tls (default off) requires https:// and pins the Authority Server's TLS
+certificate public key at your NEXT sign-in; every connection after that must
+present the same key, or the gateway refuses it and locks. Turning it on for
+an already-paired Authority Server captures the pin on the next sign-in too
+— no need to re-pair the signing key, just restart and sign in again. A
+certificate RENEWAL (same key) keeps the pin; a NEW key needs re-pairing —
+clear <dataDir>/as-pairing.json and sign in again.
 
 Changes take effect on the next \`suveren-gateway start\` / \`restart\` — a
 running gateway keeps using what it already resolved at its own startup.
@@ -390,10 +420,12 @@ async function config(args) {
     if (!key) {
       console.log(`as-url:  ${resolveAsUrl(DATA_DIR)}`);
       console.log(`ca-file: ${saved.caFile ?? '(not set)'}`);
+      console.log(`pin-tls: ${resolvePinTls(DATA_DIR) ? 'on' : 'off'}`);
       return;
     }
     if (key === 'as-url') { console.log(resolveAsUrl(DATA_DIR)); return; }
     if (key === 'ca-file') { console.log(saved.caFile ?? ''); return; }
+    if (key === 'pin-tls') { console.log(resolvePinTls(DATA_DIR) ? 'on' : 'off'); return; }
     console.error(`Unknown config key: ${key}\n`);
     printConfigHelp();
     process.exit(2);
@@ -430,6 +462,27 @@ async function config(args) {
       writeConfig(DATA_DIR, { caFile: v.path });
       console.log(`Saved ca-file: ${v.path}`);
       console.log('Restart to pick it up: suveren-gateway restart');
+      return;
+    }
+    if (key === 'pin-tls') {
+      if (value !== 'on' && value !== 'off') {
+        console.error('Usage: suveren-gateway config set pin-tls on|off');
+        process.exit(2);
+      }
+      if (value === 'on') {
+        const v = validatePinTls(resolveAsUrl(DATA_DIR));
+        if (!v.ok) {
+          console.error(`Invalid pin-tls: ${v.error}`);
+          process.exit(1);
+        }
+      }
+      writeConfig(DATA_DIR, { pinTls: value === 'on' });
+      console.log(`Saved pin-tls: ${value}`);
+      console.log(
+        value === 'on'
+          ? 'Restart and sign in again to capture the certificate pin: suveren-gateway restart'
+          : 'Restart to pick it up: suveren-gateway restart',
+      );
       return;
     }
     console.error(`Unknown config key: ${key}\n`);
@@ -945,15 +998,17 @@ Usage:
   suveren-gateway start [--detach]           Run the gateway (foreground by default)
     [--as-url <url>]                         Authority Server URL (saved for next time)
     [--ca-file <path>]                       Internal CA bundle (saved for next time)
+    [--pin-tls]                              Pin the Authority Server's TLS certificate (saved; https:// only)
   suveren-gateway stop                       Stop a detached gateway
   suveren-gateway restart                    Stop, then start --detach
   suveren-gateway status                     Show running state + health
   suveren-gateway logs [--tail]               Print or tail ~/.suveren/gateway.log
   suveren-gateway service <cmd>               Run as a login service that survives reboot
                                               (install | uninstall | status)
-  suveren-gateway config get [as-url|ca-file] Print the resolved value(s)
+  suveren-gateway config get [as-url|ca-file|pin-tls]  Print the resolved value(s)
   suveren-gateway config set as-url <url>     Save the Authority Server URL
   suveren-gateway config set ca-file <path>   Save a CA bundle for internal TLS
+  suveren-gateway config set pin-tls on|off   Pin the Authority Server's TLS certificate
   suveren-gateway help                        Print this help
 
 Environment:

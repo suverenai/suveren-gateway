@@ -29,6 +29,15 @@ export interface Pairing {
   /** Hex-encoded Ed25519 public key, exactly as `/api/as/pubkey` returns it. */
   publicKeyHex: string;
   pairedAt: string;
+  /**
+   * Opt-in TLS pinning (`config set pin-tls on`) — SHA-256 hex of the AS TLS
+   * leaf certificate's SubjectPublicKeyInfo (SPKI), captured during the
+   * challenge/sign-in exchange (control-plane's as-challenge.ts) and
+   * enforced on every connection to this asUrl from then on (see
+   * as-tls-pin.ts / sp-client.ts here). Absent when pin-tls is off, or when
+   * it was turned on but no sign-in has captured a pin yet.
+   */
+  tlsSpkiPinHex?: string;
 }
 
 function pairingPath(dataDir: string): string {
@@ -41,14 +50,29 @@ export function readPairing(dataDir: string): Pairing | null {
   try {
     const data = JSON.parse(readFileSync(path, 'utf-8')) as Partial<Pairing>;
     if (typeof data.asUrl !== 'string' || typeof data.publicKeyHex !== 'string') return null;
-    return { asUrl: data.asUrl, publicKeyHex: data.publicKeyHex, pairedAt: data.pairedAt ?? '' };
+    return {
+      asUrl: data.asUrl,
+      publicKeyHex: data.publicKeyHex,
+      pairedAt: data.pairedAt ?? '',
+      ...(typeof data.tlsSpkiPinHex === 'string' ? { tlsSpkiPinHex: data.tlsSpkiPinHex } : {}),
+    };
   } catch {
     return null;
   }
 }
 
-export function writePairing(dataDir: string, asUrl: string, publicKeyHex: string): Pairing {
-  const pairing: Pairing = { asUrl, publicKeyHex, pairedAt: new Date().toISOString() };
+export function writePairing(
+  dataDir: string,
+  asUrl: string,
+  publicKeyHex: string,
+  opts: { tlsSpkiPinHex?: string } = {},
+): Pairing {
+  const pairing: Pairing = {
+    asUrl,
+    publicKeyHex,
+    pairedAt: new Date().toISOString(),
+    ...(opts.tlsSpkiPinHex ? { tlsSpkiPinHex: opts.tlsSpkiPinHex } : {}),
+  };
   const path = pairingPath(dataDir);
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   writeFileSync(path, JSON.stringify(pairing, null, 2), { encoding: 'utf-8', mode: 0o600 });

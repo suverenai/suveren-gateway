@@ -27,6 +27,17 @@ export interface Pairing {
   /** Hex-encoded Ed25519 public key, exactly as `/api/as/pubkey` returns it. */
   publicKeyHex: string;
   pairedAt: string;
+  /**
+   * Opt-in TLS pinning (`config set pin-tls on`) — SHA-256 hex of the AS TLS
+   * leaf certificate's SubjectPublicKeyInfo (SPKI), captured during the
+   * challenge/sign-in exchange (see as-challenge.ts / as-tls-pin.ts) and
+   * enforced on every connection to this asUrl from then on. Absent when
+   * pin-tls is off, or when it was turned on but no sign-in has captured a
+   * pin yet. Renewing a certificate with the SAME key keeps this pin valid
+   * (SPKI is the key, not the certificate); a NEW key needs re-pairing —
+   * same replacement rule as `publicKeyHex`.
+   */
+  tlsSpkiPinHex?: string;
 }
 
 function pairingPath(dataDir: string): string {
@@ -39,18 +50,52 @@ export function readPairing(dataDir: string): Pairing | null {
   try {
     const data = JSON.parse(readFileSync(path, 'utf-8')) as Partial<Pairing>;
     if (typeof data.asUrl !== 'string' || typeof data.publicKeyHex !== 'string') return null;
-    return { asUrl: data.asUrl, publicKeyHex: data.publicKeyHex, pairedAt: data.pairedAt ?? '' };
+    return {
+      asUrl: data.asUrl,
+      publicKeyHex: data.publicKeyHex,
+      pairedAt: data.pairedAt ?? '',
+      ...(typeof data.tlsSpkiPinHex === 'string' ? { tlsSpkiPinHex: data.tlsSpkiPinHex } : {}),
+    };
   } catch {
     return null;
   }
 }
 
-export function writePairing(dataDir: string, asUrl: string, publicKeyHex: string): Pairing {
-  const pairing: Pairing = { asUrl, publicKeyHex, pairedAt: new Date().toISOString() };
+export function writePairing(
+  dataDir: string,
+  asUrl: string,
+  publicKeyHex: string,
+  opts: { tlsSpkiPinHex?: string } = {},
+): Pairing {
+  const pairing: Pairing = {
+    asUrl,
+    publicKeyHex,
+    pairedAt: new Date().toISOString(),
+    ...(opts.tlsSpkiPinHex ? { tlsSpkiPinHex: opts.tlsSpkiPinHex } : {}),
+  };
   const path = pairingPath(dataDir);
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   writeFileSync(path, JSON.stringify(pairing, null, 2), { encoding: 'utf-8', mode: 0o600 });
   return pairing;
+}
+
+/**
+ * Attach a newly-captured TLS SPKI pin to the EXISTING pairing record for
+ * `asUrl`, without touching the signing-key pin or `pairedAt` — the case
+ * where pin-tls is turned on for an AS this gateway already paired with
+ * (the signing-key pin exists; the TLS pin doesn't yet). A no-op when there
+ * is no existing pairing for this URL to attach to, or when one is already
+ * set (replacement is only by re-pairing — i.e. by clearing it first).
+ */
+export function recordTlsPin(dataDir: string, asUrl: string, tlsSpkiPinHex: string): void {
+  const existing = readPairing(dataDir);
+  if (!existing || existing.asUrl !== asUrl || existing.tlsSpkiPinHex) return;
+  const path = pairingPath(dataDir);
+  writeFileSync(
+    path,
+    JSON.stringify({ ...existing, tlsSpkiPinHex }, null, 2),
+    { encoding: 'utf-8', mode: 0o600 },
+  );
 }
 
 /** Idempotent — safe to call when nothing is paired yet. */

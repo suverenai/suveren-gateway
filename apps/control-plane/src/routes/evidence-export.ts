@@ -21,10 +21,20 @@ import { Router, type Request, type Response } from 'express';
 import { getLocalEvidence } from '../lib/mcp-bridge';
 import { readApprovedIntents } from './approved-intents';
 import type { Vault } from '../lib/vault';
+import { readPairing } from '../lib/as-pairing';
+import { resolvePinTls } from '../lib/as-config';
+import { fetchAs, AsTlsMismatchError } from '../lib/as-tls-pin';
 
 const AS_FETCH_TIMEOUT_MS = 20_000;
 
-export function createEvidenceExportRouter(spUrl: string, vault: Vault): Router {
+export function createEvidenceExportRouter(
+  spUrl: string,
+  vault: Vault,
+  dataDir: string,
+  /** Called on a TLS pin mismatch (as-tls-pin.ts) — same lock as every
+   *  other AS-mismatch signal, regardless of which process detected it. */
+  lockAsTlsMismatch: () => void,
+): Router {
   const router = Router();
   const getSpCookie = () => vault.getSpCookie();
 
@@ -48,17 +58,30 @@ export function createEvidenceExportRouter(spUrl: string, vault: Vault): Router 
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), AS_FETCH_TIMEOUT_MS);
       try {
-        const asRes = await fetch(`${spUrl}/api/receipts/export`, {
-          headers: { Cookie: cookie },
-          signal: controller.signal,
-        });
+        const pin = readPairing(dataDir);
+        const { res: asRes } = await fetchAs(
+          `${spUrl}/api/receipts/export`,
+          { headers: { Cookie: cookie }, signal: controller.signal },
+          {
+            enabled: resolvePinTls(dataDir),
+            pinnedSpkiHex: pin && pin.asUrl === spUrl ? pin.tlsSpkiPinHex : undefined,
+            // Never capture here — only the sign-in challenge establishes a
+            // new pin (as-challenge.ts).
+            captureIfUnpinned: false,
+          },
+        );
         if (asRes.ok) {
           authorityServer = await asRes.json();
         } else {
           asError = `Authority Server export failed: ${asRes.status}`;
         }
       } catch (err) {
-        asError = `Authority Server unreachable: ${err instanceof Error ? err.message : String(err)}`;
+        if (err instanceof AsTlsMismatchError) {
+          lockAsTlsMismatch();
+          asError = err.message;
+        } else {
+          asError = `Authority Server unreachable: ${err instanceof Error ? err.message : String(err)}`;
+        }
       } finally {
         clearTimeout(timeout);
       }

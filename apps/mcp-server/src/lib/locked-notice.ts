@@ -18,6 +18,14 @@
  *    (as-pairing.ts). Telling the agent "your sign-in ended, sign in again"
  *    here would be actively misleading: signing in again is REFUSED (409) —
  *    see auth.ts — until an operator resolves the mismatch.
+ *  - **'as-tls-mismatch'** — opt-in TLS pinning (`config set pin-tls on`,
+ *    as-tls-pin.ts) is enabled, and a connection to the Authority Server
+ *    presented a TLS certificate whose public key does not match the one
+ *    pinned at pairing. Caught at the transport layer — before any
+ *    application-level signature check — so this can happen even for a call
+ *    that would otherwise never reach the key-mismatch case above. Same fix
+ *    as key-mismatch: an operator must resolve it; signing in again is
+ *    refused until they do.
  *  - **'as-url-changed'** — the resolved Authority Server URL no longer
  *    matches the one this gateway was paired with; re-pairing (a fresh
  *    sign-in against the new server) is exactly what's needed here, unlike
@@ -37,7 +45,7 @@
  */
 
 /** Why the gateway is locked right now. */
-export type LockedReason = 'restart' | 'expired' | 'as-key-mismatch' | 'as-url-changed';
+export type LockedReason = 'restart' | 'expired' | 'as-key-mismatch' | 'as-tls-mismatch' | 'as-url-changed';
 
 /** Address the person should open. Honours a non-default control-plane port. */
 function uiUrl(): string {
@@ -79,6 +87,17 @@ function asKeyMismatchNotice(what: string): string {
   );
 }
 
+function asTlsMismatchNotice(what: string): string {
+  return (
+    `${what} Suveren gateway is LOCKED because a connection to the Authority Server presented a TLS ` +
+    `certificate that does not match the one pinned when this gateway last signed in (opt-in pin-tls). ` +
+    `This is NOT an ended sign-in — signing in again will be refused until the mismatch is resolved.\n\n` +
+    `TELL THE USER: this needs an operator to check whether the Authority Server's certificate changed ` +
+    `intentionally (e.g. a new TLS key, not just a renewal) or something else is answering at that ` +
+    `address, at ${uiUrl()}. Nothing was sent under the unrecognized certificate.`
+  );
+}
+
 function asUrlChangedNotice(what: string): string {
   return (
     `${what} Suveren gateway is LOCKED because the Authority Server it points ` +
@@ -99,6 +118,7 @@ export function lockedNotice(action?: string, reason: LockedReason = 'restart'):
   switch (reason) {
     case 'expired': return expiredSessionNotice(what);
     case 'as-key-mismatch': return asKeyMismatchNotice(what);
+    case 'as-tls-mismatch': return asTlsMismatchNotice(what);
     case 'as-url-changed': return asUrlChangedNotice(what);
     default: return bootLockedNotice(what);
   }

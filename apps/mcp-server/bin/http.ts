@@ -215,7 +215,8 @@ app.post('/internal/configure', internalOnly, (req: Request, res: Response) => {
  */
 app.post('/internal/clear-session', internalOnly, (req: Request, res: Response) => {
   const reason = (req.body as { reason?: unknown })?.reason;
-  const validReason = reason === 'as-key-mismatch' || reason === 'as-url-changed' ? reason : undefined;
+  const validReason =
+    reason === 'as-key-mismatch' || reason === 'as-tls-mismatch' || reason === 'as-url-changed' ? reason : undefined;
   state.spClient.clearSession(validReason);
   console.error(`[Suveren MCP] Session cleared by control-plane (${validReason ?? 'expired'})`);
   res.json({ ok: true });

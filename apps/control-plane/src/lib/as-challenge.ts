@@ -18,6 +18,9 @@
  */
 import { createPublicKey, randomBytes, verify as cryptoVerify } from 'node:crypto';
 import { canonicalize } from '@hap/core';
+import { fetchAs, type AsFetchPinning, AsTlsMismatchError } from './as-tls-pin';
+
+export { AsTlsMismatchError };
 
 /** The challenge endpoint is unreachable, answered with an error status, or
  *  replied with something that isn't a well-formed challenge object at all.
@@ -115,6 +118,20 @@ export function verifyChallengeSignature(
   }
 }
 
+/** What {@link verifyAsHoldsKey} learned beyond "the signature verified". */
+export interface VerifyAsHoldsKeyResult {
+  /**
+   * Set only when pin-tls is enabled, no TLS pin existed yet for this URL,
+   * and this call's own connection succeeded — the SPKI hash of the leaf
+   * certificate that answered THIS (now-verified) challenge. The caller
+   * (auth.ts) persists it next to the signing-key pin once this function
+   * has returned successfully — i.e. only once the Ed25519 signature over
+   * THIS SAME connection's response has verified, never from an
+   * unauthenticated connection.
+   */
+  capturedTlsSpkiHex?: string;
+}
+
 /**
  * Ask the Authority Server at `asUrl` to sign a fresh nonce, then verify the
  * answer proves it holds the private key matching `publicKeyHex`.
@@ -124,19 +141,35 @@ export function verifyChallengeSignature(
  * @throws AsChallengeInvalidError when the response doesn't check out: wrong
  *   `typ`, a `nonce` that doesn't match what was sent, a stale/future
  *   `issuedAt`, or a signature that fails to verify under `publicKeyHex`.
+ * @throws AsTlsMismatchError when `pinning.enabled` and the connection's
+ *   certificate doesn't carry the pinned SPKI (see as-tls-pin.ts) — this
+ *   check runs BEFORE any of the application-level checks above, at the TLS
+ *   layer, so a mismatch means no HTTP exchange happened on this call at all.
  */
-export async function verifyAsHoldsKey(asUrl: string, publicKeyHex: string): Promise<void> {
+export async function verifyAsHoldsKey(
+  asUrl: string,
+  publicKeyHex: string,
+  pinning: AsFetchPinning = { enabled: false },
+): Promise<VerifyAsHoldsKeyResult> {
   const nonce = randomBytes(32).toString('base64url');
 
   let res: Response;
+  let capturedSpkiHex: string | undefined;
   try {
-    res = await fetch(`${asUrl}/api/as/challenge`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ nonce }),
-      signal: AbortSignal.timeout(5000),
-    });
+    const result = await fetchAs(
+      `${asUrl}/api/as/challenge`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nonce }),
+        signal: AbortSignal.timeout(5000),
+      },
+      pinning,
+    );
+    res = result.res;
+    capturedSpkiHex = result.capturedSpkiHex;
   } catch (err) {
+    if (err instanceof AsTlsMismatchError) throw err;
     throw new AsChallengeUnreachableError(
       `could not reach the Authority Server at ${asUrl} to verify it holds its signing key — ` +
         `${err instanceof Error ? err.message : String(err)}`,
@@ -191,4 +224,6 @@ export async function verifyAsHoldsKey(asUrl: string, publicKeyHex: string): Pro
         'challenge exists to catch: something answered the request but does not hold the matching private key.',
     );
   }
+
+  return { capturedTlsSpkiHex: capturedSpkiHex };
 }

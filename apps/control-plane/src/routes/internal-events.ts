@@ -46,6 +46,14 @@ const SESSION_EXPIRED = 'session-expired';
  */
 const AS_KEY_MISMATCH = 'as-key-mismatch';
 
+/**
+ * Another command, same shape again: the MCP server's SPClient (opt-in
+ * pin-tls, as-tls-pin.ts) found a connection to the AS presenting a TLS
+ * certificate that doesn't match the one pinned at pairing, and asks this
+ * process to lock — see createAsTlsMismatchLock in session-lock.ts.
+ */
+const AS_TLS_MISMATCH = 'as-tls-mismatch';
+
 function secretMatches(provided: string | undefined, expected: string): boolean {
   if (!expected) return false; // never accept when no secret is configured
   if (!provided) return false;
@@ -61,6 +69,7 @@ export function createInternalEventsRouter(
   getSecret: () => string,
   onSessionExpired?: () => void,
   onAsKeyMismatch?: () => void,
+  onAsTlsMismatch?: () => void,
 ): Router {
   const router = Router();
 
@@ -80,6 +89,12 @@ export function createInternalEventsRouter(
 
     if (type === AS_KEY_MISMATCH) {
       onAsKeyMismatch?.();
+      res.json({ ok: true });
+      return;
+    }
+
+    if (type === AS_TLS_MISMATCH) {
+      onAsTlsMismatch?.();
       res.json({ ok: true });
       return;
     }

@@ -56,13 +56,14 @@ import { createArchivedMandatesRouter } from './routes/archived-mandates';
 import { createInternalEventsRouter } from './routes/internal-events';
 import { startNotificationDispatcher } from './lib/notification-dispatcher';
 import { eventBus } from './lib/event-bus';
-import { createSessionLock, createAsKeyMismatchLock } from './lib/session-lock';
+import { createSessionLock, createAsKeyMismatchLock, createAsTlsMismatchLock } from './lib/session-lock';
 import { SessionExpiryScheduler } from './lib/session-expiry-scheduler';
 import { buildSessionHealth } from './lib/session-health';
 import { loadDenials, selectDenials } from './lib/denials-reader';
 import { AGENT_CONTEXT_MAX_BYTES, agentBriefPath, readAgentBrief } from './lib/agent-brief-store';
-import { resolveAsUrl } from './lib/as-config';
+import { resolveAsUrl, resolvePinTls } from './lib/as-config';
 import { readPairing, clearPairing, fingerprintOf } from './lib/as-pairing';
+import { formatPinFingerprint } from './lib/as-tls-pin';
 
 // Same default every stateful module in this codebase uses (Vault, GateStore,
 // …) — see as-config.ts's doc comment on why `resolveAsUrl` takes it
@@ -149,6 +150,7 @@ function loginRateLimit(req: Request, res: Response, next: NextFunction): void {
 
 const lockExpiredSession = createSessionLock({ vault, port });
 const lockAsKeyMismatch = createAsKeyMismatchLock({ vault, port });
+const lockAsTlsMismatch = createAsTlsMismatchLock({ vault, port });
 const sessionExpiryScheduler = new SessionExpiryScheduler(
   () => vault.getSessionExpiresAt(),
   lockExpiredSession,
@@ -443,7 +445,7 @@ app.get('/events', requireAllowedHost, requireAuthQueryOrHeader(vault), createEv
 // Sibling-process events (MCP server → control plane). Authenticated by the
 // shared internal secret, NOT by a user session: the MCP server has none.
 // Carries an event type and nothing else.
-app.use('/internal', jsonParser, createInternalEventsRouter(() => internalSecret, lockExpiredSession, lockAsKeyMismatch));
+app.use('/internal', jsonParser, createInternalEventsRouter(() => internalSecret, lockExpiredSession, lockAsKeyMismatch, lockAsTlsMismatch));
 
 // Vault routes
 app.use('/vault', jsonParser, authGuard, createVaultRouter(vault));
@@ -472,7 +474,7 @@ app.use('/api/encrypt-intent', jsonParser, authGuard, createEncryptIntentRouter(
 
 // Evidence download — local receipt archive + gate store, merged with a
 // best-effort AS export. Mounted BEFORE the /api proxy so it wins the route.
-app.use('/api/evidence-export', authGuard, createEvidenceExportRouter(SP_URL, vault));
+app.use('/api/evidence-export', authGuard, createEvidenceExportRouter(SP_URL, vault, DATA_DIR, lockAsTlsMismatch));
 
 // Local evidence for the Receipts page (grant context/intent, archived
 // receipts). Mounted BEFORE the /api proxy so it wins the route.
@@ -693,11 +695,18 @@ app.get('/skipped-commitments', authGuard, async (_req: Request, res: Response) 
 // or by re-pairing.
 app.get('/as-pairing', authGuard, (_req: Request, res: Response) => {
   const pairing = readPairing(DATA_DIR);
+  const paired = pairing !== null && pairing.asUrl === SP_URL;
   res.json({
     asUrl: SP_URL,
-    paired: pairing !== null && pairing.asUrl === SP_URL,
-    fingerprint: pairing && pairing.asUrl === SP_URL ? fingerprintOf(pairing.publicKeyHex) : null,
-    pairedAt: pairing && pairing.asUrl === SP_URL ? pairing.pairedAt : null,
+    paired,
+    fingerprint: paired ? fingerprintOf(pairing!.publicKeyHex) : null,
+    pairedAt: paired ? pairing!.pairedAt : null,
+    // Opt-in TLS pinning (`config set pin-tls on`) — see as-tls-pin.ts.
+    // `tlsPinFingerprint` uses the SAME display convention as the signing
+    // key (formatPinFingerprint mirrors fingerprintOf's grouping), applied
+    // to the already-computed SPKI digest rather than re-hashing a key.
+    pinTlsEnabled: resolvePinTls(DATA_DIR),
+    tlsPinFingerprint: paired && pairing!.tlsSpkiPinHex ? formatPinFingerprint(pairing!.tlsSpkiPinHex) : null,
   });
 });
 

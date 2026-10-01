@@ -30,6 +30,11 @@ export const DEFAULT_AS_URL = 'https://www.suveren.ai';
 export interface AsConfig {
   asUrl?: string;
   caFile?: string;
+  /** Opt-in TLS certificate pinning for every connection to the Authority
+   *  Server (SPKI pin captured at pairing — see as-tls-pin.ts). Default
+   *  false/absent. Refused at `config set pin-tls on` / `start --pin-tls`
+   *  for an http:// AS URL, since there is no TLS to pin. */
+  pinTls?: boolean;
 }
 
 function configPath(dataDir: string): string {
@@ -57,6 +62,7 @@ function readAsConfigStrict(dataDir: string): AsConfig {
   const out: AsConfig = {};
   if (typeof data.asUrl === 'string') out.asUrl = data.asUrl;
   if (typeof data.caFile === 'string') out.caFile = data.caFile;
+  if (typeof data.pinTls === 'boolean') out.pinTls = data.pinTls;
   return out;
 }
 
@@ -70,6 +76,7 @@ export function readAsConfig(dataDir: string): AsConfig {
     const out: AsConfig = {};
     if (typeof data.asUrl === 'string') out.asUrl = data.asUrl;
     if (typeof data.caFile === 'string') out.caFile = data.caFile;
+    if (typeof data.pinTls === 'boolean') out.pinTls = data.pinTls;
     return out;
   } catch {
     return {};
@@ -189,4 +196,11 @@ export function resolveAsUrl(dataDir: string, flag?: string): string {
  *  server.js (see bundle/server.js) rather than re-derived by each app. */
 export function resolveCaFile(dataDir: string): string | undefined {
   return readAsConfig(dataDir).caFile;
+}
+
+/** Resolve the saved `pinTls` setting. No env/flag tier — only ever set
+ *  through `--pin-tls` / `config set pin-tls on|off`. Default false:
+ *  opt-in, never silently on. */
+export function resolvePinTls(dataDir: string): boolean {
+  return readAsConfig(dataDir).pinTls === true;
 }
