@@ -75,6 +75,13 @@ export interface IntegrationManifest {
     envMapping: Record<string, string>;
   };
   oauth: ManifestOAuthConfig | null;
+  /**
+   * The connector can answer from a simulated system: `field` is the credential
+   * field holding the mode, `default` the mode when it is unset. Display only —
+   * the gateway's checks and tickets are identical in both modes; the UI badges a
+   * simulated connector so a forgotten switch after go-live is never silent.
+   */
+  simulation?: { field: string; default: string } | null;
   npmPackage?: string;
   personalDefault?: boolean;
   toolGating: ProfileToolGating;
