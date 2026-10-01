@@ -7,7 +7,7 @@ import { useVisiblePolling } from '../hooks/useVisiblePolling';
 import { useSSEEvent } from '../contexts/EventSourceContext';
 import { useIntegrationStatus } from '../contexts/IntegrationStatusContext';
 
-interface NavItem {
+export interface NavItem {
   to: string;
   icon: string;
   label: string;
@@ -15,7 +15,7 @@ interface NavItem {
   teamOnly?: boolean;
 }
 
-const NAV_ITEMS: NavItem[] = [
+export const NAV_ITEMS: NavItem[] = [
   { to: '/', icon: '□', label: 'Dashboard' },
   { to: '/approvals', icon: '▷', label: 'Pending Approvals', statusKey: 'proposals' },
   // v0.7 vocabulary at the level a buyer reads (nav + page titles). Routes,
@@ -26,7 +26,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: '/tickets', icon: '▣', label: 'Tickets' },
   { to: '/team', icon: '◉', label: 'Team', teamOnly: true },
   { to: '/integrations', icon: '⧗', label: 'Integrations', statusKey: 'integrations' },
-  { to: '/settings', icon: '⚙', label: 'AI Assistant', statusKey: 'assistant' },
+  { to: '/settings', icon: '⚙', label: 'Settings', statusKey: 'assistant' },
 ];
 
 /**

@@ -9,7 +9,7 @@ const THEME_ICONS: Record<string, string> = {
   dark: '\u263E',
 };
 
-const NAV_ITEMS = [
+export const NAV_ITEMS = [
   { to: '/', icon: '\u25A1', label: 'Dashboard' },
   { to: '/approvals', icon: '\u25B7', label: 'Pending Approvals' },
   { to: '/mandates', icon: '\u2630', label: 'Mandates' },
@@ -17,7 +17,7 @@ const NAV_ITEMS = [
   { to: '/tickets', icon: '\u25A3', label: 'Tickets' },
   { to: '/team', icon: '\u25C9', label: 'Team' },
   { to: '/integrations', icon: '\u29D7', label: 'Integrations' },
-  { to: '/settings', icon: '\u2699', label: 'AI Assistant' },
+  { to: '/settings', icon: '\u2699', label: 'Settings' },
 ];
 
 interface Props {
