@@ -32,7 +32,7 @@ import { CommittedExecutor, ExecutorLock } from '../src/lib/committed-executor';
 import type { SPProposal } from '../src/lib/sp-client';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { resolveAsUrl } from '../src/lib/as-config';
+import { resolveAsUrl, resolvePinTls, validatePinTlsForUrl } from '../src/lib/as-config';
 import { readMcpPairedAsUrl, writeMcpPairedAsUrl } from '../src/lib/mcp-as-tracker';
 import { setAsBaseUrl } from '../src/lib/receipt-footer';
 
@@ -44,6 +44,9 @@ const dataDir = process.env.SUVEREN_DATA_DIR ?? join(homedir(), '.suveren');
 // default suveren.ai. Throws (refusing to start) if an explicitly set source
 // is malformed.
 const spUrl = resolveAsUrl(dataDir);
+// Refuses to start (throws) when pinTls is on for a non-https AS URL — not
+// just a CLI-flag-time check, so a hand-edited config.json is caught too.
+validatePinTlsForUrl(resolvePinTls(dataDir), spUrl);
 const port = parseInt(process.env.SUVEREN_MCP_PORT ?? '3430', 10);
 
 // The receipt footer's link uses the SAME resolved URL — see receipt-footer.ts.
@@ -215,7 +218,8 @@ app.post('/internal/configure', internalOnly, (req: Request, res: Response) => {
  */
 app.post('/internal/clear-session', internalOnly, (req: Request, res: Response) => {
   const reason = (req.body as { reason?: unknown })?.reason;
-  const validReason = reason === 'as-key-mismatch' || reason === 'as-url-changed' ? reason : undefined;
+  const validReason =
+    reason === 'as-key-mismatch' || reason === 'as-tls-mismatch' || reason === 'as-url-changed' ? reason : undefined;
   state.spClient.clearSession(validReason);
   console.error(`[Suveren MCP] Session cleared by control-plane (${validReason ?? 'expired'})`);
   res.json({ ok: true });

@@ -90,10 +90,15 @@ export class ApiKeyUnsealProvider implements UnsealProvider {
  *  'expired' — the AS session ended (30-day expiry, or revoked).
  *  'as-key-mismatch' — the AS at the configured URL presented a signing key
  *    that does not match the one pinned at pairing (see as-pairing.ts).
+ *  'as-tls-mismatch' — opt-in TLS pinning (`config set pin-tls on`) is
+ *    enabled and a connection to the AS presented a TLS certificate whose
+ *    public key does not match the one pinned at pairing (see
+ *    as-tls-pin.ts). Distinct from 'as-key-mismatch': this is caught at the
+ *    transport layer, before any application-level signature is even checked.
  *  'as-url-changed' — the resolved Authority Server URL differs from the one
  *    this gateway was last paired with (boot-time only; re-pairing is
  *    required — see as-config.ts / as-pairing.ts). */
-export type VaultLockReason = 'expired' | 'as-key-mismatch' | 'as-url-changed';
+export type VaultLockReason = 'expired' | 'as-key-mismatch' | 'as-tls-mismatch' | 'as-url-changed';
 
 export class Vault {
   private vaultKey: Buffer | null = null;
@@ -197,6 +202,14 @@ export class Vault {
   lockAsKeyMismatch(): void {
     this.clearKey();
     this.lockedReason = 'as-key-mismatch';
+  }
+
+  /** Lock because a pin-tls-enforced connection to the Authority Server
+   *  presented a certificate whose public key doesn't match the one pinned
+   *  at pairing — see as-tls-pin.ts. Mirrors lockAsKeyMismatch() exactly. */
+  lockAsTlsMismatch(): void {
+    this.clearKey();
+    this.lockedReason = 'as-tls-mismatch';
   }
 
   /**

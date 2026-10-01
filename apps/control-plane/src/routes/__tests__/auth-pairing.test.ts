@@ -15,29 +15,63 @@ import { describe, it, expect, afterEach } from 'vitest';
 import express from 'express';
 import type { Server } from 'node:http';
 import { createServer } from 'node:http';
-import { generateKeyPairSync } from 'node:crypto';
+import { generateKeyPairSync, sign as cryptoSign, type KeyObject } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { canonicalize } from '@hap/core';
 import { Vault } from '../../lib/vault';
 import { createAuthRouter } from '../auth';
 import { setInternalSecret } from '../../lib/mcp-bridge';
 import { readPairing } from '../../lib/as-pairing';
 
-function realEd25519PublicKeyHex(): string {
-  const { publicKey } = generateKeyPairSync('ed25519');
+interface TestKeypair {
+  publicKeyHex: string;
+  privateKey: KeyObject;
+}
+
+function realEd25519Keypair(): TestKeypair {
+  const { publicKey, privateKey } = generateKeyPairSync('ed25519');
   const jwk = publicKey.export({ format: 'jwk' }) as { x?: string };
-  return Buffer.from(jwk.x!, 'base64url').toString('hex');
+  return { publicKeyHex: Buffer.from(jwk.x!, 'base64url').toString('hex'), privateKey };
+}
+
+/** Sign a real `/api/as/challenge` response for `nonce`, using `privateKey` —
+ *  the domain-separated scheme as-challenge.ts verifies (the literal prefix
+ *  "hap-as-challenge\0" followed by JCS of {typ, nonce, issuedAt} — NOT the
+ *  plain-JCS scheme ticket/receipt signatures use). Used by `fakeAs` below
+ *  so sign-in's G2 holds-its-key check (checkAsKeyBeforeLogin →
+ *  verifyAsHoldsKey) has something real to verify, not a stub of the
+ *  verification itself. */
+function signChallenge(nonce: string, privateKey: KeyObject): Record<string, unknown> {
+  const unsigned = { typ: 'hap-as-challenge', nonce, issuedAt: Math.floor(Date.now() / 1000) };
+  const bytes = Buffer.concat([Buffer.from('hap-as-challenge\u0000', 'utf-8'), Buffer.from(canonicalize(unsigned), 'utf-8')]);
+  const signature = cryptoSign(null, bytes, privateKey).toString('base64url');
+  return { ...unsigned, signature };
 }
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'auth-pairing-'));
 
-/** A fake Authority Server implementing just the two routes login touches. */
-function fakeAs(getKey: () => string): Promise<{ url: string; close: () => Promise<void> }> {
+/** A fake Authority Server implementing the three routes login touches —
+ *  `/api/as/pubkey`, `/api/as/challenge` (G2 — signs with the SAME keypair
+ *  `getKeypair()` currently reports, so a key change between calls produces
+ *  a challenge that fails to verify under an old pin, exactly like a real
+ *  key rotation would), and `/api/auth/session`. */
+function fakeAs(getKeypair: () => TestKeypair): Promise<{ url: string; close: () => Promise<void> }> {
   const server: Server = createServer((req, res) => {
     if (req.url === '/api/as/pubkey') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ publicKey: getKey() }));
+      res.end(JSON.stringify({ publicKey: getKeypair().publicKeyHex }));
+      return;
+    }
+    if (req.url === '/api/as/challenge' && req.method === 'POST') {
+      let raw = '';
+      req.on('data', (c) => { raw += c; });
+      req.on('end', () => {
+        const { nonce } = JSON.parse(raw || '{}') as { nonce?: string };
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(signChallenge(nonce ?? '', getKeypair().privateKey)));
+      });
       return;
     }
     if (req.url === '/api/auth/session' && req.method === 'POST') {
@@ -82,8 +116,8 @@ afterEach(async () => {
 
 describe('POST /auth/login — AS key pairing', () => {
   it('pins the key on first sign-in', async () => {
-    const key = realEd25519PublicKeyHex();
-    const { url: asUrl, close: c1 } = await fakeAs(() => key); stopAs = c1;
+    const kp = realEd25519Keypair();
+    const { url: asUrl, close: c1 } = await fakeAs(() => kp); stopAs = c1;
     const dataDir = tmp();
     setInternalSecret('test-secret');
 
@@ -97,12 +131,12 @@ describe('POST /auth/login — AS key pairing', () => {
     expect(res.status).toBe(200);
     const pairing = readPairing(dataDir);
     expect(pairing?.asUrl).toBe(asUrl);
-    expect(pairing?.publicKeyHex).toBe(key);
+    expect(pairing?.publicKeyHex).toBe(kp.publicKeyHex);
   });
 
   it('signing in again with the SAME key is a no-op (still pinned, still succeeds)', async () => {
-    const key = realEd25519PublicKeyHex();
-    const { url: asUrl, close: c1 } = await fakeAs(() => key); stopAs = c1;
+    const kp = realEd25519Keypair();
+    const { url: asUrl, close: c1 } = await fakeAs(() => kp); stopAs = c1;
     const dataDir = tmp();
     setInternalSecret('test-secret');
 
@@ -112,26 +146,27 @@ describe('POST /auth/login — AS key pairing', () => {
     const res2 = await fetch(`${gwUrl}/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-API-Key': 'hap_test' } });
 
     expect(res2.status).toBe(200);
-    expect(readPairing(dataDir)?.publicKeyHex).toBe(key);
+    expect(readPairing(dataDir)?.publicKeyHex).toBe(kp.publicKeyHex);
   });
 
   it('REFUSAL: a live key that disagrees with an existing pin at the SAME URL blocks sign-in (409)', async () => {
-    const pinnedKey = realEd25519PublicKeyHex();
-    let liveKey = pinnedKey;
-    const { url: asUrl, close: c1 } = await fakeAs(() => liveKey); stopAs = c1;
+    const pinnedKp = realEd25519Keypair();
+    let liveKp = pinnedKp;
+    const { url: asUrl, close: c1 } = await fakeAs(() => liveKp); stopAs = c1;
     const dataDir = tmp();
     setInternalSecret('test-secret');
 
     const vault = new Vault(dataDir);
     const { url: gwUrl, close: c2 } = await startGateway(vault, asUrl, dataDir); stopGw = c2;
 
-    // First sign-in pins pinnedKey.
+    // First sign-in pins pinnedKp's key.
     const first = await fetch(`${gwUrl}/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-API-Key': 'hap_test' } });
     expect(first.status).toBe(200);
 
-    // The "AS" now answers with a DIFFERENT key at the SAME URL.
-    liveKey = realEd25519PublicKeyHex();
-    expect(liveKey).not.toBe(pinnedKey);
+    // The "AS" now answers (and signs its challenges) with a DIFFERENT
+    // keypair at the SAME URL — e.g. a real key rotation, or an impostor.
+    liveKp = realEd25519Keypair();
+    expect(liveKp.publicKeyHex).not.toBe(pinnedKp.publicKeyHex);
 
     const second = await fetch(`${gwUrl}/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-API-Key': 'hap_test' } });
     expect(second.status).toBe(409);
@@ -140,7 +175,7 @@ describe('POST /auth/login — AS key pairing', () => {
     expect(body.message).toMatch(/does not match/);
 
     // The pin must NOT have been silently replaced.
-    expect(readPairing(dataDir)?.publicKeyHex).toBe(pinnedKey);
+    expect(readPairing(dataDir)?.publicKeyHex).toBe(pinnedKp.publicKeyHex);
   });
 
   it('REFUSAL: a pubkey fetch failure blocks sign-in — never proceeds unpinned', async () => {

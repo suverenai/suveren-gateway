@@ -56,13 +56,14 @@ import { createArchivedMandatesRouter } from './routes/archived-mandates';
 import { createInternalEventsRouter } from './routes/internal-events';
 import { startNotificationDispatcher } from './lib/notification-dispatcher';
 import { eventBus } from './lib/event-bus';
-import { createSessionLock, createAsKeyMismatchLock } from './lib/session-lock';
+import { createSessionLock, createAsKeyMismatchLock, createAsTlsMismatchLock } from './lib/session-lock';
 import { SessionExpiryScheduler } from './lib/session-expiry-scheduler';
 import { buildSessionHealth } from './lib/session-health';
 import { loadDenials, selectDenials } from './lib/denials-reader';
 import { AGENT_CONTEXT_MAX_BYTES, agentBriefPath, readAgentBrief } from './lib/agent-brief-store';
-import { resolveAsUrl } from './lib/as-config';
+import { resolveAsUrl, resolvePinTls, validatePinTlsForUrl } from './lib/as-config';
 import { readPairing, clearPairing, fingerprintOf } from './lib/as-pairing';
+import { formatPinFingerprint, buildPinnedHttpsAgent, isPinCheckError, type AsFetchPinning } from './lib/as-tls-pin';
 
 // Same default every stateful module in this codebase uses (Vault, GateStore,
 // …) — see as-config.ts's doc comment on why `resolveAsUrl` takes it
@@ -73,6 +74,9 @@ const DATA_DIR = process.env.SUVEREN_DATA_DIR ?? join(homedir(), '.suveren');
 // suveren.ai. Throws (refusing to start) if an EXPLICITLY set source is
 // malformed — see as-config.ts.
 const SP_URL = resolveAsUrl(DATA_DIR);
+// Refuses to start (throws) when pinTls is on for a non-https AS URL — not
+// just a CLI-flag-time check, so a hand-edited config.json is caught too.
+validatePinTlsForUrl(resolvePinTls(DATA_DIR), SP_URL);
 const port = parseInt(process.env.SUVEREN_CP_PORT ?? '3402', 10);
 const HAP_MODE = (process.env.HAP_MODE ?? 'personal') as 'personal' | 'team';
 
@@ -149,6 +153,7 @@ function loginRateLimit(req: Request, res: Response, next: NextFunction): void {
 
 const lockExpiredSession = createSessionLock({ vault, port });
 const lockAsKeyMismatch = createAsKeyMismatchLock({ vault, port });
+const lockAsTlsMismatch = createAsTlsMismatchLock({ vault, port });
 const sessionExpiryScheduler = new SessionExpiryScheduler(
   () => vault.getSessionExpiresAt(),
   lockExpiredSession,
@@ -443,7 +448,7 @@ app.get('/events', requireAllowedHost, requireAuthQueryOrHeader(vault), createEv
 // Sibling-process events (MCP server → control plane). Authenticated by the
 // shared internal secret, NOT by a user session: the MCP server has none.
 // Carries an event type and nothing else.
-app.use('/internal', jsonParser, createInternalEventsRouter(() => internalSecret, lockExpiredSession, lockAsKeyMismatch));
+app.use('/internal', jsonParser, createInternalEventsRouter(() => internalSecret, lockExpiredSession, lockAsKeyMismatch, lockAsTlsMismatch));
 
 // Vault routes
 app.use('/vault', jsonParser, authGuard, createVaultRouter(vault));
@@ -472,7 +477,7 @@ app.use('/api/encrypt-intent', jsonParser, authGuard, createEncryptIntentRouter(
 
 // Evidence download — local receipt archive + gate store, merged with a
 // best-effort AS export. Mounted BEFORE the /api proxy so it wins the route.
-app.use('/api/evidence-export', authGuard, createEvidenceExportRouter(SP_URL, vault));
+app.use('/api/evidence-export', authGuard, createEvidenceExportRouter(SP_URL, vault, DATA_DIR, lockAsTlsMismatch));
 
 // Local evidence for the Receipts page (grant context/intent, archived
 // receipts). Mounted BEFORE the /api proxy so it wins the route.
@@ -693,11 +698,18 @@ app.get('/skipped-commitments', authGuard, async (_req: Request, res: Response) 
 // or by re-pairing.
 app.get('/as-pairing', authGuard, (_req: Request, res: Response) => {
   const pairing = readPairing(DATA_DIR);
+  const paired = pairing !== null && pairing.asUrl === SP_URL;
   res.json({
     asUrl: SP_URL,
-    paired: pairing !== null && pairing.asUrl === SP_URL,
-    fingerprint: pairing && pairing.asUrl === SP_URL ? fingerprintOf(pairing.publicKeyHex) : null,
-    pairedAt: pairing && pairing.asUrl === SP_URL ? pairing.pairedAt : null,
+    paired,
+    fingerprint: paired ? fingerprintOf(pairing!.publicKeyHex) : null,
+    pairedAt: paired ? pairing!.pairedAt : null,
+    // Opt-in TLS pinning (`config set pin-tls on`) — see as-tls-pin.ts.
+    // `tlsPinFingerprint` uses the SAME display convention as the signing
+    // key (formatPinFingerprint mirrors fingerprintOf's grouping), applied
+    // to the already-computed SPKI digest rather than re-hashing a key.
+    pinTlsEnabled: resolvePinTls(DATA_DIR),
+    tlsPinFingerprint: paired && pairing!.tlsSpkiPinHex ? formatPinFingerprint(pairing!.tlsSpkiPinHex) : null,
   });
 });
 
@@ -807,18 +819,51 @@ app.put('/agent-brief/context', jsonParser, authGuard, async (req: Request, res:
 // Auth guard for /api — runs first, rejects with 401 if unauthorized
 app.use('/api', authGuard);
 
+// Opt-in TLS pinning (as-tls-pin.ts) for this proxy's own https.Agent — the
+// UI's own path to the AS, and the one that carries the server-side session
+// cookie on every call. http-proxy-middleware hands `options.agent` straight
+// to Node's `https.request`, so a single long-lived Agent (NOT `fetchAs`,
+// which can't express a persistent proxy) is the equivalent here. `getPinning`
+// is read fresh on every NEW connection (see buildPinnedHttpsAgent), so a pin
+// captured moments ago by THIS same sign-in already applies.
+const pinnedProxyAgent = SP_URL.startsWith('https:')
+  ? buildPinnedHttpsAgent((): AsFetchPinning => {
+      const pin = readPairing(DATA_DIR);
+      return {
+        enforce: resolvePinTls(DATA_DIR),
+        pinnedSpkiHex: pin && pin.asUrl === SP_URL ? pin.tlsSpkiPinHex : undefined,
+      };
+    })
+  : undefined;
+
 // Proxy /api/* to SP — mounted at root so http-proxy-middleware sees the full path
 app.use(
   createProxyMiddleware({
     target: SP_URL,
     changeOrigin: true,
     pathFilter: '/api',
+    ...(pinnedProxyAgent ? { agent: pinnedProxyAgent } : {}),
     on: {
       proxyReq: (proxyReq) => {
         // Inject server-side SP session cookie instead of forwarding browser cookies
         const cookie = vault.getSpCookie();
         if (cookie) {
           proxyReq.setHeader('Cookie', cookie);
+        }
+      },
+      // A pin check failure means the connection never completed its TLS
+      // handshake — nothing (not even this call's own cookie) reached the
+      // network. Lock the gateway with the real reason, loudly; an ordinary
+      // network error (AS outage) is NOT a pin failure (see isPinCheckError
+      // / as-tls-pin.ts's module doc comment on outage misclassification)
+      // and falls through to http-proxy-middleware's default error handling.
+      error: (err, _req, res) => {
+        if (!isPinCheckError(err)) return;
+        console.error('[Control Plane] /api proxy: TLS pin mismatch — gateway LOCKED:', err.message);
+        lockAsTlsMismatch();
+        if (res && 'writeHead' in res && !res.headersSent) {
+          res.writeHead(502, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'as_tls_mismatch', message: err.message }));
         }
       },
       proxyRes: (proxyRes, req) => {

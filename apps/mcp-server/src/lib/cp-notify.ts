@@ -33,7 +33,7 @@ const CP_PORT = process.env.SUVEREN_CP_PORT ?? '3402';
 const CP_BASE = process.env.SUVEREN_CP_INTERNAL_URL ?? `http://127.0.0.1:${CP_PORT}`;
 const TIMEOUT_MS = 2_000;
 
-export type NotifiableEvent = 'proposal-added' | 'action-approval-needed' | 'session-expired' | 'as-key-mismatch';
+export type NotifiableEvent = 'proposal-added' | 'action-approval-needed' | 'session-expired' | 'as-key-mismatch' | 'as-tls-mismatch';
 
 export async function notifyControlPlane(type: NotifiableEvent): Promise<void> {
   const secret = process.env.SUVEREN_INTERNAL_SECRET ?? '';

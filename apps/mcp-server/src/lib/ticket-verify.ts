@@ -31,10 +31,20 @@
  *     artifact was approved, or the hash was swapped in transit.
  *  4. The receipt's signed `timestamp` must be recent — see
  *     TICKET_MAX_AGE_SECONDS / TICKET_MAX_CLOCK_SKEW_SECONDS below. This is
- *     hardening, not full replay protection: a genuinely fresh, genuinely
- *     signed ticket handed back for a DIFFERENT call of the same shape is a
- *     known open gap (the idempotency key is not part of what the AS signs)
- *     — tracked separately, needs an Authority Server change.
+ *     hardening, not full replay protection on its own — see check 5.
+ *  5. The receipt's `idempotencyKey` — whenever THIS call generated one (the
+ *     automatic path always does; tool-proxy.ts's M3 key, reused across
+ *     postReceipt's internal retries) — must match it exactly. The Authority
+ *     Server signs `idempotencyKey` into the receipt verbatim whenever the
+ *     request carried one, so a ticket genuinely signed for a DIFFERENT call
+ *     of the same shape (same action/executionContext/grant, different
+ *     invocation) can no longer be substituted for this one — closing the gap
+ *     that used to exist here, where a fresh and validly-signed ticket for
+ *     "the same kind of call" couldn't be told apart from a ticket for THIS
+ *     specific call. Missing on the ticket when this call sent one is a
+ *     mismatch, not a pass: the rollout order is Authority Server first, so
+ *     by the time a gateway checks this, the AS it talks to always echoes
+ *     the key back when given one.
  *
  * What this does NOT do: cross-check a review-mode proposal's tool/args
  * against what THIS gateway itself submitted, when it was the submitter —
@@ -97,6 +107,14 @@ export interface ExpectedTicket {
    * executed.
    */
   proposalId?: string;
+  /**
+   * The idempotency key THIS call generated and sent with its receipt
+   * request, when it sent one — see check 5 in the module doc comment. The
+   * automatic path always sends one; the review path deliberately does not
+   * (a proposal's `proposalId` is its own retry-safe key), so this is left
+   * undefined there and the check below does not apply.
+   */
+  idempotencyKey?: string;
   /**
    * The content hash THIS gateway computed for this call (computeContentBinding
    * in content-binding.ts), present iff the profile declares a content_binding.
@@ -184,6 +202,21 @@ export async function verifyTicket(
     throw new TicketBindingMismatchError(
       `Ticket proposalId "${String(receipt.proposalId)}" does not match the proposal being executed ` +
         `"${expected.proposalId}" — refusing to execute.`,
+    );
+  }
+
+  // G4: when THIS call sent an idempotency key with its receipt request, the
+  // ticket must carry the identical one. An absent key on the ticket counts
+  // as a mismatch (fail closed — see check 5 in the module doc comment), not
+  // as "the AS doesn't support this yet": the Authority Server is upgraded
+  // first by convention, so by the time a gateway enforces this, the AS it
+  // talks to always echoes the key back when given one. Idempotent replay of
+  // the SAME call (same key) still passes, by construction — nothing here
+  // changes between calls that reuse the same key for the same invocation.
+  if (expected.idempotencyKey !== undefined && receipt.idempotencyKey !== expected.idempotencyKey) {
+    throw new TicketBindingMismatchError(
+      `Ticket idempotencyKey "${String(receipt.idempotencyKey)}" does not match the one this call sent ` +
+        `"${expected.idempotencyKey}" — refusing to execute.`,
     );
   }
 

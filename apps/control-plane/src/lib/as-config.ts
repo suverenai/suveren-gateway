@@ -30,6 +30,20 @@ export const DEFAULT_AS_URL = 'https://www.suveren.ai';
 export interface AsConfig {
   asUrl?: string;
   caFile?: string;
+  /** Opt-in TLS certificate pinning for every connection to the Authority
+   *  Server (SPKI pin captured at pairing — see as-tls-pin.ts). Default
+   *  false/absent. Refused at `config set pin-tls on` / `start --pin-tls`
+   *  for an http:// AS URL, since there is no TLS to pin. */
+  pinTls?: boolean;
+  /** A fingerprint confirmed via `--expect-fingerprint` (the mandatory
+   *  out-of-band check — see bundle/bin/suveren-gateway.js) BEFORE any
+   *  signing-key pairing exists yet, so there is no as-pairing.json to
+   *  attach a TLS pin to. Staged here until the first verified sign-in
+   *  challenge, which MUST match it (enforced exactly like an
+   *  already-stored pin — see auth.ts's checkAsKeyBeforeLogin); once it
+   *  does, the value moves into as-pairing.json and this field is cleared.
+   *  Never consulted once a real pairing with a TLS pin exists. */
+  pinTlsExpectedFingerprint?: string;
 }
 
 function configPath(dataDir: string): string {
@@ -57,6 +71,8 @@ function readAsConfigStrict(dataDir: string): AsConfig {
   const out: AsConfig = {};
   if (typeof data.asUrl === 'string') out.asUrl = data.asUrl;
   if (typeof data.caFile === 'string') out.caFile = data.caFile;
+  if (typeof data.pinTls === 'boolean') out.pinTls = data.pinTls;
+  if (typeof data.pinTlsExpectedFingerprint === 'string') out.pinTlsExpectedFingerprint = data.pinTlsExpectedFingerprint;
   return out;
 }
 
@@ -70,6 +86,8 @@ export function readAsConfig(dataDir: string): AsConfig {
     const out: AsConfig = {};
     if (typeof data.asUrl === 'string') out.asUrl = data.asUrl;
     if (typeof data.caFile === 'string') out.caFile = data.caFile;
+    if (typeof data.pinTls === 'boolean') out.pinTls = data.pinTls;
+    if (typeof data.pinTlsExpectedFingerprint === 'string') out.pinTlsExpectedFingerprint = data.pinTlsExpectedFingerprint;
     return out;
   } catch {
     return {};
@@ -190,3 +208,47 @@ export function resolveAsUrl(dataDir: string, flag?: string): string {
 export function resolveCaFile(dataDir: string): string | undefined {
   return readAsConfig(dataDir).caFile;
 }
+
+/** Resolve the saved `pinTls` setting. No env/flag tier — only ever set
+ *  through `--pin-tls` / `config set pin-tls on|off`. Default false:
+ *  opt-in, never silently on. */
+export function resolvePinTls(dataDir: string): boolean {
+  return readAsConfig(dataDir).pinTls === true;
+}
+
+/**
+ * Refuse to proceed (throws) when `pinTls` is on for a non-https Authority
+ * Server URL — there is no TLS certificate to pin. Called at process
+ * startup (control-plane's index.ts, mcp-server's bin/http.ts) so a
+ * hand-edited config.json (not just the CLI's own `--pin-tls` / `config
+ * set` validation, which only ever sees a value the USER just typed) is
+ * caught too, loudly, before the gateway starts believing it is pinning
+ * something it never checks.
+ */
+export function validatePinTlsForUrl(pinTls: boolean, asUrl: string): void {
+  if (!pinTls) return;
+  if (!asUrl.startsWith('https:')) {
+    throw new Error(
+      `config.json sets "pinTls": true, but the Authority Server URL (${asUrl}) is not https:// — ` +
+        `there is no TLS certificate to pin. Fix the saved as-url, or turn pin-tls off: ` +
+        `\`suveren-gateway config set pin-tls off\`.`,
+    );
+  }
+}
+
+/** Resolve the staged, not-yet-verified fingerprint, if any — see
+ *  `AsConfig.pinTlsExpectedFingerprint`'s doc comment. Already lowercase,
+ *  no separators (the CLI normalizes before saving). */
+export function resolvePinTlsExpectedFingerprint(dataDir: string): string | undefined {
+  return readAsConfig(dataDir).pinTlsExpectedFingerprint;
+}
+
+/** Remove the staged fingerprint once it has been captured into
+ *  as-pairing.json for real (see auth.ts's checkAsKeyBeforeLogin) — a no-op
+ *  when none is staged. `undefined` in the patch drops the key entirely
+ *  (JSON.stringify omits undefined-valued properties). */
+export function clearPinTlsExpectedFingerprint(dataDir: string): void {
+  if (readAsConfig(dataDir).pinTlsExpectedFingerprint === undefined) return;
+  writeAsConfig(dataDir, { pinTlsExpectedFingerprint: undefined });
+}
+

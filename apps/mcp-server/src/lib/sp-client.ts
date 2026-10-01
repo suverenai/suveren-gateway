@@ -8,12 +8,15 @@
 import type { ContentBinding } from '@hap/core';
 import { notifyControlPlane } from './cp-notify';
 import { clientVersionHeaders } from './client-version';
+import { readPairing } from './as-pairing';
+import { resolvePinTls } from './as-config';
+import { fetchAs, AsTlsMismatchError, type AsFetchPinning } from './as-tls-pin';
 
 /** Why the client currently has no session — distinguishes the default
  *  boot-locked state from one that WAS active and ended, and carries the
  *  REAL reason (not always 'expired') so the agent is told the truth — see
  *  locked-notice.ts. */
-export type SPLockReason = 'expired' | 'as-key-mismatch' | 'as-url-changed' | null;
+export type SPLockReason = 'expired' | 'as-key-mismatch' | 'as-tls-mismatch' | 'as-url-changed' | null;
 
 export interface SPAttestationResponse {
   domain: string;
@@ -133,12 +136,34 @@ export class SPClient {
    *  was active tells the control plane. Concurrent in-flight calls that were
    *  all sent under the same now-dead cookie would otherwise all report it. */
   private sessionExpiredNotified = false;
+  /** Same single-flight shape, for a TLS pin mismatch (as-tls-pin.ts). */
+  private tlsMismatchNotified = false;
 
   constructor(
     private baseUrl: string,
     receiptRetry: Partial<ReceiptRetryConfig> = {},
+    /** Where as-pairing.json / config.json live — needed to read the TLS pin
+     *  and the pin-tls setting on every call. Optional so existing
+     *  constructions (and this class's own unit tests) that pass only a
+     *  baseUrl keep working unpinned, exactly as before pin-tls existed. */
+    private dataDir?: string,
   ) {
     this.receiptRetry = { ...DEFAULT_RECEIPT_RETRY, ...receiptRetry };
+  }
+
+  /** Opt-in TLS pinning (as-tls-pin.ts) for every call THIS client makes.
+   *  Re-read live on each call rather than cached — same reasoning as
+   *  AttestationCache.getPublicKey's pin check: a pin or setting change
+   *  must take effect on the very next call, not the next restart. Never
+   *  allowed to CAPTURE a new pin here — only the control plane's sign-in
+   *  exchange (as-challenge.ts) does that; this client only enforces. */
+  private tlsPinning(): AsFetchPinning {
+    if (!this.dataDir) return { enforce: false };
+    const pin = readPairing(this.dataDir);
+    return {
+      enforce: resolvePinTls(this.dataDir),
+      pinnedSpkiHex: pin && pin.asUrl === this.baseUrl ? pin.tlsSpkiPinHex : undefined,
+    };
   }
 
   /** The AS base URL this client talks to (for provenance records). */
@@ -153,9 +178,15 @@ export class SPClient {
   setSessionCookie(cookie: string): void {
     this.sessionCookie = cookie;
     // A freshly configured cookie means the control plane just (re)authenticated
-    // us — any prior "the session ended" state no longer applies.
+    // us — any prior "the session ended" state no longer applies. Both
+    // single-flight notify flags reset here: without resetting
+    // tlsMismatchNotified, a SECOND relay episode after re-signing-in never
+    // notified the control plane again (it had already fired once, in a
+    // process that never restarts), so the UI kept showing "signed in" while
+    // every gated call was silently refusing.
     this.lockReason = null;
     this.sessionExpiredNotified = false;
+    this.tlsMismatchNotified = false;
   }
 
   /**
@@ -216,10 +247,27 @@ export class SPClient {
     }
 
     const hadSession = this.sessionCookie !== '';
-    const res = await globalThis.fetch(url, {
-      ...init,
-      headers,
-    });
+    let res: Response;
+    try {
+      const result = await fetchAs(url, { ...init, headers }, this.tlsPinning());
+      res = result.res;
+    } catch (err) {
+      if (err instanceof AsTlsMismatchError) {
+        // Caught at the transport layer — no bytes of this request's
+        // headers/body (including any session cookie / X-API-Key) reached
+        // the network. Lock exactly like a 401 below, but with the real
+        // reason, and tell the control plane so it locks the whole gateway
+        // (createAsTlsMismatchLock in session-lock.ts) rather than just this
+        // one client silently refusing call after call.
+        this.sessionCookie = '';
+        this.lockReason = 'as-tls-mismatch';
+        if (!this.tlsMismatchNotified) {
+          this.tlsMismatchNotified = true;
+          void notifyControlPlane('as-tls-mismatch');
+        }
+      }
+      throw err;
+    }
 
     // The AS answering 401 to a request WE sent under an active session means
     // the session ended server-side (30-day expiry, or revoked on

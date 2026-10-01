@@ -1285,6 +1285,9 @@ class SPClient {
     paired: boolean;
     fingerprint: string | null;
     pairedAt: string | null;
+    /** Opt-in TLS pinning (`config set pin-tls on`) — see as-tls-pin.ts. */
+    pinTlsEnabled: boolean;
+    tlsPinFingerprint: string | null;
   }> {
     const res = await this.fetch('/as-pairing');
     if (!res.ok) throw new Error(`HTTP ${res.status}`);

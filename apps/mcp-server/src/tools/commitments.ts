@@ -246,6 +246,10 @@ export async function executeCommitted(
     // arguments, "committed" status) comes from the AS, so without this
     // check a receipt minted by ANY key at all — valid or not — would be
     // enough to make the gateway run it.
+    // No `idempotencyKey` here, matching the postReceipt call above: this
+    // path's retry-safe key is `proposalId`, not an idempotency key, so
+    // ticket-verify.ts's idempotencyKey check (G4) simply does not apply —
+    // `proposalId` above is this path's equivalent binding.
     await verifyTicket(state.cache, receipt, {
       action: proposal.tool,
       executionContext: proposal.executionContext,
