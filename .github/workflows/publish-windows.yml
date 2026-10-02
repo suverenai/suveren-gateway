@@ -296,18 +296,19 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 20
     # Job-level, not step-level: each step in a workflow is its OWN fresh
-    # pwsh process, so a `$env:X = …` assignment inside one step's script
-    # (as a previous version of this job did for SUVEREN_DATA_DIR) is
-    # invisible to the next one. `stop` then resolved the DEFAULT data dir,
-    # found no PID file there (the gateway was started with THIS one), and
-    # reported "not running" — confirmed for real on windows-latest. Job-level
-    # env reaches every step uniformly, the same pattern bundle-smoke.yml uses.
+    # pwsh process, so a `$env:X = …` assignment inside one step's script is
+    # invisible to the next one — confirmed for real on windows-latest. Every
+    # step needs the SAME ports, so job-level env is what bundle-smoke.yml's
+    # `smoke` job already uses for the same reason.
     #
-    # SUVEREN_DATA_DIR is NOT here: the `runner` context (needed for
-    # runner.temp) is not available to a job-level `env:` block — only to
-    # steps — and using it here made GitHub reject the whole workflow file
-    # outright (zero jobs scheduled). Set via $GITHUB_ENV in the first step
-    # instead, which correctly reaches every step after it.
+    # Deliberately NO SUVEREN_DATA_DIR override: this test leaves the
+    # interactive gateway RUNNING into the final `msiexec /x` (see "Uninstall
+    # the msi" below), to prove the uninstall-cleanup custom action
+    # (StopGatewayOnUninstall in Product.wxs) actually stops it before files
+    # are removed. That custom action runs with no inherited job env — it
+    # resolves the DEFAULT data dir, same as any real end user who never sets
+    # this — so the gateway it needs to find and stop must use that same
+    # default, not a job-only override it could never see.
     env:
       SUVEREN_CP_PORT: '15400'
       SUVEREN_MCP_PORT: '15430'
@@ -316,12 +317,6 @@ jobs:
       npm_config_registry: 'http://127.0.0.1:9'
     steps:
       - uses: actions/checkout@v6
-
-      - name: Compute data dir
-        shell: pwsh
-        run: |
-          $dataDir = "$env:RUNNER_TEMP\suveren-install-test-data"
-          "SUVEREN_DATA_DIR=$dataDir" >> $env:GITHUB_ENV
 
       - uses: actions/download-artifact@v4
         with:
@@ -411,21 +406,24 @@ jobs:
       - name: Start via the installed launcher — npm unreachable, no node on PATH but the bundled one
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path "$env:SUVEREN_DATA_DIR" | Out-Null
-
           # No node on PATH except the one this gateway was installed with.
           # The bundled node.exe's OWN directory must still be on PATH: every
           # connector's node_modules\.bin shim (crm-mcp.cmd etc.) is an
           # npm-generated wrapper that itself invokes a bare `node ...`,
-          # assuming npm's own install already put one on PATH — the launcher
-          # (and the MSI's per-user PATH entry, for the Task Scheduler
-          # autostart path) prepend exactly this directory for exactly this
-          # reason. This only has to make sure nothing ELSE is on PATH that
+          # assuming npm's own install already put one on PATH — launcher.cmd
+          # prepends exactly this directory for exactly this reason (for its
+          # OWN process, both interactively here and for the scheduled task's
+          # `run` subcommand — see launcher.cmd, there is no MSI-level PATH
+          # entry). This only has to make sure nothing ELSE is on PATH that
           # could be mistaken for it (a real Node install, a different npm).
           # Step-scoped (not job-level) since every OTHER step still needs its
           # own normal PATH to find pwsh-invoked tools.
           $env:PATH = "$env:LOCALAPPDATA\Programs\Suveren\node;$env:SystemRoot\System32;$env:SystemRoot"
 
+          # Deliberately NO SUVEREN_DATA_DIR override — see the job-level env
+          # comment above. This instance's PID file lands at the real default
+          # (%USERPROFILE%\.suveren\gateway.pid), exactly where the
+          # uninstall-cleanup custom action's `stop` call will look for it.
           & "$env:LOCALAPPDATA\Programs\Suveren\suveren-gateway.cmd" start --detach
           if ($LASTEXITCODE -ne 0) { throw "launcher start --detach exited $LASTEXITCODE" }
 
@@ -551,6 +549,22 @@ jobs:
           }
           if (-not $procs) { Write-Host "(nothing to kill — the task-spawned gateway was not found running)" }
 
+          # taskkill's own exit code is unreliable here: killing a whole
+          # process TREE where a child may have already exited on its own
+          # left $LASTEXITCODE non-zero and failed this step for real on
+          # windows-latest, even though every PID printed SUCCESS. GitHub's
+          # pwsh steps fail on a stale non-zero $LASTEXITCODE from the LAST
+          # native command run, so clear it and verify by RE-QUERYING
+          # instead of trusting taskkill's own exit status.
+          Start-Sleep -Seconds 1
+          $remaining = Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
+            Where-Object { $_.CommandLine -like '*server.js*--autostart*' }
+          $global:LASTEXITCODE = 0
+          if ($remaining) {
+            throw "task-spawned gateway process(es) still running after taskkill: $($remaining.ProcessId -join ', ')"
+          }
+          Write-Host "confirmed: no server.js --autostart process remains"
+
       - name: service uninstall — scheduled task removed
         shell: pwsh
         run: |
@@ -560,17 +574,31 @@ jobs:
           if ($t) { throw "scheduled task 'Suveren' still present after service uninstall" }
           Write-Host "scheduled task removed"
 
-      - name: Stop the gateway
-        if: always()
+      - name: service install again — so the final uninstall is tested WITHOUT a prior CLI service uninstall
         shell: pwsh
         run: |
-          & "$env:LOCALAPPDATA\Programs\Suveren\suveren-gateway.cmd" stop
-          Write-Host "stop exited $LASTEXITCODE (non-fatal if already stopped)"
+          # The real IT path is msiexec/Intune uninstall directly — nobody
+          # runs our CLI's `service uninstall` first. Re-register here so the
+          # "Uninstall the msi" step below genuinely tests the MSI's OWN
+          # uninstall-cleanup custom action (RemoveScheduledTaskOnUninstall in
+          # Product.wxs), not the CLI path already proved above.
+          & "$env:LOCALAPPDATA\Programs\Suveren\suveren-gateway.cmd" service install
+          if ($LASTEXITCODE -ne 0) { throw "service install exited $LASTEXITCODE" }
+          $t = Get-ScheduledTask -TaskName 'Suveren' -ErrorAction Stop
+          Write-Host "scheduled task re-registered: $($t.TaskName), state $($t.State)"
 
-      - name: Uninstall the msi — program dir and task gone
+      - name: Uninstall the msi — WITHOUT a prior service uninstall or stop; the MSI's own cleanup must do both
         if: always()
         shell: pwsh
         run: |
+          # Deliberately did NOT call `suveren-gateway stop` before this: the
+          # interactive instance from "Start via the installed launcher" is
+          # still running. This is the real IT scenario — Intune/msiexec
+          # uninstalls directly, with no chance to run our CLI first — and
+          # it's what StopGatewayOnUninstall / RemoveScheduledTaskOnUninstall
+          # (Product.wxs) exist to handle: release the gateway's own file
+          # locks before Windows Installer removes them, and clean up the
+          # scheduled task re-registered in the previous step.
           $msi = (Resolve-Path msi\suveren-gateway.msi).Path
           $log = "$env:RUNNER_TEMP\uninstall.log"
           $p = Start-Process msiexec.exe -ArgumentList "/x `"$msi`" /qn /norestart /l*v `"$log`"" -Wait -PassThru
@@ -584,29 +612,35 @@ jobs:
           $root = "$env:LOCALAPPDATA\Programs\Suveren"
           if (Test-Path $root) { throw "install dir still present after uninstall: $root" }
           $t = Get-ScheduledTask -TaskName 'Suveren' -ErrorAction SilentlyContinue
-          if ($t) { throw "scheduled task 'Suveren' still present after msi uninstall" }
-          Write-Host "clean: install dir and scheduled task both gone"
+          if ($t) { throw "scheduled task 'Suveren' still present after msi uninstall (no prior CLI service uninstall ran — the MSI's own cleanup custom action must remove it)" }
+
+          # No gateway process of ANY kind should survive — neither the
+          # interactive one (left running on purpose, into this uninstall)
+          # nor any stray task-spawned one.
+          $leftover = Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
+            Where-Object { $_.CommandLine -like '*gateway\server.js*' }
+          if ($leftover) { throw "gateway process(es) still running after msi uninstall: $($leftover.ProcessId -join ', ')" }
+
+          Write-Host "clean: install dir gone, scheduled task gone, no gateway process left — all without a prior CLI stop or service uninstall"
 
       - name: Gateway log
         if: always()
         shell: pwsh
         run: |
-          Write-Host "::group::interactive instance ($env:SUVEREN_DATA_DIR)"
-          $log = "$env:SUVEREN_DATA_DIR\gateway.log"
+          $log = "$env:USERPROFILE\.suveren\gateway.log"
           if (Test-Path $log) { Get-Content $log } else { Write-Host "(no log file)" }
-          Write-Host "::endgroup::"
 
-          # The task-spawned instance uses the DEFAULT data dir — schtasks
-          # /Run gives it a fresh environment, not whatever SUVEREN_DATA_DIR
-          # this job happens to export. It also runs server.js directly
-          # (never through the CLI's `start --detach`, which is the only
-          # thing that redirects output to a log file), so "(no log file)"
-          # here is EXPECTED, not a sign something is wrong — its stdout/
-          # stderr simply go nowhere, same as the pre-launcher Task action.
-          Write-Host "::group::scheduled-task instance ($env:USERPROFILE\.suveren)"
-          $taskLog = "$env:USERPROFILE\.suveren\gateway.log"
-          if (Test-Path $taskLog) { Get-Content $taskLog } else { Write-Host "(no log file — expected, see comment above)" }
-          Write-Host "::endgroup::"
+      - name: Final cleanup — kill any lingering gateway process (best effort, so the runner doesn't end a failed test still running one)
+        if: always()
+        shell: pwsh
+        run: |
+          Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
+            Where-Object { $_.CommandLine -like '*Suveren*gateway\server.js*' } |
+            ForEach-Object {
+              Write-Host "cleanup: killing pid $($_.ProcessId)"
+              taskkill /PID $_.ProcessId /T /F 2>$null
+            }
+          $global:LASTEXITCODE = 0
 
   # ─── Attach unsigned msi + signing kit to the GitHub Release for the tag.
   #     Tag pushes and manual dispatch only — never on a PR. ─────────────────
