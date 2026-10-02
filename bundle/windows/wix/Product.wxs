@@ -15,13 +15,19 @@
   the possibility of a per-machine install for someone who explicitly asks
   for one, which nothing here does.
 
-  Deliberately does nothing beyond installing files and a Start Menu
-  shortcut — no HKCU\Environment writes, no custom actions. Starting the
-  gateway and registering autostart go through the EXISTING `suveren-gateway
-  service install` and detached-start CLI code paths, run from the launcher,
-  which sets its own env scoped to just the gateway's process tree (see
-  launcher.cmd and the InstallMarkerComponent note below for why this isn't
-  done via HKCU\Environment).
+  Installs files and a Start Menu shortcut — no HKCU\Environment writes.
+  Starting the gateway and registering autostart go through the EXISTING
+  `suveren-gateway service install` and detached-start CLI code paths, run
+  from the launcher, which sets its own env scoped to just the gateway's
+  process tree (see launcher.cmd and the InstallMarkerComponent note below
+  for why this isn't done via HKCU\Environment).
+
+  Two UNINSTALL-ONLY custom actions exist (see "Uninstall cleanup" below):
+  stopping a running gateway so its own files aren't locked when Windows
+  Installer tries to remove them, and deleting the scheduled task. IT
+  uninstalls via Intune/msiexec directly, never through our CLI — without
+  these, `msiexec /x` on its own left the scheduled task registered forever
+  (confirmed on windows-latest CI), still pointing at a now-deleted launcher.
 
   UpgradeCode is FIXED — never change it across releases, or Windows treats
   every version as an unrelated product instead of an upgrade (orphaned old
@@ -135,6 +141,52 @@
       <ComponentRef Id="StartMenuShortcutComponent" />
       <ComponentRef Id="InstallMarkerComponent" />
     </Feature>
+
+    <!-- Uninstall cleanup — the two things msiexec /x cannot do on its own.
+         Both Return="ignore": a gateway that was never running, or a task
+         that was already removed (e.g. via `suveren-gateway service
+         uninstall` beforehand), must never fail the uninstall.
+
+         Condition: REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE — a plain
+         uninstall sets REMOVE="ALL"; so does the OLD version's removal
+         during a MAJOR UPGRADE (RemoveExistingProducts uninstalls it), which
+         ALSO sets UPGRADINGPRODUCTCODE. Excluding that case is deliberate:
+         the scheduled task registered by `service install` points at
+         [INSTALLFOLDER]suveren-gateway.cmd, and INSTALLFOLDER is the SAME
+         per-user path across versions (fixed UpgradeCode, files replaced
+         in-place) — deleting the task mid-upgrade would silently turn
+         autostart off for every existing user on every update, and nothing
+         in this package ever re-creates it. Left alone, the task keeps
+         pointing at a valid (now-upgraded) launcher with no action needed.
+
+         Both run `Execute="deferred"` (same install context — per-user,
+         no elevation boundary to cross, so Impersonate="yes" is correct
+         here as everywhere else in this package) and are scheduled before
+         RemoveFiles: stop first, so the gateway's own files (node.exe, its
+         DLLs) aren't locked when Windows Installer removes them; then
+         delete the task, so nothing can restart the gateway (and re-lock
+         those files) in the (very) small window before the files actually
+         go. -->
+    <CustomAction
+      Id="StopGatewayOnUninstall"
+      Directory="INSTALLFOLDER"
+      ExeCommand="cmd.exe /c &quot;[INSTALLFOLDER]suveren-gateway.cmd&quot; stop"
+      Execute="deferred"
+      Impersonate="yes"
+      Return="ignore" />
+
+    <CustomAction
+      Id="RemoveScheduledTaskOnUninstall"
+      Directory="INSTALLFOLDER"
+      ExeCommand="schtasks.exe /Delete /TN Suveren /F"
+      Execute="deferred"
+      Impersonate="yes"
+      Return="ignore" />
+
+    <InstallExecuteSequence>
+      <Custom Action="StopGatewayOnUninstall" Before="RemoveFiles">REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE</Custom>
+      <Custom Action="RemoveScheduledTaskOnUninstall" After="StopGatewayOnUninstall">REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE</Custom>
+    </InstallExecuteSequence>
 
   </Package>
 </Wix>
