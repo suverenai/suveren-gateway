@@ -33,6 +33,13 @@ const PROVIDER_CONFIG: Record<string, { provider: string; endpoint: string; mode
   },
 };
 
+// Single ordered list of this page's section headings. The JSX below renders
+// these by index rather than hardcoding the strings a second time, so a test
+// asserting the order can't drift from what's actually on screen.
+export const SETTINGS_SECTIONS = ['AI Assistant', 'Authority Server', 'This computer', 'Security', 'Version'] as const;
+
+const SECTION_HEADING_STYLE: React.CSSProperties = { fontSize: '1rem', fontWeight: 700, marginBottom: '1rem' };
+
 export function SettingsServicesPage() {
   const [successMsg, setSuccessMsg] = useState('');
 
@@ -168,185 +175,209 @@ export function SettingsServicesPage() {
   return (
     <>
       <div className="page-header">
-        <h1 className="page-title">AI Assistant</h1>
-        <p className="page-subtitle">Advisory AI to help you think through intent when giving mandates.</p>
+        <h1 className="page-title">Settings</h1>
+        <p className="page-subtitle">Your AI assistant, the connection to your Authority Server, security and version.</p>
       </div>
 
       {successMsg && <div className="alert alert-success">{successMsg}</div>}
 
-      {/* AI Assistant card */}
-      <div className="card">
-        <h3 className="card-title">Configuration</h3>
+      {/* 1. AI Assistant */}
+      <section style={{ marginBottom: '2rem' }}>
+        <h2 style={SECTION_HEADING_STYLE}>{SETTINGS_SECTIONS[0]}</h2>
         <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-          Connect a trusted AI model that has access to your intent — problem, objective, and tradeoffs — to help you think through mandates. Keys are encrypted in your vault.
+          Advisory AI to help you think through intent when giving mandates.
         </p>
 
-        {aiConfigured && (
-          <div className="status-banner status-banner-success" style={{ marginBottom: '1rem', fontSize: '0.8rem' }}>
-            <span className="status-banner-icon">{'\u2713'}</span>
-            <span className="status-banner-text">AI configured</span>
-          </div>
-        )}
-
-        <div className="form-group" style={{ marginBottom: '0.75rem' }}>
-          <label className="form-label">Provider Preset</label>
-          <select
-            className="form-input"
-            value={aiPreset}
-            onChange={e => handleAiPresetChange(e.target.value)}
-          >
-            <option value="openrouter">OpenRouter (recommended)</option>
-            <option value="ollama">Ollama (local)</option>
-            <option value="openai">OpenAI</option>
-            <option value="groq">Groq</option>
-            <option value="together">Together</option>
-          </select>
-        </div>
-
-        <div className="form-group" style={{ marginBottom: '0.75rem' }}>
-          <label className="form-label">API Key {aiProvider === 'ollama' ? '(not needed for Ollama)' : '(required to load models)'}</label>
-          <input
-            className="form-input"
-            type="password"
-            // Service credential, not a login: stop the browser's password
-            // manager from autofilling the Suveren API key saved for this origin.
-            name="ai-provider-api-key-credential-top"
-            autoComplete="new-password"
-            value={aiApiKey}
-            onChange={e => setAiApiKey(e.target.value)}
-            onBlur={() => { if (aiApiKey.trim()) void fetchModels(aiProvider, aiEndpoint, aiApiKey.trim()); }}
-            placeholder={aiConfigured ? '••••••••••••••••' : 'sk-... (not needed for Ollama)'}
-          />
-          <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', margin: '0.375rem 0 0' }}>
-            Each provider uses its own key — paste it and the model list loads automatically.
+        <div className="card">
+          <h3 className="card-title">Configuration</h3>
+          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
+            Connect a trusted AI model that has access to your intent — problem, objective, and tradeoffs — to help you think through mandates. Keys are encrypted in your vault.
           </p>
-        </div>
 
-        <div className="form-group" style={{ marginBottom: '0.75rem' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <label className="form-label">Model</label>
-            <button
-              type="button"
-              className="btn btn-ghost"
-              style={{ fontSize: '0.75rem', padding: '0.125rem 0.5rem' }}
-              onClick={loadModels}
-              disabled={aiLoadingModels}
-              title="Re-fetch the model list from the provider"
-            >
-              {aiLoadingModels ? 'Loading…' : '↻ Refresh'}
-            </button>
-          </div>
-          {aiFetchedModels.length === 0 ? (
-            // No hardcoded fallback: if the provider's /models endpoint hasn't
-            // returned a real list, we show a prompt — never fake options.
-            <div
-              className="form-input"
-              style={{ display: 'flex', alignItems: 'center', minHeight: '2.5rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}
-            >
-              {aiLoadingModels
-                ? 'Loading models…'
-                : aiProvider === 'ollama'
-                  ? 'Start Ollama locally, then ↻ Refresh to load models.'
-                  : 'Enter a valid API key above to load available models.'}
-            </div>
-          ) : (() => {
-            const allModels = aiFetchedModels; // live list only
-            const isKnown = allModels.includes(aiModel);
-            const showFilter = allModels.length > 12;
-            const q = aiModelFilter.trim().toLowerCase();
-            let models = q ? allModels.filter(m => m.toLowerCase().includes(q)) : allModels;
-            // Keep the current selection selectable even if filtered out.
-            if (isKnown && !models.includes(aiModel)) models = [aiModel, ...models];
-            return (
-              <>
-                {showFilter && (
-                  <input
-                    className="form-input"
-                    value={aiModelFilter}
-                    onChange={e => setAiModelFilter(e.target.value)}
-                    placeholder="Filter models… (e.g. kimi)"
-                    style={{ marginBottom: '0.375rem' }}
-                  />
-                )}
-                <select
-                  className="form-input"
-                  value={isKnown ? aiModel : '__unset__'}
-                  onChange={e => setAiModel(e.target.value === '__unset__' ? '' : e.target.value)}
-                >
-                  <option value="__unset__" disabled>Select a model…</option>
-                  {models.map(m => (
-                    <option key={m} value={m}>{m}</option>
-                  ))}
-                  {q && models.length === 0 && (
-                    <option value="__unset__" disabled>No models match “{aiModelFilter}”</option>
-                  )}
-                </select>
-              </>
-            );
-          })()}
-          {aiModelsMsg && (
-            <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', margin: '0.375rem 0 0' }}>
-              {aiModelsMsg}
-            </p>
-          )}
-        </div>
-
-        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-          <button
-            className="btn btn-primary"
-            onClick={saveAiConfig}
-            disabled={aiSaving || !aiModel.trim()}
-            title={!aiModel.trim() ? 'Select a model first' : undefined}
-          >
-            {aiSaving ? 'Saving...' : 'Save & Encrypt'}
-          </button>
           {aiConfigured && (
-            <button className="btn btn-ghost" onClick={testAi} disabled={aiTesting}>
-              {aiTesting ? 'Testing...' : 'Test Connection'}
+            <div className="status-banner status-banner-success" style={{ marginBottom: '1rem', fontSize: '0.8rem' }}>
+              <span className="status-banner-icon">{'\u2713'}</span>
+              <span className="status-banner-text">AI configured</span>
+            </div>
+          )}
+
+          <div className="form-group" style={{ marginBottom: '0.75rem' }}>
+            <label className="form-label">Provider Preset</label>
+            <select
+              className="form-input"
+              value={aiPreset}
+              onChange={e => handleAiPresetChange(e.target.value)}
+            >
+              <option value="openrouter">OpenRouter (recommended)</option>
+              <option value="ollama">Ollama (local)</option>
+              <option value="openai">OpenAI</option>
+              <option value="groq">Groq</option>
+              <option value="together">Together</option>
+            </select>
+          </div>
+
+          <div className="form-group" style={{ marginBottom: '0.75rem' }}>
+            <label className="form-label">API Key {aiProvider === 'ollama' ? '(not needed for Ollama)' : '(required to load models)'}</label>
+            <input
+              className="form-input"
+              type="password"
+              // Service credential, not a login: stop the browser's password
+              // manager from autofilling the Suveren API key saved for this origin.
+              name="ai-provider-api-key-credential-top"
+              autoComplete="new-password"
+              value={aiApiKey}
+              onChange={e => setAiApiKey(e.target.value)}
+              onBlur={() => { if (aiApiKey.trim()) void fetchModels(aiProvider, aiEndpoint, aiApiKey.trim()); }}
+              placeholder={aiConfigured ? '••••••••••••••••' : 'sk-... (not needed for Ollama)'}
+            />
+            <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', margin: '0.375rem 0 0' }}>
+              Each provider uses its own key — paste it and the model list loads automatically.
+            </p>
+          </div>
+
+          <div className="form-group" style={{ marginBottom: '0.75rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <label className="form-label">Model</label>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                style={{ fontSize: '0.75rem', padding: '0.125rem 0.5rem' }}
+                onClick={loadModels}
+                disabled={aiLoadingModels}
+                title="Re-fetch the model list from the provider"
+              >
+                {aiLoadingModels ? 'Loading…' : '↻ Refresh'}
+              </button>
+            </div>
+            {aiFetchedModels.length === 0 ? (
+              // No hardcoded fallback: if the provider's /models endpoint hasn't
+              // returned a real list, we show a prompt — never fake options.
+              <div
+                className="form-input"
+                style={{ display: 'flex', alignItems: 'center', minHeight: '2.5rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}
+              >
+                {aiLoadingModels
+                  ? 'Loading models…'
+                  : aiProvider === 'ollama'
+                    ? 'Start Ollama locally, then ↻ Refresh to load models.'
+                    : 'Enter a valid API key above to load available models.'}
+              </div>
+            ) : (() => {
+              const allModels = aiFetchedModels; // live list only
+              const isKnown = allModels.includes(aiModel);
+              const showFilter = allModels.length > 12;
+              const q = aiModelFilter.trim().toLowerCase();
+              let models = q ? allModels.filter(m => m.toLowerCase().includes(q)) : allModels;
+              // Keep the current selection selectable even if filtered out.
+              if (isKnown && !models.includes(aiModel)) models = [aiModel, ...models];
+              return (
+                <>
+                  {showFilter && (
+                    <input
+                      className="form-input"
+                      value={aiModelFilter}
+                      onChange={e => setAiModelFilter(e.target.value)}
+                      placeholder="Filter models… (e.g. kimi)"
+                      style={{ marginBottom: '0.375rem' }}
+                    />
+                  )}
+                  <select
+                    className="form-input"
+                    value={isKnown ? aiModel : '__unset__'}
+                    onChange={e => setAiModel(e.target.value === '__unset__' ? '' : e.target.value)}
+                  >
+                    <option value="__unset__" disabled>Select a model…</option>
+                    {models.map(m => (
+                      <option key={m} value={m}>{m}</option>
+                    ))}
+                    {q && models.length === 0 && (
+                      <option value="__unset__" disabled>No models match “{aiModelFilter}”</option>
+                    )}
+                  </select>
+                </>
+              );
+            })()}
+            {aiModelsMsg && (
+              <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', margin: '0.375rem 0 0' }}>
+                {aiModelsMsg}
+              </p>
+            )}
+          </div>
+
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            <button
+              className="btn btn-primary"
+              onClick={saveAiConfig}
+              disabled={aiSaving || !aiModel.trim()}
+              title={!aiModel.trim() ? 'Select a model first' : undefined}
+            >
+              {aiSaving ? 'Saving...' : 'Save & Encrypt'}
             </button>
+            {aiConfigured && (
+              <button className="btn btn-ghost" onClick={testAi} disabled={aiTesting}>
+                {aiTesting ? 'Testing...' : 'Test Connection'}
+              </button>
+            )}
+          </div>
+
+          {aiTestResult && (
+            <div className={`alert ${aiTestResult.startsWith('OK') ? 'alert-success' : 'alert-error'}`} style={{ marginTop: '0.75rem' }}>
+              {aiTestResult}
+            </div>
           )}
         </div>
 
-        {aiTestResult && (
-          <div className={`alert ${aiTestResult.startsWith('OK') ? 'alert-success' : 'alert-error'}`} style={{ marginTop: '0.75rem' }}>
-            {aiTestResult}
-          </div>
-        )}
-      </div>
+        {/* Advanced — AI assistant prompts (collapsed by default) */}
+        <AdvancedAIPrompts />
+      </section>
 
-      {/* Advanced — AI assistant prompts (collapsed by default) */}
-      <AdvancedAIPrompts />
+      {/* 2. Authority Server */}
+      <section style={{ marginBottom: '2rem' }}>
+        <h2 style={SECTION_HEADING_STYLE}>{SETTINGS_SECTIONS[1]}</h2>
+        <AuthorityServerCard />
+      </section>
 
-      {/* Autostart — the CLI's `service` command as a switch */}
-      <AutostartToggle />
-      <NotificationsToggle />
-      <AuthorityServerCard />
-      <VersionCard />
+      {/* 3. This computer */}
+      <section style={{ marginBottom: '2rem' }}>
+        <h2 style={SECTION_HEADING_STYLE}>{SETTINGS_SECTIONS[2]}</h2>
 
-      {/* Security guidance */}
-      <div className="card" style={{ padding: '1.5rem', marginTop: '2rem' }}>
-        <h2 style={{ fontSize: '1rem', fontWeight: 700, marginBottom: '1rem' }}>Security</h2>
+        {/* Autostart — the CLI's `service` command as a switch */}
+        <AutostartToggle />
+        <NotificationsToggle />
+      </section>
 
-        <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.7 }}>
-          <div style={{ marginBottom: '1rem' }}>
-            <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.375rem' }}>What the gateway protects</div>
-            <ul style={{ margin: 0, paddingLeft: '1.25rem' }}>
-              <li>Every tool call verified against your mandate bounds</li>
-              <li>Credentials never exposed to agents through MCP</li>
-              <li>Every action produces a signed ticket</li>
-            </ul>
-          </div>
+      {/* 4. Security */}
+      <section style={{ marginBottom: '2rem' }}>
+        <h2 style={SECTION_HEADING_STYLE}>{SETTINGS_SECTIONS[3]}</h2>
 
-          <div>
-            <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.375rem' }}>Your responsibility</div>
-            <ul style={{ margin: 0, paddingLeft: '1.25rem' }}>
-              <li>If your AI agent has full access to your computer, it could bypass the gateway</li>
-              <li>For best security, run agents in sandboxed environments</li>
-              <li>The gateway secures what agents do through tools — not what they do on your machine</li>
-            </ul>
+        <div className="card" style={{ padding: '1.5rem' }}>
+          <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.7 }}>
+            <div style={{ marginBottom: '1rem' }}>
+              <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.375rem' }}>What the gateway protects</div>
+              <ul style={{ margin: 0, paddingLeft: '1.25rem' }}>
+                <li>Every tool call verified against your mandate bounds</li>
+                <li>Credentials never exposed to agents through MCP</li>
+                <li>Every action produces a signed ticket</li>
+              </ul>
+            </div>
+
+            <div>
+              <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.375rem' }}>Your responsibility</div>
+              <ul style={{ margin: 0, paddingLeft: '1.25rem' }}>
+                <li>If your AI agent has full access to your computer, it could bypass the gateway</li>
+                <li>For best security, run agents in sandboxed environments</li>
+                <li>The gateway secures what agents do through tools — not what they do on your machine</li>
+              </ul>
+            </div>
           </div>
         </div>
-      </div>
+      </section>
+
+      {/* 5. Version */}
+      <section>
+        <h2 style={SECTION_HEADING_STYLE}>{SETTINGS_SECTIONS[4]}</h2>
+        <VersionCard />
+      </section>
     </>
   );
 }
