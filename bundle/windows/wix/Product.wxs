@@ -3,16 +3,22 @@
   Suveren Gateway — per-user Windows installer (W4, suveren-as/docs/
   work-plan.md "Added 2026-10-02 — Windows installer").
 
-  Per-user (Scope="perUser"): installs under
-  %LOCALAPPDATA%\Programs\Suveren with NO admin rights and NO UAC prompt —
-  required because the target is a company laptop where the signed-in user
-  has none. IT signs this with its own certificate (see build-signed.ps1)
-  and distributes it via Intune in "user context".
+  Per-user: installs under %LOCALAPPDATA%\Programs\Suveren with NO admin
+  rights and NO UAC prompt — required because the target is a company laptop
+  where the signed-in user has none. IT signs this with its own certificate
+  (see build-signed.ps1) and distributes it via Intune in "user context".
+
+  Scope="perUserOrMachine", not the stricter "perUser": WiX's own docs for
+  the <Files> harvesting element below warn that strictly per-user packages
+  generate components that fail ICE validation. "OrMachine" still DEFAULTS
+  to a per-user install (this package never sets ALLUSERS) — it only adds
+  the possibility of a per-machine install for someone who explicitly asks
+  for one, which nothing here does.
 
   Deliberately does nothing beyond installing files, a Start Menu shortcut
   and per-user environment variables: starting the gateway and registering
-  autostart go through the EXISTING `suveren-gateway service install` /
-  `start --detach` CLI code path, run from the launcher — not reimplemented
+  autostart go through the EXISTING `suveren-gateway service install` and
+  detached-start CLI code paths, run from the launcher, not reimplemented
   as MSI custom actions that could fail in ways only an MSI log shows.
 
   UpgradeCode is FIXED — never change it across releases, or Windows treats
@@ -27,7 +33,7 @@
     Version="$(var.ProductVersion)"
     UpgradeCode="ab6e0a2e-6b3f-4c2a-9b7a-9b7b7e2a3b10"
     Language="1033"
-    Scope="perUser"
+    Scope="perUserOrMachine"
     Compressed="yes">
 
     <SummaryInformation
