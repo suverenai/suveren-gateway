@@ -299,6 +299,20 @@ jobs:
     needs: build-msi
     runs-on: windows-latest
     timeout-minutes: 20
+    # Job-level, not step-level: each step in a workflow is its OWN fresh
+    # pwsh process, so a `$env:X = …` assignment inside one step's script
+    # (as a previous version of this job did for SUVEREN_DATA_DIR) is
+    # invisible to the next one. `stop` then resolved the DEFAULT data dir,
+    # found no PID file there (the gateway was started with THIS one), and
+    # reported "not running" — confirmed for real on windows-latest. Job-level
+    # env reaches every step uniformly, the same pattern bundle-smoke.yml uses.
+    env:
+      SUVEREN_CP_PORT: '15400'
+      SUVEREN_MCP_PORT: '15430'
+      SUVEREN_DATA_DIR: ${{ runner.temp }}\suveren-install-test-data
+      SUVEREN_INTERNAL_SECRET: windows-install-test-internal-secret
+      # Points at nothing — proves no step below ever needs the registry.
+      npm_config_registry: 'http://127.0.0.1:9'
     steps:
       - uses: actions/checkout@v6
 
@@ -357,18 +371,9 @@ jobs:
             ForEach-Object { Write-Host "  $($_.Name)" }
 
       - name: Start via the installed launcher — npm unreachable, no node on PATH but the bundled one
-        id: start
         shell: pwsh
-        env:
-          SUVEREN_CP_PORT: '15400'
-          SUVEREN_MCP_PORT: '15430'
-          # Points at nothing — proves no step below ever needs the registry.
-          npm_config_registry: 'http://127.0.0.1:9'
-          SUVEREN_INTERNAL_SECRET: 'windows-install-test-internal-secret'
         run: |
-          $dataDir = "$env:RUNNER_TEMP\suveren-install-test-data"
-          New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
-          "dataDir=$dataDir" >> $env:GITHUB_OUTPUT
+          New-Item -ItemType Directory -Force -Path "$env:SUVEREN_DATA_DIR" | Out-Null
 
           # No node on PATH except the one this gateway was installed with.
           # The bundled node.exe's OWN directory must still be on PATH: every
@@ -379,8 +384,9 @@ jobs:
           # autostart path) prepend exactly this directory for exactly this
           # reason. This only has to make sure nothing ELSE is on PATH that
           # could be mistaken for it (a real Node install, a different npm).
+          # Step-scoped (not job-level) since every OTHER step still needs its
+          # own normal PATH to find pwsh-invoked tools.
           $env:PATH = "$env:LOCALAPPDATA\Programs\Suveren\node;$env:SystemRoot\System32;$env:SystemRoot"
-          $env:SUVEREN_DATA_DIR = $dataDir
 
           & "$env:LOCALAPPDATA\Programs\Suveren\suveren-gateway.cmd" start --detach
           if ($LASTEXITCODE -ne 0) { throw "launcher start --detach exited $LASTEXITCODE" }
@@ -483,7 +489,7 @@ jobs:
         if: always()
         shell: pwsh
         run: |
-          $log = "$env:RUNNER_TEMP\suveren-install-test-data\gateway.log"
+          $log = "$env:SUVEREN_DATA_DIR\gateway.log"
           if (Test-Path $log) { Get-Content $log } else { Write-Host "(no log file)" }
 
   # ─── Attach unsigned msi + signing kit to the GitHub Release for the tag.
