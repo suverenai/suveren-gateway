@@ -377,6 +377,37 @@ jobs:
             Where-Object { $_.Name -match '^(crm|records|erp)-mcp' } |
             ForEach-Object { Write-Host "  $($_.Name)" }
 
+      - name: HKCU\Environment is untouched — the installer must not be account-wide
+        shell: pwsh
+        run: |
+          # An earlier version of the installer wrote SUVEREN_INSTALL_METHOD,
+          # SUVEREN_OFFLINE, SUVEREN_INTEGRATIONS_DIR and a PATH prepend for
+          # the bundled node here. HKCU\Environment is ACCOUNT-WIDE: that
+          # would shadow a developer's own Node for every other program on
+          # this Windows account, and force every other gateway install under
+          # the same user into offline+managed mode too — unacceptable for a
+          # company deploying this to many people. The scheduled task is
+          # routed through the launcher instead (see launcher.cmd's `run` and
+          # buildWindowsTaskXml's command/args override), which scopes that
+          # env to just the gateway's own process tree.
+          $envKey = Get-ItemProperty -Path 'HKCU:\Environment' -ErrorAction SilentlyContinue
+          $suverenVars = @()
+          if ($envKey) {
+            $suverenVars = $envKey.PSObject.Properties |
+              Where-Object { $_.Name -like 'SUVEREN_*' } |
+              ForEach-Object { "$($_.Name)=$($_.Value)" }
+          }
+          if ($suverenVars) {
+            throw "HKCU\Environment carries SUVEREN_* value(s) the installer must never write: $($suverenVars -join ', ')"
+          }
+          Write-Host "HKCU\Environment: no SUVEREN_* values (confirmed)"
+
+          $userPath = if ($envKey) { $envKey.Path } else { $null }
+          if ($userPath -and $userPath -like '*Programs\Suveren*') {
+            throw "HKCU\Environment's PATH contains the install dir: $userPath"
+          }
+          Write-Host "HKCU\Environment PATH: does not contain the install dir (confirmed)$(if ($userPath) { " — value: $userPath" })"
+
       - name: Start via the installed launcher — npm unreachable, no node on PATH but the bundled one
         shell: pwsh
         run: |
@@ -448,13 +479,77 @@ jobs:
             Write-Host "$id : running, $($entry.toolCount) tool(s) — started OFFLINE (SUVEREN_OFFLINE=1, npm unreachable)"
           }
 
-      - name: service install — scheduled task created
+      - name: service install — scheduled task created, pointed at the launcher
         shell: pwsh
         run: |
           & "$env:LOCALAPPDATA\Programs\Suveren\suveren-gateway.cmd" service install
           if ($LASTEXITCODE -ne 0) { throw "service install exited $LASTEXITCODE" }
           $t = Get-ScheduledTask -TaskName 'Suveren' -ErrorAction Stop
           Write-Host "scheduled task present: $($t.TaskName), state $($t.State)"
+
+          # The task must run the LAUNCHER (`run`), not node.exe + server.js
+          # directly — that's what makes the launcher's env apply to the
+          # autostart path without ever touching HKCU\Environment.
+          $action = $t.Actions[0]
+          Write-Host "action: $($action.Execute) $($action.Arguments)"
+          $expectedLauncher = "$env:LOCALAPPDATA\Programs\Suveren\suveren-gateway.cmd"
+          if ($action.Execute -ne $expectedLauncher) {
+            throw "scheduled task's Command is '$($action.Execute)', expected the launcher '$expectedLauncher'"
+          }
+          if ($action.Arguments -ne 'run') {
+            throw "scheduled task's Arguments is '$($action.Arguments)', expected 'run'"
+          }
+          Write-Host "scheduled task command confirmed: launcher + 'run'"
+
+      - name: Run the scheduled task once — exercises the autostart path without a reboot
+        shell: pwsh
+        run: |
+          # schtasks /Run starts the task's action in a FRESH environment (the
+          # way a real ONLOGON trigger would, not inherited from this shell) —
+          # on the default ports and default data dir, since nothing here
+          # overrides them for the task. The interactive gateway from the
+          # earlier step is on 15400/15430, so there's no port clash.
+          schtasks /Run /TN Suveren
+          if ($LASTEXITCODE -ne 0) { throw "schtasks /Run exited $LASTEXITCODE" }
+
+          $mcpHealth = 'http://localhost:3430/health'
+          $deadline = (Get-Date).AddSeconds(240)
+          $targets = @('crm', 'records', 'erp')
+          $body = $null
+          while ((Get-Date) -lt $deadline) {
+            try {
+              $body = Invoke-RestMethod -Uri $mcpHealth -TimeoutSec 5
+              $statuses = $body.integrations | Where-Object { $targets -contains $_.id }
+              $allUp = ($statuses.Count -eq $targets.Count) -and ($statuses | ForEach-Object { $_.running -and $_.toolCount -gt 0 }) -notcontains $false
+              if ($allUp) { break }
+            } catch {}
+            Start-Sleep -Seconds 3
+          }
+          Write-Host ($body | ConvertTo-Json -Depth 5)
+          foreach ($id in $targets) {
+            $entry = $body.integrations | Where-Object { $_.id -eq $id }
+            if (-not $entry) { throw "autostart: ${id} not in the integration registry — did not auto-start via the scheduled task" }
+            if (-not $entry.running) { throw "autostart: ${id} registered but not running ($($entry.error))" }
+            if ($entry.toolCount -le 0) { throw "autostart: ${id} running but discovered 0 tools" }
+            Write-Host "autostart: $id running, $($entry.toolCount) tool(s) — offline, via the scheduled task"
+          }
+
+      - name: Stop the task-spawned gateway
+        if: always()
+        shell: pwsh
+        run: |
+          # No PID file for this one (only `start --detach`, via the CLI,
+          # writes one) — find it by command line instead. `--autostart` is
+          # the marker that distinguishes it from the interactively-started
+          # instance (started via the CLI's `start`, which never passes that
+          # flag) running concurrently on different ports.
+          $procs = Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
+            Where-Object { $_.CommandLine -like '*server.js*--autostart*' }
+          foreach ($p in $procs) {
+            Write-Host "killing pid $($p.ProcessId): $($p.CommandLine)"
+            taskkill /PID $p.ProcessId /T /F 2>$null
+          }
+          if (-not $procs) { Write-Host "(nothing to kill — the task-spawned gateway was not found running)" }
 
       - name: service uninstall — scheduled task removed
         shell: pwsh
@@ -496,8 +591,22 @@ jobs:
         if: always()
         shell: pwsh
         run: |
+          Write-Host "::group::interactive instance ($env:SUVEREN_DATA_DIR)"
           $log = "$env:SUVEREN_DATA_DIR\gateway.log"
           if (Test-Path $log) { Get-Content $log } else { Write-Host "(no log file)" }
+          Write-Host "::endgroup::"
+
+          # The task-spawned instance uses the DEFAULT data dir — schtasks
+          # /Run gives it a fresh environment, not whatever SUVEREN_DATA_DIR
+          # this job happens to export. It also runs server.js directly
+          # (never through the CLI's `start --detach`, which is the only
+          # thing that redirects output to a log file), so "(no log file)"
+          # here is EXPECTED, not a sign something is wrong — its stdout/
+          # stderr simply go nowhere, same as the pre-launcher Task action.
+          Write-Host "::group::scheduled-task instance ($env:USERPROFILE\.suveren)"
+          $taskLog = "$env:USERPROFILE\.suveren\gateway.log"
+          if (Test-Path $taskLog) { Get-Content $taskLog } else { Write-Host "(no log file — expected, see comment above)" }
+          Write-Host "::endgroup::"
 
   # ─── Attach unsigned msi + signing kit to the GitHub Release for the tag.
   #     Tag pushes and manual dispatch only — never on a PR. ─────────────────
