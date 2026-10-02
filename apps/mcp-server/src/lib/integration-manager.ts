@@ -37,6 +37,21 @@ const DEFAULT_DATA_DIR = process.env.SUVEREN_DATA_DIR ?? join(homedir(), '.suver
 const INTEGRATIONS_DIR = process.env.SUVEREN_INTEGRATIONS_DIR ?? join(DEFAULT_DATA_DIR, 'integrations');
 
 /**
+ * Offline mode — the Windows installer (and any other fully offline
+ * installation) ships INTEGRATIONS_DIR pre-populated with every manifest's
+ * pinned connector, installed with the SAME Node binary that will run them
+ * (so native modules like better-sqlite3 get the matching prebuilt binary).
+ * On a company laptop the public npm registry is typically unreachable, so
+ * `npm install` must never even be attempted there — not "try npm, fall back
+ * to the shipped copy", because a slow/odd failure from a half-blocked
+ * registry (hangs, a captive portal page, a corporate proxy's HTML error
+ * page) is worse than refusing instantly. With this on, `ensureInstalled`
+ * either confirms the shipped connector is at the exact pinned version, or
+ * refuses to start it with a clear reason — it never shells out to npm.
+ */
+const OFFLINE_MODE = process.env.SUVEREN_OFFLINE === '1';
+
+/**
  * Serializes npm installs across ALL integrations.
  *
  * Every integration installs into the SAME prefix (`INTEGRATIONS_DIR`), and
@@ -383,6 +398,24 @@ export class IntegrationManager {
     ensureIntegrationsDir();
 
     const pinnedVersion = this.pinnedVersionFor(config);
+
+    if (OFFLINE_MODE) {
+      // Never run npm — only verify what is already on disk. See OFFLINE_MODE
+      // doc comment for why this refuses instead of attempting a fallback.
+      const current = this.readInstalledVersion(npmPackage);
+      if (pinnedVersion) {
+        if (current === pinnedVersion) return;
+        throw new Error(
+          `${config.id}: connector ${npmPackage} version ${pinnedVersion} is not part of this installation ` +
+          `(found ${current ?? 'nothing installed'} at ${INTEGRATIONS_DIR}; SUVEREN_OFFLINE=1 so no npm install was attempted).`,
+        );
+      }
+      if (current !== null) return;
+      throw new Error(
+        `${config.id}: connector ${npmPackage} is not part of this installation ` +
+        `(nothing installed at ${INTEGRATIONS_DIR}; SUVEREN_OFFLINE=1 so no npm install was attempted).`,
+      );
+    }
 
     if (pinnedVersion) {
       // Fast path: already at the pinned version. Deliberately outside the
