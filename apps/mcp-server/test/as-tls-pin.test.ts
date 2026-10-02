@@ -180,16 +180,20 @@ describe('fetchAs — opt-in TLS pinning, real certificates', () => {
     await expect(fetchAs(url, undefined, { enforce: false })).rejects.toThrow();
   });
 
-  it('pin-tls OFF: identical to calling global fetch() directly — no pinning module involved at all (today\'s behavior)', async () => {
+  it('pin-tls OFF: delegates to the SAME bare fetch() a caller would get without this module — SAME underlying failure, enriched message', async () => {
     // `--ca-file` trust for the DEFAULT fetch agent is applied once, at
     // process start, by bundle/server.js setting NODE_EXTRA_CA_CERTS before
     // re-exec'ing (see its own doc comment: Node reads that env var only at
-    // startup) — not re-derivable by setting it live mid-test. What this
-    // test proves instead is the actual invariant: with pinning off and no
-    // capture requested, fetchAs delegates to the SAME bare `fetch` a caller
-    // would get without this module at all, nothing more, nothing less —
-    // proven by getting the exact same outcome (an untrusted self-signed
-    // cert, rejected) both ways, byte-for-byte reason.
+    // startup) — not re-derivable by setting it live mid-test.
+    //
+    // The two calls no longer produce a BYTE-IDENTICAL message (they did
+    // before the corporate-proxy work added `rethrowWithIssuerHint`): an
+    // untrusted-issuer failure — the exact shape a TLS-inspecting proxy
+    // produces — is deliberately rewritten with a message naming the cause
+    // and pointing at `--ca-file`/`config set ca-file`, everywhere fetchAs is
+    // the caller's only path to the AS, not only when a proxy is configured.
+    // What must still hold: it is the SAME underlying TLS failure (same
+    // `cause.code`), not a different, misdiagnosed one.
     delete process.env.NODE_EXTRA_CA_CERTS;
     const { close, url } = await startHttps(certA); stop = close;
 
@@ -198,8 +202,13 @@ describe('fetchAs — opt-in TLS pinning, real certificates', () => {
 
     expect(direct).toBeInstanceOf(Error);
     expect(viaFetchAs).toBeInstanceOf(Error);
-    expect((viaFetchAs as Error).message).toBe((direct as Error).message);
-    expect((viaFetchAs as { cause?: { code?: string } }).cause?.code).toBe('DEPTH_ZERO_SELF_SIGNED_CERT');
+    expect((direct as Error).message).toBe('fetch failed');
+    expect((viaFetchAs as Error).message).toMatch(/not trusted.*config set ca-file/is);
+    // `.cause` on fetchAs's rethrown error is the ORIGINAL "fetch failed"
+    // error — same message as calling fetch() directly — not a new one.
+    expect(((viaFetchAs as { cause?: unknown }).cause as Error)?.message).toBe((direct as Error).message);
+    const directCause = (direct as { cause?: { code?: string } }).cause;
+    expect(directCause?.code).toBe('DEPTH_ZERO_SELF_SIGNED_CERT');
   });
 });
 
