@@ -95,6 +95,22 @@ jobs:
           ls bundle/windows/payload/integrations/node_modules 2>/dev/null || echo "(none)"
           echo "::endgroup::"
 
+      - name: Payload file counts + longest paths (diagnostic — WiX harvesting has known long-path limits)
+        shell: bash
+        run: |
+          echo "::group::file counts"
+          echo "total:        $(find bundle/windows/payload -type f | wc -l)"
+          echo "node:         $(find bundle/windows/payload/node -type f | wc -l)"
+          echo "gateway:      $(find bundle/windows/payload/gateway -type f | wc -l)"
+          echo "integrations: $(find bundle/windows/payload/integrations -type f | wc -l)"
+          for pkg in crm-mcp records-mcp erp-mcp; do
+            echo "  @humanagencyp/$pkg: $(find "bundle/windows/payload/integrations/node_modules/@humanagencyp/$pkg" -type f 2>/dev/null | wc -l) file(s)"
+          done
+          echo "::endgroup::"
+          echo "::group::10 longest paths under payload (chars)"
+          find bundle/windows/payload -type f | awk '{ print length, $0 }' | sort -rn | head -10
+          echo "::endgroup::"
+
       - uses: actions/upload-artifact@v4
         with:
           name: windows-payload
@@ -302,6 +318,22 @@ jobs:
           Write-Host "install root: $root"
           Get-ChildItem $root
 
+          # Diagnostic: compare against the payload's own file counts (see the
+          # "Payload file counts" step in build-payload) to tell whether files
+          # were lost during WiX harvesting / MSI install (a known long-path
+          # risk — Windows Installer / .NET file enumeration can silently skip
+          # paths over MAX_PATH) versus somewhere else entirely.
+          Write-Host "`nfile counts under install root:"
+          Write-Host "  total:        $((Get-ChildItem $root -Recurse -File).Count)"
+          Write-Host "  node:         $((Get-ChildItem "$root\node" -Recurse -File -ErrorAction SilentlyContinue).Count)"
+          Write-Host "  gateway:      $((Get-ChildItem "$root\gateway" -Recurse -File -ErrorAction SilentlyContinue).Count)"
+          Write-Host "  integrations: $((Get-ChildItem "$root\integrations" -Recurse -File -ErrorAction SilentlyContinue).Count)"
+          foreach ($pkg in @('crm-mcp', 'records-mcp', 'erp-mcp')) {
+            $dir = "$root\integrations\node_modules\@humanagencyp\$pkg"
+            $count = (Get-ChildItem $dir -Recurse -File -ErrorAction SilentlyContinue).Count
+            Write-Host "  @humanagencyp/${pkg}: $count file(s) at $dir"
+          }
+
       - name: Start via the installed launcher — npm unreachable, no node on PATH but the bundled one
         id: start
         shell: pwsh
@@ -371,9 +403,9 @@ jobs:
           Write-Host ($mcpBody | ConvertTo-Json -Depth 5)
           foreach ($id in $targets) {
             $entry = $mcpBody.integrations | Where-Object { $_.id -eq $id }
-            if (-not $entry) { throw "$id: not in the integration registry — did not auto-start" }
-            if (-not $entry.running) { throw "$id: registered but not running ($($entry.error))" }
-            if ($entry.toolCount -le 0) { throw "$id: running but discovered 0 tools" }
+            if (-not $entry) { throw "${id}: not in the integration registry — did not auto-start" }
+            if (-not $entry.running) { throw "${id}: registered but not running ($($entry.error))" }
+            if ($entry.toolCount -le 0) { throw "${id}: running but discovered 0 tools" }
             Write-Host "$id : running, $($entry.toolCount) tool(s) — started OFFLINE (SUVEREN_OFFLINE=1, npm unreachable)"
           }
 
