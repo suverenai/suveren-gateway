@@ -11,6 +11,7 @@ import { Skeleton, SkeletonAttentionRow } from '../components/Skeleton';
 import { RecentBlocks } from '../components/RecentBlocks';
 import { SkippedCommitmentsCard } from '../components/SkippedCommitmentsCard';
 import { bucketAuths } from '../lib/auth-status';
+import { buildIntegrationAttentionItems, buildPausedSummary } from '../lib/integration-attention';
 
 const EXPIRY_WARN_SECONDS = 30 * 60; // 30 minutes
 
@@ -83,9 +84,10 @@ export function DashboardPage() {
   const pendingProposals = proposals.filter(isPendingProposal);
   const runningIntegrations = integrationEntries.filter(e => e.state === 'running');
   const startingIntegrations = integrationEntries.filter(e => e.state === 'starting');
-  const attentionIntegrations = integrationEntries.filter(
-    e => e.state === 'not-running' || e.state === 'error',
-  );
+  // Paused (simulation-blocked) integrations are deliberately excluded here —
+  // see buildIntegrationAttentionItems. They get one calm summary line
+  // instead (pausedSummary, below), not an attention row each.
+  const pausedSummary = buildPausedSummary(integrationEntries);
   const todayReceipts = 0; // Could fetch but keep it simple
 
   // Attention items
@@ -130,16 +132,7 @@ export function DashboardPage() {
     });
   }
 
-  for (const e of attentionIntegrations) {
-    attentionItems.push({
-      label: e.state === 'error' ? 'Integration error' : 'Integration stopped',
-      detail: e.state === 'error' && e.integration?.error
-        ? `${e.manifest.name}: ${e.integration.error}`
-        : `${e.manifest.name} is not running`,
-      to: '/integrations',
-      color: 'var(--danger)',
-    });
-  }
+  attentionItems.push(...buildIntegrationAttentionItems(integrationEntries));
   for (const e of startingIntegrations) {
     attentionItems.push({
       label: 'Integration starting',
@@ -154,7 +147,7 @@ export function DashboardPage() {
   // process-down); surface it as its own row. Skip already-down ones to
   // avoid a duplicate row.
   for (const e of integrationEntries) {
-    if (e.authStatus === 'failed' && e.state !== 'not-running' && e.state !== 'error') {
+    if (e.authStatus === 'failed' && e.state !== 'not-running' && e.state !== 'error' && e.state !== 'paused') {
       attentionItems.push({
         label: 'Reconnect needed',
         detail: `${e.manifest.name}: authorization expired — reconnect to restore access`,
@@ -283,6 +276,23 @@ export function DashboardPage() {
           </div>
         )}
       </section>
+
+      {/* Real systems paused by simulation mode — one calm line, not an
+          attention row per connector. Only rendered while something IS
+          paused (see buildPausedSummary); otherwise simulation mode is either
+          off, or nothing real is registered yet. */}
+      {pausedSummary && (
+        <div className="sim-paused-summary" role="status">
+          <span className="sim-paused-summary-icon" aria-hidden="true">&#9208;</span>
+          <span>
+            <b>
+              {pausedSummary.count} real system{pausedSummary.count === 1 ? '' : 's'}{' '}
+              {pausedSummary.count === 1 ? 'is' : 'are'} paused
+            </b>{' '}
+            while simulation mode is on — {pausedSummary.namesText}.
+          </span>
+        </div>
+      )}
 
       {/* Approved commitments this gateway won't execute (submitted elsewhere) */}
       <SkippedCommitmentsCard />
