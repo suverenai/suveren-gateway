@@ -195,11 +195,15 @@ export function validateProxyUrl(candidate) {
   return { ok: true, url: trimmed };
 }
 
-/** The saved proxy URL, if any — no env/flag tier (see bundle/server.js,
+/** The effective proxy URL: IT policy first (locked — see policy.mjs), else
+ *  the saved value. No env/flag tier of its own here — see bundle/server.js,
  *  the one place that turns this into HTTP_PROXY/HTTPS_PROXY for the
- *  children it spawns). An operator's own HTTP_PROXY/HTTPS_PROXY, if set,
- *  is left untouched and wins — this only fills them in when absent. */
+ *  children it spawns, and which also decides whether that OVERRIDES an
+ *  operator's own HTTP_PROXY/HTTPS_PROXY (only when policy-locked) or merely
+ *  fills them in when absent (the saved-value case). */
 export function resolveProxyUrl(dataDir) {
+  const policyProxy = readPolicy().policy.proxy;
+  if (policyProxy) return policyProxy;
   return readConfig(dataDir).proxyUrl;
 }
 

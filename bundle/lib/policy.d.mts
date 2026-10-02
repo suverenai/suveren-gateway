@@ -7,12 +7,14 @@
  * (see config.d.mts for the established precedent).
  */
 
-export type PolicyKey = 'asUrl' | 'caFile' | 'pinTls' | 'simulation' | 'installMethod';
+export type PolicyKey = 'asUrl' | 'caFile' | 'pinTls' | 'proxy' | 'noProxy' | 'simulation' | 'installMethod';
 
 export interface GatewayPolicy {
   asUrl?: string;
   caFile?: string;
   pinTls?: boolean;
+  proxy?: string;
+  noProxy?: string;
   simulation?: boolean;
   installMethod?: 'managed';
 }

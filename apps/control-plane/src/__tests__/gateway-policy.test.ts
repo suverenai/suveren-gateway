@@ -88,6 +88,34 @@ describe('policy.mjs — policy file', () => {
     expect(() => readPolicy()).toThrow(/Invalid policy Simulation/);
   });
 
+  it('locks Proxy and NoProxy when set', () => {
+    process.env.SUVEREN_POLICY_FILE = tmpPolicyFile({
+      Proxy: 'http://proxy.corp.example:8080',
+      NoProxy: 'internal.example.com',
+    });
+    const r = readPolicy();
+    expect(r.policy.proxy).toBe('http://proxy.corp.example:8080');
+    expect(r.policy.noProxy).toBe('internal.example.com');
+    expect(r.locked.has('proxy')).toBe(true);
+    expect(r.locked.has('noProxy')).toBe(true);
+    expect(isPolicyLocked('proxy')).toBe(true);
+  });
+
+  it('REFUSAL: throws on a Proxy value that is not http(s)://', () => {
+    process.env.SUVEREN_POLICY_FILE = tmpPolicyFile({ Proxy: 'socks5://proxy.corp.example:1080' });
+    expect(() => readPolicy()).toThrow(/Invalid policy Proxy/);
+  });
+
+  it('REFUSAL: throws on a Proxy value that is not a URL at all', () => {
+    process.env.SUVEREN_POLICY_FILE = tmpPolicyFile({ Proxy: 'not-a-url' });
+    expect(() => readPolicy()).toThrow(/Invalid policy Proxy/);
+  });
+
+  it('REFUSAL: throws on an empty NoProxy', () => {
+    process.env.SUVEREN_POLICY_FILE = tmpPolicyFile({ NoProxy: '   ' });
+    expect(() => readPolicy()).toThrow(/Invalid policy NoProxy/);
+  });
+
   it('REFUSAL: throws on an InstallMethod other than "managed"', () => {
     process.env.SUVEREN_POLICY_FILE = tmpPolicyFile({ InstallMethod: 'docker' });
     expect(() => readPolicy()).toThrow(/Invalid policy InstallMethod/);
@@ -134,6 +162,8 @@ describe('policy.mjs — registry (parsing logic, platform-independent)', () => 
       'HKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\Suveren\\Gateway',
       '    AsUrl    REG_SZ    https://as.company.internal',
       '    PinTls    REG_DWORD    0x1',
+      '    Proxy    REG_SZ    http://proxy.corp.example:8080',
+      '    NoProxy    REG_SZ    internal.example.com',
       '    Simulation    REG_DWORD    0x0',
       '    InstallMethod    REG_SZ    managed',
       '',
@@ -141,6 +171,8 @@ describe('policy.mjs — registry (parsing logic, platform-independent)', () => 
     expect(parseRegQueryOutput(stdout)).toEqual({
       AsUrl: 'https://as.company.internal',
       PinTls: 1,
+      Proxy: 'http://proxy.corp.example:8080',
+      NoProxy: 'internal.example.com',
       Simulation: 0,
       InstallMethod: 'managed',
     });

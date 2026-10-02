@@ -19,9 +19,21 @@
  * regardless of env var, saved config.json, or CLI flag. Overall
  * precedence: policy > env > saved config > defaults.
  *
+ * `Proxy` is the one key that OVERRIDES an environment variable rather than
+ * merely out-ranking a saved value: on a Windows company laptop the proxy is
+ * set in system settings, not `HTTP_PROXY`/`HTTPS_PROXY` — see
+ * bundle/server.js, which sets both env vars from the policy value
+ * unconditionally when `Proxy` is locked (every other locked key has no env
+ * tier to override in the first place; the apps themselves never read this
+ * key directly — they only ever see `HTTP_PROXY`/`HTTPS_PROXY` via
+ * proxy-env.ts, already resolved by the time they start — `proxy`/`noProxy`
+ * exist on `GatewayPolicy` here purely so `/health`'s `policyLocked` can
+ * report them). `NoProxy` is read the same way but has no saved-config/CLI
+ * counterpart at all — NO_PROXY stays env-only except for this one override.
+ *
  * Registry value names = JSON file keys (PascalCase, matching what an IT
- * admin would see in either place): AsUrl, CaFile, PinTls, Simulation,
- * InstallMethod.
+ * admin would see in either place): AsUrl, CaFile, PinTls, Proxy, NoProxy,
+ * Simulation, InstallMethod.
  *
  * Mirrored (same logic, duplicated — no shared runtime package between the
  * CLI and the two apps, see as-config.ts's doc comment for the established
@@ -33,12 +45,14 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
-export type PolicyKey = 'asUrl' | 'caFile' | 'pinTls' | 'simulation' | 'installMethod';
+export type PolicyKey = 'asUrl' | 'caFile' | 'pinTls' | 'proxy' | 'noProxy' | 'simulation' | 'installMethod';
 
 export interface GatewayPolicy {
   asUrl?: string;
   caFile?: string;
   pinTls?: boolean;
+  proxy?: string;
+  noProxy?: string;
   simulation?: boolean;
   installMethod?: 'managed';
 }
@@ -50,7 +64,7 @@ export interface ResolvedPolicy {
   locked: Set<PolicyKey>;
 }
 
-const POLICY_KEYS = ['AsUrl', 'CaFile', 'PinTls', 'Simulation', 'InstallMethod'] as const;
+const POLICY_KEYS = ['AsUrl', 'CaFile', 'PinTls', 'Proxy', 'NoProxy', 'Simulation', 'InstallMethod'] as const;
 
 /** The documented production path, relative to the hive — never changes for
  *  a real install. Overridable ONLY via `SUVEREN_POLICY_REGISTRY_KEY`, which
@@ -110,6 +124,23 @@ function validateCaFile(candidate: string): { ok: boolean; path?: string; error?
   if (!trimmed) return { ok: false, error: 'The CA file path is empty.' };
   if (!existsSync(trimmed)) return { ok: false, error: `No file at "${trimmed}".` };
   return { ok: true, path: trimmed };
+}
+
+/** Same rule as proxy-env.ts's companion in config.mjs's validateProxyUrl:
+ *  http:// or https:// only. */
+function validateProxyUrl(candidate: string): { ok: boolean; url?: string; error?: string } {
+  const trimmed = candidate.trim();
+  if (!trimmed) return { ok: false, error: 'The proxy URL is empty.' };
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return { ok: false, error: `"${trimmed}" is not a valid URL.` };
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return { ok: false, error: `"${trimmed}" must use http:// or https://.` };
+  }
+  return { ok: true, url: trimmed };
 }
 
 /** Accepts a JSON boolean, or the DWORD-style 0/1 (as a number OR a string,
@@ -305,6 +336,27 @@ export function readPolicy(): ResolvedPolicy {
     }
     policy.pinTls = b;
     locked.add('pinTls');
+  }
+
+  if (merged.Proxy !== undefined) {
+    const v = validateProxyUrl(String(merged.Proxy));
+    if (!v.ok) {
+      throw new Error(`Invalid policy Proxy ("${String(merged.Proxy)}") from ${sourceOf.Proxy}: ${v.error}`);
+    }
+    policy.proxy = v.url;
+    locked.add('proxy');
+  }
+
+  // NoProxy has no saved-config/CLI counterpart — just a string, no URL
+  // shape to validate (it's a NO_PROXY-style hostname list, same grammar as
+  // the env var itself).
+  if (merged.NoProxy !== undefined) {
+    const raw = String(merged.NoProxy).trim();
+    if (!raw) {
+      throw new Error(`Invalid policy NoProxy ("${String(merged.NoProxy)}") from ${sourceOf.NoProxy}: must not be empty.`);
+    }
+    policy.noProxy = raw;
+    locked.add('noProxy');
   }
 
   if (merged.Simulation !== undefined) {

@@ -203,6 +203,7 @@ async function start(args) {
   const proxyFlag = flagValue(args, '--proxy');
   let proxyToSave = null;
   if (proxyFlag) {
+    refuseIfLockedByPolicy('proxy', 'proxy');
     const v = validateProxyUrl(proxyFlag);
     if (!v.ok) {
       console.error(`Invalid --proxy: ${v.error}`);
@@ -562,6 +563,12 @@ environment (there is no saved equivalent). A loopback target (the control
 plane and the MCP server talking to each other, or a local AI assistant) is
 never proxied, independent of any of this.
 
+An IT-set Proxy policy is the ONE locked setting that OVERRIDES an
+already-set HTTP_PROXY/HTTPS_PROXY rather than merely out-ranking a saved
+value — the Windows-company-laptop case, where the proxy lives in system
+settings, not something an employee's shell exports. A NoProxy policy
+likewise overrides NO_PROXY. See docs/managed-settings.md.
+
 pin-tls (default off, self-hosted Authority Servers with a stable signing
 key) requires https:// and pins the Authority Server's TLS certificate
 public key; every connection after it's established must present that same
@@ -626,17 +633,18 @@ async function config(args) {
     const key = args[1];
     const saved = readConfig(DATA_DIR);
     const policyCaFile = readPolicy().policy.caFile;
+    const policyProxy = readPolicy().policy.proxy;
     if (!key) {
       console.log(`as-url:  ${resolveAsUrl(DATA_DIR)}${policySuffix('asUrl')}`);
       console.log(`ca-file: ${(policyCaFile ?? saved.caFile) ?? '(not set)'}${policySuffix('caFile')}`);
       console.log(`pin-tls: ${resolvePinTls(DATA_DIR) ? 'on' : 'off'}${policySuffix('pinTls')}`);
-      console.log(`proxy:   ${saved.proxyUrl ?? '(not set)'}`);
+      console.log(`proxy:   ${(policyProxy ?? saved.proxyUrl) ?? '(not set)'}${policySuffix('proxy')}`);
       return;
     }
     if (key === 'as-url') { console.log(`${resolveAsUrl(DATA_DIR)}${policySuffix('asUrl')}`); return; }
     if (key === 'ca-file') { console.log(`${(policyCaFile ?? saved.caFile) ?? ''}${policySuffix('caFile')}`); return; }
     if (key === 'pin-tls') { console.log(`${resolvePinTls(DATA_DIR) ? 'on' : 'off'}${policySuffix('pinTls')}`); return; }
-    if (key === 'proxy') { console.log(saved.proxyUrl ?? ''); return; }
+    if (key === 'proxy') { console.log(`${(policyProxy ?? saved.proxyUrl) ?? ''}${policySuffix('proxy')}`); return; }
     console.error(`Unknown config key: ${key}\n`);
     printConfigHelp();
     process.exit(2);
@@ -678,6 +686,7 @@ async function config(args) {
       return;
     }
     if (key === 'proxy') {
+      refuseIfLockedByPolicy('proxy', 'proxy');
       if (!value) {
         console.error('Usage: suveren-gateway config set proxy <url>');
         process.exit(2);
@@ -1372,7 +1381,9 @@ Environment:
                       Corporate proxy — honoured for every outbound call to the Authority
                       Server, the update checker, and a remote AI assistant endpoint. A
                       loopback target (127.0.0.1/localhost, incl. a local AI assistant) is
-                      never proxied. These win over a saved \`config set proxy\`.
+                      never proxied. These win over a saved \`config set proxy\` — UNLESS
+                      your organization's IT has set a Proxy/NoProxy policy, which wins
+                      over both (see docs/managed-settings.md).
 
 Authority Server resolution order: --as-url flag > SUVEREN_AS_URL env >
 saved as-url (\`config set as-url\`) > default (${DEFAULT_AS_URL}).

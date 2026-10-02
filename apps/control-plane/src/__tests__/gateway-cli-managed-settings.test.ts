@@ -80,6 +80,14 @@ describe('config get — shows IT-locked settings', () => {
     const { stdout } = run(dataDir, ['config', 'get', 'pin-tls'], { SUVEREN_POLICY_FILE: policy });
     expect(stdout).not.toContain('(set by your IT)');
   });
+
+  it('appends "(set by your IT)" to a policy-locked proxy', () => {
+    const dataDir = tmp();
+    const policy = policyFile({ Proxy: 'http://proxy.corp.example:8080' });
+    const { stdout } = run(dataDir, ['config', 'get', 'proxy'], { SUVEREN_POLICY_FILE: policy });
+    expect(stdout).toContain('http://proxy.corp.example:8080');
+    expect(stdout).toContain('(set by your IT)');
+  });
 });
 
 describe('REFUSAL: config set on a policy-locked key', () => {
@@ -114,6 +122,27 @@ describe('REFUSAL: config set on a policy-locked key', () => {
       ['config', 'set', 'pin-tls', 'on', '--expect-fingerprint', 'ab'.repeat(32)],
       { SUVEREN_POLICY_FILE: policy },
     );
+    expect(status).toBe(1);
+    expect(stderr).toContain('set by your IT policy');
+  });
+
+  it('proxy — exit 1, names the policy value, config.json untouched', () => {
+    const dataDir = tmp();
+    const policy = policyFile({ Proxy: 'http://proxy.corp.example:8080' });
+    const { status, stderr } = run(dataDir, ['config', 'set', 'proxy', 'http://attacker.example:8080'], {
+      SUVEREN_POLICY_FILE: policy,
+    });
+    expect(status).toBe(1);
+    expect(stderr).toContain('set by your IT policy');
+    expect(stderr).toContain('http://proxy.corp.example:8080');
+  });
+
+  it('start --proxy — exit 1 before ever attempting to start', () => {
+    const dataDir = tmp();
+    const policy = policyFile({ Proxy: 'http://proxy.corp.example:8080' });
+    const { status, stderr } = run(dataDir, ['start', '--proxy', 'http://attacker.example:8080'], {
+      SUVEREN_POLICY_FILE: policy,
+    });
     expect(status).toBe(1);
     expect(stderr).toContain('set by your IT policy');
   });
