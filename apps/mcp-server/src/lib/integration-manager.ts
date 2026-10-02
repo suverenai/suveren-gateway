@@ -112,7 +112,24 @@ export interface IntegrationStatus {
   name: string;
   running: boolean;
   toolCount: number;
+  /**
+   * A REAL problem — the subprocess crashed, failed to spawn, etc. Never set
+   * for the simulation block (see `paused` below): paused-by-design is not an
+   * error, and collapsing the two made every blocked connector read as broken
+   * in the UI (Dashboard "Needs your attention", red "Crashed" chip, a Start
+   * button that could never succeed).
+   */
   error?: string;
+  /**
+   * Set instead of `error` when this connector is not running SOLELY because
+   * simulation mode is on and its manifest carries no `simulation` marker —
+   * the exact condition `startIntegrationLocked` refuses under. Structured
+   * rather than text so the UI never has to parse `error` to tell "paused by
+   * design" from "actually broken". The only value today is 'simulation';
+   * typed as a union (not boolean) so a second cause, if one is ever added,
+   * doesn't need a breaking shape change.
+   */
+  paused?: 'simulation';
   /**
    * Local read-age window (days), or null when unset (the read path then falls
    * back to the signed grant bound). Null and 0 are different answers — 0 is
@@ -730,11 +747,13 @@ export class IntegrationManager {
             // AND this connector has no manifest `simulation` marker, which is
             // exactly the condition startIntegrationLocked refuses under — so
             // the UI always reflects why a real connector never started,
-            // without needing a separate error-tracking path for this one
-            // reason. Unrelated start failures still surface via the
-            // `warning` string returned by /internal/add-integration.
-            error: isSimulationMode() && !manifestIsSimulated(getManifest(config.id))
-              ? SIMULATION_BLOCK_REASON
+            // without needing a separate tracking path for this one reason.
+            // This is `paused`, NOT `error`: it is not a problem, it's the
+            // mode working as designed (see IntegrationStatus.paused). Genuine
+            // start failures still surface via the one-shot `warning` string
+            // returned by /internal/add-integration — they never land here.
+            paused: isSimulationMode() && !manifestIsSimulated(getManifest(config.id))
+              ? 'simulation'
               : undefined,
           });
         }

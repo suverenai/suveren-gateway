@@ -22,3 +22,21 @@ export function isSimulated(
   const value = (fields?.[decl.field] ?? '').trim().toLowerCase() || decl.default.trim().toLowerCase();
   return value === 'simulation';
 }
+
+/**
+ * Does this manifest declare a simulated mode AT ALL (a capability), regardless
+ * of which mode it's currently set to? Mirrors the gateway's own
+ * `manifestIsSimulated` (apps/mcp-server/src/lib/simulation-mode.ts) — the UI
+ * already has the manifest, so this reads the same `simulation` marker rather
+ * than re-deriving the rule.
+ *
+ * Different question from `isSimulated` above: that one asks which mode ONE
+ * connector is in right now (current credential value); this one asks whether
+ * a connector is a "test system" at all. Used to group the Integrations page
+ * and to word Dashboard attention rows while gateway-wide simulation mode is on.
+ */
+export function declaresSimulation(
+  manifest: Pick<IntegrationManifest, 'simulation'> | null | undefined,
+): boolean {
+  return Boolean(manifest?.simulation);
+}

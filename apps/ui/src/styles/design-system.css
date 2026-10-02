@@ -779,6 +779,11 @@ code {
 /* Connector answers from a simulated system (test data) — not an error, but never silent. */
 .int-chip-sim  { background: color-mix(in srgb, var(--warning) 14%, transparent); color: var(--warning); }
 .int-chip-sim  .int-dot { background: var(--warning); }
+/* Real system intentionally off while simulation mode is on — paused by
+   design, never red: distinct from both int-chip-idle (unconfigured/stopped)
+   and int-chip-bad (a genuine crash). */
+.int-chip-paused { background: var(--bg-main); color: var(--text-muted); border: 1px solid var(--border); }
+.int-chip-paused .int-dot { background: var(--text-muted); }
 
 /* Collapsed detail disclosure on the integration card */
 .int-details { border-top: 1px solid var(--border); padding-top: 0.7rem; margin-top: 0.25rem; }
@@ -3376,6 +3381,50 @@ body.is-updating .simulation-banner {
 }
 .recent-blocks .rb-empty h3, .all-clear h3 { font-size: 0.9rem; margin: 0 0 0.3rem; }
 .recent-blocks .rb-empty p, .all-clear p { font-size: 0.8rem; color: var(--text-muted); margin: 0 auto; max-width: 30ch; line-height: 1.45; }
+
+/* ── Simulation mode — paused real systems ───────────────────────────────────
+   Dashboard: one calm line replacing N individual attention rows.
+   Integrations page: "Test systems" / "Real systems" grouping with a
+   collapsible, compact list for connectors paused by the mode. */
+.sim-paused-summary {
+  display: flex; align-items: flex-start; gap: 0.6rem;
+  color: var(--text-secondary); background: var(--bg-elevated);
+  border: 1px dashed var(--border); border-radius: 0.625rem;
+  padding: 0.75rem 1rem; font-size: 0.82rem; line-height: 1.5;
+  margin-bottom: 1.5rem;
+}
+.sim-paused-summary-icon { flex-shrink: 0; }
+.sim-paused-summary b { color: var(--text-primary); }
+
+.int-group-label {
+  font-size: 0.7rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
+  color: var(--text-muted); margin: 1.5rem 0 0.6rem;
+}
+.int-group-label:first-child { margin-top: 0; }
+
+.int-paused-group {
+  background: var(--bg-elevated); border: 1px solid var(--border);
+  border-radius: 0.75rem; padding: 0.85rem 1rem 1rem; margin-bottom: 1rem;
+}
+.int-paused-group > summary {
+  cursor: pointer; font-weight: 600; font-size: 0.85rem; color: var(--text-primary);
+  list-style: none; display: flex; align-items: center; gap: 0.35rem; user-select: none;
+}
+.int-paused-group > summary::-webkit-details-marker { display: none; }
+.int-paused-group > summary::before { content: '\25B8'; color: var(--text-muted); }
+.int-paused-group[open] > summary::before { content: '\25BE'; }
+.int-paused-group-note {
+  color: var(--text-muted); font-size: 0.78rem; margin: 0.55rem 0 0.2rem; line-height: 1.55;
+}
+.int-paused-group-note code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.76rem;
+}
+.int-paused-row {
+  display: flex; align-items: center; gap: 0.7rem; padding: 0.55rem 0;
+  border-top: 1px solid var(--border);
+}
+.int-paused-row:first-of-type { border-top: 0; margin-top: 0.3rem; }
+.int-paused-row .int-paused-name { font-weight: 500; flex: 1; font-size: 0.85rem; min-width: 0; }
 
 /* ── Receipt rows (audit) ──────────────────────────────────────────────────
    Leads with what happened in words; identifiers live in the collapsed

@@ -169,7 +169,16 @@ export interface McpIntegrationStatus {
   name: string;
   running: boolean;
   toolCount: number;
+  /** A REAL problem (crash, failed spawn, etc). Never set for the simulation
+   *  block — see `paused`, which is structural, not an error. */
   error?: string;
+  /**
+   * Set instead of `error` when this connector is not running SOLELY because
+   * simulation mode is on and its manifest declares no `simulation` marker.
+   * Paused-by-design, not broken — drives the neutral "Paused" chip and keeps
+   * it out of "Needs your attention" (see IntegrationStatusContext).
+   */
+  paused?: 'simulation';
   /**
    * Local read-age window in days, or null when unset (reads then fall back to
    * the signed grant bound). `0` means "read nothing" and is NOT the same as

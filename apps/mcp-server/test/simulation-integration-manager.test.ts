@@ -170,3 +170,63 @@ describe('simulation mode — IntegrationManager', () => {
     expect(result.content[0].text).toBe('live');
   });
 });
+
+/**
+ * getStatus() must report the simulation block as a structured `paused`
+ * field, never as `error` — paused-by-design is not a crash. Before this,
+ * the UI's only signal was `error: "blocked: simulation mode…"`, which made
+ * every blocked real connector show up as "Integration error" on the
+ * Dashboard and a red "Crashed" chip on its card, with a Start button that
+ * could never succeed while the mode stayed on.
+ */
+describe('simulation mode — getStatus() reports paused, not error', () => {
+  let im: IntegrationManager | undefined;
+
+  afterEach(async () => {
+    delete process.env.SUVEREN_SIMULATION;
+    if (im) await im.shutdown();
+    im = undefined;
+  });
+
+  it('ON: a real (gmail-like) connector that never started is paused, not errored', () => {
+    process.env.SUVEREN_SIMULATION = '1';
+    im = new IntegrationManager(new Map());
+
+    const status = im.getStatus([realConfig()]).find(s => s.id === 'real-conn');
+
+    expect(status?.running).toBe(false);
+    expect(status?.paused).toBe('simulation');
+    expect(status?.error).toBeUndefined();
+  });
+
+  it('ON: a connector whose manifest declares `simulation` is never marked paused — it CAN run simulated', () => {
+    process.env.SUVEREN_SIMULATION = '1';
+    im = new IntegrationManager(new Map());
+
+    const status = im.getStatus([simConfig()]).find(s => s.id === 'sim-conn');
+
+    expect(status?.paused).toBeUndefined();
+    expect(status?.error).toBeUndefined();
+  });
+
+  it('OFF: a real connector that never started carries neither paused nor error — simulation mode is irrelevant here', () => {
+    delete process.env.SUVEREN_SIMULATION;
+    im = new IntegrationManager(new Map());
+
+    const status = im.getStatus([realConfig()]).find(s => s.id === 'real-conn');
+
+    expect(status?.paused).toBeUndefined();
+    expect(status?.error).toBeUndefined();
+  });
+
+  it('a genuinely RUNNING connector is reported as running, never paused — the field only ever applies to a non-running entry', async () => {
+    delete process.env.SUVEREN_SIMULATION;
+    im = new IntegrationManager(new Map());
+    await im.startIntegration(realConfig());
+
+    const status = im.getStatus([realConfig()]).find(s => s.id === 'real-conn');
+
+    expect(status?.running).toBe(true);
+    expect(status?.paused).toBeUndefined();
+  });
+});
