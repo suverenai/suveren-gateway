@@ -3,11 +3,7 @@ import { Link } from 'react-router-dom';
 import { spClient, type IntegrationManifest, type McpIntegrationStatus } from '../lib/sp-client';
 import type { IntegrationState } from '../contexts/IntegrationStatusContext';
 import { isSimulated } from '../lib/simulation';
-
-const ICON_MAP: Record<string, string> = {
-  card: '\u{1F4B3}',
-  mail: '\u2709\uFE0F',
-};
+import { integrationIcon } from '../lib/integration-icon';
 
 /**
  * Does this integration read anything with an age dimension?
@@ -48,6 +44,36 @@ export function readAgeLabel(days: number | null): string {
   if (days === 365) return '1 year back';
   if (days % 365 === 0) return `${days / 365} years back`;
   return `${days} days back`;
+}
+
+export interface StoppedIntegrationDisplay {
+  chip: { c: string; t: string };
+  /** False only when paused by simulation mode — a Start click there cannot
+   *  succeed, so the button is not offered at all rather than shown disabled. */
+  showStart: boolean;
+}
+
+/**
+ * What a registered-but-not-running integration shows: chip + whether a
+ * retry ("Start") makes sense at all.
+ *
+ * Paused by simulation mode is checked first and wins outright — a connector
+ * refused solely because the gateway-wide mode is on will refuse again on
+ * every retry, so offering Start would be a dead button, and `integration`
+ * never carries both `paused` and `error` for the same reason (see
+ * integration-manager's getStatus). Anything else not running shows the
+ * pre-existing Crashed/Stopped + Start treatment, unchanged.
+ */
+export function stoppedIntegrationDisplay(
+  integration: Pick<McpIntegrationStatus, 'running' | 'error' | 'paused'> | undefined,
+): StoppedIntegrationDisplay {
+  if (integration?.paused === 'simulation') {
+    return { chip: { c: 'int-chip-paused', t: 'Paused' }, showStart: false };
+  }
+  if (integration && !integration.running && integration.error) {
+    return { chip: { c: 'int-chip-bad', t: 'Crashed' }, showStart: true };
+  }
+  return { chip: { c: 'int-chip-idle', t: 'Stopped' }, showStart: true };
 }
 
 interface Props {
@@ -295,17 +321,17 @@ export function IntegrationCard({ manifest, integration, state, onStatusChange, 
     }
   };
 
-  const icon = ICON_MAP[manifest.icon] ?? '\u{1F527}';
+  const icon = integrationIcon(manifest.icon);
 
   // Two truthful, binary status chips. Process = is the subprocess running;
   // Auth = can it authenticate (token/credentials present). Grey = neutral
   // (not set up / stopped), green = ok, red = error. (Auth "failed" detection
   // on a revoked/expired token is a follow-up — see auth-health work.)
+  const stoppedDisplay = stoppedIntegrationDisplay(integration);
   const procChip =
     cardState === 'running' ? { c: 'int-chip-ok', t: 'Running' }
     : cardState === 'starting' ? { c: 'int-chip-idle', t: 'Starting' }
-    : (integration && !integration.running && integration.error) ? { c: 'int-chip-bad', t: 'Crashed' }
-    : { c: 'int-chip-idle', t: 'Stopped' };
+    : stoppedDisplay.chip;
   // needsAuth / authConnected computed above (needed by cardState). For no-auth
   // integrations (local CRM/records) "Not set up" is wrong → show "No auth".
   const authFailed = manifest.oauth && oauthConnected && authHealth?.status === 'failed';
@@ -832,27 +858,47 @@ export function IntegrationCard({ manifest, integration, state, onStatusChange, 
         </>
       )}
 
-      {/* Stopped but registered — offer retry */}
+      {/* Stopped but registered — paused by simulation mode gets a neutral,
+          honest state (no Start button — it cannot succeed while the mode is
+          on); any other stop offers retry as before. Both branches driven by
+          the same `stoppedIntegrationDisplay` decision as the chip above. */}
       {cardState === 'ready' && integration && !integration.running && (
-        <>
-          <div className="service-status service-status-error" style={{ marginBottom: '0.75rem' }}>
-            <span className="service-status-dot" />
-            Not running
-          </div>
-          {integration.error && (
-            <div style={{ fontSize: '0.8rem', color: 'var(--danger)', marginBottom: '0.75rem' }}>
-              {integration.error}
+        !stoppedDisplay.showStart ? (
+          <>
+            <div className="service-status" style={{ marginBottom: '0.5rem', color: 'var(--text-muted)' }}>
+              <span className="service-status-dot" style={{ background: 'var(--text-muted)' }} />
+              Paused
             </div>
-          )}
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
-            <button className="btn btn-primary" onClick={activate} disabled={activating}>
-              {activating ? 'Starting...' : 'Start'}
-            </button>
-            <button className="btn btn-ghost" style={{ color: 'var(--danger)' }} onClick={remove}>
-              Disable
-            </button>
-          </div>
-        </>
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.75rem' }}>
+              Real systems are off while simulation mode is on.
+            </p>
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <button className="btn btn-ghost" style={{ color: 'var(--danger)' }} onClick={remove}>
+                Disable
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="service-status service-status-error" style={{ marginBottom: '0.75rem' }}>
+              <span className="service-status-dot" />
+              Not running
+            </div>
+            {integration.error && (
+              <div style={{ fontSize: '0.8rem', color: 'var(--danger)', marginBottom: '0.75rem' }}>
+                {integration.error}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <button className="btn btn-primary" onClick={activate} disabled={activating}>
+                {activating ? 'Starting...' : 'Start'}
+              </button>
+              <button className="btn btn-ghost" style={{ color: 'var(--danger)' }} onClick={remove}>
+                Disable
+              </button>
+            </div>
+          </>
+        )
       )}
     </div>
   );

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { declaresReadAge, readAgeLabel, READ_AGE_PRESETS } from './IntegrationCard';
+import { declaresReadAge, readAgeLabel, READ_AGE_PRESETS, stoppedIntegrationDisplay } from './IntegrationCard';
 
 // Pure logic only (the panel's JSX is presentation, verified in the browser
 // layer). These two helpers decide WHETHER the Read-policy control appears and
@@ -84,5 +84,37 @@ describe('READ_AGE_PRESETS', () => {
   it('is ordered from most to least restrictive', () => {
     const sorted = [...READ_AGE_PRESETS].sort((a, b) => a - b);
     expect([...READ_AGE_PRESETS]).toEqual(sorted);
+  });
+});
+
+describe('stoppedIntegrationDisplay — what a registered-but-not-running card shows', () => {
+  it('paused by simulation mode: neutral chip, no Start (it cannot succeed while the mode is on)', () => {
+    const d = stoppedIntegrationDisplay({ running: false, paused: 'simulation' });
+    expect(d.chip).toEqual({ c: 'int-chip-paused', t: 'Paused' });
+    expect(d.showStart).toBe(false);
+  });
+
+  it('a genuine crash still shows red "Crashed" with a Start retry — unchanged behaviour', () => {
+    const d = stoppedIntegrationDisplay({ running: false, error: 'ENOENT: spawn failed' });
+    expect(d.chip).toEqual({ c: 'int-chip-bad', t: 'Crashed' });
+    expect(d.showStart).toBe(true);
+  });
+
+  it('paused wins even if error were ever also set (defence in depth — the two must not co-occur)', () => {
+    const d = stoppedIntegrationDisplay({ running: false, paused: 'simulation', error: 'should not happen' });
+    expect(d.chip.t).toBe('Paused');
+    expect(d.showStart).toBe(false);
+  });
+
+  it('plain stop (never started, no error, no pause) shows neutral "Stopped" with Start', () => {
+    const d = stoppedIntegrationDisplay({ running: false });
+    expect(d.chip).toEqual({ c: 'int-chip-idle', t: 'Stopped' });
+    expect(d.showStart).toBe(true);
+  });
+
+  it('no status entry at all behaves like a plain stop', () => {
+    const d = stoppedIntegrationDisplay(undefined);
+    expect(d.chip).toEqual({ c: 'int-chip-idle', t: 'Stopped' });
+    expect(d.showStart).toBe(true);
   });
 });

@@ -40,6 +40,18 @@ describe('deriveIntegrationState', () => {
     expect(deriveIntegrationState(s({ error: 'spawn failed' }), 2, true)).toBe('error');
   });
 
+  it('paused (simulation block) beats both the startup window and a stray error — it is never coming up on its own', () => {
+    // Regression target: before `paused` existed, the gateway reported this
+    // case as `error`, which rendered a red "Crashed" chip and a Start button
+    // that could never succeed for as long as simulation mode stayed on.
+    expect(deriveIntegrationState(s({ paused: 'simulation' }), 2, true)).toBe('paused');
+    expect(deriveIntegrationState(s({ paused: 'simulation', error: 'should never co-occur' }), 2, false)).toBe('paused');
+  });
+
+  it('running still beats paused, even if both were ever set together', () => {
+    expect(deriveIntegrationState(s({ running: true, paused: 'simulation' }), 2, false)).toBe('running');
+  });
+
   it('shows starting only while down AND inside the window', () => {
     expect(deriveIntegrationState(s({ running: false }), 2, true)).toBe('starting');
   });

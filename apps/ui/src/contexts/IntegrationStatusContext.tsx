@@ -7,6 +7,7 @@ export type IntegrationState =
   | 'loading'      // haven't fetched yet
   | 'starting'     // not-running, but within post-mount startup window
   | 'running'      // healthy
+  | 'paused'       // not running SOLELY because simulation mode is on — by design, not broken
   | 'not-running'  // not-running past startup window (user stopped it, or never started)
   | 'error';       // has an error message from the subprocess
 
@@ -50,8 +51,11 @@ export const POLL_MS_SETTLED = 300_000;
 /**
  * One integration's display state. Pure, so the precedence can be tested:
  * `running` must beat everything (a running integration is never "Starting"),
- * and a real `error` must beat the startup window rather than being hidden
- * behind a hopeful "Starting…" until it expires.
+ * `paused` (the simulation block) must beat both `error` and the startup
+ * window — it is never going to start on its own, so "Starting…" would be a
+ * lie and `error` would wrongly read as broken — and a real `error` must beat
+ * the startup window rather than being hidden behind a hopeful "Starting…"
+ * until it expires.
  */
 export function deriveIntegrationState(
   integration: McpIntegrationStatus | undefined,
@@ -60,6 +64,7 @@ export function deriveIntegrationState(
 ): IntegrationState {
   if (fetchCount === 0) return 'loading';
   if (integration?.running) return 'running';
+  if (integration?.paused) return 'paused';
   if (integration?.error) return 'error';
   if (integration && withinStartupWindow) return 'starting';
   // Either registered-but-down past the window, or no entry at all (manifest
@@ -127,9 +132,12 @@ export function IntegrationStatusProvider({ children }: { children: ReactNode })
 
   // Is anything not yet up? Computed here rather than inside the entries memo
   // because it drives the poll rate, which must be decided before polling.
+  // Excludes `paused` (simulation block): that is never going to transition to
+  // running on its own, so treating it as "still coming up" would fast-poll
+  // every open tab forever for as long as simulation mode stays on.
   const anyNotRunning = raw.fetchCount > 0 && raw.manifests.some(m => {
     const i = raw.integrations.find(x => x.id === m.id);
-    return i && !i.running;
+    return i && !i.running && !i.paused;
   });
 
   // SSE-driven refresh: fire immediately when the server emits integration-changed.
