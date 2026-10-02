@@ -1,0 +1,496 @@
+name: Publish Windows installer
+
+# Windows installer for company laptops (W2/W4-W6/W8 — suveren-as/docs/
+# work-plan.md "Added 2026-10-02 — Windows installer"). Built UNSIGNED by us
+# (decision, Andreas: "we do not sell the software, so we do not sign it") —
+# a company's own IT verifies origin, signs with its own certificate
+# (build-signed.ps1) and distributes via Intune. This workflow only ever
+# produces the UNSIGNED installer + the signing kit that makes re-signing
+# possible.
+#
+# Runs the full build + install test on every PR touching bundle/windows/**
+# or this file (no publishing there); publishes installer assets to the
+# GitHub Release for the tag on a `v*` push or workflow_dispatch. Runs
+# alongside publish-npm.yml / publish.yml (neither of those creates a GitHub
+# Release today, so there's nothing to race — this workflow is the first
+# thing that does).
+
+on:
+  push:
+    tags: ['v*']
+  pull_request:
+    paths:
+      - 'bundle/windows/**'
+      - '.github/workflows/publish-windows.yml'
+  workflow_dispatch:
+
+jobs:
+  # ─── Build the offline payload: bundled Node + gateway bundle + every
+  #     manifest-pinned connector, installed with THAT Node build. ──────────
+  build-payload:
+    name: build payload
+    runs-on: windows-latest
+    timeout-minutes: 30
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Check out profile catalog
+        uses: actions/checkout@v6
+        with:
+          repository: humanagencyprotocol/hap-profiles
+          path: .hap-profiles
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install workspace deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Build apps
+        run: pnpm build
+
+      - name: Assemble bundle
+        run: node bundle/build.mjs
+        env:
+          HAP_PROFILES_SRC: ${{ github.workspace }}\.hap-profiles
+
+      - name: Install bundle runtime deps
+        working-directory: bundle/dist
+        run: npm install --omit=dev --no-audit --no-fund
+
+      - name: Read gateway version
+        id: version
+        shell: bash
+        run: |
+          set -e
+          V=$(jq -r .version bundle/dist/package.json)
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "gateway version: $V"
+
+      - name: Build offline Windows payload (Node + bundle + pinned connectors)
+        run: node bundle/windows/build-payload.mjs
+
+      - name: Payload summary
+        shell: bash
+        run: |
+          echo "::group::payload tree (top level)"
+          ls -la bundle/windows/payload
+          echo "::endgroup::"
+          echo "::group::node"
+          ls bundle/windows/payload/node | head -20
+          echo "::endgroup::"
+          echo "::group::integrations"
+          ls bundle/windows/payload/integrations/node_modules 2>/dev/null || echo "(none)"
+          echo "::endgroup::"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-payload
+          path: bundle/windows/payload
+          if-no-files-found: error
+
+  # ─── Build the unsigned .msi from the payload + WiX source. ──────────────
+  build-msi:
+    name: build msi
+    needs: build-payload
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-payload
+          path: bundle/windows/payload
+
+      - name: Install WiX v5
+        run: dotnet tool install --global wix
+
+      - name: Verify tag matches payload version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          set -e
+          TAG="${GITHUB_REF_NAME#v}"
+          V="${{ needs.build-payload.outputs.version }}"
+          echo "git tag: v$TAG"
+          echo "payload: $V"
+          if [ "$TAG" != "$V" ]; then
+            echo "::error::Payload version ($V) does not match git tag ($TAG). Update package.json (root) before tagging."
+            exit 1
+          fi
+
+      - name: wix build
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path bundle\windows\out | Out-Null
+          $payload = (Resolve-Path bundle\windows\payload).Path
+          $launcher = (Resolve-Path bundle\windows\launcher.cmd).Path
+          wix build bundle\windows\wix\Product.wxs `
+            -d "ProductVersion=${{ needs.build-payload.outputs.version }}" `
+            -d "PayloadDir=$payload" `
+            -d "LauncherSource=$launcher" `
+            -arch x64 `
+            -out bundle\windows\out\suveren-gateway.msi
+          if ($LASTEXITCODE -ne 0) { throw "wix build failed" }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-msi-unsigned
+          path: bundle/windows/out/suveren-gateway.msi
+          if-no-files-found: error
+
+  # ─── W5: prove the signing kit actually works — self-signed test cert,
+  #     build-signed.ps1 end to end, verify every inner file + the msi. ─────
+  prove-signing-kit:
+    name: prove signing kit
+    needs: build-payload
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-payload
+          path: kit/payload
+
+      - name: Install WiX v5
+        run: dotnet tool install --global wix
+
+      - name: Stage the kit (payload + WiX source + launcher + script — exactly what the release zip ships)
+        shell: pwsh
+        run: |
+          Copy-Item -Recurse bundle\windows\wix kit\wix
+          Copy-Item bundle\windows\launcher.cmd kit\launcher.cmd
+          Copy-Item bundle\windows\build-signed.ps1 kit\build-signed.ps1
+
+      - name: Create a self-signed code-signing certificate and trust it on THIS runner only
+        id: cert
+        shell: pwsh
+        run: |
+          $cert = New-SelfSignedCertificate `
+            -Subject "CN=Suveren CI Test Signing" `
+            -Type CodeSigningCert `
+            -CertStoreLocation Cert:\CurrentUser\My `
+            -KeyUsage DigitalSignature `
+            -KeyAlgorithm RSA -KeyLength 2048 `
+            -NotAfter (Get-Date).AddDays(7)
+          "thumbprint=$($cert.Thumbprint)" >> $env:GITHUB_OUTPUT
+
+          # Trust it the way a real machine would trust a certificate it
+          # decided to accept: as a root CA AND as a trusted publisher. This
+          # is ONLY ever done to THIS disposable CI runner, never in the
+          # installer or build-signed.ps1 itself — that trust decision is
+          # entirely a real IT department's, done on their own machines.
+          $certPath = "cert:\CurrentUser\My\$($cert.Thumbprint)"
+          Export-Certificate -Cert $certPath -FilePath kit-test-cert.cer | Out-Null
+          Import-Certificate -FilePath kit-test-cert.cer -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
+          Import-Certificate -FilePath kit-test-cert.cer -CertStoreLocation Cert:\LocalMachine\TrustedPublisher | Out-Null
+
+      - name: Run build-signed.ps1 with the test certificate
+        shell: pwsh
+        run: |
+          .\kit\build-signed.ps1 `
+            -Thumbprint "${{ steps.cert.outputs.thumbprint }}" `
+            -PayloadDir "$(Resolve-Path kit\payload)" `
+            -WixSourceDir "$(Resolve-Path kit\wix)" `
+            -OutDir "$(Resolve-Path kit)\out" `
+            -ProductVersion "${{ needs.build-payload.outputs.version }}"
+
+      - name: signtool verify every signed binary + the msi
+        shell: pwsh
+        run: |
+          function Find-SignTool {
+            $cmd = Get-Command signtool.exe -ErrorAction SilentlyContinue
+            if ($cmd) { return $cmd.Source }
+            $found = Get-ChildItem -Path "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Filter signtool.exe -Recurse -ErrorAction SilentlyContinue |
+              Where-Object { $_.FullName -match '\\x64\\' } | Select-Object -First 1
+            if ($found) { return $found.FullName }
+            throw "signtool.exe not found on this runner"
+          }
+          $signtool = Find-SignTool
+          Write-Host "signtool: $signtool"
+
+          $failed = $false
+          $binaries = Get-ChildItem -Path kit\payload -Recurse -Include '*.exe','*.dll','*.node' -File
+          Write-Host "Verifying $($binaries.Count) signed payload file(s) …"
+          foreach ($f in $binaries) {
+            & $signtool verify /pa /v $f.FullName
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host "::error::signtool verify failed for $($f.FullName)"
+              $failed = $true
+            }
+          }
+
+          $msi = Join-Path (Resolve-Path kit\out) 'suveren-gateway.msi'
+          Write-Host "Verifying $msi …"
+          & $signtool verify /pa /v $msi
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::error::signtool verify failed for $msi"
+            $failed = $true
+          }
+
+          if ($failed) { throw "one or more signtool verify checks failed" }
+          Write-Host "All signed files verified against the test certificate."
+
+      - name: SHA256SUMS present and non-empty
+        shell: pwsh
+        run: |
+          $sums = Join-Path (Resolve-Path kit\out) 'SHA256SUMS'
+          if (-not (Test-Path $sums)) { throw "SHA256SUMS missing at $sums" }
+          Get-Content $sums
+          if ((Get-Content $sums).Count -lt 1) { throw "SHA256SUMS is empty" }
+
+  # ─── The real install path: msiexec, then launcher + service, with npm
+  #     unreachable — no network dependency anywhere in the started gateway. ─
+  install-test:
+    name: install test
+    needs: build-msi
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-msi-unsigned
+          path: msi
+
+      - name: Install (per-user, silent — the Intune path)
+        shell: pwsh
+        run: |
+          $msi = (Resolve-Path msi\suveren-gateway.msi).Path
+          $log = "$env:RUNNER_TEMP\install.log"
+          $p = Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /qn /norestart /l*v `"$log`"" -Wait -PassThru
+          if ($p.ExitCode -ne 0) {
+            Write-Host "::group::install log"
+            Get-Content $log
+            Write-Host "::endgroup::"
+            throw "msiexec /i exited $($p.ExitCode)"
+          }
+          Write-Host "installed, exit code $($p.ExitCode)"
+
+      - name: Installed files present
+        shell: pwsh
+        run: |
+          $root = "$env:LOCALAPPDATA\Programs\Suveren"
+          $expect = @(
+            "$root\suveren-gateway.cmd",
+            "$root\node\node.exe",
+            "$root\gateway\server.js",
+            "$root\gateway\bin\suveren-gateway.js"
+          )
+          $missing = $expect | Where-Object { -not (Test-Path $_) }
+          if ($missing) { throw "missing after install: $($missing -join ', ')" }
+          Write-Host "install root: $root"
+          Get-ChildItem $root
+
+      - name: Start via the installed launcher — npm unreachable, no node on PATH but the bundled one
+        id: start
+        shell: pwsh
+        env:
+          SUVEREN_CP_PORT: '15400'
+          SUVEREN_MCP_PORT: '15430'
+          # Points at nothing — proves no step below ever needs the registry.
+          npm_config_registry: 'http://127.0.0.1:9'
+          SUVEREN_INTERNAL_SECRET: 'windows-install-test-internal-secret'
+        run: |
+          $dataDir = "$env:RUNNER_TEMP\suveren-install-test-data"
+          New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
+          "dataDir=$dataDir" >> $env:GITHUB_OUTPUT
+
+          # No node on PATH except the one this gateway was installed with —
+          # the launcher itself hardcodes the bundled node.exe path, so this
+          # only has to make sure nothing ELSE on PATH could be used by
+          # mistake (e.g. a connector accidentally resolving a different
+          # node/npm via PATH).
+          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+          $env:SUVEREN_DATA_DIR = $dataDir
+
+          & "$env:LOCALAPPDATA\Programs\Suveren\suveren-gateway.cmd" start --detach
+          if ($LASTEXITCODE -ne 0) { throw "launcher start --detach exited $LASTEXITCODE" }
+
+      - name: Wait for health + assert managed connectors started offline
+        shell: pwsh
+        run: |
+          $cpHealth = 'http://localhost:15400/health'
+          $mcpHealth = 'http://localhost:15430/health'
+
+          $deadline = (Get-Date).AddSeconds(180)
+          $body = $null
+          while ((Get-Date) -lt $deadline) {
+            try {
+              $body = Invoke-RestMethod -Uri $cpHealth -TimeoutSec 5
+              if ($body.status -eq 'ok') { break }
+            } catch { Start-Sleep -Seconds 2 }
+          }
+          if (-not $body) { throw "control plane /health never answered within 180s" }
+          Write-Host ($body | ConvertTo-Json -Depth 5)
+
+          if ($body.installMethod -ne 'managed') {
+            # Depends on the parallel IT-policy-settings change wiring
+            # SUVEREN_INSTALL_METHOD into detectInstallMethod() — see
+            # suveren-as/docs/work-plan.md. This launcher already sets the
+            # env var; warn (don't fail this build on someone else's
+            # not-yet-merged change) until that lands, then tighten to a
+            # hard failure.
+            Write-Host "::warning::installMethod is '$($body.installMethod)', expected 'managed' — depends on the IT-policy-settings change (SUVEREN_INSTALL_METHOD env support in detectInstallMethod); see work-plan.md."
+          } else {
+            Write-Host "installMethod: managed (confirmed)"
+          }
+
+          $mcpDeadline = (Get-Date).AddSeconds(240)
+          $mcpBody = $null
+          $targets = @('crm', 'records', 'erp')
+          while ((Get-Date) -lt $mcpDeadline) {
+            try {
+              $mcpBody = Invoke-RestMethod -Uri $mcpHealth -TimeoutSec 5
+              $statuses = $mcpBody.integrations | Where-Object { $targets -contains $_.id }
+              $allUp = ($statuses.Count -eq $targets.Count) -and ($statuses | ForEach-Object { $_.running -and $_.toolCount -gt 0 } ) -notcontains $false
+              if ($allUp) { break }
+            } catch {}
+            Start-Sleep -Seconds 3
+          }
+          Write-Host ($mcpBody | ConvertTo-Json -Depth 5)
+          foreach ($id in $targets) {
+            $entry = $mcpBody.integrations | Where-Object { $_.id -eq $id }
+            if (-not $entry) { throw "$id: not in the integration registry — did not auto-start" }
+            if (-not $entry.running) { throw "$id: registered but not running ($($entry.error))" }
+            if ($entry.toolCount -le 0) { throw "$id: running but discovered 0 tools" }
+            Write-Host "$id : running, $($entry.toolCount) tool(s) — started OFFLINE (SUVEREN_OFFLINE=1, npm unreachable)"
+          }
+
+      - name: service install — scheduled task created
+        shell: pwsh
+        run: |
+          & "$env:LOCALAPPDATA\Programs\Suveren\suveren-gateway.cmd" service install
+          if ($LASTEXITCODE -ne 0) { throw "service install exited $LASTEXITCODE" }
+          $t = Get-ScheduledTask -TaskName 'Suveren' -ErrorAction Stop
+          Write-Host "scheduled task present: $($t.TaskName), state $($t.State)"
+
+      - name: service uninstall — scheduled task removed
+        shell: pwsh
+        run: |
+          & "$env:LOCALAPPDATA\Programs\Suveren\suveren-gateway.cmd" service uninstall
+          if ($LASTEXITCODE -ne 0) { throw "service uninstall exited $LASTEXITCODE" }
+          $t = Get-ScheduledTask -TaskName 'Suveren' -ErrorAction SilentlyContinue
+          if ($t) { throw "scheduled task 'Suveren' still present after service uninstall" }
+          Write-Host "scheduled task removed"
+
+      - name: Stop the gateway
+        if: always()
+        shell: pwsh
+        run: |
+          & "$env:LOCALAPPDATA\Programs\Suveren\suveren-gateway.cmd" stop
+          Write-Host "stop exited $LASTEXITCODE (non-fatal if already stopped)"
+
+      - name: Uninstall the msi — program dir and task gone
+        if: always()
+        shell: pwsh
+        run: |
+          $msi = (Resolve-Path msi\suveren-gateway.msi).Path
+          $log = "$env:RUNNER_TEMP\uninstall.log"
+          $p = Start-Process msiexec.exe -ArgumentList "/x `"$msi`" /qn /norestart /l*v `"$log`"" -Wait -PassThru
+          if ($p.ExitCode -ne 0) {
+            Write-Host "::group::uninstall log"
+            Get-Content $log
+            Write-Host "::endgroup::"
+            throw "msiexec /x exited $($p.ExitCode)"
+          }
+
+          $root = "$env:LOCALAPPDATA\Programs\Suveren"
+          if (Test-Path $root) { throw "install dir still present after uninstall: $root" }
+          $t = Get-ScheduledTask -TaskName 'Suveren' -ErrorAction SilentlyContinue
+          if ($t) { throw "scheduled task 'Suveren' still present after msi uninstall" }
+          Write-Host "clean: install dir and scheduled task both gone"
+
+      - name: Gateway log
+        if: always()
+        shell: pwsh
+        run: |
+          $log = "$env:RUNNER_TEMP\suveren-install-test-data\gateway.log"
+          if (Test-Path $log) { Get-Content $log } else { Write-Host "(no log file)" }
+
+  # ─── Attach unsigned msi + signing kit to the GitHub Release for the tag.
+  #     Tag pushes and manual dispatch only — never on a PR. ─────────────────
+  release:
+    name: publish release assets
+    # Tag pushes ONLY. Deliberately excludes workflow_dispatch — that trigger
+    # exists so this workflow's build/install-test jobs can be iterated on
+    # from a branch without a tag (see bundle/windows/* development), and
+    # must never have a side effect of creating a release or a tag.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build-payload, build-msi, install-test, prove-signing-kit]
+    runs-on: windows-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-payload
+          path: release/payload
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-msi-unsigned
+          path: release/msi
+
+      - name: Assemble release assets
+        id: assets
+        shell: pwsh
+        run: |
+          $version = "${{ needs.build-payload.outputs.version }}"
+          New-Item -ItemType Directory -Force -Path release\out | Out-Null
+
+          $msiOut = "release\out\suveren-gateway-$version-windows-unsigned.msi"
+          Copy-Item release\msi\suveren-gateway.msi $msiOut
+
+          Copy-Item -Recurse bundle\windows\wix release\kit\wix
+          Copy-Item bundle\windows\launcher.cmd release\kit\launcher.cmd
+          Copy-Item bundle\windows\build-signed.ps1 release\kit\build-signed.ps1
+          Copy-Item -Recurse release\payload release\kit\payload
+
+          $kitZip = "release\out\suveren-gateway-$version-windows-signing-kit.zip"
+          Compress-Archive -Path release\kit\* -DestinationPath $kitZip
+
+          $sums = Get-ChildItem release\out -File | ForEach-Object {
+            $hash = (Get-FileHash -Algorithm SHA256 -Path $_.FullName).Hash.ToLowerInvariant()
+            "$hash  $($_.Name)"
+          }
+          $sums | Set-Content -Path release\out\SHA256SUMS -Encoding ascii
+          Get-Content release\out\SHA256SUMS
+
+          "msi=$msiOut" >> $env:GITHUB_OUTPUT
+          "kit=$kitZip" >> $env:GITHUB_OUTPUT
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: |
+            ${{ steps.assets.outputs.msi }}
+            ${{ steps.assets.outputs.kit }}
+
+      - name: Create/update the GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: |
+            release/out/*.msi
+            release/out/*.zip
+            release/out/SHA256SUMS
