@@ -63,11 +63,21 @@
     <!-- The payload: official Node win-x64, the gateway bundle, and every
          pinned connector — thousands of files from build-payload.mjs.
          Harvested by glob (WiX v5's built-in <Files> globbing) rather than
-         hand-listed or run through heat.exe separately. -->
+         hand-listed or run through heat.exe separately.
+
+         ONE <Files> element covering the whole payload tree, not one per
+         subdirectory (node\, gateway\, integrations\): WiX derives each
+         generated File/Component Id from the path relative to the <Files>
+         element's OWN Include base, so three separate globs can each
+         independently produce the same relative path (e.g. two unrelated
+         node_modules/<pkg>/package.json at the same depth) and collide —
+         error WIX0091 "Duplicate File ... found", hit for real on the
+         windows-latest CI runner. One glob over PayloadDir\** makes every
+         relative path unique by construction, and still reproduces the
+         exact node\ / gateway\ / integrations\ subtree layout underneath
+         INSTALLFOLDER that launcher.cmd expects. -->
     <ComponentGroup Id="PayloadFiles" Directory="INSTALLFOLDER">
-      <Files Include="$(var.PayloadDir)\node\**" />
-      <Files Include="$(var.PayloadDir)\gateway\**" />
-      <Files Include="$(var.PayloadDir)\integrations\**" />
+      <Files Include="$(var.PayloadDir)\**" />
     </ComponentGroup>
 
     <!-- The launcher — see bundle/windows/launcher.cmd's own doc comment. -->
