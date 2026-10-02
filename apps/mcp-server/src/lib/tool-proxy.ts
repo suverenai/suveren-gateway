@@ -152,6 +152,48 @@ export function profileMatches(profileId: string, shortName: string): boolean {
  * a value > 0. A tool whose action type carries no cumulative_count bound at
  * all has nothing to require, so it is vacuously visible.
  */
+/**
+ * The cumulative_count bounds of a profile that govern `actionType` (by appliesTo,
+ * or all action types when it is absent — see hap-core's boundActionTypes).
+ */
+function countBoundsFor(profileId: string, actionType: string): string[] | null {
+  const fields = getProfile(profileId)?.boundsSchema?.fields;
+  if (!fields) return null;
+  return Object.entries(fields)
+    .filter(([, def]) => def.boundType?.kind === 'cumulative_count')
+    .filter(([name, def]) => {
+      const applies = boundActionTypes(name, def);
+      return applies === undefined || applies.includes(actionType);
+    })
+    .map(([name]) => name);
+}
+
+/**
+ * A count bound of 0 for this action type means the mandate can never allow it —
+ * the Authority Server would refuse every ticket. Returns that bound's name, or
+ * null when nothing caps the action at zero.
+ *
+ * Used in selection: with two mandates on one profile (a work mandate with
+ * setup_daily_max 0 and a setup mandate with 1), the tiebreak could pick the
+ * zero-capped one and the call failed at the AS although another mandate allowed
+ * it (found 2026-10-02, hap-e2e simulation-mode). Skipping it locally also gives a
+ * clearer refusal than the AS's limit message when no mandate allows the action.
+ */
+export function zeroCappedBound(
+  profileId: string,
+  bounds: Record<string, string | number> | undefined,
+  actionType: string | undefined,
+): string | null {
+  if (typeof actionType !== 'string') return null;
+  const names = countBoundsFor(profileId, actionType);
+  if (!names) return null;
+  for (const n of names) {
+    const v = bounds?.[n];
+    if (v !== undefined && v !== '' && Number(v) <= 0) return n;
+  }
+  return null;
+}
+
 export function toolIsAuthorizedForDisplay(
   tool: DiscoveredTool,
   matchingAuths: EnrichedAuthorization[],
@@ -163,19 +205,8 @@ export function toolIsAuthorizedForDisplay(
   const actionType = tool.gating.staticExecution?.action_type;
   if (!profileId || typeof actionType !== 'string') return false;
 
-  const fields = getProfile(profileId)?.boundsSchema?.fields;
-  if (!fields) return false;
-
-  const requiredFields = Object.entries(fields)
-    .filter(([, def]) => def.boundType?.kind === 'cumulative_count')
-    .filter(([name, def]) => {
-      const applies = boundActionTypes(name, def);
-      // undefined ⇒ the bound governs every action type (see boundActionTypes'
-      // own doc comment) — so it applies here too.
-      return applies === undefined || applies.includes(actionType);
-    })
-    .map(([name]) => name);
-
+  const requiredFields = countBoundsFor(profileId, actionType);
+  if (!requiredFields) return false;
   if (requiredFields.length === 0) return true;
 
   return matchingAuths.some(a => {
@@ -732,7 +763,12 @@ function createGatedToolHandlerInner(
         bounds: candidate.bounds,
         context: candidate.context,
       });
-      if (result.approved) {
+      const capped = result.approved
+        ? zeroCappedBound(candidate.profileId, (candidate.bounds ?? candidate.frame) as Record<string, string | number> | undefined, typeof execution.action_type === 'string' ? execution.action_type : undefined)
+        : null;
+      if (result.approved && capped) {
+        errors.push(`${candidate.path}: ${capped} is 0 — this mandate does not allow "${execution.action_type}"`);
+      } else if (result.approved) {
         passers.push(candidate);
       } else {
         const reasons = result.errors.map(e => {
