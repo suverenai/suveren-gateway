@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- **Node.js 20+** — check with `node -v`
+- **Node.js 22+** — check with `node -v`
 - **pnpm 9+** — install with `corepack enable` (built into Node.js) or `npm install -g pnpm`
 - **hap-profiles** — must be cloned as a sibling directory (or set `SUVEREN_PROFILES_DIR`)
 

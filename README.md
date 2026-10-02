@@ -106,7 +106,7 @@ Open `http://localhost:7400`. The MCP server is at `http://localhost:7430`.
 
 ### Option B — npm
 
-Requires [Node.js 20.18.1+](https://nodejs.org/).
+Requires [Node.js 22+](https://nodejs.org/).
 
 ```bash
 npm install -g @suveren/gateway

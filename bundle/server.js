@@ -13,6 +13,15 @@ import { fileURLToPath } from 'node:url';
 import { homedir, tmpdir, constants as osConstants } from 'node:os';
 import { existsSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { resolveCaFile, resolveSimulation } from './lib/config.mjs';
+import { unsupportedNodeReason } from './lib/node-version.mjs';
+
+// Docker and the login service start this file directly, not through the CLI,
+// so it checks the Node version too (see lib/node-version.mjs).
+const nodeReason = unsupportedNodeReason(process.versions.node);
+if (nodeReason) {
+  console.error(`[suveren-gateway] ${nodeReason}`);
+  process.exit(1);
+}
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const THIS_FILE = fileURLToPath(import.meta.url);

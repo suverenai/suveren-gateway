@@ -45,7 +45,7 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
           # The repo is no longer at the workspace root (it sits beside
           # hap-profiles), so the lockfile has to be named explicitly.
