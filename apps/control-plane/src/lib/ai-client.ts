@@ -6,7 +6,13 @@
  *
  * Ported from demo-deploy/apps/ui/src/local-ai/client.ts
  * Key difference: runs server-side, keys never sent to browser.
+ *
+ * Every call goes through `proxiedFetch` (proxied-fetch.ts): a remote
+ * endpoint (OpenRouter, Groq, ...) is routed through a corporate proxy when
+ * one applies; a local one (Ollama on 127.0.0.1) never is, regardless of the
+ * proxy environment.
  */
+import { proxiedFetch } from './proxied-fetch';
 
 /** Shared with the reasoning-budget explanation, so the number in the error is the real one. */
 export const CHAT_TOKEN_BUDGET = 4000;
@@ -179,7 +185,7 @@ export async function getAIAssistance(
     let suggestion: string;
 
     if (config.provider === 'ollama') {
-      const response = await fetch(`${config.endpoint}/api/chat`, {
+      const response = await proxiedFetch(`${config.endpoint}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -197,7 +203,7 @@ export async function getAIAssistance(
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (config.apiKey) headers['Authorization'] = `Bearer ${config.apiKey}`;
 
-      const response = await fetch(`${config.endpoint}/chat/completions`, {
+      const response = await proxiedFetch(`${config.endpoint}/chat/completions`, {
         method: 'POST',
         headers,
         body: JSON.stringify({
@@ -373,7 +379,7 @@ export async function getAIChatResponse(
     let reply: string;
 
     if (config.provider === 'ollama') {
-      const response = await fetch(`${config.endpoint}/api/chat`, {
+      const response = await proxiedFetch(`${config.endpoint}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -400,7 +406,7 @@ export async function getAIChatResponse(
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (config.apiKey) headers['Authorization'] = `Bearer ${config.apiKey}`;
 
-      const response = await fetch(`${config.endpoint}/chat/completions`, {
+      const response = await proxiedFetch(`${config.endpoint}/chat/completions`, {
         method: 'POST',
         headers,
         body: JSON.stringify({
@@ -458,7 +464,7 @@ async function callModel(
   opts: { temperature: number; maxTokens: number; timeoutMs: number },
 ): Promise<string> {
   if (config.provider === 'ollama') {
-    const response = await fetch(`${config.endpoint}/api/chat`, {
+    const response = await proxiedFetch(`${config.endpoint}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -475,7 +481,7 @@ async function callModel(
   }
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (config.apiKey) headers['Authorization'] = `Bearer ${config.apiKey}`;
-  const response = await fetch(`${config.endpoint}/chat/completions`, {
+  const response = await proxiedFetch(`${config.endpoint}/chat/completions`, {
     method: 'POST',
     headers,
     body: JSON.stringify({ model: config.model, messages, temperature: opts.temperature, max_tokens: opts.maxTokens }),
@@ -574,7 +580,7 @@ export async function listAIModels(
 ): Promise<{ ok: boolean; models: string[]; message?: string }> {
   try {
     if (config.provider === 'ollama') {
-      const res = await fetch(`${config.endpoint}/api/tags`, {
+      const res = await proxiedFetch(`${config.endpoint}/api/tags`, {
         signal: AbortSignal.timeout(5000),
       });
       if (!res.ok) throw new Error(`Ollama: ${res.status}`);
@@ -588,7 +594,7 @@ export async function listAIModels(
 
     const headers: Record<string, string> = {};
     if (config.apiKey) headers['Authorization'] = `Bearer ${config.apiKey}`;
-    const res = await fetch(`${config.endpoint}/models`, {
+    const res = await proxiedFetch(`${config.endpoint}/models`, {
       headers,
       signal: AbortSignal.timeout(8000),
     });
@@ -618,7 +624,7 @@ export async function listAIModels(
 export async function testAIConnectivity(config: AIConfig): Promise<{ ok: boolean; message: string }> {
   try {
     if (config.provider === 'ollama') {
-      const res = await fetch(`${config.endpoint}/api/tags`, {
+      const res = await proxiedFetch(`${config.endpoint}/api/tags`, {
         signal: AbortSignal.timeout(3000),
       });
       if (!res.ok) throw new Error(`Ollama: ${res.status}`);
@@ -626,7 +632,7 @@ export async function testAIConnectivity(config: AIConfig): Promise<{ ok: boolea
     } else {
       const headers: Record<string, string> = {};
       if (config.apiKey) headers['Authorization'] = `Bearer ${config.apiKey}`;
-      const res = await fetch(`${config.endpoint}/models`, {
+      const res = await proxiedFetch(`${config.endpoint}/models`, {
         headers,
         signal: AbortSignal.timeout(3000),
       });

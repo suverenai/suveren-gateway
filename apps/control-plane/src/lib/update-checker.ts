@@ -20,6 +20,7 @@
 import { execSync } from 'node:child_process';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { proxiedFetch } from './proxied-fetch';
 
 export type InstallMethod = 'docker' | 'npm' | 'dev';
 
@@ -51,13 +52,13 @@ export async function forceCheck(): Promise<void> {
 // ─── GHCR (Docker) check ────────────────────────────────────────────────
 
 async function ghcrToken(): Promise<string> {
-  const res = await fetch(`https://ghcr.io/token?scope=repository:${GHCR_IMAGE}:pull`);
+  const res = await proxiedFetch(`https://ghcr.io/token?scope=repository:${GHCR_IMAGE}:pull`);
   const data = (await res.json()) as { token: string };
   return data.token;
 }
 
 async function ghcrDigest(tag: string, token: string): Promise<string | null> {
-  const res = await fetch(`https://ghcr.io/v2/${GHCR_IMAGE}/manifests/${tag}`, {
+  const res = await proxiedFetch(`https://ghcr.io/v2/${GHCR_IMAGE}/manifests/${tag}`, {
     method: 'HEAD',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -85,7 +86,7 @@ async function checkDocker(): Promise<void> {
 // ─── npm registry check ─────────────────────────────────────────────────
 
 async function checkNpm(): Promise<void> {
-  const res = await fetch(`https://registry.npmjs.org/${encodeURIComponent(NPM_PACKAGE)}/latest`);
+  const res = await proxiedFetch(`https://registry.npmjs.org/${encodeURIComponent(NPM_PACKAGE)}/latest`);
   if (!res.ok) return;
   const data = (await res.json()) as { version: string };
   latestVersion = data.version;
