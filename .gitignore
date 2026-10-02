@@ -7,3 +7,9 @@ dist/
 test-results/
 playwright-report/
 profiles/
+
+# Windows installer build output (bundle/windows/*.mjs regenerate these)
+bundle/windows/payload/
+bundle/windows/out/
+bundle/windows/*.msi
+bundle/windows/*.zip
