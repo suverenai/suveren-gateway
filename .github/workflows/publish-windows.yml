@@ -18,6 +18,10 @@ name: Publish Windows installer
 on:
   push:
     tags: ['v*']
+    # TEMPORARY, for CI iteration before this workflow is registered on the
+    # default branch (workflow_dispatch can't target an unregistered
+    # workflow) — REMOVE this `branches:` entry before merging.
+    branches: ['feat/windows-installer']
   pull_request:
     paths:
       - 'bundle/windows/**'
