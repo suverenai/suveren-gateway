@@ -12,6 +12,9 @@ export declare const DEFAULT_AS_URL: string;
 export interface SavedConfig {
   asUrl?: string;
   caFile?: string;
+  pinTls?: boolean;
+  pinTlsExpectedFingerprint?: string;
+  simulation?: boolean;
 }
 
 export declare function readConfig(dataDir: string): SavedConfig;
@@ -35,3 +38,4 @@ export declare function validateCaFile(candidate: string): CaFileValidation;
 
 export declare function resolveAsUrl(dataDir: string): string;
 export declare function resolveCaFile(dataDir: string): string | undefined;
+export declare function resolveSimulation(dataDir: string): boolean;

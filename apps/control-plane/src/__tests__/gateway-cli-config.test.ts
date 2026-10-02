@@ -17,6 +17,7 @@ import {
   validateCaFile,
   resolveAsUrl,
   resolveCaFile,
+  resolveSimulation,
 } from '../../../../bundle/lib/config.mjs';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'cli-config-'));
@@ -97,5 +98,27 @@ describe('bundle/lib/config.mjs — resolveAsUrl / resolveCaFile precedence', ()
     writeConfig(dir, { caFile: '/etc/ssl/company-ca.pem' });
     expect(resolveCaFile(dir)).toBe('/etc/ssl/company-ca.pem');
     expect(readConfig(dir)).toEqual({ caFile: '/etc/ssl/company-ca.pem' });
+  });
+});
+
+describe('bundle/lib/config.mjs — resolveSimulation', () => {
+  it('defaults to false — a normal install is unaffected', () => {
+    const dir = tmp(); dirs.push(dir);
+    expect(resolveSimulation(dir)).toBe(false);
+  });
+
+  it('round-trips true and false', () => {
+    const dir = tmp(); dirs.push(dir);
+    writeConfig(dir, { simulation: true });
+    expect(resolveSimulation(dir)).toBe(true);
+    writeConfig(dir, { simulation: false });
+    expect(resolveSimulation(dir)).toBe(false);
+  });
+
+  it('a corrupt config.json degrades to false rather than throwing (readConfig, not readConfigStrict)', () => {
+    const dir = tmp(); dirs.push(dir);
+    writeConfig(dir, {});
+    writeFileSync(join(dir, 'config.json'), '{ not json', 'utf-8');
+    expect(resolveSimulation(dir)).toBe(false);
   });
 });

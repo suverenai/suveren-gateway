@@ -76,10 +76,16 @@ export interface IntegrationManifest {
   };
   oauth: ManifestOAuthConfig | null;
   /**
-   * The connector can answer from a simulated system: `field` is the credential
-   * field holding the mode, `default` the mode when it is unset. Display only —
-   * the gateway's checks and tickets are identical in both modes; the UI badges a
-   * simulated connector so a forgotten switch after go-live is never silent.
+   * The connector CAN answer from a simulated system: `field` is the credential
+   * field holding the mode, `default` the mode when it is unset. Two consumers:
+   *   1. Display — the UI badges a simulated connector (per its current
+   *      credential value) so a forgotten switch after go-live is never silent.
+   *   2. Enforcement — gateway-wide simulation mode (SUVEREN_SIMULATION=1, see
+   *      simulation-mode.ts) refuses to START any connector with NO entry here
+   *      at all, and FORCES this field's env var to "simulation" for every
+   *      connector that does, overriding its stored credential value.
+   * Absent simulation mode, the gateway's checks and tickets are identical in
+   * both modes — this field alone changes nothing.
    */
   simulation?: { field: string; default: string } | null;
   npmPackage?: string;

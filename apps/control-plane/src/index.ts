@@ -62,6 +62,7 @@ import { buildSessionHealth } from './lib/session-health';
 import { loadDenials, selectDenials } from './lib/denials-reader';
 import { AGENT_CONTEXT_MAX_BYTES, agentBriefPath, readAgentBrief } from './lib/agent-brief-store';
 import { resolveAsUrl, resolvePinTls, validatePinTlsForUrl } from './lib/as-config';
+import { isSimulationMode } from './lib/simulation-mode';
 import { readPairing, clearPairing, fingerprintOf } from './lib/as-pairing';
 import { formatPinFingerprint, buildPinnedHttpsAgent, isPinCheckError, type AsFetchPinning } from './lib/as-tls-pin';
 
@@ -1024,6 +1025,9 @@ app.get('/health', async (req: Request, res: Response) => {
     updateAvailable: update.updateAvailable,
     installMethod: INSTALL_METHOD,
     spUrl: SP_URL,
+    // Purely local — the Authority Server never learns this. UI reads it to
+    // show a gateway-wide banner ("real systems are blocked").
+    simulation: isSimulationMode(),
     session: buildSessionHealth(vault),
     security: {
       note: 'Gateway secures tool execution. Agent host isolation is the user\'s responsibility.',

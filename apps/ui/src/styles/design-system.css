@@ -359,10 +359,15 @@ code {
    ══════════════════════════════════════════════ */
 .sidebar {
   position: fixed;
-  top: var(--nav-height);
+  /* --update-banner-h / --sim-banner-h default to 0px, so this collapses to
+     the plain var(--nav-height) case when neither banner is showing — see
+     UpdateBanner.tsx / SimulationBanner.tsx, which set them via ResizeObserver
+     only while visible. Both can be up at once (update + simulation), so the
+     offsets sum rather than living in separate class-gated rules. */
+  top: calc(var(--nav-height) + var(--update-banner-h, 0px) + var(--sim-banner-h, 0px));
   left: 0;
   width: var(--sidebar-width);
-  height: calc(100vh - var(--nav-height));
+  height: calc(100vh - var(--nav-height) - var(--update-banner-h, 0px) - var(--sim-banner-h, 0px));
   background: var(--bg-elevated);
   border-right: 1px solid var(--border);
   padding: 1rem 0;
@@ -443,7 +448,7 @@ code {
    ══════════════════════════════════════════════ */
 .main-content {
   margin-left: var(--sidebar-width);
-  margin-top: var(--nav-height);
+  margin-top: calc(var(--nav-height) + var(--update-banner-h, 0px) + var(--sim-banner-h, 0px));
   padding: 2rem;
   min-height: calc(100vh - var(--nav-height));
 }
@@ -1946,14 +1951,10 @@ code {
   gap: 0.6rem;
 }
 
-body.has-update-banner .sidebar {
-  top: calc(var(--nav-height) + var(--update-banner-h, 0px));
-  height: calc(100vh - var(--nav-height) - var(--update-banner-h, 0px));
-}
-
-body.has-update-banner .main-content {
-  margin-top: calc(var(--nav-height) + var(--update-banner-h, 0px));
-}
+/* Superseded by the unconditional var-sum formula on .sidebar / .main-content
+   above (which includes --sim-banner-h too, so the two banners stack
+   correctly when both are visible) — kept as a comment, not a rule, so a
+   second class-gated override can't silently drop one banner's offset. */
 .update-banner-row {
   display: flex;
   align-items: center;
@@ -2022,11 +2023,40 @@ body.has-update-banner .main-content {
   background: var(--success);
 }
 
+/* ══════════════════════════════════════════════
+   SIMULATION BANNER
+   ══════════════════════════════════════════════ */
+
+/* Same fixed-strip mechanics as .update-banner (stacks BELOW it when both are
+   showing — see the --update-banner-h / --sim-banner-h sum on .sidebar /
+   .main-content above). Warning colour, matching .int-chip-sim's palette —
+   this is the gateway-wide version of that per-connector chip: persistent
+   (no dismiss) for as long as the mode is on, since there's nothing to
+   acknowledge — only to turn off, which is a CLI command, not a click here. */
+.simulation-banner {
+  position: fixed;
+  top: calc(var(--nav-height) + var(--update-banner-h, 0px));
+  left: 0;
+  right: 0;
+  z-index: 899; /* just under .update-banner, which takes priority when both show */
+  background: var(--warning);
+  color: #fff;
+  border-top: 1px solid rgba(0, 0, 0, 0.2);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.2);
+  padding: 0.6rem 1.25rem;
+  text-align: center;
+}
+.simulation-banner-text {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
 /* ── Updating overlay (blur the chrome, wait for the restart) ── */
 body.is-updating .top-nav,
 body.is-updating .sidebar,
 body.is-updating .main-content,
-body.is-updating .update-banner {
+body.is-updating .update-banner,
+body.is-updating .simulation-banner {
   filter: blur(5px);
   pointer-events: none;
   user-select: none;

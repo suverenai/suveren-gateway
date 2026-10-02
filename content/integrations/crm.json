@@ -137,7 +137,8 @@
           "contact_type": "customer",
           "action_type": "setup"
         },
-        "actionLabel": "Test data loaded"
+        "actionLabel": "Test data loaded",
+        "hideUnlessAuthorized": true
       }
     }
   },

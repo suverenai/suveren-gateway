@@ -185,6 +185,42 @@ See `suveren-gateway config help` for the full command reference.
 
 ---
 
+## Simulation mode — block every real system
+
+A mandate is bound to a *profile* (e.g. "sales"), not to a specific connector. If a real
+connector (e.g. a live ERP account) and a simulated one (the built-in ERP/CRM/email
+simulators) share a profile on one gateway, a mandate meant only for testing also
+authorizes the real connector — nothing about the mandate says which one it's for.
+
+Simulation mode closes that gap gateway-wide: turn it on and **every connector without a
+manifest `simulation` marker is refused to even start** (the built-in ERP, CRM, and email
+simulators all declare one; a connected Gmail or live ERP account does not), and every
+connector that does declare one has its mode forced to `simulation`, overriding whatever
+credential value is on file. Mandates and profiles are completely unaffected, and the
+Authority Server never learns this is on — it's a purely local, gateway-side switch.
+
+```bash
+# Start fresh with real systems blocked:
+suveren-gateway start --simulation
+
+# Or flip it on an existing install (takes effect on the next start/restart):
+suveren-gateway simulation on
+suveren-gateway restart
+
+# Check the mode (the SAVED setting and, if the gateway is running, the LIVE one):
+suveren-gateway simulation status
+
+# Turning it off makes real systems reachable again, so it requires typed
+# confirmation (or --confirm live for scripts) — turning it ON does not:
+suveren-gateway simulation off
+suveren-gateway restart
+```
+
+`suveren-gateway status` also shows the current mode. See `suveren-gateway simulation help`
+for the full command reference.
+
+---
+
 ## Technical Documentation
 
 | Document | Contents |

@@ -3,6 +3,7 @@ import { Outlet } from 'react-router-dom';
 import { TopNav } from './TopNav';
 import { Sidebar } from './Sidebar';
 import { UpdateBanner } from './UpdateBanner';
+import { SimulationBanner } from './SimulationBanner';
 import { MobileMenu } from './MobileMenu';
 import { IntegrationStatusProvider } from '../contexts/IntegrationStatusContext';
 import { TabBadge } from './TabBadge';
@@ -17,6 +18,7 @@ export function AppShell() {
       <TabBadge />
       <TopNav onMenuToggle={() => setMobileMenuOpen(!mobileMenuOpen)} />
       <UpdateBanner />
+      <SimulationBanner />
       <Sidebar />
       <MobileMenu open={mobileMenuOpen} onClose={() => setMobileMenuOpen(false)} />
       <div className="main-content">

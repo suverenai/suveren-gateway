@@ -33,6 +33,7 @@ export function readConfig(dataDir) {
     if (typeof data.caFile === 'string') out.caFile = data.caFile;
     if (typeof data.pinTls === 'boolean') out.pinTls = data.pinTls;
     if (typeof data.pinTlsExpectedFingerprint === 'string') out.pinTlsExpectedFingerprint = data.pinTlsExpectedFingerprint;
+    if (typeof data.simulation === 'boolean') out.simulation = data.simulation;
     return out;
   } catch {
     return {};
@@ -59,6 +60,7 @@ function readConfigStrict(dataDir) {
   if (typeof data.caFile === 'string') out.caFile = data.caFile;
   if (typeof data.pinTls === 'boolean') out.pinTls = data.pinTls;
   if (typeof data.pinTlsExpectedFingerprint === 'string') out.pinTlsExpectedFingerprint = data.pinTlsExpectedFingerprint;
+  if (typeof data.simulation === 'boolean') out.simulation = data.simulation;
   return out;
 }
 
@@ -195,4 +197,18 @@ export function resolvePinTls(dataDir) {
  */
 export function resolvePinTlsExpectedFingerprint(dataDir) {
   return readConfig(dataDir).pinTlsExpectedFingerprint;
+}
+
+/**
+ * The saved simulation-mode setting (default false — off, nothing changes for
+ * a normal install). No env/flag tier of its own here: `start --simulation`
+ * and `simulation on|off` both go through `writeConfig`, and bundle/server.js
+ * is the one place that turns this saved value into `SUVEREN_SIMULATION` for
+ * the children it spawns (see that file's doc comment) — mirroring how
+ * `resolveCaFile` works, not how `resolveAsUrl` works (no env override here;
+ * an operator who wants to force it for one run can still set
+ * SUVEREN_SIMULATION directly, which server.js honours ahead of this).
+ */
+export function resolveSimulation(dataDir) {
+  return readConfig(dataDir).simulation === true;
 }
