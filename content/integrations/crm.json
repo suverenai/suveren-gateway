@@ -18,11 +18,23 @@
         "type": "text",
         "placeholder": "Leave empty for local SQLite",
         "optional": true
+      },
+      {
+        "key": "mode",
+        "label": "Mode (optional)",
+        "type": "text",
+        "placeholder": "simulation (default) — live needs an adapter for your CRM",
+        "optional": true
       }
     ],
     "envMapping": {
-      "DATABASE_URL": "databaseUrl"
+      "DATABASE_URL": "databaseUrl",
+      "CRM_MODE": "mode"
     }
+  },
+  "simulation": {
+    "field": "mode",
+    "default": "simulation"
   },
   "personalDefault": true,
   "oauth": null,
@@ -118,6 +130,14 @@
         "category": "read",
         "boundField": "export_access",
         "requiredValue": "allowed"
+      },
+      "load_simulation": {
+        "executionMapping": {},
+        "staticExecution": {
+          "contact_type": "customer",
+          "action_type": "setup"
+        },
+        "actionLabel": "Test data loaded"
       }
     }
   },
@@ -130,7 +150,8 @@
       "bounds": {
         "read_access": "unlimited",
         "write_daily_max": "50",
-        "delete_daily_max": "0"
+        "delete_daily_max": "0",
+        "setup_daily_max": "0"
       },
       "context": {
         "contact_type": "customer,lead,partner,vendor"
@@ -150,7 +171,8 @@
       "bounds": {
         "read_access": "unlimited",
         "write_daily_max": "50",
-        "delete_daily_max": "10"
+        "delete_daily_max": "10",
+        "setup_daily_max": "0"
       },
       "context": {
         "contact_type": "customer,lead,partner,vendor"
@@ -161,6 +183,28 @@
         "50 writes/day",
         "10 deletes/day",
         "review mode"
+      ]
+    },
+    {
+      "name": "Load test data (with approval)",
+      "description": "Load a simulation package (customers and optional contacts) into the simulated CRM, for setting up a three-week test. No browsing, writing, or deleting — this template grants nothing but the one-time test-data load, and it still requires your approval.",
+      "risk": "high",
+      "mode": "review",
+      "bounds": {
+        "read_access": "none",
+        "write_daily_max": "0",
+        "delete_daily_max": "0",
+        "setup_daily_max": "1"
+      },
+      "context": {
+        "contact_type": "customer"
+      },
+      "intent": "Allow the agent to load one simulation package of test data into the simulated CRM, for my review before it happens. No other CRM action is granted by this mandate — set up test data separately from the mandate the agent uses for its actual work.",
+      "ttl": 2592000,
+      "tags": [
+        "setup only",
+        "review mode",
+        "1 load"
       ]
     }
   ],
