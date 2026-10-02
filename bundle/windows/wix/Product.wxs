@@ -114,6 +114,15 @@
       <Environment Id="EnvInstallMethod" Name="SUVEREN_INSTALL_METHOD" Value="managed" Action="set" Part="all" Permanent="no" System="no" />
       <Environment Id="EnvOffline" Name="SUVEREN_OFFLINE" Value="1" Action="set" Part="all" Permanent="no" System="no" />
       <Environment Id="EnvIntegrationsDir" Name="SUVEREN_INTEGRATIONS_DIR" Value="[INSTALLFOLDER]integrations" Action="set" Part="all" Permanent="no" System="no" />
+      <!-- Every connector's node_modules\.bin shim invokes a bare `node`,
+           assuming npm's own install put one on PATH — true on a normal npm
+           install, not true on a Node-free company laptop (the premise of
+           this installer). Part="first" PREPENDS rather than replacing, so
+           it never shadows anything a less bare machine already has.
+           launcher.cmd does the equivalent for the interactive path; this
+           covers the Task-Scheduler-spawned autostart path, which bypasses
+           the launcher entirely and starts from a fresh logon environment. -->
+      <Environment Id="EnvPath" Name="PATH" Value="[INSTALLFOLDER]node" Action="set" Part="first" Permanent="no" System="no" />
       <RegistryValue Root="HKCU" Key="Software\Suveren\Gateway" Name="EnvironmentSet" Type="integer" Value="1" KeyPath="yes" />
     </Component>
 

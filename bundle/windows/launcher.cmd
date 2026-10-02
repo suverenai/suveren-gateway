@@ -36,6 +36,17 @@ rem one. User data (vault, gates, execution log) is untouched — that lives in
 rem ~/.suveren, set by the gateway itself, never by this launcher.
 if not defined SUVEREN_INTEGRATIONS_DIR set "SUVEREN_INTEGRATIONS_DIR=%HERE%integrations"
 
+rem Every connector's node_modules\.bin shim (crm-mcp.cmd etc.) is a tiny
+rem batch/npm-generated wrapper that itself invokes a bare `node ...` —
+rem npm assumes SOME node.exe is already on PATH, which is true on a normal
+rem npm install (the user has one to even run the CLI) but is exactly NOT
+rem true on a machine with no Node at all, the whole premise of this
+rem installer. Put the bundled node.exe's own directory on PATH so those
+rem shims resolve it — this is the "except the bundled one" a node-free
+rem company laptop needs. Prepended, so it never shadows a real difference
+rem on a dev machine that already has its own PATH.
+set "PATH=%HERE%node;%PATH%"
+
 if /i "%~1"=="open-ui" goto :open_ui
 
 "%HERE%node\node.exe" "%HERE%gateway\bin\suveren-gateway.js" %*

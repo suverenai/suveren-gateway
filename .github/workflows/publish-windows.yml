@@ -370,12 +370,16 @@ jobs:
           New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
           "dataDir=$dataDir" >> $env:GITHUB_OUTPUT
 
-          # No node on PATH except the one this gateway was installed with —
-          # the launcher itself hardcodes the bundled node.exe path, so this
-          # only has to make sure nothing ELSE on PATH could be used by
-          # mistake (e.g. a connector accidentally resolving a different
-          # node/npm via PATH).
-          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+          # No node on PATH except the one this gateway was installed with.
+          # The bundled node.exe's OWN directory must still be on PATH: every
+          # connector's node_modules\.bin shim (crm-mcp.cmd etc.) is an
+          # npm-generated wrapper that itself invokes a bare `node ...`,
+          # assuming npm's own install already put one on PATH — the launcher
+          # (and the MSI's per-user PATH entry, for the Task Scheduler
+          # autostart path) prepend exactly this directory for exactly this
+          # reason. This only has to make sure nothing ELSE is on PATH that
+          # could be mistaken for it (a real Node install, a different npm).
+          $env:PATH = "$env:LOCALAPPDATA\Programs\Suveren\node;$env:SystemRoot\System32;$env:SystemRoot"
           $env:SUVEREN_DATA_DIR = $dataDir
 
           & "$env:LOCALAPPDATA\Programs\Suveren\suveren-gateway.cmd" start --detach
