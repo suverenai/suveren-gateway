@@ -116,7 +116,7 @@ jobs:
           path: bundle/windows/payload
 
       - name: Install WiX v5
-        run: dotnet tool install --global wix
+        run: dotnet tool install --global wix --version 5.0.2
 
       - name: Verify tag matches payload version
         if: startsWith(github.ref, 'refs/tags/v')
@@ -168,7 +168,7 @@ jobs:
           path: kit/payload
 
       - name: Install WiX v5
-        run: dotnet tool install --global wix
+        run: dotnet tool install --global wix --version 5.0.2
 
       - name: Stage the kit (payload + WiX source + launcher + script — exactly what the release zip ships)
         shell: pwsh
@@ -225,7 +225,11 @@ jobs:
           Write-Host "signtool: $signtool"
 
           $failed = $false
-          $binaries = Get-ChildItem -Path kit\payload -Recurse -Include '*.exe','*.dll','*.node' -File
+          # Same exclusion as build-signed.ps1: non-Windows prebuilt native
+          # binaries (darwin/linux .node files shipped alongside the win32
+          # one) were never signed in the first place.
+          $binaries = Get-ChildItem -Path kit\payload -Recurse -Include '*.exe','*.dll','*.node' -File |
+            Where-Object { $_.FullName -notmatch '\\prebuilds\\(darwin|linux|linuxmusl)-' }
           Write-Host "Verifying $($binaries.Count) signed payload file(s) …"
           foreach ($f in $binaries) {
             & $signtool verify /pa /v $f.FullName

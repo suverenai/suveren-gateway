@@ -25,7 +25,7 @@
     - signtool.exe (Windows SDK — typically already present on a machine
       that does code signing; otherwise `winget install Microsoft.WindowsSDK`
       or use the one bundled with Visual Studio).
-    - The WiX v5 CLI as a dotnet tool: `dotnet tool install --global wix`
+    - The WiX v5 CLI as a dotnet tool: `dotnet tool install --global wix --version 5.0.2`
       (requires the .NET SDK).
 
 .PARAMETER Thumbprint
@@ -103,7 +103,7 @@ function Find-Wix {
   if ($cmd) { return $cmd.Source }
   $cmd = Get-Command wix -ErrorAction SilentlyContinue
   if ($cmd) { return $cmd.Source }
-  throw "wix CLI not found. Install it with: dotnet tool install --global wix"
+  throw "wix CLI not found. Install it with: dotnet tool install --global wix --version 5.0.2"
 }
 
 $signtool = Find-SignTool
@@ -146,7 +146,14 @@ function Invoke-Sign {
 # ─── 1. Sign every .exe/.dll/.node inside the payload ────────────────────
 
 Write-Host "[build-signed] signing payload binaries (.exe, .dll, .node) …"
-$binaries = Get-ChildItem -Path $PayloadDir -Recurse -Include '*.exe', '*.dll', '*.node' -File
+# Native connectors (better-sqlite3 and similar) ship prebuilt binaries for
+# EVERY platform under node_modules/**/prebuilds/<platform>-<arch>/*.node —
+# not just Windows. signtool correctly refuses a macOS/Linux Mach-O/ELF
+# "file format cannot be signed because it is not recognized" — exclude
+# those up front instead of letting one unsignable file fail the whole
+# batch (signtool invocations below are batched, see $batchSize).
+$binaries = Get-ChildItem -Path $PayloadDir -Recurse -Include '*.exe', '*.dll', '*.node' -File |
+  Where-Object { $_.FullName -notmatch '\\prebuilds\\(darwin|linux|linuxmusl)-' }
 Write-Host "[build-signed]   found $($binaries.Count) file(s)"
 # signtool accepts multiple files per invocation; batch to stay under the
 # command-line length limit on machines with a lot of connectors installed.
