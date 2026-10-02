@@ -5,10 +5,21 @@
  * the UI banner.
  */
 import { describe, it, expect, afterEach } from 'vitest';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { isSimulationMode } from '../lib/simulation-mode';
+import { _resetPolicyCacheForTests } from '../lib/policy';
+
+const dirs: string[] = [];
 
 afterEach(() => {
   delete process.env.SUVEREN_SIMULATION;
+  delete process.env.SUVEREN_POLICY_FILE;
+  _resetPolicyCacheForTests();
+  for (const d of dirs.splice(0)) {
+    try { rmSync(d, { recursive: true, force: true }); } catch { /* ignore */ }
+  }
 });
 
 describe('isSimulationMode (control-plane)', () => {
@@ -22,5 +33,15 @@ describe('isSimulationMode (control-plane)', () => {
     expect(isSimulationMode()).toBe(true);
     process.env.SUVEREN_SIMULATION = 'yes';
     expect(isSimulationMode()).toBe(false);
+  });
+
+  it('REFUSAL: IT policy wins over SUVEREN_SIMULATION — /health must report the locked value', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'policy-'));
+    dirs.push(dir);
+    const path = join(dir, 'gateway-policy.json');
+    writeFileSync(path, JSON.stringify({ Simulation: true }), 'utf8');
+    process.env.SUVEREN_POLICY_FILE = path;
+    process.env.SUVEREN_SIMULATION = '0';
+    expect(isSimulationMode()).toBe(true);
   });
 });

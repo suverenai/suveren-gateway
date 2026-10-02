@@ -24,6 +24,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { readPolicy } from './policy';
 
 export const DEFAULT_AS_URL = 'https://www.suveren.ai';
 
@@ -176,6 +177,13 @@ export function validateAsUrl(candidate: string): AsUrlValidation {
  * gotten wrong.
  */
 export function resolveAsUrl(dataDir: string, flag?: string): string {
+  // IT policy wins unconditionally — that is what "locked" means — ahead of
+  // even an explicit --as-url flag. Already validated by readPolicy(),
+  // which throws on a bad policy value the same way this function throws
+  // on a bad flag/env/saved one.
+  const policyUrl = readPolicy().policy.asUrl;
+  if (policyUrl) return policyUrl;
+
   if (flag) {
     const v = validateAsUrl(flag);
     if (!v.ok) throw new Error(`Invalid --as-url: ${v.error}`);
@@ -206,13 +214,17 @@ export function resolveAsUrl(dataDir: string, flag?: string): string {
  *  and propagated to child processes as `NODE_EXTRA_CA_CERTS` by the CLI /
  *  server.js (see bundle/server.js) rather than re-derived by each app. */
 export function resolveCaFile(dataDir: string): string | undefined {
+  const policyCaFile = readPolicy().policy.caFile;
+  if (policyCaFile) return policyCaFile;
   return readAsConfig(dataDir).caFile;
 }
 
-/** Resolve the saved `pinTls` setting. No env/flag tier — only ever set
- *  through `--pin-tls` / `config set pin-tls on|off`. Default false:
- *  opt-in, never silently on. */
+/** Resolve the effective `pinTls` setting: IT policy first (locked), else
+ *  the saved value. No env/flag tier — only ever set through `--pin-tls` /
+ *  `config set pin-tls on|off`. Default false: opt-in, never silently on. */
 export function resolvePinTls(dataDir: string): boolean {
+  const policyPinTls = readPolicy().policy.pinTls;
+  if (policyPinTls !== undefined) return policyPinTls;
   return readAsConfig(dataDir).pinTls === true;
 }
 
