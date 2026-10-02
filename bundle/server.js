@@ -12,7 +12,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir, tmpdir, constants as osConstants } from 'node:os';
 import { existsSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
-import { resolveCaFile, resolveSimulation } from './lib/config.mjs';
+import { resolveCaFile, resolveProxyUrl, resolveSimulation } from './lib/config.mjs';
 import { unsupportedNodeReason } from './lib/node-version.mjs';
 
 // Docker and the login service start this file directly, not through the CLI,
@@ -120,6 +120,20 @@ if (savedCaFile && !process.env.SUVEREN_CA_REEXEC_DONE) {
 // so it must not ride along in the env every child process below inherits
 // via `...process.env`, all the way down to individual integrations.
 delete process.env.SUVEREN_CA_REEXEC_DONE;
+
+// ─── Corporate proxy (`config set proxy <url>` / `--proxy`) ────────────────
+//
+// `HTTP_PROXY`/`HTTPS_PROXY` are read fresh on every outbound call (see
+// proxy-env.ts in both apps) — unlike NODE_EXTRA_CA_CERTS above, there is no
+// Node-startup-time requirement, so no re-exec dance is needed here. An
+// operator's own HTTP_PROXY/HTTPS_PROXY (already in their shell) always
+// wins; a saved proxy only fills in whichever of the two is still unset —
+// the overwhelmingly common case is one proxy for both schemes.
+const savedProxyUrl = resolveProxyUrl(DATA_DIR);
+if (savedProxyUrl) {
+  process.env.HTTP_PROXY ??= savedProxyUrl;
+  process.env.HTTPS_PROXY ??= savedProxyUrl;
+}
 
 const CP_PORT = process.env.SUVEREN_CP_PORT ?? '3400';
 const MCP_PORT = process.env.SUVEREN_MCP_PORT ?? '3430';

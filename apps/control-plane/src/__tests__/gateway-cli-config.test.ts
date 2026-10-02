@@ -15,8 +15,10 @@ import {
   writeConfig,
   validateAsUrl,
   validateCaFile,
+  validateProxyUrl,
   resolveAsUrl,
   resolveCaFile,
+  resolveProxyUrl,
   resolveSimulation,
 } from '../../../../bundle/lib/config.mjs';
 
@@ -98,6 +100,28 @@ describe('bundle/lib/config.mjs — resolveAsUrl / resolveCaFile precedence', ()
     writeConfig(dir, { caFile: '/etc/ssl/company-ca.pem' });
     expect(resolveCaFile(dir)).toBe('/etc/ssl/company-ca.pem');
     expect(readConfig(dir)).toEqual({ caFile: '/etc/ssl/company-ca.pem' });
+  });
+});
+
+describe('bundle/lib/config.mjs — validateProxyUrl / resolveProxyUrl', () => {
+  it('accepts http:// and https://, rejects other schemes and garbage', () => {
+    expect(validateProxyUrl('http://proxy.corp.example:8080').ok).toBe(true);
+    expect(validateProxyUrl('https://proxy.corp.example:8443').ok).toBe(true);
+    expect(validateProxyUrl('socks5://proxy.corp.example:1080').ok).toBe(false);
+    expect(validateProxyUrl('not-a-url').ok).toBe(false);
+    expect(validateProxyUrl('').ok).toBe(false);
+  });
+
+  it('accepts a proxy URL carrying basic-auth credentials', () => {
+    expect(validateProxyUrl('http://user:pass@proxy.corp.example:8080').ok).toBe(true);
+  });
+
+  it('round-trips a saved proxy URL', () => {
+    const dir = tmp(); dirs.push(dir);
+    expect(resolveProxyUrl(dir)).toBeUndefined();
+    writeConfig(dir, { proxyUrl: 'http://proxy.corp.example:8080' });
+    expect(resolveProxyUrl(dir)).toBe('http://proxy.corp.example:8080');
+    expect(readConfig(dir)).toEqual({ proxyUrl: 'http://proxy.corp.example:8080' });
   });
 });
 
