@@ -85,7 +85,9 @@ function startHttps(cert: Cert, port = 0): Promise<{ close: () => Promise<void>;
       const addr = server.address();
       const assigned = typeof addr === 'object' && addr ? addr.port : port;
       resolve({
-        close: () => new Promise<void>((r) => server.close(() => r())),
+        // Drop open keep-alive sockets too: server.close() alone waits for them, and
+        // a test that rebinds the same port (the relay case) would race them.
+        close: () => new Promise<void>((r) => { server.close(() => r()); server.closeAllConnections(); }),
         port: assigned,
         url: `https://127.0.0.1:${assigned}/`,
       });
