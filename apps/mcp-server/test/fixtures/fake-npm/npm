@@ -1,0 +1,4 @@
+#!/bin/sh
+# POSIX trampoline so `execFile('npm', ...)` resolves this fixture via PATH
+# exactly like the real binary — see fake-npm.mjs for the actual behaviour.
+exec node "$(dirname "$0")/fake-npm.mjs" "$@"

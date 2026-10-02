@@ -365,7 +365,16 @@ export class IntegrationManager {
         console.error(
           `[IntegrationManager] ${npmPackage} ${current ?? '(not installed)'} → ${pinnedVersion} (pinned by manifest)`,
         );
-        await this.installNow(npmPackage, pinnedVersion);
+        // Only force-clean first when the on-disk copy is itself broken or
+        // absent. A USABLE install that's merely the wrong version is left in
+        // place for npm to update over — exactly how `npm install pkg@x.y.z`
+        // normally works — so that if the install fails (offline, registry
+        // hiccup), the previously-working version is still there on disk
+        // afterward. It still won't be STARTED (the version check above would
+        // still see it as the wrong version), which is the fail-closed half of
+        // this: wrong-version-but-intact beats neither-version-at-all.
+        const cleanFirst = !this.isUsableInstall(npmPackage);
+        await this.installNow(npmPackage, pinnedVersion, cleanFirst);
       });
     }
 
@@ -387,13 +396,18 @@ export class IntegrationManager {
    * by the manifest loader (`isExactSemver`) — re-validated here anyway
    * because this method does not trust its caller's caller, and because the
    * version reaches a shell on Windows (see the package-name check below).
+   *
+   * `cleanFirst` (default true, i.e. today's behaviour for every caller
+   * except a version-only pin correction): wipe any existing package
+   * directory before installing. Needed for a genuinely broken/partial
+   * install, where stale files can make the reinstall itself fail; skipped
+   * for a USABLE install being corrected to a different pinned version, so a
+   * failed update leaves the previously-working version on disk instead of
+   * nothing at all.
    */
-  private async installNow(npmPackage: string, exactVersion?: string): Promise<void> {
-    // A previous attempt may have left a partial directory behind. Remove it
-    // so npm starts clean, otherwise the reinstall can fail on half-written
-    // files that are still locked.
+  private async installNow(npmPackage: string, exactVersion?: string, cleanFirst = true): Promise<void> {
     const pkgDir = join(INTEGRATIONS_DIR, 'node_modules', ...npmPackage.split('/'));
-    if (existsSync(pkgDir)) {
+    if (cleanFirst && existsSync(pkgDir)) {
       console.error(`[IntegrationManager] Removing ${exactVersion ? 'outdated' : 'unusable'} install of ${npmPackage}`);
       try {
         rmSync(pkgDir, { recursive: true, force: true });
