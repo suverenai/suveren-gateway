@@ -25,6 +25,7 @@ export interface ResolvedPolicy {
 }
 
 export declare function parseRegQueryOutput(stdout: string): Record<string, string | number>;
+export declare function registryKeyPath(hive: 'HKLM' | 'HKCU'): string;
 export declare function policyFilePath(): string;
 export declare function readPolicy(): ResolvedPolicy;
 export declare function isPolicyLocked(key: PolicyKey): boolean;

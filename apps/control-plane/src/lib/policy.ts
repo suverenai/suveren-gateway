@@ -51,6 +51,24 @@ export interface ResolvedPolicy {
 }
 
 const POLICY_KEYS = ['AsUrl', 'CaFile', 'PinTls', 'Simulation', 'InstallMethod'] as const;
+
+/** The documented production path, relative to the hive — never changes for
+ *  a real install. Overridable ONLY via `SUVEREN_POLICY_REGISTRY_KEY`, which
+ *  exists purely so `gateway-policy-windows-registry.test.ts` can point at a
+ *  unique per-run key instead of the real one: `pnpm -r test` runs every
+ *  workspace package in parallel, so a test writing to the REAL key would
+ *  race every OTHER package's tests reading the real registry on the same
+ *  Windows CI runner at the same time (this raced in practice — see
+ *  `SUVEREN_POLICY_REGISTRY` below for the other half of the fix). */
+const DEFAULT_REGISTRY_BASE_KEY = 'SOFTWARE\\Policies\\Suveren\\Gateway';
+
+/** The full `HIVE\base\key` path `reg query`/`reg add` operate on. A pure
+ *  function (no I/O) so a test can assert the default without mocking
+ *  anything — see gateway-policy.test.ts's "documented default paths". */
+export function registryKeyPath(hive: 'HKLM' | 'HKCU'): string {
+  const baseKey = process.env.SUVEREN_POLICY_REGISTRY_KEY || DEFAULT_REGISTRY_BASE_KEY;
+  return `${hive}\\${baseKey}`;
+}
 type RawPolicyKey = (typeof POLICY_KEYS)[number];
 type RawPolicy = Partial<Record<RawPolicyKey, string | number | boolean>>;
 
@@ -153,13 +171,23 @@ interface SourcedRaw {
  *  on any failure (key absent — the normal "no policy set" case — missing
  *  `reg` binary, or a platform that isn't Windows at all). Never throws: an
  *  operator without IT policy must see the gateway behave exactly as it
- *  always has. */
+ *  always has.
+ *
+ *  `SUVEREN_POLICY_REGISTRY=off` skips the registry entirely, returning
+ *  `{}` without even spawning `reg` — unit tests set this globally (see
+ *  vitest.setup.ts) so a real IT policy on the machine running the suite,
+ *  or another package's test writing to the registry concurrently, cannot
+ *  change what these tests see. Production never sets this. */
 function readRegistryHive(hive: 'HKLM' | 'HKCU'): SourcedRaw {
-  const source = `the registry policy (${hive}\\SOFTWARE\\Policies\\Suveren\\Gateway)`;
+  const path = registryKeyPath(hive);
+  const source = `the registry policy (${path})`;
+  // Checked BEFORE the platform branch so the switch is testable on any OS,
+  // not just Windows — see gateway-policy.test.ts.
+  if (process.env.SUVEREN_POLICY_REGISTRY === 'off') return { values: {}, source };
   if (process.platform !== 'win32') return { values: {}, source };
   let result;
   try {
-    result = spawnSync('reg', ['query', `${hive}\\SOFTWARE\\Policies\\Suveren\\Gateway`], { encoding: 'utf8' });
+    result = spawnSync('reg', ['query', path], { encoding: 'utf8' });
   } catch {
     return { values: {}, source };
   }

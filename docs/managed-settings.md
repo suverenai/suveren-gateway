@@ -85,15 +85,34 @@ in `apps/control-plane/src/index.ts`) and `managed` compares against the npm
 registry the same way `npm` does — an IT-provisioned install is still
 physically an npm install underneath; only the banner text differs.
 
+## Test-only env vars — never set these in production
+
+- `SUVEREN_POLICY_REGISTRY=off` disables the registry source entirely
+  (returns nothing, without even spawning `reg`). Set globally for every
+  test file via each app's `vitest.setup.ts`, so a real IT policy already
+  present on the machine running the suite — or another workspace package's
+  test writing to the registry at the same time, since `pnpm -r test` runs
+  every package in parallel — cannot change what a unit test observes.
+- `SUVEREN_POLICY_REGISTRY_KEY` overrides the registry base key (default:
+  the documented `SOFTWARE\Policies\Suveren\Gateway`). Used only by
+  `gateway-policy-windows-registry.test.ts`, which points it at a unique
+  per-test key so its real `reg add`/`reg delete` calls can never collide
+  with the real documented key, or with themselves across parallel runs.
+
+Neither variable is part of the policy contract above — the production
+defaults (HKLM then HKCU at the documented path) are covered by their own
+test asserting exactly that.
+
 ## Testing
 
 - `apps/control-plane/src/__tests__/gateway-policy.test.ts` — precedence,
   per-key locking, invalid-value refusal, registry-output parsing (against
-  captured fixture text).
+  captured fixture text), and that `registryKeyPath()` defaults to the
+  documented path when no test override is set.
 - `apps/control-plane/src/__tests__/gateway-policy-windows-registry.test.ts`
-  — the real `reg add` / `reg query` / `reg delete` path; skipped on
-  non-Windows, runs on `.github/workflows/bundle-smoke.yml`'s `unit` job
-  (windows-latest leg).
+  — the real `reg add` / `reg query` / `reg delete` path, against a unique
+  per-test registry key; skipped on non-Windows, runs on
+  `.github/workflows/bundle-smoke.yml`'s `unit` job (windows-latest leg).
 - `apps/control-plane/src/__tests__/gateway-cli-managed-settings.test.ts` —
   spawns the real CLI to prove the refusals end to end.
 - `apps/*/src/lib/__tests__/as-config.test.ts` /

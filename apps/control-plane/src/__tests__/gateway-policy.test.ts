@@ -17,6 +17,7 @@ import { join } from 'node:path';
 import {
   readPolicy,
   parseRegQueryOutput,
+  registryKeyPath,
   policyFilePath,
   isPolicyLocked,
   _resetPolicyCacheForTests,
@@ -33,6 +34,7 @@ function tmpPolicyFile(contents: unknown): string {
 
 afterEach(() => {
   delete process.env.SUVEREN_POLICY_FILE;
+  delete process.env.SUVEREN_POLICY_REGISTRY_KEY;
   _resetPolicyCacheForTests();
   for (const d of dirs.splice(0)) {
     try { rmSync(d, { recursive: true, force: true }); } catch { /* ignore */ }
@@ -166,5 +168,32 @@ describe('policy.mjs — policyFilePath default locations', () => {
   it('honours SUVEREN_POLICY_FILE above the platform default', () => {
     process.env.SUVEREN_POLICY_FILE = '/tmp/custom-policy.json';
     expect(policyFilePath()).toBe('/tmp/custom-policy.json');
+  });
+});
+
+describe('policy.mjs — registryKeyPath: the production contract is unchanged', () => {
+  it('defaults to the DOCUMENTED path for each hive when no override is set', () => {
+    delete process.env.SUVEREN_POLICY_REGISTRY_KEY;
+    expect(registryKeyPath('HKLM')).toBe('HKLM\\SOFTWARE\\Policies\\Suveren\\Gateway');
+    expect(registryKeyPath('HKCU')).toBe('HKCU\\SOFTWARE\\Policies\\Suveren\\Gateway');
+  });
+
+  it('SUVEREN_POLICY_REGISTRY_KEY overrides the base key — test-only, never set in production', () => {
+    process.env.SUVEREN_POLICY_REGISTRY_KEY = 'SOFTWARE\\Policies\\Suveren\\GatewayTest-abc123';
+    expect(registryKeyPath('HKLM')).toBe('HKLM\\SOFTWARE\\Policies\\Suveren\\GatewayTest-abc123');
+  });
+});
+
+describe('policy.mjs — SUVEREN_POLICY_REGISTRY=off: the registry source is skipped entirely', () => {
+  it('a value that would otherwise be read is ignored while the switch is off', () => {
+    // Can't write the real registry from a non-Windows test, so this proves
+    // the switch's effect the same way the "non-Windows" test above does:
+    // readPolicy() must come back empty regardless of what's "on file",
+    // because readRegistryHive() returns {} before even checking the
+    // platform branch for this flag.
+    process.env.SUVEREN_POLICY_REGISTRY = 'off';
+    const r = readPolicy();
+    expect(r.policy.asUrl).toBeUndefined();
+    delete process.env.SUVEREN_POLICY_REGISTRY;
   });
 });
