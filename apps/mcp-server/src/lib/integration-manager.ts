@@ -16,6 +16,7 @@ import type { ProfileToolGating } from '@hap/core';
 import type { IntegrationConfig, ToolGatingConfig } from './integration-registry';
 import { getManifest } from './manifest-loader';
 import { remotePreflightTarget, preflightRemoteAuth } from './remote-auth-preflight';
+import { isSimulationMode, manifestIsSimulated, SIMULATION_BLOCK_REASON } from './simulation-mode';
 
 const DEFAULT_DATA_DIR = process.env.SUVEREN_DATA_DIR ?? join(homedir(), '.suveren');
 // Runtime INSTALL directory for downstream MCP npm packages (e.g. crm-mcp,
@@ -449,6 +450,17 @@ export class IntegrationManager {
       await this.stopIntegrationLocked(config.id);
     }
 
+    // Simulation mode: an integration whose manifest carries no `simulation`
+    // marker is not started at all — including one registered directly via
+    // /internal/add-integration with no manifest (getManifest returns
+    // undefined, which manifestIsSimulated treats as "not simulated"). This
+    // is the primary enforcement point; tool-proxy.ts refuses calls too
+    // (defence in depth), in case some future path ever starts an
+    // integration without going through here.
+    if (isSimulationMode() && !manifestIsSimulated(getManifest(config.id))) {
+      throw new Error(`${config.id}: ${SIMULATION_BLOCK_REASON}`);
+    }
+
     // Install npm package on-demand if specified
     if (config.npmPackage) {
       await this.ensureInstalled(config.npmPackage);
@@ -456,6 +468,23 @@ export class IntegrationManager {
 
     // Resolve environment variables from vault references
     const env = this.resolveEnvKeys(config);
+
+    // Simulation mode, for a connector that DOES declare a simulated mode
+    // (guaranteed by the guard above — only simulated connectors reach this
+    // line while simulation mode is on): force its mode env var to
+    // "simulation", overriding whatever the stored credential says. A user
+    // who set mode=live before simulation mode was turned on must not have
+    // that live setting silently take effect while the gateway believes real
+    // systems are off.
+    if (isSimulationMode()) {
+      const manifest = getManifest(config.id);
+      const simDecl = manifest?.simulation;
+      if (simDecl) {
+        const envVar = Object.entries(manifest!.credentials.envMapping)
+          .find(([, credKey]) => credKey === simDecl.field)?.[0];
+        if (envVar) env[envVar] = 'simulation';
+      }
+    }
 
     // Interpolate ${VAR} references in args from the resolved env. This lets a
     // manifest bake a credential into an argument (e.g. mcp-remote's
@@ -697,6 +726,16 @@ export class IntegrationManager {
             running: false,
             toolCount: 0,
             readAgeDays: readAgeOf(config),
+            // Computed fresh, not cached: true whenever simulation mode is on
+            // AND this connector has no manifest `simulation` marker, which is
+            // exactly the condition startIntegrationLocked refuses under — so
+            // the UI always reflects why a real connector never started,
+            // without needing a separate error-tracking path for this one
+            // reason. Unrelated start failures still surface via the
+            // `warning` string returned by /internal/add-integration.
+            error: isSimulationMode() && !manifestIsSimulated(getManifest(config.id))
+              ? SIMULATION_BLOCK_REASON
+              : undefined,
           });
         }
       }
@@ -816,6 +855,7 @@ export class IntegrationManager {
         blockedArgs?: string[];
         argEncoding?: Record<string, string>;
         argNormalization?: Record<string, string>;
+        hideUnlessAuthorized?: boolean;
       };
       // 'disabled' = declared unavailable → block at the gating layer.
       if (ext.category === 'disabled') {
@@ -834,6 +874,7 @@ export class IntegrationManager {
           readGovernance: ext.readGovernance,
           readGovernanceReason: ext.readGovernanceReason,
           blockedArgs: ext.blockedArgs,
+          hideUnlessAuthorized: ext.hideUnlessAuthorized,
         };
       }
       return {
@@ -848,6 +889,7 @@ export class IntegrationManager {
         blockedArgs: ext.blockedArgs,
         argEncoding: ext.argEncoding,
         argNormalization: ext.argNormalization,
+        hideUnlessAuthorized: ext.hideUnlessAuthorized,
       };
     }
 

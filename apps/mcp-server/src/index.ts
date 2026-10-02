@@ -18,7 +18,7 @@ import { checkPendingHandler } from './tools/pending';
 import { listIntegrationsHandler } from './tools/integrations';
 import { checkPendingCommitmentsHandler } from './tools/commitments';
 import type { IntegrationManager, DiscoveredTool } from './lib/integration-manager';
-import { createGatedToolHandler, buildProxiedToolDescription, profileMatches } from './lib/tool-proxy';
+import { createGatedToolHandler, buildProxiedToolDescription, profileMatches, toolIsAuthorizedForDisplay } from './lib/tool-proxy';
 
 // ─── JSON Schema → Zod conversion ──────────────────────────────────────────
 
@@ -209,9 +209,13 @@ export function createMcpServer(
 
       // All tools require authorization — enable/disable based on matching authorizations
       if (tool.gating?.profile) {
-        const hasAuth = auths.some(
+        const matchingAuths = auths.filter(
           a => a.complete && profileMatches(a.profileId, tool.gating!.profile!),
         );
+        // hideUnlessAuthorized tools need more than "a mandate exists" — see
+        // toolIsAuthorizedForDisplay. For every other tool this is exactly
+        // the previous "hasAuth" check (matchingAuths.length > 0).
+        const hasAuth = matchingAuths.length > 0 && toolIsAuthorizedForDisplay(tool, matchingAuths);
         if (hasAuth) registered.enable(); else registered.disable();
       } else {
         // No gating config = no profile = always disabled

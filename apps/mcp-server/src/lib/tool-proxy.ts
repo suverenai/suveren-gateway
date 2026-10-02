@@ -42,10 +42,12 @@ import {
   hasBlockedValue,
   type BoundsSchemaLike,
 } from './read-gate';
-import { getProfile, ContentBindingError } from '@hap/core';
+import { getProfile, ContentBindingError, boundActionTypes } from '@hap/core';
 import { readFile } from 'node:fs/promises';
 import { extname } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { getManifest } from './manifest-loader';
+import { isSimulationMode, manifestIsSimulated } from './simulation-mode';
 
 const IMAGE_MIME: Record<string, string> = {
   '.jpg': 'image/jpeg',
@@ -135,6 +137,84 @@ export function profileMatches(profileId: string, shortName: string): boolean {
   return profileId === shortName || profileId.includes('/' + shortName + '@') || profileId.endsWith('/' + shortName);
 }
 
+/**
+ * Whether a `hideUnlessAuthorized` tool should be listed in `tools/list`,
+ * given the COMPLETE authorizations already matched to its profile.
+ *
+ * Generic by construction — reads the profile's OWN boundsSchema and
+ * hap-core's `boundActionTypes` (never a connector or bound-field literal in
+ * code), the same helper the Authority Server uses to decide what a
+ * cumulative bound counts. A tool without the flag is unaffected: always
+ * visible once `matchingAuths` is non-empty, exactly as before this existed.
+ *
+ * "Authorized for display" means: at least one matching mandate sets EVERY
+ * cumulative_count bound that applies to this tool's declared action_type to
+ * a value > 0. A tool whose action type carries no cumulative_count bound at
+ * all has nothing to require, so it is vacuously visible.
+ */
+/**
+ * The cumulative_count bounds of a profile that govern `actionType` (by appliesTo,
+ * or all action types when it is absent — see hap-core's boundActionTypes).
+ */
+function countBoundsFor(profileId: string, actionType: string): string[] | null {
+  const fields = getProfile(profileId)?.boundsSchema?.fields;
+  if (!fields) return null;
+  return Object.entries(fields)
+    .filter(([, def]) => def.boundType?.kind === 'cumulative_count')
+    .filter(([name, def]) => {
+      const applies = boundActionTypes(name, def);
+      return applies === undefined || applies.includes(actionType);
+    })
+    .map(([name]) => name);
+}
+
+/**
+ * A count bound of 0 for this action type means the mandate can never allow it —
+ * the Authority Server would refuse every ticket. Returns that bound's name, or
+ * null when nothing caps the action at zero.
+ *
+ * Used in selection: with two mandates on one profile (a work mandate with
+ * setup_daily_max 0 and a setup mandate with 1), the tiebreak could pick the
+ * zero-capped one and the call failed at the AS although another mandate allowed
+ * it (found 2026-10-02, hap-e2e simulation-mode). Skipping it locally also gives a
+ * clearer refusal than the AS's limit message when no mandate allows the action.
+ */
+export function zeroCappedBound(
+  profileId: string,
+  bounds: Record<string, string | number> | undefined,
+  actionType: string | undefined,
+): string | null {
+  if (typeof actionType !== 'string') return null;
+  const names = countBoundsFor(profileId, actionType);
+  if (!names) return null;
+  for (const n of names) {
+    const v = bounds?.[n];
+    if (v !== undefined && v !== '' && Number(v) <= 0) return n;
+  }
+  return null;
+}
+
+export function toolIsAuthorizedForDisplay(
+  tool: DiscoveredTool,
+  matchingAuths: EnrichedAuthorization[],
+): boolean {
+  if (!tool.gating?.hideUnlessAuthorized) return true;
+  if (matchingAuths.length === 0) return false;
+
+  const profileId = tool.gating.profile;
+  const actionType = tool.gating.staticExecution?.action_type;
+  if (!profileId || typeof actionType !== 'string') return false;
+
+  const requiredFields = countBoundsFor(profileId, actionType);
+  if (!requiredFields) return false;
+  if (requiredFields.length === 0) return true;
+
+  return matchingAuths.some(a => {
+    const bounds = (a.bounds ?? a.frame) as Record<string, string | number> | undefined;
+    return requiredFields.every(f => Number(bounds?.[f] ?? 0) > 0);
+  });
+}
+
 type ToolResult = {
   content: Array<{ type: string; text: string }>;
   isError?: boolean;
@@ -209,6 +289,25 @@ export function createGatedToolHandler(
   integrationManager: IntegrationManager,
   state: SharedState,
 ): (args: Record<string, unknown>) => Promise<ToolResult> {
+  // Simulation mode, defence in depth: integration-manager already refuses to
+  // START a connector whose manifest carries no `simulation` marker while
+  // simulation mode is on, so in the normal case this tool never exists to be
+  // called. This is a second, independent check at CALL time — so a bug in
+  // that start-time gate, or some future path that registers tools without
+  // going through IntegrationManager.startIntegration, can never let a real
+  // system execute. No ticket is requested; this runs before any gating,
+  // bounds, or receipt logic.
+  if (isSimulationMode() && !manifestIsSimulated(getManifest(tool.integrationId))) {
+    return async () => ({
+      content: [{
+        type: 'text',
+        text: `Refused: "${tool.namespacedName}" talks to a real system, but this gateway is running ` +
+          `in simulation mode (real systems are off). No ticket was requested.`,
+      }],
+      isError: true,
+    });
+  }
+
   const gated = createGatedToolHandlerInner(tool, integrationManager, state);
 
   // Normalize declared identifier arguments FIRST, so every later stage — the
@@ -664,7 +763,12 @@ function createGatedToolHandlerInner(
         bounds: candidate.bounds,
         context: candidate.context,
       });
-      if (result.approved) {
+      const capped = result.approved
+        ? zeroCappedBound(candidate.profileId, (candidate.bounds ?? candidate.frame) as Record<string, string | number> | undefined, typeof execution.action_type === 'string' ? execution.action_type : undefined)
+        : null;
+      if (result.approved && capped) {
+        errors.push(`${candidate.path}: ${capped} is 0 — this mandate does not allow "${execution.action_type}"`);
+      } else if (result.approved) {
         passers.push(candidate);
       } else {
         const reasons = result.errors.map(e => {

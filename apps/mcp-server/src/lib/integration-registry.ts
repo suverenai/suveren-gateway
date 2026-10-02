@@ -206,6 +206,25 @@ export interface ToolGatingConfig {
    * failure is indistinguishable from "this went live unapproved".
    */
   argNormalization?: Record<string, string>;
+
+  /**
+   * Hide this tool from `tools/list` unless at least one COMPLETE mandate on
+   * the connector's profile grants every cumulative_count bound that applies
+   * to this tool's `staticExecution.action_type` a value > 0 (see
+   * `toolIsAuthorizedForDisplay` in tool-proxy.ts, which does the generic
+   * check via hap-core's `boundActionTypes` — never a per-connector name).
+   *
+   * Opt-in, manifest-declared — e.g. the simulation-only `load_simulation`
+   * setup tool (erp/crm/mail manifests): exposing it to an agent whose
+   * mandate grants `setup_daily_max: 0` just advertises a capability the
+   * mandate model is supposed to keep implicit. A tool without this flag is
+   * listed exactly as before (any complete matching mandate is enough).
+   *
+   * Hiding is presentation only — a call to a hidden tool is refused exactly
+   * as it would be without the mandate; this never widens or narrows
+   * enforcement, only what `tools/list` advertises.
+   */
+  hideUnlessAuthorized?: boolean;
 }
 
 /**

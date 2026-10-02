@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { TopNav } from '../components/TopNav';
 import { UpdateBanner } from '../components/UpdateBanner';
+import { SimulationBanner } from '../components/SimulationBanner';
 import { DifferentAccountError, type DifferentAccountSummary } from '../lib/sp-client';
 
 export function LoginPage() {
@@ -50,6 +51,7 @@ export function LoginPage() {
           banner only shows the copyable upgrade command — no reason to make
           the user log in just to learn a new version exists. */}
       <UpdateBanner />
+      <SimulationBanner />
       <div className="login-split">
         {/* LEFT: Protocol summary */}
         <div className="login-split-left">

@@ -12,7 +12,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir, tmpdir, constants as osConstants } from 'node:os';
 import { existsSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
-import { resolveCaFile } from './lib/config.mjs';
+import { resolveCaFile, resolveSimulation } from './lib/config.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const THIS_FILE = fileURLToPath(import.meta.url);
@@ -138,6 +138,13 @@ const env = {
   SUVEREN_PROFILES_DIR: PROFILES_DIR,
   // Single shared internal secret so CP↔MCP authenticate the bridge.
   SUVEREN_INTERNAL_SECRET: process.env.SUVEREN_INTERNAL_SECRET ?? randomHex(32),
+  // Simulation mode — same precedence as the CA bundle above: an explicit env
+  // var (set directly, or by `start --simulation` setting process.env for
+  // THIS run — see bundle/bin/suveren-gateway.js) wins; otherwise the saved
+  // config.json value, which is what `suveren-gateway simulation on|off`
+  // changes for every future start/restart, including autostart (which
+  // spawns this file directly, bypassing the CLI's own flag handling).
+  SUVEREN_SIMULATION: process.env.SUVEREN_SIMULATION ?? (resolveSimulation(DATA_DIR) ? '1' : '0'),
   // Passed by the login service (see bundle/lib/autostart-templates.mjs) so the
   // control-plane knows a human is NOT sitting in front of a terminal watching
   // it start — that is when a locked gateway needs to announce itself.

@@ -17,7 +17,8 @@ import { homedir, platform, userInfo } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildLaunchAgentPlist, buildMacLauncher, buildSystemdUnit, buildWindowsTaskXml } from '../lib/autostart-templates.mjs';
-import { DEFAULT_AS_URL, readConfig, writeConfig, validateAsUrl, validateCaFile, validatePinTls, resolveAsUrl, resolvePinTls, resolvePinTlsExpectedFingerprint } from '../lib/config.mjs';
+import { DEFAULT_AS_URL, readConfig, writeConfig, validateAsUrl, validateCaFile, validatePinTls, resolveAsUrl, resolvePinTls, resolvePinTlsExpectedFingerprint, resolveSimulation } from '../lib/config.mjs';
+import { createInterface } from 'node:readline/promises';
 import { readPairing as readAsPairing, recordTlsPin, formatFingerprint, normalizeFingerprint } from '../lib/as-pairing.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -210,6 +211,13 @@ async function start(args) {
     pinTlsToSave = true;
   }
 
+  // --simulation: the safe direction (turning OFF real systems), so — unlike
+  // `simulation off` — this needs no confirmation. Only ever turns it ON;
+  // there is no `start --no-simulation` (use `simulation off` for that, which
+  // DOES require confirmation, since that direction makes real systems
+  // reachable again).
+  const simulationFlag = args.includes('--simulation');
+
   if (await isAlreadyRunning()) {
     console.error(`suveren-gateway is already running (pid ${readPid()}). Use \`suveren-gateway stop\` first or \`suveren-gateway restart\`.`);
     process.exit(1);
@@ -268,6 +276,10 @@ async function start(args) {
         ? `  Enforced from your next connection on.`
         : `  Staged — the first sign-in's challenge must match it (refused otherwise); it then becomes the permanent pin.`,
     );
+  }
+  if (simulationFlag) {
+    writeConfig(DATA_DIR, { simulation: true });
+    console.log(`Simulation mode: ON (saved) — every connector without a manifest "simulation" marker will be blocked.`);
   }
 
   if (detach) {
@@ -414,6 +426,7 @@ async function status() {
         console.log('suveren-gateway: running (managed by the login service)');
         console.log(`  UI:           http://localhost:${SUVEREN_PORT}`);
         console.log(`  Vault:        ${body.vaultUnlocked ? 'unlocked' : 'locked'}`);
+        console.log(`  Simulation:   ${body.simulation ? 'on — real systems are blocked' : 'off'}`);
         console.log(`  Version:      ${body.version ?? 'unknown'} (running)`);
         console.log(`  Service:      suveren-gateway service status`);
         return;
@@ -438,6 +451,7 @@ async function status() {
     console.log(`suveren-gateway: running (pid ${pid})`);
     console.log(`  UI:           http://localhost:${SUVEREN_PORT}`);
     console.log(`  Vault:        ${body.vaultUnlocked ? 'unlocked' : 'locked'}`);
+    console.log(`  Simulation:   ${body.simulation ? 'on — real systems are blocked' : 'off'}`);
     console.log(`  Version:      ${body.version ?? 'unknown'} (running)`);
     if (CLI_VERSION) console.log(`                ${CLI_VERSION} (installed CLI)`);
     if (CLI_VERSION && body.version && body.version !== CLI_VERSION && body.version !== 'dev') {
@@ -632,6 +646,102 @@ async function config(args) {
 
   printConfigHelp();
   if (sub !== undefined && sub !== 'help' && sub !== '--help' && sub !== '-h') process.exit(2);
+}
+
+// ─── simulation: gateway-wide switch that blocks every real system ──────
+//
+// A mandate is bound to a PROFILE, not a connector — see suveren-gateway's
+// tool-proxy.ts (`profileMatches`). Put a real connector and a simulated one
+// on the same profile, and one mandate authorizes both. Simulation mode
+// closes that generically: ON blocks every connector whose manifest carries
+// no `simulation` marker, and forces every connector that DOES have one into
+// its simulated mode, regardless of what credential value is on file.
+// Mandates and profiles are unaffected; the Authority Server never learns
+// about this — it is a purely local, gateway-side switch. See
+// apps/mcp-server/src/lib/simulation-mode.ts for enforcement.
+
+function printSimulationHelp() {
+  console.log(`suveren-gateway simulation — gateway-wide switch that blocks every real system
+
+Usage:
+  suveren-gateway simulation on               Block every real connector (no confirmation — the safe direction)
+  suveren-gateway simulation off              Make real systems reachable again (requires confirmation)
+    [--confirm live]                          Non-interactive confirmation
+  suveren-gateway simulation status           Show the saved setting and (if running) the live one
+
+Changes take effect on the next \`suveren-gateway start\` / \`restart\`.
+`);
+}
+
+async function printSimulationStatus() {
+  const saved = resolveSimulation(DATA_DIR);
+  console.log(`Saved:   ${saved ? 'on' : 'off'}`);
+  try {
+    const res = await fetch(`http://localhost:${SUVEREN_PORT}/health`, { signal: AbortSignal.timeout(3000) });
+    if (res.ok) {
+      const body = await res.json();
+      const running = body.simulation === true;
+      console.log(`Running: ${running ? 'on' : 'off'}${running !== saved ? '  (restart to apply the saved value)' : ''}`);
+    }
+  } catch {
+    // Not reachable — the saved value is all there is to report.
+  }
+}
+
+/** Read one line from stdin, or undefined if there is no TTY to prompt on
+ *  (so a non-interactive caller gets a clean abort instead of a hang). */
+async function promptLine(question) {
+  if (!process.stdin.isTTY) return undefined;
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    return (await rl.question(question)).trim();
+  } finally {
+    rl.close();
+  }
+}
+
+async function simulation(args) {
+  const sub = args[0] ?? 'status';
+
+  if (sub === 'help' || sub === '--help' || sub === '-h') { printSimulationHelp(); return; }
+
+  if (sub === 'status') {
+    await printSimulationStatus();
+    return;
+  }
+
+  if (sub === 'on') {
+    // The safe direction — blocking real systems needs no confirmation.
+    writeConfig(DATA_DIR, { simulation: true });
+    console.log('Simulation mode: ON (saved) — every connector without a manifest "simulation" marker will be blocked.');
+    console.log('Restart to pick it up: suveren-gateway restart');
+    return;
+  }
+
+  if (sub === 'off') {
+    console.error('Turning simulation mode OFF makes every real system reachable again: any connector');
+    console.error('without a manifest "simulation" marker (e.g. a live Gmail or ERP account) will spawn');
+    console.error('and execute for real the next time this gateway starts.');
+    console.error('');
+    let typed = flagValue(args, '--confirm');
+    if (typed === undefined) {
+      typed = await promptLine('Type "live" to confirm, or anything else to abort: ');
+    }
+    if (typed !== 'live') {
+      console.error(typed === undefined
+        ? 'No TTY to confirm on and no --confirm given — aborted. Simulation mode unchanged.'
+        : 'Aborted — simulation mode unchanged.');
+      process.exit(1);
+    }
+    writeConfig(DATA_DIR, { simulation: false });
+    console.log('Simulation mode: OFF (saved) — real systems become reachable on next restart.');
+    console.log('Restart to pick it up: suveren-gateway restart');
+    return;
+  }
+
+  console.error(`Unknown: simulation ${sub}\n`);
+  printSimulationHelp();
+  process.exit(2);
 }
 
 // ─── service: install autostart-on-login (survives reboot) ──────────────
@@ -1139,9 +1249,10 @@ Usage:
     [--as-url <url>]                         Authority Server URL (saved for next time)
     [--ca-file <path>]                       Internal CA bundle (saved for next time)
     [--pin-tls --expect-fingerprint <hex>]   Pin the AS TLS certificate (saved; https:// only — see below)
+    [--simulation]                           Block every real system (saved — see \`simulation help\`)
   suveren-gateway stop                       Stop a detached gateway
   suveren-gateway restart                    Stop, then start --detach
-  suveren-gateway status                     Show running state + health
+  suveren-gateway status                     Show running state + health (incl. simulation mode)
   suveren-gateway logs [--tail]               Print or tail ~/.suveren/gateway.log
   suveren-gateway service <cmd>               Run as a login service that survives reboot
                                               (install | uninstall | status)
@@ -1152,6 +1263,8 @@ Usage:
                                               Pin the Authority Server's TLS certificate
                                               (see \`suveren-gateway config help\` for the fingerprint check)
   suveren-gateway config set pin-tls off      Stop enforcing the TLS certificate pin
+  suveren-gateway simulation on|off|status    Block (or unblock) every real system
+                                              (see \`suveren-gateway simulation help\`)
   suveren-gateway help                        Print this help
 
 Environment:
@@ -1159,6 +1272,7 @@ Environment:
   SUVEREN_MCP_PORT    MCP server port (default 3430)
   SUVEREN_DATA_DIR    Data directory (default ~/.suveren)
   SUVEREN_AS_URL      Authority Server URL — overrides the saved as-url
+  SUVEREN_SIMULATION  1 to force simulation mode for this run — overrides the saved setting
 
 Authority Server resolution order: --as-url flag > SUVEREN_AS_URL env >
 saved as-url (\`config set as-url\`) > default (${DEFAULT_AS_URL}).
@@ -1181,6 +1295,7 @@ async function main() {
     case 'logs':    await logs(argv.slice(1)); break;
     case 'service': await service(argv.slice(1)); break;
     case 'config':  await config(argv.slice(1)); break;
+    case 'simulation': await simulation(argv.slice(1)); break;
     case 'help':
     case '--help':
     case '-h':
