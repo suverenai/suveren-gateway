@@ -19,58 +19,10 @@ import { listIntegrationsHandler } from './tools/integrations';
 import { checkPendingCommitmentsHandler } from './tools/commitments';
 import type { IntegrationManager, DiscoveredTool } from './lib/integration-manager';
 import { createGatedToolHandler, buildProxiedToolDescription, profileMatches, toolIsAuthorizedForDisplay } from './lib/tool-proxy';
+import { jsonSchemaToZodShape } from './lib/json-schema-to-zod';
 
 // ─── JSON Schema → Zod conversion ──────────────────────────────────────────
 
-/**
- * Convert a JSON Schema properties object to a Zod shape for registerTool.
- * Handles common types; defaults to z.unknown() for complex or unrecognized schemas.
- */
-function jsonSchemaToZodShape(
-  schema: Record<string, unknown>,
-): Record<string, z.ZodTypeAny> {
-  const properties = (schema.properties ?? {}) as Record<string, Record<string, unknown>>;
-  const required = new Set((schema.required ?? []) as string[]);
-  const shape: Record<string, z.ZodTypeAny> = {};
-
-  for (const [key, prop] of Object.entries(properties)) {
-    let zodType: z.ZodTypeAny;
-
-    switch (prop.type) {
-      case 'string':
-        if (prop.enum && Array.isArray(prop.enum)) {
-          zodType = z.enum(prop.enum as [string, ...string[]]);
-        } else {
-          zodType = z.string();
-        }
-        break;
-      case 'number':
-      case 'integer':
-        zodType = z.number();
-        break;
-      case 'boolean':
-        zodType = z.boolean();
-        break;
-      case 'array':
-        zodType = z.array(z.unknown());
-        break;
-      case 'object':
-        zodType = z.record(z.unknown());
-        break;
-      default:
-        zodType = z.unknown();
-        break;
-    }
-
-    if (typeof prop.description === 'string') {
-      zodType = zodType.describe(prop.description);
-    }
-
-    shape[key] = required.has(key) ? zodType : zodType.optional();
-  }
-
-  return shape;
-}
 
 // ─── Server factory ─────────────────────────────────────────────────────────
 
