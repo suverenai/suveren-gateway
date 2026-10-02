@@ -15,11 +15,13 @@
   the possibility of a per-machine install for someone who explicitly asks
   for one, which nothing here does.
 
-  Deliberately does nothing beyond installing files, a Start Menu shortcut
-  and per-user environment variables: starting the gateway and registering
-  autostart go through the EXISTING `suveren-gateway service install` and
-  detached-start CLI code paths, run from the launcher, not reimplemented
-  as MSI custom actions that could fail in ways only an MSI log shows.
+  Deliberately does nothing beyond installing files and a Start Menu
+  shortcut — no HKCU\Environment writes, no custom actions. Starting the
+  gateway and registering autostart go through the EXISTING `suveren-gateway
+  service install` and detached-start CLI code paths, run from the launcher,
+  which sets its own env scoped to just the gateway's process tree (see
+  launcher.cmd and the InstallMarkerComponent note below for why this isn't
+  done via HKCU\Environment).
 
   UpgradeCode is FIXED — never change it across releases, or Windows treats
   every version as an unrelated product instead of an upgrade (orphaned old
@@ -99,38 +101,39 @@
       <RegistryValue Root="HKCU" Key="Software\Suveren\Gateway" Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes" />
     </Component>
 
-    <!-- Per-user environment variables (HKCU\Environment). These exist
-         because the Windows Task Scheduler ONLOGON task that `service
-         install` registers carries NO environment block of its own (see
-         bundle/lib/autostart-templates.mjs's buildWindowsTaskXml doc
-         comment) — so a gateway started by that task at the NEXT logon
-         would otherwise come up with none of these set. A fresh logon
-         session reads HKCU\Environment, so this is what makes autostart
-         actually come up managed + offline, not just an interactive launch
-         of the Start Menu shortcut (which also sets them itself, directly,
-         as a second, redundant path — see launcher.cmd).
-         Permanent="no": removed again on uninstall. -->
-    <Component Id="EnvironmentComponent" Directory="INSTALLFOLDER" Guid="2c6e9b5a-4f1a-4a2d-8a5a-7e6b7c9a1003">
-      <Environment Id="EnvInstallMethod" Name="SUVEREN_INSTALL_METHOD" Value="managed" Action="set" Part="all" Permanent="no" System="no" />
-      <Environment Id="EnvOffline" Name="SUVEREN_OFFLINE" Value="1" Action="set" Part="all" Permanent="no" System="no" />
-      <Environment Id="EnvIntegrationsDir" Name="SUVEREN_INTEGRATIONS_DIR" Value="[INSTALLFOLDER]integrations" Action="set" Part="all" Permanent="no" System="no" />
-      <!-- Every connector's node_modules\.bin shim invokes a bare `node`,
-           assuming npm's own install put one on PATH — true on a normal npm
-           install, not true on a Node-free company laptop (the premise of
-           this installer). Part="first" PREPENDS rather than replacing, so
-           it never shadows anything a less bare machine already has.
-           launcher.cmd does the equivalent for the interactive path; this
-           covers the Task-Scheduler-spawned autostart path, which bypasses
-           the launcher entirely and starts from a fresh logon environment. -->
-      <Environment Id="EnvPath" Name="PATH" Value="[INSTALLFOLDER]node" Action="set" Part="first" Permanent="no" System="no" />
-      <RegistryValue Root="HKCU" Key="Software\Suveren\Gateway" Name="EnvironmentSet" Type="integer" Value="1" KeyPath="yes" />
+    <!-- Deliberately NOT writing anything to HKCU\Environment. An earlier
+         version of this installer set SUVEREN_INSTALL_METHOD, SUVEREN_
+         OFFLINE, SUVEREN_INTEGRATIONS_DIR and a PATH prepend for the bundled
+         node there, reasoning that the Task Scheduler ONLOGON task (which
+         carries no environment block of its own — see autostart-templates.
+         mjs's buildWindowsTaskXml doc comment) needed it at the next logon.
+         That is ACCOUNT-WIDE, not scoped to the gateway: it would shadow a
+         developer's own Node (say, 24 or 25) with the bundled 22 for EVERY
+         program that account runs, and force every OTHER gateway install
+         under the same Windows user (an npm install, a dev checkout) into
+         offline+managed mode too — unacceptable for an IT deploy to many
+         people who may use Node themselves.
+
+         Instead, `service install` (bundle/bin/suveren-gateway.js) routes
+         the scheduled task through THIS launcher (SUVEREN_LAUNCHER env var,
+         set by launcher.cmd before it forwards to the CLI) rather than
+         node.exe+server.js directly — the launcher sets the same variables
+         itself, scoped to just the one process tree it starts. See
+         launcher.cmd's `run` subcommand and buildWindowsTaskXml's
+         command/args override.
+
+         This component now only carries a harmless per-user marker so the
+         Feature below has something to reference; it does nothing at
+         runtime. -->
+    <Component Id="InstallMarkerComponent" Directory="INSTALLFOLDER" Guid="2c6e9b5a-4f1a-4a2d-8a5a-7e6b7c9a1003">
+      <RegistryValue Root="HKCU" Key="Software\Suveren\Gateway" Name="Installed" Type="integer" Value="1" KeyPath="yes" />
     </Component>
 
     <Feature Id="Main" Title="Suveren Gateway" Level="1">
       <ComponentGroupRef Id="PayloadFiles" />
       <ComponentRef Id="LauncherComponent" />
       <ComponentRef Id="StartMenuShortcutComponent" />
-      <ComponentRef Id="EnvironmentComponent" />
+      <ComponentRef Id="InstallMarkerComponent" />
     </Feature>
 
   </Package>

@@ -10,11 +10,23 @@ rem
 rem Every real subcommand (start, stop, status, service install/uninstall,
 rem config, simulation) is forwarded verbatim to the EXISTING CLI
 rem (bin\suveren-gateway.js) — nothing about those is reimplemented here.
-rem `open-ui` is the one subcommand this script adds itself, for the Start
-rem Menu shortcut.
+rem `open-ui` and `run` are the two subcommands this script adds itself: see
+rem their own labels below.
 setlocal enabledelayedexpansion
 
 set "HERE=%~dp0"
+
+rem Tells `service install` (in the forwarded CLI, see bundle/bin/
+rem suveren-gateway.js's serviceInstallWindows) to register the scheduled
+rem task against THIS launcher (`run`) instead of node.exe+server.js
+rem directly. That is what keeps the env below scoped to just the gateway's
+rem own process tree: an earlier version of this installer wrote the same
+rem variables into HKCU\Environment, which is ACCOUNT-WIDE — it silently
+rem shadowed a developer's own Node (on Node 24/25) with the bundled 22 for
+rem EVERY program on that account, and forced every other gateway install
+rem under the same user into offline+managed mode too. %~f0 is this batch
+rem file's own fully-qualified path, however it was invoked.
+if not defined SUVEREN_LAUNCHER set "SUVEREN_LAUNCHER=%~f0"
 
 rem Managed install: the update banner should say "updates come from your
 rem IT", not show an npm command — see the IT-policy-settings work (separate
@@ -48,6 +60,7 @@ rem on a dev machine that already has its own PATH.
 set "PATH=%HERE%node;%PATH%"
 
 if /i "%~1"=="open-ui" goto :open_ui
+if /i "%~1"=="run" goto :run_foreground
 
 "%HERE%node\node.exe" "%HERE%gateway\bin\suveren-gateway.js" %*
 exit /b %ERRORLEVEL%
@@ -66,3 +79,16 @@ if errorlevel 1 (
 if not defined SUVEREN_CP_PORT set "SUVEREN_CP_PORT=3400"
 start "" "http://localhost:%SUVEREN_CP_PORT%"
 exit /b 0
+
+:run_foreground
+rem This is what the Task Scheduler ONLOGON action actually runs (see
+rem serviceInstallWindows's SUVEREN_LAUNCHER handling in bundle/bin/
+rem suveren-gateway.js) — it exists so the env set above (managed, offline,
+rem integrations dir, PATH) applies to the autostart path too, WITHOUT ever
+rem writing any of it to HKCU\Environment (account-wide, and would affect
+rem every other program the user runs). Runs server.js directly, exactly
+rem like the pre-launcher task action did, not through the full CLI's
+rem `start` (no PID-file/port-already-in-use bookkeeping needed — Task
+rem Scheduler itself supervises this process and restarts it on failure).
+"%HERE%node\node.exe" "%HERE%gateway\server.js" --autostart
+exit /b %ERRORLEVEL%
