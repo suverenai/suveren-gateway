@@ -36,4 +36,10 @@ export declare function buildWindowsTaskXml(opts: {
   dataDir?: string;
   /** `DOMAIN\\user`. Omitting it registers an any-user task, which needs admin. */
   userId?: string;
+  /** Overrides the default node.exe-on-server.js action — the managed
+   *  Windows installer passes its launcher here so the scheduled task's env
+   *  stays scoped to the launcher's own child process, not HKCU\Environment
+   *  (account-wide). Omitted everywhere else — byte-identical XML. */
+  command?: string;
+  args?: string;
 }): string;

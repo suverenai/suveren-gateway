@@ -155,13 +155,30 @@ WantedBy=default.target
  * from schtasks — the install was impossible for exactly the audience the
  * user-level design was for. Naming the user scopes both the trigger and the
  * principal to that account, which needs no elevation.
+ *
+ * `command`/`args` (both optional) override the default "run node.exe
+ * directly on server.js" action. The Windows installer's managed install
+ * passes its launcher here instead (command = the launcher's own absolute
+ * path, args = `"run"`): a managed install's env (SUVEREN_INSTALL_METHOD,
+ * SUVEREN_OFFLINE, SUVEREN_INTEGRATIONS_DIR, a PATH prepend for the bundled
+ * node) used to be written into HKCU\Environment, which is ACCOUNT-WIDE —
+ * it silently shadowed a developer's own Node for every other program on
+ * that account, and forced every other gateway install under the same user
+ * into offline+managed mode too. Routing the scheduled task through the
+ * launcher instead keeps that env scoped to just this one process tree: the
+ * launcher sets it for its own child (server.js) only. Omitted (the npm/dev
+ * CLI's `service install`, which has no launcher), this renders BYTE-
+ * IDENTICAL XML to before — this is additive, not a behaviour change for
+ * any install that isn't the managed Windows one.
  */
-export function buildWindowsTaskXml({ nodePath, serverEntry, author, dataDir, userId }) {
+export function buildWindowsTaskXml({ nodePath, serverEntry, author, dataDir, userId, command, args: argsOverride }) {
   // Task Scheduler requires \Command to be the executable and \Arguments the
   // rest; quoting the script path handles spaces (e.g. under "Program Files").
   // Task Scheduler XML carries no environment block, so the marker that this
-  // was a service start has to ride in the arguments.
-  const args = `"${serverEntry}" --autostart`;
+  // was a service start has to ride in the arguments (or, for a launcher
+  // command, is the launcher's own job to pass through).
+  const resolvedCommand = command ?? nodePath;
+  const args = argsOverride ?? `"${serverEntry}" --autostart`;
   const envNote = dataDir ? `Suveren data directory: ${dataDir}` : 'Suveren gateway';
 
   // Element order is fixed by the Task Scheduler XSD, and schtasks rejects the
@@ -212,7 +229,7 @@ ${principalUser}      <LogonType>InteractiveToken</LogonType>
   </Settings>
   <Actions Context="Author">
     <Exec>
-      <Command>${escapeXml(nodePath)}</Command>
+      <Command>${escapeXml(resolvedCommand)}</Command>
       <Arguments>${escapeXml(args)}</Arguments>
     </Exec>
   </Actions>

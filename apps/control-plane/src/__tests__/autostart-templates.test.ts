@@ -209,6 +209,61 @@ describe('Windows Task Scheduler XML', () => {
       expect(t).not.toContain(forbidden);
     }
   });
+
+  // The Windows installer's managed install routes the scheduled task
+  // through its own launcher instead of node.exe/server.js directly, so the
+  // launcher's env (SUVEREN_INSTALL_METHOD, SUVEREN_OFFLINE, PATH prepend for
+  // the bundled node) stays scoped to just that one process tree — the
+  // earlier design wrote those into HKCU\Environment, which is ACCOUNT-WIDE
+  // and would shadow a developer's own Node on that same machine.
+  describe('command/args override (managed Windows installer only)', () => {
+    it('every call WITHOUT an override renders byte-identical XML to before — no behaviour change for npm/dev/docker service install', () => {
+      // No install path other than the managed Windows one will ever pass
+      // command/args — asserting this stays byte-identical is the contract
+      // that makes the override purely additive.
+      const withoutOverride = buildWindowsTaskXml({
+        nodePath: 'C:\\Program Files\\nodejs\\node.exe',
+        serverEntry: 'C:\\Users\\a\\AppData\\suveren\\server.js',
+        author: 'Suveren',
+        dataDir: 'C:\\Users\\a\\.suveren',
+        userId: 'LAPTOP-HP\\Hans-Peter',
+      });
+      expect(withoutOverride).toBe(task());
+      expect(withoutOverride).toContain('<Command>C:\\Program Files\\nodejs\\node.exe</Command>');
+      expect(withoutOverride).toContain('<Arguments>&quot;C:\\Users\\a\\AppData\\suveren\\server.js&quot; --autostart</Arguments>');
+    });
+
+    it('WITH an override, the launcher is the Command and the override IS the Arguments — node.exe/server.js never appear', () => {
+      const t = buildWindowsTaskXml({
+        nodePath: 'C:\\Program Files\\nodejs\\node.exe',
+        serverEntry: 'C:\\Users\\a\\AppData\\suveren\\server.js',
+        author: 'Suveren',
+        dataDir: 'C:\\Users\\a\\.suveren',
+        userId: 'LAPTOP-HP\\Hans-Peter',
+        command: 'C:\\Users\\a\\AppData\\Local\\Programs\\Suveren\\suveren-gateway.cmd',
+        args: 'run',
+      });
+      expect(t).toContain('<Command>C:\\Users\\a\\AppData\\Local\\Programs\\Suveren\\suveren-gateway.cmd</Command>');
+      expect(t).toContain('<Arguments>run</Arguments>');
+      expect(t).not.toContain('node.exe');
+      expect(t).not.toContain('server.js');
+      // Everything else (trigger, principal, restart policy) is unaffected.
+      expect(t).toContain('<LogonTrigger>');
+      expect(t).toContain('<UserId>LAPTOP-HP\\Hans-Peter</UserId>');
+      expect(t).toContain('<LogonType>InteractiveToken</LogonType>');
+    });
+
+    it('escapes a hostile launcher command/args', () => {
+      const t = buildWindowsTaskXml({
+        nodePath: 'C:\\node.exe', serverEntry: 'C:\\server.js',
+        author: 'Suveren', dataDir: '',
+        command: 'C:\\a&b\\suveren-gateway.cmd',
+        args: 'run&<x>',
+      });
+      expect(t).not.toMatch(/&(?!amp;|lt;|gt;|quot;|apos;)/);
+      expect(t).toContain('<Command>C:\\a&amp;b\\suveren-gateway.cmd</Command>');
+    });
+  });
 });
 
 describe('PATH is carried into the unit — integrations depend on it', () => {

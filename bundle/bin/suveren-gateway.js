@@ -995,6 +995,19 @@ async function serviceInstallWindows() {
   // Deliberately does NOT stop the running gateway — see the macOS note.
   // Registering is enough; Task Scheduler starts it at the next logon.
 
+  // SUVEREN_LAUNCHER (set by the Windows installer's launcher.cmd, never by
+  // a plain npm/dev install) means this `service install` was itself invoked
+  // THROUGH that launcher — route the scheduled task through it too, instead
+  // of straight at node.exe/server.js. The launcher sets SUVEREN_INSTALL_
+  // METHOD/SUVEREN_OFFLINE/SUVEREN_INTEGRATIONS_DIR/PATH itself, scoped to
+  // just the gateway process it starts; writing those into HKCU\Environment
+  // (an earlier version of the installer did this) is ACCOUNT-WIDE — it
+  // would shadow a developer's own Node for every other program on that
+  // account and force every other gateway install under the same user into
+  // offline+managed mode too. Absent (every non-managed install), this is a
+  // no-op: buildWindowsTaskXml renders identically to before.
+  const launcherPath = process.env.SUVEREN_LAUNCHER;
+
   // schtasks reads the XML from a file and requires UTF-16 LE with a BOM —
   // it rejects UTF-8 with an unhelpful "The task XML is malformed".
   const xml = buildWindowsTaskXml({
@@ -1003,6 +1016,7 @@ async function serviceInstallWindows() {
     author: 'Suveren',
     dataDir: process.env.SUVEREN_DATA_DIR ?? '',
     userId: windowsUserId(),
+    ...(launcherPath ? { command: launcherPath, args: 'run' } : {}),
   });
   const xmlPath = join(DATA_DIR, 'suveren-task.xml');
   writeFileSync(xmlPath, '\ufeff' + xml, { encoding: 'utf16le' });
