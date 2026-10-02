@@ -86,54 +86,6 @@
       }
     }
   },
-  "templates": [
-    {
-      "name": "Work the inbox",
-      "description": "Read the simulated inbox and send replies. Cannot load or replace test data.",
-      "risk": "low",
-      "mode": "automatic",
-      "bounds": {
-        "read_access": "unlimited",
-        "recipient_max": "1",
-        "send_daily_max": "50",
-        "setup_daily_max": "0"
-      },
-      "context": {
-        "allowed_recipients": "",
-        "allowed_domains": ""
-      },
-      "intent": "Allow the agent to read the simulated inbox and reply to messages on its own. It cannot load or replace the test data the inbox was seeded with.",
-      "ttl": 2592000,
-      "tags": [
-        "read + reply",
-        "automatic",
-        "no setup"
-      ]
-    },
-    {
-      "name": "Load test data (with approval)",
-      "description": "Load a simulation package into an empty inbox. No reading or sending — a separate, one-time setup mandate.",
-      "risk": "high",
-      "mode": "review",
-      "bounds": {
-        "read_access": "none",
-        "recipient_max": "0",
-        "send_daily_max": "0",
-        "setup_daily_max": "1"
-      },
-      "context": {
-        "allowed_recipients": "",
-        "allowed_domains": ""
-      },
-      "intent": "Allow the agent to load one simulation package into an empty inbox, with my review before it happens. No reading or sending under this mandate — grant it separately from the mandate the agent uses for its daily work.",
-      "ttl": 2592000,
-      "tags": [
-        "setup only",
-        "review mode",
-        "1 load/day"
-      ]
-    }
-  ],
   "setupHint": "No configuration needed — works out of the box, in simulation mode.",
   "setupGuide": [
     {
