@@ -1,0 +1,147 @@
+{
+  "id": "mail",
+  "name": "Email (simulation)",
+  "version": "1.0.0",
+  "description": "Simulated inbox for testing an agent's email replies — nothing leaves the laptop",
+  "icon": "mail",
+  "profile": "email",
+  "npmPackage": "@humanagencyp/email-mcp",
+  "mcp": {
+    "command": "email-mcp",
+    "args": []
+  },
+  "credentials": {
+    "fields": [
+      {
+        "key": "mode",
+        "label": "Mode (optional)",
+        "type": "text",
+        "placeholder": "simulation (default) — live needs a mailbox adapter",
+        "optional": true
+      },
+      {
+        "key": "databaseUrl",
+        "label": "Database URL (optional)",
+        "type": "text",
+        "placeholder": "Leave empty for local SQLite",
+        "optional": true
+      }
+    ],
+    "envMapping": {
+      "EMAIL_MODE": "mode",
+      "DATABASE_URL": "databaseUrl"
+    }
+  },
+  "simulation": {
+    "field": "mode",
+    "default": "simulation"
+  },
+  "personalDefault": false,
+  "oauth": null,
+  "toolGating": {
+    "default": {
+      "executionMapping": {},
+      "staticExecution": {}
+    },
+    "overrides": {
+      "list_messages": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "get_message": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "send_message": {
+        "executionMapping": {
+          "to": [
+            {
+              "field": "recipient_count",
+              "transform": "length"
+            },
+            {
+              "field": "allowed_recipients",
+              "transform": "join"
+            },
+            {
+              "field": "allowed_domains",
+              "transform": "join_domains"
+            }
+          ]
+        },
+        "staticExecution": {
+          "action_type": "send"
+        },
+        "actionLabel": "Email sent"
+      },
+      "load_simulation": {
+        "executionMapping": {},
+        "staticExecution": {
+          "action_type": "setup"
+        },
+        "actionLabel": "Test data loaded"
+      }
+    }
+  },
+  "templates": [
+    {
+      "name": "Work the inbox",
+      "description": "Read the simulated inbox and send replies. Cannot load or replace test data.",
+      "risk": "low",
+      "mode": "automatic",
+      "bounds": {
+        "read_access": "unlimited",
+        "recipient_max": "1",
+        "send_daily_max": "50",
+        "setup_daily_max": "0"
+      },
+      "context": {
+        "allowed_recipients": "",
+        "allowed_domains": ""
+      },
+      "intent": "Allow the agent to read the simulated inbox and reply to messages on its own. It cannot load or replace the test data the inbox was seeded with.",
+      "ttl": 2592000,
+      "tags": [
+        "read + reply",
+        "automatic",
+        "no setup"
+      ]
+    },
+    {
+      "name": "Load test data (with approval)",
+      "description": "Load a simulation package into an empty inbox. No reading or sending — a separate, one-time setup mandate.",
+      "risk": "high",
+      "mode": "review",
+      "bounds": {
+        "read_access": "none",
+        "recipient_max": "0",
+        "send_daily_max": "0",
+        "setup_daily_max": "1"
+      },
+      "context": {
+        "allowed_recipients": "",
+        "allowed_domains": ""
+      },
+      "intent": "Allow the agent to load one simulation package into an empty inbox, with my review before it happens. No reading or sending under this mandate — grant it separately from the mandate the agent uses for its daily work.",
+      "ttl": 2592000,
+      "tags": [
+        "setup only",
+        "review mode",
+        "1 load/day"
+      ]
+    }
+  ],
+  "setupHint": "No configuration needed — works out of the box, in simulation mode.",
+  "setupGuide": [
+    {
+      "title": "Ready to use",
+      "description": "This connector stores a simulated inbox locally on your machine. Nothing is sent anywhere until you load test data with a separate, reviewed setup mandate."
+    },
+    {
+      "title": "Optional: use a shared database",
+      "description": "For team use, provide a PostgreSQL connection string in the Database URL field. Otherwise, leave it empty to use local SQLite storage."
+    }
+  ]
+}
