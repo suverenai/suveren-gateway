@@ -6,6 +6,7 @@
   "icon": "file-text",
   "profile": "records",
   "npmPackage": "@humanagencyp/records-mcp",
+  "npmVersion": "1.0.4",
   "personalDefault": true,
   "mcp": {
     "command": "records-mcp",

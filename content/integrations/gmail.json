@@ -6,6 +6,7 @@
   "icon": "mail",
   "profile": "email",
   "npmPackage": "@shinzolabs/gmail-mcp",
+  "npmVersion": "1.7.4",
   "readPolicy": {
     "defaultAgeDays": 30
   },

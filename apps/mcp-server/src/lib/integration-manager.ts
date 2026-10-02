@@ -14,7 +14,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { getProfile } from '@hap/core';
 import type { ProfileToolGating } from '@hap/core';
 import type { IntegrationConfig, ToolGatingConfig } from './integration-registry';
-import { getManifest } from './manifest-loader';
+import { getManifest, isExactSemver } from './manifest-loader';
 import { remotePreflightTarget, preflightRemoteAuth } from './remote-auth-preflight';
 import { isSimulationMode, manifestIsSimulated, SIMULATION_BLOCK_REASON } from './simulation-mode';
 
@@ -289,6 +289,24 @@ export class IntegrationManager {
   }
 
   /**
+   * The installed version of `npmPackage`, or null if it isn't usably
+   * installed at all (see `isUsableInstall`) or its package.json has no
+   * parseable `version`. Never throws — an unreadable version is treated the
+   * same as "not installed", which is the safe direction: it drives a
+   * (re)install rather than a false "already pinned".
+   */
+  private readInstalledVersion(npmPackage: string): string | null {
+    if (!this.isUsableInstall(npmPackage)) return null;
+    const pkgJson = join(INTEGRATIONS_DIR, 'node_modules', ...npmPackage.split('/'), 'package.json');
+    try {
+      const pkg = JSON.parse(readFileSync(pkgJson, 'utf8')) as { version?: string };
+      return typeof pkg.version === 'string' ? pkg.version : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Does the node_modules/.bin shim for `binName` exist? On Windows npm writes
    * `<name>`, `<name>.cmd`, and `<name>.ps1`; the .cmd variant is what actually
    * runs, so any of them present counts.
@@ -303,8 +321,20 @@ export class IntegrationManager {
 
   /**
    * Install an npm package into the managed integrations directory if not
-   * already present. Called automatically before spawning when
+   * already present, and — when `config`'s manifest pins an exact
+   * `npmVersion` for this same package — bring the installed copy to EXACTLY
+   * that version, older or newer. Called automatically before spawning when
    * config.npmPackage is set.
+   *
+   * The pin is read from `getManifest(config.id)` HERE, never from
+   * `config.npmPackage`/a persisted field, so it always reflects the manifest
+   * THIS gateway build ships — not whatever manifest was loaded the day the
+   * integration was first activated (manifests are reloaded fresh on every
+   * boot; `integrations.json` is not). Only applied when the manifest's
+   * `npmPackage` still names the SAME package as `config.npmPackage`: if they
+   * differ (a manually re-pointed integration), there is nothing in the
+   * manifest that vouches for a version of config's actual package, so
+   * today's unpinned behaviour applies instead.
    *
    * Asynchronous ON PURPOSE. This used to be execSync, which blocked the MCP
    * server's event loop for the entire install — the port stayed bound but
@@ -313,29 +343,58 @@ export class IntegrationManager {
    * CI runners: ~3.6s (Linux), ~5.4s (macOS), ~14s (Windows), and far worse
    * on machines with real-time antivirus.
    */
-  private async ensureInstalled(npmPackage: string): Promise<void> {
+  private async ensureInstalled(config: IntegrationConfig): Promise<void> {
+    const npmPackage = config.npmPackage;
+    if (!npmPackage) return;
     ensureIntegrationsDir();
 
-    // Fast path: already installed. Deliberately outside the lock — the common
-    // case must not queue behind an unrelated install.
+    const manifest = getManifest(config.id);
+    const pinnedVersion = manifest?.npmPackage === npmPackage ? manifest.npmVersion : undefined;
+
+    if (pinnedVersion) {
+      // Fast path: already at the pinned version. Deliberately outside the
+      // lock — the common case (every subsequent start once pinned) must not
+      // queue behind an unrelated install.
+      if (this.readInstalledVersion(npmPackage) === pinnedVersion) return;
+
+      return withInstallLock(async () => {
+        // Re-check inside the lock: a concurrent call for the SAME package may
+        // have already brought it to the pin while this one waited.
+        const current = this.readInstalledVersion(npmPackage);
+        if (current === pinnedVersion) return;
+        console.error(
+          `[IntegrationManager] ${npmPackage} ${current ?? '(not installed)'} → ${pinnedVersion} (pinned by manifest)`,
+        );
+        await this.installNow(npmPackage, pinnedVersion);
+      });
+    }
+
+    // No pin (manually added integration, or a repointed package the
+    // manifest no longer names) — unchanged legacy behaviour: install once,
+    // then never touch it again on version grounds.
     if (this.isUsableInstall(npmPackage)) return;
 
     return withInstallLock(async () => {
-      // Re-check inside the lock: a concurrent call for the SAME package may
-      // have installed it while this one waited.
       if (this.isUsableInstall(npmPackage)) return;
       await this.installNow(npmPackage);
     });
   }
 
-  /** The actual install. Callers MUST hold the install lock. */
-  private async installNow(npmPackage: string): Promise<void> {
+  /**
+   * The actual install. Callers MUST hold the install lock.
+   *
+   * `exactVersion`, when given, is a pin already validated as an exact semver
+   * by the manifest loader (`isExactSemver`) — re-validated here anyway
+   * because this method does not trust its caller's caller, and because the
+   * version reaches a shell on Windows (see the package-name check below).
+   */
+  private async installNow(npmPackage: string, exactVersion?: string): Promise<void> {
     // A previous attempt may have left a partial directory behind. Remove it
     // so npm starts clean, otherwise the reinstall can fail on half-written
     // files that are still locked.
     const pkgDir = join(INTEGRATIONS_DIR, 'node_modules', ...npmPackage.split('/'));
     if (existsSync(pkgDir)) {
-      console.error(`[IntegrationManager] Removing unusable install of ${npmPackage}`);
+      console.error(`[IntegrationManager] Removing ${exactVersion ? 'outdated' : 'unusable'} install of ${npmPackage}`);
       try {
         rmSync(pkgDir, { recursive: true, force: true });
       } catch (err) {
@@ -352,20 +411,24 @@ export class IntegrationManager {
     if (!/^(@[a-z0-9][\w.-]*\/)?[a-z0-9][\w.-]*$/i.test(npmPackage)) {
       throw new Error(`Refusing to install unsafe package name: ${JSON.stringify(npmPackage)}`);
     }
+    if (exactVersion !== undefined && !isExactSemver(exactVersion)) {
+      throw new Error(`Refusing to install ${npmPackage} at unsafe/non-exact version spec: ${JSON.stringify(exactVersion)}`);
+    }
 
-    console.error(`[IntegrationManager] Installing ${npmPackage}...`);
+    const spec = exactVersion ? `${npmPackage}@${exactVersion}` : npmPackage;
+    console.error(`[IntegrationManager] Installing ${spec}...`);
     const startedAt = Date.now();
     const isWin = process.platform === 'win32';
 
     await new Promise<void>((resolve, reject) => {
       const child = execFile(
         'npm',
-        ['install', '--no-fund', '--no-audit', npmPackage],
+        ['install', '--no-fund', '--no-audit', spec],
         {
           cwd: INTEGRATIONS_DIR,
           // Windows: a shell so cmd.exe finds npm.cmd (see EINVAL note above).
           // POSIX: no shell — npm is a normal executable and keeping shell off
-          // means the validated package name is still passed as a bare argv.
+          // means the validated package spec is still passed as a bare argv.
           shell: isWin,
           // No timeout: a slow install on a machine with antivirus is not an
           // error, and killing it midway is what created broken installs in
@@ -375,22 +438,35 @@ export class IntegrationManager {
         },
         (err, _stdout, stderr) => {
           if (err) {
-            reject(new Error(`Failed to install ${npmPackage}: ${err.message}${stderr ? ` — ${stderr.trim()}` : ''}`));
+            reject(new Error(`Failed to install ${spec}: ${err.message}${stderr ? ` — ${stderr.trim()}` : ''}`));
             return;
           }
           resolve();
         },
       );
-      child.on('error', err => reject(new Error(`Failed to run npm for ${npmPackage}: ${err.message}`)));
+      child.on('error', err => reject(new Error(`Failed to run npm for ${spec}: ${err.message}`)));
     });
 
     if (!this.isUsableInstall(npmPackage)) {
       throw new Error(
-        `Installed ${npmPackage} but it is not usable — package.json or its bin target is missing. ` +
+        `Installed ${spec} but it is not usable — package.json or its bin target is missing. ` +
         `Check ${INTEGRATIONS_DIR} for a partial install.`,
       );
     }
-    console.error(`[IntegrationManager] Installed ${npmPackage} (${((Date.now() - startedAt) / 1000).toFixed(1)}s)`);
+    if (exactVersion !== undefined) {
+      const installed = this.readInstalledVersion(npmPackage);
+      if (installed !== exactVersion) {
+        // `npm install pkg@1.2.3` should only ever land exactly 1.2.3. If it
+        // didn't, something is wrong enough (registry inconsistency, a stale
+        // cache, a non-exact resolution we failed to catch) that running
+        // whatever DID land — a version the manifest never vouched for — is
+        // the wrong failure mode. Refuse instead of silently proceeding.
+        throw new Error(
+          `Installed ${npmPackage} but got version ${installed ?? 'unknown'}, expected the pinned ${exactVersion}.`,
+        );
+      }
+    }
+    console.error(`[IntegrationManager] Installed ${spec} (${((Date.now() - startedAt) / 1000).toFixed(1)}s)`);
   }
 
   /**
@@ -478,9 +554,14 @@ export class IntegrationManager {
       throw new Error(`${config.id}: ${SIMULATION_BLOCK_REASON}`);
     }
 
-    // Install npm package on-demand if specified
+    // Install (or update to the manifest-pinned version) npm package on-demand
+    // if specified. Throws — and the integration does not start — if the
+    // manifest pins a version and bringing the install to it fails: running
+    // whatever version happens to be on disk instead would be exactly the
+    // "run a version nobody here vouches for" failure this feature exists to
+    // prevent.
     if (config.npmPackage) {
-      await this.ensureInstalled(config.npmPackage);
+      await this.ensureInstalled(config);
     }
 
     // Resolve environment variables from vault references

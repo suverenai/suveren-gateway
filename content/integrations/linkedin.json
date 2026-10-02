@@ -6,6 +6,7 @@
   "icon": "share",
   "profile": "publish",
   "npmPackage": "@humanagencyp/linkedin-mcp",
+  "npmVersion": "1.0.7",
   "mcp": {
     "command": "linkedin-mcp",
     "args": []

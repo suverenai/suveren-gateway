@@ -9,6 +9,7 @@
     "defaultAgeDays": 30
   },
   "npmPackage": "@humanagencyp/google-calendar-mcp",
+  "npmVersion": "0.1.2",
   "mcp": {
     "command": "google-calendar-mcp",
     "args": []

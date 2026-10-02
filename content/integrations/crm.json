@@ -6,6 +6,7 @@
   "icon": "users",
   "profile": "customers",
   "npmPackage": "@humanagencyp/crm-mcp",
+  "npmVersion": "1.1.2",
   "mcp": {
     "command": "crm-mcp",
     "args": []

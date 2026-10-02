@@ -6,12 +6,10 @@
   "icon": "wrench",
   "profile": "deploy",
   "npmPackage": "@humanagencyp/deploy-mcp",
+  "npmVersion": "0.4.2",
   "mcp": {
-    "command": "npx",
-    "args": [
-      "-y",
-      "@humanagencyp/deploy-mcp@latest"
-    ]
+    "command": "deploy-mcp",
+    "args": []
   },
   "credentials": {
     "fields": [
