@@ -215,6 +215,8 @@ This works through the proxy exactly like it works directly — `--ca-file` appl
 
 **The one combination that still refuses, on purpose:** [TLS pinning](#pinning-the-authority-servers-tls-certificate) (opt-in, off by default) together with a TLS-inspecting proxy. Pinning checks the certificate the gateway sees *through* the proxy — if that's the proxy's own re-signed one rather than the real Authority Server's, the pin will not match, and the gateway refuses the connection and says so, even with the company root trusted via `--ca-file`. That refusal is correct: ask network/IT to exempt the Authority Server's host from TLS inspection, the same request you'd make for any pinned certificate on that network.
 
+**On a company-managed machine, IT can set the proxy centrally** instead of relying on `HTTPS_PROXY` being exported in every shell — see [Managed settings](docs/managed-settings.md). A policy-set `Proxy` (Windows registry or a JSON policy file) **overrides** an already-set `HTTP_PROXY`/`HTTPS_PROXY` rather than merely filling it in, and `config set proxy` / `--proxy` refuse with "set by your IT" when it's locked. A loopback target is still never proxied, regardless.
+
 ---
 
 ## Simulation mode — block every real system

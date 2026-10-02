@@ -24,6 +24,8 @@ Registry value names = JSON file keys (PascalCase):
 | `AsUrl` | string | Authority Server URL |
 | `CaFile` | string | Path to a CA bundle for internal TLS |
 | `PinTls` | DWORD 0/1 or boolean | TLS certificate pinning |
+| `Proxy` | string | Corporate HTTP(S) proxy (`http://` or `https://`) |
+| `NoProxy` | string | Hosts to bypass the proxy for (same grammar as `NO_PROXY`) |
 | `Simulation` | DWORD 0/1 or boolean | Simulation mode (blocks real connectors) |
 | `InstallMethod` | string | Only `"managed"` is recognized |
 
@@ -43,6 +45,17 @@ an invalid policy value makes every process refuse to start, loudly, naming
 the key, the bad value, and which source it came from (registry hive or file
 path). This is deliberate: an IT-pushed typo must be obvious immediately,
 not silently ignored.
+
+**`Proxy`/`NoProxy` are the exception to "env var ranks above policy only in
+the other direction":** every other locked key has no env-var tier to begin
+with (an operator doesn't typically export `SUVEREN_AS_URL` by accident), but
+a corporate laptop very often already has `HTTP_PROXY`/`HTTPS_PROXY` set —
+and on Windows, the proxy usually lives in *system settings*, not an
+employee's shell at all. So `Proxy`/`NoProxy`, when locked, **override** an
+already-set `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` rather than merely
+out-ranking a saved `config set proxy` — see `bundle/server.js`. A loopback
+target (the control plane ↔ MCP server, or a local AI assistant) is still
+never proxied, regardless of any of this — see `proxy-env.ts` in both apps.
 
 ## Where this is enforced
 
@@ -114,6 +127,18 @@ test asserting exactly that.
   per-test registry key; skipped on non-Windows, runs on
   `.github/workflows/bundle-smoke.yml`'s `unit` job (windows-latest leg).
 - `apps/control-plane/src/__tests__/gateway-cli-managed-settings.test.ts` —
-  spawns the real CLI to prove the refusals end to end.
+  spawns the real CLI to prove the refusals end to end, incl. `config
+  set/get proxy` and `start --proxy`.
 - `apps/*/src/lib/__tests__/as-config.test.ts` /
   `simulation-mode.test.ts` — policy-locked precedence for each resolver.
+- `Proxy`/`NoProxy` end to end: a built bundle, started with
+  `SUVEREN_POLICY_FILE` pointing at `{"Proxy": "http://127.0.0.1:<port>"}`
+  and a real local CONNECT proxy listening there, shows a real Authority
+  Server call (`POST /auth/login`'s pubkey fetch) tunnelled through it —
+  verified manually against `bundle/dist` (the packaged artefact, not
+  source) with a never-resolves-via-DNS Authority Server hostname, plus a
+  control run with no policy file showing the same call fails directly
+  instead. Not (yet) an automated CI step — see
+  `apps/control-plane/src/__tests__/corporate-proxy.e2e.test.ts` for the
+  automated equivalent one level down (real proxy, real TLS, without the
+  policy layer or the packaged bundle).
