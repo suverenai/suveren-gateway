@@ -13,6 +13,10 @@ const HOW_WE_CHECK: Record<string, string> = {
   npm: 'Checking npm for new releases',
   docker: 'Checking the container registry for new images',
   dev: 'Git checkout — comparing against origin/main, not npm releases',
+  // Still an npm install underneath (see docs/managed-settings.md) — only
+  // the update banner's copy differs for a managed install, not how this
+  // checks.
+  managed: 'Checking npm for new releases — managed by your IT',
 };
 
 export function VersionCard() {

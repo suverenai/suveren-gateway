@@ -13,6 +13,8 @@
  */
 import { useEffect, useState } from 'react';
 import { spClient } from '../lib/sp-client';
+import { LockedByItBadge } from './LockedByItBadge';
+import { isPolicyLocked } from '../lib/policy-lock';
 
 interface AsPairing {
   asUrl: string;
@@ -21,6 +23,11 @@ interface AsPairing {
   pairedAt: string | null;
   pinTlsEnabled: boolean;
   tlsPinFingerprint: string | null;
+  // IT policy (see lib/policy.ts via /as-pairing) — omitted entirely by an
+  // older control-plane that predates managed settings; `isPolicyLocked`
+  // treats that exactly like "not locked".
+  asUrlLockedByPolicy?: boolean;
+  pinTlsLockedByPolicy?: boolean;
 }
 
 export function AuthorityServerCard() {
@@ -35,9 +42,15 @@ export function AuthorityServerCard() {
     return () => { cancelled = true; };
   }, []);
 
+  const asUrlLocked = isPolicyLocked(state?.asUrlLockedByPolicy);
+  const pinTlsLocked = isPolicyLocked(state?.pinTlsLockedByPolicy);
+
   return (
     <div className="card" style={{ padding: '1.5rem', marginTop: '2rem' }}>
-      <h2 style={{ fontSize: '1rem', fontWeight: 700, margin: 0 }}>Authority Server</h2>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem' }}>
+        <h2 style={{ fontSize: '1rem', fontWeight: 700, margin: 0 }}>Authority Server</h2>
+        {asUrlLocked && <LockedByItBadge />}
+      </div>
 
       {!state && !error && (
         <p style={{ margin: '0.5rem 0 0', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>Checking…</p>
@@ -77,6 +90,7 @@ export function AuthorityServerCard() {
           {(state.tlsPinFingerprint || state.pinTlsEnabled) && (
             <p style={{ margin: '0.5rem 0 0', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
               <strong>TLS certificate pin:</strong>{' '}
+              {pinTlsLocked && <LockedByItBadge title="TLS pinning is set by your IT policy" />}{' '}
               {state.tlsPinFingerprint ? (
                 <code>{state.tlsPinFingerprint}</code>
               ) : (
@@ -89,26 +103,39 @@ export function AuthorityServerCard() {
               <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>
                 {state.pinTlsEnabled ? (
                   <>
-                    TLS pinning is ON (<code>config set pin-tls on</code>). Every connection to the
-                    Authority Server must present this certificate's public key, or the gateway
-                    refuses it and locks.
+                    TLS pinning is ON{pinTlsLocked ? (
+                      <>, set by your organization's IT policy</>
+                    ) : (
+                      <> (<code>config set pin-tls on</code>)</>
+                    )}. Every connection to the Authority Server must present this certificate's
+                    public key, or the gateway refuses it and locks.
                   </>
                 ) : (
                   <>
-                    Captured at sign-in; not currently enforced (<code>config set pin-tls on</code>{' '}
-                    to require it on every connection).
+                    Captured at sign-in; not currently enforced{pinTlsLocked ? (
+                      <> — controlled by your organization's IT policy on this computer</>
+                    ) : (
+                      <> (<code>config set pin-tls on</code> to require it on every connection)</>
+                    )}.
                   </>
                 )}{' '}
                 A certificate renewal with the SAME key keeps this pin; a NEW key needs re-pairing.
               </span>
             </p>
           )}
-          <p style={{ margin: '0.75rem 0 0', fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>
-            To point this gateway at a different Authority Server:{' '}
-            <code>suveren-gateway config set as-url &lt;url&gt;</code>, then restart. Changing it
-            ends the current sign-in and clears cached mandates — you sign in again against the
-            new server.
-          </p>
+          {asUrlLocked ? (
+            <p style={{ margin: '0.75rem 0 0', fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>
+              This Authority Server URL is set by your organization's IT policy and cannot be
+              changed from this computer. Contact your IT administrator if it needs to change.
+            </p>
+          ) : (
+            <p style={{ margin: '0.75rem 0 0', fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>
+              To point this gateway at a different Authority Server:{' '}
+              <code>suveren-gateway config set as-url &lt;url&gt;</code>, then restart. Changing it
+              ends the current sign-in and clears cached mandates — you sign in again against the
+              new server.
+            </p>
+          )}
         </>
       )}
     </div>
