@@ -306,15 +306,26 @@ jobs:
     # found no PID file there (the gateway was started with THIS one), and
     # reported "not running" — confirmed for real on windows-latest. Job-level
     # env reaches every step uniformly, the same pattern bundle-smoke.yml uses.
+    #
+    # SUVEREN_DATA_DIR is NOT here: the `runner` context (needed for
+    # runner.temp) is not available to a job-level `env:` block — only to
+    # steps — and using it here made GitHub reject the whole workflow file
+    # outright (zero jobs scheduled). Set via $GITHUB_ENV in the first step
+    # instead, which correctly reaches every step after it.
     env:
       SUVEREN_CP_PORT: '15400'
       SUVEREN_MCP_PORT: '15430'
-      SUVEREN_DATA_DIR: ${{ runner.temp }}\suveren-install-test-data
       SUVEREN_INTERNAL_SECRET: windows-install-test-internal-secret
       # Points at nothing — proves no step below ever needs the registry.
       npm_config_registry: 'http://127.0.0.1:9'
     steps:
       - uses: actions/checkout@v6
+
+      - name: Compute data dir
+        shell: pwsh
+        run: |
+          $dataDir = "$env:RUNNER_TEMP\suveren-install-test-data"
+          "SUVEREN_DATA_DIR=$dataDir" >> $env:GITHUB_ENV
 
       - uses: actions/download-artifact@v4
         with:
