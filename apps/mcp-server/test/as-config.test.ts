@@ -18,7 +18,9 @@ import {
   validateAsUrl,
   resolveAsUrl,
   resolveCaFile,
+  resolvePinTls,
 } from '../src/lib/as-config';
+import { _resetPolicyCacheForTests } from '../src/lib/policy';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'as-config-'));
 const dirs: string[] = [];
@@ -28,11 +30,59 @@ function dataDir(): string {
   return d;
 }
 
+function tmpPolicyFile(contents: unknown): string {
+  const dir = dataDir();
+  const path = join(dir, 'gateway-policy.json');
+  writeFileSync(path, JSON.stringify(contents), 'utf8');
+  return path;
+}
+
 afterEach(() => {
   delete process.env.SUVEREN_AS_URL;
+  delete process.env.SUVEREN_POLICY_FILE;
+  _resetPolicyCacheForTests();
   for (const d of dirs.splice(0)) {
     try { rmSync(d, { recursive: true, force: true }); } catch { /* ignore */ }
   }
+});
+
+describe('IT policy locking', () => {
+  it('REFUSAL: policy AsUrl wins over flag, env, and saved config', () => {
+    const dir = dataDir();
+    writeAsConfig(dir, { asUrl: 'https://saved.example.com' });
+    process.env.SUVEREN_AS_URL = 'https://env.example.com';
+    process.env.SUVEREN_POLICY_FILE = tmpPolicyFile({ AsUrl: 'https://policy.example.com' });
+    expect(resolveAsUrl(dir, 'https://flag.example.com')).toBe('https://policy.example.com');
+  });
+
+  it('policy CaFile wins over the saved value', () => {
+    const dir = dataDir();
+    const caPath = join(dir, 'ca.pem');
+    writeFileSync(caPath, '-----BEGIN CERTIFICATE-----\n...', 'utf8');
+    writeAsConfig(dir, { caFile: '/some/other/saved-ca.pem' });
+    process.env.SUVEREN_POLICY_FILE = tmpPolicyFile({ CaFile: caPath });
+    expect(resolveCaFile(dir)).toBe(caPath);
+  });
+
+  it('policy PinTls wins over the saved value', () => {
+    const dir = dataDir();
+    writeAsConfig(dir, { pinTls: false });
+    process.env.SUVEREN_POLICY_FILE = tmpPolicyFile({ PinTls: true });
+    expect(resolvePinTls(dir)).toBe(true);
+  });
+
+  it('REFUSAL: an invalid policy AsUrl refuses to start — same validation as config set', () => {
+    const dir = dataDir();
+    process.env.SUVEREN_POLICY_FILE = tmpPolicyFile({ AsUrl: 'not-a-url' });
+    expect(() => resolveAsUrl(dir)).toThrow(/Invalid policy AsUrl/);
+  });
+
+  it('no policy configured — behaves exactly as before (unaffected)', () => {
+    const dir = dataDir();
+    process.env.SUVEREN_POLICY_FILE = join(dir, 'absent.json');
+    writeAsConfig(dir, { asUrl: 'https://saved.example.com' });
+    expect(resolveAsUrl(dir)).toBe('https://saved.example.com');
+  });
 });
 
 describe('validateAsUrl', () => {

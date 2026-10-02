@@ -7,8 +7,13 @@ const JUST_UPDATED_KEY = 'suveren:updatedTo';
 
 /** Per-install-method upgrade command. The control-plane reports
  *  `installMethod` on /health based on whether it sees /.dockerenv
- *  (docker), a node_modules path (npm), or neither (dev). */
-function upgradeCommandFor(method: InstallMethod): string {
+ *  (docker), a node_modules path (npm), or neither (dev) — UNLESS IT policy
+ *  or `SUVEREN_INSTALL_METHOD=managed` pre-empts that to `managed`.
+ *  Returns `null` for `managed`: an employee on a managed install has no
+ *  permission to run the npm command themselves (see
+ *  docs/managed-settings.md), so there is no command to show at all. */
+export function upgradeCommandFor(method: InstallMethod): string | null {
+  if (method === 'managed') return null;
   if (method === 'npm') {
     // `restart`, not stop-then-start. Once the login service is installed —
     // which the CLI itself offers — stop/start no longer manage the process:
@@ -23,6 +28,11 @@ function upgradeCommandFor(method: InstallMethod): string {
   // docker (default)
   return 'docker rm -f suveren-gateway 2>/dev/null; docker ps -q --filter publish=7400 --filter publish=7430 | xargs -r docker rm -f; docker pull ghcr.io/suverenai/suveren-gateway:latest && docker run -d --name suveren-gateway -p 7400:3000 -p 7430:3030 -v $HOME/.suveren:/app/data ghcr.io/suverenai/suveren-gateway';
 }
+
+/** Shown in place of the Update button + command for a managed install —
+ *  matches the signed-off mockup's copy exactly (temp/managed-settings-mockup.html). */
+export const MANAGED_UPDATE_HINT =
+  "Updates for this gateway come from your company's IT — no action needed here.";
 
 /** Don't yank the page out from under in-progress work. An open modal/dialog
  *  (other than our own overlay) or a focused text field with content means the
@@ -120,6 +130,7 @@ export function UpdateBanner() {
 
   const beginUpdate = () => { setUpdating(true); startFastPolling(); };
   const copyCmd = async () => {
+    if (!updateCmd) return; // managed install: no command exists to copy
     try {
       await navigator.clipboard.writeText(updateCmd);
       setCopied(true);
@@ -142,16 +153,23 @@ export function UpdateBanner() {
         </div>
       )}
 
-      {/* Update available — headline + Update only; the command lives in the overlay. */}
+      {/* Update available — headline + Update only; the command lives in the overlay.
+          Managed install: no command exists to run, so no Update button either —
+          just the headline, the "ask your IT" hint, and dismiss. */}
       {updateAvailable && !updating && !liveVersion && (
         <div ref={ref} className="update-banner" role="status" aria-live="polite">
           <div className="update-banner-row">
             <span className="update-banner-text">Update available.</span>
             <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-              <button className="btn btn-sm btn-secondary" onClick={beginUpdate}>Update</button>
+              {installMethod !== 'managed' && (
+                <button className="btn btn-sm btn-secondary" onClick={beginUpdate}>Update</button>
+              )}
               <button className="update-banner-x" onClick={dismiss} aria-label="Dismiss">{'×'}</button>
             </div>
           </div>
+          {installMethod === 'managed' && (
+            <p className="update-banner-hint">{MANAGED_UPDATE_HINT}</p>
+          )}
         </div>
       )}
 

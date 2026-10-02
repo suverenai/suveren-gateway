@@ -24,10 +24,20 @@
  * the NEXT start/restart — not read continuously, because the env is fixed
  * for the life of a process anyway; checking it live (rather than caching it
  * once) costs nothing and is far easier to exercise in tests.
+ *
+ * IT policy (see policy.ts) wins UNCONDITIONALLY over the env var — a
+ * locked `Simulation` setting must be impossible to turn off locally, even
+ * by hand-setting SUVEREN_SIMULATION in the environment this process
+ * happens to inherit. readPolicy() is memoized, so checking it on every
+ * call (this runs per tool call — the defence-in-depth check in
+ * tool-proxy.ts) costs nothing on a real install that has no policy set.
  */
 import type { IntegrationManifest } from './manifest-loader';
+import { readPolicy } from './policy';
 
 export function isSimulationMode(): boolean {
+  const policySimulation = readPolicy().policy.simulation;
+  if (policySimulation !== undefined) return policySimulation;
   return process.env.SUVEREN_SIMULATION === '1';
 }
 

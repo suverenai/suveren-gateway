@@ -9,6 +9,16 @@
  *   dev     → `git fetch origin` then count commits HEAD..origin/main;
  *             update available iff behind. (Previously hardcoded true,
  *             which cried wolf permanently.)
+ *   managed → an IT-provisioned install (SUVEREN_INSTALL_METHOD=managed env,
+ *             or policy InstallMethod=managed — see lib/policy.ts). Still
+ *             physically an npm install underneath, so the CHECK is the
+ *             same registry.npmjs.org comparison as `npm` — only the UI's
+ *             banner differs: it must not show the `npm install -g …`
+ *             command (the employee has no permission to run IT-managed
+ *             installs), and instead says updates come from the company's
+ *             IT. See index.ts's `/health` (`installMethod: 'managed'` is
+ *             the flag the UI banner branches on) and
+ *             docs/managed-settings.md.
  *
  * Boots with a 30s initial delay to avoid hammering the registry on
  * every restart, then re-checks once per hour as a safety net for
@@ -22,7 +32,7 @@ import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { proxiedFetch } from './proxied-fetch';
 
-export type InstallMethod = 'docker' | 'npm' | 'dev';
+export type InstallMethod = 'docker' | 'npm' | 'dev' | 'managed';
 
 const GHCR_IMAGE = 'suverenai/suveren-gateway';
 const NPM_PACKAGE = '@suveren/gateway';
@@ -144,7 +154,10 @@ async function check(): Promise<void> {
       checkDev();
       return;
     }
-    if (installMethod === 'npm') {
+    if (installMethod === 'npm' || installMethod === 'managed') {
+      // `managed` is still an npm install underneath (IT provisions it the
+      // same way) — only the UI's banner text differs, not where the
+      // version actually comes from.
       await checkNpm();
       return;
     }
