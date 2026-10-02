@@ -295,6 +295,11 @@ export function createAuthRouter(
               // session (see doc at the top of this file).
               ...clientVersionHeaders(),
             },
+            // Belt-and-suspenders on top of fetchAs's own default bound
+            // (as-tls-pin.ts): this is the exact call that hung in
+            // production (2026-10-02) with NO timeout at all — a dead
+            // keep-alive socket left the whole login request stuck forever.
+            signal: AbortSignal.timeout(10_000),
           },
           sessionPinning,
         );
@@ -309,7 +314,17 @@ export function createAuthRouter(
           res.status(409).json({ error: 'as_tls_mismatch', message: err.message });
           return;
         }
-        throw err;
+        // Network failure, or the timeout above firing — either way nothing
+        // was verified; refuse the same way `checkAsKeyBeforeLogin` already
+        // does for an unreachable Authority Server, rather than falling
+        // through to the generic 500 below (which logs it, correctly, but
+        // gives the caller no machine-readable reason to retry on).
+        res.status(502).json({
+          error: 'as_unreachable',
+          message: `Could not reach the Authority Server at ${SP_URL} to sign in — ` +
+            `${err instanceof Error ? err.message : String(err)}. Refusing to sign in.`,
+        });
+        return;
       }
 
       if (!spRes.ok) {
@@ -543,7 +558,16 @@ export function createAuthRouter(
       cookie
         ? fetchAs(
             `${SP_URL}/api/auth/logout`,
-            { method: 'POST', headers: { cookie, ...clientVersionHeaders() }, redirect: 'manual' },
+            {
+              method: 'POST',
+              headers: { cookie, ...clientVersionHeaders() },
+              redirect: 'manual',
+              // Same reasoning as the session call above — this sat with no
+              // timeout of its own before, which would have hung the
+              // `Promise.allSettled` below (and this handler's response)
+              // forever on a dead connection.
+              signal: AbortSignal.timeout(10_000),
+            },
             logoutPinning,
           ).catch(err => {
             if (err instanceof AsTlsMismatchError) {

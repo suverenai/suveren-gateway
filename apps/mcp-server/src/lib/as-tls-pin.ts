@@ -269,6 +269,47 @@ export interface AsFetchResult {
 }
 
 /**
+ * Upper bound on how long ANY single `fetchAs` call may stay in flight,
+ * applied even when the caller passed no `signal` of its own (and combined
+ * with one if it did — whichever fires first wins). Exists because a
+ * production incident (2026-10-02) showed the alternative: `SPClient.fetch`
+ * (sp-client.ts) never passes a `signal` at all, so once undici reused — or
+ * this module's own per-call Agent opened — a connection that went silent (a
+ * dead keep-alive socket a load balancer/edge dropped without the client
+ * ever seeing a FIN/RST), the `await` never settled. The sibling incident
+ * was `POST /auth/login` on the control-plane side; this app's every gated
+ * tool call goes through the exact same unbounded path via `SPClient.fetch`.
+ * There is nothing dangerous about erroring out an AS call after a bound
+ * this generous — every caller already treats a thrown error here as "the
+ * Authority Server could not be reached" and fails closed.
+ */
+const DEFAULT_AS_FETCH_TIMEOUT_MS = 15_000;
+
+/** `init.signal` combined with a {@link DEFAULT_AS_FETCH_TIMEOUT_MS} bound —
+ *  whichever fires first aborts the call. A caller-supplied signal is never
+ *  weakened, only ever tightened. */
+function withBoundedSignal(init: RequestInit | undefined): RequestInit {
+  const timeout = AbortSignal.timeout(DEFAULT_AS_FETCH_TIMEOUT_MS);
+  const signal = init?.signal ? AbortSignal.any([init.signal as AbortSignal, timeout]) : timeout;
+  return { ...init, signal };
+}
+
+/**
+ * Closes `dispatcher` once `pending` settles, without making the caller wait
+ * for it (undici's `Dispatcher.close()` itself waits for any still-streaming
+ * response body to finish before actually tearing down the connection — see
+ * its doc comment — so this never cuts a response short; it only stops the
+ * per-call Agent this module builds for the pinned/capturing branches from
+ * being silently abandoned, which otherwise leaks one open socket per call
+ * forever (the OTHER half of the 2026-10-02 incident: long-running
+ * processes accumulating idle ESTABLISHED connections, one per sign-in
+ * attempt, none of them ever closed).
+ */
+function closeAfter(dispatcher: Dispatcher, pending: Promise<unknown>): void {
+  pending.catch(() => {}).finally(() => { void dispatcher.close().catch(() => {}); });
+}
+
+/**
  * The ONE place every Authority Server HTTP call from this process must go
  * through once pin-tls is a concern — in this app that's `SPClient.fetch()`
  * in sp-client.ts, the single chokepoint every AS call (receipt, proposals,
@@ -276,6 +317,13 @@ export interface AsFetchResult {
  * exists here only to mirror the control-plane's module shape (its `/api`
  * proxy is the one caller that needs it); this app has no long-lived proxy
  * agent of its own to attach it to.
+ *
+ * Every branch below is bounded by {@link DEFAULT_AS_FETCH_TIMEOUT_MS} (see
+ * {@link withBoundedSignal}) and, for the pinned/capturing branches, closes
+ * its per-call Agent once the call settles (see {@link closeAfter}) — a
+ * caller forgetting its own `signal` (as `SPClient.fetch` always has), or the
+ * AS going quietly unresponsive, can therefore never hang this call or leak
+ * its connection forever.
  *
  * @throws AsTlsMismatchError when `pinning.enforce` and either (a) a pin
  *   exists but the live certificate's SPKI (or hostname) doesn't check out,
@@ -290,9 +338,10 @@ export async function fetchAs(
   pinning: AsFetchPinning,
 ): Promise<AsFetchResult> {
   // Ordinary call (not the capturing challenge), pin-tls off: nothing to
-  // enforce and nothing to capture — exactly a bare fetch.
+  // enforce and nothing to capture — exactly a bare fetch (still bounded —
+  // this is the branch every SPClient call takes by default).
   if (!pinning.enforce && !pinning.capture) {
-    const res = await fetch(url, init);
+    const res = await fetch(url, withBoundedSignal(init));
     return { res };
   }
 
@@ -312,8 +361,10 @@ export async function fetchAs(
   // (never silently replaced, even though `capture` is set).
   if (pinning.pinnedSpkiHex && (pinning.enforce || !pinning.capture)) {
     const dispatcher = buildPinnedDispatcher(pinning.pinnedSpkiHex);
+    const pending = undiciFetch(url, { ...(withBoundedSignal(init) as Record<string, unknown>), dispatcher });
+    closeAfter(dispatcher, pending);
     try {
-      const res = (await undiciFetch(url, { ...(init as Record<string, unknown>), dispatcher })) as unknown as Response;
+      const res = (await pending) as unknown as Response;
       return { res };
     } catch (err) {
       if (!isPinCheckError(err)) throw err; // an AS outage, not a pin mismatch — pass through unchanged
@@ -330,9 +381,11 @@ export async function fetchAs(
   // captures/refreshes) or pin-tls on and genuinely nothing pinned yet
   // (first-ever pairing — trust-on-first-use at the one legitimate moment).
   const { dispatcher, getCapturedCert } = buildCapturingDispatcher();
+  const pending = undiciFetch(url, { ...(withBoundedSignal(init) as Record<string, unknown>), dispatcher });
+  closeAfter(dispatcher, pending);
   let res: Response;
   try {
-    res = (await undiciFetch(url, { ...(init as Record<string, unknown>), dispatcher })) as unknown as Response;
+    res = (await pending) as unknown as Response;
   } catch (err) {
     if (!isPinCheckError(err)) throw err; // an ordinary connection failure — not a pin/hostname rejection
     throw new AsTlsMismatchError(
