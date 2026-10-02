@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- **Node.js 20+** — check with `node -v`
+- **Node.js 22+** — check with `node -v`
 - **pnpm 9+** — install with `corepack enable` (built into Node.js) or `npm install -g pnpm`
 - **hap-profiles** — must be cloned as a sibling directory (or set `SUVEREN_PROFILES_DIR`)
 
@@ -83,6 +83,12 @@ By default, the gateway connects to `https://www.suveren.ai`. Just run `pnpm dev
 | `SUVEREN_MANIFESTS_DIR` | `content/integrations` (resolved from repo) | Integration manifest JSON directory (read-only source) |
 | `SUVEREN_INTEGRATIONS_DIR` | `~/.suveren/integrations` | Runtime install target for on-demand MCP npm packages. Must NOT be the manifest dir — the installer writes `package.json` and `node_modules/` here. |
 | `SUVEREN_SIMULATION` | `0` | `1` blocks every connector without a manifest `simulation` marker and forces simulated ones into that mode. Normally set by `bundle/server.js` from the CLI's saved config (`suveren-gateway simulation on\|off`), not by hand — see README's "Simulation mode" section. |
+
+## Connector manifests — pinned versions
+
+Every manifest under `content/integrations/` that installs a connector via npm (`npmPackage` set) must also pin the exact tested version via `npmVersion` (e.g. `"0.3.3"`) — no ranges (`^1.2.3`), no dist-tags (`"latest"`), no git/URL/file specs. `manifest-loader.ts` refuses the whole manifest at load time, by name, if the pin is missing or not an exact semver; `manifest-npm-pin.test.ts` lints every shipped manifest so a new one can't ship without it.
+
+On start, `IntegrationManager.ensureInstalled` (`apps/mcp-server/src/lib/integration-manager.ts`) reads the pin from the **current** loaded manifest (never a persisted copy in `integrations.json`) and brings the installed package to exactly that version — older or newer — before the connector runs, logging the change (e.g. `erp-mcp 0.3.0 → 0.3.3 (pinned by manifest)`). If that install fails, the connector does **not** start: a gateway release ships a tested set of connector versions, the same way it ships a tested set of bundled profiles, and running whatever happens to already be on disk when the pinned install fails would defeat that. An integration with no `npmPackage` pin at all (one added manually, outside any manifest) keeps the original install-once-and-never-touch-it behaviour.
 
 ## Testing
 

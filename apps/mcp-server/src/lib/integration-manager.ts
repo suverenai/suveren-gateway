@@ -14,7 +14,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { getProfile } from '@hap/core';
 import type { ProfileToolGating } from '@hap/core';
 import type { IntegrationConfig, ToolGatingConfig } from './integration-registry';
-import { getManifest } from './manifest-loader';
+import { getManifest, isExactSemver } from './manifest-loader';
 import { remotePreflightTarget, preflightRemoteAuth } from './remote-auth-preflight';
 import { isSimulationMode, manifestIsSimulated, SIMULATION_BLOCK_REASON } from './simulation-mode';
 
@@ -210,6 +210,17 @@ export class IntegrationManager {
   private running = new Map<string, RunningIntegration>();
   private onToolsChanged: (() => void) | null = null;
   /**
+   * Called when a persisted config was migrated to the manifest's command/args
+   * (see `migrateNpxConfig`) so the caller can write the fix back to
+   * `integrations.json` — the manager itself has no registry/persistence
+   * handle, by design (mirrors `onToolsChanged`). Without a subscriber the
+   * migration still takes effect for THIS start (the in-memory config is
+   * still corrected before spawn); only the one-time persistence is skipped,
+   * so every later start keeps re-migrating in memory, which is safe, if
+   * redundant.
+   */
+  private onConfigMigrated: ((id: string, updates: Partial<IntegrationConfig>) => void) | null = null;
+  /**
    * Per-integration operation queue. Start/stop for one id are serialized
    * through here; without it, a second start issued while the first is still
    * installing/handshaking sees `running.has(id) === false`, skips the stop,
@@ -238,6 +249,17 @@ export class IntegrationManager {
    */
   setOnToolsChanged(cb: () => void): void {
     this.onToolsChanged = cb;
+  }
+
+  /**
+   * Register a callback invoked when a persisted config is migrated off a
+   * stale `npx` command to the current manifest's command/args (see
+   * `migrateNpxConfig`). The caller is expected to persist `updates` against
+   * `id` in `integrations.json` so the fix survives the next boot instead of
+   * silently reapplying on every start.
+   */
+  setOnConfigMigrated(cb: (id: string, updates: Partial<IntegrationConfig>) => void): void {
+    this.onConfigMigrated = cb;
   }
 
   /**
@@ -289,6 +311,24 @@ export class IntegrationManager {
   }
 
   /**
+   * The installed version of `npmPackage`, or null if it isn't usably
+   * installed at all (see `isUsableInstall`) or its package.json has no
+   * parseable `version`. Never throws — an unreadable version is treated the
+   * same as "not installed", which is the safe direction: it drives a
+   * (re)install rather than a false "already pinned".
+   */
+  private readInstalledVersion(npmPackage: string): string | null {
+    if (!this.isUsableInstall(npmPackage)) return null;
+    const pkgJson = join(INTEGRATIONS_DIR, 'node_modules', ...npmPackage.split('/'), 'package.json');
+    try {
+      const pkg = JSON.parse(readFileSync(pkgJson, 'utf8')) as { version?: string };
+      return typeof pkg.version === 'string' ? pkg.version : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Does the node_modules/.bin shim for `binName` exist? On Windows npm writes
    * `<name>`, `<name>.cmd`, and `<name>.ps1`; the .cmd variant is what actually
    * runs, so any of them present counts.
@@ -302,8 +342,32 @@ export class IntegrationManager {
   }
 
   /**
+   * The exact version THIS gateway's CURRENTLY LOADED manifest pins
+   * `config.npmPackage` to — or undefined when there's no npmPackage, no
+   * manifest for this id, or the manifest's `npmPackage` no longer names the
+   * same package as `config` (a manually re-pointed integration: nothing in
+   * the manifest vouches for a version of config's actual package).
+   *
+   * Read fresh from `getManifest(config.id)` on every call, never from
+   * anything persisted on `config` itself — manifests are reloaded fresh on
+   * every boot, `integrations.json` is not, so this is what keeps the pin
+   * from going stale the day after an integration was first activated. Used
+   * both to decide the npm install/update (`ensureInstalled`) and to decide
+   * whether a persisted `npx …` command must be refused/migrated
+   * (`migrateNpxConfig`) — one definition of "pinned", so the two can't
+   * disagree about which connectors it applies to.
+   */
+  private pinnedVersionFor(config: IntegrationConfig): string | undefined {
+    if (!config.npmPackage) return undefined;
+    const manifest = getManifest(config.id);
+    return manifest?.npmPackage === config.npmPackage ? manifest.npmVersion : undefined;
+  }
+
+  /**
    * Install an npm package into the managed integrations directory if not
-   * already present. Called automatically before spawning when
+   * already present, and — when `config`'s manifest pins an exact
+   * `npmVersion` for this same package — bring the installed copy to EXACTLY
+   * that version, older or newer. Called automatically before spawning when
    * config.npmPackage is set.
    *
    * Asynchronous ON PURPOSE. This used to be execSync, which blocked the MCP
@@ -313,29 +377,71 @@ export class IntegrationManager {
    * CI runners: ~3.6s (Linux), ~5.4s (macOS), ~14s (Windows), and far worse
    * on machines with real-time antivirus.
    */
-  private async ensureInstalled(npmPackage: string): Promise<void> {
+  private async ensureInstalled(config: IntegrationConfig): Promise<void> {
+    const npmPackage = config.npmPackage;
+    if (!npmPackage) return;
     ensureIntegrationsDir();
 
-    // Fast path: already installed. Deliberately outside the lock — the common
-    // case must not queue behind an unrelated install.
+    const pinnedVersion = this.pinnedVersionFor(config);
+
+    if (pinnedVersion) {
+      // Fast path: already at the pinned version. Deliberately outside the
+      // lock — the common case (every subsequent start once pinned) must not
+      // queue behind an unrelated install.
+      if (this.readInstalledVersion(npmPackage) === pinnedVersion) return;
+
+      return withInstallLock(async () => {
+        // Re-check inside the lock: a concurrent call for the SAME package may
+        // have already brought it to the pin while this one waited.
+        const current = this.readInstalledVersion(npmPackage);
+        if (current === pinnedVersion) return;
+        console.error(
+          `[IntegrationManager] ${npmPackage} ${current ?? '(not installed)'} → ${pinnedVersion} (pinned by manifest)`,
+        );
+        // Only force-clean first when the on-disk copy is itself broken or
+        // absent. A USABLE install that's merely the wrong version is left in
+        // place for npm to update over — exactly how `npm install pkg@x.y.z`
+        // normally works — so that if the install fails (offline, registry
+        // hiccup), the previously-working version is still there on disk
+        // afterward. It still won't be STARTED (the version check above would
+        // still see it as the wrong version), which is the fail-closed half of
+        // this: wrong-version-but-intact beats neither-version-at-all.
+        const cleanFirst = !this.isUsableInstall(npmPackage);
+        await this.installNow(npmPackage, pinnedVersion, cleanFirst);
+      });
+    }
+
+    // No pin (manually added integration, or a repointed package the
+    // manifest no longer names) — unchanged legacy behaviour: install once,
+    // then never touch it again on version grounds.
     if (this.isUsableInstall(npmPackage)) return;
 
     return withInstallLock(async () => {
-      // Re-check inside the lock: a concurrent call for the SAME package may
-      // have installed it while this one waited.
       if (this.isUsableInstall(npmPackage)) return;
       await this.installNow(npmPackage);
     });
   }
 
-  /** The actual install. Callers MUST hold the install lock. */
-  private async installNow(npmPackage: string): Promise<void> {
-    // A previous attempt may have left a partial directory behind. Remove it
-    // so npm starts clean, otherwise the reinstall can fail on half-written
-    // files that are still locked.
+  /**
+   * The actual install. Callers MUST hold the install lock.
+   *
+   * `exactVersion`, when given, is a pin already validated as an exact semver
+   * by the manifest loader (`isExactSemver`) — re-validated here anyway
+   * because this method does not trust its caller's caller, and because the
+   * version reaches a shell on Windows (see the package-name check below).
+   *
+   * `cleanFirst` (default true, i.e. today's behaviour for every caller
+   * except a version-only pin correction): wipe any existing package
+   * directory before installing. Needed for a genuinely broken/partial
+   * install, where stale files can make the reinstall itself fail; skipped
+   * for a USABLE install being corrected to a different pinned version, so a
+   * failed update leaves the previously-working version on disk instead of
+   * nothing at all.
+   */
+  private async installNow(npmPackage: string, exactVersion?: string, cleanFirst = true): Promise<void> {
     const pkgDir = join(INTEGRATIONS_DIR, 'node_modules', ...npmPackage.split('/'));
-    if (existsSync(pkgDir)) {
-      console.error(`[IntegrationManager] Removing unusable install of ${npmPackage}`);
+    if (cleanFirst && existsSync(pkgDir)) {
+      console.error(`[IntegrationManager] Removing ${exactVersion ? 'outdated' : 'unusable'} install of ${npmPackage}`);
       try {
         rmSync(pkgDir, { recursive: true, force: true });
       } catch (err) {
@@ -352,20 +458,24 @@ export class IntegrationManager {
     if (!/^(@[a-z0-9][\w.-]*\/)?[a-z0-9][\w.-]*$/i.test(npmPackage)) {
       throw new Error(`Refusing to install unsafe package name: ${JSON.stringify(npmPackage)}`);
     }
+    if (exactVersion !== undefined && !isExactSemver(exactVersion)) {
+      throw new Error(`Refusing to install ${npmPackage} at unsafe/non-exact version spec: ${JSON.stringify(exactVersion)}`);
+    }
 
-    console.error(`[IntegrationManager] Installing ${npmPackage}...`);
+    const spec = exactVersion ? `${npmPackage}@${exactVersion}` : npmPackage;
+    console.error(`[IntegrationManager] Installing ${spec}...`);
     const startedAt = Date.now();
     const isWin = process.platform === 'win32';
 
     await new Promise<void>((resolve, reject) => {
       const child = execFile(
         'npm',
-        ['install', '--no-fund', '--no-audit', npmPackage],
+        ['install', '--no-fund', '--no-audit', spec],
         {
           cwd: INTEGRATIONS_DIR,
           // Windows: a shell so cmd.exe finds npm.cmd (see EINVAL note above).
           // POSIX: no shell — npm is a normal executable and keeping shell off
-          // means the validated package name is still passed as a bare argv.
+          // means the validated package spec is still passed as a bare argv.
           shell: isWin,
           // No timeout: a slow install on a machine with antivirus is not an
           // error, and killing it midway is what created broken installs in
@@ -375,22 +485,35 @@ export class IntegrationManager {
         },
         (err, _stdout, stderr) => {
           if (err) {
-            reject(new Error(`Failed to install ${npmPackage}: ${err.message}${stderr ? ` — ${stderr.trim()}` : ''}`));
+            reject(new Error(`Failed to install ${spec}: ${err.message}${stderr ? ` — ${stderr.trim()}` : ''}`));
             return;
           }
           resolve();
         },
       );
-      child.on('error', err => reject(new Error(`Failed to run npm for ${npmPackage}: ${err.message}`)));
+      child.on('error', err => reject(new Error(`Failed to run npm for ${spec}: ${err.message}`)));
     });
 
     if (!this.isUsableInstall(npmPackage)) {
       throw new Error(
-        `Installed ${npmPackage} but it is not usable — package.json or its bin target is missing. ` +
+        `Installed ${spec} but it is not usable — package.json or its bin target is missing. ` +
         `Check ${INTEGRATIONS_DIR} for a partial install.`,
       );
     }
-    console.error(`[IntegrationManager] Installed ${npmPackage} (${((Date.now() - startedAt) / 1000).toFixed(1)}s)`);
+    if (exactVersion !== undefined) {
+      const installed = this.readInstalledVersion(npmPackage);
+      if (installed !== exactVersion) {
+        // `npm install pkg@1.2.3` should only ever land exactly 1.2.3. If it
+        // didn't, something is wrong enough (registry inconsistency, a stale
+        // cache, a non-exact resolution we failed to catch) that running
+        // whatever DID land — a version the manifest never vouched for — is
+        // the wrong failure mode. Refuse instead of silently proceeding.
+        throw new Error(
+          `Installed ${npmPackage} but got version ${installed ?? 'unknown'}, expected the pinned ${exactVersion}.`,
+        );
+      }
+    }
+    console.error(`[IntegrationManager] Installed ${spec} (${((Date.now() - startedAt) / 1000).toFixed(1)}s)`);
   }
 
   /**
@@ -478,9 +601,66 @@ export class IntegrationManager {
       throw new Error(`${config.id}: ${SIMULATION_BLOCK_REASON}`);
     }
 
-    // Install npm package on-demand if specified
+    // Install (or update to the manifest-pinned version) npm package on-demand
+    // if specified. Throws — and the integration does not start — if the
+    // manifest pins a version and bringing the install to it fails: running
+    // whatever version happens to be on disk instead would be exactly the
+    // "run a version nobody here vouches for" failure this feature exists to
+    // prevent.
     if (config.npmPackage) {
-      await this.ensureInstalled(config.npmPackage);
+      await this.ensureInstalled(config);
+    }
+
+    // A pinned connector's spawn command must come from the CURRENT manifest,
+    // never a persisted copy that may predate the pin. This was the actual
+    // bug behind the first version of this feature: deploy-github's manifest
+    // moved from `npx -y @humanagencyp/deploy-mcp@latest` to the installed
+    // `deploy-mcp` bin + an exact `npmVersion` pin, but EXISTING installs kept
+    // their old registry entry forever — ensureInstalled correctly updated
+    // the on-disk package to the pin, and then the spawn below ran the old
+    // persisted `npx …@latest` anyway, fetching unvetted "latest" on every
+    // single start regardless of what had just been installed.
+    //
+    // Only migrate when the persisted command is EXACTLY `npx`: that is the
+    // one shape the old `npx -y pkg@latest` pattern used, and it is safe to
+    // replace wholesale with the manifest's own command/args. Anything else
+    // (e.g. mollie's `mcp-remote` with manifest-declared args containing a
+    // `${MOLLIE_ACCESS_TOKEN}` template, interpolated from vault credentials
+    // at spawn time) is already the manifest's own shape — not a leftover
+    // `npx` invocation — and must be left alone.
+    const pinnedVersion = this.pinnedVersionFor(config);
+    if (pinnedVersion && config.command === 'npx') {
+      const manifest = getManifest(config.id)!; // pinnedVersionFor already confirmed this exists and matches npmPackage
+      const migrated: Pick<IntegrationConfig, 'command' | 'args' | 'env'> = {
+        command: manifest.mcp.command,
+        args: manifest.mcp.args,
+        env: manifest.mcp.env ?? config.env,
+      };
+      console.error(
+        `[IntegrationManager] ${config.id}: command migrated to manifest (was npx ${config.args.join(' ')})`,
+      );
+      config = { ...config, ...migrated };
+      // Let the caller (http.ts owns the registry; this class deliberately
+      // does not — see `onConfigMigrated`'s doc comment) persist the fix so
+      // integrations.json stops disagreeing with the manifest from here on.
+      this.onConfigMigrated?.(config.id, migrated);
+    }
+
+    // Defense in depth, independent of the migration above: whatever the
+    // config says at this point, a PINNED connector must never actually be
+    // spawned via npx — that would silently ignore the installed, pinned
+    // version and fetch the package fresh (possibly "latest") on every start,
+    // which is exactly the failure this whole feature exists to prevent. The
+    // only way to reach this with `pinnedVersion` set is a manifest that
+    // itself still declares `npx` as its `mcp.command` — shipped manifests
+    // can't (manifest-npm-pin.test.ts lints it), but nothing stops a
+    // third-party one from trying.
+    if (pinnedVersion && config.command === 'npx') {
+      throw new Error(
+        `${config.id}: refusing to spawn a pinned connector ("${config.npmPackage}"@${pinnedVersion}) via npx — ` +
+        `this would ignore the pinned local install and fetch the package fresh on every start. ` +
+        `The manifest's mcp.command must name the installed binary, not "npx".`,
+      );
     }
 
     // Resolve environment variables from vault references

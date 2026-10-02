@@ -136,6 +136,15 @@ integrationManager.setOnToolsChanged(() => {
   refreshAllSessions();
 });
 
+// A pinned connector whose persisted config still uses the old `npx …
+// @latest` shape gets its command/args corrected in-memory on every start
+// regardless (see integration-manager.ts); this persists that fix to
+// integrations.json ONCE, so it stops happening silently on every boot.
+integrationManager.setOnConfigMigrated((id, updates) => {
+  integrationRegistry.update(id, updates);
+  console.error(`[Suveren MCP] ${id}: persisted config migrated (${Object.keys(updates).join(', ')})`);
+});
+
 const app = express();
 app.use(express.json());
 

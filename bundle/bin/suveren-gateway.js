@@ -20,6 +20,15 @@ import { buildLaunchAgentPlist, buildMacLauncher, buildSystemdUnit, buildWindows
 import { DEFAULT_AS_URL, readConfig, writeConfig, validateAsUrl, validateCaFile, validatePinTls, resolveAsUrl, resolvePinTls, resolvePinTlsExpectedFingerprint, resolveSimulation } from '../lib/config.mjs';
 import { createInterface } from 'node:readline/promises';
 import { readPairing as readAsPairing, recordTlsPin, formatFingerprint, normalizeFingerprint } from '../lib/as-pairing.mjs';
+import { unsupportedNodeReason } from '../lib/node-version.mjs';
+
+// Before any command: on an unsupported Node the connectors cannot run (see
+// lib/node-version.mjs), so refuse with the reason instead of starting.
+const nodeReason = unsupportedNodeReason(process.versions.node);
+if (nodeReason) {
+  console.error(nodeReason);
+  process.exit(1);
+}
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PKG_ROOT = resolve(__dirname, '..');

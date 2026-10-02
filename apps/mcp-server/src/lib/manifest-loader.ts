@@ -88,7 +88,26 @@ export interface IntegrationManifest {
    * both modes — this field alone changes nothing.
    */
   simulation?: { field: string; default: string } | null;
+  /** npm package to install on-demand for this connector (e.g. "@humanagencyp/crm-mcp"). */
   npmPackage?: string;
+  /**
+   * The EXACT version of `npmPackage` this manifest is tested against and
+   * vouches for — e.g. "0.3.3". Required whenever `npmPackage` is set.
+   *
+   * A gateway release ships a tested SET of connector versions, the same way
+   * it ships a tested set of bundled profiles: nobody auto-pulls "latest" and
+   * gets a connector nobody here has run. `ensureInstalled` in
+   * integration-manager.ts brings the installed package to this exact
+   * version (older OR newer) before the connector starts, and refuses to
+   * start it if that install fails — never silently keeping a version the
+   * manifest does not vouch for.
+   *
+   * Must be an EXACT semver: no ranges ("^1.2.3", "~1.2.0"), no dist-tags
+   * ("latest", "next"), no git/URL/file specs. `isExactSemver` (below)
+   * is the single definition of "valid"; `loadManifests` refuses the whole
+   * manifest, named, if this is missing or fails it.
+   */
+  npmVersion?: string;
   personalDefault?: boolean;
   toolGating: ProfileToolGating;
   setupHint?: string;
@@ -98,6 +117,40 @@ export interface IntegrationManifest {
 
 interface ManifestIndex {
   integrations: Record<string, string>;
+}
+
+// ─── npmVersion pin validation ──────────────────────────────────────────────
+
+/**
+ * An exact semver only — no ranges, no build-metadata-as-range tricks, no
+ * dist-tags, no git/URL/file specs. Anything `npm install <pkg>@<this>` could
+ * resolve to something OTHER than one specific published version is rejected:
+ * the whole point of the pin is that every gateway release installs the exact
+ * bytes it was tested against.
+ */
+const EXACT_SEMVER_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+
+export function isExactSemver(value: unknown): value is string {
+  return typeof value === 'string' && EXACT_SEMVER_RE.test(value);
+}
+
+/**
+ * Returns a human-readable refusal reason if `manifest`'s npm pin is invalid,
+ * or null if it's fine (including "no npmPackage at all" — nothing to pin).
+ * Shared by the loader (refuses the manifest) and the lint test (fails CI) so
+ * the two can never disagree about what counts as a valid pin.
+ */
+export function invalidNpmPinReason(
+  manifest: Pick<IntegrationManifest, 'npmPackage' | 'npmVersion'>,
+): string | null {
+  if (!manifest.npmPackage) return null;
+  if (manifest.npmVersion === undefined) {
+    return `npmPackage "${manifest.npmPackage}" is set but npmVersion is missing — every connector manifest must pin an exact tested version`;
+  }
+  if (!isExactSemver(manifest.npmVersion)) {
+    return `npmVersion ${JSON.stringify(manifest.npmVersion)} for "${manifest.npmPackage}" is not an exact semver (e.g. "1.2.3") — ranges, dist-tags like "latest", git specs, URLs, and file paths are not allowed`;
+  }
+  return null;
 }
 
 // ─── Module state ───────────────────────────────────────────────────────────
@@ -137,6 +190,11 @@ export function loadManifests(integrationsDir?: string): number {
     const manifestPath = join(dir, relativePath);
     try {
       const manifest: IntegrationManifest = JSON.parse(readFileSync(manifestPath, 'utf-8'));
+      const pinReason = invalidNpmPinReason(manifest);
+      if (pinReason) {
+        console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${pinReason}`);
+        continue;
+      }
       manifests.set(id, manifest);
       loaded++;
     } catch (err) {

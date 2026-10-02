@@ -21,7 +21,7 @@
     "README.md"
   ],
   "engines": {
-    "node": ">=20.18.1"
+    "node": ">=22"
   },
   "dependencies": {},
   "repository": {
