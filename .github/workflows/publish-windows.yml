@@ -111,6 +111,9 @@ jobs:
             echo "  @humanagencyp/$pkg: $(find "bundle/windows/payload/integrations/node_modules/@humanagencyp/$pkg" -type f 2>/dev/null | wc -l) file(s)"
           done
           echo "::endgroup::"
+          echo "::group::node_modules/.bin shims (every connector is SPAWNED through these)"
+          ls bundle/windows/payload/integrations/node_modules/.bin 2>/dev/null | grep -E '^(crm|records|erp)-mcp' || echo "MISSING — connectors will refuse to start"
+          echo "::endgroup::"
           echo "::group::10 longest paths under payload (chars)"
           find bundle/windows/payload -type f | awk '{ print length, $0 }' | sort -rn | head -10
           echo "::endgroup::"
@@ -120,6 +123,17 @@ jobs:
           name: windows-payload
           path: bundle/windows/payload
           if-no-files-found: error
+          # Default is false, which silently drops every dot-prefixed path —
+          # including node_modules/.bin/, the directory every connector is
+          # actually SPAWNED through (config.command resolves via PATH, which
+          # includes that dir). Without this, every connector's package.json
+          # lands fine but its bin shim doesn't, isUsableInstall() sees no
+          # usable install for ANY connector, and SUVEREN_OFFLINE=1 refuses
+          # every one with "not part of this installation" even though the
+          # package itself is right there on disk. Confirmed on
+          # windows-latest: installed file counts matched the source payload
+          # almost exactly, except for exactly the missing .bin shims.
+          include-hidden-files: true
 
   # ─── Build the unsigned .msi from the payload + WiX source. ──────────────
   build-msi:
@@ -337,6 +351,10 @@ jobs:
             $count = (Get-ChildItem $dir -Recurse -File -ErrorAction SilentlyContinue).Count
             Write-Host "  @humanagencyp/${pkg}: $count file(s) at $dir"
           }
+          Write-Host "`nnode_modules/.bin shims (every connector is SPAWNED through these):"
+          Get-ChildItem "$root\integrations\node_modules\.bin" -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match '^(crm|records|erp)-mcp' } |
+            ForEach-Object { Write-Host "  $($_.Name)" }
 
       - name: Start via the installed launcher — npm unreachable, no node on PATH but the bundled one
         id: start
