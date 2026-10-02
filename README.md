@@ -185,6 +185,38 @@ See `suveren-gateway config help` for the full command reference.
 
 ---
 
+## Behind a company proxy
+
+On a company laptop that routes all internet traffic through an HTTP(S) proxy, the gateway needs two things: the proxy address, and — if that proxy does TLS inspection — the company's root certificate.
+
+**The proxy.** Set the standard environment variables (upper or lower case both work) before starting the gateway, or save one with the CLI:
+
+```bash
+export HTTPS_PROXY=http://proxy.corp.example:8080
+export HTTP_PROXY=http://proxy.corp.example:8080   # usually the same value
+export NO_PROXY=internal.example.com               # optional: hosts to reach directly
+suveren-gateway start
+
+# or, to save it so every future start picks it up without re-exporting:
+suveren-gateway config set proxy http://proxy.corp.example:8080
+suveren-gateway restart
+```
+
+Every outbound call this applies to — the Authority Server, the update checker, and a remote AI assistant endpoint — honours the proxy. A loopback target (the control plane and MCP server talking to each other, or a local AI assistant such as Ollama) is **never** proxied, no matter what is set — a corporate proxy has no route back to the machine it's running on.
+
+**TLS inspection.** Many corporate proxies intercept HTTPS by re-signing every certificate with their own root — that includes the Authority Server's. If you see a certificate error mentioning an untrusted issuer, trust the company's root the same way you would for a self-hosted Authority Server:
+
+```bash
+suveren-gateway config set ca-file /path/to/company-root-ca.pem
+suveren-gateway restart
+```
+
+This works through the proxy exactly like it works directly — `--ca-file` applies to the certificate the gateway actually sees, proxied or not.
+
+**The one combination that still refuses, on purpose:** [TLS pinning](#pinning-the-authority-servers-tls-certificate) (opt-in, off by default) together with a TLS-inspecting proxy. Pinning checks the certificate the gateway sees *through* the proxy — if that's the proxy's own re-signed one rather than the real Authority Server's, the pin will not match, and the gateway refuses the connection and says so, even with the company root trusted via `--ca-file`. That refusal is correct: ask network/IT to exempt the Authority Server's host from TLS inspection, the same request you'd make for any pinned certificate on that network.
+
+---
+
 ## Simulation mode — block every real system
 
 A mandate is bound to a *profile* (e.g. "sales"), not to a specific connector. If a real
