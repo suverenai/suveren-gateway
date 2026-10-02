@@ -210,6 +210,17 @@ export class IntegrationManager {
   private running = new Map<string, RunningIntegration>();
   private onToolsChanged: (() => void) | null = null;
   /**
+   * Called when a persisted config was migrated to the manifest's command/args
+   * (see `migrateNpxConfig`) so the caller can write the fix back to
+   * `integrations.json` — the manager itself has no registry/persistence
+   * handle, by design (mirrors `onToolsChanged`). Without a subscriber the
+   * migration still takes effect for THIS start (the in-memory config is
+   * still corrected before spawn); only the one-time persistence is skipped,
+   * so every later start keeps re-migrating in memory, which is safe, if
+   * redundant.
+   */
+  private onConfigMigrated: ((id: string, updates: Partial<IntegrationConfig>) => void) | null = null;
+  /**
    * Per-integration operation queue. Start/stop for one id are serialized
    * through here; without it, a second start issued while the first is still
    * installing/handshaking sees `running.has(id) === false`, skips the stop,
@@ -238,6 +249,17 @@ export class IntegrationManager {
    */
   setOnToolsChanged(cb: () => void): void {
     this.onToolsChanged = cb;
+  }
+
+  /**
+   * Register a callback invoked when a persisted config is migrated off a
+   * stale `npx` command to the current manifest's command/args (see
+   * `migrateNpxConfig`). The caller is expected to persist `updates` against
+   * `id` in `integrations.json` so the fix survives the next boot instead of
+   * silently reapplying on every start.
+   */
+  setOnConfigMigrated(cb: (id: string, updates: Partial<IntegrationConfig>) => void): void {
+    this.onConfigMigrated = cb;
   }
 
   /**
@@ -320,21 +342,33 @@ export class IntegrationManager {
   }
 
   /**
+   * The exact version THIS gateway's CURRENTLY LOADED manifest pins
+   * `config.npmPackage` to — or undefined when there's no npmPackage, no
+   * manifest for this id, or the manifest's `npmPackage` no longer names the
+   * same package as `config` (a manually re-pointed integration: nothing in
+   * the manifest vouches for a version of config's actual package).
+   *
+   * Read fresh from `getManifest(config.id)` on every call, never from
+   * anything persisted on `config` itself — manifests are reloaded fresh on
+   * every boot, `integrations.json` is not, so this is what keeps the pin
+   * from going stale the day after an integration was first activated. Used
+   * both to decide the npm install/update (`ensureInstalled`) and to decide
+   * whether a persisted `npx …` command must be refused/migrated
+   * (`migrateNpxConfig`) — one definition of "pinned", so the two can't
+   * disagree about which connectors it applies to.
+   */
+  private pinnedVersionFor(config: IntegrationConfig): string | undefined {
+    if (!config.npmPackage) return undefined;
+    const manifest = getManifest(config.id);
+    return manifest?.npmPackage === config.npmPackage ? manifest.npmVersion : undefined;
+  }
+
+  /**
    * Install an npm package into the managed integrations directory if not
    * already present, and — when `config`'s manifest pins an exact
    * `npmVersion` for this same package — bring the installed copy to EXACTLY
    * that version, older or newer. Called automatically before spawning when
    * config.npmPackage is set.
-   *
-   * The pin is read from `getManifest(config.id)` HERE, never from
-   * `config.npmPackage`/a persisted field, so it always reflects the manifest
-   * THIS gateway build ships — not whatever manifest was loaded the day the
-   * integration was first activated (manifests are reloaded fresh on every
-   * boot; `integrations.json` is not). Only applied when the manifest's
-   * `npmPackage` still names the SAME package as `config.npmPackage`: if they
-   * differ (a manually re-pointed integration), there is nothing in the
-   * manifest that vouches for a version of config's actual package, so
-   * today's unpinned behaviour applies instead.
    *
    * Asynchronous ON PURPOSE. This used to be execSync, which blocked the MCP
    * server's event loop for the entire install — the port stayed bound but
@@ -348,8 +382,7 @@ export class IntegrationManager {
     if (!npmPackage) return;
     ensureIntegrationsDir();
 
-    const manifest = getManifest(config.id);
-    const pinnedVersion = manifest?.npmPackage === npmPackage ? manifest.npmVersion : undefined;
+    const pinnedVersion = this.pinnedVersionFor(config);
 
     if (pinnedVersion) {
       // Fast path: already at the pinned version. Deliberately outside the
@@ -576,6 +609,58 @@ export class IntegrationManager {
     // prevent.
     if (config.npmPackage) {
       await this.ensureInstalled(config);
+    }
+
+    // A pinned connector's spawn command must come from the CURRENT manifest,
+    // never a persisted copy that may predate the pin. This was the actual
+    // bug behind the first version of this feature: deploy-github's manifest
+    // moved from `npx -y @humanagencyp/deploy-mcp@latest` to the installed
+    // `deploy-mcp` bin + an exact `npmVersion` pin, but EXISTING installs kept
+    // their old registry entry forever — ensureInstalled correctly updated
+    // the on-disk package to the pin, and then the spawn below ran the old
+    // persisted `npx …@latest` anyway, fetching unvetted "latest" on every
+    // single start regardless of what had just been installed.
+    //
+    // Only migrate when the persisted command is EXACTLY `npx`: that is the
+    // one shape the old `npx -y pkg@latest` pattern used, and it is safe to
+    // replace wholesale with the manifest's own command/args. Anything else
+    // (e.g. mollie's `mcp-remote` with manifest-declared args containing a
+    // `${MOLLIE_ACCESS_TOKEN}` template, interpolated from vault credentials
+    // at spawn time) is already the manifest's own shape — not a leftover
+    // `npx` invocation — and must be left alone.
+    const pinnedVersion = this.pinnedVersionFor(config);
+    if (pinnedVersion && config.command === 'npx') {
+      const manifest = getManifest(config.id)!; // pinnedVersionFor already confirmed this exists and matches npmPackage
+      const migrated: Pick<IntegrationConfig, 'command' | 'args' | 'env'> = {
+        command: manifest.mcp.command,
+        args: manifest.mcp.args,
+        env: manifest.mcp.env ?? config.env,
+      };
+      console.error(
+        `[IntegrationManager] ${config.id}: command migrated to manifest (was npx ${config.args.join(' ')})`,
+      );
+      config = { ...config, ...migrated };
+      // Let the caller (http.ts owns the registry; this class deliberately
+      // does not — see `onConfigMigrated`'s doc comment) persist the fix so
+      // integrations.json stops disagreeing with the manifest from here on.
+      this.onConfigMigrated?.(config.id, migrated);
+    }
+
+    // Defense in depth, independent of the migration above: whatever the
+    // config says at this point, a PINNED connector must never actually be
+    // spawned via npx — that would silently ignore the installed, pinned
+    // version and fetch the package fresh (possibly "latest") on every start,
+    // which is exactly the failure this whole feature exists to prevent. The
+    // only way to reach this with `pinnedVersion` set is a manifest that
+    // itself still declares `npx` as its `mcp.command` — shipped manifests
+    // can't (manifest-npm-pin.test.ts lints it), but nothing stops a
+    // third-party one from trying.
+    if (pinnedVersion && config.command === 'npx') {
+      throw new Error(
+        `${config.id}: refusing to spawn a pinned connector ("${config.npmPackage}"@${pinnedVersion}) via npx — ` +
+        `this would ignore the pinned local install and fetch the package fresh on every start. ` +
+        `The manifest's mcp.command must name the installed binary, not "npx".`,
+      );
     }
 
     // Resolve environment variables from vault references
