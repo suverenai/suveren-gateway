@@ -96,7 +96,11 @@ jobs:
           echo "::endgroup::"
 
       - name: Payload file counts + longest paths (diagnostic — WiX harvesting has known long-path limits)
-        shell: bash
+        # -e only, no pipefail: `sort | head` makes head close the pipe early,
+        # SIGPIPE-ing sort/find (exit 141) — harmless truncation, not a real
+        # failure, but pipefail (GH's bash default) propagates it and failed
+        # this purely diagnostic step for real on windows-latest.
+        shell: bash -e {0}
         run: |
           echo "::group::file counts"
           echo "total:        $(find bundle/windows/payload -type f | wc -l)"
