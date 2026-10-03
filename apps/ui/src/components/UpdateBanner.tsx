@@ -34,6 +34,14 @@ export function upgradeCommandFor(method: InstallMethod): string | null {
 export const MANAGED_UPDATE_HINT =
   "Updates for this gateway come from your company's IT — no action needed here.";
 
+/** Banner style per install method. A managed install asks nothing of the
+ *  employee ("no action needed"), so it gets the neutral strip instead of the
+ *  red one, which signals that the person in front of the screen should act.
+ *  Every other method keeps the red banner unchanged. */
+export function updateBannerClass(method: InstallMethod): string {
+  return method === 'managed' ? 'update-banner is-managed' : 'update-banner';
+}
+
 /** Don't yank the page out from under in-progress work. An open modal/dialog
  *  (other than our own overlay) or a focused text field with content means the
  *  user is mid-task — defer the reload until that clears. */
@@ -157,7 +165,7 @@ export function UpdateBanner() {
           Managed install: no command exists to run, so no Update button either —
           just the headline, the "ask your IT" hint, and dismiss. */}
       {updateAvailable && !updating && !liveVersion && (
-        <div ref={ref} className="update-banner" role="status" aria-live="polite">
+        <div ref={ref} className={updateBannerClass(installMethod)} role="status" aria-live="polite">
           <div className="update-banner-row">
             <span className="update-banner-text">Update available.</span>
             <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
