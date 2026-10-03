@@ -191,10 +191,14 @@ Invoke-Sign -Paths @($msiPath)
 
 $sumsPath = Join-Path $OutDir 'SHA256SUMS'
 Write-Host "[build-signed] writing $sumsPath …"
-Get-ChildItem -Path $OutDir -File | Where-Object { $_.Name -ne 'SHA256SUMS' } | ForEach-Object {
+$lines = Get-ChildItem -Path $OutDir -File | Where-Object { $_.Name -ne 'SHA256SUMS' } | ForEach-Object {
   $hash = (Get-FileHash -Algorithm SHA256 -Path $_.FullName).Hash.ToLowerInvariant()
   "$hash  $($_.Name)"
-} | Set-Content -Path $sumsPath -Encoding ascii
+}
+# LF line endings, not Set-Content's CRLF: `sha256sum -c` / `shasum -c` on
+# macOS and Linux read the CR as part of the file name and report every file
+# as missing.
+[System.IO.File]::WriteAllText($sumsPath, (($lines -join "`n") + "`n"), [System.Text.Encoding]::ASCII)
 
 Write-Host ""
 Write-Host "[build-signed] done."
