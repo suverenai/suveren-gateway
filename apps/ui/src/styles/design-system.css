@@ -2023,6 +2023,19 @@ code {
 }
 .update-banner-x:hover { color: #fff; }
 
+/* Managed install (IT owns updates): neutral strip — nothing for the employee
+   to do, so no alarm colour. Theme tokens keep it right in dark mode. */
+.update-banner.is-managed {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.update-banner.is-managed .update-banner-text { color: var(--text-primary); }
+.update-banner.is-managed .update-banner-hint { color: var(--text-muted); }
+.update-banner.is-managed .update-banner-x { color: var(--text-muted); }
+.update-banner.is-managed .update-banner-x:hover { color: var(--text-primary); }
+
 /* Green "you're on the latest version" confirmation, shown after the reload. */
 .update-banner.is-live {
   background: var(--success);
