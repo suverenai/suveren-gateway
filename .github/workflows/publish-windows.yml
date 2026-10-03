@@ -287,6 +287,9 @@ jobs:
           if (-not (Test-Path $sums)) { throw "SHA256SUMS missing at $sums" }
           Get-Content $sums
           if ((Get-Content $sums).Count -lt 1) { throw "SHA256SUMS is empty" }
+          if ([System.IO.File]::ReadAllText($sums).Contains("`r")) { throw "SHA256SUMS has CRLF line endings — shasum -c on macOS/Linux cannot read it" }
+          bash -c "cd kit/out && sha256sum -c SHA256SUMS"
+          if ($LASTEXITCODE -ne 0) { throw "sha256sum -c failed on the kit SHA256SUMS" }
 
   # ─── The real install path: msiexec, then launcher + service, with npm
   #     unreachable — no network dependency anywhere in the started gateway. ─
@@ -707,8 +710,12 @@ jobs:
             $hash = (Get-FileHash -Algorithm SHA256 -Path $_.FullName).Hash.ToLowerInvariant()
             "$hash  $($_.Name)"
           }
-          $sums | Set-Content -Path release\out\SHA256SUMS -Encoding ascii
+          # LF, not Set-Content's CRLF — see build-signed.ps1 (shasum -c on
+          # macOS/Linux otherwise reports every file as missing).
+          [System.IO.File]::WriteAllText((Join-Path (Resolve-Path release\out) 'SHA256SUMS'), (($sums -join "`n") + "`n"), [System.Text.Encoding]::ASCII)
           Get-Content release\out\SHA256SUMS
+          bash -c "cd release/out && sha256sum -c SHA256SUMS"
+          if ($LASTEXITCODE -ne 0) { throw "sha256sum -c failed on the release SHA256SUMS" }
 
           "msi=$msiOut" >> $env:GITHUB_OUTPUT
           "kit=$kitZip" >> $env:GITHUB_OUTPUT
