@@ -35,6 +35,7 @@ export function readConfig(dataDir) {
     if (typeof data.pinTls === 'boolean') out.pinTls = data.pinTls;
     if (typeof data.pinTlsExpectedFingerprint === 'string') out.pinTlsExpectedFingerprint = data.pinTlsExpectedFingerprint;
     if (typeof data.simulation === 'boolean') out.simulation = data.simulation;
+    if (typeof data.proxyUrl === 'string') out.proxyUrl = data.proxyUrl;
     return out;
   } catch {
     return {};
@@ -62,6 +63,7 @@ function readConfigStrict(dataDir) {
   if (typeof data.pinTls === 'boolean') out.pinTls = data.pinTls;
   if (typeof data.pinTlsExpectedFingerprint === 'string') out.pinTlsExpectedFingerprint = data.pinTlsExpectedFingerprint;
   if (typeof data.simulation === 'boolean') out.simulation = data.simulation;
+  if (typeof data.proxyUrl === 'string') out.proxyUrl = data.proxyUrl;
   return out;
 }
 
@@ -164,6 +166,45 @@ export function resolveCaFile(dataDir) {
   const policyCaFile = readPolicy().policy.caFile;
   if (policyCaFile) return policyCaFile;
   return readConfig(dataDir).caFile;
+}
+
+/**
+ * Validate a candidate proxy URL: `http://` or `https://`, with an optional
+ * `user:pass@` and port. This is a CONVENIENCE for operators who would
+ * otherwise have to set `HTTP_PROXY`/`HTTPS_PROXY` themselves — those
+ * environment variables remain the actual requirement (every process this
+ * gateway runs honours them directly; see proxy-env.ts in both apps) and
+ * always win if set, same precedence as `SUVEREN_AS_URL` over a saved
+ * `as-url`. Saving a proxy here sets BOTH `HTTP_PROXY` and `HTTPS_PROXY` for
+ * every process bundle/server.js spawns (see that file) — there is no
+ * separate saved value for each, matching how a single corporate proxy
+ * almost always handles both schemes.
+ */
+export function validateProxyUrl(candidate) {
+  const trimmed = (candidate ?? '').trim();
+  if (!trimmed) return { ok: false, error: 'The proxy URL is empty.' };
+  let parsed;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return { ok: false, error: `"${trimmed}" is not a valid URL.` };
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return { ok: false, error: `"${trimmed}" must use http:// or https://.` };
+  }
+  return { ok: true, url: trimmed };
+}
+
+/** The effective proxy URL: IT policy first (locked — see policy.mjs), else
+ *  the saved value. No env/flag tier of its own here — see bundle/server.js,
+ *  the one place that turns this into HTTP_PROXY/HTTPS_PROXY for the
+ *  children it spawns, and which also decides whether that OVERRIDES an
+ *  operator's own HTTP_PROXY/HTTPS_PROXY (only when policy-locked) or merely
+ *  fills them in when absent (the saved-value case). */
+export function resolveProxyUrl(dataDir) {
+  const policyProxy = readPolicy().policy.proxy;
+  if (policyProxy) return policyProxy;
+  return readConfig(dataDir).proxyUrl;
 }
 
 /**

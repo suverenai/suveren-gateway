@@ -29,6 +29,17 @@
  * (refusing a mismatch, or refusing to connect at all when no pin is on
  * file) only ever applies when pin-tls is on; see {@link AsFetchPinning}.
  *
+ * Corporate proxy (`HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`, see `proxy-env.ts`):
+ * every dispatcher this module builds is proxy-aware, including the pinned
+ * and capturing ones — a `ProxyAgent` tunnels the connection via `CONNECT`
+ * and the SAME `ca`/`checkServerIdentity` apply to the TLS seen through that
+ * tunnel, so a TLS-inspecting proxy is pinned (and refused on a key change)
+ * exactly like a direct connection would be. A loopback Authority Server
+ * (local dev) is NEVER proxied, independent of the proxy environment. The
+ * native `https.Agent` this module ALSO builds (`buildPinnedHttpsAgent`, for
+ * the `/api` reverse proxy) gets the same treatment via
+ * `ConnectTunnelHttpsAgent` (proxy-https-agent.ts).
+ *
  * Mirrors `apps/mcp-server/src/lib/as-tls-pin.ts`. Keep the two in step.
  */
 import { createHash } from 'node:crypto';
@@ -36,7 +47,9 @@ import { checkServerIdentity as defaultCheckServerIdentity, rootCertificates } f
 import type { PeerCertificate } from 'node:tls';
 import { Agent as HttpsAgent } from 'node:https';
 import { readFileSync } from 'node:fs';
-import { Agent, fetch as undiciFetch, type Dispatcher } from 'undici';
+import { Agent, ProxyAgent, fetch as undiciFetch, type Dispatcher } from 'undici';
+import { selectProxyUrl } from './proxy-env';
+import { ConnectTunnelHttpsAgent } from './proxy-https-agent';
 
 /**
  * The effective trust store for a dispatcher THIS module builds: Node's own
@@ -164,38 +177,60 @@ function pinnedCheckServerIdentity(pinnedSpkiHex: string) {
 }
 
 /**
- * An undici Agent whose TLS `checkServerIdentity` enforces `pinnedSpkiHex`
- * (see {@link pinnedCheckServerIdentity}). Returning an `Error` from
- * `checkServerIdentity` aborts the TLS handshake itself — before any request
- * headers or body are sent, and before any response is read — not merely
- * after the fact.
+ * A dispatcher (undici `Agent` for a direct connection, or `ProxyAgent` when
+ * `HTTP_PROXY`/`HTTPS_PROXY` applies to `url` — see `proxy-env.ts`) whose
+ * TLS `connect` options are `connectOpts` for every connection it makes.
+ *
+ * `ProxyAgent`'s `requestTls` — NOT its top-level `connect` — is the only
+ * option that reaches the CONNECT-tunnelled TLS connection to the real
+ * target: `ProxyAgent` overrides `connect` internally for its own tunnel
+ * bookkeeping (see its source), so a pin or `--ca-file` passed as
+ * `connect` there would silently do nothing. `requestTls` is read fresh by
+ * undici on every call, exactly like `connect` on a plain `Agent`.
  */
-export function buildPinnedDispatcher(pinnedSpkiHex: string): Dispatcher {
-  return new Agent({
-    connect: {
-      ca: effectiveCa(),
-      checkServerIdentity: pinnedCheckServerIdentity(pinnedSpkiHex),
-    },
+function buildTlsDispatcher(url: string, connectOpts: { ca?: string[]; checkServerIdentity: (hostname: string, cert: PeerCertificate) => Error | undefined }): Dispatcher {
+  const proxyUrl = selectProxyUrl(url);
+  if (proxyUrl) {
+    return new ProxyAgent({ uri: proxyUrl, requestTls: connectOpts });
+  }
+  return new Agent({ connect: connectOpts });
+}
+
+/**
+ * A dispatcher (see {@link buildTlsDispatcher}) whose TLS `checkServerIdentity`
+ * enforces `pinnedSpkiHex` (see {@link pinnedCheckServerIdentity}). Returning
+ * an `Error` from `checkServerIdentity` aborts the TLS handshake itself —
+ * before any request headers or body are sent, and before any response is
+ * read — not merely after the fact.
+ */
+export function buildPinnedDispatcher(pinnedSpkiHex: string, url: string): Dispatcher {
+  return buildTlsDispatcher(url, {
+    ca: effectiveCa(),
+    checkServerIdentity: pinnedCheckServerIdentity(pinnedSpkiHex),
   });
 }
 
 /**
- * An undici Agent that runs ONLY the default hostname/trust check (no pin
- * enforcement — there is nothing to enforce yet) and records the detailed
- * certificate of the first connection it makes, for the caller to pin.
- * Used by the verified sign-in challenge (as-challenge.ts) to capture — or,
- * with pin-tls off, refresh — the pin on every successful sign-in.
+ * A dispatcher (see {@link buildTlsDispatcher}) that runs ONLY the default
+ * hostname/trust check (no pin enforcement — there is nothing to enforce
+ * yet) and records the detailed certificate of the first connection it
+ * makes, for the caller to pin. Used by the verified sign-in challenge
+ * (as-challenge.ts) to capture — or, with pin-tls off, refresh — the pin on
+ * every successful sign-in. Proxy-aware (see {@link buildTlsDispatcher}) so
+ * the captured certificate is the one the connection actually used — the
+ * real Authority Server's leaf when unproxied or behind a transparent
+ * CONNECT proxy, or a TLS-inspecting proxy's own re-signed leaf when one is
+ * in the path, which is exactly the certificate pin-tls needs to pin against
+ * for THIS network to keep working.
  */
-export function buildCapturingDispatcher(): { dispatcher: Dispatcher; getCapturedCert: () => PeerCertificate | undefined } {
+export function buildCapturingDispatcher(url: string): { dispatcher: Dispatcher; getCapturedCert: () => PeerCertificate | undefined } {
   let captured: PeerCertificate | undefined;
-  const dispatcher = new Agent({
-    connect: {
-      ca: effectiveCa(),
-      checkServerIdentity: (hostname: string, cert: PeerCertificate) => {
-        captured = cert;
-        const defaultErr = defaultCheckServerIdentity(hostname, cert);
-        return defaultErr ? taggedCheckError(defaultErr) : undefined;
-      },
+  const dispatcher = buildTlsDispatcher(url, {
+    ca: effectiveCa(),
+    checkServerIdentity: (hostname: string, cert: PeerCertificate) => {
+      captured = cert;
+      const defaultErr = defaultCheckServerIdentity(hostname, cert);
+      return defaultErr ? taggedCheckError(defaultErr) : undefined;
     },
   });
   return { dispatcher, getCapturedCert: () => captured };
@@ -212,22 +247,31 @@ export function buildCapturingDispatcher(): { dispatcher: Dispatcher; getCapture
  * live-edited pin-tls setting) takes effect on the very next connection —
  * existing keep-alive sockets are not retroactively re-checked, same as any
  * TLS pin.
+ *
+ * `asUrl` decides ONCE, at construction (this agent is long-lived and always
+ * serves the one fixed Authority Server URL the process started with — see
+ * index.ts), whether a proxy applies — see `proxy-env.ts`'s loopback/`NO_PROXY`
+ * rules. When it does, connections are tunnelled via {@link ConnectTunnelHttpsAgent}
+ * (proxy-https-agent.ts) rather than a plain `https.Agent`, with the exact
+ * same `ca`/`checkServerIdentity` applied either way.
  */
-export function buildPinnedHttpsAgent(getPinning: () => AsFetchPinning): HttpsAgent {
-  return new HttpsAgent({
-    checkServerIdentity: (hostname: string, cert: PeerCertificate) => {
-      const pinning = getPinning();
-      if (!pinning.enforce) return defaultCheckServerIdentity(hostname, cert);
-      if (!pinning.pinnedSpkiHex) {
-        return taggedCheckError(new Error(
-          `pin-tls is on but no certificate is pinned yet for ${hostname} — sign in again to establish ` +
-            `it (re-pairing required).`,
-        ));
-      }
-      return pinnedCheckServerIdentity(pinning.pinnedSpkiHex)(hostname, cert);
-    },
-    ca: effectiveCa(),
-  });
+export function buildPinnedHttpsAgent(getPinning: () => AsFetchPinning, asUrl: string): HttpsAgent {
+  const checkServerIdentity = (hostname: string, cert: PeerCertificate): Error | undefined => {
+    const pinning = getPinning();
+    if (!pinning.enforce) return defaultCheckServerIdentity(hostname, cert);
+    if (!pinning.pinnedSpkiHex) {
+      return taggedCheckError(new Error(
+        `pin-tls is on but no certificate is pinned yet for ${hostname} — sign in again to establish ` +
+          `it (re-pairing required).`,
+      ));
+    }
+    return pinnedCheckServerIdentity(pinning.pinnedSpkiHex)(hostname, cert);
+  };
+  const proxyUrl = selectProxyUrl(asUrl);
+  if (proxyUrl) {
+    return new ConnectTunnelHttpsAgent({ proxyUrl, checkServerIdentity, ca: effectiveCa() });
+  }
+  return new HttpsAgent({ checkServerIdentity, ca: effectiveCa() });
 }
 
 export interface AsFetchPinning {
@@ -295,6 +339,63 @@ function withBoundedSignal(init: RequestInit | undefined): RequestInit {
 }
 
 /**
+ * TLS error codes Node/undici raise when a certificate's ISSUER isn't
+ * trusted — distinct from an expired/malformed/hostname-mismatched
+ * certificate. This is the exact signature a TLS-inspecting corporate proxy
+ * produces: it re-signs every certificate it sees with its own (locally
+ * unknown) root, so the chain validates fine on the company network but
+ * fails everywhere Node doesn't already trust that root.
+ */
+const UNKNOWN_ISSUER_CODES = new Set([
+  'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+  'UNABLE_TO_GET_ISSUER_CERT',
+  'UNABLE_TO_GET_ISSUER_CERT_LOCALLY',
+  'SELF_SIGNED_CERT_IN_CHAIN',
+  'DEPTH_ZERO_SELF_SIGNED_CERT',
+  'CERT_UNTRUSTED',
+]);
+
+/** The TLS error `code` on `err` itself, or on its `.cause` (undici wraps
+ *  connection errors in a generic `TypeError: fetch failed` with the real
+ *  `node:tls`/`node:net` error as `cause` — see {@link describeFetchError}). */
+function tlsErrorCode(err: unknown): string | undefined {
+  if (!(err instanceof Error)) return undefined;
+  const cause = (err as { cause?: unknown }).cause;
+  const withCode = (cause instanceof Error ? cause : err) as NodeJS.ErrnoException;
+  return withCode.code;
+}
+
+/** True when `err` is a TLS handshake failure caused by an untrusted
+ *  certificate ISSUER (see {@link UNKNOWN_ISSUER_CODES}) — never true for a
+ *  pin mismatch ({@link isPinCheckError}) or an ordinary outage
+ *  (DNS/ECONNREFUSED/timeout), so a genuine Authority Server outage is never
+ *  misdiagnosed as "someone is intercepting your traffic". */
+export function isUnknownIssuerError(err: unknown): boolean {
+  const code = tlsErrorCode(err);
+  return !!code && UNKNOWN_ISSUER_CODES.has(code);
+}
+
+/** Rethrows `err` unchanged, UNLESS it is {@link isUnknownIssuerError}, in
+ *  which case it is rethrown with a message that names the cause (a
+ *  TLS-inspecting company network is the overwhelmingly common one) and
+ *  points at the fix, instead of the generic "fetch failed" every caller up
+ *  the stack would otherwise report as an undifferentiated "AS unreachable". */
+function rethrowWithIssuerHint(err: unknown, url: string): never {
+  if (isUnknownIssuerError(err)) {
+    const hinted = new Error(
+      `Could not verify the certificate presented for ${url} — its issuer is not trusted ` +
+        `(${tlsErrorCode(err)}). This is the typical signature of a company network that inspects ` +
+        `HTTPS traffic with its own root certificate: trust it with ` +
+        `\`suveren-gateway config set ca-file <path-to-company-root.pem>\` (or --ca-file / ` +
+        `NODE_EXTRA_CA_CERTS), then try again. Original error: ${describeFetchError(err)}`,
+    );
+    hinted.cause = err;
+    throw hinted;
+  }
+  throw err;
+}
+
+/**
  * Closes `dispatcher` once `pending` settles, without making the caller wait
  * for it (undici's `Dispatcher.close()` itself waits for any still-streaming
  * response body to finish before actually tearing down the connection — see
@@ -339,10 +440,34 @@ export async function fetchAs(
   // Ordinary call (not the capturing challenge), pin-tls off: nothing to
   // enforce and nothing to capture — exactly a bare fetch (still bounded —
   // this is the branch every unpinned AS call takes, including the session
-  // exchange that hung in production).
+  // exchange that hung in production) UNLESS a corporate proxy applies to
+  // `url` (see proxy-env.ts), in which case the call is routed through
+  // undici's own `fetch` with a `ProxyAgent` dispatcher instead — global
+  // `fetch` has no dispatcher option. `effectiveCa()` is carried through
+  // here too: a bare global `fetch` picks up NODE_EXTRA_CA_CERTS for free
+  // (it's a process-wide default), but a dispatcher with its own `connect`
+  // option does NOT get that "extra" treatment automatically (see
+  // `effectiveCa`'s doc comment) — so without this, enabling a proxy would
+  // silently stop `--ca-file` from working.
   if (!pinning.enforce && !pinning.capture) {
-    const res = await fetch(url, withBoundedSignal(init));
-    return { res };
+    const proxyUrl = selectProxyUrl(url);
+    if (!proxyUrl) {
+      try {
+        const res = await fetch(url, withBoundedSignal(init));
+        return { res };
+      } catch (err) {
+        rethrowWithIssuerHint(err, url);
+      }
+    }
+    const dispatcher = new ProxyAgent({ uri: proxyUrl, requestTls: { ca: effectiveCa() } });
+    const pending = undiciFetch(url, { ...(withBoundedSignal(init) as Record<string, unknown>), dispatcher });
+    closeAfter(dispatcher, pending);
+    try {
+      const res = (await pending) as unknown as Response;
+      return { res };
+    } catch (err) {
+      rethrowWithIssuerHint(err, url);
+    }
   }
 
   // Ordinary call, pin-tls on, but nothing is pinned yet (an old pairing
@@ -360,19 +485,21 @@ export async function fetchAs(
   // an ordinary call, or the challenge call finding a pin already there
   // (never silently replaced, even though `capture` is set).
   if (pinning.pinnedSpkiHex && (pinning.enforce || !pinning.capture)) {
-    const dispatcher = buildPinnedDispatcher(pinning.pinnedSpkiHex);
+    const dispatcher = buildPinnedDispatcher(pinning.pinnedSpkiHex, url);
     const pending = undiciFetch(url, { ...(withBoundedSignal(init) as Record<string, unknown>), dispatcher });
     closeAfter(dispatcher, pending);
     try {
       const res = (await pending) as unknown as Response;
       return { res };
     } catch (err) {
-      if (!isPinCheckError(err)) throw err; // an AS outage, not a pin mismatch — pass through unchanged
+      if (!isPinCheckError(err)) rethrowWithIssuerHint(err, url); // an AS outage, or an untrusted issuer — not a pin mismatch
       throw new AsTlsMismatchError(
         `TLS pin check failed for ${url} — ${describeFetchError(err)}. Refusing the connection; the API ` +
-          `key / session cookie were never sent. If the Authority Server's certificate changed ` +
-          `intentionally (a new key, not just renewal), an operator must clear the pairing and sign in ` +
-          `again to re-pin it.`,
+          `key / session cookie were never sent. Two things produce this: (1) the Authority Server's TLS ` +
+          `certificate genuinely changed (a new signing key, not just a renewal) — clear the pairing and ` +
+          `sign in again to re-pin it; or (2) a TLS-inspecting proxy on this network is re-signing traffic ` +
+          `with its own certificate — ask network/IT to exempt the Authority Server's host from TLS ` +
+          `inspection (pin-tls refusing this, even with a trusted --ca-file, is working as intended).`,
       );
     }
   }
@@ -380,14 +507,14 @@ export async function fetchAs(
   // Capturing: the verified challenge, with either pin-tls off (always
   // captures/refreshes) or pin-tls on and genuinely nothing pinned yet
   // (first-ever pairing — trust-on-first-use at the one legitimate moment).
-  const { dispatcher, getCapturedCert } = buildCapturingDispatcher();
+  const { dispatcher, getCapturedCert } = buildCapturingDispatcher(url);
   const pending = undiciFetch(url, { ...(withBoundedSignal(init) as Record<string, unknown>), dispatcher });
   closeAfter(dispatcher, pending);
   let res: Response;
   try {
     res = (await pending) as unknown as Response;
   } catch (err) {
-    if (!isPinCheckError(err)) throw err; // an ordinary connection failure — not a pin/hostname rejection
+    if (!isPinCheckError(err)) rethrowWithIssuerHint(err, url); // an ordinary connection failure, or an untrusted issuer — not a pin/hostname rejection
     throw new AsTlsMismatchError(
       `could not verify the Authority Server at ${url} while establishing its TLS pin — ` +
         `${describeFetchError(err)}.`,

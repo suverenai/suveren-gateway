@@ -13,6 +13,7 @@ import { Router, type Request, type Response } from 'express';
 import type { Vault, ServiceDef } from '../lib/vault';
 import { getManifests, pushServiceCredentials } from '../lib/mcp-bridge';
 import { credentialView, textFieldsFor, META_KEY } from '../lib/credential-meta';
+import { proxiedFetch } from '../lib/proxied-fetch';
 
 /**
  * Manifests decide which credential fields are `text` (returned as values)
@@ -194,13 +195,17 @@ export function createVaultRouter(vault: Vault): Router {
         const headers: Record<string, string> = {};
         if (cred.apiKey) headers['Authorization'] = `Bearer ${cred.apiKey}`;
 
+        // proxiedFetch (not a bare fetch): the same "Test connection" check
+        // ai-client.ts's own connectivity probes use — a remote provider
+        // behind a corporate proxy must pass this check the same way actual
+        // chat calls do; a local Ollama (loopback) is never proxied either way.
         if (cred.provider === 'ollama') {
-          const r = await fetch(`${cred.endpoint}/api/tags`, {
+          const r = await proxiedFetch(`${cred.endpoint}/api/tags`, {
             signal: AbortSignal.timeout(3000),
           });
           if (!r.ok) throw new Error(`Ollama: ${r.status}`);
         } else {
-          const r = await fetch(`${cred.endpoint}/models`, {
+          const r = await proxiedFetch(`${cred.endpoint}/models`, {
             headers,
             signal: AbortSignal.timeout(3000),
           });

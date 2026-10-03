@@ -54,12 +54,20 @@ interface AsKeyCheckResult {
  * itself (see as-challenge.ts); {@link checkAsKeyBeforeLogin} only trusts
  * whatever this returns once the challenge below proves the AS actually
  * holds it.
+ *
+ * Goes through `fetchAs` (not a bare `fetch`) so this, the FIRST Authority
+ * Server call a sign-in makes, is proxy-aware (HTTP_PROXY/HTTPS_PROXY, see
+ * proxy-env.ts) exactly like `verifyAsHoldsKey`'s challenge call right after
+ * it — a corporate proxy with no NO_PROXY for the AS host must not make this
+ * call fail while the challenge call right after it succeeds. Always
+ * `enforce: false, capture: false`: there is no pin to enforce yet (that's
+ * the challenge's job, below), and this call must never itself capture one.
  */
 async function fetchAsPublicKey(
   asUrl: string,
 ): Promise<{ ok: true; publicKeyHex: string } | { ok: false; message: string }> {
   try {
-    const res = await fetch(`${asUrl}/api/as/pubkey`, { signal: AbortSignal.timeout(5000) });
+    const { res } = await fetchAs(`${asUrl}/api/as/pubkey`, { signal: AbortSignal.timeout(5000) }, { enforce: false });
     if (!res.ok) {
       return {
         ok: false,

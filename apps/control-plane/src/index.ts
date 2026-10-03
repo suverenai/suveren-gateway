@@ -837,9 +837,11 @@ app.use('/api', authGuard);
 // UI's own path to the AS, and the one that carries the server-side session
 // cookie on every call. http-proxy-middleware hands `options.agent` straight
 // to Node's `https.request`, so a single long-lived Agent (NOT `fetchAs`,
-// which can't express a persistent proxy) is the equivalent here. `getPinning`
-// is read fresh on every NEW connection (see buildPinnedHttpsAgent), so a pin
-// captured moments ago by THIS same sign-in already applies.
+// which has its own, per-call, equivalent) is used here. `getPinning` is
+// read fresh on every NEW connection (see buildPinnedHttpsAgent), so a pin
+// captured moments ago by THIS same sign-in already applies. `SP_URL` is
+// also used, once, to decide whether a corporate proxy applies (see
+// proxy-env.ts) — this agent tunnels via CONNECT when it does.
 const pinnedProxyAgent = SP_URL.startsWith('https:')
   ? buildPinnedHttpsAgent((): AsFetchPinning => {
       const pin = readPairing(DATA_DIR);
@@ -847,7 +849,7 @@ const pinnedProxyAgent = SP_URL.startsWith('https:')
         enforce: resolvePinTls(DATA_DIR),
         pinnedSpkiHex: pin && pin.asUrl === SP_URL ? pin.tlsSpkiPinHex : undefined,
       };
-    })
+    }, SP_URL)
   : undefined;
 
 // Proxy /api/* to SP — mounted at root so http-proxy-middleware sees the full path
