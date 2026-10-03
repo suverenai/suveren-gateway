@@ -89,7 +89,7 @@ No credentials. No signing keys. Just the scope of what the agent is allowed to 
 
 ## Quick Start
 
-Pick whichever you have on hand — both produce the same gateway.
+Pick whichever fits — all three produce the same gateway. For company laptops managed by IT, use Option C.
 
 ### Option A — Docker
 
@@ -99,7 +99,7 @@ Requires [Docker](https://docs.docker.com/get-docker/).
 docker run -d --name suveren-gateway \
   -p 7400:3000 -p 7430:3030 \
   -v $HOME/.suveren:/app/data \
-  ghcr.io/humanagencyprotocol/suveren-gateway
+  ghcr.io/suverenai/suveren-gateway
 ```
 
 Open `http://localhost:7400`. The MCP server is at `http://localhost:7430`.
@@ -130,9 +130,23 @@ suveren-gateway restart
 PowerShell 5.1, which is what ships with Windows. Use `;` there if you want
 them on one line.)
 
+### Option C — Windows installer (company laptops)
+
+For laptops managed by a company's IT: no admin rights, no Node.js and no access to the public npm registry needed. Every [GitHub Release](https://github.com/suverenai/suveren-gateway/releases) from 0.13.0 on carries:
+
+| File | What it is |
+|---|---|
+| `suveren-gateway-<version>-windows-unsigned.msi` | Per-user installer: the gateway, its own Node.js and the tested connector versions — nothing is downloaded at runtime |
+| `suveren-gateway-<version>-windows-signing-kit.zip` | The unpacked contents, the installer source and `build-signed.ps1`, so IT can sign every file with its own certificate and rebuild the `.msi` |
+| `SHA256SUMS` | Checksums of both files |
+
+**The installer is not signed by us.** IT checks where it comes from (`sha256sum -c SHA256SUMS` and `gh attestation verify <file> -R suverenai/suveren-gateway`, which shows the exact commit it was built from), signs it, and distributes it, e.g. with Intune. IT can preset the Authority Server, simulation mode, proxy and certificate centrally; the employee cannot change them, and updates come from IT. Step by step: [Windows IT guide](docs/windows-it-guide.md) · settings: [Managed settings](docs/managed-settings.md).
+
+Open `http://localhost:3400` (Start menu: *Suveren Gateway*). The MCP server is at `http://localhost:3430`.
+
 ### Connecting an MCP client
 
-Either path exposes the same MCP transports — use the port from the path you chose (7430 for Docker, 3430 for npm):
+Every option exposes the same MCP transports — use the port from the option you chose (7430 for Docker, 3430 for npm and the Windows installer):
 
 ```
 Streamable HTTP:  POST http://localhost:<port>/mcp
@@ -263,6 +277,8 @@ for the full command reference.
 | [Authorization Flow](docs/authorization-flow.md) | Data flow, gate wizard, tool execution, agent context |
 | [Security Model](docs/security.md) | Enforcement layers, verification, encryption, fail-closed design |
 | [Development](docs/development.md) | Local setup, env vars, Docker, testing |
+| [Windows IT guide](docs/windows-it-guide.md) | Verify, sign and distribute the Windows installer; network and updates |
+| [Managed settings](docs/managed-settings.md) | Settings IT presets and locks (registry or policy file) |
 
 ---
 
