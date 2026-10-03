@@ -49,7 +49,7 @@ import { createEvidenceExportRouter } from './routes/evidence-export';
 import { createEvidenceRouter } from './routes/evidence';
 import { createDecryptIntentRouter } from './routes/decrypt-intent';
 import { createApprovedIntentsRouter } from './routes/approved-intents';
-import { startUpdateChecker, getUpdateStatus, forceCheck } from './lib/update-checker';
+import { startUpdateChecker, getUpdateStatus, forceCheck, type InstallMethod } from './lib/update-checker';
 import { createEventsHandler } from './routes/events';
 import { createGatewaySettingsRouter } from './routes/gateway-settings';
 import { createArchivedMandatesRouter } from './routes/archived-mandates';
@@ -63,6 +63,7 @@ import { loadDenials, selectDenials } from './lib/denials-reader';
 import { AGENT_CONTEXT_MAX_BYTES, agentBriefPath, readAgentBrief } from './lib/agent-brief-store';
 import { resolveAsUrl, resolvePinTls, validatePinTlsForUrl } from './lib/as-config';
 import { isSimulationMode } from './lib/simulation-mode';
+import { readPolicy } from './lib/policy';
 import { readPairing, clearPairing, fingerprintOf } from './lib/as-pairing';
 import { formatPinFingerprint, buildPinnedHttpsAgent, isPinCheckError, type AsFetchPinning } from './lib/as-tls-pin';
 
@@ -71,13 +72,20 @@ import { formatPinFingerprint, buildPinnedHttpsAgent, isPinCheckError, type AsFe
 // explicitly rather than reading the env var itself.
 const DATA_DIR = process.env.SUVEREN_DATA_DIR ?? join(homedir(), '.suveren');
 
-// Resolution order: env SUVEREN_AS_URL > saved <dataDir>/config.json > default
-// suveren.ai. Throws (refusing to start) if an EXPLICITLY set source is
-// malformed — see as-config.ts.
+// Resolution order: IT policy > env SUVEREN_AS_URL > saved <dataDir>/config.json
+// > default suveren.ai. Throws (refusing to start) if an EXPLICITLY set
+// source — including a bad policy value — is malformed; see as-config.ts and
+// lib/policy.ts.
 const SP_URL = resolveAsUrl(DATA_DIR);
 // Refuses to start (throws) when pinTls is on for a non-https AS URL — not
 // just a CLI-flag-time check, so a hand-edited config.json is caught too.
 validatePinTlsForUrl(resolvePinTls(DATA_DIR), SP_URL);
+// Keys IT policy has locked (see lib/policy.ts) — reported on /health and
+// /as-pairing so the UI can show "set by your IT" instead of controls that
+// would silently do nothing. readPolicy() is memoized, so this is cheap —
+// it already ran above via resolveAsUrl/resolvePinTls.
+const POLICY_LOCKED = [...readPolicy().locked];
+const POLICY_LOCKED_INSTALL_METHOD = readPolicy().policy.installMethod;
 const port = parseInt(process.env.SUVEREN_CP_PORT ?? '3402', 10);
 const HAP_MODE = (process.env.HAP_MODE ?? 'personal') as 'personal' | 'team';
 
@@ -711,6 +719,11 @@ app.get('/as-pairing', authGuard, (_req: Request, res: Response) => {
     // to the already-computed SPKI digest rather than re-hashing a key.
     pinTlsEnabled: resolvePinTls(DATA_DIR),
     tlsPinFingerprint: paired && pairing!.tlsSpkiPinHex ? formatPinFingerprint(pairing!.tlsSpkiPinHex) : null,
+    // IT policy (see lib/policy.ts) — read-only flags so Settings can show
+    // "set by your IT" instead of the "change it via the CLI" hint, which
+    // would be actively misleading for a locked value.
+    asUrlLockedByPolicy: POLICY_LOCKED.includes('asUrl'),
+    pinTlsLockedByPolicy: POLICY_LOCKED.includes('pinTls'),
   });
 });
 
@@ -959,11 +972,19 @@ app.use(
  * version you cannot one-click upgrade to is a far smaller problem than never
  * being told at all.
  *
+ * `managed` pre-empts all of the above: an IT-provisioned install
+ * (SUVEREN_INSTALL_METHOD=managed env, or policy InstallMethod=managed — see
+ * lib/policy.ts) is still physically an npm install, but the update banner
+ * must not offer the npm command an employee has no permission to run — see
+ * update-checker.ts and docs/managed-settings.md.
+ *
  * Mirrored (with injected inputs) in __tests__/install-method.test.ts —
  * importing this module starts a server, so the rule is duplicated there
  * rather than imported. Keep the two in step.
  */
-function detectInstallMethod(): 'docker' | 'npm' | 'dev' {
+function detectInstallMethod(): InstallMethod {
+  if (process.env.SUVEREN_INSTALL_METHOD === 'managed' || POLICY_LOCKED_INSTALL_METHOD === 'managed') return 'managed';
+
   if (existsSync('/.dockerenv')) return 'docker';
 
   const dir = import.meta.dirname ?? __dirname;
@@ -1028,6 +1049,13 @@ app.get('/health', async (req: Request, res: Response) => {
     // Purely local — the Authority Server never learns this. UI reads it to
     // show a gateway-wide banner ("real systems are blocked").
     simulation: isSimulationMode(),
+    // Settings IT has locked centrally (Windows registry policy, or a
+    // policy file — see lib/policy.ts). Read-only here: there is no API
+    // route that lets the UI change any of these (as-url/ca-file/pin-tls
+    // are CLI-only; simulation has no UI control either), so this exists
+    // purely so Settings can render "set by your IT" instead of controls
+    // that would silently do nothing.
+    policyLocked: POLICY_LOCKED,
     session: buildSessionHealth(vault),
     security: {
       note: 'Gateway secures tool execution. Agent host isolation is the user\'s responsibility.',

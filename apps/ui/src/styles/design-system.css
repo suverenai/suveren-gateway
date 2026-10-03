@@ -2056,6 +2056,35 @@ code {
   font-weight: 600;
 }
 
+/* ══════════════════════════════════════════════
+   MANAGED SETTINGS (IT policy)
+   ══════════════════════════════════════════════ */
+
+/* "Set by your IT" badge — same visual language as the "Custom" label on an
+   overridden AI prompt (uppercase, small, accent-colored), paired with a
+   lock glyph so it reads as "you can't change this" rather than "this has
+   been customized". Used wherever Settings shows a value locked by
+   `docs/managed-settings.md` IT policy (Authority Server URL, TLS pinning,
+   simulation mode). */
+.it-locked-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+  background: var(--accent-subtle);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.2rem 0.55rem;
+  white-space: nowrap;
+}
+.it-locked-badge .lock-icon {
+  font-size: 0.75rem;
+}
+
 /* ── Updating overlay (blur the chrome, wait for the restart) ── */
 body.is-updating .top-nav,
 body.is-updating .sidebar,

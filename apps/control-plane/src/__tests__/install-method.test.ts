@@ -12,6 +12,11 @@
  * to the npm check. Being told about a version you cannot one-click upgrade to
  * is a far smaller problem than never being told.
  *
+ * `managed` (SUVEREN_INSTALL_METHOD=managed env, or IT policy
+ * InstallMethod=managed — see lib/policy.ts) pre-empts every other signal,
+ * including Docker: an IT-provisioned install must never show the gateway's
+ * normal upgrade command, regardless of how it happens to be packaged.
+ *
  * Reimplemented here rather than imported because index.ts starts a server on
  * import. The duplication is deliberate and the comment above index.ts's copy
  * points here.
@@ -21,10 +26,11 @@ import { mkdtempSync, mkdirSync, rmSync, existsSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 
-type InstallMethod = 'docker' | 'npm' | 'dev';
+type InstallMethod = 'docker' | 'npm' | 'dev' | 'managed';
 
 /** Mirrors detectInstallMethod() in index.ts, with the inputs injected. */
-function detect(dir: string, dockerEnv = false): InstallMethod {
+function detect(dir: string, dockerEnv = false, managed = false): InstallMethod {
+  if (managed) return 'managed';
   if (dockerEnv) return 'docker';
   if (dir.includes('/node_modules/@suveren/gateway/')) return 'npm';
   let cursor = dir;
@@ -81,5 +87,13 @@ describe('detectInstallMethod', () => {
 
   it('does not walk up forever from the filesystem root', () => {
     expect(() => detect('/')).not.toThrow();
+  });
+
+  it('managed wins over docker — an IT-provisioned install must never show the normal upgrade path', () => {
+    expect(detect('/anywhere', true, true)).toBe('managed');
+  });
+
+  it('managed wins over npm/dev detection too', () => {
+    expect(detect('/opt/homebrew/lib/node_modules/@suveren/gateway/dist/control-plane', false, true)).toBe('managed');
   });
 });

@@ -4,6 +4,7 @@ import { AutostartToggle } from '../components/AutostartToggle';
 import { NotificationsToggle } from '../components/NotificationsToggle';
 import { VersionCard } from '../components/VersionCard';
 import { AuthorityServerCard } from '../components/AuthorityServerCard';
+import { SimulationLockCard } from '../components/SimulationLockCard';
 
 const PROVIDER_CONFIG: Record<string, { provider: string; endpoint: string; models: string[] }> = {
   ollama: {
@@ -344,6 +345,8 @@ export function SettingsServicesPage() {
         {/* Autostart — the CLI's `service` command as a switch */}
         <AutostartToggle />
         <NotificationsToggle />
+        {/* Only renders when IT policy has locked simulation mode */}
+        <SimulationLockCard />
       </section>
 
       {/* 4. Security */}
