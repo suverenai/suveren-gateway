@@ -87,13 +87,25 @@ Start Menu.
 
 ## 5. IT-managed settings
 
-Your policy settings (Authority Server address, a TLS certificate for a
-company proxy, TLS pinning, simulation mode) are set centrally via a registry
-key and read by every installed gateway — see
-**[`docs/managed-settings.md`](docs/managed-settings.md)** *(placeholder — this
-doc is written as part of a parallel change; link it here once merged)*.
+Your policy settings — Authority Server address, a TLS certificate for a
+company proxy, TLS pinning, simulation mode, and the corporate proxy itself —
+are set centrally via the Windows registry (`HKLM\SOFTWARE\Policies\Suveren\
+Gateway`, or `HKCU` for the same key) and read by every installed gateway.
 Settings made this way are shown to the user as "set by your IT" and cannot be
-changed from the gateway's own UI.
+changed from the gateway's own UI or CLI. Full reference, including every
+registry value name and type:
+**[`managed-settings.md`](managed-settings.md)**.
+
+**The proxy, specifically:** on a company laptop the proxy is usually already
+configured at the Windows/system level, not something a user sets in a shell
+— push it via the `Proxy` (and, if needed, `NoProxy`) registry keys rather
+than relying on `HTTP_PROXY`/`HTTPS_PROXY` being present in whatever
+environment the gateway happens to start in. A policy-set `Proxy` **overrides**
+an already-set `HTTP_PROXY`/`HTTPS_PROXY`, so this is safe to push even to
+machines that already have one. See the README's
+[**"Behind a company proxy"**](../README.md#behind-a-company-proxy) section
+for the full behaviour (what gets proxied, TLS inspection, and the one
+combination — proxy plus TLS pinning — that refuses on purpose).
 
 ## 6. Network requirements
 
@@ -105,8 +117,10 @@ it uses are already inside the `.msi`. Installing and running it needs:
   tested version.
 - **Access to your Authority Server's address only** — by default
   `https://www.suveren.ai`, or your own self-hosted Authority Server if your
-  policy settings point there (see §5). Behind a TLS-inspecting proxy, point
-  the gateway at your root certificate via the same policy settings.
+  policy settings point there (see §5), reached either directly or through a
+  corporate proxy set via the `Proxy` policy key (§5) — nothing else is ever
+  contacted. Behind a TLS-inspecting proxy, point the gateway at your root
+  certificate via the same policy settings.
 
 ## 7. Updates
 

@@ -444,17 +444,14 @@ jobs:
           if (-not $body) { throw "control plane /health never answered within 180s" }
           Write-Host ($body | ConvertTo-Json -Depth 5)
 
+          # detectInstallMethod() (apps/control-plane/src/index.ts) reads
+          # SUVEREN_INSTALL_METHOD=managed since PR #36 (merged to main) —
+          # the launcher sets it, so this is now a hard requirement, not a
+          # warning.
           if ($body.installMethod -ne 'managed') {
-            # Depends on the parallel IT-policy-settings change wiring
-            # SUVEREN_INSTALL_METHOD into detectInstallMethod() — see
-            # suveren-as/docs/work-plan.md. This launcher already sets the
-            # env var; warn (don't fail this build on someone else's
-            # not-yet-merged change) until that lands, then tighten to a
-            # hard failure.
-            Write-Host "::warning::installMethod is '$($body.installMethod)', expected 'managed' — depends on the IT-policy-settings change (SUVEREN_INSTALL_METHOD env support in detectInstallMethod); see work-plan.md."
-          } else {
-            Write-Host "installMethod: managed (confirmed)"
+            throw "installMethod is '$($body.installMethod)', expected 'managed' for the interactively-started instance"
           }
+          Write-Host "installMethod: managed (confirmed — interactive instance)"
 
           $mcpDeadline = (Get-Date).AddSeconds(240)
           $mcpBody = $null
@@ -509,6 +506,23 @@ jobs:
           # earlier step is on 15400/15430, so there's no port clash.
           schtasks /Run /TN Suveren
           if ($LASTEXITCODE -ne 0) { throw "schtasks /Run exited $LASTEXITCODE" }
+
+          # Control plane — for installMethod. The MCP server's own /health
+          # (queried below) carries no such field.
+          $cpHealth = 'http://localhost:3400/health'
+          $cpDeadline = (Get-Date).AddSeconds(120)
+          $cpBody = $null
+          while ((Get-Date) -lt $cpDeadline) {
+            try {
+              $cpBody = Invoke-RestMethod -Uri $cpHealth -TimeoutSec 5
+              if ($cpBody.status -eq 'ok') { break }
+            } catch { Start-Sleep -Seconds 2 }
+          }
+          if (-not $cpBody) { throw "control plane /health never answered within 120s (scheduled-task instance)" }
+          if ($cpBody.installMethod -ne 'managed') {
+            throw "installMethod is '$($cpBody.installMethod)', expected 'managed' for the scheduled-task-started instance"
+          }
+          Write-Host "installMethod: managed (confirmed — scheduled-task instance)"
 
           $mcpHealth = 'http://localhost:3430/health'
           $deadline = (Get-Date).AddSeconds(240)
