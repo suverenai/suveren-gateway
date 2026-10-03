@@ -8,8 +8,14 @@
  * same pattern applied to as-config.ts.
  *
  * Set via `SUVEREN_SIMULATION=1`, written onto both children's env by
- * bundle/server.js from the CLI's saved `<dataDir>/config.json`.
+ * bundle/server.js from the CLI's saved `<dataDir>/config.json`. IT policy
+ * (see policy.ts) wins unconditionally over that env var, so `/health`
+ * reports the same locked value the MCP server actually enforces.
  */
+import { readPolicy } from './policy';
+
 export function isSimulationMode(): boolean {
+  const policySimulation = readPolicy().policy.simulation;
+  if (policySimulation !== undefined) return policySimulation;
   return process.env.SUVEREN_SIMULATION === '1';
 }

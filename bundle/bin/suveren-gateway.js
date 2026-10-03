@@ -17,10 +17,11 @@ import { homedir, platform, userInfo } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildLaunchAgentPlist, buildMacLauncher, buildSystemdUnit, buildWindowsTaskXml } from '../lib/autostart-templates.mjs';
-import { DEFAULT_AS_URL, readConfig, writeConfig, validateAsUrl, validateCaFile, validatePinTls, resolveAsUrl, resolvePinTls, resolvePinTlsExpectedFingerprint, resolveSimulation } from '../lib/config.mjs';
+import { DEFAULT_AS_URL, readConfig, writeConfig, validateAsUrl, validateCaFile, validateProxyUrl, validatePinTls, resolveAsUrl, resolvePinTls, resolvePinTlsExpectedFingerprint, resolveSimulation } from '../lib/config.mjs';
 import { createInterface } from 'node:readline/promises';
 import { readPairing as readAsPairing, recordTlsPin, formatFingerprint, normalizeFingerprint } from '../lib/as-pairing.mjs';
 import { unsupportedNodeReason } from '../lib/node-version.mjs';
+import { readPolicy, isPolicyLocked } from '../lib/policy.mjs';
 
 // Before any command: on an unsupported Node the connectors cannot run (see
 // lib/node-version.mjs), so refuse with the reason instead of starting.
@@ -199,6 +200,18 @@ async function start(args) {
     caFileToSave = v.path;
   }
 
+  const proxyFlag = flagValue(args, '--proxy');
+  let proxyToSave = null;
+  if (proxyFlag) {
+    refuseIfLockedByPolicy('proxy', 'proxy');
+    const v = validateProxyUrl(proxyFlag);
+    if (!v.ok) {
+      console.error(`Invalid --proxy: ${v.error}`);
+      process.exit(1);
+    }
+    proxyToSave = v.url;
+  }
+
   // --pin-tls: a boolean flag (turns TLS certificate pinning ON — there is
   // no `start --pin-tls off`; use `config set pin-tls off` for that).
   // Validated against the EFFECTIVE as-url for this very start (the flag
@@ -274,6 +287,12 @@ async function start(args) {
   if (caFileToSave) {
     writeConfig(DATA_DIR, { caFile: caFileToSave });
     console.log(`CA file: ${caFileToSave} (saved — applied to every process this gateway starts)`);
+  }
+  if (proxyToSave) {
+    writeConfig(DATA_DIR, { proxyUrl: proxyToSave });
+    process.env.HTTP_PROXY ??= proxyToSave;
+    process.env.HTTPS_PROXY ??= proxyToSave;
+    console.log(`Proxy: ${proxyToSave} (saved — applied to every process this gateway starts, unless HTTP_PROXY/HTTPS_PROXY is already set)`);
   }
   if (pinTlsToSave) {
     const effectiveAsUrl = asUrlToSave ?? resolveAsUrl(DATA_DIR);
@@ -519,16 +538,36 @@ function printConfigHelp() {
   console.log(`suveren-gateway config — read or save gateway settings
 
 Usage:
-  suveren-gateway config get [as-url|ca-file|pin-tls]  Print the resolved value(s)
+  suveren-gateway config get [as-url|ca-file|pin-tls|proxy]  Print the resolved value(s)
   suveren-gateway config set as-url <url>              Save the Authority Server URL
   suveren-gateway config set ca-file <path>            Save a CA bundle for internal TLS
   suveren-gateway config set pin-tls on --expect-fingerprint <sha256-hex>
                                                         Pin the Authority Server's TLS certificate
   suveren-gateway config set pin-tls off               Stop enforcing the TLS certificate pin
+  suveren-gateway config set proxy <url>               Save an HTTP(S) proxy (http(s)://host:port)
 
 Saved in ${join(DATA_DIR, 'config.json')}.
-Precedence at start: --as-url flag > env SUVEREN_AS_URL > saved as-url >
-default (${DEFAULT_AS_URL}).
+Precedence at start: IT policy > --as-url flag > env SUVEREN_AS_URL > saved
+as-url > default (${DEFAULT_AS_URL}).
+
+A setting your organization's IT has set centrally (Windows registry policy,
+or a policy file — see docs/managed-settings.md) is LOCKED: \`config get\`
+shows "(set by your IT)" next to it, and \`config set\` refuses to change it.
+
+proxy is a convenience for operators without shell access to set
+HTTP_PROXY/HTTPS_PROXY themselves — those environment variables remain the
+actual requirement (every process this gateway runs honours them directly)
+and always win if already set; a saved proxy only fills in whichever of the
+two is still unset. NO_PROXY is honoured too, read directly from the
+environment (there is no saved equivalent). A loopback target (the control
+plane and the MCP server talking to each other, or a local AI assistant) is
+never proxied, independent of any of this.
+
+An IT-set Proxy policy is the ONE locked setting that OVERRIDES an
+already-set HTTP_PROXY/HTTPS_PROXY rather than merely out-ranking a saved
+value — the Windows-company-laptop case, where the proxy lives in system
+settings, not something an employee's shell exports. A NoProxy policy
+likewise overrides NO_PROXY. See docs/managed-settings.md.
 
 pin-tls (default off, self-hosted Authority Servers with a stable signing
 key) requires https:// and pins the Authority Server's TLS certificate
@@ -564,21 +603,48 @@ running gateway keeps using what it already resolved at its own startup.
 `);
 }
 
+/** Appended to `config get` output when IT policy has set this key — see
+ *  lib/policy.mjs. Purely informational here; the refusal itself lives in
+ *  `refuseIfLockedByPolicy`, called from `config set` / `simulation`. */
+function policySuffix(key) {
+  return isPolicyLocked(key) ? '  (set by your IT)' : '';
+}
+
+/**
+ * Refuse a `config set` / `simulation on|off` for a key IT policy already
+ * controls. A policy value is the top precedence tier (see policy.mjs) —
+ * writing a saved config.json value anyway would be actively misleading
+ * (`config get` would show something that is NOT what's actually running),
+ * so this exits before any validation or write happens, naming the policy
+ * value so the person doesn't have to go find it themselves.
+ */
+function refuseIfLockedByPolicy(key, humanName, display) {
+  if (!isPolicyLocked(key)) return;
+  const value = readPolicy().policy[key];
+  console.error(`${humanName} is set by your IT policy (${display ? display(value) : value}) and cannot be changed here.`);
+  console.error('Contact your IT administrator to change it.');
+  process.exit(1);
+}
+
 async function config(args) {
   const sub = args[0];
 
   if (sub === 'get') {
     const key = args[1];
     const saved = readConfig(DATA_DIR);
+    const policyCaFile = readPolicy().policy.caFile;
+    const policyProxy = readPolicy().policy.proxy;
     if (!key) {
-      console.log(`as-url:  ${resolveAsUrl(DATA_DIR)}`);
-      console.log(`ca-file: ${saved.caFile ?? '(not set)'}`);
-      console.log(`pin-tls: ${resolvePinTls(DATA_DIR) ? 'on' : 'off'}`);
+      console.log(`as-url:  ${resolveAsUrl(DATA_DIR)}${policySuffix('asUrl')}`);
+      console.log(`ca-file: ${(policyCaFile ?? saved.caFile) ?? '(not set)'}${policySuffix('caFile')}`);
+      console.log(`pin-tls: ${resolvePinTls(DATA_DIR) ? 'on' : 'off'}${policySuffix('pinTls')}`);
+      console.log(`proxy:   ${(policyProxy ?? saved.proxyUrl) ?? '(not set)'}${policySuffix('proxy')}`);
       return;
     }
-    if (key === 'as-url') { console.log(resolveAsUrl(DATA_DIR)); return; }
-    if (key === 'ca-file') { console.log(saved.caFile ?? ''); return; }
-    if (key === 'pin-tls') { console.log(resolvePinTls(DATA_DIR) ? 'on' : 'off'); return; }
+    if (key === 'as-url') { console.log(`${resolveAsUrl(DATA_DIR)}${policySuffix('asUrl')}`); return; }
+    if (key === 'ca-file') { console.log(`${(policyCaFile ?? saved.caFile) ?? ''}${policySuffix('caFile')}`); return; }
+    if (key === 'pin-tls') { console.log(`${resolvePinTls(DATA_DIR) ? 'on' : 'off'}${policySuffix('pinTls')}`); return; }
+    if (key === 'proxy') { console.log(`${(policyProxy ?? saved.proxyUrl) ?? ''}${policySuffix('proxy')}`); return; }
     console.error(`Unknown config key: ${key}\n`);
     printConfigHelp();
     process.exit(2);
@@ -588,6 +654,7 @@ async function config(args) {
     const key = args[1];
     const value = args[2];
     if (key === 'as-url') {
+      refuseIfLockedByPolicy('asUrl', 'as-url');
       if (!value) {
         console.error('Usage: suveren-gateway config set as-url <url>');
         process.exit(2);
@@ -603,6 +670,7 @@ async function config(args) {
       return;
     }
     if (key === 'ca-file') {
+      refuseIfLockedByPolicy('caFile', 'ca-file');
       if (!value) {
         console.error('Usage: suveren-gateway config set ca-file <path>');
         process.exit(2);
@@ -617,7 +685,25 @@ async function config(args) {
       console.log('Restart to pick it up: suveren-gateway restart');
       return;
     }
+    if (key === 'proxy') {
+      refuseIfLockedByPolicy('proxy', 'proxy');
+      if (!value) {
+        console.error('Usage: suveren-gateway config set proxy <url>');
+        process.exit(2);
+      }
+      const v = validateProxyUrl(value);
+      if (!v.ok) {
+        console.error(`Invalid proxy: ${v.error}`);
+        process.exit(1);
+      }
+      writeConfig(DATA_DIR, { proxyUrl: v.url });
+      console.log(`Saved proxy: ${v.url}`);
+      console.log('Sets HTTP_PROXY/HTTPS_PROXY for every process this gateway starts, unless already set in the environment.');
+      console.log('Restart to pick it up: suveren-gateway restart');
+      return;
+    }
     if (key === 'pin-tls') {
+      refuseIfLockedByPolicy('pinTls', 'pin-tls', (v) => (v ? 'on' : 'off'));
       if (value !== 'on' && value !== 'off') {
         console.error('Usage: suveren-gateway config set pin-tls on|off [--expect-fingerprint <sha256-hex>]');
         process.exit(2);
@@ -679,12 +765,17 @@ Usage:
   suveren-gateway simulation status           Show the saved setting and (if running) the live one
 
 Changes take effect on the next \`suveren-gateway start\` / \`restart\`.
+
+If your organization's IT has set Simulation centrally (Windows registry
+policy, or a policy file — see docs/managed-settings.md), it is LOCKED: both
+\`on\` and \`off\` refuse, naming the policy value, and this cannot be
+overridden locally — not even by setting SUVEREN_SIMULATION directly.
 `);
 }
 
 async function printSimulationStatus() {
   const saved = resolveSimulation(DATA_DIR);
-  console.log(`Saved:   ${saved ? 'on' : 'off'}`);
+  console.log(`Saved:   ${saved ? 'on' : 'off'}${policySuffix('simulation')}`);
   try {
     const res = await fetch(`http://localhost:${SUVEREN_PORT}/health`, { signal: AbortSignal.timeout(3000) });
     if (res.ok) {
@@ -720,6 +811,7 @@ async function simulation(args) {
   }
 
   if (sub === 'on') {
+    refuseIfLockedByPolicy('simulation', 'Simulation mode', (v) => (v ? 'on' : 'off'));
     // The safe direction — blocking real systems needs no confirmation.
     writeConfig(DATA_DIR, { simulation: true });
     console.log('Simulation mode: ON (saved) — every connector without a manifest "simulation" marker will be blocked.');
@@ -728,6 +820,7 @@ async function simulation(args) {
   }
 
   if (sub === 'off') {
+    refuseIfLockedByPolicy('simulation', 'Simulation mode', (v) => (v ? 'on' : 'off'));
     console.error('Turning simulation mode OFF makes every real system reachable again: any connector');
     console.error('without a manifest "simulation" marker (e.g. a live Gmail or ERP account) will spawn');
     console.error('and execute for real the next time this gateway starts.');
@@ -1271,6 +1364,7 @@ Usage:
   suveren-gateway start [--detach]           Run the gateway (foreground by default)
     [--as-url <url>]                         Authority Server URL (saved for next time)
     [--ca-file <path>]                       Internal CA bundle (saved for next time)
+    [--proxy <url>]                          HTTP(S) proxy (saved for next time — see below)
     [--pin-tls --expect-fingerprint <hex>]   Pin the AS TLS certificate (saved; https:// only — see below)
     [--simulation]                           Block every real system (saved — see \`simulation help\`)
   suveren-gateway stop                       Stop a detached gateway
@@ -1279,9 +1373,10 @@ Usage:
   suveren-gateway logs [--tail]               Print or tail ~/.suveren/gateway.log
   suveren-gateway service <cmd>               Run as a login service that survives reboot
                                               (install | uninstall | status)
-  suveren-gateway config get [as-url|ca-file|pin-tls]  Print the resolved value(s)
+  suveren-gateway config get [as-url|ca-file|pin-tls|proxy]  Print the resolved value(s)
   suveren-gateway config set as-url <url>     Save the Authority Server URL
   suveren-gateway config set ca-file <path>   Save a CA bundle for internal TLS
+  suveren-gateway config set proxy <url>      Save an HTTP(S) proxy (see below)
   suveren-gateway config set pin-tls on --expect-fingerprint <hex>
                                               Pin the Authority Server's TLS certificate
                                               (see \`suveren-gateway config help\` for the fingerprint check)
@@ -1296,6 +1391,13 @@ Environment:
   SUVEREN_DATA_DIR    Data directory (default ~/.suveren)
   SUVEREN_AS_URL      Authority Server URL — overrides the saved as-url
   SUVEREN_SIMULATION  1 to force simulation mode for this run — overrides the saved setting
+  HTTP_PROXY / HTTPS_PROXY / NO_PROXY (upper or lower case)
+                      Corporate proxy — honoured for every outbound call to the Authority
+                      Server, the update checker, and a remote AI assistant endpoint. A
+                      loopback target (127.0.0.1/localhost, incl. a local AI assistant) is
+                      never proxied. These win over a saved \`config set proxy\` — UNLESS
+                      your organization's IT has set a Proxy/NoProxy policy, which wins
+                      over both (see docs/managed-settings.md).
 
 Authority Server resolution order: --as-url flag > SUVEREN_AS_URL env >
 saved as-url (\`config set as-url\`) > default (${DEFAULT_AS_URL}).

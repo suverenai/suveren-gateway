@@ -3,7 +3,12 @@ import { useState, useEffect, useRef } from 'react';
 const SLOW_INTERVAL = 5 * 60 * 1000; // 5 minutes — background "is an update out?"
 const FAST_INTERVAL = 2000;          // 2 seconds — while waiting for a restart
 
-export type InstallMethod = 'docker' | 'npm' | 'dev';
+// 'managed' = an IT-provisioned install (control-plane's /health reports it
+// when SUVEREN_INSTALL_METHOD=managed or IT policy sets InstallMethod —
+// see docs/managed-settings.md). Physically still an npm install underneath,
+// but the employee has no permission to run the upgrade command themselves,
+// so UpdateBanner shows no command for it at all.
+export type InstallMethod = 'docker' | 'npm' | 'dev' | 'managed';
 
 /**
  * Polls /health for update state AND detects when the running gateway has

@@ -12,7 +12,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir, tmpdir, constants as osConstants } from 'node:os';
 import { existsSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
-import { resolveCaFile, resolveSimulation } from './lib/config.mjs';
+import { resolveCaFile, resolveProxyUrl, resolveSimulation } from './lib/config.mjs';
+import { readPolicy, isPolicyLocked } from './lib/policy.mjs';
 import { unsupportedNodeReason } from './lib/node-version.mjs';
 
 // Docker and the login service start this file directly, not through the CLI,
@@ -121,6 +122,43 @@ if (savedCaFile && !process.env.SUVEREN_CA_REEXEC_DONE) {
 // via `...process.env`, all the way down to individual integrations.
 delete process.env.SUVEREN_CA_REEXEC_DONE;
 
+// ─── Corporate proxy (`config set proxy <url>` / `--proxy` / IT policy) ────
+//
+// `HTTP_PROXY`/`HTTPS_PROXY` are read fresh on every outbound call (see
+// proxy-env.ts in both apps) — unlike NODE_EXTRA_CA_CERTS above, there is no
+// Node-startup-time requirement, so no re-exec dance is needed here.
+//
+// Two different precedence rules apply, because `resolveProxyUrl` already
+// folds IT policy ahead of the saved value (see config.mjs):
+//   - IT policy LOCKED (`Proxy` — see lib/policy.mjs): OVERRIDES an
+//     operator's own HTTP_PROXY/HTTPS_PROXY unconditionally — "locked"
+//     means locked even against a pre-existing env var, the one case among
+//     all the policy-able settings where there IS a meaningful env tier to
+//     override (every other locked key has none to begin with). This is
+//     the Windows-company-laptop case: the proxy lives in system settings,
+//     not an env var an employee thinks to set.
+//   - Otherwise (a plain saved `config set proxy`): fills in whichever of
+//     HTTP_PROXY/HTTPS_PROXY is still unset — an operator's own value
+//     always wins, same as every other env-vs-saved precedence here.
+const resolvedProxyUrl = resolveProxyUrl(DATA_DIR);
+if (resolvedProxyUrl) {
+  if (isPolicyLocked('proxy')) {
+    process.env.HTTP_PROXY = resolvedProxyUrl;
+    process.env.HTTPS_PROXY = resolvedProxyUrl;
+  } else {
+    process.env.HTTP_PROXY ??= resolvedProxyUrl;
+    process.env.HTTPS_PROXY ??= resolvedProxyUrl;
+  }
+}
+
+// `NoProxy` has no saved-config/CLI counterpart at all (see policy.mjs) —
+// NO_PROXY stays env-only except for this one IT-policy override, which (like
+// `Proxy` above) overrides an operator's own NO_PROXY unconditionally when set.
+const policyNoProxy = readPolicy().policy.noProxy;
+if (policyNoProxy) {
+  process.env.NO_PROXY = policyNoProxy;
+}
+
 const CP_PORT = process.env.SUVEREN_CP_PORT ?? '3400';
 const MCP_PORT = process.env.SUVEREN_MCP_PORT ?? '3430';
 const UI_DIST = process.env.HAP_UI_DIST ?? join(__dirname, 'dist', 'ui');
@@ -147,13 +185,18 @@ const env = {
   SUVEREN_PROFILES_DIR: PROFILES_DIR,
   // Single shared internal secret so CP↔MCP authenticate the bridge.
   SUVEREN_INTERNAL_SECRET: process.env.SUVEREN_INTERNAL_SECRET ?? randomHex(32),
-  // Simulation mode — same precedence as the CA bundle above: an explicit env
-  // var (set directly, or by `start --simulation` setting process.env for
-  // THIS run — see bundle/bin/suveren-gateway.js) wins; otherwise the saved
-  // config.json value, which is what `suveren-gateway simulation on|off`
-  // changes for every future start/restart, including autostart (which
-  // spawns this file directly, bypassing the CLI's own flag handling).
-  SUVEREN_SIMULATION: process.env.SUVEREN_SIMULATION ?? (resolveSimulation(DATA_DIR) ? '1' : '0'),
+  // Simulation mode — IT policy (see lib/policy.mjs) wins UNCONDITIONALLY,
+  // ahead of even an explicit env var: that is what "locked" means. Below
+  // that: an explicit env var (set directly, or by `start --simulation`
+  // setting process.env for THIS run — see bundle/bin/suveren-gateway.js)
+  // wins; otherwise the saved config.json value, which is what
+  // `suveren-gateway simulation on|off` changes for every future
+  // start/restart, including autostart (which spawns this file directly,
+  // bypassing the CLI's own flag handling).
+  SUVEREN_SIMULATION:
+    readPolicy().policy.simulation !== undefined
+      ? (readPolicy().policy.simulation ? '1' : '0')
+      : (process.env.SUVEREN_SIMULATION ?? (resolveSimulation(DATA_DIR) ? '1' : '0')),
   // Passed by the login service (see bundle/lib/autostart-templates.mjs) so the
   // control-plane knows a human is NOT sitting in front of a terminal watching
   // it start — that is when a locked gateway needs to announce itself.

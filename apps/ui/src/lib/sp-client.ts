@@ -1299,6 +1299,10 @@ class SPClient {
     /** Opt-in TLS pinning (`config set pin-tls on`) — see as-tls-pin.ts. */
     pinTlsEnabled: boolean;
     tlsPinFingerprint: string | null;
+    // IT policy (see lib/policy.ts) — omitted by an older control-plane;
+    // the UI must treat a missing field exactly like "not locked".
+    asUrlLockedByPolicy?: boolean;
+    pinTlsLockedByPolicy?: boolean;
   }> {
     const res = await this.fetch('/as-pairing');
     if (!res.ok) throw new Error(`HTTP ${res.status}`);

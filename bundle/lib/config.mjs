@@ -15,6 +15,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
+import { readPolicy } from './policy.mjs';
 
 export const DEFAULT_AS_URL = 'https://www.suveren.ai';
 
@@ -34,6 +35,7 @@ export function readConfig(dataDir) {
     if (typeof data.pinTls === 'boolean') out.pinTls = data.pinTls;
     if (typeof data.pinTlsExpectedFingerprint === 'string') out.pinTlsExpectedFingerprint = data.pinTlsExpectedFingerprint;
     if (typeof data.simulation === 'boolean') out.simulation = data.simulation;
+    if (typeof data.proxyUrl === 'string') out.proxyUrl = data.proxyUrl;
     return out;
   } catch {
     return {};
@@ -61,6 +63,7 @@ function readConfigStrict(dataDir) {
   if (typeof data.pinTls === 'boolean') out.pinTls = data.pinTls;
   if (typeof data.pinTlsExpectedFingerprint === 'string') out.pinTlsExpectedFingerprint = data.pinTlsExpectedFingerprint;
   if (typeof data.simulation === 'boolean') out.simulation = data.simulation;
+  if (typeof data.proxyUrl === 'string') out.proxyUrl = data.proxyUrl;
   return out;
 }
 
@@ -125,15 +128,22 @@ export function validateCaFile(candidate) {
 }
 
 /**
- * Resolution order: env SUVEREN_AS_URL > saved config > default. Throws on
- * an explicitly-set-but-invalid env var, AND on a saved value that is
- * present but invalid or on a config.json that won't parse — fail closed,
- * audibly. For a self-hosted customer, silently falling back to the public
- * default here would mean their real API key gets sent to suveren.ai instead
- * of their own server. Only a genuinely ABSENT saved value (nothing was ever
- * set) falls through to the default.
+ * Resolution order: IT policy > env SUVEREN_AS_URL > saved config > default.
+ * A policy-set AsUrl (see policy.mjs) wins unconditionally — that is the
+ * whole point of "locked" — and is already validated by readPolicy(), which
+ * throws (refusing to start) on a bad policy value the same way this
+ * function throws on a bad env/saved one. Throws on an explicitly-set-but-
+ * invalid env var, AND on a saved value that is present but invalid or on a
+ * config.json that won't parse — fail closed, audibly. For a self-hosted
+ * customer, silently falling back to the public default here would mean
+ * their real API key gets sent to suveren.ai instead of their own server.
+ * Only a genuinely ABSENT saved value (nothing was ever set) falls through
+ * to the default.
  */
 export function resolveAsUrl(dataDir) {
+  const policyUrl = readPolicy().policy.asUrl;
+  if (policyUrl) return policyUrl;
+
   const envUrl = process.env.SUVEREN_AS_URL;
   if (envUrl) {
     const v = validateAsUrl(envUrl);
@@ -149,10 +159,52 @@ export function resolveAsUrl(dataDir) {
   return DEFAULT_AS_URL;
 }
 
-/** The saved CA file path, if any — no env/flag tier (see bundle/server.js,
- *  the one place that reads and acts on it). */
+/** The effective CA file path: IT policy first (locked — see policy.mjs),
+ *  else the saved value. No env/flag tier (see bundle/server.js, the one
+ *  place that reads and acts on it). */
 export function resolveCaFile(dataDir) {
+  const policyCaFile = readPolicy().policy.caFile;
+  if (policyCaFile) return policyCaFile;
   return readConfig(dataDir).caFile;
+}
+
+/**
+ * Validate a candidate proxy URL: `http://` or `https://`, with an optional
+ * `user:pass@` and port. This is a CONVENIENCE for operators who would
+ * otherwise have to set `HTTP_PROXY`/`HTTPS_PROXY` themselves — those
+ * environment variables remain the actual requirement (every process this
+ * gateway runs honours them directly; see proxy-env.ts in both apps) and
+ * always win if set, same precedence as `SUVEREN_AS_URL` over a saved
+ * `as-url`. Saving a proxy here sets BOTH `HTTP_PROXY` and `HTTPS_PROXY` for
+ * every process bundle/server.js spawns (see that file) — there is no
+ * separate saved value for each, matching how a single corporate proxy
+ * almost always handles both schemes.
+ */
+export function validateProxyUrl(candidate) {
+  const trimmed = (candidate ?? '').trim();
+  if (!trimmed) return { ok: false, error: 'The proxy URL is empty.' };
+  let parsed;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return { ok: false, error: `"${trimmed}" is not a valid URL.` };
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return { ok: false, error: `"${trimmed}" must use http:// or https://.` };
+  }
+  return { ok: true, url: trimmed };
+}
+
+/** The effective proxy URL: IT policy first (locked — see policy.mjs), else
+ *  the saved value. No env/flag tier of its own here — see bundle/server.js,
+ *  the one place that turns this into HTTP_PROXY/HTTPS_PROXY for the
+ *  children it spawns, and which also decides whether that OVERRIDES an
+ *  operator's own HTTP_PROXY/HTTPS_PROXY (only when policy-locked) or merely
+ *  fills them in when absent (the saved-value case). */
+export function resolveProxyUrl(dataDir) {
+  const policyProxy = readPolicy().policy.proxy;
+  if (policyProxy) return policyProxy;
+  return readConfig(dataDir).proxyUrl;
 }
 
 /**
@@ -177,10 +229,13 @@ export function validatePinTls(effectiveAsUrl) {
   return { ok: true };
 }
 
-/** The saved pin-tls setting. No env/flag tier — only ever set through
+/** The effective pin-tls setting: IT policy first (locked — see policy.mjs),
+ *  else the saved value. No env/flag tier — only ever set through
  *  `--pin-tls` / `config set pin-tls on|off`. Default false: opt-in,
  *  never silently on. */
 export function resolvePinTls(dataDir) {
+  const policyPinTls = readPolicy().policy.pinTls;
+  if (policyPinTls !== undefined) return policyPinTls;
   return readConfig(dataDir).pinTls === true;
 }
 
@@ -200,15 +255,21 @@ export function resolvePinTlsExpectedFingerprint(dataDir) {
 }
 
 /**
- * The saved simulation-mode setting (default false — off, nothing changes for
- * a normal install). No env/flag tier of its own here: `start --simulation`
- * and `simulation on|off` both go through `writeConfig`, and bundle/server.js
- * is the one place that turns this saved value into `SUVEREN_SIMULATION` for
- * the children it spawns (see that file's doc comment) — mirroring how
- * `resolveCaFile` works, not how `resolveAsUrl` works (no env override here;
- * an operator who wants to force it for one run can still set
- * SUVEREN_SIMULATION directly, which server.js honours ahead of this).
+ * The effective simulation-mode setting: IT policy first — LOCKED, meaning
+ * `simulation off` must refuse rather than write a saved value that would
+ * be overridden anyway (see the CLI's `simulation` subcommand) — else the
+ * saved value (default false — off, nothing changes for a normal install).
+ * No env/flag tier of its own here: `start --simulation` and `simulation
+ * on|off` both go through `writeConfig`, and bundle/server.js is the one
+ * place that turns this saved value into `SUVEREN_SIMULATION` for the
+ * children it spawns (see that file's doc comment) — mirroring how
+ * `resolveCaFile` works, not how `resolveAsUrl` works (no env override
+ * here; an operator who wants to force it for one run can still set
+ * SUVEREN_SIMULATION directly, which server.js honours ahead of this saved
+ * value, but NOT ahead of policy — policy is the top precedence tier).
  */
 export function resolveSimulation(dataDir) {
+  const policySimulation = readPolicy().policy.simulation;
+  if (policySimulation !== undefined) return policySimulation;
   return readConfig(dataDir).simulation === true;
 }

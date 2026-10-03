@@ -15,6 +15,7 @@ export interface SavedConfig {
   pinTls?: boolean;
   pinTlsExpectedFingerprint?: string;
   simulation?: boolean;
+  proxyUrl?: string;
 }
 
 export declare function readConfig(dataDir: string): SavedConfig;
@@ -36,6 +37,15 @@ export interface CaFileValidation {
 
 export declare function validateCaFile(candidate: string): CaFileValidation;
 
+export interface ProxyUrlValidation {
+  ok: boolean;
+  url?: string;
+  error?: string;
+}
+
+export declare function validateProxyUrl(candidate: string): ProxyUrlValidation;
+
 export declare function resolveAsUrl(dataDir: string): string;
 export declare function resolveCaFile(dataDir: string): string | undefined;
+export declare function resolveProxyUrl(dataDir: string): string | undefined;
 export declare function resolveSimulation(dataDir: string): boolean;
