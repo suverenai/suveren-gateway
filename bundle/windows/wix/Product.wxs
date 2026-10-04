@@ -102,6 +102,7 @@
         Description="Open the Suveren gateway"
         Target="[#LauncherCmd]"
         Arguments="open-ui"
+        Show="minimized"
         WorkingDirectory="INSTALLFOLDER" />
       <RemoveFolder Id="RemoveSuverenMenuFolder" Directory="SuverenMenuFolder" On="uninstall" />
       <RegistryValue Root="HKCU" Key="Software\Suveren\Gateway" Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes" />
