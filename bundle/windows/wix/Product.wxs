@@ -50,10 +50,20 @@
 
     <!-- A newer version already installed refuses an older one outright,
          rather than silently downgrading files a newer connector set
-         depends on. -->
+         depends on.
+
+         AllowSameVersionUpgrades="yes": without it, re-installing the EXACT
+         same ProductVersion falls into neither the upgrade nor the downgrade
+         range, so Windows Installer treats it as an unrelated product —
+         observed for real (a test build sharing its version with an already-
+         installed release registered as a SECOND product instead of
+         upgrading it, part of a stuck-install investigation on a Windows 11
+         VM). Harmless the rest of the time: it only matters when the two
+         versions are literally identical. -->
     <MajorUpgrade
       DowngradeErrorMessage="A newer version of Suveren Gateway is already installed. Uninstall it first to install this older version."
-      Schedule="afterInstallInitialize" />
+      Schedule="afterInstallInitialize"
+      AllowSameVersionUpgrades="yes" />
 
     <MediaTemplate EmbedCab="yes" />
 
@@ -143,35 +153,91 @@
       <ComponentRef Id="InstallMarkerComponent" />
     </Feature>
 
-    <!-- Uninstall cleanup — the two things msiexec /x cannot do on its own.
-         Both Return="ignore": a gateway that was never running, or a task
-         that was already removed (e.g. via `suveren-gateway service
-         uninstall` beforehand), must never fail the uninstall.
+    <!-- Stop/cleanup custom actions. See bundle/windows/stop-gateway.ps1 for
+         the readable, documented version of the SAME logic — kept there as
+         a reference for IT to run by hand, not shipped as an installed file:
+         StopGatewayBeforeUpgrade runs BEFORE RemoveExistingProducts, which
+         for a brand-new install is BEFORE any file this package ships has
+         even been copied to INSTALLFOLDER yet — a `-File "[INSTALLFOLDER]…"`
+         custom action would reference a script that doesn't exist at that
+         point, and for the exact scenario this exists to fix (upgrading
+         FROM an older release that never shipped this script at all) it
+         never would. Inlined via `-Command` instead, so it depends on
+         nothing but powershell.exe itself (always present) and the
+         INSTALLFOLDER property (always resolvable, file or no file).
+         Written with single-quoted PowerShell string literals throughout
+         (the WQL filter's embedded quote is doubled, the standard PowerShell
+         single-quote escape) so the only thing that needs XML-attribute
+         escaping is the one pair of quotes wrapping the whole -Command
+         argument — every nested "quoting inside quoting inside quoting"
+         layer that makes these custom actions so easy to get subtly wrong
+         is avoided by construction, not by being careful.
 
-         Condition: REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE — a plain
-         uninstall sets REMOVE="ALL"; so does the OLD version's removal
-         during a MAJOR UPGRADE (RemoveExistingProducts uninstalls it), which
-         ALSO sets UPGRADINGPRODUCTCODE. Excluding that case is deliberate:
-         the scheduled task registered by `service install` points at
-         [INSTALLFOLDER]suveren-gateway.cmd, and INSTALLFOLDER is the SAME
-         per-user path across versions (fixed UpgradeCode, files replaced
-         in-place) — deleting the task mid-upgrade would silently turn
-         autostart off for every existing user on every update, and nothing
-         in this package ever re-creates it. Left alone, the task keeps
-         pointing at a valid (now-upgraded) launcher with no action needed.
+         StopGatewayBeforeUpgrade runs on EVERY install attempt (install,
+         repair, or upgrade — unconditioned): a major upgrade's old-version
+         removal runs the OLD package's OWN uninstall sequence, which — for
+         every version already out in the world before this fix shipped —
+         has no equivalent cleanup at all. Scheduling the stop in the NEW
+         package, early, fixes upgrading FROM any older version, not only
+         from versions that already carry this fix. Confirmed for real:
+         without it, upgrading over a running gateway hangs forever at
+         "Please wait while Windows configures Suveren Gateway" — the
+         bundled node.exe stays locked while Windows Installer's Restart
+         Manager / file-replacement waits for it, and ending the process by
+         hand in Task Manager is what lets the stuck install continue.
+         Harmless on a fresh install (nothing to stop).
 
-         Both run `Execute="deferred"` (same install context — per-user,
-         no elevation boundary to cross, so Impersonate="yes" is correct
-         here as everywhere else in this package) and are scheduled before
-         RemoveFiles: stop first, so the gateway's own files (node.exe, its
-         DLLs) aren't locked when Windows Installer removes them; then
-         delete the task, so nothing can restart the gateway (and re-lock
-         those files) in the (very) small window before the files actually
-         go. -->
+         Neither `launcher.cmd stop` (the CLI's own stop) nor ending the
+         scheduled task alone is enough on its own: the CLI's stop only
+         knows how to stop an instance started detached via the CLI's own
+         `start` (PID file); a gateway started BY the scheduled task
+         (`launcher.cmd run` → server.js directly, no PID file) makes it
+         print "running under the login service" and exit without stopping
+         anything (confirmed with the same CLI on macOS). So: end the
+         task's current run AND kill every
+         node.exe whose OWN executable path is under INSTALLFOLDER — the
+         same bundled node.exe runs server.js, its control-plane child, and
+         its mcp-server child (see bundle/server.js's spawn calls), so this
+         one filter catches the whole tree regardless of which of the two
+         ways it was started.
+
+         StopGatewayOnUninstall + RemoveScheduledTaskOnUninstall are the
+         PLAIN-uninstall-only pair (Condition: REMOVE="ALL" AND NOT
+         UPGRADINGPRODUCTCODE — a plain uninstall sets REMOVE="ALL"; so does
+         the old version's removal during a major upgrade, which ALSO sets
+         UPGRADINGPRODUCTCODE, hence excluding it here). Excluding upgrade is
+         deliberate for the TASK deletion specifically: the scheduled task
+         points at [INSTALLFOLDER]suveren-gateway.cmd, a path identical
+         across versions (fixed UpgradeCode, files replaced in-place) —
+         deleting it mid-upgrade would silently turn autostart off for every
+         existing user on every update, and nothing in this package ever
+         re-creates it. Left alone, it keeps pointing at a valid
+         (now-upgraded) launcher with no action needed.
+
+         RestartScheduledTaskAfterInstall (Execute="commit", so it runs only
+         after the WHOLE install/upgrade transaction succeeds, never on
+         rollback) brings the gateway back the way it was: if the scheduled
+         task exists, run it — otherwise an IT-pushed upgrade would leave
+         every user without a running gateway until their next logon. A
+         fresh install has no task yet, so this is a silent no-op there.
+
+         All four: Return="ignore" (a gateway that was never running, or a
+         task that doesn't exist, must never fail the install/uninstall) and
+         Execute="deferred"/"commit" with Impersonate="yes" — same per-user
+         install context as everywhere else in this package, no elevation
+         boundary to cross. -->
+    <CustomAction
+      Id="StopGatewayBeforeUpgrade"
+      Directory="INSTALLFOLDER"
+      ExeCommand="powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command &quot;$ErrorActionPreference='SilentlyContinue'; schtasks.exe /End /TN Suveren 2&gt;$null; $p=('[INSTALLFOLDER]').TrimEnd('\'); Get-CimInstance Win32_Process -Filter 'Name=''node.exe''' | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.ToLower().StartsWith(($p+'\').ToLower()) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }&quot;"
+      Execute="deferred"
+      Impersonate="yes"
+      Return="ignore" />
+
     <CustomAction
       Id="StopGatewayOnUninstall"
       Directory="INSTALLFOLDER"
-      ExeCommand="cmd.exe /c &quot;[INSTALLFOLDER]suveren-gateway.cmd&quot; stop"
+      ExeCommand="powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command &quot;$ErrorActionPreference='SilentlyContinue'; schtasks.exe /End /TN Suveren 2&gt;$null; $p=('[INSTALLFOLDER]').TrimEnd('\'); Get-CimInstance Win32_Process -Filter 'Name=''node.exe''' | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.ToLower().StartsWith(($p+'\').ToLower()) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }&quot;"
       Execute="deferred"
       Impersonate="yes"
       Return="ignore" />
@@ -184,9 +250,19 @@
       Impersonate="yes"
       Return="ignore" />
 
+    <CustomAction
+      Id="RestartScheduledTaskAfterInstall"
+      Directory="INSTALLFOLDER"
+      ExeCommand="cmd.exe /c schtasks.exe /Query /TN Suveren &gt;nul 2&gt;&amp;1 &amp;&amp; schtasks.exe /Run /TN Suveren"
+      Execute="commit"
+      Impersonate="yes"
+      Return="ignore" />
+
     <InstallExecuteSequence>
+      <Custom Action="StopGatewayBeforeUpgrade" Before="RemoveExistingProducts" />
       <Custom Action="StopGatewayOnUninstall" Before="RemoveFiles" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
       <Custom Action="RemoveScheduledTaskOnUninstall" After="StopGatewayOnUninstall" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+      <Custom Action="RestartScheduledTaskAfterInstall" After="InstallFinalize" />
     </InstallExecuteSequence>
 
   </Package>
