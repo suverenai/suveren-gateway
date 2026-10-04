@@ -299,9 +299,17 @@ jobs:
   # ─── The real install path: msiexec, then launcher + service, with npm
   #     unreachable — no network dependency anywhere in the started gateway. ─
   install-test:
-    name: install test
+    name: install test (${{ matrix.runner }})
     needs: build-msi
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # windows-11-arm: the real case this whole job exists to fix was
+        # found on ARM Windows (UTM VM) — x64 under Windows' built-in
+        # emulation, not a native ARM build (there isn't one; Node/
+        # better-sqlite3 in this payload are x64 prebuilts).
+        runner: [windows-latest, windows-11-arm]
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     # Job-level, not step-level: each step in a workflow is its OWN fresh
     # pwsh process, so a `$env:X = …` assignment inside one step's script is
@@ -379,6 +387,106 @@ jobs:
           Get-ChildItem "$root\integrations\node_modules\.bin" -ErrorAction SilentlyContinue |
             Where-Object { $_.Name -match '^(crm|records|erp)-mcp' } |
             ForEach-Object { Write-Host "  $($_.Name)" }
+
+      - name: A silent install ends with the gateway actually running (StartGatewayAfterInstall)
+        shell: pwsh
+        run: |
+          # The msi used to only ever place files — nothing started the
+          # gateway or told the user it wasn't running, a real gap found on
+          # a Windows 11 VM. This is the commit custom action's job, with NO
+          # manual `start`/`service install` call from this test — default
+          # ports, since nothing here overrides them.
+          $targets = @('crm', 'records', 'erp')
+          $deadline = (Get-Date).AddSeconds(240)
+          $body = $null
+          while ((Get-Date) -lt $deadline) {
+            try {
+              $cp = Invoke-RestMethod -Uri 'http://localhost:3400/health' -TimeoutSec 5
+              if ($cp.status -eq 'ok') {
+                $body = Invoke-RestMethod -Uri 'http://localhost:3430/health' -TimeoutSec 5
+                $statuses = $body.integrations | Where-Object { $targets -contains $_.id }
+                $allUp = ($statuses.Count -eq $targets.Count) -and ($statuses | ForEach-Object { $_.running -and $_.toolCount -gt 0 }) -notcontains $false
+                if ($allUp) { break }
+              }
+            } catch {}
+            Start-Sleep -Seconds 3
+          }
+          if (-not $body) { throw "gateway never came up on its own after a silent install — StartGatewayAfterInstall did not work" }
+          Write-Host ($body | ConvertTo-Json -Depth 5)
+          foreach ($id in $targets) {
+            $entry = $body.integrations | Where-Object { $_.id -eq $id }
+            if (-not $entry -or -not $entry.running -or $entry.toolCount -le 0) {
+              throw "fresh-install: $id not running with tools after a silent install — nobody ran start or logged in"
+            }
+          }
+          Write-Host "confirmed: gateway came up on its own after a SILENT install, connectors running offline, with no manual start/service-install call."
+
+          # Clean up before the rest of this job's scenarios run — they
+          # assume the default ports and the scheduled task's run state are
+          # free/fresh.
+          schtasks /End /TN Suveren 2>$null | Out-Null
+          Start-Sleep -Seconds 1
+          Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
+            Where-Object { $_.CommandLine -like '*gateway\server.js*' } |
+            ForEach-Object { taskkill /PID $_.ProcessId /T /F 2>$null }
+          Start-Sleep -Seconds 1
+
+      - name: Finish-dialog checkbox's underlying action, run non-interactively (the dialog itself is NOT tested) + window visibility
+        shell: pwsh
+        run: |
+          # The ExitDialog "Launch Suveren Gateway" checkbox can't be
+          # clicked in CI. This runs the EXACT command
+          # LaunchGatewayAfterInstall itself runs (see Product.wxs) —
+          # proving the action works — NOT the interactive dialog, which
+          # remains genuinely untested here.
+          $launcher = "$env:LOCALAPPDATA\Programs\Suveren\suveren-gateway.cmd"
+          cmd.exe /c start /min "" "$launcher" open-ui
+
+          $targets = @('crm', 'records', 'erp')
+          $deadline = (Get-Date).AddSeconds(240)
+          $body = $null
+          while ((Get-Date) -lt $deadline) {
+            try {
+              $body = Invoke-RestMethod -Uri 'http://localhost:3430/health' -TimeoutSec 5
+              $statuses = $body.integrations | Where-Object { $targets -contains $_.id }
+              $allUp = ($statuses.Count -eq $targets.Count) -and ($statuses | ForEach-Object { $_.running -and $_.toolCount -gt 0 }) -notcontains $false
+              if ($allUp) { break }
+            } catch {}
+            Start-Sleep -Seconds 3
+          }
+          if (-not $body) { throw "open-ui (the Finish checkbox's own action) did not bring the gateway up" }
+          Write-Host "confirmed: open-ui's underlying command works — service install + start + (a browser would open interactively)."
+
+          # Best-effort window-visibility check (PR #47: windowsHide on the
+          # detached spawn + Shortcut Show="minimized"). This can only
+          # observe what THIS runner's session reports; it is evidence, not
+          # a guarantee the real interactive Start-Menu path never shows a
+          # window on every possible Windows configuration.
+          $root = "$env:LOCALAPPDATA\Programs\Suveren"
+          $gwProcs = Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
+            Where-Object { $_.ExecutablePath -and $_.ExecutablePath.ToLower().StartsWith("$($root.ToLower())\") }
+          $visible = foreach ($p in $gwProcs) {
+            $proc = Get-Process -Id $p.ProcessId -ErrorAction SilentlyContinue
+            if ($proc -and $proc.MainWindowHandle -ne 0) { $proc }
+          }
+          if ($visible) {
+            throw "gateway process(es) have a VISIBLE main window: $($visible.Id -join ', ') — PR #47's windowsHide may have regressed"
+          }
+          Write-Host "confirmed (best effort): none of $($gwProcs.Count) gateway node.exe process(es) report a visible main window (MainWindowHandle -eq 0 for all)."
+          $conhost = Get-CimInstance Win32_Process -Filter "Name='conhost.exe' OR Name='cmd.exe'"
+          if ($conhost) {
+            Write-Host "::warning::$($conhost.Count) conhost.exe/cmd.exe process(es) present on this runner — cannot reliably attribute them to the gateway tree vs. this very CI step's own `cmd.exe /c start` invocation without deeper inspection; NOT treated as a failure. See step name: this is a best-effort signal, not proof for every real machine."
+          } else {
+            Write-Host "confirmed: no conhost.exe/cmd.exe process remains at all."
+          }
+
+          # Clean up before the rest of this job's scenarios run.
+          schtasks /End /TN Suveren 2>$null | Out-Null
+          Start-Sleep -Seconds 1
+          Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
+            Where-Object { $_.CommandLine -like '*gateway\server.js*' } |
+            ForEach-Object { taskkill /PID $_.ProcessId /T /F 2>$null }
+          Start-Sleep -Seconds 1
 
       - name: HKCU\Environment is untouched — the installer must not be account-wide
         shell: pwsh
@@ -671,9 +779,13 @@ jobs:
   #     -d ProductVersion — the payload content doesn't need to differ for
   #     what this proves). ─────────────────────────────────────────────────
   upgrade-test:
-    name: upgrade + uninstall (task-started gateway)
+    name: upgrade + uninstall (task-started gateway, ${{ matrix.runner }})
     needs: build-payload
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-latest, windows-11-arm]
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 25
     env:
       SUVEREN_INTERNAL_SECRET: windows-upgrade-test-internal-secret
@@ -792,7 +904,7 @@ jobs:
         if: failure() && steps.upgrade.outputs.log != ''
         uses: actions/upload-artifact@v4
         with:
-          name: upgrade-install-log
+          name: upgrade-install-log-${{ matrix.runner }}
           path: ${{ steps.upgrade.outputs.log }}
           if-no-files-found: warn
 
@@ -883,7 +995,7 @@ jobs:
         if: failure() && steps.uninstall.outputs.log != ''
         uses: actions/upload-artifact@v4
         with:
-          name: upgrade-test-uninstall-log
+          name: upgrade-test-uninstall-log-${{ matrix.runner }}
           path: ${{ steps.uninstall.outputs.log }}
           if-no-files-found: warn
 
