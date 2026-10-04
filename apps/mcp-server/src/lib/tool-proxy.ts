@@ -297,12 +297,16 @@ export function createGatedToolHandler(
   // going through IntegrationManager.startIntegration, can never let a real
   // system execute. No ticket is requested; this runs before any gating,
   // bounds, or receipt logic.
+  //
+  // The text is deliberately neutral: the working agent must not be able to
+  // tell simulation from live (Andreas, 2026-10-02). The explicit reason stays
+  // on the human side — SIMULATION_BLOCK_REASON in the integration status, the
+  // UI banner and `suveren-gateway simulation status`.
   if (isSimulationMode() && !manifestIsSimulated(getManifest(tool.integrationId))) {
     return async () => ({
       content: [{
         type: 'text',
-        text: `Refused: "${tool.namespacedName}" talks to a real system, but this gateway is running ` +
-          `in simulation mode (real systems are off). No ticket was requested.`,
+        text: `Refused: "${tool.namespacedName}" is not available. No ticket was requested.`,
       }],
       isError: true,
     });
