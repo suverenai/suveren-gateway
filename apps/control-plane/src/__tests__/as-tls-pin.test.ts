@@ -71,11 +71,14 @@ function trustViaCaFile(cert: Cert): void {
   process.env.NODE_EXTRA_CA_CERTS = cert.certFile;
 }
 
-/** @param port 0 (default) lets the OS assign a free port — read back via
- *  the resolved `port`/`url`. Pass an explicit port to rebind the SAME
- *  number a prior (now-closed) server in this test was assigned, for the
- *  "same URL, different certificate" shape. */
-function startHttps(cert: Cert, port = 0): Promise<{ close: () => Promise<void>; port: number; url: string }> {
+/** Listens on port 0 (OS-assigned) — read back via the resolved `port`/`url`.
+ *  For the "same URL, different certificate" shape use `swapCert`: it replaces
+ *  the certificate on the LIVE listening socket (tls.Server#setSecureContext)
+ *  and drops open connections so the next request handshakes again. Closing
+ *  and re-binding the same port instead left a gap in which a concurrently
+ *  running test process could be handed that port by the OS (EADDRINUSE,
+ *  intermittent under `pnpm -r test`). */
+function startHttps(cert: Cert, port = 0): Promise<{ close: () => Promise<void>; swapCert: (next: Cert) => void; port: number; url: string }> {
   const server: Server = createServer(
     { cert: readFileSync(cert.certFile), key: readFileSync(cert.keyFile) },
     (_req, res) => res.end('ok'),
@@ -88,6 +91,10 @@ function startHttps(cert: Cert, port = 0): Promise<{ close: () => Promise<void>;
         // Drop open keep-alive sockets too: server.close() alone waits for them, and
         // a test that rebinds the same port (the relay case) would race them.
         close: () => new Promise<void>((r) => { server.close(() => r()); server.closeAllConnections(); }),
+        swapCert: (next: Cert) => {
+          server.setSecureContext({ cert: readFileSync(next.certFile), key: readFileSync(next.keyFile) });
+          server.closeAllConnections();
+        },
         port: assigned,
         url: `https://127.0.0.1:${assigned}/`,
       });
@@ -127,11 +134,10 @@ describe('fetchAs — opt-in TLS pinning, real certificates', () => {
 
   it('accepts the SAME certificate again under the pin — renewal-with-same-key shape', async () => {
     trustViaCaFile(certA);
-    const { close: c1, port, url } = await startHttps(certA);
+    const { close, swapCert, url } = await startHttps(certA); stop = close;
     const { capturedSpkiHex } = await fetchAs(url, undefined, { enforce: true, capture: true });
-    await c1();
 
-    const { close: c2 } = await startHttps(certA, port); stop = c2;
+    swapCert(certA); // same key re-presented on the same url:port, fresh handshake
     const { res } = await fetchAs(url, undefined, { enforce: true, pinnedSpkiHex: capturedSpkiHex });
     expect(res.status).toBe(200);
   });
@@ -139,16 +145,15 @@ describe('fetchAs — opt-in TLS pinning, real certificates', () => {
   it('REFUSAL: a relay with its own (CA-trusted) certificate on the same URL is refused under the pin', async () => {
     // Pin against certA.
     trustViaCaFile(certA);
-    const { close: c1, port, url } = await startHttps(certA);
+    const { close, swapCert, url } = await startHttps(certA); stop = close;
     const { capturedSpkiHex } = await fetchAs(url, undefined, { enforce: true, capture: true });
-    await c1();
 
     // Now something else answers the SAME url:port with certB — a totally
     // different keypair — and the operator has separately trusted certB via
     // --ca-file (so plain TLS validation alone would accept it: this is
     // exactly the gap pin-tls exists to close).
     trustViaCaFile(certB);
-    const { close: c2 } = await startHttps(certB, port); stop = c2;
+    swapCert(certB);
 
     await expect(fetchAs(url, undefined, { enforce: true, pinnedSpkiHex: capturedSpkiHex }))
       .rejects.toBeInstanceOf(AsTlsMismatchError);
@@ -232,12 +237,11 @@ describe('fetchAs — capture at every pairing, independent of enforcement (desi
 
   it('pin-tls ON + an EXISTING pin is enforced, never silently replaced, even though capture is requested', async () => {
     trustViaCaFile(certA);
-    const { close: c1, port, url } = await startHttps(certA);
+    const { close, swapCert, url } = await startHttps(certA); stop = close;
     const { capturedSpkiHex: realHex } = await fetchAs(url, undefined, { enforce: true, capture: true });
-    await c1();
 
     trustViaCaFile(certB);
-    const { close: c2 } = await startHttps(certB, port); stop = c2;
+    swapCert(certB);
 
     // `capture: true` here models the challenge call itself finding a pin
     // ALREADY on file — it must enforce, not quietly adopt certB's key.
