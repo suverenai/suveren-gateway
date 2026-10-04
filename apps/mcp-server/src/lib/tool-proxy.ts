@@ -339,6 +339,39 @@ export function createGatedToolHandler(
   };
 }
 
+/**
+ * True when the Authority Server refused a receipt because the SELECTED
+ * MANDATE itself is no longer valid — revoked, past its signed expiry, or
+ * unknown to the AS at all — as opposed to a refusal about the CALL
+ * (BOUND_EXCEEDED, approval_required, a malformed request). Only THIS class
+ * of refusal is safe to retry with a different mandate: the call was never
+ * judged on its merits, only the authority offered to cover it turned out to
+ * be dead. Everything else (bounds, approval, idempotency, shape) must fail
+ * exactly as before — retrying those would either paper over an enforcement
+ * refusal or risk a double execution.
+ *
+ * Matched on the AS's structured `errors[0].code` (suveren-as's
+ * `app/api/as/receipt/route.ts`), never on the free-text message — codes are
+ * the contract. `ATTESTATION_REVOKED` / `ATTESTATION_EXPIRED` (403) cover a
+ * mandate the AS actively invalidated; `ATTESTATION_NOT_FOUND` (404) covers
+ * a cached mandate the AS has no record of at all (e.g. the cache is stale
+ * about an id that was deleted). There is currently no distinct "superseded"
+ * code on the wire — a renewal reuses the same authorizationId (see
+ * `authz-store.ts`'s `renewAuthorization`) rather than minting a new one, so
+ * a superseded mandate surfaces as one of these two codes, not a third.
+ */
+function isStaleMandateRefusal(err: SPReceiptError): boolean {
+  const errors = err.body?.errors as Array<{ code?: unknown }> | undefined;
+  const code = errors?.[0]?.code;
+  if (err.statusCode === 403 && (code === 'ATTESTATION_REVOKED' || code === 'ATTESTATION_EXPIRED')) {
+    return true;
+  }
+  if (err.statusCode === 404 && code === 'ATTESTATION_NOT_FOUND') {
+    return true;
+  }
+  return false;
+}
+
 function createGatedToolHandlerInner(
   tool: DiscoveredTool,
   integrationManager: IntegrationManager,
@@ -797,23 +830,38 @@ function createGatedToolHandlerInner(
     // per-profile code. A tie / partial overlap / no-scope profile falls back to
     // requiring approval if any passer does (never a silent bypass).
     const contextKeys = getProfile(passers[0].profileId)?.contextSchema?.keyOrder ?? [];
-    const selection = selectAuthorization(
-      contextKeys,
-      passers.map(a => ({
-        id: a.authorizationId,
-        auth: a,
-        context: a.context ?? {},
-        requiresApproval: (a.deferredCommitmentDomains ?? []).length > 0,
-      })),
-    );
-    const auth = selection.chosen.auth;
-    if (selection.superseded.length > 0) {
-      console.error(
-        `[Suveren MCP] selection(${tool.namespacedName}): chose ${auth.authorizationId} ` +
-          `(${selection.reason}) over [${selection.superseded.map(s => s.id).join(', ')}]`,
+
+    // Fallback on a stale-mandate refusal (see isStaleMandateRefusal): the AS
+    // — not this process's local cache — is the source of truth on whether a
+    // mandate is still valid. `attemptWithCandidates` reruns selection over a
+    // candidate pool that shrinks by exactly the refused mandate on each
+    // retry, so it is bounded by `passers.length`: at most one attempt per
+    // distinct mandate, never the same id twice, and no path that loops
+    // forever against an AS that keeps refusing.
+    return attemptWithCandidates(passers);
+
+    // `candidates` is never empty: the initial call passes `passers`, already
+    // checked non-empty above, and the only recursive call site below only
+    // recurses when at least one candidate remains — when none do, it returns
+    // the AS's own refusal directly instead of recursing into an empty pool.
+    async function attemptWithCandidates(candidates: EnrichedAuthorization[]): Promise<ToolResult> {
+      const selection = selectAuthorization(
+        contextKeys,
+        candidates.map(a => ({
+          id: a.authorizationId,
+          auth: a,
+          context: a.context ?? {},
+          requiresApproval: (a.deferredCommitmentDomains ?? []).length > 0,
+        })),
       );
-    }
-    {
+      const auth = selection.chosen.auth;
+      if (selection.superseded.length > 0) {
+        console.error(
+          `[Suveren MCP] selection(${tool.namespacedName}): chose ${auth.authorizationId} ` +
+            `(${selection.reason}) over [${selection.superseded.map(s => s.id).join(', ')}]`,
+        );
+      }
+
         // Every SP reference (receipt, proposals, summary) is the per-ceremony id.
         const authzId = auth.authorizationId;
 
@@ -1000,6 +1048,42 @@ function createGatedToolHandlerInner(
             };
           }
 
+          if (err instanceof SPReceiptError && isStaleMandateRefusal(err)) {
+            // The mandate selected for THIS call failed validity at the AS —
+            // not a bound/approval refusal, so retrying the same call under a
+            // different mandate is safe: the call itself was never judged,
+            // only the authority offered to cover it was found dead. Purge it
+            // from the local cache (the AS, not this cache, decided it's
+            // dead — list-authorizations/list-integrations must stop
+            // offering it immediately, same as the pre-existing revoked-403
+            // purge below) and retry ONCE for this mandate: drop it from
+            // THIS call's candidate pool and recurse. A sibling call already
+            // in flight keeps its own pool, so this never cross-cancels
+            // another invocation's in-progress selection.
+            state.cache.invalidate(auth.authorizationId);
+            const code = (err.body?.errors as Array<{ code?: unknown }> | undefined)?.[0]?.code ?? 'unknown';
+            const remaining = candidates.filter(c => c.authorizationId !== auth.authorizationId);
+            if (remaining.length === 0) {
+              // Nothing left to fall back to — fail closed with the Authority
+              // Server's own reason, exactly as a single-candidate refusal
+              // always has, rather than a generic "exhausted" message that
+              // would hide WHY (revoked vs. expired vs. not found).
+              console.error(
+                `[Suveren MCP] fallback(${tool.namespacedName}): mandate ${auth.authorizationId} invalid ` +
+                  `(${code}) — no remaining candidates`,
+              );
+              return {
+                content: [{ type: 'text', text: `Blocked by SP: ${err.message}` }],
+                isError: true,
+              };
+            }
+            console.error(
+              `[Suveren MCP] fallback(${tool.namespacedName}): mandate ${auth.authorizationId} invalid ` +
+                `(${code}) → retrying with [${remaining.map(c => c.authorizationId).join(', ')}]`,
+            );
+            return attemptWithCandidates(remaining);
+          }
+
           if (err instanceof SPReceiptError && err.statusCode === 409) {
             // P8.2: SP returned approval_required — this action exceeds the team cap
             // for an above-cap authority. Route to per-action multi-party approval:
@@ -1168,7 +1252,7 @@ function createGatedToolHandlerInner(
           }
         }
         return integrationManager.callTool(tool.integrationId, tool.originalName, outgoingArgs);
-      }
+    }
   });
 }
 
