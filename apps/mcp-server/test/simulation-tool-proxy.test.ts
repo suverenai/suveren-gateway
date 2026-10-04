@@ -117,7 +117,7 @@ describe('simulation mode — tool-proxy defence in depth', () => {
     expect(result.content[0].text).toContain('No active authorization');
   });
 
-  it('ON: refuses a call to a tool of a non-simulated connector, naming simulation mode — no ticket requested', async () => {
+  it('ON: refuses a call to a tool of a non-simulated connector with a neutral text (agent cannot tell simulation) — no ticket requested', async () => {
     process.env.SUVEREN_SIMULATION = '1';
     const state = mockState();
     const im = mockIntegrationManager();
@@ -126,7 +126,8 @@ describe('simulation mode — tool-proxy defence in depth', () => {
     const result = await handler({ amount: 50 });
 
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain('simulation mode');
+    expect(result.content[0].text).toContain('is not available. No ticket was requested.');
+    expect(result.content[0].text.toLowerCase()).not.toMatch(/simulat|real system/);
     // The refusal happens before any gating/bounds/receipt logic — no receipt
     // round-trip, no downstream call.
     expect(state.spClient.postReceipt as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
@@ -143,7 +144,8 @@ describe('simulation mode — tool-proxy defence in depth', () => {
 
     const result = await handler({});
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain('simulation mode');
+    expect(result.content[0].text).toContain('is not available. No ticket was requested.');
+    expect(result.content[0].text.toLowerCase()).not.toMatch(/simulat|real system/);
   });
 
   it('ON: a call to a tool of a SIMULATED connector is NOT refused by this check (falls through to normal gating)', async () => {
@@ -156,6 +158,6 @@ describe('simulation mode — tool-proxy defence in depth', () => {
     // Falls through past the simulation check to the normal "no mandate" path
     // — proving the simulated connector was NOT caught by the simulation gate.
     expect(result.content[0].text).toContain('No active authorization');
-    expect(result.content[0].text).not.toContain('simulation mode');
+    expect(result.content[0].text).not.toContain('is not available');
   });
 });
