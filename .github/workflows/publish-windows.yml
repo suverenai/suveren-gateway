@@ -659,6 +659,238 @@ jobs:
             }
           $global:LASTEXITCODE = 0
 
+  # ─── The scenario that actually hangs on a real machine: upgrading over a
+  #     RUNNING gateway (started by the scheduled task, not the CLI's own
+  #     `start`), and uninstalling the same way. Separate job, its own two
+  #     msis built from the one shared payload (just a different
+  #     -d ProductVersion — the payload content doesn't need to differ for
+  #     what this proves). ─────────────────────────────────────────────────
+  upgrade-test:
+    name: upgrade + uninstall (task-started gateway)
+    needs: build-payload
+    runs-on: windows-latest
+    timeout-minutes: 25
+    env:
+      SUVEREN_INTERNAL_SECRET: windows-upgrade-test-internal-secret
+      # Points at nothing — the gateway must never need it, before OR after
+      # the upgrade.
+      npm_config_registry: 'http://127.0.0.1:9'
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-payload
+          path: bundle/windows/payload
+
+      - name: Install WiX v5
+        run: dotnet tool install --global wix --version 5.0.2
+
+      - name: Compute old/new versions
+        id: versions
+        shell: bash
+        run: |
+          set -e
+          OLD="${{ needs.build-payload.outputs.version }}"
+          IFS='.' read -r MA MI PA <<< "$OLD"
+          NEW="$MA.$MI.$((PA + 1))"
+          echo "old=$OLD" >> "$GITHUB_OUTPUT"
+          echo "new=$NEW" >> "$GITHUB_OUTPUT"
+          echo "old: $OLD -> new: $NEW"
+
+      - name: wix build — old and new msi, same payload
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path bundle\windows\out | Out-Null
+          $payload = (Resolve-Path bundle\windows\payload).Path
+          $launcher = (Resolve-Path bundle\windows\launcher.cmd).Path
+          foreach ($pair in @(
+            @{ Version = "${{ steps.versions.outputs.old }}"; Out = 'old.msi' },
+            @{ Version = "${{ steps.versions.outputs.new }}"; Out = 'new.msi' }
+          )) {
+            wix build bundle\windows\wix\Product.wxs `
+              -d "ProductVersion=$($pair.Version)" `
+              -d "PayloadDir=$payload" `
+              -d "LauncherSource=$launcher" `
+              -arch x64 `
+              -out "bundle\windows\out\$($pair.Out)"
+            if ($LASTEXITCODE -ne 0) { throw "wix build failed for $($pair.Out) ($($pair.Version))" }
+          }
+
+      - name: Install OLD — service install, start via the scheduled task
+        shell: pwsh
+        run: |
+          $msi = (Resolve-Path bundle\windows\out\old.msi).Path
+          $log = "$env:RUNNER_TEMP\install-old.log"
+          $p = Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /qn /norestart /l*v `"$log`"" -Wait -PassThru
+          if ($p.ExitCode -ne 0) {
+            Write-Host "::group::install-old log"; Get-Content $log; Write-Host "::endgroup::"
+            throw "msiexec /i (old) exited $($p.ExitCode)"
+          }
+
+          & "$env:LOCALAPPDATA\Programs\Suveren\suveren-gateway.cmd" service install
+          if ($LASTEXITCODE -ne 0) { throw "service install exited $LASTEXITCODE" }
+
+          schtasks /Run /TN Suveren
+          if ($LASTEXITCODE -ne 0) { throw "schtasks /Run exited $LASTEXITCODE" }
+
+      - name: Wait for the task-started gateway (OLD) — default ports, no CLI involved
+        shell: pwsh
+        run: |
+          $targets = @('crm', 'records', 'erp')
+          $deadline = (Get-Date).AddSeconds(240)
+          $body = $null
+          while ((Get-Date) -lt $deadline) {
+            try {
+              $body = Invoke-RestMethod -Uri 'http://localhost:3430/health' -TimeoutSec 5
+              $statuses = $body.integrations | Where-Object { $targets -contains $_.id }
+              $allUp = ($statuses.Count -eq $targets.Count) -and ($statuses | ForEach-Object { $_.running -and $_.toolCount -gt 0 }) -notcontains $false
+              if ($allUp) { break }
+            } catch {}
+            Start-Sleep -Seconds 3
+          }
+          Write-Host ($body | ConvertTo-Json -Depth 5)
+          foreach ($id in $targets) {
+            $entry = $body.integrations | Where-Object { $_.id -eq $id }
+            if (-not $entry -or -not $entry.running -or $entry.toolCount -le 0) {
+              throw "OLD: $id is not running with tools before the upgrade — nothing to prove an upgrade against"
+            }
+          }
+          Write-Host "OLD gateway confirmed running via the scheduled task, connectors up."
+
+      - name: a) Install NEW over the running OLD — this is the hang this test exists to catch
+        id: upgrade
+        shell: pwsh
+        run: |
+          $msi = (Resolve-Path bundle\windows\out\new.msi).Path
+          $log = "$env:RUNNER_TEMP\install-new-upgrade.log"
+          "log=$log" >> $env:GITHUB_OUTPUT
+          $proc = Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /qn /norestart /l*v `"$log`"" -PassThru
+
+          $timeoutMs = 5 * 60 * 1000
+          $completed = $proc.WaitForExit($timeoutMs)
+          if (-not $completed) {
+            Write-Host "::error::msiexec /i (upgrade) did not finish within 5 minutes — this is the real hang ('Please wait while Windows configures Suveren Gateway')"
+            try { $proc.Kill() } catch {}
+            throw "upgrade install timed out"
+          }
+          if ($proc.ExitCode -ne 0) {
+            Write-Host "::group::upgrade install log"; Get-Content $log; Write-Host "::endgroup::"
+            throw "msiexec /i (upgrade) exited $($proc.ExitCode)"
+          }
+          Write-Host "upgrade install completed, exit code $($proc.ExitCode)"
+
+      - name: a) Upload the upgrade install log on failure
+        if: failure() && steps.upgrade.outputs.log != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: upgrade-install-log
+          path: ${{ steps.upgrade.outputs.log }}
+          if-no-files-found: warn
+
+      - name: a) Assert exactly one product registered, at the NEW version
+        shell: pwsh
+        run: |
+          $apps = @(
+            Get-ChildItem 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall' -ErrorAction SilentlyContinue |
+              ForEach-Object { Get-ItemProperty $_.PSPath } |
+              Where-Object { $_.DisplayName -eq 'Suveren Gateway' }
+          )
+          if ($apps.Count -ne 1) {
+            throw "expected exactly 1 registered 'Suveren Gateway' product after the upgrade, found $($apps.Count)"
+          }
+          $expected = "${{ steps.versions.outputs.new }}"
+          if ($apps[0].DisplayVersion -ne $expected) {
+            throw "registered DisplayVersion is '$($apps[0].DisplayVersion)', expected '$expected'"
+          }
+          Write-Host "exactly one product registered, DisplayVersion $($apps[0].DisplayVersion) (confirms the files on disk are the NEW version's — MSI only replaces files when it recognizes this as the same product being upgraded)"
+
+      - name: a) Assert the scheduled task survived the upgrade and still points at the launcher
+        shell: pwsh
+        run: |
+          $t = Get-ScheduledTask -TaskName 'Suveren' -ErrorAction Stop
+          $action = $t.Actions[0]
+          Write-Host "action: $($action.Execute) $($action.Arguments)"
+          $expectedLauncher = "$env:LOCALAPPDATA\Programs\Suveren\suveren-gateway.cmd"
+          if ($action.Execute -ne $expectedLauncher) { throw "task Command is '$($action.Execute)', expected '$expectedLauncher'" }
+          if ($action.Arguments -ne 'run') { throw "task Arguments is '$($action.Arguments)', expected 'run'" }
+          Write-Host "scheduled task survived the upgrade, still points at the (now-upgraded) launcher."
+
+      - name: a) Assert the gateway is running again after the upgrade — RestartScheduledTaskAfterInstall
+        shell: pwsh
+        run: |
+          $targets = @('crm', 'records', 'erp')
+          $deadline = (Get-Date).AddSeconds(240)
+          $body = $null
+          while ((Get-Date) -lt $deadline) {
+            try {
+              $body = Invoke-RestMethod -Uri 'http://localhost:3430/health' -TimeoutSec 5
+              $statuses = $body.integrations | Where-Object { $targets -contains $_.id }
+              $allUp = ($statuses.Count -eq $targets.Count) -and ($statuses | ForEach-Object { $_.running -and $_.toolCount -gt 0 }) -notcontains $false
+              if ($allUp) { break }
+            } catch {}
+            Start-Sleep -Seconds 3
+          }
+          Write-Host ($body | ConvertTo-Json -Depth 5)
+          foreach ($id in $targets) {
+            $entry = $body.integrations | Where-Object { $_.id -eq $id }
+            if (-not $entry) { throw "NEW: $id not in the integration registry after the upgrade — the gateway did not come back on its own" }
+            if (-not $entry.running) { throw "NEW: $id registered but not running after the upgrade ($($entry.error))" }
+            if ($entry.toolCount -le 0) { throw "NEW: $id running but discovered 0 tools after the upgrade" }
+          }
+          Write-Host "gateway came back on its own after the upgrade (RestartScheduledTaskAfterInstall), connectors up offline — nobody had to log out and back in."
+
+      - name: b) Uninstall while the task-started gateway is running — the case the old uninstall test never covered
+        id: uninstall
+        shell: pwsh
+        run: |
+          $msi = (Resolve-Path bundle\windows\out\new.msi).Path
+          $log = "$env:RUNNER_TEMP\uninstall.log"
+          "log=$log" >> $env:GITHUB_OUTPUT
+          $proc = Start-Process msiexec.exe -ArgumentList "/x `"$msi`" /qn /norestart /l*v `"$log`"" -PassThru
+
+          $timeoutMs = 5 * 60 * 1000
+          $completed = $proc.WaitForExit($timeoutMs)
+          if (-not $completed) {
+            Write-Host "::error::msiexec /x did not finish within 5 minutes"
+            try { $proc.Kill() } catch {}
+            throw "uninstall timed out"
+          }
+          if ($proc.ExitCode -ne 0) {
+            Write-Host "::group::uninstall log"; Get-Content $log; Write-Host "::endgroup::"
+            throw "msiexec /x exited $($proc.ExitCode)"
+          }
+
+          $root = "$env:LOCALAPPDATA\Programs\Suveren"
+          if (Test-Path $root) { throw "install dir still present after uninstall: $root" }
+          $t = Get-ScheduledTask -TaskName 'Suveren' -ErrorAction SilentlyContinue
+          if ($t) { throw "scheduled task 'Suveren' still present after uninstall" }
+          $leftover = Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
+            Where-Object { $_.ExecutablePath -and $_.ExecutablePath.ToLower().StartsWith("$($root.ToLower())\") }
+          if ($leftover) { throw "node.exe still running under the (now-deleted) install dir: $($leftover.ProcessId -join ', ')" }
+
+          Write-Host "clean: uninstalled a RUNNING task-started gateway, dir gone, task gone, no leftover node.exe under the install dir."
+
+      - name: b) Upload the uninstall log on failure
+        if: failure() && steps.uninstall.outputs.log != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: upgrade-test-uninstall-log
+          path: ${{ steps.uninstall.outputs.log }}
+          if-no-files-found: warn
+
+      - name: Final cleanup — kill any lingering gateway process (best effort)
+        if: always()
+        shell: pwsh
+        run: |
+          Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
+            Where-Object { $_.CommandLine -like '*Suveren*gateway\server.js*' } |
+            ForEach-Object {
+              Write-Host "cleanup: killing pid $($_.ProcessId)"
+              taskkill /PID $_.ProcessId /T /F 2>$null
+            }
+          $global:LASTEXITCODE = 0
+
   # ─── Attach unsigned msi + signing kit to the GitHub Release for the tag.
   #     Tag pushes and manual dispatch only — never on a PR. ─────────────────
   release:
@@ -668,7 +900,7 @@ jobs:
     # from a branch without a tag (see bundle/windows/* development), and
     # must never have a side effect of creating a release or a tag.
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build-payload, build-msi, install-test, prove-signing-kit]
+    needs: [build-payload, build-msi, install-test, prove-signing-kit, upgrade-test]
     runs-on: windows-latest
     timeout-minutes: 15
     permissions:
