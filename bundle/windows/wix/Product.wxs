@@ -156,13 +156,21 @@
     <!-- Stop/cleanup custom actions. See bundle/windows/stop-gateway.ps1 for
          the readable, documented version of the SAME logic — kept there as
          a reference for IT to run by hand, not shipped as an installed file:
-         StopGatewayBeforeUpgrade runs BEFORE RemoveExistingProducts, which
-         for a brand-new install is BEFORE any file this package ships has
-         even been copied to INSTALLFOLDER yet — a `-File "[INSTALLFOLDER]…"`
-         custom action would reference a script that doesn't exist at that
-         point, and for the exact scenario this exists to fix (upgrading
-         FROM an older release that never shipped this script at all) it
-         never would. Inlined via `-Command` instead, so it depends on
+         StopGatewayBeforeUpgrade runs BEFORE InstallInitialize — which is
+         BEFORE RemoveExistingProducts too (Schedule="afterInstallInitialize"
+         below places it directly after InstallInitialize; scheduling
+         anything else `Before="RemoveExistingProducts"` directly breaks
+         THAT required adjacency and makes the engine refuse the whole
+         sequence with "error 2613: RemoveExistingProducts action sequenced
+         incorrectly" — hit for real on windows-latest, on a plain FRESH
+         install with nothing to even upgrade). For a brand-new install,
+         this point in the sequence is also BEFORE any file this package
+         ships has been copied to INSTALLFOLDER yet — a
+         `-File "[INSTALLFOLDER]…"` custom action would reference a script
+         that doesn't exist at that point, and for the exact scenario this
+         exists to fix (upgrading FROM an older release that never shipped
+         this script at all) it never would. Inlined via `-Command` instead,
+         so it depends on
          nothing but powershell.exe itself (always present) and the
          INSTALLFOLDER property (always resolvable, file or no file).
          Written with single-quoted PowerShell string literals throughout
@@ -259,7 +267,7 @@
       Return="ignore" />
 
     <InstallExecuteSequence>
-      <Custom Action="StopGatewayBeforeUpgrade" Before="RemoveExistingProducts" />
+      <Custom Action="StopGatewayBeforeUpgrade" Before="InstallInitialize" />
       <Custom Action="StopGatewayOnUninstall" Before="RemoveFiles" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
       <Custom Action="RemoveScheduledTaskOnUninstall" After="StopGatewayOnUninstall" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
       <Custom Action="RestartScheduledTaskAfterInstall" After="InstallFinalize" />
