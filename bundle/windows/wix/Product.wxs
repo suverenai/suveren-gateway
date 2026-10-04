@@ -153,26 +153,90 @@
       <ComponentRef Id="InstallMarkerComponent" />
     </Feature>
 
+    <!-- Interactive (double-click) install only: WixUI_Minimal — welcome,
+         progress, exit, nothing else (no EULA page; this installer is
+         unsigned freeware-style, matching the rest of the "IT verifies and
+         signs it" story). A SILENT install (`/qn`, the real Intune path)
+         never shows ANY of this — StartGatewayAfterInstall above already
+         brings the gateway up headlessly regardless of UI, which is the
+         path that actually matters for a company deployment.
+
+         ExitDialog's "OptionalCheckBox" control is BUILT INTO WixUI's own
+         ExitDialog.wxs (part of WixToolset.UI.wixext — see its source);
+         setting these two properties is what makes it appear, checked by
+         default, worded for this product. "NOT Installed" (baked into the
+         control's own ShowCondition, and repeated in the Publish condition
+         below) is WixUI's standard guard against showing this on a repair
+         — not relevant to a product with no repair UI exposed here, kept
+         for correctness anyway.
+
+         Order="10" on the Publish below — well before WixUI_Minimal's own
+         `Finish -> EndDialog` at Order="999" — runs OUR action first, then
+         lets the dialog close normally. -->
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Launch Suveren Gateway" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+    <UIRef Id="WixUI_Minimal" />
+    <UI>
+      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchGatewayAfterInstall" Order="10">WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed</Publish>
+    </UI>
+
+    <!-- Runs ONLY from the ExitDialog checkbox above (immediate, not part of
+         InstallExecuteSequence — this is a UI-sequence action, fired after
+         the install has already finished and StartGatewayAfterInstall has
+         already brought the gateway up headlessly). Its ONE job beyond that
+         is the part a silent install must never do: open a browser tab.
+         `cmd.exe /c start /min "" "..."` — `start`'s own empty-title
+         placeholder (`""`) is required before a quoted target path, the
+         classic cmd.exe `start` gotcha, and `/min` matches the Start Menu
+         shortcut's own Show="minimized" (no console window pops up — see
+         PR #47). Return="asyncNoWait": the MSI UI thread must not block on
+         a process that opens a browser and keeps a gateway running
+         indefinitely. Calls `open-ui` (not `run`): the Start Menu shortcut
+         already does exactly this, including opening the browser — the
+         correct behaviour for a human who just chose "Launch" on a dialog
+         they're looking at, unlike the silent/headless commit action. -->
+    <CustomAction
+      Id="LaunchGatewayAfterInstall"
+      Directory="INSTALLFOLDER"
+      ExeCommand="cmd.exe /c start /min &quot;&quot; &quot;[INSTALLFOLDER]suveren-gateway.cmd&quot; open-ui"
+      Execute="immediate"
+      Return="asyncNoWait"
+      Impersonate="yes" />
+
     <!-- Stop/cleanup custom actions. See bundle/windows/stop-gateway.ps1 for
          the readable, documented version of the SAME logic — kept there as
-         a reference for IT to run by hand, not shipped as an installed file:
-         StopGatewayBeforeUpgrade runs BEFORE InstallInitialize — which is
-         BEFORE RemoveExistingProducts too (Schedule="afterInstallInitialize"
-         below places it directly after InstallInitialize; scheduling
-         anything else `Before="RemoveExistingProducts"` directly breaks
-         THAT required adjacency and makes the engine refuse the whole
-         sequence with "error 2613: RemoveExistingProducts action sequenced
-         incorrectly" — hit for real on windows-latest, on a plain FRESH
-         install with nothing to even upgrade). For a brand-new install,
-         this point in the sequence is also BEFORE any file this package
-         ships has been copied to INSTALLFOLDER yet — a
-         `-File "[INSTALLFOLDER]…"` custom action would reference a script
+         a reference for IT to run by hand, not shipped as an installed file.
+
+         StopGatewayBeforeUpgrade is scheduled Before="RemoveFiles" — the
+         SAME anchor StopGatewayOnUninstall already uses below, deliberately
+         reused rather than anchoring relative to RemoveExistingProducts or
+         InstallInitialize, both of which were tried and failed for real on
+         windows-latest:
+           - Before="RemoveExistingProducts" directly breaks that action's
+             required adjacency to InstallInitialize under
+             Schedule="afterInstallInitialize" below — "error 2613:
+             RemoveExistingProducts action sequenced incorrectly", on a
+             plain FRESH install with nothing to even upgrade.
+           - Before="InstallInitialize" is outright illegal for a DEFERRED
+             custom action (this one is) — "error 2762: Unable to schedule
+             operation. The action must be scheduled between
+             InstallInitialize and InstallFinalize."
+         RemoveFiles is a completely ordinary standard action with no
+         special adjacency rule, sits well inside the legal
+         InstallInitialize..InstallFinalize window for a deferred action,
+         and — the actual property that matters here — runs before BOTH the
+         old product's RemoveExistingProducts-driven file cleanup and the
+         new product's own InstallFiles, i.e. before anything that could
+         touch the gateway's locked files, which is the whole point.
+
+         For a brand-new install, this point in the sequence is also BEFORE
+         any file this package ships has been copied to INSTALLFOLDER yet —
+         a `-File "[INSTALLFOLDER]…"` custom action would reference a script
          that doesn't exist at that point, and for the exact scenario this
          exists to fix (upgrading FROM an older release that never shipped
          this script at all) it never would. Inlined via `-Command` instead,
-         so it depends on
-         nothing but powershell.exe itself (always present) and the
-         INSTALLFOLDER property (always resolvable, file or no file).
+         so it depends on nothing but powershell.exe itself (always present)
+         and the INSTALLFOLDER property (always resolvable, file or no file).
          Written with single-quoted PowerShell string literals throughout
          (the WQL filter's embedded quote is doubled, the standard PowerShell
          single-quote escape) so the only thing that needs XML-attribute
@@ -222,15 +286,23 @@
          re-creates it. Left alone, it keeps pointing at a valid
          (now-upgraded) launcher with no action needed.
 
-         RestartScheduledTaskAfterInstall (Execute="commit", so it runs only
-         after the WHOLE install/upgrade transaction succeeds, never on
-         rollback) brings the gateway back the way it was: if the scheduled
-         task exists, run it — otherwise an IT-pushed upgrade would leave
-         every user without a running gateway until their next logon. A
-         fresh install has no task yet, so this is a silent no-op there.
-
-         All four: Return="ignore" (a gateway that was never running, or a
-         task that doesn't exist, must never fail the install/uninstall) and
+         StartGatewayAfterInstall (Execute="commit", so it runs only after
+         the WHOLE install/upgrade transaction succeeds, never on rollback;
+         Condition NOT REMOVE="ALL" so it never fires on the top-level
+         sequence of a plain uninstall — REMOVE="ALL" there is the TOP-level
+         action, unlike the old version's removal mid-upgrade, which is a
+         nested transaction the top-level commit phase doesn't belong to)
+         brings the gateway up: `service install` (idempotent — the CLI's
+         own `/F` overwrite) registers autostart if it isn't already, then
+         `schtasks /Run` starts it immediately. Needed for BOTH a brand-new
+         install (the msi only ever placed files — nothing starts the
+         gateway or tells the user it isn't running — confirmed a real gap
+         on a Windows 11 VM) and an upgrade (an IT-pushed upgrade must not
+         leave every user without a running gateway until their next
+         logon). Deliberately NOT `launcher.cmd open-ui`: that also opens a
+         browser tab, wrong for a silent/Intune install. -->
+         All: Return="ignore" (a gateway that was never running, or a task
+         that doesn't exist, must never fail the install/uninstall) and
          Execute="deferred"/"commit" with Impersonate="yes" — same per-user
          install context as everywhere else in this package, no elevation
          boundary to cross. -->
@@ -259,18 +331,18 @@
       Return="ignore" />
 
     <CustomAction
-      Id="RestartScheduledTaskAfterInstall"
+      Id="StartGatewayAfterInstall"
       Directory="INSTALLFOLDER"
-      ExeCommand="cmd.exe /c schtasks.exe /Query /TN Suveren &gt;nul 2&gt;&amp;1 &amp;&amp; schtasks.exe /Run /TN Suveren"
+      ExeCommand="cmd.exe /c &quot;[INSTALLFOLDER]suveren-gateway.cmd&quot; service install &amp; schtasks.exe /Run /TN Suveren"
       Execute="commit"
       Impersonate="yes"
       Return="ignore" />
 
     <InstallExecuteSequence>
-      <Custom Action="StopGatewayBeforeUpgrade" Before="InstallInitialize" />
+      <Custom Action="StopGatewayBeforeUpgrade" Before="RemoveFiles" />
       <Custom Action="StopGatewayOnUninstall" Before="RemoveFiles" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
       <Custom Action="RemoveScheduledTaskOnUninstall" After="StopGatewayOnUninstall" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
-      <Custom Action="RestartScheduledTaskAfterInstall" After="InstallFinalize" />
+      <Custom Action="StartGatewayAfterInstall" After="InstallFinalize" Condition="NOT REMOVE=&quot;ALL&quot;" />
     </InstallExecuteSequence>
 
   </Package>

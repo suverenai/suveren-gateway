@@ -145,8 +145,10 @@ jobs:
           name: windows-payload
           path: bundle/windows/payload
 
-      - name: Install WiX v5
-        run: dotnet tool install --global wix --version 5.0.2
+      - name: Install WiX v5 (+ UI extension, for the interactive-install Finish checkbox)
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          wix extension add -g WixToolset.UI.wixext/5.0.2
 
       - name: Verify tag matches payload version
         if: startsWith(github.ref, 'refs/tags/v')
@@ -169,6 +171,7 @@ jobs:
           $payload = (Resolve-Path bundle\windows\payload).Path
           $launcher = (Resolve-Path bundle\windows\launcher.cmd).Path
           wix build bundle\windows\wix\Product.wxs `
+            -ext WixToolset.UI.wixext/5.0.2 `
             -d "ProductVersion=${{ needs.build-payload.outputs.version }}" `
             -d "PayloadDir=$payload" `
             -d "LauncherSource=$launcher" `
@@ -197,8 +200,10 @@ jobs:
           name: windows-payload
           path: kit/payload
 
-      - name: Install WiX v5
-        run: dotnet tool install --global wix --version 5.0.2
+      - name: Install WiX v5 (+ UI extension, for the interactive-install Finish checkbox)
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          wix extension add -g WixToolset.UI.wixext/5.0.2
 
       - name: Stage the kit (payload + WiX source + launcher + script — exactly what the release zip ships)
         shell: pwsh
@@ -683,8 +688,10 @@ jobs:
           name: windows-payload
           path: bundle/windows/payload
 
-      - name: Install WiX v5
-        run: dotnet tool install --global wix --version 5.0.2
+      - name: Install WiX v5 (+ UI extension, for the interactive-install Finish checkbox)
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          wix extension add -g WixToolset.UI.wixext/5.0.2
 
       - name: Compute old/new versions
         id: versions
@@ -709,6 +716,7 @@ jobs:
             @{ Version = "${{ steps.versions.outputs.new }}"; Out = 'new.msi' }
           )) {
             wix build bundle\windows\wix\Product.wxs `
+              -ext WixToolset.UI.wixext/5.0.2 `
               -d "ProductVersion=$($pair.Version)" `
               -d "PayloadDir=$payload" `
               -d "LauncherSource=$launcher" `

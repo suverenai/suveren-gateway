@@ -62,8 +62,9 @@ This signs every `.exe`, `.dll` and `.node` file inside `payload\` (strict
 policies such as WDAC or AppLocker check every loaded binary, not just the
 installer), rebuilds the `.msi` from the now-signed payload, signs the `.msi`
 itself, and writes a fresh `SHA256SUMS` for what it produced. Needs
-`signtool.exe` (from the Windows SDK) and the WiX CLI
-(`dotnet tool install --global wix --version 5.0.2`) on the machine you run it on.
+`signtool.exe` (from the Windows SDK) and the WiX CLI with its UI extension
+(`dotnet tool install --global wix --version 5.0.2` then `wix extension add -g
+WixToolset.UI.wixext/5.0.2`) on the machine you run it on.
 
 If you'd rather use a `.pfx` file instead of a certificate already in a
 store: `.\build-signed.ps1 -PfxPath .\your-cert.pfx`.
