@@ -14,6 +14,7 @@ import type { IntegrationManager } from './integration-manager';
 import { getProfile } from '@hap/core';
 import { getConsumptionState, formatConsumptionCompact } from './consumption';
 import { getContextForBrief } from './context-loader';
+import { agentVisibleAuthorizations } from './agent-visibility';
 
 /** Extract short profile name from full ID (e.g., "github.com/.../charge@0.3" → "charge") */
 function shortProfileName(profileId: string): string {
@@ -62,7 +63,10 @@ export interface MandateBriefOptions {
  * Compact format — one-line summary per authority with consumption and tool counts.
  */
 export function buildMandateBrief(opts: MandateBriefOptions): string {
-  const { authorizations, executionLog, integrationManager, contextDir } = opts;
+  const { executionLog, integrationManager, contextDir } = opts;
+  // In simulation mode, hide authorities for profiles with no running
+  // integration — see agent-visibility.ts. A no-op outside simulation.
+  const authorizations = agentVisibleAuthorizations(opts.authorizations, integrationManager);
 
   const lines: string[] = [
     'You are connected to Suveren — the gateway that gates every privileged tool call you make.',
