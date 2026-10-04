@@ -14,6 +14,7 @@ import type { ProfileToolGating } from '@hap/core';
 import { getConsumptionState, formatConsumptionCompact, formatConsumptionFull } from '../lib/consumption';
 import { readContextFile } from '../lib/context-loader';
 import { profileMatches } from '../lib/tool-proxy';
+import { agentVisibleAuthorizations } from '../lib/agent-visibility';
 
 /** Extract short profile name from full ID */
 function shortProfileName(profileId: string): string {
@@ -109,7 +110,9 @@ export function listAuthorizationsHandler(
     if (!state.spClient.isUnlocked()) {
       return { content: [{ type: 'text' as const, text: lockedNotice('list authorizations', state.spClient.getLockReason() ?? 'restart') }] };
     }
-    const authorizations = state.getEnrichedAuthorizations();
+    // In simulation mode, hide authorizations for profiles with no running
+    // integration — see agent-visibility.ts. A no-op outside simulation.
+    const authorizations = agentVisibleAuthorizations(state.getEnrichedAuthorizations(), integrationManager);
     const now = Math.floor(Date.now() / 1000);
     const domain = args?.domain;
 
