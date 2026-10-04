@@ -175,7 +175,16 @@
          lets the dialog close normally. -->
     <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Launch Suveren Gateway" />
     <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
-    <UIRef Id="WixUI_Minimal" />
+    <!-- WixUI_Minimal_X64, not the bare WixUI_Minimal: the UI extension's
+         own WixUI_Minimal.wxs defines the externally-usable entry point
+         per architecture (WixUI_Minimal_X86/_X64/_A64, each a thin wrapper
+         that references the shared, library-private "file WixUI_Minimal").
+         The bare Id is scoped "file"-private to the extension's own
+         compiled object and isn't directly referenceable from here — "error
+         WIX0094: The identifier 'WixUI:WixUI_Minimal' is inaccessible due
+         to its protection level", confirmed for real on windows-latest.
+         Matches this package's own -arch x64. -->
+    <UIRef Id="WixUI_Minimal_X64" />
     <UI>
       <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchGatewayAfterInstall" Order="10" Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed" />
     </UI>
