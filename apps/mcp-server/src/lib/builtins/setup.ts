@@ -6,11 +6,17 @@
  *
  * set_agent_brief — replaces the agent brief (context.md) with the proposed text
  * after approval; it applies from the next agent session.
+ *
+ * create_mandate — creates a new mandate for the signed-in person after approval,
+ * exactly as the sign page would (control plane, lib/mandate-ceremony.ts). Checked
+ * in full before the proposal (a dry run with the same code), so nobody approves a
+ * mandate that could not be created. Create only — editing stays with the person.
  */
 import { builtinText, type BuiltinIntegration } from '../builtin-integration';
 import { CONTEXT_MAX_BYTES, writeContextFile } from '../context-loader';
 import { isSimulationMode } from '../simulation-mode';
 import type { BuiltinDeps } from './index';
+import { controlPlaneMandate } from '../cp-mandate';
 
 export const DELEGATION_PROFILE = 'github.com/humanagencyprotocol/hap-profiles/delegation@0.1';
 
@@ -26,8 +32,8 @@ export function setupBuiltin(_deps: BuiltinDeps): BuiltinIntegration {
     id: 'setup',
     name: 'Test setup',
     description:
-      'Your AI proposes its own setup for a test — for now its agent brief. Every proposal waits for your ' +
-      'approval. Simulation mode only.',
+      'Your AI proposes its own setup for a test — its agent brief and its mandates. Every proposal waits for ' +
+      'your approval. Simulation mode only.',
     profile: DELEGATION_PROFILE,
     simulation: true,
     simulationOnly: true,
@@ -36,6 +42,11 @@ export function setupBuiltin(_deps: BuiltinDeps): BuiltinIntegration {
         set_agent_brief: {
           executionMapping: {},
           staticExecution: { action_type: 'brief' },
+          hideUnlessAuthorized: true,
+        },
+        create_mandate: {
+          executionMapping: {},
+          staticExecution: { action_type: 'mandate' },
           hideUnlessAuthorized: true,
         },
       },
@@ -71,6 +82,60 @@ export function setupBuiltin(_deps: BuiltinDeps): BuiltinIntegration {
           );
         },
       },
+      {
+        name: 'create_mandate',
+        description:
+          'Simulation mode only: propose a new mandate for the person running this gateway — the authority another ' +
+          'tool needs (e.g. sales quotes up to a value). A person approves or rejects the proposal; only after ' +
+          'approval is the mandate created, exactly as if they had signed it on the mandate screen. Checked against ' +
+          'the profile before the proposal: unknown limits, a mode the profile does not allow, or a team where the ' +
+          'person may not give this mandate are refused at once. Create only.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            team: { type: 'string', description: 'Team name or id. Omit for the personal workspace.' },
+            profile: { type: 'string', description: 'Profile, e.g. "sales" (newest version) or a full profile id.' },
+            limits: { type: 'object', description: 'The limits (bounds) by field name, as the profile defines them.' },
+            scope: { type: 'object', description: 'The scope (context) by field name, as the profile defines it.' },
+            intent: { type: 'string', description: 'Why, goal and watch-outs — signed with the mandate (at most 2000 characters).' },
+            mode: { type: 'string', enum: ['review', 'automatic'], description: 'review = each action needs approval; automatic = within the limits.' },
+            duration_hours: { type: 'number', description: 'How long the mandate is valid, in hours. Omit for the profile default.' },
+            title: { type: 'string', description: 'A short name for the mandate.' },
+            receipt_id: {
+              type: 'string',
+              description: 'Authorization reference for this call, set by the governing gateway — agents do not set this.',
+            },
+          },
+          required: ['profile', 'limits', 'intent', 'mode'],
+        },
+        validate: async (args) => {
+          const check = await controlPlaneMandate(true, mandateRequest(args));
+          return check.ok ? undefined : check.message;
+        },
+        handler: async (args) => {
+          if (!isSimulationMode()) return { ...builtinText('Refused: not available outside simulation mode.'), isError: true };
+          const r = await controlPlaneMandate(false, mandateRequest(args));
+          if (!r.ok) return { ...builtinText(`Refused: ${r.message}`), isError: true };
+          return builtinText(
+            `Mandate created: ${r.authorizationId} — profile ${r.profileId}, ${r.groupName}, mode ${r.mode}, ` +
+            `valid for ${Math.round((r.ttlSeconds ?? 0) / 3600)} h. It is active now.`,
+          );
+        },
+      },
     ],
+  };
+}
+
+/** The tool's arguments as the control plane's MandateRequest. */
+function mandateRequest(args: Record<string, unknown>): Record<string, unknown> {
+  return {
+    team: typeof args.team === 'string' && args.team.trim() ? args.team.trim() : undefined,
+    profile: args.profile,
+    limits: args.limits,
+    scope: args.scope,
+    intent: args.intent,
+    mode: args.mode,
+    durationHours: args.duration_hours,
+    title: args.title,
   };
 }

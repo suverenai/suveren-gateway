@@ -424,6 +424,14 @@ export function createAuthRouter(
       // it). Held in memory only — see vault.ts's doc on spSessionExpiresAt.
       const sessionExpiresAt = typeof data.sessionExpiresAt === 'number' ? data.sessionExpiresAt : null;
       vault.setSessionExpiresAt(sessionExpiresAt);
+      // Who this session belongs to — needed to create a mandate from the
+      // gateway itself (lib/mandate-ceremony.ts), the way the sign page does.
+      const sessionUser = (data as { user?: { id?: unknown; did?: unknown } }).user;
+      vault.setSessionUser(
+        typeof sessionUser?.id === 'string' && typeof sessionUser?.did === 'string'
+          ? { id: sessionUser.id, did: sessionUser.did }
+          : null,
+      );
       onSessionEstablished?.();
 
       // Push session cookie + vault key to MCP server (must complete before responding)

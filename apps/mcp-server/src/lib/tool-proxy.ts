@@ -325,7 +325,7 @@ export function createGatedToolHandler(
   const inner = async (args: Record<string, unknown>) => {
     const normalized = normalizeIncomingArgs(tool, args);
     // Optional call: test doubles of the manager predate built-ins.
-    const refusal = gateable ? integrationManager.precheckBuiltin?.(tool, normalized) : null;
+    const refusal = gateable ? await integrationManager.precheckBuiltin?.(tool, normalized) : null;
     if (refusal) return { content: [{ type: 'text', text: refusal }], isError: true };
     return gated(normalized);
   };

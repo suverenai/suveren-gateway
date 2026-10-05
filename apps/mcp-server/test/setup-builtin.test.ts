@@ -44,8 +44,8 @@ afterEach(() => { delete process.env.SUVEREN_SIMULATION; rmSync(BRIEF, { force: 
 const AUTH = {
   authorizationId: 'authz_d0000000-0000-4000-8000-000000000001',
   profileId: DELEGATION.id, path: 'p',
-  frame: { read_access: 'unlimited', brief_daily_max: 2, mandate_daily_max: 0 },
-  bounds: { read_access: 'unlimited', brief_daily_max: 2, mandate_daily_max: 0 },
+  frame: { read_access: 'unlimited', brief_daily_max: 2, mandate_daily_max: 2 },
+  bounds: { read_access: 'unlimited', brief_daily_max: 2, mandate_daily_max: 2 },
   context: {}, attestations: [], requiredDomains: [], attestedDomains: [],
   deferredCommitmentDomains: ['owner'], signedCommitmentMode: 'review', complete: true, gateContent: null,
 } as unknown as EnrichedAuthorization;
@@ -142,5 +142,73 @@ describe('setup__set_agent_brief', () => {
     delete process.env.SUVEREN_SIMULATION;
     await approve();
     expect(existsSync(BRIEF)).toBe(false);
+  });
+});
+
+describe('setup__create_mandate', () => {
+  /** A stand-in control plane: records each /internal/mandate request and answers per `answer`. */
+  function stubControlPlane(answer: (dryRun: boolean, request: any) => { status: number; body: any }) {
+    const seen: Array<{ dryRun: boolean; request: any; secret: string | null }> = [];
+    const realFetch = globalThis.fetch;
+    vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
+      if (!String(url).endsWith('/internal/mandate')) return realFetch(url, init);
+      const { dryRun, request } = JSON.parse(String(init.body));
+      seen.push({ dryRun, request, secret: (init.headers as Record<string, string>)['X-Internal-Secret'] ?? null });
+      const a = answer(dryRun, request);
+      return new Response(JSON.stringify(a.body), { status: a.status, headers: { 'Content-Type': 'application/json' } });
+    });
+    return seen;
+  }
+  const ARGS = { profile: 'sales', limits: { value_max: 1000 }, scope: { currency: 'EUR' }, intent: 'Why — test.', mode: 'automatic', duration_hours: 24 };
+
+  afterEach(() => { vi.unstubAllGlobals(); delete process.env.SUVEREN_INTERNAL_SECRET; });
+
+  function mandateTool() {
+    const s = setup();
+    const tool = s.im.getAllTools().find((t) => t.namespacedName === 'setup__create_mandate')!;
+    return { ...s, call: (args: Record<string, unknown>) => createGatedToolHandler(tool, s.im, s.state)(args) };
+  }
+
+  it('a refused check (e.g. not an approver) comes back at once — no proposal', async () => {
+    process.env.SUVEREN_SIMULATION = '1';
+    process.env.SUVEREN_INTERNAL_SECRET = 'sec';
+    const seen = stubControlPlane(() => ({ status: 422, body: { error: 'mandate_refused', message: 'Only Sales\'s approvers in "Sales Vienna" can give this mandate.' } }));
+    const { call, submitProposal } = mandateTool();
+    const r = await call(ARGS);
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toMatch(/Refused: Only Sales's approvers/);
+    expect(r.content[0].text).toMatch(/No ticket was requested/);
+    expect(submitProposal).not.toHaveBeenCalled();
+    expect(seen).toEqual([expect.objectContaining({ dryRun: true, secret: 'sec' })]);
+  });
+
+  it('a valid request becomes a proposal; the mandate is created only after approval', async () => {
+    process.env.SUVEREN_SIMULATION = '1';
+    process.env.SUVEREN_INTERNAL_SECRET = 'sec';
+    const seen = stubControlPlane((dryRun) => dryRun
+      ? { status: 200, body: { ok: true } }
+      : { status: 200, body: { ok: true, authorizationId: 'authz_created', profileId: 'p/sales@0.3', groupName: 'Anna', mode: 'automatic', ttlSeconds: 86400 } });
+    const { call, approve, submitProposal } = mandateTool();
+
+    const r = await call(ARGS);
+    expect(r.isError, r.content[0].text).toBeFalsy();
+    expect(r.content[0].text).toMatch(/Awaiting commitment/);
+    expect(submitProposal).toHaveBeenCalledWith(expect.objectContaining({
+      tool: 'setup__create_mandate', executionContext: expect.objectContaining({ action_type: 'mandate' }),
+    }));
+    expect(seen.map((x) => x.dryRun)).toEqual([true]); // nothing created yet
+
+    const done = await approve();
+    expect(done.isError, done.text).toBeFalsy();
+    expect(seen.map((x) => x.dryRun)).toEqual([true, false]);
+    expect(seen[1].request).toMatchObject({ profile: 'sales', limits: { value_max: 1000 }, scope: { currency: 'EUR' }, mode: 'automatic', durationHours: 24 });
+  });
+
+  it('outside simulation mode: refused, the control plane is never asked', async () => {
+    process.env.SUVEREN_INTERNAL_SECRET = 'sec';
+    const seen = stubControlPlane(() => ({ status: 200, body: { ok: true } }));
+    const r = await mandateTool().call(ARGS);
+    expect(r.isError).toBe(true);
+    expect(seen).toEqual([]);
   });
 });
