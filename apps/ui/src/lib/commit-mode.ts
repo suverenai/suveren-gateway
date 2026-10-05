@@ -1,10 +1,23 @@
 /**
  * The commitment modes the mandate screen offers. A profile may allow only some
- * (`commitment_modes`, e.g. review only); the Authority Server refuses any other,
- * so the screen offers exactly what the AS will sign — from the same hap-core
- * helper, so the two cannot disagree.
+ * (`commitment_modes`, e.g. review only); the Authority Server refuses any other
+ * (hap-core `allowedCommitmentModes`), so the screen offers exactly what the AS
+ * will sign.
+ *
+ * The rule is restated here, not imported: hap-core's runtime pulls in Node's
+ * crypto and cannot be bundled for the browser (the UI imports only its types,
+ * like computeBoundsHashBrowser restates the bounds hash). The tests pin the
+ * same cases as hap-core's: absent = both, a list = those, malformed = none.
  */
-import { allowedCommitmentModes, type AgentProfile } from '@hap/core';
+import type { AgentProfile } from '@hap/core';
+
+/** hap-core allowedCommitmentModes, for the browser: display order, fail-closed. */
+function allowedCommitmentModes(profile: AgentProfile): Array<'review' | 'automatic'> {
+  const declared = (profile as { commitment_modes?: unknown }).commitment_modes;
+  if (declared === undefined) return ['review', 'automatic'];
+  if (!Array.isArray(declared)) return [];
+  return (['review', 'automatic'] as const).filter((m) => declared.includes(m));
+}
 
 /** The screen's names: 'per-action' = review, 'immediate' = automatic. */
 export type UiCommitMode = 'immediate' | 'per-action';

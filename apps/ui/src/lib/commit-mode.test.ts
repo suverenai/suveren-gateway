@@ -19,8 +19,17 @@ describe('offeredCommitModes', () => {
     expect(offeredCommitModes(profile(['review']))).toEqual(['per-action']);
   });
 
-  it('a malformed declaration offers nothing (the AS would refuse every mode)', () => {
-    expect(offeredCommitModes(profile([]))).toEqual([]);
+  it.each([
+    ['an empty list', []],
+    ['a string instead of a list', 'review'],
+    ['a misspelled mode', ['reveiw']],
+    ['review_above_cap (not chosen by the signer)', ['review_above_cap']],
+  ])('fail-closed like the AS: %s offers nothing', (_label, declared) => {
+    expect(offeredCommitModes(profile(declared))).toEqual([]);
+  });
+
+  it('display order whatever order the profile lists them', () => {
+    expect(offeredCommitModes(profile(['automatic', 'review']))).toEqual(['per-action', 'immediate']);
   });
 
   it('before the profile has loaded: both', () => {
