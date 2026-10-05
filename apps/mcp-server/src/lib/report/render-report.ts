@@ -350,7 +350,7 @@ export const DRAWN_ELEMENT_STYLES = `
 .sv-badge-warn { color:#b45309; background:#fff7e6; }
 .sv-badge-bad { color:#b91c1c; background:#fdecea; }
 .sv-big { font-size:24px; font-weight:700; }
-.sv-tl { display:flex; gap:16px; overflow-x:auto; padding:6px 0; }
+.sv-tl { display:flex; flex-wrap:wrap; gap:10px 16px; padding:6px 0; }
 .sv-step { min-width:100px; border:1px solid #e5e5e5; border-radius:8px; padding:6px 8px; font-size:11.5px; text-decoration:none; color:inherit; flex-shrink:0; }
 .sv-step-k { font-size:9.5px; text-transform:uppercase; color:#666; }
 .sv-step-t { font-weight:600; font-size:12px; }

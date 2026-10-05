@@ -294,7 +294,7 @@ function DetailPanel({ report, elementId, ticketParam, onClose }: {
   return (
     <div className="card" style={{ marginTop: '1rem' }}>
       <div className="card-header">
-        <div className="card-title">Details{ticketId ? ` · ${ticketId}` : ''}</div>
+        <div className="card-title">Details</div>
         <button type="button" className="btn btn-ghost btn-sm" onClick={onClose}>Close</button>
       </div>
       {!element && <p className="page-subtitle">This element is no longer in the report.</p>}

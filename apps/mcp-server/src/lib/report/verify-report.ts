@@ -232,7 +232,7 @@ function summarize(el: VerifiedElement): string {
       return `${String(d.kind ?? 'record')} record checked`;
     case 'sv-case': {
       const steps = (d.steps as unknown[] | undefined)?.length ?? 0;
-      return `Case ${String(d.caseId)}: ${steps} step(s), ${formatDuration(d.totalDurationSeconds)}`;
+      return `Case ${String(d.caseId)}: ${steps} ${steps === 1 ? "step" : "steps"}, ${formatDuration(d.totalDurationSeconds)}`;
     }
     case 'sv-metric': {
       const kind = String(d.kind ?? '');
