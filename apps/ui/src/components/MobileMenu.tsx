@@ -15,6 +15,7 @@ export const NAV_ITEMS = [
   { to: '/mandates', icon: '\u2630', label: 'Mandates' },
   { to: '/agent-brief', icon: '▤', label: 'Agent Brief' },
   { to: '/tickets', icon: '\u25A3', label: 'Tickets' },
+  { to: '/reports', icon: '\u25A5', label: 'Reports' },
   { to: '/team', icon: '\u25C9', label: 'Team' },
   { to: '/integrations', icon: '\u29D7', label: 'Integrations' },
   { to: '/settings', icon: '\u2699', label: 'Settings' },

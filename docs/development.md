@@ -137,6 +137,23 @@ docker run -p 7400:3000 -p 7430:3030 \
   suveren-gateway
 ```
 
+## Reports page — posting a sample report without an AI
+
+To see the Reports page (`/reports` in the UI) render its six verifiable
+elements without wiring up an AI/tool integration first:
+
+```bash
+cd apps/mcp-server
+pnpm report:post-sample
+```
+
+Posts `test/fixtures/sample-report.html` to the running dev MCP server's
+`/internal/report`. On a gateway with no matching receipt archive, every
+element correctly renders "not verifiable" — that is the fail-closed
+behaviour working, not a bug in the fixture. `test/report/sample-report.test.ts`
+is where the same fixture is checked against a matching archive/export,
+proving what it resolves to when the evidence actually exists.
+
 ## Login Re-sync
 
 After restarting services, a single login in the UI restores the full state:
