@@ -59,6 +59,9 @@ $offending = foreach ($w in $windows) {
   if (-not $owner) { continue }
   # A console window is drawn by its host; the hosted program is the host's parent.
   $hosted = if ($owner.Name -in @('conhost.exe', 'OpenConsole.exe')) { $procs[[int]$owner.ParentProcessId] } else { $owner }
+  # Only console programs count. The browser the launcher opens (open-ui) is SUPPOSED to
+  # appear and descends from the launcher, so it must not be flagged.
+  if ($hosted -and $hosted.Name -notin @('node.exe', 'cmd.exe', 'powershell.exe', 'pwsh.exe')) { continue }
   if ($hosted -and (Test-GatewayTree $hosted)) {
     "window owner=$($owner.Name) pid=$windowPid title='$title' hosts=$($hosted.Name) pid=$($hosted.ProcessId) cmd=$($hosted.CommandLine)"
   }
