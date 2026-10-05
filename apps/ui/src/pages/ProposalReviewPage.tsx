@@ -7,6 +7,7 @@ import { ApproverProposalCard } from '../components/ApproverProposalCard';
 import { profileDisplayName } from '../lib/profile-display';
 import { useVisiblePolling } from '../hooks/useVisiblePolling';
 import { useSSEEvent } from '../contexts/EventSourceContext';
+import type { ToolDisplay } from '../lib/approval-view';
 
 type QueueTab = 'awaiting-me' | 'awaiting-others' | 'all';
 type StatusFilter = 'pending' | 'all';
@@ -31,6 +32,7 @@ export function ProposalReviewPage() {
   // once: without them the reviewer sees identifiers and nothing to open, which
   // turns approving into signing.
   const [manifests, setManifests] = useState<IntegrationManifest[]>([]);
+  const [toolDisplay, setToolDisplay] = useState<Record<string, ToolDisplay>>({});
   const [approverLoading, setApproverLoading] = useState(true);
   const [approverMessage, setApproverMessage] = useState('');
 
@@ -124,6 +126,9 @@ export function ProposalReviewPage() {
     spClient.getIntegrationManifests()
       .then(d => setManifests(d.manifests ?? []))
       .catch(() => { /* links are an enhancement — never block review on them */ });
+    spClient.getToolDisplay()
+      .then(setToolDisplay)
+      .catch(() => { /* labels are an enhancement — the card still shows every argument */ });
   }, []);
 
   // The tool is namespaced `<integrationId>__<tool>`, which is the only link
@@ -280,6 +285,7 @@ export function ProposalReviewPage() {
                 <ActionCard
                   key={item.id}
                   proposalLinks={item.kind === 'proposal' ? linksForTool(item.proposal.tool) : undefined}
+                  toolDisplay={item.kind === 'proposal' ? toolDisplay[item.proposal.tool] : undefined}
                   item={item}
                   onApprove={(id) => handleResolve(id, 'commit')}
                   onReject={(id) => handleResolve(id, 'reject')}
@@ -295,6 +301,7 @@ export function ProposalReviewPage() {
                   onAction={handleApproverAction}
                   onMessage={setApproverMessage}
                   proposalLinks={linksForTool(proposal.tool)}
+                  toolDisplay={toolDisplay[proposal.tool]}
                 />
               ))}
             </div>
@@ -405,6 +412,7 @@ export function ProposalReviewPage() {
                 <ActionCard
                   key={item.id}
                   proposalLinks={item.kind === 'proposal' ? linksForTool(item.proposal.tool) : undefined}
+                  toolDisplay={item.kind === 'proposal' ? toolDisplay[item.proposal.tool] : undefined}
                   item={item}
                   onApprove={(id) => handleResolve(id, 'commit')}
                   onReject={(id) => handleResolve(id, 'reject')}

@@ -40,7 +40,7 @@ import { createAIRouter } from './routes/ai';
 import { createAIPromptsRouter } from './routes/ai-prompts';
 import { requireAuth, requireAuthQueryOrHeader } from './middleware/auth';
 import { requireAllowedHost } from './middleware/host-guard';
-import { pushGateContent, pushServiceCredentials, setInternalSecret, getManifests, getGateContent, getEnrichedAuthorizations, getSkippedCommitments, MCP_BASE, runCommittedProposals, resyncGates, setReadPolicy } from './lib/mcp-bridge';
+import { getToolDisplay, pushGateContent, pushServiceCredentials, setInternalSecret, getManifests, getGateContent, getEnrichedAuthorizations, getSkippedCommitments, MCP_BASE, runCommittedProposals, resyncGates, setReadPolicy } from './lib/mcp-bridge';
 import { backfillReadPolicyDefaults } from './lib/read-policy-defaults';
 import { createMCPRouter } from './routes/mcp';
 import { createAutostartRouter } from './routes/autostart';
@@ -56,6 +56,9 @@ import { createEventsHandler } from './routes/events';
 import { createGatewaySettingsRouter } from './routes/gateway-settings';
 import { createArchivedMandatesRouter } from './routes/archived-mandates';
 import { createInternalEventsRouter } from './routes/internal-events';
+import { createInternalMandateRouter } from './routes/internal-mandate';
+import { encryptIntentForRecipients } from './lib/intent-encryption';
+import { fetchAs as fetchAsForMandate, AsTlsMismatchError as MandateTlsMismatch } from './lib/as-tls-pin';
 import { startNotificationDispatcher } from './lib/notification-dispatcher';
 import { eventBus } from './lib/event-bus';
 import { createSessionLock, createAsKeyMismatchLock, createAsTlsMismatchLock } from './lib/session-lock';
@@ -461,6 +464,37 @@ app.get('/events', requireAllowedHost, requireAuthQueryOrHeader(vault), createEv
 // Carries an event type and nothing else.
 app.use('/internal', jsonParser, createInternalEventsRouter(() => internalSecret, lockExpiredSession, lockAsKeyMismatch, lockAsTlsMismatch));
 
+// The gateway creating a mandate for the signed-in person after a person
+// approved the AI's proposal (simulation setup S8) — the sign page's steps, run
+// here with this process's AS session. See routes/internal-mandate.ts.
+app.use('/internal', jsonParser, createInternalMandateRouter(() => internalSecret, () => ({
+  user: vault.getSessionUser(),
+  as: async (method, path, body) => {
+    const cookie = vault.getSpCookie();
+    if (!cookie) return { status: 401, body: { error: 'not signed in' } };
+    const pin = readPairing(DATA_DIR);
+    try {
+      const { res } = await fetchAsForMandate(
+        `${SP_URL}${path}`,
+        {
+          method,
+          headers: { Cookie: cookie, ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) },
+          body: body !== undefined ? JSON.stringify(body) : undefined,
+          signal: AbortSignal.timeout(15_000),
+        },
+        { enforce: resolvePinTls(DATA_DIR), pinnedSpkiHex: pin && pin.asUrl === SP_URL ? pin.tlsSpkiPinHex : undefined },
+      );
+      if (res.status === 401 && vault.isUnlocked()) lockExpiredSession();
+      return { status: res.status, body: await res.json().catch(() => ({})) };
+    } catch (err) {
+      if (err instanceof MandateTlsMismatch) lockAsTlsMismatch();
+      throw err;
+    }
+  },
+  encrypt: encryptIntentForRecipients,
+  deliverGateContent: (args) => pushGateContent(args),
+})));
+
 // Vault routes
 app.use('/vault', jsonParser, authGuard, createVaultRouter(vault));
 
@@ -771,6 +805,17 @@ app.post('/gate-content', jsonParser, authGuard, async (req: Request, res: Respo
   } catch (err) {
     console.error('[Control Plane] Gate content forward error:', err);
     res.status(500).json({ error: 'Failed to forward gate content to MCP server' });
+  }
+});
+
+// Tool display info for the approval screen — argument schemas and the
+// optional approvalView hints, keyed by namespaced tool name.
+app.get('/tool-display', authGuard, async (_req: Request, res: Response) => {
+  try {
+    res.json(await getToolDisplay());
+  } catch (err) {
+    console.error('[Control Plane] tool-display error:', err);
+    res.status(502).json({ error: 'MCP server unavailable' });
   }
 });
 

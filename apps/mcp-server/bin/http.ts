@@ -640,7 +640,15 @@ app.get('/health', (_req: Request, res: Response) => {
     storedGates: state.gateStore.getAll().length,
     serviceCredentials: Array.from(serviceCredentials.keys()),
     integrations: integrationManager.getStatus(integrationRegistry.getAll()),
+    // The gateway's own tool groups (built-ins) — not connectors; the mandate
+    // picker offers them so a person can give a mandate for them.
+    builtins: integrationManager.getBuiltins(),
   });
+});
+
+// Argument schemas + approvalView hints per tool, for the approval screen.
+app.get('/internal/tool-display', internalOnly, (_req: Request, res: Response) => {
+  res.json({ tools: integrationManager.getToolDisplay() });
 });
 
 app.get('/internal/gate-content', internalOnly, (req: Request, res: Response) => {

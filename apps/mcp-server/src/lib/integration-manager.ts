@@ -17,7 +17,7 @@ import type { IntegrationConfig, ToolGatingConfig } from './integration-registry
 import { getManifest, isExactSemver } from './manifest-loader';
 import { remotePreflightTarget, preflightRemoteAuth } from './remote-auth-preflight';
 import { isSimulationMode, manifestIsSimulated, SIMULATION_BLOCK_REASON } from './simulation-mode';
-import type { BuiltinIntegration } from './builtin-integration';
+import type { BuiltinIntegration, BuiltinStatus } from './builtin-integration';
 
 const DEFAULT_DATA_DIR = process.env.SUVEREN_DATA_DIR ?? join(homedir(), '.suveren');
 // Runtime INSTALL directory for downstream MCP npm packages (e.g. crm-mcp,
@@ -901,6 +901,30 @@ export class IntegrationManager {
     this.onToolsChanged?.();
   }
 
+  /** The built-in groups, for the mandate picker — never part of the connector status list. */
+  getBuiltins(): BuiltinStatus[] {
+    return Array.from(this.builtins.values()).map(({ def }) => ({
+      id: def.id,
+      name: def.name,
+      description: def.description ?? '',
+      profile: def.profile,
+      available: !def.simulationOnly || isSimulationMode(),
+    }));
+  }
+
+  /**
+   * What the approval screen needs to show a proposal for each tool: its argument
+   * schema (labels from the descriptions) and the optional approvalView hints.
+   * Keyed by the namespaced tool name a proposal carries.
+   */
+  getToolDisplay(): Record<string, { inputSchema: Record<string, unknown>; approvalView?: import('./integration-registry').ApprovalView }> {
+    const out: Record<string, { inputSchema: Record<string, unknown>; approvalView?: import('./integration-registry').ApprovalView }> = {};
+    for (const t of this.getAllTools()) {
+      out[t.namespacedName] = { inputSchema: t.inputSchema, ...(t.gating?.approvalView ? { approvalView: t.gating.approvalView } : {}) };
+    }
+    return out;
+  }
+
   /** Whether `id` names a built-in (in-process) integration. */
   isBuiltin(id: string): boolean {
     return this.builtins.has(id);
@@ -921,14 +945,14 @@ export class IntegrationManager {
    * no ticket): `simulationOnly` outside simulation mode, then the tool's `validate`.
    * Null for connector tools and for calls that may proceed.
    */
-  precheckBuiltin(tool: DiscoveredTool, args: Record<string, unknown>): string | null {
+  async precheckBuiltin(tool: DiscoveredTool, args: Record<string, unknown>): Promise<string | null> {
     const builtin = this.builtins.get(tool.integrationId);
     if (!builtin) return null;
     if (builtin.def.simulationOnly && !isSimulationMode()) {
       return `Refused: "${tool.namespacedName}" is not available. No ticket was requested.`;
     }
     const def = builtin.def.tools.find(t => t.name === tool.originalName);
-    const refusal = def?.validate?.(args);
+    const refusal = await def?.validate?.(args);
     return refusal ? `Refused: ${refusal} No ticket was requested.` : null;
   }
 
@@ -1183,6 +1207,7 @@ export class IntegrationManager {
         argEncoding?: Record<string, string>;
         argNormalization?: Record<string, string>;
         hideUnlessAuthorized?: boolean;
+        approvalView?: import('./integration-registry').ApprovalView;
       };
       // 'disabled' = declared unavailable → block at the gating layer.
       if (ext.category === 'disabled') {
@@ -1202,6 +1227,7 @@ export class IntegrationManager {
           readGovernanceReason: ext.readGovernanceReason,
           blockedArgs: ext.blockedArgs,
           hideUnlessAuthorized: ext.hideUnlessAuthorized,
+          approvalView: ext.approvalView,
         };
       }
       return {
@@ -1217,6 +1243,7 @@ export class IntegrationManager {
         argEncoding: ext.argEncoding,
         argNormalization: ext.argNormalization,
         hideUnlessAuthorized: ext.hideUnlessAuthorized,
+        approvalView: ext.approvalView,
       };
     }
 

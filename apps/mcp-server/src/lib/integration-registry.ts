@@ -99,6 +99,18 @@ export interface ReadAdapter {
   resultValuesPath?: string;
 }
 
+/** Display kinds the approval screen understands — a fixed set, not per tool. */
+export type ApprovalViewKind = 'text' | 'markdown' | 'list' | 'money' | 'profile' | 'profile-limits' | 'profile-scope';
+
+export type ApprovalView = Record<string, {
+  label?: string;
+  kind?: ApprovalViewKind;
+  /** money: the argument holding the currency. */
+  currencyArg?: string;
+  /** profile-limits / profile-scope: the argument holding the profile id or short name. */
+  profileArg?: string;
+}>;
+
 export interface ToolGatingConfig {
   profile: string | null;
   executionMapping: Record<string, ExecutionMappingValue>;
@@ -224,6 +236,14 @@ export interface ToolGatingConfig {
    * as it would be without the mandate; this never widens or narrows
    * enforcement, only what `tools/list` advertises.
    */
+  /**
+   * How the approval screen shows this tool's arguments (optional). Per argument:
+   * a label and a display kind. Without it the screen still labels arguments from
+   * the tool's own descriptions and formats them by type — this only adds what
+   * the schema cannot say (e.g. "these are limits of the profile named in
+   * `profile`"). Purely presentational: never part of any check.
+   */
+  approvalView?: ApprovalView;
   hideUnlessAuthorized?: boolean;
 }
 

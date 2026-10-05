@@ -1,6 +1,6 @@
 {
   "name": "suveren-gateway",
-  "version": "0.16.0",
+  "version": "0.18.0",
   "private": true,
   "pnpm": {
     "onlyBuiltDependencies": [

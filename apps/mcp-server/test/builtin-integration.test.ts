@@ -311,3 +311,15 @@ describe('registerBuiltins (start-up registration)', () => {
     expect(im.getAllTools().map((t) => t.namespacedName)).toEqual(['setup__propose_brief']);
   });
 });
+
+describe('getBuiltins (for the mandate picker)', () => {
+  it('lists each group with its profile; a simulationOnly group is available only in simulation mode', () => {
+    const im = new IntegrationManager();
+    im.registerBuiltin({ ...delegationBuiltin().def, simulationOnly: true, description: 'Test setup tools.' });
+    expect(im.getBuiltins()).toEqual([
+      { id: 'setup', name: 'Setup', description: 'Test setup tools.', profile: DELEGATION.id, available: false },
+    ]);
+    process.env.SUVEREN_SIMULATION = '1';
+    expect(im.getBuiltins()[0].available).toBe(true);
+  });
+});

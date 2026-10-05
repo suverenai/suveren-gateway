@@ -61,6 +61,8 @@ RUN npm install -g mcp-remote @humanagencyp/linkedin-mcp @humanagencyp/crm-mcp @
 # Integration manifests (read-only source the gateway lists in the UI).
 # Distinct from /app/integrations which is a writable runtime install dir.
 COPY content/integrations/ /app/content/integrations/
+# Default setup guides (setup__get_guide); SUVEREN_GUIDES_DIR may add an override folder.
+COPY content/guides/ /app/content/guides/
 
 # Profiles
 COPY --from=build /hap-profiles /hap-profiles
@@ -76,6 +78,7 @@ ENV SUVEREN_CP_PORT=3000
 ENV SUVEREN_MCP_PORT=3030
 ENV SUVEREN_MCP_INTERNAL_URL=http://127.0.0.1:3030
 ENV SUVEREN_MANIFESTS_DIR=/app/content/integrations
+ENV SUVEREN_BUILTIN_GUIDES_DIR=/app/content/guides
 ENV SUVEREN_INTEGRATIONS_DIR=/app/integrations
 ENV SUVEREN_PROFILES_DIR=/hap-profiles
 ENV NODE_ENV=production
