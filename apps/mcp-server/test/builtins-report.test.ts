@@ -29,7 +29,7 @@ import { registerBuiltins } from '../src/lib/builtins';
 import { createGatedToolHandler, toolIsAuthorizedForDisplay } from '../src/lib/tool-proxy';
 import { ReportStore } from '../src/lib/report/report-store';
 import { REPORT_BRIEF } from '../src/lib/report-brief';
-import { MAX_REPORT_HTML_BYTES } from '../src/lib/builtins/report';
+import { MAX_REPORT_HTML_BYTES, reportBuiltin } from '../src/lib/builtins/report';
 import { buildScenario } from './report/fixtures/scenario';
 import { buildEmailExport, buildErpExport, buildCrmExport } from './report/fixtures/exports';
 import type { SharedState, EnrichedAuthorization } from '../src/lib/shared-state';
@@ -122,9 +122,12 @@ function setup(enriched: EnrichedAuthorization[], runExport?: ReportSources['run
   const reportSources: ReportSources = { archive: scenario.archive, runExport: runExport ?? defaultRunExport };
   const { state, postReceipt, submitProposal } = buildState(enriched, reportStore);
   const im = new IntegrationManager();
-  const ids = registerBuiltins({ state, integrationManager: im, reportSources }, undefined);
-  expect(ids).toContain('report');
-  const tools = Object.fromEntries(im.getAllTools().map((t) => [t.originalName, t]));
+  // Only this built-in — isolated from `setup` and any other group BUILTIN_FACTORIES carries.
+  const ids = registerBuiltins({ state, integrationManager: im, reportSources }, [reportBuiltin]);
+  expect(ids).toEqual(['report']);
+  const tools = Object.fromEntries(
+    im.getAllTools().filter((t) => t.integrationId === 'report').map((t) => [t.originalName, t]),
+  );
   const cleanup = () => rmSync(reportDir, { recursive: true, force: true });
   return { im, tools, state, scenario, reportStore, postReceipt, submitProposal, cleanup };
 }
