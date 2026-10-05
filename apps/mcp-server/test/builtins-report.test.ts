@@ -25,6 +25,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { registerProfile } from '@hap/core';
 import { IntegrationManager } from '../src/lib/integration-manager';
+import { createMcpServer } from '../src/index';
 import { registerBuiltins } from '../src/lib/builtins';
 import { createGatedToolHandler, toolIsAuthorizedForDisplay } from '../src/lib/tool-proxy';
 import { ReportStore } from '../src/lib/report/report-store';
@@ -49,10 +50,10 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function auth(bounds: Record<string, unknown>): EnrichedAuthorization {
+function authWithProfile(profileId: string, bounds: Record<string, unknown>): EnrichedAuthorization {
   return {
     authorizationId: 'authz_r0000000-0000-4000-8000-000000000001',
-    profileId: REPORTING.id,
+    profileId,
     path: 'p',
     frame: bounds,
     bounds,
@@ -65,6 +66,10 @@ function auth(bounds: Record<string, unknown>): EnrichedAuthorization {
     complete: true,
     gateContent: null,
   } as unknown as EnrichedAuthorization;
+}
+
+function auth(bounds: Record<string, unknown>): EnrichedAuthorization {
+  return authWithProfile(REPORTING.id, bounds);
 }
 
 const REPORTING_BOUNDS = { read_access: 'unlimited', report_daily_max: 5 };
@@ -133,14 +138,19 @@ function setup(enriched: EnrichedAuthorization[], runExport?: ReportSources['run
 }
 
 describe('report built-in registration', () => {
-  it('registers all five tools under the reporting profile, none hidden', () => {
+  it('registers all five tools under the reporting profile', () => {
     const { tools } = setup([]);
     expect(Object.keys(tools).sort()).toEqual(
       ['get_records', 'get_ticket', 'list_cases', 'list_tickets', 'write_report'].sort(),
     );
+    // None declares hideUnlessAuthorized, so this PURE predicate is vacuously
+    // true for all of them — this is NOT the same claim as "listed in
+    // tools/list without a mandate": that is decided by refreshTools() in
+    // src/index.ts (`matchingAuths.length > 0 && toolIsAuthorizedForDisplay`),
+    // which ALSO requires a complete authorization on this exact profile. See
+    // the "tools/list visibility" describe block below for the real check,
+    // through the real MCP server wiring.
     for (const name of Object.keys(tools)) {
-      // No tool declares hideUnlessAuthorized — always listed, refused on call
-      // instead, so a missing mandate reads as "refused", not "does not exist".
       expect(toolIsAuthorizedForDisplay(tools[name], [])).toBe(true);
     }
   });
@@ -148,6 +158,63 @@ describe('report built-in registration', () => {
   it("write_report's description IS the report brief (R3/R4: the brief reaches the AI via the tool description)", () => {
     const { tools } = setup([]);
     expect(tools.write_report.description).toBe(REPORT_BRIEF);
+  });
+});
+
+/**
+ * The REAL `tools/list` visibility check: `src/index.ts#refreshTools` is what
+ * actually decides whether the working agent ever sees `report__*` — it calls
+ * `registered.enable()`/`.disable()` on the MCP SDK's own RegisteredTool based
+ * on `matchingAuths.length > 0 && toolIsAuthorizedForDisplay(...)`, where
+ * `matchingAuths` is already filtered to authorizations matching THIS tool's
+ * profile. Since none of the five tools sets `hideUnlessAuthorized`,
+ * `toolIsAuthorizedForDisplay` alone is vacuously true (see above) — the
+ * `matchingAuths.length > 0` half is what actually gates listing, and that is
+ * NOT exercised by testing the predicate in isolation. Mirrors
+ * hide-unless-authorized.test.ts's end-to-end section ("C"), reading the SDK's
+ * own `enabled` flag — the thing `tools/list` actually filters on.
+ */
+describe('tools/list visibility (real MCP server wiring: src/index.ts refreshTools)', () => {
+  const REPORT_TOOL_NAMES = [
+    'report__list_tickets', 'report__get_ticket', 'report__list_cases',
+    'report__get_records', 'report__write_report',
+  ];
+
+  function mockExecutionLog() {
+    return { record: () => {}, sumByWindow: () => 0, getAll: () => [], size: 0 };
+  }
+
+  function mockState(auths: EnrichedAuthorization[]): SharedState {
+    return {
+      getEnrichedAuthorizations: () => auths,
+      executionLog: mockExecutionLog(),
+      spClient: { isUnlocked: () => true },
+    } as unknown as SharedState;
+  }
+
+  /** The real MCP SDK's own `enabled` flag per registered tool name. */
+  function registeredTools(auths: EnrichedAuthorization[]): Record<string, { enabled: boolean }> {
+    const im = new IntegrationManager();
+    im.registerBuiltin(reportBuiltin({ state: {} as SharedState, integrationManager: im, reportSources: {} as ReportSources }));
+    const { server, refreshTools } = createMcpServer(mockState(auths), im);
+    refreshTools();
+    return (server as unknown as { _registeredTools: Record<string, { enabled: boolean }> })._registeredTools;
+  }
+
+  it('(a) no reporting mandate at all: report__* tools are NOT listed', () => {
+    const tools = registeredTools([]);
+    for (const name of REPORT_TOOL_NAMES) expect(tools[name].enabled, name).toBe(false);
+  });
+
+  it("(b) only a sales mandate (the working agent's, a DIFFERENT profile): report__* tools are NOT listed", () => {
+    const salesAuth = authWithProfile('github.com/humanagencyprotocol/hap-profiles/sales@0.2', { foo: 'bar' });
+    const tools = registeredTools([salesAuth]);
+    for (const name of REPORT_TOOL_NAMES) expect(tools[name].enabled, name).toBe(false);
+  });
+
+  it('(c) a reporting mandate: report__* tools ARE listed', () => {
+    const tools = registeredTools([auth(REPORTING_BOUNDS)]);
+    for (const name of REPORT_TOOL_NAMES) expect(tools[name].enabled, name).toBe(true);
   });
 });
 
@@ -244,7 +311,7 @@ describe('read tools', () => {
     const body = JSON.parse(r.content[0].text);
     expect(body.cases).toEqual([{ caseId: 'C1', startMessageId: 'm1', from: 'a@example.com', subject: 'Hi', receivedAt: '2026-10-01T01:00:00.000Z' }]);
     expect(body.sent[0]).toMatchObject({ id: 's1', inReplyTo: 'm1', receiptId: 'tk-1' });
-    expect(body.simulationLoadedAt).toBe('2026-10-01T00:00:00.000Z');
+    expect(body.testDataLoadedAt).toBe('2026-10-01T00:00:00.000Z');
     cleanup();
   });
 
@@ -324,25 +391,22 @@ describe('write_report', () => {
     cleanup();
   });
 
-  it('oversize html is refused before verification ever runs — nothing stored', async () => {
-    // A ticket is still requested pre-flight (tool-proxy.ts gates EVERY write
-    // tool call the same way, builtin or connector — see
-    // builtin-integration.test.ts's "a handler that throws is reported as a
-    // failed call" for the same ticket-then-local-failure shape); what must
-    // never happen is the oversize html reaching sanitize/verify/storage.
-    const { tools, im, state, reportStore, cleanup } = setup([auth(REPORTING_BOUNDS)]);
+  it('oversize html is refused by `validate` BEFORE the gate — no ticket requested, no report_daily_max consumed, nothing stored', async () => {
+    const { tools, im, state, postReceipt, reportStore, cleanup } = setup([auth(REPORTING_BOUNDS)]);
     const huge = '<p>' + 'x'.repeat(MAX_REPORT_HTML_BYTES + 1) + '</p>';
 
     const r = await createGatedToolHandler(tools.write_report, im, state)({ html: huge });
     expect(r.isError).toBe(true);
     expect(r.content[0].text).toMatch(/bytes/);
+    expect(postReceipt).not.toHaveBeenCalled();
     expect(reportStore.getReport()).toBeNull();
     cleanup();
   });
 
-  it('empty html is refused', async () => {
-    const { tools, im, state, cleanup } = setup([auth(REPORTING_BOUNDS)]);
+  it('empty html is refused BEFORE the gate — no ticket requested', async () => {
+    const { tools, im, state, postReceipt, cleanup } = setup([auth(REPORTING_BOUNDS)]);
     const r = await createGatedToolHandler(tools.write_report, im, state)({ html: '   ' });
+    expect(postReceipt).not.toHaveBeenCalled();
     expect(r.isError).toBe(true);
     cleanup();
   });
@@ -364,5 +428,68 @@ describe('control check — breaking a gate must break its test', () => {
     expect(rAllowed.isError).toBeFalsy();
     denied.cleanup();
     allowed.cleanup();
+  });
+});
+
+/**
+ * Andreas's rule: in simulation mode the WORKING agent must never be able to
+ * tell it is a simulation. report__* tool names/descriptions/output use
+ * neutral wording ("connected systems", "test data") instead — this is an
+ * executable spec for that rule, not a one-off check: a future edit that
+ * reintroduces "simulation"/"simulated" anywhere agent-facing fails this.
+ */
+describe('no report__* tool name/description/output says "simulation"/"simulated"', () => {
+  const FORBIDDEN = /simulat/i;
+
+  it('no tool name or description mentions it', () => {
+    const { tools, cleanup } = setup([]);
+    for (const [name, tool] of Object.entries(tools)) {
+      expect(name, name).not.toMatch(FORBIDDEN);
+      expect(tool.description, `${name} description`).not.toMatch(FORBIDDEN);
+    }
+    cleanup();
+  });
+
+  it('list_cases output and its "no data" error never mention it', async () => {
+    const { tools, im, state, cleanup } = setup([auth(REPORTING_BOUNDS)]);
+    const ok = await createGatedToolHandler(tools.list_cases, im, state)({});
+    expect(ok.content[0].text).not.toMatch(FORBIDDEN);
+
+    const { tools: tools2, im: im2, state: state2, cleanup: cleanup2 } = setup(
+      [auth(REPORTING_BOUNDS)],
+      vi.fn(async () => { throw new Error('boom'); }),
+    );
+    const failed = await createGatedToolHandler(tools2.list_cases, im2, state2)({});
+    expect(failed.isError).toBe(true);
+    expect(failed.content[0].text).not.toMatch(FORBIDDEN);
+    cleanup();
+    cleanup2();
+  });
+
+  it('get_records output and its "unexpected shape" error never mention it', async () => {
+    const { tools, im, state, cleanup } = setup([auth(REPORTING_BOUNDS)]);
+    const ok = await createGatedToolHandler(tools.get_records, im, state)({ system: 'erp' });
+    expect(ok.content[0].text).not.toMatch(FORBIDDEN);
+
+    const badShape = vi.fn(async () => ({ not: 'the expected shape' }));
+    const { tools: tools2, im: im2, state: state2, cleanup: cleanup2 } = setup([auth(REPORTING_BOUNDS)], badShape);
+    const failed = await createGatedToolHandler(tools2.get_records, im2, state2)({ system: 'erp' });
+    expect(failed.isError).toBe(true);
+    expect(failed.content[0].text).not.toMatch(FORBIDDEN);
+    cleanup();
+    cleanup2();
+  });
+});
+
+describe("write_report's validate hook (precheckBuiltin) — refused before the gate", () => {
+  // `validate` lives on the BuiltinTool, not the DiscoveredTool tool-proxy.ts
+  // sees — precheckBuiltin (IntegrationManager) is the real, documented way to
+  // reach it, so this exercises exactly what createGatedToolHandler calls.
+  it('precheckBuiltin flags empty and oversize html with NO ticket side effects, and lets good html through', () => {
+    const { tools, im, cleanup } = setup([]);
+    expect(im.precheckBuiltin(tools.write_report, { html: '   ' })).toMatch(/non-empty/);
+    expect(im.precheckBuiltin(tools.write_report, { html: 'x'.repeat(MAX_REPORT_HTML_BYTES + 1) })).toMatch(/bytes/);
+    expect(im.precheckBuiltin(tools.write_report, { html: '<p>ok</p>' })).toBeNull();
+    cleanup();
   });
 });

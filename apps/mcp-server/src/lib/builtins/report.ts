@@ -8,10 +8,15 @@
  * gated `category: 'read'` against `read_access: unlimited` — the generic read
  * gate in tool-proxy.ts refuses them outright without a matching authorization,
  * the same mechanism every connector's read tools use. None declares
- * `hideUnlessAuthorized`: unlike a setup-only action, a reporting agent should
- * see these tools exist even before it has been granted a mandate, so a
- * missing mandate reads as "refused", never as "this capability does not
- * exist" (`createGatedToolHandler`'s read-gate denial already says why).
+ * `hideUnlessAuthorized`: that flag is for a tool that stays invisible even
+ * WITH a matching mandate, until a specific per-action bound is above zero
+ * (the `setup` built-in's own case). These five need no such extra check —
+ * `refreshTools()` in src/index.ts already hides every tool here from
+ * `tools/list` unless a complete authorization on THIS profile (`reporting`)
+ * exists at all, independent of `hideUnlessAuthorized` — a working agent
+ * holding only its own (e.g. sales/email) mandate, or none, never sees
+ * `report__*` listed; see builtins-report.test.ts's "tools/list visibility"
+ * suite, which exercises the real MCP server wiring, not just the predicate.
  *
  * `write_report` is a write tool gated like any other: `staticExecution: {
  * action_type: 'report' }` maps onto the profile's `report_daily_max`
@@ -142,8 +147,8 @@ function listCasesTool(deps: BuiltinDeps): BuiltinTool {
   return {
     name: 'list_cases',
     description:
-      'Loaded business cases from the email simulator, plus every sent mail — so you can define sv-case ' +
-      'elements without guessing ids. Returns: when the test package was loaded (simulationLoadedAt); ' +
+      'Loaded business cases from the connected email system, plus every sent mail — so you can define ' +
+      'sv-case elements without guessing ids. Returns: when the test data was loaded (testDataLoadedAt); ' +
       'cases (caseId, the starting inbox message id, sender, subject, received time); and sent mails ' +
       '(id, inReplyTo, the receiptId of the ticket that sent it, subject, sentAt) so you can confirm which ' +
       'ticket closed which case. Never includes the team\'s own reference replies — those are not part of ' +
@@ -154,9 +159,9 @@ function listCasesTool(deps: BuiltinDeps): BuiltinTool {
       try {
         exported = await deps.reportSources.runExport('email');
       } catch (err) {
-        return errorText(`Could not read the email simulator export: ${err instanceof Error ? err.message : String(err)}`);
+        return errorText(`Could not read email records: ${err instanceof Error ? err.message : String(err)}`);
       }
-      if (!isEmailExport(exported)) return errorText('The email simulator export had an unexpected shape.');
+      if (!isEmailExport(exported)) return errorText('Email records were returned in an unexpected shape.');
       const exp: EmailExport = exported;
       const cases = exp.inbox
         .filter((m) => !!m.case_id)
@@ -175,7 +180,7 @@ function listCasesTool(deps: BuiltinDeps): BuiltinTool {
         sentAt: m.received_at,
       }));
       return builtinText(JSON.stringify({
-        simulationLoadedAt: exp.simulation_load?.loaded_at ?? null,
+        testDataLoadedAt: exp.simulation_load?.loaded_at ?? null,
         cases,
         sent,
       }, null, 2));
@@ -193,7 +198,7 @@ function getRecordsTool(deps: BuiltinDeps): BuiltinTool {
   return {
     name: 'get_records',
     description:
-      'Rows from one simulator\'s export (email, erp or crm) that you may reference with <sv-record system="..." ref="...">. ' +
+      'Rows from one connected system (email, erp or crm) that you may reference with <sv-record system="..." ref="...">. ' +
       'Optionally narrow to one table via "kind" (email: inbox/sent/changes/refusals; erp: quotes/orders/changes/refusals; ' +
       'crm: contacts/deals/tasks/activities/changes/refusals) — omit it to get every table for that system. ' +
       'Never returns the team\'s own reference replies.',
@@ -201,7 +206,7 @@ function getRecordsTool(deps: BuiltinDeps): BuiltinTool {
       type: 'object',
       properties: {
         system: { type: 'string', enum: ['email', 'erp', 'crm'] },
-        kind: { type: 'string', description: 'Optional: one table name within the system\'s export.' },
+        kind: { type: 'string', description: 'Optional: one table name within that system\'s records.' },
       },
       required: ['system'],
     },
@@ -214,10 +219,10 @@ function getRecordsTool(deps: BuiltinDeps): BuiltinTool {
       try {
         exported = await deps.reportSources.runExport(system);
       } catch (err) {
-        return errorText(`Could not read the ${system} simulator export: ${err instanceof Error ? err.message : String(err)}`);
+        return errorText(`Could not read ${system} records: ${err instanceof Error ? err.message : String(err)}`);
       }
       const ok = system === 'email' ? isEmailExport(exported) : system === 'erp' ? isErpExport(exported) : isCrmExport(exported);
-      if (!ok) return errorText(`The ${system} simulator export had an unexpected shape.`);
+      if (!ok) return errorText(`${system} records were returned in an unexpected shape.`);
 
       const allowedKinds = recordKindsFor(system);
       const requestedKind = typeof args.kind === 'string' ? args.kind : undefined;
@@ -268,6 +273,28 @@ function summarizeWrite(result: VerifyReportResult): string {
   return lines.join('\n');
 }
 
+/**
+ * What makes this call impossible regardless of who/what approves it — empty
+ * or oversize html. Used BOTH as `validate` (checked by
+ * `IntegrationManager.precheckBuiltin` before any proposal or ticket — see
+ * builtin-integration.ts) and re-checked inside the handler itself, since
+ * `validate` only ever sees the args at call time and the handler must not
+ * assume nothing has changed by the time it actually runs.
+ */
+function writeReportRefusal(args: Record<string, unknown>): string | undefined {
+  const html = typeof args.html === 'string' ? args.html : '';
+  if (!html.trim()) return '`html` must be a non-empty string.';
+  const bytes = Buffer.byteLength(html, 'utf8');
+  if (bytes > MAX_REPORT_HTML_BYTES) {
+    return (
+      `the report is ${bytes} bytes, over the ${MAX_REPORT_HTML_BYTES}-byte limit. ` +
+      `Shorten it (the gateway draws the verifiable elements for you — you do not need to inline ` +
+      `their data) and write again.`
+    );
+  }
+  return undefined;
+}
+
 function writeReportTool(deps: BuiltinDeps): BuiltinTool {
   return {
     name: 'write_report',
@@ -282,17 +309,15 @@ function writeReportTool(deps: BuiltinDeps): BuiltinTool {
       },
       required: ['html'],
     },
+    // Empty/oversize html is refused here, BEFORE the gate requests a ticket
+    // (precheckBuiltin) — a refused write must not consume report_daily_max.
+    validate: writeReportRefusal,
     handler: async (args) => {
-      const html = typeof args.html === 'string' ? args.html : '';
-      if (!html.trim()) return errorText('html is required and must be a non-empty string.');
-      const bytes = Buffer.byteLength(html, 'utf8');
-      if (bytes > MAX_REPORT_HTML_BYTES) {
-        return errorText(
-          `This report is ${bytes} bytes, over the ${MAX_REPORT_HTML_BYTES}-byte limit. ` +
-          `Shorten it (the gateway draws the verifiable elements for you — you do not need to inline ` +
-          `their data) and write again.`,
-        );
-      }
+      // automatic mode means no human-approval delay, but the handler still
+      // checks again rather than trust validate's earlier pass blindly.
+      const refusal = writeReportRefusal(args);
+      if (refusal) return errorText(`Refused: ${refusal}`);
+      const html = args.html as string;
       if (deps.state.reportStore.isLocked()) {
         return errorText('The report store is locked (the vault is not unlocked) — cannot save a report right now.');
       }
