@@ -8,7 +8,7 @@ const FAST_INTERVAL = 2000;          // 2 seconds — while waiting for a restar
 // see docs/managed-settings.md). Physically still an npm install underneath,
 // but the employee has no permission to run the upgrade command themselves,
 // so UpdateBanner shows no command for it at all.
-export type InstallMethod = 'docker' | 'npm' | 'dev' | 'managed';
+export type InstallMethod = 'docker' | 'npm' | 'dev' | 'managed' | 'msi';
 
 /**
  * Polls /health for update state AND detects when the running gateway has

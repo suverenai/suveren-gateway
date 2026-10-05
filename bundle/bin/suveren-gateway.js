@@ -316,6 +316,11 @@ async function start(args) {
       detached: true,
       stdio: ['ignore', out, out],
       env: process.env,
+      // Windows: `detached` gives the child its OWN console, which shows as a
+      // window for the gateway's whole lifetime — and closing it kills the
+      // gateway. Output goes to the log file anyway, so hide it. No effect
+      // on macOS/Linux.
+      windowsHide: true,
     });
     writeFileSync(PID_FILE, String(child.pid), 'utf8');
     child.unref();

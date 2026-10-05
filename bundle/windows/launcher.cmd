@@ -28,10 +28,11 @@ rem under the same user into offline+managed mode too. %~f0 is this batch
 rem file's own fully-qualified path, however it was invoked.
 if not defined SUVEREN_LAUNCHER set "SUVEREN_LAUNCHER=%~f0"
 
-rem Managed install: the update banner should say "updates come from your
-rem IT", not show an npm command — see the IT-policy-settings work (separate
-rem change) for how SUVEREN_INSTALL_METHOD=managed is read.
-if not defined SUVEREN_INSTALL_METHOD set "SUVEREN_INSTALL_METHOD=managed"
+rem Install method: NOT set here. The installer ships gateway\install-method.json
+rem ("msi") so a self-installed gateway offers "Download installer"; a company
+rem marks its installs as managed via IT policy (InstallMethod=managed), which
+rem wins. Forcing "managed" here told every self-installer that "updates come
+rem from your IT".
 
 rem Offline install: every connector this gateway will ever run ships inside
 rem this install dir, pinned to an exact version by build-payload.mjs at
@@ -59,6 +60,11 @@ rem company laptop needs. Prepended, so it never shadows a real difference
 rem on a dev machine that already has its own PATH.
 set "PATH=%HERE%node;%PATH%"
 
+rem Unpack runtime.zip (connectors + the gateway's node_modules) on the first start
+rem after an install or upgrade — see stage-msi.ps1 for why they ship as one archive.
+call :prepare
+if errorlevel 1 exit /b 1
+if /i "%~1"=="prepare" exit /b 0
 if /i "%~1"=="open-ui" goto :open_ui
 if /i "%~1"=="run" goto :run_foreground
 
@@ -92,3 +98,36 @@ rem `start` (no PID-file/port-already-in-use bookkeeping needed — Task
 rem Scheduler itself supervises this process and restarts it on failure).
 "%HERE%node\node.exe" "%HERE%gateway\server.js" --autostart
 exit /b %ERRORLEVEL%
+
+:prepare
+rem Nothing to do for an unpacked payload (dev/CI runs straight from the payload dir).
+if not exist "%HERE%runtime.zip" exit /b 0
+rem Already unpacked for exactly this archive?
+fc /b "%HERE%runtime.stamp" "%HERE%runtime.extracted" >nul 2>&1
+if not errorlevel 1 exit /b 0
+rem One unpacker at a time (the login task and the Start menu can start together).
+rem mkdir is atomic; a lock older than ~2 minutes is from a crashed run and is taken over.
+set /a "_waited=0"
+:prepare_lock
+mkdir "%HERE%runtime.lock" 2>nul
+if not errorlevel 1 goto :prepare_locked
+fc /b "%HERE%runtime.stamp" "%HERE%runtime.extracted" >nul 2>&1
+if not errorlevel 1 exit /b 0
+if %_waited% GEQ 120 goto :prepare_locked
+timeout /t 2 /nobreak >nul
+set /a "_waited+=2"
+goto :prepare_lock
+:prepare_locked
+del /q "%HERE%runtime.extracted" 2>nul
+if exist "%HERE%integrations" rmdir /s /q "%HERE%integrations"
+if exist "%HERE%gateway\node_modules" rmdir /s /q "%HERE%gateway\node_modules"
+"%SystemRoot%\System32\tar.exe" -x -f "%HERE%runtime.zip" -C "%HERE%."
+if errorlevel 1 (
+  rmdir "%HERE%runtime.lock" 2>nul
+  echo Suveren gateway: could not unpack runtime.zip into %HERE% 1>&2
+  exit /b 1
+)
+copy /y "%HERE%runtime.stamp" "%HERE%runtime.extracted" >nul
+rmdir "%HERE%runtime.lock" 2>nul
+exit /b 0
+

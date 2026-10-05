@@ -26,7 +26,9 @@
       that does code signing; otherwise `winget install Microsoft.WindowsSDK`
       or use the one bundled with Visual Studio).
     - The WiX v5 CLI as a dotnet tool: `dotnet tool install --global wix --version 5.0.2`
-      (requires the .NET SDK).
+      (requires the .NET SDK), plus the UI extension this product's
+      interactive-install dialog uses: `wix extension add -g
+      WixToolset.UI.wixext/5.0.2`.
 
 .PARAMETER Thumbprint
   SHA-1 thumbprint of the code-signing certificate to use (as shown by
@@ -173,14 +175,24 @@ if (-not (Test-Path $launcherSource)) {
   # fall back there if this script is run from the zip's own layout.
   $launcherSource = Join-Path $PSScriptRoot '..\launcher.cmd'
 }
+# Stage AFTER signing: stage-msi.ps1 packs integrations\ and gateway\node_modules\
+# into runtime.zip, so the .node binaries inside carry the signature applied above.
+$stageScript = Join-Path $PSScriptRoot 'stage-msi.ps1'
+if (-not (Test-Path $stageScript)) { $stageScript = Join-Path $PSScriptRoot '..\stage-msi.ps1' }
+$stageDir = Join-Path $OutDir 'stage'
+& $stageScript -PayloadDir $PayloadDir -StageDir $stageDir
+
 Write-Host "[build-signed] building $msiPath …"
 & $wix build (Join-Path $WixSourceDir 'Product.wxs') `
+  -ext WixToolset.UI.wixext/5.0.2 `
   -d "ProductVersion=$ProductVersion" `
-  -d "PayloadDir=$PayloadDir" `
+  -d "PayloadDir=$stageDir" `
   -d "LauncherSource=$launcherSource" `
   -arch x64 `
   -out $msiPath
-if ($LASTEXITCODE -ne 0) { throw "wix build failed (exit $LASTEXITCODE)" }
+if ($LASTEXITCODE -ne 0) {
+  throw "wix build failed (exit $LASTEXITCODE) — if this is 'extension could not be found', run: wix extension add -g WixToolset.UI.wixext/5.0.2"
+}
 
 # ─── 3. Sign the .msi itself ──────────────────────────────────────────────
 

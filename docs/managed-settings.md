@@ -93,10 +93,11 @@ An install counts as `managed` when either is true:
 - env var `SUVEREN_INSTALL_METHOD=managed`
 - policy `InstallMethod=managed`
 
-This pre-empts the normal Docker/npm/dev auto-detection (`detectInstallMethod`
-in `apps/control-plane/src/index.ts`) and `managed` compares against the npm
-registry the same way `npm` does — an IT-provisioned install is still
-physically an npm install underneath; only the banner text differs.
+This pre-empts every other detection (`apps/control-plane/src/lib/install-method.ts`),
+including the Windows installer's own marker: without the policy, a gateway
+installed with the `.msi` reports `msi` and shows a red "Download installer"
+banner meant for people who installed it themselves. `managed` and `msi`
+check the same release versions as `npm`; only the banner differs.
 
 ## Test-only env vars — never set these in production
 

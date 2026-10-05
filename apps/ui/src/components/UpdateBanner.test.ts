@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { upgradeCommandFor, updateBannerClass, MANAGED_UPDATE_HINT } from './UpdateBanner';
+import { upgradeCommandFor, updateBannerClass, installerDownloadUrl, MANAGED_UPDATE_HINT, MSI_UPDATE_HINT } from './UpdateBanner';
 
 // Pure logic only (the banner's JSX is presentation). What matters: a managed
 // install gets NO command at all — not a different one, none — because the
@@ -45,5 +45,24 @@ describe('updateBannerClass', () => {
     for (const m of ['npm', 'dev', 'docker'] as const) {
       expect(updateBannerClass(m)).toBe('update-banner');
     }
+  });
+});
+
+describe('msi (Windows installer, self-installed)', () => {
+  it('has no command — the update is the next installer', () => {
+    expect(upgradeCommandFor('msi')).toBeNull();
+  });
+
+  it('keeps the red banner (the person has to act), unlike managed', () => {
+    expect(updateBannerClass('msi')).toBe('update-banner');
+  });
+
+  it('links to the release that carries the new installer', () => {
+    expect(installerDownloadUrl('0.13.2')).toBe('https://github.com/suverenai/suveren-gateway/releases/tag/v0.13.2');
+    expect(installerDownloadUrl(null)).toBe('https://github.com/suverenai/suveren-gateway/releases/latest');
+  });
+
+  it('tells the person what to do and that their data stays', () => {
+    expect(MSI_UPDATE_HINT).toBe('Download the new installer and run it. Your settings and mandates stay.');
   });
 });
