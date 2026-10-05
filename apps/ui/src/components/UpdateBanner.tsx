@@ -13,7 +13,7 @@ const JUST_UPDATED_KEY = 'suveren:updatedTo';
  *  permission to run the npm command themselves (see
  *  docs/managed-settings.md), so there is no command to show at all. */
 export function upgradeCommandFor(method: InstallMethod): string | null {
-  if (method === 'managed') return null;
+  if (method === 'managed' || method === 'msi') return null;
   if (method === 'npm') {
     // `restart`, not stop-then-start. Once the login service is installed —
     // which the CLI itself offers — stop/start no longer manage the process:
@@ -40,6 +40,19 @@ export const MANAGED_UPDATE_HINT =
  *  Every other method keeps the red banner unchanged. */
 export function updateBannerClass(method: InstallMethod): string {
   return method === 'managed' ? 'update-banner is-managed' : 'update-banner';
+}
+
+/** Windows installer, installed by the person themselves (`msi`): there is no
+ *  command to run — the update is the next installer, which stops, replaces
+ *  and restarts the gateway itself. Red like npm/docker: the person has to act.
+ *  (Andreas, 2026-10-05.) */
+export const MSI_UPDATE_HINT = 'Download the new installer and run it. Your settings and mandates stay.';
+
+/** Release page carrying that version's Windows installer; the generic
+ *  "latest" page when the version is unknown. */
+export function installerDownloadUrl(latestVersion: string | null | undefined): string {
+  const base = 'https://github.com/suverenai/suveren-gateway/releases';
+  return latestVersion ? `${base}/tag/v${latestVersion}` : `${base}/latest`;
 }
 
 /** Don't yank the page out from under in-progress work. An open modal/dialog
@@ -167,9 +180,16 @@ export function UpdateBanner() {
       {updateAvailable && !updating && !liveVersion && (
         <div ref={ref} className={updateBannerClass(installMethod)} role="status" aria-live="polite">
           <div className="update-banner-row">
-            <span className="update-banner-text">Update available.</span>
+            <span className="update-banner-text">
+              {installMethod === 'msi' && latestVersion ? `Update available — version ${latestVersion}.` : 'Update available.'}
+            </span>
             <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-              {installMethod !== 'managed' && (
+              {installMethod === 'msi' && (
+                <a className="btn btn-sm btn-secondary" href={installerDownloadUrl(latestVersion)} target="_blank" rel="noopener noreferrer">
+                  Download installer
+                </a>
+              )}
+              {installMethod !== 'managed' && installMethod !== 'msi' && (
                 <button className="btn btn-sm btn-secondary" onClick={beginUpdate}>Update</button>
               )}
               <button className="update-banner-x" onClick={dismiss} aria-label="Dismiss">{'×'}</button>
@@ -177,6 +197,9 @@ export function UpdateBanner() {
           </div>
           {installMethod === 'managed' && (
             <p className="update-banner-hint">{MANAGED_UPDATE_HINT}</p>
+          )}
+          {installMethod === 'msi' && (
+            <p className="update-banner-hint">{MSI_UPDATE_HINT}</p>
           )}
         </div>
       )}

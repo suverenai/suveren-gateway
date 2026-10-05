@@ -95,7 +95,7 @@ if (savedCaFile && !process.env.SUVEREN_CA_REEXEC_DONE) {
   const child = spawn(
     process.execPath,
     [THIS_FILE, ...process.argv.slice(2)],
-    { env: { ...process.env, NODE_EXTRA_CA_CERTS: effectiveCaFile, SUVEREN_CA_REEXEC_DONE: '1' }, stdio: 'inherit' },
+    { env: { ...process.env, NODE_EXTRA_CA_CERTS: effectiveCaFile, SUVEREN_CA_REEXEC_DONE: '1' }, stdio: 'inherit', windowsHide: true },
   );
   child.on('exit', (code, signal) => {
     if (combinedDirToClean) {
@@ -206,13 +206,16 @@ const env = {
 const cp = spawn(
   process.execPath,
   [join(__dirname, 'dist', 'control-plane', 'index.mjs')],
-  { env, stdio: 'inherit' },
+  // windowsHide: on Windows 11 ARM (x64 emulation) these children otherwise got
+  // their own visible console windows even under a hidden parent — seen in CI
+  // and in a real ARM VM. No effect on macOS/Linux; output still goes to stdio.
+  { env, stdio: 'inherit', windowsHide: true },
 );
 
 const mcp = spawn(
   process.execPath,
   [join(__dirname, 'dist', 'mcp-server', 'http.mjs')],
-  { env, stdio: 'inherit' },
+  { env, stdio: 'inherit', windowsHide: true },
 );
 
 const children = [

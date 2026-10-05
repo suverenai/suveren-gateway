@@ -32,7 +32,8 @@ import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { proxiedFetch } from './proxied-fetch';
 
-export type InstallMethod = 'docker' | 'npm' | 'dev' | 'managed';
+import type { InstallMethod } from './install-method';
+export type { InstallMethod } from './install-method';
 
 const GHCR_IMAGE = 'suverenai/suveren-gateway';
 const NPM_PACKAGE = '@suveren/gateway';
@@ -154,10 +155,10 @@ async function check(): Promise<void> {
       checkDev();
       return;
     }
-    if (installMethod === 'npm' || installMethod === 'managed') {
-      // `managed` is still an npm install underneath (IT provisions it the
-      // same way) — only the UI's banner text differs, not where the
-      // version actually comes from.
+    if (installMethod === 'npm' || installMethod === 'managed' || installMethod === 'msi') {
+      // `managed` and `msi` ship the same versions as npm (one release tag
+      // publishes npm, Docker and the Windows installer) — only the UI's
+      // banner differs, not where the version number comes from.
       await checkNpm();
       return;
     }

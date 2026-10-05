@@ -50,10 +50,20 @@
 
     <!-- A newer version already installed refuses an older one outright,
          rather than silently downgrading files a newer connector set
-         depends on. -->
+         depends on.
+
+         AllowSameVersionUpgrades="yes": without it, re-installing the EXACT
+         same ProductVersion falls into neither the upgrade nor the downgrade
+         range, so Windows Installer treats it as an unrelated product —
+         observed for real (a test build sharing its version with an already-
+         installed release registered as a SECOND product instead of
+         upgrading it, part of a stuck-install investigation on a Windows 11
+         VM). Harmless the rest of the time: it only matters when the two
+         versions are literally identical. -->
     <MajorUpgrade
       DowngradeErrorMessage="A newer version of Suveren Gateway is already installed. Uninstall it first to install this older version."
-      Schedule="afterInstallInitialize" />
+      Schedule="afterInstallInitialize"
+      AllowSameVersionUpgrades="yes" />
 
     <MediaTemplate EmbedCab="yes" />
 
@@ -100,8 +110,10 @@
         Id="StartMenuShortcut"
         Name="Suveren Gateway"
         Description="Open the Suveren gateway"
-        Target="[#LauncherCmd]"
-        Arguments="open-ui"
+        Target="[WindowsFolder]System32\conhost.exe"
+        Arguments="--headless cmd.exe /c &quot;&quot;[#LauncherCmd]&quot; open-ui&quot;"
+        Show="minimized"
+        Icon="SuverenIcon"
         WorkingDirectory="INSTALLFOLDER" />
       <RemoveFolder Id="RemoveSuverenMenuFolder" Directory="SuverenMenuFolder" On="uninstall" />
       <RegistryValue Root="HKCU" Key="Software\Suveren\Gateway" Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes" />
@@ -142,37 +154,116 @@
       <ComponentRef Id="InstallMarkerComponent" />
     </Feature>
 
-    <!-- Uninstall cleanup — the two things msiexec /x cannot do on its own.
-         Both Return="ignore": a gateway that was never running, or a task
-         that was already removed (e.g. via `suveren-gateway service
-         uninstall` beforehand), must never fail the uninstall.
+    <!-- Interactive (double-click) install only: WixUI_Minimal — welcome,
+         progress, exit, nothing else (no EULA page; this installer is
+         unsigned freeware-style, matching the rest of the "IT verifies and
+         signs it" story). A SILENT install (`/qn`, the real Intune path)
+         never shows ANY of this — StartGatewayAfterInstall above already
+         brings the gateway up headlessly regardless of UI, which is the
+         path that actually matters for a company deployment.
 
-         Condition: REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE — a plain
-         uninstall sets REMOVE="ALL"; so does the OLD version's removal
-         during a MAJOR UPGRADE (RemoveExistingProducts uninstalls it), which
-         ALSO sets UPGRADINGPRODUCTCODE. Excluding that case is deliberate:
-         the scheduled task registered by `service install` points at
-         [INSTALLFOLDER]suveren-gateway.cmd, and INSTALLFOLDER is the SAME
-         per-user path across versions (fixed UpgradeCode, files replaced
-         in-place) — deleting the task mid-upgrade would silently turn
-         autostart off for every existing user on every update, and nothing
-         in this package ever re-creates it. Left alone, the task keeps
-         pointing at a valid (now-upgraded) launcher with no action needed.
+         ExitDialog's "OptionalCheckBox" control is BUILT INTO WixUI's own
+         ExitDialog.wxs (part of WixToolset.UI.wixext — see its source);
+         setting these two properties is what makes it appear, checked by
+         default, worded for this product. "NOT Installed" (baked into the
+         control's own ShowCondition, and repeated in the Publish condition
+         below) is WixUI's standard guard against showing this on a repair
+         — not relevant to a product with no repair UI exposed here, kept
+         for correctness anyway.
 
-         Both run `Execute="deferred"` (same install context — per-user,
-         no elevation boundary to cross, so Impersonate="yes" is correct
-         here as everywhere else in this package) and are scheduled before
-         RemoveFiles: stop first, so the gateway's own files (node.exe, its
-         DLLs) aren't locked when Windows Installer removes them; then
-         delete the task, so nothing can restart the gateway (and re-lock
-         those files) in the (very) small window before the files actually
-         go. -->
+         Order="10" on the Publish below — well before WixUI_Minimal's own
+         `Finish -> EndDialog` at Order="999" — runs OUR action first, then
+         lets the dialog close normally. -->
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Launch Suveren Gateway" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+    <!-- WixUI_Minimal_X64, not the bare WixUI_Minimal: the UI extension's
+         own WixUI_Minimal.wxs defines the externally-usable entry point
+         per architecture (WixUI_Minimal_X86/_X64/_A64, each a thin wrapper
+         that references the shared, library-private "file WixUI_Minimal").
+         The bare Id is scoped "file"-private to the extension's own
+         compiled object and isn't directly referenceable from here — "error
+         WIX0094: The identifier 'WixUI:WixUI_Minimal' is inaccessible due
+         to its protection level", confirmed for real on windows-latest.
+         Matches this package's own -arch x64. -->
+    <!-- Licence page: the repository's MIT LICENSE word for word plus a third-party note,
+         generated by bundle/windows/license-rtf.mjs (a test keeps it in sync). Without
+         this WixUI shows its own "Lorem ipsum" placeholder. -->
+    <WixVariable Id="WixUILicenseRtf" Value="$(sys.SOURCEFILEDIR)License.rtf" />
+    <!-- Suveren look instead of the toolkit's default red artwork (signed off 2026-10-05);
+         generated by bundle/windows/make-graphics.mjs from the gateway's mark. -->
+    <WixVariable Id="WixUIDialogBmp" Value="$(sys.SOURCEFILEDIR)dialog.bmp" />
+    <WixVariable Id="WixUIBannerBmp" Value="$(sys.SOURCEFILEDIR)banner.bmp" />
+    <Icon Id="SuverenIcon" SourceFile="$(sys.SOURCEFILEDIR)suveren.ico" />
+    <Property Id="ARPPRODUCTICON" Value="SuverenIcon" />
+    <UIRef Id="WixUI_Minimal_X64" />
+    <UI>
+      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchGatewayAfterInstall" Order="10" Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed" />
+    </UI>
+
+    <!-- Runs ONLY from the ExitDialog checkbox above (immediate, not part of
+         InstallExecuteSequence — this is a UI-sequence action, fired after
+         the install has already finished and StartGatewayAfterInstall has
+         already brought the gateway up headlessly). Its ONE job beyond that
+         is the part a silent install must never do: open a browser tab.
+         `cmd.exe /c start /min "" "..."` — `start`'s own empty-title
+         placeholder (`""`) is required before a quoted target path, the
+         classic cmd.exe `start` gotcha, and `/min` matches the Start Menu
+         shortcut's own Show="minimized" (no console window pops up — see
+         PR #47). Return="asyncNoWait": the MSI UI thread must not block on
+         a process that opens a browser and keeps a gateway running
+         indefinitely. Calls `open-ui` (not `run`): the Start Menu shortcut
+         already does exactly this, including opening the browser — the
+         correct behaviour for a human who just chose "Launch" on a dialog
+         they're looking at, unlike the silent/headless commit action. -->
+    <!-- Headless, like the Start-menu entry and the login task: `cmd /c start "" x.cmd`
+         runs the batch file with `cmd /K`, which kept a (minimized) console window open for
+         good after Finish (caught by CI's window check). conhost.exe headless + `cmd /c`
+         runs open-ui with no window; only the browser it opens appears. -->
     <CustomAction
-      Id="StopGatewayOnUninstall"
+      Id="LaunchGatewayAfterInstall"
       Directory="INSTALLFOLDER"
-      ExeCommand="cmd.exe /c &quot;[INSTALLFOLDER]suveren-gateway.cmd&quot; stop"
-      Execute="deferred"
-      Impersonate="yes"
+      ExeCommand="conhost.exe --headless cmd.exe /c &quot;&quot;[INSTALLFOLDER]suveren-gateway.cmd&quot; open-ui&quot;"
+      Execute="immediate"
+      Return="asyncNoWait"
+      Impersonate="yes" />
+
+    <!-- Stop / start custom actions (bundle/windows/stop-gateway.ps1 is the readable
+         version of the stop logic, for IT to run by hand).
+
+         StopGateway — IMMEDIATE, Before="InstallValidate", on every install, upgrade and
+         uninstall — except inside the OLD version's removal during an upgrade
+         (UPGRADINGPRODUCTCODE): the new package already stopped everything, and running it
+         twice cost ~45 s on ARM. Get-Process (not Get-CimInstance) because the CIM query
+         alone took ~45 s under x64 emulation on Windows 11 ARM. It must run before anything touches the gateway's files: InstallValidate
+         (the files-in-use check), RemoveExistingProducts (with MajorUpgrade
+         Schedule="afterInstallInitialize" the OLD version is removed right after
+         InstallInitialize — long before RemoveFiles, which is why the earlier
+         Before="RemoveFiles" anchor still hung), and file removal on uninstall. Only an
+         immediate action may be scheduled that early; deferred ones fail with 2762. It ends
+         the scheduled task's run and kills every node.exe whose executable lives under
+         INSTALLFOLDER — that covers both a task-started gateway (the normal case, which the
+         CLI's own `stop` refuses: "running under the login service") and a detached one.
+         Running it in the NEW package also fixes upgrading FROM releases that have no stop
+         logic at all. Harmless when nothing runs. Inlined via -Command because on a fresh
+         install or an upgrade from an old release no script of ours exists yet.
+
+         RemoveScheduledTaskOnUninstall — plain uninstall only (REMOVE="ALL" AND NOT
+         UPGRADINGPRODUCTCODE): an upgrade keeps the task, whose launcher path is the same
+         across versions.
+
+         StartGatewayAfterInstall — COMMIT action (runs only after the whole transaction
+         succeeded), scheduled Before="InstallFinalize" (After="InstallFinalize" failed every
+         install with 2762). Through the launcher it first unpacks runtime.zip (`prepare`),
+         then registers autostart (`service install`, idempotent) and runs the task, so the gateway is up after a fresh install and after an upgrade — silently, no
+         browser (the interactive Finish checkbox opens the browser separately).
+
+         All Return="ignore": a gateway that is not running or a missing task must never fail
+         the install. -->
+    <CustomAction
+      Id="StopGateway"
+      Directory="INSTALLFOLDER"
+      ExeCommand="powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command &quot;$ErrorActionPreference='SilentlyContinue'; schtasks.exe /End /TN Suveren 2&gt;$null; $p=('[INSTALLFOLDER]').TrimEnd('\').ToLower()+'\'; Get-Process -Name node | Where-Object { $_.Path -and $_.Path.ToLower().StartsWith($p) } | Stop-Process -Force&quot;"
+      Execute="immediate"
       Return="ignore" />
 
     <CustomAction
@@ -183,9 +274,37 @@
       Impersonate="yes"
       Return="ignore" />
 
+    <!-- runtime.zip is unpacked by the launcher (`prepare`) into integrations\ and
+         gateway\node_modules\, so Windows Installer does not track those files —
+         remove them on a plain uninstall (an upgrade keeps them; the new launcher
+         re-unpacks when runtime.stamp changes). -->
+    <CustomAction
+      Id="RemoveRuntimeOnUninstall"
+      Directory="INSTALLFOLDER"
+      ExeCommand="cmd.exe /c rmdir /s /q &quot;[INSTALLFOLDER]integrations&quot; &amp; rmdir /s /q &quot;[INSTALLFOLDER]gateway\node_modules&quot; &amp; rmdir /s /q &quot;[INSTALLFOLDER]runtime.lock&quot; &amp; del /q &quot;[INSTALLFOLDER]runtime.extracted&quot;"
+      Execute="deferred"
+      Impersonate="yes"
+      Return="ignore" />
+
+    <CustomAction
+      Id="StartGatewayAfterInstall"
+      Directory="INSTALLFOLDER"
+      ExeCommand="cmd.exe /c &quot;[INSTALLFOLDER]suveren-gateway.cmd&quot; service install &amp; schtasks.exe /Run /TN Suveren"
+      Execute="commit"
+      Impersonate="yes"
+      Return="ignore" />
+
     <InstallExecuteSequence>
-      <Custom Action="StopGatewayOnUninstall" Before="RemoveFiles" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
-      <Custom Action="RemoveScheduledTaskOnUninstall" After="StopGatewayOnUninstall" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+      <!-- Immediate, before InstallValidate: no gateway process may hold files when Windows Installer
+           checks for files in use, removes the old version (major upgrade, RemoveExistingProducts
+           afterInstallInitialize) or removes files on uninstall. An immediate action is the only kind
+           allowed outside InstallInitialize..InstallFinalize (deferred ones there fail with 2762). -->
+      <Custom Action="StopGateway" Before="InstallValidate" Condition="NOT UPGRADINGPRODUCTCODE" />
+      <Custom Action="RemoveScheduledTaskOnUninstall" Before="RemoveFiles" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+      <Custom Action="RemoveRuntimeOnUninstall" Before="RemoveFiles" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+      <!-- Commit: runs only once the whole transaction has succeeded, but must be SCHEDULED before
+           InstallFinalize (After="InstallFinalize" failed every install with error 2762). -->
+      <Custom Action="StartGatewayAfterInstall" Before="InstallFinalize" Condition="NOT REMOVE=&quot;ALL&quot;" />
     </InstallExecuteSequence>
 
   </Package>

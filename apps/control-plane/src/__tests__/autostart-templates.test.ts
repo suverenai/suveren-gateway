@@ -185,7 +185,14 @@ describe('Windows Task Scheduler XML', () => {
   });
 
   it('quotes the script path so "Program Files" style paths survive', () => {
-    expect(task()).toContain('<Arguments>&quot;C:\\Users\\a\\AppData\\suveren\\server.js&quot; --autostart</Arguments>');
+    expect(task()).toContain('&quot;C:\\Users\\a\\AppData\\suveren\\server.js&quot; --autostart</Arguments>');
+  });
+
+  it('runs headless — <Hidden> only hides the task in the UI, not the console window', () => {
+    // A console program started by an InteractiveToken task otherwise gets a
+    // visible window for the gateway's lifetime (closing it stops the gateway).
+    expect(task()).toContain('<Command>%SystemRoot%\\System32\\conhost.exe</Command>');
+    expect(task()).toContain('<Arguments>--headless &quot;C:\\Program Files\\nodejs\\node.exe&quot; &quot;C:\\Users\\a\\AppData\\suveren\\server.js&quot; --autostart</Arguments>');
   });
 
   it('passes --autostart, the only way Windows can mark a service start', () => {
@@ -217,7 +224,7 @@ describe('Windows Task Scheduler XML', () => {
   // earlier design wrote those into HKCU\Environment, which is ACCOUNT-WIDE
   // and would shadow a developer's own Node on that same machine.
   describe('command/args override (managed Windows installer only)', () => {
-    it('every call WITHOUT an override renders byte-identical XML to before — no behaviour change for npm/dev/docker service install', () => {
+    it('every call WITHOUT an override uses the default node.exe action (headless) — npm/dev/docker service install', () => {
       // No install path other than the managed Windows one will ever pass
       // command/args — asserting this stays byte-identical is the contract
       // that makes the override purely additive.
@@ -229,11 +236,11 @@ describe('Windows Task Scheduler XML', () => {
         userId: 'LAPTOP-HP\\Hans-Peter',
       });
       expect(withoutOverride).toBe(task());
-      expect(withoutOverride).toContain('<Command>C:\\Program Files\\nodejs\\node.exe</Command>');
-      expect(withoutOverride).toContain('<Arguments>&quot;C:\\Users\\a\\AppData\\suveren\\server.js&quot; --autostart</Arguments>');
+      expect(withoutOverride).toContain('<Command>%SystemRoot%\\System32\\conhost.exe</Command>');
+      expect(withoutOverride).toContain('<Arguments>--headless &quot;C:\\Program Files\\nodejs\\node.exe&quot; &quot;C:\\Users\\a\\AppData\\suveren\\server.js&quot; --autostart</Arguments>');
     });
 
-    it('WITH an override, the launcher is the Command and the override IS the Arguments — node.exe/server.js never appear', () => {
+    it('WITH an override, the launcher (headless) runs with the override as its arguments — node.exe/server.js never appear', () => {
       const t = buildWindowsTaskXml({
         nodePath: 'C:\\Program Files\\nodejs\\node.exe',
         serverEntry: 'C:\\Users\\a\\AppData\\suveren\\server.js',
@@ -243,8 +250,8 @@ describe('Windows Task Scheduler XML', () => {
         command: 'C:\\Users\\a\\AppData\\Local\\Programs\\Suveren\\suveren-gateway.cmd',
         args: 'run',
       });
-      expect(t).toContain('<Command>C:\\Users\\a\\AppData\\Local\\Programs\\Suveren\\suveren-gateway.cmd</Command>');
-      expect(t).toContain('<Arguments>run</Arguments>');
+      expect(t).toContain('<Command>%SystemRoot%\\System32\\conhost.exe</Command>');
+      expect(t).toContain('<Arguments>--headless &quot;C:\\Users\\a\\AppData\\Local\\Programs\\Suveren\\suveren-gateway.cmd&quot; run</Arguments>');
       expect(t).not.toContain('node.exe');
       expect(t).not.toContain('server.js');
       // Everything else (trigger, principal, restart policy) is unaffected.
@@ -261,7 +268,7 @@ describe('Windows Task Scheduler XML', () => {
         args: 'run&<x>',
       });
       expect(t).not.toMatch(/&(?!amp;|lt;|gt;|quot;|apos;)/);
-      expect(t).toContain('<Command>C:\\a&amp;b\\suveren-gateway.cmd</Command>');
+      expect(t).toContain('&quot;C:\\a&amp;b\\suveren-gateway.cmd&quot;');
     });
   });
 });

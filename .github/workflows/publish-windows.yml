@@ -145,8 +145,10 @@ jobs:
           name: windows-payload
           path: bundle/windows/payload
 
-      - name: Install WiX v5
-        run: dotnet tool install --global wix --version 5.0.2
+      - name: Install WiX v5 (+ UI extension, for the interactive-install Finish checkbox)
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          wix extension add -g WixToolset.UI.wixext/5.0.2
 
       - name: Verify tag matches payload version
         if: startsWith(github.ref, 'refs/tags/v')
@@ -168,9 +170,13 @@ jobs:
           New-Item -ItemType Directory -Force -Path bundle\windows\out | Out-Null
           $payload = (Resolve-Path bundle\windows\payload).Path
           $launcher = (Resolve-Path bundle\windows\launcher.cmd).Path
+          # node_modules trees go into one runtime.zip (see stage-msi.ps1)
+          & bundle\windows\stage-msi.ps1 -PayloadDir $payload -StageDir bundle\windows\stage
+          $stage = (Resolve-Path bundle\windows\stage).Path
           wix build bundle\windows\wix\Product.wxs `
+            -ext WixToolset.UI.wixext/5.0.2 `
             -d "ProductVersion=${{ needs.build-payload.outputs.version }}" `
-            -d "PayloadDir=$payload" `
+            -d "PayloadDir=$stage" `
             -d "LauncherSource=$launcher" `
             -arch x64 `
             -out bundle\windows\out\suveren-gateway.msi
@@ -197,8 +203,10 @@ jobs:
           name: windows-payload
           path: kit/payload
 
-      - name: Install WiX v5
-        run: dotnet tool install --global wix --version 5.0.2
+      - name: Install WiX v5 (+ UI extension, for the interactive-install Finish checkbox)
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          wix extension add -g WixToolset.UI.wixext/5.0.2
 
       - name: Stage the kit (payload + WiX source + launcher + script — exactly what the release zip ships)
         shell: pwsh
@@ -206,6 +214,7 @@ jobs:
           Copy-Item -Recurse bundle\windows\wix kit\wix
           Copy-Item bundle\windows\launcher.cmd kit\launcher.cmd
           Copy-Item bundle\windows\build-signed.ps1 kit\build-signed.ps1
+          Copy-Item bundle\windows\stage-msi.ps1 kit\stage-msi.ps1
 
       - name: Create a self-signed code-signing certificate and trust it on THIS runner only
         id: cert
@@ -294,9 +303,17 @@ jobs:
   # ─── The real install path: msiexec, then launcher + service, with npm
   #     unreachable — no network dependency anywhere in the started gateway. ─
   install-test:
-    name: install test
+    name: install test (${{ matrix.runner }})
     needs: build-msi
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # windows-11-arm: the real case this whole job exists to fix was
+        # found on ARM Windows (UTM VM) — x64 under Windows' built-in
+        # emulation, not a native ARM build (there isn't one; Node/
+        # better-sqlite3 in this payload are x64 prebuilts).
+        runner: [windows-latest, windows-11-arm]
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     # Job-level, not step-level: each step in a workflow is its OWN fresh
     # pwsh process, so a `$env:X = …` assignment inside one step's script is
@@ -307,7 +324,7 @@ jobs:
     # Deliberately NO SUVEREN_DATA_DIR override: this test leaves the
     # interactive gateway RUNNING into the final `msiexec /x` (see "Uninstall
     # the msi" below), to prove the uninstall-cleanup custom action
-    # (StopGatewayOnUninstall in Product.wxs) actually stops it before files
+    # (StopGateway in Product.wxs) actually stops it before files
     # are removed. That custom action runs with no inherited job env — it
     # resolves the DEFAULT data dir, same as any real end user who never sets
     # this — so the gateway it needs to find and stop must use that same
@@ -325,6 +342,20 @@ jobs:
         with:
           name: windows-msi-unsigned
           path: msi
+
+      - name: Use the classic console host (so CI can see console windows at all)
+        shell: pwsh
+        run: |
+          # The runner image defaults to Windows Terminal, which opens new console programs as TABS
+          # in an existing window — invisible to a top-level-window check. Switch delegation to
+          # conhost so every console gets its own window the check can attribute. The product
+          # must stay windowless under either setting; this only makes CI able to observe it.
+          $k = 'HKCU:\Console\%%Startup'
+          New-Item -Path $k -Force | Out-Null
+          $conhost = '{B23D10C0-E52E-411E-9D5B-C09FDF709C7D}'
+          Set-ItemProperty -Path $k -Name DelegationConsole -Value $conhost
+          Set-ItemProperty -Path $k -Name DelegationTerminal -Value $conhost
+          Get-ItemProperty -Path $k | Select-Object DelegationConsole, DelegationTerminal | Format-List | Out-String | Write-Host
 
       - name: Install (per-user, silent — the Intune path)
         shell: pwsh
@@ -374,6 +405,137 @@ jobs:
           Get-ChildItem "$root\integrations\node_modules\.bin" -ErrorAction SilentlyContinue |
             Where-Object { $_.Name -match '^(crm|records|erp)-mcp' } |
             ForEach-Object { Write-Host "  $($_.Name)" }
+
+      - name: A silent install ends with the gateway actually running (StartGatewayAfterInstall)
+        shell: pwsh
+        run: |
+          # The msi used to only ever place files — nothing started the
+          # gateway or told the user it wasn't running, a real gap found on
+          # a Windows 11 VM. This is the commit custom action's job, with NO
+          # manual `start`/`service install` call from this test — default
+          # ports, since nothing here overrides them.
+          $targets = @('crm', 'records', 'erp')
+          $deadline = (Get-Date).AddSeconds(240)
+          $body = $null
+          while ((Get-Date) -lt $deadline) {
+            try {
+              $cp = Invoke-RestMethod -Uri 'http://localhost:3400/health' -TimeoutSec 5
+              if ($cp.status -eq 'ok') {
+                $body = Invoke-RestMethod -Uri 'http://localhost:3430/health' -TimeoutSec 5
+                $statuses = $body.integrations | Where-Object { $targets -contains $_.id }
+                $allUp = ($statuses.Count -eq $targets.Count) -and ($statuses | ForEach-Object { $_.running -and $_.toolCount -gt 0 }) -notcontains $false
+                if ($allUp) { break }
+              }
+            } catch {}
+            Start-Sleep -Seconds 3
+          }
+          if (-not $body) { throw "gateway never came up on its own after a silent install — StartGatewayAfterInstall did not work" }
+          Write-Host ($body | ConvertTo-Json -Depth 5)
+          foreach ($id in $targets) {
+            $entry = $body.integrations | Where-Object { $_.id -eq $id }
+            if (-not $entry -or -not $entry.running -or $entry.toolCount -le 0) {
+              throw "fresh-install: $id not running with tools after a silent install — nobody ran start or logged in"
+            }
+          }
+          Write-Host "confirmed: gateway came up on its own after a SILENT install, connectors running offline, with no manual start/service-install call."
+
+          & bundle\windows\ci-assert-no-console-window.ps1   # while the gateway is still running
+          # Clean up before the rest of this job's scenarios run — they
+          # assume the default ports and the scheduled task's run state are
+          # free/fresh.
+          schtasks /End /TN Suveren 2>$null | Out-Null
+          Start-Sleep -Seconds 1
+          Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
+            Where-Object { $_.CommandLine -like '*gateway\server.js*' } |
+            ForEach-Object { taskkill /PID $_.ProcessId /T /F 2>$null }
+          $global:LASTEXITCODE = 0  # taskkill on an already-exited child is not a failure
+          Start-Sleep -Seconds 1
+
+      - name: Control — the window check DOES see a visible gateway console (else it proves nothing)
+        shell: pwsh
+        run: |
+          # Deliberately open a normal, visible console running the bundled node.exe from the
+          # install dir. The checker must FAIL on it; if it passes, it is blind on this runner.
+          $node = "$env:LOCALAPPDATA\Programs\Suveren\node\node.exe"
+          $p = Start-Process -FilePath $node -ArgumentList '-e "setInterval(function(){}, 1000)"' -WindowStyle Normal -PassThru
+          Start-Sleep -Seconds 3
+          if ($p.HasExited) { throw "control setup broken: the deliberately started node.exe exited (code $($p.ExitCode))" }
+          $failedAsExpected = $false
+          try { & bundle\windows\ci-assert-no-console-window.ps1 -Diagnose } catch { $failedAsExpected = $true; Write-Host "checker failed as expected: $($_.Exception.Message)" }
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          $global:LASTEXITCODE = 0
+          if (-not $failedAsExpected) { throw "the window check did NOT detect a deliberately visible gateway console — it cannot be trusted on this runner" }
+          Write-Host "control passed: the window check detects a visible gateway console window."
+
+      - name: Finish-dialog checkbox's underlying action, run non-interactively (the dialog itself is NOT tested) + window visibility
+        shell: pwsh
+        run: |
+          # The ExitDialog "Launch Suveren Gateway" checkbox can't be
+          # clicked in CI. This runs the EXACT command
+          # LaunchGatewayAfterInstall itself runs (see Product.wxs) —
+          # proving the action works — NOT the interactive dialog, which
+          # remains genuinely untested here.
+          $launcher = "$env:LOCALAPPDATA\Programs\Suveren\suveren-gateway.cmd"
+          # open-ui runs in THIS step's environment, so the gateway it starts listens on the job's
+          # SUVEREN_CP_PORT/SUVEREN_MCP_PORT (15400/15430), not the defaults the scheduled task uses.
+          # Exactly the Finish checkbox's command (LaunchGatewayAfterInstall in Product.wxs).
+          Start-Process -FilePath conhost.exe -ArgumentList "--headless cmd.exe /c `"`"$launcher`" open-ui`""
+
+          $targets = @('crm', 'records', 'erp')
+          $deadline = (Get-Date).AddSeconds(240)
+          $body = $null
+          while ((Get-Date) -lt $deadline) {
+            try {
+              $body = Invoke-RestMethod -Uri "http://localhost:$env:SUVEREN_MCP_PORT/health" -TimeoutSec 5
+              $statuses = $body.integrations | Where-Object { $targets -contains $_.id }
+              $allUp = ($statuses.Count -eq $targets.Count) -and ($statuses | ForEach-Object { $_.running -and $_.toolCount -gt 0 }) -notcontains $false
+              if ($allUp) { break }
+            } catch {}
+            Start-Sleep -Seconds 3
+          }
+          if (-not $body) { throw "open-ui (the Finish checkbox's own action) did not bring the gateway up" }
+          Write-Host "confirmed: open-ui's underlying command works — service install + start + (a browser would open interactively)."
+
+          # Best-effort window-visibility check (PR #47: windowsHide on the
+          # detached spawn + Shortcut Show="minimized"). This can only
+          # observe what THIS runner's session reports; it is evidence, not
+          # a guarantee the real interactive Start-Menu path never shows a
+          # window on every possible Windows configuration.
+          $root = "$env:LOCALAPPDATA\Programs\Suveren"
+          $gwProcs = Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
+            Where-Object { $_.ExecutablePath -and $_.ExecutablePath.ToLower().StartsWith("$($root.ToLower())\") }
+          $visible = foreach ($p in $gwProcs) {
+            $proc = Get-Process -Id $p.ProcessId -ErrorAction SilentlyContinue
+            if ($proc -and $proc.MainWindowHandle -ne 0) { $proc }
+          }
+          if ($visible) {
+            foreach ($v in $visible) {
+              $w = Get-CimInstance Win32_Process -Filter "ProcessId=$($v.Id)"
+              $parent = Get-CimInstance Win32_Process -Filter "ProcessId=$($w.ParentProcessId)" -ErrorAction SilentlyContinue
+              Write-Host "VISIBLE pid=$($v.Id) title='$($v.MainWindowTitle)' cmd=$($w.CommandLine)"
+              Write-Host "        parent pid=$($w.ParentProcessId) name=$($parent.Name) cmd=$($parent.CommandLine)"
+            }
+            throw "gateway process(es) have a VISIBLE main window: $($visible.Id -join ', ') — PR #47's windowsHide may have regressed"
+          }
+          Write-Host "confirmed (best effort): none of $($gwProcs.Count) gateway node.exe process(es) report a visible main window (MainWindowHandle -eq 0 for all)."
+          $conhost = Get-CimInstance Win32_Process -Filter "Name='conhost.exe' OR Name='cmd.exe'"
+          if ($conhost) {
+            Write-Host "::warning::$($conhost.Count) conhost.exe/cmd.exe process(es) present on this runner — cannot reliably attribute them to the gateway tree vs. this very CI step's own `cmd.exe /c start` invocation without deeper inspection; NOT treated as a failure. See step name: this is a best-effort signal, not proof for every real machine."
+          } else {
+            Write-Host "confirmed: no conhost.exe/cmd.exe process remains at all."
+          }
+
+          $deadline = (Get-Date).AddSeconds(30)  # open-ui's own minimized cmd exits once the gateway serves
+          while ((Get-Date) -lt $deadline -and (Get-CimInstance Win32_Process -Filter "Name='cmd.exe'" | Where-Object { $_.CommandLine -like '*suveren-gateway.cmd*open-ui*' -and $_.CommandLine -notlike '* /K *' })) { Start-Sleep -Seconds 1 }
+          & bundle\windows\ci-assert-no-console-window.ps1   # while the gateway is still running
+          # Clean up before the rest of this job's scenarios run.
+          schtasks /End /TN Suveren 2>$null | Out-Null
+          Start-Sleep -Seconds 1
+          Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
+            Where-Object { $_.CommandLine -like '*gateway\server.js*' } |
+            ForEach-Object { taskkill /PID $_.ProcessId /T /F 2>$null }
+          $global:LASTEXITCODE = 0  # taskkill on an already-exited child is not a failure
+          Start-Sleep -Seconds 1
 
       - name: HKCU\Environment is untouched — the installer must not be account-wide
         shell: pwsh
@@ -451,10 +613,10 @@ jobs:
           # SUVEREN_INSTALL_METHOD=managed since PR #36 (merged to main) —
           # the launcher sets it, so this is now a hard requirement, not a
           # warning.
-          if ($body.installMethod -ne 'managed') {
-            throw "installMethod is '$($body.installMethod)', expected 'managed' for the interactively-started instance"
+          if ($body.installMethod -ne 'msi') {
+            throw "installMethod is '$($body.installMethod)', expected 'msi' (Windows installer marker) for the interactively-started instance"
           }
-          Write-Host "installMethod: managed (confirmed — interactive instance)"
+          Write-Host "installMethod: msi (confirmed — interactive instance)"
 
           $mcpDeadline = (Get-Date).AddSeconds(240)
           $mcpBody = $null
@@ -490,14 +652,11 @@ jobs:
           # autostart path without ever touching HKCU\Environment.
           $action = $t.Actions[0]
           Write-Host "action: $($action.Execute) $($action.Arguments)"
+          # Runs headless: conhost.exe --headless "<launcher>" run — <Hidden> alone does not hide a console window.
           $expectedLauncher = "$env:LOCALAPPDATA\Programs\Suveren\suveren-gateway.cmd"
-          if ($action.Execute -ne $expectedLauncher) {
-            throw "scheduled task's Command is '$($action.Execute)', expected the launcher '$expectedLauncher'"
-          }
-          if ($action.Arguments -ne 'run') {
-            throw "scheduled task's Arguments is '$($action.Arguments)', expected 'run'"
-          }
-          Write-Host "scheduled task command confirmed: launcher + 'run'"
+          if ($action.Execute -notlike '*\System32\conhost.exe') { throw "task Command is '$($action.Execute)', expected conhost.exe (headless)" }
+          if ($action.Arguments -ne "--headless `"$expectedLauncher`" run") { throw "task Arguments is '$($action.Arguments)', expected --headless `"$expectedLauncher`" run" }
+          Write-Host "scheduled task command confirmed: conhost --headless + launcher + 'run'"
 
       - name: Run the scheduled task once — exercises the autostart path without a reboot
         shell: pwsh
@@ -522,10 +681,10 @@ jobs:
             } catch { Start-Sleep -Seconds 2 }
           }
           if (-not $cpBody) { throw "control plane /health never answered within 120s (scheduled-task instance)" }
-          if ($cpBody.installMethod -ne 'managed') {
-            throw "installMethod is '$($cpBody.installMethod)', expected 'managed' for the scheduled-task-started instance"
+          if ($cpBody.installMethod -ne 'msi') {
+            throw "installMethod is '$($cpBody.installMethod)', expected 'msi' (Windows installer marker) for the scheduled-task-started instance"
           }
-          Write-Host "installMethod: managed (confirmed — scheduled-task instance)"
+          Write-Host "installMethod: msi (confirmed — scheduled-task instance)"
 
           $mcpHealth = 'http://localhost:3430/health'
           $deadline = (Get-Date).AddSeconds(240)
@@ -612,7 +771,7 @@ jobs:
           # interactive instance from "Start via the installed launcher" is
           # still running. This is the real IT scenario — Intune/msiexec
           # uninstalls directly, with no chance to run our CLI first — and
-          # it's what StopGatewayOnUninstall / RemoveScheduledTaskOnUninstall
+          # it's what StopGateway / RemoveScheduledTaskOnUninstall
           # (Product.wxs) exist to handle: release the gateway's own file
           # locks before Windows Installer removes them, and clean up the
           # scheduled task re-registered in the previous step.
@@ -659,6 +818,290 @@ jobs:
             }
           $global:LASTEXITCODE = 0
 
+  # ─── The scenario that actually hangs on a real machine: upgrading over a
+  #     RUNNING gateway (started by the scheduled task, not the CLI's own
+  #     `start`), and uninstalling the same way. Separate job, its own two
+  #     msis built from the one shared payload (just a different
+  #     -d ProductVersion — the payload content doesn't need to differ for
+  #     what this proves). ─────────────────────────────────────────────────
+  upgrade-test:
+    name: upgrade + uninstall (task-started gateway, ${{ matrix.runner }})
+    needs: build-payload
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-latest, windows-11-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    env:
+      SUVEREN_INTERNAL_SECRET: windows-upgrade-test-internal-secret
+      # Points at nothing — the gateway must never need it, before OR after
+      # the upgrade.
+      npm_config_registry: 'http://127.0.0.1:9'
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-payload
+          path: bundle/windows/payload
+
+      - name: Install WiX v5 (+ UI extension, for the interactive-install Finish checkbox)
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          wix extension add -g WixToolset.UI.wixext/5.0.2
+
+      - name: Compute old/new versions
+        id: versions
+        shell: bash
+        run: |
+          set -e
+          OLD="${{ needs.build-payload.outputs.version }}"
+          IFS='.' read -r MA MI PA <<< "$OLD"
+          NEW="$MA.$MI.$((PA + 1))"
+          echo "old=$OLD" >> "$GITHUB_OUTPUT"
+          echo "new=$NEW" >> "$GITHUB_OUTPUT"
+          echo "old: $OLD -> new: $NEW"
+
+      - name: wix build — old and new msi, same payload
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path bundle\windows\out | Out-Null
+          $payload = (Resolve-Path bundle\windows\payload).Path
+          $launcher = (Resolve-Path bundle\windows\launcher.cmd).Path
+          # NEW is staged from the payload as is. OLD gets one extra file in its runtime.zip, so
+          # the two archives (and stamps) differ — after the upgrade that file must be GONE,
+          # proving the launcher re-unpacked the new archive instead of keeping the old tree.
+          & bundle\windows\stage-msi.ps1 -PayloadDir $payload -StageDir bundle\windows\stage-new
+          Set-Content -Path "$payload\integrations\old-build-marker.txt" -Value 'old'
+          & bundle\windows\stage-msi.ps1 -PayloadDir $payload -StageDir bundle\windows\stage-old
+          Remove-Item "$payload\integrations\old-build-marker.txt"
+          foreach ($pair in @(
+            @{ Version = "${{ steps.versions.outputs.old }}"; Out = 'old.msi'; Stage = 'stage-old' },
+            @{ Version = "${{ steps.versions.outputs.new }}"; Out = 'new.msi'; Stage = 'stage-new' }
+          )) {
+            $stage = (Resolve-Path "bundle\windows\$($pair.Stage)").Path
+            wix build bundle\windows\wix\Product.wxs `
+              -ext WixToolset.UI.wixext/5.0.2 `
+              -d "ProductVersion=$($pair.Version)" `
+              -d "PayloadDir=$stage" `
+              -d "LauncherSource=$launcher" `
+              -arch x64 `
+              -out "bundle\windows\out\$($pair.Out)"
+            if ($LASTEXITCODE -ne 0) { throw "wix build failed for $($pair.Out) ($($pair.Version))" }
+          }
+
+      - name: Use the classic console host (so CI can see console windows at all)
+        shell: pwsh
+        run: |
+          # The runner image defaults to Windows Terminal, which opens new console programs as TABS
+          # in an existing window — invisible to a top-level-window check. Switch delegation to
+          # conhost so every console gets its own window the check can attribute. The product
+          # must stay windowless under either setting; this only makes CI able to observe it.
+          $k = 'HKCU:\Console\%%Startup'
+          New-Item -Path $k -Force | Out-Null
+          $conhost = '{B23D10C0-E52E-411E-9D5B-C09FDF709C7D}'
+          Set-ItemProperty -Path $k -Name DelegationConsole -Value $conhost
+          Set-ItemProperty -Path $k -Name DelegationTerminal -Value $conhost
+          Get-ItemProperty -Path $k | Select-Object DelegationConsole, DelegationTerminal | Format-List | Out-String | Write-Host
+
+      - name: Install OLD — service install, start via the scheduled task
+        shell: pwsh
+        run: |
+          $msi = (Resolve-Path bundle\windows\out\old.msi).Path
+          $log = "$env:RUNNER_TEMP\install-old.log"
+          $p = Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /qn /norestart /l*v `"$log`"" -Wait -PassThru
+          if ($p.ExitCode -ne 0) {
+            Write-Host "::group::install-old log"; Get-Content $log; Write-Host "::endgroup::"
+            throw "msiexec /i (old) exited $($p.ExitCode)"
+          }
+
+          & "$env:LOCALAPPDATA\Programs\Suveren\suveren-gateway.cmd" service install
+          if ($LASTEXITCODE -ne 0) { throw "service install exited $LASTEXITCODE" }
+
+          schtasks /Run /TN Suveren
+          if ($LASTEXITCODE -ne 0) { throw "schtasks /Run exited $LASTEXITCODE" }
+
+      - name: Wait for the task-started gateway (OLD) — default ports, no CLI involved
+        shell: pwsh
+        run: |
+          $targets = @('crm', 'records', 'erp')
+          $deadline = (Get-Date).AddSeconds(240)
+          $body = $null
+          while ((Get-Date) -lt $deadline) {
+            try {
+              $body = Invoke-RestMethod -Uri 'http://localhost:3430/health' -TimeoutSec 5
+              $statuses = $body.integrations | Where-Object { $targets -contains $_.id }
+              $allUp = ($statuses.Count -eq $targets.Count) -and ($statuses | ForEach-Object { $_.running -and $_.toolCount -gt 0 }) -notcontains $false
+              if ($allUp) { break }
+            } catch {}
+            Start-Sleep -Seconds 3
+          }
+          Write-Host ($body | ConvertTo-Json -Depth 5)
+          foreach ($id in $targets) {
+            $entry = $body.integrations | Where-Object { $_.id -eq $id }
+            if (-not $entry -or -not $entry.running -or $entry.toolCount -le 0) {
+              throw "OLD: $id is not running with tools before the upgrade — nothing to prove an upgrade against"
+            }
+          }
+          Write-Host "OLD gateway confirmed running via the scheduled task, connectors up."
+
+      - name: a) Install NEW over the running OLD — this is the hang this test exists to catch
+        id: upgrade
+        shell: pwsh
+        run: |
+          $msi = (Resolve-Path bundle\windows\out\new.msi).Path
+          $log = "$env:RUNNER_TEMP\install-new-upgrade.log"
+          "log=$log" >> $env:GITHUB_OUTPUT
+          $proc = Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /qn /norestart /l*v `"$log`"" -PassThru
+
+          $timeoutMs = 5 * 60 * 1000
+          $completed = $proc.WaitForExit($timeoutMs)
+          if (-not $completed) {
+            Write-Host "::error::msiexec /i (upgrade) did not finish within 5 minutes — this is the real hang ('Please wait while Windows configures Suveren Gateway')"
+            try { $proc.Kill() } catch {}
+            throw "upgrade install timed out"
+          }
+          if ($proc.ExitCode -ne 0) {
+            Write-Host "::group::upgrade install log"; Get-Content $log; Write-Host "::endgroup::"
+            throw "msiexec /i (upgrade) exited $($proc.ExitCode)"
+          }
+          Write-Host "upgrade install completed, exit code $($proc.ExitCode)"
+
+      - name: a) Upload the upgrade install log on failure
+        if: failure() && steps.upgrade.outputs.log != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: upgrade-install-log-${{ matrix.runner }}
+          path: ${{ steps.upgrade.outputs.log }}
+          if-no-files-found: warn
+
+      - name: a) Assert exactly one product registered, at the NEW version
+        shell: pwsh
+        run: |
+          # Per-user MSI products are registered under Installer\UserData, not HKCU\...\Uninstall —
+          # ask Windows Installer itself (all contexts) instead of guessing registry paths.
+          $wi = New-Object -ComObject WindowsInstaller.Installer
+          $apps = @(
+            $wi.ProductsEx('', '', 7) | ForEach-Object {
+              [pscustomobject]@{ DisplayName = $_.InstallProperty('ProductName'); DisplayVersion = $_.InstallProperty('VersionString'); Code = $_.ProductCode() }
+            } | Where-Object { $_.DisplayName -eq 'Suveren Gateway' }
+          )
+          $apps | Format-Table -AutoSize | Out-String | Write-Host
+          if ($apps.Count -ne 1) {
+            throw "expected exactly 1 registered 'Suveren Gateway' product after the upgrade, found $($apps.Count)"
+          }
+          $expected = "${{ steps.versions.outputs.new }}"
+          if ($apps[0].DisplayVersion -ne $expected) {
+            throw "registered DisplayVersion is '$($apps[0].DisplayVersion)', expected '$expected'"
+          }
+          Write-Host "exactly one product registered, DisplayVersion $($apps[0].DisplayVersion) (confirms the files on disk are the NEW version's — MSI only replaces files when it recognizes this as the same product being upgraded)"
+
+      - name: a) Runtime re-unpacked from the NEW runtime.zip (old tree replaced)
+        shell: pwsh
+        run: |
+          $root = "$env:LOCALAPPDATA\Programs\Suveren"
+          $stamp = (Get-Content "$root\runtime.stamp" -Raw).Trim()
+          if (-not (Test-Path "$root\runtime.extracted")) { throw "runtime.extracted missing — the launcher never unpacked runtime.zip after the upgrade" }
+          $extracted = (Get-Content "$root\runtime.extracted" -Raw).Trim()
+          if ($extracted -ne $stamp) { throw "unpacked runtime ($extracted) is not the NEW archive ($stamp)" }
+          if (Test-Path "$root\integrations\old-build-marker.txt") { throw "the OLD runtime tree is still there — upgrade did not re-unpack" }
+          if (Test-Path "$root\runtime.lock") { throw "runtime.lock left behind" }
+          $msiFiles = (Get-ChildItem -Recurse -File $root | Where-Object { $_.FullName -notlike "$root\integrations\*" -and $_.FullName -notlike "$root\gateway\node_modules\*" }).Count
+          Write-Host "confirmed: runtime re-unpacked from the new archive (stamp $stamp); old tree gone; ~$msiFiles files owned by the msi."
+
+      - name: a) Assert the scheduled task survived the upgrade and still points at the launcher
+        shell: pwsh
+        run: |
+          $t = Get-ScheduledTask -TaskName 'Suveren' -ErrorAction Stop
+          $action = $t.Actions[0]
+          Write-Host "action: $($action.Execute) $($action.Arguments)"
+          # Runs headless: conhost.exe --headless "<launcher>" run — <Hidden> alone does not hide a console window.
+          $expectedLauncher = "$env:LOCALAPPDATA\Programs\Suveren\suveren-gateway.cmd"
+          if ($action.Execute -notlike '*\System32\conhost.exe') { throw "task Command is '$($action.Execute)', expected conhost.exe (headless)" }
+          if ($action.Arguments -ne "--headless `"$expectedLauncher`" run") { throw "task Arguments is '$($action.Arguments)', expected --headless `"$expectedLauncher`" run" }
+          Write-Host "scheduled task survived the upgrade, still points at the (now-upgraded) launcher."
+
+      - name: a) Assert the gateway is running again after the upgrade — RestartScheduledTaskAfterInstall
+        shell: pwsh
+        run: |
+          $targets = @('crm', 'records', 'erp')
+          $deadline = (Get-Date).AddSeconds(240)
+          $body = $null
+          while ((Get-Date) -lt $deadline) {
+            try {
+              $body = Invoke-RestMethod -Uri 'http://localhost:3430/health' -TimeoutSec 5
+              $statuses = $body.integrations | Where-Object { $targets -contains $_.id }
+              $allUp = ($statuses.Count -eq $targets.Count) -and ($statuses | ForEach-Object { $_.running -and $_.toolCount -gt 0 }) -notcontains $false
+              if ($allUp) { break }
+            } catch {}
+            Start-Sleep -Seconds 3
+          }
+          Write-Host ($body | ConvertTo-Json -Depth 5)
+          foreach ($id in $targets) {
+            $entry = $body.integrations | Where-Object { $_.id -eq $id }
+            if (-not $entry) { throw "NEW: $id not in the integration registry after the upgrade — the gateway did not come back on its own" }
+            if (-not $entry.running) { throw "NEW: $id registered but not running after the upgrade ($($entry.error))" }
+            if ($entry.toolCount -le 0) { throw "NEW: $id running but discovered 0 tools after the upgrade" }
+          }
+          Write-Host "gateway came back on its own after the upgrade (RestartScheduledTaskAfterInstall), connectors up offline — nobody had to log out and back in."
+
+      - name: No visible window belongs to the gateway (console hosts included) — after the upgrade restarted it
+        shell: pwsh
+        run: |
+          & bundle\windows\ci-assert-no-console-window.ps1
+
+      - name: b) Uninstall while the task-started gateway is running — the case the old uninstall test never covered
+        id: uninstall
+        shell: pwsh
+        run: |
+          $msi = (Resolve-Path bundle\windows\out\new.msi).Path
+          $log = "$env:RUNNER_TEMP\uninstall.log"
+          "log=$log" >> $env:GITHUB_OUTPUT
+          $proc = Start-Process msiexec.exe -ArgumentList "/x `"$msi`" /qn /norestart /l*v `"$log`"" -PassThru
+
+          $timeoutMs = 5 * 60 * 1000
+          $completed = $proc.WaitForExit($timeoutMs)
+          if (-not $completed) {
+            Write-Host "::error::msiexec /x did not finish within 5 minutes"
+            try { $proc.Kill() } catch {}
+            throw "uninstall timed out"
+          }
+          if ($proc.ExitCode -ne 0) {
+            Write-Host "::group::uninstall log"; Get-Content $log; Write-Host "::endgroup::"
+            throw "msiexec /x exited $($proc.ExitCode)"
+          }
+
+          $root = "$env:LOCALAPPDATA\Programs\Suveren"
+          if (Test-Path $root) { throw "install dir still present after uninstall: $root" }
+          $t = Get-ScheduledTask -TaskName 'Suveren' -ErrorAction SilentlyContinue
+          if ($t) { throw "scheduled task 'Suveren' still present after uninstall" }
+          $leftover = Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
+            Where-Object { $_.ExecutablePath -and $_.ExecutablePath.ToLower().StartsWith("$($root.ToLower())\") }
+          if ($leftover) { throw "node.exe still running under the (now-deleted) install dir: $($leftover.ProcessId -join ', ')" }
+
+          Write-Host "clean: uninstalled a RUNNING task-started gateway, dir gone, task gone, no leftover node.exe under the install dir."
+
+      - name: b) Upload the uninstall log on failure
+        if: failure() && steps.uninstall.outputs.log != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: upgrade-test-uninstall-log-${{ matrix.runner }}
+          path: ${{ steps.uninstall.outputs.log }}
+          if-no-files-found: warn
+
+      - name: Final cleanup — kill any lingering gateway process (best effort)
+        if: always()
+        shell: pwsh
+        run: |
+          Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
+            Where-Object { $_.CommandLine -like '*Suveren*gateway\server.js*' } |
+            ForEach-Object {
+              Write-Host "cleanup: killing pid $($_.ProcessId)"
+              taskkill /PID $_.ProcessId /T /F 2>$null
+            }
+          $global:LASTEXITCODE = 0
+
   # ─── Attach unsigned msi + signing kit to the GitHub Release for the tag.
   #     Tag pushes and manual dispatch only — never on a PR. ─────────────────
   release:
@@ -668,7 +1111,7 @@ jobs:
     # from a branch without a tag (see bundle/windows/* development), and
     # must never have a side effect of creating a release or a tag.
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build-payload, build-msi, install-test, prove-signing-kit]
+    needs: [build-payload, build-msi, install-test, prove-signing-kit, upgrade-test]
     runs-on: windows-latest
     timeout-minutes: 15
     permissions:
@@ -701,6 +1144,7 @@ jobs:
           Copy-Item -Recurse bundle\windows\wix release\kit\wix
           Copy-Item bundle\windows\launcher.cmd release\kit\launcher.cmd
           Copy-Item bundle\windows\build-signed.ps1 release\kit\build-signed.ps1
+          Copy-Item bundle\windows\stage-msi.ps1 release\kit\stage-msi.ps1
           Copy-Item -Recurse release\payload release\kit\payload
 
           $kitZip = "release\out\suveren-gateway-$version-windows-signing-kit.zip"

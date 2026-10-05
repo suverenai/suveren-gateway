@@ -17,6 +17,7 @@ const HOW_WE_CHECK: Record<string, string> = {
   // the update banner's copy differs for a managed install, not how this
   // checks.
   managed: 'Checking npm for new releases — managed by your IT',
+  msi: 'Checking for new releases — update with the Windows installer',
 };
 
 export function VersionCard() {
