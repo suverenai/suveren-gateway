@@ -11,7 +11,7 @@
   the gateway: an executable under the install dir, or the installer's
   launcher.cmd. Not shipped in the installer or the signing kit.
 #>
-param([string]$InstallRoot = "$env:LOCALAPPDATA\Programs\Suveren")
+param([string]$InstallRoot = "$env:LOCALAPPDATA\Programs\Suveren", [switch]$Diagnose)
 $ErrorActionPreference = 'Stop'
 
 Add-Type -TypeDefinition @"
@@ -65,6 +65,21 @@ $offending = foreach ($w in $windows) {
 }
 
 Write-Host "checked $($windows.Count) visible top-level window(s)"
+if ($Diagnose) {
+  Write-Host "session: $([System.Diagnostics.Process]::GetCurrentProcess().SessionId) user: $env:USERNAME interactive: $([Environment]::UserInteractive)"
+  foreach ($w in $windows) {
+    $windowPid, $title = $w -split '\|', 2
+    $o = $procs[[int]$windowPid]
+    Write-Host ("  window pid={0} owner={1} parent={2} exe={3} title='{4}'" -f $windowPid, $o.Name, $o.ParentProcessId, $o.ExecutablePath, $title)
+  }
+  Get-Process -Name node -ErrorAction SilentlyContinue | ForEach-Object {
+    $c = $procs[[int]$_.Id]
+    Write-Host ("  node pid={0} session={1} mainWindow={2} title='{3}' exe={4} parent={5}" -f $_.Id, $_.SessionId, $_.MainWindowHandle, $_.MainWindowTitle, $_.Path, $c.ParentProcessId)
+  }
+  Get-CimInstance Win32_Process -Filter "Name='conhost.exe' OR Name='OpenConsole.exe'" | ForEach-Object {
+    Write-Host ("  host {0} pid={1} parent={2} session={3} cmd={4}" -f $_.Name, $_.ProcessId, $_.ParentProcessId, $_.SessionId, $_.CommandLine)
+  }
+}
 if ($offending) {
   $offending | ForEach-Object { Write-Host "VISIBLE GATEWAY WINDOW: $_" }
   throw "$(@($offending).Count) visible window(s) belong to the gateway — it must run without any window"
