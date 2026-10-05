@@ -349,6 +349,49 @@ export async function getLocalEvidence(): Promise<Record<string, unknown>> {
   return res.json() as Promise<Record<string, unknown>>;
 }
 
+// ─── Report (evidence-backed reports) ────────────────────────────────────
+
+/**
+ * Fetch the one current report, already verified — or `{ report: null }` if
+ * the AI has not written one yet. Throws `MCP_LOCKED` (checked by the route)
+ * when the MCP server reports the vault is locked, so the route can answer
+ * 503 rather than a generic failure.
+ */
+export class McpLockedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'McpLockedError';
+  }
+}
+
+async function reportRequest(path: string, init?: RequestInit): Promise<unknown> {
+  const res = await fetch(`${MCP_BASE}${path}`, { ...init, headers: internalHeaders() });
+  if (res.status === 503) {
+    const err = await res.json().catch(() => ({ error: 'Vault locked' }));
+    throw new McpLockedError((err as { error?: string }).error ?? 'Vault locked');
+  }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+    throw new Error((err as { error?: string }).error ?? `Request to ${path} failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function getReport(): Promise<unknown> {
+  return reportRequest('/internal/report');
+}
+
+export async function saveReport(html: string): Promise<unknown> {
+  return reportRequest('/internal/report', {
+    method: 'POST',
+    body: JSON.stringify({ html }),
+  });
+}
+
+export async function recheckReport(): Promise<unknown> {
+  return reportRequest('/internal/report/recheck', { method: 'POST' });
+}
+
 export async function getMcpHealth(): Promise<unknown> {
   const res = await fetch(`${MCP_BASE}/health`);
   if (!res.ok) throw new Error('MCP server unreachable');

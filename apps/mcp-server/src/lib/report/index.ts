@@ -8,4 +8,8 @@ export { sanitizeReportHtml } from './sanitize';
 export { parseElements, type ParsedElement } from './parse-elements';
 export { createConnectorExportRunner, ConnectorExportError, type ConnectorExportConfig } from './connector-export';
 export { METRIC_KINDS, type MetricKind } from './metric-resolvers';
+export { ReportStore, type StoredReport } from './report-store';
+export { renderReportHtml, escapeHtml, DRAWN_ELEMENT_STYLES } from './render-report';
+export { resolveTicketElement, resolveApprovalElement, resolveMandateElement } from './ticket-resolvers';
+export { buildTicketDetails, type TicketDetail } from './ticket-details';
 export * from './types';

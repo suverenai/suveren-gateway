@@ -22,7 +22,9 @@ import { createMcpServer } from '../src/index';
 import { verifyGateContentHashes } from '../src/lib/gate-content';
 import type { GateContent } from '../src/lib/gate-store';
 import { IntegrationRegistry, type IntegrationConfig } from '../src/lib/integration-registry';
-import { IntegrationManager } from '../src/lib/integration-manager';
+import { IntegrationManager, getIntegrationsBinDir } from '../src/lib/integration-manager';
+import { createConnectorExportRunner, renderReportHtml, buildTicketDetails } from '../src/lib/report';
+import type { ReportSources } from '../src/lib/report';
 import { loadProfiles } from '../src/lib/profile-loader';
 import { loadManifests, getAllManifests, getManifest } from '../src/lib/manifest-loader';
 import { buildMandateBrief } from '../src/lib/mandate-brief';
@@ -55,6 +57,15 @@ setAsBaseUrl(spUrl);
 // ─── Shared state (one instance for all connections) ───────────────────────
 
 const state = new SharedState(spUrl, undefined, dataDir);
+
+// What verifyReport (via ReportStore) reads evidence from: the local receipt
+// archive, and each simulator's own `export` CLI — same bin dir / data dir
+// integration-manager.ts uses to spawn these connectors as MCP servers, so
+// `<bin> export` reads the SAME SQLite file the live connector writes to.
+const reportSources: ReportSources = {
+  archive: state.receiptArchive,
+  runExport: createConnectorExportRunner({ integrationsBinDir: getIntegrationsBinDir(), dataDir }),
+};
 
 // ─── Re-pair when the Authority Server URL changes ──────────────────────
 //
@@ -201,7 +212,8 @@ app.post('/internal/configure', internalOnly, (req: Request, res: Response) => {
     state.gateStore.setVaultKey(key);
     state.denialLog.setVaultKey(key);
     state.receiptArchive.setVaultKey(key);
-    console.error('[Suveren MCP] Vault key configured — gate store + denial log + receipt archive encryption active');
+    state.reportStore.setVaultKey(key);
+    console.error('[Suveren MCP] Vault key configured — gate store + denial log + receipt archive + report store encryption active');
   }
 
   if (apiKey) {
@@ -717,6 +729,84 @@ app.get('/internal/evidence', internalOnly, (_req: Request, res: Response) => {
     authorizations,
     gates: state.gateStore.getAll(),
   });
+});
+
+// ─── Report (evidence-backed reports, work-plan "evidence-backed reports") ──
+//
+// ONE current report, vault-encrypted like the stores above (report-store.ts).
+// GET returns the already-verified model from the last save/recheck — never
+// re-verifies on read (that would hide when a check actually ran from the
+// UI's "checked HH:MM" status). The save and recheck routes are deliberately
+// generic (take/return the stored report + element render) rather than
+// AI-tool-shaped: the AI-facing save tool is a later step (R4, out of scope
+// here) and will call the SAME store, not duplicate this logic.
+
+/**
+ * Shared response shape for GET/POST /internal/report and /internal/report/recheck
+ * — same fields every time so the control-plane proxy (and the UI) have one
+ * shape to handle regardless of which route produced it.
+ */
+async function reportResponsePayload(stored: NonNullable<ReturnType<typeof state.reportStore.getReport>>) {
+  const ticketDetails = await buildTicketDetails(state.receiptArchive, stored.result.proof.ticketsReferenced);
+  return {
+    savedAt: stored.savedAt,
+    checkedAt: stored.checkedAt,
+    renderedHtml: renderReportHtml(stored.result.html, stored.result.elements),
+    proof: stored.result.proof,
+    coverage: stored.result.coverage,
+    elements: stored.result.elements,
+    ticketDetails,
+  };
+}
+
+app.get('/internal/report', internalOnly, async (_req: Request, res: Response) => {
+  if (state.reportStore.isLocked()) {
+    res.status(503).json({ error: 'Vault locked — the report is encrypted until sign-in.' });
+    return;
+  }
+  const stored = state.reportStore.getReport();
+  if (!stored) {
+    res.json({ report: null });
+    return;
+  }
+  res.json({ report: await reportResponsePayload(stored) });
+});
+
+app.post('/internal/report', internalOnly, async (req: Request, res: Response) => {
+  if (state.reportStore.isLocked()) {
+    res.status(503).json({ error: 'Vault locked — cannot save a report until sign-in.' });
+    return;
+  }
+  const html = (req.body as { html?: unknown })?.html;
+  if (typeof html !== 'string' || !html.trim()) {
+    res.status(400).json({ error: 'Missing required field: html (non-empty string)' });
+    return;
+  }
+  try {
+    const stored = await state.reportStore.saveReport(html, reportSources);
+    res.json({ report: await reportResponsePayload(stored) });
+  } catch (err) {
+    console.error('[Suveren MCP] /internal/report save failed:', err);
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Report verification failed' });
+  }
+});
+
+app.post('/internal/report/recheck', internalOnly, async (_req: Request, res: Response) => {
+  if (state.reportStore.isLocked()) {
+    res.status(503).json({ error: 'Vault locked — cannot recheck until sign-in.' });
+    return;
+  }
+  try {
+    const stored = await state.reportStore.recheck(reportSources);
+    if (!stored) {
+      res.json({ report: null });
+      return;
+    }
+    res.json({ report: await reportResponsePayload(stored) });
+  } catch (err) {
+    console.error('[Suveren MCP] /internal/report/recheck failed:', err);
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Recheck failed' });
+  }
 });
 
 // Agent Brief preview — returns the exact string the next MCP session will
