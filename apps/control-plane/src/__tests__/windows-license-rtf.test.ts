@@ -12,8 +12,9 @@ import { buildLicenseRtf, THIRD_PARTY_NOTE } from '../../../../bundle/windows/li
 const root = join(__dirname, '../../../..');
 
 describe('Windows installer licence page', () => {
-  const license = readFileSync(join(root, 'LICENSE'), 'utf8');
-  const rtf = readFileSync(join(root, 'bundle/windows/wix/License.rtf'), 'utf8');
+  // Line endings normalised: git checks text files out with CRLF on Windows runners.
+  const license = readFileSync(join(root, 'LICENSE'), 'utf8').replace(/\r\n/g, '\n');
+  const rtf = readFileSync(join(root, 'bundle/windows/wix/License.rtf'), 'utf8').replace(/\r\n/g, '\n');
 
   it('is generated from LICENSE (run node bundle/windows/license-rtf.mjs after changing LICENSE)', () => {
     expect(rtf).toBe(buildLicenseRtf(license));
