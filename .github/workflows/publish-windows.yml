@@ -343,6 +343,20 @@ jobs:
           name: windows-msi-unsigned
           path: msi
 
+      - name: Use the classic console host (so CI can see console windows at all)
+        shell: pwsh
+        run: |
+          # The runner image defaults to Windows Terminal, which opens new console programs as TABS
+          # in an existing window — invisible to a top-level-window check. Switch delegation to
+          # conhost so every console gets its own window the check can attribute. The product
+          # must stay windowless under either setting; this only makes CI able to observe it.
+          $k = 'HKCU:\Console\%%Startup'
+          New-Item -Path $k -Force | Out-Null
+          $conhost = '{B23D10C0-E52E-411E-9D5B-C09FDF709C7D}'
+          Set-ItemProperty -Path $k -Name DelegationConsole -Value $conhost
+          Set-ItemProperty -Path $k -Name DelegationTerminal -Value $conhost
+          Get-ItemProperty -Path $k | Select-Object DelegationConsole, DelegationTerminal | Format-List | Out-String | Write-Host
+
       - name: Install (per-user, silent — the Intune path)
         shell: pwsh
         run: |
@@ -425,6 +439,7 @@ jobs:
           }
           Write-Host "confirmed: gateway came up on its own after a SILENT install, connectors running offline, with no manual start/service-install call."
 
+          & bundle\windows\ci-assert-no-console-window.ps1   # while the gateway is still running
           # Clean up before the rest of this job's scenarios run — they
           # assume the default ports and the scheduled task's run state are
           # free/fresh.
@@ -442,19 +457,15 @@ jobs:
           # Deliberately open a normal, visible console running the bundled node.exe from the
           # install dir. The checker must FAIL on it; if it passes, it is blind on this runner.
           $node = "$env:LOCALAPPDATA\Programs\Suveren\node\node.exe"
-          $p = Start-Process -FilePath $node -ArgumentList '-e', 'setTimeout(() => {}, 60000)' -WindowStyle Normal -PassThru
+          $p = Start-Process -FilePath $node -ArgumentList '-e "setInterval(function(){}, 1000)"' -WindowStyle Normal -PassThru
           Start-Sleep -Seconds 3
+          if ($p.HasExited) { throw "control setup broken: the deliberately started node.exe exited (code $($p.ExitCode))" }
           $failedAsExpected = $false
           try { & bundle\windows\ci-assert-no-console-window.ps1 -Diagnose } catch { $failedAsExpected = $true; Write-Host "checker failed as expected: $($_.Exception.Message)" }
           Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
           $global:LASTEXITCODE = 0
           if (-not $failedAsExpected) { throw "the window check did NOT detect a deliberately visible gateway console — it cannot be trusted on this runner" }
           Write-Host "control passed: the window check detects a visible gateway console window."
-
-      - name: No visible window belongs to the gateway (console hosts included) — after the silent install started it
-        shell: pwsh
-        run: |
-          & bundle\windows\ci-assert-no-console-window.ps1
 
       - name: Finish-dialog checkbox's underlying action, run non-interactively (the dialog itself is NOT tested) + window visibility
         shell: pwsh
@@ -513,6 +524,9 @@ jobs:
             Write-Host "confirmed: no conhost.exe/cmd.exe process remains at all."
           }
 
+          $deadline = (Get-Date).AddSeconds(30)  # open-ui's own minimized cmd exits once the gateway serves
+          while ((Get-Date) -lt $deadline -and (Get-CimInstance Win32_Process -Filter "Name='cmd.exe'" | Where-Object { $_.CommandLine -like '*suveren-gateway.cmd*open-ui*' })) { Start-Sleep -Seconds 1 }
+          & bundle\windows\ci-assert-no-console-window.ps1   # while the gateway is still running
           # Clean up before the rest of this job's scenarios run.
           schtasks /End /TN Suveren 2>$null | Out-Null
           Start-Sleep -Seconds 1
@@ -521,14 +535,6 @@ jobs:
             ForEach-Object { taskkill /PID $_.ProcessId /T /F 2>$null }
           $global:LASTEXITCODE = 0  # taskkill on an already-exited child is not a failure
           Start-Sleep -Seconds 1
-
-      - name: No visible window belongs to the gateway (console hosts included) — after the checkbox launch
-        shell: pwsh
-        run: |
-          # open-ui's own minimized cmd exits once the gateway serves; give it a moment.
-          $deadline = (Get-Date).AddSeconds(30)
-          while ((Get-Date) -lt $deadline -and (Get-CimInstance Win32_Process -Filter "Name='cmd.exe'" | Where-Object { $_.CommandLine -like '*suveren-gateway.cmd*open-ui*' })) { Start-Sleep -Seconds 1 }
-          & bundle\windows\ci-assert-no-console-window.ps1
 
       - name: HKCU\Environment is untouched — the installer must not be account-wide
         shell: pwsh
@@ -883,6 +889,20 @@ jobs:
               -out "bundle\windows\out\$($pair.Out)"
             if ($LASTEXITCODE -ne 0) { throw "wix build failed for $($pair.Out) ($($pair.Version))" }
           }
+
+      - name: Use the classic console host (so CI can see console windows at all)
+        shell: pwsh
+        run: |
+          # The runner image defaults to Windows Terminal, which opens new console programs as TABS
+          # in an existing window — invisible to a top-level-window check. Switch delegation to
+          # conhost so every console gets its own window the check can attribute. The product
+          # must stay windowless under either setting; this only makes CI able to observe it.
+          $k = 'HKCU:\Console\%%Startup'
+          New-Item -Path $k -Force | Out-Null
+          $conhost = '{B23D10C0-E52E-411E-9D5B-C09FDF709C7D}'
+          Set-ItemProperty -Path $k -Name DelegationConsole -Value $conhost
+          Set-ItemProperty -Path $k -Name DelegationTerminal -Value $conhost
+          Get-ItemProperty -Path $k | Select-Object DelegationConsole, DelegationTerminal | Format-List | Out-String | Write-Host
 
       - name: Install OLD — service install, start via the scheduled task
         shell: pwsh
