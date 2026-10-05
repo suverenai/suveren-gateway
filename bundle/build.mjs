@@ -88,6 +88,13 @@ if (existsSync(MANIFESTS_SRC)) {
   cpSync(MANIFESTS_SRC, join(OUT, 'content', 'integrations'), { recursive: true });
 }
 
+// Ship the default setup guides (setup__get_guide, simulation setup S10).
+// The Windows payload is built from this bundle, so it gets them too.
+const GUIDES_SRC = join(REPO_ROOT, 'content/guides');
+if (existsSync(GUIDES_SRC)) {
+  cpSync(GUIDES_SRC, join(OUT, 'content', 'guides'), { recursive: true });
+}
+
 // Ship the profile catalog. Docker `git clone`s hap-profiles into
 // /hap-profiles; for the npm bundle we resolve it from HAP_PROFILES_SRC
 // (set by CI) or a sibling checkout (local dev). Without profiles the
@@ -110,6 +117,8 @@ for (const [label, indexPath, hint] of [
     `set HAP_PROFILES_SRC or check out hap-profiles next to the gateway (looked in ${PROFILES_SRC})`],
   ['integration manifests', join(OUT, 'content', 'integrations', 'index.json'),
     `expected ${MANIFESTS_SRC} to exist in-repo`],
+  ['setup guides', join(OUT, 'content', 'guides', '1-interview.md'),
+    `expected ${GUIDES_SRC} to exist in-repo`],
 ]) {
   if (!existsSync(indexPath)) {
     throw new Error(

@@ -168,6 +168,8 @@ const UI_DIST = process.env.HAP_UI_DIST ?? join(__dirname, 'dist', 'ui');
 // win for advanced users / Docker.
 const MANIFESTS_DIR = process.env.SUVEREN_MANIFESTS_DIR ?? join(__dirname, 'content', 'integrations');
 const PROFILES_DIR = process.env.SUVEREN_PROFILES_DIR ?? join(__dirname, 'profiles');
+// Default setup guides; SUVEREN_GUIDES_DIR (an override folder) is read on top.
+const BUILTIN_GUIDES_DIR = process.env.SUVEREN_BUILTIN_GUIDES_DIR ?? join(__dirname, 'content', 'guides');
 
 const env = {
   ...process.env,
@@ -183,6 +185,7 @@ const env = {
   HAP_UI_DIST: UI_DIST,
   SUVEREN_MANIFESTS_DIR: MANIFESTS_DIR,
   SUVEREN_PROFILES_DIR: PROFILES_DIR,
+  SUVEREN_BUILTIN_GUIDES_DIR: BUILTIN_GUIDES_DIR,
   // Single shared internal secret so CP↔MCP authenticate the bridge.
   SUVEREN_INTERNAL_SECRET: process.env.SUVEREN_INTERNAL_SECRET ?? randomHex(32),
   // Simulation mode — IT policy (see lib/policy.mjs) wins UNCONDITIONALLY,
