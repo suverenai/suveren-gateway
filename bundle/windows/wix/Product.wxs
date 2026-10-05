@@ -216,7 +216,10 @@
          version of the stop logic, for IT to run by hand).
 
          StopGateway — IMMEDIATE, Before="InstallValidate", on every install, upgrade and
-         uninstall. It must run before anything touches the gateway's files: InstallValidate
+         uninstall — except inside the OLD version's removal during an upgrade
+         (UPGRADINGPRODUCTCODE): the new package already stopped everything, and running it
+         twice cost ~45 s on ARM. Get-Process (not Get-CimInstance) because the CIM query
+         alone took ~45 s under x64 emulation on Windows 11 ARM. It must run before anything touches the gateway's files: InstallValidate
          (the files-in-use check), RemoveExistingProducts (with MajorUpgrade
          Schedule="afterInstallInitialize" the OLD version is removed right after
          InstallInitialize — long before RemoveFiles, which is why the earlier
@@ -244,7 +247,7 @@
     <CustomAction
       Id="StopGateway"
       Directory="INSTALLFOLDER"
-      ExeCommand="powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command &quot;$ErrorActionPreference='SilentlyContinue'; schtasks.exe /End /TN Suveren 2&gt;$null; $p=('[INSTALLFOLDER]').TrimEnd('\'); Get-CimInstance Win32_Process -Filter 'Name=''node.exe''' | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.ToLower().StartsWith(($p+'\').ToLower()) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }&quot;"
+      ExeCommand="powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command &quot;$ErrorActionPreference='SilentlyContinue'; schtasks.exe /End /TN Suveren 2&gt;$null; $p=('[INSTALLFOLDER]').TrimEnd('\').ToLower()+'\'; Get-Process -Name node | Where-Object { $_.Path -and $_.Path.ToLower().StartsWith($p) } | Stop-Process -Force&quot;"
       Execute="immediate"
       Return="ignore" />
 
@@ -269,7 +272,7 @@
            checks for files in use, removes the old version (major upgrade, RemoveExistingProducts
            afterInstallInitialize) or removes files on uninstall. An immediate action is the only kind
            allowed outside InstallInitialize..InstallFinalize (deferred ones there fail with 2762). -->
-      <Custom Action="StopGateway" Before="InstallValidate" />
+      <Custom Action="StopGateway" Before="InstallValidate" Condition="NOT UPGRADINGPRODUCTCODE" />
       <Custom Action="RemoveScheduledTaskOnUninstall" Before="RemoveFiles" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
       <!-- Commit: runs only once the whole transaction has succeeded, but must be SCHEDULED before
            InstallFinalize (After="InstallFinalize" failed every install with error 2762). -->

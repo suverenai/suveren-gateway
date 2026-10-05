@@ -56,14 +56,16 @@ $ErrorActionPreference = 'SilentlyContinue'
 # and between the parent and its two children) but by the actual on-disk
 # path, which is identical for all of them.
 $prefix = $InstallFolder.TrimEnd('\')
-$targets = Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
+# Get-Process, not Get-CimInstance: the CIM query took ~45 s under x64 emulation
+# on Windows 11 ARM (same logic as the StopGateway custom action in Product.wxs).
+$targets = Get-Process -Name node -ErrorAction SilentlyContinue |
   Where-Object {
-    $_.ExecutablePath -and $_.ExecutablePath.StartsWith("$prefix\", [System.StringComparison]::OrdinalIgnoreCase)
+    $_.Path -and $_.Path.StartsWith("$prefix\", [System.StringComparison]::OrdinalIgnoreCase)
   }
 
 foreach ($p in $targets) {
   try {
-    Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop
+    Stop-Process -Id $p.Id -Force -ErrorAction Stop
   } catch {
     # Already gone (e.g. a child whose parent was just killed) — fine.
   }
