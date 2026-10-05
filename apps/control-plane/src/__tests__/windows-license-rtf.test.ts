@@ -30,4 +30,18 @@ describe('Windows installer licence page', () => {
     const wxs = readFileSync(join(root, 'bundle/windows/wix/Product.wxs'), 'utf8');
     expect(wxs).toContain('<WixVariable Id="WixUILicenseRtf" Value="$(sys.SOURCEFILEDIR)License.rtf" />');
   });
+
+  it('uses the Suveren images and icon, not the toolkit defaults', () => {
+    const wxs = readFileSync(join(root, 'bundle/windows/wix/Product.wxs'), 'utf8');
+    expect(wxs).toContain('<WixVariable Id="WixUIDialogBmp" Value="$(sys.SOURCEFILEDIR)dialog.bmp" />');
+    expect(wxs).toContain('<WixVariable Id="WixUIBannerBmp" Value="$(sys.SOURCEFILEDIR)banner.bmp" />');
+    expect(wxs).toContain('Icon="SuverenIcon"');
+    const size = (f: string) => {
+      const b = readFileSync(join(root, 'bundle/windows/wix', f));
+      return [b.readInt32LE(18), b.readInt32LE(22)];
+    };
+    expect(size('dialog.bmp')).toEqual([493, 312]);
+    expect(size('banner.bmp')).toEqual([493, 58]);
+    expect(readFileSync(join(root, 'bundle/windows/wix/suveren.ico')).readUInt16LE(2)).toBe(1); // ICO type
+  });
 });
