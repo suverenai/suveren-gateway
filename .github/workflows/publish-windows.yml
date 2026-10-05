@@ -440,6 +440,8 @@ jobs:
           # proving the action works — NOT the interactive dialog, which
           # remains genuinely untested here.
           $launcher = "$env:LOCALAPPDATA\Programs\Suveren\suveren-gateway.cmd"
+          # open-ui runs in THIS step's environment, so the gateway it starts listens on the job's
+          # SUVEREN_CP_PORT/SUVEREN_MCP_PORT (15400/15430), not the defaults the scheduled task uses.
           cmd.exe /c start /min "" "$launcher" open-ui
 
           $targets = @('crm', 'records', 'erp')
@@ -447,7 +449,7 @@ jobs:
           $body = $null
           while ((Get-Date) -lt $deadline) {
             try {
-              $body = Invoke-RestMethod -Uri 'http://localhost:3430/health' -TimeoutSec 5
+              $body = Invoke-RestMethod -Uri "http://localhost:$env:SUVEREN_MCP_PORT/health" -TimeoutSec 5
               $statuses = $body.integrations | Where-Object { $targets -contains $_.id }
               $allUp = ($statuses.Count -eq $targets.Count) -and ($statuses | ForEach-Object { $_.running -and $_.toolCount -gt 0 }) -notcontains $false
               if ($allUp) { break }

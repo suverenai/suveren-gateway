@@ -202,6 +202,44 @@ if (process.platform !== 'win32') {
   console.log('[build-payload] all pinned connectors verified.');
 }
 
+// ─── Prune files nothing reads at runtime ──────────────────────────────────
+//
+// Windows Installer registers, copies and (on upgrade/uninstall) removes every
+// file individually. With full node_modules trees the payload had ~41,700
+// files and an upgrade took longer than 5 minutes — the old version's file
+// removal alone ran for minutes (seen in CI). TypeScript declarations, source
+// maps and Markdown docs are never loaded by node at runtime, and the bundled
+// Node's own npm/npx/corepack are never run (the gateway is SUVEREN_OFFLINE in
+// this install). Licence/notice files are kept.
+const PRUNE_FILE = /(\.d\.(c|m)?ts|\.map|\.md|\.markdown)$/i;
+const KEEP_FILE = /^(licen[cs]e|copying|notice)/i;
+function pruneTree(dir) {
+  let removed = 0;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) removed += pruneTree(full);
+    else if (PRUNE_FILE.test(entry.name) && !KEEP_FILE.test(entry.name)) {
+      rmSync(full, { force: true });
+      removed++;
+    }
+  }
+  return removed;
+}
+function countFiles(dir) {
+  let n = 0;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    n += entry.isDirectory() ? countFiles(join(dir, entry.name)) : 1;
+  }
+  return n;
+}
+const filesBefore = countFiles(PAYLOAD_DIR);
+for (const name of ['node_modules/npm', 'node_modules/corepack', 'npm', 'npm.cmd', 'npm.ps1', 'npx', 'npx.cmd', 'npx.ps1', 'corepack', 'corepack.cmd']) {
+  rmSync(join(nodeDir, name), { recursive: true, force: true });
+}
+const prunedDocs = pruneTree(PAYLOAD_DIR);
+const filesAfter = countFiles(PAYLOAD_DIR);
+console.log(`[build-payload] pruned ${filesBefore - filesAfter} files (${prunedDocs} types/maps/docs + bundled npm/npx/corepack): ${filesBefore} → ${filesAfter}`);
+
 const installedCount = existsSync(join(integrationsOut, 'node_modules'))
   ? readdirSync(join(integrationsOut, 'node_modules')).length
   : 0;
