@@ -1,0 +1,62 @@
+/**
+ * Built-in integrations — tools the gateway implements itself (in process), governed
+ * exactly like a connector's tools.
+ *
+ * A built-in declares what a connector's manifest declares: the profile that governs
+ * it and a `toolGating` entry per tool (action type, mappings, `category: 'read'` +
+ * read gate, `hideUnlessAuthorized`). `IntegrationManager.registerBuiltin` turns it
+ * into ordinary `DiscoveredTool`s named `<id>__<tool>`, so everything downstream is
+ * shared, not duplicated: tool listing and hiding, mandate selection, the local
+ * gatekeeper, the read gate, ticket requests and `receipt_id` injection, review-mode
+ * proposals and their execution after approval (committed executor), the execution
+ * journal, and simulation-mode visibility. Only the last step differs: the manager
+ * calls `handler` instead of a child MCP client.
+ *
+ * What a built-in never goes through: npm install/pin, spawn, respawn, the
+ * integration registry (`integrations.json`), or the connector status list. It
+ * cannot be stopped; it exists for the life of the process.
+ *
+ * Simulation mode: a built-in is refused there unless it declares
+ * `simulation: true`, the same rule as a manifest's `simulation` marker — a
+ * built-in that could reach a real system must not run during a test.
+ */
+import type { ProfileToolGating } from '@hap/core';
+
+/** What a tool returns — the same shape a connector's MCP tool call returns. */
+export interface BuiltinToolResult {
+  content: Array<{ type: 'text'; text: string }>;
+  isError?: boolean;
+}
+
+export interface BuiltinTool {
+  /** Tool name without the integration prefix (the agent sees `<id>__<name>`). */
+  name: string;
+  description: string;
+  /** JSON Schema of the arguments, as a connector would publish it. */
+  inputSchema: Record<string, unknown>;
+  /**
+   * Runs the action. Called only after the call passed the gatekeeper — for a
+   * write, with a ticket (its id in `args.receipt_id` when the tool declares it);
+   * for review mode, only after a person approved it, possibly in another trigger.
+   * Throwing is reported to the agent as a failed call.
+   */
+  handler: (args: Record<string, unknown>) => Promise<BuiltinToolResult>;
+}
+
+export interface BuiltinIntegration {
+  /** Prefix of the tool names. Must not contain `__` and must not clash with a connector id. */
+  id: string;
+  name: string;
+  /** Profile id governing every tool (full id or short name, as in a manifest). */
+  profile: string;
+  /** Per-tool gating, the `toolGating` block of a manifest. A tool without an entry is refused. */
+  toolGating: ProfileToolGating;
+  /** Safe while simulation mode is on (touches no real system). Default false = refused there. */
+  simulation?: boolean;
+  tools: BuiltinTool[];
+}
+
+/** Shorthand for a successful text result. */
+export function builtinText(text: string): BuiltinToolResult {
+  return { content: [{ type: 'text', text }] };
+}
