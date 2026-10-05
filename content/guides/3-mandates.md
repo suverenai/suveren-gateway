@@ -21,6 +21,7 @@ Apply this to whatever systems are connected: the header above lists each system
 - **Limits come from the interview:** amounts, discounts, daily counts, allowed recipients. Do not invent them; ask.
 - **Intent:** write why, goal and watch-outs in the person's words, in the language the team uses. It is signed with the mandate and the working AI follows it.
 - **Teams:** in a team, the person must be an approver for the profile. `create_mandate` refuses at once if not; tell the person who can fix it (a team admin).
+- **Workspace:** without `team`, a mandate goes where the person's Delegation mandate is. If they hold Delegation mandates in several workspaces, ask which one and pass it (`team`: a team's name, or `"personal"`).
 - **Reporting:** never propose a `reporting` mandate for the working AI during a run (see **risks**).
 
 ## Example (only an example)

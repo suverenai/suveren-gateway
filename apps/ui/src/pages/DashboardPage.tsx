@@ -49,7 +49,7 @@ export function DashboardPage() {
     spClient.getArchivedMandates()
       .then(setArchivedIds)
       .catch(() => setArchivedIds([]));
-    spClient.getProposals(domain || 'owner')
+    spClient.getMyProposals(domain)
       .then(v => { setProposals(v); setProposalsReady(true); })
       .catch(() => setProposalsReady(true));
     // Phase 6: fetch approver inbox alongside the legacy domain proposals.

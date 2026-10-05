@@ -27,7 +27,7 @@ const LIMITS = {
   quote_daily_max: 10, send_daily_max: 10, order_daily_max: 0, setup_daily_max: 0,
 };
 
-function fakeAs(opts: { approvers?: string[]; attestStatus?: number; attestBody?: unknown } = {}) {
+function fakeAs(opts: { approvers?: string[]; attestStatus?: number; attestBody?: unknown; delegationIn?: string[] } = {}) {
   const calls: Array<{ method: string; path: string; body?: any }> = [];
   const profiles = [SALES, DELEGATION, { ...SALES, id: SALES.id.replace('@0.3', '@0.2'), version: '0.2' }];
   const as: CeremonyDeps['as'] = async (method, path, body) => {
@@ -35,6 +35,10 @@ function fakeAs(opts: { approvers?: string[]; attestStatus?: number; attestBody?
     if (path === '/api/groups') return { status: 200, body: { groups: [
       { id: 'g_personal', name: 'Anna', isPersonal: true },
       { id: 'g_team', name: 'Sales Vienna', isPersonal: false },
+    ] } };
+    if (path === '/api/attestations/mine?status=active') return { status: 200, body: { attestations: [
+      ...(opts.delegationIn ?? []).map((g) => ({ profileId: DELEGATION.id, groupId: g })),
+      { profileId: SALES.id, groupId: 'g_other' },
     ] } };
     if (path === '/api/profiles') return { status: 200, body: { profiles: profiles.map((p) => ({ id: p.id })) } };
     if (path.startsWith('/api/profiles/')) {
@@ -153,5 +157,30 @@ describe('approverPubkeys', () => {
     expect(approverPubkeys({ pubkeys: { u1: 'k1', u2: 'k2' } })).toEqual([{ userId: 'u1', publicKey: 'k1' }, { userId: 'u2', publicKey: 'k2' }]);
     expect(approverPubkeys({ pubkeys: {} })).toEqual([]);
     expect(approverPubkeys({ approvers: [] })).toEqual([]);
+  });
+});
+
+describe('workspace when `team` is omitted — the Delegation mandate\'s', () => {
+  it('no Delegation mandate: the personal workspace', async () => {
+    const { as } = fakeAs();
+    expect((await planMandate(REQ, deps(as).d)).groupId).toBe('g_personal');
+  });
+
+  it('Delegation mandate in a team: that team (domain = user id)', async () => {
+    const { as } = fakeAs({ delegationIn: ['g_team'], approvers: ['u_anna'] });
+    const plan = await planMandate(REQ, deps(as).d);
+    expect(plan.groupId).toBe('g_team');
+    expect(plan.domain).toBe('u_anna');
+  });
+
+  it('Delegation mandates in two workspaces: refused, naming both — the AI must say which', async () => {
+    const { as, calls } = fakeAs({ delegationIn: ['g_team', 'g_personal'], approvers: ['u_anna'] });
+    await expect(planMandate(REQ, deps(as).d)).rejects.toThrow(/several workspaces.*"Sales Vienna".*personal/);
+    expect(calls.some((c) => c.path === '/api/as/attest')).toBe(false);
+  });
+
+  it('`team: "personal"` picks the personal workspace even when a team holds the Delegation mandate', async () => {
+    const { as } = fakeAs({ delegationIn: ['g_team'] });
+    expect((await planMandate({ ...REQ, team: 'personal' }, deps(as).d)).groupId).toBe('g_personal');
   });
 });

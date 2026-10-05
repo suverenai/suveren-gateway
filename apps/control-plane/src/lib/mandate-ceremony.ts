@@ -135,18 +135,44 @@ export function approverPubkeys(body: unknown): Array<{ userId: string; publicKe
     .map(([userId, publicKey]) => ({ userId, publicKey }));
 }
 
+/**
+ * The workspace of the person's active Delegation mandate(s): that one when they
+ * all sit in one workspace, the personal workspace when there are none, and a
+ * refusal naming the workspaces when there are several — the AI must then say
+ * which (`team`), never guess.
+ */
+async function delegationWorkspace<G extends { id: string; name: string; isPersonal?: boolean }>(
+  deps: CeremonyDeps,
+  groups: G[],
+): Promise<G | undefined> {
+  const personal = groups.find(g => g.isPersonal);
+  const mine = await deps.as('GET', '/api/attestations/mine?status=active');
+  const rows = (mine.status === 200 ? mine.body?.attestations ?? [] : []) as Array<{ profileId?: string; groupId?: string }>;
+  const ids = new Set(rows.filter(r => r.profileId && shortOf(r.profileId) === 'delegation' && r.groupId).map(r => r.groupId!));
+  const found = groups.filter(g => ids.has(g.id));
+  if (found.length === 0) return personal;
+  if (found.length === 1) return found[0];
+  const names = found.map(g => (g.isPersonal ? 'the personal workspace' : `"${g.name}"`)).join(', ');
+  refuse(`Delegation mandates exist in several workspaces (${names}): say which in \`team\` — a team's name, or "personal".`);
+}
+
 /** Validate the request and resolve everything needed — creates nothing. */
 export async function planMandate(req: MandateRequest, deps: CeremonyDeps): Promise<MandatePlan> {
   const user = deps.user;
   if (!user) refuse('The gateway is not signed in.');
 
-  // Workspace: a named team, or the personal workspace.
+  // Workspace: a named team, or — unnamed — where the person's Delegation
+  // mandate lives. That mandate is the person's "AI may set up mandates for me
+  // here"; creating in another workspace sends the new mandate's review
+  // requests to a queue the person is not looking at (found 2026-10-05).
   const groupsRes = await deps.as('GET', '/api/groups');
   const groups = (groupsRes.body?.groups ?? []) as Array<{ id: string; name: string; isPersonal?: boolean; allowLazyEnable?: boolean }>;
-  const group = req.team
-    ? groups.find(g => !g.isPersonal && (g.id === req.team || g.name === req.team))
-    : groups.find(g => g.isPersonal);
-  if (!group) refuse(req.team ? `You are not a member of a team "${req.team}".` : 'No personal workspace found.');
+  const group = req.team === 'personal'
+    ? groups.find(g => g.isPersonal)
+    : req.team
+      ? groups.find(g => !g.isPersonal && (g.id === req.team || g.name === req.team))
+      : await delegationWorkspace(deps, groups);
+  if (!group) refuse(req.team && req.team !== 'personal' ? `You are not a member of a team "${req.team}".` : 'No personal workspace found.');
   const isPersonal = !!group.isPersonal;
 
   const profile = await resolveProfile(deps.as, req.profile);

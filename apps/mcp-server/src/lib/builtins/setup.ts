@@ -163,7 +163,7 @@ export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
         inputSchema: {
           type: 'object',
           properties: {
-            team: { type: 'string', description: 'Team name or id. Omit for the personal workspace.' },
+            team: { type: 'string', description: 'Team name or id, or "personal". Omit to use the workspace of your Delegation mandate.' },
             profile: { type: 'string', description: 'Profile, e.g. "sales" (newest version) or a full profile id.' },
             limits: { type: 'object', description: 'The limits (bounds) by field name, as the profile defines them.' },
             scope: { type: 'object', description: 'The scope (context) by field name, as the profile defines it.' },

@@ -44,7 +44,7 @@ function useOtherNavStatus() {
       const [aiStatus, authData, proposalData, approverProposals, briefText, archivedIds] = await Promise.all([
         spClient.getCredential('ai-config').catch(() => null),
         spClient.getMyAttestations().catch(() => null),
-        spClient.getProposals(activeDomain || 'owner').catch(() => null),
+        spClient.getMyProposals(activeDomain).catch(() => null),
         spClient.getProposalsForApprover().catch(() => null),
         spClient.getAgentContext().catch(() => ''),
         spClient.getArchivedMandates().catch(() => [] as string[]),
