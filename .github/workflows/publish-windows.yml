@@ -472,6 +472,12 @@ jobs:
             if ($proc -and $proc.MainWindowHandle -ne 0) { $proc }
           }
           if ($visible) {
+            foreach ($v in $visible) {
+              $w = Get-CimInstance Win32_Process -Filter "ProcessId=$($v.Id)"
+              $parent = Get-CimInstance Win32_Process -Filter "ProcessId=$($w.ParentProcessId)" -ErrorAction SilentlyContinue
+              Write-Host "VISIBLE pid=$($v.Id) title='$($v.MainWindowTitle)' cmd=$($w.CommandLine)"
+              Write-Host "        parent pid=$($w.ParentProcessId) name=$($parent.Name) cmd=$($parent.CommandLine)"
+            }
             throw "gateway process(es) have a VISIBLE main window: $($visible.Id -join ', ') — PR #47's windowsHide may have regressed"
           }
           Write-Host "confirmed (best effort): none of $($gwProcs.Count) gateway node.exe process(es) report a visible main window (MainWindowHandle -eq 0 for all)."
@@ -913,11 +919,15 @@ jobs:
       - name: a) Assert exactly one product registered, at the NEW version
         shell: pwsh
         run: |
+          # Per-user MSI products are registered under Installer\UserData, not HKCU\...\Uninstall —
+          # ask Windows Installer itself (all contexts) instead of guessing registry paths.
+          $wi = New-Object -ComObject WindowsInstaller.Installer
           $apps = @(
-            Get-ChildItem 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall' -ErrorAction SilentlyContinue |
-              ForEach-Object { Get-ItemProperty $_.PSPath } |
-              Where-Object { $_.DisplayName -eq 'Suveren Gateway' }
+            $wi.ProductsEx('', '', 7) | ForEach-Object {
+              [pscustomobject]@{ DisplayName = $_.InstallProperty('ProductName'); DisplayVersion = $_.InstallProperty('VersionString'); Code = $_.ProductCode() }
+            } | Where-Object { $_.DisplayName -eq 'Suveren Gateway' }
           )
+          $apps | Format-Table -AutoSize | Out-String | Write-Host
           if ($apps.Count -ne 1) {
             throw "expected exactly 1 registered 'Suveren Gateway' product after the upgrade, found $($apps.Count)"
           }
