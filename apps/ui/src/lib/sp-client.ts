@@ -308,6 +308,67 @@ export interface ReceiptPage {
   nextBefore: string | null;
 }
 
+// ─── Report (evidence-backed reports) ───────────────────────────────────────
+// Mirrors apps/mcp-server/src/lib/report/types.ts — the gateway's contract
+// for the one current report. Kept as a parallel type here (not imported
+// cross-app) the same way every other evidence shape in this file is: the UI
+// never imports server code directly.
+
+export type ReportElementStatus = 'verified' | 'unverifiable' | 'warning';
+
+export interface ReportElement {
+  id: string;
+  kind: string;
+  attrs: Record<string, string>;
+  status: ReportElementStatus;
+  reason?: string;
+  data?: Record<string, unknown>;
+}
+
+export interface ReportProof {
+  ticketsReferenced: string[];
+  signaturesValid: number;
+  recordsChecked: number;
+  unverifiableCount: number;
+  verifiedValues: Array<{ elementId: string; kind: string; summary: string }>;
+}
+
+export interface ReportCoverage {
+  loadedCases: string[];
+  coveredCases: string[];
+  missingCases: string[];
+  periodStart: number | null;
+  ticketsInPeriod: string[];
+  ticketsReferenced: string[];
+  ticketsNotReferenced: string[];
+}
+
+/** One resolved fact (a ticket, an approval, or a mandate) for the detail panel. */
+export interface ResolvedFact {
+  status: 'verified' | 'unverifiable';
+  reason?: string;
+  data?: Record<string, unknown>;
+}
+
+export interface TicketDetail {
+  ticket: ResolvedFact;
+  approval: ResolvedFact;
+  mandate: ResolvedFact;
+}
+
+export interface ReportModel {
+  savedAt: number;
+  checkedAt: number;
+  /** Already server-rendered: every sv-* element replaced with drawn markup. */
+  renderedHtml: string;
+  proof: ReportProof;
+  coverage: ReportCoverage;
+  elements: ReportElement[];
+  /** Full detail for every ticket id the report proves it referenced —
+   *  keyed by ticket id, for the detail panel (?element=&ticket=). */
+  ticketDetails: Record<string, TicketDetail>;
+}
+
 /**
  * Per-profile team configuration (admin-set).
  * Mirrors suveren-as/src/lib/profile-config-store.ts — do not import from there.
@@ -587,6 +648,35 @@ class SPClient {
     if (res.status === 404) return null;
     if (!res.ok) throw new Error(`Local evidence unavailable (${res.status})`);
     return (await res.json()) as LocalReceiptEntry;
+  }
+
+  // ─── Report (evidence-backed reports) ──────────────────────────────────
+
+  async getReport(): Promise<{ report: ReportModel | null }> {
+    const res = await this.fetch('/api/report');
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: `Report unavailable (${res.status})` }));
+      throw new Error((err as { error?: string }).error ?? `Report unavailable (${res.status})`);
+    }
+    return res.json();
+  }
+
+  async saveReport(html: string): Promise<{ report: ReportModel }> {
+    const res = await this.fetch('/api/report', { method: 'POST', body: JSON.stringify({ html }) });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: `Save failed (${res.status})` }));
+      throw new Error((err as { error?: string }).error ?? `Save failed (${res.status})`);
+    }
+    return res.json();
+  }
+
+  async recheckReport(): Promise<{ report: ReportModel | null }> {
+    const res = await this.fetch('/api/report/recheck', { method: 'POST' });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: `Recheck failed (${res.status})` }));
+      throw new Error((err as { error?: string }).error ?? `Recheck failed (${res.status})`);
+    }
+    return res.json();
   }
 
   async revokeAttestation(authorizationId: string, reason?: string): Promise<void> {

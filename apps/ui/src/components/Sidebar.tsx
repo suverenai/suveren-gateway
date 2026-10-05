@@ -24,6 +24,7 @@ export const NAV_ITEMS: NavItem[] = [
   { to: '/mandates', icon: '☰', label: 'Mandates', statusKey: 'authorizations' },
   { to: '/agent-brief', icon: '▤', label: 'Agent Brief', statusKey: 'brief' },
   { to: '/tickets', icon: '▣', label: 'Tickets' },
+  { to: '/reports', icon: '▥', label: 'Reports' },
   { to: '/team', icon: '◉', label: 'Team', teamOnly: true },
   { to: '/integrations', icon: '⧗', label: 'Integrations', statusKey: 'integrations' },
   { to: '/settings', icon: '⚙', label: 'Settings', statusKey: 'assistant' },
