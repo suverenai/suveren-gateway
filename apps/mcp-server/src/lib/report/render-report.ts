@@ -22,6 +22,8 @@
  */
 import { Parser } from 'htmlparser2';
 import type { VerifiedElement } from './types';
+import { formatActionLabel, formatDateTime, formatDuration, formatCurrency, formatMetricValue, METRIC_LABELS } from './format';
+import { parseTimestampSeconds } from './time';
 
 interface Span {
   id: string;
@@ -90,21 +92,6 @@ function detailLink(id: string, ticketId?: string): string {
   return `/reports${qs}`;
 }
 
-function formatTime(value: unknown): string {
-  const n = typeof value === 'number' ? value : Number(value);
-  if (!Number.isFinite(n)) return escapeHtml(value);
-  return new Date(n * 1000).toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
-}
-
-function formatDuration(seconds: unknown): string {
-  const n = typeof seconds === 'number' ? seconds : Number(seconds);
-  if (!Number.isFinite(n) || n < 0) return '?';
-  const mins = Math.round(n / 60);
-  if (mins < 60) return `${mins} min`;
-  const hrs = Math.floor(mins / 60);
-  return `${hrs}h ${mins % 60}m`;
-}
-
 function badge(status: VerifiedElement['status'], okLabel: string): string {
   if (status === 'verified') return `<span class="sv-badge sv-badge-ok">✓ ${escapeHtml(okLabel)}</span>`;
   if (status === 'warning') return `<span class="sv-badge sv-badge-warn">⚠ verified with a note</span>`;
@@ -124,10 +111,13 @@ function renderTicket(el: VerifiedElement): string {
   if (el.status === 'unverifiable' || !el.data) return unverifiableCard(el);
   const d = el.data;
   const href = typeof d.checkUrl === 'string' ? d.checkUrl : undefined;
+  const actionLabel = typeof d.actionLabel === 'string' ? d.actionLabel : formatActionLabel(d.action);
+  const timeLabel = typeof d.timeLabel === 'string' ? d.timeLabel : formatDateTime(d.time);
+  const profileLabel = typeof d.profileLabel === 'string' ? d.profileLabel : escapeHtml(d.profile ?? '');
   return (
     `<div class="sv-el sv-el-${el.status}" data-sv-id="${escapeHtml(el.id)}">` +
-    `<div class="sv-el-row"><b>${escapeHtml(d.action)}</b>${badge(el.status, 'signature valid')}</div>` +
-    `<div class="sv-el-row"><span>${escapeHtml(d.profile ?? '')} · ${formatTime(d.time)}</span></div>` +
+    `<div class="sv-el-row"><b>${escapeHtml(actionLabel)}</b>${badge(el.status, 'signature valid')}</div>` +
+    `<div class="sv-el-row"><span>${escapeHtml(profileLabel)} · ${escapeHtml(timeLabel)}</span></div>` +
     `<div class="sv-el-row"><code>${escapeHtml(d.ticketId)}</code>` +
     (href ? ` <a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">Check on suveren.ai ↗</a>` : '') +
     ` · <a href="${escapeHtml(detailLink(el.id))}" target="_top">Details</a></div>` +
@@ -138,12 +128,14 @@ function renderTicket(el: VerifiedElement): string {
 function renderApproval(el: VerifiedElement): string {
   if (el.status === 'unverifiable' || !el.data) return unverifiableCard(el);
   const d = el.data;
-  const who = Array.isArray(d.who) ? (d.who as string[]).join(', ') : String(d.who ?? 'unknown');
-  const waited = typeof d.waitSeconds === 'number' ? formatDuration(d.waitSeconds) : 'unknown';
+  const who = typeof d.whoLabel === 'string' ? d.whoLabel : (Array.isArray(d.who) ? (d.who as string[]).join(', ') : 'unknown');
+  const asked = typeof d.createdAtLabel === 'string' ? d.createdAtLabel : 'unknown';
+  const approved = typeof d.decidedAtLabel === 'string' ? d.decidedAtLabel : 'unknown';
+  const waited = typeof d.waitLabel === 'string' ? d.waitLabel : 'unknown';
   return (
     `<div class="sv-el sv-el-${el.status}" data-sv-id="${escapeHtml(el.id)}">` +
-    `<div class="sv-el-row"><b>Approved by ${escapeHtml(who)}</b>${badge(el.status, 'from ticket archive')}</div>` +
-    `<div class="sv-el-row"><span>requested ${d.createdAt !== undefined ? formatTime(d.createdAt) : '?'} · decided ${d.decidedAt !== undefined ? formatTime(d.decidedAt) : '?'}</span><b>waited ${escapeHtml(waited)}</b></div>` +
+    `<div class="sv-el-row"><b>Approval</b>${badge(el.status, 'from ticket archive')}</div>` +
+    `<div class="sv-el-row"><span>asked ${escapeHtml(asked)} · approved ${escapeHtml(approved)} by ${escapeHtml(who)} (${escapeHtml(waited)})</span></div>` +
     `<div class="sv-el-row"><a href="${escapeHtml(detailLink(el.id, String(d.ticketId ?? '')))}" target="_top">Details</a></div>` +
     `</div>`
   );
@@ -152,12 +144,13 @@ function renderApproval(el: VerifiedElement): string {
 function renderMandate(el: VerifiedElement): string {
   if (el.status === 'unverifiable' || !el.data) return unverifiableCard(el);
   const d = el.data;
+  const profileLabel = typeof d.profileLabel === 'string' ? d.profileLabel : String(d.profile ?? '');
   const owners = Array.isArray(d.owners) && (d.owners as string[]).length > 0 ? (d.owners as string[]).join(', ') : 'unknown owner';
-  const limits = d.limits && typeof d.limits === 'object' ? Object.entries(d.limits as Record<string, unknown>).map(([k, v]) => `${k} ≤ ${escapeHtml(v)}`).join(' · ') : '';
+  const limits = Array.isArray(d.limits) && (d.limits as string[]).length > 0 ? (d.limits as string[]).join(' · ') : '';
   return (
     `<div class="sv-el sv-el-${el.status}" data-sv-id="${escapeHtml(el.id)}">` +
-    `<div class="sv-el-row"><b>${escapeHtml(d.profile ?? '')} · ${escapeHtml(owners)}</b>${badge(el.status, 'matches ticket')}</div>` +
-    (limits ? `<div class="sv-el-row">${limits}${d.mode ? ` · ${escapeHtml(d.mode)}` : ''}</div>` : '') +
+    `<div class="sv-el-row"><b>${escapeHtml(profileLabel)} · ${escapeHtml(owners)}</b>${badge(el.status, 'matches ticket')}</div>` +
+    (limits ? `<div class="sv-el-row">${escapeHtml(limits)}${d.mode ? ` · ${escapeHtml(d.mode)}` : ''}</div>` : '') +
     (d.intent ? `<div class="sv-el-intent">Intent: “${escapeHtml(d.intent)}”</div>` : '') +
     `<div class="sv-el-row"><a href="${escapeHtml(detailLink(el.id))}" target="_top">Details</a></div>` +
     `</div>`
@@ -166,9 +159,24 @@ function renderMandate(el: VerifiedElement): string {
 
 const RECORD_FIELD_ORDER = [
   'subject', 'from_email', 'from_name', 'to_json', 'received_at',
-  'number', 'status', 'net_total', 'currency', 'customer_id',
+  'number', 'status', 'net_total', 'customer_id',
   'causingReceiptId', 'message',
 ];
+
+const RECORD_TIME_FIELDS = new Set(['received_at', 'created_at', 'sent_at']);
+
+function renderRecordField(key: string, d: Record<string, unknown>): string {
+  if (key === 'net_total') {
+    const currency = typeof d.currency === 'string' ? d.currency : undefined;
+    return `<div class="sv-el-row"><span>Value</span><span>${escapeHtml(formatCurrency(d.net_total, currency))}</span></div>`;
+  }
+  if (RECORD_TIME_FIELDS.has(key)) {
+    const t = parseTimestampSeconds(d[key]);
+    const display = t !== undefined ? formatDateTime(t) : d[key];
+    return `<div class="sv-el-row"><span>${escapeHtml(key)}</span><span>${escapeHtml(display)}</span></div>`;
+  }
+  return `<div class="sv-el-row"><span>${escapeHtml(key)}</span><span>${escapeHtml(d[key])}</span></div>`;
+}
 
 function renderRecord(el: VerifiedElement): string {
   if (el.status === 'unverifiable' || !el.data) return unverifiableCard(el);
@@ -177,7 +185,7 @@ function renderRecord(el: VerifiedElement): string {
   const rows = RECORD_FIELD_ORDER
     .filter(k => d[k] !== undefined && d[k] !== null && d[k] !== '')
     .slice(0, 5)
-    .map(k => `<div class="sv-el-row"><span>${escapeHtml(k)}</span><span>${escapeHtml(d[k])}</span></div>`)
+    .map(k => renderRecordField(k, d))
     .join('');
   return (
     `<div class="sv-el sv-el-${el.status}" data-sv-id="${escapeHtml(el.id)}">` +
@@ -187,66 +195,87 @@ function renderRecord(el: VerifiedElement): string {
   );
 }
 
-interface CaseStepLike { ticketId: string; time: number }
+interface CaseStepLike { ticketId: string; time: number; action?: unknown }
+interface CaseApprovalLike { ticketId: string; whoLabel?: string; who?: string[]; createdAtLabel?: string; decidedAtLabel?: string; waitLabel?: string }
+
+/** One ticket-carrying node in the case timeline — a step or the goal.
+ *  `kind` drives both the small caption ("ticket"/"goal") and the CSS hook
+ *  the goal already had (`sv-step-goal`). */
+function renderCaseTicketStep(caseElementId: string, node: CaseStepLike, isGoal: boolean): string {
+  const cls = isGoal ? 'sv-step sv-step-goal' : 'sv-step';
+  const kind = isGoal ? 'goal' : 'ticket';
+  return (
+    `<a class="${cls}" href="${escapeHtml(detailLink(caseElementId, node.ticketId))}" target="_top">` +
+    `<div class="sv-step-k">${kind}</div><div class="sv-step-t">${escapeHtml(formatActionLabel(node.action))}</div>${formatDateTime(node.time)}` +
+    `</a>`
+  );
+}
+
+/** The approval as its OWN step in the timeline, between the request and the
+ *  decision it belongs to (polish 2026-10-05: "SHOW APPROVALS as their own
+ *  step ... for any step/goal ticket that has an archived approval"). Not a
+ *  link (an approval is not itself a ticket to open) — its ticket's own step,
+ *  rendered immediately before it, carries the "Details" link. */
+function renderCaseApprovalStep(approval: CaseApprovalLike): string {
+  const who = approval.whoLabel ?? (Array.isArray(approval.who) ? approval.who.join(', ') : 'unknown');
+  const asked = approval.createdAtLabel ?? 'unknown';
+  const decided = approval.decidedAtLabel ?? 'unknown';
+  const waited = approval.waitLabel ?? 'unknown';
+  return (
+    `<div class="sv-step sv-step-approval">` +
+    `<div class="sv-step-k">approval</div><div class="sv-step-t">Approval</div>` +
+    `<div class="sv-step-sub">asked ${escapeHtml(asked)} · approved ${escapeHtml(decided)} by ${escapeHtml(who)} (${escapeHtml(waited)})</div>` +
+    `</div>`
+  );
+}
 
 function renderCase(el: VerifiedElement): string {
   if (el.status === 'unverifiable' || !el.data) return unverifiableCard(el);
   const d = el.data;
   const steps: CaseStepLike[] = Array.isArray(d.steps) ? (d.steps as CaseStepLike[]) : [];
-  const approvalsByTicket = new Map<string, { waitSeconds?: number }>();
+  const goal = d.goal as CaseStepLike | undefined;
+  const approvalsByTicket = new Map<string, CaseApprovalLike>();
   if (Array.isArray(d.approvals)) {
-    for (const a of d.approvals as Array<{ ticketId: string; waitSeconds?: number }>) {
+    for (const a of d.approvals as CaseApprovalLike[]) {
       approvalsByTicket.set(a.ticketId, a);
     }
   }
-  const startStep = `<div class="sv-step"><div class="sv-step-k">start</div><div class="sv-step-t">email</div>${formatTime((d.start as { time: number }).time)}</div>`;
-  const stepHtml = steps
-    .map(s => {
-      const approval = approvalsByTicket.get(s.ticketId);
-      const approvalNote = approval ? `<div class="sv-step-sub">approval ${formatDuration(approval.waitSeconds ?? 0)}</div>` : '';
-      return (
-        `<a class="sv-step" href="${escapeHtml(detailLink(el.id, s.ticketId))}" target="_top">` +
-        `<div class="sv-step-k">ticket</div><div class="sv-step-t">${escapeHtml(s.ticketId)}</div>${formatTime(s.time)}${approvalNote}` +
-        `</a>`
-      );
+  const start = d.start as { time: number } | undefined;
+  const startStep = start
+    ? `<div class="sv-step"><div class="sv-step-k">start</div><div class="sv-step-t">Email in</div>${formatDateTime(start.time)}</div>`
+    : '';
+
+  // Every ticket-carrying node, chronological, each immediately followed by
+  // its own archived approval as a separate step (never folded into the
+  // ticket's own card) — this is what lets a manager see WHY a case waited.
+  const ticketNodes: Array<{ node: CaseStepLike; isGoal: boolean }> = [
+    ...steps.map(s => ({ node: s, isGoal: false })),
+    ...(goal ? [{ node: goal, isGoal: true }] : []),
+  ].sort((a, b) => a.node.time - b.node.time);
+
+  const stepHtml = ticketNodes
+    .map(({ node, isGoal }) => {
+      const approval = approvalsByTicket.get(node.ticketId);
+      return renderCaseTicketStep(el.id, node, isGoal) + (approval ? renderCaseApprovalStep(approval) : '');
     })
     .join('');
-  const goal = d.goal as { ticketId: string; time: number } | undefined;
-  const goalStep = goal
-    ? `<a class="sv-step sv-step-goal" href="${escapeHtml(detailLink(el.id, goal.ticketId))}" target="_top"><div class="sv-step-k">goal</div><div class="sv-step-t">${escapeHtml(goal.ticketId)}</div>${formatTime(goal.time)}</a>`
-    : '';
+
   return (
     `<div class="sv-el sv-el-${el.status}" data-sv-id="${escapeHtml(el.id)}">` +
     `<div class="sv-el-row"><b>Case ${escapeHtml(d.caseId)} · ${formatDuration(d.totalDurationSeconds)}</b>${badge(el.status, 'assembled by gateway')}</div>` +
     (el.status === 'warning' && el.reason ? `<div class="sv-el-warn">${escapeHtml(el.reason)}</div>` : '') +
-    `<div class="sv-tl">${startStep}${stepHtml}${goalStep}</div>` +
+    `<div class="sv-tl">${startStep}${stepHtml}</div>` +
     `<div class="sv-el-row"><a href="${escapeHtml(detailLink(el.id))}" target="_top">Case details</a></div>` +
     `</div>`
   );
 }
-
-const METRIC_LABELS: Record<string, string> = {
-  completed: 'cases completed',
-  'median-time': 'median time, start → goal',
-  'average-time': 'average time, start → goal',
-  'without-approval': 'share without approval',
-  approvals: 'approvals',
-  'median-approval-wait': 'median approval wait',
-  tickets: 'tickets',
-  refusals: 'system refusals',
-};
 
 function renderMetric(el: VerifiedElement): string {
   if (el.status === 'unverifiable' || !el.data) return unverifiableCard(el);
   const d = el.data;
   const kind = String(d.kind ?? '');
   const label = METRIC_LABELS[kind] ?? kind;
-  let display = String(d.value);
-  if (kind === 'without-approval' && typeof d.value === 'number') {
-    display = `${Math.round(d.value * 100)}%`;
-  } else if ((kind === 'median-time' || kind === 'average-time' || kind === 'median-approval-wait') && typeof d.value === 'number') {
-    display = formatDuration(d.value);
-  }
+  const display = formatMetricValue(kind, d.value);
   return (
     `<div class="sv-el sv-el-${el.status} sv-el-metric" data-sv-id="${escapeHtml(el.id)}">` +
     `<div class="sv-big">${escapeHtml(display)}</div>` +

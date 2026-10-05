@@ -120,8 +120,17 @@ describe('verifyReport — sv-mandate', () => {
     const e = el(result.elements, 'sv-mandate-0');
     expect(e.status).toBe('verified');
     expect(e.data).toMatchObject({
-      authorizationId: 'authz-mandate-1', profile: 'sales@0.3', limits: { value_max: 1000 },
-      intent: 'Quote known customers only.', mode: 'review', owners: ['did:key:zOwner9'],
+      authorizationId: 'authz-mandate-1', profile: 'sales@0.3',
+      // Limits are display-ready "Label: value" strings (no registered
+      // profile in THIS process's registry for "sales@0.3" — falls back to a
+      // humanized key, same as an unknown profile would in production); the
+      // raw numbers survive separately under `rawLimits` for the technical
+      // details section.
+      limits: ['Value Max: 1 000'], rawLimits: { value_max: 1000 },
+      intent: 'Quote known customers only.', mode: 'review',
+      // A did:key is never the only label — this attestation discloses no
+      // name, so it falls back to a truncated, labeled key, never the raw did.
+      owners: ['Owner (key …Owner9)'], ownersRaw: ['did:key:zOwner9'],
     });
   });
 
@@ -430,6 +439,29 @@ describe('verifyReport — ticket coverage (the AI cannot leave a ticket out unn
     const result = await verifyReport('<p>nothing</p>', { archive, runExport: makeRunExport({ email: buildEmailExport({}) }) });
     expect(result.coverage.periodStart).toBeNull();
     expect(result.coverage.ticketsNotReferenced).toEqual(['old']);
+  });
+});
+
+describe('verifyReport — "Checked values" summaries carry no raw technical values', () => {
+  it('an sv-ticket summary names the human action and a readable time, never the raw tool name/unix seconds', async () => {
+    const { archive, addTicket } = buildScenario();
+    addTicket({ id: 't1', action: 'erp__create_quote', authorizationId: 'authz-1', timestamp: 1_800_000_000 });
+    const result = await verifyReport('<sv-ticket ref="t1"></sv-ticket>', { archive, runExport: makeRunExport({}) });
+    const summary = result.proof.verifiedValues.find(v => v.elementId === 'sv-ticket-0');
+    expect(summary?.summary).toContain('Quote created');
+    expect(summary?.summary).not.toContain('erp__create_quote');
+    expect(summary?.summary).not.toContain('1800000000');
+  });
+
+  it('an sv-mandate summary never carries a bare did:key owner', async () => {
+    const { archive, addTicket } = buildScenario();
+    addTicket({
+      id: 't4', action: 'erp__create_quote', authorizationId: 'authz-mandate-1',
+      authorization: { authorizationId: 'authz-mandate-1', profileId: 'sales@0.3', owners: ['did:key:zOwner9'] },
+    });
+    const result = await verifyReport('<sv-mandate ticket="t4"></sv-mandate>', { archive, runExport: makeRunExport({}) });
+    const summary = result.proof.verifiedValues.find(v => v.elementId === 'sv-mandate-0');
+    expect(summary?.summary).not.toContain('did:key:zOwner9');
   });
 });
 

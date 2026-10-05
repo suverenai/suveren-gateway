@@ -18,6 +18,7 @@
 import { verifyReceiptSignature, verifyAttestationSignature, decodeAttestationBlob, type ReceiptPayload } from '@hap/core';
 import type { ArchivedReceipt, ArchivedAuthorization } from '../receipt-archive';
 import type { ReceiptArchiveReader } from './types';
+import { formatActionLabel, formatDateTime, formatDuration, formatBoundLabel, formatOwnerLabel, profileShortLabel } from './format';
 
 export function findReceiptEntry(archive: ReceiptArchiveReader, ticketId: string): ArchivedReceipt | undefined {
   return archive.getReceipts().find(r => (r.receipt as { id?: unknown }).id === ticketId);
@@ -84,8 +85,11 @@ export async function resolveTicketElement(archive: ReceiptArchiveReader, ref: s
     data: {
       ticketId: ref,
       action: r.action,
+      actionLabel: formatActionLabel(r.action),
       time: r.timestamp,
+      timeLabel: formatDateTime(r.timestamp),
       profile: r.profileId,
+      profileLabel: profileShortLabel(typeof r.profileId === 'string' ? r.profileId : undefined),
       authorizationId: r.authorizationId,
       limitsUsed: r.limits ?? r.executionContext ?? {},
       checkUrl: checkUrlFor(check.entry),
@@ -107,14 +111,20 @@ export async function resolveApprovalElement(archive: ReceiptArchiveReader, tick
   const approvers = Object.values(committedBy);
   const createdAt = typeof proposal.createdAt === 'number' ? proposal.createdAt : undefined;
   const decidedAt = approvers.length > 0 ? Math.max(...approvers.map(a => a.at)) : undefined;
+  const waitSeconds = createdAt !== undefined && decidedAt !== undefined ? decidedAt - createdAt : undefined;
+  const who = approvers.map(a => a.userId);
   return {
     status: 'verified' as const,
     data: {
       ticketId: ticketRef,
-      who: approvers.map(a => a.userId),
+      who,
+      whoLabel: who.length > 0 ? who.join(', ') : 'unknown',
       createdAt,
+      createdAtLabel: createdAt !== undefined ? formatDateTime(createdAt) : 'unknown',
       decidedAt,
-      waitSeconds: createdAt !== undefined && decidedAt !== undefined ? decidedAt - createdAt : undefined,
+      decidedAtLabel: decidedAt !== undefined ? formatDateTime(decidedAt) : 'unknown',
+      waitSeconds,
+      waitLabel: waitSeconds !== undefined ? formatDuration(waitSeconds) : 'unknown',
       status: proposal.status,
     },
   };
@@ -144,6 +154,7 @@ export async function resolveMandateElement(archive: ReceiptArchiveReader, ticke
 
   let mode: string | undefined;
   let owners: string[] = [];
+  let ownersRaw: string[] = [];
   const firstBlob = auth.attestations[0]?.blob;
   if (firstBlob && check.entry.asPublicKey) {
     try {
@@ -152,9 +163,14 @@ export async function resolveMandateElement(archive: ReceiptArchiveReader, ticke
       mode = attestation.payload.commitment_mode;
       const dids = attestation.payload.resolved_owners ?? [];
       const subjects = attestation.payload.subjects ?? [];
+      ownersRaw = dids;
+      // A did:key is never shown bare — only a HIGH-assurance disclosed name
+      // stands in its place; everything else falls back to a labeled,
+      // truncated key, never the raw did string as the only label (polish
+      // 2026-10-05: "no raw technical values anywhere a manager reads").
       owners = dids.map(did => {
         const subject = subjects.find(s => s.did === did);
-        return subject?.assurance === 'high' && subject.disclose?.name ? subject.disclose.name : did;
+        return subject?.assurance === 'high' && subject.disclose?.name ? subject.disclose.name : formatOwnerLabel(did);
       });
     } catch {
       // Undecodable/unverifiable attestation blob — mode/owner stay unknown,
@@ -164,15 +180,26 @@ export async function resolveMandateElement(archive: ReceiptArchiveReader, ticke
     }
   }
 
+  // A bound's own unit (e.g. "currency:EUR") is authoritative; this is only a
+  // fallback for an older profile whose field declares no unit at all, so a
+  // plain number still renders with the mandate's own currency rather than
+  // bare — the mandate's plaintext context is archived precisely for this.
+  const fallbackCurrency = typeof auth.context?.currency === 'string' ? auth.context.currency : undefined;
+  const rawLimits = auth.bounds ?? {};
+  const limits = Object.entries(rawLimits).map(([key, value]) => formatBoundLabel(auth.profileId, key, value, fallbackCurrency));
+
   return {
     status: 'verified' as const,
     data: {
       authorizationId,
       profile: auth.profileId,
-      limits: auth.bounds ?? {},
+      profileLabel: profileShortLabel(auth.profileId),
+      limits,
+      rawLimits,
       intent: auth.intent,
       mode,
       owners,
+      ownersRaw,
     },
   };
 }
