@@ -436,6 +436,21 @@ jobs:
           $global:LASTEXITCODE = 0  # taskkill on an already-exited child is not a failure
           Start-Sleep -Seconds 1
 
+      - name: Control — the window check DOES see a visible gateway console (else it proves nothing)
+        shell: pwsh
+        run: |
+          # Deliberately open a normal, visible console running the bundled node.exe from the
+          # install dir. The checker must FAIL on it; if it passes, it is blind on this runner.
+          $node = "$env:LOCALAPPDATA\Programs\Suveren\node\node.exe"
+          $p = Start-Process -FilePath $node -ArgumentList '-e', 'setTimeout(() => {}, 60000)' -WindowStyle Normal -PassThru
+          Start-Sleep -Seconds 3
+          $failedAsExpected = $false
+          try { & bundle\windows\ci-assert-no-console-window.ps1 } catch { $failedAsExpected = $true; Write-Host "checker failed as expected: $($_.Exception.Message)" }
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          $global:LASTEXITCODE = 0
+          if (-not $failedAsExpected) { throw "the window check did NOT detect a deliberately visible gateway console — it cannot be trusted on this runner" }
+          Write-Host "control passed: the window check detects a visible gateway console window."
+
       - name: No visible window belongs to the gateway (console hosts included) — after the silent install started it
         shell: pwsh
         run: |
