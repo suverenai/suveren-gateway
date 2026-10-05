@@ -478,7 +478,8 @@ jobs:
           $launcher = "$env:LOCALAPPDATA\Programs\Suveren\suveren-gateway.cmd"
           # open-ui runs in THIS step's environment, so the gateway it starts listens on the job's
           # SUVEREN_CP_PORT/SUVEREN_MCP_PORT (15400/15430), not the defaults the scheduled task uses.
-          cmd.exe /c start /min "" "$launcher" open-ui
+          # Exactly the Finish checkbox's command (LaunchGatewayAfterInstall in Product.wxs).
+          Start-Process -FilePath conhost.exe -ArgumentList "--headless cmd.exe /c `"`"$launcher`" open-ui`""
 
           $targets = @('crm', 'records', 'erp')
           $deadline = (Get-Date).AddSeconds(240)
@@ -525,7 +526,7 @@ jobs:
           }
 
           $deadline = (Get-Date).AddSeconds(30)  # open-ui's own minimized cmd exits once the gateway serves
-          while ((Get-Date) -lt $deadline -and (Get-CimInstance Win32_Process -Filter "Name='cmd.exe'" | Where-Object { $_.CommandLine -like '*suveren-gateway.cmd*open-ui*' })) { Start-Sleep -Seconds 1 }
+          while ((Get-Date) -lt $deadline -and (Get-CimInstance Win32_Process -Filter "Name='cmd.exe'" | Where-Object { $_.CommandLine -like '*suveren-gateway.cmd*open-ui*' -and $_.CommandLine -notlike '* /K *' })) { Start-Sleep -Seconds 1 }
           & bundle\windows\ci-assert-no-console-window.ps1   # while the gateway is still running
           # Clean up before the rest of this job's scenarios run.
           schtasks /End /TN Suveren 2>$null | Out-Null
