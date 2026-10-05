@@ -6,7 +6,7 @@
   "icon": "mail",
   "profile": "email",
   "npmPackage": "@humanagencyp/email-mcp",
-  "npmVersion": "0.1.3",
+  "npmVersion": "0.2.0",
   "mcp": {
     "command": "email-mcp",
     "args": []
