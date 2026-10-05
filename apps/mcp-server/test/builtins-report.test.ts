@@ -485,11 +485,11 @@ describe("write_report's validate hook (precheckBuiltin) — refused before the 
   // `validate` lives on the BuiltinTool, not the DiscoveredTool tool-proxy.ts
   // sees — precheckBuiltin (IntegrationManager) is the real, documented way to
   // reach it, so this exercises exactly what createGatedToolHandler calls.
-  it('precheckBuiltin flags empty and oversize html with NO ticket side effects, and lets good html through', () => {
+  it('precheckBuiltin flags empty and oversize html with NO ticket side effects, and lets good html through', async () => {
     const { tools, im, cleanup } = setup([]);
-    expect(im.precheckBuiltin(tools.write_report, { html: '   ' })).toMatch(/non-empty/);
-    expect(im.precheckBuiltin(tools.write_report, { html: 'x'.repeat(MAX_REPORT_HTML_BYTES + 1) })).toMatch(/bytes/);
-    expect(im.precheckBuiltin(tools.write_report, { html: '<p>ok</p>' })).toBeNull();
+    expect(await im.precheckBuiltin(tools.write_report, { html: '   ' })).toMatch(/non-empty/);
+    expect(await im.precheckBuiltin(tools.write_report, { html: 'x'.repeat(MAX_REPORT_HTML_BYTES + 1) })).toMatch(/bytes/);
+    expect(await im.precheckBuiltin(tools.write_report, { html: '<p>ok</p>' })).toBeNull();
     cleanup();
   });
 });
