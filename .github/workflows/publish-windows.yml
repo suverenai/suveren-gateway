@@ -170,10 +170,13 @@ jobs:
           New-Item -ItemType Directory -Force -Path bundle\windows\out | Out-Null
           $payload = (Resolve-Path bundle\windows\payload).Path
           $launcher = (Resolve-Path bundle\windows\launcher.cmd).Path
+          # node_modules trees go into one runtime.zip (see stage-msi.ps1)
+          & bundle\windows\stage-msi.ps1 -PayloadDir $payload -StageDir bundle\windows\stage
+          $stage = (Resolve-Path bundle\windows\stage).Path
           wix build bundle\windows\wix\Product.wxs `
             -ext WixToolset.UI.wixext/5.0.2 `
             -d "ProductVersion=${{ needs.build-payload.outputs.version }}" `
-            -d "PayloadDir=$payload" `
+            -d "PayloadDir=$stage" `
             -d "LauncherSource=$launcher" `
             -arch x64 `
             -out bundle\windows\out\suveren-gateway.msi
@@ -211,6 +214,7 @@ jobs:
           Copy-Item -Recurse bundle\windows\wix kit\wix
           Copy-Item bundle\windows\launcher.cmd kit\launcher.cmd
           Copy-Item bundle\windows\build-signed.ps1 kit\build-signed.ps1
+          Copy-Item bundle\windows\stage-msi.ps1 kit\stage-msi.ps1
 
       - name: Create a self-signed code-signing certificate and trust it on THIS runner only
         id: cert
@@ -831,14 +835,22 @@ jobs:
           New-Item -ItemType Directory -Force -Path bundle\windows\out | Out-Null
           $payload = (Resolve-Path bundle\windows\payload).Path
           $launcher = (Resolve-Path bundle\windows\launcher.cmd).Path
+          # NEW is staged from the payload as is. OLD gets one extra file in its runtime.zip, so
+          # the two archives (and stamps) differ — after the upgrade that file must be GONE,
+          # proving the launcher re-unpacked the new archive instead of keeping the old tree.
+          & bundle\windows\stage-msi.ps1 -PayloadDir $payload -StageDir bundle\windows\stage-new
+          Set-Content -Path "$payload\integrations\old-build-marker.txt" -Value 'old'
+          & bundle\windows\stage-msi.ps1 -PayloadDir $payload -StageDir bundle\windows\stage-old
+          Remove-Item "$payload\integrations\old-build-marker.txt"
           foreach ($pair in @(
-            @{ Version = "${{ steps.versions.outputs.old }}"; Out = 'old.msi' },
-            @{ Version = "${{ steps.versions.outputs.new }}"; Out = 'new.msi' }
+            @{ Version = "${{ steps.versions.outputs.old }}"; Out = 'old.msi'; Stage = 'stage-old' },
+            @{ Version = "${{ steps.versions.outputs.new }}"; Out = 'new.msi'; Stage = 'stage-new' }
           )) {
+            $stage = (Resolve-Path "bundle\windows\$($pair.Stage)").Path
             wix build bundle\windows\wix\Product.wxs `
               -ext WixToolset.UI.wixext/5.0.2 `
               -d "ProductVersion=$($pair.Version)" `
-              -d "PayloadDir=$payload" `
+              -d "PayloadDir=$stage" `
               -d "LauncherSource=$launcher" `
               -arch x64 `
               -out "bundle\windows\out\$($pair.Out)"
@@ -936,6 +948,19 @@ jobs:
             throw "registered DisplayVersion is '$($apps[0].DisplayVersion)', expected '$expected'"
           }
           Write-Host "exactly one product registered, DisplayVersion $($apps[0].DisplayVersion) (confirms the files on disk are the NEW version's — MSI only replaces files when it recognizes this as the same product being upgraded)"
+
+      - name: a) Runtime re-unpacked from the NEW runtime.zip (old tree replaced)
+        shell: pwsh
+        run: |
+          $root = "$env:LOCALAPPDATA\Programs\Suveren"
+          $stamp = (Get-Content "$root\runtime.stamp" -Raw).Trim()
+          if (-not (Test-Path "$root\runtime.extracted")) { throw "runtime.extracted missing — the launcher never unpacked runtime.zip after the upgrade" }
+          $extracted = (Get-Content "$root\runtime.extracted" -Raw).Trim()
+          if ($extracted -ne $stamp) { throw "unpacked runtime ($extracted) is not the NEW archive ($stamp)" }
+          if (Test-Path "$root\integrations\old-build-marker.txt") { throw "the OLD runtime tree is still there — upgrade did not re-unpack" }
+          if (Test-Path "$root\runtime.lock") { throw "runtime.lock left behind" }
+          $msiFiles = (Get-ChildItem -Recurse -File $root | Where-Object { $_.FullName -notlike "$root\integrations\*" -and $_.FullName -notlike "$root\gateway\node_modules\*" }).Count
+          Write-Host "confirmed: runtime re-unpacked from the new archive (stamp $stamp); old tree gone; ~$msiFiles files owned by the msi."
 
       - name: a) Assert the scheduled task survived the upgrade and still points at the launcher
         shell: pwsh
@@ -1065,6 +1090,7 @@ jobs:
           Copy-Item -Recurse bundle\windows\wix release\kit\wix
           Copy-Item bundle\windows\launcher.cmd release\kit\launcher.cmd
           Copy-Item bundle\windows\build-signed.ps1 release\kit\build-signed.ps1
+          Copy-Item bundle\windows\stage-msi.ps1 release\kit\stage-msi.ps1
           Copy-Item -Recurse release\payload release\kit\payload
 
           $kitZip = "release\out\suveren-gateway-$version-windows-signing-kit.zip"

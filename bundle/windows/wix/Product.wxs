@@ -238,8 +238,8 @@
 
          StartGatewayAfterInstall — COMMIT action (runs only after the whole transaction
          succeeded), scheduled Before="InstallFinalize" (After="InstallFinalize" failed every
-         install with 2762). Registers autostart (`service install`, idempotent) and runs the
-         task, so the gateway is up after a fresh install and after an upgrade — silently, no
+         install with 2762). Through the launcher it first unpacks runtime.zip (`prepare`),
+         then registers autostart (`service install`, idempotent) and runs the task, so the gateway is up after a fresh install and after an upgrade — silently, no
          browser (the interactive Finish checkbox opens the browser separately).
 
          All Return="ignore": a gateway that is not running or a missing task must never fail
@@ -259,6 +259,18 @@
       Impersonate="yes"
       Return="ignore" />
 
+    <!-- runtime.zip is unpacked by the launcher (`prepare`) into integrations\ and
+         gateway\node_modules\, so Windows Installer does not track those files —
+         remove them on a plain uninstall (an upgrade keeps them; the new launcher
+         re-unpacks when runtime.stamp changes). -->
+    <CustomAction
+      Id="RemoveRuntimeOnUninstall"
+      Directory="INSTALLFOLDER"
+      ExeCommand="cmd.exe /c rmdir /s /q &quot;[INSTALLFOLDER]integrations&quot; &amp; rmdir /s /q &quot;[INSTALLFOLDER]gateway\node_modules&quot; &amp; rmdir /s /q &quot;[INSTALLFOLDER]runtime.lock&quot; &amp; del /q &quot;[INSTALLFOLDER]runtime.extracted&quot;"
+      Execute="deferred"
+      Impersonate="yes"
+      Return="ignore" />
+
     <CustomAction
       Id="StartGatewayAfterInstall"
       Directory="INSTALLFOLDER"
@@ -274,6 +286,7 @@
            allowed outside InstallInitialize..InstallFinalize (deferred ones there fail with 2762). -->
       <Custom Action="StopGateway" Before="InstallValidate" Condition="NOT UPGRADINGPRODUCTCODE" />
       <Custom Action="RemoveScheduledTaskOnUninstall" Before="RemoveFiles" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+      <Custom Action="RemoveRuntimeOnUninstall" Before="RemoveFiles" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
       <!-- Commit: runs only once the whole transaction has succeeded, but must be SCHEDULED before
            InstallFinalize (After="InstallFinalize" failed every install with error 2762). -->
       <Custom Action="StartGatewayAfterInstall" Before="InstallFinalize" Condition="NOT REMOVE=&quot;ALL&quot;" />
