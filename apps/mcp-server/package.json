@@ -10,7 +10,8 @@
     "dev": "SUVEREN_INTERNAL_SECRET=${SUVEREN_INTERNAL_SECRET:-dev-shared-internal-secret} SUVEREN_DATA_DIR=${SUVEREN_DATA_DIR:-$HOME/.suveren} SUVEREN_MCP_PORT=3431 tsx --watch bin/http.ts",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "report:post-sample": "node scripts/post-sample-report.mjs"
   },
   "dependencies": {
     "@hap/core": "workspace:*",
