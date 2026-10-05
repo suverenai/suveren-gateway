@@ -17,7 +17,7 @@
  * Read on every call, so an edited override applies without a restart.
  */
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 export interface Guide {
   topic: string;
@@ -31,9 +31,23 @@ export interface Guide {
 
 const FILE_RE = /^(?:(\d+)-)?([a-z0-9][a-z0-9-]*)\.md$/;
 
+/**
+ * The default guides: SUVEREN_BUILTIN_GUIDES_DIR (the npm bundle and Docker set it),
+ * else the repo's `content/guides`, found by walking up from this module. A fixed
+ * number of `..` would be right only for one layout — the source file sits four
+ * levels below the repo root, the compiled `dist/http.mjs` three.
+ */
 export function builtinGuidesDir(): string {
-  return process.env.SUVEREN_BUILTIN_GUIDES_DIR
-    ?? join(import.meta.dirname ?? __dirname, '..', '..', '..', '..', 'content', 'guides');
+  if (process.env.SUVEREN_BUILTIN_GUIDES_DIR) return process.env.SUVEREN_BUILTIN_GUIDES_DIR;
+  let dir = import.meta.dirname ?? __dirname;
+  for (let i = 0; i < 8; i++) {
+    const candidate = join(dir, 'content', 'guides');
+    if (existsSync(candidate)) return candidate;
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return join(import.meta.dirname ?? __dirname, 'content', 'guides'); // nothing found — an empty list, not a crash
 }
 
 function parse(body: string): { title: string; summary: string } {
