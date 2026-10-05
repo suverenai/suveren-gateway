@@ -905,6 +905,22 @@ export class IntegrationManager {
   }
 
   /**
+   * The built-in's own refusal for this call, checked before the gate (no proposal,
+   * no ticket): `simulationOnly` outside simulation mode, then the tool's `validate`.
+   * Null for connector tools and for calls that may proceed.
+   */
+  precheckBuiltin(tool: DiscoveredTool, args: Record<string, unknown>): string | null {
+    const builtin = this.builtins.get(tool.integrationId);
+    if (!builtin) return null;
+    if (builtin.def.simulationOnly && !isSimulationMode()) {
+      return `Refused: "${tool.namespacedName}" is not available. No ticket was requested.`;
+    }
+    const def = builtin.def.tools.find(t => t.name === tool.originalName);
+    const refusal = def?.validate?.(args);
+    return refusal ? `Refused: ${refusal} No ticket was requested.` : null;
+  }
+
+  /**
    * Proxy a tool call to a downstream MCP server (or a built-in's handler).
    */
   async callTool(

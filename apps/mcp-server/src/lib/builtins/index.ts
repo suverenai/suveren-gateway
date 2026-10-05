@@ -12,6 +12,7 @@
 import type { IntegrationManager } from '../integration-manager';
 import type { SharedState } from '../shared-state';
 import type { BuiltinIntegration } from '../builtin-integration';
+import { setupBuiltin } from './setup';
 
 /** What a built-in's handlers may use. Extend when a group needs more. */
 export interface BuiltinDeps {
@@ -22,7 +23,7 @@ export interface BuiltinDeps {
 export type BuiltinFactory = (deps: BuiltinDeps) => BuiltinIntegration;
 
 /** Add a group here. */
-export const BUILTIN_FACTORIES: BuiltinFactory[] = [];
+export const BUILTIN_FACTORIES: BuiltinFactory[] = [setupBuiltin];
 
 export function registerBuiltins(deps: BuiltinDeps, factories: BuiltinFactory[] = BUILTIN_FACTORIES): string[] {
   const registered: string[] = [];

@@ -5,11 +5,33 @@
  * by the human decision owner and included in the agent's mandate brief.
  */
 
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, mkdirSync, writeFileSync, renameSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 
 const DEFAULT_DIR = process.env.SUVEREN_DATA_DIR ?? join(homedir(), '.suveren');
+
+/** The byte cap the control plane enforces on write (agent-brief-store.ts) — the same for every writer. */
+export const CONTEXT_MAX_BYTES = 16 * 1024;
+
+export function contextFilePath(dataDir?: string): string {
+  return join(dataDir ?? DEFAULT_DIR, 'context.md');
+}
+
+/**
+ * Replace the agent brief. Atomic (tmp + rename), like the control plane's PUT,
+ * so a crash mid-write never leaves a half-written brief for the next session.
+ * Refuses content over the cap instead of truncating it.
+ */
+export function writeContextFile(content: string, dataDir?: string): void {
+  const bytes = Buffer.byteLength(content, 'utf-8');
+  if (bytes > CONTEXT_MAX_BYTES) throw new Error(`the brief is ${bytes} bytes; the limit is ${CONTEXT_MAX_BYTES}.`);
+  const filePath = contextFilePath(dataDir);
+  mkdirSync(dirname(filePath), { recursive: true });
+  const tmpPath = `${filePath}.tmp`;
+  writeFileSync(tmpPath, content, 'utf-8');
+  renameSync(tmpPath, filePath);
+}
 
 /**
  * Maximum chars to include in the mandate brief before truncating.
@@ -25,8 +47,7 @@ const BRIEF_MAX_CHARS = 16 * 1024;
  * Read the context file. Returns null if the file doesn't exist.
  */
 export function readContextFile(dataDir?: string): string | null {
-  const dir = dataDir ?? DEFAULT_DIR;
-  const filePath = join(dir, 'context.md');
+  const filePath = contextFilePath(dataDir);
 
   if (!existsSync(filePath)) return null;
 
