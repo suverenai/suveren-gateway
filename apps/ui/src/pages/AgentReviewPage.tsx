@@ -7,6 +7,7 @@ import { buildGateForwardArgs } from '../lib/gate-forward';
 import { StepIndicator } from '../components/StepIndicator';
 import { DomainBadge } from '../components/DomainBadge';
 import { profileDisplayName } from '../lib/profile-display';
+import { offeredCommitModes, settleCommitMode, toProtocolMode } from '../lib/commit-mode';
 import { scopesOverlap } from '../lib/scope-overlap';
 import { formatScopeValue } from '../lib/scope-labels';
 import { teamGateBlocked } from '../lib/team-gate';
@@ -228,6 +229,14 @@ export function AgentReviewPage() {
   // same-profile grant's bounds with the same canonicalization the attest
   // flow uses, then count exact matches. Purely advisory — per-ceremony
   // identity means a twin never merges with the original on the AS.
+  // A preset mode (template, edited grant) the profile does not allow falls
+  // back to one it does.
+  useEffect(() => {
+    if (!profile) return;
+    const settled = settleCommitMode(commitMode, offeredCommitModes(profile));
+    if (settled && settled !== commitMode) setCommitMode(settled);
+  }, [profile, commitMode]);
+
   useEffect(() => {
     if (!gateData || !profile || existingSameProfile.length === 0) {
       setDuplicateBoundsCount(0);
@@ -320,7 +329,7 @@ export function AgentReviewPage() {
         execution_context_hash: ecHash,
         group_id: authData.groupId,
         ttl: ttlSeconds,
-        commitment_mode: commitMode === 'per-action' ? 'review' : 'automatic',
+        commitment_mode: toProtocolMode(commitMode),
         title: authTitle.trim(),
         // Phase 5 — E2EE intent fields (undefined when no approvers)
         intent_ciphertext: intentCiphertext,
@@ -409,6 +418,10 @@ export function AgentReviewPage() {
   // !group.isPersonal), so they are exempt here — by the same flag, not by
   // the absence of a groupId, which the personal workspace also has.
   const blockedByTeamGate = teamGateBlocked(authData, profileConfigLoaded, profileConfig?.approvers);
+  // The profile may allow only some modes (e.g. review only); offer exactly
+  // those — the AS refuses any other (commitment_mode_not_allowed).
+  const offeredModes = offeredCommitModes(profile);
+  const noModeAllowed = offeredModes.length === 0;
   const ttlExceedsMax = ttlSeconds > ttlMax;
   const commitStyleImmediate = {
     flex: 1,
@@ -498,19 +511,35 @@ export function AgentReviewPage() {
         <div className="field-editable">
           <div className="field-label"><span className="pen">✎</span> Commitment</div>
           <div style={{ display: 'flex', gap: '0.75rem' }}>
+            {offeredModes.includes('per-action') && (
             <button onClick={() => setCommitMode('per-action')} style={commitStylePerAction}>
               <div style={{ fontWeight: 600, fontSize: '0.85rem', marginBottom: '0.25rem', color: 'var(--text-primary)' }}>Review Each Action</div>
               <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
                 You review and approve each action before it executes.
               </div>
             </button>
+            )}
+            {offeredModes.includes('immediate') && (
             <button onClick={() => setCommitMode('immediate')} style={commitStyleImmediate}>
               <div style={{ fontWeight: 600, fontSize: '0.85rem', marginBottom: '0.25rem', color: 'var(--text-primary)' }}>Automatic</div>
               <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
                 Agent acts freely within your limits.
               </div>
             </button>
+            )}
           </div>
+          {offeredModes.length === 1 && (
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: '0.25rem' }}>
+              {offeredModes[0] === 'per-action'
+                ? 'This profile only allows review: you approve each action before it runs.'
+                : 'This profile only allows automatic mode.'}
+            </div>
+          )}
+          {noModeAllowed && (
+            <div style={{ fontSize: '0.75rem', color: 'var(--danger)', marginTop: '0.25rem' }}>
+              This profile allows no commitment mode, so no mandate can be signed under it. Its publisher must fix the profile.
+            </div>
+          )}
         </div>
 
         {/* Duration selector */}
@@ -733,7 +762,7 @@ export function AgentReviewPage() {
             className="btn btn-primary btn-lg"
             style={{ flex: 1 }}
             onClick={handleCommit}
-            disabled={submitting || !authTitle.trim() || blockedByTeamGate}
+            disabled={submitting || !authTitle.trim() || blockedByTeamGate || noModeAllowed}
           >
             {submitting ? 'Signing...' : commitMode === 'immediate' ? 'Sign mandate' : 'Sign mandate (asks first)'}
           </button>

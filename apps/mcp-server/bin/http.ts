@@ -27,6 +27,7 @@ import { createConnectorExportRunner, renderReportHtml, buildTicketDetails } fro
 import type { ReportSources } from '../src/lib/report';
 import { loadProfiles } from '../src/lib/profile-loader';
 import { loadManifests, getAllManifests, getManifest } from '../src/lib/manifest-loader';
+import { registerBuiltins } from '../src/lib/builtins';
 import { buildMandateBrief } from '../src/lib/mandate-brief';
 import { decodeAttestationBlob } from '@hap/core';
 import { executeCommitted, installCommittedExecutor, buildSkippedProposalNote } from '../src/tools/commitments';
@@ -930,6 +931,8 @@ app.listen(port, '0.0.0.0', () => {
   // Load profiles and integration manifests before starting integrations
   profilesLoaded = loadProfiles();
   loadManifests();
+  // The gateway's own tool groups — after manifests, so a built-in can never take a connector's id.
+  registerBuiltins({ state, integrationManager });
 
   // Auto-register personalDefault integrations on first boot (no integrations
   // registered yet). SUVEREN_DISABLE_AUTO_INTEGRATIONS=1 skips it — tests want a

@@ -46,8 +46,7 @@ import { getProfile, ContentBindingError, boundActionTypes } from '@hap/core';
 import { readFile } from 'node:fs/promises';
 import { extname } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { getManifest } from './manifest-loader';
-import { isSimulationMode, manifestIsSimulated } from './simulation-mode';
+import { isSimulationMode } from './simulation-mode';
 
 const IMAGE_MIME: Record<string, string> = {
   '.jpg': 'image/jpeg',
@@ -302,7 +301,7 @@ export function createGatedToolHandler(
   // tell simulation from live (Andreas, 2026-10-02). The explicit reason stays
   // on the human side — SIMULATION_BLOCK_REASON in the integration status, the
   // UI banner and `suveren-gateway simulation status`.
-  if (isSimulationMode() && !manifestIsSimulated(getManifest(tool.integrationId))) {
+  if (isSimulationMode() && !integrationManager.isSimulationSafe(tool.integrationId)) {
     return async () => ({
       content: [{
         type: 'text',

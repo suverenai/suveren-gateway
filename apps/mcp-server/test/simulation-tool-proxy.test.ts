@@ -19,7 +19,8 @@ import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createGatedToolHandler } from '../src/lib/tool-proxy';
-import { loadManifests } from '../src/lib/manifest-loader';
+import { loadManifests, getManifest } from '../src/lib/manifest-loader';
+import { manifestIsSimulated } from '../src/lib/simulation-mode';
 import type { SharedState } from '../src/lib/shared-state';
 import type { IntegrationManager, DiscoveredTool } from '../src/lib/integration-manager';
 
@@ -63,6 +64,8 @@ function mockIntegrationManager() {
   return {
     callTool: vi.fn().mockResolvedValue({ content: [{ type: 'text', text: 'ok' }] }),
     getReadAgeDays: () => null,
+    // The real rule for connectors (no built-ins in this file): the manifest's marker.
+    isSimulationSafe: (id: string) => manifestIsSimulated(getManifest(id)),
   } as unknown as IntegrationManager;
 }
 
