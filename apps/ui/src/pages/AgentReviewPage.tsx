@@ -10,7 +10,7 @@ import { profileDisplayName } from '../lib/profile-display';
 import { offeredCommitModes, settleCommitMode, toProtocolMode } from '../lib/commit-mode';
 import { scopesOverlap } from '../lib/scope-overlap';
 import { formatScopeValue } from '../lib/scope-labels';
-import { teamGateBlocked } from '../lib/team-gate';
+import { mandateRight } from '../lib/mandate-rights';
 import type { AgentProfile, AgentBoundsParams, AgentContextParams } from '@hap/core';
 import type { ProfileConfig } from '../lib/sp-client';
 
@@ -411,13 +411,18 @@ export function AgentReviewPage() {
     ? `Over-cap actions will be reviewed by you and ${approverNamesStr}. Within-cap actions run per the mode you chose above.`
     : `Approvers ${approverNamesStr} can read your intent but won't gate any action — no caps configured on this profile.`;
   const showBottomNote = !!(profileConfig?.approvers?.length);
-  // In a team, a profile with no approvers is not enabled: the AS refuses the
-  // grant (PROFILE_NOT_ENABLED_FOR_GROUP). Say so here and block the button,
-  // instead of calling it a "solo authorization" and letting the user sign
-  // into a refusal. Personal workspaces are exempt on the AS (attest gates on
-  // !group.isPersonal), so they are exempt here — by the same flag, not by
-  // the absence of a groupId, which the personal workspace also has.
-  const blockedByTeamGate = teamGateBlocked(authData, profileConfigLoaded, profileConfig?.approvers);
+  // The AS's team authority gate (PROFILE_NOT_ENABLED_FOR_GROUP /
+  // OWNER_NOT_APPROVER), same rule as the profile picker — block the button
+  // and say why, instead of letting the person sign into a refusal.
+  const right = mandateRight({
+    isPersonal: authData.isPersonal,
+    configLoaded: profileConfigLoaded,
+    approvers: profileConfig?.approvers,
+    userId: user?.id,
+    profileName: profileDisplayName(authData.profileId),
+    teamName: authData.groupName,
+  });
+  const blockedByTeamGate = !right.can;
   // The profile may allow only some modes (e.g. review only); offer exactly
   // those — the AS refuses any other (commitment_mode_not_allowed).
   const offeredModes = offeredCommitModes(profile);
@@ -687,12 +692,14 @@ export function AgentReviewPage() {
               <dd>
                 {!profileConfigLoaded ? (
                   <span style={{ color: 'var(--text-tertiary)' }}>Loading…</span>
-                ) : (profileConfig?.approvers?.length ?? 0) === 0 ? (
+                ) : !right.can ? (
                   <>
-                    <span style={{ color: 'var(--danger)', fontWeight: 600 }}>Not enabled for {authData.groupName ?? 'this team'}</span>
+                    <span style={{ color: 'var(--danger)', fontWeight: 600 }}>
+                      {right.code === 'PROFILE_NOT_ENABLED_FOR_GROUP' ? `Not enabled for ${authData.groupName ?? 'this team'}` : 'You cannot give this mandate'}
+                    </span>
+                    {right.code === 'OWNER_NOT_APPROVER' && <div>{approverNamesStr}</div>}
                     <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: '0.125rem' }}>
-                      A team admin must name at least one approver for this profile on the Authority Server
-                      (team → Profiles) before anyone can grant under it. Personal use is unaffected.
+                      {right.reason} {right.fix}
                     </div>
                   </>
                 ) : (

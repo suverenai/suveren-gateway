@@ -7,7 +7,11 @@ import {
   type IntegrationManifest,
   type McpIntegrationStatus,
   type ProfileConfig,
+  type BuiltinStatus,
 } from '../lib/sp-client';
+import { pickerEntries } from '../lib/picker-entries';
+import { mandateRight } from '../lib/mandate-rights';
+import { profileDisplayName } from '../lib/profile-display';
 
 interface Props {
   onDismiss?: () => void;
@@ -21,10 +25,11 @@ interface Props {
  */
 export function AuthorizePicker({ onDismiss }: Props) {
   const navigate = useNavigate();
-  const { group, groupId, domain } = useAuth();
+  const { group, groupId, domain, user } = useAuth();
   const [profiles, setProfiles] = useState<ProfileSummary[]>([]);
   const [manifests, setManifests] = useState<IntegrationManifest[]>([]);
   const [integrations, setIntegrations] = useState<McpIntegrationStatus[]>([]);
+  const [builtins, setBuiltins] = useState<BuiltinStatus[]>([]);
   const [loading, setLoading] = useState(true);
   const [teamProfiles, setTeamProfiles] = useState<Record<string, ProfileConfig>>({});
 
@@ -32,11 +37,12 @@ export function AuthorizePicker({ onDismiss }: Props) {
     Promise.all([
       spClient.listProfiles().catch(() => []),
       spClient.getIntegrationManifests().then(d => d.manifests ?? []).catch(() => []),
-      spClient.getMcpHealth().then(h => h.integrations ?? []).catch(() => []),
-    ]).then(async ([profileList, manifestList, integrationList]) => {
+      spClient.getMcpHealth().catch(() => null),
+    ]).then(async ([profileList, manifestList, health]) => {
       setProfiles(profileList);
       setManifests(manifestList);
-      setIntegrations(integrationList);
+      setIntegrations(health?.integrations ?? []);
+      setBuiltins(health?.builtins ?? []);
 
       // Phase 3: profile-config is per-profile now. Fetch in parallel for
       // the team's profiles so we can show the "Team" badge on managed ones.
@@ -56,52 +62,20 @@ export function AuthorizePicker({ onDismiss }: Props) {
     }).finally(() => setLoading(false));
   }, [groupId]);
 
-  // Which profiles have an installed connector at all. Only used to filter the
-  // profile list below; the integration itself is resolved per entry, because a
-  // profile-keyed integration map cannot represent two connectors sharing one
-  // profile — the defect this component was fixed for.
-  const profileManifestMap = new Map<string, IntegrationManifest>();
-  for (const m of manifests) {
-    if (m.profile) profileManifestMap.set(m.profile, m);
-  }
+  // Connectors and the gateway's own tool groups, each with the newest profile
+  // version the Authority Server serves (see lib/picker-entries.ts).
+  const entries = pickerEntries(profiles, manifests, integrations, builtins);
 
-  // Only profiles an installed manifest maps to, deduped to the HIGHEST version
-  // per short id. Several versions of one profile can be served at once (e.g.
-  // customers@0.4 kept for old grants + customers@0.5 with a read gate); the
-  // picker must offer exactly one — the newest — or the same integration lists
-  // twice. New grants are created under the newest version.
-  const shortOf = (id: string): string => id.replace(/@.*$/, '').split('/').pop() ?? id;
-  const versionOf = (id: string): string => id.split('@')[1] ?? '';
-  const latestByShort = new Map<string, ProfileSummary>();
-  for (const p of profiles) {
-    const shortId = shortOf(p.id);
-    if (!profileManifestMap.has(shortId)) continue;
-    const existing = latestByShort.get(shortId);
-    // Numeric-aware compare so 0.10 > 0.9; falls back to localeCompare.
-    if (!existing || versionOf(p.id).localeCompare(versionOf(existing.id), undefined, { numeric: true }) > 0) {
-      latestByShort.set(shortId, p);
-    }
-  }
-
-  /**
-   * One entry per INSTALLED INTEGRATION, not per profile.
-   *
-   * This list used to be keyed by profile, which silently lost integrations:
-   * several connectors legitimately share one profile — a deploy profile serves
-   * a GitHub/Vercel connector and a Kubernetes one, an email profile would serve
-   * Gmail and Outlook — and a profile-keyed map keeps only whichever was
-   * processed last. The user saw a single card, named after the profile, with no
-   * way to tell which connector they were authorising.
-   *
-   * Keying by integration also lets the card say "Deploy (GitHub)" rather than
-   * "Deploy", which is the name the person actually recognises.
-   */
-  const entries = manifests
-    .map(manifest => {
-      const profile = manifest.profile ? latestByShort.get(manifest.profile) : undefined;
-      return profile ? { manifest, profile, integration: integrations.find(i => i.id === manifest.id) } : null;
-    })
-    .filter((e): e is NonNullable<typeof e> => e !== null);
+  // Whether this person may give a mandate for a profile here — the Authority
+  // Server's team rule, shown at selection instead of on the last page.
+  const rightFor = (profile: ProfileSummary) => mandateRight({
+    isPersonal: !!group?.isPersonal,
+    configLoaded: !loading,
+    approvers: teamProfiles[profile.id]?.approvers,
+    userId: user?.id,
+    profileName: profileDisplayName(profile.id),
+    teamName: group?.name,
+  });
 
   const isTeamManaged = (profileId: string): boolean => profileId in teamProfiles;
 
@@ -157,18 +131,20 @@ export function AuthorizePicker({ onDismiss }: Props) {
         </div>
       ) : (
         <div className="profile-grid">
-          {entries.map(({ manifest, profile: p, integration }) => {
+          {entries.map((entry) => {
+            const p = entry.profile;
             const isTeam = isTeamManaged(p.id);
-            const isRunning = integration?.running === true;
+            const right = rightFor(p);
+            const muted = !entry.ready || !right.can;
 
             return (
-              <div className="card" key={manifest.id} style={!isRunning ? { opacity: 0.7 } : undefined}>
+              <div className="card" key={entry.key} style={muted ? { opacity: 0.7 } : undefined}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.125rem' }}>
                   {/* The INTEGRATION's name — "Deploy (GitHub)", not "Deploy".
                       Several connectors can share one profile, so the profile
                       name cannot identify what is being authorised. */}
                   <h3 className="card-title" style={{ margin: 0 }}>
-                    {manifest.name}
+                    {entry.name}
                   </h3>
                   {isTeam ? (
                     <span style={{
@@ -184,21 +160,35 @@ export function AuthorizePicker({ onDismiss }: Props) {
                   )}
                 </div>
                 <p style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginBottom: '1rem', flex: 1 }}>
-                  {manifest.description || p.description}
+                  {entry.description}
                 </p>
 
-                {isRunning ? (
+                {!right.can ? (
+                  <>
+                    <button className="btn btn-secondary btn-sm" disabled>Give a mandate</button>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.5rem' }}>
+                      {right.reason} <span style={{ color: 'var(--text-tertiary)' }}>{right.fix}</span>
+                    </div>
+                  </>
+                ) : entry.ready ? (
                   <button className="btn btn-primary btn-sm" onClick={() => handleCreate(p.id)}>
                     Give a mandate
                   </button>
+                ) : entry.kind === 'builtin' ? (
+                  <>
+                    <button className="btn btn-secondary btn-sm" disabled>Give a mandate</button>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: '0.5rem' }}>
+                      {entry.unavailableReason}
+                    </div>
+                  </>
                 ) : (
                   <Link
-                    to={`/integrations?setup=${manifest?.id ?? ''}`}
+                    to={`/integrations?setup=${entry.setupId ?? ''}`}
                     className="btn btn-secondary btn-sm"
                     style={{ textDecoration: 'none', textAlign: 'center' }}
                     onClick={() => onDismiss?.()}
                   >
-                    Set up {manifest?.name ?? 'integration'}
+                    Set up {entry.name}
                   </Link>
                 )}
               </div>

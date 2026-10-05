@@ -17,7 +17,7 @@ import type { IntegrationConfig, ToolGatingConfig } from './integration-registry
 import { getManifest, isExactSemver } from './manifest-loader';
 import { remotePreflightTarget, preflightRemoteAuth } from './remote-auth-preflight';
 import { isSimulationMode, manifestIsSimulated, SIMULATION_BLOCK_REASON } from './simulation-mode';
-import type { BuiltinIntegration } from './builtin-integration';
+import type { BuiltinIntegration, BuiltinStatus } from './builtin-integration';
 
 const DEFAULT_DATA_DIR = process.env.SUVEREN_DATA_DIR ?? join(homedir(), '.suveren');
 // Runtime INSTALL directory for downstream MCP npm packages (e.g. crm-mcp,
@@ -887,6 +887,17 @@ export class IntegrationManager {
     this.builtins.set(def.id, { def, tools });
     console.error(`[IntegrationManager] Built-in ${def.id}: ${tools.length} tool(s) under profile ${def.profile}`);
     this.onToolsChanged?.();
+  }
+
+  /** The built-in groups, for the mandate picker — never part of the connector status list. */
+  getBuiltins(): BuiltinStatus[] {
+    return Array.from(this.builtins.values()).map(({ def }) => ({
+      id: def.id,
+      name: def.name,
+      description: def.description ?? '',
+      profile: def.profile,
+      available: !def.simulationOnly || isSimulationMode(),
+    }));
   }
 
   /** Whether `id` names a built-in (in-process) integration. */

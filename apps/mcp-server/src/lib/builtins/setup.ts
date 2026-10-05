@@ -25,6 +25,9 @@ export function setupBuiltin(_deps: BuiltinDeps): BuiltinIntegration {
   return {
     id: 'setup',
     name: 'Test setup',
+    description:
+      'Your AI proposes its own setup for a test — for now its agent brief. Every proposal waits for your ' +
+      'approval. Simulation mode only.',
     profile: DELEGATION_PROFILE,
     simulation: true,
     simulationOnly: true,
