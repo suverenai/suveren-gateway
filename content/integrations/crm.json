@@ -6,7 +6,7 @@
   "icon": "users",
   "profile": "customers",
   "npmPackage": "@humanagencyp/crm-mcp",
-  "npmVersion": "1.1.2",
+  "npmVersion": "1.2.0",
   "mcp": {
     "command": "crm-mcp",
     "args": []
@@ -139,6 +139,15 @@
           "action_type": "setup"
         },
         "actionLabel": "Test data loaded",
+        "hideUnlessAuthorized": true
+      },
+      "clear_simulation": {
+        "executionMapping": {},
+        "staticExecution": {
+          "contact_type": "customer",
+          "action_type": "setup"
+        },
+        "actionLabel": "Test data cleared",
         "hideUnlessAuthorized": true
       }
     }
