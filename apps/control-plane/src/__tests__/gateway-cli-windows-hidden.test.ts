@@ -18,6 +18,13 @@ describe('Windows: no console window for the running gateway', () => {
     expect(detachSpawn).toContain('windowsHide: true');
   });
 
+  it('server.js spawns the control plane, MCP server and CA re-exec with windowsHide', () => {
+    const src = readFileSync(join(root, 'bundle/server.js'), 'utf8');
+    const spawns = src.split('spawn(').slice(1).map(s => s.slice(0, s.indexOf(');')));
+    expect(spawns.length).toBe(3);
+    for (const call of spawns) expect(call).toContain('windowsHide: true');
+  });
+
   it('the Start-menu shortcut runs the launcher minimized', () => {
     const wxs = readFileSync(join(root, 'bundle/windows/wix/Product.wxs'), 'utf8');
     const shortcut = wxs.slice(wxs.indexOf('<Shortcut'), wxs.indexOf('/>', wxs.indexOf('<Shortcut')));
