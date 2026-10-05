@@ -17,6 +17,7 @@ import type { IntegrationConfig, ToolGatingConfig } from './integration-registry
 import { getManifest, isExactSemver } from './manifest-loader';
 import { remotePreflightTarget, preflightRemoteAuth } from './remote-auth-preflight';
 import { isSimulationMode, manifestIsSimulated, SIMULATION_BLOCK_REASON } from './simulation-mode';
+import type { BuiltinIntegration } from './builtin-integration';
 
 const DEFAULT_DATA_DIR = process.env.SUVEREN_DATA_DIR ?? join(homedir(), '.suveren');
 // Runtime INSTALL directory for downstream MCP npm packages (e.g. crm-mcp,
@@ -223,6 +224,8 @@ export interface StartIntegrationOptions {
 
 export class IntegrationManager {
   private running = new Map<string, RunningIntegration>();
+  /** In-process tool groups (see builtin-integration.ts) — kept apart from `running` on purpose. */
+  private builtins = new Map<string, { def: BuiltinIntegration; tools: DiscoveredTool[] }>();
   private onToolsChanged: (() => void) | null = null;
   /**
    * Called when a persisted config was migrated to the manifest's command/args
@@ -855,13 +858,90 @@ export class IntegrationManager {
   }
 
   /**
-   * Proxy a tool call to a downstream MCP server.
+   * Register an in-process tool group (see builtin-integration.ts). Its tools are
+   * listed, gated and executed through the same path as a connector's; only the
+   * final call runs `handler` instead of a child MCP client. Refused when the id
+   * is unusable or already taken, so a built-in can never shadow a connector.
+   */
+  registerBuiltin(def: BuiltinIntegration): void {
+    if (!/^[a-z0-9][a-z0-9-]*$/.test(def.id) || def.id.includes('__')) {
+      throw new Error(`Built-in integration id "${def.id}" must be lowercase letters, digits and '-'.`);
+    }
+    if (this.builtins.has(def.id) || this.running.has(def.id) || getManifest(def.id)) {
+      throw new Error(`Built-in integration id "${def.id}" is already in use.`);
+    }
+    const names = new Set<string>();
+    const tools: DiscoveredTool[] = def.tools.map(tool => {
+      if (names.has(tool.name)) throw new Error(`Built-in "${def.id}": tool "${tool.name}" is declared twice.`);
+      names.add(tool.name);
+      const gating = this.resolveToolGating(def.profile, def.toolGating, tool.name);
+      return {
+        originalName: tool.name,
+        namespacedName: `${def.id}__${tool.name}`,
+        integrationId: def.id,
+        description: tool.description,
+        inputSchema: withoutBlockedArgs(tool.inputSchema, gating?.blockedArgs),
+        gating,
+      };
+    });
+    this.builtins.set(def.id, { def, tools });
+    console.error(`[IntegrationManager] Built-in ${def.id}: ${tools.length} tool(s) under profile ${def.profile}`);
+    this.onToolsChanged?.();
+  }
+
+  /** Whether `id` names a built-in (in-process) integration. */
+  isBuiltin(id: string): boolean {
+    return this.builtins.has(id);
+  }
+
+  /**
+   * Whether `id` may run while simulation mode is on: a connector whose manifest
+   * carries the `simulation` marker, or a built-in that declares `simulation: true`.
+   */
+  isSimulationSafe(id: string): boolean {
+    const builtin = this.builtins.get(id);
+    if (builtin) return builtin.def.simulation === true;
+    return manifestIsSimulated(getManifest(id));
+  }
+
+  /**
+   * The built-in's own refusal for this call, checked before the gate (no proposal,
+   * no ticket): `simulationOnly` outside simulation mode, then the tool's `validate`.
+   * Null for connector tools and for calls that may proceed.
+   */
+  precheckBuiltin(tool: DiscoveredTool, args: Record<string, unknown>): string | null {
+    const builtin = this.builtins.get(tool.integrationId);
+    if (!builtin) return null;
+    if (builtin.def.simulationOnly && !isSimulationMode()) {
+      return `Refused: "${tool.namespacedName}" is not available. No ticket was requested.`;
+    }
+    const def = builtin.def.tools.find(t => t.name === tool.originalName);
+    const refusal = def?.validate?.(args);
+    return refusal ? `Refused: ${refusal} No ticket was requested.` : null;
+  }
+
+  /**
+   * Proxy a tool call to a downstream MCP server (or a built-in's handler).
    */
   async callTool(
     integrationId: string,
     toolName: string,
     args: Record<string, unknown>,
   ): Promise<{ content: Array<{ type: string; text: string }>; isError?: boolean }> {
+    const builtin = this.builtins.get(integrationId);
+    if (builtin) {
+      const tool = builtin.def.tools.find(t => t.name === toolName);
+      if (!tool) {
+        return { content: [{ type: 'text', text: `Tool "${integrationId}__${toolName}" does not exist.` }], isError: true };
+      }
+      try {
+        const result = await tool.handler(args);
+        return { content: result.content.map(c => ({ type: c.type, text: c.text })), isError: result.isError };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text', text: `Tool call failed: ${message}` }], isError: true };
+      }
+    }
     const entry = this.running.get(integrationId);
     if (!entry) {
       return {
@@ -894,6 +974,9 @@ export class IntegrationManager {
   getAllTools(): DiscoveredTool[] {
     const tools: DiscoveredTool[] = [];
     for (const entry of this.running.values()) {
+      tools.push(...entry.tools);
+    }
+    for (const entry of this.builtins.values()) {
       tools.push(...entry.tools);
     }
     return tools;

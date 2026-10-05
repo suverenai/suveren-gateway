@@ -46,8 +46,7 @@ import { getProfile, ContentBindingError, boundActionTypes } from '@hap/core';
 import { readFile } from 'node:fs/promises';
 import { extname } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { getManifest } from './manifest-loader';
-import { isSimulationMode, manifestIsSimulated } from './simulation-mode';
+import { isSimulationMode } from './simulation-mode';
 
 const IMAGE_MIME: Record<string, string> = {
   '.jpg': 'image/jpeg',
@@ -302,7 +301,7 @@ export function createGatedToolHandler(
   // tell simulation from live (Andreas, 2026-10-02). The explicit reason stays
   // on the human side — SIMULATION_BLOCK_REASON in the integration status, the
   // UI banner and `suveren-gateway simulation status`.
-  if (isSimulationMode() && !manifestIsSimulated(getManifest(tool.integrationId))) {
+  if (isSimulationMode() && !integrationManager.isSimulationSafe(tool.integrationId)) {
     return async () => ({
       content: [{
         type: 'text',
@@ -318,8 +317,18 @@ export function createGatedToolHandler(
   // approval card, the bounds check, the content hash, the downstream call —
   // sees one spelling. Normalizing after the proposal would bind a string the
   // approver never saw.
-  const inner = async (args: Record<string, unknown>) =>
-    gated(normalizeIncomingArgs(tool, args));
+  // A built-in's own refusal (simulation-only, invalid arguments) comes before any
+  // proposal or ticket, so no person is asked to approve a call that cannot run.
+  // Skipped for a tool the gate refuses outright anyway (no profile, disabled):
+  // that refusal must not depend on — or touch — the manager.
+  const gateable = !!tool.gating?.profile && tool.gating.category !== 'disabled';
+  const inner = async (args: Record<string, unknown>) => {
+    const normalized = normalizeIncomingArgs(tool, args);
+    // Optional call: test doubles of the manager predate built-ins.
+    const refusal = gateable ? integrationManager.precheckBuiltin?.(tool, normalized) : null;
+    if (refusal) return { content: [{ type: 'text', text: refusal }], isError: true };
+    return gated(normalized);
+  };
 
   const blocked = tool.gating?.blockedArgs ?? [];
   if (blocked.length === 0) return inner;
