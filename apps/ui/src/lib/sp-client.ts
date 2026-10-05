@@ -1026,6 +1026,14 @@ class SPClient {
    * a key are included. Empty array = no approvers have keys (skip encryption).
    * Endpoint: GET /api/groups/:id/profile-config/:profileId/approvers/pubkeys
    */
+  /** Argument schemas + approvalView hints per namespaced tool, for the approval screen. */
+  async getToolDisplay(): Promise<Record<string, import('./approval-view').ToolDisplay>> {
+    const res = await this.fetch('/tool-display');
+    if (!res.ok) return {};
+    const data = await res.json();
+    return (data?.tools ?? {}) as Record<string, import('./approval-view').ToolDisplay>;
+  }
+
   async getApproversPubkeys(groupId: string, profileId: string): Promise<Array<{ userId: string; publicKey: string }>> {
     const res = await this.fetch(
       `/api/groups/${encodeURIComponent(groupId)}/profile-config/${encodeURIComponent(profileId)}/approvers/pubkeys`,

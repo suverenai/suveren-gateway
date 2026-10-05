@@ -47,7 +47,7 @@ function fakeAs(opts: { approvers?: string[]; attestStatus?: number; attestBody?
     if (path.includes('/profile-config/')) {
       return opts.approvers ? { status: 200, body: { config: { approvers: opts.approvers } } } : { status: 404, body: { error: 'No config' } };
     }
-    if (path === '/api/as/attest') return { status: opts.attestStatus ?? 201, body: opts.attestBody ?? { authorization_id: body.authorization_id } };
+    if (path === '/api/as/attest') return { status: opts.attestStatus ?? 201, body: opts.attestBody ?? { authorization_id: (body as { authorization_id?: string }).authorization_id } };
     if (path.endsWith('/revoke')) return { status: 200, body: {} };
     return { status: 404, body: {} };
   };

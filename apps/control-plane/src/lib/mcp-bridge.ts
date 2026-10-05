@@ -148,6 +148,13 @@ export async function runCommittedProposals(): Promise<void> {
 
 // ─── Integration management ──────────────────────────────────────────────
 
+/** Argument schemas + approvalView hints per tool, for the approval screen. */
+export async function getToolDisplay(): Promise<unknown> {
+  const res = await fetch(`${MCP_BASE}/internal/tool-display`, { headers: internalHeaders() });
+  if (!res.ok) throw new Error(`MCP tool-display failed: ${res.status}`);
+  return res.json();
+}
+
 export async function getIntegrations(): Promise<unknown> {
   const res = await fetch(`${MCP_BASE}/internal/integrations`, {
     headers: internalHeaders(),

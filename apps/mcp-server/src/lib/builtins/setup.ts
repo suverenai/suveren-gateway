@@ -43,11 +43,23 @@ export function setupBuiltin(_deps: BuiltinDeps): BuiltinIntegration {
           executionMapping: {},
           staticExecution: { action_type: 'brief' },
           hideUnlessAuthorized: true,
+          approvalView: { content: { label: 'New agent brief', kind: 'markdown' } },
         },
         create_mandate: {
           executionMapping: {},
           staticExecution: { action_type: 'mandate' },
           hideUnlessAuthorized: true,
+          // Shown like the mandate screen: limits and scope by the profile's own names.
+          approvalView: {
+            team: { label: 'Team' },
+            profile: { label: 'Profile', kind: 'profile' },
+            limits: { label: 'Limits', kind: 'profile-limits', profileArg: 'profile' },
+            scope: { label: 'Scope', kind: 'profile-scope', profileArg: 'profile' },
+            intent: { label: 'Intent', kind: 'markdown' },
+            mode: { label: 'Mode' },
+            duration_hours: { label: 'Valid for (hours)' },
+            title: { label: 'Title' },
+          },
         },
       },
     } as unknown as BuiltinIntegration['toolGating'],

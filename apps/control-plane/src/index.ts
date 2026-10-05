@@ -40,7 +40,7 @@ import { createAIRouter } from './routes/ai';
 import { createAIPromptsRouter } from './routes/ai-prompts';
 import { requireAuth, requireAuthQueryOrHeader } from './middleware/auth';
 import { requireAllowedHost } from './middleware/host-guard';
-import { pushGateContent, pushServiceCredentials, setInternalSecret, getManifests, getGateContent, getEnrichedAuthorizations, getSkippedCommitments, MCP_BASE, runCommittedProposals, resyncGates, setReadPolicy } from './lib/mcp-bridge';
+import { getToolDisplay, pushGateContent, pushServiceCredentials, setInternalSecret, getManifests, getGateContent, getEnrichedAuthorizations, getSkippedCommitments, MCP_BASE, runCommittedProposals, resyncGates, setReadPolicy } from './lib/mcp-bridge';
 import { backfillReadPolicyDefaults } from './lib/read-policy-defaults';
 import { createMCPRouter } from './routes/mcp';
 import { createAutostartRouter } from './routes/autostart';
@@ -800,6 +800,17 @@ app.post('/gate-content', jsonParser, authGuard, async (req: Request, res: Respo
   } catch (err) {
     console.error('[Control Plane] Gate content forward error:', err);
     res.status(500).json({ error: 'Failed to forward gate content to MCP server' });
+  }
+});
+
+// Tool display info for the approval screen — argument schemas and the
+// optional approvalView hints, keyed by namespaced tool name.
+app.get('/tool-display', authGuard, async (_req: Request, res: Response) => {
+  try {
+    res.json(await getToolDisplay());
+  } catch (err) {
+    console.error('[Control Plane] tool-display error:', err);
+    res.status(502).json({ error: 'MCP server unavailable' });
   }
 });
 

@@ -4,6 +4,7 @@ import type { AgentProfile, AgentBoundsParams, AgentContextParams, AgentFramePar
 import { DiscoveredScopeField } from './DiscoveredScopeField';
 import { spClient, type IntegrationManifest, type ProfileConfig } from '../lib/sp-client';
 import { minForBound, seedForBound, numericBoundValue } from '../lib/bound-defaults';
+import { formatUnit } from '../lib/bound-format';
 
 interface Props {
   profile: AgentProfile;
@@ -68,15 +69,6 @@ function validateTag(value: string, format: string): boolean {
 
 /** Render a profile field's `unit` as a human-readable suffix.
  *  `count` returns empty string (the count is its own meaning). */
-function formatUnit(unit?: string): string {
-  if (!unit || unit === 'count') return '';
-  if (unit === 'minutes') return 'min';
-  if (unit === 'hours') return 'hr';
-  if (unit === 'days') return 'days';
-  if (unit === 'percent') return '%';
-  if (unit.startsWith('currency:')) return unit.slice('currency:'.length);
-  return unit;
-}
 
 /** Smart step size for +/- buttons based on the unit. */
 function stepFor(unit?: string): number {

@@ -634,6 +634,11 @@ app.get('/health', (_req: Request, res: Response) => {
   });
 });
 
+// Argument schemas + approvalView hints per tool, for the approval screen.
+app.get('/internal/tool-display', internalOnly, (_req: Request, res: Response) => {
+  res.json({ tools: integrationManager.getToolDisplay() });
+});
+
 app.get('/internal/gate-content', internalOnly, (req: Request, res: Response) => {
   // Lookup is exact-match on the per-ceremony `authorizationId` ONLY.
   // The old multi-key fallback (path / profileId / boundsHash) returned
