@@ -12,17 +12,23 @@
 import type { IntegrationManager } from '../integration-manager';
 import type { SharedState } from '../shared-state';
 import type { BuiltinIntegration } from '../builtin-integration';
+import type { ReportSources } from '../report';
+import { reportBuiltin } from './report';
 
 /** What a built-in's handlers may use. Extend when a group needs more. */
 export interface BuiltinDeps {
   state: SharedState;
   integrationManager: IntegrationManager;
+  /** What the `report` built-in (./report.ts) reads evidence from — the SAME
+   *  instance http.ts hands to ReportStore/the /internal/report routes, so a
+   *  tool-driven read and a manual save/recheck see identical data. */
+  reportSources: ReportSources;
 }
 
 export type BuiltinFactory = (deps: BuiltinDeps) => BuiltinIntegration;
 
 /** Add a group here. */
-export const BUILTIN_FACTORIES: BuiltinFactory[] = [];
+export const BUILTIN_FACTORIES: BuiltinFactory[] = [reportBuiltin];
 
 export function registerBuiltins(deps: BuiltinDeps, factories: BuiltinFactory[] = BUILTIN_FACTORIES): string[] {
   const registered: string[] = [];

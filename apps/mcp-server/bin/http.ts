@@ -932,7 +932,7 @@ app.listen(port, '0.0.0.0', () => {
   profilesLoaded = loadProfiles();
   loadManifests();
   // The gateway's own tool groups — after manifests, so a built-in can never take a connector's id.
-  registerBuiltins({ state, integrationManager });
+  registerBuiltins({ state, integrationManager, reportSources });
 
   // Auto-register personalDefault integrations on first boot (no integrations
   // registered yet). SUVEREN_DISABLE_AUTO_INTEGRATIONS=1 skips it — tests want a
