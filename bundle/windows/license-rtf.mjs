@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * Writes bundle/windows/wix/License.rtf — the licence page of the Windows
  * installer — from the repository's LICENSE (MIT), word for word, plus one

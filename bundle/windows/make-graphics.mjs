@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * Generates the Windows installer's images from the Suveren mark
  * (apps/ui/public/favicon.svg), as signed off by Andreas on 2026-10-05
