@@ -8,7 +8,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { verifyReport } from '../../src/lib/report/verify-report';
-import { renderReportHtml } from '../../src/lib/report/render-report';
+import { renderReportHtml, DRAWN_ELEMENT_STYLES } from '../../src/lib/report/render-report';
 import { buildScenario } from './fixtures/scenario';
 import { buildEmailExport, buildErpExport } from './fixtures/exports';
 import type { RunConnectorExport, ExportSystem } from '../../src/lib/report/types';
@@ -34,6 +34,23 @@ describe('renderReportHtml', () => {
     expect(out).toContain('Quote created');
     expect(out).not.toContain('erp__create_quote');
     expect(out).toContain('sv-badge-ok');
+  });
+
+  it('a ticket card never shows the raw ticket id or a stray separator (polish 2026-10-05, second pass)', async () => {
+    const { archive, addTicket } = buildScenario();
+    addTicket({ id: 't1', action: 'erp__create_quote', authorizationId: 'authz-1', timestamp: 1_800_000_000 });
+    const html = '<sv-ticket ref="t1"></sv-ticket>';
+    const result = await verifyReport(html, { archive, runExport: makeRunExport() });
+    const out = renderReportHtml(result.html, result.elements);
+
+    // No bare <code>t1</code> — the raw id belongs in the detail panel's
+    // Technical details only.
+    expect(out).not.toContain('<code>t1</code>');
+    // The checkUrl + Details links sit in a single flex item: two links
+    // joined by one real " · " separator, never an orphaned middle dot with
+    // nothing adjacent (the bug: a bare text node between two <a> tags
+    // became its own `justify-content: space-between` flex item).
+    expect(out).toMatch(/Check on suveren\.ai ↗<\/a> · <a[^>]*>Details<\/a>/);
   });
 
   it('renders an unverifiable reference as a "not verifiable" card, never with invented content', async () => {
@@ -108,7 +125,7 @@ describe('renderReportHtml', () => {
     expect(out).not.toContain('erp__convert_quote_to_order');
   });
 
-  it('SHOWS AN APPROVAL AS ITS OWN STEP between the request and the decision, for any step/goal ticket with an archived approval', async () => {
+  it('SHOWS AN APPROVAL AS ITS OWN STEP, placed BEFORE the goal ticket it gates (asked/decided always precede execution)', async () => {
     const { archive, addTicket } = buildScenario();
     const email = buildEmailExport({
       inbox: [{ id: 'm1', from_name: 'A', from_email: 'a@example.com', to_json: '[]', subject: 'Order', body: 'x', received_at: '2026-10-01T09:00:00Z', case_id: 'C1' }],
@@ -116,7 +133,9 @@ describe('renderReportHtml', () => {
     addTicket({ id: 's1', action: 'erp__create_quote', authorizationId: 'authz-1', timestamp: 1_800_000_300 });
     addTicket({
       id: 'goal1', action: 'erp__convert_quote_to_order', authorizationId: 'authz-1', timestamp: 1_800_001_000,
-      proposal: { createdAt: 1_800_000_320, status: 'approved', committedBy: { u1: { userId: 'M. Huber', at: 1_800_000_320 + 24 * 60 } } },
+      // Asked 680s before, decided 100s before the goal ticket executes —
+      // a realistic approval-then-execution order.
+      proposal: { createdAt: 1_800_000_320, status: 'approved', committedBy: { u1: { userId: 'M. Huber', at: 1_800_000_900 } } },
     });
     const html = '<sv-case start="email:m1" goal="ticket:goal1" steps="s1"></sv-case>';
     const result = await verifyReport(html, { archive, runExport: makeRunExport({ email }) });
@@ -128,14 +147,48 @@ describe('renderReportHtml', () => {
     expect(out).toContain('asked');
     expect(out).toContain('approved');
     expect(out).toContain('M. Huber');
-    expect(out).toContain('24 min');
+    expect(out).toContain('10 min');
 
-    // Order in the markup: the goal's own ticket step comes before its
-    // approval step (request, then decision) — not folded into one card.
+    // REFUSAL (polish 2026-10-05, second pass): the first version always drew
+    // a ticket's approval right AFTER its own card, which put the goal's
+    // approval dead last — "Email in → Quote created → Reply sent →
+    // Approval" read as if approval happened after the ticket already ran.
+    // An approval is asked/decided BEFORE the ticket it gates executes, so it
+    // belongs immediately BEFORE that ticket in the timeline.
+    const approvalIdx = out.lastIndexOf('<div class="sv-step sv-step-approval">'); // the RENDERED step, not the CSS selector
     const goalIdx = out.indexOf('Order placed');
-    const approvalIdx = out.indexOf('sv-step-approval');
+    expect(approvalIdx).toBeGreaterThan(-1);
     expect(goalIdx).toBeGreaterThan(-1);
-    expect(approvalIdx).toBeGreaterThan(goalIdx);
+    expect(approvalIdx).toBeLessThan(goalIdx);
+  });
+
+  it('an approval on a MIDDLE step sorts right before that step, not before the goal or after every other step', async () => {
+    const { archive, addTicket } = buildScenario();
+    const email = buildEmailExport({
+      inbox: [{ id: 'm1', from_name: 'A', from_email: 'a@example.com', to_json: '[]', subject: 'Order', body: 'x', received_at: '2026-10-01T09:00:00Z', case_id: 'C1' }],
+    });
+    addTicket({ id: 's1', action: 'erp__create_quote', authorizationId: 'authz-1', timestamp: 1_800_000_200 });
+    addTicket({
+      id: 's2', action: 'crm__log_activity', authorizationId: 'authz-1', timestamp: 1_800_000_900,
+      proposal: { createdAt: 1_800_000_500, status: 'approved', committedBy: { u1: { userId: 'M. Huber', at: 1_800_000_800 } } },
+    });
+    addTicket({ id: 'g1', action: 'erp__convert_quote_to_order', authorizationId: 'authz-1', timestamp: 1_800_001_200 });
+    const html = '<sv-case start="email:m1" goal="ticket:g1" steps="s1 s2"></sv-case>';
+    const result = await verifyReport(html, { archive, runExport: makeRunExport({ email }) });
+    expect(result.elements[0].status).toBe('verified');
+    const out = renderReportHtml(result.html, result.elements);
+
+    const quoteIdx = out.indexOf('Quote created'); // s1, no approval
+    const approvalIdx = out.lastIndexOf('<div class="sv-step sv-step-approval">'); // s2's approval — the RENDERED step, not the CSS selector
+    const activityIdx = out.indexOf('Activity logged'); // s2 itself
+    const goalIdx = out.indexOf('Order placed'); // g1, no approval
+    expect(quoteIdx).toBeGreaterThan(-1);
+    expect(approvalIdx).toBeGreaterThan(-1);
+    expect(activityIdx).toBeGreaterThan(-1);
+    expect(goalIdx).toBeGreaterThan(-1);
+    expect(quoteIdx).toBeLessThan(approvalIdx);
+    expect(approvalIdx).toBeLessThan(activityIdx);
+    expect(activityIdx).toBeLessThan(goalIdx);
   });
 
   it('renders an sv-mandate\'s limits using the profile\'s own display name and unit, never the bare bound key', async () => {
@@ -243,5 +296,14 @@ describe('renderReportHtml', () => {
     const out = renderReportHtml(result.html, result.elements);
     expect(out).toContain('<svg viewBox="0 0 10 10">');
     expect(out).toContain('AI analysis');
+  });
+
+  it('the approval step\'s text can wrap — no fixed width or nowrap that would cut it off (polish 2026-10-05, second pass)', () => {
+    expect(DRAWN_ELEMENT_STYLES).toMatch(/\.sv-step-approval\s*\{[^}]*white-space:\s*normal/);
+    expect(DRAWN_ELEMENT_STYLES).not.toMatch(/\.sv-step-approval\s*\{[^}]*white-space:\s*nowrap/);
+    // A bounded max-width (rather than no width at all) is what forces a
+    // flex item with flex-shrink:0 to wrap instead of growing to its
+    // one-line content width and overflowing the visible frame.
+    expect(DRAWN_ELEMENT_STYLES).toMatch(/\.sv-step-approval\s*\{[^}]*max-width:\s*\d+px/);
   });
 });

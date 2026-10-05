@@ -114,13 +114,22 @@ function renderTicket(el: VerifiedElement): string {
   const actionLabel = typeof d.actionLabel === 'string' ? d.actionLabel : formatActionLabel(d.action);
   const timeLabel = typeof d.timeLabel === 'string' ? d.timeLabel : formatDateTime(d.time);
   const profileLabel = typeof d.profileLabel === 'string' ? d.profileLabel : escapeHtml(d.profile ?? '');
+  // The raw ticket id is a technical value, not something a manager reads on
+  // the card itself — it lives in the detail panel's "Technical details"
+  // only (ticket-details.ts / ReportsPage.tsx already surface it there).
+  // Both links are wrapped in ONE <span> so the row's flexbox never sees the
+  // " · " joiner as its own text-node flex item (polish 2026-10-05: that
+  // produced a stray, orphaned "·" spaced across the row by
+  // `justify-content: space-between`).
+  const links = [
+    href ? `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">Check on suveren.ai ↗</a>` : '',
+    `<a href="${escapeHtml(detailLink(el.id))}" target="_top">Details</a>`,
+  ].filter(Boolean);
   return (
     `<div class="sv-el sv-el-${el.status}" data-sv-id="${escapeHtml(el.id)}">` +
     `<div class="sv-el-row"><b>${escapeHtml(actionLabel)}</b>${badge(el.status, 'signature valid')}</div>` +
     `<div class="sv-el-row"><span>${escapeHtml(profileLabel)} · ${escapeHtml(timeLabel)}</span></div>` +
-    `<div class="sv-el-row"><code>${escapeHtml(d.ticketId)}</code>` +
-    (href ? ` <a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">Check on suveren.ai ↗</a>` : '') +
-    ` · <a href="${escapeHtml(detailLink(el.id))}" target="_top">Details</a></div>` +
+    `<div class="sv-el-row"><span>${links.join(' · ')}</span></div>` +
     `</div>`
   );
 }
@@ -196,7 +205,16 @@ function renderRecord(el: VerifiedElement): string {
 }
 
 interface CaseStepLike { ticketId: string; time: number; action?: unknown }
-interface CaseApprovalLike { ticketId: string; whoLabel?: string; who?: string[]; createdAtLabel?: string; decidedAtLabel?: string; waitLabel?: string }
+interface CaseApprovalLike {
+  ticketId: string;
+  whoLabel?: string;
+  who?: string[];
+  createdAt?: number;
+  createdAtLabel?: string;
+  decidedAt?: number;
+  decidedAtLabel?: string;
+  waitLabel?: string;
+}
 
 /** One ticket-carrying node in the case timeline — a step or the goal.
  *  `kind` drives both the small caption ("ticket"/"goal") and the CSS hook
@@ -242,29 +260,48 @@ function renderCase(el: VerifiedElement): string {
   }
   const start = d.start as { time: number } | undefined;
   const startStep = start
-    ? `<div class="sv-step"><div class="sv-step-k">start</div><div class="sv-step-t">Email in</div>${formatDateTime(start.time)}</div>`
-    : '';
+    ? { time: start.time, html: `<div class="sv-step"><div class="sv-step-k">start</div><div class="sv-step-t">Email in</div>${formatDateTime(start.time)}</div>` }
+    : undefined;
 
-  // Every ticket-carrying node, chronological, each immediately followed by
-  // its own archived approval as a separate step (never folded into the
-  // ticket's own card) — this is what lets a manager see WHY a case waited.
+  // Every ticket-carrying node, PLUS its own archived approval (if any) as a
+  // separate timeline item — sorted together by time, not grouped by ticket.
+  // An approval is always asked/decided BEFORE the ticket it gates actually
+  // executes, so it belongs immediately before that ticket in the timeline,
+  // not after (polish 2026-10-05, second pass: the first version always drew
+  // a ticket's approval right after its own card, which put the goal's
+  // approval dead last — "Email in → Quote created → Reply sent → Approval"
+  // reads as if the approval happened AFTER the reply was already sent).
   const ticketNodes: Array<{ node: CaseStepLike; isGoal: boolean }> = [
     ...steps.map(s => ({ node: s, isGoal: false })),
     ...(goal ? [{ node: goal, isGoal: true }] : []),
-  ].sort((a, b) => a.node.time - b.node.time);
+  ];
 
-  const stepHtml = ticketNodes
-    .map(({ node, isGoal }) => {
-      const approval = approvalsByTicket.get(node.ticketId);
-      return renderCaseTicketStep(el.id, node, isGoal) + (approval ? renderCaseApprovalStep(approval) : '');
-    })
-    .join('');
+  const items: Array<{ time: number; html: string }> = [];
+  if (startStep) items.push(startStep);
+  for (const { node, isGoal } of ticketNodes) {
+    const approval = approvalsByTicket.get(node.ticketId);
+    if (approval) {
+      // Clamp to at most the ticket's own time: a real approval always
+      // precedes execution, but this also guarantees correct placement
+      // (immediately before, via the stable sort below) even if clock skew
+      // ever put a recorded decidedAt a beat after the ticket's timestamp.
+      const approvalTime = Math.min(approval.decidedAt ?? approval.createdAt ?? node.time, node.time);
+      items.push({ time: approvalTime, html: renderCaseApprovalStep(approval) });
+    }
+    items.push({ time: node.time, html: renderCaseTicketStep(el.id, node, isGoal) });
+  }
+  // Array.prototype.sort is a STABLE sort (guaranteed since ES2019) — an
+  // approval pushed immediately before its own ticket above keeps that exact
+  // order when their times are equal, which is what "right before its
+  // ticket" requires at the tie.
+  items.sort((a, b) => a.time - b.time);
+  const stepHtml = items.map(i => i.html).join('');
 
   return (
     `<div class="sv-el sv-el-${el.status}" data-sv-id="${escapeHtml(el.id)}">` +
     `<div class="sv-el-row"><b>Case ${escapeHtml(d.caseId)} · ${formatDuration(d.totalDurationSeconds)}</b>${badge(el.status, 'assembled by gateway')}</div>` +
     (el.status === 'warning' && el.reason ? `<div class="sv-el-warn">${escapeHtml(el.reason)}</div>` : '') +
-    `<div class="sv-tl">${startStep}${stepHtml}</div>` +
+    `<div class="sv-tl">${stepHtml}</div>` +
     `<div class="sv-el-row"><a href="${escapeHtml(detailLink(el.id))}" target="_top">Case details</a></div>` +
     `</div>`
   );
@@ -317,10 +354,17 @@ export const DRAWN_ELEMENT_STYLES = `
 .sv-step { min-width:100px; border:1px solid #e5e5e5; border-radius:8px; padding:6px 8px; font-size:11.5px; text-decoration:none; color:inherit; flex-shrink:0; }
 .sv-step-k { font-size:9.5px; text-transform:uppercase; color:#666; }
 .sv-step-t { font-weight:600; font-size:12px; }
-.sv-step-sub { color:#666; }
+.sv-step-sub { color:#666; white-space:normal; }
+/* The approval step's text ("asked ... approved ... by ... (duration)") is
+ * longer than a ticket step's — without a width to wrap against, a
+ * flex item with flex-shrink:0 takes its one-line content width instead of
+ * wrapping, which reads as the text being cut off at the container's visible
+ * edge (polish 2026-10-05, second pass). */
+.sv-step-approval { max-width:240px; white-space:normal; }
 @media (max-width: 480px) {
   .sv-tl { flex-direction:column; overflow-x:visible; }
   .sv-step { min-width:0; }
+  .sv-step-approval { max-width:none; }
   .sv-el-row { flex-direction:column; gap:2px; }
 }
 `;
