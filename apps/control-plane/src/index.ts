@@ -1113,18 +1113,31 @@ app.listen(port, '0.0.0.0', () => {
   // the MCP server. Silent failure here (e.g. SUVEREN_MCP_INTERNAL_URL unset →
   // defaulting to the npm port :3430, which 403s) is what makes the UI show an
   // empty "No integrations" with no clue why.
-  getManifests()
-    .then((d) => {
-      const n = (d as { manifests?: unknown[] })?.manifests?.length ?? 0;
-      if (n === 0) {
-        console.error(`[Control Plane] ⚠ MCP server at ${MCP_BASE} returned 0 integration manifests — wrong SUVEREN_MCP_INTERNAL_URL? (dev MCP is :3431, npm is :3430)`);
-      } else {
-        console.error(`[Control Plane]   Integrations: ${n} manifests loaded from ${MCP_BASE}`);
-        void backfillReadPolicyDefaults(d as { manifests?: Array<Record<string, unknown>> });
+  //
+  // Retried for up to ~60 s: the control plane and the MCP server start side by
+  // side, and on a fresh Windows install the MCP server is still starting its
+  // connectors when this first runs — a single attempt printed a misleading
+  // "Could not reach MCP server" and skipped the read-policy backfill below.
+  void (async () => {
+    const deadline = Date.now() + 60_000;
+    let lastErr: unknown;
+    for (let delay = 500; Date.now() < deadline; delay = Math.min(delay * 2, 5_000)) {
+      try {
+        const d = await getManifests();
+        const n = (d as { manifests?: unknown[] })?.manifests?.length ?? 0;
+        if (n === 0) {
+          console.error(`[Control Plane] ⚠ MCP server at ${MCP_BASE} returned 0 integration manifests — wrong SUVEREN_MCP_INTERNAL_URL? (dev MCP is :3431, npm is :3430)`);
+        } else {
+          console.error(`[Control Plane]   Integrations: ${n} manifests loaded from ${MCP_BASE}`);
+          void backfillReadPolicyDefaults(d as { manifests?: Array<Record<string, unknown>> });
+        }
+        return;
+      } catch (err) {
+        lastErr = err;
+        await new Promise(r => setTimeout(r, delay));
       }
-    })
-    .catch((err) => {
-      console.error(`[Control Plane] ⚠ Could not reach MCP server at ${MCP_BASE} for manifests — wrong SUVEREN_MCP_INTERNAL_URL? (dev=:3431, npm=:3430). ${err instanceof Error ? err.message : err}`);
-    });
+    }
+    console.error(`[Control Plane] ⚠ Could not reach MCP server at ${MCP_BASE} for manifests within 60 s — wrong SUVEREN_MCP_INTERNAL_URL? (dev=:3431, npm=:3430). ${lastErr instanceof Error ? lastErr.message : lastErr}`);
+  })();
   startUpdateChecker(INSTALL_METHOD, RUNNING_VERSION);
 });

@@ -146,8 +146,14 @@ WantedBy=default.target
  * carry paths containing spaces.
  *
  * LogonType=InteractiveToken keeps it in the user's own session with no stored
- * password and no admin rights. Hidden + no execution time limit stop it
- * flashing a console window or being killed after the default 72 hours.
+ * password and no admin rights. No execution time limit stops it being killed
+ * after the default 72 hours. `<Hidden>` only hides the task in the Task
+ * Scheduler UI — it does NOT hide the console window: a console program
+ * (node.exe, or the installer's launcher.cmd) started by an InteractiveToken
+ * task gets a visible console for the gateway's whole lifetime (seen on a real
+ * Windows 11 VM; closing it stops the gateway). So the action always runs
+ * through `conhost.exe --headless`, Windows' own console host without a
+ * window; the real command and its arguments follow it.
  *
  * `userId` is what makes it unprivileged, and leaving it out is not a cosmetic
  * omission: a LogonTrigger with no UserId means "at ANY user's logon", which
@@ -167,9 +173,8 @@ WantedBy=default.target
  * into offline+managed mode too. Routing the scheduled task through the
  * launcher instead keeps that env scoped to just this one process tree: the
  * launcher sets it for its own child (server.js) only. Omitted (the npm/dev
- * CLI's `service install`, which has no launcher), this renders BYTE-
- * IDENTICAL XML to before — this is additive, not a behaviour change for
- * any install that isn't the managed Windows one.
+ * CLI's `service install`, which has no launcher), the default node.exe
+ * action is used. Either way it is wrapped in conhost.exe --headless.
  */
 export function buildWindowsTaskXml({ nodePath, serverEntry, author, dataDir, userId, command, args: argsOverride }) {
   // Task Scheduler requires \Command to be the executable and \Arguments the
@@ -177,8 +182,11 @@ export function buildWindowsTaskXml({ nodePath, serverEntry, author, dataDir, us
   // Task Scheduler XML carries no environment block, so the marker that this
   // was a service start has to ride in the arguments (or, for a launcher
   // command, is the launcher's own job to pass through).
-  const resolvedCommand = command ?? nodePath;
-  const args = argsOverride ?? `"${serverEntry}" --autostart`;
+  const realCommand = command ?? nodePath;
+  const realArgs = argsOverride ?? `"${serverEntry}" --autostart`;
+  // No visible console window (see above): conhost.exe --headless "<real command>" <args>.
+  const resolvedCommand = '%SystemRoot%\\System32\\conhost.exe';
+  const args = `--headless "${realCommand}" ${realArgs}`;
   const envNote = dataDir ? `Suveren data directory: ${dataDir}` : 'Suveren gateway';
 
   // Element order is fixed by the Task Scheduler XSD, and schtasks rejects the

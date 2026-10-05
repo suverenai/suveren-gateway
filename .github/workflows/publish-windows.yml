@@ -436,6 +436,11 @@ jobs:
           $global:LASTEXITCODE = 0  # taskkill on an already-exited child is not a failure
           Start-Sleep -Seconds 1
 
+      - name: No visible window belongs to the gateway (console hosts included) — after the silent install started it
+        shell: pwsh
+        run: |
+          & bundle\windows\ci-assert-no-console-window.ps1
+
       - name: Finish-dialog checkbox's underlying action, run non-interactively (the dialog itself is NOT tested) + window visibility
         shell: pwsh
         run: |
@@ -501,6 +506,14 @@ jobs:
             ForEach-Object { taskkill /PID $_.ProcessId /T /F 2>$null }
           $global:LASTEXITCODE = 0  # taskkill on an already-exited child is not a failure
           Start-Sleep -Seconds 1
+
+      - name: No visible window belongs to the gateway (console hosts included) — after the checkbox launch
+        shell: pwsh
+        run: |
+          # open-ui's own minimized cmd exits once the gateway serves; give it a moment.
+          $deadline = (Get-Date).AddSeconds(30)
+          while ((Get-Date) -lt $deadline -and (Get-CimInstance Win32_Process -Filter "Name='cmd.exe'" | Where-Object { $_.CommandLine -like '*suveren-gateway.cmd*open-ui*' })) { Start-Sleep -Seconds 1 }
+          & bundle\windows\ci-assert-no-console-window.ps1
 
       - name: HKCU\Environment is untouched — the installer must not be account-wide
         shell: pwsh
@@ -617,14 +630,11 @@ jobs:
           # autostart path without ever touching HKCU\Environment.
           $action = $t.Actions[0]
           Write-Host "action: $($action.Execute) $($action.Arguments)"
+          # Runs headless: conhost.exe --headless "<launcher>" run — <Hidden> alone does not hide a console window.
           $expectedLauncher = "$env:LOCALAPPDATA\Programs\Suveren\suveren-gateway.cmd"
-          if ($action.Execute -ne $expectedLauncher) {
-            throw "scheduled task's Command is '$($action.Execute)', expected the launcher '$expectedLauncher'"
-          }
-          if ($action.Arguments -ne 'run') {
-            throw "scheduled task's Arguments is '$($action.Arguments)', expected 'run'"
-          }
-          Write-Host "scheduled task command confirmed: launcher + 'run'"
+          if ($action.Execute -notlike '*\System32\conhost.exe') { throw "task Command is '$($action.Execute)', expected conhost.exe (headless)" }
+          if ($action.Arguments -ne "--headless `"$expectedLauncher`" run") { throw "task Arguments is '$($action.Arguments)', expected --headless `"$expectedLauncher`" run" }
+          Write-Host "scheduled task command confirmed: conhost --headless + launcher + 'run'"
 
       - name: Run the scheduled task once — exercises the autostart path without a reboot
         shell: pwsh
@@ -970,9 +980,10 @@ jobs:
           $t = Get-ScheduledTask -TaskName 'Suveren' -ErrorAction Stop
           $action = $t.Actions[0]
           Write-Host "action: $($action.Execute) $($action.Arguments)"
+          # Runs headless: conhost.exe --headless "<launcher>" run — <Hidden> alone does not hide a console window.
           $expectedLauncher = "$env:LOCALAPPDATA\Programs\Suveren\suveren-gateway.cmd"
-          if ($action.Execute -ne $expectedLauncher) { throw "task Command is '$($action.Execute)', expected '$expectedLauncher'" }
-          if ($action.Arguments -ne 'run') { throw "task Arguments is '$($action.Arguments)', expected 'run'" }
+          if ($action.Execute -notlike '*\System32\conhost.exe') { throw "task Command is '$($action.Execute)', expected conhost.exe (headless)" }
+          if ($action.Arguments -ne "--headless `"$expectedLauncher`" run") { throw "task Arguments is '$($action.Arguments)', expected --headless `"$expectedLauncher`" run" }
           Write-Host "scheduled task survived the upgrade, still points at the (now-upgraded) launcher."
 
       - name: a) Assert the gateway is running again after the upgrade — RestartScheduledTaskAfterInstall
@@ -998,6 +1009,11 @@ jobs:
             if ($entry.toolCount -le 0) { throw "NEW: $id running but discovered 0 tools after the upgrade" }
           }
           Write-Host "gateway came back on its own after the upgrade (RestartScheduledTaskAfterInstall), connectors up offline — nobody had to log out and back in."
+
+      - name: No visible window belongs to the gateway (console hosts included) — after the upgrade restarted it
+        shell: pwsh
+        run: |
+          & bundle\windows\ci-assert-no-console-window.ps1
 
       - name: b) Uninstall while the task-started gateway is running — the case the old uninstall test never covered
         id: uninstall
