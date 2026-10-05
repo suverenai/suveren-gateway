@@ -13,6 +13,7 @@ import { ReceiptArchive, type ArchivedAttestation } from './receipt-archive';
 import { ExecutionJournal } from './execution-journal';
 import { ProposalSubmissionStore } from './proposal-submission-store';
 import { MCPGatekeeper } from './gatekeeper';
+import { ReportStore } from './report/report-store';
 
 export interface EnrichedAuthorization extends CachedAuthorization {
   gateContent: GateContent | null;
@@ -28,6 +29,9 @@ export class SharedState {
   readonly executionLog: ExecutionLog;
   readonly denialLog: DenialLog;
   readonly receiptArchive: ReceiptArchive;
+  /** The one current evidence-backed report the user's AI has written —
+   *  see report/report-store.ts. Vault-encrypted, like the stores above. */
+  readonly reportStore: ReportStore;
   /** Which tickets this Gatekeeper has executed — the "one execution per ticket" half of exactly-once. */
   readonly executionJournal: ExecutionJournal;
   /** What THIS gateway submitted for each review-mode proposal it created —
@@ -49,6 +53,7 @@ export class SharedState {
     this.executionLog = new ExecutionLog(gateStorePath);
     this.denialLog = new DenialLog(gateStorePath);
     this.receiptArchive = new ReceiptArchive(gateStorePath);
+    this.reportStore = new ReportStore(gateStorePath);
     this.executionJournal = new ExecutionJournal(gateStorePath);
     this.proposalSubmissions = new ProposalSubmissionStore(gateStorePath);
     // The execution log is deliberately NOT handed to the Gatekeeper: it is a

@@ -1,0 +1,21 @@
+#!/usr/bin/env node
+// Fixture bin shim standing in for a real connector's installed executable
+// (e.g. ~/.suveren/integrations/node_modules/.bin/erp-mcp) — a real,
+// independent process `connector-export.ts` really spawns via execFile, not
+// a mocked function. Mirrors the real connectors' `<bin> export` contract:
+// only acts when invoked with extra argv, prints JSON to stdout, reads
+// HAP_DATA_DIR the same way they do.
+const argv = process.argv.slice(2);
+if (argv[0] === 'export') {
+  process.stdout.write(JSON.stringify({ sawDataDir: process.env.HAP_DATA_DIR ?? null, ok: true }));
+  process.exit(0);
+}
+if (argv[0] === 'fail') {
+  process.stderr.write('simulated failure\n');
+  process.exit(1);
+}
+if (argv[0] === 'not-json') {
+  process.stdout.write('this is not json');
+  process.exit(0);
+}
+process.exit(2);

@@ -28,6 +28,7 @@ import { executeCommitted } from '../src/tools/commitments';
 import { hashToolArgs } from '../src/lib/execution-journal';
 import type { SharedState, EnrichedAuthorization } from '../src/lib/shared-state';
 import type { SPProposal } from '../src/lib/sp-client';
+import type { ReportSources } from '../src/lib/report';
 import { testReceiptKeypair, makeSignedReceipt } from './helpers/real-receipt';
 
 const profilesDir =
@@ -302,7 +303,10 @@ describe('registerBuiltins (start-up registration)', () => {
     const im = new IntegrationManager();
     const ok = () => delegationBuiltin().def;
     const bad = () => ({ ...delegationBuiltin().def, id: 'Bad Id' });
-    const ids = registerBuiltins({ state: {} as SharedState, integrationManager: im }, [bad, ok]);
+    const ids = registerBuiltins(
+      { state: {} as SharedState, integrationManager: im, reportSources: {} as ReportSources },
+      [bad, ok],
+    );
     expect(ids).toEqual(['setup']);
     expect(im.getAllTools().map((t) => t.namespacedName)).toEqual(['setup__propose_brief']);
   });

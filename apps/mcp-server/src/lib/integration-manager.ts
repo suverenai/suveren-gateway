@@ -87,6 +87,18 @@ export function withInstallLock<T>(task: () => Promise<T>): Promise<T> {
 const INTEGRATIONS_BIN = join(INTEGRATIONS_DIR, 'node_modules', '.bin');
 
 /**
+ * The same `node_modules/.bin` directory this module puts on PATH before
+ * spawning a connector as an MCP server — exported so another caller that
+ * needs to run a connector's own CLI (report/connector-export.ts's `<bin>
+ * export`) resolves the SAME installed binary, without duplicating
+ * `INTEGRATIONS_DIR`'s resolution logic (env override, docker note, etc.) a
+ * second time.
+ */
+export function getIntegrationsBinDir(): string {
+  return INTEGRATIONS_BIN;
+}
+
+/**
  * Build PATH that includes the managed integrations directory
  * so on-demand installed MCP server binaries are found.
  */

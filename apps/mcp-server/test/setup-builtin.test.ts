@@ -31,6 +31,7 @@ const { writeContextFile, CONTEXT_MAX_BYTES } = await import('../src/lib/context
 const { testReceiptKeypair, makeSignedReceipt } = await import('./helpers/real-receipt');
 import type { SharedState, EnrichedAuthorization } from '../src/lib/shared-state';
 import type { SPProposal } from '../src/lib/sp-client';
+import type { ReportSources } from '../src/lib/report';
 
 const profilesDir =
   process.env.SUVEREN_PROFILES_DIR ?? join(import.meta.dirname, '..', '..', '..', '..', 'hap-profiles');
@@ -78,7 +79,9 @@ function setup() {
     archiveReceipt: vi.fn().mockResolvedValue(undefined),
   } as unknown as SharedState;
   const im = new IntegrationManager();
-  expect(registerBuiltins({ state, integrationManager: im })).toEqual(['setup']);
+  // BUILTIN_FACTORIES also registers `report` (independent built-in, its own
+  // tests) — assert setup registered, not the full default list's exact shape.
+  expect(registerBuiltins({ state, integrationManager: im, reportSources: {} as ReportSources })).toContain('setup');
   const tool = im.getAllTools().find((t) => t.namespacedName === 'setup__set_agent_brief')!;
   const call = (args: Record<string, unknown>) => createGatedToolHandler(tool, im, state)(args);
   const approve = () => {

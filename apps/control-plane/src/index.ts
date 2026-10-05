@@ -48,6 +48,7 @@ import { notify, lockedNotification } from './lib/desktop-notify';
 import { createEncryptIntentRouter } from './routes/encrypt-intent';
 import { createEvidenceExportRouter } from './routes/evidence-export';
 import { createEvidenceRouter } from './routes/evidence';
+import { createReportRouter } from './routes/report';
 import { createDecryptIntentRouter } from './routes/decrypt-intent';
 import { createApprovedIntentsRouter } from './routes/approved-intents';
 import { startUpdateChecker, getUpdateStatus, forceCheck, type InstallMethod } from './lib/update-checker';
@@ -526,6 +527,10 @@ app.use('/api/evidence-export', authGuard, createEvidenceExportRouter(SP_URL, va
 // Local evidence for the Receipts page (grant context/intent, archived
 // receipts). Mounted BEFORE the /api proxy so it wins the route.
 app.use('/api/evidence', authGuard, createEvidenceRouter());
+
+// The one current evidence-backed report (Reports page). Mounted BEFORE the
+// /api proxy so it wins the route.
+app.use('/api/report', jsonParser, authGuard, createReportRouter());
 
 // E2EE intent decryption (P6.4) — approver-side, uses vault private key
 app.use('/api/decrypt-intent', jsonParser, authGuard, createDecryptIntentRouter(vault));

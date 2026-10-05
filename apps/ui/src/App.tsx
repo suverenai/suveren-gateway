@@ -20,6 +20,7 @@ import { AuditPage } from './pages/AuditPage';
 import { SettingsServicesPage } from './pages/SettingsServicesPage';
 import { ProposalReviewPage } from './pages/ProposalReviewPage';
 import { AgentBriefPage } from './pages/AgentBriefPage';
+import { ReportsPage } from './pages/ReportsPage';
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
   const { user, mode, domain } = useAuth();
@@ -59,6 +60,7 @@ function AppRoutes() {
         <Route path="/team" element={<GroupsPage />} />
         <Route path="/tickets" element={<AuditPage />} />
         <Route path="/approvals" element={<ProposalReviewPage />} />
+        <Route path="/reports" element={<ReportsPage />} />
         {/* Pre-v0.7 addresses: bookmarks and links already sent keep working. */}
         <Route path="/agent/new" element={<Navigate to="/mandates?new=1" replace />} />
         <Route path="/agent/gate" element={<Forward to="/mandates/new/intent" />} />
