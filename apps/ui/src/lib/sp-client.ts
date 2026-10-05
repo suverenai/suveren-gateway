@@ -334,6 +334,9 @@ export interface ReportProof {
 }
 
 export interface ReportCoverage {
+  /** Set when the email simulator export could not be read at all — cases
+   *  below are UNKNOWN, not zero; never render "0 of 0" as "fully covered". */
+  emailExportError?: string;
   loadedCases: string[];
   coveredCases: string[];
   missingCases: string[];

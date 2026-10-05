@@ -4,6 +4,8 @@ import {
   findMandateLabel,
   formatCheckedTime,
   narrowSummaryLine,
+  coverageCasesLine,
+  periodStartNote,
   missingSummary,
   resolveDetailTicketId,
   buildSrcDoc,
@@ -93,6 +95,50 @@ describe('narrowSummaryLine', () => {
     const line = narrowSummaryLine(proof({ signaturesValid: 14 }), coverage({ coveredCases: ['C1'], loadedCases: ['C1', 'C2'], ticketsReferenced: ['t1'], ticketsInPeriod: ['t1', 't2'] }));
     expect(line).toContain('14');
     expect(line).toContain('1/2');
+  });
+
+  it('REFUSAL: says "cases unknown" rather than "0/0" when the email export failed', () => {
+    const line = narrowSummaryLine(proof(), coverage({ emailExportError: 'ENOENT', loadedCases: [], coveredCases: [] }));
+    expect(line).toContain('cases unknown');
+    expect(line).not.toMatch(/0\/0 cases/);
+  });
+});
+
+describe('coverageCasesLine — "0 of 0" must never stand in for "unknown"', () => {
+  it('REFUSAL: an unreadable email export is a tagged error, not a bare "0 of 0"', () => {
+    const line = coverageCasesLine(coverage({ emailExportError: 'email-mcp export failed: ENOENT', loadedCases: [], coveredCases: [] }));
+    expect(line.kind).toBe('error');
+    expect(line.text).toContain('ENOENT');
+    expect(line.text).not.toMatch(/^0 of 0$/);
+  });
+
+  it('genuinely zero loaded cases (no export error) is a normal "0 of 0"', () => {
+    const line = coverageCasesLine(coverage({ loadedCases: [], coveredCases: [] }));
+    expect(line.kind).toBe('ok');
+    expect(line.text).toBe('0 of 0');
+  });
+
+  it('a readable export with partial coverage reports the real counts', () => {
+    const line = coverageCasesLine(coverage({ loadedCases: ['C1', 'C2'], coveredCases: ['C1'] }));
+    expect(line.kind).toBe('ok');
+    expect(line.text).toBe('1 of 2');
+  });
+});
+
+describe('periodStartNote', () => {
+  it('is null when the period start is known', () => {
+    expect(periodStartNote(coverage({ periodStart: 1_700_000_000 }))).toBeNull();
+  });
+
+  it('explains the inclusive fallback when the period start is unknown', () => {
+    const note = periodStartNote(coverage({ periodStart: null }));
+    expect(note).toMatch(/period start unknown/i);
+    expect(note).toMatch(/all archived tickets counted/i);
+  });
+
+  it('folds in the email export error as the reason, when there is one', () => {
+    const note = periodStartNote(coverage({ periodStart: null, emailExportError: 'ENOENT' }));
+    expect(note).toContain('ENOENT');
   });
 });
 

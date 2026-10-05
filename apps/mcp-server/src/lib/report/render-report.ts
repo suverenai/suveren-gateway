@@ -251,6 +251,7 @@ function renderMetric(el: VerifiedElement): string {
     `<div class="sv-el sv-el-${el.status} sv-el-metric" data-sv-id="${escapeHtml(el.id)}">` +
     `<div class="sv-big">${escapeHtml(display)}</div>` +
     `<div class="sv-el-row"><span>${escapeHtml(label)} (${escapeHtml(d.caseCount ?? 0)} case${d.caseCount === 1 ? '' : 's'})</span>${badge(el.status, 'computed by gateway')}</div>` +
+    (el.status === 'warning' && el.reason ? `<div class="sv-el-warn">${escapeHtml(el.reason)}</div>` : '') +
     `</div>`
   );
 }

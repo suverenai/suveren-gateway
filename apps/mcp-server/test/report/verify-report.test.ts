@@ -307,6 +307,52 @@ describe('verifyReport — sv-metric', () => {
     const result = await verifyReport(html, { archive, runExport: makeRunExport({ email }) });
     expect(el(result.elements, 'sv-metric-0').status).toBe('unverifiable');
   });
+
+  it('REFUSAL: a figure over ZERO verified cases is unverifiable, never a green "verified" zero', async () => {
+    // No sv-case at all — report-review 2026-10-05 finding: this used to draw
+    // "0 cases completed" with a green "✓ computed by gateway" badge, visually
+    // indistinguishable from an honest zero.
+    const { archive } = buildScenario();
+    const html = '<sv-metric kind="completed" cases="all"></sv-metric><sv-metric kind="median-time" cases="all"></sv-metric>';
+    const result = await verifyReport(html, { archive, runExport: makeRunExport({}) });
+    const completed = el(result.elements, 'sv-metric-0');
+    expect(completed.status).toBe('unverifiable');
+    expect(completed.data).toBeUndefined();
+    expect(completed.reason).toMatch(/no verified cases/i);
+    expect(el(result.elements, 'sv-metric-1').status).toBe('unverifiable');
+  });
+
+  it('REFUSAL: a figure over zero of N REQUESTED cases names how many were asked for', async () => {
+    const { archive } = buildScenario();
+    // A case is DEFINED but does not verify (bad goal) — cases="all" asked
+    // for everything the report defines, none of it checked out.
+    const html = '<sv-case start="email:ghost" goal="ticket:also-ghost" steps=""></sv-case><sv-metric kind="completed" cases="all"></sv-metric>';
+    const result = await verifyReport(html, { archive, runExport: makeRunExport({ email: buildEmailExport() }) });
+    const metric = el(result.elements, 'sv-metric-0');
+    expect(metric.status).toBe('unverifiable');
+    expect(metric.reason).toMatch(/0 of 1 requested/i);
+  });
+
+  it('a figure over SOME but not all requested cases is a WARNING, with the real value over the verified subset', async () => {
+    const { archive, email } = await oneCaseScenario();
+    // Two named cases requested; only CM1 (from oneCaseScenario) is actually
+    // defined+verified in the report — the other, "GHOST", is requested but
+    // never defined at all.
+    const html = '<sv-case start="email:mm1" goal="ticket:m-goal" steps="m-step"></sv-case><sv-metric kind="completed" cases="CM1 GHOST"></sv-metric>';
+    const result = await verifyReport(html, { archive, runExport: makeRunExport({ email }) });
+    const metric = el(result.elements, 'sv-metric-0');
+    expect(metric.status).toBe('warning');
+    expect(metric.data!.value).toBe(1); // the real count over the one case that DID verify
+    expect(metric.data!.caseCount).toBe(1);
+    expect(metric.reason).toMatch(/1 of 2 requested/i);
+  });
+
+  it('a figure over ALL requested cases, where all verify, stays fully "verified" (no false warning)', async () => {
+    const { archive, email } = await oneCaseScenario();
+    const html = '<sv-case start="email:mm1" goal="ticket:m-goal" steps="m-step"></sv-case><sv-metric kind="completed" cases="CM1"></sv-metric>';
+    const result = await verifyReport(html, { archive, runExport: makeRunExport({ email }) });
+    expect(el(result.elements, 'sv-metric-0').status).toBe('verified');
+  });
 });
 
 describe('verifyReport — unknown elements and coverage', () => {
@@ -333,6 +379,28 @@ describe('verifyReport — unknown elements and coverage', () => {
     expect(result.coverage.loadedCases.sort()).toEqual(['COVERED', 'MISSING']);
     expect(result.coverage.coveredCases).toEqual(['COVERED']);
     expect(result.coverage.missingCases).toEqual(['MISSING']);
+    expect(result.coverage.emailExportError).toBeUndefined();
+  });
+
+  it('REFUSAL: an unreadable email export sets emailExportError — "0 of 0" must not look like full coverage', async () => {
+    // Review 2026-10-05 finding: loadedCases/coveredCases fell back to [],
+    // which rendered identically to a report that genuinely covered every
+    // loaded case. UNKNOWN and ZERO are different claims.
+    const { archive } = buildScenario();
+    const result = await verifyReport('<p>no cases</p>', {
+      archive,
+      runExport: makeRunExport({}, { email: 'email-mcp export failed: spawn email-mcp ENOENT' }),
+    });
+    expect(result.coverage.emailExportError).toMatch(/ENOENT/);
+    expect(result.coverage.loadedCases).toEqual([]);
+    expect(result.coverage.coveredCases).toEqual([]);
+    expect(result.coverage.missingCases).toEqual([]);
+  });
+
+  it('an email export with an unexpected shape also sets emailExportError (not silently treated as "no cases")', async () => {
+    const { archive } = buildScenario();
+    const result = await verifyReport('<p>no cases</p>', { archive, runExport: makeRunExport({ email: { nonsense: true } }) });
+    expect(result.coverage.emailExportError).toMatch(/unexpected shape/i);
   });
 });
 

@@ -50,6 +50,16 @@ export interface ProofSummary {
 }
 
 export interface CoverageSummary {
+  /**
+   * Set when the email simulator export could not be read at all (connector
+   * not installed, crashed, bad JSON, …). When this is set, `loadedCases` /
+   * `coveredCases` / `missingCases` below are EMPTY ARRAYS BUT UNKNOWN, NOT
+   * ZERO — a caller must not render "0 of 0" (which reads as "fully
+   * covered"); it must say coverage could not be checked, and why. Caught in
+   * review 2026-10-05: an unreadable export rendered identically to a report
+   * that genuinely covered everything it loaded.
+   */
+  emailExportError?: string;
   /** case_id values present in the loaded email inbox. */
   loadedCases: string[];
   /** case_id values the report actually defined with an sv-case element

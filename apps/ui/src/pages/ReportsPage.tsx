@@ -34,7 +34,30 @@ export function formatCheckedTime(ts: number): string {
 
 /** The narrow-layout one-line summary (plan: "proof and coverage collapse into one line"). */
 export function narrowSummaryLine(proof: ReportProof, coverage: ReportCoverage): string {
-  return `${proof.signaturesValid} ✓ tickets · ${coverage.coveredCases.length}/${coverage.loadedCases.length} cases · ${coverage.ticketsReferenced.length}/${coverage.ticketsInPeriod.length} tickets covered`;
+  const casesPart = coverage.emailExportError ? 'cases unknown' : `${coverage.coveredCases.length}/${coverage.loadedCases.length} cases`;
+  return `${proof.signaturesValid} ✓ tickets · ${casesPart} · ${coverage.ticketsReferenced.length}/${coverage.ticketsInPeriod.length} tickets covered`;
+}
+
+/**
+ * The Coverage panel's "Cases" line — a tagged result, never a bare number,
+ * so a caller cannot accidentally render "0 of 0" for "we don't know"
+ * (review 2026-10-05: that read as "fully covered", the opposite of true).
+ */
+export function coverageCasesLine(coverage: ReportCoverage): { kind: 'ok' | 'error'; text: string } {
+  if (coverage.emailExportError) {
+    return { kind: 'error', text: `Cases: unknown — email simulator not readable: ${coverage.emailExportError}` };
+  }
+  return { kind: 'ok', text: `${coverage.coveredCases.length} of ${coverage.loadedCases.length}` };
+}
+
+/** Explains an unknown test-period start rather than silently falling back —
+ *  "all archived tickets counted" is a deliberate, inclusive fallback (never
+ *  excludes a ticket it isn't sure about), not a bug, but it must be stated. */
+export function periodStartNote(coverage: ReportCoverage): string | null {
+  if (coverage.periodStart !== null) return null;
+  return coverage.emailExportError
+    ? `Period start unknown (${coverage.emailExportError}) — all archived tickets counted.`
+    : 'Period start unknown — all archived tickets counted.';
 }
 
 /** "Not in the report: cases C4, C9 · 3 tickets" — null when the report is complete. */
@@ -151,6 +174,8 @@ function DetailPanel({ report, elementId, ticketParam, onClose }: {
 function SidePanel({ report, open }: { report: ReportModel; open?: boolean }) {
   const { proof, coverage } = report;
   const missing = missingSummary(coverage);
+  const casesLine = coverageCasesLine(coverage);
+  const periodNote = periodStartNote(coverage);
   return (
     <div className={`reports-side${open ? ' reports-side-open' : ''}`}>
       <div className="card">
@@ -162,8 +187,13 @@ function SidePanel({ report, open }: { report: ReportModel; open?: boolean }) {
       </div>
       <div className="card" style={{ marginTop: '0.75rem' }}>
         <div className="card-title">Coverage</div>
-        <div className="reports-row"><span>Cases</span><b>{coverage.coveredCases.length} of {coverage.loadedCases.length}</b></div>
+        {casesLine.kind === 'error' ? (
+          <p className="reports-error" role="alert">{casesLine.text}</p>
+        ) : (
+          <div className="reports-row"><span>Cases</span><b>{casesLine.text}</b></div>
+        )}
         <div className="reports-row"><span>Tickets in test period</span><b>{coverage.ticketsReferenced.length} of {coverage.ticketsInPeriod.length}</b></div>
+        {periodNote && <p className="reports-note">{periodNote}</p>}
         {missing && <p className="reports-missing">{missing}</p>}
       </div>
       {proof.verifiedValues.length > 0 && (

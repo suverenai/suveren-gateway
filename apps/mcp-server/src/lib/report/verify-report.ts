@@ -117,10 +117,20 @@ export async function verifyReport(html: string, sources: ReportSources): Promis
   }
 
   // Second pass: sv-metric, over the sv-cases already resolved above.
+  //
+  // A figure's STATUS must reflect how much of what it claims actually
+  // verified — never "verified" by construction just because computeMetric()
+  // can run on an empty list (median([]) === 0 is a real return value, not
+  // evidence of zero completed cases). Caught in review 2026-10-05: a report
+  // with no real archive drew "0 cases completed" with a green "✓ computed
+  // by gateway" badge — indistinguishable from an honestly-computed zero.
   for (const p of metricParsed) {
     try {
       const kind = p.attrs.kind ?? '';
       const casesAttr = (p.attrs.cases ?? 'all').trim();
+      // What the AI asked for: every case it defined ("all"), or a named
+      // subset — counted distinct, so "cases="C1 C1"" doesn't inflate M.
+      const requestedCount = casesAttr === 'all' ? caseElements.length : new Set(casesAttr.split(/\s+/).filter(Boolean)).size;
       let selected = caseElements.filter(c => c.resolution.status !== 'unverifiable' && c.resolution.data);
       if (casesAttr !== 'all') {
         const wanted = new Set(casesAttr.split(/\s+/).filter(Boolean));
@@ -134,13 +144,35 @@ export async function verifyReport(html: string, sources: ReportSources): Promis
         ticketIds: [c.resolution.data!.goal.ticketId, ...c.resolution.data!.steps.map(s => s.ticketId)],
         approvals: c.resolution.data!.approvals,
       }));
+      const verifiedCount = caseInputs.length;
+
+      if (verifiedCount === 0) {
+        // Nothing to compute over — a number here would be indistinguishable
+        // from a real zero. No `data`, per the unverifiable contract.
+        elements.push({
+          id: p.id, kind: p.kind, attrs: p.attrs, status: 'unverifiable',
+          reason: requestedCount > 0
+            ? `No verified cases (0 of ${requestedCount} requested) — no figure.`
+            : 'No verified cases — no figure.',
+        });
+        continue;
+      }
 
       const refusalTimes = kind === 'refusals' ? await collectRefusalTimes(getExport) : [];
       const value = computeMetric(kind, caseInputs, refusalTimes);
-      elements.push({
-        id: p.id, kind: p.kind, attrs: p.attrs, status: 'verified',
-        data: { kind, cases: casesAttr, value, caseCount: caseInputs.length },
-      });
+      const data = { kind, cases: casesAttr, value, caseCount: verifiedCount };
+      if (verifiedCount < requestedCount) {
+        // A real, honestly-computed figure — just not over everything asked
+        // for. Shown with its value (not hidden), flagged so it is never
+        // mistaken for the complete picture.
+        elements.push({
+          id: p.id, kind: p.kind, attrs: p.attrs, status: 'warning',
+          reason: `Computed over ${verifiedCount} of ${requestedCount} requested cases — the rest did not verify.`,
+          data,
+        });
+      } else {
+        elements.push({ id: p.id, kind: p.kind, attrs: p.attrs, status: 'verified', data });
+      }
     } catch (err) {
       elements.push({ id: p.id, kind: p.kind, attrs: p.attrs, status: 'unverifiable', reason: err instanceof Error ? err.message : String(err) });
     }
@@ -246,6 +278,11 @@ async function buildCoverage(
   referenced: string[],
 ): Promise<CoverageSummary> {
   const exp = await getExport('email');
+  const emailExportError = !exp.ok
+    ? exp.reason
+    : !isEmailExport(exp.data)
+      ? 'Email simulator export had an unexpected shape.'
+      : undefined;
   const loadedCases = exp.ok && isEmailExport(exp.data)
     ? [...new Set(exp.data.inbox.map(m => m.case_id).filter((c): c is string => !!c))]
     : [];
@@ -269,5 +306,9 @@ async function buildCoverage(
   const ticketsReferenced = inPeriod.filter(id => referencedSet.has(id));
   const ticketsNotReferenced = inPeriod.filter(id => !referencedSet.has(id));
 
-  return { loadedCases, coveredCases, missingCases, periodStart, ticketsInPeriod: inPeriod, ticketsReferenced, ticketsNotReferenced };
+  return {
+    ...(emailExportError ? { emailExportError } : {}),
+    loadedCases, coveredCases, missingCases, periodStart,
+    ticketsInPeriod: inPeriod, ticketsReferenced, ticketsNotReferenced,
+  };
 }

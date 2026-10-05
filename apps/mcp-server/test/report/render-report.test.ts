@@ -106,6 +106,32 @@ describe('renderReportHtml', () => {
     expect(out.match(/data-sv-drawn-styles/g)?.length).toBe(1);
   });
 
+  it('a figure over zero verified cases draws as not-verifiable, never a green zero', async () => {
+    const { archive } = buildScenario();
+    const html = '<sv-metric kind="completed" cases="all"></sv-metric>';
+    const result = await verifyReport(html, { archive, runExport: makeRunExport() });
+    const out = renderReportHtml(result.html, result.elements);
+    expect(out).toContain('sv-badge sv-badge-bad');
+    // Only the stylesheet's own selector rule may mention sv-badge-ok — no
+    // element actually wears that badge class.
+    expect(out).not.toContain('sv-badge sv-badge-ok');
+    expect(out).toMatch(/no verified cases/i);
+  });
+
+  it('a figure over a partial set of requested cases draws amber, with its real value and the "N of M" note', async () => {
+    const { archive, addTicket } = buildScenario();
+    addTicket({ id: 'g1', action: 'erp__create_order', authorizationId: 'authz-1', timestamp: 1_800_000_000 });
+    const email = buildEmailExport({
+      inbox: [{ id: 'm1', from_name: 'A', from_email: 'a@example.com', to_json: '[]', subject: 'x', body: 'x', received_at: '2026-10-01T09:00:00Z', case_id: 'C1' }],
+    });
+    const html = '<sv-case start="email:m1" goal="ticket:g1" steps=""></sv-case><sv-metric kind="completed" cases="C1 C2"></sv-metric>';
+    const result = await verifyReport(html, { archive, runExport: makeRunExport({ email }) });
+    const out = renderReportHtml(result.html, result.elements);
+    expect(out).toContain('sv-badge-warn');
+    expect(out).toMatch(/1 of 2 requested/i);
+    expect(out).toContain('>1<'); // the real computed value, not hidden
+  });
+
   it('leaves the AI\'s own free HTML/CSS/SVG completely untouched', async () => {
     const { archive } = buildScenario();
     const html = '<svg viewBox="0 0 10 10"><circle cx="5" cy="5" r="4"/></svg><div class="chart">AI analysis</div>';
