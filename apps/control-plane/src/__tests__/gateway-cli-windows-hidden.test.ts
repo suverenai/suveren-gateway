@@ -25,10 +25,18 @@ describe('Windows: no console window for the running gateway', () => {
     for (const call of spawns) expect(call).toContain('windowsHide: true');
   });
 
-  it('the Start-menu shortcut runs the launcher minimized', () => {
+  it('the Start-menu shortcut runs the launcher headless (conhost --headless, no console window)', () => {
     const wxs = readFileSync(join(root, 'bundle/windows/wix/Product.wxs'), 'utf8');
     const shortcut = wxs.slice(wxs.indexOf('<Shortcut'), wxs.indexOf('/>', wxs.indexOf('<Shortcut')));
-    expect(shortcut).toContain('Arguments="open-ui"');
-    expect(shortcut).toContain('Show="minimized"');
+    expect(shortcut).toContain('Target="[WindowsFolder]System32\\conhost.exe"');
+    expect(shortcut).toContain('Arguments="--headless cmd.exe /c &quot;&quot;[#LauncherCmd]&quot; open-ui&quot;"');
+  });
+
+  it('the Finish checkbox action runs headless too — never `start` (it runs a .cmd with cmd /K, keeping a window)', () => {
+    const wxs = readFileSync(join(root, 'bundle/windows/wix/Product.wxs'), 'utf8');
+    const at = wxs.indexOf('Id="LaunchGatewayAfterInstall"');
+    const action = wxs.slice(at, wxs.indexOf('/>', at));
+    expect(action).toContain('ExeCommand="conhost.exe --headless cmd.exe /c');
+    expect(action).not.toMatch(/\bstart\b/);
   });
 });
