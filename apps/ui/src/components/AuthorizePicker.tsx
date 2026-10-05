@@ -146,18 +146,21 @@ export function AuthorizePicker({ onDismiss }: Props) {
                   <h3 className="card-title" style={{ margin: 0 }}>
                     {entry.name}
                   </h3>
+                  {/* "Personal" only in the personal workspace: in a team, an
+                      unconfigured profile is not personal — it is not enabled,
+                      which the card says below. */}
                   {isTeam ? (
                     <span style={{
                       fontSize: '0.6rem', padding: '0.1rem 0.35rem', borderRadius: '0.2rem',
                       background: 'var(--accent-subtle)', color: 'var(--accent)', fontWeight: 600,
                     }}>Team</span>
-                  ) : (
+                  ) : group?.isPersonal ? (
                     <span style={{
                       fontSize: '0.6rem', padding: '0.1rem 0.35rem', borderRadius: '0.2rem',
                       background: 'var(--bg-main)', color: 'var(--text-tertiary)', fontWeight: 600,
                       border: '1px solid var(--border)',
                     }}>Personal</span>
-                  )}
+                  ) : null}
                 </div>
                 <p style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginBottom: '1rem', flex: 1 }}>
                   {entry.description}

@@ -35,16 +35,16 @@ export function mandateRight(i: MandateRightInput): MandateRight {
     return {
       can: false,
       code: 'PROFILE_NOT_ENABLED_FOR_GROUP',
-      reason: `${i.profileName} is not enabled for ${team}: no one has been named who may give ${i.profileName} mandates here.`,
-      fix: `A team admin names the approvers for ${i.profileName} on the Authority Server.`,
+      reason: `Not enabled in ${team}.`,
+      fix: `A team admin names who may give ${i.profileName} mandates.`,
     };
   }
   if (!i.userId || !i.approvers!.includes(i.userId)) {
     return {
       can: false,
       code: 'OWNER_NOT_APPROVER',
-      reason: `Only the approvers of ${i.profileName} in ${team} may give ${i.profileName} mandates — you are not one of them.`,
-      fix: `Ask one of them to give it, or ask a team admin to add you as an approver.`,
+      reason: `Only ${i.profileName}'s approvers in ${team} can give this — you are not one of them.`,
+      fix: `Ask one of them, or a team admin to add you.`,
     };
   }
   return { can: true };
