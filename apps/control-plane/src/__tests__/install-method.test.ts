@@ -17,30 +17,21 @@
  * including Docker: an IT-provisioned install must never show the gateway's
  * normal upgrade command, regardless of how it happens to be packaged.
  *
- * Reimplemented here rather than imported because index.ts starts a server on
- * import. The duplication is deliberate and the comment above index.ts's copy
- * points here.
+ * `msi` — the Windows installer's marker file in the bundle root — comes
+ * right after `managed`: a self-installed Windows gateway shows "Download
+ * installer", however it was started; IT's managed setting still wins.
+ *
+ * Tests the real rule in lib/install-method.ts (no copy).
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, existsSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
+import { join } from 'node:path';
 
-type InstallMethod = 'docker' | 'npm' | 'dev' | 'managed';
+import { detectInstallMethod, INSTALL_MARKER } from '../lib/install-method';
 
-/** Mirrors detectInstallMethod() in index.ts, with the inputs injected. */
-function detect(dir: string, dockerEnv = false, managed = false): InstallMethod {
-  if (managed) return 'managed';
-  if (dockerEnv) return 'docker';
-  if (dir.includes('/node_modules/@suveren/gateway/')) return 'npm';
-  let cursor = dir;
-  for (let i = 0; i < 8; i++) {
-    if (existsSync(join(cursor, '.git'))) return 'dev';
-    const parent = dirname(cursor);
-    if (parent === cursor) break;
-    cursor = parent;
-  }
-  return 'npm';
+function detect(dir: string, dockerEnv = false, managed = false) {
+  return detectInstallMethod({ dir, dockerEnv, managed });
 }
 
 let root: string;
@@ -95,5 +86,32 @@ describe('detectInstallMethod', () => {
 
   it('managed wins over npm/dev detection too', () => {
     expect(detect('/opt/homebrew/lib/node_modules/@suveren/gateway/dist/control-plane', false, true)).toBe('managed');
+  });
+
+  it('msi: the Windows installer marker in the bundle root, however the gateway was started', () => {
+    const bundle = join(root, 'Suveren', 'gateway');
+    const cpDir = join(bundle, 'dist', 'control-plane');
+    mkdirSync(cpDir, { recursive: true });
+    writeFileSync(join(bundle, INSTALL_MARKER), JSON.stringify({ method: 'msi' }));
+    expect(detect(cpDir)).toBe('msi');
+  });
+
+  it('managed (IT) wins over the installer marker', () => {
+    const bundle = join(root, 'Suveren', 'gateway');
+    const cpDir = join(bundle, 'dist', 'control-plane');
+    mkdirSync(cpDir, { recursive: true });
+    writeFileSync(join(bundle, INSTALL_MARKER), JSON.stringify({ method: 'msi' }));
+    expect(detect(cpDir, false, true)).toBe('managed');
+  });
+
+  it('a missing, unreadable or foreign marker changes nothing', () => {
+    const bundle = join(root, 'b');
+    const cpDir = join(bundle, 'dist', 'control-plane');
+    mkdirSync(cpDir, { recursive: true });
+    expect(detect(cpDir)).toBe('npm');
+    writeFileSync(join(bundle, INSTALL_MARKER), 'not json');
+    expect(detect(cpDir)).toBe('npm');
+    writeFileSync(join(bundle, INSTALL_MARKER), JSON.stringify({ method: 'something-else' }));
+    expect(detect(cpDir)).toBe('npm');
   });
 });

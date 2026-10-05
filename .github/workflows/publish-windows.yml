@@ -572,10 +572,10 @@ jobs:
           # SUVEREN_INSTALL_METHOD=managed since PR #36 (merged to main) —
           # the launcher sets it, so this is now a hard requirement, not a
           # warning.
-          if ($body.installMethod -ne 'managed') {
-            throw "installMethod is '$($body.installMethod)', expected 'managed' for the interactively-started instance"
+          if ($body.installMethod -ne 'msi') {
+            throw "installMethod is '$($body.installMethod)', expected 'msi' (Windows installer marker) for the interactively-started instance"
           }
-          Write-Host "installMethod: managed (confirmed — interactive instance)"
+          Write-Host "installMethod: msi (confirmed — interactive instance)"
 
           $mcpDeadline = (Get-Date).AddSeconds(240)
           $mcpBody = $null
@@ -643,10 +643,10 @@ jobs:
             } catch { Start-Sleep -Seconds 2 }
           }
           if (-not $cpBody) { throw "control plane /health never answered within 120s (scheduled-task instance)" }
-          if ($cpBody.installMethod -ne 'managed') {
-            throw "installMethod is '$($cpBody.installMethod)', expected 'managed' for the scheduled-task-started instance"
+          if ($cpBody.installMethod -ne 'msi') {
+            throw "installMethod is '$($cpBody.installMethod)', expected 'msi' (Windows installer marker) for the scheduled-task-started instance"
           }
-          Write-Host "installMethod: managed (confirmed — scheduled-task instance)"
+          Write-Host "installMethod: msi (confirmed — scheduled-task instance)"
 
           $mcpHealth = 'http://localhost:3430/health'
           $deadline = (Get-Date).AddSeconds(240)

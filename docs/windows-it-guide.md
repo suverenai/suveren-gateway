@@ -125,18 +125,25 @@ it uses are already inside the `.msi`. Installing and running it needs:
 
 ## 7. Updates
 
-There is no in-place "check for updates" on a managed install — your policy
-setting marks it `managed`, and the gateway tells the user updates come from
-IT instead of offering to self-update. To update:
+**Set `InstallMethod = managed` in your policy (§5).** Without it, the gateway
+assumes the person installed it themselves and shows a red "Update available —
+Download installer" banner pointing at the public release. With it, the banner
+is neutral: "Updates for this gateway come from your company's IT — no action
+needed here."
+
+To update:
 
 1. Download the new release, verify it (§2), sign it (§3) — **every version
    needs re-signing**; a signature on 1.2.0 does not carry over to 1.3.0.
-2. Push the new `.msi` through Intune the same way (a newer version replaces
-   the old one automatically — Windows treats it as an upgrade, not a
-   separate install).
+2. Push the new `.msi` through Intune the same way. Windows treats it as an
+   upgrade: the installer stops the running gateway (also one started by the
+   login task), replaces the files, keeps the user's data in
+   `%USERPROFILE%\.suveren`, and starts the gateway again. Silent installs show
+   no windows and open no browser.
 
 The new connector set ships inside the new `.msi` — there's nothing separate
-to update.
+to update. Uninstalling stops the gateway and removes the login task; the
+user's data folder is kept.
 
 ## 8. What "unsigned" means for you, concretely
 

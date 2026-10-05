@@ -202,6 +202,15 @@ if (process.platform !== 'win32') {
   console.log('[build-payload] all pinned connectors verified.');
 }
 
+// ─── Install-method marker ──────────────────────────────────────────────────
+//
+// Tells the gateway it was installed with the Windows installer, however it is
+// started (Start menu, scheduled task, by hand) — so the update banner offers
+// "Download installer" instead of an npm command. Read by
+// apps/control-plane/src/lib/install-method.ts; IT's InstallMethod=managed
+// policy still wins over it.
+writeFileSync(join(gatewayOut, 'install-method.json'), JSON.stringify({ method: 'msi' }) + '\n');
+
 // ─── Prune files nothing reads at runtime ──────────────────────────────────
 //
 // Windows Installer registers, copies and (on upgrade/uninstall) removes every

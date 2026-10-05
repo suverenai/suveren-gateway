@@ -33,6 +33,7 @@ import { homedir } from 'node:os';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import { createProxyMiddleware } from 'http-proxy-middleware';
 import { Vault } from './lib/vault';
+import { detectInstallMethod as detectInstallMethodFrom } from './lib/install-method';
 import { createAuthRouter } from './routes/auth';
 import { createVaultRouter } from './routes/vault';
 import { createAIRouter } from './routes/ai';
@@ -980,27 +981,14 @@ app.use(
  * must not offer the npm command an employee has no permission to run — see
  * update-checker.ts and docs/managed-settings.md.
  *
- * Mirrored (with injected inputs) in __tests__/install-method.test.ts —
- * importing this module starts a server, so the rule is duplicated there
- * rather than imported. Keep the two in step.
+ * The rule lives in lib/install-method.ts (tested directly there).
  */
 function detectInstallMethod(): InstallMethod {
-  if (process.env.SUVEREN_INSTALL_METHOD === 'managed' || POLICY_LOCKED_INSTALL_METHOD === 'managed') return 'managed';
-
-  if (existsSync('/.dockerenv')) return 'docker';
-
-  const dir = import.meta.dirname ?? __dirname;
-  if (dir.includes('/node_modules/@suveren/gateway/')) return 'npm';
-
-  // Walk up looking for a .git — the only thing that makes the dev check meaningful.
-  let cursor = dir;
-  for (let i = 0; i < 8; i++) {
-    if (existsSync(join(cursor, '.git'))) return 'dev';
-    const parent = dirname(cursor);
-    if (parent === cursor) break;
-    cursor = parent;
-  }
-  return 'npm';
+  return detectInstallMethodFrom({
+    dir: import.meta.dirname ?? __dirname,
+    dockerEnv: existsSync('/.dockerenv'),
+    managed: process.env.SUVEREN_INSTALL_METHOD === 'managed' || POLICY_LOCKED_INSTALL_METHOD === 'managed',
+  });
 }
 const INSTALL_METHOD = detectInstallMethod();
 

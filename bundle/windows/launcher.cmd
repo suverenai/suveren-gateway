@@ -28,10 +28,11 @@ rem under the same user into offline+managed mode too. %~f0 is this batch
 rem file's own fully-qualified path, however it was invoked.
 if not defined SUVEREN_LAUNCHER set "SUVEREN_LAUNCHER=%~f0"
 
-rem Managed install: the update banner should say "updates come from your
-rem IT", not show an npm command — see the IT-policy-settings work (separate
-rem change) for how SUVEREN_INSTALL_METHOD=managed is read.
-if not defined SUVEREN_INSTALL_METHOD set "SUVEREN_INSTALL_METHOD=managed"
+rem Install method: NOT set here. The installer ships gateway\install-method.json
+rem ("msi") so a self-installed gateway offers "Download installer"; a company
+rem marks its installs as managed via IT policy (InstallMethod=managed), which
+rem wins. Forcing "managed" here told every self-installer that "updates come
+rem from your IT".
 
 rem Offline install: every connector this gateway will ever run ships inside
 rem this install dir, pinned to an exact version by build-payload.mjs at
