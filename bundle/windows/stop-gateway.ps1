@@ -1,7 +1,7 @@
 # Reference copy — readable and documented — of the logic Product.wxs's
-# StopGatewayBeforeUpgrade / StopGatewayOnUninstall custom actions actually
+# StopGateway custom action actually
 # run INLINE (via `powershell.exe -Command`, not `-File` against this file).
-# They can't call this file directly: StopGatewayBeforeUpgrade runs before
+# They can't call this file directly: StopGateway runs before
 # RemoveExistingProducts, which — for a brand-new install — is before any
 # file this package ships has even been copied to INSTALLFOLDER, and for the
 # exact scenario it exists to fix (upgrading FROM an older release) the OLD

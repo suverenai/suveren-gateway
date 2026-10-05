@@ -320,7 +320,7 @@ jobs:
     # Deliberately NO SUVEREN_DATA_DIR override: this test leaves the
     # interactive gateway RUNNING into the final `msiexec /x` (see "Uninstall
     # the msi" below), to prove the uninstall-cleanup custom action
-    # (StopGatewayOnUninstall in Product.wxs) actually stops it before files
+    # (StopGateway in Product.wxs) actually stops it before files
     # are removed. That custom action runs with no inherited job env — it
     # resolves the DEFAULT data dir, same as any real end user who never sets
     # this — so the gateway it needs to find and stop must use that same
@@ -725,7 +725,7 @@ jobs:
           # interactive instance from "Start via the installed launcher" is
           # still running. This is the real IT scenario — Intune/msiexec
           # uninstalls directly, with no chance to run our CLI first — and
-          # it's what StopGatewayOnUninstall / RemoveScheduledTaskOnUninstall
+          # it's what StopGateway / RemoveScheduledTaskOnUninstall
           # (Product.wxs) exist to handle: release the gateway's own file
           # locks before Windows Installer removes them, and clean up the
           # scheduled task re-registered in the previous step.
