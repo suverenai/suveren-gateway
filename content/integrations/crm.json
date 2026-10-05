@@ -140,6 +140,15 @@
         },
         "actionLabel": "Test data loaded",
         "hideUnlessAuthorized": true
+      },
+      "clear_simulation": {
+        "executionMapping": {},
+        "staticExecution": {
+          "contact_type": "customer",
+          "action_type": "setup"
+        },
+        "actionLabel": "Test data cleared",
+        "hideUnlessAuthorized": true
       }
     }
   },
