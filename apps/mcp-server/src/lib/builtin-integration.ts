@@ -41,6 +41,14 @@ export interface BuiltinTool {
    * Throwing is reported to the agent as a failed call.
    */
   handler: (args: Record<string, unknown>) => Promise<BuiltinToolResult>;
+  /**
+   * Checks the arguments BEFORE anything is requested — no proposal, no ticket.
+   * Return a refusal text, or nothing to let the call through to the gate. Use it
+   * for what makes the action impossible regardless of who approves (too large,
+   * malformed), so a person is never asked to approve a call that cannot run.
+   * The handler must still check again: approval can come much later.
+   */
+  validate?: (args: Record<string, unknown>) => string | undefined;
 }
 
 export interface BuiltinIntegration {
@@ -53,6 +61,11 @@ export interface BuiltinIntegration {
   toolGating: ProfileToolGating;
   /** Safe while simulation mode is on (touches no real system). Default false = refused there. */
   simulation?: boolean;
+  /**
+   * Available ONLY while simulation mode is on: refused outside it before any
+   * proposal or ticket (e.g. the AI creating its own mandates — test setups only).
+   */
+  simulationOnly?: boolean;
   tools: BuiltinTool[];
 }
 
