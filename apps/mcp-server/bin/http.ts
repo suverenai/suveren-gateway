@@ -628,6 +628,9 @@ app.get('/health', (_req: Request, res: Response) => {
     storedGates: state.gateStore.getAll().length,
     serviceCredentials: Array.from(serviceCredentials.keys()),
     integrations: integrationManager.getStatus(integrationRegistry.getAll()),
+    // The gateway's own tool groups (built-ins) — not connectors; the mandate
+    // picker offers them so a person can give a mandate for them.
+    builtins: integrationManager.getBuiltins(),
   });
 });
 

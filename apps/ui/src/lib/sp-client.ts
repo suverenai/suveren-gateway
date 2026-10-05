@@ -347,6 +347,19 @@ export interface McpHealthResponse {
   storedGates: number;
   serviceCredentials: string[];
   integrations: McpIntegrationStatus[];
+  /** The gateway's own tool groups (built-ins). Absent on gateways before they existed. */
+  builtins?: BuiltinStatus[];
+}
+
+/** A built-in tool group of the gateway, as /health reports it. */
+export interface BuiltinStatus {
+  id: string;
+  name: string;
+  description: string;
+  /** Full profile id governing its tools. */
+  profile: string;
+  /** Usable right now — false e.g. for test-setup tools outside simulation mode. */
+  available: boolean;
 }
 
 class SPClient {

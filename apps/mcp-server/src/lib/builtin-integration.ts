@@ -55,6 +55,8 @@ export interface BuiltinIntegration {
   /** Prefix of the tool names. Must not contain `__` and must not clash with a connector id. */
   id: string;
   name: string;
+  /** One sentence for the person giving a mandate: what the agent can do with these tools. */
+  description?: string;
   /** Profile id governing every tool (full id or short name, as in a manifest). */
   profile: string;
   /** Per-tool gating, the `toolGating` block of a manifest. A tool without an entry is refused. */
@@ -67,6 +69,17 @@ export interface BuiltinIntegration {
    */
   simulationOnly?: boolean;
   tools: BuiltinTool[];
+}
+
+/** What the UI's mandate picker needs to offer a built-in group (via /health). */
+export interface BuiltinStatus {
+  id: string;
+  name: string;
+  description: string;
+  /** Profile id governing the tools. */
+  profile: string;
+  /** Usable right now — false for a simulationOnly group outside simulation mode. */
+  available: boolean;
 }
 
 /** Shorthand for a successful text result. */
