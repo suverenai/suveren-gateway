@@ -147,7 +147,7 @@ export async function verifyReport(html: string, sources: ReportSources): Promis
   }
 
   const proof = buildProof(elements, caseElements);
-  const coverage = await buildCoverage(caseElements, getExport);
+  const coverage = await buildCoverage(caseElements, getExport, sources.archive, proof.ticketsReferenced);
 
   return { html: sanitized, elements, proof, coverage };
 }
@@ -242,6 +242,8 @@ function buildProof(
 async function buildCoverage(
   caseElements: Array<{ el: VerifiedElement; resolution: CaseResolution }>,
   getExport: (s: ExportSystem) => Promise<ExportOutcome>,
+  archive: ReportSources['archive'],
+  referenced: string[],
 ): Promise<CoverageSummary> {
   const exp = await getExport('email');
   const loadedCases = exp.ok && isEmailExport(exp.data)
@@ -254,5 +256,18 @@ async function buildCoverage(
   const coveredCases = loadedCases.filter(c => covered.has(c));
   const missingCases = loadedCases.filter(c => !covered.has(c));
 
-  return { loadedCases, coveredCases, missingCases };
+  // Ticket-level coverage: tickets carry no case id, so the AI names a case's
+  // steps itself — this is what keeps it from leaving one out unnoticed.
+  const loadedAt = exp.ok && isEmailExport(exp.data) ? exp.data.simulation_load?.loaded_at : undefined;
+  const periodStart = loadedAt !== undefined ? (parseTimestampSeconds(loadedAt) ?? null) : null;
+  const inPeriod = archive.getReceipts()
+    .map(r => ({ id: String(r.receipt.id ?? ''), time: Number(r.receipt.timestamp ?? r.archivedAt) }))
+    .filter(t => t.id && (periodStart === null || t.time >= periodStart))
+    .sort((a, b) => a.time - b.time)
+    .map(t => t.id);
+  const referencedSet = new Set(referenced);
+  const ticketsReferenced = inPeriod.filter(id => referencedSet.has(id));
+  const ticketsNotReferenced = inPeriod.filter(id => !referencedSet.has(id));
+
+  return { loadedCases, coveredCases, missingCases, periodStart, ticketsInPeriod: inPeriod, ticketsReferenced, ticketsNotReferenced };
 }

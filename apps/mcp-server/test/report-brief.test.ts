@@ -31,4 +31,14 @@ describe('report brief', () => {
   it('stays vendor-neutral about the AI client and free of internal jargon for managers', () => {
     expect(REPORT_BRIEF).not.toMatch(/Claude|ChatGPT|OpenAI|Anthropic/);
   });
+
+  it('asks for a layout that works on phones and in a narrow side panel', () => {
+    expect(REPORT_BRIEF).toMatch(/on a phone, in a narrow side panel/);
+    expect(REPORT_BRIEF).toMatch(/viewBox/);
+  });
+
+  it('documents case lists for metrics and that unreferenced tickets are listed', () => {
+    expect(REPORT_BRIEF).toContain('cases="C1 C3"');
+    expect(REPORT_BRIEF).toMatch(/lists every ticket from the test period that your report does not reference/);
+  });
 });

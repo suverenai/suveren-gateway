@@ -57,6 +57,18 @@ export interface CoverageSummary {
   coveredCases: string[];
   /** loadedCases minus coveredCases, in loadedCases order. */
   missingCases: string[];
+  /** Start of the test period (unix seconds): when the simulation package was
+   *  loaded (email export `simulation_load.loaded_at`). null when unknown —
+   *  then every archived ticket counts as in the period. */
+  periodStart: number | null;
+  /** Every archived ticket issued in the test period, oldest first. */
+  ticketsInPeriod: string[];
+  /** ticketsInPeriod that the report references (sv-ticket, sv-approval,
+   *  sv-mandate, or an sv-case goal/step). */
+  ticketsReferenced: string[];
+  /** ticketsInPeriod the report does NOT reference — the AI cannot leave an
+   *  awkward ticket out unnoticed. */
+  ticketsNotReferenced: string[];
 }
 
 export interface VerifyReportResult {
@@ -134,9 +146,19 @@ export interface SimulatorRefusal {
   message: string;
 }
 
+export interface EmailSimulationLoad {
+  name: string;
+  package_sha256: string;
+  cases_loaded: number;
+  loaded_at: string;
+  email?: string | null;
+}
+
 export interface EmailExport {
   mode: string;
   exported_at: string;
+  /** The single row of the email simulator's simulation_load table (null before any load). */
+  simulation_load?: EmailSimulationLoad | null;
   inbox: EmailMessage[];
   sent: EmailMessage[];
   changes: SimulatorChange[];

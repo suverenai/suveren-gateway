@@ -336,6 +336,35 @@ describe('verifyReport — unknown elements and coverage', () => {
   });
 });
 
+describe('verifyReport — ticket coverage (the AI cannot leave a ticket out unnoticed)', () => {
+  it('lists every ticket since the simulation load that the report does not reference', async () => {
+    const { archive, addTicket } = buildScenario();
+    addTicket({ id: 'before-load', action: 'erp__create_quote', authorizationId: 'authz-1', timestamp: START_TIME - 600 });
+    addTicket({ id: 't-step', action: 'erp__create_quote', authorizationId: 'authz-1', timestamp: START_TIME + 100 });
+    addTicket({ id: 't-hidden', action: 'erp__update_quote', authorizationId: 'authz-1', timestamp: START_TIME + 150 });
+    addTicket({ id: 't-goal', action: 'email__send_message', authorizationId: 'authz-1', timestamp: START_TIME + 200 });
+    const email = buildEmailExport({
+      simulation_load: { name: 'pkg', package_sha256: 'x', cases_loaded: 1, loaded_at: START_ISO },
+      inbox: [{ id: 'm-1', from_name: 'A', from_email: 'a@example.com', to_json: '[]', subject: 'x', body: 'x', received_at: START_ISO, case_id: 'C1' }],
+    });
+    const html = '<sv-case start="email:m-1" goal="ticket:t-goal" steps="t-step"></sv-case>';
+    const result = await verifyReport(html, { archive, runExport: makeRunExport({ email }) });
+
+    expect(result.coverage.periodStart).toBe(START_TIME);
+    expect(result.coverage.ticketsInPeriod).toEqual(['t-step', 't-hidden', 't-goal']);
+    expect(result.coverage.ticketsReferenced).toEqual(['t-step', 't-goal']);
+    expect(result.coverage.ticketsNotReferenced).toEqual(['t-hidden']);
+  });
+
+  it('without a known load time every archived ticket counts', async () => {
+    const { archive, addTicket } = buildScenario();
+    addTicket({ id: 'old', action: 'erp__create_quote', authorizationId: 'authz-1', timestamp: START_TIME - 600 });
+    const result = await verifyReport('<p>nothing</p>', { archive, runExport: makeRunExport({ email: buildEmailExport({}) }) });
+    expect(result.coverage.periodStart).toBeNull();
+    expect(result.coverage.ticketsNotReferenced).toEqual(['old']);
+  });
+});
+
 describe('verifyReport — control check (a broken rule must fail its own test)', () => {
   it('a tampered ticket signature is caught — proving the signature check is not a no-op', async () => {
     const { archive, addTicket, kp } = buildScenario();

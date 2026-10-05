@@ -29,6 +29,8 @@ Who reads it: managers who are not technical. Plain words, short sentences, the 
 
 What you write: one HTML page (HTML, CSS and inline SVG only — no JavaScript, no external files or links except the check links the gateway adds). The layout, headings, charts, tables and your assessment are yours.
 
+It must read well everywhere: on a phone, in a narrow side panel (about 360 pixels wide) and on a large screen. Use fluid widths (no fixed page widths), let columns stack on narrow screens (CSS grid/flex with wrapping, or media queries), make wide tables scroll horizontally or turn into stacked rows, give SVG charts a viewBox so they scale, and keep text at a readable size.
+
 What you cannot write yourself: facts that need proof. Place these elements instead; the gateway looks the data up, checks it and draws the element. You give references, never the content:
 
 - <sv-ticket ref="TICKET_ID"></sv-ticket> — one action you took, with its signed ticket.
@@ -36,10 +38,10 @@ What you cannot write yourself: facts that need proof. Place these elements inst
 - <sv-mandate ticket="TICKET_ID"></sv-mandate> — the authority the action ran under: limits, mode, intent.
 - <sv-record system="email|crm|erp" ref="RECORD_ID"></sv-record> — an email, CRM entry, quote or order.
 - <sv-case start="email:MESSAGE_ID" goal="ticket:TICKET_ID" steps="TICKET_ID TICKET_ID"></sv-case> — one business case: the incoming email that started it, the ticket that completed it, and the tickets in between.
-- <sv-metric kind="KIND" cases="all"></sv-metric> — a number the gateway computes over the cases you defined. KIND: completed, median-time, average-time, without-approval, approvals, median-approval-wait, tickets, refusals.
+- <sv-metric kind="KIND" cases="all"></sv-metric> — a number the gateway computes over the cases you defined. KIND: completed, median-time, average-time, without-approval, approvals, median-approval-wait, tickets, refusals. cases is "all" or a space-separated list of case ids, e.g. cases="C1 C3".
 
 Rules:
-1. Define every case you worked on with sv-case — also the ones that did not reach their goal (omit goal, or say why in your text). The gateway shows management how many of the loaded cases your report covers and names the missing ones.
+1. Define every case you worked on with sv-case — also the ones that did not reach their goal (omit goal, or say why in your text). The gateway shows management how many of the loaded cases your report covers and names the missing ones — and lists every ticket from the test period that your report does not reference, so name every step.
 2. Use sv-metric for every headline number. Numbers you compute yourself are shown as "AI analysis — not verified".
 3. A case's goal must be what actually completed it — for an email reply, the reply to the start email. The gateway checks this link.
 4. A wrong or unknown reference is shown as "not verifiable". Do not guess IDs — read them first.
