@@ -10,6 +10,10 @@ export { createConnectorExportRunner, ConnectorExportError, type ConnectorExport
 export { METRIC_KINDS, type MetricKind } from './metric-resolvers';
 export { ReportStore, type StoredReport } from './report-store';
 export { renderReportHtml, escapeHtml, DRAWN_ELEMENT_STYLES } from './render-report';
+export {
+  formatDateTime, formatDuration, formatCurrency, formatBoundValue, formatBoundLabel,
+  formatOwnerLabel, profileShortLabel, formatActionLabel, formatMetricValue, METRIC_LABELS,
+} from './format';
 export { resolveTicketElement, resolveApprovalElement, resolveMandateElement } from './ticket-resolvers';
 export { buildTicketDetails, type TicketDetail } from './ticket-details';
 export * from './types';

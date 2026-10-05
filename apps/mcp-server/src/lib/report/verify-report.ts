@@ -18,6 +18,7 @@ import { resolveCaseElement, parseCaseAttrs, type CaseResolution } from './case-
 import { computeMetric, type CaseMetricInput } from './metric-resolvers';
 import { parseTimestampSeconds } from './time';
 import { isEmailExport } from './types';
+import { formatActionLabel, formatDateTime, formatDuration, formatMetricValue, profileShortLabel, METRIC_LABELS } from './format';
 import type {
   ExportSystem, ReportSources, VerifiedElement, VerifyReportResult,
   ProofSummary, CoverageSummary,
@@ -201,21 +202,43 @@ async function collectRefusalTimes(getExport: (s: ExportSystem) => Promise<Expor
   return times;
 }
 
+/**
+ * The "Checked values" side panel's one-line-per-element summary — a manager
+ * cross-checks these against the rendered report, so they carry the SAME
+ * formatting as the drawn `sv-*` cards (render-report.ts): no unix seconds,
+ * no raw tool names, no bare did:key (polish 2026-10-05). `owners`/`limits`
+ * on a resolved mandate are already display-ready strings by the time they
+ * reach here (ticket-resolvers.ts#resolveMandateElement).
+ */
 function summarize(el: VerifiedElement): string {
   const d = el.data ?? {};
   switch (el.kind) {
-    case 'sv-ticket':
-      return `Ticket ${String(d.ticketId)}: ${String(d.action)} at ${String(d.time)}`;
-    case 'sv-approval':
-      return `Approval for ${String(d.ticketId)}: ${(d.who as string[] | undefined)?.join(', ') ?? 'unknown'}`;
-    case 'sv-mandate':
-      return `Mandate ${String(d.authorizationId)}: profile ${String(d.profile)}, mode ${String(d.mode)}`;
+    case 'sv-ticket': {
+      const actionLabel = typeof d.actionLabel === 'string' ? d.actionLabel : formatActionLabel(d.action);
+      const timeLabel = typeof d.timeLabel === 'string' ? d.timeLabel : formatDateTime(d.time);
+      return `${actionLabel} — ${timeLabel}`;
+    }
+    case 'sv-approval': {
+      const who = typeof d.whoLabel === 'string' ? d.whoLabel : ((d.who as string[] | undefined)?.join(', ') ?? 'unknown');
+      const waitLabel = typeof d.waitLabel === 'string' ? d.waitLabel : (typeof d.waitSeconds === 'number' ? formatDuration(d.waitSeconds) : 'unknown');
+      return `Approval by ${who} — waited ${waitLabel}`;
+    }
+    case 'sv-mandate': {
+      const profileLabel = typeof d.profileLabel === 'string' ? d.profileLabel : profileShortLabel(typeof d.profile === 'string' ? d.profile : undefined);
+      const owners = Array.isArray(d.owners) && (d.owners as string[]).length > 0 ? (d.owners as string[]).join(', ') : 'unknown owner';
+      return `Mandate: ${profileLabel} · ${owners}`;
+    }
     case 'sv-record':
-      return `${String(d.kind)} record ${el.attrs.ref ?? ''}`;
-    case 'sv-case':
-      return `Case ${String(d.caseId)}: ${(d.steps as unknown[] | undefined)?.length ?? 0} step(s), ${String(d.totalDurationSeconds)}s`;
-    case 'sv-metric':
-      return `${String(d.kind)} (${String(d.cases)}) = ${String(d.value)}`;
+      return `${String(d.kind ?? 'record')} record checked`;
+    case 'sv-case': {
+      const steps = (d.steps as unknown[] | undefined)?.length ?? 0;
+      return `Case ${String(d.caseId)}: ${steps} step(s), ${formatDuration(d.totalDurationSeconds)}`;
+    }
+    case 'sv-metric': {
+      const kind = String(d.kind ?? '');
+      const label = METRIC_LABELS[kind] ?? kind;
+      return `${label} = ${formatMetricValue(kind, d.value)}`;
+    }
     default:
       return el.id;
   }

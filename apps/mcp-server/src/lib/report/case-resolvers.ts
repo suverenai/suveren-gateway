@@ -72,6 +72,14 @@ export interface CaseApproval {
   createdAt?: number;
   decidedAt?: number;
   waitSeconds?: number;
+  // The following mirror resolveApprovalElement's own display fields
+  // (ticket-resolvers.ts) — present at runtime because this array is built
+  // by spreading that resolver's `data`, kept optional here since this
+  // interface predates them and some construction paths may not set them.
+  whoLabel?: string;
+  createdAtLabel?: string;
+  decidedAtLabel?: string;
+  waitLabel?: string;
 }
 
 export interface CaseData {

@@ -9,6 +9,11 @@ import {
   missingSummary,
   resolveDetailTicketId,
   buildSrcDoc,
+  proofCountLine,
+  formatDateTimeClient,
+  formatCurrencyClient,
+  formatDetailValue,
+  factSummaryLines,
 } from './ReportsPage';
 import type { ReportElement, ReportProof, ReportCoverage } from '../lib/sp-client';
 
@@ -40,11 +45,25 @@ function ticketEl(overrides: Partial<ReportElement> = {}): ReportElement {
 }
 
 describe('findMandateLabel — "written by the AI under mandate X" only when known', () => {
-  it('returns the capitalized profile name from a VERIFIED sv-mandate element', () => {
+  it('prefers the server\'s own profileLabel', () => {
+    const elements: ReportElement[] = [
+      { id: 'sv-mandate-0', kind: 'sv-mandate', attrs: { ticket: 't1' }, status: 'verified', data: { profile: 'github.com/humanagencyprotocol/hap-profiles/sales@0.3', profileLabel: 'Sales' } },
+    ];
+    expect(findMandateLabel(elements)).toBe('Sales');
+  });
+
+  it('falls back to deriving a name from the raw profile id when no profileLabel is present', () => {
     const elements: ReportElement[] = [
       { id: 'sv-mandate-0', kind: 'sv-mandate', attrs: { ticket: 't1' }, status: 'verified', data: { profile: 'reporting@0.1' } },
     ];
     expect(findMandateLabel(elements)).toBe('Reporting');
+  });
+
+  it('REFUSAL: a full qualified profile id with no profileLabel never leaks the whole path as the mandate name', () => {
+    const elements: ReportElement[] = [
+      { id: 'sv-mandate-0', kind: 'sv-mandate', attrs: { ticket: 't1' }, status: 'verified', data: { profile: 'github.com/humanagencyprotocol/hap-profiles/sales@0.3' } },
+    ];
+    expect(findMandateLabel(elements)).toBe('Sales');
   });
 
   it('returns null (omit the phrase) when no sv-mandate element is present', () => {
@@ -187,6 +206,109 @@ describe('resolveDetailTicketId', () => {
 
   it('returns null when neither a param nor an element is available', () => {
     expect(resolveDetailTicketId(undefined, null)).toBeNull();
+  });
+});
+
+describe('proofCountLine — zero must never look like success', () => {
+  it('a positive count gets the green checkmark', () => {
+    expect(proofCountLine(14)).toEqual({ kind: 'ok', text: '14 ✓' });
+  });
+
+  it('REFUSAL: zero gets neutral styling and no checkmark, with a plain-language note', () => {
+    const line = proofCountLine(0);
+    expect(line.kind).toBe('neutral');
+    expect(line.text).not.toContain('✓');
+    expect(line.text).toBe('none in this report');
+  });
+
+  it('a custom "none" label is honored', () => {
+    expect(proofCountLine(0, 'nothing checked')).toEqual({ kind: 'neutral', text: 'nothing checked' });
+  });
+});
+
+describe('narrowSummaryLine — zero tickets must not carry a checkmark either', () => {
+  it('REFUSAL: zero signatures valid renders without a tick', () => {
+    const line = narrowSummaryLine(proof({ signaturesValid: 0 }), coverage());
+    expect(line).toContain('0 tickets');
+    expect(line).not.toMatch(/0 ✓/);
+  });
+});
+
+describe('formatDateTimeClient', () => {
+  it('renders a human "D Mon, HH:MM" shape, never raw unix seconds', () => {
+    const out = formatDateTimeClient(1_800_000_000);
+    expect(out).toMatch(/^\d{1,2} [A-Z][a-z]{2}, \d{2}:\d{2}$/);
+  });
+
+  it('REFUSAL: a non-numeric value never renders "NaN"', () => {
+    expect(formatDateTimeClient('nonsense')).toBe('unknown time');
+  });
+});
+
+describe('formatCurrencyClient', () => {
+  it('known currencies render with a symbol and space-grouped amount', () => {
+    expect(formatCurrencyClient(4380, 'EUR')).toBe('€ 4 380');
+  });
+
+  it('an unrecognized code shows the code itself', () => {
+    expect(formatCurrencyClient(100, 'CHF')).toBe('CHF 100');
+  });
+});
+
+describe('formatDetailValue — the generic sv-record/sv-metric detail dump', () => {
+  it('formats a currency amount using the sibling currency field, dropping the bare currency row', () => {
+    const data = { net_total: 4380, currency: 'EUR' };
+    expect(formatDetailValue('net_total', data)).toBe('€ 4 380');
+    expect(formatDetailValue('currency', data)).toBeNull();
+  });
+
+  it('formats a recognized date field as human time, never the raw ISO string', () => {
+    const data = { received_at: '2027-01-15T08:10:00.000Z' };
+    const out = formatDetailValue('received_at', data);
+    expect(out).not.toContain('2027-01-15T08:10:00');
+    expect(out).toMatch(/^\d{1,2} [A-Z][a-z]{2}, \d{2}:\d{2}$/);
+  });
+
+  it('an unrecognized field is stringified as-is', () => {
+    expect(formatDetailValue('status', { status: 'sent' })).toBe('sent');
+  });
+
+  it('a missing/empty value renders as null (the caller skips the row)', () => {
+    expect(formatDetailValue('subject', { subject: '' })).toBeNull();
+    expect(formatDetailValue('subject', {})).toBeNull();
+  });
+});
+
+describe('factSummaryLines — human-first ticket/mandate/approval detail summary', () => {
+  it('Ticket: uses the server\'s own actionLabel/timeLabel/profileLabel when present', () => {
+    const lines = factSummaryLines('Ticket', { actionLabel: 'Quote created', timeLabel: '5 Oct, 14:26', profileLabel: 'Sales' });
+    expect(lines).toContainEqual({ label: 'Action', value: 'Quote created' });
+    expect(lines).toContainEqual({ label: 'When', value: '5 Oct, 14:26' });
+    expect(lines).toContainEqual({ label: 'Mandate', value: 'Sales' });
+  });
+
+  it('Mandate: owners and limits are already display-ready strings, joined for reading', () => {
+    const lines = factSummaryLines('Mandate', {
+      profileLabel: 'Sales', owners: ['M. Huber'], limits: ['Max value per quote: € 5 000'], mode: 'review',
+    });
+    expect(lines).toContainEqual({ label: 'Owners', value: 'M. Huber' });
+    expect(lines).toContainEqual({ label: 'Limits', value: 'Max value per quote: € 5 000' });
+    expect(lines).toContainEqual({ label: 'Commitment mode', value: 'review' });
+  });
+
+  it('Mandate: an empty owners list reads as "unknown owner", not blank', () => {
+    const lines = factSummaryLines('Mandate', { profileLabel: 'Sales', owners: [] });
+    expect(lines).toContainEqual({ label: 'Owners', value: 'unknown owner' });
+  });
+
+  it('Approval: "asked ... approved ... waited ..." from the server\'s own labels', () => {
+    const lines = factSummaryLines('Approval', {
+      whoLabel: 'M. Huber', createdAtLabel: '5 Oct, 09:20', decidedAtLabel: '5 Oct, 09:44', waitLabel: '24 min',
+    });
+    expect(lines).toContainEqual({ label: 'Approved by', value: 'M. Huber' });
+    expect(lines).toContainEqual({ label: 'Asked', value: '5 Oct, 09:20' });
+    expect(lines).toContainEqual({ label: 'Approved', value: '5 Oct, 09:44' });
+    expect(lines).toContainEqual({ label: 'Waited', value: '24 min' });
   });
 });
 
