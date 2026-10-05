@@ -1,8 +1,9 @@
-import { Fragment } from 'react';
 import { resolveProposalLinks, type ProposalLink } from '../lib/proposal-links';
 import type { ThreadItem } from '../lib/thread-aggregator';
 import { ProfileBadge } from './ProfileBadge';
 import { formatTimeLeft } from '../lib/time-left';
+import { ProposalArgs } from './ProposalArgs';
+import type { ToolDisplay } from '../lib/approval-view';
 
 type CardStatus = 'pending' | 'committed' | 'executed' | 'rejected' | 'expired';
 
@@ -51,21 +52,8 @@ function isDestructive(tool: string): boolean {
   );
 }
 
-const HIDDEN_ARG_KEYS = new Set([
-  'apiKey', 'api_key', 'accessToken', 'access_token',
-  'password', 'secret', 'signature',
-  '_imagePreview', // rendered separately, not in the args table
-]);
 
-const IMAGE_FIELD_RE = /^(image|img|photo|picture|thumbnail)(_?url)?$/i;
 
-function isImageArg(key: string, value: unknown): value is string {
-  if (typeof value !== 'string') return false;
-  // Data URLs are always images regardless of field name
-  if (/^data:image\//i.test(value)) return true;
-  if (IMAGE_FIELD_RE.test(key)) return /^https?:\/\//.test(value);
-  return /^https?:\/\/.+\.(jpe?g|png|gif|webp|svg|avif)(\?|$)/i.test(value);
-}
 
 // NEVER truncate: this card is the review surface — the human approves
 // exactly what they can read here, so the full content must be visible at
@@ -86,12 +74,14 @@ interface Props {
   item: ThreadItem;
   /** Declared by the acting integration's manifest — see resolveProposalLinks. */
   proposalLinks?: ProposalLink[];
+  /** Labels and display kinds for the arguments (lib/approval-view.ts). */
+  toolDisplay?: ToolDisplay;
   onApprove?: (id: string) => void;
   onReject?: (id: string) => void;
   resolving?: boolean;
 }
 
-export function ActionCard({ item, onApprove, onReject, resolving, proposalLinks }: Props) {
+export function ActionCard({ item, onApprove, onReject, resolving, proposalLinks, toolDisplay }: Props) {
   const isProposal = item.kind === 'proposal';
   const status: CardStatus = isProposal ? item.proposal.status : 'executed';
   const toolFull = isProposal ? item.proposal.tool : item.receipt.action;
@@ -106,9 +96,6 @@ export function ActionCard({ item, onApprove, onReject, resolving, proposalLinks
   // ApproverProposalCard is only for above-cap approvals — so a link wired only
   // there never reaches the person deciding.
   const inspectLinks = isProposal ? resolveProposalLinks(proposalLinks, item.proposal.toolArgs) : [];
-  const argEntries = args
-    ? Object.entries(args).filter(([k]) => !HIDDEN_ARG_KEYS.has(k))
-    : [];
   const ctxEntries = Object.entries(executionContext ?? {});
 
   return (
@@ -195,49 +182,7 @@ export function ActionCard({ item, onApprove, onReject, resolving, proposalLinks
         </div>
       )}
 
-      {isProposal && argEntries.length > 0 && (
-        <div style={{ marginBottom: '0.75rem' }}>
-          <div style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.35rem' }}>
-            Arguments
-          </div>
-          <dl style={{ display: 'grid', gridTemplateColumns: 'max-content 1fr', gap: '0.2rem 0.75rem', fontSize: '0.85rem', margin: 0 }}>
-            {argEntries.map(([k, v]) => (
-              <Fragment key={k}>
-                <dt style={{ color: 'var(--text-tertiary)', whiteSpace: 'nowrap', alignSelf: 'start' }}>{k}</dt>
-                <dd style={{ color: 'var(--text-primary)', margin: 0, wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}>
-                  {isImageArg(k, v) ? (
-                    <img
-                      src={v}
-                      alt={typeof (args as Record<string, unknown>)?.altText === 'string'
-                        ? (args as Record<string, string>).altText
-                        : k}
-                      style={{
-                        display: 'block',
-                        maxWidth: '100%',
-                        maxHeight: '240px',
-                        borderRadius: '0.375rem',
-                        border: '1px solid var(--border)',
-                      }}
-                      onError={(e) => {
-                        const img = e.currentTarget;
-                        const parent = img.parentElement;
-                        if (!parent) return;
-                        img.style.display = 'none';
-                        const fallback = document.createElement('span');
-                        fallback.textContent = v;
-                        fallback.style.color = 'var(--text-tertiary)';
-                        parent.appendChild(fallback);
-                      }}
-                    />
-                  ) : (
-                    formatArgValue(v)
-                  )}
-                </dd>
-              </Fragment>
-            ))}
-          </dl>
-        </div>
-      )}
+      {isProposal && args && <ProposalArgs args={args} display={toolDisplay} />}
 
       {ctxEntries.length > 0 && (
         <div style={{ marginBottom: '0.75rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>

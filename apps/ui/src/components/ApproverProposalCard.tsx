@@ -14,16 +14,14 @@
  *  4. Persists to ~/.suveren/approved-intents.enc.json via POST /api/approved-intents (CP)
  */
 
-import { useState, Fragment } from 'react';
+import { useState } from 'react';
 import { resolveProposalLinks, type ProposalLink } from '../lib/proposal-links';
 import { spClient, type Proposal } from '../lib/sp-client';
 import { profileDisplayName } from '../lib/profile-display';
 import { formatTimeLeft } from '../lib/time-left';
+import { ProposalArgs } from './ProposalArgs';
+import type { ToolDisplay } from '../lib/approval-view';
 
-const HIDDEN_ARG_KEYS = new Set([
-  'apiKey', 'api_key', 'accessToken', 'access_token',
-  'password', 'secret', 'signature', '_imagePreview',
-]);
 
 // NEVER truncate: approvers commit to exactly what they can read here, so
 // the full content must be visible at once (an email body cut at 200 chars
@@ -53,12 +51,14 @@ interface Props {
   proposal: Proposal;
   /** Declared by the acting integration's manifest — see resolveProposalLinks. */
   proposalLinks?: ProposalLink[];
+  /** Labels and display kinds for the arguments (lib/approval-view.ts). */
+  toolDisplay?: ToolDisplay;
   currentUserId: string;
   onAction: () => void;
   onMessage: (msg: string) => void;
 }
 
-export function ApproverProposalCard({ proposal, currentUserId, onAction, onMessage, proposalLinks }: Props) {
+export function ApproverProposalCard({ proposal, currentUserId, onAction, onMessage, proposalLinks, toolDisplay }: Props) {
   const [approving, setApproving] = useState(false);
   const [rejecting, setRejecting] = useState(false);
   const [intent, setIntent] = useState<string | null>(null);
@@ -67,7 +67,6 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
   const [expanded, setExpanded] = useState(false);
 
   const toolShort = proposal.tool.split('__').pop() ?? proposal.tool;
-  const argEntries = Object.entries(proposal.toolArgs).filter(([k]) => !HIDDEN_ARG_KEYS.has(k));
   const boundsEntries = Object.entries(proposal.executionContext);
   const inspectLinks = resolveProposalLinks(proposalLinks, proposal.toolArgs);
 
@@ -237,21 +236,7 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
       )}
 
       {/* Arguments */}
-      {argEntries.length > 0 && (
-        <div style={{ marginBottom: '0.75rem' }}>
-          <div style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.25rem' }}>
-            Arguments
-          </div>
-          <dl style={{ display: 'grid', gridTemplateColumns: 'max-content 1fr', gap: '0.2rem 0.75rem', fontSize: '0.85rem', margin: 0 }}>
-            {argEntries.map(([k, v]) => (
-              <Fragment key={k}>
-                <dt style={{ color: 'var(--text-tertiary)', whiteSpace: 'nowrap', alignSelf: 'start' }}>{k}</dt>
-                <dd style={{ color: 'var(--text-primary)', margin: 0, wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}>{formatArgValue(v)}</dd>
-              </Fragment>
-            ))}
-          </dl>
-        </div>
-      )}
+      <ProposalArgs args={proposal.toolArgs} display={toolDisplay} />
 
       {/* Execution context */}
       {boundsEntries.length > 0 && (

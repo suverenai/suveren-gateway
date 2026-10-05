@@ -25,8 +25,7 @@
  */
 
 import { Router, type Request, type Response } from 'express';
-import { encryptForRecipients } from '../lib/e2e-crypto';
-import { computeIntentDisclosureHash } from '@hap/core';
+import { encryptIntentForRecipients } from '../lib/intent-encryption';
 
 export function createEncryptIntentRouter(): Router {
   const router = Router();
@@ -79,27 +78,11 @@ export function createEncryptIntentRouter(): Router {
     }
 
     try {
-      const encrypted = await encryptForRecipients(intent, parsed);
-
-      // Serialize binary values to base64 for the wire.
-      const encryptedKeys: Record<string, { ct: string; enc: string }> = {};
-      for (const [userId, wrap] of Object.entries(encrypted.encryptedKeys)) {
-        encryptedKeys[userId] = {
-          ct: Buffer.from(wrap.ct).toString('base64'),
-          enc: Buffer.from(wrap.enc).toString('base64'),
-        };
-      }
-
-      const intentCiphertextB64 = Buffer.from(encrypted.intentCiphertext).toString('base64');
-      const approversFrozen = parsed.map(r => r.userId);
-      const intentDisclosureHash = computeIntentDisclosureHash(intentCiphertextB64, approversFrozen);
-
-      res.json({
-        intentCiphertext: intentCiphertextB64,
-        encryptedKeys,
-        approversFrozen,
-        intentDisclosureHash,
-      });
+      // Same implementation as the gateway's own mandate creation (lib/intent-encryption.ts).
+      res.json(await encryptIntentForRecipients(
+        intent,
+        parsed.map(r => ({ userId: r.userId, publicKey: Buffer.from(r.publicKey).toString('base64') })),
+      ));
     } catch (err) {
       console.error('[Control Plane] encrypt-intent error:', err);
       res.status(500).json({ error: err instanceof Error ? err.message : 'Encryption failed' });

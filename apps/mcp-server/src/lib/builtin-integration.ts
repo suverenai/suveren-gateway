@@ -48,7 +48,7 @@ export interface BuiltinTool {
    * malformed), so a person is never asked to approve a call that cannot run.
    * The handler must still check again: approval can come much later.
    */
-  validate?: (args: Record<string, unknown>) => string | undefined;
+  validate?: (args: Record<string, unknown>) => string | undefined | Promise<string | undefined>;
 }
 
 export interface BuiltinIntegration {

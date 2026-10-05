@@ -362,6 +362,20 @@ export interface BuiltinStatus {
   available: boolean;
 }
 
+/**
+ * The approvers' public keys from the AS, which answers
+ * `{ pubkeys: { <userId>: <base64 key> } }`. This used to read `data.approvers`,
+ * a field the AS never sends — so the list was always empty and the sign page
+ * silently skipped encrypting the intent for a team's approvers.
+ */
+export function parseApproverPubkeys(data: unknown): Array<{ userId: string; publicKey: string }> {
+  const map = (data as { pubkeys?: unknown })?.pubkeys;
+  if (!map || typeof map !== 'object' || Array.isArray(map)) return [];
+  return Object.entries(map as Record<string, unknown>)
+    .filter((e): e is [string, string] => typeof e[1] === 'string' && e[1].length > 0)
+    .map(([userId, publicKey]) => ({ userId, publicKey }));
+}
+
 class SPClient {
   private apiKey: string | null = null;
 
@@ -1012,13 +1026,20 @@ class SPClient {
    * a key are included. Empty array = no approvers have keys (skip encryption).
    * Endpoint: GET /api/groups/:id/profile-config/:profileId/approvers/pubkeys
    */
+  /** Argument schemas + approvalView hints per namespaced tool, for the approval screen. */
+  async getToolDisplay(): Promise<Record<string, import('./approval-view').ToolDisplay>> {
+    const res = await this.fetch('/tool-display');
+    if (!res.ok) return {};
+    const data = await res.json();
+    return (data?.tools ?? {}) as Record<string, import('./approval-view').ToolDisplay>;
+  }
+
   async getApproversPubkeys(groupId: string, profileId: string): Promise<Array<{ userId: string; publicKey: string }>> {
     const res = await this.fetch(
       `/api/groups/${encodeURIComponent(groupId)}/profile-config/${encodeURIComponent(profileId)}/approvers/pubkeys`,
     );
     if (!res.ok) return [];
-    const data = await res.json();
-    return (data.approvers as Array<{ userId: string; publicKey: string }>) ?? [];
+    return parseApproverPubkeys(await res.json());
   }
 
   /**

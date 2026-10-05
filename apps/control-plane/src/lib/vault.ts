@@ -113,6 +113,8 @@ export class Vault {
    * disk, gone the moment the process restarts or the vault locks.
    */
   private spSessionExpiresAt: number | null = null;
+  /** Who the current AS session belongs to (from the login response). Never persisted. */
+  private sessionUser: { id: string; did: string } | null = null;
   /** Set by lockExpired(); cleared by any fresh unseal (a new login). */
   private lockedReason: VaultLockReason | null = null;
 
@@ -181,6 +183,7 @@ export class Vault {
     this.spSessionCookie = null;
     this.unsealedBy = null;
     this.spSessionExpiresAt = null;
+    this.sessionUser = null;
     this.lockedReason = null;
   }
 
@@ -239,6 +242,15 @@ export class Vault {
 
   getSessionExpiresAt(): number | null {
     return this.spSessionExpiresAt;
+  }
+
+  /** The signed-in person, set at login from the AS session response; cleared with the session. */
+  setSessionUser(user: { id: string; did: string } | null): void {
+    this.sessionUser = user;
+  }
+
+  getSessionUser(): { id: string; did: string } | null {
+    return this.sessionUser;
   }
 
   /**
