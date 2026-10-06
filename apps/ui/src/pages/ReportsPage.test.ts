@@ -19,6 +19,7 @@ import {
   AI_ANALYSIS_LABEL_CLIENT,
   GLOSS_SWITCH_LABEL,
   pickRenderedHtml,
+  formatNoticeText,
   detailSearchParams,
   unverifiableRows,
   caseDetailSteps,
@@ -360,22 +361,18 @@ describe('formatCurrencyClient', () => {
   });
 });
 
-describe('formatDetailValue — the generic sv-record/sv-metric detail dump', () => {
-  it('formats a currency amount using the sibling currency field, dropping the bare currency row', () => {
-    const data = { net_total: 4380, currency: 'EUR' };
-    expect(formatDetailValue('net_total', data)).toBe('€ 4 380');
-    expect(formatDetailValue('currency', data)).toBeNull();
+describe('formatDetailValue — the generic detail dump shows raw values (RR6 follow-up)', () => {
+  it('REFUSAL: no currency symbol, no rounding, no reformatted date — the value as stored', () => {
+    expect(formatDetailValue('net_total', { net_total: 4380, currency: 'EUR' })).toBe('4380');
+    expect(formatDetailValue('currency', { currency: 'EUR' })).toBe('EUR');
+    expect(formatDetailValue('received_at', { received_at: '2027-01-15T08:10:00.000Z' })).toBe('2027-01-15T08:10:00.000Z');
+    expect(formatDetailValue('waitSeconds', { waitSeconds: 12 })).toBe('12');
   });
 
-  it('formats a recognized date field as human time, never the raw ISO string', () => {
-    const data = { received_at: '2027-01-15T08:10:00.000Z' };
-    const out = formatDetailValue('received_at', data);
-    expect(out).not.toContain('2027-01-15T08:10:00');
-    expect(out).toMatch(/^\d{1,2} [A-Z][a-z]{2}, \d{2}:\d{2}$/);
-  });
-
-  it('an unrecognized field is stringified as-is', () => {
-    expect(formatDetailValue('status', { status: 'sent' })).toBe('sent');
+  it('REFUSAL: the server\'s display-only reading fields are left out', () => {
+    for (const k of ['actionLabel', 'waitLabel', 'timeLabel', 'profileLabel', 'limits', 'fields']) {
+      expect(formatDetailValue(k, { [k]: 'x' })).toBeNull();
+    }
   });
 
   it('a missing/empty value renders as null (the caller skips the row)', () => {
@@ -384,36 +381,43 @@ describe('formatDetailValue — the generic sv-record/sv-metric detail dump', ()
   });
 });
 
-describe('factSummaryLines — human-first ticket/mandate/approval detail summary', () => {
-  it('Ticket: uses the server\'s own actionLabel/timeLabel/profileLabel when present', () => {
-    const lines = factSummaryLines('Ticket', { actionLabel: 'Quote created', timeLabel: '5 Oct, 14:26', profileLabel: 'Sales' });
-    expect(lines).toContainEqual({ label: 'Action', value: 'Quote created' });
-    expect(lines).toContainEqual({ label: 'When', value: '5 Oct, 14:26' });
-    expect(lines).toContainEqual({ label: 'Mandate', value: 'Sales' });
-  });
-
-  it('Mandate: owners and limits are already display-ready strings, joined for reading', () => {
-    const lines = factSummaryLines('Mandate', {
-      profileLabel: 'Sales', owners: ['M. Huber'], limits: ['Max value per quote: € 5 000'], mode: 'review',
-    });
-    expect(lines).toContainEqual({ label: 'Owners', value: 'M. Huber' });
-    expect(lines).toContainEqual({ label: 'Limits', value: 'Max value per quote: € 5 000' });
-    expect(lines).toContainEqual({ label: 'Commitment mode', value: 'review' });
-  });
-
-  it('Mandate: an empty owners list reads as "unknown owner", not blank', () => {
-    const lines = factSummaryLines('Mandate', { profileLabel: 'Sales', owners: [] });
-    expect(lines).toContainEqual({ label: 'Owners', value: 'unknown owner' });
-  });
-
-  it('Approval: "asked ... approved ... waited ..." from the server\'s own labels', () => {
+describe('factSummaryLines — raw signed fields, as the boxes show them (RR6 follow-up)', () => {
+  it('uses the server\'s field lines verbatim', () => {
     const lines = factSummaryLines('Approval', {
-      whoLabel: 'M. Huber', createdAtLabel: '5 Oct, 09:20', decidedAtLabel: '5 Oct, 09:44', waitLabel: '24 min',
+      whoLabel: 'M. Huber', waitLabel: '0 min',
+      fields: [{ key: 'committedBy', value: 'M. Huber' }, { key: 'wait_s', value: '12 = decidedAt − createdAt' }],
     });
-    expect(lines).toContainEqual({ label: 'Approved by', value: 'M. Huber' });
-    expect(lines).toContainEqual({ label: 'Asked', value: '5 Oct, 09:20' });
-    expect(lines).toContainEqual({ label: 'Approved', value: '5 Oct, 09:44' });
-    expect(lines).toContainEqual({ label: 'Waited', value: '24 min' });
+    expect(lines).toEqual([{ label: 'committedBy', value: 'M. Huber' }, { label: 'wait_s', value: '12 = decidedAt − createdAt' }]);
+  });
+
+  it('REFUSAL: an older payload without field lines shows raw values, never the reading labels', () => {
+    const lines = factSummaryLines('Approval', { whoLabel: 'M. Huber', waitSeconds: 12, waitLabel: '0 min' });
+    expect(lines).toContainEqual({ label: 'waitSeconds', value: '12' });
+    expect(lines.some(l => l.value === '0 min')).toBe(false);
+    const t = factSummaryLines('Ticket', { action: 'erp__create_quote', actionLabel: 'Quote created', time: 1 });
+    expect(t).toContainEqual({ label: 'action', value: 'erp__create_quote' });
+    expect(t.some(l => l.value === 'Quote created')).toBe(false);
+  });
+});
+
+describe('formatNoticeText — a report stored in the older format says what is not shown (RR6 follow-up)', () => {
+  it('names the number of blocks not shown and asks for a rewrite', () => {
+    expect(formatNoticeText({ formatNotice: { blocksNotShown: 3 } })).toBe(
+      'This report was written in an older format — 3 blocks were not shown. Ask the AI to write it again.',
+    );
+    expect(formatNoticeText({ formatNotice: { blocksNotShown: 1 } })).toMatch(/1 block was not shown/);
+  });
+
+  it('is absent for a report in the current format', () => {
+    expect(formatNoticeText({})).toBeNull();
+    expect(formatNoticeText({ formatNotice: { blocksNotShown: 0 } })).toBeNull();
+  });
+
+  it('is shown in the gateway UI, outside the frame', () => {
+    const src = readFileSync(resolve(__dirname, 'ReportsPage.tsx'), 'utf-8');
+    const notice = src.indexOf('{formatNoticeText(report) && (');
+    expect(notice).toBeGreaterThan(-1);
+    expect(notice).toBeLessThan(src.indexOf('<iframe'));
   });
 });
 
@@ -497,18 +501,18 @@ describe('unverifiableRows — the not-verifiable proof count opens each element
 });
 
 describe('caseDetailSteps — the case detail\'s step buttons replace the in-frame step links', () => {
-  it('lists steps then goal, in time order, with the human action label', () => {
+  it('lists steps then goal, in time order, with the raw signed action (as the case box shows it)', () => {
     const el: ReportElement = {
       id: 'sv-case-0', kind: 'sv-case', attrs: {}, status: 'verified',
       data: {
-        steps: [{ ticketId: 's2', time: 30, actionLabel: 'Quote sent' }, { ticketId: 's1', time: 10, actionLabel: 'Quote created' }],
-        goal: { ticketId: 'g', time: 50, actionLabel: 'Reply sent' },
+        steps: [{ ticketId: 's2', time: 30, action: 'erp__send_quote', actionLabel: 'Quote sent' }, { ticketId: 's1', time: 10, action: 'erp__create_quote', actionLabel: 'Quote created' }],
+        goal: { ticketId: 'g', time: 50, action: 'email__send_message', actionLabel: 'Reply sent' },
       },
     };
     expect(caseDetailSteps(el)).toEqual([
-      { ticketId: 's1', label: 'Quote created', isGoal: false },
-      { ticketId: 's2', label: 'Quote sent', isGoal: false },
-      { ticketId: 'g', label: 'Reply sent', isGoal: true },
+      { ticketId: 's1', label: 'erp__create_quote', isGoal: false },
+      { ticketId: 's2', label: 'erp__send_quote', isGoal: false },
+      { ticketId: 'g', label: 'email__send_message', isGoal: true },
     ]);
   });
 

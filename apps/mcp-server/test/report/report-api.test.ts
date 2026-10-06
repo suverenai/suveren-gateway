@@ -153,7 +153,9 @@ describe('/internal/report* on a stored report (its own reporting window)', () =
     writeFileSync(resolve(PROFILES2, 'index.json'), JSON.stringify({ repository: 'test', profiles: {} }));
     rmSync(DATA2, { recursive: true, force: true });
     mkdirSync(DATA2, { recursive: true });
-    const html = '<sv-ai><h1>Three-week test</h1></sv-ai><sv-ticket ref="ghost-1"></sv-ticket>' +
+    // One paragraph outside every block — as a report stored before the
+    // two-tag rule (RR6) still has it: not shown, and the UI must say so.
+    const html = '<sv-ai><h1>Three-week test</h1></sv-ai><p>Old free prose</p><sv-ticket ref="ghost-1"></sv-ticket>' +
       '<sv-glossary lang="de"><sv-term key="erp__create_quote">Angebot erstellt</sv-term><sv-term key="ghost-1">Beleg</sv-term></sv-glossary>';
     writeFileSync(resolve(DATA2, 'report.json'), JSON.stringify({
       version: 1,
@@ -212,6 +214,13 @@ describe('/internal/report* on a stored report (its own reporting window)', () =
     expect(data.renderedHtmlGloss).not.toContain('Beleg');
     expect(data.glossary.applied).toEqual(['erp__create_quote']);
     expect(data.glossary.rejected.map((r: { key: string }) => r.key)).toEqual(['ghost-1']);
+  });
+
+  it('GET tells the UI how many blocks of an older-format report are not shown (RR6 follow-up)', async () => {
+    const res = await fetch(`${BASE2}/internal/report`, { headers: withSecret() });
+    const data = (await res.json()).report;
+    expect(data.formatNotice).toEqual({ blocksNotShown: 1 });
+    expect(data.renderedHtml).not.toContain('Old free prose');
   });
 
   it('recheck() re-verifies without requiring a new html body, and REFUSES without a secret', async () => {

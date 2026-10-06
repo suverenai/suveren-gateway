@@ -83,14 +83,14 @@ describe('buildExportDocument — round trip + safety', () => {
     return { doc, bundle, kp };
   }
 
-  it('carries the "AI analysis — not verified" legend in the gateway header AND above the AI\'s content (review SR5)', async () => {
+  it('carries the legend ONCE, in the gateway header; the AI\'s content sits in labelled frames (review SR5, RR6)', async () => {
     const { doc } = await buildRealExport();
     const header = doc.slice(doc.indexOf('<div class="sv-export-header">'), doc.indexOf('<div class="sv-export-layout">'));
     expect(header).toContain('class="sv-export-legend"');
-    expect(header).toContain(AI_ANALYSIS_LABEL);
+    expect(header).toContain('Grey dashed = the AI&#39;s own analysis, not verified');
+    expect(doc.match(/<div class="sv-legend"/g)).toHaveLength(1);
     const main = doc.slice(doc.indexOf('<div class="sv-export-main">'));
-    expect(main.indexOf('class="sv-legend"')).toBeGreaterThan(-1);
-    expect(main.indexOf('class="sv-legend"')).toBeLessThan(main.indexOf('Three-week test'));
+    expect(main).not.toContain('class="sv-legend"');
     // ...and the AI's content itself sits in a labelled grey frame.
     expect(main).toMatch(new RegExp(`<span class="sv-ai-label">${AI_ANALYSIS_LABEL}</span><div class="sv-ai-block"><div class="sv-ai-content"><h1>Three-week test</h1>`));
   });

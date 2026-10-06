@@ -382,6 +382,9 @@ export interface ReportModel {
   renderedHtmlGloss?: string;
   /** The AI's glossary: which terms are shown, which were refused. */
   glossary?: { lang: string; applied: string[]; rejected: Array<{ key: string; reason: string }> };
+  /** Set when the stored report predates the two-tag rule and blocks of it
+   *  are not shown (RR6). */
+  formatNotice?: { blocksNotShown: number };
   proof: ReportProof;
   coverage: ReportCoverage;
   elements: ReportElement[];

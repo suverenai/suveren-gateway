@@ -384,6 +384,90 @@ function renderElement(ctx: Ctx, el: VerifiedElement): string {
   }
 }
 
+// ─── Raw field lines for the gateway UI around the report ───────────────────
+// The side panel's "Checked values" and the detail panel show the SAME signed
+// field names and values the boxes show, formatted by the same functions —
+// never a rounded or translated reading of them (RR6 follow-up: "12 s" in a
+// box must not read "0 min" next to it).
+
+export interface FieldLine { key: string; value: string }
+
+function line(key: string, value: string): FieldLine { return { key, value }; }
+
+/** A ticket's signed fields: action, profileId, execution context, timestamp. */
+export function ticketFields(d: Data): FieldLine[] {
+  const out: FieldLine[] = [line('action', String(d.action ?? ''))];
+  if (d.actionType !== undefined) out.push(line('actionType', String(d.actionType)));
+  if (d.profile !== undefined) out.push(line('profileId', String(d.profile)));
+  for (const [k, v] of Object.entries((d.executionContext ?? {}) as Data)) {
+    const sv = scalar(v);
+    if (sv !== undefined) out.push(line(k, sv));
+  }
+  out.push(line('timestamp', formatTimestamp(d.time)));
+  return out;
+}
+
+/** An approval's archived fields, plus the computed wait with its formula. */
+export function approvalFields(d: Data): FieldLine[] {
+  const out: FieldLine[] = [];
+  if (d.createdAt !== undefined) out.push(line('createdAt', formatTimestamp(d.createdAt)));
+  if (d.decidedAt !== undefined) out.push(line('decidedAt', formatTimestamp(d.decidedAt)));
+  if (typeof d.whoLabel === 'string') out.push(line('committedBy', d.whoLabel));
+  if (typeof d.status === 'string') out.push(line('status', d.status));
+  if (typeof d.waitSeconds === 'number') out.push(line('wait_s', `${rawNumber(d.waitSeconds)} = decidedAt − createdAt`));
+  return out;
+}
+
+/** A mandate's fields: profileId, bounds, commitment_mode, owner(s), intent. */
+export function mandateFields(d: Data): FieldLine[] {
+  const out: FieldLine[] = [];
+  if (d.profile !== undefined) out.push(line('profileId', String(d.profile)));
+  for (const [k, v] of Object.entries((d.rawLimits ?? {}) as Data)) {
+    const sv = scalar(v);
+    if (sv !== undefined) out.push(line(k, sv));
+  }
+  if (typeof d.mode === 'string') out.push(line('commitment_mode', d.mode));
+  for (const o of Array.isArray(d.owners) ? (d.owners as unknown[]) : []) out.push(line('owner', String(o)));
+  if (typeof d.intent === 'string' && d.intent) out.push(line('intent', d.intent));
+  return out;
+}
+
+const fmt = (lines: FieldLine[]) => lines.map(l => `${l.key} ${l.value}`).join(' · ');
+
+/**
+ * One "Checked values" row: the element's headline fields, raw, exactly as
+ * its box shows them.
+ */
+export function checkedValueLine(el: VerifiedElement): string {
+  const d = (el.data ?? {}) as Data;
+  switch (el.kind) {
+    case 'sv-ticket':
+      return fmt([line('action', String(d.action ?? '')), line('timestamp', formatTimestamp(d.time))]);
+    case 'sv-approval': {
+      const a = approvalFields(d);
+      const pick = a.filter(l => l.key === 'wait_s' || l.key === 'committedBy');
+      return fmt(pick.length > 0 ? pick : a);
+    }
+    case 'sv-mandate':
+      return fmt(mandateFields(d).filter(l => l.key === 'profileId' || l.key === 'commitment_mode'));
+    case 'sv-record': {
+      const k = ['number', 'id', 'subject'].find(x => scalar(d[x]) !== undefined);
+      return k ? fmt([line(k, String(scalar(d[k])))]) : el.id;
+    }
+    case 'sv-case': {
+      const out = [line('case_id', String(d.caseId ?? ''))];
+      if (typeof d.totalDurationSeconds === 'number') out.push(line('duration_s', rawNumber(d.totalDurationSeconds)));
+      return fmt(out);
+    }
+    case 'sv-metric': {
+      const kind = String(d.kind ?? '');
+      return fmt([line(METRIC_FIELDS[kind]?.name ?? kind, rawNumber(d.value))]);
+    }
+    default:
+      return el.id;
+  }
+}
+
 // ─── Styles, labels, legend ─────────────────────────────────────────────────
 
 /** The frame label on every AI block, and the words the UI/export reuse. */
@@ -460,7 +544,10 @@ export const GLOSS_ON_STYLES = `
 ruby.sv-gloss { font-size:11.5px; }
 `;
 
-function legend(showGloss: boolean): string {
+/** The legend — drawn ONCE per surface: by the Reports page outside the
+ *  frame (live), and by the export's own header (export-report.ts). Never
+ *  inside the report body itself, so the live page does not show it twice. */
+export function reportLegend(showGloss: boolean): string {
   return (
     `<div class="sv-legend" role="note">` +
     `<span class="sv-legend-chip"><span class="sv-sw sv-sw-v"></span>${escapeHtml(VERIFIED_LEGEND_TEXT)}</span>` +
@@ -588,8 +675,9 @@ export function renderReportHtml(rawHtml: string, elements: VerifiedElement[], o
   const ctx: Ctx = { mode, terms: g?.terms ?? new Map(), used: new Set() };
   const body = drawBody(walk, elements, ctx);
   const showGloss = mode !== 'off' && ctx.used.size > 0;
+  void showGloss;
   const styles = `<style data-sv-drawn-styles="1">${DRAWN_ELEMENT_STYLES}${mode === 'on' ? GLOSS_ON_STYLES : ''}</style>`;
   const langAttr = showGloss && g?.lang ? ` data-sv-gloss-lang="${escapeHtml(g.lang)}"` : '';
   const cls = mode === 'toggle' ? 'sv-report sv-gloss-toggle-mode' : 'sv-report';
-  return `${styles}<div class="${cls}"${langAttr}>${legend(showGloss)}${body}</div>`;
+  return `${styles}<div class="${cls}"${langAttr}>${body}</div>`;
 }

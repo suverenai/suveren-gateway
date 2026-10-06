@@ -14,7 +14,7 @@
  * Every dynamic string this module inserts outside that JSON block goes
  * through `escapeHtml`.
  */
-import { escapeHtml, DRAWN_ELEMENT_STYLES, GLOSS_ON_STYLES, AI_ANALYSIS_LABEL, VERIFIED_LEGEND_TEXT, AI_LEGEND_TEXT, GLOSS_LEGEND_TEXT } from './render-report';
+import { escapeHtml, DRAWN_ELEMENT_STYLES, GLOSS_ON_STYLES, reportLegend } from './render-report';
 import { formatDateTime } from './format';
 import type { ProofSummary, CoverageSummary, ReceiptArchiveReader } from './types';
 import type { StoredReport } from './report-store';
@@ -161,7 +161,8 @@ const EXPORT_PAGE_STYLES = `
 .sv-export-card-title { font-weight:700; margin-bottom:6px; }
 .sv-export-row { display:flex; justify-content:space-between; gap:10px; margin:2px 0; }
 .sv-export-note, .sv-export-missing { color:#b45309; font-size:12px; margin:4px 0 0 0; }
-.sv-export-legend { margin:6px 0 0 0; color:#3f3f46; }
+.sv-export-legend { margin:8px 0 0 0; }
+.sv-export-legend .sv-legend { border-bottom:0; padding:0; margin:0; }
 .sv-toggle-input { position:absolute; opacity:0; width:1px; height:1px; }
 .sv-translate { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:8px 0 0 0; }
 .sv-toggle-switch { display:inline-flex; cursor:pointer; }
@@ -238,11 +239,9 @@ export function buildExportDocument(params: BuildExportDocumentParams): string {
     `<p class="sv-export-meta">Suveren Gateway ${escapeHtml(bundle.gatewayVersion)} — exported ${escapeHtml(exportedLabel)} &middot; checked ${escapeHtml(checkedLabel)} (times in ${escapeHtml(tzLabel)})</p>` +
     `<p class="sv-export-howto">How to check this report: each ticket below links to its public record on suveren.ai ("Check on suveren.ai ↗"). ` +
     `To verify this entire file offline (including every signature), run <code>suveren-gateway verify-report ${escapeHtml(suggestedFilename(bundle))}</code> from a terminal with the Suveren gateway CLI installed.</p>` +
-    // The legend again, in the gateway-owned header outside the report body.
-    // No AI stylesheet can exist (sanitize.ts: inline styles only), so plain
-    // classes are enough — nothing the AI writes can select them.
-    `<p class="sv-export-legend" role="note"><b>${escapeHtml(VERIFIED_LEGEND_TEXT)}.</b> ${escapeHtml(AI_LEGEND_TEXT)} (“${escapeHtml(AI_ANALYSIS_LABEL)}”).` +
-    (hasGloss ? ` <i>Abc</i> ${escapeHtml(GLOSS_LEGEND_TEXT)}.` : '') + `</p>` +
+    // The legend, once, in the gateway-owned header (no outside UI exists
+    // around an exported file). The report body itself carries none.
+    `<div class="sv-export-legend">${reportLegend(hasGloss)}</div>` +
     (hasGloss
       ? `<div class="sv-translate"><label for="sv-gloss-toggle" class="sv-toggle-switch" aria-hidden="true"><span class="sv-toggle-track"><span class="sv-toggle-thumb"></span></span></label>` +
         `<label for="sv-gloss-toggle" class="sv-toggle-text">Übersetzung anzeigen / show translation</label></div>`

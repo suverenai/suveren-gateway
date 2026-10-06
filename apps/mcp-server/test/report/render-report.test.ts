@@ -7,7 +7,8 @@
 import { describe, it, expect } from 'vitest';
 import { parseDocument, DomUtils } from 'htmlparser2';
 import { verifyReport } from '../../src/lib/report/verify-report';
-import { renderReportHtml, glossaryUsage, DRAWN_ELEMENT_STYLES, AI_ANALYSIS_LABEL, METRIC_FIELDS } from '../../src/lib/report/render-report';
+import { renderReportHtml, glossaryUsage, checkedValueLine, DRAWN_ELEMENT_STYLES, AI_ANALYSIS_LABEL, METRIC_FIELDS } from '../../src/lib/report/render-report';
+import { buildTicketDetails } from '../../src/lib/report/ticket-details';
 import { formatTimestamp } from '../../src/lib/report/format';
 import { buildScenario } from './fixtures/scenario';
 import { buildEmailExport, buildErpExport } from './fixtures/exports';
@@ -22,10 +23,12 @@ const INBOX_C1 = { id: 'm1', from_name: 'A', from_email: 'a@example.com', to_jso
 /** Every drawn verified box (`data-sv-id`) as { id, text }. */
 function boxes(out: string): Array<{ id: string; text: string; html: string }> {
   const doc = parseDocument(out);
+  const raw = parseDocument(out, { decodeEntities: false });
+  const rawById = new Map(DomUtils.findAll(e => typeof e.attribs['data-sv-id'] === 'string', raw.children).map(e => [e.attribs['data-sv-id'], e]));
   return DomUtils.findAll(e => typeof e.attribs['data-sv-id'] === 'string', doc.children).map(e => ({
     id: e.attribs['data-sv-id'],
     text: DomUtils.textContent(e),
-    html: DomUtils.getOuterHTML(e),
+    html: DomUtils.getOuterHTML(rawById.get(e.attribs['data-sv-id'])!, { decodeEntities: false }),
   }));
 }
 
@@ -273,6 +276,74 @@ describe('renderReportHtml — verified boxes carry no interpretation', () => {
   });
 });
 
+describe('the gateway UI around the report shows the boxes\' own values (RR6 follow-up)', () => {
+  /** "key value · key value" -> the box must show each pair exactly. */
+  function expectPairsInBox(summary: string, boxHtml: string, id: string) {
+    for (const part of summary.split(' · ')) {
+      const i = part.indexOf(' ');
+      const [k, rest] = [part.slice(0, i), part.slice(i + 1)];
+      const [v, f] = rest.split(' = ');
+      const want = `<span class="sv-k">${k}</span><span class="sv-v">${v}</span>${f ? `<span class="sv-f">= ${f}</span>` : ''}`;
+      expect({ id, part, inBox: boxHtml.includes(want) }).toEqual({ id, part, inBox: true });
+    }
+  }
+
+  it('every "Checked values" row carries the same raw field name + value as its box', async () => {
+    const { result } = await fullScenario(ALL_KINDS_HTML);
+    const out = renderReportHtml(result.html, result.elements);
+    const byId = new Map(boxes(out).map(b => [b.id, b.html]));
+    expect(result.proof.verifiedValues).toHaveLength(result.elements.length);
+    for (const v of result.proof.verifiedValues) {
+      expect(v.summary).toBe(checkedValueLine(result.elements.find(e => e.id === v.elementId)!));
+      expectPairsInBox(v.summary, byId.get(v.elementId)!, v.elementId);
+    }
+    // The case the coordinator caught: 140 s in the box, never "2 min" beside it.
+    const wait = result.proof.verifiedValues.find(v => v.elementId === 'sv-metric-1')!.summary;
+    expect(wait).toBe('median_approval_wait_s 140');
+  });
+
+  it('REFUSAL: no row rounds or translates (no "min", no labels)', async () => {
+    const { result } = await fullScenario(ALL_KINDS_HTML);
+    for (const v of result.proof.verifiedValues) {
+      expect(v.summary).not.toMatch(/\bmin\b|Quote created|Approval by|waited|record checked|€/);
+    }
+  });
+
+  it('the detail panel\'s field lines equal the full ticket box and the approval box', async () => {
+    const { result } = await fullScenario(ALL_KINDS_HTML);
+    const out = renderReportHtml(result.html, result.elements);
+    const byId = new Map(boxes(out).map(b => [b.id, b.html]));
+    const fullTicket = result.elements.find(e => e.id === 'sv-ticket-1')!;
+    expect(fullTicket.attrs.variant).toBe('full');
+    const approval = result.elements.find(e => e.id === 'sv-approval-0')!;
+    const mandate = result.elements.find(e => e.id === 'sv-mandate-0')!;
+    const { ticketFields, approvalFields, mandateFields } = await import('../../src/lib/report/render-report');
+    for (const l of ticketFields(fullTicket.data!)) {
+      expect(byId.get('sv-ticket-1')).toContain(`<span class="sv-k">${l.key}</span><span class="sv-v">${l.value}</span>`);
+    }
+    for (const l of approvalFields(approval.data!)) {
+      const [v, f] = l.value.split(' = ');
+      expect(byId.get('sv-approval-0')).toContain(`<span class="sv-k">${l.key}</span><span class="sv-v">${v}</span>${f ? `<span class="sv-f">= ${f}</span>` : ''}`);
+    }
+    for (const l of mandateFields(mandate.data!)) {
+      expect(byId.get('sv-mandate-0')).toContain(`<span class="sv-k">${l.key}</span>`);
+      expect(byId.get('sv-mandate-0')).toContain(l.value);
+    }
+  });
+
+  it('buildTicketDetails carries those field lines for the detail panel', async () => {
+    const { archive, addTicket } = buildScenario();
+    addTicket({
+      id: 't1', action: 'erp__create_quote', authorizationId: 'a1', timestamp: 1_800_000_000,
+      proposal: { status: 'executed', createdAt: 1_800_000_000 - 12, committedBy: { u: { userId: 'u', at: 1_800_000_000 - 2 } } },
+    });
+    const d = await buildTicketDetails(archive, ['t1']);
+    expect(d.t1.ticket.data!.fields).toContainEqual({ key: 'action', value: 'erp__create_quote' });
+    expect(d.t1.ticket.data!.fields).toContainEqual({ key: 'timestamp', value: formatTimestamp(1_800_000_000) });
+    expect(d.t1.approval.data!.fields).toContainEqual({ key: 'wait_s', value: '10 = decidedAt − createdAt' });
+  });
+});
+
 describe('renderReportHtml — glossary (AI translation as a gloss)', () => {
   const GLOSSARY =
     '<sv-glossary lang="de">' +
@@ -292,8 +363,10 @@ describe('renderReportHtml — glossary (AI translation as a gloss)', () => {
     expect(on).toContain('<ruby class="sv-gloss"><span class="sv-k">action</span><rt>Aktion</rt></ruby>');
     expect(on).toContain('<ruby class="sv-gloss"><span class="sv-k">value_max</span><rt>Maximalwert</rt></ruby>');
     expect(on).toContain('<ruby class="sv-gloss"><span class="sv-v">review</span><rt>Prüfpflichtig</rt></ruby>');
-    expect(on).toContain('= translation by the AI, not verified');
-    expect(off).not.toContain('= translation by the AI');
+    // The legend is drawn once per surface, never inside the report body
+    // (the live page draws it outside the frame, the export in its header).
+    expect(on).not.toContain('class="sv-legend"');
+    expect(off).not.toContain('class="sv-legend"');
   });
 
   it('REFUSAL: glosses on numbers, timestamps, ids, addresses and unknown keys are rejected', async () => {

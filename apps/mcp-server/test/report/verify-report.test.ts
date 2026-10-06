@@ -10,6 +10,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { verifyReport } from '../../src/lib/report/verify-report';
+import { formatTimestamp } from '../../src/lib/report/format';
 import type { RunConnectorExport, ExportSystem, VerifiedElement } from '../../src/lib/report/types';
 import { buildScenario, AS_URL } from './fixtures/scenario';
 import { buildEmailExport, buildErpExport, buildCrmExport } from './fixtures/exports';
@@ -228,7 +229,7 @@ describe('verifyReport — case start time vs. backdated test emails (review SR4
     expect(el(result.elements, 'sv-metric-1').data!.value).toBe(600);
     expect(el(result.elements, 'sv-metric-3').data!.value).toBe(1);
     const caseSummary = result.proof.verifiedValues.find(v => v.elementId === 'sv-case-0')!.summary;
-    expect(caseSummary).toContain('10 min');
+    expect(caseSummary).toBe('case_id BD1 · duration_s 600'); // raw, as the box shows it
   });
 
   it('an email that genuinely arrived after the load keeps its own time as the start', async () => {
@@ -255,7 +256,8 @@ describe('verifyReport — case start time vs. backdated test emails (review SR4
     }
     // Counting cases does not depend on when they started.
     expect(el(result.elements, 'sv-metric-2').status).toBe('verified');
-    expect(result.proof.verifiedValues.find(v => v.elementId === 'sv-case-0')!.summary).toContain('time not verifiable');
+    // No duration value at all — never one from the email date.
+    expect(result.proof.verifiedValues.find(v => v.elementId === 'sv-case-0')!.summary).toBe('case_id BD1');
   });
 
   it('REFUSAL: a step ticket from before the test data was loaded is outside the case window', async () => {
@@ -528,14 +530,14 @@ describe('verifyReport — ticket coverage (the AI cannot leave a ticket out unn
   });
 });
 
-describe('verifyReport — "Checked values" summaries carry no raw technical values', () => {
-  it('an sv-ticket summary names the human action and a readable time, never the raw tool name/unix seconds', async () => {
+describe('verifyReport — "Checked values" summaries show the raw fields the boxes show (RR6 follow-up)', () => {
+  it('an sv-ticket summary is the raw action and the formatted timestamp, never a translated label or unix seconds', async () => {
     const { archive, addTicket } = buildScenario();
     addTicket({ id: 't1', action: 'erp__create_quote', authorizationId: 'authz-1', timestamp: 1_800_000_000 });
     const result = await verifyReport('<sv-ticket ref="t1"></sv-ticket>', { archive, runExport: makeRunExport({}) });
     const summary = result.proof.verifiedValues.find(v => v.elementId === 'sv-ticket-0');
-    expect(summary?.summary).toContain('Quote created');
-    expect(summary?.summary).not.toContain('erp__create_quote');
+    expect(summary?.summary).toBe(`action erp__create_quote · timestamp ${formatTimestamp(1_800_000_000)}`);
+    expect(summary?.summary).not.toContain('Quote created');
     expect(summary?.summary).not.toContain('1800000000');
   });
 

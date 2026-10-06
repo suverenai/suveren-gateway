@@ -23,7 +23,7 @@ import { verifyGateContentHashes } from '../src/lib/gate-content';
 import type { GateContent } from '../src/lib/gate-store';
 import { IntegrationRegistry, type IntegrationConfig } from '../src/lib/integration-registry';
 import { IntegrationManager, getIntegrationsBinDir } from '../src/lib/integration-manager';
-import { createConnectorExportRunner, renderReportHtml, glossaryUsage, buildTicketDetails, buildExportBundle, buildExportDocument, suggestedFilename } from '../src/lib/report';
+import { createConnectorExportRunner, renderReportHtml, glossaryUsage, sanitizeReport, buildTicketDetails, buildExportBundle, buildExportDocument, suggestedFilename } from '../src/lib/report';
 import type { ReportSources, ReceiptArchiveReader } from '../src/lib/report';
 import { scopeReportSources, scopeReportSourcesToStoredWindow } from '../src/lib/report/window';
 import type { StoredReport } from '../src/lib/report/report-store';
@@ -800,6 +800,10 @@ async function reportResponsePayload(
   // The UI's switch, outside the frame, picks one — no script in the frame.
   // The "on" variant exists only when at least one gloss is drawn.
   const glossary = glossaryUsage(stored.result.html, stored.result.elements);
+  // A report stored before the two-tag rule (RR6) keeps its free HTML; the
+  // render drops whatever is outside the allowed blocks. Say so in the UI.
+  const dropped = sanitizeReport(stored.html).notes;
+  const notShown = dropped.droppedBlocks + dropped.droppedSvInsideAi + dropped.droppedStyles;
   return {
     savedAt: stored.savedAt,
     checkedAt: stored.checkedAt,
@@ -808,6 +812,7 @@ async function reportResponsePayload(
       ? { renderedHtmlGloss: renderReportHtml(stored.result.html, stored.result.elements, { gloss: 'on' }) }
       : {}),
     ...(glossary ? { glossary } : {}),
+    ...(notShown > 0 ? { formatNotice: { blocksNotShown: notShown } } : {}),
     proof: stored.result.proof,
     coverage: stored.result.coverage,
     elements: stored.result.elements,
