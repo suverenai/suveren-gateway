@@ -20,6 +20,7 @@ import { planMandate, createMandate, approverPubkeys, MandateRefused, type Cerem
 const profilesDir = process.env.SUVEREN_PROFILES_DIR ?? join(import.meta.dirname, '..', '..', '..', '..', '..', 'hap-profiles');
 const SALES = JSON.parse(readFileSync(join(profilesDir, 'sales', '0.3.profile.json'), 'utf8'));
 const DELEGATION = JSON.parse(readFileSync(join(profilesDir, 'delegation', '0.1.profile.json'), 'utf8'));
+const REPORTING = JSON.parse(readFileSync(join(profilesDir, 'reporting', '0.2.profile.json'), 'utf8'));
 const USER = { id: 'u_anna', did: 'did:key:anna' };
 
 const LIMITS = {
@@ -29,7 +30,7 @@ const LIMITS = {
 
 function fakeAs(opts: { approvers?: string[]; attestStatus?: number; attestBody?: unknown; delegationIn?: string[] } = {}) {
   const calls: Array<{ method: string; path: string; body?: any }> = [];
-  const profiles = [SALES, DELEGATION, { ...SALES, id: SALES.id.replace('@0.3', '@0.2'), version: '0.2' }];
+  const profiles = [SALES, DELEGATION, REPORTING, { ...SALES, id: SALES.id.replace('@0.3', '@0.2'), version: '0.2' }];
   const as: CeremonyDeps['as'] = async (method, path, body) => {
     calls.push({ method, path, body });
     if (path === '/api/groups') return { status: 200, body: { groups: [
@@ -130,6 +131,7 @@ describe('planMandate — every refusal comes before anything is created', () =>
     ['a scope the profile does not define', { scope: { colour: 'red' } }, {}, /does not fit/],
     ['a mode the profile does not allow', { profile: DELEGATION.id, limits: { read_access: 'unlimited', brief_daily_max: 1, mandate_daily_max: 0 }, scope: {}, mode: 'automatic' }, {}, /allows mode review/],
     ['a duration over the profile maximum', { durationHours: 24 * 365 }, {}, /At most/],
+    ['a limit above the profile\'s declared maximum', { profile: REPORTING.id, limits: { read_access: 'unlimited', read_max_age_days: 367, report_daily_max: 5 }, scope: {} }, {}, /"read_max_age_days" may be at most 366/],
     ['an empty intent', { intent: '  ' }, {}, /`intent` is required/],
     ['an intent over 2000 characters', { intent: 'x'.repeat(2001) }, {}, /limit is 2000/],
   ];
@@ -143,6 +145,12 @@ describe('planMandate — every refusal comes before anything is created', () =>
   it('refuses when the gateway is not signed in', async () => {
     const { as } = fakeAs();
     await expect(planMandate(REQ, deps(as, { user: null }).d)).rejects.toThrow(/not signed in/);
+  });
+
+  it('a limit exactly at the profile\'s maximum is allowed', async () => {
+    const { as } = fakeAs();
+    const plan = await planMandate({ ...REQ, profile: REPORTING.id, limits: { read_access: 'unlimited', read_max_age_days: 366, report_daily_max: 5 }, scope: {} }, deps(as).d);
+    expect(plan.profile.id).toBe(REPORTING.id);
   });
 
   it('a delegation mandate (review) is allowed — no special rule', async () => {

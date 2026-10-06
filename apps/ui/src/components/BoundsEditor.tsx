@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import type { AgentProfile, AgentBoundsParams, AgentContextParams, AgentFrameParams, ProfileBoundsField, ProfileContextField } from '@hap/core';
 import { DiscoveredScopeField } from './DiscoveredScopeField';
 import { spClient, type IntegrationManifest, type ProfileConfig } from '../lib/sp-client';
-import { minForBound, seedForBound, numericBoundValue } from '../lib/bound-defaults';
+import { minForBound, maxForBound, seedForBound, numericBoundValue } from '../lib/bound-defaults';
 import { formatUnit } from '../lib/bound-format';
 
 interface Props {
@@ -148,6 +148,7 @@ function BoundedNumberInput({
   placeholder,
   unit,
   min = 0,
+  max,
 }: {
   id: string;
   value: string;
@@ -157,9 +158,11 @@ function BoundedNumberInput({
   unit?: string;
   /** Floor for the value — see bound-defaults.ts. */
   min?: 0 | 1;
+  /** Ceiling the profile declares (`maximum`) — see bound-defaults.ts. */
+  max?: number;
 }) {
   const step = stepFor(unit);
-  const presets = presetsFor(unit);
+  const presets = presetsFor(unit).filter(p => max === undefined || p.value <= max);
   const unitLabel = formatUnit(unit);
   const echo = naturalEcho(value, unit);
   const currentNum = value === '' ? null : Number(value);
@@ -169,7 +172,7 @@ function BoundedNumberInput({
     const n = value === '' ? 0 : Number(value);
     const remainder = n % step;
     const next = remainder === 0 ? n + step : n + (step - remainder);
-    onChange(String(next));
+    onChange(String(max !== undefined ? Math.min(max, next) : next));
   };
 
   const handleDecrement = () => {
@@ -197,10 +200,16 @@ function BoundedNumberInput({
           className="stepper-input"
           type="number"
           min={min}
+          max={max}
           step={step}
           value={value}
           placeholder={placeholder ?? String(min)}
-          onChange={e => onChange(e.target.value)}
+          onChange={e => {
+            const v = e.target.value;
+            // Never hold a value above the profile's maximum — the owner
+            // cannot type past it (submit clamps too: numericBoundValue).
+            onChange(max !== undefined && v !== '' && Number(v) > max ? String(max) : v);
+          }}
           onFocus={e => e.target.select()}
           disabled={disabled}
         />
@@ -208,7 +217,7 @@ function BoundedNumberInput({
           type="button"
           className="stepper-btn stepper-increment"
           onClick={handleIncrement}
-          disabled={disabled}
+          disabled={disabled || (max !== undefined && value !== '' && Number(value) >= max)}
           aria-label="Increase"
         >
           +
@@ -496,6 +505,7 @@ function FieldRow({
           disabled={readOnly}
           unit={(fieldDef as { unit?: string }).unit}
           min={minForBound(fieldDef)}
+          max={maxForBound(fieldDef)}
         />
       ) : isTagField(fieldDef) ? (
         <TagInput
