@@ -11,8 +11,9 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { decodeAttestationBlob, encodeAttestationBlob } from '@hap/core';
 import { verifyReport } from '../../src/lib/report/verify-report';
-import { buildExportBundle } from '../../src/lib/report/export-report';
-import { verifyExportBundle } from '../../src/lib/report/verify-export';
+import { buildExportBundle, buildExportDocument } from '../../src/lib/report/export-report';
+import { renderReportHtml } from '../../src/lib/report/render-report';
+import { verifyExportBundle, collectPresentedStates } from '../../src/lib/report/verify-export';
 import { runVerifyReportCli } from '../../bin/report-verify-cli';
 import { buildScenario, AS_URL, signAttestationPayload } from './fixtures/scenario';
 import { testReceiptKeypair, signTestReceipt, type TestReceiptKeypair } from '../helpers/real-receipt';
@@ -31,6 +32,17 @@ async function buildRealBundle(html: string, archive: ReturnType<typeof buildSce
   const now = Math.floor(Date.now() / 1000);
   const stored = { html: result.html, savedAt: now, checkedAt: now, result };
   return buildExportBundle({ stored, archive, gatewayVersion: 'test', authorityServer: { url: AS_URL, publicKeyHex: kp.publicKeyHex } });
+}
+
+/** A REAL export file exactly as the gateway's export route builds it:
+ *  gateway-drawn elements (`renderReportHtml(..., false)`) + embedded bundle. */
+async function buildRealExport(html: string, archive: ReturnType<typeof buildScenario>['archive'], kp: TestReceiptKeypair): Promise<{ bundle: ExportBundle; doc: string }> {
+  const result = await verifyReport(html, { archive, runExport: noExports() });
+  const now = Math.floor(Date.now() / 1000);
+  const stored = { html: result.html, savedAt: now, checkedAt: now, result };
+  const bundle = buildExportBundle({ stored, archive, gatewayVersion: 'test', authorityServer: { url: AS_URL, publicKeyHex: kp.publicKeyHex } });
+  const doc = buildExportDocument({ bundle, renderedHtml: renderReportHtml(result.html, result.elements, false) });
+  return { bundle, doc };
 }
 
 /** Re-signs every ticket and every attestation blob in `bundle` with `newKp`
@@ -118,7 +130,7 @@ describe('verifyExportBundle', () => {
     expect(checked.keyConfirmation.state).toBe('mismatch');
   });
 
-  it('REFUSAL: a reference to a ticket missing from the bundle is reported, not silently skipped', async () => {
+  it('REFUSAL: with no drawn markup handed in, a reference missing from the bundle counts as presented-as-verified (strict) and fails', async () => {
     const { archive, addTicket, kp } = buildScenario();
     addTicket({ id: 't1', action: 'erp__create_quote', authorizationId: 'authz-1', timestamp: 1_800_000_000 });
     const bundle = await buildRealBundle('<sv-ticket ref="t1"></sv-ticket><sv-ticket ref="ghost"></sv-ticket>', archive, kp);
@@ -131,6 +143,108 @@ describe('verifyExportBundle', () => {
     const ghost = result.tickets.find(t => t.ticketId === 'ghost')!;
     expect(ghost.present).toBe(false);
     expect(ghost.referenced).toBe(true);
+    const el = result.elements.find(e => e.ticketIds.includes('ghost'))!;
+    expect(el.presented).toBe('verified');
+    expect(el.backed).toBe(false);
+  });
+
+  it('a missing reference the gateway DREW as not verifiable passes, and is listed as such', async () => {
+    const { archive, addTicket, kp } = buildScenario();
+    addTicket({ id: 't1', action: 'erp__create_quote', authorizationId: 'authz-1', timestamp: 1_800_000_000 });
+    const { bundle, doc } = await buildRealExport('<sv-ticket ref="t1"></sv-ticket><sv-ticket ref="ghost"></sv-ticket>', archive, kp);
+
+    const result = await verifyExportBundle(bundle, { documentHtml: doc });
+    expect(result.allValid).toBe(true);
+    const ghostEl = result.elements.find(e => e.ticketIds.includes('ghost'))!;
+    expect(ghostEl.presented).toBe('not-verifiable');
+    expect(ghostEl.backed).toBe(false);
+    const t1El = result.elements.find(e => e.ticketIds.includes('t1'))!;
+    expect(t1El.presented).toBe('verified');
+    expect(t1El.backed).toBe(true);
+  });
+
+  it('REFUSAL: a missing reference whose drawn CLASS was flipped to verified fails', async () => {
+    const { archive, addTicket, kp } = buildScenario();
+    addTicket({ id: 't1', action: 'erp__create_quote', authorizationId: 'authz-1', timestamp: 1_800_000_000 });
+    const { bundle, doc } = await buildRealExport('<sv-ticket ref="t1"></sv-ticket><sv-ticket ref="ghost"></sv-ticket>', archive, kp);
+    const tampered = doc.replace('sv-el sv-el-unverifiable', 'sv-el sv-el-verified');
+    expect(tampered).not.toBe(doc);
+
+    const result = await verifyExportBundle(bundle, { documentHtml: tampered });
+    expect(result.allValid).toBe(false);
+    expect(result.elements.find(e => e.ticketIds.includes('ghost'))!.presented).toBe('verified');
+  });
+
+  it('REFUSAL: a missing reference whose drawn BADGE was flipped to verified fails', async () => {
+    const { archive, addTicket, kp } = buildScenario();
+    addTicket({ id: 't1', action: 'erp__create_quote', authorizationId: 'authz-1', timestamp: 1_800_000_000 });
+    const { bundle, doc } = await buildRealExport('<sv-ticket ref="t1"></sv-ticket><sv-ticket ref="ghost"></sv-ticket>', archive, kp);
+    const tampered = doc.replace('sv-badge sv-badge-bad', 'sv-badge sv-badge-ok');
+    expect(tampered).not.toBe(doc);
+
+    const result = await verifyExportBundle(bundle, { documentHtml: tampered });
+    expect(result.allValid).toBe(false);
+  });
+
+  it('REFUSAL: a missing reference whose drawn element was removed entirely fails (no drawn node = strict)', async () => {
+    const { archive, addTicket, kp } = buildScenario();
+    addTicket({ id: 't1', action: 'erp__create_quote', authorizationId: 'authz-1', timestamp: 1_800_000_000 });
+    const { bundle, doc } = await buildRealExport('<sv-ticket ref="t1"></sv-ticket><sv-ticket ref="ghost"></sv-ticket>', archive, kp);
+    const tampered = doc.replace(/data-sv-id="sv-ticket-1"/, 'data-sv-id="sv-ticket-9"');
+    expect(tampered).not.toBe(doc);
+
+    const result = await verifyExportBundle(bundle, { documentHtml: tampered });
+    expect(result.allValid).toBe(false);
+  });
+
+  it('REFUSAL: a flagged reference does not excuse an invalid signature on a bundled ticket', async () => {
+    const { archive, addTicket, kp } = buildScenario();
+    addTicket({ id: 't1', action: 'erp__create_quote', authorizationId: 'authz-1', timestamp: 1_800_000_000 });
+    const { bundle, doc } = await buildRealExport('<sv-ticket ref="t1"></sv-ticket><sv-ticket ref="ghost"></sv-ticket>', archive, kp);
+    (bundle.tickets[0] as Record<string, unknown>).action = 'tampered';
+
+    const result = await verifyExportBundle(bundle, { documentHtml: doc });
+    expect(result.allValid).toBe(false);
+  });
+
+  it('a downgrade is allowed: a backed reference drawn as not verifiable still passes', async () => {
+    const { archive, addTicket, kp } = buildScenario();
+    addTicket({ id: 't1', action: 'erp__create_quote', authorizationId: 'authz-1', timestamp: 1_800_000_000 });
+    const { bundle, doc } = await buildRealExport('<sv-ticket ref="t1"></sv-ticket>', archive, kp);
+    const downgraded = doc
+      .replace('sv-el sv-el-verified', 'sv-el sv-el-unverifiable')
+      .replace('sv-badge sv-badge-ok', 'sv-badge sv-badge-bad');
+
+    const result = await verifyExportBundle(bundle, { documentHtml: downgraded });
+    expect(result.allValid).toBe(true);
+    expect(result.elements[0].presented).toBe('not-verifiable');
+  });
+
+  it('REFUSAL: a mandate element shown as verified whose mandate is missing from the bundle fails', async () => {
+    const { archive, addTicket, kp } = buildScenario();
+    addTicket({
+      id: 't1', action: 'erp__create_quote', authorizationId: 'authz-1', timestamp: 1_800_000_000,
+      authorization: { authorizationId: 'authz-1', profileId: 'test-profile', boundsHash: 'bh-1' },
+    });
+    const { bundle, doc } = await buildRealExport('<sv-mandate ticket="t1"></sv-mandate>', archive, kp);
+    expect(collectPresentedStates(doc).get('sv-mandate-0')).toBe('verified');
+    delete bundle.authorizations['authz-1'];
+
+    const result = await verifyExportBundle(bundle, { documentHtml: doc });
+    expect(result.allValid).toBe(false);
+    expect(result.elements[0].error).toMatch(/mandate/);
+  });
+
+  it('collectPresentedStates: a decoy flagged node with the same id as a verified one stays verified (strict)', () => {
+    const doc =
+      '<div class="sv-el sv-el-verified" data-sv-id="sv-ticket-0"><span class="sv-badge sv-badge-ok">ok</span></div>' +
+      '<div class="sv-el sv-el-unverifiable" data-sv-id="sv-ticket-0"><span class="sv-badge sv-badge-bad">x</span></div>' +
+      '<div class="sv-el sv-el-unverifiable" data-sv-id="sv-ticket-1"><div><br><span class="sv-badge sv-badge-bad">x</span></div></div>' +
+      '<div class="sv-el sv-el-unverifiable" data-sv-id="sv-ticket-2"></div>';
+    const states = collectPresentedStates(doc);
+    expect(states.get('sv-ticket-0')).toBe('verified');
+    expect(states.get('sv-ticket-1')).toBe('not-verifiable');
+    expect(states.get('sv-ticket-2')).toBe('verified'); // no badge — strict
   });
 
   it('REFUSAL: a tampered authorization boundsHash is reported', async () => {
@@ -206,6 +320,64 @@ describe('runVerifyReportCli — exit codes', () => {
 
     const impostor = testReceiptKeypair();
     const code = await runVerifyReportCli([file, '--key', impostor.publicKeyHex]);
+    expect(code).toBe(1);
+  });
+
+  function writeDoc(doc: string): string {
+    const dir = mkdtempSync(join(tmpdir(), 'suveren-verify-report-cli-'));
+    dirs.push(dir);
+    const file = join(dir, 'report.html');
+    writeFileSync(file, doc);
+    return file;
+  }
+
+  async function captureStdout(fn: () => Promise<number>): Promise<{ code: number; out: string }> {
+    const lines: string[] = [];
+    const orig = console.log;
+    console.log = (...a: unknown[]) => { lines.push(a.map(String).join(' ')); };
+    try {
+      const code = await fn();
+      return { code, out: lines.join('\n') };
+    } finally {
+      console.log = orig;
+    }
+  }
+
+  it('a reference drawn as not verifiable: exit 2 without a key, 0 with --key, and it is listed', async () => {
+    const { archive, addTicket, kp } = buildScenario();
+    addTicket({ id: 't1', action: 'erp__create_quote', authorizationId: 'authz-1', timestamp: 1_800_000_000 });
+    const { doc } = await buildRealExport('<sv-ticket ref="t1"></sv-ticket><sv-ticket ref="ghost"></sv-ticket>', archive, kp);
+    const file = writeDoc(doc);
+
+    const noKey = await captureStdout(() => runVerifyReportCli([file]));
+    expect(noKey.code).toBe(2);
+    expect(noKey.out).toContain('1 verified · 1 not verifiable (as shown in the report)');
+    expect(noKey.out).toMatch(/Not verifiable \(as shown in the report\):\n\s+- sv-ticket-1 \(ghost\) — not in the file: ghost/);
+
+    const withKey = await captureStdout(() => runVerifyReportCli([file, '--key', kp.publicKeyHex]));
+    expect(withKey.code).toBe(0);
+  });
+
+  it('REFUSAL: exit 1 — the missing reference\'s drawn badge flipped to verified', async () => {
+    const { archive, addTicket, kp } = buildScenario();
+    addTicket({ id: 't1', action: 'erp__create_quote', authorizationId: 'authz-1', timestamp: 1_800_000_000 });
+    const { doc } = await buildRealExport('<sv-ticket ref="t1"></sv-ticket><sv-ticket ref="ghost"></sv-ticket>', archive, kp);
+    const file = writeDoc(doc.replace('sv-badge sv-badge-bad', 'sv-badge sv-badge-ok'));
+
+    const { code, out } = await captureStdout(() => runVerifyReportCli([file, '--key', kp.publicKeyHex]));
+    expect(code).toBe(1);
+    expect(out).toContain('shown as verified with no valid backing');
+  });
+
+  it('REFUSAL: exit 1 — an invalid signature still fails a real export with a flagged reference', async () => {
+    const { archive, addTicket, kp } = buildScenario();
+    addTicket({ id: 't1', action: 'erp__create_quote', authorizationId: 'authz-1', timestamp: 1_800_000_000 });
+    const { bundle } = await buildRealExport('<sv-ticket ref="t1"></sv-ticket><sv-ticket ref="ghost"></sv-ticket>', archive, kp);
+    (bundle.tickets[0] as Record<string, unknown>).action = 'tampered';
+    const renderedAgain = await verifyReport('<sv-ticket ref="t1"></sv-ticket><sv-ticket ref="ghost"></sv-ticket>', { archive, runExport: noExports() });
+    const file = writeDoc(buildExportDocument({ bundle, renderedHtml: renderReportHtml(renderedAgain.html, renderedAgain.elements, false) }));
+
+    const { code } = await captureStdout(() => runVerifyReportCli([file, '--key', kp.publicKeyHex]));
     expect(code).toBe(1);
   });
 
