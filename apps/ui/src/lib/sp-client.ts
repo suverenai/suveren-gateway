@@ -6,6 +6,8 @@
  * No cookies are used — the API key is stored in React state only.
  */
 
+import { queueDomains, mergeProposals } from './my-queue';
+
 export interface SPUser {
   id: string;
   name: string;
@@ -1159,6 +1161,12 @@ class SPClient {
     return data.proposals ?? [];
   }
 
+  /** The user's whole queue: the active workspace plus the personal one — see lib/my-queue. */
+  async getMyProposals(activeDomain: string | null | undefined): Promise<Proposal[]> {
+    const lists = await Promise.all(queueDomains(activeDomain).map((d) => this.getProposals(d)));
+    return mergeProposals(lists);
+  }
+
   async resolveProposal(id: string, action: 'commit' | 'reject', domain: string): Promise<{ status: string }> {
     const res = await this.fetch(`/api/proposals/${encodeURIComponent(id)}/resolve`, {
       method: 'POST',
@@ -1367,10 +1375,8 @@ class SPClient {
     const sinceDays = options.sinceDays ?? 7;
     const status = options.status ?? 'pending';
 
-    // Match the Sidebar's fallback: when the user has no active domain (fresh
-    // session, no group joined yet), query the personal 'owner' domain.
-    const domain = options.domain || 'owner';
-    const proposals = await this.getProposals(domain);
+    // The active workspace plus the personal one (no active domain = personal only).
+    const proposals = await this.getMyProposals(options.domain);
 
     let receipts: ExecutionReceipt[] = [];
     if (status === 'all') {

@@ -8,6 +8,7 @@ import { profileDisplayName } from '../lib/profile-display';
 import { useVisiblePolling } from '../hooks/useVisiblePolling';
 import { useSSEEvent } from '../contexts/EventSourceContext';
 import type { ToolDisplay } from '../lib/approval-view';
+import { resolveDomainFor } from '../lib/my-queue';
 
 type QueueTab = 'awaiting-me' | 'awaiting-others' | 'all';
 type StatusFilter = 'pending' | 'all';
@@ -59,7 +60,7 @@ export function ProposalReviewPage() {
 
   const fetchMyProposals = useCallback(async () => {
     try {
-      const ps = await spClient.getProposals(domain || 'owner');
+      const ps = await spClient.getMyProposals(domain);
       // Also include above-cap proposals where I'm the creator but already approved.
       setMyProposals(ps);
     } catch {
@@ -103,7 +104,7 @@ export function ProposalReviewPage() {
       // This works because above-cap proposals are still stored per frame, not per domain.
       // The domain query may miss them — but the SP returns all pending proposals
       // including those with empty pendingDomains. Good enough for v1.
-      const ps = await spClient.getProposals(domain || 'owner');
+      const ps = await spClient.getMyProposals(domain);
       const mine = ps.filter(p =>
         p.status === 'pending' &&
         p.pendingApprovers &&
@@ -175,7 +176,9 @@ export function ProposalReviewPage() {
     setResolving(id);
     setMessage('');
     try {
-      const resolveDomain = domain || 'owner';
+      // Resolve under the proposal's own queue — a personal one stays 'owner' in team context.
+      const proposal = proposals.find(p => p.id === id) ?? myProposals.find(p => p.id === id);
+      const resolveDomain = resolveDomainFor(proposal, domain);
       const result = await spClient.resolveProposal(id, action, resolveDomain);
       setMessage(action === 'commit' ? `Action approved. Status: ${result.status}` : 'Action rejected.');
       // Refresh the All thread AND the awaiting-me domain queue so a just-approved

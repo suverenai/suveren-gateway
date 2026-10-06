@@ -41,7 +41,7 @@ export function usePendingCount(): number {
     }
     try {
       const [proposals, approver] = await Promise.all([
-        spClient.getProposals(domain || 'owner').catch(() => []),
+        spClient.getMyProposals(domain).catch(() => []),
         spClient.getProposalsForApprover().catch(() => []),
       ]);
       setCount(countPending(proposals, approver));
