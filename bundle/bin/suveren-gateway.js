@@ -15,7 +15,7 @@ import { createConnection } from 'node:net';
 import { existsSync, mkdirSync, openSync, readFileSync, writeFileSync, unlinkSync, statSync } from 'node:fs';
 import { homedir, platform, userInfo } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { buildLaunchAgentPlist, buildMacLauncher, buildSystemdUnit, buildWindowsTaskXml } from '../lib/autostart-templates.mjs';
 import { DEFAULT_AS_URL, readConfig, writeConfig, validateAsUrl, validateCaFile, validateProxyUrl, validatePinTls, resolveAsUrl, resolvePinTls, resolvePinTlsExpectedFingerprint, resolveSimulation } from '../lib/config.mjs';
 import { createInterface } from 'node:readline/promises';
@@ -1362,6 +1362,27 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+/**
+ * `suveren-gateway verify-report <file> [--key <hex>] [--online]` — offline
+ * verification of an "Export with proof" report file (work-plan R6).
+ * Delegates entirely to the compiled `dist/mcp-server/report-verify-cli.mjs`
+ * (built from apps/mcp-server's OWN tsup entry, next to dist/mcp-server/
+ * http.mjs) — this script never reimplements the signature-checking logic.
+ * Exit codes are documented there (`--help`): 0 valid+key confirmed,
+ * 1 invalid, 2 valid but key unconfirmed.
+ */
+async function verifyReport(args) {
+  const modPath = join(PKG_ROOT, 'dist', 'mcp-server', 'report-verify-cli.mjs');
+  if (!existsSync(modPath)) {
+    console.error(`verify-report is unavailable: ${modPath} not found.`);
+    console.error('This checkout has no built mcp-server bundle — install the published package, or build one first.');
+    process.exitCode = 1;
+    return;
+  }
+  const mod = await import(pathToFileURL(modPath).href);
+  process.exitCode = await mod.runVerifyReportCli(args);
+}
+
 function printHelp() {
   console.log(`suveren-gateway — Suveren gateway (Human Agency Protocol)
 
@@ -1388,6 +1409,9 @@ Usage:
   suveren-gateway config set pin-tls off      Stop enforcing the TLS certificate pin
   suveren-gateway simulation on|off|status    Block (or unblock) every real system
                                               (see \`suveren-gateway simulation help\`)
+  suveren-gateway verify-report <file> [--key <hex>] [--online]
+                                              Verify an "Export with proof" report file offline
+                                              (see \`suveren-gateway verify-report --help\`)
   suveren-gateway help                        Print this help
 
 Environment:
@@ -1426,6 +1450,7 @@ async function main() {
     case 'service': await service(argv.slice(1)); break;
     case 'config':  await config(argv.slice(1)); break;
     case 'simulation': await simulation(argv.slice(1)); break;
+    case 'verify-report': await verifyReport(argv.slice(1)); break;
     case 'help':
     case '--help':
     case '-h':

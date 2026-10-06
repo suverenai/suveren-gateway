@@ -382,6 +382,8 @@ export function ReportsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [rechecking, setRechecking] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
   const [narrowDetailsOpen, setNarrowDetailsOpen] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -402,6 +404,24 @@ export function ReportsPage() {
       .then(({ report }) => setReport(report))
       .catch(err => setError(err instanceof Error ? err.message : String(err)))
       .finally(() => setRechecking(false));
+  }, []);
+
+  const handleExport = useCallback(async () => {
+    setExporting(true);
+    setExportError(null);
+    try {
+      const { html, filename } = await spClient.exportReportWithProof();
+      const url = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setExportError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setExporting(false);
+    }
   }, []);
 
   const elementId = searchParams.get('element');
@@ -463,11 +483,16 @@ export function ReportsPage() {
             <button type="button" className="btn btn-secondary btn-sm" onClick={handleRecheck} disabled={rechecking}>
               {rechecking ? 'Checking…' : 'Check again'}
             </button>
-            <button type="button" className="btn btn-primary btn-sm" disabled title="coming soon">
-              Export with proof
+            <button type="button" className="btn btn-primary btn-sm" onClick={handleExport} disabled={exporting}>
+              {exporting ? 'Exporting…' : 'Export with proof'}
             </button>
           </div>
         </div>
+        {exportError && (
+          <p className="reports-error" role="alert" style={{ margin: '0.5rem 0 0 0' }}>
+            Export failed: {exportError}
+          </p>
+        )}
 
         <div className="reports-summary-chip">
           <span>{narrowSummaryLine(report.proof, report.coverage)}</span>

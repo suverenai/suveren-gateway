@@ -530,7 +530,7 @@ app.use('/api/evidence', authGuard, createEvidenceRouter());
 
 // The one current evidence-backed report (Reports page). Mounted BEFORE the
 // /api proxy so it wins the route.
-app.use('/api/report', jsonParser, authGuard, createReportRouter());
+app.use('/api/report', jsonParser, authGuard, createReportRouter(() => RUNNING_VERSION));
 
 // E2EE intent decryption (P6.4) — approver-side, uses vault private key
 app.use('/api/decrypt-intent', jsonParser, authGuard, createDecryptIntentRouter(vault));

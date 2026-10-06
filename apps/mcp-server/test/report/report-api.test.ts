@@ -99,6 +99,12 @@ describe('/internal/report* auth + round trip', () => {
     expect(data.report).toBeNull();
   });
 
+  it('REFUSAL: GET /internal/report/export before any save fails visibly (404), never an empty file', async () => {
+    const res = await fetch(`${BASE_URL}/internal/report/export`, { headers: withSecret() });
+    expect(res.status).toBe(404);
+    expect(res.headers.get('content-type')).toMatch(/json/);
+  });
+
   it('REFUSAL: POST /internal/report rejects a missing/empty html body (400)', async () => {
     const res = await fetch(`${BASE_URL}/internal/report`, {
       method: 'POST',
@@ -139,5 +145,22 @@ describe('/internal/report* auth + round trip', () => {
     expect(res.status).toBe(200);
     const data = (await res.json()).report;
     expect(data.checkedAt).toBeGreaterThanOrEqual(data.savedAt);
+  });
+
+  it('REFUSAL: GET /internal/report/export with no secret is rejected (403)', async () => {
+    const res = await fetch(`${BASE_URL}/internal/report/export`);
+    expect(res.status).toBe(403);
+  });
+
+  it('REFUSAL: GET /internal/report/export fails visibly (no AS pairing in this test harness, never an empty file)', async () => {
+    // This suite's TEST_DATA_DIR has a saved report (from the earlier test)
+    // but no as-pairing.json and no archived tickets — there is genuinely no
+    // Authority Server key to anchor an export to, so the route must refuse
+    // rather than ship an unanchored bundle.
+    const res = await fetch(`${BASE_URL}/internal/report/export`, { headers: withSecret() });
+    expect(res.status).toBe(503);
+    const body = await res.json();
+    expect(body.error).toMatch(/authority server/i);
+    expect(res.headers.get('content-type')).toMatch(/json/);
   });
 });
