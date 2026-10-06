@@ -51,6 +51,10 @@ export interface TicketCheckFail {
 export async function checkTicket(archive: ReceiptArchiveReader, ticketId: string): Promise<TicketCheckOk | TicketCheckFail> {
   const entry = findReceiptEntry(archive, ticketId);
   if (!entry) {
+    // On a window-scoped archive a ticket outside the window reads as absent;
+    // say so plainly instead of "no such ticket" (window.ts, RR2).
+    const outside = archive.outsideWindowReason?.(ticketId);
+    if (outside) return { ok: false, reason: `Ticket "${ticketId}": ${outside}` };
     return { ok: false, reason: `No ticket "${ticketId}" in the local archive.` };
   }
   if (!entry.asPublicKey) {
@@ -116,7 +120,7 @@ export async function resolveApprovalElement(archive: ReceiptArchiveReader, tick
   const waitSeconds = createdAt !== undefined && decidedAt !== undefined ? decidedAt - createdAt : undefined;
   const who = approvers.map(a => a.userId);
   // Never a bare account id on the card: the best name the archive can vouch
-  // for, else a neutral "a person (account …xxxxxx)" (identity.ts).
+  // for, else a neutral "a person (name not disclosed)" (identity.ts).
   const dir = await getIdentityDirectory(archive);
   const whoLabels = approverEntries.map(([domain, a]) => approverLabel(dir, domain, String(a.userId ?? '')));
   return {
@@ -170,13 +174,13 @@ export async function resolveMandateElement(archive: ReceiptArchiveReader, ticke
       const dids = attestation.payload.resolved_owners ?? [];
       const subjects = attestation.payload.subjects ?? [];
       ownersRaw = dids;
-      // A did:key is never shown bare — only a HIGH-assurance disclosed name
-      // stands in its place; everything else falls back to a labeled,
-      // truncated key, never the raw did string as the only label (polish
-      // 2026-10-05: "no raw technical values anywhere a manager reads").
+      // A did:key is never shown — only a HIGH-assurance disclosed name
+      // stands in its place; everything else falls back to the neutral
+      // "Owner (name not disclosed)" (polish 2026-10-05: "no raw technical
+      // values anywhere a manager reads"; RR3: not even a truncated key).
       // The SAME label for the same DID on every card: a name disclosed in
       // THIS attestation, else one disclosed in any other verified archived
-      // attestation (identity.ts), else the truncated key.
+      // attestation (identity.ts), else the neutral label.
       const dir = await getIdentityDirectory(archive);
       owners = dids.map(did => {
         const subject = subjects.find(s => s.did === did);

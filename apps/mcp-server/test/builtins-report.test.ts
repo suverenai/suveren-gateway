@@ -4,7 +4,8 @@
  * `reporting` profile, the same harness style as builtin-integration.test.ts
  * (which this file deliberately does not depend on, so it is unaffected by
  * whatever profile the sibling `hap-profiles` checkout currently has loaded
- * for OTHER profiles' tests — only `reporting/0.1.profile.json` is read here).
+ * for OTHER profiles' tests — only the `reporting` profiles are read here:
+ * 0.2, which sets the reporting window, and 0.1, which does not).
  *
  * What must hold:
  * - under an automatic `reporting` mandate, write_report goes through the
@@ -31,7 +32,11 @@ import { createGatedToolHandler, toolIsAuthorizedForDisplay } from '../src/lib/t
 import { ReportStore } from '../src/lib/report/report-store';
 import { REPORT_BRIEF } from '../src/lib/report-brief';
 import { MAX_REPORT_HTML_BYTES, reportBuiltin } from '../src/lib/builtins/report';
-import { buildScenario } from './report/fixtures/scenario';
+import { buildScenario, AS_URL } from './report/fixtures/scenario';
+import { buildExportBundle, buildExportDocument } from '../src/lib/report/export-report';
+import { renderReportHtml } from '../src/lib/report/render-report';
+import { scopeReportSources } from '../src/lib/report/window';
+import { FORBIDDEN_AGENT_KEYS } from '../src/lib/report/agent-view';
 import { buildEmailExport, buildErpExport, buildCrmExport } from './report/fixtures/exports';
 import type { SharedState, EnrichedAuthorization } from '../src/lib/shared-state';
 import type { ReportSources, ExportSystem } from '../src/lib/report/types';
@@ -39,12 +44,20 @@ import { testReceiptKeypair, makeSignedReceipt } from './helpers/real-receipt';
 
 const profilesDir =
   process.env.SUVEREN_PROFILES_DIR ?? join(import.meta.dirname, '..', '..', '..', '..', 'hap-profiles');
-const REPORTING = JSON.parse(readFileSync(join(profilesDir, 'reporting/0.1.profile.json'), 'utf8'));
+const REPORTING = JSON.parse(readFileSync(join(profilesDir, 'reporting/0.2.profile.json'), 'utf8'));
+const REPORTING_01 = JSON.parse(readFileSync(join(profilesDir, 'reporting/0.1.profile.json'), 'utf8'));
 
 beforeAll(() => {
+  registerProfile(REPORTING_01.id, REPORTING_01);
   registerProfile(REPORTING.id, REPORTING);
   registerProfile('reporting', REPORTING);
 });
+
+/** Unix seconds, relative to the real clock — the reporting window is
+ *  [now − read_max_age_days, now], so fixed timestamps would age out. */
+const nowS = () => Math.floor(Date.now() / 1000);
+const DAY = 86_400;
+const isoAgo = (seconds: number) => new Date((nowS() - seconds) * 1000).toISOString();
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -72,7 +85,7 @@ function auth(bounds: Record<string, unknown>): EnrichedAuthorization {
   return authWithProfile(REPORTING.id, bounds);
 }
 
-const REPORTING_BOUNDS = { read_access: 'unlimited', report_daily_max: 5 };
+const REPORTING_BOUNDS = { read_access: 'unlimited', read_max_age_days: 30, report_daily_max: 5 };
 
 /**
  * One SharedState-shaped object serving BOTH roles it plays in production
@@ -239,8 +252,8 @@ describe('without a reporting mandate', () => {
 describe('read tools', () => {
   it('read_access: unlimited — list_tickets returns tickets from the archive, no signatures/raw blobs', async () => {
     const { tools, im, state, scenario, cleanup } = setup([auth(REPORTING_BOUNDS)]);
-    scenario.addTicket({ id: 'tk-1', action: 'erp__create_quote', authorizationId: 'authz-x', timestamp: 1000 });
-    scenario.addTicket({ id: 'tk-2', action: 'erp__create_quote', authorizationId: 'authz-x', timestamp: 2000 });
+    scenario.addTicket({ id: 'tk-1', action: 'erp__create_quote', authorizationId: 'authz-x', timestamp: nowS() - 2000 });
+    scenario.addTicket({ id: 'tk-2', action: 'erp__create_quote', authorizationId: 'authz-x', timestamp: nowS() - 1000 });
 
     const r = await createGatedToolHandler(tools.list_tickets, im, state)({});
     expect(r.isError).toBeFalsy();
@@ -253,10 +266,10 @@ describe('read tools', () => {
 
   it('list_tickets filters by since/until', async () => {
     const { tools, im, state, scenario, cleanup } = setup([auth(REPORTING_BOUNDS)]);
-    scenario.addTicket({ id: 'early', action: 'a', authorizationId: 'x', timestamp: 100 });
-    scenario.addTicket({ id: 'late', action: 'a', authorizationId: 'x', timestamp: 9000 });
+    scenario.addTicket({ id: 'early', action: 'a', authorizationId: 'x', timestamp: nowS() - 9000 });
+    scenario.addTicket({ id: 'late', action: 'a', authorizationId: 'x', timestamp: nowS() - 100 });
 
-    const r = await createGatedToolHandler(tools.list_tickets, im, state)({ since: 500 });
+    const r = await createGatedToolHandler(tools.list_tickets, im, state)({ since: nowS() - 500 });
     const body = JSON.parse(r.content[0].text);
     expect(body.tickets.map((t: any) => t.id)).toEqual(['late']);
     cleanup();
@@ -265,16 +278,17 @@ describe('read tools', () => {
   it('get_ticket returns ticket + approval + mandate, reusing the same resolvers verify-report.ts uses', async () => {
     const { tools, im, state, scenario, cleanup } = setup([auth(REPORTING_BOUNDS)]);
     scenario.addTicket({
-      id: 'tk-1', action: 'erp__create_quote', authorizationId: 'authz-x', timestamp: 1000,
+      id: 'tk-1', action: 'erp__create_quote', authorizationId: 'authz-x', timestamp: nowS() - 1000,
       authorization: { authorizationId: 'authz-x', profileId: 'test-profile', bounds: { cap: 10 }, intent: 'do the thing' },
-      proposal: { committedBy: { owner: { userId: 'u1', at: 1050 } }, createdAt: 1000, status: 'committed' },
+      proposal: { committedBy: { owner: { userId: 'u1', at: nowS() - 1050 } }, createdAt: nowS() - 1100, status: 'committed' },
     });
 
     const r = await createGatedToolHandler(tools.get_ticket, im, state)({ id: 'tk-1' });
     expect(r.isError, r.content[0]?.text).toBeFalsy();
     const body = JSON.parse(r.content[0].text);
     expect(body.ticket.ticketId).toBe('tk-1');
-    expect(body.approval).toMatchObject({ verified: true, who: ['u1'] });
+    expect(body.approval).toMatchObject({ verified: true, approved: true, approvedBy: 'a person (name not disclosed)', waitSeconds: 50 });
+    expect(body.approval).not.toHaveProperty('who'); // raw account ids never reach the AI (RR3)
     expect(body.mandate).toMatchObject({ verified: true, intent: 'do the thing' });
     cleanup();
   });
@@ -288,13 +302,15 @@ describe('read tools', () => {
   });
 
   it('list_cases returns cases and sent mail, and NEVER reference_replies even when the raw export carries it', async () => {
+    const LOADED = isoAgo(5000);
+    const RECEIVED = isoAgo(4000);
     const runExport = vi.fn(async (system: ExportSystem) => {
       if (system !== 'email') return buildEmailExport();
       return {
         ...buildEmailExport({
-          simulation_load: { name: 'pkg', package_sha256: 'sha', cases_loaded: 1, loaded_at: '2026-10-01T00:00:00.000Z' },
-          inbox: [{ id: 'm1', from_name: 'A', from_email: 'a@example.com', to_json: '[]', subject: 'Hi', body: 'b', received_at: '2026-10-01T01:00:00.000Z', case_id: 'C1' }],
-          sent: [{ id: 's1', from_name: 'Us', from_email: 'us@example.com', to_json: '["a@example.com"]', subject: 'Re: Hi', body: 'b', received_at: '2026-10-01T02:00:00.000Z', in_reply_to: 'm1', receipt_id: 'tk-1' }],
+          simulation_load: { name: 'pkg', package_sha256: 'sha', cases_loaded: 1, loaded_at: LOADED },
+          inbox: [{ id: 'm1', from_name: 'A', from_email: 'a@example.com', to_json: '[]', subject: 'Hi', body: 'b', received_at: RECEIVED, case_id: 'C1' }],
+          sent: [{ id: 's1', from_name: 'Us', from_email: 'us@example.com', to_json: '["a@example.com"]', subject: 'Re: Hi', body: 'b', received_at: isoAgo(3000), in_reply_to: 'm1', receipt_id: 'tk-1' }],
         }),
         // The real email-mcp export always includes this table (cli.ts) —
         // injected here even though the narrowed EmailExport type doesn't
@@ -309,9 +325,9 @@ describe('read tools', () => {
     expect(r.content[0].text).not.toMatch(/reference_replies/);
     expect(r.content[0].text).not.toMatch(/SECRET ANSWER/);
     const body = JSON.parse(r.content[0].text);
-    expect(body.cases).toEqual([{ caseId: 'C1', startMessageId: 'm1', from: 'a@example.com', subject: 'Hi', receivedAt: '2026-10-01T01:00:00.000Z' }]);
+    expect(body.cases).toEqual([{ caseId: 'C1', startMessageId: 'm1', from: 'a@example.com', subject: 'Hi', receivedAt: RECEIVED }]);
     expect(body.sent[0]).toMatchObject({ id: 's1', inReplyTo: 'm1', receiptId: 'tk-1' });
-    expect(body.testDataLoadedAt).toBe('2026-10-01T00:00:00.000Z');
+    expect(body.testDataLoadedAt).toBe(LOADED);
     cleanup();
   });
 
@@ -319,7 +335,7 @@ describe('read tools', () => {
     const runExport = vi.fn(async (system: ExportSystem) => {
       if (system !== 'email') return buildEmailExport();
       return {
-        ...buildEmailExport({ inbox: [{ id: 'm1', from_name: 'A', from_email: 'a@x.com', to_json: '[]', subject: 's', body: 'b', received_at: 't' }] }),
+        ...buildEmailExport({ inbox: [{ id: 'm1', from_name: 'A', from_email: 'a@x.com', to_json: '[]', subject: 's', body: 'b', received_at: isoAgo(60) }] }),
         reference_replies: [{ case_id: 'C1', reply_body: 'secret' }],
       } as unknown as ReturnType<typeof buildEmailExport>;
     });
@@ -373,7 +389,7 @@ describe('write_report', () => {
 
   it('a ticket id reaches the handler via receipt_id, and the stored report is the actually-verified result', async () => {
     const { tools, im, state, scenario, reportStore, cleanup } = setup([auth(REPORTING_BOUNDS)]);
-    scenario.addTicket({ id: 'tk-real', action: 'erp__create_quote', authorizationId: 'authz-x', timestamp: 1000 });
+    scenario.addTicket({ id: 'tk-real', action: 'erp__create_quote', authorizationId: 'authz-x', timestamp: nowS() - 1000 });
 
     const r = await createGatedToolHandler(tools.write_report, im, state)({ html: '<sv-ticket ref="tk-real"></sv-ticket>' });
     expect(r.isError, r.content[0]?.text).toBeFalsy();
@@ -486,10 +502,275 @@ describe("write_report's validate hook (precheckBuiltin) — refused before the 
   // sees — precheckBuiltin (IntegrationManager) is the real, documented way to
   // reach it, so this exercises exactly what createGatedToolHandler calls.
   it('precheckBuiltin flags empty and oversize html with NO ticket side effects, and lets good html through', async () => {
-    const { tools, im, cleanup } = setup([]);
+    const { tools, im, cleanup } = setup([auth(REPORTING_BOUNDS)]);
     expect(await im.precheckBuiltin(tools.write_report, { html: '   ' })).toMatch(/non-empty/);
     expect(await im.precheckBuiltin(tools.write_report, { html: 'x'.repeat(MAX_REPORT_HTML_BYTES + 1) })).toMatch(/bytes/);
     expect(await im.precheckBuiltin(tools.write_report, { html: '<p>ok</p>' })).toBeNull();
     cleanup();
+  });
+});
+
+
+// ─── RR2 — the reporting window ─────────────────────────────────────────────
+
+/**
+ * An archive that holds a REAL ticket from long before the window — real work
+ * from the gateway's normal use, with a private intent — next to tickets from
+ * inside the window. The old one must be absent from every tool output and
+ * from the export file; a reference to it must say why it is not verifiable.
+ */
+describe('reporting window (RR2) — an old real ticket never reaches the report AI or the export', () => {
+  const OLD_INTENT = 'Family calendar — PRIVATE, never in a business context';
+  const NEW_INTENT = 'Quote known customers only.';
+
+  function seed(scenario: ReturnType<typeof buildScenario>) {
+    scenario.addTicket({
+      id: 'tk-old-real', action: 'calendar__create_event', authorizationId: 'authz-old',
+      timestamp: nowS() - 40 * DAY,
+      authorization: { authorizationId: 'authz-old', profileId: 'github.com/humanagencyprotocol/hap-profiles/calendar@0.5', intent: OLD_INTENT, bounds: { booking_daily_max: 3 } },
+    });
+    scenario.addTicket({
+      id: 'tk-old-unreferenced', action: 'email__send_message', authorizationId: 'authz-old',
+      timestamp: nowS() - 31 * DAY,
+    });
+    scenario.addTicket({
+      id: 'tk-new-1', action: 'erp__create_quote', authorizationId: 'authz-new',
+      timestamp: nowS() - 2 * DAY,
+      authorization: { authorizationId: 'authz-new', profileId: 'github.com/humanagencyprotocol/hap-profiles/sales@0.3', intent: NEW_INTENT, bounds: { value_max: 1000 } },
+    });
+    scenario.addTicket({ id: 'tk-new-2', action: 'erp__send_quote', authorizationId: 'authz-new', timestamp: nowS() - 3600 });
+  }
+
+  it('list_tickets lists only tickets inside the window, and says which window', async () => {
+    const t = setup([auth(REPORTING_BOUNDS)]);
+    seed(t.scenario);
+    const r = await createGatedToolHandler(t.tools.list_tickets, t.im, t.state)({});
+    expect(r.isError, r.content[0]?.text).toBeFalsy();
+    const body = JSON.parse(r.content[0].text);
+    expect(body.tickets.map((x: any) => x.id)).toEqual(['tk-new-1', 'tk-new-2']);
+    expect(body.window.since).toMatch(/last 30 days/);
+    // An explicit `since` cannot reach back past the window either.
+    const wide = await createGatedToolHandler(t.tools.list_tickets, t.im, t.state)({ since: 0 });
+    expect(JSON.parse(wide.content[0].text).tickets.map((x: any) => x.id)).toEqual(['tk-new-1', 'tk-new-2']);
+    expect(wide.content[0].text).not.toContain('tk-old');
+    t.cleanup();
+  });
+
+  it('get_ticket refuses a ticket outside the window, naming the window, and reveals nothing of it', async () => {
+    const t = setup([auth(REPORTING_BOUNDS)]);
+    seed(t.scenario);
+    const r = await createGatedToolHandler(t.tools.get_ticket, t.im, t.state)({ id: 'tk-old-real' });
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toMatch(/outside the reporting window/);
+    expect(r.content[0].text).toMatch(/last 30 days/);
+    expect(r.content[0].text).not.toContain(OLD_INTENT);
+    expect(r.content[0].text).not.toContain('calendar');
+    t.cleanup();
+  });
+
+  it('a report reference to it renders "not verifiable — outside the reporting window", and the export file carries none of it', async () => {
+    const t = setup([auth(REPORTING_BOUNDS)]);
+    seed(t.scenario);
+    const html =
+      '<h1>Week</h1><sv-ticket ref="tk-old-real"></sv-ticket><sv-mandate ticket="tk-old-real"></sv-mandate>' +
+      '<sv-approval ticket="tk-old-real"></sv-approval><sv-ticket ref="tk-new-1"></sv-ticket>';
+    const w = await createGatedToolHandler(t.tools.write_report, t.im, t.state)({ html });
+    expect(w.isError, w.content[0]?.text).toBeFalsy();
+    expect(w.content[0].text).toMatch(/tk-old-real.*not verifiable — outside the reporting window/);
+    expect(w.content[0].text).not.toContain(OLD_INTENT);
+
+    const stored = t.reportStore.getReport()!;
+    for (const e of stored.result.elements.filter(e => e.attrs.ref === 'tk-old-real' || e.attrs.ticket === 'tk-old-real')) {
+      expect(e.status).toBe('unverifiable');
+      expect(e.reason).toMatch(/not verifiable — outside the reporting window/);
+      expect(e.data).toBeUndefined();
+    }
+    expect(stored.result.coverage.ticketsInPeriod).toEqual(['tk-new-1', 'tk-new-2']);
+
+    // The export, built the way http.ts builds it: scoped sources, recheck, bundle, document.
+    const scoped = await scopeReportSources(
+      { archive: t.scenario.archive, runExport: async () => buildEmailExport() },
+      { authorizations: [auth(REPORTING_BOUNDS)], simulation: false },
+    );
+    expect(scoped.ok).toBe(true);
+    if (!scoped.ok) return;
+    const rechecked = (await t.reportStore.recheck(scoped.sources))!;
+    const bundle = buildExportBundle({
+      stored: rechecked, archive: scoped.sources.archive, gatewayVersion: 'test',
+      authorityServer: { url: AS_URL, publicKeyHex: t.scenario.kp.publicKeyHex },
+    });
+    const doc = buildExportDocument({ bundle, renderedHtml: renderReportHtml(rechecked.result.html, rechecked.result.elements) });
+
+    expect(bundle.tickets.map(x => (x as { id: string }).id).sort()).toEqual(['tk-new-1', 'tk-new-2']);
+    expect(Object.keys(bundle.authorizations)).toEqual([]);
+    const oldReceipt = t.scenario.archive.getReceipts().find(r => r.receipt.id === 'tk-old-real')!.receipt;
+    expect(doc).not.toContain(OLD_INTENT);
+    expect(doc).not.toContain('authz-old');
+    expect(doc).not.toContain(String(oldReceipt.signature));
+    expect(doc).not.toContain('tk-old-unreferenced'); // not referenced, outside the window: nowhere in the file
+    expect(doc).toContain('not verifiable — outside the reporting window');
+    t.cleanup();
+  });
+
+  it('get_records and list_cases show only rows inside the window', async () => {
+    const runExport = vi.fn(async (system: ExportSystem) => {
+      if (system === 'erp') {
+        return buildErpExport({
+          quotes: [
+            { id: 'q-old', number: 'Q-1', customer_id: 'c', status: 'sent', currency: 'EUR', net_total: 1, created_at: isoAgo(45 * DAY) },
+            { id: 'q-new', number: 'Q-2', customer_id: 'c', status: 'sent', currency: 'EUR', net_total: 2, created_at: isoAgo(DAY) },
+          ],
+        });
+      }
+      return buildEmailExport({
+        inbox: [
+          { id: 'm-old', from_name: 'A', from_email: 'a@x', to_json: '[]', subject: 'old', body: 'b', received_at: isoAgo(60 * DAY), case_id: 'C0' },
+          { id: 'm-new', from_name: 'A', from_email: 'a@x', to_json: '[]', subject: 'new', body: 'b', received_at: isoAgo(DAY), case_id: 'C1' },
+        ],
+      });
+    });
+    const t = setup([auth(REPORTING_BOUNDS)], runExport);
+    const recs = JSON.parse((await createGatedToolHandler(t.tools.get_records, t.im, t.state)({ system: 'erp', kind: 'quotes' })).content[0].text);
+    expect(recs.records.quotes.map((q: any) => q.id)).toEqual(['q-new']);
+    const cases = JSON.parse((await createGatedToolHandler(t.tools.list_cases, t.im, t.state)({})).content[0].text);
+    expect(cases.cases.map((c: any) => c.caseId)).toEqual(['C1']);
+    t.cleanup();
+  });
+});
+
+describe('reporting window (RR2) — simulation mode and reporting@0.1', () => {
+  const prev = process.env.SUVEREN_SIMULATION;
+  afterEach(() => {
+    if (prev === undefined) delete process.env.SUVEREN_SIMULATION; else process.env.SUVEREN_SIMULATION = prev;
+  });
+
+  function loadExport(loadedAgo: number) {
+    return vi.fn(async (system: ExportSystem) => (system === 'email'
+      ? buildEmailExport({ simulation_load: { name: 'pkg', package_sha256: 's', cases_loaded: 0, loaded_at: isoAgo(loadedAgo) } })
+      : system === 'erp' ? buildErpExport() : buildCrmExport()));
+  }
+
+  it('simulation mode: a ticket from before the test data was loaded is hidden, even inside the lookback', async () => {
+    process.env.SUVEREN_SIMULATION = '1';
+    const t = setup([auth(REPORTING_BOUNDS)], loadExport(3600));
+    t.scenario.addTicket({ id: 'tk-before-load', action: 'a', authorizationId: 'x', timestamp: nowS() - 3601 });
+    t.scenario.addTicket({ id: 'tk-after-load', action: 'a', authorizationId: 'x', timestamp: nowS() - 3599 });
+    const r = await createGatedToolHandler(t.tools.list_tickets, t.im, t.state)({});
+    const body = JSON.parse(r.content[0].text);
+    expect(body.tickets.map((x: any) => x.id)).toEqual(['tk-after-load']);
+    expect(body.window.since).toMatch(/test data was loaded/);
+    const g = await createGatedToolHandler(t.tools.get_ticket, t.im, t.state)({ id: 'tk-before-load' });
+    expect(g.isError).toBe(true);
+    expect(g.content[0].text).toMatch(/outside the reporting window/);
+    t.cleanup();
+  });
+
+  it('reporting@0.1 in simulation mode keeps working, with the window starting when the test data was loaded', async () => {
+    process.env.SUVEREN_SIMULATION = '1';
+    const t = setup([authWithProfile(REPORTING_01.id, { read_access: 'unlimited', report_daily_max: 5 })], loadExport(600));
+    t.scenario.addTicket({ id: 'tk-old', action: 'a', authorizationId: 'x', timestamp: nowS() - 7200 });
+    t.scenario.addTicket({ id: 'tk-run', action: 'a', authorizationId: 'x', timestamp: nowS() - 60 });
+    const r = await createGatedToolHandler(t.tools.list_tickets, t.im, t.state)({});
+    expect(r.isError, r.content[0]?.text).toBeFalsy();
+    expect(JSON.parse(r.content[0].text).tickets.map((x: any) => x.id)).toEqual(['tk-run']);
+    t.cleanup();
+  });
+
+  it('REFUSAL: reporting@0.1 outside simulation mode is refused with a clear message — and write_report before any ticket', async () => {
+    delete process.env.SUVEREN_SIMULATION;
+    const runExport = vi.fn(async () => buildEmailExport());
+    const t = setup([authWithProfile(REPORTING_01.id, { read_access: 'unlimited', report_daily_max: 5 })], runExport);
+    t.scenario.addTicket({ id: 'tk-1', action: 'a', authorizationId: 'x', timestamp: nowS() - 60 });
+    for (const [name, args] of [['list_tickets', {}], ['get_ticket', { id: 'tk-1' }], ['list_cases', {}], ['get_records', { system: 'email' }]] as const) {
+      const r = await createGatedToolHandler(t.tools[name], t.im, t.state)(args);
+      expect(r.isError, name).toBe(true);
+      expect(r.content[0].text, name).toMatch(/sets no reporting window/);
+      expect(r.content[0].text, name).not.toContain('tk-1');
+    }
+    const w = await createGatedToolHandler(t.tools.write_report, t.im, t.state)({ html: '<p>x</p>' });
+    expect(w.isError).toBe(true);
+    expect(w.content[0].text).toMatch(/sets no reporting window/);
+    expect(t.postReceipt).not.toHaveBeenCalled(); // refused before a ticket was requested
+    expect(runExport).not.toHaveBeenCalled();
+    t.cleanup();
+  });
+});
+
+// ─── RR3 — what the report AI may read ──────────────────────────────────────
+
+describe('report AI read scope (RR3) — no internal ids, signatures, blobs or account ids in any tool output', () => {
+  const USER = 'c7246947-0f1e-4c2b-9a77-3d1f00a1b2c3';
+  const GROUP = 'grp_5a1f0c2e-team';
+  const DID = 'did:key:z6MkOwnerKeyMaterial246947';
+
+  function seedSensitive(scenario: ReturnType<typeof buildScenario>) {
+    return scenario.addTicket({
+      id: 'tk-s', action: 'erp__send_quote', authorizationId: 'authz_9d3b7c11-secret',
+      timestamp: nowS() - 600,
+      extra: {
+        userId: USER, groupId: GROUP, approvalSignature: 'APPROVALSIG-xyz', proposalId: 'prop_77',
+        executionContext: { action_type: 'send', net_total: 840, userId: USER },
+      },
+      authorization: {
+        authorizationId: 'authz_9d3b7c11-secret', profileId: 'github.com/humanagencyprotocol/hap-profiles/sales@0.3',
+        bounds: { value_max: 1000 }, intent: 'Quote known customers only.', commitmentMode: 'review', owners: [DID],
+      },
+      proposal: { status: 'executed', createdAt: nowS() - 900, committedBy: { [USER]: { userId: USER, at: nowS() - 700 } } },
+    });
+  }
+
+  it('every read tool and write_report: no forbidden key, no user/group/mandate id, no DID, no signature, no blob', async () => {
+    const t = setup([auth(REPORTING_BOUNDS)]);
+    const receipt = seedSensitive(t.scenario);
+    const blob = t.scenario.archive.getAuthorizations()[0].attestations[0].blob;
+    const outputs: Record<string, string> = {};
+    for (const [name, args] of [
+      ['list_tickets', {}], ['get_ticket', { id: 'tk-s' }], ['list_cases', {}],
+      ['get_records', { system: 'erp' }], ['write_report', { html: '<sv-ticket ref="tk-s"></sv-ticket><sv-approval ticket="tk-s"></sv-approval><sv-mandate ticket="tk-s"></sv-mandate>' }],
+    ] as const) {
+      const r = await createGatedToolHandler(t.tools[name], t.im, t.state)(args);
+      expect(r.isError, `${name}: ${r.content[0]?.text}`).toBeFalsy();
+      outputs[name] = r.content.map(c => c.text).join('\n');
+    }
+    for (const [name, text] of Object.entries(outputs)) {
+      for (const key of FORBIDDEN_AGENT_KEYS) expect(text, `${name} carries "${key}"`).not.toContain(`"${key}"`);
+      for (const value of [USER, GROUP, DID, 'authz_9d3b7c11-secret', String(receipt.signature), blob, 'APPROVALSIG-xyz', 'prop_77', '246947']) {
+        expect(text, `${name} leaks ${value.slice(0, 24)}`).not.toContain(value);
+      }
+    }
+    t.cleanup();
+  });
+
+  it('get_ticket is an allow-list: exactly these fields, with the facts a working agent sees plus approval facts', async () => {
+    const t = setup([auth(REPORTING_BOUNDS)]);
+    seedSensitive(t.scenario);
+    const r = await createGatedToolHandler(t.tools.get_ticket, t.im, t.state)({ id: 'tk-s' });
+    const body = JSON.parse(r.content[0].text);
+    expect(Object.keys(body).sort()).toEqual(['approval', 'mandate', 'ticket']);
+    expect(Object.keys(body.ticket).sort()).toEqual(
+      ['action', 'actionLabel', 'checkUrl', 'limitsUsed', 'profile', 'profileLabel', 'ticketId', 'time', 'timeLabel'],
+    );
+    expect(Object.keys(body.approval).sort()).toEqual(
+      ['approved', 'approvedBy', 'askedAt', 'askedAtLabel', 'decidedAt', 'decidedAtLabel', 'verified', 'waitLabel', 'waitSeconds'],
+    );
+    expect(Object.keys(body.mandate).sort()).toEqual(
+      ['intent', 'limits', 'mode', 'owners', 'profile', 'profileLabel', 'rawLimits', 'verified'],
+    );
+    expect(body.ticket.ticketId).toBe('tk-s');
+    expect(body.ticket.checkUrl).toBe(`${AS_URL}/r/tk-s`);
+    expect(body.ticket.limitsUsed).toEqual({ action_type: 'send', net_total: 840 }); // nested userId scrubbed
+    expect(body.approval).toMatchObject({ verified: true, approved: true, approvedBy: 'a person (name not disclosed)', waitSeconds: 200 });
+    expect(body.mandate).toMatchObject({ verified: true, intent: 'Quote known customers only.', mode: 'review', owners: ['Owner (name not disclosed)'] });
+    t.cleanup();
+  });
+
+  it('list_tickets rows are an allow-list too', async () => {
+    const t = setup([auth(REPORTING_BOUNDS)]);
+    seedSensitive(t.scenario);
+    const body = JSON.parse((await createGatedToolHandler(t.tools.list_tickets, t.im, t.state)({})).content[0].text);
+    expect(Object.keys(body.tickets[0]).sort()).toEqual(
+      ['action', 'actionType', 'hasApproval', 'id', 'limitsUsed', 'profile', 'profileLabel', 'time'],
+    );
+    t.cleanup();
   });
 });

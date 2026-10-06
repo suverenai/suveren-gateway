@@ -187,7 +187,7 @@ export async function verifyReport(html: string, sources: ReportSources): Promis
   }
 
   const proof = buildProof(elements, caseElements);
-  const coverage = await buildCoverage(caseElements, getExport, sources.archive, proof.ticketsReferenced);
+  const coverage = await buildCoverage(caseElements, getExport, sources.archive, proof.ticketsReferenced, sources.window);
 
   return { html: sanitized, elements, proof, coverage };
 }
@@ -307,6 +307,7 @@ async function buildCoverage(
   getExport: (s: ExportSystem) => Promise<ExportOutcome>,
   archive: ReportSources['archive'],
   referenced: string[],
+  window?: ReportSources['window'],
 ): Promise<CoverageSummary> {
   const exp = await getExport('email');
   const emailExportError = !exp.ok
@@ -326,8 +327,14 @@ async function buildCoverage(
 
   // Ticket-level coverage: tickets carry no case id, so the AI names a case's
   // steps itself — this is what keeps it from leaving one out unnoticed.
+  // With scoped sources (window.ts) the archive already holds only tickets
+  // inside the reporting window, and the window's start is the period start —
+  // in simulation mode it is never earlier than the load time.
   const loadedAt = exp.ok && isEmailExport(exp.data) ? exp.data.simulation_load?.loaded_at : undefined;
-  const periodStart = loadedAt !== undefined ? (parseTimestampSeconds(loadedAt) ?? null) : null;
+  const loadedAtSeconds = loadedAt !== undefined ? (parseTimestampSeconds(loadedAt) ?? null) : null;
+  const periodStart = window
+    ? (loadedAtSeconds !== null ? Math.max(window.start, loadedAtSeconds) : window.start)
+    : loadedAtSeconds;
   const inPeriod = archive.getReceipts()
     .map(r => ({ id: String(r.receipt.id ?? ''), time: Number(r.receipt.timestamp ?? r.archivedAt) }))
     .filter(t => t.id && (periodStart === null || t.time >= periodStart))
@@ -340,6 +347,7 @@ async function buildCoverage(
   return {
     ...(emailExportError ? { emailExportError } : {}),
     loadedCases, coveredCases, missingCases, periodStart,
+    ...(window ? { window: { start: window.start, end: window.end, days: window.days, label: window.label } } : {}),
     ticketsInPeriod: inPeriod, ticketsReferenced, ticketsNotReferenced,
   };
 }

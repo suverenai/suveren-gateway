@@ -9,6 +9,7 @@
  * what the AI is told to write, this file is what reads it back.
  */
 import type { ArchivedAuthorization, ArchivedReceipt } from '../receipt-archive';
+import type { ReportWindow } from './window';
 
 /** The three simulator connectors a report can reference records from. */
 export type ExportSystem = 'email' | 'crm' | 'erp';
@@ -71,6 +72,10 @@ export interface CoverageSummary {
    *  loaded (email export `simulation_load.loaded_at`). null when unknown —
    *  then every archived ticket counts as in the period. */
   periodStart: number | null;
+  /** The reporting window the evidence was scoped to (window.ts), when the
+   *  report was checked through scoped sources. `periodStart` is then the
+   *  window's start. */
+  window?: { start: number; end: number; days: number | null; label: string };
   /** Every archived ticket issued in the test period, oldest first. */
   ticketsInPeriod: string[];
   /** ticketsInPeriod that the report references (sv-ticket, sv-approval,
@@ -99,6 +104,13 @@ export interface VerifyReportResult {
 export interface ReceiptArchiveReader {
   getReceipts(): ArchivedReceipt[];
   getAuthorizations(): ArchivedAuthorization[];
+  /**
+   * Set only on a window-scoped archive (window.ts#windowArchive): when a
+   * ticket exists but lies outside the reporting window, the reason to show
+   * instead of "no such ticket". Undefined for a ticket that does not exist
+   * at all, or is inside the window.
+   */
+  outsideWindowReason?(ticketId: string): string | undefined;
 }
 
 /**
@@ -113,6 +125,9 @@ export type RunConnectorExport = (system: ExportSystem) => Promise<unknown>;
 export interface ReportSources {
   archive: ReceiptArchiveReader;
   runExport: RunConnectorExport;
+  /** The reporting window these sources are scoped to (window.ts) — set by
+   *  `scopeReportSources`, absent on the raw, unscoped sources. */
+  window?: ReportWindow;
 }
 
 // ─── Connector export shapes ────────────────────────────────────────────────
