@@ -158,7 +158,8 @@ describe('buildExportDocument — round trip + safety', () => {
     expect(header).not.toMatch(/\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/);
     expect(header).toMatch(/exported \d{1,2} \w{3} \d{4}, \d{2}:\d{2}/);
     expect(header).toMatch(/checked \d{1,2} \w{3}, \d{2}:\d{2}/);
-    expect((header.match(/UTC[+-]\d/g) ?? []).length).toBe(1);
+    // Zone stated once — "UTC" on a UTC host (CI), "UTC+2" etc. elsewhere.
+    expect((header.match(/\bUTC(?:[+-]\d{1,2}(?::\d{2})?)?(?![\w+-])/g) ?? []).length).toBe(1);
     // Inside the verified boxes a signed timestamp is the one deterministic
     // full format (two-tag rule, RR6), never the raw unix seconds.
     expect(doc).toContain(formatTimestamp(1_800_000_000));
