@@ -9,6 +9,8 @@ import { useVisiblePolling } from '../hooks/useVisiblePolling';
 import { useSSEEvent } from '../contexts/EventSourceContext';
 import type { ToolDisplay } from '../lib/approval-view';
 import { resolveDomainFor } from '../lib/my-queue';
+import { ProfileRail } from '../components/ProfileRail';
+import { isTestSetupAction, profileIdentity } from '../lib/profile-identity';
 
 type QueueTab = 'awaiting-me' | 'awaiting-others' | 'all';
 type StatusFilter = 'pending' | 'all';
@@ -464,10 +466,15 @@ function AwaitingOthersCard({ proposal, currentUserId, onCancel }: AwaitingOther
     }
   };
 
+  const testSetup = profileIdentity(proposal.profileId).testSetup || isTestSetupAction(proposal.tool);
+
   return (
-    <div className="card">
+    <div className="card id-card">
+      <ProfileRail profileId={proposal.profileId} />
+      <div className="id-body">
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
-        <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>{profileDisplayName(proposal.profileId)}</span>
+        <code style={{ fontSize: '0.85rem' }}>{proposal.tool.split('__').pop() ?? proposal.tool}</code>
+        {testSetup && <span className="sim-mark">Test setup</span>}
         {isAboveCap && (
           <span style={{ fontSize: '0.65rem', padding: '0.15rem 0.4rem', borderRadius: '0.25rem', background: 'var(--accent-subtle)', color: 'var(--accent)', fontWeight: 600 }}>
             Above cap
@@ -476,10 +483,6 @@ function AwaitingOthersCard({ proposal, currentUserId, onCancel }: AwaitingOther
         <span style={{ marginLeft: 'auto', fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
           {formatAge(proposal.createdAt)}
         </span>
-      </div>
-
-      <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
-        <code>{proposal.tool.split('__').pop() ?? proposal.tool}</code>
       </div>
 
       {isAboveCap && (
@@ -506,6 +509,7 @@ function AwaitingOthersCard({ proposal, currentUserId, onCancel }: AwaitingOther
         >
           {cancelling ? 'Cancelling...' : 'Cancel'}
         </button>
+      </div>
       </div>
     </div>
   );

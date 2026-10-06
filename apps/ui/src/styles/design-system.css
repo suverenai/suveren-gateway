@@ -826,6 +826,55 @@ code {
 }
 
 /* ══════════════════════════════════════════════
+   IDENTITY RAIL — neutral profile icon + name, as a fixed-width left
+   column at full card height, separate from the title/tags line. Used on
+   Mandates, Tickets, and the action/approval cards, wherever profile
+   identity and card content appear together. No per-profile color: the
+   icon is told apart by shape alone (see lib/profile-identity.ts). The
+   picker keeps its own inline chip layout instead (profile IS the card).
+   ══════════════════════════════════════════════ */
+.id-card { display: flex; align-items: stretch; padding: 0; overflow: hidden; }
+.id-rail {
+  flex: 0 0 5.5rem; width: 5.5rem; box-sizing: border-box;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 0.4rem; padding: 1rem 0.4rem; text-align: center;
+}
+.id-rail-icon { width: 1.6rem; height: 1.6rem; color: var(--text-secondary); flex: none; }
+.id-rail-name {
+  /* Break between words only — a name split mid-word ("CUSTOMER/S") reads as two words. */
+  max-width: 100%; overflow-wrap: normal; word-break: keep-all; hyphens: manual; font-size: 0.65rem; font-weight: 700;
+  color: var(--text-muted); line-height: 1.25; text-transform: uppercase; letter-spacing: 0.02em;
+}
+.id-sep { flex: 0 0 1px; background: var(--border); }
+.id-body { flex: 1 1 auto; min-width: 0; padding: 1rem 1.25rem; }
+.id-body .auth-card-header, .id-body .receipt-head { margin-bottom: 0.25rem; }
+
+/* Phone-width: the rail shrinks (smaller icon, smaller name) rather than
+   stacking above the content, so identity stays visible beside the header
+   instead of pushing the title and tags down out of view. */
+@media (max-width: 460px) {
+  .id-rail { flex-basis: 4.25rem; width: 4.25rem; padding: 0.75rem 0.25rem; gap: 0.2rem; }
+  .id-rail-icon { width: 1.2rem; height: 1.2rem; }
+  .id-rail-name { font-size: 0.5rem; letter-spacing: 0; }
+  .id-body { padding: 0.85rem 0.9rem; }
+}
+
+/* Neutral chip for the picker: icon + text, no rail (the whole card IS one profile). */
+.profile-chip { display: inline-flex; align-items: center; gap: 0.45rem; }
+.profile-chip-icon { width: 1.15rem; height: 1.15rem; flex: none; color: var(--text-secondary); }
+
+/* Test-setup marker. The ONE place color still carries meaning (never "which
+   profile" — see header comment above): the existing simulation/warning
+   token, unchanged, matching .int-chip-sim's exact color-mix pattern. */
+.sim-mark {
+  display: inline-flex; align-items: center; gap: 0.3rem;
+  font-size: 0.65rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+  padding: 0.15rem 0.45rem; border-radius: 0.25rem;
+  background: color-mix(in srgb, var(--warning) 14%, transparent); color: var(--warning);
+  border: 1px solid color-mix(in srgb, var(--warning) 35%, transparent);
+}
+
+/* ══════════════════════════════════════════════
    STEP INDICATOR (wizard progress)
    Equal-width columns; the connector is a pseudo-element at circle-centre
    height running from the previous circle's edge to this one's, with a

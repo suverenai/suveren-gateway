@@ -17,9 +17,10 @@
 import { useState } from 'react';
 import { resolveProposalLinks, type ProposalLink } from '../lib/proposal-links';
 import { spClient, type Proposal } from '../lib/sp-client';
-import { profileDisplayName } from '../lib/profile-display';
 import { formatTimeLeft } from '../lib/time-left';
 import { ProposalArgs } from './ProposalArgs';
+import { ProfileRail } from './ProfileRail';
+import { isTestSetupAction, profileIdentity } from '../lib/profile-identity';
 import type { ToolDisplay } from '../lib/approval-view';
 
 
@@ -69,6 +70,8 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
   const toolShort = proposal.tool.split('__').pop() ?? proposal.tool;
   const boundsEntries = Object.entries(proposal.executionContext);
   const inspectLinks = resolveProposalLinks(proposalLinks, proposal.toolArgs);
+  // Test setup: the delegation profile, OR a setup__* tool.
+  const testSetup = profileIdentity(proposal.profileId).testSetup || isTestSetupAction(proposal.tool);
 
   const pendingApprovers = proposal.pendingApprovers ?? [];
   const approvedBy = proposal.approvedBy ?? {};
@@ -164,15 +167,15 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
   const isBusy = approving || rejecting;
 
   return (
-    <div className="card">
+    <div className="card id-card">
+      <ProfileRail profileId={proposal.profileId} />
+      <div className="id-body">
       {/* Header row */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
-        <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>
-          {profileDisplayName(proposal.profileId)}
-        </span>
         <span style={{ fontSize: '0.65rem', padding: '0.15rem 0.4rem', borderRadius: '0.25rem', background: 'var(--accent-subtle)', color: 'var(--accent)', fontWeight: 600 }}>
           Above cap
         </span>
+        {testSetup && <span className="sim-mark">Test setup</span>}
         <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           {(() => {
             const left = formatTimeLeft(proposal.expiresAt, Date.now());
@@ -298,6 +301,7 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
 
       <div style={{ marginTop: '0.5rem', fontSize: '0.7rem', color: 'var(--text-tertiary)' }}>
         Proposal: {proposal.id}
+      </div>
       </div>
     </div>
   );

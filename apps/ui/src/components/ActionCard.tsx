@@ -1,8 +1,9 @@
 import { resolveProposalLinks, type ProposalLink } from '../lib/proposal-links';
 import type { ThreadItem } from '../lib/thread-aggregator';
-import { ProfileBadge } from './ProfileBadge';
 import { formatTimeLeft } from '../lib/time-left';
 import { ProposalArgs } from './ProposalArgs';
+import { ProfileRail } from './ProfileRail';
+import { isTestSetupAction, profileIdentity } from '../lib/profile-identity';
 import type { ToolDisplay } from '../lib/approval-view';
 
 type CardStatus = 'pending' | 'committed' | 'executed' | 'rejected' | 'expired';
@@ -97,12 +98,16 @@ export function ActionCard({ item, onApprove, onReject, resolving, proposalLinks
   // there never reaches the person deciding.
   const inspectLinks = isProposal ? resolveProposalLinks(proposalLinks, item.proposal.toolArgs) : [];
   const ctxEntries = Object.entries(executionContext ?? {});
+  // Test setup: the delegation profile, OR a setup__* tool.
+  const testSetup = profileIdentity(item.profileId).testSetup || isTestSetupAction(toolFull);
 
   return (
-    <div className="card">
+    <div className="card id-card">
+      <ProfileRail profileId={item.profileId} />
+      <div className="id-body">
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
-        <ProfileBadge profileId={item.profileId} />
         <code style={{ fontSize: '0.85rem' }}>{toolShort}</code>
+        {testSetup && <span className="sim-mark">Test setup</span>}
         {item.commitmentMode === 'automatic' && (
           <span style={{ fontSize: '0.7rem', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
             autonomous
@@ -221,6 +226,7 @@ export function ActionCard({ item, onApprove, onReject, resolving, proposalLinks
 
       <div style={{ marginTop: '0.5rem', fontSize: '0.7rem', color: 'var(--text-tertiary)' }}>
         {isProposal ? 'Proposal' : 'Ticket'}: {item.id}
+      </div>
       </div>
     </div>
   );
