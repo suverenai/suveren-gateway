@@ -28,6 +28,12 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { ReportElement, ReportProof, ReportCoverage } from '../lib/sp-client';
 
+/** ReportsPage.tsx as text, line endings as LF — a Windows checkout
+ *  (core.autocrlf) gives CRLF, and the source assertions below match '\n'. */
+function readPageSource(): string {
+  return readFileSync(resolve(__dirname, 'ReportsPage.tsx'), 'utf-8').replace(/\r\n?/g, '\n');
+}
+
 // Pure logic only — this file has no DOM test runner (see other *.test.ts in
 // this directory); the JSX is presentation, these are the decisions that are
 // easy to get silently wrong: what title shows, what counts as "known"
@@ -414,7 +420,7 @@ describe('formatNoticeText — a report stored in the older format says what is 
   });
 
   it('is shown in the gateway UI, outside the frame', () => {
-    const src = readFileSync(resolve(__dirname, 'ReportsPage.tsx'), 'utf-8');
+    const src = readPageSource();
     const notice = src.indexOf('{formatNoticeText(report) && (');
     expect(notice).toBeGreaterThan(-1);
     expect(notice).toBeLessThan(src.indexOf('<iframe'));
@@ -462,7 +468,7 @@ describe('REPORT_IFRAME_SANDBOX — no top navigation, popups only for the publi
   });
 
   it('the page actually uses this constant (not a stale literal) and keeps the CSP meta', () => {
-    const src = readFileSync(resolve(__dirname, 'ReportsPage.tsx'), 'utf-8');
+    const src = readPageSource();
     expect(src).toContain('sandbox={REPORT_IFRAME_SANDBOX}');
     expect(src).not.toMatch(/sandbox="/);
     expect(buildSrcDoc('<p>x</p>')).toContain("default-src 'none'");
@@ -525,7 +531,7 @@ describe('caseDetailSteps — the case detail\'s step buttons replace the in-fra
 describe('AI analysis legend outside the frame', () => {
   it('uses the same words the gateway draws inside the frame and the export', () => {
     expect(AI_ANALYSIS_LABEL_CLIENT).toBe('AI analysis — not verified');
-    const src = readFileSync(resolve(__dirname, 'ReportsPage.tsx'), 'utf-8');
+    const src = readPageSource();
     expect(src).toMatch(/className="reports-legend"/);
   });
 });
@@ -538,7 +544,7 @@ describe('translation switch (two-tag rule, RR6)', () => {
   });
 
   it('the switch is gateway UI outside the frame, off by default, and puts no script in the frame', () => {
-    const src = readFileSync(resolve(__dirname, 'ReportsPage.tsx'), 'utf-8');
+    const src = readPageSource();
     expect(GLOSS_SWITCH_LABEL).toBe('Übersetzung anzeigen / show translation');
     expect(src).toContain('useState(false);\n  const [searchParams');
     expect(src).toContain('srcDoc={buildSrcDoc(pickRenderedHtml(report, glossOn))}');
