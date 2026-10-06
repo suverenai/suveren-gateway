@@ -64,6 +64,14 @@ export function AgentReviewPage() {
   // identity is actually verified (otherwise actions stay pseudonymous), so
   // the safe-and-most-useful default is to disclose. Opt-out stays one click.
   const [discloseIdentity, setDiscloseIdentity] = useState(true);
+  // The owner's standing choice (Settings): when on, the AS attaches the name
+  // whatever this checkbox says, so the checkbox shows it locked on.
+  const [alwaysDisclose, setAlwaysDisclose] = useState(false);
+  useEffect(() => {
+    spClient.getIdentityDisclosure()
+      .then(d => setAlwaysDisclose(d.always))
+      .catch(() => { /* the AS still applies the standing choice; the box just isn't locked */ });
+  }, []);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   // Profile-config + resolved approver display names — surfaced as a Review row
@@ -618,7 +626,8 @@ export function AgentReviewPage() {
           <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem', cursor: 'pointer' }}>
             <input
               type="checkbox"
-              checked={discloseIdentity}
+              checked={alwaysDisclose || discloseIdentity}
+              disabled={alwaysDisclose}
               onChange={e => setDiscloseIdentity(e.target.checked)}
               style={{ marginTop: '0.15rem' }}
             />
@@ -627,6 +636,7 @@ export function AgentReviewPage() {
               <div style={{ fontSize: '0.7rem', color: 'var(--text-tertiary)', marginTop: '0.15rem' }}>
                 Adds "verified by Suveren" with your name to outgoing content. Takes effect
                 only if your identity is verified; otherwise actions stay pseudonymous.
+                {alwaysDisclose && ' Always on — you chose this in Settings.'}
               </div>
             </span>
           </label>
