@@ -113,9 +113,10 @@ describe('formatBoundLabel — reads displayName/unit from the profile registry 
   });
 });
 
-describe('formatOwnerLabel — a did:key is never shown bare', () => {
-  it('labels a did:key with its own truncated tail', () => {
-    expect(formatOwnerLabel('did:key:zOwner9')).toBe('Owner (key …Owner9)');
+describe('formatOwnerLabel — a did:key is never shown, not even truncated (RR3)', () => {
+  it('an undisclosed owner is a neutral label with no part of the key', () => {
+    expect(formatOwnerLabel('did:key:zOwner9')).toBe('Owner (name not disclosed)');
+    expect(formatOwnerLabel('did:key:zOwner9')).not.toContain('Owner9');
   });
 
   it('never returns the raw did string unlabeled', () => {

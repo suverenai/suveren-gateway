@@ -113,11 +113,16 @@ export function formatBoundLabel(profileId: string | undefined, key: string, val
 
 // ─── Mandate owners ─────────────────────────────────────────────────────────
 
-/** A did:key is never shown bare — "did:key:zOwner9" -> "Owner (key …Owner9)". */
+/** The owner label when no name was disclosed. Neutral on purpose (RR3,
+ *  2026-10-06): no part of the key either — in team mode an owner's did:key
+ *  carries the account id, and a report shows a name only when that person
+ *  disclosed it. */
+export const UNDISCLOSED_OWNER_LABEL = 'Owner (name not disclosed)';
+
+/** A did:key is never shown, not even truncated — see UNDISCLOSED_OWNER_LABEL. */
 export function formatOwnerLabel(did: string): string {
   if (!did) return 'Unknown owner';
-  const tail = did.length > 6 ? did.slice(-6) : did;
-  return `Owner (key …${tail})`;
+  return UNDISCLOSED_OWNER_LABEL;
 }
 
 // ─── Profile / action labels ────────────────────────────────────────────────

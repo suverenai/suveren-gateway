@@ -149,7 +149,8 @@ describe('renderReportHtml', () => {
     expect(out).toContain('approved');
     // No name is disclosed for this approver anywhere in the archive — a
     // neutral label, never the raw account id (review SR6).
-    expect(out).toContain('by a person (account …246947)');
+    expect(out).toContain('by a person (name not disclosed)');
+    expect(out).not.toContain('246947');
     expect(out).not.toContain('c7246947-0f1e');
     expect(out).toContain('10 min');
 
@@ -212,7 +213,7 @@ describe('renderReportHtml', () => {
     expect(out).not.toContain('value_max ≤');
   });
 
-  it('a mandate\'s owners are never a bare did:key — unknown identity falls back to a labeled, truncated key', async () => {
+  it('a mandate\'s owners are never a did:key — unknown identity falls back to a neutral label (RR3)', async () => {
     const { archive, addTicket } = buildScenario();
     addTicket({
       id: 't1', action: 'erp__create_quote', authorizationId: 'authz-owner',
@@ -222,7 +223,8 @@ describe('renderReportHtml', () => {
     const result = await verifyReport(html, { archive, runExport: makeRunExport() });
     const out = renderReportHtml(result.html, result.elements);
     expect(out).not.toContain('did:key:zOwner9');
-    expect(out).toContain('Owner (key …Owner9)');
+    expect(out).toContain('Owner (name not disclosed)');
+    expect(out).not.toContain('Owner9');
   });
 
   it('a record\'s amount and dates render as currency/human time, not raw numbers/ISO strings', async () => {
