@@ -14,8 +14,8 @@ import { sanitizeReportHtml } from './sanitize';
 import { parseElements, type ParsedElement } from './parse-elements';
 import { resolveTicketElement, resolveApprovalElement, resolveMandateElement } from './ticket-resolvers';
 import { resolveRecord } from './record-resolvers';
-import { resolveCaseElement, parseCaseAttrs, type CaseResolution } from './case-resolvers';
-import { computeMetric, type CaseMetricInput } from './metric-resolvers';
+import { resolveCaseElement, parseCaseAttrs, CASE_TIME_UNKNOWN_REASON, type CaseResolution } from './case-resolvers';
+import { computeMetric, START_TIME_METRICS, type CaseMetricInput } from './metric-resolvers';
 import { parseTimestampSeconds } from './time';
 import { isEmailExport } from './types';
 import { formatActionLabel, formatDateTime, formatDuration, formatMetricValue, profileShortLabel, METRIC_LABELS } from './format';
@@ -159,6 +159,13 @@ export async function verifyReport(html: string, sources: ReportSources): Promis
         continue;
       }
 
+      if (START_TIME_METRICS.has(kind) && caseInputs.some(c => c.totalDurationSeconds === null)) {
+        // Durations and start-windowed counts would rest on the email's own
+        // (possibly backdated) date — refuse, never show such a number.
+        elements.push({ id: p.id, kind: p.kind, attrs: p.attrs, status: 'unverifiable', reason: CASE_TIME_UNKNOWN_REASON });
+        continue;
+      }
+
       const refusalTimes = kind === 'refusals' ? await collectRefusalTimes(getExport) : [];
       const value = computeMetric(kind, caseInputs, refusalTimes);
       const data = { kind, cases: casesAttr, value, caseCount: verifiedCount };
@@ -232,7 +239,8 @@ function summarize(el: VerifiedElement): string {
       return `${String(d.kind ?? 'record')} record checked`;
     case 'sv-case': {
       const steps = (d.steps as unknown[] | undefined)?.length ?? 0;
-      return `Case ${String(d.caseId)}: ${steps} ${steps === 1 ? "step" : "steps"}, ${formatDuration(d.totalDurationSeconds)}`;
+      const time = typeof d.totalDurationSeconds === 'number' ? formatDuration(d.totalDurationSeconds) : 'time not verifiable';
+      return `Case ${String(d.caseId)}: ${steps} ${steps === 1 ? "step" : "steps"}, ${time}`;
     }
     case 'sv-metric': {
       const kind = String(d.kind ?? '');

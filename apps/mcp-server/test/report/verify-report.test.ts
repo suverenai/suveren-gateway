@@ -183,6 +183,89 @@ describe('verifyReport — sv-record', () => {
 
 const START_TIME = 1_800_000_000; // fixed, arbitrary — 2027-01-15T06:40:00Z
 const START_ISO = new Date(START_TIME * 1000).toISOString();
+/** Test data loaded an hour BEFORE the start emails' dates — the email date is the case start. */
+const LOADED_BEFORE_START = { name: 'pkg', package_sha256: 'x', cases_loaded: 1, loaded_at: new Date((START_TIME - 3600) * 1000).toISOString() };
+
+describe('verifyReport — case start time vs. backdated test emails (review SR4, 2026-10-06)', () => {
+  // The real export: emails dated 08:33–09:16, data loaded at 09:24:58. A
+  // case "started" at its email's date would claim durations nobody can back.
+  const EMAIL_TIME = START_TIME;               // what the package wrote into received_at
+  const LOADED_AT = START_TIME + 3000;          // 50 min later: when the data actually arrived
+  const GOAL_TIME = LOADED_AT + 600;            // the reply, 10 min after the load
+  const backdated = (loadedAt: string | null) => buildEmailExport({
+    simulation_load: loadedAt === null ? null : { name: 'pkg', package_sha256: 'x', cases_loaded: 1, loaded_at: loadedAt },
+    inbox: [{ id: 'bd1', from_name: 'Cust', from_email: 'cust@example.com', to_json: '["us@example.com"]', subject: 'Quote', body: 'x', received_at: new Date(EMAIL_TIME * 1000).toISOString(), case_id: 'BD1' }],
+    sent: [{ id: 'bds1', from_name: 'Us', from_email: 'us@example.com', to_json: '["cust@example.com"]', subject: 'Re: Quote', body: 'x', received_at: new Date(GOAL_TIME * 1000).toISOString(), in_reply_to: 'bd1', receipt_id: 'bd-goal' }],
+  });
+  const html =
+    '<sv-case start="email:bd1" goal="ticket:bd-goal" steps="bd-step"></sv-case>' +
+    '<sv-metric kind="median-time" cases="all"></sv-metric>' +
+    '<sv-metric kind="average-time" cases="all"></sv-metric>' +
+    '<sv-metric kind="completed" cases="all"></sv-metric>' +
+    '<sv-metric kind="refusals" cases="all"></sv-metric>';
+
+  function scenario() {
+    const s = buildScenario();
+    s.addTicket({ id: 'bd-step', action: 'erp__create_quote', authorizationId: 'authz-1', timestamp: LOADED_AT + 120 });
+    s.addTicket({ id: 'bd-goal', action: 'email__send_message', authorizationId: 'authz-1', timestamp: GOAL_TIME });
+    return s;
+  }
+
+  it('the case starts when the test data was loaded, not at the backdated email date; durations follow', async () => {
+    const { archive } = scenario();
+    // A refusal BEFORE the load (inside the old, backdated window) must not count.
+    const erp = buildErpExport({ refusals: [
+      { id: 'r-early', at: new Date((EMAIL_TIME + 60) * 1000).toISOString(), tool: 'create_quote', message: 'x' },
+      { id: 'r-in', at: new Date((LOADED_AT + 60) * 1000).toISOString(), tool: 'create_quote', message: 'x' },
+    ] });
+    const result = await verifyReport(html, { archive, runExport: makeRunExport({ email: backdated(new Date(LOADED_AT * 1000).toISOString()), erp, crm: buildCrmExport() }) });
+    const c = el(result.elements, 'sv-case-0');
+    expect(c.status).toBe('verified');
+    expect(c.data!.start).toMatchObject({ time: LOADED_AT, emailTime: EMAIL_TIME, basis: 'loaded' });
+    expect(c.data!.totalDurationSeconds).toBe(600); // not 3600 (goal - backdated email)
+    expect(el(result.elements, 'sv-metric-0').data!.value).toBe(600);
+    expect(el(result.elements, 'sv-metric-1').data!.value).toBe(600);
+    expect(el(result.elements, 'sv-metric-3').data!.value).toBe(1);
+    const caseSummary = result.proof.verifiedValues.find(v => v.elementId === 'sv-case-0')!.summary;
+    expect(caseSummary).toContain('10 min');
+  });
+
+  it('an email that genuinely arrived after the load keeps its own time as the start', async () => {
+    const { archive } = scenario();
+    const loadedEarlier = new Date((EMAIL_TIME - 60) * 1000).toISOString();
+    const result = await verifyReport(html, { archive, runExport: makeRunExport({ email: backdated(loadedEarlier), erp: buildErpExport(), crm: buildCrmExport() }) });
+    const c = el(result.elements, 'sv-case-0');
+    expect(c.data!.start).toMatchObject({ time: EMAIL_TIME, basis: 'email' });
+    expect(c.data!.totalDurationSeconds).toBe(GOAL_TIME - EMAIL_TIME);
+  });
+
+  it('REFUSAL: with no known load time, every start-time metric is not verifiable — never a number from the email date', async () => {
+    const { archive } = scenario();
+    const result = await verifyReport(html, { archive, runExport: makeRunExport({ email: backdated(null), erp: buildErpExport(), crm: buildCrmExport() }) });
+    const c = el(result.elements, 'sv-case-0');
+    expect(c.status).toBe('verified'); // the case's tickets still check out
+    expect(c.data!.totalDurationSeconds).toBeNull();
+    expect(c.data!.timeUnverifiableReason).toMatch(/load.*unknown/i);
+    for (const id of ['sv-metric-0', 'sv-metric-1', 'sv-metric-3']) {
+      const m = el(result.elements, id);
+      expect(m.status).toBe('unverifiable');
+      expect(m.data).toBeUndefined();
+      expect(m.reason).toMatch(/not verifiable/i);
+    }
+    // Counting cases does not depend on when they started.
+    expect(el(result.elements, 'sv-metric-2').status).toBe('verified');
+    expect(result.proof.verifiedValues.find(v => v.elementId === 'sv-case-0')!.summary).toContain('time not verifiable');
+  });
+
+  it('REFUSAL: a step ticket from before the test data was loaded is outside the case window', async () => {
+    const { archive, addTicket } = buildScenario();
+    addTicket({ id: 'bd-step', action: 'erp__create_quote', authorizationId: 'authz-1', timestamp: EMAIL_TIME + 120 }); // after the email date, before the load
+    addTicket({ id: 'bd-goal', action: 'email__send_message', authorizationId: 'authz-1', timestamp: GOAL_TIME });
+    const result = await verifyReport(html, { archive, runExport: makeRunExport({ email: backdated(new Date(LOADED_AT * 1000).toISOString()) }) });
+    expect(el(result.elements, 'sv-case-0').status).toBe('unverifiable');
+    expect(el(result.elements, 'sv-case-0').reason).toMatch(/outside the case window/);
+  });
+});
 
 describe('verifyReport — sv-case', () => {
   it('verifies start, goal and steps, and builds the timeline', async () => {
@@ -193,6 +276,7 @@ describe('verifyReport — sv-case', () => {
       proposal: { id: 'p1', status: 'executed', createdAt: START_TIME + 500, committedBy: { finance: { userId: 'alice', at: START_TIME + 580 } } },
     });
     const email = buildEmailExport({
+      simulation_load: LOADED_BEFORE_START,
       inbox: [{ id: 'm1', from_name: 'Cust', from_email: 'cust@example.com', to_json: '["us@example.com"]', subject: 'Quote please', body: 'hi', received_at: START_ISO, case_id: 'C1' }],
       sent: [{ id: 's1', from_name: 'Us', from_email: 'us@example.com', to_json: '["cust@example.com"]', subject: 'Re: Quote please', body: 'here', received_at: new Date((START_TIME + 600) * 1000).toISOString(), in_reply_to: 'm1', receipt_id: 'goal-1' }],
     });
@@ -267,6 +351,7 @@ describe('verifyReport — sv-metric', () => {
       proposal: { id: 'p-m', status: 'executed', createdAt: START_TIME + 350, committedBy: { finance: { userId: 'bob', at: START_TIME + 390 } } },
     });
     const email = buildEmailExport({
+      simulation_load: LOADED_BEFORE_START,
       inbox: [{ id: 'mm1', from_name: 'Cust', from_email: 'cust@example.com', to_json: '["us@example.com"]', subject: 'x', body: 'x', received_at: START_ISO, case_id: 'CM1' }],
       sent: [{ id: 'ss1', from_name: 'Us', from_email: 'us@example.com', to_json: '["cust@example.com"]', subject: 'x', body: 'x', received_at: new Date((START_TIME + 400) * 1000).toISOString(), in_reply_to: 'mm1', receipt_id: 'm-goal' }],
     });
@@ -486,5 +571,60 @@ describe('verifyReport — control check (a broken rule must fail its own test)'
     const result = await verifyReport('<sv-ticket ref="tamper-1-recorded"></sv-ticket>', { archive, runExport: makeRunExport({}) });
     expect(el(result.elements, 'sv-ticket-0').status).toBe('unverifiable');
     expect(el(result.elements, 'sv-ticket-0').reason).toMatch(/signature does not verify/i);
+  });
+});
+
+describe('verifyReport — who approved / who owns, as a name (review SR6, 2026-10-06)', () => {
+  const USER = 'c7246947-0f1e-4c2b-9a77-3d1f00a1b2c3';
+  const DID = 'did:key:c7246947';
+  const named = [{ did: DID, assurance: 'high' as const, method: 'as_vouched' as const, trust_root: 'as' as const, verifier: 'did:web:as.example', disclose: { name: 'Andreas Schadauer' } }];
+
+  it('REFUSAL: an approver with no name anywhere is "a person (account …246947)", never the bare account id', async () => {
+    const { archive, addTicket } = buildScenario();
+    addTicket({ id: 'a1', action: 'report__write_report', authorizationId: 'authz-1', proposal: { status: 'executed', createdAt: 1, committedBy: { [USER]: { userId: USER, at: 2 } } } });
+    const result = await verifyReport('<sv-approval ticket="a1"></sv-approval>', { archive, runExport: makeRunExport({}) });
+    const e = el(result.elements, 'sv-approval-0');
+    expect(e.data!.whoLabel).toBe('a person (account …246947)');
+    expect(e.data!.who).toEqual([USER]); // raw id kept for Technical details only
+    expect(result.proof.verifiedValues[0].summary).not.toContain(USER);
+  });
+
+  it('team mode: the approver\'s account id is the signed domain of a mandate that discloses the owner\'s name', async () => {
+    const { archive, addTicket } = buildScenario();
+    addTicket({
+      id: 'a2', action: 'erp__send_quote', authorizationId: 'authz-team',
+      authorization: { authorizationId: 'authz-team', profileId: 'sales@0.3', owners: [DID], subjects: named, resolvedDomains: [{ domain: USER, did: DID }] },
+      proposal: { status: 'executed', createdAt: 1, committedBy: { [USER]: { userId: USER, at: 2 } } },
+    });
+    const result = await verifyReport('<sv-approval ticket="a2"></sv-approval>', { archive, runExport: makeRunExport({}) });
+    expect(el(result.elements, 'sv-approval-0').data!.whoLabel).toBe('Andreas Schadauer');
+  });
+
+  it('personal mode: committedBy keyed by the domain "owner" resolves through the same signed domain map', async () => {
+    const { archive, addTicket } = buildScenario();
+    addTicket({
+      id: 'a3', action: 'erp__send_quote', authorizationId: 'authz-personal',
+      authorization: { authorizationId: 'authz-personal', profileId: 'sales@0.3', owners: [DID], subjects: named, resolvedDomains: [{ domain: 'owner', did: DID }] },
+      proposal: { status: 'executed', createdAt: 1, committedBy: { owner: { userId: USER, at: 2 } } },
+    });
+    const result = await verifyReport('<sv-approval ticket="a3"></sv-approval>', { archive, runExport: makeRunExport({}) });
+    expect(el(result.elements, 'sv-approval-0').data!.whoLabel).toBe('Andreas Schadauer');
+  });
+
+  it('the same owner reads the same on every mandate — a name disclosed on one verified mandate is used on another that did not disclose it', async () => {
+    const { archive, addTicket } = buildScenario();
+    addTicket({ id: 'n1', action: 'erp__create_quote', authorizationId: 'authz-named', authorization: { authorizationId: 'authz-named', profileId: 'sales@0.3', owners: [DID], subjects: named } });
+    addTicket({ id: 'n2', action: 'report__write_report', authorizationId: 'authz-plain', authorization: { authorizationId: 'authz-plain', profileId: 'reporting@0.1', owners: [DID] } });
+    const result = await verifyReport('<sv-mandate ticket="n1"></sv-mandate><sv-mandate ticket="n2"></sv-mandate>', { archive, runExport: makeRunExport({}) });
+    expect(el(result.elements, 'sv-mandate-0').data!.owners).toEqual(['Andreas Schadauer']);
+    expect(el(result.elements, 'sv-mandate-1').data!.owners).toEqual(['Andreas Schadauer']); // was "Owner (key …246947)"
+  });
+
+  it('REFUSAL: a name in a LOW-assurance subject is never shown', async () => {
+    const { archive, addTicket } = buildScenario();
+    const low = [{ did: DID, assurance: 'low' as const, method: 'self_declared' as const, trust_root: 'self' as const, disclose: { name: 'Mallory' } }];
+    addTicket({ id: 'l1', action: 'erp__create_quote', authorizationId: 'authz-low', authorization: { authorizationId: 'authz-low', profileId: 'sales@0.3', owners: [DID], subjects: low } });
+    const result = await verifyReport('<sv-mandate ticket="l1"></sv-mandate>', { archive, runExport: makeRunExport({}) });
+    expect(el(result.elements, 'sv-mandate-0').data!.owners).toEqual(['Owner (key …246947)']);
   });
 });

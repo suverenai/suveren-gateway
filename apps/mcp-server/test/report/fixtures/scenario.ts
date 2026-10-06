@@ -34,6 +34,10 @@ export interface ScenarioAuthorization {
   intent?: string;
   commitmentMode?: 'automatic' | 'review' | 'review_above_cap';
   owners?: string[]; // resolved_owners DIDs
+  /** Signed identity overlay (v0.6 subjects) — a name only at assurance "high". */
+  subjects?: AttestationPayload['subjects'];
+  /** Signed domain -> owner DID map (in team mode the domain is the approver's account id). */
+  resolvedDomains?: Array<{ domain: string; did: string }>;
 }
 
 export function buildScenario() {
@@ -80,6 +84,8 @@ export function buildScenario() {
         gate_content_hashes: {},
         resolved_owners: authorization.owners ?? ['did:key:zOwner1'],
         commitment_mode: authorization.commitmentMode ?? 'automatic',
+        ...(authorization.subjects ? { subjects: authorization.subjects } : {}),
+        ...(authorization.resolvedDomains ? { resolved_domains: authorization.resolvedDomains } : {}),
         issued_at: Math.floor(Date.now() / 1000) - 3600,
         expires_at: Math.floor(Date.now() / 1000) + 3600 * 24,
       };

@@ -17,6 +17,7 @@ import type { EmailExport, EmailMessage } from './types';
 import type { ReceiptArchiveReader } from './types';
 import { checkTicket, resolveApprovalElement } from './ticket-resolvers';
 import { parseTimestampSeconds } from './time';
+import { formatActionLabel } from './format';
 
 /** `"email:abc123"` -> `{ type: "email", id: "abc123" }`. No colon -> the
  *  whole value is the id and `type` is `undefined` (caller supplies the
@@ -82,14 +83,32 @@ export interface CaseApproval {
   waitLabel?: string;
 }
 
+/** Plain reason shown wherever a case time cannot be trusted. */
+export const CASE_TIME_UNKNOWN_REASON =
+  'Not verifiable: the time the test data was loaded is unknown, and the email\'s own date may be set by the test package.';
+
 export interface CaseData {
   caseId: string;
-  start: { id: string; time: number; sender: string };
-  goal: { ticketId: string; time: number; action: unknown };
-  steps: Array<{ ticketId: string; time: number; action: unknown }>;
+  /**
+   * `time` is the EFFECTIVE case start: max(email received_at, test-data
+   * loaded_at). A test package backdates its emails (e.g. 08:33 for data
+   * loaded at 09:24), so the email's own date alone would invent case
+   * durations (review SR4, 2026-10-06). `emailTime` keeps the email's own
+   * date for display ("Email dated …"). `basis` says which one `time` is:
+   * 'email' (the email arrived after the load), 'loaded' (backdated email,
+   * clamped to the load time) or 'load-unknown' (no load time — `time` is
+   * the email's own date and every duration is withheld).
+   */
+  start: { id: string; time: number; sender: string; emailTime: number; basis: 'email' | 'loaded' | 'load-unknown' };
+  goal: { ticketId: string; time: number; action: unknown; actionLabel?: string };
+  steps: Array<{ ticketId: string; time: number; action: unknown; actionLabel?: string }>;
   approvals: CaseApproval[];
   timeline: TimelineEntry[];
-  totalDurationSeconds: number;
+  /** null when the start time cannot be trusted (`start.basis === 'load-unknown'`)
+   *  — never a number computed from a possibly backdated email date. */
+  totalDurationSeconds: number | null;
+  /** Set whenever `totalDurationSeconds` is null — plain reason for the reader. */
+  timeUnverifiableReason?: string;
 }
 
 export interface CaseResolution {
@@ -113,10 +132,16 @@ export async function resolveCaseElement(
     return { status: 'unverifiable', reason: `start "${attrs.start ?? ''}" is not a loaded case email with a case_id.` };
   }
   const startCaseId = startMessage.case_id;
-  const startTime = parseTimestampSeconds(startMessage.received_at);
-  if (startTime === undefined) {
+  const emailTime = parseTimestampSeconds(startMessage.received_at);
+  if (emailTime === undefined) {
     return { status: 'unverifiable', reason: `start message "${start.id}" has an unparseable received_at.`, startCaseId };
   }
+  // Effective start = max(email date, test-data load time). The case window
+  // below (goal/step checks) uses the same value: a ticket from before the
+  // test data existed cannot belong to this case.
+  const loadedAt = parseTimestampSeconds(emailExport.simulation_load?.loaded_at);
+  const startTime = loadedAt !== undefined ? Math.max(emailTime, loadedAt) : emailTime;
+  const basis: CaseData['start']['basis'] = loadedAt === undefined ? 'load-unknown' : emailTime >= loadedAt ? 'email' : 'loaded';
 
   const goal = parseRef(attrs.goal);
   const goalCheck = await checkTicket(archive, goal.id);
@@ -134,7 +159,7 @@ export async function resolveCaseElement(
 
   // Step tickets must each verify and lie inside [start, goal].
   const stepIds = parseStepRefs(attrs.steps);
-  const steps: Array<{ ticketId: string; time: number; action: unknown }> = [];
+  const steps: CaseData['steps'] = [];
   for (const stepId of stepIds) {
     const stepCheck = await checkTicket(archive, stepId);
     if (!stepCheck.ok) {
@@ -145,7 +170,7 @@ export async function resolveCaseElement(
     if (stepTime === undefined || stepTime < startTime || stepTime > goalTime) {
       return { status: 'unverifiable', reason: `step ticket "${stepId}" is outside the case window [${startTime}, ${goalTime}].`, startCaseId };
     }
-    steps.push({ ticketId: stepId, time: stepTime, action: stepReceipt.action });
+    steps.push({ ticketId: stepId, time: stepTime, action: stepReceipt.action, actionLabel: formatActionLabel(stepReceipt.action) });
   }
 
   // Goal-link check — only applies when the goal ticket is an email send.
@@ -182,12 +207,13 @@ export async function resolveCaseElement(
     startCaseId,
     data: {
       caseId: startCaseId,
-      start: { id: start.id, time: startTime, sender: startMessage.from_email },
-      goal: { ticketId: goal.id, time: goalTime, action: goalReceipt.action },
+      start: { id: start.id, time: startTime, sender: startMessage.from_email, emailTime, basis },
+      goal: { ticketId: goal.id, time: goalTime, action: goalReceipt.action, actionLabel: formatActionLabel(goalReceipt.action) },
       steps,
       approvals,
       timeline,
-      totalDurationSeconds: goalTime - startTime,
+      totalDurationSeconds: basis === 'load-unknown' ? null : goalTime - startTime,
+      ...(basis === 'load-unknown' ? { timeUnverifiableReason: CASE_TIME_UNKNOWN_REASON } : {}),
     },
   };
 }

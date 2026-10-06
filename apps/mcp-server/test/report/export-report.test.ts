@@ -7,7 +7,7 @@
 import { describe, it, expect } from 'vitest';
 import { verifyReceiptSignature, type ReceiptPayload } from '@hap/core';
 import { verifyReport } from '../../src/lib/report/verify-report';
-import { renderReportHtml } from '../../src/lib/report/render-report';
+import { renderReportHtml, AI_ANALYSIS_LABEL } from '../../src/lib/report/render-report';
 import { buildExportBundle, buildExportDocument, suggestedFilename } from '../../src/lib/report/export-report';
 import { extractProofBundle } from '../../bin/report-verify-cli';
 import { buildScenario, AS_URL } from './fixtures/scenario';
@@ -71,11 +71,27 @@ describe('buildExportDocument — round trip + safety', () => {
     const html = '<h1>Three-week test</h1><sv-ticket ref="t1"></sv-ticket><sv-mandate ticket="t1"></sv-mandate>';
     const stored = await buildStored(html, archive);
     const bundle = buildExportBundle({ stored, archive, gatewayVersion: '0.0.0-test', authorityServer: { url: AS_URL, publicKeyHex: kp.publicKeyHex } });
-    // interactive=false — the real export route's own call (http.ts).
-    const renderedHtml = renderReportHtml(stored.result.html, stored.result.elements, false);
+    // The same call the real export route makes (http.ts).
+    const renderedHtml = renderReportHtml(stored.result.html, stored.result.elements);
     const doc = buildExportDocument({ bundle, renderedHtml });
     return { doc, bundle, kp };
   }
+
+  it('carries the "AI analysis — not verified" legend in the gateway header AND above the AI\'s content (review SR5)', async () => {
+    const { doc } = await buildRealExport();
+    const header = doc.slice(doc.indexOf('<div class="sv-export-header">'), doc.indexOf('<div class="sv-export-layout">'));
+    expect(header).toContain('class="sv-export-legend"');
+    expect(header).toContain(AI_ANALYSIS_LABEL);
+    const main = doc.slice(doc.indexOf('<div class="sv-export-main">'));
+    expect(main.indexOf('class="sv-ai-legend"')).toBeGreaterThan(-1);
+    expect(main.indexOf('class="sv-ai-legend"')).toBeLessThan(main.indexOf('Three-week test'));
+  });
+
+  it('the public check link is a plain new-tab link in the file (no sandbox, no in-app route)', async () => {
+    const { doc } = await buildRealExport();
+    expect(doc).toContain(`<a href="${AS_URL}/r/t1" target="_blank" rel="noopener noreferrer">Check on suveren.ai ↗</a>`);
+    expect(doc).not.toMatch(/target="_top"/);
+  });
 
   it('embeds a proof bundle that round-trips and verifies independently with hap-core', async () => {
     const { doc, bundle } = await buildRealExport();
@@ -151,7 +167,7 @@ describe('buildExportDocument — round trip + safety', () => {
     const now = Math.floor(Date.now() / 1000);
     const stored: StoredReport = { html: result.html, savedAt: now, checkedAt: now, result };
     const bundle = buildExportBundle({ stored, archive, gatewayVersion: 'test', authorityServer: { url: AS_URL, publicKeyHex: kp.publicKeyHex } });
-    const renderedHtml = renderReportHtml(stored.result.html, stored.result.elements, false);
+    const renderedHtml = renderReportHtml(stored.result.html, stored.result.elements);
     const doc = buildExportDocument({ bundle, renderedHtml });
 
     expect(bundle.coverage.emailExportError).toMatch(/ENOENT/); // still in the data
@@ -182,7 +198,7 @@ describe('buildExportDocument — round trip + safety', () => {
     const html = '<sv-mandate ticket="t1"></sv-mandate>';
     const stored = await buildStored(html, archive);
     const bundle = buildExportBundle({ stored, archive, gatewayVersion: 'test', authorityServer: { url: AS_URL, publicKeyHex: kp.publicKeyHex } });
-    const renderedHtml = renderReportHtml(stored.result.html, stored.result.elements, false);
+    const renderedHtml = renderReportHtml(stored.result.html, stored.result.elements);
     const doc = buildExportDocument({ bundle, renderedHtml });
 
     // Exactly one genuine closing tag may exist in the whole document: the

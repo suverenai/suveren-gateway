@@ -42,8 +42,8 @@ What you cannot write yourself: facts that need proof. Place these elements inst
 
 Rules:
 1. Define every case you worked on with sv-case — also the ones that did not reach their goal (omit goal, or say why in your text). The gateway shows management how many of the loaded cases your report covers and names the missing ones — and lists every ticket from the test period that your report does not reference, so name every step.
-2. Use sv-metric for every headline number. Numbers you compute yourself are shown as "AI analysis — not verified".
-3. A case's goal must be what actually completed it — for an email reply, the reply to the start email. The gateway checks this link.
+2. Use sv-metric for every headline number. Everything you write yourself — text, tables, charts, numbers you compute — sits under the gateway's label "AI analysis — not verified"; only the drawn elements carry the gateway's green check. Do not imitate them: class names starting with "sv-" are removed from your HTML.
+3. A case's goal must be what actually completed it — for an email reply, the reply to the start email. The gateway checks this link. A case is timed from when its email reached the test (the test data may date its emails earlier — the gateway uses the later of the two), so steps from before that moment do not belong to it.
 4. A wrong or unknown reference is shown as "not verifiable". Do not guess IDs — read them first.
 5. Never claim more than the elements prove. Say plainly what went wrong or waited for a person.
 

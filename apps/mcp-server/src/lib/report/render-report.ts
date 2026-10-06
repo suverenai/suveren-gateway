@@ -24,6 +24,7 @@ import { Parser } from 'htmlparser2';
 import type { VerifiedElement } from './types';
 import { formatActionLabel, formatDateTime, formatDuration, formatCurrency, formatMetricValue, METRIC_LABELS } from './format';
 import { parseTimestampSeconds } from './time';
+import { sanitizeReportHtml } from './sanitize';
 
 interface Span {
   id: string;
@@ -87,11 +88,6 @@ export function escapeHtml(value: unknown): string {
     .replace(/'/g, '&#39;');
 }
 
-function detailLink(id: string, ticketId?: string): string {
-  const qs = ticketId ? `?element=${encodeURIComponent(id)}&ticket=${encodeURIComponent(ticketId)}` : `?element=${encodeURIComponent(id)}`;
-  return `/reports${qs}`;
-}
-
 function badge(status: VerifiedElement['status'], okLabel: string): string {
   if (status === 'verified') return `<span class="sv-badge sv-badge-ok">✓ ${escapeHtml(okLabel)}</span>`;
   if (status === 'warning') return `<span class="sv-badge sv-badge-warn">⚠ verified with a note</span>`;
@@ -107,7 +103,7 @@ function unverifiableCard(el: VerifiedElement): string {
   );
 }
 
-function renderTicket(el: VerifiedElement, interactive: boolean): string {
+function renderTicket(el: VerifiedElement): string {
   if (el.status === 'unverifiable' || !el.data) return unverifiableCard(el);
   const d = el.data;
   const href = typeof d.checkUrl === 'string' ? d.checkUrl : undefined;
@@ -120,14 +116,14 @@ function renderTicket(el: VerifiedElement, interactive: boolean): string {
   // Both links are wrapped in ONE <span> so the row's flexbox never sees the
   // " · " joiner as its own text-node flex item (polish 2026-10-05: that
   // produced a stray, orphaned "·" spaced across the row by
-  // `justify-content: space-between`). `interactive=false` (a standalone
-  // export, R6) drops the "Details" link — it points at the in-app `/reports`
-  // route, which does not exist when the file is opened on its own; `.filter
-  // (Boolean)` already keeps a single remaining link from leaving an orphaned
-  // " · " (polish 2026-10-06).
+  // `justify-content: space-between`). No in-frame "Details" link any more
+  // (2026-10-06): it was a `target="_top"` full page load of `/reports?…`,
+  // and the SPA keeps its API key in memory only, so every click logged the
+  // user out. Details open from the gateway's own side panel instead
+  // (ReportsPage.tsx). The public check link opens a new tab — the iframe
+  // sandbox allows popups for exactly this.
   const links = [
     href ? `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">Check on suveren.ai ↗</a>` : '',
-    interactive ? `<a href="${escapeHtml(detailLink(el.id))}" target="_top">Details</a>` : '',
   ].filter(Boolean);
   return (
     `<div class="sv-el sv-el-${el.status}" data-sv-id="${escapeHtml(el.id)}">` +
@@ -138,7 +134,7 @@ function renderTicket(el: VerifiedElement, interactive: boolean): string {
   );
 }
 
-function renderApproval(el: VerifiedElement, interactive: boolean): string {
+function renderApproval(el: VerifiedElement): string {
   if (el.status === 'unverifiable' || !el.data) return unverifiableCard(el);
   const d = el.data;
   const who = typeof d.whoLabel === 'string' ? d.whoLabel : (Array.isArray(d.who) ? (d.who as string[]).join(', ') : 'unknown');
@@ -149,12 +145,11 @@ function renderApproval(el: VerifiedElement, interactive: boolean): string {
     `<div class="sv-el sv-el-${el.status}" data-sv-id="${escapeHtml(el.id)}">` +
     `<div class="sv-el-row"><b>Approval</b>${badge(el.status, 'from ticket archive')}</div>` +
     `<div class="sv-el-row"><span>asked ${escapeHtml(asked)} · approved ${escapeHtml(approved)} by ${escapeHtml(who)} (${escapeHtml(waited)})</span></div>` +
-    (interactive ? `<div class="sv-el-row"><a href="${escapeHtml(detailLink(el.id, String(d.ticketId ?? '')))}" target="_top">Details</a></div>` : '') +
     `</div>`
   );
 }
 
-function renderMandate(el: VerifiedElement, interactive: boolean): string {
+function renderMandate(el: VerifiedElement): string {
   if (el.status === 'unverifiable' || !el.data) return unverifiableCard(el);
   const d = el.data;
   const profileLabel = typeof d.profileLabel === 'string' ? d.profileLabel : String(d.profile ?? '');
@@ -165,7 +160,6 @@ function renderMandate(el: VerifiedElement, interactive: boolean): string {
     `<div class="sv-el-row"><b>${escapeHtml(profileLabel)} · ${escapeHtml(owners)}</b>${badge(el.status, 'matches ticket')}</div>` +
     (limits ? `<div class="sv-el-row">${escapeHtml(limits)}${d.mode ? ` · ${escapeHtml(d.mode)}` : ''}</div>` : '') +
     (d.intent ? `<div class="sv-el-intent">Intent: “${escapeHtml(d.intent)}”</div>` : '') +
-    (interactive ? `<div class="sv-el-row"><a href="${escapeHtml(detailLink(el.id))}" target="_top">Details</a></div>` : '') +
     `</div>`
   );
 }
@@ -222,15 +216,14 @@ interface CaseApprovalLike {
 
 /** One ticket-carrying node in the case timeline — a step or the goal.
  *  `kind` drives both the small caption ("ticket"/"goal") and the CSS hook
- *  the goal already had (`sv-step-goal`). `interactive=false` (R6 export)
- *  renders the SAME content as a plain `<div>` instead of a link to the
- *  in-app `/reports` route, which does nothing in a standalone file. */
-function renderCaseTicketStep(caseElementId: string, node: CaseStepLike, isGoal: boolean, interactive: boolean): string {
+ *  the goal already had (`sv-step-goal`). A plain `<div>` — never a link out
+ *  of the frame (see renderTicket); the side panel's case detail lists the
+ *  same steps as buttons. */
+function renderCaseTicketStep(node: CaseStepLike, isGoal: boolean): string {
   const cls = isGoal ? 'sv-step sv-step-goal' : 'sv-step';
   const kind = isGoal ? 'goal' : 'ticket';
   const inner = `<div class="sv-step-k">${kind}</div><div class="sv-step-t">${escapeHtml(formatActionLabel(node.action))}</div>${formatDateTime(node.time)}`;
-  if (!interactive) return `<div class="${cls}">${inner}</div>`;
-  return `<a class="${cls}" href="${escapeHtml(detailLink(caseElementId, node.ticketId))}" target="_top">${inner}</a>`;
+  return `<div class="${cls}">${inner}</div>`;
 }
 
 /** The approval as its OWN step in the timeline, between the request and the
@@ -251,7 +244,22 @@ function renderCaseApprovalStep(approval: CaseApprovalLike): string {
   );
 }
 
-function renderCase(el: VerifiedElement, interactive: boolean): string {
+/** The case's start node. Its time is the EFFECTIVE start (case-resolvers.ts:
+ *  max(email date, test-data load)); when the email carries an earlier date
+ *  (a test package backdates its mails), that date is shown separately as
+ *  "Email dated …" so nobody reads it as the case start. */
+function renderCaseStartStep(start: { time: number; emailTime?: number; basis?: string }): string {
+  let sub = '';
+  if (start.basis === 'loaded' && typeof start.emailTime === 'number') {
+    sub = `<div class="sv-step-sub">Email dated ${escapeHtml(formatDateTime(start.emailTime))} · timed from when the test data was loaded</div>`;
+  } else if (start.basis === 'load-unknown') {
+    sub = `<div class="sv-step-sub">Email dated ${escapeHtml(formatDateTime(start.emailTime ?? start.time))} · start time not verifiable</div>`;
+  }
+  const time = start.basis === 'load-unknown' ? '' : escapeHtml(formatDateTime(start.time));
+  return `<div class="sv-step sv-step-start"><div class="sv-step-k">start</div><div class="sv-step-t">Email in</div>${time}${sub}</div>`;
+}
+
+function renderCase(el: VerifiedElement): string {
   if (el.status === 'unverifiable' || !el.data) return unverifiableCard(el);
   const d = el.data;
   const steps: CaseStepLike[] = Array.isArray(d.steps) ? (d.steps as CaseStepLike[]) : [];
@@ -262,10 +270,8 @@ function renderCase(el: VerifiedElement, interactive: boolean): string {
       approvalsByTicket.set(a.ticketId, a);
     }
   }
-  const start = d.start as { time: number } | undefined;
-  const startStep = start
-    ? { time: start.time, html: `<div class="sv-step"><div class="sv-step-k">start</div><div class="sv-step-t">Email in</div>${formatDateTime(start.time)}</div>` }
-    : undefined;
+  const start = d.start as { time: number; emailTime?: number; basis?: string } | undefined;
+  const startStep = start ? { time: start.time, html: renderCaseStartStep(start) } : undefined;
 
   // Every ticket-carrying node, PLUS its own archived approval (if any) as a
   // separate timeline item — sorted together by time, not grouped by ticket.
@@ -292,7 +298,7 @@ function renderCase(el: VerifiedElement, interactive: boolean): string {
       const approvalTime = Math.min(approval.decidedAt ?? approval.createdAt ?? node.time, node.time);
       items.push({ time: approvalTime, html: renderCaseApprovalStep(approval) });
     }
-    items.push({ time: node.time, html: renderCaseTicketStep(el.id, node, isGoal, interactive) });
+    items.push({ time: node.time, html: renderCaseTicketStep(node, isGoal) });
   }
   // Array.prototype.sort is a STABLE sort (guaranteed since ES2019) — an
   // approval pushed immediately before its own ticket above keeps that exact
@@ -303,10 +309,10 @@ function renderCase(el: VerifiedElement, interactive: boolean): string {
 
   return (
     `<div class="sv-el sv-el-${el.status}" data-sv-id="${escapeHtml(el.id)}">` +
-    `<div class="sv-el-row"><b>Case ${escapeHtml(d.caseId)} · ${formatDuration(d.totalDurationSeconds)}</b>${badge(el.status, 'assembled by gateway')}</div>` +
+    `<div class="sv-el-row"><b>Case ${escapeHtml(d.caseId)} · ${typeof d.totalDurationSeconds === 'number' ? formatDuration(d.totalDurationSeconds) : 'time not verifiable'}</b>${badge(el.status, 'assembled by gateway')}</div>` +
     (el.status === 'warning' && el.reason ? `<div class="sv-el-warn">${escapeHtml(el.reason)}</div>` : '') +
+    (typeof d.totalDurationSeconds !== 'number' ? `<div class="sv-el-warn">${escapeHtml(d.timeUnverifiableReason ?? 'Case time not verifiable.')}</div>` : '') +
     `<div class="sv-tl">${stepHtml}</div>` +
-    (interactive ? `<div class="sv-el-row"><a href="${escapeHtml(detailLink(el.id))}" target="_top">Case details</a></div>` : '') +
     `</div>`
   );
 }
@@ -326,13 +332,13 @@ function renderMetric(el: VerifiedElement): string {
   );
 }
 
-function renderElement(el: VerifiedElement, interactive: boolean): string {
+function renderElement(el: VerifiedElement): string {
   switch (el.kind) {
-    case 'sv-ticket': return renderTicket(el, interactive);
-    case 'sv-approval': return renderApproval(el, interactive);
-    case 'sv-mandate': return renderMandate(el, interactive);
+    case 'sv-ticket': return renderTicket(el);
+    case 'sv-approval': return renderApproval(el);
+    case 'sv-mandate': return renderMandate(el);
     case 'sv-record': return renderRecord(el);
-    case 'sv-case': return renderCase(el, interactive);
+    case 'sv-case': return renderCase(el);
     case 'sv-metric': return renderMetric(el);
     default: return unverifiableCard(el);
   }
@@ -365,30 +371,63 @@ export const DRAWN_ELEMENT_STYLES = `
  * wrapping, which reads as the text being cut off at the container's visible
  * edge (polish 2026-10-05, second pass). */
 .sv-step-approval { max-width:240px; white-space:normal; }
+.sv-step-start { max-width:240px; white-space:normal; }
 @media (max-width: 480px) {
   .sv-tl { flex-direction:column; overflow-x:visible; }
   .sv-step { min-width:0; }
   .sv-step-approval { max-width:none; }
+  .sv-step-start { max-width:none; }
   .sv-el-row { flex-direction:column; gap:2px; }
 }
 `;
 
+/** The label every report carries for the AI's own free content (review
+ *  SR5, 2026-10-06) — exported so the UI legend, the export header and the
+ *  tests all use the same words. */
+export const AI_ANALYSIS_LABEL = 'AI analysis — not verified';
+export const AI_LEGEND_TEXT =
+  'Boxes with a green ✓ are drawn and checked by the gateway, and each one is listed under “Checked values”. ' +
+  'Everything else is the AI\'s own analysis and is not verified.';
+
+/**
+ * The gateway-drawn banner at the top of the report body. Styled INLINE with
+ * `!important`: an inline important declaration wins over any author
+ * stylesheet rule, so the AI's own `<style>` cannot hide or restyle it by
+ * selector. (It could still cover it with an overlay of its own — which is
+ * why the Reports page also draws the same legend OUTSIDE the frame, where
+ * the AI's markup cannot reach at all.) The class is `sv-`-prefixed and the
+ * sanitizer strips every `sv-*` class from the AI's own markup, so the AI
+ * cannot draw a second, fake one with the same class.
+ */
+export function aiLegendBanner(): string {
+  const box = 'display:block !important;visibility:visible !important;opacity:1 !important;position:relative !important;' +
+    'transform:none !important;clip-path:none !important;filter:none !important;z-index:2147483647 !important;' +
+    'margin:0 0 12px 0 !important;padding:8px 12px !important;border:1px solid #d4d4d8 !important;border-left:4px solid #a1a1aa !important;' +
+    'border-radius:8px !important;background:#f4f4f5 !important;color:#3f3f46 !important;font:12.5px/1.45 system-ui, sans-serif !important;' +
+    'text-align:left !important;max-width:none !important;width:auto !important;height:auto !important;';
+  const strong = 'display:inline !important;visibility:visible !important;font-weight:700 !important;color:#18181b !important;font-size:inherit !important;';
+  return `<div class="sv-ai-legend" role="note" style="${box}"><b style="${strong}">${escapeHtml(AI_ANALYSIS_LABEL)}.</b> ${escapeHtml(AI_LEGEND_TEXT)}</div>`;
+}
+
 /**
  * Replaces every `sv-*` element in `html` with gateway-drawn markup for the
  * matching `VerifiedElement` (matched by id — see `findElementSpans`'s doc
- * comment). Prepends `DRAWN_ELEMENT_STYLES` once. Elements present in `html`
- * but missing from `elements` (should not happen — both come from the same
- * `verifyReport()` call) render as a generic "not verifiable" card rather
- * than throwing, so a mismatch degrades visibly instead of crashing the page.
+ * comment). Prepends `DRAWN_ELEMENT_STYLES` and the "AI analysis — not
+ * verified" banner once. Elements present in `html` but missing from
+ * `elements` (should not happen — both come from the same `verifyReport()`
+ * call) render as a generic "not verifiable" card rather than throwing, so a
+ * mismatch degrades visibly instead of crashing the page.
  *
- * @param interactive Default `true` (the live Reports page, served from the
- *   gateway itself, where `/reports?element=...` "Details" links resolve).
- *   Pass `false` for a standalone export (R6, `export-report.ts`) — those
- *   links point at an in-app route that does not exist once the file is
- *   opened on its own, which reads as broken rather than absent; the public
- *   "Check on suveren.ai" link is unaffected either way.
+ * The same output serves the live Reports page and the standalone export:
+ * neither has any link out of the report except the public "Check on
+ * suveren.ai" link (a new tab).
  */
-export function renderReportHtml(html: string, elements: VerifiedElement[], interactive: boolean = true): string {
+export function renderReportHtml(rawHtml: string, elements: VerifiedElement[]): string {
+  // `rawHtml` is normally already sanitized (VerifyReportResult.html). Run it
+  // through the sanitizer again anyway (idempotent): a report stored by an
+  // older gateway was sanitized before `sv-*` classes were stripped from AI
+  // markup, and must not draw fake gateway boxes until its next re-check.
+  const html = sanitizeReportHtml(rawHtml);
   const byId = new Map(elements.map(e => [e.id, e]));
   const spans = findElementSpans(html);
 
@@ -397,12 +436,12 @@ export function renderReportHtml(html: string, elements: VerifiedElement[], inte
   for (const span of spans) {
     out += html.slice(cursor, span.start);
     const el = byId.get(span.id) ?? { id: span.id, kind: span.kind, attrs: {}, status: 'unverifiable' as const, reason: 'No verification result for this element.' };
-    out += renderElement(el, interactive);
+    out += renderElement(el);
     cursor = span.end;
   }
   out += html.slice(cursor);
 
-  const styleTag = `<style data-sv-drawn-styles="1">${DRAWN_ELEMENT_STYLES}</style>`;
+  const styleTag = `<style data-sv-drawn-styles="1">${DRAWN_ELEMENT_STYLES}</style>${aiLegendBanner()}`;
   if (/<body[^>]*>/i.test(out)) {
     return out.replace(/<body([^>]*)>/i, (m) => `${m}${styleTag}`);
   }

@@ -14,7 +14,7 @@
  * Every dynamic string this module inserts outside that JSON block goes
  * through `escapeHtml`.
  */
-import { escapeHtml, renderReportHtml, DRAWN_ELEMENT_STYLES } from './render-report';
+import { escapeHtml, DRAWN_ELEMENT_STYLES, AI_ANALYSIS_LABEL, AI_LEGEND_TEXT } from './render-report';
 import { formatDateTime } from './format';
 import type { ProofSummary, CoverageSummary, ReceiptArchiveReader } from './types';
 import type { StoredReport } from './report-store';
@@ -218,6 +218,11 @@ export function buildExportDocument(params: BuildExportDocumentParams): string {
     `<p class="sv-export-meta">Suveren Gateway ${escapeHtml(bundle.gatewayVersion)} — exported ${escapeHtml(exportedLabel)} &middot; checked ${escapeHtml(checkedLabel)} (times in ${escapeHtml(tzLabel)})</p>` +
     `<p class="sv-export-howto">How to check this report: each ticket below links to its public record on suveren.ai ("Check on suveren.ai ↗"). ` +
     `To verify this entire file offline (including every signature), run <code>suveren-gateway verify-report ${escapeHtml(suggestedFilename(bundle))}</code> from a terminal with the Suveren gateway CLI installed.</p>` +
+    // The legend again, in the gateway-owned header outside the report body
+    // (review SR5). Inline !important for the same reason as the in-body
+    // banner (render-report.ts#aiLegendBanner): the AI's <style> shares this
+    // flat document and must not be able to hide it by selector.
+    `<p class="sv-export-legend" role="note" style="display:block !important;visibility:visible !important;opacity:1 !important;margin:6px 0 0 0 !important;color:#3f3f46 !important;font:12.5px/1.45 system-ui, sans-serif !important;"><b style="display:inline !important;visibility:visible !important;color:#18181b !important;">${escapeHtml(AI_ANALYSIS_LABEL)}:</b> ${escapeHtml(AI_LEGEND_TEXT)}</p>` +
     `</div>`;
 
   const proofScriptJson = JSON.stringify(bundle).replace(/<\//g, '<\\/');

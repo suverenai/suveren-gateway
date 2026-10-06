@@ -27,11 +27,21 @@ export class UnknownMetricKindError extends Error {
   }
 }
 
+/**
+ * Kinds that depend on WHEN a case started (durations, and the refusal count,
+ * which is windowed by [start, goal]). A case start is only trustworthy when
+ * the test-data load time is known (case-resolvers.ts: effective start =
+ * max(email date, loaded_at)); the caller must refuse these kinds — not
+ * compute them — whenever any selected case has `totalDurationSeconds: null`.
+ */
+export const START_TIME_METRICS = new Set<string>(['median-time', 'average-time', 'refusals']);
+
 export interface CaseMetricInput {
   caseId: string;
   startTime: number;
   goalTime: number;
-  totalDurationSeconds: number;
+  /** null = start time not trustworthy (see START_TIME_METRICS). */
+  totalDurationSeconds: number | null;
   /** Every ticket id the case names — goal + steps, for the `tickets` kind. */
   ticketIds: string[];
   approvals: Array<{ waitSeconds?: number }>;
@@ -58,13 +68,18 @@ function average(values: number[]): number {
  * counted for both (cases are not expected to overlap in practice).
  */
 export function computeMetric(kind: string, cases: CaseMetricInput[], refusalTimes: number[] = []): number {
+  if (START_TIME_METRICS.has(kind) && cases.some(c => c.totalDurationSeconds === null)) {
+    // Defense in depth — verify-report.ts refuses before calling; never a
+    // number derived from a possibly backdated email date.
+    throw new Error('Case start times are not verifiable.');
+  }
   switch (kind as MetricKind) {
     case 'completed':
       return cases.length;
     case 'median-time':
-      return median(cases.map(c => c.totalDurationSeconds));
+      return median(cases.map(c => c.totalDurationSeconds as number));
     case 'average-time':
-      return average(cases.map(c => c.totalDurationSeconds));
+      return average(cases.map(c => c.totalDurationSeconds as number));
     case 'without-approval': {
       if (cases.length === 0) return 0;
       const withoutApproval = cases.filter(c => c.approvals.length === 0).length;

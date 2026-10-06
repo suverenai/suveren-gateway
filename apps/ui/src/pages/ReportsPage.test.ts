@@ -15,7 +15,14 @@ import {
   formatDetailValue,
   factSummaryLines,
   runExportAndRefresh,
+  REPORT_IFRAME_SANDBOX,
+  AI_ANALYSIS_LABEL_CLIENT,
+  detailSearchParams,
+  unverifiableRows,
+  caseDetailSteps,
 } from './ReportsPage';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import type { ReportElement, ReportProof, ReportCoverage } from '../lib/sp-client';
 
 // Pure logic only — this file has no DOM test runner (see other *.test.ts in
@@ -432,5 +439,92 @@ describe('buildSrcDoc — CSP meta for the sandboxed iframe', () => {
     expect(out).toContain("default-src 'none'");
     expect(out).toContain("style-src 'unsafe-inline'");
     expect(out).toContain('img-src data:');
+  });
+});
+
+describe('REPORT_IFRAME_SANDBOX — no top navigation, popups only for the public check link (2026-10-06)', () => {
+  const tokens = REPORT_IFRAME_SANDBOX.split(/\s+/);
+
+  it('REFUSAL: grants no top-level navigation of any kind (a page load logs the user out)', () => {
+    expect(REPORT_IFRAME_SANDBOX).not.toMatch(/top-navigation/);
+  });
+
+  it('allows the "Check on suveren.ai" link to open a normal new tab', () => {
+    expect(tokens).toContain('allow-popups');
+    expect(tokens).toContain('allow-popups-to-escape-sandbox');
+  });
+
+  it('REFUSAL: still no scripts, no same-origin, no forms', () => {
+    expect(tokens).not.toContain('allow-scripts');
+    expect(tokens).not.toContain('allow-same-origin');
+    expect(tokens).not.toContain('allow-forms');
+  });
+
+  it('the page actually uses this constant (not a stale literal) and keeps the CSP meta', () => {
+    const src = readFileSync(resolve(__dirname, 'ReportsPage.tsx'), 'utf-8');
+    expect(src).toContain('sandbox={REPORT_IFRAME_SANDBOX}');
+    expect(src).not.toMatch(/sandbox="/);
+    expect(buildSrcDoc('<p>x</p>')).toContain("default-src 'none'");
+  });
+
+  it('the CSP does not restrict navigation, so the check link is not blocked by it', () => {
+    // CSP has no navigation directive in default-src's fallback set; this pins
+    // that we never add one (navigate-to / form-action would need review).
+    expect(buildSrcDoc('<p>x</p>')).not.toMatch(/navigate-to|form-action/);
+  });
+});
+
+describe('detailSearchParams — details open in place through the router', () => {
+  it('sets element (and ticket when given), keeping other params', () => {
+    const next = detailSearchParams(new URLSearchParams('foo=1&ticket=old'), 'sv-case-0', 'goal1');
+    expect(next.get('element')).toBe('sv-case-0');
+    expect(next.get('ticket')).toBe('goal1');
+    expect(next.get('foo')).toBe('1');
+  });
+
+  it('drops a stale ticket when opening a different element', () => {
+    const next = detailSearchParams(new URLSearchParams('element=sv-case-0&ticket=goal1'), 'sv-ticket-2');
+    expect(next.get('element')).toBe('sv-ticket-2');
+    expect(next.has('ticket')).toBe(false);
+  });
+});
+
+describe('unverifiableRows — the not-verifiable proof count opens each element', () => {
+  it('one plain row per unverifiable element, with its reason', () => {
+    const rows = unverifiableRows([
+      ticketEl(),
+      { id: 'sv-metric-1', kind: 'sv-metric', attrs: {}, status: 'unverifiable', reason: 'No verified cases — no figure.' },
+    ]);
+    expect(rows).toEqual([{ elementId: 'sv-metric-1', text: 'Figure: No verified cases — no figure.' }]);
+  });
+});
+
+describe('caseDetailSteps — the case detail\'s step buttons replace the in-frame step links', () => {
+  it('lists steps then goal, in time order, with the human action label', () => {
+    const el: ReportElement = {
+      id: 'sv-case-0', kind: 'sv-case', attrs: {}, status: 'verified',
+      data: {
+        steps: [{ ticketId: 's2', time: 30, actionLabel: 'Quote sent' }, { ticketId: 's1', time: 10, actionLabel: 'Quote created' }],
+        goal: { ticketId: 'g', time: 50, actionLabel: 'Reply sent' },
+      },
+    };
+    expect(caseDetailSteps(el)).toEqual([
+      { ticketId: 's1', label: 'Quote created', isGoal: false },
+      { ticketId: 's2', label: 'Quote sent', isGoal: false },
+      { ticketId: 'g', label: 'Reply sent', isGoal: true },
+    ]);
+  });
+
+  it('is empty for anything but a resolved case', () => {
+    expect(caseDetailSteps(ticketEl())).toEqual([]);
+    expect(caseDetailSteps(undefined)).toEqual([]);
+  });
+});
+
+describe('AI analysis legend outside the frame', () => {
+  it('uses the same words the gateway draws inside the frame and the export', () => {
+    expect(AI_ANALYSIS_LABEL_CLIENT).toBe('AI analysis — not verified');
+    const src = readFileSync(resolve(__dirname, 'ReportsPage.tsx'), 'utf-8');
+    expect(src).toMatch(/className="reports-legend"/);
   });
 });
