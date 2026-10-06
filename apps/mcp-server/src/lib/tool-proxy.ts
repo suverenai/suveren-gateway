@@ -405,6 +405,40 @@ function createGatedToolHandlerInner(
 
   const { profile, executionMapping, staticExecution, category } = tool.gating;
 
+  // The held mandates this tool may be called under: complete, on its
+  // profile, and not refused by the tool's own integration (a built-in's
+  // `mandateRefusal`, e.g. an older profile version). Applied BEFORE the
+  // gatekeeper check and selection, on the read AND the write path alike: a
+  // mandate the integration refuses must never be selectable — otherwise the
+  // tie-break can pick it and a write is ticketed (and charged) under a
+  // mandate every other tool of the integration refuses (RR7). Generic: no
+  // profile or field names here; the integration declares the predicate.
+  const eligibleMandates = (): { matching: EnrichedAuthorization[]; refusals: string[] } => {
+    const refusals: string[] = [];
+    const matching = state.getEnrichedAuthorizations()
+      .filter(a => a.complete && profileMatches(a.profileId, profile!))
+      .filter(a => {
+        // Optional call: test doubles of the manager predate this hook.
+        const refusal = integrationManager.mandateRefusal?.(tool, a) ?? null;
+        if (refusal) refusals.push(refusal);
+        return !refusal;
+      });
+    return { matching, refusals };
+  };
+  const noEligibleMandate = (refusals: string[]): ToolResult => {
+    const reasons = [...new Set(refusals)].join(' ');
+    return {
+      content: [{
+        type: 'text',
+        text: refusals.length > 0
+          ? `Refused: ${reasons.charAt(0).toUpperCase() + reasons.slice(1)} No ticket was requested.`
+          : `No active authorization matching profile "${profile}". ` +
+            `A decision owner must grant authority via the Authority UI before this tool can be used.`,
+      }],
+      isError: true,
+    };
+  };
+
   // Locked ⇒ no authorization can be read, so every gated call fails. Say WHY
   // before the gate reports the symptom ("no authorization grants it"), which
   // would send the user off to create one they already have.
@@ -457,21 +491,8 @@ function createGatedToolHandlerInner(
           `no explicit exemption), so the gateway cannot bound what it returns. This is a manifest ` +
           `defect — the tool must declare how its reads are limited before it can be used.`);
       }
-      const auths = state.getEnrichedAuthorizations();
-      const matchingAuths = auths.filter(
-        a => a.complete && profileMatches(a.profileId, profile!),
-      );
-
-      if (matchingAuths.length === 0) {
-        return {
-          content: [{
-            type: 'text',
-            text: `No active authorization matching profile "${profile}". ` +
-              `A decision owner must grant authority via the Authority UI before this tool can be used.`,
-          }],
-          isError: true,
-        };
-      }
+      const { matching: matchingAuths, refusals } = eligibleMandates();
+      if (matchingAuths.length === 0) return noEligibleMandate(refusals);
 
       // Enforce the static read gate: at least one matching authorization must
       // grant the required bound (e.g. read_access:unlimited). Fail closed.
@@ -781,21 +802,8 @@ function createGatedToolHandlerInner(
     }
 
     // Find all active authorizations matching this profile
-    const auths = state.getEnrichedAuthorizations();
-    const matchingAuths = auths.filter(
-      a => a.complete && profileMatches(a.profileId, profile!),
-    );
-
-    if (matchingAuths.length === 0) {
-      return {
-        content: [{
-          type: 'text',
-          text: `No active authorization matching profile "${profile}". ` +
-            `A decision owner must grant authority via the Authority UI before this tool can be used.`,
-        }],
-        isError: true,
-      };
-    }
+    const { matching: matchingAuths, refusals } = eligibleMandates();
+    if (matchingAuths.length === 0) return noEligibleMandate(refusals);
 
     // Verify EVERY matching authorization and collect the ones that pass
     // ("passers"). Selection among them is most-specific-wins + fail-safe

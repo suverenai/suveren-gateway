@@ -62,6 +62,16 @@ jobs:
         working-directory: suveren-gateway
         run: pnpm build
 
+      # The report layout suite (apps/mcp-server/test/report/
+      # render-report.browser.test.ts) proves in a real browser that an AI
+      # block cannot cover a verified box. REPORT_BROWSER_TEST=required makes
+      # a missing browser a failure here instead of a local skip.
+      - name: Install Chromium for the report layout test
+        working-directory: suveren-gateway
+        run: pnpm exec playwright install --with-deps chromium
+
       - name: Unit tests
         working-directory: suveren-gateway
+        env:
+          REPORT_BROWSER_TEST: required
         run: pnpm -r test

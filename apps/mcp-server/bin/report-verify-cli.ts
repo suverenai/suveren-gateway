@@ -35,6 +35,13 @@ export function extractProofBundle(html: string): ExportBundle {
   } catch (err) {
     throw new Error(`Could not parse the embedded proof bundle: ${err instanceof Error ? err.message : String(err)}`);
   }
+  const o = parsed as { format?: unknown; version?: unknown } | null;
+  if (o && o.format === 'suveren-report-export' && o.version === 1) {
+    throw new Error(
+      'This file was exported by an older gateway (format version 1): it does not carry what the checker needs to ' +
+      'compare the values the page SHOWS with the signed data. Export the report again with a current gateway.',
+    );
+  }
   if (!isExportBundle(parsed)) {
     throw new Error('The embedded proof bundle is not in the expected "suveren-report-export" format.');
   }
@@ -71,8 +78,8 @@ function parseArgs(argv: string[]): ParsedArgs {
 export const HELP_TEXT = `Usage: suveren-gateway verify-report <file> [--key <hex>] [--online]
 
 Verifies an "Export with proof" report file OFFLINE: every ticket signature,
-every mandate attestation signature, and every reference the report makes to
-a ticket, approval, mandate, or case.
+every mandate attestation signature, every reference the report makes to a
+ticket, approval, mandate, or case — and every VALUE the page shows.
 
   --key <hex>   Require the embedded Authority Server key to match this exact
                 value — a fingerprint you already trust (e.g. read aloud over
@@ -86,6 +93,27 @@ confirm the embedded key against something you trust independently of this
 file; with neither, the file's internal consistency is checked but the key
 itself is not.
 
+What the page shows is checked in two steps:
+  1. The visible page must be exactly what the embedded proof data draws —
+     the checker re-draws the whole file and compares it byte for byte. Any
+     edit to the page (a number, a time, a style, an added box) fails. Keep
+     the file as downloaded: re-saving it from a browser changes it. A file
+     drawn by a different gateway version may not re-draw identically; check
+     it with that version.
+  2. Every value in every green box is checked against its source:
+       checked against signature   ticket fields (action, time, profile,
+                                   execution context), mandate limits (via
+                                   the recomputed bounds hash), commitment
+                                   mode, owners, intent (via its hash)
+       recomputed                  wait_s, a case's duration_s, metrics —
+                                   recomputed from the file's own values
+       not checkable offline       approval times and approver (local
+                                   archive), records and a case's start email
+                                   (connector database), the refusals metric
+     Values that cannot be checked offline are listed per box under "Not
+     checkable offline" and do NOT fail the check — but they are never
+     reported as signed.
+
 References the report itself shows as "not verifiable" (e.g. the AI named a
 ticket that does not exist) are listed under "Not verifiable (as shown in the
 report)" and do NOT fail the check — the file is honest about them. Every
@@ -94,10 +122,12 @@ ticket (and mandate) in the file, or the check fails.
 
 Exit codes:
   0  every signature is valid, every reference shown as verified is backed,
-     AND the embedded key was confirmed
+     every value checked against a signature or recomputed matches, AND the
+     embedded key was confirmed
   1  something is invalid — a bad signature, a reference shown as verified
-     with no valid ticket behind it, or a key that does not match
-     --key/--online
+     with no valid ticket behind it, a value on the page that differs from
+     the signed data or does not recompute, an edited page, or a key that
+     does not match --key/--online
   2  everything else is valid, but the embedded key was NOT checked (no --key
      or --online given) — confirm it yourself before trusting this file
 `;
@@ -179,7 +209,9 @@ function printSummary(bundle: ExportBundle, result: VerifyExportResult): void {
     }
   }
 
-  const invalidAuth = result.authorizations.filter(a => !a.attestationValid || a.boundsHashMatches === false);
+  printBoxes(result);
+
+  const invalidAuth = result.authorizations.filter(a => !a.attestationValid || a.boundsHashMatches === false || a.boundsValuesProven === false);
   if (invalidAuth.length > 0) {
     console.log(`  Mandates: ${result.authorizations.length - invalidAuth.length}/${result.authorizations.length} valid — INVALID:`);
     for (const a of invalidAuth) console.log(`    - ${a.authorizationId}: ${a.error ?? 'invalid'}`);
@@ -195,6 +227,35 @@ function printSummary(bundle: ExportBundle, result: VerifyExportResult): void {
   } else {
     console.log(`  Key not confirmed — compare this fingerprint with ${bundle.authorityServer.url}/api/as/pubkey or pass --online.`);
   }
+}
+
+function printBoxes(result: VerifyExportResult): void {
+  if (result.document.state === 'match') console.log('  Page: exactly what the signed data draws.');
+  else if (result.document.state === 'mismatch') console.log(`  INVALID — page: ${result.document.error}`);
+  for (const e of result.drawnErrors) console.log(`  INVALID — ${e}`);
+
+  const bad = result.boxes.filter(b => b.mismatches.length > 0);
+  const ok = result.boxes.filter(b => b.mismatches.length === 0);
+  const fully = ok.filter(b => b.notCheckable.length === 0);
+  console.log(`  Boxes: ${fully.length} fully checked · ${ok.length - fully.length} partly not checkable offline · ${bad.length} MISMATCH.`);
+  for (const b of ok) {
+    const parts: string[] = [];
+    if (b.signed.length > 0) parts.push(`checked against signature: ${[...new Set(b.signed)].join(', ')}`);
+    if (b.recomputed.length > 0) parts.push(`recomputed: ${b.recomputed.map(r => `${r.field} (from ${r.inputs.join(' + ')})`).join(', ')}`);
+    if (parts.length > 0) console.log(`    - ${b.elementId}: ${parts.join(' · ')}`);
+  }
+  if (bad.length > 0) {
+    console.log(`  INVALID — ${bad.length} box(es) show a value that differs from its source:`);
+    for (const b of bad) for (const m of b.mismatches) console.log(`    - ${b.elementId}: ${m}`);
+  }
+  const unbackable = result.boxes.filter(b => b.notCheckable.length > 0);
+  if (unbackable.length > 0) {
+    console.log('  Not checkable offline (shown in the report, not backed by a signature — does not fail the check):');
+    for (const b of unbackable) {
+      console.log(`    - ${b.elementId}: ${b.notCheckable.map(n => `${n.field} (${n.source})`).join(', ')}`);
+    }
+  }
+  console.log('  Coverage panel: from the connector database — not checkable offline.');
 }
 
 // Allow running this file's COMPILED output directly

@@ -99,7 +99,11 @@ export interface CaseData {
    * clamped to the load time) or 'load-unknown' (no load time — `time` is
    * the email's own date and every duration is withheld).
    */
-  start: { id: string; time: number; sender: string; emailTime: number; basis: 'email' | 'loaded' | 'load-unknown' };
+  start: {
+    id: string; time: number; sender: string; emailTime: number; basis: 'email' | 'loaded' | 'load-unknown';
+    /** The inbox row's own signed-source values, verbatim (two-tag rule, RR6). */
+    subject?: string; receivedAt?: string; loadedAt?: string;
+  };
   goal: { ticketId: string; time: number; action: unknown; actionLabel?: string };
   steps: Array<{ ticketId: string; time: number; action: unknown; actionLabel?: string }>;
   approvals: CaseApproval[];
@@ -207,7 +211,11 @@ export async function resolveCaseElement(
     startCaseId,
     data: {
       caseId: startCaseId,
-      start: { id: start.id, time: startTime, sender: startMessage.from_email, emailTime, basis },
+      start: {
+        id: start.id, time: startTime, sender: startMessage.from_email, emailTime, basis,
+        subject: startMessage.subject, receivedAt: startMessage.received_at,
+        ...(emailExport.simulation_load?.loaded_at ? { loadedAt: emailExport.simulation_load.loaded_at } : {}),
+      },
       goal: { ticketId: goal.id, time: goalTime, action: goalReceipt.action, actionLabel: formatActionLabel(goalReceipt.action) },
       steps,
       approvals,

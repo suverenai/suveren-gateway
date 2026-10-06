@@ -18,6 +18,14 @@
  */
 import { resolveTicketElement, resolveApprovalElement, resolveMandateElement } from './ticket-resolvers';
 import type { ReceiptArchiveReader } from './types';
+import { ticketFields, approvalFields, mandateFields } from './render-report';
+
+/** Adds `fields` — the raw field lines the detail panel shows, formatted
+ *  exactly like the boxes (RR6 follow-up) — to a verified fact. */
+function withFields<T extends { status: string; data?: Record<string, unknown> }>(fact: T, build: (d: Record<string, unknown>) => unknown): T {
+  if (fact.status !== 'verified' || !fact.data) return fact;
+  return { ...fact, data: { ...fact.data, fields: build(fact.data) } };
+}
 
 export interface TicketDetail {
   ticket: Awaited<ReturnType<typeof resolveTicketElement>>;
@@ -36,7 +44,11 @@ export async function buildTicketDetails(
       resolveApprovalElement(archive, id),
       resolveMandateElement(archive, id),
     ]);
-    out[id] = { ticket, approval, mandate };
+    out[id] = {
+      ticket: withFields(ticket, ticketFields),
+      approval: withFields(approval, approvalFields),
+      mandate: withFields(mandate, mandateFields),
+    };
   }
   return out;
 }

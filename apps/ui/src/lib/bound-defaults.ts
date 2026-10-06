@@ -34,9 +34,21 @@ export function seedForBound(field: NumericField, seed: string | number | undefi
   return minForBound(field) === 1 ? '1' : '';
 }
 
-/** Submitted numeric value: '' becomes the floor (0 as before, 1 for floor-1 fields). */
+/**
+ * Ceiling the profile declares for the field (`maximum`, e.g. reporting@0.2
+ * `read_max_age_days`: 366), or undefined. Read from the schema — the owner
+ * must not be able to sign a value the profile does not allow.
+ */
+export function maxForBound(field: NumericField): number | undefined {
+  const m = (field as { maximum?: unknown }).maximum;
+  return typeof m === 'number' && Number.isFinite(m) ? m : undefined;
+}
+
+/** Submitted numeric value: '' becomes the floor (0 as before, 1 for floor-1
+ *  fields); a value above the profile's `maximum` becomes the maximum. */
 export function numericBoundValue(field: NumericField, raw: string): number {
   const min = minForBound(field);
-  if (raw === '') return min;
-  return Math.max(min, Number(raw));
+  const max = maxForBound(field);
+  const value = raw === '' ? min : Math.max(min, Number(raw));
+  return max !== undefined ? Math.min(max, value) : value;
 }

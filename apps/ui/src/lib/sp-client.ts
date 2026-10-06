@@ -374,8 +374,17 @@ export interface TicketDetail {
 export interface ReportModel {
   savedAt: number;
   checkedAt: number;
-  /** Already server-rendered: every sv-* element replaced with drawn markup. */
+  /** Already server-rendered: every sv-* element replaced with drawn markup.
+   *  Translation off (the default). */
   renderedHtml: string;
+  /** The same render with the AI's glossary shown as glosses — present only
+   *  when at least one gloss is drawn (two-tag rule, RR6). */
+  renderedHtmlGloss?: string;
+  /** The AI's glossary: which terms are shown, which were refused. */
+  glossary?: { lang: string; applied: string[]; rejected: Array<{ key: string; reason: string }> };
+  /** Set when the stored report predates the two-tag rule and blocks of it
+   *  are not shown (RR6). */
+  formatNotice?: { blocksNotShown: number };
   proof: ReportProof;
   coverage: ReportCoverage;
   elements: ReportElement[];

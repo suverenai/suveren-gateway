@@ -196,6 +196,12 @@ export async function planMandate(req: MandateRequest, deps: CeremonyDeps): Prom
     if (bt?.kind === 'enum' && Array.isArray(bt.values) && !bt.values.includes(String(value))) {
       errors.push(`Field "${field}" must be one of ${bt.values.join(', ')}.`);
     }
+    // A profile-declared ceiling on what a mandate may grant (e.g. reporting@0.2
+    // read_max_age_days: 366) — refused here, before any proposal exists.
+    const maximum = (profile.boundsSchema?.fields[field] as { maximum?: unknown } | undefined)?.maximum;
+    if (typeof maximum === 'number' && typeof value === 'number' && value > maximum) {
+      errors.push(`Field "${field}" may be at most ${maximum}.`);
+    }
   }
   const context = scalarRecord('scope', req.scope);
   errors.push(...validateContextParams(context as never, profile).errors);

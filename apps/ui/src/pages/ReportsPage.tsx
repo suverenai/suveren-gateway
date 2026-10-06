@@ -115,18 +115,6 @@ export function formatDateTimeClient(value: unknown): string {
   return `${d.getDate()} ${MONTHS_CLIENT[d.getMonth()]}, ${hh}:${mm}`;
 }
 
-/** Parses a connector export's date string (SQLite `datetime('now')` or ISO
- *  8601) to unix seconds — same two shapes apps/mcp-server/src/lib/report/
- *  time.ts handles server-side. Returns undefined, never NaN, on anything else. */
-function parseTimestampSecondsClient(value: unknown): number | undefined {
-  if (typeof value !== 'string' || !value.trim()) return undefined;
-  const iso = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}/.test(value) && !/[zZ]|[+-]\d{2}:?\d{2}$/.test(value)
-    ? `${value.replace(' ', 'T')}Z`
-    : value;
-  const ms = Date.parse(iso);
-  return Number.isFinite(ms) ? Math.floor(ms / 1000) : undefined;
-}
-
 function groupThousandsClient(n: number): string {
   const sign = n < 0 ? '-' : '';
   const [intPart, frac] = Math.abs(n).toString().split('.');
@@ -144,24 +132,23 @@ export function formatCurrencyClient(amount: unknown, currencyCode: string | und
   return symbol ? `${symbol} ${groupThousandsClient(n)}` : `${code} ${groupThousandsClient(n)}`;
 }
 
-const RECORD_TIME_KEYS = new Set(['received_at', 'created_at', 'sent_at']);
+/** Display-only fields the server adds next to the raw ones (`actionLabel`,
+ *  `waitLabel`, formatted `limits`, …) — a reading of the values, not the
+ *  values. Left out of the detail dump (RR6 follow-up). */
+function isInterpretedKey(key: string): boolean {
+  return /Labels?$/.test(key) || key === 'limits' || key === 'fields';
+}
 
 /**
- * A raw fact's value for the GENERIC detail dump (sv-record / sv-metric —
- * kinds with no per-field formatting of their own from the server). Returns
- * null for a field that should not render at all (the `currency` field,
- * folded into `net_total`'s own display). Never returns a bare unix second
- * count or an un-symboled amount for a field this function recognizes.
+ * A fact's value for the GENERIC detail dump (sv-record / sv-metric / sv-case):
+ * the raw value as stored — no currency symbol, no rounding, no reformatted
+ * date. Returns null for a field that should not render (empty, or one of the
+ * server's display-only reading fields).
  */
 export function formatDetailValue(key: string, data: Record<string, unknown>): string | null {
   const value = data[key];
   if (value === undefined || value === null || value === '') return null;
-  if (key === 'currency') return null;
-  if (key === 'net_total') return formatCurrencyClient(value, typeof data.currency === 'string' ? data.currency : undefined);
-  if (RECORD_TIME_KEYS.has(key)) {
-    const t = parseTimestampSecondsClient(value);
-    return t !== undefined ? formatDateTimeClient(t) : String(value);
-  }
+  if (isInterpretedKey(key)) return null;
   return typeof value === 'object' ? JSON.stringify(value) : String(value);
 }
 
@@ -206,14 +193,30 @@ export function resolveDetailTicketId(element: ReportElement | undefined, ticket
  */
 export const REPORT_IFRAME_SANDBOX = 'allow-popups allow-popups-to-escape-sandbox';
 
-/** The words the gateway uses for the AI's own content — the same text the
- *  mcp-server draws into the frame and the export (render-report.ts
- *  AI_ANALYSIS_LABEL / AI_LEGEND_TEXT; kept in step by hand, see the
- *  client-side formatting note below). */
+/** The words the gateway uses for its legend — the same text the mcp-server
+ *  draws into the frame and the export (render-report.ts AI_ANALYSIS_LABEL /
+ *  VERIFIED_LEGEND_TEXT / AI_LEGEND_TEXT / GLOSS_LEGEND_TEXT; kept in step by
+ *  hand and pinned by a parity test there). */
 export const AI_ANALYSIS_LABEL_CLIENT = 'AI analysis — not verified';
-export const AI_LEGEND_TEXT_CLIENT =
-  'Boxes with a green ✓ are drawn and checked by the gateway, and each one is listed under “Checked values”. ' +
-  "Everything else is the AI's own analysis and is not verified.";
+export const VERIFIED_LEGEND_TEXT_CLIENT = 'Green = verified by the gateway — raw signed fields only';
+export const AI_LEGEND_TEXT_CLIENT = "Grey dashed = the AI's own analysis, not verified";
+export const GLOSS_LEGEND_TEXT_CLIENT = '= translation by the AI, not verified';
+export const GLOSS_SWITCH_LABEL = 'Übersetzung anzeigen / show translation';
+
+/** The plain notice for a report stored in the pre-RR6 free-HTML format —
+ *  null when nothing was dropped. Gateway UI, outside the frame. */
+export function formatNoticeText(report: Pick<ReportModel, 'formatNotice'>): string | null {
+  const n = report.formatNotice?.blocksNotShown ?? 0;
+  if (n <= 0) return null;
+  return `This report was written in an older format — ${n} ${n === 1 ? 'block was' : 'blocks were'} not shown. Ask the AI to write it again.`;
+}
+
+/** Which server-rendered variant the frame shows (RR6): the glossed one only
+ *  when the reader switched translation on AND the server drew one. The
+ *  switch never runs anything inside the frame — it swaps the srcdoc. */
+export function pickRenderedHtml(report: Pick<ReportModel, 'renderedHtml' | 'renderedHtmlGloss'>, glossOn: boolean): string {
+  return glossOn && report.renderedHtmlGloss ? report.renderedHtmlGloss : report.renderedHtml;
+}
 
 /** Search params that open the detail panel for one element (optionally one
  *  ticket of it) — set through the router, so it never reloads the page. */
@@ -252,24 +255,21 @@ export function caseDetailSteps(element: ReportElement | undefined): Array<{ tic
   nodes.sort((a, b) => (a.n.time ?? 0) - (b.n.time ?? 0));
   return nodes.map(({ n, isGoal }) => ({
     ticketId: n.ticketId as string,
-    label: typeof n.actionLabel === 'string' ? n.actionLabel : String(n.action ?? 'Action'),
+    // The raw signed action, as the case box shows it (RR6 follow-up).
+    label: String(n.action ?? n.ticketId),
     isGoal,
   }));
 }
 
-/** Wraps the gateway-rendered HTML with the CSP meta tag the iframe srcdoc
- *  needs (plan: "no JavaScript ... CSP meta in the srcdoc"). No script tag
- *  can run even without this (the sandbox omits allow-scripts) — the CSP is
- *  defense in depth against inline event handlers sanitize-html missed. */
+/** Wraps the gateway-rendered HTML FRAGMENT in a full document with the CSP
+ *  meta tag (plan: "no JavaScript ... CSP meta in the srcdoc"). No script can
+ *  run even without it (the sandbox omits allow-scripts) — the CSP is defense
+ *  in depth. Always a fresh document: the server renders a fragment (RR6),
+ *  and hunting for an existing <head> would match an AI <header> element,
+ *  putting the CSP inside the body where browsers ignore it. */
 export function buildSrcDoc(renderedHtml: string): string {
   const csp = '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; img-src data:;">';
-  if (/<head[^>]*>/i.test(renderedHtml)) {
-    return renderedHtml.replace(/<head([^>]*)>/i, m => `${m}${csp}`);
-  }
-  if (/<html[^>]*>/i.test(renderedHtml)) {
-    return renderedHtml.replace(/<html([^>]*)>/i, m => `${m}<head>${csp}</head>`);
-  }
-  return `<!doctype html><html><head>${csp}</head><body>${renderedHtml}</body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8">${csp}<style>body{margin:12px;background:#fff}</style></head><body>${renderedHtml}</body></html>`;
 }
 
 // ─── Detail panel ───────────────────────────────────────────────────────────
@@ -285,37 +285,23 @@ const TECHNICAL_FIELDS: Record<'Ticket' | 'Mandate' | 'Approval', string[]> = {
   Approval: ['ticketId', 'who', 'createdAt', 'decidedAt', 'waitSeconds', 'status'],
 };
 
-/** The human-readable summary lines for one resolved fact — already-formatted
- *  values from the server (actionLabel/timeLabel/profileLabel/limits/owners/
- *  who*Label), falling back to a client-side format only where the server
- *  field is missing (older stored report). */
+/** The summary lines for one resolved fact: the raw signed field names and
+ *  values, formatted on the server exactly like the report's boxes
+ *  (`data.fields`, ticket-details.ts) — never a rounded or translated
+ *  reading (RR6 follow-up). An older payload without `fields` shows the raw
+ *  values as they are. */
 export function factSummaryLines(title: 'Ticket' | 'Mandate' | 'Approval', data: Record<string, unknown>): Array<{ label: string; value: string }> {
-  if (title === 'Ticket') {
-    return [
-      { label: 'Action', value: String(data.actionLabel ?? data.action ?? 'unknown') },
-      { label: 'When', value: String(data.timeLabel ?? formatDateTimeClient(data.time)) },
-      { label: 'Mandate', value: String(data.profileLabel ?? data.profile ?? 'unknown') },
-    ];
+  if (Array.isArray(data.fields)) {
+    return (data.fields as Array<{ key: string; value: string }>).map(f => ({ label: f.key, value: f.value }));
   }
-  if (title === 'Mandate') {
-    const lines = [
-      { label: 'Mandate', value: String(data.profileLabel ?? data.profile ?? 'unknown') },
-      { label: 'Owners', value: Array.isArray(data.owners) && (data.owners as string[]).length > 0 ? (data.owners as string[]).join(', ') : 'unknown owner' },
-    ];
-    if (Array.isArray(data.limits) && (data.limits as string[]).length > 0) {
-      lines.push({ label: 'Limits', value: (data.limits as string[]).join(' · ') });
-    }
-    if (data.mode) lines.push({ label: 'Commitment mode', value: String(data.mode) });
-    if (data.intent) lines.push({ label: 'Intent', value: String(data.intent) });
-    return lines;
-  }
-  // Approval
-  return [
-    { label: 'Approved by', value: String(data.whoLabel ?? 'unknown') },
-    { label: 'Asked', value: String(data.createdAtLabel ?? 'unknown') },
-    { label: 'Approved', value: String(data.decidedAtLabel ?? 'unknown') },
-    { label: 'Waited', value: String(data.waitLabel ?? 'unknown') },
-  ];
+  const raw: Record<typeof title, string[]> = {
+    Ticket: ['action', 'profile', 'time'],
+    Mandate: ['profile', 'mode', 'owners', 'intent'],
+    Approval: ['createdAt', 'decidedAt', 'whoLabel', 'status', 'waitSeconds'],
+  };
+  return raw[title]
+    .filter(k => data[k] !== undefined && data[k] !== null)
+    .map(k => ({ label: k, value: typeof data[k] === 'object' ? JSON.stringify(data[k]) : String(data[k]) }));
 }
 
 function technicalDetails(title: 'Ticket' | 'Mandate' | 'Approval', data: Record<string, unknown>) {
@@ -566,6 +552,8 @@ export function ReportsPage() {
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const [narrowDetailsOpen, setNarrowDetailsOpen] = useState(false);
+  // Translation switch (RR6): off by default, gateway UI outside the frame.
+  const [glossOn, setGlossOn] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
 
   // Silent refresh — no `loading` toggle, so it never replaces the page with
@@ -706,15 +694,34 @@ export function ReportsPage() {
             {/* Drawn by the gateway OUTSIDE the frame — the AI's markup cannot
                 reach, hide or restyle it (review SR5). */}
             <div className="reports-legend" role="note">
-              <b>{AI_ANALYSIS_LABEL_CLIENT}:</b> {AI_LEGEND_TEXT_CLIENT}
+              <span className="reports-legend-chip"><span className="reports-sw reports-sw-v" />{VERIFIED_LEGEND_TEXT_CLIENT}</span>
+              <span className="reports-legend-chip"><span className="reports-sw reports-sw-a" />{AI_LEGEND_TEXT_CLIENT} (“{AI_ANALYSIS_LABEL_CLIENT}”)</span>
+              {report.renderedHtmlGloss && (
+                <span className="reports-legend-chip"><i className="reports-gloss-swatch">Abc</i>&nbsp;{GLOSS_LEGEND_TEXT_CLIENT}</span>
+              )}
             </div>
+            {formatNoticeText(report) && (
+              <p className="reports-error" role="status" style={{ margin: '0 0 0.5rem 0' }}>{formatNoticeText(report)}</p>
+            )}
+            {report.renderedHtmlGloss && (
+              <label className="reports-gloss-switch">
+                <input
+                  type="checkbox"
+                  role="switch"
+                  checked={glossOn}
+                  onChange={e => setGlossOn(e.target.checked)}
+                />
+                <span className="reports-gloss-track" aria-hidden="true"><span className="reports-gloss-thumb" /></span>
+                <span>{GLOSS_SWITCH_LABEL}</span>
+              </label>
+            )}
             <p className="form-hint" style={{ marginBottom: '0.5rem' }}>
               Written by the AI, rendered without scripts or network access. Scroll inside the report — the gateway does not auto-resize the frame. Click a checked value to see its details.
             </p>
             <iframe
               title="Report"
               sandbox={REPORT_IFRAME_SANDBOX}
-              srcDoc={buildSrcDoc(report.renderedHtml)}
+              srcDoc={buildSrcDoc(pickRenderedHtml(report, glossOn))}
               className="reports-iframe"
             />
           </div>

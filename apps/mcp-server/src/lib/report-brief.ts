@@ -1,14 +1,13 @@
 /**
- * The report brief — how the user's AI should build the evidence-backed
- * report (work-plan "Added 2026-10-05 — evidence-backed reports", step R3).
+ * The report brief — how the user's AI writes a report (work-plan "regular
+ * reporting", decision 5 + RR6; originally "evidence-backed reports", R3).
  *
- * Fixed text shipped with the gateway for now (later: per company). It is
- * delivered to the AI in the description of the report tool (R4), the same
- * way load_simulation carries its package guide, so the AI has it exactly
- * when it writes a report.
+ * Fixed text shipped with the gateway (later: per company), delivered as the
+ * description of `write_report`, so the AI has it exactly when it writes.
  *
- * The element names and attributes here are a contract with the report
- * widget (R5), which resolves and verifies them — change both together.
+ * The block syntax here is a contract with sanitize.ts (what survives),
+ * verify-report.ts (what is checked) and render-report.ts (what is drawn) —
+ * change them together.
  */
 
 /** The fixed, verifiable elements the AI may place, in the order the brief lists them. */
@@ -21,37 +20,45 @@ export const REPORT_ELEMENTS = [
   'sv-metric',
 ] as const;
 
-export const REPORT_BRIEF = `How to write the report
+/** The report format's structural blocks (not verified, not elements). */
+export const REPORT_BLOCKS = ['sv-ai', 'sv-row', 'sv-glossary', 'sv-term'] as const;
 
-Purpose: show the company's management what the AI achieved in this test — case by case, from the request that started it to the goal that completed it — with proof for every fact that matters.
+export const REPORT_BRIEF = `How to write a report
 
-Who reads it: managers who are not technical. Plain words, short sentences, the result first.
+Purpose: regular reports on what you did in your reporting window — this week, this test, this month — for managers who are not technical. Plain words, short sentences, the result first. Each write replaces the previous report.
 
-What you write: one HTML page (HTML, CSS and inline SVG only — no JavaScript, no external files or links except the check links the gateway adds). The layout, headings, charts, tables and your assessment are yours.
+Your window: the reporting mandate sets how many days back you may report. list_tickets returns it ("window"), and write_report repeats it. Tickets and records from before it cannot be used.
 
-It must read well everywhere: on a phone, in a narrow side panel (about 360 pixels wide) and on a large screen. Use fluid widths (no fixed page widths), let columns stack on narrow screens (CSS grid/flex with wrapping, or media queries), make wide tables scroll horizontally or turn into stacked rows, give SVG charts a viewBox so they scale, and keep text at a readable size.
+The format — only these blocks, one after another. Anything else is dropped (write_report tells you how much):
 
-What you cannot write yourself: facts that need proof. Place these elements instead; the gateway looks the data up, checks it and draws the element. You give references, never the content:
+1. <sv-ai>…</sv-ai> — your own content: headings, text, tables, inline SVG charts, your assessment. Any HTML inside, styled with inline style="…" attributes only (no <style> blocks, no JavaScript, no external files or links). The gateway draws it in a grey frame labelled "AI analysis — not verified".
+2. Verified elements — you give a reference, the gateway checks it and draws the box. You never write their content:
+   - <sv-ticket ref="TICKET_ID" variant="compact"></sv-ticket> — one action: action + time. variant="full" shows every signed field (incl. its mandate and approval) and the public check link.
+   - <sv-approval ticket="TICKET_ID"></sv-approval> — when the approval was asked and decided, and by whom.
+   - <sv-mandate ticket="TICKET_ID"></sv-mandate> — the authority the action ran under: limits, mode, intent.
+   - <sv-record system="email|crm|erp" ref="RECORD_ID"></sv-record> — an email, CRM entry, quote or order.
+   - <sv-case start="email:MESSAGE_ID" goal="ticket:TICKET_ID" steps="TICKET_ID TICKET_ID"></sv-case> — one business case from its start email to the ticket that completed it.
+   - <sv-metric kind="KIND" cases="all"></sv-metric> — a number the gateway computes over your cases. KIND: completed, median-time, average-time, without-approval, approvals, median-approval-wait, tickets, refusals. cases is "all" or case ids, e.g. cases="C1 C3".
+3. <sv-row>…</sv-row> — puts verified elements side by side (they stack on a phone). Only verified elements inside.
+4. <sv-glossary lang="de"><sv-term key="erp__create_quote">Angebot erstellt</sv-term></sv-glossary> — optional, once per report. Translates field names and fixed words that appear in the verified boxes (action names, profile, mode, field names such as value_max). Words only: never numbers, amounts, times or ids; plain text, at most 60 characters. The reader sees it small above the raw value, only when they switch translation on. Unknown keys are ignored.
 
-- <sv-ticket ref="TICKET_ID"></sv-ticket> — one action you took, with its signed ticket.
-- <sv-approval ticket="TICKET_ID"></sv-approval> — who approved that action, when, and how long it waited.
-- <sv-mandate ticket="TICKET_ID"></sv-mandate> — the authority the action ran under: limits, mode, intent.
-- <sv-record system="email|crm|erp" ref="RECORD_ID"></sv-record> — an email, CRM entry, quote or order.
-- <sv-case start="email:MESSAGE_ID" goal="ticket:TICKET_ID" steps="TICKET_ID TICKET_ID"></sv-case> — one business case: the incoming email that started it, the ticket that completed it, and the tickets in between.
-- <sv-metric kind="KIND" cases="all"></sv-metric> — a number the gateway computes over the cases you defined. KIND: completed, median-time, average-time, without-approval, approvals, median-approval-wait, tickets, refusals. cases is "all" or a space-separated list of case ids, e.g. cases="C1 C3".
+Example:
+<sv-ai><h1>Week 41: three requests answered</h1><p>One quote needed an approval.</p></sv-ai>
+<sv-row><sv-metric kind="completed" cases="all"></sv-metric><sv-metric kind="approvals" cases="all"></sv-metric></sv-row>
+<sv-ai><p>The quote for Huber went out 9 minutes after the request.</p></sv-ai>
+<sv-ticket ref="rcpt_123" variant="full"></sv-ticket>
 
 Rules:
-1. Define every case you worked on with sv-case — also the ones that did not reach their goal (omit goal, or say why in your text). The gateway shows management how many of the loaded cases your report covers and names the missing ones — and lists every ticket from the test period that your report does not reference, so name every step.
-2. Use sv-metric for every headline number. Everything you write yourself — text, tables, charts, numbers you compute — sits under the gateway's label "AI analysis — not verified"; only the drawn elements carry the gateway's green check. Do not imitate them: class names starting with "sv-" are removed from your HTML.
-3. A case's goal must be what actually completed it — for an email reply, the reply to the start email. The gateway checks this link. A case is timed from when its email reached the test (the test data may date its emails earlier — the gateway uses the later of the two), so steps from before that moment do not belong to it.
-4. A wrong or unknown reference is shown as "not verifiable". Do not guess IDs — read them first.
-5. Never claim more than the elements prove. Say plainly what went wrong or waited for a person.
+1. Nothing verified inside sv-ai: an sv-* element there is removed, and class names starting with "sv-" are removed from your HTML. Do not imitate the green boxes — your content always sits in the grey frame.
+2. Verified boxes show only signed field names and raw values. Explain them in plain words in the sv-ai block next to them.
+3. Use sv-metric for every headline number. Numbers you compute yourself stay "AI analysis — not verified".
+4. A wrong or unknown reference is shown as "not verifiable". Do not guess IDs — read them first (list_tickets, get_ticket, list_cases, get_records).
+5. Never claim more than the boxes prove. Say plainly what went wrong or waited for a person.
 
-Suggested structure:
-1. The result in one sentence, then 3–4 sv-metric figures (completed, median time, share without approval, approvals).
-2. All cases at a glance — a table with one row per case, linked to its sv-case below.
-3. Each case: sv-case, then the sv-ticket and sv-approval elements that explain it.
-4. What was stopped or needed a person, and why (sv-approval, refusals).
-5. Your assessment: what worked, what slowed things down, what a different mandate would change — marked as your view.
+Cases and coverage apply only when test data is loaded (list_cases shows it):
+- Define every case you worked on with sv-case. The gateway shows how many of the loaded cases your report covers, names the missing ones, and lists every ticket from the window that your report does not reference — so name every step.
+- A case's goal must be what actually completed it — for an email reply, the reply to the start email. A case is timed from when its email reached the test (the test data may date its emails earlier — the gateway uses the later of the two).
 
-Update the report whenever cases progress; each write replaces the previous report.`;
+Layout: it must read well on a phone, in a narrow side panel (about 360 pixels) and on a large screen. Inside sv-ai use fluid widths, wrapping flex/grid, tables that scroll, and SVG charts with a viewBox.
+
+Suggested structure: the result in one sentence (sv-ai) → 3–4 sv-metric in an sv-row → each case (sv-case, then the tickets and approvals that explain it, each with a short sv-ai caption) → what was stopped or waited for a person → your assessment (sv-ai).`;

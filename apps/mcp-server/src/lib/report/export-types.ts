@@ -28,11 +28,14 @@
  * `proof`/`coverage` summaries traveling alongside it.
  */
 import type { ArchivedAuthorization } from '../receipt-archive';
-import type { ProofSummary, CoverageSummary } from './types';
+import type { ProofSummary, CoverageSummary, VerifiedElement } from './types';
 
 export interface ExportBundle {
   format: 'suveren-report-export';
-  version: 1;
+  /** 2 since RR7: carries `elements` + `timeZone`, so the checker can re-draw
+   *  the visible page and check every drawn value. A version-1 file cannot be
+   *  checked that way and is refused (re-export it). */
+  version: 2;
   /** Unix seconds — when this file was generated. */
   exportedAt: number;
   /** The running gateway's own version string (e.g. "0.18.0"), or "dev"/"unknown"
@@ -57,14 +60,40 @@ export interface ExportBundle {
    *  every ticket the report references PLUS every ticket in the coverage
    *  period, so "not referenced" is itself checkable. */
   tickets: Record<string, unknown>[];
-  /** Keyed by authorizationId — the mandate(s) backing the included tickets. */
+  /** Keyed by authorizationId — ONLY the mandates the report places with a
+   *  verified `sv-mandate` or full `sv-ticket` (RR5/RR7, "the proof follows
+   *  the report"), reduced to what that element draws plus what verifies it:
+   *  `intent` only for an sv-mandate, scope (`context`) values never
+   *  (export-report.ts#buildExportBundle). Every other ticket is in `tickets`
+   *  bare: its own signature still verifies it. */
   authorizations: Record<string, ArchivedAuthorization>;
+  /**
+   * Every element exactly as the report draws it
+   * (render-report.ts#drawnElement — only the fields its box shows, plus the
+   * id/kind/attrs/status/reason the frame shows). The checker re-draws the
+   * page from these and requires it to equal the file byte for byte, then
+   * checks each drawn field against its signed source.
+   */
+  elements: VerifiedElement[];
+  /** The IANA time zone the boxes' timestamps were drawn in (e.g.
+   *  "Europe/Vienna") — the checker re-draws in the same zone. Every drawn
+   *  timestamp shows its own numeric UTC offset, so the zone never changes
+   *  which instant a reader sees. */
+  timeZone: string;
+  /**
+   * Extra signed attestation blobs, ONLY to back an owner NAME a box shows
+   * that the owner disclosed in a different mandate's attestation than the
+   * one in `authorizations` (identity.ts: one name per person across all
+   * cards). Each is checked against the Authority Server key.
+   */
+  identityAttestations: string[];
 }
 
 export function isExportBundle(v: unknown): v is ExportBundle {
   if (!v || typeof v !== 'object') return false;
   const o = v as Record<string, unknown>;
-  if (o.format !== 'suveren-report-export' || o.version !== 1) return false;
+  if (o.format !== 'suveren-report-export' || o.version !== 2) return false;
+  if (!Array.isArray(o.elements) || typeof o.timeZone !== 'string' || !Array.isArray(o.identityAttestations)) return false;
   if (!o.report || typeof o.report !== 'object') return false;
   if (!Array.isArray(o.tickets)) return false;
   if (!o.authorizations || typeof o.authorizations !== 'object') return false;

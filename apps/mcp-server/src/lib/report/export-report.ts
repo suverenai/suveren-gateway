@@ -14,8 +14,9 @@
  * Every dynamic string this module inserts outside that JSON block goes
  * through `escapeHtml`.
  */
-import { escapeHtml, DRAWN_ELEMENT_STYLES, AI_ANALYSIS_LABEL, AI_LEGEND_TEXT } from './render-report';
-import { formatDateTime } from './format';
+import { decodeAttestationBlob, getProfile } from '@hap/core';
+import { escapeHtml, DRAWN_ELEMENT_STYLES, GLOSS_ON_STYLES, reportLegend, drawnElement, renderReportHtml, checkedValueLine } from './render-report';
+import { formatDateTime, UNDISCLOSED_OWNER_LABEL, withDrawingZone, zonedParts, offsetLabel } from './format';
 import type { ProofSummary, CoverageSummary, ReceiptArchiveReader } from './types';
 import type { StoredReport } from './report-store';
 import type { ArchivedAuthorization } from '../receipt-archive';
@@ -27,6 +28,62 @@ export interface BuildExportBundleParams {
   authorityServer: { url: string; publicKeyHex: string };
   gatewayVersion: string;
   now?: number;
+  /** The zone the boxes were drawn in — defaults to this process's own. */
+  timeZone?: string;
+}
+
+/** This process's IANA time zone — the one `format.ts` draws timestamps in. */
+export function processTimeZone(): string {
+  try {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (tz) return tz;
+  } catch {
+    // fall through
+  }
+  return 'UTC';
+}
+
+/** Bounds VALUES in the profile's canonical key order (boundsSchema.keyOrder),
+ *  so the checker can recompute the signed bounds_hash from the object's own
+ *  key order (verify-export.ts#recomputeBoundsHash) without the profile. */
+function canonicalOrder(profileId: string, bounds: Record<string, string | number>): Record<string, string | number> {
+  const keyOrder = (getProfile(profileId) as { boundsSchema?: { keyOrder?: string[] } } | undefined)?.boundsSchema?.keyOrder;
+  if (!Array.isArray(keyOrder)) return bounds;
+  const out: Record<string, string | number> = {};
+  for (const k of keyOrder) if (bounds[k] !== undefined) out[k] = bounds[k];
+  // A key outside the profile's order stays (last), so the hash check fails
+  // loudly instead of a value being dropped from the file unseen.
+  for (const [k, v] of Object.entries(bounds)) if (!(k in out)) out[k] = v;
+  return out;
+}
+
+/** did -> high-assurance disclosed name, from these attestation blobs
+ *  (unverified here — the checker verifies every blob it relies on). */
+function disclosedNames(blobs: string[]): Map<string, Set<string>> {
+  const names = new Map<string, Set<string>>();
+  for (const blob of blobs) {
+    try {
+      for (const sub of decodeAttestationBlob(blob).payload.subjects ?? []) {
+        if (sub.assurance === 'high' && sub.disclose?.name) {
+          if (!names.has(sub.did)) names.set(sub.did, new Set());
+          names.get(sub.did)!.add(sub.disclose.name);
+        }
+      }
+    } catch {
+      // undecodable — backs nothing
+    }
+  }
+  return names;
+}
+
+function firstOwnerDids(auth: ArchivedAuthorization | undefined): string[] {
+  const blob = auth?.attestations[0]?.blob;
+  if (!blob) return [];
+  try {
+    return decodeAttestationBlob(blob).payload.resolved_owners ?? [];
+  } catch {
+    return [];
+  }
 }
 
 function receiptId(receipt: Record<string, unknown>): string {
@@ -34,16 +91,47 @@ function receiptId(receipt: Record<string, unknown>): string {
 }
 
 /**
- * Assembles the `ExportBundle` data. Ticket selection mirrors the plan
- * exactly: every ticket the report REFERENCES (`proof.ticketsReferenced`)
- * plus every ticket in the COVERAGE PERIOD (`coverage.ticketsInPeriod`,
- * already the union of referenced + not-referenced for that window) — their
- * union, so a ticket outside the period that the report still names (an
- * older mandate cited for context) is never silently dropped.
+ * Assembles the `ExportBundle` data — "the proof follows the report"
+ * (work-plan "regular reporting", RR5; closes SR2: the file used to carry the
+ * full intent text, bounds and scope of EVERY mandate used in the period,
+ * whether the report showed it or not).
+ *
+ * Tickets: every ticket the report REFERENCES (`proof.ticketsReferenced`) plus
+ * every ticket in the COVERAGE PERIOD (`coverage.ticketsInPeriod`), so "not
+ * referenced" stays checkable — but only those the (window-scoped, see
+ * window.ts) `archive` still holds: a ticket outside the reporting window never
+ * enters the file, even if the report names it. A ticket goes in as its raw
+ * signed payload; its signature covers the ticket itself, so a bare ticket is
+ * fully verifiable on its own.
+ *
+ * Mandates: the bundle carries exactly what the report SHOWS of a mandate,
+ * plus what is needed to verify it (RR7 — closes the last SR2 gap):
+ *   - a mandate goes in only when a verified element places it — an
+ *     `sv-mandate`, or a full `sv-ticket` whose mandate group resolved;
+ *   - always: its attestation blob(s) (signed; commit to the bounds/scope/
+ *     intent by HASH only — `bounds_hash`, `context_hash`,
+ *     `gate_content_hashes.intent`), its hashes, and its bounds VALUES (both
+ *     elements draw them, render-report.ts `mandateRows`);
+ *   - the intent TEXT only when an `sv-mandate` places the mandate — the one
+ *     element that draws it. A full ticket draws limits/mode/owner, never the
+ *     intent, so its mandate travels without it;
+ *   - never the scope (context) VALUES: no element draws them. `contextHash`
+ *     stays, as the signed commitment.
+ * Nothing in verify-export.ts reads the intent or scope values, so a missing
+ * one never fails a check. Every other ticket goes in bare.
  */
 export function buildExportBundle(params: BuildExportBundleParams): ExportBundle {
   const { stored, archive, authorityServer, gatewayVersion, now = Math.floor(Date.now() / 1000) } = params;
-  const proof: ProofSummary = stored.result.proof;
+  const timeZone = params.timeZone ?? processTimeZone();
+  const elements = stored.result.elements.map(drawnElement);
+  // The "Checked values" rows quote the boxes' timestamps — drawn here in the
+  // file's own zone, so the panel always reads exactly like the boxes.
+  const proof: ProofSummary = {
+    ...stored.result.proof,
+    verifiedValues: withDrawingZone(timeZone, () => elements
+      .filter(e => e.status !== 'unverifiable')
+      .map(e => ({ elementId: e.id, kind: e.kind, summary: checkedValueLine(e) }))),
+  };
   const coverage: CoverageSummary = stored.result.coverage;
 
   const ticketIdSet = new Set<string>([...proof.ticketsReferenced, ...coverage.ticketsInPeriod]);
@@ -51,15 +139,71 @@ export function buildExportBundle(params: BuildExportBundleParams): ExportBundle
 
   const tickets = entries.map(r => r.receipt);
 
-  const authorizationIds = new Set(entries.map(r => r.authorizationId));
+  const placed = stored.result.elements.filter(e => e.status !== 'unverifiable');
+  // Tickets whose mandate an sv-mandate draws (intent included).
+  const mandateCardTickets = new Set<string>(
+    placed.filter(e => e.kind === 'sv-mandate' && e.attrs.ticket).map(e => e.attrs.ticket),
+  );
+  // Tickets whose mandate a full sv-ticket draws (limits/mode/owner only).
+  const fullTicketTickets = new Set<string>(
+    placed.filter(e => e.kind === 'sv-ticket' && e.attrs.ref && e.data?.mandate).map(e => e.attrs.ref),
+  );
+  const authOf = (set: Set<string>) =>
+    new Set(entries.filter(r => set.has(receiptId(r.receipt))).map(r => r.authorizationId));
+  const withIntent = authOf(mandateCardTickets);
+  const withoutIntent = authOf(fullTicketTickets);
+
   const authorizations: Record<string, ArchivedAuthorization> = {};
   for (const a of archive.getAuthorizations()) {
-    if (authorizationIds.has(a.authorizationId)) authorizations[a.authorizationId] = a;
+    if (!withIntent.has(a.authorizationId) && !withoutIntent.has(a.authorizationId)) continue;
+    // Whitelist, not a copy-then-delete: a field added to the archive later
+    // never slips into the file unseen.
+    const out: ArchivedAuthorization = {
+      authorizationId: a.authorizationId,
+      profileId: a.profileId,
+      ...(a.boundsHash !== undefined ? { boundsHash: a.boundsHash } : {}),
+      ...(a.contextHash !== undefined ? { contextHash: a.contextHash } : {}),
+      ...(a.bounds !== undefined ? { bounds: canonicalOrder(a.profileId, a.bounds) } : {}),
+      ...(withIntent.has(a.authorizationId) && a.intent !== undefined ? { intent: a.intent } : {}),
+      attestations: a.attestations,
+      archivedAt: a.archivedAt,
+    };
+    authorizations[a.authorizationId] = out;
+  }
+
+  // Owner NAMES a box draws must be backed by a signed attestation in the
+  // file. The gateway takes a person's name from ANY verified archived
+  // attestation (identity.ts) — when that is not one of the bundled
+  // mandates', the one blob that discloses it travels in identityAttestations.
+  const bundledBlobs = Object.values(authorizations).flatMap(a => a.attestations.map(x => x.blob));
+  const known = disclosedNames(bundledBlobs);
+  const identityAttestations: string[] = [];
+  const archiveBlobs = archive.getAuthorizations().flatMap(a => a.attestations.map(x => x.blob));
+  const ticketAuth = new Map(entries.map(r => [receiptId(r.receipt), r.authorizationId]));
+  for (const el of elements) {
+    const owners = el.kind === 'sv-mandate'
+      ? el.data?.owners
+      : el.kind === 'sv-ticket' ? (el.data?.mandate as { owners?: unknown } | undefined)?.owners : undefined;
+    if (!Array.isArray(owners)) continue;
+    const ref = el.kind === 'sv-mandate' ? el.attrs.ticket : el.attrs.ref;
+    const dids = firstOwnerDids(authorizations[ticketAuth.get(ref ?? '') ?? '']);
+    owners.forEach((label, i) => {
+      const did = dids[i];
+      if (!did || typeof label !== 'string' || label === UNDISCLOSED_OWNER_LABEL) return;
+      if (known.get(did)?.has(label)) return;
+      const blob = archiveBlobs.find(b => disclosedNames([b]).get(did)?.has(label));
+      if (!blob) return; // nothing backs it — the checker will say so
+      identityAttestations.push(blob);
+      for (const [d, set] of disclosedNames([blob])) {
+        if (!known.has(d)) known.set(d, new Set());
+        for (const n of set) known.get(d)!.add(n);
+      }
+    });
   }
 
   return {
     format: 'suveren-report-export',
-    version: 1,
+    version: 2,
     exportedAt: now,
     gatewayVersion,
     report: { html: stored.html, savedAt: stored.savedAt, checkedAt: stored.checkedAt },
@@ -68,6 +212,9 @@ export function buildExportBundle(params: BuildExportBundleParams): ExportBundle
     authorityServer,
     tickets,
     authorizations,
+    elements,
+    timeZone,
+    identityAttestations,
   };
 }
 
@@ -121,29 +268,9 @@ function renderProofCoveragePanels(proof: ProofSummary, coverage: CoverageSummar
   );
 }
 
-// ─── Document shell helpers (same best-effort regex injection convention as
-// render-report.ts / ReportsPage.tsx's buildSrcDoc — no full HTML parse). ────
-
-function ensureHtmlDocument(html: string): string {
-  if (/<html[^>]*>/i.test(html)) return html;
-  return `<!doctype html><html><head><meta charset="utf-8"></head><body>${html}</body></html>`;
-}
-
-function injectIntoHead(html: string, insert: string): string {
-  if (/<head[^>]*>/i.test(html)) return html.replace(/<head([^>]*)>/i, m => `${m}${insert}`);
-  if (/<html[^>]*>/i.test(html)) return html.replace(/<html([^>]*)>/i, m => `${m}<head>${insert}</head>`);
-  return `<head>${insert}</head>${html}`;
-}
-
-function injectAfterBodyOpen(html: string, insert: string): string {
-  if (/<body[^>]*>/i.test(html)) return html.replace(/<body([^>]*)>/i, m => `${m}${insert}`);
-  return `${insert}${html}`;
-}
-
-function injectBeforeBodyClose(html: string, insert: string): string {
-  if (/<\/body>/i.test(html)) return html.replace(/<\/body>/i, `${insert}</body>`);
-  return `${html}${insert}`;
-}
+/** GLOSS_ON_STYLES, keyed to the export's CSS-only checkbox. */
+const GLOSS_ON_TOGGLED = GLOSS_ON_STYLES.trim().split('\n').filter(Boolean)
+  .map(rule => `#sv-gloss-toggle:checked ~ .sv-export-layout ${rule}`).join('\n');
 
 const EXPORT_PAGE_STYLES = `
 .sv-export-header { font:13px/1.5 system-ui, sans-serif; background:#f6f6f4; border-bottom:1px solid #e5e5e5; padding:14px 20px; }
@@ -157,6 +284,19 @@ const EXPORT_PAGE_STYLES = `
 .sv-export-card-title { font-weight:700; margin-bottom:6px; }
 .sv-export-row { display:flex; justify-content:space-between; gap:10px; margin:2px 0; }
 .sv-export-note, .sv-export-missing { color:#b45309; font-size:12px; margin:4px 0 0 0; }
+.sv-export-legend { margin:8px 0 0 0; }
+.sv-export-legend .sv-legend { border-bottom:0; padding:0; margin:0; }
+.sv-toggle-input { position:absolute; opacity:0; width:1px; height:1px; }
+.sv-translate { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:8px 0 0 0; }
+.sv-toggle-switch { display:inline-flex; cursor:pointer; }
+.sv-toggle-track { width:34px; height:18px; border-radius:999px; background:#d4d4d4; position:relative; flex:none; transition:background .15s ease; }
+.sv-toggle-thumb { position:absolute; top:2px; left:2px; width:14px; height:14px; border-radius:50%; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,.25); transition:transform .15s ease; }
+.sv-toggle-text { font-size:13px; font-weight:600; cursor:pointer; }
+#sv-gloss-toggle:checked ~ .sv-export-header .sv-toggle-track { background:#111; }
+#sv-gloss-toggle:checked ~ .sv-export-header .sv-toggle-thumb { transform:translateX(16px); }
+#sv-gloss-toggle:focus-visible ~ .sv-export-header .sv-toggle-track { outline:2px solid #1d4ed8; outline-offset:2px; }
+#sv-gloss-toggle:checked ~ .sv-export-layout .sv-gloss-toggle-mode ruby.sv-gloss rt { display:ruby-text; }
+${GLOSS_ON_TOGGLED}
 @media (max-width: 720px) {
   .sv-export-layout { flex-direction:column; }
   .sv-export-side { flex:1 1 auto; width:100%; }
@@ -172,11 +312,11 @@ const EXPORT_PAGE_STYLES = `
  *  "21:43 UTC" next to cards reading "22:43" local — two clocks on one page). */
 function formatDateTimeWithYear(value: number): string {
   const base = formatDateTime(value);
-  const year = new Date(value * 1000).getFullYear();
+  const year = zonedParts(value).year;
   return base.replace(',', ` ${year},`);
 }
 
-/** "UTC+2" / "UTC-5" / "UTC+5:30" — the export process's own local offset,
+/** "UTC+2" / "UTC-5" / "UTC+5:30" — the offset of the drawing zone (`bundle.timeZone`),
  *  stated ONCE in the header so every timestamp in the file (header + every
  *  drawn card, all in the SAME local time per `format.ts`'s doc comment) is
  *  unambiguous without repeating a zone name on every line. Deliberately not
@@ -184,32 +324,45 @@ function formatDateTimeWithYear(value: number): string {
  *  avoids for determinism (see `format.ts`'s own doc comment on
  *  `toLocaleString`). */
 function utcOffsetLabel(value: number): string {
-  const offsetMin = -new Date(value * 1000).getTimezoneOffset();
-  const sign = offsetMin >= 0 ? '+' : '-';
-  const abs = Math.abs(offsetMin);
-  const hh = Math.floor(abs / 60);
-  const mm = abs % 60;
-  return `UTC${sign}${hh}${mm ? ':' + String(mm).padStart(2, '0') : ''}`;
+  return offsetLabel(zonedParts(value).offsetMin);
 }
 
 export interface BuildExportDocumentParams {
   bundle: ExportBundle;
-  /** `renderReportHtml(stored.result.html, stored.result.elements)` — exactly
-   *  what the Reports page shows, computed by the caller so this module never
-   *  has to re-verify or re-derive it. */
-  renderedHtml: string;
+}
+
+/**
+ * The report body exactly as the export draws it: the bundle's own html and
+ * drawn elements, glosses present behind the CSS-only switch (RR6). Built
+ * ONLY from the bundle, so `verify-export.ts` can re-draw it and compare.
+ */
+export function renderExportBody(bundle: ExportBundle): string {
+  return renderReportHtml(bundle.report.html, bundle.elements, { gloss: 'toggle' });
 }
 
 /**
  * Assembles the final, self-contained HTML file: the gateway-drawn report,
  * static Proof/Coverage panels, a plain-language header, and the embedded
  * JSON proof bundle. No executable script, no network requests, no external
- * fonts — openable offline in any browser.
+ * fonts — openable offline in any browser. Everything in it is a function of
+ * the bundle (and the drawing time zone, `bundle.timeZone`).
  */
 export function buildExportDocument(params: BuildExportDocumentParams): string {
-  const { bundle, renderedHtml } = params;
+  // Every date in the file is drawn in the zone the bundle records — the
+  // checker re-draws in that same zone, wherever it runs.
+  return withDrawingZone(params.bundle.timeZone, () => drawExportDocument(params.bundle));
+}
+
+function drawExportDocument(bundle: ExportBundle): string {
+  // Always drawn from the bundle itself — the one drawing the offline
+  // checker can reproduce byte for byte (verify-export.ts).
+  const renderedHtml = renderExportBody(bundle);
 
   const exportedDate = new Date(bundle.exportedAt * 1000).toISOString().slice(0, 10);
+  // A CSS-only translation switch, when the render carries glosses
+  // (renderReportHtml(..., { gloss: 'toggle' })). No script: a checkbox and
+  // sibling selectors.
+  const hasGloss = /<ruby class="sv-gloss">/.test(renderedHtml);
   const exportedLabel = formatDateTimeWithYear(bundle.exportedAt);
   const checkedLabel = formatDateTime(bundle.report.checkedAt);
   const tzLabel = utcOffsetLabel(bundle.exportedAt);
@@ -217,22 +370,34 @@ export function buildExportDocument(params: BuildExportDocumentParams): string {
     `<div class="sv-export-header">` +
     `<p class="sv-export-meta">Suveren Gateway ${escapeHtml(bundle.gatewayVersion)} — exported ${escapeHtml(exportedLabel)} &middot; checked ${escapeHtml(checkedLabel)} (times in ${escapeHtml(tzLabel)})</p>` +
     `<p class="sv-export-howto">How to check this report: each ticket below links to its public record on suveren.ai ("Check on suveren.ai ↗"). ` +
-    `To verify this entire file offline (including every signature), run <code>suveren-gateway verify-report ${escapeHtml(suggestedFilename(bundle))}</code> from a terminal with the Suveren gateway CLI installed.</p>` +
-    // The legend again, in the gateway-owned header outside the report body
-    // (review SR5). Inline !important for the same reason as the in-body
-    // banner (render-report.ts#aiLegendBanner): the AI's <style> shares this
-    // flat document and must not be able to hide it by selector.
-    `<p class="sv-export-legend" role="note" style="display:block !important;visibility:visible !important;opacity:1 !important;margin:6px 0 0 0 !important;color:#3f3f46 !important;font:12.5px/1.45 system-ui, sans-serif !important;"><b style="display:inline !important;visibility:visible !important;color:#18181b !important;">${escapeHtml(AI_ANALYSIS_LABEL)}:</b> ${escapeHtml(AI_LEGEND_TEXT)}</p>` +
+    `To verify this entire file offline (every signature, and every value the boxes show), run <code>suveren-gateway verify-report ${escapeHtml(suggestedFilename(bundle))}</code> from a terminal with the Suveren gateway CLI installed.</p>` +
+    // The legend, once, in the gateway-owned header (no outside UI exists
+    // around an exported file). The report body itself carries none.
+    `<div class="sv-export-legend">${reportLegend(hasGloss)}</div>` +
+    (hasGloss
+      ? `<div class="sv-translate"><label for="sv-gloss-toggle" class="sv-toggle-switch" aria-hidden="true"><span class="sv-toggle-track"><span class="sv-toggle-thumb"></span></span></label>` +
+        `<label for="sv-gloss-toggle" class="sv-toggle-text">Übersetzung anzeigen / show translation</label></div>`
+      : '') +
     `</div>`;
 
   const proofScriptJson = JSON.stringify(bundle).replace(/<\//g, '<\\/');
   const proofScript = `<script type="application/json" id="suveren-proof">${proofScriptJson}</script>`;
 
-  let doc = ensureHtmlDocument(renderedHtml);
-  doc = injectIntoHead(doc, `<meta charset="utf-8"><title>Suveren report export — ${escapeHtml(exportedDate)}</title><style>${DRAWN_ELEMENT_STYLES}${EXPORT_PAGE_STYLES}</style>`);
-  doc = injectAfterBodyOpen(doc, headerHtml + `<div class="sv-export-layout"><div class="sv-export-main">`);
-  doc = injectBeforeBodyClose(doc, `</div>${renderProofCoveragePanels(bundle.proof, bundle.coverage)}</div>${proofScript}`);
-  return doc;
+  // CSP: the file runs nothing and loads nothing, even opened outside the
+  // gateway's sandboxed frame (the JSON data block is not executable).
+  const csp = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:">`;
+  const head = `<meta charset="utf-8">${csp}<title>Suveren report export — ${escapeHtml(exportedDate)}</title><style>${DRAWN_ELEMENT_STYLES}${EXPORT_PAGE_STYLES}</style>`;
+  const toggleInput = hasGloss ? `<input type="checkbox" id="sv-gloss-toggle" class="sv-toggle-input">` : '';
+  // Always a fresh document around the rendered FRAGMENT (renderReportHtml
+  // returns one) — never a regex hunt for <head>/<body> inside it, which an
+  // AI <header> element would match.
+  return (
+    `<!doctype html><html lang="en"><head>${head}</head><body>` +
+    toggleInput + headerHtml +
+    `<div class="sv-export-layout"><div class="sv-export-main">${renderedHtml}</div>` +
+    `${renderProofCoveragePanels(bundle.proof, bundle.coverage)}</div>${proofScript}` +
+    `</body></html>`
+  );
 }
 
 /** `suveren-report-<YYYY-MM-DD>.html` — the download's own filename, and the

@@ -51,6 +51,15 @@ export interface BuiltinTool {
   validate?: (args: Record<string, unknown>) => string | undefined | Promise<string | undefined>;
 }
 
+/** What `mandateRefusal` sees of a held mandate — EnrichedAuthorization fits. */
+export interface MandateCandidate {
+  authorizationId: string;
+  profileId: string;
+  complete: boolean;
+  bounds?: Record<string, string | number>;
+  frame?: Record<string, string | number>;
+}
+
 export interface BuiltinIntegration {
   /** Prefix of the tool names. Must not contain `__` and must not clash with a connector id. */
   id: string;
@@ -68,6 +77,16 @@ export interface BuiltinIntegration {
    * proposal or ticket (e.g. the AI creating its own mandates — test setups only).
    */
   simulationOnly?: boolean;
+  /**
+   * A held mandate (on this built-in's profile) that the built-in refuses —
+   * e.g. one from an older profile version. Return the refusal reason, or
+   * nothing to accept it. The gate applies it to EVERY tool of the built-in,
+   * before the gatekeeper check and mandate selection (tool-proxy.ts): a
+   * refused mandate is never selectable, so it can neither authorize nor be
+   * charged for a call. Declare here the SAME predicate the built-in's own
+   * refusal uses, so reads and writes follow one rule.
+   */
+  mandateRefusal?: (auth: MandateCandidate) => string | undefined;
   tools: BuiltinTool[];
 }
 

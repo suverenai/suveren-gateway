@@ -3604,6 +3604,31 @@ body.is-updating .simulation-banner {
   font-size: 0.8rem; color: var(--text-primary);
 }
 
+/* Legend chips + the translation switch (two-tag rule, RR6). Gateway UI,
+ * outside the report frame. */
+.reports-legend { display: flex; flex-wrap: wrap; gap: 0.25rem 1rem; align-items: center; }
+.reports-legend-chip { display: inline-flex; align-items: center; gap: 0.4rem; }
+.reports-sw { width: 11px; height: 11px; border-radius: 3px; display: inline-block; flex: none; }
+.reports-sw-v { background: var(--success-subtle); border: 2px solid #15803d; }
+.reports-sw-a { border: 2px dashed #9a9a9a; }
+.reports-gloss-swatch { color: var(--text-muted); border-bottom: 1px dotted var(--text-muted); }
+.reports-gloss-switch {
+  display: inline-flex; align-items: center; gap: 0.6rem; margin: 0 0 0.5rem 0;
+  font-size: 0.82rem; font-weight: 600; cursor: pointer; user-select: none;
+}
+.reports-gloss-switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.reports-gloss-track {
+  width: 34px; height: 18px; border-radius: 999px; background: var(--border);
+  position: relative; flex: none; transition: background 0.15s ease;
+}
+.reports-gloss-thumb {
+  position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25); transition: transform 0.15s ease;
+}
+.reports-gloss-switch input:checked + .reports-gloss-track { background: var(--text-primary); }
+.reports-gloss-switch input:checked + .reports-gloss-track .reports-gloss-thumb { transform: translateX(16px); }
+.reports-gloss-switch input:focus-visible + .reports-gloss-track { outline: 2px solid var(--text-primary); outline-offset: 2px; }
+
 /* Fixed height with internal scrolling — the iframe cannot auto-resize to its
  * (script-free) content, so the page says so (see the hint above it). */
 .reports-iframe {

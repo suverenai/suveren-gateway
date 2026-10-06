@@ -114,50 +114,136 @@ describe('/internal/report* auth + round trip', () => {
     expect(res.status).toBe(400);
   });
 
-  it('saves a report, verifies it, and GET reflects exactly what was saved', async () => {
-    const html = '<h1>Three-week test</h1><sv-ticket ref="ghost-1"></sv-ticket>';
+  it('REFUSAL: POST /internal/report with no reporting mandate is refused (409) — no window, nothing verified or saved (RR2)', async () => {
     const saveRes = await fetch(`${BASE_URL}/internal/report`, {
       method: 'POST',
       headers: { ...withSecret(), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ html }),
+      body: JSON.stringify({ html: '<sv-ai><h1>Three-week test</h1></sv-ai><sv-ticket ref="ghost-1"></sv-ticket>' }),
     });
-    expect(saveRes.status).toBe(200);
-    const saved = (await saveRes.json()).report;
-    expect(saved.savedAt).toBe(saved.checkedAt);
-    expect(saved.renderedHtml).toContain('Three-week test');
-    expect(saved.renderedHtml).not.toMatch(/<sv-ticket/);
-    // No real archive/connector in this test harness — an unknown ticket ref
-    // is correctly unverifiable, never invented.
-    expect(saved.proof.unverifiableCount).toBe(1);
-    expect(saved.elements[0].status).toBe('unverifiable');
+    expect(saveRes.status).toBe(409);
+    expect((await saveRes.json()).error).toMatch(/reporting mandate/i);
+    const check = await fetch(`${BASE_URL}/internal/report`, { headers: withSecret() });
+    expect((await check.json()).report).toBeNull();
+  });
 
-    const getRes = await fetch(`${BASE_URL}/internal/report`, { headers: withSecret() });
-    const fetched = (await getRes.json()).report;
-    expect(fetched.savedAt).toBe(saved.savedAt);
-    expect(fetched.renderedHtml).toBe(saved.renderedHtml);
+  it('recheck with no report yet returns {report: null} — no window needed to say "nothing there"', async () => {
+    const res = await fetch(`${BASE_URL}/internal/report/recheck`, { method: 'POST', headers: withSecret() });
+    expect(res.status).toBe(200);
+    expect((await res.json()).report).toBeNull();
+  });
+});
+
+/**
+ * A report the AI already wrote under a reporting mandate (seeded on disk, as
+ * write_report stores it — with the reporting window it was checked against).
+ * "Check again" and the export reuse THAT window: they need no active
+ * mandate, and the window's start never moves (window.ts#scopeReportSourcesToStoredWindow).
+ */
+describe('/internal/report* on a stored report (its own reporting window)', () => {
+  const PORT2 = 13032;
+  const BASE2 = `http://127.0.0.1:${PORT2}`;
+  const DATA2 = resolve(__dirname, '../../.test-data-report-api-stored');
+  const PROFILES2 = resolve(__dirname, '../../.test-profiles-report-api-stored');
+  let proc2: ChildProcess;
+  const now = Math.floor(Date.now() / 1000);
+  const window = { start: now - 30 * 86_400, end: now, days: 30, label: 'since then (the last 30 days)' };
+
+  beforeAll(async () => {
+    mkdirSync(PROFILES2, { recursive: true });
+    writeFileSync(resolve(PROFILES2, 'index.json'), JSON.stringify({ repository: 'test', profiles: {} }));
+    rmSync(DATA2, { recursive: true, force: true });
+    mkdirSync(DATA2, { recursive: true });
+    // One paragraph outside every block — as a report stored before the
+    // two-tag rule (RR6) still has it: not shown, and the UI must say so.
+    const html = '<sv-ai><h1>Three-week test</h1></sv-ai><p>Old free prose</p><sv-ticket ref="ghost-1"></sv-ticket>' +
+      '<sv-glossary lang="de"><sv-term key="erp__create_quote">Angebot erstellt</sv-term><sv-term key="ghost-1">Beleg</sv-term></sv-glossary>';
+    writeFileSync(resolve(DATA2, 'report.json'), JSON.stringify({
+      version: 1,
+      report: {
+        html, savedAt: now - 60, checkedAt: now - 60,
+        result: {
+          // As stored by a save: one verified compact ticket (GET renders the
+          // stored result, it never re-verifies).
+          html, elements: [{ id: 'sv-ticket-0', kind: 'sv-ticket', attrs: { ref: 'ghost-1' }, status: 'verified', data: { ticketId: 'ghost-1', action: 'erp__create_quote', time: now - 120 } }],
+          proof: { ticketsReferenced: [], signaturesValid: 0, recordsChecked: 0, unverifiableCount: 0, verifiedValues: [] },
+          coverage: {
+            loadedCases: [], coveredCases: [], missingCases: [], periodStart: window.start, window,
+            ticketsInPeriod: [], ticketsReferenced: [], ticketsNotReferenced: [],
+          },
+        },
+      },
+    }));
+    proc2 = spawn('npx', ['tsx', 'bin/http.ts'], {
+      cwd: resolve(__dirname, '../..'),
+      shell: process.platform === 'win32',
+      env: {
+        ...process.env,
+        SUVEREN_MCP_PORT: String(PORT2),
+        SUVEREN_AS_URL: 'https://www.suveren.ai',
+        SUVEREN_DATA_DIR: DATA2,
+        SUVEREN_PROFILES_DIR: PROFILES2,
+        SUVEREN_DISABLE_AUTO_INTEGRATIONS: '1',
+        SUVEREN_INTERNAL_SECRET: SECRET,
+      },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    proc2.stderr?.on('data', (data: Buffer) => {
+      process.stderr.write(`  [report-api stored server] ${data.toString()}`);
+    });
+    await waitForServer(BASE2);
+  }, 60000);
+
+  afterAll(async () => {
+    proc2?.kill();
+    rmSync(PROFILES2, { recursive: true, force: true });
+    rmSync(DATA2, { recursive: true, force: true });
+  });
+
+  it('GET returns the stored report with its reporting window', async () => {
+    const res = await fetch(`${BASE2}/internal/report`, { headers: withSecret() });
+    const data = (await res.json()).report;
+    expect(data.renderedHtml).toContain('Three-week test');
+    expect(data.coverage.window.start).toBe(window.start);
+  });
+
+  it('GET carries two pre-rendered variants: translation off (default) and on, plus what the glossary did (RR6)', async () => {
+    const res = await fetch(`${BASE2}/internal/report`, { headers: withSecret() });
+    const data = (await res.json()).report;
+    expect(data.renderedHtml).not.toContain('<ruby');
+    expect(data.renderedHtmlGloss).toContain('<ruby class="sv-gloss"><span class="sv-v">erp__create_quote</span><rt>Angebot erstellt</rt></ruby>');
+    expect(data.renderedHtmlGloss).not.toContain('Beleg');
+    expect(data.glossary.applied).toEqual(['erp__create_quote']);
+    expect(data.glossary.rejected.map((r: { key: string }) => r.key)).toEqual(['ghost-1']);
+  });
+
+  it('GET tells the UI how many blocks of an older-format report are not shown (RR6 follow-up)', async () => {
+    const res = await fetch(`${BASE2}/internal/report`, { headers: withSecret() });
+    const data = (await res.json()).report;
+    expect(data.formatNotice).toEqual({ blocksNotShown: 1 });
+    expect(data.renderedHtml).not.toContain('Old free prose');
   });
 
   it('recheck() re-verifies without requiring a new html body, and REFUSES without a secret', async () => {
-    const noAuth = await fetch(`${BASE_URL}/internal/report/recheck`, { method: 'POST' });
+    const noAuth = await fetch(`${BASE2}/internal/report/recheck`, { method: 'POST' });
     expect(noAuth.status).toBe(403);
 
-    const res = await fetch(`${BASE_URL}/internal/report/recheck`, { method: 'POST', headers: withSecret() });
+    const res = await fetch(`${BASE2}/internal/report/recheck`, { method: 'POST', headers: withSecret() });
     expect(res.status).toBe(200);
     const data = (await res.json()).report;
     expect(data.checkedAt).toBeGreaterThanOrEqual(data.savedAt);
   });
 
   it('REFUSAL: GET /internal/report/export with no secret is rejected (403)', async () => {
-    const res = await fetch(`${BASE_URL}/internal/report/export`);
+    const res = await fetch(`${BASE2}/internal/report/export`);
     expect(res.status).toBe(403);
   });
 
   it('REFUSAL: GET /internal/report/export fails visibly (no AS pairing in this test harness, never an empty file)', async () => {
-    // This suite's TEST_DATA_DIR has a saved report (from the earlier test)
+    // This suite's data dir has a stored report (seeded above)
     // but no as-pairing.json and no archived tickets — there is genuinely no
     // Authority Server key to anchor an export to, so the route must refuse
     // rather than ship an unanchored bundle.
-    const res = await fetch(`${BASE_URL}/internal/report/export`, { headers: withSecret() });
+    const res = await fetch(`${BASE2}/internal/report/export`, { headers: withSecret() });
     expect(res.status).toBe(503);
     const body = await res.json();
     expect(body.error).toMatch(/authority server/i);
@@ -178,27 +264,22 @@ describe('/internal/report* auth + round trip', () => {
    * incident's synthetic reproduction, nothing here hand-crafts a
    * never-fails stub.
    */
-  it('GET always reflects the MOST RECENT check (save, then recheck) — coverage.emailExportError never goes stale', async () => {
-    const html = '<h1>Coverage consistency check</h1>';
-    const saveRes = await fetch(`${BASE_URL}/internal/report`, {
-      method: 'POST',
-      headers: { ...withSecret(), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ html }),
-    });
-    const saved = (await saveRes.json()).report;
+  it('GET always reflects the MOST RECENT check (recheck, then recheck) — coverage.emailExportError never goes stale', async () => {
+    const firstRes = await fetch(`${BASE2}/internal/report/recheck`, { method: 'POST', headers: withSecret() });
+    const saved = (await firstRes.json()).report;
     expect(saved.coverage.emailExportError).toBeTruthy(); // no connector in this harness
 
-    const getAfterSave = await fetch(`${BASE_URL}/internal/report`, { headers: withSecret() });
+    const getAfterSave = await fetch(`${BASE2}/internal/report`, { headers: withSecret() });
     const fetchedAfterSave = (await getAfterSave.json()).report;
     expect(fetchedAfterSave.coverage.emailExportError).toBe(saved.coverage.emailExportError);
     expect(fetchedAfterSave.checkedAt).toBe(saved.checkedAt);
 
-    const recheckRes = await fetch(`${BASE_URL}/internal/report/recheck`, { method: 'POST', headers: withSecret() });
+    const recheckRes = await fetch(`${BASE2}/internal/report/recheck`, { method: 'POST', headers: withSecret() });
     const rechecked = (await recheckRes.json()).report;
     expect(rechecked.coverage.emailExportError).toBeTruthy();
     expect(rechecked.checkedAt).toBeGreaterThanOrEqual(saved.checkedAt);
 
-    const getAfterRecheck = await fetch(`${BASE_URL}/internal/report`, { headers: withSecret() });
+    const getAfterRecheck = await fetch(`${BASE2}/internal/report`, { headers: withSecret() });
     const fetchedAfterRecheck = (await getAfterRecheck.json()).report;
     // The critical assertion: GET reflects the RECHECK's checkedAt/coverage,
     // not a stale copy of the earlier save's.

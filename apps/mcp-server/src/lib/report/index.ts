@@ -4,12 +4,12 @@
  * this later (a UI step, out of scope here).
  */
 export { verifyReport } from './verify-report';
-export { sanitizeReportHtml } from './sanitize';
+export { sanitizeReportHtml, sanitizeReport, type SanitizeNotes } from './sanitize';
 export { parseElements, type ParsedElement } from './parse-elements';
 export { createConnectorExportRunner, ConnectorExportError, type ConnectorExportConfig } from './connector-export';
 export { METRIC_KINDS, type MetricKind } from './metric-resolvers';
 export { ReportStore, type StoredReport } from './report-store';
-export { renderReportHtml, escapeHtml, DRAWN_ELEMENT_STYLES } from './render-report';
+export { renderReportHtml, glossaryUsage, escapeHtml, DRAWN_ELEMENT_STYLES, type GlossMode, type GlossaryUsage } from './render-report';
 export {
   formatDateTime, formatDuration, formatCurrency, formatBoundValue, formatBoundLabel,
   formatOwnerLabel, profileShortLabel, formatActionLabel, formatMetricValue, METRIC_LABELS,

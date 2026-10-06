@@ -1368,6 +1368,9 @@ function sleep(ms) {
  * Delegates entirely to the compiled `dist/mcp-server/report-verify-cli.mjs`
  * (built from apps/mcp-server's OWN tsup entry, next to dist/mcp-server/
  * http.mjs) — this script never reimplements the signature-checking logic.
+ * It checks the signatures AND every value the page shows (RR7: the page
+ * must re-draw from the bundle byte for byte; each drawn field is checked
+ * against its signed source, recomputed, or listed as not checkable offline).
  * Exit codes are documented there (`--help`): 0 valid+key confirmed,
  * 1 invalid, 2 valid but key unconfirmed.
  */
@@ -1410,7 +1413,8 @@ Usage:
   suveren-gateway simulation on|off|status    Block (or unblock) every real system
                                               (see \`suveren-gateway simulation help\`)
   suveren-gateway verify-report <file> [--key <hex>] [--online]
-                                              Verify an "Export with proof" report file offline
+                                              Verify an "Export with proof" report file offline —
+                                              every signature and every value the page shows
                                               (see \`suveren-gateway verify-report --help\`)
   suveren-gateway help                        Print this help
 

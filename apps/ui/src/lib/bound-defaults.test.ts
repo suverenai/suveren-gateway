@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { ProfileBoundsField } from '@hap/core';
-import { minForBound, seedForBound, numericBoundValue } from './bound-defaults';
+import { minForBound, maxForBound, seedForBound, numericBoundValue } from './bound-defaults';
 
 /**
  * A fresh email mandate used to submit recipient_max = 0 (empty input → 0),
@@ -62,5 +62,24 @@ describe('numericBoundValue', () => {
   it('keeps the old empty → 0 behaviour for everything else', () => {
     expect(numericBoundValue(sendDailyMax, '')).toBe(0);
     expect(numericBoundValue(amountMax, '250')).toBe(250);
+  });
+});
+
+describe('maximum — a profile-declared ceiling (reporting@0.2 read_max_age_days: 366)', () => {
+  const reportingWindow = {
+    type: 'number', required: true, unit: 'days', maximum: 366,
+    boundType: { kind: 'per_transaction', of: 'read_age_days' },
+  } as unknown as ProfileBoundsField;
+
+  it('is read from the schema, absent when not declared', () => {
+    expect(maxForBound(reportingWindow)).toBe(366);
+    expect(maxForBound(readMaxAgeDays)).toBeUndefined();
+  });
+
+  it('a value above it is submitted as the maximum, never above', () => {
+    expect(numericBoundValue(reportingWindow, '5000')).toBe(366);
+    expect(numericBoundValue(reportingWindow, '366')).toBe(366);
+    expect(numericBoundValue(reportingWindow, '30')).toBe(30);
+    expect(numericBoundValue(readMaxAgeDays, '5000')).toBe(5000);
   });
 });

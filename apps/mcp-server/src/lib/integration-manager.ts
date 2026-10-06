@@ -17,7 +17,7 @@ import type { IntegrationConfig, ToolGatingConfig } from './integration-registry
 import { getManifest, isExactSemver } from './manifest-loader';
 import { remotePreflightTarget, preflightRemoteAuth } from './remote-auth-preflight';
 import { isSimulationMode, manifestIsSimulated, SIMULATION_BLOCK_REASON } from './simulation-mode';
-import type { BuiltinIntegration, BuiltinStatus } from './builtin-integration';
+import type { BuiltinIntegration, BuiltinStatus, MandateCandidate } from './builtin-integration';
 
 const DEFAULT_DATA_DIR = process.env.SUVEREN_DATA_DIR ?? join(homedir(), '.suveren');
 // Runtime INSTALL directory for downstream MCP npm packages (e.g. crm-mcp,
@@ -954,6 +954,16 @@ export class IntegrationManager {
     const def = builtin.def.tools.find(t => t.name === tool.originalName);
     const refusal = await def?.validate?.(args);
     return refusal ? `Refused: ${refusal} No ticket was requested.` : null;
+  }
+
+  /**
+   * Why this tool's integration refuses the held mandate `auth`, or null when
+   * it accepts it (always null for connectors and built-ins that declare no
+   * `mandateRefusal`). tool-proxy.ts drops refused mandates before selection.
+   */
+  mandateRefusal(tool: DiscoveredTool, auth: MandateCandidate): string | null {
+    const builtin = this.builtins.get(tool.integrationId);
+    return builtin?.def.mandateRefusal?.(auth) ?? null;
   }
 
   /**

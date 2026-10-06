@@ -49,7 +49,7 @@ describe('ReportStore', () => {
     const runExport = vi.fn(async () => buildEmailExport());
     const store = new ReportStore(testDir);
 
-    const stored = await store.saveReport('<p>hello</p>', makeSources(runExport, archive), 1_000);
+    const stored = await store.saveReport('<sv-ai><p>hello</p></sv-ai>', makeSources(runExport, archive), 1_000);
 
     expect(stored.html).toContain('hello');
     expect(stored.savedAt).toBe(1_000);
@@ -67,8 +67,8 @@ describe('ReportStore', () => {
     const runExport = async () => buildEmailExport();
     const store = new ReportStore(testDir);
 
-    await store.saveReport('<p>first</p>', makeSources(runExport, archive), 1_000);
-    const second = await store.saveReport('<p>second</p>', makeSources(runExport, archive), 2_000);
+    await store.saveReport('<sv-ai><p>first</p></sv-ai>', makeSources(runExport, archive), 1_000);
+    const second = await store.saveReport('<sv-ai><p>second</p></sv-ai>', makeSources(runExport, archive), 2_000);
 
     expect(second.html).toContain('second');
     expect(second.savedAt).toBe(2_000);
@@ -105,7 +105,7 @@ describe('ReportStore', () => {
   it('persists plaintext until a vault key is set, then migrates to encrypted', async () => {
     const { archive } = buildScenario();
     const store = new ReportStore(testDir);
-    await store.saveReport('<p>secret-ish</p>', makeSources(async () => buildEmailExport(), archive), 1_000);
+    await store.saveReport('<sv-ai><p>secret-ish</p></sv-ai>', makeSources(async () => buildEmailExport(), archive), 1_000);
 
     expect(existsSync(join(testDir, 'report.json'))).toBe(true);
     expect(existsSync(join(testDir, 'report.enc.json'))).toBe(false);
@@ -125,7 +125,7 @@ describe('ReportStore', () => {
     const key = makeVaultKey();
     const writer = new ReportStore(testDir);
     writer.setVaultKey(key); // no report yet — nothing to encrypt
-    await writer.saveReport('<p>x</p>', makeSources(async () => buildEmailExport(), archive), 1_000);
+    await writer.saveReport('<sv-ai><p>x</p></sv-ai>', makeSources(async () => buildEmailExport(), archive), 1_000);
 
     const reopened = new ReportStore(testDir);
     expect(reopened.isLocked()).toBe(true);

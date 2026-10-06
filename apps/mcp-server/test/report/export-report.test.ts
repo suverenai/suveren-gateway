@@ -7,9 +7,14 @@
 import { describe, it, expect } from 'vitest';
 import { verifyReceiptSignature, type ReceiptPayload } from '@hap/core';
 import { verifyReport } from '../../src/lib/report/verify-report';
-import { renderReportHtml, AI_ANALYSIS_LABEL } from '../../src/lib/report/render-report';
+import { renderReportHtml, AI_ANALYSIS_LABEL, GLOSS_LEGEND_TEXT } from '../../src/lib/report/render-report';
+import { formatTimestamp } from '../../src/lib/report/format';
 import { buildExportBundle, buildExportDocument, suggestedFilename } from '../../src/lib/report/export-report';
-import { extractProofBundle } from '../../bin/report-verify-cli';
+import { extractProofBundle, runVerifyReportCli } from '../../bin/report-verify-cli';
+import { verifyExportBundle, recomputeBoundsHash } from '../../src/lib/report/verify-export';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { buildScenario, AS_URL } from './fixtures/scenario';
 import type { RunConnectorExport, ExportSystem } from '../../src/lib/report/types';
 import type { StoredReport } from '../../src/lib/report/report-store';
@@ -25,7 +30,7 @@ async function buildStored(html: string, archive: ReturnType<typeof buildScenari
 }
 
 describe('buildExportBundle', () => {
-  it('includes every referenced ticket and every ticket in the coverage period, with their authorizations', async () => {
+  it('includes every referenced ticket and every ticket in the coverage period — bare, when no sv-mandate places their mandate (RR5)', async () => {
     const { archive, addTicket, kp } = buildScenario();
     addTicket({
       id: 't-ref', action: 'erp__create_quote', authorizationId: 'authz-ref', timestamp: 1_800_000_000,
@@ -36,7 +41,7 @@ describe('buildExportBundle', () => {
       authorization: { authorizationId: 'authz-other', profileId: 'test-profile', boundsHash: 'bh-other' },
     });
 
-    const html = '<h1>Report</h1><sv-ticket ref="t-ref"></sv-ticket>';
+    const html = '<sv-ai><h1>Report</h1></sv-ai><sv-ticket ref="t-ref"></sv-ticket>';
     const stored = await buildStored(html, archive);
 
     const bundle = buildExportBundle({
@@ -47,7 +52,7 @@ describe('buildExportBundle', () => {
     const ids = bundle.tickets.map(t => (t as { id: string }).id);
     expect(ids).toContain('t-ref');
     expect(ids).toContain('t-unreferenced'); // in coverage period, not referenced
-    expect(Object.keys(bundle.authorizations)).toEqual(expect.arrayContaining(['authz-ref', 'authz-other']));
+    expect(bundle.authorizations).toEqual({}); // no sv-mandate placed → no mandate data
     expect(bundle.report.html).toBe(stored.html);
     expect(bundle.authorityServer).toEqual({ url: AS_URL, publicKeyHex: kp.publicKeyHex });
   });
@@ -62,29 +67,32 @@ describe('buildExportBundle', () => {
 });
 
 describe('buildExportDocument — round trip + safety', () => {
-  async function buildRealExport() {
+  async function buildRealExport(opts: { glossary?: boolean } = {}) {
     const { archive, addTicket, kp } = buildScenario();
     addTicket({
       id: 't1', action: 'erp__create_quote', authorizationId: 'authz-1', timestamp: 1_800_000_000,
       authorization: { authorizationId: 'authz-1', profileId: 'test-profile', boundsHash: 'bh-1', intent: 'Quote up to 1000' },
     });
-    const html = '<h1>Three-week test</h1><sv-ticket ref="t1"></sv-ticket><sv-mandate ticket="t1"></sv-mandate>';
+    const html = '<sv-ai><h1>Three-week test</h1></sv-ai><sv-ticket ref="t1" variant="full"></sv-ticket><sv-mandate ticket="t1"></sv-mandate>' +
+      (opts.glossary ? '<sv-glossary lang="de"><sv-term key="action">Aktion</sv-term></sv-glossary>' : '');
     const stored = await buildStored(html, archive);
     const bundle = buildExportBundle({ stored, archive, gatewayVersion: '0.0.0-test', authorityServer: { url: AS_URL, publicKeyHex: kp.publicKeyHex } });
     // The same call the real export route makes (http.ts).
-    const renderedHtml = renderReportHtml(stored.result.html, stored.result.elements);
-    const doc = buildExportDocument({ bundle, renderedHtml });
+    const renderedHtml = renderReportHtml(stored.result.html, stored.result.elements, { gloss: 'toggle' });
+    const doc = buildExportDocument({ bundle });
     return { doc, bundle, kp };
   }
 
-  it('carries the "AI analysis — not verified" legend in the gateway header AND above the AI\'s content (review SR5)', async () => {
+  it('carries the legend ONCE, in the gateway header; the AI\'s content sits in labelled frames (review SR5, RR6)', async () => {
     const { doc } = await buildRealExport();
     const header = doc.slice(doc.indexOf('<div class="sv-export-header">'), doc.indexOf('<div class="sv-export-layout">'));
     expect(header).toContain('class="sv-export-legend"');
-    expect(header).toContain(AI_ANALYSIS_LABEL);
+    expect(header).toContain('Grey dashed = the AI&#39;s own analysis, not verified');
+    expect(doc.match(/<div class="sv-legend"/g)).toHaveLength(1);
     const main = doc.slice(doc.indexOf('<div class="sv-export-main">'));
-    expect(main.indexOf('class="sv-ai-legend"')).toBeGreaterThan(-1);
-    expect(main.indexOf('class="sv-ai-legend"')).toBeLessThan(main.indexOf('Three-week test'));
+    expect(main).not.toContain('class="sv-legend"');
+    // ...and the AI's content itself sits in a labelled grey frame.
+    expect(main).toMatch(new RegExp(`<span class="sv-ai-label">${AI_ANALYSIS_LABEL}</span><div class="sv-ai-block"><div class="sv-ai-content"><h1>Three-week test</h1>`));
   });
 
   it('the public check link is a plain new-tab link in the file (no sandbox, no in-app route)', async () => {
@@ -145,14 +153,18 @@ describe('buildExportDocument — round trip + safety', () => {
 
   it('fix 2: exported/checked timestamps share one local format and the zone is stated once', async () => {
     const { doc, bundle } = await buildRealExport();
-    // Same "D Mon, HH:MM" shape the gateway-drawn ticket card uses (format.ts's
-    // formatDateTime) — never the old "...T...Z"/"21:43 UTC" ISO mix.
-    expect(doc).not.toMatch(/\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/);
-    expect(doc).toMatch(/exported \d{1,2} \w{3} \d{4}, \d{2}:\d{2}/);
-    expect(doc).toMatch(/checked \d{1,2} \w{3}, \d{2}:\d{2}/);
-    // The zone is named exactly once, in the header — never repeated per line.
-    const tzMentions = doc.match(/UTC[+-]\d/g) ?? [];
-    expect(tzMentions.length).toBe(1);
+    // The header keeps its plain "D Mon, HH:MM" shape — never an ISO mix.
+    const header = doc.slice(doc.indexOf('<div class="sv-export-header">'), doc.indexOf('<div class="sv-export-layout">'));
+    expect(header).not.toMatch(/\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/);
+    expect(header).toMatch(/exported \d{1,2} \w{3} \d{4}, \d{2}:\d{2}/);
+    expect(header).toMatch(/checked \d{1,2} \w{3}, \d{2}:\d{2}/);
+    // Zone stated once — "UTC" on a UTC host (CI), "UTC+2" etc. elsewhere.
+    expect((header.match(/\bUTC(?:[+-]\d{1,2}(?::\d{2})?)?(?![\w+-])/g) ?? []).length).toBe(1);
+    // Inside the verified boxes a signed timestamp is the one deterministic
+    // full format (two-tag rule, RR6), never the raw unix seconds.
+    expect(doc).toContain(formatTimestamp(1_800_000_000));
+    const visible = doc.replace(/<script type="application\/json" id="suveren-proof">[\s\S]*?<\/script>/, '');
+    expect(visible).not.toContain('1800000000');
     void bundle;
   });
 
@@ -168,7 +180,7 @@ describe('buildExportDocument — round trip + safety', () => {
     const stored: StoredReport = { html: result.html, savedAt: now, checkedAt: now, result };
     const bundle = buildExportBundle({ stored, archive, gatewayVersion: 'test', authorityServer: { url: AS_URL, publicKeyHex: kp.publicKeyHex } });
     const renderedHtml = renderReportHtml(stored.result.html, stored.result.elements);
-    const doc = buildExportDocument({ bundle, renderedHtml });
+    const doc = buildExportDocument({ bundle });
 
     expect(bundle.coverage.emailExportError).toMatch(/ENOENT/); // still in the data
     const visibleHtml = doc.replace(/<script type="application\/json" id="suveren-proof">[\s\S]*?<\/script>/, '');
@@ -176,6 +188,46 @@ describe('buildExportDocument — round trip + safety', () => {
     expect(visibleHtml).not.toMatch(/spawn email-mcp/);
     expect(visibleHtml).toMatch(/the email simulator could not be read/i);
     expect(visibleHtml).toMatch(/all saved tickets were counted/i);
+  });
+
+  it('a report with a glossary gets a CSS-only translation switch (off by default) and the gloss legend; still no script', async () => {
+    const { doc } = await buildRealExport({ glossary: true });
+    expect(doc).toContain('<input type="checkbox" id="sv-gloss-toggle" class="sv-toggle-input">');
+    expect(doc).not.toMatch(/<input[^>]*checked/);
+    expect(doc).toContain('Übersetzung anzeigen / show translation');
+    expect(doc).toContain(GLOSS_LEGEND_TEXT);
+    expect(doc).toContain('#sv-gloss-toggle:checked ~ .sv-export-layout .sv-gloss-toggle-mode ruby.sv-gloss rt { display:ruby-text; }');
+    expect(doc).toContain('<ruby class="sv-gloss"><span class="sv-k">action</span><rt>Aktion</rt></ruby>');
+    // The toggle input precedes the layout as a sibling (the selector needs it).
+    expect(doc.indexOf('id="sv-gloss-toggle"')).toBeLessThan(doc.indexOf('<div class="sv-export-layout">'));
+    const scriptOpens = doc.match(/<script\b[^>]*>/gi) ?? [];
+    expect(scriptOpens).toHaveLength(1);
+    expect(scriptOpens[0]).toMatch(/type="application\/json"/);
+  });
+
+  it('without a glossary there is no switch and no gloss markup', async () => {
+    const { doc } = await buildRealExport();
+    expect(doc).not.toContain('sv-gloss-toggle"');
+    expect(doc).not.toContain('<ruby');
+  });
+
+  it('the file carries a CSP that runs nothing and loads nothing', async () => {
+    const { doc } = await buildRealExport();
+    const head = doc.slice(0, doc.indexOf('</head>'));
+    expect(head).toContain(`<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:">`);
+  });
+
+  it('a full sv-ticket places its mandate, so the mandate travels in the bundle', async () => {
+    const { archive, addTicket, kp } = buildScenario();
+    addTicket({
+      id: 't1', action: 'erp__create_quote', authorizationId: 'authz-1', timestamp: 1_800_000_000,
+      authorization: { authorizationId: 'authz-1', profileId: 'test-profile', boundsHash: 'bh-1', bounds: { value_max: 1000 } },
+    });
+    const full = await buildStored('<sv-ticket ref="t1" variant="full"></sv-ticket>', archive);
+    const compact = await buildStored('<sv-ticket ref="t1" variant="compact"></sv-ticket>', archive);
+    const as = { url: AS_URL, publicKeyHex: kp.publicKeyHex };
+    expect(Object.keys(buildExportBundle({ stored: full, archive, gatewayVersion: 't', authorityServer: as }).authorizations)).toEqual(['authz-1']);
+    expect(buildExportBundle({ stored: compact, archive, gatewayVersion: 't', authorityServer: as }).authorizations).toEqual({});
   });
 
   it('filename is suveren-report-<date>.html', async () => {
@@ -199,11 +251,172 @@ describe('buildExportDocument — round trip + safety', () => {
     const stored = await buildStored(html, archive);
     const bundle = buildExportBundle({ stored, archive, gatewayVersion: 'test', authorityServer: { url: AS_URL, publicKeyHex: kp.publicKeyHex } });
     const renderedHtml = renderReportHtml(stored.result.html, stored.result.elements);
-    const doc = buildExportDocument({ bundle, renderedHtml });
+    const doc = buildExportDocument({ bundle });
 
     // Exactly one genuine closing tag may exist in the whole document: the
     // proof block's own. Any more means the attacker's payload escaped it.
     const closings = doc.match(/<\/script>/gi) ?? [];
     expect(closings.length).toBe(1);
+  });
+});
+
+
+// ─── RR5 — the proof follows the report ─────────────────────────────────────
+
+describe('RR5 — the proof follows the report: mandate data only for a placed sv-mandate', () => {
+  const SHOWN_INTENT = 'Quote known customers only, up to 1 000 EUR.';
+  const HIDDEN_INTENT = 'Credit policy: never more than 5 % discount for A-customers.';
+
+  async function buildSlimExport() {
+    const { archive, addTicket, kp } = buildScenario();
+    addTicket({
+      id: 't-shown', action: 'erp__create_quote', authorizationId: 'authz-shown', timestamp: 1_800_000_000,
+      authorization: { authorizationId: 'authz-shown', profileId: 'test-profile', boundsHash: 'bh-shown', intent: SHOWN_INTENT, bounds: { value_max: 1000 } },
+    });
+    addTicket({
+      id: 't-bare', action: 'erp__send_quote', authorizationId: 'authz-hidden', timestamp: 1_800_000_100,
+      authorization: { authorizationId: 'authz-hidden', profileId: 'test-profile', boundsHash: 'bh-hidden', intent: HIDDEN_INTENT, bounds: { discount_max: 5 } },
+    });
+    addTicket({ id: 't-coverage-only', action: 'erp__send_quote', authorizationId: 'authz-hidden', timestamp: 1_800_000_200 });
+    const html = '<sv-ai><h1>Week</h1></sv-ai><sv-ticket ref="t-shown"></sv-ticket><sv-mandate ticket="t-shown"></sv-mandate><sv-ticket ref="t-bare"></sv-ticket>';
+    const stored = await buildStored(html, archive);
+    const bundle = buildExportBundle({ stored, archive, gatewayVersion: 'test', authorityServer: { url: AS_URL, publicKeyHex: kp.publicKeyHex } });
+    const doc = buildExportDocument({ bundle });
+    return { bundle, doc, kp, stored };
+  }
+
+  it('an intent the report does not show is nowhere in the exported file; a placed sv-mandate\'s intent is', async () => {
+    const { bundle, doc } = await buildSlimExport();
+    expect(doc).not.toContain(HIDDEN_INTENT);
+    expect(doc).not.toContain('discount_max');
+    // The mandate's id is a SIGNED field of each bare ticket, so it stays in the
+    // raw ticket (the signature must verify) — but nowhere outside the proof
+    // data block, and no mandate record under it.
+    const visible = doc.replace(/<script type="application\/json" id="suveren-proof">[\s\S]*?<\/script>/, '');
+    expect(visible).not.toContain('authz-hidden');
+    expect(doc).toContain(SHOWN_INTENT);
+    expect(Object.keys(bundle.authorizations)).toEqual(['authz-shown']);
+    // Every ticket still travels, bare: referenced, and in coverage.
+    expect(bundle.tickets.map(t => (t as { id: string }).id).sort()).toEqual(['t-bare', 't-coverage-only', 't-shown']);
+  });
+
+  it('the bare tickets still verify on their own — their signature covers the ticket itself', async () => {
+    const { bundle } = await buildSlimExport();
+    for (const t of bundle.tickets) {
+      await expect(verifyReceiptSignature(t as unknown as ReceiptPayload, bundle.authorityServer.publicKeyHex)).resolves.toBeUndefined();
+    }
+  });
+
+  it('the offline checker passes the slim file: exit 2 without a key, 0 with --key, all signatures valid', async () => {
+    const { doc, kp } = await buildSlimExport();
+    const dir = mkdtempSync(join(tmpdir(), 'suveren-rr5-'));
+    const file = join(dir, 'report.html');
+    writeFileSync(file, doc);
+    const log = console.log;
+    console.log = () => {};
+    try {
+      expect(await runVerifyReportCli([file])).toBe(2);
+      expect(await runVerifyReportCli([file, '--key', kp.publicKeyHex])).toBe(0);
+    } finally {
+      console.log = log;
+      rmSync(dir, { recursive: true, force: true });
+    }
+    const result = await verifyExportBundle(extractProofBundle(doc), { documentHtml: doc, expectedKeyHex: kp.publicKeyHex });
+    expect(result.allValid).toBe(true);
+    expect(result.tickets.every(t => t.signatureValid)).toBe(true);
+  });
+
+  it('REFUSAL: exit 1 when the mandate data of an sv-mandate presented as verified is stripped from the file', async () => {
+    const { doc, kp, bundle } = await buildSlimExport();
+    const stripped = { ...bundle, authorizations: {} };
+    const tampered = doc.replace(
+      /(<script type="application\/json" id="suveren-proof">)[\s\S]*?(<\/script>)/,
+      (_m, open, close) => `${open}${JSON.stringify(stripped).replace(/<\//g, '<\\/')}${close}`,
+    );
+    expect(tampered).not.toBe(doc);
+    const dir = mkdtempSync(join(tmpdir(), 'suveren-rr5-'));
+    const file = join(dir, 'report.html');
+    writeFileSync(file, tampered);
+    const log = console.log;
+    console.log = () => {};
+    try {
+      expect(await runVerifyReportCli([file, '--key', kp.publicKeyHex])).toBe(1);
+    } finally {
+      console.log = log;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ─── RR7 — a full ticket draws its mandate's limits, never its intent ──────
+
+describe('RR7 — a full sv-ticket\'s mandate travels without the intent text', () => {
+  const INTENT = 'Internal: quote only customers the CFO cleared this quarter.';
+  const SCOPE_VALUE = 'scope-value-not-drawn-anywhere';
+
+  async function buildFullTicketExport(html: string) {
+    const { archive, addTicket, kp } = buildScenario();
+    addTicket({
+      id: 't1', action: 'erp__create_quote', authorizationId: 'authz-1', timestamp: 1_800_000_000,
+      authorization: {
+        authorizationId: 'authz-1', profileId: 'test-profile', boundsHash: 'bh-1', contextHash: 'ch-1',
+        intent: INTENT, bounds: { value_max: 1000 }, context: { region: SCOPE_VALUE },
+      },
+    });
+    const stored = await buildStored(html, archive);
+    const bundle = buildExportBundle({ stored, archive, gatewayVersion: 'test', authorityServer: { url: AS_URL, publicKeyHex: kp.publicKeyHex } });
+    const doc = buildExportDocument({ bundle });
+    return { bundle, doc, kp };
+  }
+
+  async function cli(doc: string, args: string[]): Promise<number> {
+    const dir = mkdtempSync(join(tmpdir(), 'suveren-rr7-'));
+    const file = join(dir, 'report.html');
+    writeFileSync(file, doc);
+    const log = console.log;
+    console.log = () => {};
+    try {
+      return await runVerifyReportCli([file, ...args]);
+    } finally {
+      console.log = log;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it('full sv-ticket only: the intent text is nowhere in the file; bounds, hashes and attestation are', async () => {
+    const { bundle, doc } = await buildFullTicketExport('<sv-ticket ref="t1" variant="full"></sv-ticket>');
+    expect(doc).not.toContain(INTENT);
+    const auth = bundle.authorizations['authz-1'];
+    expect(auth).toBeDefined();
+    expect('intent' in auth).toBe(false);
+    // Drawn → bundled (the ticket's mandate group shows value_max).
+    expect(auth.bounds).toEqual({ value_max: 1000 });
+    expect(auth.boundsHash).toBe(recomputeBoundsHash({ value_max: 1000 }));
+    expect(auth.attestations.length).toBeGreaterThan(0);
+    // Scope values are drawn by no element → never bundled; the hash stays.
+    expect('context' in auth).toBe(false);
+    expect(auth.contextHash).toBe('ch-1');
+    expect(doc).not.toContain(SCOPE_VALUE);
+  });
+
+  it('full sv-ticket only: the offline checker still passes — exit 2 without a key, 0 with --key, presented states OK', async () => {
+    const { doc, kp } = await buildFullTicketExport('<sv-ticket ref="t1" variant="full"></sv-ticket>');
+    expect(await cli(doc, [])).toBe(2);
+    expect(await cli(doc, ['--key', kp.publicKeyHex])).toBe(0);
+    const result = await verifyExportBundle(extractProofBundle(doc), { documentHtml: doc, expectedKeyHex: kp.publicKeyHex });
+    expect(result.allValid).toBe(true);
+    expect(result.authorizations.every(a => a.attestationValid && a.boundsHashMatches !== false)).toBe(true);
+    expect(result.elements.every(e => e.presented === 'verified' && e.backed)).toBe(true);
+  });
+
+  it('with an sv-mandate for the same mandate the intent is present (still no scope values), and the checker passes', async () => {
+    const { bundle, doc, kp } = await buildFullTicketExport('<sv-ticket ref="t1" variant="full"></sv-ticket><sv-mandate ticket="t1"></sv-mandate>');
+    expect(bundle.authorizations['authz-1'].intent).toBe(INTENT);
+    expect(doc).toContain(INTENT);
+    expect('context' in bundle.authorizations['authz-1']).toBe(false);
+    expect(await cli(doc, ['--key', kp.publicKeyHex])).toBe(0);
+    const result = await verifyExportBundle(extractProofBundle(doc), { documentHtml: doc, expectedKeyHex: kp.publicKeyHex });
+    expect(result.allValid).toBe(true);
+    expect(result.elements.every(e => e.presented === 'verified' && e.backed)).toBe(true);
   });
 });

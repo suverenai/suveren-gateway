@@ -31,6 +31,15 @@
  * `/internal/report` route and `ReportStore` use — no second copy of "what a
  * ticket/case/record looks like".
  *
+ * Every tool reads through sources scoped to the REPORTING WINDOW the active
+ * reporting mandate sets (`report/window.ts`, work-plan "regular reporting"
+ * RR2): a ticket or record from before it is not listed, cannot be opened,
+ * and a report reference to it renders "not verifiable — outside the reporting
+ * window". What the tools return about a ticket is an allow-list
+ * (`report/agent-view.ts`, RR3): what a working agent sees about its own
+ * mandates plus approval facts — never user/group/mandate ids, signatures,
+ * attestation blobs or owner DIDs.
+ *
  * `reference_replies` (the people's actual reference answers — see
  * hap-email-mcp's `cli.ts`: "must never be reachable through any tool call")
  * is excluded by construction in `list_cases`/`get_records`: neither handler
@@ -40,11 +49,14 @@
 import { REPORT_BRIEF } from '../report-brief';
 import { builtinText, type BuiltinIntegration, type BuiltinTool } from '../builtin-integration';
 import {
-  buildTicketDetails,
-  isEmailExport, isErpExport, isCrmExport,
+  buildTicketDetails, glossaryUsage,
+  isEmailExport, isErpExport, isCrmExport, profileShortLabel,
   type EmailExport, type ErpExport, type CrmExport, type ExportSystem,
   type VerifyReportResult,
 } from '../report';
+import { scopeReportSources, reportingMandateRefusal, type ScopeResolution, type ReportWindow } from '../report/window';
+import { agentTicketRow, agentTicket, agentApproval, agentMandate } from '../report/agent-view';
+import { isSimulationMode } from '../simulation-mode';
 import type { BuiltinDeps, BuiltinFactory } from './index';
 
 /** Refused above this size, before anything is sanitized or verified — the
@@ -66,14 +78,32 @@ function errorText(text: string) {
   return { content: [{ type: 'text' as const, text }], isError: true as const };
 }
 
+/**
+ * Every tool reads through sources scoped to the reporting window the active
+ * reporting mandate sets (report/window.ts, RR2) — resolved per call, so a new,
+ * changed or expired mandate applies to the very next read.
+ */
+function scope(deps: BuiltinDeps): Promise<ScopeResolution> {
+  return scopeReportSources(deps.reportSources, {
+    authorizations: deps.state.getEnrichedAuthorizations(),
+    simulation: isSimulationMode(),
+  });
+}
+
+function windowInfo(w: ReportWindow) {
+  return { since: w.label, start: w.start, end: w.end };
+}
+
 function listTicketsTool(deps: BuiltinDeps): BuiltinTool {
   return {
     name: 'list_tickets',
     description:
-      'List tickets (signed executions) from the local receipt archive: id, time, action, action type, ' +
-      'profile, authorizationId, the limits used, and whether an approval was archived for it. ' +
-      'Optionally filter by since/until (unix seconds). Use the ids with get_ticket for full detail, ' +
-      'and with <sv-ticket>, <sv-approval>, <sv-mandate> and <sv-case> in the report.',
+      'List tickets (signed executions) from the local receipt archive inside your reporting window ' +
+      '(the number of days back your reporting mandate allows): id, time, action, action type, ' +
+      'profile, the limits used, and whether an approval was archived for it. Older tickets are not ' +
+      'shown and cannot be used in the report. Optionally narrow further by since/until (unix seconds). ' +
+      'Use the ids with get_ticket for full detail, and with <sv-ticket>, <sv-approval>, <sv-mandate> ' +
+      'and <sv-case> in the report.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -82,28 +112,20 @@ function listTicketsTool(deps: BuiltinDeps): BuiltinTool {
       },
     },
     handler: async (args) => {
+      const scoped = await scope(deps);
+      if (!scoped.ok) return errorText(scoped.reason);
       const since = typeof args.since === 'number' ? args.since : undefined;
       const until = typeof args.until === 'number' ? args.until : undefined;
-      const tickets = deps.reportSources.archive.getReceipts()
+      const tickets = scoped.sources.archive.getReceipts()
         .map((entry) => {
           const r = entry.receipt as Record<string, unknown>;
-          const time = typeof r.timestamp === 'number' ? r.timestamp : undefined;
-          return {
-            id: typeof r.id === 'string' ? r.id : String(r.id ?? ''),
-            time,
-            action: r.action,
-            actionType: r.actionType ?? null,
-            profile: r.profileId,
-            authorizationId: r.authorizationId,
-            limitsUsed: r.limits ?? r.executionContext ?? {},
-            hasApproval: Boolean(entry.proposal),
-          };
+          return agentTicketRow(r, Boolean(entry.proposal), profileShortLabel(typeof r.profileId === 'string' ? r.profileId : undefined));
         })
         .filter((t) => t.id !== '')
-        .filter((t) => since === undefined || (t.time !== undefined && t.time >= since))
-        .filter((t) => until === undefined || (t.time !== undefined && t.time <= until))
-        .sort((a, b) => (a.time ?? 0) - (b.time ?? 0));
-      return builtinText(JSON.stringify({ tickets }, null, 2));
+        .filter((t) => since === undefined || (typeof t.time === 'number' && t.time >= since))
+        .filter((t) => until === undefined || (typeof t.time === 'number' && t.time <= until))
+        .sort((a, b) => ((a.time as number | undefined) ?? 0) - ((b.time as number | undefined) ?? 0));
+      return builtinText(JSON.stringify({ window: windowInfo(scoped.window), tickets }, null, 2));
     },
   };
 }
@@ -115,8 +137,9 @@ function getTicketTool(deps: BuiltinDeps): BuiltinTool {
       'Full detail for one ticket: the ticket itself (action, time, limits used, public-check link), ' +
       'its archived approval (who approved it, when it was requested and decided, how long it waited), ' +
       'and the mandate it ran under (limits, commitment mode, intent). Each part reports "unverifiable" ' +
-      'on its own if it could not be checked — e.g. an automatic-mode ticket has no approval. Use this ' +
-      'to decide what a ticket actually proves before referencing it in the report.',
+      'on its own if it could not be checked — e.g. an automatic-mode ticket has no approval. Only tickets ' +
+      'inside your reporting window can be opened. Use this to decide what a ticket actually proves before ' +
+      'referencing it in the report.',
     inputSchema: {
       type: 'object',
       properties: { id: { type: 'string', description: 'The ticket id, as listed by list_tickets.' } },
@@ -125,18 +148,22 @@ function getTicketTool(deps: BuiltinDeps): BuiltinTool {
     handler: async (args) => {
       const id = typeof args.id === 'string' ? args.id.trim() : '';
       if (!id) return errorText('id is required.');
-      const details = await buildTicketDetails(deps.reportSources.archive, [id]);
+      const scoped = await scope(deps);
+      if (!scoped.ok) return errorText(scoped.reason);
+      const details = await buildTicketDetails(scoped.sources.archive, [id]);
       const detail = details[id];
       if (!detail || detail.ticket.status !== 'verified') {
         return errorText(detail?.ticket.reason ?? `No ticket "${id}" in the local archive.`);
       }
+      // Allow-listed projections (report/agent-view.ts, RR3): no user/group/
+      // mandate ids, no signatures, no attestation blobs, no owner DIDs.
       return builtinText(JSON.stringify({
-        ticket: detail.ticket.data,
+        ticket: agentTicket(detail.ticket.data),
         approval: detail.approval.status === 'verified'
-          ? { verified: true, ...detail.approval.data }
+          ? { verified: true, ...agentApproval(detail.approval.data) }
           : { verified: false, reason: detail.approval.reason },
         mandate: detail.mandate.status === 'verified'
-          ? { verified: true, ...detail.mandate.data }
+          ? { verified: true, ...agentMandate(detail.mandate.data) }
           : { verified: false, reason: detail.mandate.reason },
       }, null, 2));
     },
@@ -151,13 +178,15 @@ function listCasesTool(deps: BuiltinDeps): BuiltinTool {
       'sv-case elements without guessing ids. Returns: when the test data was loaded (testDataLoadedAt); ' +
       'cases (caseId, the starting inbox message id, sender, subject, received time); and sent mails ' +
       '(id, inReplyTo, the receiptId of the ticket that sent it, subject, sentAt) so you can confirm which ' +
-      'ticket closed which case. Never includes the team\'s own reference replies — those are not part of ' +
-      'this report.',
+      'ticket closed which case. Only records inside your reporting window. Never includes the team\'s own ' +
+      'reference replies — those are not part of this report.',
     inputSchema: { type: 'object', properties: {} },
     handler: async () => {
+      const scoped = await scope(deps);
+      if (!scoped.ok) return errorText(scoped.reason);
       let exported: unknown;
       try {
-        exported = await deps.reportSources.runExport('email');
+        exported = await scoped.sources.runExport('email');
       } catch (err) {
         return errorText(`Could not read email records: ${err instanceof Error ? err.message : String(err)}`);
       }
@@ -180,6 +209,7 @@ function listCasesTool(deps: BuiltinDeps): BuiltinTool {
         sentAt: m.received_at,
       }));
       return builtinText(JSON.stringify({
+        window: windowInfo(scoped.window),
         testDataLoadedAt: exp.simulation_load?.loaded_at ?? null,
         cases,
         sent,
@@ -201,7 +231,7 @@ function getRecordsTool(deps: BuiltinDeps): BuiltinTool {
       'Rows from one connected system (email, erp or crm) that you may reference with <sv-record system="..." ref="...">. ' +
       'Optionally narrow to one table via "kind" (email: inbox/sent/changes/refusals; erp: quotes/orders/changes/refusals; ' +
       'crm: contacts/deals/tasks/activities/changes/refusals) — omit it to get every table for that system. ' +
-      'Never returns the team\'s own reference replies.',
+      'Only rows inside your reporting window. Never returns the team\'s own reference replies.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -215,9 +245,11 @@ function getRecordsTool(deps: BuiltinDeps): BuiltinTool {
       if (system !== 'email' && system !== 'erp' && system !== 'crm') {
         return errorText('system must be one of "email", "erp", "crm".');
       }
+      const scoped = await scope(deps);
+      if (!scoped.ok) return errorText(scoped.reason);
       let exported: unknown;
       try {
-        exported = await deps.reportSources.runExport(system);
+        exported = await scoped.sources.runExport(system);
       } catch (err) {
         return errorText(`Could not read ${system} records: ${err instanceof Error ? err.message : String(err)}`);
       }
@@ -238,12 +270,12 @@ function getRecordsTool(deps: BuiltinDeps): BuiltinTool {
       for (const kind of kinds) {
         records[kind] = (exp as unknown as Record<string, unknown[]>)[kind] ?? [];
       }
-      return builtinText(JSON.stringify({ system, records }, null, 2));
+      return builtinText(JSON.stringify({ system, window: windowInfo(scoped.window), records }, null, 2));
     },
   };
 }
 
-function summarizeWrite(result: VerifyReportResult): string {
+function summarizeWrite(result: VerifyReportResult, rawHtml: string): string {
   const verified = result.elements.filter((e) => e.status === 'verified');
   const warnings = result.elements.filter((e) => e.status === 'warning');
   const unverifiable = result.elements.filter((e) => e.status === 'unverifiable');
@@ -260,7 +292,21 @@ function summarizeWrite(result: VerifyReportResult): string {
     lines.push('Not verifiable — fix these references and write again:');
     for (const u of unverifiable) lines.push(`  - ${u.kind} (${u.id}): ${u.reason ?? 'unspecified'}`);
   }
+  // Two-tag rule (RR6): say exactly what was dropped, so the AI can fix it.
+  const n = result.sanitizeNotes;
+  if (n) {
+    if (n.droppedBlocks > 0) lines.push(`dropped: ${n.droppedBlocks} block(s) outside sv-ai — put your own content inside <sv-ai>…</sv-ai>; only gateway elements, sv-row and one sv-glossary may stand outside it.`);
+    if (n.droppedSvInsideAi > 0) lines.push(`dropped: ${n.droppedSvInsideAi} sv-* element(s) inside sv-ai — place gateway elements outside sv-ai blocks.`);
+    if (n.droppedStyles > 0) lines.push(`dropped: ${n.droppedStyles} <style> block(s) — use inline style="…" attributes inside sv-ai.`);
+    if (n.extraGlossaries > 0) lines.push(`dropped: ${n.extraGlossaries} extra sv-glossary — one per report.`);
+  }
+  const g = glossaryUsage(rawHtml, result.elements);
+  if (g) {
+    lines.push(`Glossary: ${g.applied.length} term(s) shown as translation (when the reader switches it on).`);
+    for (const r of g.rejected) lines.push(`  - ignored "${r.key}": ${r.reason}`);
+  }
   const cov = result.coverage;
+  if (cov.window) lines.push(`Reporting window: ${cov.window.label}. Evidence from before it is not verifiable in this report.`);
   if (cov.emailExportError) {
     lines.push(`Coverage could not be checked: ${cov.emailExportError}`);
   } else {
@@ -309,9 +355,15 @@ function writeReportTool(deps: BuiltinDeps): BuiltinTool {
       },
       required: ['html'],
     },
-    // Empty/oversize html is refused here, BEFORE the gate requests a ticket
-    // (precheckBuiltin) — a refused write must not consume report_daily_max.
-    validate: writeReportRefusal,
+    // Empty/oversize html, or no reporting window to check it against, is
+    // refused here, BEFORE the gate requests a ticket (precheckBuiltin) — a
+    // refused write must not consume report_daily_max.
+    validate: async (args) => {
+      const refusal = writeReportRefusal(args);
+      if (refusal) return refusal;
+      const scoped = await scope(deps);
+      return scoped.ok ? undefined : scoped.reason;
+    },
     handler: async (args) => {
       // automatic mode means no human-approval delay, but the handler still
       // checks again rather than trust validate's earlier pass blindly.
@@ -321,9 +373,11 @@ function writeReportTool(deps: BuiltinDeps): BuiltinTool {
       if (deps.state.reportStore.isLocked()) {
         return errorText('The report store is locked (the vault is not unlocked) — cannot save a report right now.');
       }
+      const scoped = await scope(deps);
+      if (!scoped.ok) return errorText(`Refused: ${scoped.reason}`);
       try {
-        const stored = await deps.state.reportStore.saveReport(html, deps.reportSources);
-        return builtinText(summarizeWrite(stored.result));
+        const stored = await deps.state.reportStore.saveReport(html, scoped.sources);
+        return builtinText(summarizeWrite(stored.result, html));
       } catch (err) {
         return errorText(`Could not verify and store the report: ${err instanceof Error ? err.message : String(err)}`);
       }
@@ -341,6 +395,11 @@ export const reportBuiltin: BuiltinFactory = (deps) => ({
   // read-only export CLI; writes only the local, vault-encrypted report file)
   // — safe during a simulation-mode test.
   simulation: true,
+  // The same predicate the reporting window uses to refuse a mandate
+  // (reporting@0.1, or no window set): the gate never selects such a mandate
+  // for ANY report tool — so write_report is never ticketed under (and never
+  // charges report_daily_max of) a mandate every read tool refuses (RR7).
+  mandateRefusal: (auth) => reportingMandateRefusal(auth),
   toolGating: {
     overrides: {
       list_tickets: READ_GATE,

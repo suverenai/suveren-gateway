@@ -3,7 +3,8 @@
  * account id into the best name the LOCAL archive can vouch for (review of a
  * real export, 2026-10-06: an approval read "approved … by c7246947-…", and
  * one ticket's mandate showed "Andreas Schadauer" while another showed
- * "Owner (key …246947)" for the same person).
+ * "Owner (key …246947)" for the same person; since RR3 an undisclosed owner
+ * reads "Owner (name not disclosed)").
  *
  * Why the two disagreed: a name is only ever disclosed inside a signed
  * attestation (`subjects[].disclose.name`, at `assurance: "high"`), and the
@@ -18,7 +19,7 @@
  * each attestation's signed `resolved_domains` maps that domain to its owner
  * DID (in team mode the domain IS the approver's account id). No name is
  * guessed from an account id; with no verified link the approver is shown as
- * "a person (account …xxxxxx)", never a bare id.
+ * "a person (name not disclosed)" — never an id, nor part of one.
  */
 import { decodeAttestationBlob, verifyAttestationSignature } from '@hap/core';
 import type { ReceiptArchiveReader } from './types';
@@ -80,18 +81,15 @@ export function ownerLabel(dir: IdentityDirectory, did: string): string {
   return dir.names.get(did) ?? formatOwnerLabel(did);
 }
 
-function accountTail(id: string): string {
-  // "c7246947-1b2c-…" -> "246947": the first UUID group's tail, which is also
-  // what the owner key label shows for the same person (`did:key:c7246947`).
-  const head = id.split('-')[0] || id;
-  return head.length > 6 ? head.slice(-6) : head;
-}
+/** The approver label when no name was disclosed — neutral, never an id or
+ *  part of one (RR3, 2026-10-06: the report AI and the reader see a name only
+ *  when that person disclosed it). */
+export const UNDISCLOSED_APPROVER_LABEL = 'a person (name not disclosed)';
 
 /** The approver label for one `committedBy` entry. */
 export function approverLabel(dir: IdentityDirectory, domainKey: string, userId: string): string {
   const did = dir.domainDids.get(domainKey) ?? dir.domainDids.get(userId);
   const name = did ? dir.names.get(did) : undefined;
   if (name) return name;
-  if (!userId) return 'a person (unknown account)';
-  return `a person (account …${accountTail(userId)})`;
+  return UNDISCLOSED_APPROVER_LABEL;
 }

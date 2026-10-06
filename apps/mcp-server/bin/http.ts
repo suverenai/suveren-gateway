@@ -23,8 +23,11 @@ import { verifyGateContentHashes } from '../src/lib/gate-content';
 import type { GateContent } from '../src/lib/gate-store';
 import { IntegrationRegistry, type IntegrationConfig } from '../src/lib/integration-registry';
 import { IntegrationManager, getIntegrationsBinDir } from '../src/lib/integration-manager';
-import { createConnectorExportRunner, renderReportHtml, buildTicketDetails, buildExportBundle, buildExportDocument, suggestedFilename } from '../src/lib/report';
-import type { ReportSources } from '../src/lib/report';
+import { createConnectorExportRunner, renderReportHtml, glossaryUsage, sanitizeReport, buildTicketDetails, buildExportBundle, buildExportDocument, suggestedFilename } from '../src/lib/report';
+import type { ReportSources, ReceiptArchiveReader } from '../src/lib/report';
+import { scopeReportSources, scopeReportSourcesToStoredWindow } from '../src/lib/report/window';
+import type { StoredReport } from '../src/lib/report/report-store';
+import { isSimulationMode } from '../src/lib/simulation-mode';
 import { readPairing } from '../src/lib/as-pairing';
 import { loadProfiles } from '../src/lib/profile-loader';
 import { loadManifests, getAllManifests, getManifest } from '../src/lib/manifest-loader';
@@ -756,12 +759,60 @@ app.get('/internal/evidence', internalOnly, (_req: Request, res: Response) => {
  * — same fields every time so the control-plane proxy (and the UI) have one
  * shape to handle regardless of which route produced it.
  */
-async function reportResponsePayload(stored: NonNullable<ReturnType<typeof state.reportStore.getReport>>) {
-  const ticketDetails = await buildTicketDetails(state.receiptArchive, stored.result.proof.ticketsReferenced);
+/**
+ * The report's evidence, scoped to the reporting window the active reporting
+ * mandate sets (report/window.ts, RR2) — the SAME scoping the report__* tools
+ * use, so a save, a "Check again" and an export see exactly what the AI could.
+ */
+function reportScope() {
+  return scopeReportSources(reportSources, {
+    authorizations: state.getEnrichedAuthorizations(),
+    simulation: isSimulationMode(),
+  });
+}
+
+/** "Check again" / export of a stored report: the window it was written under
+ *  when it has one (see scopeReportSourcesToStoredWindow), else the window the
+ *  active reporting mandate sets now, else refused. */
+function storedReportScope(stored: StoredReport | null) {
+  const w = stored?.result.coverage.window;
+  if (w) return scopeReportSourcesToStoredWindow(reportSources, w, { simulation: isSimulationMode() });
+  return reportScope();
+}
+
+async function reportResponsePayload(
+  stored: NonNullable<ReturnType<typeof state.reportStore.getReport>>,
+  archive?: ReceiptArchiveReader,
+) {
+  // Detail-panel data for the local UI, scoped to the report's window (the
+  // one it was written under, else the active mandate's). Only a report saved
+  // before windows existed, with no reporting mandate active, falls back to
+  // the owner's own full archive — this is the owner's UI, not the AI.
+  let detailArchive: ReceiptArchiveReader = state.receiptArchive;
+  if (archive) {
+    detailArchive = archive;
+  } else {
+    const scoped = await storedReportScope(stored);
+    if (scoped.ok) detailArchive = scoped.sources.archive;
+  }
+  const ticketDetails = await buildTicketDetails(detailArchive, stored.result.proof.ticketsReferenced);
+  // Two pre-rendered variants (RR6): translation off (the default) and on.
+  // The UI's switch, outside the frame, picks one — no script in the frame.
+  // The "on" variant exists only when at least one gloss is drawn.
+  const glossary = glossaryUsage(stored.result.html, stored.result.elements);
+  // A report stored before the two-tag rule (RR6) keeps its free HTML; the
+  // render drops whatever is outside the allowed blocks. Say so in the UI.
+  const dropped = sanitizeReport(stored.html).notes;
+  const notShown = dropped.droppedBlocks + dropped.droppedSvInsideAi + dropped.droppedStyles;
   return {
     savedAt: stored.savedAt,
     checkedAt: stored.checkedAt,
     renderedHtml: renderReportHtml(stored.result.html, stored.result.elements),
+    ...(glossary && glossary.applied.length > 0
+      ? { renderedHtmlGloss: renderReportHtml(stored.result.html, stored.result.elements, { gloss: 'on' }) }
+      : {}),
+    ...(glossary ? { glossary } : {}),
+    ...(notShown > 0 ? { formatNotice: { blocksNotShown: notShown } } : {}),
     proof: stored.result.proof,
     coverage: stored.result.coverage,
     elements: stored.result.elements,
@@ -792,9 +843,14 @@ app.post('/internal/report', internalOnly, async (req: Request, res: Response) =
     res.status(400).json({ error: 'Missing required field: html (non-empty string)' });
     return;
   }
+  const scoped = await reportScope();
+  if (!scoped.ok) {
+    res.status(409).json({ error: scoped.reason });
+    return;
+  }
   try {
-    const stored = await state.reportStore.saveReport(html, reportSources);
-    res.json({ report: await reportResponsePayload(stored) });
+    const stored = await state.reportStore.saveReport(html, scoped.sources);
+    res.json({ report: await reportResponsePayload(stored, scoped.sources.archive) });
   } catch (err) {
     console.error('[Suveren MCP] /internal/report save failed:', err);
     res.status(500).json({ error: err instanceof Error ? err.message : 'Report verification failed' });
@@ -806,13 +862,23 @@ app.post('/internal/report/recheck', internalOnly, async (_req: Request, res: Re
     res.status(503).json({ error: 'Vault locked — cannot recheck until sign-in.' });
     return;
   }
+  const current = state.reportStore.getReport();
+  if (!current) {
+    res.json({ report: null });
+    return;
+  }
+  const scoped = await storedReportScope(current);
+  if (!scoped.ok) {
+    res.status(409).json({ error: scoped.reason });
+    return;
+  }
   try {
-    const stored = await state.reportStore.recheck(reportSources);
+    const stored = await state.reportStore.recheck(scoped.sources);
     if (!stored) {
       res.json({ report: null });
       return;
     }
-    res.json({ report: await reportResponsePayload(stored) });
+    res.json({ report: await reportResponsePayload(stored, scoped.sources.archive) });
   } catch (err) {
     console.error('[Suveren MCP] /internal/report/recheck failed:', err);
     res.status(500).json({ error: err instanceof Error ? err.message : 'Recheck failed' });
@@ -847,10 +913,21 @@ app.get('/internal/report/export', internalOnly, async (req: Request, res: Respo
     return;
   }
   // Re-run verification so the export reflects the CURRENT state, same as
-  // "Check again" — never ship a file describing a stale check.
+  // "Check again" — never ship a file describing a stale check. Scoped to the
+  // reporting window: nothing outside it can enter the file (RR2).
+  const current = state.reportStore.getReport();
+  if (!current) {
+    res.status(404).json({ error: 'No report to export yet — the AI writes it with the Reporting mandate.' });
+    return;
+  }
+  const scoped = await storedReportScope(current);
+  if (!scoped.ok) {
+    res.status(409).json({ error: scoped.reason });
+    return;
+  }
   let stored;
   try {
-    stored = await state.reportStore.recheck(reportSources);
+    stored = await state.reportStore.recheck(scoped.sources);
   } catch (err) {
     console.error('[Suveren MCP] /internal/report/export recheck failed:', err);
     res.status(500).json({ error: err instanceof Error ? err.message : 'Recheck failed' });
@@ -872,13 +949,14 @@ app.get('/internal/report/export', internalOnly, async (req: Request, res: Respo
   const gatewayVersion = typeof req.query.gatewayVersion === 'string' ? req.query.gatewayVersion : 'unknown';
   const bundle = buildExportBundle({
     stored,
-    archive: state.receiptArchive,
+    archive: scoped.sources.archive,
     authorityServer,
     gatewayVersion,
   });
-  // Same render as the live page — it carries no in-app links any more.
-  const renderedHtml = renderReportHtml(stored.result.html, stored.result.elements);
-  const document = buildExportDocument({ bundle, renderedHtml });
+  // Same strict boxes as the live page, drawn from the bundle's own elements
+  // (glosses behind the export's CSS-only switch, RR6) — so the offline
+  // checker can re-draw the file byte for byte (verify-export.ts).
+  const document = buildExportDocument({ bundle });
 
   res
     .setHeader('Content-Type', 'text/html; charset=utf-8')

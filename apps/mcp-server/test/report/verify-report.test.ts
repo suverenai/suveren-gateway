@@ -10,6 +10,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { verifyReport } from '../../src/lib/report/verify-report';
+import { formatTimestamp } from '../../src/lib/report/format';
 import type { RunConnectorExport, ExportSystem, VerifiedElement } from '../../src/lib/report/types';
 import { buildScenario, AS_URL } from './fixtures/scenario';
 import { buildEmailExport, buildErpExport, buildCrmExport } from './fixtures/exports';
@@ -128,9 +129,10 @@ describe('verifyReport — sv-mandate', () => {
       // details section.
       limits: ['Value Max: 1 000'], rawLimits: { value_max: 1000 },
       intent: 'Quote known customers only.', mode: 'review',
-      // A did:key is never the only label — this attestation discloses no
-      // name, so it falls back to a truncated, labeled key, never the raw did.
-      owners: ['Owner (key …Owner9)'], ownersRaw: ['did:key:zOwner9'],
+      // A did:key is never shown — this attestation discloses no name, so
+      // the owner is the neutral label (RR3). ownersRaw stays in the stored
+      // result for the owner's own UI; the report AI never gets it (agent-view.ts).
+      owners: ['Owner (name not disclosed)'], ownersRaw: ['did:key:zOwner9'],
     });
   });
 
@@ -227,7 +229,7 @@ describe('verifyReport — case start time vs. backdated test emails (review SR4
     expect(el(result.elements, 'sv-metric-1').data!.value).toBe(600);
     expect(el(result.elements, 'sv-metric-3').data!.value).toBe(1);
     const caseSummary = result.proof.verifiedValues.find(v => v.elementId === 'sv-case-0')!.summary;
-    expect(caseSummary).toContain('10 min');
+    expect(caseSummary).toBe('case_id BD1 · duration_s 600'); // raw, as the box shows it
   });
 
   it('an email that genuinely arrived after the load keeps its own time as the start', async () => {
@@ -254,7 +256,8 @@ describe('verifyReport — case start time vs. backdated test emails (review SR4
     }
     // Counting cases does not depend on when they started.
     expect(el(result.elements, 'sv-metric-2').status).toBe('verified');
-    expect(result.proof.verifiedValues.find(v => v.elementId === 'sv-case-0')!.summary).toContain('time not verifiable');
+    // No duration value at all — never one from the email date.
+    expect(result.proof.verifiedValues.find(v => v.elementId === 'sv-case-0')!.summary).toBe('case_id BD1');
   });
 
   it('REFUSAL: a step ticket from before the test data was loaded is outside the case window', async () => {
@@ -527,14 +530,14 @@ describe('verifyReport — ticket coverage (the AI cannot leave a ticket out unn
   });
 });
 
-describe('verifyReport — "Checked values" summaries carry no raw technical values', () => {
-  it('an sv-ticket summary names the human action and a readable time, never the raw tool name/unix seconds', async () => {
+describe('verifyReport — "Checked values" summaries show the raw fields the boxes show (RR6 follow-up)', () => {
+  it('an sv-ticket summary is the raw action and the formatted timestamp, never a translated label or unix seconds', async () => {
     const { archive, addTicket } = buildScenario();
     addTicket({ id: 't1', action: 'erp__create_quote', authorizationId: 'authz-1', timestamp: 1_800_000_000 });
     const result = await verifyReport('<sv-ticket ref="t1"></sv-ticket>', { archive, runExport: makeRunExport({}) });
     const summary = result.proof.verifiedValues.find(v => v.elementId === 'sv-ticket-0');
-    expect(summary?.summary).toContain('Quote created');
-    expect(summary?.summary).not.toContain('erp__create_quote');
+    expect(summary?.summary).toBe(`action erp__create_quote · timestamp ${formatTimestamp(1_800_000_000)}`);
+    expect(summary?.summary).not.toContain('Quote created');
     expect(summary?.summary).not.toContain('1800000000');
   });
 
@@ -579,12 +582,13 @@ describe('verifyReport — who approved / who owns, as a name (review SR6, 2026-
   const DID = 'did:key:c7246947';
   const named = [{ did: DID, assurance: 'high' as const, method: 'as_vouched' as const, trust_root: 'as' as const, verifier: 'did:web:as.example', disclose: { name: 'Andreas Schadauer' } }];
 
-  it('REFUSAL: an approver with no name anywhere is "a person (account …246947)", never the bare account id', async () => {
+  it('REFUSAL: an approver with no name anywhere is "a person (name not disclosed)", never the account id nor part of it', async () => {
     const { archive, addTicket } = buildScenario();
     addTicket({ id: 'a1', action: 'report__write_report', authorizationId: 'authz-1', proposal: { status: 'executed', createdAt: 1, committedBy: { [USER]: { userId: USER, at: 2 } } } });
     const result = await verifyReport('<sv-approval ticket="a1"></sv-approval>', { archive, runExport: makeRunExport({}) });
     const e = el(result.elements, 'sv-approval-0');
-    expect(e.data!.whoLabel).toBe('a person (account …246947)');
+    expect(e.data!.whoLabel).toBe('a person (name not disclosed)');
+    expect(e.data!.whoLabel).not.toContain('246947');
     expect(e.data!.who).toEqual([USER]); // raw id kept for Technical details only
     expect(result.proof.verifiedValues[0].summary).not.toContain(USER);
   });
@@ -617,7 +621,7 @@ describe('verifyReport — who approved / who owns, as a name (review SR6, 2026-
     addTicket({ id: 'n2', action: 'report__write_report', authorizationId: 'authz-plain', authorization: { authorizationId: 'authz-plain', profileId: 'reporting@0.1', owners: [DID] } });
     const result = await verifyReport('<sv-mandate ticket="n1"></sv-mandate><sv-mandate ticket="n2"></sv-mandate>', { archive, runExport: makeRunExport({}) });
     expect(el(result.elements, 'sv-mandate-0').data!.owners).toEqual(['Andreas Schadauer']);
-    expect(el(result.elements, 'sv-mandate-1').data!.owners).toEqual(['Andreas Schadauer']); // was "Owner (key …246947)"
+    expect(el(result.elements, 'sv-mandate-1').data!.owners).toEqual(['Andreas Schadauer']); // was "Owner (key …246947)", later "Owner (name not disclosed)"
   });
 
   it('REFUSAL: a name in a LOW-assurance subject is never shown', async () => {
@@ -625,6 +629,6 @@ describe('verifyReport — who approved / who owns, as a name (review SR6, 2026-
     const low = [{ did: DID, assurance: 'low' as const, method: 'self_declared' as const, trust_root: 'self' as const, disclose: { name: 'Mallory' } }];
     addTicket({ id: 'l1', action: 'erp__create_quote', authorizationId: 'authz-low', authorization: { authorizationId: 'authz-low', profileId: 'sales@0.3', owners: [DID], subjects: low } });
     const result = await verifyReport('<sv-mandate ticket="l1"></sv-mandate>', { archive, runExport: makeRunExport({}) });
-    expect(el(result.elements, 'sv-mandate-0').data!.owners).toEqual(['Owner (key …246947)']);
+    expect(el(result.elements, 'sv-mandate-0').data!.owners).toEqual(['Owner (name not disclosed)']);
   });
 });
