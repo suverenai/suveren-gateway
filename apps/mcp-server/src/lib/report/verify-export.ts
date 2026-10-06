@@ -20,6 +20,7 @@
  * reason; `report-verify-cli.ts` turns the combination into the three exit
  * codes documented there.
  */
+import { Parser } from 'htmlparser2';
 import { verifyReceiptSignature, verifyAttestationSignature, decodeAttestationBlob } from '@hap/core';
 import { parseElements } from './parse-elements';
 import { parseCaseAttrs } from './case-resolvers';
@@ -43,6 +44,97 @@ export function collectReferencedTicketIds(html: string): Set<string> {
     }
   }
   return ids;
+}
+
+/** The ticket ids ONE parsed element names — same rules as
+ *  `collectReferencedTicketIds`, per element. */
+function ticketIdsOf(el: { kind: string; attrs: Record<string, string> }): string[] {
+  if (el.kind === 'sv-ticket') return el.attrs.ref ? [el.attrs.ref] : [];
+  if (el.kind === 'sv-approval' || el.kind === 'sv-mandate') return el.attrs.ticket ? [el.attrs.ticket] : [];
+  if (el.kind === 'sv-case') {
+    const { goalId, stepIds } = parseCaseAttrs(el.attrs);
+    return [...(goalId ? [goalId] : []), ...stepIds];
+  }
+  return [];
+}
+
+const TICKET_BACKED_KINDS = new Set(['sv-ticket', 'sv-approval', 'sv-mandate', 'sv-case']);
+
+/** How the gateway-drawn element markup in an exported file PRESENTS one
+ *  element. Markers come from `render-report.ts`: every drawn element is a
+ *  `<div class="sv-el sv-el-<status>" data-sv-id="<id>">` whose status is
+ *  `verified` | `warning` | `unverifiable`, and carries a `sv-badge-ok` /
+ *  `sv-badge-warn` / `sv-badge-bad` badge.
+ *
+ *  'not-verifiable' ONLY when every drawn node for that id has the
+ *  `sv-el-unverifiable` class, no `sv-el-verified`/`sv-el-warning` class, at
+ *  least one badge, and every badge is `sv-badge-bad`. Anything else —
+ *  including no drawn node at all, or a class/badge that disagrees — is
+ *  'verified' (the strict side): a forger may downgrade a claim, never
+ *  upgrade one. */
+export type PresentedState = 'verified' | 'not-verifiable';
+
+const PROOF_SCRIPT_BLOCK_RE = /<script[^>]*id="suveren-proof"[^>]*>[\s\S]*?<\/script>/gi;
+
+export function collectPresentedStates(documentHtml: string): Map<string, PresentedState> {
+  // The embedded proof JSON carries the AI's raw html (sv-* tags, never drawn
+  // divs) — drop it so nothing inside it can ever be read as drawn markup.
+  const html = documentHtml.replace(PROOF_SCRIPT_BLOCK_RE, '');
+  interface Frame { id: string; depth: number; classes: Set<string>; badges: Set<string>[] }
+  const open: Frame[] = [];
+  const flaggedById = new Map<string, boolean>();
+  let depth = 0;
+
+  const classesOf = (attribs: Record<string, string>) => new Set((attribs.class ?? '').split(/\s+/).filter(Boolean));
+  const settle = (f: Frame) => {
+    const flagged =
+      f.classes.has('sv-el-unverifiable') &&
+      !f.classes.has('sv-el-verified') && !f.classes.has('sv-el-warning') &&
+      f.badges.length > 0 &&
+      f.badges.every(b => b.has('sv-badge-bad') && !b.has('sv-badge-ok') && !b.has('sv-badge-warn'));
+    // Several drawn nodes with one id: flagged only if ALL are flagged.
+    flaggedById.set(f.id, (flaggedById.get(f.id) ?? true) && flagged);
+  };
+
+  const parser = new Parser(
+    {
+      onopentag(_name, attribs) {
+        depth++;
+        const classes = classesOf(attribs);
+        if ([...classes].some(c => c.startsWith('sv-badge'))) {
+          for (const f of open) f.badges.push(classes);
+        }
+        const id = attribs['data-sv-id'];
+        if (typeof id === 'string' && id) open.push({ id, depth, classes, badges: [] });
+      },
+      onclosetag() {
+        while (open.length > 0 && open[open.length - 1].depth >= depth) settle(open.pop()!);
+        depth--;
+      },
+    },
+    { decodeEntities: true },
+  );
+  parser.write(html);
+  parser.end();
+  while (open.length > 0) settle(open.pop()!);
+
+  const states = new Map<string, PresentedState>();
+  for (const [id, flagged] of flaggedById) states.set(id, flagged ? 'not-verifiable' : 'verified');
+  return states;
+}
+
+export interface ElementVerification {
+  /** `${kind}-${n}` — same id scheme as parse-elements.ts / render-report.ts. */
+  elementId: string;
+  kind: string;
+  ticketIds: string[];
+  /** How the gateway-drawn markup in the file shows this element (strict:
+   *  'verified' unless clearly drawn as not verifiable). */
+  presented: PresentedState;
+  /** Every named ticket is in the bundle with a valid signature (and, for
+   *  sv-mandate, its mandate is bundled and consistent with the ticket). */
+  backed: boolean;
+  error?: string;
 }
 
 export interface TicketVerification {
@@ -79,15 +171,23 @@ export interface VerifyExportOptions {
   /** `--online` — the CLI's own live fetch of `<asUrl>/api/as/pubkey`, handed
    *  in so this module stays network-free. */
   onlineKeyHex?: string;
+  /** The WHOLE exported file, whose gateway-drawn element markup says which
+   *  elements the file presents as verified (`collectPresentedStates`).
+   *  Omitted → every element counts as presented-as-verified (strict). */
+  documentHtml?: string;
 }
 
 export interface VerifyExportResult {
   tickets: TicketVerification[];
+  /** Every ticket/approval/mandate/case element in the report. */
+  elements: ElementVerification[];
   authorizations: AuthorizationVerification[];
   keyFingerprint: string;
   keyConfirmation: KeyConfirmation;
-  /** Every ticket signature AND every authorization check passed —
-   *  independent of whether the key itself was confirmed. */
+  /** (a) every BUNDLED ticket signature and every authorization check
+   *  passed, AND (b) every element presented as verified is backed. A
+   *  reference with no backing is fine only when the drawn element shows it
+   *  as not verifiable. Independent of whether the key itself was confirmed. */
   allValid: boolean;
 }
 
@@ -155,14 +255,46 @@ export async function verifyExportBundle(bundle: ExportBundle, opts: VerifyExpor
     });
   }
 
+  const ticketById = new Map(tickets.map(t => [t.ticketId, t]));
+  const authById = new Map(authorizations.map(a => [a.authorizationId, a]));
+  const presentedStates = opts.documentHtml !== undefined ? collectPresentedStates(opts.documentHtml) : new Map<string, PresentedState>();
+
+  const elements: ElementVerification[] = [];
+  for (const el of parseElements(bundle.report.html)) {
+    if (!TICKET_BACKED_KINDS.has(el.kind)) continue;
+    const ticketIds = ticketIdsOf(el);
+    const presented: PresentedState = presentedStates.get(el.id) ?? 'verified';
+    let error: string | undefined;
+    if (ticketIds.length === 0) error = 'Names no ticket.';
+    for (const id of ticketIds) {
+      if (error) break;
+      const t = ticketById.get(id);
+      if (!t || !t.present) error = `Ticket ${id} is not in the bundle.`;
+      else if (!t.signatureValid) error = `Ticket ${id} has an invalid signature.`;
+    }
+    if (!error && el.kind === 'sv-mandate') {
+      const receipt = byId.get(ticketIds[0])!;
+      const authorizationId = typeof receipt.authorizationId === 'string' ? receipt.authorizationId : undefined;
+      const auth = authorizationId ? bundle.authorizations[authorizationId] : undefined;
+      const authCheck = authorizationId ? authById.get(authorizationId) : undefined;
+      if (!auth || !authCheck) error = `The mandate for ticket ${ticketIds[0]} is not in the bundle.`;
+      else if (!authCheck.attestationValid) error = `The mandate for ticket ${ticketIds[0]} has an invalid attestation.`;
+      else if (auth.boundsHash && typeof receipt.boundsHash === 'string' && auth.boundsHash !== receipt.boundsHash) {
+        error = `The mandate's boundsHash does not match ticket ${ticketIds[0]}.`;
+      }
+    }
+    elements.push({ elementId: el.id, kind: el.kind, ticketIds, presented, backed: !error, ...(error ? { error } : {}) });
+  }
+
   const keyFingerprint = fingerprintOf(bundle.authorityServer.publicKeyHex);
   const keyConfirmation = resolveKeyConfirmation(bundle.authorityServer.publicKeyHex, opts);
 
   const allValid =
-    tickets.every(t => t.signatureValid) &&
-    authorizations.every(a => a.attestationValid && a.boundsHashMatches !== false);
+    tickets.filter(t => t.present).every(t => t.signatureValid) &&
+    authorizations.every(a => a.attestationValid && a.boundsHashMatches !== false) &&
+    elements.every(e => e.presented === 'not-verifiable' || e.backed);
 
-  return { tickets, authorizations, keyFingerprint, keyConfirmation, allValid };
+  return { tickets, elements, authorizations, keyFingerprint, keyConfirmation, allValid };
 }
 
 function resolveKeyConfirmation(actualKeyHex: string, opts: VerifyExportOptions): KeyConfirmation {
