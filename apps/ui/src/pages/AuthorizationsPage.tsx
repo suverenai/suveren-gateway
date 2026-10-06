@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { spClient, type PendingItem, type GateContentEntry, type ProfileConfig, type ProfileSummary } from '../lib/sp-client';
 import { profileDisplayName } from '../lib/profile-display';
+import { profileIdentity } from '../lib/profile-identity';
+import { ProfileRail } from '../components/ProfileRail';
 import { AuthorizePicker } from '../components/AuthorizePicker';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
@@ -145,7 +147,8 @@ function AuthCard({
       ? `Above-cap actions under this mandate require per-action approval from the profile's approvers. Bounds remain authorized at their original values.`
       : `No approvers are configured for this profile, so the team cap is a hard ceiling. Bounds above the cap are effectively reduced to the cap. Ask the admin to raise the cap or add approvers, or copy this mandate to reissue within the cap.`;
 
-  const profileShortName = profileDisplayName(item.profile_id);
+  const identity = profileIdentity(item.profile_id);
+  const profileShortName = identity.name;
 
   // A newer version of this profile exists. Stated, not nagged: the grant is
   // still valid and still enforced — it is simply pinned to older terms, and
@@ -171,10 +174,12 @@ function AuthCard({
 
   return (
     <div
-      className={`card${isHighlighted ? ' card-highlight' : ''}`}
+      className={`card id-card${isHighlighted ? ' card-highlight' : ''}`}
       key={item.authorization_id}
       style={{ marginBottom: 0 }}
     >
+      <ProfileRail profileId={item.profile_id} />
+      <div className="id-body">
       {upgradeHint}
 
       {/* Team owner line */}
@@ -186,6 +191,9 @@ function AuthCard({
 
       {/* Collapsed view */}
       <div className="auth-card-header">
+        {/* The profile name now lives in the rail — this is the mandate's own
+            title; it falls back to the profile name so the header never
+            renders blank for a mandate with no custom title. */}
         <span
           style={{
             fontWeight: 700,
@@ -194,14 +202,10 @@ function AuthCard({
             letterSpacing: '0.01em',
           }}
         >
-          {profileShortName}
+          {item.title || profileShortName}
         </span>
-        {item.title && (
-          <span style={{ fontWeight: 500, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-            {item.title}
-          </span>
-        )}
         <StatusBadge status={status} />
+        {identity.testSetup && <span className="sim-mark">Test setup</span>}
         {status === 'active' && item.earliest_expiry && (
           <TTLBadge expiresAt={new Date(item.earliest_expiry).getTime() / 1000} />
         )}
@@ -459,6 +463,7 @@ function AuthCard({
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }

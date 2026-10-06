@@ -12,6 +12,8 @@ import {
 import { pickerEntries } from '../lib/picker-entries';
 import { mandateRight } from '../lib/mandate-rights';
 import { profileDisplayName } from '../lib/profile-display';
+import { profileIdentity } from '../lib/profile-identity';
+import { ProfileIcon } from './ProfileIcon';
 
 interface Props {
   onDismiss?: () => void;
@@ -136,6 +138,10 @@ export function AuthorizePicker({ onDismiss }: Props) {
             const isTeam = isTeamManaged(p.id);
             const right = rightFor(p);
             const muted = !entry.ready || !right.can;
+            // Neutral icon (no per-profile color — see lib/profile-identity.ts),
+            // declared by the profile JSON when it sets one, else a fallback
+            // map keyed by the profile's short id.
+            const { icon } = profileIdentity(p.id, { name: p.name, icon: p.icon });
 
             return (
               <div className="card" key={entry.key} style={muted ? { opacity: 0.7 } : undefined}>
@@ -143,7 +149,8 @@ export function AuthorizePicker({ onDismiss }: Props) {
                   {/* The INTEGRATION's name — "Deploy (GitHub)", not "Deploy".
                       Several connectors can share one profile, so the profile
                       name cannot identify what is being authorised. */}
-                  <h3 className="card-title" style={{ margin: 0 }}>
+                  <h3 className="card-title profile-chip" style={{ margin: 0 }}>
+                    <ProfileIcon icon={icon} className="profile-chip-icon" />
                     {entry.name}
                   </h3>
                   {/* "Personal" only in the personal workspace: in a team, an

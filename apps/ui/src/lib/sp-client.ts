@@ -57,6 +57,8 @@ export interface ProfileSummary {
   paths: string[];
   /** One line on what this version changed — shown to owners still on an older one. */
   whatsNew?: string;
+  /** Optional declared icon key (see lib/profile-identity.ts). No shipped profile sets this yet. */
+  icon?: string;
 }
 
 export interface PendingItem {

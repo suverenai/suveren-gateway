@@ -23,6 +23,8 @@ import {
   allowedSummary,
   usageSummary,
 } from '../lib/receipt-summary';
+import { profileIdentity, isTestSetupAction } from '../lib/profile-identity';
+import { ProfileRail } from './ProfileRail';
 import type {
   ExecutionReceipt,
   IntegrationManifest,
@@ -82,9 +84,14 @@ export function ReceiptCard({
   const allowed = allowedSummary(localAuth?.context);
   const usage = usageSummary(receipt, localAuth?.bounds ?? receipt.limits);
   const intent = localAuth?.intent;
+  // Test setup: the delegation profile, OR a setup__* tool — both run only
+  // while simulation mode is on (see lib/profile-identity.ts).
+  const testSetup = profileIdentity(receipt.profileId).testSetup || isTestSetupAction(receipt.action);
 
   return (
-    <div className="card" style={{ marginBottom: 0 }}>
+    <div className="card id-card" style={{ marginBottom: 0 }}>
+      <ProfileRail profileId={receipt.profileId} />
+      <div className="id-body">
       {/* Headline: what happened, in words. */}
       <div className="receipt-head">
         <span className="receipt-what">{actionLabel(receipt, manifests)}</span>
@@ -99,6 +106,7 @@ export function ReceiptCard({
             content bound
           </span>
         )}
+        {testSetup && <span className="sim-mark">Test setup</span>}
         <span className="auth-card-time">{formatDate(receipt.timestamp)}</span>
       </div>
 
@@ -180,6 +188,7 @@ export function ReceiptCard({
           <div>signature &middot; {receipt.signature}</div>
         </div>
       </details>
+      </div>
     </div>
   );
 }
