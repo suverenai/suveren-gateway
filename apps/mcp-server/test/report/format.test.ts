@@ -156,6 +156,22 @@ describe('formatActionLabel — human labels for tool names (raw name stays in t
     expect(formatActionLabel('erp__create_quote')).not.toContain('erp__');
   });
 
+  it('irregular verbs read as English — "Report written", never "Report writed" (review SR6, 2026-10-06)', () => {
+    expect(formatActionLabel('report__write_report')).toBe('Report written');
+    expect(formatActionLabel('mail__send_reminder')).toBe('Reminder sent');
+    expect(formatActionLabel('deploy__run_workflow')).toBe('Workflow run');
+    expect(formatActionLabel('erp__set_price')).toBe('Price set');
+    expect(formatActionLabel('erp__make_offer')).toBe('Offer made');
+    expect(formatActionLabel('ci__build_release')).toBe('Release built');
+    expect(formatActionLabel('erp__pay_invoice')).toBe('Invoice paid');
+    expect(formatActionLabel('crm__apply_discount')).toBe('Discount applied');
+    expect(formatActionLabel('deploy__stop_service')).toBe('Service stopped');
+    expect(formatActionLabel('erp__submit_order')).toBe('Order submitted');
+    // Regular verbs are unchanged.
+    expect(formatActionLabel('calendar__book_meeting')).toBe('Meeting booked');
+    expect(formatActionLabel('erp__approve_quote')).toBe('Quote approved');
+  });
+
   it('an empty/missing action is reported as "Action", not blank', () => {
     expect(formatActionLabel(undefined)).toBe('Action');
     expect(formatActionLabel('')).toBe('Action');

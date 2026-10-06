@@ -35,13 +35,13 @@ async function buildRealBundle(html: string, archive: ReturnType<typeof buildSce
 }
 
 /** A REAL export file exactly as the gateway's export route builds it:
- *  gateway-drawn elements (`renderReportHtml(..., false)`) + embedded bundle. */
+ *  gateway-drawn elements (`renderReportHtml(...)`) + embedded bundle. */
 async function buildRealExport(html: string, archive: ReturnType<typeof buildScenario>['archive'], kp: TestReceiptKeypair): Promise<{ bundle: ExportBundle; doc: string }> {
   const result = await verifyReport(html, { archive, runExport: noExports() });
   const now = Math.floor(Date.now() / 1000);
   const stored = { html: result.html, savedAt: now, checkedAt: now, result };
   const bundle = buildExportBundle({ stored, archive, gatewayVersion: 'test', authorityServer: { url: AS_URL, publicKeyHex: kp.publicKeyHex } });
-  const doc = buildExportDocument({ bundle, renderedHtml: renderReportHtml(result.html, result.elements, false) });
+  const doc = buildExportDocument({ bundle, renderedHtml: renderReportHtml(result.html, result.elements) });
   return { bundle, doc };
 }
 
@@ -375,7 +375,7 @@ describe('runVerifyReportCli — exit codes', () => {
     const { bundle } = await buildRealExport('<sv-ticket ref="t1"></sv-ticket><sv-ticket ref="ghost"></sv-ticket>', archive, kp);
     (bundle.tickets[0] as Record<string, unknown>).action = 'tampered';
     const renderedAgain = await verifyReport('<sv-ticket ref="t1"></sv-ticket><sv-ticket ref="ghost"></sv-ticket>', { archive, runExport: noExports() });
-    const file = writeDoc(buildExportDocument({ bundle, renderedHtml: renderReportHtml(renderedAgain.html, renderedAgain.elements, false) }));
+    const file = writeDoc(buildExportDocument({ bundle, renderedHtml: renderReportHtml(renderedAgain.html, renderedAgain.elements) }));
 
     const { code } = await captureStdout(() => runVerifyReportCli([file, '--key', kp.publicKeyHex]));
     expect(code).toBe(1);

@@ -3583,6 +3583,27 @@ body.is-updating .simulation-banner {
 
 .reports-checked-values .reports-row { font-size: 0.78rem; }
 
+/* Checked values / not-verifiable rows open the detail panel in place. */
+.reports-row-button {
+  width: 100%; background: none; border: none; border-bottom: 1px solid var(--border);
+  text-align: left; color: inherit; font: inherit; cursor: pointer;
+  border-radius: 0; align-items: center;
+}
+.reports-checked-values .reports-row-button { font-size: 0.78rem; }
+.reports-row-button:hover, .reports-row-button:focus-visible { text-decoration: underline; }
+.reports-row-button.reports-row-selected { box-shadow: inset 3px 0 0 var(--text-primary); padding-left: 0.5rem; font-weight: 600; }
+.reports-row-bad { color: var(--danger); font-size: 0.78rem; }
+.reports-detail .reports-case-steps { display: flex; flex-wrap: wrap; gap: 0.35rem; margin: 0.25rem 0 0.5rem 0; }
+
+/* The gateway's own legend above the report frame (review SR5): the AI's
+ * content is not verified, only the drawn boxes are. */
+.reports-legend {
+  margin-bottom: 0.5rem; padding: 0.5rem 0.75rem;
+  background: var(--bg-elevated); border: 1px solid var(--border);
+  border-left: 4px solid var(--text-muted); border-radius: 0.5rem;
+  font-size: 0.8rem; color: var(--text-primary);
+}
+
 /* Fixed height with internal scrolling — the iframe cannot auto-resize to its
  * (script-free) content, so the page says so (see the hint above it). */
 .reports-iframe {

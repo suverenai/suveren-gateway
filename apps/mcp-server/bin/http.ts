@@ -876,10 +876,8 @@ app.get('/internal/report/export', internalOnly, async (req: Request, res: Respo
     authorityServer,
     gatewayVersion,
   });
-  // interactive=false: the in-app "Details" links (/reports?element=...) do
-  // nothing once this file is opened on its own — see renderReportHtml's doc
-  // comment (polish 2026-10-06).
-  const renderedHtml = renderReportHtml(stored.result.html, stored.result.elements, false);
+  // Same render as the live page — it carries no in-app links any more.
+  const renderedHtml = renderReportHtml(stored.result.html, stored.result.elements);
   const document = buildExportDocument({ bundle, renderedHtml });
 
   res

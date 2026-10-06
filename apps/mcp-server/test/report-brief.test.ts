@@ -41,4 +41,13 @@ describe('report brief', () => {
     expect(REPORT_BRIEF).toContain('cases="C1 C3"');
     expect(REPORT_BRIEF).toMatch(/lists every ticket from the test period that your report does not reference/);
   });
+
+  it('tells the AI its own content is labelled "AI analysis — not verified" and that sv- classes are removed (review SR5)', () => {
+    expect(REPORT_BRIEF).toContain('"AI analysis — not verified"');
+    expect(REPORT_BRIEF).toMatch(/class names starting with "sv-" are removed/);
+  });
+
+  it('explains how a case is timed (later of email date and test load — review SR4)', () => {
+    expect(REPORT_BRIEF).toMatch(/the later of the two/);
+  });
 });

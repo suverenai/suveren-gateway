@@ -78,4 +78,23 @@ describe('sanitizeReportHtml', () => {
     expect(out).toContain('<h1>Report</h1>');
     expect(out).toContain('<table>');
   });
+
+  it('REFUSAL: the AI cannot carry the gateway\'s own sv-* classes or data-sv-* markers (review SR5)', () => {
+    const fake =
+      '<div class="sv-el sv-el-verified card" data-sv-id="sv-ticket-0" data-sv-drawn-styles="1">' +
+      '<span class="SV-BADGE sv-badge-ok">✓ signature valid</span></div>' +
+      '<svg class="sv-ai-legend chart"><rect class="sv-step" width="1" height="1"/></svg>';
+    const out = sanitizeReportHtml(fake);
+    expect(out).not.toMatch(/class="[^"]*\bsv-/i);
+    expect(out).not.toMatch(/data-sv/i);
+    // The AI's own, non-gateway classes survive; a class attribute left empty is dropped.
+    expect(out).toContain('class="card"');
+    expect(out).toContain('class="chart"');
+    expect(out).toContain('<rect width="1" height="1"');
+    expect(out).toContain('✓ signature valid'); // text itself stays — the label/legend handle it
+  });
+
+  it('keeps the sv-* ELEMENTS themselves (the gateway draws those)', () => {
+    expect(sanitizeReportHtml('<sv-ticket ref="t1"></sv-ticket>')).toContain('<sv-ticket ref="t1">');
+  });
 });

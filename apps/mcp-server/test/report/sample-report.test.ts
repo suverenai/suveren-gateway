@@ -35,6 +35,9 @@ describe('sample-report.html fixture', () => {
     });
 
     const email = buildEmailExport({
+      // Loaded before the emails' own dates — case times start at the email
+      // (time metrics need a known load time; case-resolvers.ts).
+      simulation_load: { name: 'sample', package_sha256: 'x', cases_loaded: 2, loaded_at: '2027-01-15T07:55:00Z' },
       inbox: [
         { id: 'm1', from_name: 'Kraus GmbH', from_email: 'orders@kraus.example', to_json: '[]', subject: 'Order inquiry', body: 'x', received_at: '2027-01-15T08:00:00Z', case_id: 'C1' },
         { id: 'm2', from_name: 'Other Co', from_email: 'buy@other.example', to_json: '[]', subject: 'Another order', body: 'y', received_at: '2027-01-15T09:00:00Z', case_id: 'C2' },

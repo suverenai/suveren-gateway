@@ -48,6 +48,20 @@ function isAllowedUrl(value: string): boolean {
   return false;
 }
 
+/**
+ * `sv-*` class names and `data-sv-*` attributes belong to the gateway: the
+ * drawn boxes (`sv-el`, `sv-badge-ok`, …, render-report.ts), the "AI analysis
+ * — not verified" banner, and the markers the offline verifier reads
+ * (`data-sv-id`, verify-export.ts). Left in the AI's own markup, a `<div
+ * class="sv-el sv-el-verified"><span class="sv-badge sv-badge-ok">✓ …` would
+ * be drawn by the gateway's own stylesheet as a perfect copy of a verified
+ * box (review SR5, 2026-10-06). Matched case-insensitively — class selectors
+ * in HTML documents are case-sensitive, but stripping more is the safe side.
+ */
+export function stripGatewayClasses(value: string): string {
+  return value.split(/\s+/).filter(c => c && !/^sv-/i.test(c)).join(' ');
+}
+
 export function sanitizeReportHtml(html: string): string {
   return sanitizeHtmlLib(html, {
     // Allow every tag/attribute by default — see module doc comment for why
@@ -90,8 +104,17 @@ export function sanitizeReportHtml(html: string): string {
       '*': (tagName, attribs) => {
         const kept: Record<string, string> = {};
         for (const [name, value] of Object.entries(attribs)) {
-          if (name.toLowerCase().startsWith('on')) continue; // onclick, onerror, onload, ...
+          const lower = name.toLowerCase();
+          if (lower.startsWith('on')) continue; // onclick, onerror, onload, ...
           if (isUrlAttribute(name) && !isAllowedUrl(value)) continue; // javascript:, http(s)://, ...
+          // The gateway's own markers (see module doc): the AI may not carry
+          // them, so it cannot borrow the drawn boxes' styling or pose as one.
+          if (lower.startsWith('data-sv')) continue;
+          if (lower === 'class') {
+            const classes = stripGatewayClasses(value);
+            if (classes) kept[name] = classes;
+            continue;
+          }
           kept[name] = value;
         }
         return { tagName, attribs: kept };

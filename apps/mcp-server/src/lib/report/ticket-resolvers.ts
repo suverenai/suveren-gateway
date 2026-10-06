@@ -18,7 +18,8 @@
 import { verifyReceiptSignature, verifyAttestationSignature, decodeAttestationBlob, type ReceiptPayload } from '@hap/core';
 import type { ArchivedReceipt, ArchivedAuthorization } from '../receipt-archive';
 import type { ReceiptArchiveReader } from './types';
-import { formatActionLabel, formatDateTime, formatDuration, formatBoundLabel, formatOwnerLabel, profileShortLabel } from './format';
+import { formatActionLabel, formatDateTime, formatDuration, formatBoundLabel, profileShortLabel } from './format';
+import { getIdentityDirectory, ownerLabel, approverLabel } from './identity';
 
 export function findReceiptEntry(archive: ReceiptArchiveReader, ticketId: string): ArchivedReceipt | undefined {
   return archive.getReceipts().find(r => (r.receipt as { id?: unknown }).id === ticketId);
@@ -108,17 +109,22 @@ export async function resolveApprovalElement(archive: ReceiptArchiveReader, tick
     };
   }
   const committedBy = (proposal.committedBy ?? {}) as Record<string, { userId: string; at: number }>;
-  const approvers = Object.values(committedBy);
+  const approverEntries = Object.entries(committedBy);
+  const approvers = approverEntries.map(([, a]) => a);
   const createdAt = typeof proposal.createdAt === 'number' ? proposal.createdAt : undefined;
   const decidedAt = approvers.length > 0 ? Math.max(...approvers.map(a => a.at)) : undefined;
   const waitSeconds = createdAt !== undefined && decidedAt !== undefined ? decidedAt - createdAt : undefined;
   const who = approvers.map(a => a.userId);
+  // Never a bare account id on the card: the best name the archive can vouch
+  // for, else a neutral "a person (account …xxxxxx)" (identity.ts).
+  const dir = await getIdentityDirectory(archive);
+  const whoLabels = approverEntries.map(([domain, a]) => approverLabel(dir, domain, String(a.userId ?? '')));
   return {
     status: 'verified' as const,
     data: {
       ticketId: ticketRef,
       who,
-      whoLabel: who.length > 0 ? who.join(', ') : 'unknown',
+      whoLabel: whoLabels.length > 0 ? whoLabels.join(', ') : 'unknown',
       createdAt,
       createdAtLabel: createdAt !== undefined ? formatDateTime(createdAt) : 'unknown',
       decidedAt,
@@ -168,9 +174,13 @@ export async function resolveMandateElement(archive: ReceiptArchiveReader, ticke
       // stands in its place; everything else falls back to a labeled,
       // truncated key, never the raw did string as the only label (polish
       // 2026-10-05: "no raw technical values anywhere a manager reads").
+      // The SAME label for the same DID on every card: a name disclosed in
+      // THIS attestation, else one disclosed in any other verified archived
+      // attestation (identity.ts), else the truncated key.
+      const dir = await getIdentityDirectory(archive);
       owners = dids.map(did => {
         const subject = subjects.find(s => s.did === did);
-        return subject?.assurance === 'high' && subject.disclose?.name ? subject.disclose.name : formatOwnerLabel(did);
+        return subject?.assurance === 'high' && subject.disclose?.name ? subject.disclose.name : ownerLabel(dir, did);
       });
     } catch {
       // Undecodable/unverifiable attestation blob — mode/owner stay unknown,

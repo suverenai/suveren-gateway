@@ -8,7 +8,8 @@
  */
 import { describe, it, expect } from 'vitest';
 import { verifyReport } from '../../src/lib/report/verify-report';
-import { renderReportHtml, DRAWN_ELEMENT_STYLES } from '../../src/lib/report/render-report';
+import { renderReportHtml, DRAWN_ELEMENT_STYLES, AI_ANALYSIS_LABEL } from '../../src/lib/report/render-report';
+import { formatDateTime } from '../../src/lib/report/format';
 import { buildScenario } from './fixtures/scenario';
 import { buildEmailExport, buildErpExport } from './fixtures/exports';
 import type { RunConnectorExport, ExportSystem } from '../../src/lib/report/types';
@@ -46,11 +47,11 @@ describe('renderReportHtml', () => {
     // No bare <code>t1</code> — the raw id belongs in the detail panel's
     // Technical details only.
     expect(out).not.toContain('<code>t1</code>');
-    // The checkUrl + Details links sit in a single flex item: two links
-    // joined by one real " · " separator, never an orphaned middle dot with
-    // nothing adjacent (the bug: a bare text node between two <a> tags
-    // became its own `justify-content: space-between` flex item).
-    expect(out).toMatch(/Check on suveren\.ai ↗<\/a> · <a[^>]*>Details<\/a>/);
+    // Only the public check link remains (the in-frame "Details" link logged
+    // users out — 2026-10-06), with no orphaned " · " left beside it (the
+    // older bug: a bare text node became its own flex item).
+    expect(out).toMatch(/<span><a [^>]*>Check on suveren\.ai ↗<\/a><\/span>/);
+    expect(out).not.toMatch(/Check on suveren\.ai ↗<\/a>\s*·/);
   });
 
   it('renders an unverifiable reference as a "not verifiable" card, never with invented content', async () => {
@@ -73,28 +74,28 @@ describe('renderReportHtml', () => {
     expect(out).toMatch(/not verifiable/i);
   });
 
-  it('every drawn element and case step links with target="_top" to /reports?element=', async () => {
+  it('REFUSAL: no drawn element or case step navigates the top window (a reload logs the user out — 2026-10-06)', async () => {
     const { archive, addTicket } = buildScenario();
-    addTicket({ id: 't1', action: 'erp__create_quote', authorizationId: 'authz-1' });
-    const html = '<sv-ticket ref="t1"></sv-ticket>';
-    const result = await verifyReport(html, { archive, runExport: makeRunExport() });
-    const out = renderReportHtml(result.html, result.elements);
-    expect(out).toMatch(/href="\/reports\?element=sv-ticket-0"[^>]*target="_top"/);
-  });
-
-  it('sv-case draws a timeline whose step links carry &ticket= and target="_top"', async () => {
-    const { archive, addTicket } = buildScenario();
+    addTicket({
+      id: 'goal1', action: 'erp__create_order', authorizationId: 'authz-1', timestamp: 1_800_000_500,
+      authorization: { authorizationId: 'authz-1', profileId: 'test-profile' },
+      proposal: { status: 'committed', createdAt: 1_800_000_000, committedBy: { u1: { userId: 'alice', at: 1_800_000_100 } } },
+    });
     const email = buildEmailExport({
       inbox: [{ id: 'm1', from_name: 'A', from_email: 'a@example.com', to_json: '[]', subject: 'Order', body: 'x', received_at: '2026-10-01T09:00:00Z', case_id: 'C1' }],
     });
-    addTicket({ id: 'goal1', action: 'erp__create_order', authorizationId: 'authz-1', timestamp: 1_800_000_500 });
-    const html = '<sv-case start="email:m1" goal="ticket:goal1" steps=""></sv-case>';
+    const html =
+      '<sv-ticket ref="goal1"></sv-ticket><sv-approval ticket="goal1"></sv-approval><sv-mandate ticket="goal1"></sv-mandate>' +
+      '<sv-case start="email:m1" goal="ticket:goal1" steps=""></sv-case>';
     const result = await verifyReport(html, { archive, runExport: makeRunExport({ email }) });
-
-    expect(result.elements[0].status).toBe('verified');
+    expect(result.elements.every(e => e.status === 'verified')).toBe(true);
     const out = renderReportHtml(result.html, result.elements);
-    // "&" is correctly HTML-encoded as "&amp;" in the attribute value.
-    expect(out).toMatch(/href="\/reports\?element=sv-case-0&amp;ticket=goal1"[^>]*target="_top"/);
+    expect(out).not.toMatch(/target="_top"/);
+    expect(out).not.toMatch(/\/reports\?element=/);
+    expect(out).not.toMatch(/>Details</);
+    expect(out).not.toMatch(/Case details/);
+    // The one remaining link is the public check — a new tab, not the top window.
+    expect(out).toMatch(/<a href="https:\/\/as\.example\/r\/goal1" target="_blank" rel="noopener noreferrer">/);
   });
 
   it('the case start step reads "Email in", never the raw "email" kind label', async () => {
@@ -135,7 +136,7 @@ describe('renderReportHtml', () => {
       id: 'goal1', action: 'erp__convert_quote_to_order', authorizationId: 'authz-1', timestamp: 1_800_001_000,
       // Asked 680s before, decided 100s before the goal ticket executes —
       // a realistic approval-then-execution order.
-      proposal: { createdAt: 1_800_000_320, status: 'approved', committedBy: { u1: { userId: 'M. Huber', at: 1_800_000_900 } } },
+      proposal: { createdAt: 1_800_000_320, status: 'approved', committedBy: { u1: { userId: 'c7246947-0f1e-4c2b-9a77-3d1f00a1b2c3', at: 1_800_000_900 } } },
     });
     const html = '<sv-case start="email:m1" goal="ticket:goal1" steps="s1"></sv-case>';
     const result = await verifyReport(html, { archive, runExport: makeRunExport({ email }) });
@@ -146,7 +147,10 @@ describe('renderReportHtml', () => {
     expect(out).toContain('>Approval<');
     expect(out).toContain('asked');
     expect(out).toContain('approved');
-    expect(out).toContain('M. Huber');
+    // No name is disclosed for this approver anywhere in the archive — a
+    // neutral label, never the raw account id (review SR6).
+    expect(out).toContain('by a person (account …246947)');
+    expect(out).not.toContain('c7246947-0f1e');
     expect(out).toContain('10 min');
 
     // REFUSAL (polish 2026-10-05, second pass): the first version always drew
@@ -308,40 +312,80 @@ describe('renderReportHtml', () => {
   });
 });
 
-describe('renderReportHtml(html, elements, interactive=false) — standalone export (R6, polish 2026-10-06)', () => {
-  it('REFUSAL: drops the in-app "Details" link on a ticket card, keeping only the public check link with no orphaned separator', async () => {
-    const { archive, addTicket } = buildScenario();
-    addTicket({ id: 't1', action: 'erp__create_quote', authorizationId: 'authz-1', timestamp: 1_800_000_000 });
-    const result = await verifyReport('<sv-ticket ref="t1"></sv-ticket>', { archive, runExport: makeRunExport() });
-
-    const out = renderReportHtml(result.html, result.elements, false);
-    expect(out).not.toMatch(/>Details</);
-    expect(out).not.toMatch(/\/reports\?element=/);
-    expect(out).toMatch(/Check on suveren\.ai/);
-    // No trailing/leading " · " left behind where "Details" used to sit.
-    expect(out).not.toMatch(/Check on suveren\.ai ↗<\/a>\s*·/);
-    expect(out).not.toMatch(/·\s*<\/span>/);
-
-    // The interactive default is UNCHANGED — same input still gets Details.
-    const interactiveOut = renderReportHtml(result.html, result.elements);
-    expect(interactiveOut).toMatch(/>Details</);
+describe('renderReportHtml — the "AI analysis — not verified" label (review SR5, 2026-10-06)', () => {
+  it('draws the label once, at the top of the body, styled inline with !important', async () => {
+    const { archive } = buildScenario();
+    const result = await verifyReport('<html><head><style>.x{}</style></head><body><h1>Hi</h1><p>My view.</p></body></html>', { archive, runExport: makeRunExport() });
+    const out = renderReportHtml(result.html, result.elements);
+    expect(out.match(/class="sv-ai-legend"/g)?.length).toBe(1);
+    expect(out).toContain(AI_ANALYSIS_LABEL);
+    expect(out).toContain('Everything else is the AI&#39;s own analysis and is not verified.');
+    // Before the AI's own content, right after <body>.
+    expect(out.indexOf('sv-ai-legend')).toBeLessThan(out.indexOf('<h1>Hi</h1>'));
+    expect(out).toMatch(/class="sv-ai-legend" role="note" style="display:block !important;visibility:visible !important;/);
   });
 
-  it('REFUSAL: drops the "Details" link on sv-approval/sv-mandate and the per-step/"Case details" links on sv-case', async () => {
-    const { archive, addTicket } = buildScenario();
-    addTicket({
-      id: 'g1', action: 'erp__create_quote', authorizationId: 'authz-1', timestamp: 1_800_000_200,
-      authorization: { authorizationId: 'authz-1', profileId: 'test-profile' },
-      proposal: { status: 'committed', createdAt: 1_800_000_000, committedBy: { u1: { userId: 'alice', at: 1_800_000_100 } } },
-    });
-    const html =
-      '<sv-approval ticket="g1"></sv-approval><sv-mandate ticket="g1"></sv-mandate>' +
-      '<sv-case start="email:m1" goal="ticket:g1" steps=""></sv-case>';
-    const result = await verifyReport(html, { archive, runExport: makeRunExport({ email: buildEmailExport({ inbox: [{ id: 'm1', from_name: 'A', from_email: 'a@x.com', to_json: '[]', subject: 's', body: 'b', received_at: '2026-01-01T00:00:00Z', case_id: 'C1' }] }) }) });
+  it('REFUSAL: an AI-written look-alike of a verified box does not get the gateway\'s classes, so the gateway stylesheet never draws it', async () => {
+    const { archive } = buildScenario();
+    const fake = '<div class="sv-el sv-el-verified" data-sv-id="sv-ticket-0"><b>Order placed</b><span class="sv-badge sv-badge-ok">✓ signature valid</span></div>' +
+      '<div class="sv-ai-legend">Everything here is verified.</div>';
+    const result = await verifyReport(fake, { archive, runExport: makeRunExport() });
+    const out = renderReportHtml(result.html, result.elements);
+    expect(out).not.toMatch(/<div class="sv-el /);
+    expect(out).not.toMatch(/<span class="sv-badge/);
+    expect(out).not.toMatch(/data-sv-id="sv-ticket-0"/);
+    expect(out.match(/class="sv-ai-legend"/g)?.length).toBe(1); // only the gateway's own
+  });
 
-    const out = renderReportHtml(result.html, result.elements, false);
-    expect(out).not.toMatch(/>Details</);
-    expect(out).not.toMatch(/Case details/);
-    expect(out).not.toMatch(/\/reports\?element=/);
+  it('REFUSAL: a stored report sanitized by an OLDER gateway (classes still in its html) is stripped at render time too', () => {
+    const out = renderReportHtml('<div class="sv-el sv-el-verified"><span class="sv-badge sv-badge-ok">✓</span></div>', []);
+    expect(out).not.toMatch(/<div class="sv-el/);
+    expect(out).not.toMatch(/<span class="sv-badge/);
+  });
+});
+
+describe('renderReportHtml — case start time (review SR4, 2026-10-06)', () => {
+  const EMAIL_ISO = '2026-10-01T08:33:00Z';
+  const LOADED_ISO = '2026-10-01T09:24:58Z';
+  const loadedSec = Math.floor(Date.parse(LOADED_ISO) / 1000);
+
+  async function render(loadedAt: string | null) {
+    const { archive, addTicket } = buildScenario();
+    addTicket({ id: 'g1', action: 'email__send_message', authorizationId: 'authz-1', timestamp: loadedSec + 720 });
+    const email = buildEmailExport({
+      simulation_load: loadedAt ? { name: 'pkg', package_sha256: 'x', cases_loaded: 1, loaded_at: loadedAt } : null,
+      inbox: [{ id: 'm1', from_name: 'A', from_email: 'a@example.com', to_json: '[]', subject: 'x', body: 'x', received_at: EMAIL_ISO, case_id: 'C1' }],
+    });
+    const result = await verifyReport('<sv-case start="email:m1" goal="ticket:g1" steps=""></sv-case>', { archive, runExport: makeRunExport({ email }) });
+    return renderReportHtml(result.html, result.elements);
+  }
+
+  it('the start step shows the load time as the case start and the email\'s own date separately', async () => {
+    const out = await render(LOADED_ISO);
+    const emailLabel = formatDateTime(Math.floor(Date.parse(EMAIL_ISO) / 1000));
+    expect(out).toContain('Case C1 · 12 min'); // goal - load, not goal - backdated email (63 min)
+    expect(out).toContain(`Email in</div>${formatDateTime(loadedSec)}`);
+    expect(out).toContain(`Email dated ${emailLabel}`);
+  });
+
+  it('REFUSAL: with no known load time the case shows no duration — "time not verifiable"', async () => {
+    const out = await render(null);
+    expect(out).toContain('Case C1 · time not verifiable');
+    expect(out).toMatch(/time the test data was loaded is unknown/);
+    expect(out).not.toMatch(/Case C1 · \d/);
+  });
+});
+
+describe('label parity with the Reports page', () => {
+  it('the UI legend outside the frame uses the same words as the drawn label', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { resolve } = await import('node:path');
+    const { AI_LEGEND_TEXT } = await import('../../src/lib/report/render-report');
+    const ui = readFileSync(resolve(__dirname, '../../../ui/src/pages/ReportsPage.tsx'), 'utf-8');
+    expect(ui).toContain(`'${AI_ANALYSIS_LABEL}'`);
+    // The legend text is split over two string literals in the UI; compare the halves.
+    const [first, second] = AI_LEGEND_TEXT.split('”. ');
+    expect(ui).toContain(first);
+    expect(ui).toContain(second);
   });
 });

@@ -161,9 +161,33 @@ const ACTION_LABELS: Record<string, string> = {
   publish_post: 'Post published',
 };
 
+/** Irregular past participles for verbs a tool name may start with — the
+ *  plain "+ed" rule produced "Report writed" for `report__write_report`
+ *  (review of a real export, 2026-10-06). Read-style verbs (get/list/find)
+ *  are included only so a future write tool named that way still reads as
+ *  English; read tools carry no ticket and so rarely reach a label. */
+const IRREGULAR_PAST: Record<string, string> = {
+  write: 'written', rewrite: 'rewritten', send: 'sent', resend: 'resent',
+  run: 'run', rerun: 'rerun', set: 'set', reset: 'reset', put: 'put',
+  make: 'made', build: 'built', rebuild: 'rebuilt', begin: 'begun',
+  take: 'taken', give: 'given', do: 'done', redo: 'redone', read: 'read',
+  find: 'found', get: 'retrieved', buy: 'bought', pay: 'paid', sell: 'sold',
+  hold: 'held', keep: 'kept', leave: 'left', draw: 'drawn', withdraw: 'withdrawn',
+  forbid: 'forbidden', choose: 'chosen', speak: 'spoken', meet: 'met',
+  lead: 'led', split: 'split', cut: 'cut', upload: 'uploaded', forward: 'forwarded',
+  bring: 'brought', tell: 'told', show: 'shown', drive: 'driven', break: 'broken',
+};
+
+/** Short verbs whose final consonant doubles before "-ed" (stop -> stopped). */
+const DOUBLE_FINAL = new Set(['stop', 'plan', 'ship', 'tag', 'log', 'submit', 'drop', 'flag', 'pin', 'unpin', 'map', 'wrap', 'chat', 'admit', 'commit', 'permit', 'refer', 'transfer']);
+
 function pastTense(verb: string): string {
   if (!verb) return verb;
+  const lower = verb.toLowerCase();
+  if (IRREGULAR_PAST[lower]) return IRREGULAR_PAST[lower];
+  if (DOUBLE_FINAL.has(lower)) return `${verb}${verb.slice(-1)}ed`;
   if (/e$/.test(verb)) return `${verb}d`;
+  if (/[^aeiou]y$/i.test(verb)) return `${verb.slice(0, -1)}ied`; // apply -> applied, reply -> replied
   return `${verb}ed`;
 }
 

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { spClient, type ReportModel, type ReportElement, type ReportProof, type ReportCoverage, type TicketDetail } from '../lib/sp-client';
 import { EmptyState } from '../components/EmptyState';
@@ -193,6 +193,70 @@ export function resolveDetailTicketId(element: ReportElement | undefined, ticket
   return null;
 }
 
+/**
+ * The report iframe's sandbox (2026-10-06). No `allow-scripts`, no
+ * `allow-same-origin`: the AI's HTML cannot run code or reach the gateway's
+ * origin. No `allow-top-navigation*` any more: the report used to link
+ * "Details" with `target="_top"`, a full page load that logged the user out
+ * (the API key lives in memory only, by design). Details now open from the
+ * side panel, in place. `allow-popups` + `allow-popups-to-escape-sandbox`
+ * exist for one link only — the public "Check on suveren.ai ↗" (a new tab,
+ * which must open as a normal, unsandboxed page). The sanitizer removes every
+ * other URL from the AI's markup, so nothing else can open a popup.
+ */
+export const REPORT_IFRAME_SANDBOX = 'allow-popups allow-popups-to-escape-sandbox';
+
+/** The words the gateway uses for the AI's own content — the same text the
+ *  mcp-server draws into the frame and the export (render-report.ts
+ *  AI_ANALYSIS_LABEL / AI_LEGEND_TEXT; kept in step by hand, see the
+ *  client-side formatting note below). */
+export const AI_ANALYSIS_LABEL_CLIENT = 'AI analysis — not verified';
+export const AI_LEGEND_TEXT_CLIENT =
+  'Boxes with a green ✓ are drawn and checked by the gateway, and each one is listed under “Checked values”. ' +
+  "Everything else is the AI's own analysis and is not verified.";
+
+/** Search params that open the detail panel for one element (optionally one
+ *  ticket of it) — set through the router, so it never reloads the page. */
+export function detailSearchParams(current: URLSearchParams, elementId: string, ticketId?: string | null): URLSearchParams {
+  const next = new URLSearchParams(current);
+  next.set('element', elementId);
+  if (ticketId) next.set('ticket', ticketId);
+  else next.delete('ticket');
+  return next;
+}
+
+const KIND_LABELS: Record<string, string> = {
+  'sv-ticket': 'Action', 'sv-approval': 'Approval', 'sv-mandate': 'Mandate',
+  'sv-record': 'Record', 'sv-case': 'Case', 'sv-metric': 'Figure',
+};
+
+/** The "Not verifiable" rows under Proof — one per element the gateway could
+ *  not check, each opening its detail (with the reason) in place. */
+export function unverifiableRows(elements: ReportElement[]): Array<{ elementId: string; text: string }> {
+  return elements
+    .filter(e => e.status === 'unverifiable')
+    .map(e => ({ elementId: e.id, text: `${KIND_LABELS[e.kind] ?? 'Element'}: ${e.reason ?? 'could not be checked'}` }));
+}
+
+/** An sv-case's tickets in time order (steps, then goal), for the case
+ *  detail's step buttons — what the in-frame step links used to do. */
+export function caseDetailSteps(element: ReportElement | undefined): Array<{ ticketId: string; label: string; isGoal: boolean }> {
+  if (!element || element.kind !== 'sv-case' || !element.data) return [];
+  type Node = { ticketId?: string; time?: number; action?: unknown; actionLabel?: unknown };
+  const steps = Array.isArray(element.data.steps) ? (element.data.steps as Node[]) : [];
+  const goal = element.data.goal as Node | undefined;
+  const nodes = [
+    ...steps.map(n => ({ n, isGoal: false })),
+    ...(goal ? [{ n: goal, isGoal: true }] : []),
+  ].filter(x => typeof x.n.ticketId === 'string' && x.n.ticketId);
+  nodes.sort((a, b) => (a.n.time ?? 0) - (b.n.time ?? 0));
+  return nodes.map(({ n, isGoal }) => ({
+    ticketId: n.ticketId as string,
+    label: typeof n.actionLabel === 'string' ? n.actionLabel : String(n.action ?? 'Action'),
+    isGoal,
+  }));
+}
+
 /** Wraps the gateway-rendered HTML with the CSP meta tag the iframe srcdoc
  *  needs (plan: "no JavaScript ... CSP meta in the srcdoc"). No script tag
  *  can run even without this (the sandbox omits allow-scripts) — the CSP is
@@ -296,22 +360,52 @@ function factSection(title: 'Ticket' | 'Mandate' | 'Approval', fact: TicketDetai
   );
 }
 
-function DetailPanel({ report, elementId, ticketParam, onClose }: {
+function DetailPanel({ report, elementId, ticketParam, onClose, onSelectTicket }: {
   report: ReportModel;
   elementId: string;
   ticketParam: string | null;
   onClose: () => void;
+  onSelectTicket: (ticketId: string) => void;
 }) {
   const element = report.elements.find(e => e.id === elementId);
   const ticketId = resolveDetailTicketId(element, ticketParam);
   const detail = ticketId ? report.ticketDetails[ticketId] : undefined;
+  const caseSteps = caseDetailSteps(element);
+  const summary = report.proof.verifiedValues.find(v => v.elementId === elementId)?.summary;
+  const ref = useRef<HTMLDivElement>(null);
+  // Bring the panel's TOP into view when it opens or switches, but only if
+  // it is off screen (on a phone it sits below the report; on a wide screen
+  // it is already at the top of the side column). Same-page scroll only,
+  // never a navigation.
+  useEffect(() => {
+    const node = ref.current;
+    if (!node || typeof node.getBoundingClientRect !== 'function') return;
+    const top = node.getBoundingClientRect().top;
+    if (top < 0 || top > window.innerHeight - 80) node.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  }, [elementId, ticketParam]);
 
   return (
-    <div className="card" style={{ marginTop: '1rem' }}>
+    <div className="card reports-detail" ref={ref}>
       <div className="card-header">
         <div className="card-title">Details</div>
         <button type="button" className="btn btn-ghost btn-sm" onClick={onClose}>Close</button>
       </div>
+      {summary && <p className="page-subtitle" style={{ marginTop: 0 }}>{summary}</p>}
+      {caseSteps.length > 0 && (
+        <div className="reports-case-steps" role="group" aria-label="Case steps">
+          {caseSteps.map(step => (
+            <button
+              key={step.ticketId}
+              type="button"
+              className={`btn btn-sm ${step.ticketId === ticketId ? 'btn-secondary' : 'btn-ghost'}`}
+              aria-pressed={step.ticketId === ticketId}
+              onClick={() => onSelectTicket(step.ticketId)}
+            >
+              {step.isGoal ? 'Goal: ' : ''}{step.label}
+            </button>
+          ))}
+        </div>
+      )}
       {!element && <p className="page-subtitle">This element is no longer in the report.</p>}
       {element && !ticketId && (
         element.status === 'unverifiable'
@@ -378,8 +472,15 @@ function TechnicalDetail({ detail }: { detail?: string }) {
   );
 }
 
-function SidePanel({ report, open }: { report: ReportModel; open?: boolean }) {
+function SidePanel({ report, open, selectedId, onOpenElement, detail }: {
+  report: ReportModel;
+  open?: boolean;
+  selectedId: string | null;
+  onOpenElement: (elementId: string) => void;
+  detail?: ReactNode;
+}) {
   const { proof, coverage } = report;
+  const notVerifiable = unverifiableRows(report.elements);
   const missing = missingSummary(coverage);
   const casesLine = coverageCasesLine(coverage);
   const periodNote = periodStartNote(coverage);
@@ -387,6 +488,7 @@ function SidePanel({ report, open }: { report: ReportModel; open?: boolean }) {
   const recordsLine = proofCountLine(proof.recordsChecked);
   return (
     <div className={`reports-side${open ? ' reports-side-open' : ''}`}>
+      {detail}
       <div className="card">
         <div className="card-title">Proof</div>
         <div className="reports-row"><span>Tickets referenced</span><b>{proof.ticketsReferenced.length}</b></div>
@@ -399,6 +501,16 @@ function SidePanel({ report, open }: { report: ReportModel; open?: boolean }) {
           <b style={recordsLine.kind === 'ok' ? { color: 'var(--success)' } : undefined}>{recordsLine.text}</b>
         </div>
         <div className="reports-row"><span>Not verifiable</span><b>{proof.unverifiableCount}</b></div>
+        {notVerifiable.map(r => (
+          <button
+            key={r.elementId}
+            type="button"
+            className={`reports-row reports-row-button reports-row-bad${selectedId === r.elementId ? ' reports-row-selected' : ''}`}
+            onClick={() => onOpenElement(r.elementId)}
+          >
+            <span>{r.text}</span><span aria-hidden="true">›</span>
+          </button>
+        ))}
       </div>
       <div className="card" style={{ marginTop: '0.75rem' }}>
         <div className="card-title">Coverage</div>
@@ -428,7 +540,15 @@ function SidePanel({ report, open }: { report: ReportModel; open?: boolean }) {
         <div className="card reports-checked-values" style={{ marginTop: '0.75rem' }}>
           <div className="card-title">Checked values</div>
           {proof.verifiedValues.map(v => (
-            <div className="reports-row" key={v.elementId}><span>{v.summary}</span></div>
+            <button
+              key={v.elementId}
+              type="button"
+              className={`reports-row reports-row-button${selectedId === v.elementId ? ' reports-row-selected' : ''}`}
+              onClick={() => onOpenElement(v.elementId)}
+              title="Show details"
+            >
+              <span>{v.summary}</span><span aria-hidden="true">›</span>
+            </button>
           ))}
         </div>
       )}
@@ -499,6 +619,13 @@ export function ReportsPage() {
 
   const elementId = searchParams.get('element');
   const ticketParam = searchParams.get('ticket');
+
+  // In-place navigation only: the router updates `?element=` (so the deep
+  // link keeps working) without a page load — a reload would log the user
+  // out, the API key lives in memory only.
+  const openElement = useCallback((id: string, ticketId?: string | null) => {
+    setSearchParams(detailSearchParams(searchParams, id, ticketId));
+  }, [searchParams, setSearchParams]);
 
   const closeDetail = useCallback(() => {
     const next = new URLSearchParams(searchParams);
@@ -576,23 +703,36 @@ export function ReportsPage() {
 
         <div className="reports-grid">
           <div>
+            {/* Drawn by the gateway OUTSIDE the frame — the AI's markup cannot
+                reach, hide or restyle it (review SR5). */}
+            <div className="reports-legend" role="note">
+              <b>{AI_ANALYSIS_LABEL_CLIENT}:</b> {AI_LEGEND_TEXT_CLIENT}
+            </div>
             <p className="form-hint" style={{ marginBottom: '0.5rem' }}>
-              Written by the AI, rendered without scripts or network access. Scroll inside the report — the gateway does not auto-resize the frame.
+              Written by the AI, rendered without scripts or network access. Scroll inside the report — the gateway does not auto-resize the frame. Click a checked value to see its details.
             </p>
-            {/* No allow-scripts, no allow-same-origin: the AI's HTML cannot run
-                code or reach the gateway's origin. Only top-level navigation
-                (the sv-* detail links) is permitted, and only on a real click. */}
             <iframe
               title="Report"
-              sandbox="allow-top-navigation-by-user-activation"
+              sandbox={REPORT_IFRAME_SANDBOX}
               srcDoc={buildSrcDoc(report.renderedHtml)}
               className="reports-iframe"
             />
-            {elementId && (
-              <DetailPanel report={report} elementId={elementId} ticketParam={ticketParam} onClose={closeDetail} />
-            )}
           </div>
-          <SidePanel report={report} open={narrowDetailsOpen} />
+          <SidePanel
+            report={report}
+            open={narrowDetailsOpen || !!elementId}
+            selectedId={elementId}
+            onOpenElement={id => openElement(id)}
+            detail={elementId ? (
+              <DetailPanel
+                report={report}
+                elementId={elementId}
+                ticketParam={ticketParam}
+                onClose={closeDetail}
+                onSelectTicket={t => openElement(elementId, t)}
+              />
+            ) : undefined}
+          />
         </div>
       </div>
     </div>
