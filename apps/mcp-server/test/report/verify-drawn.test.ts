@@ -34,7 +34,7 @@ const HTML = SAMPLE.replace(
 );
 const OWNER = 'did:key:z6MkOwnerRR7';
 
-async function buildRich(timeZone?: string) {
+async function buildRich(timeZone?: string, html: string = HTML) {
   const { archive, addTicket, kp } = buildScenario();
   const start = 1_800_000_000;
   const authorization = {
@@ -56,7 +56,7 @@ async function buildRich(timeZone?: string) {
   });
   const erp = buildErpExport({ quotes: [{ id: 'Q1', number: 'Q-2027-0001', customer_id: 'kraus', status: 'sent', currency: 'EUR', net_total: 4380, created_at: '2027-01-15T08:10:00Z' }] });
   const runExport: RunConnectorExport = async (system: ExportSystem) => ({ email, erp } as Record<string, unknown>)[system] ?? {};
-  const result = await verifyReport(HTML, { archive, runExport });
+  const result = await verifyReport(html, { archive, runExport });
   const now = Math.floor(Date.now() / 1000);
   const stored = { html: result.html, savedAt: now, checkedAt: now, result };
   const bundle = buildExportBundle({ stored, archive, gatewayVersion: 'test', authorityServer: { url: AS_URL, publicKeyHex: kp.publicKeyHex }, ...(timeZone ? { timeZone } : {}) });
@@ -294,5 +294,42 @@ describe('RR7 — the drawing time zone', () => {
     const forged = doc.replace('"timeZone":"' + bundle.timeZone + '"', '"timeZone":"Mars/Olympus"');
     expect(forged).not.toBe(doc);
     expect((await cli(forged, kp.publicKeyHex)).code).toBe(1);
+  });
+});
+
+describe('RR7 — line endings never decide the check (a file crosses Windows ⇄ macOS/Linux)', () => {
+  // The sample is read from disk, so on a Windows checkout it arrives with
+  // CRLF. Both variants are forced here, so every OS runs both paths.
+  const LF = HTML.replace(/\r\n?/g, '\n');
+  const CRLF = LF.replace(/\n/g, '\r\n');
+  const toLf = (s: string) => s.replace(/\r\n?/g, '\n');
+  const toCrlf = (s: string) => toLf(s).replace(/\n/g, '\r\n');
+
+  for (const [name, report] of [['LF', LF], ['CRLF', CRLF]] as const) {
+    it(`a report the AI wrote with ${name} line endings: the untouched export, and the same file with its line endings rewritten either way, all pass`, async () => {
+      const { doc, kp } = await buildRich(undefined, report);
+      for (const file of [doc, toLf(doc), toCrlf(doc)]) {
+        const r = await verifyExportBundle(extractProofBundle(file), { documentHtml: file, expectedKeyHex: kp.publicKeyHex });
+        expect(r.document).toEqual({ state: 'match' });
+        expect(r.allValid).toBe(true);
+        expect((await cli(file, kp.publicKeyHex)).code).toBe(0);
+      }
+    });
+  }
+
+  it('the embedded proof data is untouched by a line-ending rewrite (a CR there is the JSON escape, not a raw byte)', async () => {
+    const { doc } = await buildRich(undefined, CRLF);
+    expect(extractProofBundle(toCrlf(doc))).toEqual(extractProofBundle(doc));
+    expect(extractProofBundle(toLf(doc))).toEqual(extractProofBundle(doc));
+  });
+
+  it('normalizing line endings does not hide a visible edit, in either line-ending form', async () => {
+    const { doc, kp } = await buildRich(undefined, CRLF);
+    const edited = doc.replace('<span class="sv-v">', '<span class="sv-v">9');
+    expect(edited).not.toBe(doc);
+    for (const file of [edited, toLf(edited), toCrlf(edited)]) {
+      const r = await verifyExportBundle(extractProofBundle(file), { documentHtml: file, expectedKeyHex: kp.publicKeyHex });
+      expect(r.document.state).toBe('mismatch');
+    }
   });
 });

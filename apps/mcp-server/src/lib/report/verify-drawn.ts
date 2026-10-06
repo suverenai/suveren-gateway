@@ -75,8 +75,29 @@ function visibleText(html: string): string {
   return html.replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
+/**
+ * Line endings, the HTML way: CRLF and a lone CR both become LF — exactly the
+ * newline normalization every HTML parser applies to its input before
+ * tokenizing (WHATWG "preprocessing the input stream"). Two strings equal
+ * after this cannot render differently, so it can never hide an edit a reader
+ * would see. It is applied to BOTH sides, because both can carry CR:
+ *   - the file, when a download, a mail client, git (core.autocrlf) or an
+ *     editor rewrote its line endings — a Windows user must be able to check a
+ *     file exported on macOS, and the other way round;
+ *   - the re-draw, because the report HTML the AI wrote (stored and bundled
+ *     as-is) may itself contain CRLF — normalizing only the file made such an
+ *     untouched export fail its own check on every OS.
+ * Values the checker compares as DATA (tickets, bounds, the report HTML in
+ * the embedded bundle) are not affected: inside the JSON proof block a CR is
+ * the escape `\r`, which no line-ending rewrite touches.
+ */
+function normalizeNewlines(html: string): string {
+  return html.replace(/\r\n?/g, '\n');
+}
+
 /** Re-draws the file from the bundle and requires byte equality (line
- *  endings normalized). On a difference, says where — in visible words. */
+ *  endings normalized on both sides, see normalizeNewlines). On a
+ *  difference, says where — in visible words. */
 export function checkDocumentReproduces(bundle: ExportBundle, documentHtml: string | undefined): DocumentCheck {
   if (documentHtml === undefined) return { state: 'not-given' };
   if (!validTimeZone(bundle.timeZone)) {
@@ -85,11 +106,11 @@ export function checkDocumentReproduces(bundle: ExportBundle, documentHtml: stri
   let expected: string;
   try {
     // buildExportDocument draws in bundle.timeZone itself (format.ts#withDrawingZone).
-    expected = buildExportDocument({ bundle });
+    expected = normalizeNewlines(buildExportDocument({ bundle }));
   } catch (err) {
     return { state: 'mismatch', error: `The page could not be re-drawn from the bundle: ${err instanceof Error ? err.message : String(err)}` };
   }
-  const actual = documentHtml.replace(/\r\n/g, '\n');
+  const actual = normalizeNewlines(documentHtml);
   if (actual === expected) return { state: 'match' };
   let i = 0;
   while (i < actual.length && i < expected.length && actual[i] === expected[i]) i++;
