@@ -373,9 +373,16 @@ function DetailPanel({ report, elementId, ticketParam, onClose, onSelectTicket }
   const caseSteps = caseDetailSteps(element);
   const summary = report.proof.verifiedValues.find(v => v.elementId === elementId)?.summary;
   const ref = useRef<HTMLDivElement>(null);
-  // Bring the panel into view when it opens or switches — it may sit below
-  // the fold on a phone. Same-page scroll only, never a navigation.
-  useEffect(() => { ref.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' }); }, [elementId, ticketParam]);
+  // Bring the panel's TOP into view when it opens or switches, but only if
+  // it is off screen (on a phone it sits below the report; on a wide screen
+  // it is already at the top of the side column). Same-page scroll only,
+  // never a navigation.
+  useEffect(() => {
+    const node = ref.current;
+    if (!node || typeof node.getBoundingClientRect !== 'function') return;
+    const top = node.getBoundingClientRect().top;
+    if (top < 0 || top > window.innerHeight - 80) node.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  }, [elementId, ticketParam]);
 
   return (
     <div className="card reports-detail" ref={ref}>

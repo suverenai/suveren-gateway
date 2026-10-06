@@ -3590,8 +3590,8 @@ body.is-updating .simulation-banner {
   border-radius: 0; align-items: center;
 }
 .reports-checked-values .reports-row-button { font-size: 0.78rem; }
-.reports-row-button:hover, .reports-row-button:focus-visible { background: var(--bg-hover, var(--accent-subtle)); }
-.reports-row-button.reports-row-selected { background: var(--accent-subtle); }
+.reports-row-button:hover, .reports-row-button:focus-visible { text-decoration: underline; }
+.reports-row-button.reports-row-selected { box-shadow: inset 3px 0 0 var(--text-primary); padding-left: 0.5rem; font-weight: 600; }
 .reports-row-bad { color: var(--danger); font-size: 0.78rem; }
 .reports-detail .reports-case-steps { display: flex; flex-wrap: wrap; gap: 0.35rem; margin: 0.25rem 0 0.5rem 0; }
 
