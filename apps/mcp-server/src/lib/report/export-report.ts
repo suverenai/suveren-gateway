@@ -34,12 +34,24 @@ function receiptId(receipt: Record<string, unknown>): string {
 }
 
 /**
- * Assembles the `ExportBundle` data. Ticket selection mirrors the plan
- * exactly: every ticket the report REFERENCES (`proof.ticketsReferenced`)
- * plus every ticket in the COVERAGE PERIOD (`coverage.ticketsInPeriod`,
- * already the union of referenced + not-referenced for that window) — their
- * union, so a ticket outside the period that the report still names (an
- * older mandate cited for context) is never silently dropped.
+ * Assembles the `ExportBundle` data — "the proof follows the report"
+ * (work-plan "regular reporting", RR5; closes SR2: the file used to carry the
+ * full intent text, bounds and scope of EVERY mandate used in the period,
+ * whether the report showed it or not).
+ *
+ * Tickets: every ticket the report REFERENCES (`proof.ticketsReferenced`) plus
+ * every ticket in the COVERAGE PERIOD (`coverage.ticketsInPeriod`), so "not
+ * referenced" stays checkable — but only those the (window-scoped, see
+ * window.ts) `archive` still holds: a ticket outside the reporting window never
+ * enters the file, even if the report names it. A ticket goes in as its raw
+ * signed payload; its signature covers the ticket itself, so a bare ticket is
+ * fully verifiable on its own.
+ *
+ * Mandates: a mandate's data (bounds, scope, intent, attestation) goes in ONLY
+ * when the report places an `sv-mandate` for one of its tickets AND that
+ * element verified — the one place the report shows that data, and the one
+ * element the offline checker needs it for (verify-export.ts). Every other
+ * ticket goes in bare.
  */
 export function buildExportBundle(params: BuildExportBundleParams): ExportBundle {
   const { stored, archive, authorityServer, gatewayVersion, now = Math.floor(Date.now() / 1000) } = params;
@@ -51,7 +63,14 @@ export function buildExportBundle(params: BuildExportBundleParams): ExportBundle
 
   const tickets = entries.map(r => r.receipt);
 
-  const authorizationIds = new Set(entries.map(r => r.authorizationId));
+  const placedMandateTickets = new Set(
+    stored.result.elements
+      .filter(e => e.kind === 'sv-mandate' && e.status !== 'unverifiable' && e.attrs.ticket)
+      .map(e => e.attrs.ticket),
+  );
+  const authorizationIds = new Set(
+    entries.filter(r => placedMandateTickets.has(receiptId(r.receipt))).map(r => r.authorizationId),
+  );
   const authorizations: Record<string, ArchivedAuthorization> = {};
   for (const a of archive.getAuthorizations()) {
     if (authorizationIds.has(a.authorizationId)) authorizations[a.authorizationId] = a;

@@ -57,7 +57,9 @@ export interface ExportBundle {
    *  every ticket the report references PLUS every ticket in the coverage
    *  period, so "not referenced" is itself checkable. */
   tickets: Record<string, unknown>[];
-  /** Keyed by authorizationId — the mandate(s) backing the included tickets. */
+  /** Keyed by authorizationId — ONLY the mandates the report places with a
+   *  verified `sv-mandate` (RR5, "the proof follows the report"). Every other
+   *  ticket is in `tickets` bare: its own signature still verifies it. */
   authorizations: Record<string, ArchivedAuthorization>;
 }
 

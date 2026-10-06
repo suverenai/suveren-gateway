@@ -132,7 +132,10 @@ export interface ElementVerification {
    *  'verified' unless clearly drawn as not verifiable). */
   presented: PresentedState;
   /** Every named ticket is in the bundle with a valid signature (and, for
-   *  sv-mandate, its mandate is bundled and consistent with the ticket). */
+   *  sv-mandate, its mandate is bundled and consistent with the ticket).
+   *  Mandate data is required ONLY here: since RR5 the bundle carries a
+   *  mandate only when the report places it with an sv-mandate, and every
+   *  other ticket travels bare — its own signature is its proof. */
   backed: boolean;
   error?: string;
 }
