@@ -1,7 +1,7 @@
 /**
  * The reporting window (src/lib/report/window.ts, RR2): how it is resolved
  * from the held reporting mandates, its edges, the simulation load-time clamp,
- * the reporting@0.1 rule, and that a window-scoped archive / export really
+ * the refusal of reporting@0.1 mandates, and that a window-scoped archive / export really
  * hides everything outside it.
  *
  * Profiles are read from the REAL hap-profiles checkout (SUVEREN_PROFILES_DIR,
@@ -73,27 +73,14 @@ describe('resolveReportWindow', () => {
     expect(r.ok && r.window.start).toBe(NOW - 30 * DAY);
   });
 
-  it('reporting@0.1 in simulation mode: window starts at the load time', () => {
-    const loadedAt = NOW - 3600;
-    const r = resolveReportWindow({ authorizations: [m01()], simulation: true, loadedAt, now: NOW });
-    expect(r.ok).toBe(true);
-    if (!r.ok) return;
-    expect(r.window.start).toBe(loadedAt);
-    expect(r.window.days).toBeNull();
-  });
-
-  it('REFUSAL: reporting@0.1 outside simulation mode — no window, refused with what to do', () => {
-    const r = resolveReportWindow({ authorizations: [m01()], simulation: false, loadedAt: null, now: NOW });
-    expect(r.ok).toBe(false);
-    if (r.ok) return;
-    expect(r.reason).toMatch(/sets no reporting window/);
-    expect(r.reason).toMatch(/new reporting mandate/);
-    expect(r.reason).not.toMatch(/simulat/i); // agent-facing (report.ts rule)
-  });
-
-  it('REFUSAL: reporting@0.1 in simulation mode with no known load time', () => {
-    const r = resolveReportWindow({ authorizations: [m01()], simulation: true, loadedAt: null, now: NOW });
-    expect(r.ok).toBe(false);
+  it('REFUSAL: reporting@0.1 (no window bound in its profile) is refused — in simulation mode too, even with a known load time', () => {
+    for (const [simulation, loadedAt] of [[false, null], [true, null], [true, NOW - 3600]] as const) {
+      const r = resolveReportWindow({ authorizations: [m01()], simulation, loadedAt, now: NOW });
+      expect(r.ok).toBe(false);
+      if (r.ok) return;
+      expect(r.reason).toBe('This reporting mandate is from an older profile version — create a new reporting mandate (reporting@0.2).');
+      expect(r.reason).not.toMatch(/simulat/i); // agent-facing (report.ts rule)
+    }
   });
 
   it('REFUSAL: no reporting mandate (or only an incomplete one, or another profile)', () => {

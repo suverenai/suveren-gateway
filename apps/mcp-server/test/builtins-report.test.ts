@@ -5,7 +5,7 @@
  * (which this file deliberately does not depend on, so it is unaffected by
  * whatever profile the sibling `hap-profiles` checkout currently has loaded
  * for OTHER profiles' tests — only the `reporting` profiles are read here:
- * 0.2, which sets the reporting window, and 0.1, which does not).
+ * 0.2, which sets the reporting window, and 0.1, which does not and is refused).
  *
  * What must hold:
  * - under an automatic `reporting` mandate, write_report goes through the
@@ -638,7 +638,7 @@ describe('reporting window (RR2) — an old real ticket never reaches the report
   });
 });
 
-describe('reporting window (RR2) — simulation mode and reporting@0.1', () => {
+describe('reporting window (RR2) — simulation mode, and reporting@0.1 refused', () => {
   const prev = process.env.SUVEREN_SIMULATION;
   afterEach(() => {
     if (prev === undefined) delete process.env.SUVEREN_SIMULATION; else process.env.SUVEREN_SIMULATION = prev;
@@ -665,35 +665,26 @@ describe('reporting window (RR2) — simulation mode and reporting@0.1', () => {
     t.cleanup();
   });
 
-  it('reporting@0.1 in simulation mode keeps working, with the window starting when the test data was loaded', async () => {
-    process.env.SUVEREN_SIMULATION = '1';
-    const t = setup([authWithProfile(REPORTING_01.id, { read_access: 'unlimited', report_daily_max: 5 })], loadExport(600));
-    t.scenario.addTicket({ id: 'tk-old', action: 'a', authorizationId: 'x', timestamp: nowS() - 7200 });
-    t.scenario.addTicket({ id: 'tk-run', action: 'a', authorizationId: 'x', timestamp: nowS() - 60 });
-    const r = await createGatedToolHandler(t.tools.list_tickets, t.im, t.state)({});
-    expect(r.isError, r.content[0]?.text).toBeFalsy();
-    expect(JSON.parse(r.content[0].text).tickets.map((x: any) => x.id)).toEqual(['tk-run']);
-    t.cleanup();
-  });
-
-  it('REFUSAL: reporting@0.1 outside simulation mode is refused with a clear message — and write_report before any ticket', async () => {
-    delete process.env.SUVEREN_SIMULATION;
-    const runExport = vi.fn(async () => buildEmailExport());
-    const t = setup([authWithProfile(REPORTING_01.id, { read_access: 'unlimited', report_daily_max: 5 })], runExport);
-    t.scenario.addTicket({ id: 'tk-1', action: 'a', authorizationId: 'x', timestamp: nowS() - 60 });
-    for (const [name, args] of [['list_tickets', {}], ['get_ticket', { id: 'tk-1' }], ['list_cases', {}], ['get_records', { system: 'email' }]] as const) {
-      const r = await createGatedToolHandler(t.tools[name], t.im, t.state)(args);
-      expect(r.isError, name).toBe(true);
-      expect(r.content[0].text, name).toMatch(/sets no reporting window/);
-      expect(r.content[0].text, name).not.toContain('tk-1');
-    }
-    const w = await createGatedToolHandler(t.tools.write_report, t.im, t.state)({ html: '<p>x</p>' });
-    expect(w.isError).toBe(true);
-    expect(w.content[0].text).toMatch(/sets no reporting window/);
-    expect(t.postReceipt).not.toHaveBeenCalled(); // refused before a ticket was requested
-    expect(runExport).not.toHaveBeenCalled();
-    t.cleanup();
-  });
+  for (const simulation of [false, true]) {
+    it(`REFUSAL: a reporting@0.1 mandate is refused ${simulation ? 'in' : 'outside'} simulation mode — every tool, and write_report before any ticket`, async () => {
+      if (simulation) process.env.SUVEREN_SIMULATION = '1'; else delete process.env.SUVEREN_SIMULATION;
+      const runExport = loadExport(600);
+      const t = setup([authWithProfile(REPORTING_01.id, { read_access: 'unlimited', report_daily_max: 5 })], runExport);
+      t.scenario.addTicket({ id: 'tk-1', action: 'a', authorizationId: 'x', timestamp: nowS() - 60 });
+      for (const [name, args] of [['list_tickets', {}], ['get_ticket', { id: 'tk-1' }], ['list_cases', {}], ['get_records', { system: 'email' }]] as const) {
+        const r = await createGatedToolHandler(t.tools[name], t.im, t.state)(args);
+        expect(r.isError, name).toBe(true);
+        expect(r.content[0].text, name).toMatch(/older profile version — create a new reporting mandate \(reporting@0\.2\)/);
+        expect(r.content[0].text, name).not.toContain('tk-1');
+      }
+      const w = await createGatedToolHandler(t.tools.write_report, t.im, t.state)({ html: '<p>x</p>' });
+      expect(w.isError).toBe(true);
+      expect(w.content[0].text).toMatch(/older profile version/);
+      expect(t.postReceipt).not.toHaveBeenCalled(); // refused before a ticket was requested
+      if (!simulation) expect(runExport).not.toHaveBeenCalled();
+      t.cleanup();
+    });
+  }
 });
 
 // ─── RR3 — what the report AI may read ──────────────────────────────────────

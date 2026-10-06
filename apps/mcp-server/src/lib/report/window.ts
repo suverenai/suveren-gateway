@@ -22,10 +22,9 @@
  *    now].
  *  - In simulation mode the window also starts no earlier than the test data's
  *    load time (`simulation_load.loaded_at` from the email connector's export).
- *  - A mandate whose profile declares no such bound (reporting@0.1): accepted
- *    only in simulation mode, with the window starting at the load time; refused
- *    outside simulation mode, or when the load time is unknown, with a reason
- *    that says what to do (decision RR1, 2026-10-06).
+ *  - A mandate whose profile declares no such bound (reporting@0.1) is refused,
+ *    in simulation mode too, with a message that says to create a new one
+ *    (decision Andreas, 2026-10-06: old reporting mandates need not work).
  *
  * Several reporting mandates: the most permissive window wins (the earliest
  * start) — the same rule the connector read gate applies to read_max_age_days
@@ -52,6 +51,10 @@ import type { ReceiptArchiveReader, ReportSources, RunConnectorExport, ExportSys
 export const REPORT_AGE_FIELD = 'read_age_days';
 export const REPORTING_PROFILE = 'reporting';
 export const END_SKEW_SECONDS = 120;
+/** Shown when the only reporting mandate is from a profile version without
+ *  a reporting window (reporting@0.1). */
+export const OLD_PROFILE_REFUSAL =
+  'this reporting mandate is from an older profile version — create a new reporting mandate (reporting@0.2).';
 const DAY = 86_400;
 
 export interface ReportWindow {
@@ -60,9 +63,8 @@ export interface ReportWindow {
   /** Unix seconds — "now" when the window was resolved. Tickets up to
    *  end + END_SKEW_SECONDS are inside. */
   end: number;
-  /** The lookback in days that set `start`, or null when it was set by the
-   *  test-data load time alone (a reporting@0.1 mandate in simulation mode). */
-  days: number | null;
+  /** The lookback in days the mandate sets (after the profile's maximum). */
+  days: number;
   /** The load time that clamped `start`, when it did. */
   loadedAt: number | null;
   /** Plain sentence for the AI and the UI, e.g. "since 5 Oct, 09:24 (the last 30 days)". */
@@ -95,11 +97,10 @@ function boundsOf(a: WindowAuthorization): Record<string, string | number> | und
   return (a.bounds ?? a.frame) as Record<string, string | number> | undefined;
 }
 
-function windowLabel(start: number, days: number | null, loadedAt: number | null): string {
+function windowLabel(start: number, days: number, loadedAt: number | null): string {
   const since = `since ${formatDateTime(start)}`;
   if (loadedAt !== null && loadedAt === start) return `${since} (when the test data was loaded)`;
-  if (days !== null) return `${since} (the last ${days} ${days === 1 ? 'day' : 'days'})`;
-  return since;
+  return `${since} (the last ${days} ${days === 1 ? 'day' : 'days'})`;
 }
 
 /**
@@ -113,31 +114,19 @@ export function resolveReportWindow(input: ResolveWindowInput): WindowResolution
     return { ok: false, reason: 'No active reporting mandate — the reporting window comes from it, so no evidence can be shown.' };
   }
 
-  const candidates: Array<{ start: number; days: number | null; loadedAt: number | null }> = [];
+  const candidates: Array<{ start: number; days: number; loadedAt: number | null }> = [];
   const refusals: string[] = [];
   for (const m of mandates) {
     const schema = lookup(m.profileId)?.boundsSchema as BoundsSchemaLike | undefined;
     const field = resolveAgeBoundField(schema, REPORT_AGE_FIELD);
     if (!field) {
-      // reporting@0.1 — no window in the mandate (decision RR1).
-      if (!input.simulation) {
-        refusals.push(
-          `the reporting mandate (${m.profileId}) sets no reporting window. Outside a test it would show the ` +
-          `whole ticket history, so it is not accepted — ask for a new reporting mandate, which sets how many days back the report may read.`,
-        );
-      } else if (input.loadedAt === null) {
-        refusals.push(
-          `the reporting mandate (${m.profileId}) sets no reporting window, and the time the test data was loaded is unknown, ` +
-          `so there is no safe start — load the test data, or ask for a new reporting mandate with a reporting window.`,
-        );
-      } else {
-        candidates.push({ start: input.loadedAt, days: null, loadedAt: input.loadedAt });
-      }
+      // reporting@0.1 — its profile has no window bound. Not accepted.
+      refusals.push(OLD_PROFILE_REFUSAL);
       continue;
     }
     const declared = maxReadAgeDays([boundsOf(m)], field);
     if (declared === null) {
-      refusals.push(`the reporting mandate (${m.profileId}) does not set ${field} — no window, so nothing can be shown.`);
+      refusals.push(`the reporting mandate does not set ${field} (the reporting window), so nothing can be shown — create a new reporting mandate.`);
       continue;
     }
     const def = (schema?.fields?.[field] ?? {}) as { maximum?: unknown };
@@ -153,7 +142,8 @@ export function resolveReportWindow(input: ResolveWindowInput): WindowResolution
   }
 
   if (candidates.length === 0) {
-    return { ok: false, reason: `No reporting window: ${refusals.join(' ')}` };
+    const reason = [...new Set(refusals)].join(' ');
+    return { ok: false, reason: reason.charAt(0).toUpperCase() + reason.slice(1) };
   }
   const best = candidates.reduce((a, b) => (b.start < a.start ? b : a));
   return {
@@ -322,7 +312,7 @@ function scopedSources(base: ReportSources, window: ReportWindow, loadedAt: numb
  */
 export async function scopeReportSourcesToStoredWindow(
   base: ReportSources,
-  stored: { start: number; days: number | null; label: string },
+  stored: { start: number; days: number; label: string },
   opts: { simulation: boolean; now?: number },
 ): Promise<ScopeResolution> {
   const now = opts.now ?? Math.floor(Date.now() / 1000);

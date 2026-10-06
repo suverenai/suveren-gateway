@@ -75,7 +75,7 @@ export interface CoverageSummary {
   /** The reporting window the evidence was scoped to (window.ts), when the
    *  report was checked through scoped sources. `periodStart` is then the
    *  window's start. */
-  window?: { start: number; end: number; days: number | null; label: string };
+  window?: { start: number; end: number; days: number; label: string };
   /** Every archived ticket issued in the test period, oldest first. */
   ticketsInPeriod: string[];
   /** ticketsInPeriod that the report references (sv-ticket, sv-approval,
