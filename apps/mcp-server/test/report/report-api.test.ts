@@ -163,4 +163,46 @@ describe('/internal/report* auth + round trip', () => {
     expect(body.error).toMatch(/authority server/i);
     expect(res.headers.get('content-type')).toMatch(/json/);
   });
+
+  /**
+   * API-level counterpart to the 2026-10-06 regression (ReportsPage.test.ts's
+   * "REGRESSION PIN" block): the live page briefly showed a "0 of 0" Cases
+   * line while a just-exported file correctly said "unknown". That turned
+   * out to be a CLIENT bug (the page never re-fetched after a successful
+   * export, see `runExportAndRefresh`) — this test is the server-side half
+   * of ruling that out: GET must always reflect the MOST RECENT check
+   * (save OR recheck), with no staleness of its own, so a client that DOES
+   * refresh (the fix) gets the true current answer. No email-mcp connector
+   * is installed in this test harness, so `coverage.emailExportError` is
+   * expected to be set from the FIRST save already — unlike the production
+   * incident's synthetic reproduction, nothing here hand-crafts a
+   * never-fails stub.
+   */
+  it('GET always reflects the MOST RECENT check (save, then recheck) — coverage.emailExportError never goes stale', async () => {
+    const html = '<h1>Coverage consistency check</h1>';
+    const saveRes = await fetch(`${BASE_URL}/internal/report`, {
+      method: 'POST',
+      headers: { ...withSecret(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ html }),
+    });
+    const saved = (await saveRes.json()).report;
+    expect(saved.coverage.emailExportError).toBeTruthy(); // no connector in this harness
+
+    const getAfterSave = await fetch(`${BASE_URL}/internal/report`, { headers: withSecret() });
+    const fetchedAfterSave = (await getAfterSave.json()).report;
+    expect(fetchedAfterSave.coverage.emailExportError).toBe(saved.coverage.emailExportError);
+    expect(fetchedAfterSave.checkedAt).toBe(saved.checkedAt);
+
+    const recheckRes = await fetch(`${BASE_URL}/internal/report/recheck`, { method: 'POST', headers: withSecret() });
+    const rechecked = (await recheckRes.json()).report;
+    expect(rechecked.coverage.emailExportError).toBeTruthy();
+    expect(rechecked.checkedAt).toBeGreaterThanOrEqual(saved.checkedAt);
+
+    const getAfterRecheck = await fetch(`${BASE_URL}/internal/report`, { headers: withSecret() });
+    const fetchedAfterRecheck = (await getAfterRecheck.json()).report;
+    // The critical assertion: GET reflects the RECHECK's checkedAt/coverage,
+    // not a stale copy of the earlier save's.
+    expect(fetchedAfterRecheck.checkedAt).toBe(rechecked.checkedAt);
+    expect(fetchedAfterRecheck.coverage.emailExportError).toBe(rechecked.coverage.emailExportError);
+  });
 });

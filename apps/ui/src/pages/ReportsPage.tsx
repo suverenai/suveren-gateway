@@ -343,6 +343,27 @@ function DetailPanel({ report, elementId, ticketParam, onClose }: {
   );
 }
 
+/**
+ * The export-then-refresh sequence, pulled out of `handleExport` as a pure,
+ * dependency-injected function so it is testable without a DOM runner (this
+ * file has none — see the module doc comment). `deps.refresh` MUST be called
+ * after a successful export and awaited before this resolves: the export
+ * route just ran its own fresh recheck server-side, and skipping the refresh
+ * is exactly the 2026-10-06 bug — a page open since before a connector died
+ * kept showing its last-good "0 of 0" Cases line while the file just
+ * exported correctly said "unknown" (coverage.emailExportError never reached
+ * the page because nothing re-fetched `/api/report` after the click).
+ */
+export async function runExportAndRefresh(deps: {
+  exportReport: () => Promise<{ html: string; filename: string }>;
+  download: (html: string, filename: string) => void;
+  refresh: () => Promise<void>;
+}): Promise<void> {
+  const { html, filename } = await deps.exportReport();
+  deps.download(html, filename);
+  await deps.refresh();
+}
+
 // ─── Side panel (Proof / Coverage / Checked values) ────────────────────────
 
 /** A raw connector error, collapsed behind a disclosure — never shown inline
@@ -392,7 +413,12 @@ function SidePanel({ report, open }: { report: ReportModel; open?: boolean }) {
         <div className="reports-row"><span>Tickets in test period</span><b>{coverage.ticketsReferenced.length} of {coverage.ticketsInPeriod.length}</b></div>
         {periodNote && (
           <>
-            <p className="reports-note">{periodNote.text}</p>
+            {/* `detail` present means THIS note exists because a real connector
+             *  read failed — same error class as the Cases line above, so it
+             *  gets the SAME error styling (not the plain grey "nothing
+             *  loaded yet" note) — matches the export file's own orange
+             *  treatment for the identical condition (polish 2026-10-06). */}
+            <p className={periodNote.detail ? 'reports-error' : 'reports-note'} role={periodNote.detail ? 'alert' : undefined}>{periodNote.text}</p>
             <TechnicalDetail detail={periodNote.detail} />
           </>
         )}
@@ -422,14 +448,21 @@ export function ReportsPage() {
   const [narrowDetailsOpen, setNarrowDetailsOpen] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
 
+  // Silent refresh — no `loading` toggle, so it never replaces the page with
+  // the full "Loading…" state. Used both by the initial mount effect (via
+  // `load` below) and by handleExport (which must NOT flash the page back to
+  // its loading skeleton right after a download completes).
+  const refreshQuiet = useCallback(() => {
+    return spClient.getReport()
+      .then(({ report }) => setReport(report))
+      .catch(err => setError(err instanceof Error ? err.message : String(err)));
+  }, []);
+
   const load = useCallback(() => {
     setLoading(true);
     setError(null);
-    spClient.getReport()
-      .then(({ report }) => setReport(report))
-      .catch(err => setError(err instanceof Error ? err.message : String(err)))
-      .finally(() => setLoading(false));
-  }, []);
+    refreshQuiet().finally(() => setLoading(false));
+  }, [refreshQuiet]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -445,19 +478,24 @@ export function ReportsPage() {
     setExporting(true);
     setExportError(null);
     try {
-      const { html, filename } = await spClient.exportReportWithProof();
-      const url = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      a.click();
-      URL.revokeObjectURL(url);
+      await runExportAndRefresh({
+        exportReport: () => spClient.exportReportWithProof(),
+        download: (html, filename) => {
+          const url = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = filename;
+          a.click();
+          URL.revokeObjectURL(url);
+        },
+        refresh: refreshQuiet,
+      });
     } catch (err) {
       setExportError(err instanceof Error ? err.message : String(err));
     } finally {
       setExporting(false);
     }
-  }, []);
+  }, [refreshQuiet]);
 
   const elementId = searchParams.get('element');
   const ticketParam = searchParams.get('ticket');

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   extractReportTitle,
   findMandateLabel,
@@ -14,6 +14,7 @@ import {
   formatCurrencyClient,
   formatDetailValue,
   factSummaryLines,
+  runExportAndRefresh,
 } from './ReportsPage';
 import type { ReportElement, ReportProof, ReportCoverage } from '../lib/sp-client';
 
@@ -166,6 +167,93 @@ describe('periodStartNote', () => {
     expect(note?.text).not.toMatch(/spawn|ENOENT|export failed/i);
     expect(note?.text).toMatch(/email simulator could not be read/i);
     expect(note?.detail).toBe('email-mcp export failed: ENOENT');
+  });
+});
+
+/**
+ * 2026-10-06 regression report: a real click-through screenshot
+ * (temp/report-export-click.png) showed the LIVE page's Coverage panel
+ * reading "Cases 0 of 0" next to a grey "Test period start unknown" note,
+ * while the file that same click had just exported correctly read "Cases:
+ * unknown — the email simulator could not be read." Two hypotheses were
+ * named: (a) `coverageCasesLine`'s refactor broke the live page, or (b) the
+ * live page simply never received a payload WITH `emailExportError` — it was
+ * still showing whatever `GET /api/report` returned at page-LOAD time, from
+ * BEFORE the export's own fresh recheck ran.
+ *
+ * This block pins down (b): given the EXACT payload shape the live page was
+ * actually holding at that moment — `coverage.emailExportError` undefined,
+ * because the on-screen check predated the export's recheck — "0 of 0" is
+ * the CORRECT rendering (no bug in `coverageCasesLine` itself: given a
+ * payload that DOES carry `emailExportError`, the suite above already proves
+ * it is tagged 'error', never "0 of 0"). The real defect was that nothing
+ * re-fetched `/api/report` after a successful export, so the page kept
+ * showing that now-superseded payload — fixed by `runExportAndRefresh`
+ * (below), not by this function.
+ */
+describe('REGRESSION PIN (2026-10-06): "Cases 0 of 0" next to a just-exported "unknown" — confirmed root cause', () => {
+  it('is NOT a coverageCasesLine bug: a payload that already carries emailExportError is never "0 of 0"', () => {
+    const line = coverageCasesLine(coverage({ emailExportError: 'email-mcp export failed: spawn email-mcp ENOENT', loadedCases: [], coveredCases: [] }));
+    expect(line.kind).toBe('error');
+    expect(line.text).not.toMatch(/^0 of 0$/);
+  });
+
+  it('IS a stale-payload bug: a payload from BEFORE the connector failure genuinely has no error, and "0 of 0" is the honest answer for THAT payload', () => {
+    // This is exactly the shape GET /api/report returned at page-load time in
+    // the regression: loadedCases/coveredCases empty, but no emailExportError
+    // — because the stored check predated the export route's own recheck.
+    const stalePayload = coverage({ emailExportError: undefined, loadedCases: [], coveredCases: [] });
+    const line = coverageCasesLine(stalePayload);
+    expect(line.kind).toBe('ok');
+    expect(line.text).toBe('0 of 0'); // correct for THIS payload — the bug was never refreshing to the NEXT one
+  });
+});
+
+describe('runExportAndRefresh — the export-then-refresh sequence (fixes the regression above)', () => {
+  it('REFUSAL (this is the actual 2026-10-06 bug, reproduced): skipping the refresh step leaves the page on stale data — asserts the real fix calls it', async () => {
+    const refresh = vi.fn().mockResolvedValue(undefined);
+    const download = vi.fn();
+    await runExportAndRefresh({
+      exportReport: async () => ({ html: '<html></html>', filename: 'x.html' }),
+      download,
+      refresh,
+    });
+    // Before the fix, `handleExport` never called anything like `refresh` —
+    // the live page's `report` state was never updated after a successful
+    // export. This assertion is exactly what would have failed on the
+    // pre-fix code (refresh was not part of the export flow at all).
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(download).toHaveBeenCalledWith('<html></html>', 'x.html');
+  });
+
+  it('downloads BEFORE refreshing (the file itself must never wait on the refresh)', async () => {
+    const order: string[] = [];
+    await runExportAndRefresh({
+      exportReport: async () => ({ html: '<html></html>', filename: 'x.html' }),
+      download: () => { order.push('download'); },
+      refresh: async () => { order.push('refresh'); },
+    });
+    expect(order).toEqual(['download', 'refresh']);
+  });
+
+  it('REFUSAL: an export failure never calls refresh or download', async () => {
+    const refresh = vi.fn().mockResolvedValue(undefined);
+    const download = vi.fn();
+    await expect(runExportAndRefresh({
+      exportReport: async () => { throw new Error('No Authority Server key available'); },
+      download,
+      refresh,
+    })).rejects.toThrow('No Authority Server key available');
+    expect(download).not.toHaveBeenCalled();
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it('propagates a refresh failure too (the caller still learns something went wrong)', async () => {
+    await expect(runExportAndRefresh({
+      exportReport: async () => ({ html: '<html></html>', filename: 'x.html' }),
+      download: () => {},
+      refresh: async () => { throw new Error('report unavailable'); },
+    })).rejects.toThrow('report unavailable');
   });
 });
 
