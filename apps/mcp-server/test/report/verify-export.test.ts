@@ -41,7 +41,7 @@ async function buildRealExport(html: string, archive: ReturnType<typeof buildSce
   const now = Math.floor(Date.now() / 1000);
   const stored = { html: result.html, savedAt: now, checkedAt: now, result };
   const bundle = buildExportBundle({ stored, archive, gatewayVersion: 'test', authorityServer: { url: AS_URL, publicKeyHex: kp.publicKeyHex } });
-  const doc = buildExportDocument({ bundle, renderedHtml: renderReportHtml(result.html, result.elements) });
+  const doc = buildExportDocument({ bundle });
   return { bundle, doc };
 }
 
@@ -207,21 +207,19 @@ describe('verifyExportBundle', () => {
     expect(result.allValid).toBe(false);
   });
 
-  it('a downgrade is allowed: a backed reference drawn as not verifiable still passes', async () => {
+  it('RR7: a downgrade is an edit too — a backed reference redrawn as not verifiable no longer re-draws, so it fails', async () => {
     const { archive, addTicket, kp } = buildScenario();
     addTicket({ id: 't1', action: 'erp__create_quote', authorizationId: 'authz-1', timestamp: 1_800_000_000 });
     const { bundle, doc } = await buildRealExport('<sv-ticket ref="t1"></sv-ticket>', archive, kp);
-    // A downgrade replaces the whole seal (class AND its source type) with
-    // the "not verifiable" badge — a seal that still names a source counts
-    // as a verified claim (strict).
     const downgraded = doc
       .replace('sv-el sv-el-verified', 'sv-el sv-el-unverifiable')
       .replace(/<span class="sv-badge sv-badge-ok sv-seal" data-sv-source="signed">[^<]*<\/span>/, '<span class="sv-badge sv-badge-bad">✗ not verifiable</span>');
     expect(downgraded).toContain('sv-badge sv-badge-bad');
 
     const result = await verifyExportBundle(bundle, { documentHtml: downgraded });
-    expect(result.allValid).toBe(true);
     expect(result.elements[0].presented).toBe('not-verifiable');
+    expect(result.document.state).toBe('mismatch');
+    expect(result.allValid).toBe(false);
   });
 
   it('REFUSAL: a mandate element shown as verified whose mandate is missing from the bundle fails', async () => {
@@ -305,8 +303,8 @@ describe('runVerifyReportCli — exit codes', () => {
     const dir = mkdtempSync(join(tmpdir(), 'suveren-verify-report-cli-'));
     dirs.push(dir);
     const file = join(dir, 'report.html');
-    const json = JSON.stringify(bundle).replace(/<\//g, '<\\/');
-    writeFileSync(file, `<!doctype html><html><body><p>report</p><script type="application/json" id="suveren-proof">${json}</script></body></html>`);
+    // The real file the export route builds — the checker re-draws it byte for byte.
+    writeFileSync(file, buildExportDocument({ bundle }));
     return file;
   }
 
@@ -404,7 +402,7 @@ describe('runVerifyReportCli — exit codes', () => {
     const { bundle } = await buildRealExport('<sv-ticket ref="t1"></sv-ticket><sv-ticket ref="ghost"></sv-ticket>', archive, kp);
     (bundle.tickets[0] as Record<string, unknown>).action = 'tampered';
     const renderedAgain = await verifyReport('<sv-ticket ref="t1"></sv-ticket><sv-ticket ref="ghost"></sv-ticket>', { archive, runExport: noExports() });
-    const file = writeDoc(buildExportDocument({ bundle, renderedHtml: renderReportHtml(renderedAgain.html, renderedAgain.elements) }));
+    const file = writeDoc(buildExportDocument({ bundle }));
 
     const { code } = await captureStdout(() => runVerifyReportCli([file, '--key', kp.publicKeyHex]));
     expect(code).toBe(1);

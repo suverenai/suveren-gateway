@@ -622,7 +622,7 @@ describe('reporting window (RR2) — an old real ticket never reaches the report
       stored: rechecked, archive: scoped.sources.archive, gatewayVersion: 'test',
       authorityServer: { url: AS_URL, publicKeyHex: t.scenario.kp.publicKeyHex },
     });
-    const doc = buildExportDocument({ bundle, renderedHtml: renderReportHtml(rechecked.result.html, rechecked.result.elements) });
+    const doc = buildExportDocument({ bundle });
 
     expect(bundle.tickets.map(x => (x as { id: string }).id).sort()).toEqual(['tk-new-1', 'tk-new-2']);
     expect(Object.keys(bundle.authorizations)).toEqual([]);

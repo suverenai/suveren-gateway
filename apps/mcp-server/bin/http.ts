@@ -953,10 +953,10 @@ app.get('/internal/report/export', internalOnly, async (req: Request, res: Respo
     authorityServer,
     gatewayVersion,
   });
-  // Same strict boxes as the live page; glosses present but hidden behind the
-  // export's CSS-only switch (RR6).
-  const renderedHtml = renderReportHtml(stored.result.html, stored.result.elements, { gloss: 'toggle' });
-  const document = buildExportDocument({ bundle, renderedHtml });
+  // Same strict boxes as the live page, drawn from the bundle's own elements
+  // (glosses behind the export's CSS-only switch, RR6) — so the offline
+  // checker can re-draw the file byte for byte (verify-export.ts).
+  const document = buildExportDocument({ bundle });
 
   res
     .setHeader('Content-Type', 'text/html; charset=utf-8')

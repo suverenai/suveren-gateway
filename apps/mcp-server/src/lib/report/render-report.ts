@@ -384,6 +384,67 @@ function renderElement(ctx: Ctx, el: VerifiedElement): string {
   }
 }
 
+// ─── What a box draws, as data ──────────────────────────────────────────────
+
+function pick(d: Data | undefined, keys: string[]): Data {
+  const out: Data = {};
+  if (!d) return out;
+  for (const k of keys) if (d[k] !== undefined) out[k] = d[k];
+  return out;
+}
+
+/**
+ * Exactly the data `renderElement` reads for this element — nothing else.
+ * The export bundles this projection (export-report.ts), so the offline
+ * checker can re-draw every box and compare it with the file byte for byte,
+ * and then check each drawn field against its signed source
+ * (verify-export.ts). Kept next to the renderers on purpose: a renderer that
+ * starts reading a new field must add it here, or the export test that
+ * re-draws from the projection fails.
+ */
+export function drawnElement(el: VerifiedElement): VerifiedElement {
+  const base: VerifiedElement = {
+    id: el.id, kind: el.kind, attrs: el.attrs, status: el.status,
+    ...(el.reason !== undefined ? { reason: el.reason } : {}),
+  };
+  if (el.status === 'unverifiable' || !el.data) return base;
+  const d = el.data;
+  let data: Data;
+  switch (el.kind) {
+    case 'sv-ticket': {
+      const full = (el.attrs.variant ?? '').trim().toLowerCase() === 'full';
+      if (!full) { data = pick(d, ['action', 'time']); break; }
+      data = pick(d, ['ticketId', 'action', 'actionType', 'profile', 'executionContext', 'time', 'checkUrl']);
+      if (d.mandate) data.mandate = pick(d.mandate as Data, ['rawLimits', 'mode', 'owners']);
+      if (d.approval) data.approval = pick(d.approval as Data, ['createdAt', 'decidedAt', 'whoLabel']);
+      break;
+    }
+    case 'sv-approval':
+      data = pick(d, ['createdAt', 'decidedAt', 'whoLabel', 'status', 'waitSeconds']);
+      break;
+    case 'sv-mandate':
+      data = pick(d, ['profile', 'rawLimits', 'mode', 'owners', 'intent']);
+      break;
+    case 'sv-record':
+      data = pick(d, Object.keys(d).filter(k => !RECORD_SKIP.has(k)));
+      break;
+    case 'sv-case': {
+      data = pick(d, ['caseId', 'totalDurationSeconds', 'timeUnverifiableReason']);
+      if (d.start) data.start = pick(d.start as Data, ['time', 'emailTime', 'basis', 'subject', 'sender', 'receivedAt', 'loadedAt']);
+      if (d.goal) data.goal = pick(d.goal as Data, ['ticketId', 'time', 'action']);
+      data.steps = (Array.isArray(d.steps) ? (d.steps as Data[]) : []).map(x => pick(x, ['ticketId', 'time', 'action']));
+      data.approvals = (Array.isArray(d.approvals) ? (d.approvals as Data[]) : []).map(x => pick(x, ['ticketId', 'whoLabel', 'createdAt', 'decidedAt']));
+      break;
+    }
+    case 'sv-metric':
+      data = pick(d, ['kind', 'value', 'caseIds']);
+      break;
+    default:
+      return base;
+  }
+  return { ...base, data };
+}
+
 // ─── Raw field lines for the gateway UI around the report ───────────────────
 // The side panel's "Checked values" and the detail panel show the SAME signed
 // field names and values the boxes show, formatted by the same functions —

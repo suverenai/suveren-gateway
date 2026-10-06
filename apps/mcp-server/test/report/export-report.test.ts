@@ -11,7 +11,7 @@ import { renderReportHtml, AI_ANALYSIS_LABEL, GLOSS_LEGEND_TEXT } from '../../sr
 import { formatTimestamp } from '../../src/lib/report/format';
 import { buildExportBundle, buildExportDocument, suggestedFilename } from '../../src/lib/report/export-report';
 import { extractProofBundle, runVerifyReportCli } from '../../bin/report-verify-cli';
-import { verifyExportBundle } from '../../src/lib/report/verify-export';
+import { verifyExportBundle, recomputeBoundsHash } from '../../src/lib/report/verify-export';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -79,7 +79,7 @@ describe('buildExportDocument — round trip + safety', () => {
     const bundle = buildExportBundle({ stored, archive, gatewayVersion: '0.0.0-test', authorityServer: { url: AS_URL, publicKeyHex: kp.publicKeyHex } });
     // The same call the real export route makes (http.ts).
     const renderedHtml = renderReportHtml(stored.result.html, stored.result.elements, { gloss: 'toggle' });
-    const doc = buildExportDocument({ bundle, renderedHtml });
+    const doc = buildExportDocument({ bundle });
     return { doc, bundle, kp };
   }
 
@@ -179,7 +179,7 @@ describe('buildExportDocument — round trip + safety', () => {
     const stored: StoredReport = { html: result.html, savedAt: now, checkedAt: now, result };
     const bundle = buildExportBundle({ stored, archive, gatewayVersion: 'test', authorityServer: { url: AS_URL, publicKeyHex: kp.publicKeyHex } });
     const renderedHtml = renderReportHtml(stored.result.html, stored.result.elements);
-    const doc = buildExportDocument({ bundle, renderedHtml });
+    const doc = buildExportDocument({ bundle });
 
     expect(bundle.coverage.emailExportError).toMatch(/ENOENT/); // still in the data
     const visibleHtml = doc.replace(/<script type="application\/json" id="suveren-proof">[\s\S]*?<\/script>/, '');
@@ -250,7 +250,7 @@ describe('buildExportDocument — round trip + safety', () => {
     const stored = await buildStored(html, archive);
     const bundle = buildExportBundle({ stored, archive, gatewayVersion: 'test', authorityServer: { url: AS_URL, publicKeyHex: kp.publicKeyHex } });
     const renderedHtml = renderReportHtml(stored.result.html, stored.result.elements);
-    const doc = buildExportDocument({ bundle, renderedHtml });
+    const doc = buildExportDocument({ bundle });
 
     // Exactly one genuine closing tag may exist in the whole document: the
     // proof block's own. Any more means the attacker's payload escaped it.
@@ -280,7 +280,7 @@ describe('RR5 — the proof follows the report: mandate data only for a placed s
     const html = '<sv-ai><h1>Week</h1></sv-ai><sv-ticket ref="t-shown"></sv-ticket><sv-mandate ticket="t-shown"></sv-mandate><sv-ticket ref="t-bare"></sv-ticket>';
     const stored = await buildStored(html, archive);
     const bundle = buildExportBundle({ stored, archive, gatewayVersion: 'test', authorityServer: { url: AS_URL, publicKeyHex: kp.publicKeyHex } });
-    const doc = buildExportDocument({ bundle, renderedHtml: renderReportHtml(stored.result.html, stored.result.elements) });
+    const doc = buildExportDocument({ bundle });
     return { bundle, doc, kp, stored };
   }
 
@@ -364,7 +364,7 @@ describe('RR7 — a full sv-ticket\'s mandate travels without the intent text', 
     });
     const stored = await buildStored(html, archive);
     const bundle = buildExportBundle({ stored, archive, gatewayVersion: 'test', authorityServer: { url: AS_URL, publicKeyHex: kp.publicKeyHex } });
-    const doc = buildExportDocument({ bundle, renderedHtml: renderReportHtml(stored.result.html, stored.result.elements) });
+    const doc = buildExportDocument({ bundle });
     return { bundle, doc, kp };
   }
 
@@ -390,7 +390,7 @@ describe('RR7 — a full sv-ticket\'s mandate travels without the intent text', 
     expect('intent' in auth).toBe(false);
     // Drawn → bundled (the ticket's mandate group shows value_max).
     expect(auth.bounds).toEqual({ value_max: 1000 });
-    expect(auth.boundsHash).toBe('bh-1');
+    expect(auth.boundsHash).toBe(recomputeBoundsHash({ value_max: 1000 }));
     expect(auth.attestations.length).toBeGreaterThan(0);
     // Scope values are drawn by no element → never bundled; the hash stays.
     expect('context' in auth).toBe(false);

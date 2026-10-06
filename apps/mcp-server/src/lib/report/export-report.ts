@@ -14,8 +14,9 @@
  * Every dynamic string this module inserts outside that JSON block goes
  * through `escapeHtml`.
  */
-import { escapeHtml, DRAWN_ELEMENT_STYLES, GLOSS_ON_STYLES, reportLegend } from './render-report';
-import { formatDateTime } from './format';
+import { decodeAttestationBlob, getProfile } from '@hap/core';
+import { escapeHtml, DRAWN_ELEMENT_STYLES, GLOSS_ON_STYLES, reportLegend, drawnElement, renderReportHtml, checkedValueLine } from './render-report';
+import { formatDateTime, UNDISCLOSED_OWNER_LABEL, withDrawingZone, zonedParts, offsetLabel } from './format';
 import type { ProofSummary, CoverageSummary, ReceiptArchiveReader } from './types';
 import type { StoredReport } from './report-store';
 import type { ArchivedAuthorization } from '../receipt-archive';
@@ -27,6 +28,62 @@ export interface BuildExportBundleParams {
   authorityServer: { url: string; publicKeyHex: string };
   gatewayVersion: string;
   now?: number;
+  /** The zone the boxes were drawn in — defaults to this process's own. */
+  timeZone?: string;
+}
+
+/** This process's IANA time zone — the one `format.ts` draws timestamps in. */
+export function processTimeZone(): string {
+  try {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (tz) return tz;
+  } catch {
+    // fall through
+  }
+  return 'UTC';
+}
+
+/** Bounds VALUES in the profile's canonical key order (boundsSchema.keyOrder),
+ *  so the checker can recompute the signed bounds_hash from the object's own
+ *  key order (verify-export.ts#recomputeBoundsHash) without the profile. */
+function canonicalOrder(profileId: string, bounds: Record<string, string | number>): Record<string, string | number> {
+  const keyOrder = (getProfile(profileId) as { boundsSchema?: { keyOrder?: string[] } } | undefined)?.boundsSchema?.keyOrder;
+  if (!Array.isArray(keyOrder)) return bounds;
+  const out: Record<string, string | number> = {};
+  for (const k of keyOrder) if (bounds[k] !== undefined) out[k] = bounds[k];
+  // A key outside the profile's order stays (last), so the hash check fails
+  // loudly instead of a value being dropped from the file unseen.
+  for (const [k, v] of Object.entries(bounds)) if (!(k in out)) out[k] = v;
+  return out;
+}
+
+/** did -> high-assurance disclosed name, from these attestation blobs
+ *  (unverified here — the checker verifies every blob it relies on). */
+function disclosedNames(blobs: string[]): Map<string, Set<string>> {
+  const names = new Map<string, Set<string>>();
+  for (const blob of blobs) {
+    try {
+      for (const sub of decodeAttestationBlob(blob).payload.subjects ?? []) {
+        if (sub.assurance === 'high' && sub.disclose?.name) {
+          if (!names.has(sub.did)) names.set(sub.did, new Set());
+          names.get(sub.did)!.add(sub.disclose.name);
+        }
+      }
+    } catch {
+      // undecodable — backs nothing
+    }
+  }
+  return names;
+}
+
+function firstOwnerDids(auth: ArchivedAuthorization | undefined): string[] {
+  const blob = auth?.attestations[0]?.blob;
+  if (!blob) return [];
+  try {
+    return decodeAttestationBlob(blob).payload.resolved_owners ?? [];
+  } catch {
+    return [];
+  }
 }
 
 function receiptId(receipt: Record<string, unknown>): string {
@@ -65,7 +122,16 @@ function receiptId(receipt: Record<string, unknown>): string {
  */
 export function buildExportBundle(params: BuildExportBundleParams): ExportBundle {
   const { stored, archive, authorityServer, gatewayVersion, now = Math.floor(Date.now() / 1000) } = params;
-  const proof: ProofSummary = stored.result.proof;
+  const timeZone = params.timeZone ?? processTimeZone();
+  const elements = stored.result.elements.map(drawnElement);
+  // The "Checked values" rows quote the boxes' timestamps — drawn here in the
+  // file's own zone, so the panel always reads exactly like the boxes.
+  const proof: ProofSummary = {
+    ...stored.result.proof,
+    verifiedValues: withDrawingZone(timeZone, () => elements
+      .filter(e => e.status !== 'unverifiable')
+      .map(e => ({ elementId: e.id, kind: e.kind, summary: checkedValueLine(e) }))),
+  };
   const coverage: CoverageSummary = stored.result.coverage;
 
   const ticketIdSet = new Set<string>([...proof.ticketsReferenced, ...coverage.ticketsInPeriod]);
@@ -97,7 +163,7 @@ export function buildExportBundle(params: BuildExportBundleParams): ExportBundle
       profileId: a.profileId,
       ...(a.boundsHash !== undefined ? { boundsHash: a.boundsHash } : {}),
       ...(a.contextHash !== undefined ? { contextHash: a.contextHash } : {}),
-      ...(a.bounds !== undefined ? { bounds: a.bounds } : {}),
+      ...(a.bounds !== undefined ? { bounds: canonicalOrder(a.profileId, a.bounds) } : {}),
       ...(withIntent.has(a.authorizationId) && a.intent !== undefined ? { intent: a.intent } : {}),
       attestations: a.attestations,
       archivedAt: a.archivedAt,
@@ -105,9 +171,39 @@ export function buildExportBundle(params: BuildExportBundleParams): ExportBundle
     authorizations[a.authorizationId] = out;
   }
 
+  // Owner NAMES a box draws must be backed by a signed attestation in the
+  // file. The gateway takes a person's name from ANY verified archived
+  // attestation (identity.ts) — when that is not one of the bundled
+  // mandates', the one blob that discloses it travels in identityAttestations.
+  const bundledBlobs = Object.values(authorizations).flatMap(a => a.attestations.map(x => x.blob));
+  const known = disclosedNames(bundledBlobs);
+  const identityAttestations: string[] = [];
+  const archiveBlobs = archive.getAuthorizations().flatMap(a => a.attestations.map(x => x.blob));
+  const ticketAuth = new Map(entries.map(r => [receiptId(r.receipt), r.authorizationId]));
+  for (const el of elements) {
+    const owners = el.kind === 'sv-mandate'
+      ? el.data?.owners
+      : el.kind === 'sv-ticket' ? (el.data?.mandate as { owners?: unknown } | undefined)?.owners : undefined;
+    if (!Array.isArray(owners)) continue;
+    const ref = el.kind === 'sv-mandate' ? el.attrs.ticket : el.attrs.ref;
+    const dids = firstOwnerDids(authorizations[ticketAuth.get(ref ?? '') ?? '']);
+    owners.forEach((label, i) => {
+      const did = dids[i];
+      if (!did || typeof label !== 'string' || label === UNDISCLOSED_OWNER_LABEL) return;
+      if (known.get(did)?.has(label)) return;
+      const blob = archiveBlobs.find(b => disclosedNames([b]).get(did)?.has(label));
+      if (!blob) return; // nothing backs it — the checker will say so
+      identityAttestations.push(blob);
+      for (const [d, set] of disclosedNames([blob])) {
+        if (!known.has(d)) known.set(d, new Set());
+        for (const n of set) known.get(d)!.add(n);
+      }
+    });
+  }
+
   return {
     format: 'suveren-report-export',
-    version: 1,
+    version: 2,
     exportedAt: now,
     gatewayVersion,
     report: { html: stored.html, savedAt: stored.savedAt, checkedAt: stored.checkedAt },
@@ -116,6 +212,9 @@ export function buildExportBundle(params: BuildExportBundleParams): ExportBundle
     authorityServer,
     tickets,
     authorizations,
+    elements,
+    timeZone,
+    identityAttestations,
   };
 }
 
@@ -213,11 +312,11 @@ ${GLOSS_ON_TOGGLED}
  *  "21:43 UTC" next to cards reading "22:43" local — two clocks on one page). */
 function formatDateTimeWithYear(value: number): string {
   const base = formatDateTime(value);
-  const year = new Date(value * 1000).getFullYear();
+  const year = zonedParts(value).year;
   return base.replace(',', ` ${year},`);
 }
 
-/** "UTC+2" / "UTC-5" / "UTC+5:30" — the export process's own local offset,
+/** "UTC+2" / "UTC-5" / "UTC+5:30" — the offset of the drawing zone (`bundle.timeZone`),
  *  stated ONCE in the header so every timestamp in the file (header + every
  *  drawn card, all in the SAME local time per `format.ts`'s doc comment) is
  *  unambiguous without repeating a zone name on every line. Deliberately not
@@ -225,30 +324,39 @@ function formatDateTimeWithYear(value: number): string {
  *  avoids for determinism (see `format.ts`'s own doc comment on
  *  `toLocaleString`). */
 function utcOffsetLabel(value: number): string {
-  const offsetMin = -new Date(value * 1000).getTimezoneOffset();
-  const sign = offsetMin >= 0 ? '+' : '-';
-  const abs = Math.abs(offsetMin);
-  const hh = Math.floor(abs / 60);
-  const mm = abs % 60;
-  return `UTC${sign}${hh}${mm ? ':' + String(mm).padStart(2, '0') : ''}`;
+  return offsetLabel(zonedParts(value).offsetMin);
 }
 
 export interface BuildExportDocumentParams {
   bundle: ExportBundle;
-  /** `renderReportHtml(stored.result.html, stored.result.elements, { gloss:
-   *  'toggle' })` — the same strict boxes the Reports page shows, computed by the caller so this module never
-   *  has to re-verify or re-derive it. */
-  renderedHtml: string;
+}
+
+/**
+ * The report body exactly as the export draws it: the bundle's own html and
+ * drawn elements, glosses present behind the CSS-only switch (RR6). Built
+ * ONLY from the bundle, so `verify-export.ts` can re-draw it and compare.
+ */
+export function renderExportBody(bundle: ExportBundle): string {
+  return renderReportHtml(bundle.report.html, bundle.elements, { gloss: 'toggle' });
 }
 
 /**
  * Assembles the final, self-contained HTML file: the gateway-drawn report,
  * static Proof/Coverage panels, a plain-language header, and the embedded
  * JSON proof bundle. No executable script, no network requests, no external
- * fonts — openable offline in any browser.
+ * fonts — openable offline in any browser. Everything in it is a function of
+ * the bundle (and the drawing time zone, `bundle.timeZone`).
  */
 export function buildExportDocument(params: BuildExportDocumentParams): string {
-  const { bundle, renderedHtml } = params;
+  // Every date in the file is drawn in the zone the bundle records — the
+  // checker re-draws in that same zone, wherever it runs.
+  return withDrawingZone(params.bundle.timeZone, () => drawExportDocument(params.bundle));
+}
+
+function drawExportDocument(bundle: ExportBundle): string {
+  // Always drawn from the bundle itself — the one drawing the offline
+  // checker can reproduce byte for byte (verify-export.ts).
+  const renderedHtml = renderExportBody(bundle);
 
   const exportedDate = new Date(bundle.exportedAt * 1000).toISOString().slice(0, 10);
   // A CSS-only translation switch, when the render carries glosses
@@ -262,7 +370,7 @@ export function buildExportDocument(params: BuildExportDocumentParams): string {
     `<div class="sv-export-header">` +
     `<p class="sv-export-meta">Suveren Gateway ${escapeHtml(bundle.gatewayVersion)} — exported ${escapeHtml(exportedLabel)} &middot; checked ${escapeHtml(checkedLabel)} (times in ${escapeHtml(tzLabel)})</p>` +
     `<p class="sv-export-howto">How to check this report: each ticket below links to its public record on suveren.ai ("Check on suveren.ai ↗"). ` +
-    `To verify this entire file offline (including every signature), run <code>suveren-gateway verify-report ${escapeHtml(suggestedFilename(bundle))}</code> from a terminal with the Suveren gateway CLI installed.</p>` +
+    `To verify this entire file offline (every signature, and every value the boxes show), run <code>suveren-gateway verify-report ${escapeHtml(suggestedFilename(bundle))}</code> from a terminal with the Suveren gateway CLI installed.</p>` +
     // The legend, once, in the gateway-owned header (no outside UI exists
     // around an exported file). The report body itself carries none.
     `<div class="sv-export-legend">${reportLegend(hasGloss)}</div>` +

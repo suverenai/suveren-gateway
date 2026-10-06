@@ -180,7 +180,7 @@ describe.skipIf(!browser && !REQUIRED)('two-tag rule in a real browser', () => {
     const now = Math.floor(Date.now() / 1000);
     const stored = { html: result.html, savedAt: now, checkedAt: now, result };
     const bundle = buildExportBundle({ stored, archive, gatewayVersion: 't', authorityServer: { url: AS_URL, publicKeyHex: kp.publicKeyHex } });
-    const doc = buildExportDocument({ bundle, renderedHtml: renderReportHtml(result.html, result.elements, { gloss: 'toggle' }) });
+    const doc = buildExportDocument({ bundle });
 
     const page = await browser!.newPage({ viewport: { width: 900, height: 900 } });
     await page.setContent(doc);

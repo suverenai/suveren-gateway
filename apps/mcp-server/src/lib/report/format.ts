@@ -19,6 +19,57 @@ import { getProfile, type FieldUnit } from '@hap/core';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
+// ─── The drawing zone ───────────────────────────────────────────────────────
+// Every date below is drawn in the process's own local zone — unless a
+// caller draws inside `withDrawingZone(tz, …)`: the export draws in the zone
+// it records in its bundle, and the offline checker re-draws in that same
+// zone (verify-drawn.ts), wherever it runs. Synchronous by design.
+
+let drawingZone: string | undefined;
+
+/** Runs `fn` with every date in this module drawn in IANA zone `tz`. */
+export function withDrawingZone<T>(tz: string, fn: () => T): T {
+  const prev = drawingZone;
+  drawingZone = tz;
+  try {
+    return fn();
+  } finally {
+    drawingZone = prev;
+  }
+}
+
+/** Wall-clock parts of an instant, plus its UTC offset in minutes. */
+export interface ZonedParts { year: number; month: number; day: number; hour: number; minute: number; second: number; offsetMin: number }
+
+export function zonedParts(epochSeconds: number): ZonedParts {
+  const d = new Date(epochSeconds * 1000);
+  if (drawingZone === undefined) {
+    return {
+      year: d.getFullYear(), month: d.getMonth() + 1, day: d.getDate(),
+      hour: d.getHours(), minute: d.getMinutes(), second: d.getSeconds(),
+      offsetMin: -d.getTimezoneOffset(),
+    };
+  }
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: drawingZone, hourCycle: 'h23',
+    year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric',
+  }).formatToParts(d);
+  const get = (t: string) => Number(parts.find(x => x.type === t)?.value ?? NaN);
+  const p = { year: get('year'), month: get('month'), day: get('day'), hour: get('hour'), minute: get('minute'), second: get('second') };
+  const wallMs = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);
+  const offsetMin = Math.round((wallMs - Math.floor(d.getTime() / 1000) * 1000) / 60000);
+  return { ...p, offsetMin };
+}
+
+/** "UTC+2" / "UTC-5" / "UTC+5:30" / "UTC" for an offset in minutes. */
+export function offsetLabel(offsetMin: number): string {
+  if (offsetMin === 0) return 'UTC';
+  const sign = offsetMin > 0 ? '+' : '-';
+  const abs = Math.abs(offsetMin);
+  const mm = abs % 60;
+  return `UTC${sign}${Math.floor(abs / 60)}${mm ? ':' + String(mm).padStart(2, '0') : ''}`;
+}
+
 /**
  * Unix seconds -> "5 Oct, 14:26" in the gateway process's own local time zone
  * (this module runs on the customer's machine — "local" IS correct here,
@@ -30,12 +81,10 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 export function formatDateTime(value: unknown): string {
   const n = typeof value === 'number' ? value : Number(value);
   if (!Number.isFinite(n)) return 'unknown time';
-  const d = new Date(n * 1000);
-  const day = d.getDate();
-  const month = MONTHS[d.getMonth()];
-  const hh = String(d.getHours()).padStart(2, '0');
-  const mm = String(d.getMinutes()).padStart(2, '0');
-  return `${day} ${month}, ${hh}:${mm}`;
+  const z = zonedParts(n);
+  const hh = String(z.hour).padStart(2, '0');
+  const mm = String(z.minute).padStart(2, '0');
+  return `${z.day} ${MONTHS[z.month - 1]}, ${hh}:${mm}`;
 }
 
 /** Seconds -> "30 min" under an hour, "1 h 05 min" at or above. Never a raw
@@ -251,28 +300,9 @@ export function formatMetricValue(kind: string, value: unknown): string {
 
 // ─── Verified-box timestamps (two-tag rule, RR6) ────────────────────────────
 
-/** The process's own zone for one instant: "CEST"/"CET" style when the
- *  runtime names it, else "UTC+2" from the offset — never a guess. */
-function zoneLabel(d: Date): string {
-  try {
-    const part = new Intl.DateTimeFormat('en-GB', { timeZoneName: 'short' })
-      .formatToParts(d)
-      .find(p => p.type === 'timeZoneName')?.value;
-    if (part && /^[A-Z]{2,5}$/.test(part)) return part;
-  } catch {
-    // no ICU zone names — fall through to the numeric offset
-  }
-  const offsetMin = -d.getTimezoneOffset();
-  if (offsetMin === 0) return 'UTC';
-  const sign = offsetMin > 0 ? '+' : '-';
-  const abs = Math.abs(offsetMin);
-  const mm = abs % 60;
-  return `UTC${sign}${Math.floor(abs / 60)}${mm ? ':' + String(mm).padStart(2, '0') : ''}`;
-}
-
 /**
  * A signed timestamp as it appears inside a verified box: "2026-10-06
- * 09:27:34 CEST" — the one deterministic, interpretation-free transformation
+ * 09:27:34 UTC+2" — the one deterministic, interpretation-free transformation
  * the two-tag rule allows (work-plan "regular reporting", decision 5). Takes
  * unix seconds, or a connector's own date string (parsed the same way the
  * verifier parses it). Unparseable input comes back verbatim, never invented.
@@ -280,9 +310,13 @@ function zoneLabel(d: Date): string {
 export function formatTimestamp(value: unknown): string {
   const n = typeof value === 'number' ? value : parseTimestampSecondsLoose(value);
   if (n === undefined || !Number.isFinite(n)) return String(value ?? '');
-  const d = new Date(n * 1000);
+  // The zone as its numeric UTC offset, never an abbreviation like "CEST":
+  // those come from ICU data that differs between runtimes, so the offline
+  // checker could not reproduce the drawn text — and the offset alone is
+  // unambiguous about the instant.
+  const z = zonedParts(n);
   const p = (x: number) => String(x).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())} ${zoneLabel(d)}`;
+  return `${z.year}-${p(z.month)}-${p(z.day)} ${p(z.hour)}:${p(z.minute)}:${p(z.second)} ${offsetLabel(z.offsetMin)}`;
 }
 
 function parseTimestampSecondsLoose(value: unknown): number | undefined {

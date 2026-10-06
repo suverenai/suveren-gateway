@@ -11,8 +11,9 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { sign as cryptoSign } from 'node:crypto';
-import { canonicalize, encodeAttestationBlob, type Attestation, type AttestationPayload } from '@hap/core';
+import { canonicalize, computeIntentHash, encodeAttestationBlob, type Attestation, type AttestationPayload } from '@hap/core';
 import { ReceiptArchive } from '../../../src/lib/receipt-archive';
+import { recomputeBoundsHash } from '../../../src/lib/report/verify-export';
 import { testReceiptKeypair, makeSignedReceipt, type TestReceiptKeypair } from '../../helpers/real-receipt';
 
 export const AS_URL = 'https://as.example';
@@ -65,17 +66,22 @@ export function buildScenario() {
     omitAsPublicKey?: boolean;
   }) {
     const signingKp = opts.signWithKeypair ?? kp;
+    // Like the real Authority Server: with bounds VALUES, the bounds hash IS
+    // their canonical hash (the explicit `boundsHash` is used only without
+    // values, e.g. a pre-values legacy entry).
+    const authorization: ScenarioAuthorization | undefined = opts.authorization
+      ? { ...opts.authorization, ...(opts.authorization.bounds ? { boundsHash: recomputeBoundsHash(opts.authorization.bounds) } : {}) }
+      : undefined;
     const receipt = makeSignedReceipt(signingKp, {
       id: opts.id,
       action: opts.action,
       authorizationId: opts.authorizationId,
       profileId: opts.authorization?.profileId ?? 'test-profile',
-      boundsHash: opts.authorization?.boundsHash,
+      boundsHash: authorization?.boundsHash,
       timestamp: opts.timestamp ?? Math.floor(Date.now() / 1000),
       ...opts.extra,
     });
 
-    let authorization: ScenarioAuthorization | undefined = opts.authorization;
     let attestations: Array<{ domain: string; blob: string; expiresAt: number }> = [];
     if (authorization) {
       const payload: AttestationPayload = {
@@ -85,7 +91,8 @@ export function buildScenario() {
         bounds_hash: authorization.boundsHash,
         ...(authorization.contextHash ? { context_hash: authorization.contextHash } : {}),
         execution_context_hash: 'sha256:test',
-        gate_content_hashes: {},
+        // Like a real mandate ceremony: the intent is committed by its hash.
+        gate_content_hashes: authorization.intent ? { intent: computeIntentHash(authorization.intent) } : {},
         resolved_owners: authorization.owners ?? ['did:key:zOwner1'],
         commitment_mode: authorization.commitmentMode ?? 'automatic',
         ...(authorization.subjects ? { subjects: authorization.subjects } : {}),

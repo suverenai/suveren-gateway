@@ -19,9 +19,17 @@
  * result is deliberately a SEPARATE field from `allValid` for exactly this
  * reason; `report-verify-cli.ts` turns the combination into the three exit
  * codes documented there.
+ *
+ * WHAT THE PAGE SHOWS (RR7): signatures alone do not cover the visible page —
+ * a forger could edit a number in a green box and leave the bundle intact.
+ * `verify-drawn.ts` closes that: the page must re-draw from the bundle byte
+ * for byte, and every drawn field is checked against its signed source
+ * (bounds through `recomputeBoundsHash`), recomputed, or listed as not
+ * checkable offline (archive/database values).
  */
 import { Parser } from 'htmlparser2';
-import { verifyReceiptSignature, verifyAttestationSignature, decodeAttestationBlob } from '@hap/core';
+import { verifyReceiptSignature, verifyAttestationSignature, decodeAttestationBlob, computeBoundsHash, type AgentProfile } from '@hap/core';
+import { checkDocumentReproduces, checkDrawnElements, type BoxCheck, type DocumentCheck } from './verify-drawn';
 import { parseElements } from './parse-elements';
 import { sanitizeReportHtml } from './sanitize';
 import { parseCaseAttrs } from './case-resolvers';
@@ -172,10 +180,36 @@ export interface AuthorizationVerification {
    *  bundle's Authority Server key. False (never silently skipped) when the
    *  mandate has no archived attestation at all. */
   attestationValid: boolean;
-  /** 'n/a' when neither side carries a boundsHash to compare — the same
-   *  graceful degradation `ticket-resolvers.ts#resolveMandateElement` uses. */
+  /** Every bounds hash present — the mandate's, each attestation's signed
+   *  `bounds_hash`, each of its tickets' signed `boundsHash`, and the one
+   *  recomputed from the bundled bounds VALUES — agrees. 'n/a' when there is
+   *  nothing to compare. */
   boundsHashMatches: boolean | 'n/a';
+  /** The bundled bounds VALUES hash to a SIGNED bounds_hash (attestation or
+   *  ticket) — so the limits a box draws are the signed ones. 'n/a' when the
+   *  mandate carries no values. */
+  boundsValuesProven: boolean | 'n/a';
   error?: string;
+}
+
+/**
+ * The bounds hash of these VALUES, in the object's own key order — the same
+ * canonical form hap-core's `computeBoundsHash` builds from a profile's
+ * `boundsSchema.keyOrder` (`key=percent-encoded value` lines). The export
+ * writes the values in the profile's key order (export-report.ts), so the
+ * checker needs no profile; a reordered, added or dropped key yields a
+ * different hash.
+ */
+export function recomputeBoundsHash(bounds: Record<string, string | number>): string {
+  const keyOrder = Object.keys(bounds);
+  const profile = {
+    id: 'export-check',
+    boundsSchema: {
+      keyOrder,
+      fields: Object.fromEntries(keyOrder.map(k => [k, { type: typeof bounds[k] === 'number' ? 'number' : 'string' }])),
+    },
+  } as unknown as AgentProfile;
+  return computeBoundsHash(bounds, profile);
 }
 
 export type KeyConfirmation =
@@ -197,6 +231,13 @@ export interface VerifyExportOptions {
 }
 
 export interface VerifyExportResult {
+  /** The visible page is exactly what the bundle draws (verify-drawn.ts). */
+  document: DocumentCheck;
+  /** Every drawn box: which fields are checked against a signature, which
+   *  are recomputed, which cannot be checked offline, and any mismatch. */
+  boxes: BoxCheck[];
+  /** Bundle-level inconsistencies (elements vs report, Proof panel). */
+  drawnErrors: string[];
   tickets: TicketVerification[];
   /** Every ticket/approval/mandate/case element in the report. */
   elements: ElementVerification[];
@@ -257,20 +298,57 @@ export async function verifyExportBundle(bundle: ExportBundle, opts: VerifyExpor
   }
 
   const authorizations: AuthorizationVerification[] = [];
+  const boundsProven = new Set<string>();
   for (const [authorizationId, auth] of Object.entries(bundle.authorizations)) {
     const { valid: attestationValid, error: attestationError } = await checkAttestations(auth, bundle.authorityServer.publicKeyHex);
 
-    let boundsHashMatches: boolean | 'n/a' = 'n/a';
-    const representative = [...byId.values()].find(r => r.authorizationId === authorizationId);
-    if (auth.boundsHash && representative && typeof representative.boundsHash === 'string') {
-      boundsHashMatches = auth.boundsHash === representative.boundsHash;
+    // Every hash that commits to this mandate's bounds, signed or not.
+    const hashes: Array<{ from: string; value: string; signed: boolean }> = [];
+    if (auth.boundsHash) hashes.push({ from: 'the mandate record', value: auth.boundsHash, signed: false });
+    for (const att of auth.attestations) {
+      try {
+        const bh = decodeAttestationBlob(att.blob).payload.bounds_hash;
+        if (bh) hashes.push({ from: 'the signed attestation', value: bh, signed: attestationValid });
+      } catch {
+        // undecodable — already an attestation error
+      }
     }
+    for (const r of byId.values()) {
+      if (r.authorizationId === authorizationId && typeof r.boundsHash === 'string') {
+        const t = tickets.find(x => x.ticketId === ticketId(r));
+        hashes.push({ from: `signed ticket ${String(r.id ?? '')}`, value: r.boundsHash, signed: !!t?.signatureValid });
+      }
+    }
+    let recomputed: string | undefined;
+    let recomputeError: string | undefined;
+    if (auth.bounds && Object.keys(auth.bounds).length > 0) {
+      try {
+        recomputed = recomputeBoundsHash(auth.bounds);
+      } catch (err) {
+        recomputeError = `The bounds values cannot be hashed: ${err instanceof Error ? err.message : String(err)}`;
+      }
+    }
+    const all = [...hashes.map(h => h.value), ...(recomputed ? [recomputed] : [])];
+    const boundsHashMatches: boolean | 'n/a' = all.length < 2 ? 'n/a' : all.every(v => v === all[0]);
+    let boundsValuesProven: boolean | 'n/a' = 'n/a';
+    if (auth.bounds && Object.keys(auth.bounds).length > 0) {
+      boundsValuesProven = !!recomputed && boundsHashMatches !== false && hashes.some(h => h.signed && h.value === recomputed);
+      if (boundsValuesProven === true) boundsProven.add(authorizationId);
+    }
+    const mismatch = hashes.find(h => h.value !== (recomputed ?? all[0]));
+    const boundsError = recomputeError
+      ?? (boundsHashMatches === false
+        ? `Bounds hash mismatch: ${recomputed ? 'the hash of the bounds values in the file' : 'the mandate record'} does not match ${mismatch?.from ?? 'another hash'}.`
+        : boundsValuesProven === false
+          ? 'The bounds values in the file are not committed by any signed bounds_hash.'
+          : undefined);
 
     authorizations.push({
       authorizationId,
       attestationValid,
       boundsHashMatches,
-      ...(attestationError ? { error: attestationError } : boundsHashMatches === false ? { error: `boundsHash does not match ticket ${representative?.id ?? 'unknown'}.` } : {}),
+      boundsValuesProven,
+      ...(attestationError ? { error: attestationError } : boundsError ? { error: boundsError } : {}),
     });
   }
 
@@ -300,6 +378,8 @@ export async function verifyExportBundle(bundle: ExportBundle, opts: VerifyExpor
       else if (!authCheck.attestationValid) error = `The mandate for ticket ${ticketIds[0]} has an invalid attestation.`;
       else if (auth.boundsHash && typeof receipt.boundsHash === 'string' && auth.boundsHash !== receipt.boundsHash) {
         error = `The mandate's boundsHash does not match ticket ${ticketIds[0]}.`;
+      } else if (authCheck.boundsHashMatches === false || authCheck.boundsValuesProven === false) {
+        error = `The mandate for ticket ${ticketIds[0]}: ${authCheck.error ?? 'bounds not proven'}`;
       }
     }
     elements.push({ elementId: el.id, kind: el.kind, ticketIds, presented, backed: !error, ...(error ? { error } : {}) });
@@ -308,12 +388,25 @@ export async function verifyExportBundle(bundle: ExportBundle, opts: VerifyExpor
   const keyFingerprint = fingerprintOf(bundle.authorityServer.publicKeyHex);
   const keyConfirmation = resolveKeyConfirmation(bundle.authorityServer.publicKeyHex, opts);
 
+  // RR7: the visible page is exactly what the bundle draws, and every drawn
+  // value is checked against its source (verify-drawn.ts).
+  const document = checkDocumentReproduces(bundle, opts.documentHtml);
+  const validTickets = new Map<string, Record<string, unknown>>();
+  for (const t of tickets) if (t.signatureValid) validTickets.set(t.ticketId, byId.get(t.ticketId)!);
+  const drawn = await checkDrawnElements(
+    { bundle, validTickets, boundsProven },
+    reportElements(bundle.report.html).map(e => ({ id: e.id, kind: e.kind, attrs: e.attrs })),
+  );
+
   const allValid =
     tickets.filter(t => t.present).every(t => t.signatureValid) &&
-    authorizations.every(a => a.attestationValid && a.boundsHashMatches !== false) &&
-    elements.every(e => e.presented === 'not-verifiable' || e.backed);
+    authorizations.every(a => a.attestationValid && a.boundsHashMatches !== false && a.boundsValuesProven !== false) &&
+    elements.every(e => e.presented === 'not-verifiable' || e.backed) &&
+    document.state !== 'mismatch' &&
+    drawn.errors.length === 0 &&
+    drawn.boxes.every(b => b.mismatches.length === 0);
 
-  return { tickets, elements, authorizations, keyFingerprint, keyConfirmation, allValid };
+  return { document, boxes: drawn.boxes, drawnErrors: drawn.errors, tickets, elements, authorizations, keyFingerprint, keyConfirmation, allValid };
 }
 
 function resolveKeyConfirmation(actualKeyHex: string, opts: VerifyExportOptions): KeyConfirmation {
