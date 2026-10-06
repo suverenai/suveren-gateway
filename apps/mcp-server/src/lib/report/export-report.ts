@@ -15,6 +15,7 @@
  * through `escapeHtml`.
  */
 import { escapeHtml, renderReportHtml, DRAWN_ELEMENT_STYLES } from './render-report';
+import { formatDateTime } from './format';
 import type { ProofSummary, CoverageSummary, ReceiptArchiveReader } from './types';
 import type { StoredReport } from './report-store';
 import type { ArchivedAuthorization } from '../receipt-archive';
@@ -76,12 +77,23 @@ function countLine(count: number, noneText = 'none in this report'): string {
   return count > 0 ? `${count} ✓` : noneText;
 }
 
+/**
+ * Plain, manager-readable sentences for an unreadable email simulator export
+ * — mirrors `ReportsPage.tsx`'s `coverageCasesLine`/`periodStartNote` (same
+ * convention as `format.ts`'s doc comment: not cross-imported, kept in step
+ * by hand). The raw connector error (`coverage.emailExportError`, e.g. `spawn
+ * email-mcp ENOENT`) is never shown in this visible panel — it still travels,
+ * unredacted, in the embedded JSON bundle (polish 2026-10-06: a manager-
+ * facing export showed that raw error verbatim, twice).
+ */
 function renderProofCoveragePanels(proof: ProofSummary, coverage: CoverageSummary): string {
   const casesLine = coverage.emailExportError
-    ? `unknown — ${escapeHtml(coverage.emailExportError)}`
+    ? 'unknown — the email simulator could not be read'
     : `${coverage.coveredCases.length} of ${coverage.loadedCases.length}`;
   const periodNote = coverage.periodStart === null
-    ? `<p class="sv-export-note">Period start unknown${coverage.emailExportError ? ` (${escapeHtml(coverage.emailExportError)})` : ''} — all archived tickets counted.</p>`
+    ? `<p class="sv-export-note">${coverage.emailExportError
+        ? 'Test period start unknown — the email simulator could not be read. All saved tickets were counted.'
+        : 'Test period start unknown — all saved tickets were counted.'}</p>`
     : '';
   const missingParts: string[] = [];
   if (coverage.missingCases.length > 0) missingParts.push(`cases ${coverage.missingCases.map(escapeHtml).join(', ')}`);
@@ -151,6 +163,35 @@ const EXPORT_PAGE_STYLES = `
 }
 `;
 
+/** Same shape `formatDateTime` produces ("5 Oct, 14:26") but with the year
+ *  inserted — used once, for the header's "exported" timestamp (its first
+ *  mention of a date), so a file read months later is unambiguous about the
+ *  year. The "checked" timestamp right next to it reuses the plain
+ *  `formatDateTime` the gateway-drawn ticket cards already use, so the two
+ *  never disagree in format (polish 2026-10-06: the header previously showed
+ *  "21:43 UTC" next to cards reading "22:43" local — two clocks on one page). */
+function formatDateTimeWithYear(value: number): string {
+  const base = formatDateTime(value);
+  const year = new Date(value * 1000).getFullYear();
+  return base.replace(',', ` ${year},`);
+}
+
+/** "UTC+2" / "UTC-5" / "UTC+5:30" — the export process's own local offset,
+ *  stated ONCE in the header so every timestamp in the file (header + every
+ *  drawn card, all in the SAME local time per `format.ts`'s doc comment) is
+ *  unambiguous without repeating a zone name on every line. Deliberately not
+ *  an abbreviation like "CEST": that needs ICU locale data this codebase
+ *  avoids for determinism (see `format.ts`'s own doc comment on
+ *  `toLocaleString`). */
+function utcOffsetLabel(value: number): string {
+  const offsetMin = -new Date(value * 1000).getTimezoneOffset();
+  const sign = offsetMin >= 0 ? '+' : '-';
+  const abs = Math.abs(offsetMin);
+  const hh = Math.floor(abs / 60);
+  const mm = abs % 60;
+  return `UTC${sign}${hh}${mm ? ':' + String(mm).padStart(2, '0') : ''}`;
+}
+
 export interface BuildExportDocumentParams {
   bundle: ExportBundle;
   /** `renderReportHtml(stored.result.html, stored.result.elements)` — exactly
@@ -169,10 +210,12 @@ export function buildExportDocument(params: BuildExportDocumentParams): string {
   const { bundle, renderedHtml } = params;
 
   const exportedDate = new Date(bundle.exportedAt * 1000).toISOString().slice(0, 10);
-  const checkedLabel = `${new Date(bundle.report.checkedAt * 1000).toISOString().replace('T', ' ').slice(0, 16)} UTC`;
+  const exportedLabel = formatDateTimeWithYear(bundle.exportedAt);
+  const checkedLabel = formatDateTime(bundle.report.checkedAt);
+  const tzLabel = utcOffsetLabel(bundle.exportedAt);
   const headerHtml =
     `<div class="sv-export-header">` +
-    `<p class="sv-export-meta">Report exported from Suveren Gateway ${escapeHtml(bundle.gatewayVersion)} on ${escapeHtml(exportedDate)} &middot; checked ${escapeHtml(checkedLabel)}</p>` +
+    `<p class="sv-export-meta">Suveren Gateway ${escapeHtml(bundle.gatewayVersion)} — exported ${escapeHtml(exportedLabel)} &middot; checked ${escapeHtml(checkedLabel)} (times in ${escapeHtml(tzLabel)})</p>` +
     `<p class="sv-export-howto">How to check this report: each ticket below links to its public record on suveren.ai ("Check on suveren.ai ↗"). ` +
     `To verify this entire file offline (including every signature), run <code>suveren-gateway verify-report ${escapeHtml(suggestedFilename(bundle))}</code> from a terminal with the Suveren gateway CLI installed.</p>` +
     `</div>`;

@@ -107,7 +107,7 @@ function unverifiableCard(el: VerifiedElement): string {
   );
 }
 
-function renderTicket(el: VerifiedElement): string {
+function renderTicket(el: VerifiedElement, interactive: boolean): string {
   if (el.status === 'unverifiable' || !el.data) return unverifiableCard(el);
   const d = el.data;
   const href = typeof d.checkUrl === 'string' ? d.checkUrl : undefined;
@@ -120,21 +120,25 @@ function renderTicket(el: VerifiedElement): string {
   // Both links are wrapped in ONE <span> so the row's flexbox never sees the
   // " · " joiner as its own text-node flex item (polish 2026-10-05: that
   // produced a stray, orphaned "·" spaced across the row by
-  // `justify-content: space-between`).
+  // `justify-content: space-between`). `interactive=false` (a standalone
+  // export, R6) drops the "Details" link — it points at the in-app `/reports`
+  // route, which does not exist when the file is opened on its own; `.filter
+  // (Boolean)` already keeps a single remaining link from leaving an orphaned
+  // " · " (polish 2026-10-06).
   const links = [
     href ? `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">Check on suveren.ai ↗</a>` : '',
-    `<a href="${escapeHtml(detailLink(el.id))}" target="_top">Details</a>`,
+    interactive ? `<a href="${escapeHtml(detailLink(el.id))}" target="_top">Details</a>` : '',
   ].filter(Boolean);
   return (
     `<div class="sv-el sv-el-${el.status}" data-sv-id="${escapeHtml(el.id)}">` +
     `<div class="sv-el-row"><b>${escapeHtml(actionLabel)}</b>${badge(el.status, 'signature valid')}</div>` +
     `<div class="sv-el-row"><span>${escapeHtml(profileLabel)} · ${escapeHtml(timeLabel)}</span></div>` +
-    `<div class="sv-el-row"><span>${links.join(' · ')}</span></div>` +
+    (links.length > 0 ? `<div class="sv-el-row"><span>${links.join(' · ')}</span></div>` : '') +
     `</div>`
   );
 }
 
-function renderApproval(el: VerifiedElement): string {
+function renderApproval(el: VerifiedElement, interactive: boolean): string {
   if (el.status === 'unverifiable' || !el.data) return unverifiableCard(el);
   const d = el.data;
   const who = typeof d.whoLabel === 'string' ? d.whoLabel : (Array.isArray(d.who) ? (d.who as string[]).join(', ') : 'unknown');
@@ -145,12 +149,12 @@ function renderApproval(el: VerifiedElement): string {
     `<div class="sv-el sv-el-${el.status}" data-sv-id="${escapeHtml(el.id)}">` +
     `<div class="sv-el-row"><b>Approval</b>${badge(el.status, 'from ticket archive')}</div>` +
     `<div class="sv-el-row"><span>asked ${escapeHtml(asked)} · approved ${escapeHtml(approved)} by ${escapeHtml(who)} (${escapeHtml(waited)})</span></div>` +
-    `<div class="sv-el-row"><a href="${escapeHtml(detailLink(el.id, String(d.ticketId ?? '')))}" target="_top">Details</a></div>` +
+    (interactive ? `<div class="sv-el-row"><a href="${escapeHtml(detailLink(el.id, String(d.ticketId ?? '')))}" target="_top">Details</a></div>` : '') +
     `</div>`
   );
 }
 
-function renderMandate(el: VerifiedElement): string {
+function renderMandate(el: VerifiedElement, interactive: boolean): string {
   if (el.status === 'unverifiable' || !el.data) return unverifiableCard(el);
   const d = el.data;
   const profileLabel = typeof d.profileLabel === 'string' ? d.profileLabel : String(d.profile ?? '');
@@ -161,7 +165,7 @@ function renderMandate(el: VerifiedElement): string {
     `<div class="sv-el-row"><b>${escapeHtml(profileLabel)} · ${escapeHtml(owners)}</b>${badge(el.status, 'matches ticket')}</div>` +
     (limits ? `<div class="sv-el-row">${escapeHtml(limits)}${d.mode ? ` · ${escapeHtml(d.mode)}` : ''}</div>` : '') +
     (d.intent ? `<div class="sv-el-intent">Intent: “${escapeHtml(d.intent)}”</div>` : '') +
-    `<div class="sv-el-row"><a href="${escapeHtml(detailLink(el.id))}" target="_top">Details</a></div>` +
+    (interactive ? `<div class="sv-el-row"><a href="${escapeHtml(detailLink(el.id))}" target="_top">Details</a></div>` : '') +
     `</div>`
   );
 }
@@ -218,15 +222,15 @@ interface CaseApprovalLike {
 
 /** One ticket-carrying node in the case timeline — a step or the goal.
  *  `kind` drives both the small caption ("ticket"/"goal") and the CSS hook
- *  the goal already had (`sv-step-goal`). */
-function renderCaseTicketStep(caseElementId: string, node: CaseStepLike, isGoal: boolean): string {
+ *  the goal already had (`sv-step-goal`). `interactive=false` (R6 export)
+ *  renders the SAME content as a plain `<div>` instead of a link to the
+ *  in-app `/reports` route, which does nothing in a standalone file. */
+function renderCaseTicketStep(caseElementId: string, node: CaseStepLike, isGoal: boolean, interactive: boolean): string {
   const cls = isGoal ? 'sv-step sv-step-goal' : 'sv-step';
   const kind = isGoal ? 'goal' : 'ticket';
-  return (
-    `<a class="${cls}" href="${escapeHtml(detailLink(caseElementId, node.ticketId))}" target="_top">` +
-    `<div class="sv-step-k">${kind}</div><div class="sv-step-t">${escapeHtml(formatActionLabel(node.action))}</div>${formatDateTime(node.time)}` +
-    `</a>`
-  );
+  const inner = `<div class="sv-step-k">${kind}</div><div class="sv-step-t">${escapeHtml(formatActionLabel(node.action))}</div>${formatDateTime(node.time)}`;
+  if (!interactive) return `<div class="${cls}">${inner}</div>`;
+  return `<a class="${cls}" href="${escapeHtml(detailLink(caseElementId, node.ticketId))}" target="_top">${inner}</a>`;
 }
 
 /** The approval as its OWN step in the timeline, between the request and the
@@ -247,7 +251,7 @@ function renderCaseApprovalStep(approval: CaseApprovalLike): string {
   );
 }
 
-function renderCase(el: VerifiedElement): string {
+function renderCase(el: VerifiedElement, interactive: boolean): string {
   if (el.status === 'unverifiable' || !el.data) return unverifiableCard(el);
   const d = el.data;
   const steps: CaseStepLike[] = Array.isArray(d.steps) ? (d.steps as CaseStepLike[]) : [];
@@ -288,7 +292,7 @@ function renderCase(el: VerifiedElement): string {
       const approvalTime = Math.min(approval.decidedAt ?? approval.createdAt ?? node.time, node.time);
       items.push({ time: approvalTime, html: renderCaseApprovalStep(approval) });
     }
-    items.push({ time: node.time, html: renderCaseTicketStep(el.id, node, isGoal) });
+    items.push({ time: node.time, html: renderCaseTicketStep(el.id, node, isGoal, interactive) });
   }
   // Array.prototype.sort is a STABLE sort (guaranteed since ES2019) — an
   // approval pushed immediately before its own ticket above keeps that exact
@@ -302,7 +306,7 @@ function renderCase(el: VerifiedElement): string {
     `<div class="sv-el-row"><b>Case ${escapeHtml(d.caseId)} · ${formatDuration(d.totalDurationSeconds)}</b>${badge(el.status, 'assembled by gateway')}</div>` +
     (el.status === 'warning' && el.reason ? `<div class="sv-el-warn">${escapeHtml(el.reason)}</div>` : '') +
     `<div class="sv-tl">${stepHtml}</div>` +
-    `<div class="sv-el-row"><a href="${escapeHtml(detailLink(el.id))}" target="_top">Case details</a></div>` +
+    (interactive ? `<div class="sv-el-row"><a href="${escapeHtml(detailLink(el.id))}" target="_top">Case details</a></div>` : '') +
     `</div>`
   );
 }
@@ -322,13 +326,13 @@ function renderMetric(el: VerifiedElement): string {
   );
 }
 
-function renderElement(el: VerifiedElement): string {
+function renderElement(el: VerifiedElement, interactive: boolean): string {
   switch (el.kind) {
-    case 'sv-ticket': return renderTicket(el);
-    case 'sv-approval': return renderApproval(el);
-    case 'sv-mandate': return renderMandate(el);
+    case 'sv-ticket': return renderTicket(el, interactive);
+    case 'sv-approval': return renderApproval(el, interactive);
+    case 'sv-mandate': return renderMandate(el, interactive);
     case 'sv-record': return renderRecord(el);
-    case 'sv-case': return renderCase(el);
+    case 'sv-case': return renderCase(el, interactive);
     case 'sv-metric': return renderMetric(el);
     default: return unverifiableCard(el);
   }
@@ -376,8 +380,15 @@ export const DRAWN_ELEMENT_STYLES = `
  * but missing from `elements` (should not happen — both come from the same
  * `verifyReport()` call) render as a generic "not verifiable" card rather
  * than throwing, so a mismatch degrades visibly instead of crashing the page.
+ *
+ * @param interactive Default `true` (the live Reports page, served from the
+ *   gateway itself, where `/reports?element=...` "Details" links resolve).
+ *   Pass `false` for a standalone export (R6, `export-report.ts`) — those
+ *   links point at an in-app route that does not exist once the file is
+ *   opened on its own, which reads as broken rather than absent; the public
+ *   "Check on suveren.ai" link is unaffected either way.
  */
-export function renderReportHtml(html: string, elements: VerifiedElement[]): string {
+export function renderReportHtml(html: string, elements: VerifiedElement[], interactive: boolean = true): string {
   const byId = new Map(elements.map(e => [e.id, e]));
   const spans = findElementSpans(html);
 
@@ -386,7 +397,7 @@ export function renderReportHtml(html: string, elements: VerifiedElement[]): str
   for (const span of spans) {
     out += html.slice(cursor, span.start);
     const el = byId.get(span.id) ?? { id: span.id, kind: span.kind, attrs: {}, status: 'unverifiable' as const, reason: 'No verification result for this element.' };
-    out += renderElement(el);
+    out += renderElement(el, interactive);
     cursor = span.end;
   }
   out += html.slice(cursor);

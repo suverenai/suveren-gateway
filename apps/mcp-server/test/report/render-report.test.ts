@@ -307,3 +307,41 @@ describe('renderReportHtml', () => {
     expect(DRAWN_ELEMENT_STYLES).toMatch(/\.sv-step-approval\s*\{[^}]*max-width:\s*\d+px/);
   });
 });
+
+describe('renderReportHtml(html, elements, interactive=false) — standalone export (R6, polish 2026-10-06)', () => {
+  it('REFUSAL: drops the in-app "Details" link on a ticket card, keeping only the public check link with no orphaned separator', async () => {
+    const { archive, addTicket } = buildScenario();
+    addTicket({ id: 't1', action: 'erp__create_quote', authorizationId: 'authz-1', timestamp: 1_800_000_000 });
+    const result = await verifyReport('<sv-ticket ref="t1"></sv-ticket>', { archive, runExport: makeRunExport() });
+
+    const out = renderReportHtml(result.html, result.elements, false);
+    expect(out).not.toMatch(/>Details</);
+    expect(out).not.toMatch(/\/reports\?element=/);
+    expect(out).toMatch(/Check on suveren\.ai/);
+    // No trailing/leading " · " left behind where "Details" used to sit.
+    expect(out).not.toMatch(/Check on suveren\.ai ↗<\/a>\s*·/);
+    expect(out).not.toMatch(/·\s*<\/span>/);
+
+    // The interactive default is UNCHANGED — same input still gets Details.
+    const interactiveOut = renderReportHtml(result.html, result.elements);
+    expect(interactiveOut).toMatch(/>Details</);
+  });
+
+  it('REFUSAL: drops the "Details" link on sv-approval/sv-mandate and the per-step/"Case details" links on sv-case', async () => {
+    const { archive, addTicket } = buildScenario();
+    addTicket({
+      id: 'g1', action: 'erp__create_quote', authorizationId: 'authz-1', timestamp: 1_800_000_200,
+      authorization: { authorizationId: 'authz-1', profileId: 'test-profile' },
+      proposal: { status: 'committed', createdAt: 1_800_000_000, committedBy: { u1: { userId: 'alice', at: 1_800_000_100 } } },
+    });
+    const html =
+      '<sv-approval ticket="g1"></sv-approval><sv-mandate ticket="g1"></sv-mandate>' +
+      '<sv-case start="email:m1" goal="ticket:g1" steps=""></sv-case>';
+    const result = await verifyReport(html, { archive, runExport: makeRunExport({ email: buildEmailExport({ inbox: [{ id: 'm1', from_name: 'A', from_email: 'a@x.com', to_json: '[]', subject: 's', body: 'b', received_at: '2026-01-01T00:00:00Z', case_id: 'C1' }] }) }) });
+
+    const out = renderReportHtml(result.html, result.elements, false);
+    expect(out).not.toMatch(/>Details</);
+    expect(out).not.toMatch(/Case details/);
+    expect(out).not.toMatch(/\/reports\?element=/);
+  });
+});

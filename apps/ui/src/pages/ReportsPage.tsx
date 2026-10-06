@@ -52,22 +52,37 @@ export function narrowSummaryLine(proof: ReportProof, coverage: ReportCoverage):
  * The Coverage panel's "Cases" line — a tagged result, never a bare number,
  * so a caller cannot accidentally render "0 of 0" for "we don't know"
  * (review 2026-10-05: that read as "fully covered", the opposite of true).
+ *
+ * `text` is always a plain sentence a manager can read — never a raw
+ * connector error (`spawn email-mcp ENOENT` reads as broken software, not as
+ * evidence). The raw reason travels separately in `detail`, for a collapsed
+ * "Technical detail" only (polish 2026-10-06: a manager-facing panel showed
+ * `email-mcp export failed: spawn email-mcp ENOENT` verbatim, twice).
  */
-export function coverageCasesLine(coverage: ReportCoverage): { kind: 'ok' | 'error'; text: string } {
+export function coverageCasesLine(coverage: ReportCoverage): { kind: 'ok' | 'error'; text: string; detail?: string } {
   if (coverage.emailExportError) {
-    return { kind: 'error', text: `Cases: unknown — email simulator not readable: ${coverage.emailExportError}` };
+    return { kind: 'error', text: 'Cases: unknown — the email simulator could not be read.', detail: coverage.emailExportError };
   }
   return { kind: 'ok', text: `${coverage.coveredCases.length} of ${coverage.loadedCases.length}` };
 }
 
-/** Explains an unknown test-period start rather than silently falling back —
- *  "all archived tickets counted" is a deliberate, inclusive fallback (never
- *  excludes a ticket it isn't sure about), not a bug, but it must be stated. */
-export function periodStartNote(coverage: ReportCoverage): string | null {
+/**
+ * Explains an unknown test-period start rather than silently falling back —
+ * "all saved tickets counted" is a deliberate, inclusive fallback (never
+ * excludes a ticket it isn't sure about), not a bug, but it must be stated.
+ * `text` is always plain language; the raw connector error (when the reason
+ * IS an unreadable export, not simply "nothing loaded yet") travels in
+ * `detail` only — same rule as `coverageCasesLine` above.
+ */
+export function periodStartNote(coverage: ReportCoverage): { text: string; detail?: string } | null {
   if (coverage.periodStart !== null) return null;
-  return coverage.emailExportError
-    ? `Period start unknown (${coverage.emailExportError}) — all archived tickets counted.`
-    : 'Period start unknown — all archived tickets counted.';
+  if (coverage.emailExportError) {
+    return {
+      text: 'Test period start unknown — the email simulator could not be read. All saved tickets were counted.',
+      detail: coverage.emailExportError,
+    };
+  }
+  return { text: 'Test period start unknown — all saved tickets were counted.' };
 }
 
 /**
@@ -330,6 +345,18 @@ function DetailPanel({ report, elementId, ticketParam, onClose }: {
 
 // ─── Side panel (Proof / Coverage / Checked values) ────────────────────────
 
+/** A raw connector error, collapsed behind a disclosure — never shown inline
+ *  on a page meant for a non-technical reader (polish 2026-10-06). */
+function TechnicalDetail({ detail }: { detail?: string }) {
+  if (!detail) return null;
+  return (
+    <details style={{ marginTop: '0.25rem' }}>
+      <summary style={{ cursor: 'pointer', fontSize: '0.8rem', color: 'var(--text-muted)' }}>Technical detail</summary>
+      <p className="page-subtitle" style={{ marginTop: '0.25rem', wordBreak: 'break-word' }}>{detail}</p>
+    </details>
+  );
+}
+
 function SidePanel({ report, open }: { report: ReportModel; open?: boolean }) {
   const { proof, coverage } = report;
   const missing = missingSummary(coverage);
@@ -355,12 +382,20 @@ function SidePanel({ report, open }: { report: ReportModel; open?: boolean }) {
       <div className="card" style={{ marginTop: '0.75rem' }}>
         <div className="card-title">Coverage</div>
         {casesLine.kind === 'error' ? (
-          <p className="reports-error" role="alert">{casesLine.text}</p>
+          <>
+            <p className="reports-error" role="alert">{casesLine.text}</p>
+            <TechnicalDetail detail={casesLine.detail} />
+          </>
         ) : (
           <div className="reports-row"><span>Cases</span><b>{casesLine.text}</b></div>
         )}
         <div className="reports-row"><span>Tickets in test period</span><b>{coverage.ticketsReferenced.length} of {coverage.ticketsInPeriod.length}</b></div>
-        {periodNote && <p className="reports-note">{periodNote}</p>}
+        {periodNote && (
+          <>
+            <p className="reports-note">{periodNote.text}</p>
+            <TechnicalDetail detail={periodNote.detail} />
+          </>
+        )}
         {missing && <p className="reports-missing">{missing}</p>}
       </div>
       {proof.verifiedValues.length > 0 && (

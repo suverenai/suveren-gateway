@@ -124,17 +124,21 @@ describe('narrowSummaryLine', () => {
 });
 
 describe('coverageCasesLine — "0 of 0" must never stand in for "unknown"', () => {
-  it('REFUSAL: an unreadable email export is a tagged error, not a bare "0 of 0"', () => {
+  it('REFUSAL: an unreadable email export is a tagged error, not a bare "0 of 0" — and never shows the raw connector error inline', () => {
     const line = coverageCasesLine(coverage({ emailExportError: 'email-mcp export failed: ENOENT', loadedCases: [], coveredCases: [] }));
     expect(line.kind).toBe('error');
-    expect(line.text).toContain('ENOENT');
+    expect(line.text).not.toContain('ENOENT');
+    expect(line.text).not.toMatch(/spawn|ENOENT|export failed/i);
     expect(line.text).not.toMatch(/^0 of 0$/);
+    // The raw reason still travels, just not in the sentence a manager reads.
+    expect(line.detail).toBe('email-mcp export failed: ENOENT');
   });
 
-  it('genuinely zero loaded cases (no export error) is a normal "0 of 0"', () => {
+  it('genuinely zero loaded cases (no export error) is a normal "0 of 0" with no technical detail', () => {
     const line = coverageCasesLine(coverage({ loadedCases: [], coveredCases: [] }));
     expect(line.kind).toBe('ok');
     expect(line.text).toBe('0 of 0');
+    expect(line.detail).toBeUndefined();
   });
 
   it('a readable export with partial coverage reports the real counts', () => {
@@ -151,13 +155,17 @@ describe('periodStartNote', () => {
 
   it('explains the inclusive fallback when the period start is unknown', () => {
     const note = periodStartNote(coverage({ periodStart: null }));
-    expect(note).toMatch(/period start unknown/i);
-    expect(note).toMatch(/all archived tickets counted/i);
+    expect(note?.text).toMatch(/test period start unknown/i);
+    expect(note?.text).toMatch(/all saved tickets were counted/i);
+    expect(note?.detail).toBeUndefined();
   });
 
-  it('folds in the email export error as the reason, when there is one', () => {
-    const note = periodStartNote(coverage({ periodStart: null, emailExportError: 'ENOENT' }));
-    expect(note).toContain('ENOENT');
+  it('REFUSAL: never shows the raw connector error inline — it travels in `detail` only', () => {
+    const note = periodStartNote(coverage({ periodStart: null, emailExportError: 'email-mcp export failed: ENOENT' }));
+    expect(note?.text).not.toContain('ENOENT');
+    expect(note?.text).not.toMatch(/spawn|ENOENT|export failed/i);
+    expect(note?.text).toMatch(/email simulator could not be read/i);
+    expect(note?.detail).toBe('email-mcp export failed: ENOENT');
   });
 });
 
