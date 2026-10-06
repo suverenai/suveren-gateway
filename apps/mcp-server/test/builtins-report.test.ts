@@ -63,9 +63,9 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function authWithProfile(profileId: string, bounds: Record<string, unknown>): EnrichedAuthorization {
+function authWithProfile(profileId: string, bounds: Record<string, unknown>, authorizationId = 'authz_r0000000-0000-4000-8000-000000000001'): EnrichedAuthorization {
   return {
-    authorizationId: 'authz_r0000000-0000-4000-8000-000000000001',
+    authorizationId,
     profileId,
     path: 'p',
     frame: bounds,
@@ -708,6 +708,57 @@ describe('reporting window (RR2) — simulation mode, and reporting@0.1 refused'
       t.cleanup();
     });
   }
+});
+
+// ─── RR7 — a refused mandate is never selectable ───────────────────────────
+
+describe('RR7 — with reporting@0.1 and @0.2 held, every report tool uses 0.2; 0.1 is never selected', () => {
+  // Ids chosen so 0.1 sorts FIRST: the fail-safe tie-break (by id) picked it
+  // before the gate filtered refused mandates out.
+  const ID_01 = 'authz_a0000000-0000-4000-8000-000000000001';
+  const ID_02 = 'authz_b0000000-0000-4000-8000-000000000002';
+  const both = () => [
+    authWithProfile(REPORTING_01.id, { read_access: 'unlimited', report_daily_max: 5 }, ID_01),
+    authWithProfile(REPORTING.id, REPORTING_BOUNDS, ID_02),
+  ];
+
+  it('write_report is ticketed under the 0.2 mandate — its id and profile — and 0.1 is never charged', async () => {
+    const t = setup(both());
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const r = await createGatedToolHandler(t.tools.write_report, t.im, t.state)({ html: '<sv-ai><p>hello</p></sv-ai>' });
+    expect(r.isError, r.content[0]?.text).toBeFalsy();
+    expect(t.postReceipt).toHaveBeenCalledTimes(1);
+    const req = t.postReceipt.mock.calls[0][0] as Record<string, unknown>;
+    expect(req.authorizationId).toBe(ID_02);
+    expect(req.profileId).toBe(REPORTING.id);
+    // No ticket was requested against 0.1 — so its report_daily_max is untouched.
+    for (const [c] of t.postReceipt.mock.calls) expect((c as Record<string, unknown>).authorizationId).not.toBe(ID_01);
+    // The local gatekeeper was never even asked about 0.1.
+    const verify = (t.state.gatekeeper.verifyExecution as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    expect(verify.map(c => c[0])).not.toContain(ID_01);
+    log.mockRestore();
+    t.cleanup();
+  });
+
+  it('the read tools follow the identical rule: they work under 0.2 with 0.1 also held', async () => {
+    const t = setup(both());
+    t.scenario.addTicket({ id: 'tk-1', action: 'a', authorizationId: 'x', timestamp: nowS() - 60 });
+    const r = await createGatedToolHandler(t.tools.list_tickets, t.im, t.state)({});
+    expect(r.isError, r.content[0]?.text).toBeFalsy();
+    expect(JSON.parse(r.content[0].text).tickets.map((x: any) => x.id)).toEqual(['tk-1']);
+    t.cleanup();
+  });
+
+  it('the predicate lives in one place: the manager reports 0.1 refused and 0.2 accepted for every report tool', () => {
+    const t = setup(both());
+    const [a01, a02] = both();
+    for (const tool of Object.values(t.tools)) {
+      expect(t.im.mandateRefusal(tool, a01), tool.originalName).toMatch(/older profile version/);
+      expect(t.im.mandateRefusal(tool, a02), tool.originalName).toBeNull();
+    }
+    t.cleanup();
+  });
 });
 
 // ─── RR3 — what the report AI may read ──────────────────────────────────────

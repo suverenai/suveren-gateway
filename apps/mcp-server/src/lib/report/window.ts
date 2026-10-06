@@ -103,12 +103,35 @@ function windowLabel(start: number, days: number, loadedAt: number | null): stri
   return `${since} (the last ${days} ${days === 1 ? 'day' : 'days'})`;
 }
 
+type ProfileLookup = (id: string) => { boundsSchema?: unknown } | undefined;
+const defaultLookup: ProfileLookup = (id) => getProfile(id) as { boundsSchema?: unknown } | undefined;
+
+/**
+ * Why the report tools refuse ONE held reporting mandate, or undefined when it
+ * is accepted: its profile declares no reporting-window bound (reporting@0.1),
+ * or the mandate does not set it. THE single predicate for "a refused mandate"
+ * — `resolveReportWindow` drops these, and the report built-in declares it as
+ * its `mandateRefusal`, so the gate never SELECTS one for a report tool's call
+ * either (tool-proxy.ts — a refused mandate must not authorize, or be charged
+ * for, a write the report tools would refuse; RR7).
+ */
+export function reportingMandateRefusal(m: WindowAuthorization, lookup: ProfileLookup = defaultLookup): string | undefined {
+  const schema = lookup(m.profileId)?.boundsSchema as BoundsSchemaLike | undefined;
+  const field = resolveAgeBoundField(schema, REPORT_AGE_FIELD);
+  // reporting@0.1 — its profile has no window bound. Not accepted.
+  if (!field) return OLD_PROFILE_REFUSAL;
+  if (maxReadAgeDays([boundsOf(m)], field) === null) {
+    return `the reporting mandate does not set ${field} (the reporting window), so nothing can be shown — create a new reporting mandate.`;
+  }
+  return undefined;
+}
+
 /**
  * Pure: the window the held reporting mandates allow right now, or why there
  * is none. See the module comment for the rules.
  */
 export function resolveReportWindow(input: ResolveWindowInput): WindowResolution {
-  const lookup = input.lookupProfile ?? ((id: string) => getProfile(id) as { boundsSchema?: unknown } | undefined);
+  const lookup = input.lookupProfile ?? defaultLookup;
   const mandates = input.authorizations.filter(a => a.complete && profileMatches(a.profileId, REPORTING_PROFILE));
   if (mandates.length === 0) {
     return { ok: false, reason: 'No active reporting mandate — the reporting window comes from it, so no evidence can be shown.' };
@@ -117,18 +140,14 @@ export function resolveReportWindow(input: ResolveWindowInput): WindowResolution
   const candidates: Array<{ start: number; days: number; loadedAt: number | null }> = [];
   const refusals: string[] = [];
   for (const m of mandates) {
+    const refusal = reportingMandateRefusal(m, lookup);
+    if (refusal) {
+      refusals.push(refusal);
+      continue;
+    }
     const schema = lookup(m.profileId)?.boundsSchema as BoundsSchemaLike | undefined;
-    const field = resolveAgeBoundField(schema, REPORT_AGE_FIELD);
-    if (!field) {
-      // reporting@0.1 — its profile has no window bound. Not accepted.
-      refusals.push(OLD_PROFILE_REFUSAL);
-      continue;
-    }
-    const declared = maxReadAgeDays([boundsOf(m)], field);
-    if (declared === null) {
-      refusals.push(`the reporting mandate does not set ${field} (the reporting window), so nothing can be shown — create a new reporting mandate.`);
-      continue;
-    }
+    const field = resolveAgeBoundField(schema, REPORT_AGE_FIELD)!;
+    const declared = maxReadAgeDays([boundsOf(m)], field)!;
     const def = (schema?.fields?.[field] ?? {}) as { maximum?: unknown };
     const maximum = typeof def.maximum === 'number' && Number.isFinite(def.maximum) ? def.maximum : null;
     const days = Math.max(0, maximum !== null ? Math.min(declared, maximum) : declared);

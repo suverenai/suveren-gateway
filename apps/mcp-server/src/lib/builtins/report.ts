@@ -54,7 +54,7 @@ import {
   type EmailExport, type ErpExport, type CrmExport, type ExportSystem,
   type VerifyReportResult,
 } from '../report';
-import { scopeReportSources, type ScopeResolution, type ReportWindow } from '../report/window';
+import { scopeReportSources, reportingMandateRefusal, type ScopeResolution, type ReportWindow } from '../report/window';
 import { agentTicketRow, agentTicket, agentApproval, agentMandate } from '../report/agent-view';
 import { isSimulationMode } from '../simulation-mode';
 import type { BuiltinDeps, BuiltinFactory } from './index';
@@ -395,6 +395,11 @@ export const reportBuiltin: BuiltinFactory = (deps) => ({
   // read-only export CLI; writes only the local, vault-encrypted report file)
   // — safe during a simulation-mode test.
   simulation: true,
+  // The same predicate the reporting window uses to refuse a mandate
+  // (reporting@0.1, or no window set): the gate never selects such a mandate
+  // for ANY report tool — so write_report is never ticketed under (and never
+  // charges report_daily_max of) a mandate every read tool refuses (RR7).
+  mandateRefusal: (auth) => reportingMandateRefusal(auth),
   toolGating: {
     overrides: {
       list_tickets: READ_GATE,
