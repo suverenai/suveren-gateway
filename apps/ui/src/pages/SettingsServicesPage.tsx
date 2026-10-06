@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { spClient } from '../lib/sp-client';
 import { AutostartToggle } from '../components/AutostartToggle';
 import { NotificationsToggle } from '../components/NotificationsToggle';
+import { IdentityDisclosureToggle } from '../components/IdentityDisclosureToggle';
 import { VersionCard } from '../components/VersionCard';
 import { AuthorityServerCard } from '../components/AuthorityServerCard';
 import { SimulationLockCard } from '../components/SimulationLockCard';
@@ -336,6 +337,7 @@ export function SettingsServicesPage() {
       <section style={{ marginBottom: '2rem' }}>
         <h2 style={SECTION_HEADING_STYLE}>{SETTINGS_SECTIONS[1]}</h2>
         <AuthorityServerCard />
+        <IdentityDisclosureToggle />
       </section>
 
       {/* 3. This computer */}

@@ -212,6 +212,16 @@ export interface EnrichedAuthorizationEntry {
   deferredCommitmentDomains: string[];
 }
 
+/** The owner's standing identity-disclosure choice, as the Authority Server holds it. */
+export interface IdentityDisclosure {
+  always: boolean;
+  verified: boolean;
+  name: string | null;
+  method: string | null;
+  verifier: string | null;
+  verified_at: number | null;
+}
+
 export interface Proposal {
   id: string;
   authorizationId: string;
@@ -1168,6 +1178,20 @@ class SPClient {
       const err = await res.json().catch(() => ({ error: 'Failed to delete profile config' }));
       throw new Error((err as { error: string }).error || `deleteTeamProfileConfig failed: ${res.status}`);
     }
+  }
+
+  // ─── Identity disclosure (standing choice) ──────────────────────────────
+
+  async getIdentityDisclosure(): Promise<IdentityDisclosure> {
+    const res = await this.fetch('/api/users/me/identity-disclosure');
+    if (!res.ok) throw new Error(`Failed to read identity setting: ${res.status}`);
+    return res.json();
+  }
+
+  async setIdentityDisclosure(always: boolean): Promise<IdentityDisclosure> {
+    const res = await this.fetch('/api/users/me/identity-disclosure', { method: 'PUT', body: JSON.stringify({ always }) });
+    if (!res.ok) throw new Error(`Failed to save identity setting: ${res.status}`);
+    return res.json();
   }
 
   // ─── Proposals ──────────────────────────────────────────────────────────
