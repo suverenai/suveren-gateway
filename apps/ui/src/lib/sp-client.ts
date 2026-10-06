@@ -711,6 +711,24 @@ class SPClient {
     return res.json();
   }
 
+  /**
+   * "Export with proof" (work-plan R6) — a self-contained HTML file, so this
+   * reads text + the filename from Content-Disposition rather than JSON
+   * (same pattern as `fetchEvidenceBundle` above).
+   */
+  async exportReportWithProof(): Promise<{ html: string; filename: string }> {
+    const res = await this.fetch('/api/report/export');
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: `Export failed (${res.status})` }));
+      throw new Error((err as { error?: string }).error ?? `Export failed (${res.status})`);
+    }
+    const html = await res.text();
+    const filename =
+      /filename="([^"]+)"/.exec(res.headers.get('content-disposition') ?? '')?.[1] ??
+      'suveren-report.html';
+    return { html, filename };
+  }
+
   async revokeAttestation(authorizationId: string, reason?: string): Promise<void> {
     const res = await this.fetch(`/api/authorizations/${encodeURIComponent(authorizationId)}/revoke`, {
       method: 'POST',

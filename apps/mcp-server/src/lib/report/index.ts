@@ -17,3 +17,6 @@ export {
 export { resolveTicketElement, resolveApprovalElement, resolveMandateElement } from './ticket-resolvers';
 export { buildTicketDetails, type TicketDetail } from './ticket-details';
 export * from './types';
+export { buildExportBundle, buildExportDocument, suggestedFilename, type BuildExportBundleParams, type BuildExportDocumentParams } from './export-report';
+export { isExportBundle, type ExportBundle } from './export-types';
+export { verifyExportBundle, collectReferencedTicketIds, type VerifyExportResult, type VerifyExportOptions, type TicketVerification, type AuthorizationVerification, type KeyConfirmation } from './verify-export';

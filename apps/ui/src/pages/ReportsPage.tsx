@@ -52,22 +52,37 @@ export function narrowSummaryLine(proof: ReportProof, coverage: ReportCoverage):
  * The Coverage panel's "Cases" line — a tagged result, never a bare number,
  * so a caller cannot accidentally render "0 of 0" for "we don't know"
  * (review 2026-10-05: that read as "fully covered", the opposite of true).
+ *
+ * `text` is always a plain sentence a manager can read — never a raw
+ * connector error (`spawn email-mcp ENOENT` reads as broken software, not as
+ * evidence). The raw reason travels separately in `detail`, for a collapsed
+ * "Technical detail" only (polish 2026-10-06: a manager-facing panel showed
+ * `email-mcp export failed: spawn email-mcp ENOENT` verbatim, twice).
  */
-export function coverageCasesLine(coverage: ReportCoverage): { kind: 'ok' | 'error'; text: string } {
+export function coverageCasesLine(coverage: ReportCoverage): { kind: 'ok' | 'error'; text: string; detail?: string } {
   if (coverage.emailExportError) {
-    return { kind: 'error', text: `Cases: unknown — email simulator not readable: ${coverage.emailExportError}` };
+    return { kind: 'error', text: 'Cases: unknown — the email simulator could not be read.', detail: coverage.emailExportError };
   }
   return { kind: 'ok', text: `${coverage.coveredCases.length} of ${coverage.loadedCases.length}` };
 }
 
-/** Explains an unknown test-period start rather than silently falling back —
- *  "all archived tickets counted" is a deliberate, inclusive fallback (never
- *  excludes a ticket it isn't sure about), not a bug, but it must be stated. */
-export function periodStartNote(coverage: ReportCoverage): string | null {
+/**
+ * Explains an unknown test-period start rather than silently falling back —
+ * "all saved tickets counted" is a deliberate, inclusive fallback (never
+ * excludes a ticket it isn't sure about), not a bug, but it must be stated.
+ * `text` is always plain language; the raw connector error (when the reason
+ * IS an unreadable export, not simply "nothing loaded yet") travels in
+ * `detail` only — same rule as `coverageCasesLine` above.
+ */
+export function periodStartNote(coverage: ReportCoverage): { text: string; detail?: string } | null {
   if (coverage.periodStart !== null) return null;
-  return coverage.emailExportError
-    ? `Period start unknown (${coverage.emailExportError}) — all archived tickets counted.`
-    : 'Period start unknown — all archived tickets counted.';
+  if (coverage.emailExportError) {
+    return {
+      text: 'Test period start unknown — the email simulator could not be read. All saved tickets were counted.',
+      detail: coverage.emailExportError,
+    };
+  }
+  return { text: 'Test period start unknown — all saved tickets were counted.' };
 }
 
 /**
@@ -328,7 +343,40 @@ function DetailPanel({ report, elementId, ticketParam, onClose }: {
   );
 }
 
+/**
+ * The export-then-refresh sequence, pulled out of `handleExport` as a pure,
+ * dependency-injected function so it is testable without a DOM runner (this
+ * file has none — see the module doc comment). `deps.refresh` MUST be called
+ * after a successful export and awaited before this resolves: the export
+ * route just ran its own fresh recheck server-side, and skipping the refresh
+ * is exactly the 2026-10-06 bug — a page open since before a connector died
+ * kept showing its last-good "0 of 0" Cases line while the file just
+ * exported correctly said "unknown" (coverage.emailExportError never reached
+ * the page because nothing re-fetched `/api/report` after the click).
+ */
+export async function runExportAndRefresh(deps: {
+  exportReport: () => Promise<{ html: string; filename: string }>;
+  download: (html: string, filename: string) => void;
+  refresh: () => Promise<void>;
+}): Promise<void> {
+  const { html, filename } = await deps.exportReport();
+  deps.download(html, filename);
+  await deps.refresh();
+}
+
 // ─── Side panel (Proof / Coverage / Checked values) ────────────────────────
+
+/** A raw connector error, collapsed behind a disclosure — never shown inline
+ *  on a page meant for a non-technical reader (polish 2026-10-06). */
+function TechnicalDetail({ detail }: { detail?: string }) {
+  if (!detail) return null;
+  return (
+    <details style={{ marginTop: '0.25rem' }}>
+      <summary style={{ cursor: 'pointer', fontSize: '0.8rem', color: 'var(--text-muted)' }}>Technical detail</summary>
+      <p className="page-subtitle" style={{ marginTop: '0.25rem', wordBreak: 'break-word' }}>{detail}</p>
+    </details>
+  );
+}
 
 function SidePanel({ report, open }: { report: ReportModel; open?: boolean }) {
   const { proof, coverage } = report;
@@ -355,12 +403,25 @@ function SidePanel({ report, open }: { report: ReportModel; open?: boolean }) {
       <div className="card" style={{ marginTop: '0.75rem' }}>
         <div className="card-title">Coverage</div>
         {casesLine.kind === 'error' ? (
-          <p className="reports-error" role="alert">{casesLine.text}</p>
+          <>
+            <p className="reports-error" role="alert">{casesLine.text}</p>
+            <TechnicalDetail detail={casesLine.detail} />
+          </>
         ) : (
           <div className="reports-row"><span>Cases</span><b>{casesLine.text}</b></div>
         )}
         <div className="reports-row"><span>Tickets in test period</span><b>{coverage.ticketsReferenced.length} of {coverage.ticketsInPeriod.length}</b></div>
-        {periodNote && <p className="reports-note">{periodNote}</p>}
+        {periodNote && (
+          <>
+            {/* `detail` present means THIS note exists because a real connector
+             *  read failed — same error class as the Cases line above, so it
+             *  gets the SAME error styling (not the plain grey "nothing
+             *  loaded yet" note) — matches the export file's own orange
+             *  treatment for the identical condition (polish 2026-10-06). */}
+            <p className={periodNote.detail ? 'reports-error' : 'reports-note'} role={periodNote.detail ? 'alert' : undefined}>{periodNote.text}</p>
+            <TechnicalDetail detail={periodNote.detail} />
+          </>
+        )}
         {missing && <p className="reports-missing">{missing}</p>}
       </div>
       {proof.verifiedValues.length > 0 && (
@@ -382,17 +443,26 @@ export function ReportsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [rechecking, setRechecking] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
   const [narrowDetailsOpen, setNarrowDetailsOpen] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
+
+  // Silent refresh — no `loading` toggle, so it never replaces the page with
+  // the full "Loading…" state. Used both by the initial mount effect (via
+  // `load` below) and by handleExport (which must NOT flash the page back to
+  // its loading skeleton right after a download completes).
+  const refreshQuiet = useCallback(() => {
+    return spClient.getReport()
+      .then(({ report }) => setReport(report))
+      .catch(err => setError(err instanceof Error ? err.message : String(err)));
+  }, []);
 
   const load = useCallback(() => {
     setLoading(true);
     setError(null);
-    spClient.getReport()
-      .then(({ report }) => setReport(report))
-      .catch(err => setError(err instanceof Error ? err.message : String(err)))
-      .finally(() => setLoading(false));
-  }, []);
+    refreshQuiet().finally(() => setLoading(false));
+  }, [refreshQuiet]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -403,6 +473,29 @@ export function ReportsPage() {
       .catch(err => setError(err instanceof Error ? err.message : String(err)))
       .finally(() => setRechecking(false));
   }, []);
+
+  const handleExport = useCallback(async () => {
+    setExporting(true);
+    setExportError(null);
+    try {
+      await runExportAndRefresh({
+        exportReport: () => spClient.exportReportWithProof(),
+        download: (html, filename) => {
+          const url = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = filename;
+          a.click();
+          URL.revokeObjectURL(url);
+        },
+        refresh: refreshQuiet,
+      });
+    } catch (err) {
+      setExportError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setExporting(false);
+    }
+  }, [refreshQuiet]);
 
   const elementId = searchParams.get('element');
   const ticketParam = searchParams.get('ticket');
@@ -463,11 +556,16 @@ export function ReportsPage() {
             <button type="button" className="btn btn-secondary btn-sm" onClick={handleRecheck} disabled={rechecking}>
               {rechecking ? 'Checking…' : 'Check again'}
             </button>
-            <button type="button" className="btn btn-primary btn-sm" disabled title="coming soon">
-              Export with proof
+            <button type="button" className="btn btn-primary btn-sm" onClick={handleExport} disabled={exporting}>
+              {exporting ? 'Exporting…' : 'Export with proof'}
             </button>
           </div>
         </div>
+        {exportError && (
+          <p className="reports-error" role="alert" style={{ margin: '0.5rem 0 0 0' }}>
+            Export failed: {exportError}
+          </p>
+        )}
 
         <div className="reports-summary-chip">
           <span>{narrowSummaryLine(report.proof, report.coverage)}</span>

@@ -12,7 +12,7 @@
  * it from a gated tool (scope: "NOT building MCP tools").
  */
 import { Router, type Request, type Response } from 'express';
-import { getReport, saveReport, recheckReport, McpLockedError } from '../lib/mcp-bridge';
+import { getReport, saveReport, recheckReport, exportReport, McpLockedError } from '../lib/mcp-bridge';
 
 function handleError(res: Response, err: unknown): void {
   if (err instanceof McpLockedError) {
@@ -25,7 +25,14 @@ function handleError(res: Response, err: unknown): void {
   });
 }
 
-export function createReportRouter(): Router {
+/**
+ * @param getGatewayVersion A GETTER, not a value: `RUNNING_VERSION` in
+ *   index.ts is computed later in that file than this router is mounted, so
+ *   capturing the plain value here would read it before initialization
+ *   (TDZ). Reading it lazily, on request, is safe — by the time any request
+ *   arrives the whole module has finished loading.
+ */
+export function createReportRouter(getGatewayVersion: () => string): Router {
   const router = Router();
 
   router.get('/', async (_req: Request, res: Response) => {
@@ -54,6 +61,29 @@ export function createReportRouter(): Router {
       res.json(await recheckReport());
     } catch (err) {
       handleError(res, err);
+    }
+  });
+
+  // "Export with proof" (R6) — a self-contained HTML file, not JSON, so it
+  // gets its own response handling rather than reusing handleError's JSON
+  // error body for the one success path.
+  router.get('/export', async (_req: Request, res: Response) => {
+    try {
+      const { html, filename } = await exportReport(getGatewayVersion());
+      res
+        .setHeader('Content-Type', 'text/html; charset=utf-8')
+        .setHeader('Content-Disposition', `attachment; filename="${filename}"`)
+        .setHeader('Cache-Control', 'no-store')
+        .send(html);
+    } catch (err) {
+      if (err instanceof McpLockedError) {
+        res.status(503).json({ error: err.message });
+        return;
+      }
+      res.status(502).json({
+        error: 'Export failed',
+        detail: err instanceof Error ? err.message : String(err),
+      });
     }
   });
 

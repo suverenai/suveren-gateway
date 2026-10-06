@@ -399,6 +399,35 @@ export async function recheckReport(): Promise<unknown> {
   return reportRequest('/internal/report/recheck', { method: 'POST' });
 }
 
+/**
+ * "Export with proof" (work-plan R6) — unlike the other report calls this
+ * returns raw `text/html`, not JSON, so it bypasses `reportRequest()`'s JSON
+ * assumption. `gatewayVersion` is threaded through from the control plane's
+ * own `RUNNING_VERSION` (the one place that already knows how to detect it —
+ * see index.ts's `detectRunningVersion`) since the MCP server has no
+ * equivalent of its own.
+ */
+export async function exportReport(gatewayVersion: string): Promise<{ html: string; filename: string }> {
+  const res = await fetch(`${MCP_BASE}/internal/report/export?gatewayVersion=${encodeURIComponent(gatewayVersion)}`, {
+    headers: internalHeaders(),
+  });
+  if (res.status === 503) {
+    const err = await res.json().catch(() => ({ error: 'Vault locked' }));
+    throw new McpLockedError((err as { error?: string }).error ?? 'Vault locked');
+  }
+  if (res.status === 404) {
+    const err = await res.json().catch(() => ({ error: 'No report to export' }));
+    throw new Error((err as { error?: string }).error ?? 'No report to export');
+  }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: `Export failed: ${res.status}` }));
+    throw new Error((err as { error?: string }).error ?? `Export failed: ${res.status}`);
+  }
+  const html = await res.text();
+  const filename = /filename="([^"]+)"/.exec(res.headers.get('content-disposition') ?? '')?.[1] ?? 'suveren-report.html';
+  return { html, filename };
+}
+
 export async function getMcpHealth(): Promise<unknown> {
   const res = await fetch(`${MCP_BASE}/health`);
   if (!res.ok) throw new Error('MCP server unreachable');

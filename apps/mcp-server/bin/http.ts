@@ -23,8 +23,9 @@ import { verifyGateContentHashes } from '../src/lib/gate-content';
 import type { GateContent } from '../src/lib/gate-store';
 import { IntegrationRegistry, type IntegrationConfig } from '../src/lib/integration-registry';
 import { IntegrationManager, getIntegrationsBinDir } from '../src/lib/integration-manager';
-import { createConnectorExportRunner, renderReportHtml, buildTicketDetails } from '../src/lib/report';
+import { createConnectorExportRunner, renderReportHtml, buildTicketDetails, buildExportBundle, buildExportDocument, suggestedFilename } from '../src/lib/report';
 import type { ReportSources } from '../src/lib/report';
+import { readPairing } from '../src/lib/as-pairing';
 import { loadProfiles } from '../src/lib/profile-loader';
 import { loadManifests, getAllManifests, getManifest } from '../src/lib/manifest-loader';
 import { registerBuiltins } from '../src/lib/builtins';
@@ -816,6 +817,76 @@ app.post('/internal/report/recheck', internalOnly, async (_req: Request, res: Re
     console.error('[Suveren MCP] /internal/report/recheck failed:', err);
     res.status(500).json({ error: err instanceof Error ? err.message : 'Recheck failed' });
   }
+});
+
+/**
+ * The single Authority Server key an export bundle anchors every ticket
+ * signature to (export-types.ts's doc comment explains why ONE key, not one
+ * per ticket). Prefers the pinned pairing (`as-pairing.json` — the same trust
+ * anchor `AttestationCache`/`ticket-verify.ts` enforce against day to day, no
+ * extra network call needed here). Falls back to the most recently archived
+ * ticket's own key only if the pairing file is somehow missing despite having
+ * evidence to export (e.g. hand-cleared) — empty string, never fabricated,
+ * when truly nothing is available; the route below refuses to export in that
+ * case rather than ship an unanchored bundle.
+ */
+function resolveExportAuthorityServer(): { url: string; publicKeyHex: string } {
+  const pin = readPairing(dataDir);
+  if (pin) return { url: pin.asUrl, publicKeyHex: pin.publicKeyHex };
+  const withKey = state.receiptArchive
+    .getReceipts()
+    .filter((r): r is typeof r & { asPublicKey: string } => !!r.asPublicKey)
+    .sort((a, b) => b.archivedAt - a.archivedAt);
+  if (withKey.length > 0) return { url: withKey[0].asUrl, publicKeyHex: withKey[0].asPublicKey };
+  return { url: spUrl, publicKeyHex: '' };
+}
+
+app.get('/internal/report/export', internalOnly, async (req: Request, res: Response) => {
+  if (state.reportStore.isLocked() || state.receiptArchive.isLocked()) {
+    res.status(503).json({ error: 'Vault locked — the report is encrypted until sign-in.' });
+    return;
+  }
+  // Re-run verification so the export reflects the CURRENT state, same as
+  // "Check again" — never ship a file describing a stale check.
+  let stored;
+  try {
+    stored = await state.reportStore.recheck(reportSources);
+  } catch (err) {
+    console.error('[Suveren MCP] /internal/report/export recheck failed:', err);
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Recheck failed' });
+    return;
+  }
+  if (!stored) {
+    res.status(404).json({ error: 'No report to export yet — the AI writes it with the Reporting mandate.' });
+    return;
+  }
+
+  const authorityServer = resolveExportAuthorityServer();
+  if (!authorityServer.publicKeyHex) {
+    res.status(503).json({
+      error: 'No Authority Server key is available yet to anchor this export — sign in once, or execute at least one gated action, before exporting.',
+    });
+    return;
+  }
+
+  const gatewayVersion = typeof req.query.gatewayVersion === 'string' ? req.query.gatewayVersion : 'unknown';
+  const bundle = buildExportBundle({
+    stored,
+    archive: state.receiptArchive,
+    authorityServer,
+    gatewayVersion,
+  });
+  // interactive=false: the in-app "Details" links (/reports?element=...) do
+  // nothing once this file is opened on its own — see renderReportHtml's doc
+  // comment (polish 2026-10-06).
+  const renderedHtml = renderReportHtml(stored.result.html, stored.result.elements, false);
+  const document = buildExportDocument({ bundle, renderedHtml });
+
+  res
+    .setHeader('Content-Type', 'text/html; charset=utf-8')
+    .setHeader('Content-Disposition', `attachment; filename="${suggestedFilename(bundle)}"`)
+    .setHeader('Cache-Control', 'no-store')
+    .send(document);
 });
 
 // Agent Brief preview — returns the exact string the next MCP session will
