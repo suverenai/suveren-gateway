@@ -346,3 +346,76 @@ describe('RR5 — the proof follows the report: mandate data only for a placed s
     }
   });
 });
+
+// ─── RR7 — a full ticket draws its mandate's limits, never its intent ──────
+
+describe('RR7 — a full sv-ticket\'s mandate travels without the intent text', () => {
+  const INTENT = 'Internal: quote only customers the CFO cleared this quarter.';
+  const SCOPE_VALUE = 'scope-value-not-drawn-anywhere';
+
+  async function buildFullTicketExport(html: string) {
+    const { archive, addTicket, kp } = buildScenario();
+    addTicket({
+      id: 't1', action: 'erp__create_quote', authorizationId: 'authz-1', timestamp: 1_800_000_000,
+      authorization: {
+        authorizationId: 'authz-1', profileId: 'test-profile', boundsHash: 'bh-1', contextHash: 'ch-1',
+        intent: INTENT, bounds: { value_max: 1000 }, context: { region: SCOPE_VALUE },
+      },
+    });
+    const stored = await buildStored(html, archive);
+    const bundle = buildExportBundle({ stored, archive, gatewayVersion: 'test', authorityServer: { url: AS_URL, publicKeyHex: kp.publicKeyHex } });
+    const doc = buildExportDocument({ bundle, renderedHtml: renderReportHtml(stored.result.html, stored.result.elements) });
+    return { bundle, doc, kp };
+  }
+
+  async function cli(doc: string, args: string[]): Promise<number> {
+    const dir = mkdtempSync(join(tmpdir(), 'suveren-rr7-'));
+    const file = join(dir, 'report.html');
+    writeFileSync(file, doc);
+    const log = console.log;
+    console.log = () => {};
+    try {
+      return await runVerifyReportCli([file, ...args]);
+    } finally {
+      console.log = log;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it('full sv-ticket only: the intent text is nowhere in the file; bounds, hashes and attestation are', async () => {
+    const { bundle, doc } = await buildFullTicketExport('<sv-ticket ref="t1" variant="full"></sv-ticket>');
+    expect(doc).not.toContain(INTENT);
+    const auth = bundle.authorizations['authz-1'];
+    expect(auth).toBeDefined();
+    expect('intent' in auth).toBe(false);
+    // Drawn → bundled (the ticket's mandate group shows value_max).
+    expect(auth.bounds).toEqual({ value_max: 1000 });
+    expect(auth.boundsHash).toBe('bh-1');
+    expect(auth.attestations.length).toBeGreaterThan(0);
+    // Scope values are drawn by no element → never bundled; the hash stays.
+    expect('context' in auth).toBe(false);
+    expect(auth.contextHash).toBe('ch-1');
+    expect(doc).not.toContain(SCOPE_VALUE);
+  });
+
+  it('full sv-ticket only: the offline checker still passes — exit 2 without a key, 0 with --key, presented states OK', async () => {
+    const { doc, kp } = await buildFullTicketExport('<sv-ticket ref="t1" variant="full"></sv-ticket>');
+    expect(await cli(doc, [])).toBe(2);
+    expect(await cli(doc, ['--key', kp.publicKeyHex])).toBe(0);
+    const result = await verifyExportBundle(extractProofBundle(doc), { documentHtml: doc, expectedKeyHex: kp.publicKeyHex });
+    expect(result.allValid).toBe(true);
+    expect(result.authorizations.every(a => a.attestationValid && a.boundsHashMatches !== false)).toBe(true);
+    expect(result.elements.every(e => e.presented === 'verified' && e.backed)).toBe(true);
+  });
+
+  it('with an sv-mandate for the same mandate the intent is present (still no scope values), and the checker passes', async () => {
+    const { bundle, doc, kp } = await buildFullTicketExport('<sv-ticket ref="t1" variant="full"></sv-ticket><sv-mandate ticket="t1"></sv-mandate>');
+    expect(bundle.authorizations['authz-1'].intent).toBe(INTENT);
+    expect(doc).toContain(INTENT);
+    expect('context' in bundle.authorizations['authz-1']).toBe(false);
+    expect(await cli(doc, ['--key', kp.publicKeyHex])).toBe(0);
+    const result = await verifyExportBundle(extractProofBundle(doc), { documentHtml: doc, expectedKeyHex: kp.publicKeyHex });
+    expect(result.allValid).toBe(true);
+    expect(result.elements.every(e => e.presented === 'verified' && e.backed)).toBe(true);
+  });
+});

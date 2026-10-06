@@ -31,6 +31,9 @@ export interface ScenarioAuthorization {
   profileId: string;
   bounds?: Record<string, string | number>;
   boundsHash?: string;
+  /** Scope (context) values + hash, archived like the gateway does. */
+  context?: Record<string, string | number>;
+  contextHash?: string;
   intent?: string;
   commitmentMode?: 'automatic' | 'review' | 'review_above_cap';
   owners?: string[]; // resolved_owners DIDs
@@ -80,6 +83,7 @@ export function buildScenario() {
         version: '0.6',
         profile_id: authorization.profileId,
         bounds_hash: authorization.boundsHash,
+        ...(authorization.contextHash ? { context_hash: authorization.contextHash } : {}),
         execution_context_hash: 'sha256:test',
         gate_content_hashes: {},
         resolved_owners: authorization.owners ?? ['did:key:zOwner1'],
@@ -104,6 +108,8 @@ export function buildScenario() {
             profileId: authorization.profileId,
             boundsHash: authorization.boundsHash,
             bounds: authorization.bounds,
+            ...(authorization.context ? { context: authorization.context } : {}),
+            ...(authorization.contextHash ? { contextHash: authorization.contextHash } : {}),
             intent: authorization.intent,
             attestations,
           }

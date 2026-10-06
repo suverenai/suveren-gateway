@@ -58,8 +58,11 @@ export interface ExportBundle {
    *  period, so "not referenced" is itself checkable. */
   tickets: Record<string, unknown>[];
   /** Keyed by authorizationId — ONLY the mandates the report places with a
-   *  verified `sv-mandate` (RR5, "the proof follows the report"). Every other
-   *  ticket is in `tickets` bare: its own signature still verifies it. */
+   *  verified `sv-mandate` or full `sv-ticket` (RR5/RR7, "the proof follows
+   *  the report"), reduced to what that element draws plus what verifies it:
+   *  `intent` only for an sv-mandate, scope (`context`) values never
+   *  (export-report.ts#buildExportBundle). Every other ticket is in `tickets`
+   *  bare: its own signature still verifies it. */
   authorizations: Record<string, ArchivedAuthorization>;
 }
 

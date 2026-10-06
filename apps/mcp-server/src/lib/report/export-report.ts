@@ -47,11 +47,21 @@ function receiptId(receipt: Record<string, unknown>): string {
  * signed payload; its signature covers the ticket itself, so a bare ticket is
  * fully verifiable on its own.
  *
- * Mandates: a mandate's data (bounds, scope, intent, attestation) goes in ONLY
- * when the report places an `sv-mandate` for one of its tickets AND that
- * element verified — the one place the report shows that data, and the one
- * element the offline checker needs it for (verify-export.ts). Every other
- * ticket goes in bare.
+ * Mandates: the bundle carries exactly what the report SHOWS of a mandate,
+ * plus what is needed to verify it (RR7 — closes the last SR2 gap):
+ *   - a mandate goes in only when a verified element places it — an
+ *     `sv-mandate`, or a full `sv-ticket` whose mandate group resolved;
+ *   - always: its attestation blob(s) (signed; commit to the bounds/scope/
+ *     intent by HASH only — `bounds_hash`, `context_hash`,
+ *     `gate_content_hashes.intent`), its hashes, and its bounds VALUES (both
+ *     elements draw them, render-report.ts `mandateRows`);
+ *   - the intent TEXT only when an `sv-mandate` places the mandate — the one
+ *     element that draws it. A full ticket draws limits/mode/owner, never the
+ *     intent, so its mandate travels without it;
+ *   - never the scope (context) VALUES: no element draws them. `contextHash`
+ *     stays, as the signed commitment.
+ * Nothing in verify-export.ts reads the intent or scope values, so a missing
+ * one never fails a check. Every other ticket goes in bare.
  */
 export function buildExportBundle(params: BuildExportBundleParams): ExportBundle {
   const { stored, archive, authorityServer, gatewayVersion, now = Math.floor(Date.now() / 1000) } = params;
@@ -63,22 +73,36 @@ export function buildExportBundle(params: BuildExportBundleParams): ExportBundle
 
   const tickets = entries.map(r => r.receipt);
 
-  // A mandate is shown by an sv-mandate, and by a full sv-ticket whose
-  // mandate group resolved (render-report.ts) — both place its data.
-  const placedMandateTickets = new Set<string>([
-    ...stored.result.elements
-      .filter(e => e.kind === 'sv-mandate' && e.status !== 'unverifiable' && e.attrs.ticket)
-      .map(e => e.attrs.ticket),
-    ...stored.result.elements
-      .filter(e => e.kind === 'sv-ticket' && e.status !== 'unverifiable' && e.attrs.ref && e.data?.mandate)
-      .map(e => e.attrs.ref),
-  ]);
-  const authorizationIds = new Set(
-    entries.filter(r => placedMandateTickets.has(receiptId(r.receipt))).map(r => r.authorizationId),
+  const placed = stored.result.elements.filter(e => e.status !== 'unverifiable');
+  // Tickets whose mandate an sv-mandate draws (intent included).
+  const mandateCardTickets = new Set<string>(
+    placed.filter(e => e.kind === 'sv-mandate' && e.attrs.ticket).map(e => e.attrs.ticket),
   );
+  // Tickets whose mandate a full sv-ticket draws (limits/mode/owner only).
+  const fullTicketTickets = new Set<string>(
+    placed.filter(e => e.kind === 'sv-ticket' && e.attrs.ref && e.data?.mandate).map(e => e.attrs.ref),
+  );
+  const authOf = (set: Set<string>) =>
+    new Set(entries.filter(r => set.has(receiptId(r.receipt))).map(r => r.authorizationId));
+  const withIntent = authOf(mandateCardTickets);
+  const withoutIntent = authOf(fullTicketTickets);
+
   const authorizations: Record<string, ArchivedAuthorization> = {};
   for (const a of archive.getAuthorizations()) {
-    if (authorizationIds.has(a.authorizationId)) authorizations[a.authorizationId] = a;
+    if (!withIntent.has(a.authorizationId) && !withoutIntent.has(a.authorizationId)) continue;
+    // Whitelist, not a copy-then-delete: a field added to the archive later
+    // never slips into the file unseen.
+    const out: ArchivedAuthorization = {
+      authorizationId: a.authorizationId,
+      profileId: a.profileId,
+      ...(a.boundsHash !== undefined ? { boundsHash: a.boundsHash } : {}),
+      ...(a.contextHash !== undefined ? { contextHash: a.contextHash } : {}),
+      ...(a.bounds !== undefined ? { bounds: a.bounds } : {}),
+      ...(withIntent.has(a.authorizationId) && a.intent !== undefined ? { intent: a.intent } : {}),
+      attestations: a.attestations,
+      archivedAt: a.archivedAt,
+    };
+    authorizations[a.authorizationId] = out;
   }
 
   return {
