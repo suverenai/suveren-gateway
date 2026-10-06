@@ -23,6 +23,7 @@
 import { Parser } from 'htmlparser2';
 import { verifyReceiptSignature, verifyAttestationSignature, decodeAttestationBlob } from '@hap/core';
 import { parseElements } from './parse-elements';
+import { sanitizeReportHtml } from './sanitize';
 import { parseCaseAttrs } from './case-resolvers';
 import { fingerprintOf } from '../as-pairing';
 import type { ArchivedAuthorization } from '../receipt-archive';
@@ -34,7 +35,7 @@ import type { ExportBundle } from './export-types';
  *  (which could itself have been tampered with alongside everything else). */
 export function collectReferencedTicketIds(html: string): Set<string> {
   const ids = new Set<string>();
-  for (const el of parseElements(html)) {
+  for (const el of reportElements(html)) {
     if (el.kind === 'sv-ticket' && el.attrs.ref) ids.add(el.attrs.ref);
     if ((el.kind === 'sv-approval' || el.kind === 'sv-mandate') && el.attrs.ticket) ids.add(el.attrs.ticket);
     if (el.kind === 'sv-case') {
@@ -44,6 +45,15 @@ export function collectReferencedTicketIds(html: string): Set<string> {
     }
   }
   return ids;
+}
+
+/** The report's elements exactly as the gateway drew them: the raw html
+ *  through the same two-tag sanitizer (sanitize.ts), so the ids match the
+ *  drawn markup — content the gateway dropped (an sv-* inside sv-ai, a block
+ *  outside the format) was never presented and is not checked. Glossary
+ *  entries are not elements; the checker ignores them. */
+function reportElements(html: string) {
+  return parseElements(sanitizeReportHtml(html));
 }
 
 /** The ticket ids ONE parsed element names — same rules as
@@ -64,7 +74,9 @@ const TICKET_BACKED_KINDS = new Set(['sv-ticket', 'sv-approval', 'sv-mandate', '
  *  element. Markers come from `render-report.ts`: every drawn element is a
  *  `<div class="sv-el sv-el-<status>" data-sv-id="<id>">` whose status is
  *  `verified` | `warning` | `unverifiable`, and carries a `sv-badge-ok` /
- *  `sv-badge-warn` / `sv-badge-bad` badge.
+ *  `sv-badge-warn` / `sv-badge-bad` badge. A verified seal also names its
+ *  source (`data-sv-source="signed|archive|database|computed"`, "✓ verified ·
+ *  signed") — any badge carrying a source is a verified claim.
  *
  *  'not-verifiable' ONLY when every drawn node for that id has the
  *  `sv-el-unverifiable` class, no `sv-el-verified`/`sv-el-warning` class, at
@@ -80,7 +92,8 @@ export function collectPresentedStates(documentHtml: string): Map<string, Presen
   // The embedded proof JSON carries the AI's raw html (sv-* tags, never drawn
   // divs) — drop it so nothing inside it can ever be read as drawn markup.
   const html = documentHtml.replace(PROOF_SCRIPT_BLOCK_RE, '');
-  interface Frame { id: string; depth: number; classes: Set<string>; badges: Set<string>[] }
+  interface Badge { classes: Set<string>; hasSource: boolean }
+  interface Frame { id: string; depth: number; classes: Set<string>; badges: Badge[] }
   const open: Frame[] = [];
   const flaggedById = new Map<string, boolean>();
   let depth = 0;
@@ -91,7 +104,9 @@ export function collectPresentedStates(documentHtml: string): Map<string, Presen
       f.classes.has('sv-el-unverifiable') &&
       !f.classes.has('sv-el-verified') && !f.classes.has('sv-el-warning') &&
       f.badges.length > 0 &&
-      f.badges.every(b => b.has('sv-badge-bad') && !b.has('sv-badge-ok') && !b.has('sv-badge-warn'));
+      f.badges.every(b =>
+        b.classes.has('sv-badge-bad') && !b.classes.has('sv-badge-ok') && !b.classes.has('sv-badge-warn') &&
+        !b.classes.has('sv-seal') && !b.hasSource);
     // Several drawn nodes with one id: flagged only if ALL are flagged.
     flaggedById.set(f.id, (flaggedById.get(f.id) ?? true) && flagged);
   };
@@ -101,8 +116,9 @@ export function collectPresentedStates(documentHtml: string): Map<string, Presen
       onopentag(_name, attribs) {
         depth++;
         const classes = classesOf(attribs);
-        if ([...classes].some(c => c.startsWith('sv-badge'))) {
-          for (const f of open) f.badges.push(classes);
+        const hasSource = typeof attribs['data-sv-source'] === 'string';
+        if (hasSource || [...classes].some(c => c.startsWith('sv-badge') || c === 'sv-seal')) {
+          for (const f of open) f.badges.push({ classes, hasSource });
         }
         const id = attribs['data-sv-id'];
         if (typeof id === 'string' && id) open.push({ id, depth, classes, badges: [] });
@@ -263,7 +279,7 @@ export async function verifyExportBundle(bundle: ExportBundle, opts: VerifyExpor
   const presentedStates = opts.documentHtml !== undefined ? collectPresentedStates(opts.documentHtml) : new Map<string, PresentedState>();
 
   const elements: ElementVerification[] = [];
-  for (const el of parseElements(bundle.report.html)) {
+  for (const el of reportElements(bundle.report.html)) {
     if (!TICKET_BACKED_KINDS.has(el.kind)) continue;
     const ticketIds = ticketIdsOf(el);
     const presented: PresentedState = presentedStates.get(el.id) ?? 'verified';

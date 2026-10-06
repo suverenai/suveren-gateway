@@ -7,7 +7,8 @@
 import { describe, it, expect } from 'vitest';
 import { verifyReceiptSignature, type ReceiptPayload } from '@hap/core';
 import { verifyReport } from '../../src/lib/report/verify-report';
-import { renderReportHtml, AI_ANALYSIS_LABEL } from '../../src/lib/report/render-report';
+import { renderReportHtml, AI_ANALYSIS_LABEL, GLOSS_LEGEND_TEXT } from '../../src/lib/report/render-report';
+import { formatTimestamp } from '../../src/lib/report/format';
 import { buildExportBundle, buildExportDocument, suggestedFilename } from '../../src/lib/report/export-report';
 import { extractProofBundle, runVerifyReportCli } from '../../bin/report-verify-cli';
 import { verifyExportBundle } from '../../src/lib/report/verify-export';
@@ -40,7 +41,7 @@ describe('buildExportBundle', () => {
       authorization: { authorizationId: 'authz-other', profileId: 'test-profile', boundsHash: 'bh-other' },
     });
 
-    const html = '<h1>Report</h1><sv-ticket ref="t-ref"></sv-ticket>';
+    const html = '<sv-ai><h1>Report</h1></sv-ai><sv-ticket ref="t-ref"></sv-ticket>';
     const stored = await buildStored(html, archive);
 
     const bundle = buildExportBundle({
@@ -66,17 +67,18 @@ describe('buildExportBundle', () => {
 });
 
 describe('buildExportDocument — round trip + safety', () => {
-  async function buildRealExport() {
+  async function buildRealExport(opts: { glossary?: boolean } = {}) {
     const { archive, addTicket, kp } = buildScenario();
     addTicket({
       id: 't1', action: 'erp__create_quote', authorizationId: 'authz-1', timestamp: 1_800_000_000,
       authorization: { authorizationId: 'authz-1', profileId: 'test-profile', boundsHash: 'bh-1', intent: 'Quote up to 1000' },
     });
-    const html = '<h1>Three-week test</h1><sv-ticket ref="t1"></sv-ticket><sv-mandate ticket="t1"></sv-mandate>';
+    const html = '<sv-ai><h1>Three-week test</h1></sv-ai><sv-ticket ref="t1" variant="full"></sv-ticket><sv-mandate ticket="t1"></sv-mandate>' +
+      (opts.glossary ? '<sv-glossary lang="de"><sv-term key="action">Aktion</sv-term></sv-glossary>' : '');
     const stored = await buildStored(html, archive);
     const bundle = buildExportBundle({ stored, archive, gatewayVersion: '0.0.0-test', authorityServer: { url: AS_URL, publicKeyHex: kp.publicKeyHex } });
     // The same call the real export route makes (http.ts).
-    const renderedHtml = renderReportHtml(stored.result.html, stored.result.elements);
+    const renderedHtml = renderReportHtml(stored.result.html, stored.result.elements, { gloss: 'toggle' });
     const doc = buildExportDocument({ bundle, renderedHtml });
     return { doc, bundle, kp };
   }
@@ -87,8 +89,10 @@ describe('buildExportDocument — round trip + safety', () => {
     expect(header).toContain('class="sv-export-legend"');
     expect(header).toContain(AI_ANALYSIS_LABEL);
     const main = doc.slice(doc.indexOf('<div class="sv-export-main">'));
-    expect(main.indexOf('class="sv-ai-legend"')).toBeGreaterThan(-1);
-    expect(main.indexOf('class="sv-ai-legend"')).toBeLessThan(main.indexOf('Three-week test'));
+    expect(main.indexOf('class="sv-legend"')).toBeGreaterThan(-1);
+    expect(main.indexOf('class="sv-legend"')).toBeLessThan(main.indexOf('Three-week test'));
+    // ...and the AI's content itself sits in a labelled grey frame.
+    expect(main).toMatch(new RegExp(`<span class="sv-ai-label">${AI_ANALYSIS_LABEL}</span><div class="sv-ai-block"><div class="sv-ai-content"><h1>Three-week test</h1>`));
   });
 
   it('the public check link is a plain new-tab link in the file (no sandbox, no in-app route)', async () => {
@@ -149,14 +153,17 @@ describe('buildExportDocument — round trip + safety', () => {
 
   it('fix 2: exported/checked timestamps share one local format and the zone is stated once', async () => {
     const { doc, bundle } = await buildRealExport();
-    // Same "D Mon, HH:MM" shape the gateway-drawn ticket card uses (format.ts's
-    // formatDateTime) — never the old "...T...Z"/"21:43 UTC" ISO mix.
-    expect(doc).not.toMatch(/\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/);
-    expect(doc).toMatch(/exported \d{1,2} \w{3} \d{4}, \d{2}:\d{2}/);
-    expect(doc).toMatch(/checked \d{1,2} \w{3}, \d{2}:\d{2}/);
-    // The zone is named exactly once, in the header — never repeated per line.
-    const tzMentions = doc.match(/UTC[+-]\d/g) ?? [];
-    expect(tzMentions.length).toBe(1);
+    // The header keeps its plain "D Mon, HH:MM" shape — never an ISO mix.
+    const header = doc.slice(doc.indexOf('<div class="sv-export-header">'), doc.indexOf('<div class="sv-export-layout">'));
+    expect(header).not.toMatch(/\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/);
+    expect(header).toMatch(/exported \d{1,2} \w{3} \d{4}, \d{2}:\d{2}/);
+    expect(header).toMatch(/checked \d{1,2} \w{3}, \d{2}:\d{2}/);
+    expect((header.match(/UTC[+-]\d/g) ?? []).length).toBe(1);
+    // Inside the verified boxes a signed timestamp is the one deterministic
+    // full format (two-tag rule, RR6), never the raw unix seconds.
+    expect(doc).toContain(formatTimestamp(1_800_000_000));
+    const visible = doc.replace(/<script type="application\/json" id="suveren-proof">[\s\S]*?<\/script>/, '');
+    expect(visible).not.toContain('1800000000');
     void bundle;
   });
 
@@ -180,6 +187,46 @@ describe('buildExportDocument — round trip + safety', () => {
     expect(visibleHtml).not.toMatch(/spawn email-mcp/);
     expect(visibleHtml).toMatch(/the email simulator could not be read/i);
     expect(visibleHtml).toMatch(/all saved tickets were counted/i);
+  });
+
+  it('a report with a glossary gets a CSS-only translation switch (off by default) and the gloss legend; still no script', async () => {
+    const { doc } = await buildRealExport({ glossary: true });
+    expect(doc).toContain('<input type="checkbox" id="sv-gloss-toggle" class="sv-toggle-input">');
+    expect(doc).not.toMatch(/<input[^>]*checked/);
+    expect(doc).toContain('Übersetzung anzeigen / show translation');
+    expect(doc).toContain(GLOSS_LEGEND_TEXT);
+    expect(doc).toContain('#sv-gloss-toggle:checked ~ .sv-export-layout .sv-gloss-toggle-mode ruby.sv-gloss rt { display:ruby-text; }');
+    expect(doc).toContain('<ruby class="sv-gloss"><span class="sv-k">action</span><rt>Aktion</rt></ruby>');
+    // The toggle input precedes the layout as a sibling (the selector needs it).
+    expect(doc.indexOf('id="sv-gloss-toggle"')).toBeLessThan(doc.indexOf('<div class="sv-export-layout">'));
+    const scriptOpens = doc.match(/<script\b[^>]*>/gi) ?? [];
+    expect(scriptOpens).toHaveLength(1);
+    expect(scriptOpens[0]).toMatch(/type="application\/json"/);
+  });
+
+  it('without a glossary there is no switch and no gloss markup', async () => {
+    const { doc } = await buildRealExport();
+    expect(doc).not.toContain('sv-gloss-toggle"');
+    expect(doc).not.toContain('<ruby');
+  });
+
+  it('the file carries a CSP that runs nothing and loads nothing', async () => {
+    const { doc } = await buildRealExport();
+    const head = doc.slice(0, doc.indexOf('</head>'));
+    expect(head).toContain(`<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:">`);
+  });
+
+  it('a full sv-ticket places its mandate, so the mandate travels in the bundle', async () => {
+    const { archive, addTicket, kp } = buildScenario();
+    addTicket({
+      id: 't1', action: 'erp__create_quote', authorizationId: 'authz-1', timestamp: 1_800_000_000,
+      authorization: { authorizationId: 'authz-1', profileId: 'test-profile', boundsHash: 'bh-1', bounds: { value_max: 1000 } },
+    });
+    const full = await buildStored('<sv-ticket ref="t1" variant="full"></sv-ticket>', archive);
+    const compact = await buildStored('<sv-ticket ref="t1" variant="compact"></sv-ticket>', archive);
+    const as = { url: AS_URL, publicKeyHex: kp.publicKeyHex };
+    expect(Object.keys(buildExportBundle({ stored: full, archive, gatewayVersion: 't', authorityServer: as }).authorizations)).toEqual(['authz-1']);
+    expect(buildExportBundle({ stored: compact, archive, gatewayVersion: 't', authorityServer: as }).authorizations).toEqual({});
   });
 
   it('filename is suveren-report-<date>.html', async () => {
@@ -230,7 +277,7 @@ describe('RR5 — the proof follows the report: mandate data only for a placed s
       authorization: { authorizationId: 'authz-hidden', profileId: 'test-profile', boundsHash: 'bh-hidden', intent: HIDDEN_INTENT, bounds: { discount_max: 5 } },
     });
     addTicket({ id: 't-coverage-only', action: 'erp__send_quote', authorizationId: 'authz-hidden', timestamp: 1_800_000_200 });
-    const html = '<h1>Week</h1><sv-ticket ref="t-shown"></sv-ticket><sv-mandate ticket="t-shown"></sv-mandate><sv-ticket ref="t-bare"></sv-ticket>';
+    const html = '<sv-ai><h1>Week</h1></sv-ai><sv-ticket ref="t-shown"></sv-ticket><sv-mandate ticket="t-shown"></sv-mandate><sv-ticket ref="t-bare"></sv-ticket>';
     const stored = await buildStored(html, archive);
     const bundle = buildExportBundle({ stored, archive, gatewayVersion: 'test', authorityServer: { url: AS_URL, publicKeyHex: kp.publicKeyHex } });
     const doc = buildExportDocument({ bundle, renderedHtml: renderReportHtml(stored.result.html, stored.result.elements) });

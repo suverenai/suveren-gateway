@@ -206,14 +206,22 @@ export function resolveDetailTicketId(element: ReportElement | undefined, ticket
  */
 export const REPORT_IFRAME_SANDBOX = 'allow-popups allow-popups-to-escape-sandbox';
 
-/** The words the gateway uses for the AI's own content — the same text the
- *  mcp-server draws into the frame and the export (render-report.ts
- *  AI_ANALYSIS_LABEL / AI_LEGEND_TEXT; kept in step by hand, see the
- *  client-side formatting note below). */
+/** The words the gateway uses for its legend — the same text the mcp-server
+ *  draws into the frame and the export (render-report.ts AI_ANALYSIS_LABEL /
+ *  VERIFIED_LEGEND_TEXT / AI_LEGEND_TEXT / GLOSS_LEGEND_TEXT; kept in step by
+ *  hand and pinned by a parity test there). */
 export const AI_ANALYSIS_LABEL_CLIENT = 'AI analysis — not verified';
-export const AI_LEGEND_TEXT_CLIENT =
-  'Boxes with a green ✓ are drawn and checked by the gateway, and each one is listed under “Checked values”. ' +
-  "Everything else is the AI's own analysis and is not verified.";
+export const VERIFIED_LEGEND_TEXT_CLIENT = 'Green = verified by the gateway — raw signed fields only';
+export const AI_LEGEND_TEXT_CLIENT = "Grey dashed = the AI's own analysis, not verified";
+export const GLOSS_LEGEND_TEXT_CLIENT = '= translation by the AI, not verified';
+export const GLOSS_SWITCH_LABEL = 'Übersetzung anzeigen / show translation';
+
+/** Which server-rendered variant the frame shows (RR6): the glossed one only
+ *  when the reader switched translation on AND the server drew one. The
+ *  switch never runs anything inside the frame — it swaps the srcdoc. */
+export function pickRenderedHtml(report: Pick<ReportModel, 'renderedHtml' | 'renderedHtmlGloss'>, glossOn: boolean): string {
+  return glossOn && report.renderedHtmlGloss ? report.renderedHtmlGloss : report.renderedHtml;
+}
 
 /** Search params that open the detail panel for one element (optionally one
  *  ticket of it) — set through the router, so it never reloads the page. */
@@ -257,19 +265,15 @@ export function caseDetailSteps(element: ReportElement | undefined): Array<{ tic
   }));
 }
 
-/** Wraps the gateway-rendered HTML with the CSP meta tag the iframe srcdoc
- *  needs (plan: "no JavaScript ... CSP meta in the srcdoc"). No script tag
- *  can run even without this (the sandbox omits allow-scripts) — the CSP is
- *  defense in depth against inline event handlers sanitize-html missed. */
+/** Wraps the gateway-rendered HTML FRAGMENT in a full document with the CSP
+ *  meta tag (plan: "no JavaScript ... CSP meta in the srcdoc"). No script can
+ *  run even without it (the sandbox omits allow-scripts) — the CSP is defense
+ *  in depth. Always a fresh document: the server renders a fragment (RR6),
+ *  and hunting for an existing <head> would match an AI <header> element,
+ *  putting the CSP inside the body where browsers ignore it. */
 export function buildSrcDoc(renderedHtml: string): string {
   const csp = '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; img-src data:;">';
-  if (/<head[^>]*>/i.test(renderedHtml)) {
-    return renderedHtml.replace(/<head([^>]*)>/i, m => `${m}${csp}`);
-  }
-  if (/<html[^>]*>/i.test(renderedHtml)) {
-    return renderedHtml.replace(/<html([^>]*)>/i, m => `${m}<head>${csp}</head>`);
-  }
-  return `<!doctype html><html><head>${csp}</head><body>${renderedHtml}</body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8">${csp}<style>body{margin:12px;background:#fff}</style></head><body>${renderedHtml}</body></html>`;
 }
 
 // ─── Detail panel ───────────────────────────────────────────────────────────
@@ -566,6 +570,8 @@ export function ReportsPage() {
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const [narrowDetailsOpen, setNarrowDetailsOpen] = useState(false);
+  // Translation switch (RR6): off by default, gateway UI outside the frame.
+  const [glossOn, setGlossOn] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
 
   // Silent refresh — no `loading` toggle, so it never replaces the page with
@@ -706,15 +712,31 @@ export function ReportsPage() {
             {/* Drawn by the gateway OUTSIDE the frame — the AI's markup cannot
                 reach, hide or restyle it (review SR5). */}
             <div className="reports-legend" role="note">
-              <b>{AI_ANALYSIS_LABEL_CLIENT}:</b> {AI_LEGEND_TEXT_CLIENT}
+              <span className="reports-legend-chip"><span className="reports-sw reports-sw-v" />{VERIFIED_LEGEND_TEXT_CLIENT}</span>
+              <span className="reports-legend-chip"><span className="reports-sw reports-sw-a" />{AI_LEGEND_TEXT_CLIENT} (“{AI_ANALYSIS_LABEL_CLIENT}”)</span>
+              {report.renderedHtmlGloss && (
+                <span className="reports-legend-chip"><i className="reports-gloss-swatch">Abc</i>&nbsp;{GLOSS_LEGEND_TEXT_CLIENT}</span>
+              )}
             </div>
+            {report.renderedHtmlGloss && (
+              <label className="reports-gloss-switch">
+                <input
+                  type="checkbox"
+                  role="switch"
+                  checked={glossOn}
+                  onChange={e => setGlossOn(e.target.checked)}
+                />
+                <span className="reports-gloss-track" aria-hidden="true"><span className="reports-gloss-thumb" /></span>
+                <span>{GLOSS_SWITCH_LABEL}</span>
+              </label>
+            )}
             <p className="form-hint" style={{ marginBottom: '0.5rem' }}>
               Written by the AI, rendered without scripts or network access. Scroll inside the report — the gateway does not auto-resize the frame. Click a checked value to see its details.
             </p>
             <iframe
               title="Report"
               sandbox={REPORT_IFRAME_SANDBOX}
-              srcDoc={buildSrcDoc(report.renderedHtml)}
+              srcDoc={buildSrcDoc(pickRenderedHtml(report, glossOn))}
               className="reports-iframe"
             />
           </div>

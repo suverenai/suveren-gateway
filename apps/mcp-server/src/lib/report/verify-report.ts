@@ -10,7 +10,7 @@
  * computed in the same pass as the cases it summarizes.
  */
 import { REPORT_ELEMENTS } from '../report-brief';
-import { sanitizeReportHtml } from './sanitize';
+import { sanitizeReport } from './sanitize';
 import { parseElements, type ParsedElement } from './parse-elements';
 import { resolveTicketElement, resolveApprovalElement, resolveMandateElement } from './ticket-resolvers';
 import { resolveRecord } from './record-resolvers';
@@ -29,7 +29,7 @@ const KNOWN_KINDS = new Set<string>(REPORT_ELEMENTS);
 type ExportOutcome = { ok: true; data: unknown } | { ok: false; reason: string };
 
 export async function verifyReport(html: string, sources: ReportSources): Promise<VerifyReportResult> {
-  const sanitized = sanitizeReportHtml(html);
+  const { html: sanitized, notes: sanitizeNotes } = sanitizeReport(html);
   const parsed = parseElements(sanitized);
 
   // One export call per system per run (plan): cache by system, not by element.
@@ -54,7 +54,18 @@ export async function verifyReport(html: string, sources: ReportSources): Promis
     try {
       switch (p.kind) {
         case 'sv-ticket': {
-          const r = await resolveTicketElement(sources.archive, p.attrs.ref ?? '');
+          const ref = p.attrs.ref ?? '';
+          const r = await resolveTicketElement(sources.archive, ref);
+          if (r.status === 'verified' && (p.attrs.variant ?? '').trim().toLowerCase() === 'full') {
+            // The full variant shows every signed field, grouped — including
+            // the mandate it ran under and its approval, where those resolve.
+            const m = await resolveMandateElement(sources.archive, ref);
+            const a = await resolveApprovalElement(sources.archive, ref);
+            const data: Record<string, unknown> = { ...r.data };
+            if (m.status === 'verified') data.mandate = m.data;
+            if (a.status === 'verified') data.approval = a.data;
+            return { id: p.id, kind: p.kind, attrs: p.attrs, status: r.status, data };
+          }
           return { id: p.id, kind: p.kind, attrs: p.attrs, ...r };
         }
         case 'sv-approval': {
@@ -168,7 +179,7 @@ export async function verifyReport(html: string, sources: ReportSources): Promis
 
       const refusalTimes = kind === 'refusals' ? await collectRefusalTimes(getExport) : [];
       const value = computeMetric(kind, caseInputs, refusalTimes);
-      const data = { kind, cases: casesAttr, value, caseCount: verifiedCount };
+      const data = { kind, cases: casesAttr, value, caseCount: verifiedCount, caseIds: caseInputs.map(c => c.caseId) };
       if (verifiedCount < requestedCount) {
         // A real, honestly-computed figure — just not over everything asked
         // for. Shown with its value (not hidden), flagged so it is never
@@ -189,7 +200,7 @@ export async function verifyReport(html: string, sources: ReportSources): Promis
   const proof = buildProof(elements, caseElements);
   const coverage = await buildCoverage(caseElements, getExport, sources.archive, proof.ticketsReferenced, sources.window);
 
-  return { html: sanitized, elements, proof, coverage };
+  return { html: sanitized, elements, proof, coverage, sanitizeNotes };
 }
 
 /** Every connector's refusals, fail-closed: a report must not silently

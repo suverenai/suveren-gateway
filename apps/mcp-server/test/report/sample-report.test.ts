@@ -66,6 +66,8 @@ describe('sample-report.html fixture', () => {
     expect(result.coverage.missingCases).toEqual(['C2']);
 
     expect(result.proof.unverifiableCount).toBe(1);
+    // The fixture follows the two-tag format: nothing is dropped.
+    expect(result.sanitizeNotes).toMatchObject({ droppedBlocks: 0, droppedSvInsideAi: 0, droppedStyles: 0 });
 
     // And the drawn render reflects all of this without inventing anything
     // for the bad reference.

@@ -1,24 +1,26 @@
 /**
- * Finds the `sv-*` elements the AI placed in its report HTML, in document
- * order — the raw material `verify-report.ts` resolves and checks. Reading
- * back exactly what `report-brief.ts` (R3) told the AI to write: the six
- * known kinds there, `REPORT_ELEMENTS`, plus anything else starting `sv-`
- * (an unknown element — the brief's contract names only six; a report that
- * invents a seventh gets "unverifiable", never silently rendered as content).
+ * Finds the verifiable `sv-*` elements the AI placed in its report HTML, in
+ * document order — the raw material `verify-report.ts` resolves and checks.
+ * The six known kinds are `REPORT_ELEMENTS` (report-brief.ts); any other
+ * `sv-*` element is returned too (a report that invents a seventh gets "not
+ * verifiable", never silently rendered as content).
+ *
+ * The report FORMAT's structural tags (`sv-ai`, `sv-row`, `sv-glossary`,
+ * `sv-term` — sanitize.ts#STRUCTURE_TAGS) are not elements and get no id;
+ * nothing inside an `sv-ai` or `sv-glossary` is an element either. Callers
+ * pass SANITIZED html (sanitize.ts), where both hold by construction — the
+ * skipping here keeps the id scheme identical even on raw input.
  *
  * Uses `htmlparser2` (already a `sanitize-html` dependency, pure JS) rather
- * than a regex over the HTML: an `sv-ticket` could legally appear inside an
- * attribute value elsewhere in the AI's free text, and real HTML can nest
- * angle brackets in ways a regex gets wrong — a parser is a second,
- * independent model of "what tag is this", not the same one twice.
+ * than a regex over the HTML.
  */
 import { Parser } from 'htmlparser2';
+import { STRUCTURE_TAGS } from './sanitize';
 
 export interface ParsedElement {
   /** Stable within one parse: `${kind}-${n}`, n = 0-based order of that kind. */
   id: string;
-  /** The tag name, lowercased by the parser (HTML custom elements are
-   *  case-insensitive but conventionally lowercase anyway). */
+  /** The tag name, lowercased by the parser. */
   kind: string;
   attrs: Record<string, string>;
 }
@@ -26,17 +28,23 @@ export interface ParsedElement {
 export function parseElements(html: string): ParsedElement[] {
   const found: ParsedElement[] = [];
   const seenCount = new Map<string, number>();
+  let opaqueDepth = 0; // inside sv-ai / sv-glossary
 
   const parser = new Parser(
     {
       onopentag(name, attribs) {
-        if (!name.startsWith('sv-')) return;
+        if (name === 'sv-ai' || name === 'sv-glossary') { opaqueDepth++; return; }
+        if (opaqueDepth > 0) return;
+        if (!name.startsWith('sv-') || STRUCTURE_TAGS.has(name)) return;
         const n = seenCount.get(name) ?? 0;
         seenCount.set(name, n + 1);
         found.push({ id: `${name}-${n}`, kind: name, attrs: { ...attribs } });
       },
+      onclosetag(name) {
+        if ((name === 'sv-ai' || name === 'sv-glossary') && opaqueDepth > 0) opaqueDepth--;
+      },
     },
-    { decodeEntities: true },
+    { decodeEntities: true, recognizeSelfClosing: true },
   );
   parser.write(html);
   parser.end();

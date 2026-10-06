@@ -211,9 +211,13 @@ describe('verifyExportBundle', () => {
     const { archive, addTicket, kp } = buildScenario();
     addTicket({ id: 't1', action: 'erp__create_quote', authorizationId: 'authz-1', timestamp: 1_800_000_000 });
     const { bundle, doc } = await buildRealExport('<sv-ticket ref="t1"></sv-ticket>', archive, kp);
+    // A downgrade replaces the whole seal (class AND its source type) with
+    // the "not verifiable" badge — a seal that still names a source counts
+    // as a verified claim (strict).
     const downgraded = doc
       .replace('sv-el sv-el-verified', 'sv-el sv-el-unverifiable')
-      .replace('sv-badge sv-badge-ok', 'sv-badge sv-badge-bad');
+      .replace(/<span class="sv-badge sv-badge-ok sv-seal" data-sv-source="signed">[^<]*<\/span>/, '<span class="sv-badge sv-badge-bad">✗ not verifiable</span>');
+    expect(downgraded).toContain('sv-badge sv-badge-bad');
 
     const result = await verifyExportBundle(bundle, { documentHtml: downgraded });
     expect(result.allValid).toBe(true);
@@ -233,6 +237,31 @@ describe('verifyExportBundle', () => {
     const result = await verifyExportBundle(bundle, { documentHtml: doc });
     expect(result.allValid).toBe(false);
     expect(result.elements[0].error).toMatch(/mandate/);
+  });
+
+  it('REFUSAL: a seal that keeps its source type stays a verified claim even with a "bad" class (strict)', async () => {
+    const { archive, addTicket, kp } = buildScenario();
+    addTicket({ id: 't1', action: 'erp__create_quote', authorizationId: 'authz-1', timestamp: 1_800_000_000 });
+    const { doc } = await buildRealExport('<sv-ticket ref="t1"></sv-ticket><sv-ticket ref="ghost"></sv-ticket>', archive, kp);
+    // The ghost's drawn badge is "bad"; graft a seal with a source type onto it.
+    const tampered = doc.replace('<span class="sv-badge sv-badge-bad">', '<span class="sv-badge sv-badge-bad" data-sv-source="signed">');
+    expect(tampered).not.toBe(doc);
+    expect(collectPresentedStates(doc).get('sv-ticket-1')).toBe('not-verifiable');
+    expect(collectPresentedStates(tampered).get('sv-ticket-1')).toBe('verified');
+  });
+
+  it('presented states read the new markup: verified cards carry a seal with a source type; glosses and sv-ai content are ignored', async () => {
+    const { archive, addTicket, kp } = buildScenario();
+    addTicket({ id: 't1', action: 'erp__create_quote', authorizationId: 'authz-1', timestamp: 1_800_000_000 });
+    const html = '<sv-ai><p>text</p><sv-ticket ref="ghost-in-ai"></sv-ticket></sv-ai><sv-ticket ref="t1"></sv-ticket>' +
+      '<sv-glossary lang="de"><sv-term key="action">Aktion</sv-term></sv-glossary>';
+    const { bundle, doc } = await buildRealExport(html, archive, kp);
+    expect(doc).toMatch(/<span class="sv-badge sv-badge-ok sv-seal" data-sv-source="signed">✓ verified · signed<\/span>/);
+    expect(collectPresentedStates(doc).get('sv-ticket-0')).toBe('verified');
+    const result = await verifyExportBundle(bundle, { documentHtml: doc });
+    // The sv-ticket inside sv-ai was never drawn, so it is not an element to check.
+    expect(result.elements.map(e => e.ticketIds)).toEqual([['t1']]);
+    expect(result.allValid).toBe(true);
   });
 
   it('collectPresentedStates: a decoy flagged node with the same id as a verified one stays verified (strict)', () => {

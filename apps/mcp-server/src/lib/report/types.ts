@@ -10,6 +10,7 @@
  */
 import type { ArchivedAuthorization, ArchivedReceipt } from '../receipt-archive';
 import type { ReportWindow } from './window';
+import type { SanitizeNotes } from './sanitize';
 
 /** The three simulator connectors a report can reference records from. */
 export type ExportSystem = 'email' | 'crm' | 'erp';
@@ -87,8 +88,12 @@ export interface CoverageSummary {
 }
 
 export interface VerifyReportResult {
-  /** The AI's HTML, sanitized — safe to render in a sandboxed, script-free view. */
+  /** The AI's HTML, sanitized under the two-tag rule (sanitize.ts) — safe to
+   *  render in a sandboxed, script-free view. */
   html: string;
+  /** What the sanitizer dropped (two-tag rule, RR6) — reported back to the AI
+   *  by write_report. Absent on results stored before RR6. */
+  sanitizeNotes?: SanitizeNotes;
   elements: VerifiedElement[];
   proof: ProofSummary;
   coverage: CoverageSummary;

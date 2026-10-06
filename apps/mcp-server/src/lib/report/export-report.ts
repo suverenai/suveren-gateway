@@ -14,7 +14,7 @@
  * Every dynamic string this module inserts outside that JSON block goes
  * through `escapeHtml`.
  */
-import { escapeHtml, DRAWN_ELEMENT_STYLES, AI_ANALYSIS_LABEL, AI_LEGEND_TEXT } from './render-report';
+import { escapeHtml, DRAWN_ELEMENT_STYLES, GLOSS_ON_STYLES, AI_ANALYSIS_LABEL, VERIFIED_LEGEND_TEXT, AI_LEGEND_TEXT, GLOSS_LEGEND_TEXT } from './render-report';
 import { formatDateTime } from './format';
 import type { ProofSummary, CoverageSummary, ReceiptArchiveReader } from './types';
 import type { StoredReport } from './report-store';
@@ -63,11 +63,16 @@ export function buildExportBundle(params: BuildExportBundleParams): ExportBundle
 
   const tickets = entries.map(r => r.receipt);
 
-  const placedMandateTickets = new Set(
-    stored.result.elements
+  // A mandate is shown by an sv-mandate, and by a full sv-ticket whose
+  // mandate group resolved (render-report.ts) — both place its data.
+  const placedMandateTickets = new Set<string>([
+    ...stored.result.elements
       .filter(e => e.kind === 'sv-mandate' && e.status !== 'unverifiable' && e.attrs.ticket)
       .map(e => e.attrs.ticket),
-  );
+    ...stored.result.elements
+      .filter(e => e.kind === 'sv-ticket' && e.status !== 'unverifiable' && e.attrs.ref && e.data?.mandate)
+      .map(e => e.attrs.ref),
+  ]);
   const authorizationIds = new Set(
     entries.filter(r => placedMandateTickets.has(receiptId(r.receipt))).map(r => r.authorizationId),
   );
@@ -140,29 +145,9 @@ function renderProofCoveragePanels(proof: ProofSummary, coverage: CoverageSummar
   );
 }
 
-// ─── Document shell helpers (same best-effort regex injection convention as
-// render-report.ts / ReportsPage.tsx's buildSrcDoc — no full HTML parse). ────
-
-function ensureHtmlDocument(html: string): string {
-  if (/<html[^>]*>/i.test(html)) return html;
-  return `<!doctype html><html><head><meta charset="utf-8"></head><body>${html}</body></html>`;
-}
-
-function injectIntoHead(html: string, insert: string): string {
-  if (/<head[^>]*>/i.test(html)) return html.replace(/<head([^>]*)>/i, m => `${m}${insert}`);
-  if (/<html[^>]*>/i.test(html)) return html.replace(/<html([^>]*)>/i, m => `${m}<head>${insert}</head>`);
-  return `<head>${insert}</head>${html}`;
-}
-
-function injectAfterBodyOpen(html: string, insert: string): string {
-  if (/<body[^>]*>/i.test(html)) return html.replace(/<body([^>]*)>/i, m => `${m}${insert}`);
-  return `${insert}${html}`;
-}
-
-function injectBeforeBodyClose(html: string, insert: string): string {
-  if (/<\/body>/i.test(html)) return html.replace(/<\/body>/i, `${insert}</body>`);
-  return `${html}${insert}`;
-}
+/** GLOSS_ON_STYLES, keyed to the export's CSS-only checkbox. */
+const GLOSS_ON_TOGGLED = GLOSS_ON_STYLES.trim().split('\n').filter(Boolean)
+  .map(rule => `#sv-gloss-toggle:checked ~ .sv-export-layout ${rule}`).join('\n');
 
 const EXPORT_PAGE_STYLES = `
 .sv-export-header { font:13px/1.5 system-ui, sans-serif; background:#f6f6f4; border-bottom:1px solid #e5e5e5; padding:14px 20px; }
@@ -176,6 +161,18 @@ const EXPORT_PAGE_STYLES = `
 .sv-export-card-title { font-weight:700; margin-bottom:6px; }
 .sv-export-row { display:flex; justify-content:space-between; gap:10px; margin:2px 0; }
 .sv-export-note, .sv-export-missing { color:#b45309; font-size:12px; margin:4px 0 0 0; }
+.sv-export-legend { margin:6px 0 0 0; color:#3f3f46; }
+.sv-toggle-input { position:absolute; opacity:0; width:1px; height:1px; }
+.sv-translate { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:8px 0 0 0; }
+.sv-toggle-switch { display:inline-flex; cursor:pointer; }
+.sv-toggle-track { width:34px; height:18px; border-radius:999px; background:#d4d4d4; position:relative; flex:none; transition:background .15s ease; }
+.sv-toggle-thumb { position:absolute; top:2px; left:2px; width:14px; height:14px; border-radius:50%; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,.25); transition:transform .15s ease; }
+.sv-toggle-text { font-size:13px; font-weight:600; cursor:pointer; }
+#sv-gloss-toggle:checked ~ .sv-export-header .sv-toggle-track { background:#111; }
+#sv-gloss-toggle:checked ~ .sv-export-header .sv-toggle-thumb { transform:translateX(16px); }
+#sv-gloss-toggle:focus-visible ~ .sv-export-header .sv-toggle-track { outline:2px solid #1d4ed8; outline-offset:2px; }
+#sv-gloss-toggle:checked ~ .sv-export-layout .sv-gloss-toggle-mode ruby.sv-gloss rt { display:ruby-text; }
+${GLOSS_ON_TOGGLED}
 @media (max-width: 720px) {
   .sv-export-layout { flex-direction:column; }
   .sv-export-side { flex:1 1 auto; width:100%; }
@@ -213,8 +210,8 @@ function utcOffsetLabel(value: number): string {
 
 export interface BuildExportDocumentParams {
   bundle: ExportBundle;
-  /** `renderReportHtml(stored.result.html, stored.result.elements)` — exactly
-   *  what the Reports page shows, computed by the caller so this module never
+  /** `renderReportHtml(stored.result.html, stored.result.elements, { gloss:
+   *  'toggle' })` — the same strict boxes the Reports page shows, computed by the caller so this module never
    *  has to re-verify or re-derive it. */
   renderedHtml: string;
 }
@@ -229,6 +226,10 @@ export function buildExportDocument(params: BuildExportDocumentParams): string {
   const { bundle, renderedHtml } = params;
 
   const exportedDate = new Date(bundle.exportedAt * 1000).toISOString().slice(0, 10);
+  // A CSS-only translation switch, when the render carries glosses
+  // (renderReportHtml(..., { gloss: 'toggle' })). No script: a checkbox and
+  // sibling selectors.
+  const hasGloss = /<ruby class="sv-gloss">/.test(renderedHtml);
   const exportedLabel = formatDateTimeWithYear(bundle.exportedAt);
   const checkedLabel = formatDateTime(bundle.report.checkedAt);
   const tzLabel = utcOffsetLabel(bundle.exportedAt);
@@ -237,21 +238,35 @@ export function buildExportDocument(params: BuildExportDocumentParams): string {
     `<p class="sv-export-meta">Suveren Gateway ${escapeHtml(bundle.gatewayVersion)} — exported ${escapeHtml(exportedLabel)} &middot; checked ${escapeHtml(checkedLabel)} (times in ${escapeHtml(tzLabel)})</p>` +
     `<p class="sv-export-howto">How to check this report: each ticket below links to its public record on suveren.ai ("Check on suveren.ai ↗"). ` +
     `To verify this entire file offline (including every signature), run <code>suveren-gateway verify-report ${escapeHtml(suggestedFilename(bundle))}</code> from a terminal with the Suveren gateway CLI installed.</p>` +
-    // The legend again, in the gateway-owned header outside the report body
-    // (review SR5). Inline !important for the same reason as the in-body
-    // banner (render-report.ts#aiLegendBanner): the AI's <style> shares this
-    // flat document and must not be able to hide it by selector.
-    `<p class="sv-export-legend" role="note" style="display:block !important;visibility:visible !important;opacity:1 !important;margin:6px 0 0 0 !important;color:#3f3f46 !important;font:12.5px/1.45 system-ui, sans-serif !important;"><b style="display:inline !important;visibility:visible !important;color:#18181b !important;">${escapeHtml(AI_ANALYSIS_LABEL)}:</b> ${escapeHtml(AI_LEGEND_TEXT)}</p>` +
+    // The legend again, in the gateway-owned header outside the report body.
+    // No AI stylesheet can exist (sanitize.ts: inline styles only), so plain
+    // classes are enough — nothing the AI writes can select them.
+    `<p class="sv-export-legend" role="note"><b>${escapeHtml(VERIFIED_LEGEND_TEXT)}.</b> ${escapeHtml(AI_LEGEND_TEXT)} (“${escapeHtml(AI_ANALYSIS_LABEL)}”).` +
+    (hasGloss ? ` <i>Abc</i> ${escapeHtml(GLOSS_LEGEND_TEXT)}.` : '') + `</p>` +
+    (hasGloss
+      ? `<div class="sv-translate"><label for="sv-gloss-toggle" class="sv-toggle-switch" aria-hidden="true"><span class="sv-toggle-track"><span class="sv-toggle-thumb"></span></span></label>` +
+        `<label for="sv-gloss-toggle" class="sv-toggle-text">Übersetzung anzeigen / show translation</label></div>`
+      : '') +
     `</div>`;
 
   const proofScriptJson = JSON.stringify(bundle).replace(/<\//g, '<\\/');
   const proofScript = `<script type="application/json" id="suveren-proof">${proofScriptJson}</script>`;
 
-  let doc = ensureHtmlDocument(renderedHtml);
-  doc = injectIntoHead(doc, `<meta charset="utf-8"><title>Suveren report export — ${escapeHtml(exportedDate)}</title><style>${DRAWN_ELEMENT_STYLES}${EXPORT_PAGE_STYLES}</style>`);
-  doc = injectAfterBodyOpen(doc, headerHtml + `<div class="sv-export-layout"><div class="sv-export-main">`);
-  doc = injectBeforeBodyClose(doc, `</div>${renderProofCoveragePanels(bundle.proof, bundle.coverage)}</div>${proofScript}`);
-  return doc;
+  // CSP: the file runs nothing and loads nothing, even opened outside the
+  // gateway's sandboxed frame (the JSON data block is not executable).
+  const csp = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:">`;
+  const head = `<meta charset="utf-8">${csp}<title>Suveren report export — ${escapeHtml(exportedDate)}</title><style>${DRAWN_ELEMENT_STYLES}${EXPORT_PAGE_STYLES}</style>`;
+  const toggleInput = hasGloss ? `<input type="checkbox" id="sv-gloss-toggle" class="sv-toggle-input">` : '';
+  // Always a fresh document around the rendered FRAGMENT (renderReportHtml
+  // returns one) — never a regex hunt for <head>/<body> inside it, which an
+  // AI <header> element would match.
+  return (
+    `<!doctype html><html lang="en"><head>${head}</head><body>` +
+    toggleInput + headerHtml +
+    `<div class="sv-export-layout"><div class="sv-export-main">${renderedHtml}</div>` +
+    `${renderProofCoveragePanels(bundle.proof, bundle.coverage)}</div>${proofScript}` +
+    `</body></html>`
+  );
 }
 
 /** `suveren-report-<YYYY-MM-DD>.html` — the download's own filename, and the

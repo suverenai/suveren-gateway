@@ -238,7 +238,7 @@ describe('without a reporting mandate', () => {
 
     for (const name of ['list_tickets', 'get_ticket', 'list_cases', 'get_records', 'write_report']) {
       const tool = tools[name];
-      const r = await createGatedToolHandler(tool, im, state)({ id: 'x', html: '<p>x</p>', system: 'email' });
+      const r = await createGatedToolHandler(tool, im, state)({ id: 'x', html: '<sv-ai><p>x</p></sv-ai>', system: 'email' });
       expect(r.isError, `${name} should be refused without a mandate`).toBe(true);
     }
     expect(postReceipt).not.toHaveBeenCalled();
@@ -377,13 +377,36 @@ describe('write_report', () => {
   it('automatic mandate: goes through the real tool-proxy, gets a ticket, the handler stores + verifies, AI gets a summary', async () => {
     const { tools, im, state, postReceipt, reportStore, cleanup } = setup([auth(REPORTING_BOUNDS)]);
 
-    const r = await createGatedToolHandler(tools.write_report, im, state)({ html: '<p>hello</p>' });
+    const r = await createGatedToolHandler(tools.write_report, im, state)({ html: '<sv-ai><p>hello</p></sv-ai>' });
     expect(r.isError, r.content[0]?.text).toBeFalsy();
     expect(postReceipt).toHaveBeenCalledWith(expect.objectContaining({ action: 'report__write_report', actionType: 'report' }));
     // content-binding.ts injects receipt_id because the input schema declares it.
     expect(reportStore.getReport()?.html).toContain('hello');
     expect(r.content[0].text).toMatch(/stored/i);
     expect(r.content[0].text).toMatch(/0 element\(s\) verified, 0 warning\(s\), 0 not verifiable/);
+    cleanup();
+  });
+
+  it('two-tag rule: tells the AI what was dropped and which glossary terms were refused (RR6)', async () => {
+    const { tools, im, state, scenario, reportStore, cleanup } = setup([auth(REPORTING_BOUNDS)]);
+    scenario.addTicket({ id: 'tk-real', action: 'erp__create_quote', authorizationId: 'authz-x', timestamp: nowS() - 1000 });
+    const html =
+      '<h1>Loose</h1><p>loose</p>' +
+      '<sv-ai><style>*{color:red}</style><p>mine</p><sv-ticket ref="tk-real"></sv-ticket></sv-ai>' +
+      '<sv-ticket ref="tk-real"></sv-ticket>' +
+      '<sv-glossary lang="de"><sv-term key="erp__create_quote">Angebot erstellt</sv-term><sv-term key="tk-real">Beleg</sv-term></sv-glossary>';
+    const r = await createGatedToolHandler(tools.write_report, im, state)({ html });
+    expect(r.isError, r.content[0]?.text).toBeFalsy();
+    const text = r.content[0].text;
+    expect(text).toMatch(/dropped: 2 block\(s\) outside sv-ai/);
+    expect(text).toMatch(/dropped: 1 sv-\* element\(s\) inside sv-ai/);
+    expect(text).toMatch(/dropped: 1 <style> block\(s\)/);
+    expect(text).toMatch(/Glossary: 1 term\(s\) shown/);
+    expect(text).toMatch(/ignored "tk-real": not a field name or fixed word/);
+    expect(text).toMatch(/Reporting window: since /);
+    // Stored is the sanitized report: the loose content is gone.
+    expect(reportStore.getReport()?.html).not.toContain('Loose');
+    expect(reportStore.getReport()?.result.elements).toHaveLength(1);
     cleanup();
   });
 
@@ -677,7 +700,7 @@ describe('reporting window (RR2) — simulation mode, and reporting@0.1 refused'
         expect(r.content[0].text, name).toMatch(/older profile version — create a new reporting mandate \(reporting@0\.2\)/);
         expect(r.content[0].text, name).not.toContain('tk-1');
       }
-      const w = await createGatedToolHandler(t.tools.write_report, t.im, t.state)({ html: '<p>x</p>' });
+      const w = await createGatedToolHandler(t.tools.write_report, t.im, t.state)({ html: '<sv-ai><p>x</p></sv-ai>' });
       expect(w.isError).toBe(true);
       expect(w.content[0].text).toMatch(/older profile version/);
       expect(t.postReceipt).not.toHaveBeenCalled(); // refused before a ticket was requested

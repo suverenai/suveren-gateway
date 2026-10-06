@@ -17,6 +17,8 @@ import {
   runExportAndRefresh,
   REPORT_IFRAME_SANDBOX,
   AI_ANALYSIS_LABEL_CLIENT,
+  GLOSS_SWITCH_LABEL,
+  pickRenderedHtml,
   detailSearchParams,
   unverifiableRows,
   caseDetailSteps,
@@ -416,15 +418,10 @@ describe('factSummaryLines — human-first ticket/mandate/approval detail summar
 });
 
 describe('buildSrcDoc — CSP meta for the sandboxed iframe', () => {
-  it('injects the CSP meta into an existing <head>', () => {
-    const out = buildSrcDoc('<html><head><title>x</title></head><body>hi</body></html>');
-    expect(out).toMatch(/<head><meta http-equiv="Content-Security-Policy"/);
-    expect(out).toContain('hi');
-  });
-
-  it('adds a <head> when only <html> exists', () => {
-    const out = buildSrcDoc('<html><body>hi</body></html>');
-    expect(out).toMatch(/<html><head><meta http-equiv="Content-Security-Policy"/);
+  it('REFUSAL: an AI <header> element never receives the CSP (it would be ignored inside the body)', () => {
+    const out = buildSrcDoc('<div class="sv-ai-content"><header>AI</header></div>');
+    expect(out.indexOf('Content-Security-Policy')).toBeLessThan(out.indexOf('<body>'));
+    expect(out).toContain('<header>AI</header>');
   });
 
   it('wraps a bare fragment in a full document with the CSP meta', () => {
@@ -526,5 +523,21 @@ describe('AI analysis legend outside the frame', () => {
     expect(AI_ANALYSIS_LABEL_CLIENT).toBe('AI analysis — not verified');
     const src = readFileSync(resolve(__dirname, 'ReportsPage.tsx'), 'utf-8');
     expect(src).toMatch(/className="reports-legend"/);
+  });
+});
+
+describe('translation switch (two-tag rule, RR6)', () => {
+  it('shows the glossed render only when switched on AND the server drew one', () => {
+    expect(pickRenderedHtml({ renderedHtml: 'OFF', renderedHtmlGloss: 'ON' }, false)).toBe('OFF');
+    expect(pickRenderedHtml({ renderedHtml: 'OFF', renderedHtmlGloss: 'ON' }, true)).toBe('ON');
+    expect(pickRenderedHtml({ renderedHtml: 'OFF' }, true)).toBe('OFF');
+  });
+
+  it('the switch is gateway UI outside the frame, off by default, and puts no script in the frame', () => {
+    const src = readFileSync(resolve(__dirname, 'ReportsPage.tsx'), 'utf-8');
+    expect(GLOSS_SWITCH_LABEL).toBe('Übersetzung anzeigen / show translation');
+    expect(src).toContain('useState(false);\n  const [searchParams');
+    expect(src).toContain('srcDoc={buildSrcDoc(pickRenderedHtml(report, glossOn))}');
+    expect(buildSrcDoc('<p>x</p>')).not.toMatch(/<script/i);
   });
 });

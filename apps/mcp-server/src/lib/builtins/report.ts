@@ -49,7 +49,7 @@
 import { REPORT_BRIEF } from '../report-brief';
 import { builtinText, type BuiltinIntegration, type BuiltinTool } from '../builtin-integration';
 import {
-  buildTicketDetails,
+  buildTicketDetails, glossaryUsage,
   isEmailExport, isErpExport, isCrmExport, profileShortLabel,
   type EmailExport, type ErpExport, type CrmExport, type ExportSystem,
   type VerifyReportResult,
@@ -275,7 +275,7 @@ function getRecordsTool(deps: BuiltinDeps): BuiltinTool {
   };
 }
 
-function summarizeWrite(result: VerifyReportResult): string {
+function summarizeWrite(result: VerifyReportResult, rawHtml: string): string {
   const verified = result.elements.filter((e) => e.status === 'verified');
   const warnings = result.elements.filter((e) => e.status === 'warning');
   const unverifiable = result.elements.filter((e) => e.status === 'unverifiable');
@@ -291,6 +291,19 @@ function summarizeWrite(result: VerifyReportResult): string {
   if (unverifiable.length > 0) {
     lines.push('Not verifiable — fix these references and write again:');
     for (const u of unverifiable) lines.push(`  - ${u.kind} (${u.id}): ${u.reason ?? 'unspecified'}`);
+  }
+  // Two-tag rule (RR6): say exactly what was dropped, so the AI can fix it.
+  const n = result.sanitizeNotes;
+  if (n) {
+    if (n.droppedBlocks > 0) lines.push(`dropped: ${n.droppedBlocks} block(s) outside sv-ai — put your own content inside <sv-ai>…</sv-ai>; only gateway elements, sv-row and one sv-glossary may stand outside it.`);
+    if (n.droppedSvInsideAi > 0) lines.push(`dropped: ${n.droppedSvInsideAi} sv-* element(s) inside sv-ai — place gateway elements outside sv-ai blocks.`);
+    if (n.droppedStyles > 0) lines.push(`dropped: ${n.droppedStyles} <style> block(s) — use inline style="…" attributes inside sv-ai.`);
+    if (n.extraGlossaries > 0) lines.push(`dropped: ${n.extraGlossaries} extra sv-glossary — one per report.`);
+  }
+  const g = glossaryUsage(rawHtml, result.elements);
+  if (g) {
+    lines.push(`Glossary: ${g.applied.length} term(s) shown as translation (when the reader switches it on).`);
+    for (const r of g.rejected) lines.push(`  - ignored "${r.key}": ${r.reason}`);
   }
   const cov = result.coverage;
   if (cov.window) lines.push(`Reporting window: ${cov.window.label}. Evidence from before it is not verifiable in this report.`);
@@ -364,7 +377,7 @@ function writeReportTool(deps: BuiltinDeps): BuiltinTool {
       if (!scoped.ok) return errorText(`Refused: ${scoped.reason}`);
       try {
         const stored = await deps.state.reportStore.saveReport(html, scoped.sources);
-        return builtinText(summarizeWrite(stored.result));
+        return builtinText(summarizeWrite(stored.result, html));
       } catch (err) {
         return errorText(`Could not verify and store the report: ${err instanceof Error ? err.message : String(err)}`);
       }

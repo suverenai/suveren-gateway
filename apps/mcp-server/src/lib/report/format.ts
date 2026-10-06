@@ -248,3 +248,49 @@ export function formatMetricValue(kind: string, value: unknown): string {
   }
   return String(value);
 }
+
+// ─── Verified-box timestamps (two-tag rule, RR6) ────────────────────────────
+
+/** The process's own zone for one instant: "CEST"/"CET" style when the
+ *  runtime names it, else "UTC+2" from the offset — never a guess. */
+function zoneLabel(d: Date): string {
+  try {
+    const part = new Intl.DateTimeFormat('en-GB', { timeZoneName: 'short' })
+      .formatToParts(d)
+      .find(p => p.type === 'timeZoneName')?.value;
+    if (part && /^[A-Z]{2,5}$/.test(part)) return part;
+  } catch {
+    // no ICU zone names — fall through to the numeric offset
+  }
+  const offsetMin = -d.getTimezoneOffset();
+  if (offsetMin === 0) return 'UTC';
+  const sign = offsetMin > 0 ? '+' : '-';
+  const abs = Math.abs(offsetMin);
+  const mm = abs % 60;
+  return `UTC${sign}${Math.floor(abs / 60)}${mm ? ':' + String(mm).padStart(2, '0') : ''}`;
+}
+
+/**
+ * A signed timestamp as it appears inside a verified box: "2026-10-06
+ * 09:27:34 CEST" — the one deterministic, interpretation-free transformation
+ * the two-tag rule allows (work-plan "regular reporting", decision 5). Takes
+ * unix seconds, or a connector's own date string (parsed the same way the
+ * verifier parses it). Unparseable input comes back verbatim, never invented.
+ */
+export function formatTimestamp(value: unknown): string {
+  const n = typeof value === 'number' ? value : parseTimestampSecondsLoose(value);
+  if (n === undefined || !Number.isFinite(n)) return String(value ?? '');
+  const d = new Date(n * 1000);
+  const p = (x: number) => String(x).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())} ${zoneLabel(d)}`;
+}
+
+function parseTimestampSecondsLoose(value: unknown): number | undefined {
+  if (typeof value !== 'string' || !value.trim()) return undefined;
+  if (/^\d+(\.\d+)?$/.test(value.trim())) return Number(value);
+  const iso = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}/.test(value) && !/[zZ]|[+-]\d{2}:?\d{2}$/.test(value)
+    ? `${value.replace(' ', 'T')}Z`
+    : value;
+  const ms = Date.parse(iso);
+  return Number.isFinite(ms) ? Math.floor(ms / 1000) : undefined;
+}

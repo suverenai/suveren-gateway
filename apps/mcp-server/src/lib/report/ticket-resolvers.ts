@@ -20,6 +20,7 @@ import type { ArchivedReceipt, ArchivedAuthorization } from '../receipt-archive'
 import type { ReceiptArchiveReader } from './types';
 import { formatActionLabel, formatDateTime, formatDuration, formatBoundLabel, profileShortLabel } from './format';
 import { getIdentityDirectory, ownerLabel, approverLabel } from './identity';
+import { scrubForbidden } from './agent-view';
 
 export function findReceiptEntry(archive: ReceiptArchiveReader, ticketId: string): ArchivedReceipt | undefined {
   return archive.getReceipts().find(r => (r.receipt as { id?: unknown }).id === ticketId);
@@ -91,6 +92,10 @@ export async function resolveTicketElement(archive: ReceiptArchiveReader, ref: s
       ticketId: ref,
       action: r.action,
       actionLabel: formatActionLabel(r.action),
+      actionType: r.actionType,
+      // The signed execution context, minus internal ids (agent-view.ts) —
+      // drawn verbatim by the full ticket variant (two-tag rule, RR6).
+      executionContext: scrubForbidden(r.executionContext ?? {}),
       time: r.timestamp,
       timeLabel: formatDateTime(r.timestamp),
       profile: r.profileId,

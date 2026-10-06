@@ -118,7 +118,7 @@ describe('/internal/report* auth + round trip', () => {
     const saveRes = await fetch(`${BASE_URL}/internal/report`, {
       method: 'POST',
       headers: { ...withSecret(), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ html: '<h1>Three-week test</h1><sv-ticket ref="ghost-1"></sv-ticket>' }),
+      body: JSON.stringify({ html: '<sv-ai><h1>Three-week test</h1></sv-ai><sv-ticket ref="ghost-1"></sv-ticket>' }),
     });
     expect(saveRes.status).toBe(409);
     expect((await saveRes.json()).error).toMatch(/reporting mandate/i);
@@ -153,13 +153,16 @@ describe('/internal/report* on a stored report (its own reporting window)', () =
     writeFileSync(resolve(PROFILES2, 'index.json'), JSON.stringify({ repository: 'test', profiles: {} }));
     rmSync(DATA2, { recursive: true, force: true });
     mkdirSync(DATA2, { recursive: true });
-    const html = '<h1>Three-week test</h1><sv-ticket ref="ghost-1"></sv-ticket>';
+    const html = '<sv-ai><h1>Three-week test</h1></sv-ai><sv-ticket ref="ghost-1"></sv-ticket>' +
+      '<sv-glossary lang="de"><sv-term key="erp__create_quote">Angebot erstellt</sv-term><sv-term key="ghost-1">Beleg</sv-term></sv-glossary>';
     writeFileSync(resolve(DATA2, 'report.json'), JSON.stringify({
       version: 1,
       report: {
         html, savedAt: now - 60, checkedAt: now - 60,
         result: {
-          html, elements: [],
+          // As stored by a save: one verified compact ticket (GET renders the
+          // stored result, it never re-verifies).
+          html, elements: [{ id: 'sv-ticket-0', kind: 'sv-ticket', attrs: { ref: 'ghost-1' }, status: 'verified', data: { ticketId: 'ghost-1', action: 'erp__create_quote', time: now - 120 } }],
           proof: { ticketsReferenced: [], signaturesValid: 0, recordsChecked: 0, unverifiableCount: 0, verifiedValues: [] },
           coverage: {
             loadedCases: [], coveredCases: [], missingCases: [], periodStart: window.start, window,
@@ -199,6 +202,16 @@ describe('/internal/report* on a stored report (its own reporting window)', () =
     const data = (await res.json()).report;
     expect(data.renderedHtml).toContain('Three-week test');
     expect(data.coverage.window.start).toBe(window.start);
+  });
+
+  it('GET carries two pre-rendered variants: translation off (default) and on, plus what the glossary did (RR6)', async () => {
+    const res = await fetch(`${BASE2}/internal/report`, { headers: withSecret() });
+    const data = (await res.json()).report;
+    expect(data.renderedHtml).not.toContain('<ruby');
+    expect(data.renderedHtmlGloss).toContain('<ruby class="sv-gloss"><span class="sv-v">erp__create_quote</span><rt>Angebot erstellt</rt></ruby>');
+    expect(data.renderedHtmlGloss).not.toContain('Beleg');
+    expect(data.glossary.applied).toEqual(['erp__create_quote']);
+    expect(data.glossary.rejected.map((r: { key: string }) => r.key)).toEqual(['ghost-1']);
   });
 
   it('recheck() re-verifies without requiring a new html body, and REFUSES without a secret', async () => {

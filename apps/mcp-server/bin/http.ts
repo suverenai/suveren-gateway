@@ -23,7 +23,7 @@ import { verifyGateContentHashes } from '../src/lib/gate-content';
 import type { GateContent } from '../src/lib/gate-store';
 import { IntegrationRegistry, type IntegrationConfig } from '../src/lib/integration-registry';
 import { IntegrationManager, getIntegrationsBinDir } from '../src/lib/integration-manager';
-import { createConnectorExportRunner, renderReportHtml, buildTicketDetails, buildExportBundle, buildExportDocument, suggestedFilename } from '../src/lib/report';
+import { createConnectorExportRunner, renderReportHtml, glossaryUsage, buildTicketDetails, buildExportBundle, buildExportDocument, suggestedFilename } from '../src/lib/report';
 import type { ReportSources, ReceiptArchiveReader } from '../src/lib/report';
 import { scopeReportSources, scopeReportSourcesToStoredWindow } from '../src/lib/report/window';
 import type { StoredReport } from '../src/lib/report/report-store';
@@ -796,10 +796,18 @@ async function reportResponsePayload(
     if (scoped.ok) detailArchive = scoped.sources.archive;
   }
   const ticketDetails = await buildTicketDetails(detailArchive, stored.result.proof.ticketsReferenced);
+  // Two pre-rendered variants (RR6): translation off (the default) and on.
+  // The UI's switch, outside the frame, picks one — no script in the frame.
+  // The "on" variant exists only when at least one gloss is drawn.
+  const glossary = glossaryUsage(stored.result.html, stored.result.elements);
   return {
     savedAt: stored.savedAt,
     checkedAt: stored.checkedAt,
     renderedHtml: renderReportHtml(stored.result.html, stored.result.elements),
+    ...(glossary && glossary.applied.length > 0
+      ? { renderedHtmlGloss: renderReportHtml(stored.result.html, stored.result.elements, { gloss: 'on' }) }
+      : {}),
+    ...(glossary ? { glossary } : {}),
     proof: stored.result.proof,
     coverage: stored.result.coverage,
     elements: stored.result.elements,
@@ -940,8 +948,9 @@ app.get('/internal/report/export', internalOnly, async (req: Request, res: Respo
     authorityServer,
     gatewayVersion,
   });
-  // Same render as the live page — it carries no in-app links any more.
-  const renderedHtml = renderReportHtml(stored.result.html, stored.result.elements);
+  // Same strict boxes as the live page; glosses present but hidden behind the
+  // export's CSS-only switch (RR6).
+  const renderedHtml = renderReportHtml(stored.result.html, stored.result.elements, { gloss: 'toggle' });
   const document = buildExportDocument({ bundle, renderedHtml });
 
   res
