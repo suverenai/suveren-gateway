@@ -69,6 +69,10 @@ export interface IntegrationManifest {
     command: string;
     args: string[];
     env?: Record<string, string>;
+    /** Names of gateway environment variables this connector reads (e.g. a
+     *  seed file the operator sets). Everything else is withheld — see
+     *  connector-env.ts. */
+    passEnv?: string[];
   };
   credentials: {
     fields: ManifestCredentialField[];

@@ -1,6 +1,6 @@
 {
   "name": "suveren-gateway",
-  "version": "0.19.1",
+  "version": "0.19.2",
   "private": true,
   "pnpm": {
     "onlyBuiltDependencies": [
@@ -16,7 +16,7 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
-    "react-router-dom": "^7.13.1"
+    "react-router-dom": "^7.18.4"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.2"

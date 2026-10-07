@@ -2,8 +2,11 @@ services:
   suveren:
     build: .
     ports:
-      - "${SUVEREN_UI_PORT:-7400}:3000"
-      - "${SUVEREN_MCP_PORT:-7430}:3030"
+      # Published on the host's loopback only: the agent port lets whoever
+      # connects act under the signed-in person's mandates. To reach it from
+      # other machines, change 127.0.0.1 AND set SUVEREN_MCP_TOKEN below.
+      - "127.0.0.1:${SUVEREN_UI_PORT:-7400}:3000"
+      - "127.0.0.1:${SUVEREN_MCP_PORT:-7430}:3030"
     volumes:
       - ${HOME}/.suveren:/app/data
     environment:

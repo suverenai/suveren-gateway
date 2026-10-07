@@ -76,6 +76,11 @@ ENV HAP_UI_DIST=/app/dist/ui
 ENV SUVEREN_DATA_DIR=/app/data
 ENV SUVEREN_CP_PORT=3000
 ENV SUVEREN_MCP_PORT=3030
+# A container must listen on its own interface. Whether the ports reach the
+# network is decided where they are published (docker-compose: host loopback
+# only). To expose the agent port further, also set SUVEREN_MCP_TOKEN.
+ENV SUVEREN_BIND_HOST=0.0.0.0
+ENV SUVEREN_CONTAINER=1
 ENV SUVEREN_MCP_INTERNAL_URL=http://127.0.0.1:3030
 # The documented host mapping (-p 7430:3030) — what the UI tells AI assistants
 # to connect to. Override when mapping a different host port.

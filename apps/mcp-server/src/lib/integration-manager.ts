@@ -17,6 +17,7 @@ import type { IntegrationConfig, ToolGatingConfig } from './integration-registry
 import { getManifest, isExactSemver } from './manifest-loader';
 import { remotePreflightTarget, preflightRemoteAuth } from './remote-auth-preflight';
 import { isSimulationMode, manifestIsSimulated, SIMULATION_BLOCK_REASON } from './simulation-mode';
+import { inheritedConnectorEnv } from './connector-env';
 import type { BuiltinIntegration, BuiltinStatus, MandateCandidate } from './builtin-integration';
 
 const DEFAULT_DATA_DIR = process.env.SUVEREN_DATA_DIR ?? join(homedir(), '.suveren');
@@ -737,8 +738,11 @@ export class IntegrationManager {
     // the old approach spawned `sh -c "... $VAR"`, which doesn't exist on
     // Windows and left Mollie unstartable there. We spawn the binary directly
     // and do the substitution ourselves so it works on every platform.
+    // Falls back only to the connector's inherited allowlist, never the full
+    // process env — a manifest arg must not be able to name a gateway secret.
+    const inherited = inheritedConnectorEnv(process.env, getManifest(config.id)?.mcp.passEnv);
     const interpolate = (s: string): string =>
-      s.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_m, name) => env[name] ?? process.env[name] ?? '');
+      s.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_m, name) => env[name] ?? inherited[name] ?? '');
     const args = config.args.map(interpolate);
 
     // A remote connector whose credential the remote rejects must not be
@@ -760,13 +764,13 @@ export class IntegrationManager {
     const transport = new StdioClientTransport({
       command: config.command,
       args,
-      // `...process.env` is also how a saved `--ca-file` reaches an
-      // integration: NODE_EXTRA_CA_CERTS (read by Node only at process
-      // start) is already set on THIS process by bundle/server.js before
-      // the MCP server ever starts, so every integration this manager spawns
-      // inherits it here for free — no separate handling needed.
+      // Only an allowlist of the gateway's environment — never its own
+      // secrets (connector-env.ts). The allowlist includes
+      // NODE_EXTRA_CA_CERTS, which is how a saved `--ca-file` reaches an
+      // integration: bundle/server.js sets it on THIS process before the MCP
+      // server starts, and Node reads it only at process start.
       env: {
-        ...process.env,
+        ...inherited,
         PATH: buildPath(),
         HAP_DATA_DIR: DEFAULT_DATA_DIR,
         ...config.env,

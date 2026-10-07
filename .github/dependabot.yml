@@ -1,0 +1,20 @@
+version: 2
+updates:
+  # Workspace dependencies (pnpm-lock.yaml). Minor and patch updates are
+  # grouped into one weekly pull request; majors come one by one, because
+  # they need a real look. Security updates are opened as soon as an advisory
+  # is published (enable "Dependabot security updates" in the repo settings).
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly

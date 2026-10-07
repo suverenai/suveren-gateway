@@ -1135,8 +1135,13 @@ if (existsSync(UI_DIST)) {
   });
 }
 
-app.listen(port, '0.0.0.0', () => {
-  console.error(`[Control Plane] Listening on http://0.0.0.0:${port}`);
+// Default: this machine only. The Docker image sets SUVEREN_BIND_HOST=0.0.0.0
+// (a container must listen on its own interface). Same variable as the MCP
+// server's — see apps/mcp-server/src/lib/agent-access.ts.
+const bindHost = process.env.SUVEREN_BIND_HOST?.trim() || '127.0.0.1';
+
+app.listen(port, bindHost, () => {
+  console.error(`[Control Plane] Listening on http://${bindHost}:${port}`);
 
   // Started by the login service ⇒ nobody is watching a terminal. The gateway
   // is up and answering but the vault is locked, so the agent has no authority

@@ -15,7 +15,7 @@
     "parse-diff": "^0.11.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "react-router-dom": "^7.13.1"
+    "react-router-dom": "^7.18.4"
   },
   "devDependencies": {
     "@types/react": "^18.2.0",

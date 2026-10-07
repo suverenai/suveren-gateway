@@ -9,7 +9,8 @@
   "npmVersion": "0.4.0",
   "mcp": {
     "command": "erp-mcp",
-    "args": []
+    "args": [],
+    "passEnv": ["ERP_COMPANY_FILE"]
   },
   "credentials": {
     "fields": [

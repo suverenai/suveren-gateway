@@ -15,8 +15,8 @@
   },
   "dependencies": {
     "@hap/core": "workspace:*",
-    "@modelcontextprotocol/sdk": "^1.12.1",
-    "express": "^4.18.0",
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "express": "^4.22.3",
     "htmlparser2": "^12.0.0",
     "sanitize-html": "^2.18.0",
     "undici": "^7.30.0",

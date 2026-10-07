@@ -1,0 +1,8 @@
+[
+  {
+    "ghsa": "GHSA-vfj7-8cjw-p6xm",
+    "package": "braces",
+    "reason": "No patched version exists; reached only via http-proxy-middleware > micromatch (v4 still depends on it). The only glob patterns are the control plane's own fixed proxy path filters — never user input.",
+    "reviewBy": "2027-01-07"
+  }
+]
