@@ -19,3 +19,15 @@
  * collide with this default-off setting (or itself) elsewhere.
  */
 process.env.SUVEREN_POLICY_REGISTRY = 'off';
+
+/**
+ * Same reason for the saved ports + data folder (bundle/lib/install-
+ * settings.mjs): without this, a test spawning the real CLI or server.js
+ * would read the developer's own saved settings (or the real registry on
+ * Windows) and start on their port and data folder. A per-process path
+ * that does not exist means "nothing saved"; a test that needs saved values
+ * points this at its own temp file.
+ */
+import { tmpdir as __tmpdir } from 'node:os';
+import { join as __join } from 'node:path';
+process.env.SUVEREN_INSTALL_SETTINGS_FILE ??= __join(__tmpdir(), `suveren-test-install-settings-${process.pid}.json`);

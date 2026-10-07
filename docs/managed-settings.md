@@ -28,6 +28,18 @@ Registry value names = JSON file keys (PascalCase):
 | `NoProxy` | string | Hosts to bypass the proxy for (same grammar as `NO_PROXY`) |
 | `Simulation` | DWORD 0/1 or boolean | Simulation mode (blocks real connectors) |
 | `InstallMethod` | string | Only `"managed"` is recognized |
+| `Port` | DWORD or string | Gateway port (1024–65535) |
+| `McpPort` | DWORD or string | Port AI assistants connect to (1024–65535, ≠ `Port`) |
+| `DataDir` | string | Data folder — a full path. Changing it does not move existing data |
+
+`Port`, `McpPort` and `DataDir` are read by the CLI and `bundle/server.js`
+only (see `bundle/lib/install-settings.mjs`), which pass the result to the
+control plane and MCP server as `SUVEREN_CP_PORT` / `SUVEREN_MCP_PORT` /
+`SUVEREN_DATA_DIR`. Unlocked, the same three are saved per user by the
+Windows installer (`PORT` / `MCP_PORT` / `DATA_DIR`) or `config set
+port|mcp-port|data-dir` — in `HKCU\Software\Suveren\Gateway` on Windows,
+`~/Library/Application Support/Suveren/gateway.json` on macOS,
+`~/.config/suveren/gateway.json` on Linux.
 
 A key present in **either** source is **locked**: nothing running on that
 machine can override it — not a CLI flag, not an env var, not a saved

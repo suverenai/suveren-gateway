@@ -86,10 +86,39 @@ No further configuration is required for the app to install — the gateway
 starts itself and sets up autostart the first time the user opens it from the
 Start Menu.
 
+### Port and data folder (optional)
+
+Three install options change where the gateway listens and keeps its data.
+Each is optional; leave it out for the default.
+
+| Option | Default | Meaning |
+|---|---|---|
+| `PORT` | `3400` | Port of the gateway app in the browser |
+| `MCP_PORT` | `3430` | Port AI assistants connect to (`http://localhost:<MCP_PORT>/mcp`) |
+| `DATA_DIR` | `%USERPROFILE%\.suveren` | Folder for the vault, mandates and logs — a full path |
+
+```
+msiexec /i suveren-gateway.msi /qn PORT=3500 MCP_PORT=3530 DATA_DIR="D:\Suveren"
+```
+
+Ports must be 1024–65535 and different from each other; an invalid value stops
+the install before anything is installed. A double-click install shows the same
+three fields on a "Gateway settings" page.
+
+The values are saved per user in `HKCU\Software\Suveren\Gateway` (`Port`,
+`McpPort`, `DataDir`) and kept on upgrade — an upgrade command does not need to
+repeat them. The user can change them later with `suveren-gateway config set
+port|mcp-port|data-dir`. **Changing the data folder does not move existing
+data.** Uninstalling removes the saved values but never the data folder.
+
+To lock them so the user cannot change them, use the `Port`, `McpPort` and
+`DataDir` policy keys instead (§5).
+
 ## 5. IT-managed settings
 
 Your policy settings — Authority Server address, a TLS certificate for a
-company proxy, TLS pinning, simulation mode, and the corporate proxy itself —
+company proxy, TLS pinning, simulation mode, the corporate proxy itself, and
+the gateway's ports and data folder —
 are set centrally via the Windows registry (`HKLM\SOFTWARE\Policies\Suveren\
 Gateway`, or `HKCU` for the same key) and read by every installed gateway.
 Settings made this way are shown to the user as "set by your IT" and cannot be
@@ -137,8 +166,9 @@ To update:
    needs re-signing**; a signature on 1.2.0 does not carry over to 1.3.0.
 2. Push the new `.msi` through Intune the same way. Windows treats it as an
    upgrade: the installer stops the running gateway (also one started by the
-   login task), replaces the files, keeps the user's data in
-   `%USERPROFILE%\.suveren`, and starts the gateway again. Silent installs show
+   login task), replaces the files, keeps the user's data in its data folder
+   (`%USERPROFILE%\.suveren` unless set otherwise, §4) and the saved port and
+   folder settings, and starts the gateway again. Silent installs show
    no windows and open no browser.
 
 The new connector set ships inside the new `.msi` — there's nothing separate

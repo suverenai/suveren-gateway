@@ -77,6 +77,9 @@ ENV SUVEREN_DATA_DIR=/app/data
 ENV SUVEREN_CP_PORT=3000
 ENV SUVEREN_MCP_PORT=3030
 ENV SUVEREN_MCP_INTERNAL_URL=http://127.0.0.1:3030
+# The documented host mapping (-p 7430:3030) — what the UI tells AI assistants
+# to connect to. Override when mapping a different host port.
+ENV SUVEREN_MCP_PUBLIC_PORT=7430
 ENV SUVEREN_MANIFESTS_DIR=/app/content/integrations
 ENV SUVEREN_BUILTIN_GUIDES_DIR=/app/content/guides
 ENV SUVEREN_INTEGRATIONS_DIR=/app/integrations

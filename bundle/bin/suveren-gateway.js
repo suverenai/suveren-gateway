@@ -12,7 +12,7 @@
 
 import { spawn, spawnSync } from 'node:child_process';
 import { createConnection } from 'node:net';
-import { existsSync, mkdirSync, openSync, readFileSync, writeFileSync, unlinkSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, openSync, readFileSync, readdirSync, writeFileSync, unlinkSync, statSync } from 'node:fs';
 import { homedir, platform, userInfo } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -22,6 +22,7 @@ import { createInterface } from 'node:readline/promises';
 import { readPairing as readAsPairing, recordTlsPin, formatFingerprint, normalizeFingerprint } from '../lib/as-pairing.mjs';
 import { unsupportedNodeReason } from '../lib/node-version.mjs';
 import { readPolicy, isPolicyLocked } from '../lib/policy.mjs';
+import { resolveInstallSettings, describeSource, installSettingsLocation, validatePort, validateDataDir, writeInstallSettings } from '../lib/install-settings.mjs';
 
 // Before any command: on an unsupported Node the connectors cannot run (see
 // lib/node-version.mjs), so refuse with the reason instead of starting.
@@ -35,11 +36,29 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const PKG_ROOT = resolve(__dirname, '..');
 const SERVER_ENTRY = join(PKG_ROOT, 'server.js');
 
-const DATA_DIR = process.env.SUVEREN_DATA_DIR ?? join(homedir(), '.suveren');
+// Ports + data folder: IT policy > env > saved install setting > default
+// (lib/install-settings.mjs — the same resolver server.js uses, so the CLI
+// and the running gateway always agree). An invalid value stops every
+// command except `config` and `help`, which stay usable so the person can
+// see and fix it.
+const COMMAND = process.argv[2] ?? 'help';
+const TOLERANT = ['config', 'help', '--help', '-h'].includes(COMMAND);
+let INSTALL;
+try {
+  INSTALL = resolveInstallSettings({ tolerant: TOLERANT });
+} catch (err) {
+  console.error(err instanceof Error ? err.message : String(err));
+  console.error('Fix it with `suveren-gateway config set …` — see `suveren-gateway config help`.');
+  process.exit(1);
+}
+for (const warning of INSTALL.errors) console.error(`Warning: ${warning}`);
+
+const DATA_DIR = INSTALL.dataDir;
 const PID_FILE = join(DATA_DIR, 'gateway.pid');
 const LOG_FILE = join(DATA_DIR, 'gateway.log');
 
-const SUVEREN_PORT = process.env.SUVEREN_CP_PORT ?? '3400';
+const SUVEREN_PORT = String(INSTALL.cpPort);
+const MCP_PORT = String(INSTALL.mcpPort);
 
 /** Version of THIS CLI (the binary on disk). Compared against the
  *  running gateway's version inside `status` so users see a mismatch
@@ -267,8 +286,18 @@ async function start(args) {
       console.error(`another terminal, which leaves no PID file for this CLI to find.`);
       console.error(``);
       console.error(`  Check what it is:      suveren-gateway status`);
-      console.error(`  Or use another port:   SUVEREN_CP_PORT=3410 suveren-gateway start`);
+      console.error(`  Or use another port:   suveren-gateway config set port 3410`);
     }
+    process.exit(1);
+  }
+
+  // The MCP port too: before this check, a taken MCP port let the gateway
+  // "start", then its MCP server died on EADDRINUSE and took the rest down
+  // with it — reported only in the log.
+  if (await isPortListening(MCP_PORT)) {
+    console.error(`Port ${MCP_PORT} (for AI assistants, MCP) is already in use.`);
+    console.error(``);
+    console.error(`  Use another port:   suveren-gateway config set mcp-port 3440`);
     process.exit(1);
   }
 
@@ -543,15 +572,26 @@ function printConfigHelp() {
   console.log(`suveren-gateway config — read or save gateway settings
 
 Usage:
-  suveren-gateway config get [as-url|ca-file|pin-tls|proxy]  Print the resolved value(s)
+  suveren-gateway config get [as-url|ca-file|pin-tls|proxy|port|mcp-port|data-dir]
+                                                        Print the resolved value(s)
   suveren-gateway config set as-url <url>              Save the Authority Server URL
   suveren-gateway config set ca-file <path>            Save a CA bundle for internal TLS
   suveren-gateway config set pin-tls on --expect-fingerprint <sha256-hex>
                                                         Pin the Authority Server's TLS certificate
   suveren-gateway config set pin-tls off               Stop enforcing the TLS certificate pin
   suveren-gateway config set proxy <url>               Save an HTTP(S) proxy (http(s)://host:port)
+  suveren-gateway config set port <port>               Port for the gateway app in the browser (default 3400)
+  suveren-gateway config set mcp-port <port>           Port AI assistants connect to (default 3430)
+  suveren-gateway config set data-dir <folder>         Folder for the vault, mandates and logs (default ~/.suveren)
+  suveren-gateway config unset port|mcp-port|data-dir  Back to the default
 
-Saved in ${join(DATA_DIR, 'config.json')}.
+Saved in ${join(DATA_DIR, 'config.json')} — except port, mcp-port and
+data-dir, which live outside the data folder, in ${installSettingsLocation()}.
+They are kept across restarts and autostart. Ports must be 1024–65535 and
+differ from each other; the data folder must be a full path. Changing the
+data folder does NOT move existing data. Precedence: IT policy > env var
+(SUVEREN_CP_PORT / SUVEREN_MCP_PORT / SUVEREN_DATA_DIR) > saved > default.
+Stop a gateway started with --detach before changing them.
 Precedence at start: IT policy > --as-url flag > env SUVEREN_AS_URL > saved
 as-url > default (${DEFAULT_AS_URL}).
 
@@ -631,6 +671,106 @@ function refuseIfLockedByPolicy(key, humanName, display) {
   process.exit(1);
 }
 
+// ─── config: ports + data folder (lib/install-settings.mjs) ─────────────
+
+/** `config` key → resolved-settings field, policy key and env var. */
+const INSTALL_KEYS = {
+  port: { field: 'cpPort', policyKey: 'port', env: 'SUVEREN_CP_PORT', name: 'The gateway port' },
+  'mcp-port': { field: 'mcpPort', policyKey: 'mcpPort', env: 'SUVEREN_MCP_PORT', name: 'The MCP port' },
+  'data-dir': { field: 'dataDir', policyKey: 'dataDir', env: 'SUVEREN_DATA_DIR', name: 'The data folder' },
+};
+
+/**
+ * `config set port|mcp-port|data-dir <value>` and `config unset <key>`
+ * (`value` null). Saved outside the data folder — see install-settings.mjs.
+ */
+async function setInstallSetting(key, value) {
+  const { field, policyKey, env, name } = INSTALL_KEYS[key];
+  refuseIfLockedByPolicy(policyKey, key);
+  const clearing = value === null;
+
+  let next;
+  if (!clearing) {
+    if (!value) {
+      console.error(`Usage: suveren-gateway config set ${key} <${key === 'data-dir' ? 'folder' : 'port'}>`);
+      process.exit(2);
+    }
+    const v = field === 'dataDir' ? validateDataDir(value) : validatePort(value);
+    if (!v.ok) {
+      console.error(`Invalid ${key}: ${v.error}`);
+      process.exit(1);
+    }
+    next = field === 'dataDir' ? v.path : v.port;
+    const other = field === 'cpPort' ? 'mcpPort' : field === 'mcpPort' ? 'cpPort' : null;
+    if (other && INSTALL[other] === next) {
+      console.error(`Invalid ${key}: ${next} is already the ${other === 'cpPort' ? 'gateway port' : 'MCP port'} — the two must differ.`);
+      process.exit(1);
+    }
+  }
+
+  // A gateway this CLI started with --detach keeps its PID file in the
+  // CURRENT data folder and listens on the CURRENT ports. Changing either
+  // underneath it leaves `stop`/`restart` unable to find it, and a second
+  // gateway fighting it for the port. Stop first. (A login-service gateway
+  // is fine: `restart` finds that one through the service manager.)
+  if (await isAlreadyRunning()) {
+    console.error(`The gateway is running (pid ${readPid()}). Stop it first, then change ${key}:`);
+    console.error('  suveren-gateway stop');
+    process.exit(1);
+  }
+
+  try {
+    writeInstallSettings({ [field]: clearing ? null : next });
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  }
+
+  const shown = clearing ? `back to the default` : `${next}`;
+  console.log(`Saved ${key}: ${shown}  (in ${installSettingsLocation()})`);
+
+  if (process.env[env]) {
+    console.log(``);
+    console.log(`  Note: ${env} is set in this shell (${process.env[env]}) and wins over the saved value.`);
+  }
+
+  if (field === 'mcpPort') {
+    const port = clearing ? 3430 : next;
+    console.log(``);
+    console.log(`  AI assistants connect to the new address from the next start:`);
+    console.log(`    http://localhost:${port}/mcp   (SSE: http://localhost:${port}/sse)`);
+    console.log(`  Update the MCP settings of every assistant you connected before.`);
+  }
+
+  if (field === 'dataDir') {
+    const newDir = clearing ? join(homedir(), '.suveren') : next;
+    const oldDir = INSTALL.dataDir;
+    let oldHasData = false;
+    try { oldHasData = resolve(newDir) !== resolve(oldDir) && readdirSync(oldDir).length > 0; } catch { /* no old folder */ }
+    if (oldHasData) {
+      console.log(``);
+      console.log(`  Your existing data stays in ${oldDir} — nothing is moved or deleted.`);
+      console.log(`  The gateway starts EMPTY in ${newDir}: you sign in and set up again.`);
+      console.log(`  To keep your data instead, copy the folder there yourself before the next start.`);
+    }
+    // An autostart registered from a shell that had SUVEREN_DATA_DIR set
+    // carries it in the service definition, where it wins over this setting.
+    const unit = platform() === 'darwin' ? launchAgentPath() : platform() === 'linux' ? systemdUnitPath() : null;
+    try {
+      if (unit && existsSync(unit) && readFileSync(unit, 'utf8').includes('SUVEREN_DATA_DIR')) {
+        console.log(``);
+        console.log(`  Your login service still sets SUVEREN_DATA_DIR itself (${unit}).`);
+        console.log(`  Register it again from a shell without that variable:  suveren-gateway service install`);
+      }
+    } catch { /* unreadable — nothing to warn about */ }
+  }
+
+  console.log(``);
+  console.log(serviceRunning()
+    ? '  Restart to apply it:  suveren-gateway restart'
+    : '  It applies from the next start.');
+}
+
 async function config(args) {
   const sub = args[0];
 
@@ -644,6 +784,14 @@ async function config(args) {
       console.log(`ca-file: ${(policyCaFile ?? saved.caFile) ?? '(not set)'}${policySuffix('caFile')}`);
       console.log(`pin-tls: ${resolvePinTls(DATA_DIR) ? 'on' : 'off'}${policySuffix('pinTls')}`);
       console.log(`proxy:   ${(policyProxy ?? saved.proxyUrl) ?? '(not set)'}${policySuffix('proxy')}`);
+      console.log(`port:     ${INSTALL.cpPort}  (${describeSource(INSTALL.source.cpPort, 'cpPort')})`);
+      console.log(`mcp-port: ${INSTALL.mcpPort}  (${describeSource(INSTALL.source.mcpPort, 'mcpPort')})`);
+      console.log(`data-dir: ${INSTALL.dataDir}  (${describeSource(INSTALL.source.dataDir, 'dataDir')})`);
+      return;
+    }
+    const install = INSTALL_KEYS[key];
+    if (install) {
+      console.log(`${INSTALL[install.field]}  (${describeSource(INSTALL.source[install.field], install.field)})`);
       return;
     }
     if (key === 'as-url') { console.log(`${resolveAsUrl(DATA_DIR)}${policySuffix('asUrl')}`); return; }
@@ -655,9 +803,18 @@ async function config(args) {
     process.exit(2);
   }
 
-  if (sub === 'set') {
+  if (sub === 'set' || sub === 'unset') {
     const key = args[1];
     const value = args[2];
+    if (INSTALL_KEYS[key]) {
+      await setInstallSetting(key, sub === 'unset' ? null : value);
+      return;
+    }
+    if (sub === 'unset') {
+      console.error(`config unset works for port, mcp-port and data-dir only.\n`);
+      printConfigHelp();
+      process.exit(2);
+    }
     if (key === 'as-url') {
       refuseIfLockedByPolicy('asUrl', 'as-url');
       if (!value) {
@@ -1386,6 +1543,29 @@ async function verifyReport(args) {
   process.exitCode = await mod.runVerifyReportCli(args);
 }
 
+/**
+ * `suveren-gateway open` — open the UI in the default browser, on whatever
+ * port is configured. The Windows Start Menu entry and the installer's
+ * Finish checkbox use this (via launcher.cmd) instead of a hard-coded port.
+ */
+function openUi() {
+  const url = `http://localhost:${SUVEREN_PORT}`;
+  const os = platform();
+  let child;
+  if (os === 'win32') {
+    // `start ""` — the empty title is required before a quoted target.
+    // Verbatim, or Node escapes those quotes into something cmd misreads.
+    child = spawn('cmd.exe', ['/d', '/s', '/c', `start "" "${url}"`], {
+      detached: true, stdio: 'ignore', windowsHide: true, windowsVerbatimArguments: true,
+    });
+  } else {
+    child = spawn(os === 'darwin' ? 'open' : 'xdg-open', [url], { detached: true, stdio: 'ignore' });
+  }
+  child.on('error', () => { console.log(`Open ${url} in your browser.`); });
+  child.unref();
+  console.log(`Opening ${url}`);
+}
+
 function printHelp() {
   console.log(`suveren-gateway — Suveren gateway (Human Agency Protocol)
 
@@ -1399,13 +1579,19 @@ Usage:
   suveren-gateway stop                       Stop a detached gateway
   suveren-gateway restart                    Stop, then start --detach
   suveren-gateway status                     Show running state + health (incl. simulation mode)
+  suveren-gateway open                       Open the gateway in your browser
   suveren-gateway logs [--tail]               Print or tail ~/.suveren/gateway.log
   suveren-gateway service <cmd>               Run as a login service that survives reboot
                                               (install | uninstall | status)
-  suveren-gateway config get [as-url|ca-file|pin-tls|proxy]  Print the resolved value(s)
+  suveren-gateway config get [as-url|ca-file|pin-tls|proxy|port|mcp-port|data-dir]
+                                              Print the resolved value(s)
   suveren-gateway config set as-url <url>     Save the Authority Server URL
   suveren-gateway config set ca-file <path>   Save a CA bundle for internal TLS
   suveren-gateway config set proxy <url>      Save an HTTP(S) proxy (see below)
+  suveren-gateway config set port <port>      Save the gateway port (default 3400)
+  suveren-gateway config set mcp-port <port>  Save the port AI assistants connect to (default 3430)
+  suveren-gateway config set data-dir <folder>
+                                              Save the data folder (default ~/.suveren)
   suveren-gateway config set pin-tls on --expect-fingerprint <hex>
                                               Pin the Authority Server's TLS certificate
                                               (see \`suveren-gateway config help\` for the fingerprint check)
@@ -1419,9 +1605,9 @@ Usage:
   suveren-gateway help                        Print this help
 
 Environment:
-  SUVEREN_CP_PORT     UI + API port  (default 3400)
-  SUVEREN_MCP_PORT    MCP server port (default 3430)
-  SUVEREN_DATA_DIR    Data directory (default ~/.suveren)
+  SUVEREN_CP_PORT     UI + API port  (default 3400) — overrides a saved \`config set port\`
+  SUVEREN_MCP_PORT    MCP server port (default 3430) — overrides a saved \`config set mcp-port\`
+  SUVEREN_DATA_DIR    Data directory (default ~/.suveren) — overrides a saved \`config set data-dir\`
   SUVEREN_AS_URL      Authority Server URL — overrides the saved as-url
   SUVEREN_SIMULATION  1 to force simulation mode for this run — overrides the saved setting
   HTTP_PROXY / HTTPS_PROXY / NO_PROXY (upper or lower case)
@@ -1450,6 +1636,7 @@ async function main() {
     case 'stop':    await stop(); break;
     case 'status':  await status(); break;
     case 'restart': await restart(); break;
+    case 'open':    openUi(); break;
     case 'logs':    await logs(argv.slice(1)); break;
     case 'service': await service(argv.slice(1)); break;
     case 'config':  await config(argv.slice(1)); break;

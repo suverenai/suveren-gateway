@@ -33,6 +33,13 @@
   every version as an unrelated product instead of an upgrade (orphaned old
   installs, no cleanup, no single "Suveren Gateway" entry in Settings).
 -->
+<!-- Valid gateway settings (PORT / MCP_PORT / DATA_DIR, each optional — empty means
+     the default). Used by the launch condition (silent installs) and by the settings
+     page's Next button. Ports: 1024–65535, different from each other, also against the
+     OTHER one's default; data folder: a full path (drive or UNC). The gateway checks the
+     same rules again at every start (bundle/lib/install-settings.mjs) — this only stops
+     an obvious typo before anything is installed. -->
+<?define SettingsValid = (NOT PORT OR (PORT >= 1024 AND PORT <= 65535)) AND (NOT MCP_PORT OR (MCP_PORT >= 1024 AND MCP_PORT <= 65535)) AND (NOT PORT OR NOT MCP_PORT OR PORT <> MCP_PORT) AND (NOT PORT OR MCP_PORT OR PORT <> 3430) AND (NOT MCP_PORT OR PORT OR MCP_PORT <> 3400) AND (NOT DATA_DIR OR DATA_DIR >< ":\" OR DATA_DIR << "\\") ?>
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
 
   <Package
@@ -147,11 +154,69 @@
       <RegistryValue Root="HKCU" Key="Software\Suveren\Gateway" Name="Installed" Type="integer" Value="1" KeyPath="yes" />
     </Component>
 
+    <!-- Gateway settings: port, MCP port, data folder.
+
+         Set on the command line for a silent (Intune) install —
+           msiexec /i suveren-gateway.msi /qn PORT=3500 MCP_PORT=3530 DATA_DIR="D:\Suveren"
+         — or on the settings page of a double-click install. Each is optional; empty
+         means the default (3400 / 3430 / %USERPROFILE%\.suveren).
+
+         Saved to HKCU\Software\Suveren\Gateway (Port, McpPort, DataDir), which is where
+         the gateway reads them at every start — including the login task, which has no
+         environment of its own (bundle/lib/install-settings.mjs). `suveren-gateway config
+         set port|mcp-port|data-dir` writes the same values.
+
+         Remembered across upgrades: the SAVED_* searches read what is there now, and
+         RememberX copies it into X unless X was given on the command line. Without this an
+         upgrade with no properties would remove the old values (the old product's
+         components are removed first) and silently move the gateway back to the defaults
+         and an empty data folder.
+
+         Each value is its own conditional component: an empty property installs nothing,
+         so no empty value is ever written. A plain uninstall removes them (the data folder
+         itself is never touched). -->
+    <Property Id="PORT" Secure="yes" />
+    <Property Id="MCP_PORT" Secure="yes" />
+    <Property Id="DATA_DIR" Secure="yes" />
+    <Property Id="SAVED_PORT">
+      <RegistrySearch Id="SavedPortSearch" Root="HKCU" Key="Software\Suveren\Gateway" Name="Port" Type="raw" />
+    </Property>
+    <Property Id="SAVED_MCP_PORT">
+      <RegistrySearch Id="SavedMcpPortSearch" Root="HKCU" Key="Software\Suveren\Gateway" Name="McpPort" Type="raw" />
+    </Property>
+    <Property Id="SAVED_DATA_DIR">
+      <RegistrySearch Id="SavedDataDirSearch" Root="HKCU" Key="Software\Suveren\Gateway" Name="DataDir" Type="raw" />
+    </Property>
+    <SetProperty Id="PORT" Action="RememberPort" Value="[SAVED_PORT]" After="AppSearch" Condition="NOT PORT AND SAVED_PORT" />
+    <SetProperty Id="MCP_PORT" Action="RememberMcpPort" Value="[SAVED_MCP_PORT]" After="AppSearch" Condition="NOT MCP_PORT AND SAVED_MCP_PORT" />
+    <SetProperty Id="DATA_DIR" Action="RememberDataDir" Value="[SAVED_DATA_DIR]" After="AppSearch" Condition="NOT DATA_DIR AND SAVED_DATA_DIR" />
+    <!-- Double-click install only: show the defaults in the fields instead of empty boxes. -->
+    <SetProperty Id="PORT" Action="DefaultPort" Value="3400" After="RememberPort" Sequence="ui" Condition="NOT PORT" />
+    <SetProperty Id="MCP_PORT" Action="DefaultMcpPort" Value="3430" After="RememberMcpPort" Sequence="ui" Condition="NOT MCP_PORT" />
+    <SetProperty Id="DATA_DIR" Action="DefaultDataDir" Value="[%USERPROFILE]\.suveren" After="RememberDataDir" Sequence="ui" Condition="NOT DATA_DIR" />
+
+    <Launch
+      Condition="Installed OR ($(var.SettingsValid))"
+      Message="Invalid gateway settings. PORT and MCP_PORT must be numbers from 1024 to 65535 and differ from each other (defaults 3400 and 3430); DATA_DIR must be a full path such as D:\Suveren." />
+
+    <Component Id="PortSettingComponent" Directory="INSTALLFOLDER" Guid="2c6e9b5a-4f1a-4a2d-8a5a-7e6b7c9a1004" Condition="PORT">
+      <RegistryValue Root="HKCU" Key="Software\Suveren\Gateway" Name="Port" Type="string" Value="[PORT]" KeyPath="yes" />
+    </Component>
+    <Component Id="McpPortSettingComponent" Directory="INSTALLFOLDER" Guid="2c6e9b5a-4f1a-4a2d-8a5a-7e6b7c9a1005" Condition="MCP_PORT">
+      <RegistryValue Root="HKCU" Key="Software\Suveren\Gateway" Name="McpPort" Type="string" Value="[MCP_PORT]" KeyPath="yes" />
+    </Component>
+    <Component Id="DataDirSettingComponent" Directory="INSTALLFOLDER" Guid="2c6e9b5a-4f1a-4a2d-8a5a-7e6b7c9a1006" Condition="DATA_DIR">
+      <RegistryValue Root="HKCU" Key="Software\Suveren\Gateway" Name="DataDir" Type="string" Value="[DATA_DIR]" KeyPath="yes" />
+    </Component>
+
     <Feature Id="Main" Title="Suveren Gateway" Level="1">
       <ComponentGroupRef Id="PayloadFiles" />
       <ComponentRef Id="LauncherComponent" />
       <ComponentRef Id="StartMenuShortcutComponent" />
       <ComponentRef Id="InstallMarkerComponent" />
+      <ComponentRef Id="PortSettingComponent" />
+      <ComponentRef Id="McpPortSettingComponent" />
+      <ComponentRef Id="DataDirSettingComponent" />
     </Feature>
 
     <!-- Interactive (double-click) install only: WixUI_Minimal — welcome,
@@ -195,10 +260,77 @@
     <WixVariable Id="WixUIBannerBmp" Value="$(sys.SOURCEFILEDIR)banner.bmp" />
     <Icon Id="SuverenIcon" SourceFile="$(sys.SOURCEFILEDIR)suveren.ico" />
     <Property Id="ARPPRODUCTICON" Value="SuverenIcon" />
-    <UIRef Id="WixUI_Minimal_X64" />
-    <UI>
+    <!-- Was WixUI_Minimal_X64 (one page: licence + Install). Now WixUI_InstallDir's page
+         flow with our settings page in place of the install-folder page (the install
+         folder stays fixed — per-user, no admin):
+           Welcome → Licence → Gateway settings → Ready to install.
+         Copied from WiX 5.0.2's own WixUI_InstallDir.wxs (src/ext/UI/wixlib), minus the
+         folder-browse pieces. A silent install (/qn) shows none of this. -->
+    <UI Id="SuverenUI">
+      <TextStyle Id="WixUI_Font_Normal" FaceName="Tahoma" Size="8" />
+      <TextStyle Id="WixUI_Font_Bigger" FaceName="Tahoma" Size="12" />
+      <TextStyle Id="WixUI_Font_Title" FaceName="Tahoma" Size="9" Bold="yes" />
+      <Property Id="DefaultUIFont" Value="WixUI_Font_Normal" />
+
+      <DialogRef Id="ErrorDlg" />
+      <DialogRef Id="FatalError" />
+      <DialogRef Id="FilesInUse" />
+      <DialogRef Id="MsiRMFilesInUse" />
+      <DialogRef Id="PrepareDlg" />
+      <DialogRef Id="ProgressDlg" />
+      <DialogRef Id="ResumeDlg" />
+      <DialogRef Id="UserExit" />
+
       <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchGatewayAfterInstall" Order="10" Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed" />
+      <Publish Dialog="ExitDialog" Control="Finish" Event="EndDialog" Value="Return" Order="999" />
+
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="LicenseAgreementDlg" Condition="NOT Installed" />
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" Condition="Installed AND PATCH" />
+
+      <Publish Dialog="LicenseAgreementDlg" Control="Print" Event="DoAction" Value="WixUIPrintEula_X64" />
+      <Publish Dialog="LicenseAgreementDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" />
+      <Publish Dialog="LicenseAgreementDlg" Control="Next" Event="NewDialog" Value="SuverenSettingsDlg" Condition="LicenseAccepted = &quot;1&quot;" />
+
+      <Publish Dialog="SuverenSettingsDlg" Control="Back" Event="NewDialog" Value="LicenseAgreementDlg" />
+      <Publish Dialog="SuverenSettingsDlg" Control="Next" Property="SUVEREN_SETTINGS_CHECKED" Value="1" Order="1" />
+      <Publish Dialog="SuverenSettingsDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" Order="2" Condition="$(var.SettingsValid)" />
+
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="SuverenSettingsDlg" Order="1" Condition="NOT Installed" />
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="MaintenanceTypeDlg" Order="2" Condition="Installed AND NOT PATCH" />
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="2" Condition="Installed AND PATCH" />
+
+      <Publish Dialog="MaintenanceWelcomeDlg" Control="Next" Event="NewDialog" Value="MaintenanceTypeDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="RepairButton" Event="NewDialog" Value="VerifyReadyDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="RemoveButton" Event="NewDialog" Value="VerifyReadyDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="Back" Event="NewDialog" Value="MaintenanceWelcomeDlg" />
+
+      <Property Id="ARPNOMODIFY" Value="1" />
+
+      <!-- The settings page. Same frame as WiX's own InstallDirDlg (banner, lines, buttons). -->
+      <Dialog Id="SuverenSettingsDlg" Width="370" Height="270" Title="!(loc.InstallDirDlg_Title)">
+        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="!(loc.WixUINext)" />
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="!(loc.WixUIBack)" />
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="!(loc.WixUICancel)">
+          <Publish Event="SpawnDialog" Value="CancelDlg" />
+        </Control>
+
+        <Control Id="Description" Type="Text" X="25" Y="23" Width="280" Height="15" Transparent="yes" NoPrefix="yes" Text="Where the gateway listens and keeps its data. The defaults suit most people." />
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="200" Height="15" Transparent="yes" NoPrefix="yes" Text="{\WixUI_Font_Title}Gateway settings" />
+        <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="!(loc.InstallDirDlgBannerBitmap)" />
+        <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
+
+        <Control Id="PortLabel" Type="Text" X="20" Y="54" Width="330" Height="12" NoPrefix="yes" Text="Port for the gateway in your browser (default 3400):" />
+        <Control Id="PortEdit" Type="Edit" X="20" Y="67" Width="60" Height="17" Property="PORT" Text="{5}" />
+        <Control Id="McpPortLabel" Type="Text" X="20" Y="90" Width="330" Height="12" NoPrefix="yes" Text="Port AI assistants connect to, MCP (default 3430):" />
+        <Control Id="McpPortEdit" Type="Edit" X="20" Y="103" Width="60" Height="17" Property="MCP_PORT" Text="{5}" />
+        <Control Id="DataDirLabel" Type="Text" X="20" Y="126" Width="330" Height="12" NoPrefix="yes" Text="Folder for your data (vault, mandates, logs):" />
+        <Control Id="DataDirEdit" Type="Edit" X="20" Y="139" Width="330" Height="17" Property="DATA_DIR" Text="{260}" />
+        <Control Id="Hint" Type="Text" X="20" Y="162" Width="330" Height="30" NoPrefix="yes" Text="Ports must be from 1024 to 65535 and differ from each other. The folder must be a full path, for example D:\Suveren. Changing the folder later does not move data that is already there." />
+        <Control Id="Invalid" Type="Text" X="20" Y="200" Width="330" Height="24" NoPrefix="yes" Hidden="yes" Text="{\WixUI_Font_Title}Please check the values above: a port or the folder is not valid." ShowCondition="SUVEREN_SETTINGS_CHECKED AND NOT ($(var.SettingsValid))" HideCondition="NOT SUVEREN_SETTINGS_CHECKED OR ($(var.SettingsValid))" />
+      </Dialog>
     </UI>
+    <UIRef Id="WixUI_Common" />
 
     <!-- Runs ONLY from the ExitDialog checkbox above (immediate, not part of
          InstallExecuteSequence — this is a UI-sequence action, fired after

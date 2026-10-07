@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { spClient, type PendingItem, type Proposal } from '../lib/sp-client';
 import { SetupGuide } from '../components/SetupGuide';
 import { useVisiblePolling } from '../hooks/useVisiblePolling';
+import { useMcpEndpoint } from '../hooks/useMcpEndpoint';
 import { useSSEEvent } from '../contexts/EventSourceContext';
 import { isPendingProposal } from '../lib/pending';
 import { useIntegrationStatus } from '../contexts/IntegrationStatusContext';
@@ -38,6 +39,7 @@ export function DashboardPage() {
   const [proposalsReady, setProposalsReady] = useState(false);
   const [aiReady, setAiReady] = useState(false);
   const { entries: integrationEntries, activeSessions, loading: integrationsLoading } = useIntegrationStatus();
+  const mcpEndpoint = useMcpEndpoint();
   const integrationsReady = !integrationsLoading;
 
   const refresh = useCallback(() => {
@@ -178,13 +180,13 @@ export function DashboardPage() {
           for a frame, then the real data flipped every step to "done" and it
           vanished. Waiting for allReady means it either appears once with the
           correct progress, or never appears at all for a fully-set-up user. */}
-      {allReady && (
+      {allReady && mcpEndpoint && (
         <SetupGuide
           aiConfigured={aiConfigured}
           hasRunningIntegration={runningIntegrations.length > 0}
           hasActiveAuth={active.length > 0}
           hasAgentConnected={activeSessions > 0}
-          mcpEndpoint={`http://localhost:${window.location.port === '3400' ? '3430' : '7430'}`}
+          mcpEndpoint={mcpEndpoint}
         />
       )}
 

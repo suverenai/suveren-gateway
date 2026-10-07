@@ -31,7 +31,7 @@
  *
  * Registry value names = JSON file keys (PascalCase, matching what an IT
  * admin would see in either place): AsUrl, CaFile, PinTls, Proxy, NoProxy,
- * Simulation, InstallMethod.
+ * Simulation, InstallMethod, Port, McpPort, DataDir.
  *
  * Mirrored (same logic, duplicated — no shared runtime package between the
  * CLI and the two apps, see config.mjs's doc comment for the established
@@ -39,11 +39,14 @@
  * `apps/control-plane/src/lib/policy.ts`. Keep all three in step.
  */
 
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import { isAbsolute, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
-const POLICY_KEYS = ['AsUrl', 'CaFile', 'PinTls', 'Proxy', 'NoProxy', 'Simulation', 'InstallMethod'];
+// Port, McpPort and DataDir exist ONLY here, not in the two apps' TS
+// mirrors: they are resolved by the CLI and bundle/server.js alone (see
+// install-settings.mjs), which hand the result to the apps as plain env vars.
+const POLICY_KEYS = ['AsUrl', 'CaFile', 'PinTls', 'Proxy', 'NoProxy', 'Simulation', 'InstallMethod', 'Port', 'McpPort', 'DataDir'];
 
 /** The documented production path, relative to the hive — never changes for
  *  a real install. Overridable ONLY via `SUVEREN_POLICY_REGISTRY_KEY`, which
@@ -120,6 +123,28 @@ function validateProxyUrl(candidate) {
     return { ok: false, error: `"${trimmed}" must use http:// or https://.` };
   }
   return { ok: true, url: trimmed };
+}
+
+/** Same rule as install-settings.mjs's validatePort (duplicated, not
+ *  imported — that module imports this one): 1024–65535. A REG_DWORD
+ *  arrives as a number, a REG_SZ / JSON value as either. */
+function validatePort(candidate) {
+  const raw = String(candidate ?? '').trim();
+  if (!/^\d+$/.test(raw)) return { ok: false, error: `"${raw}" is not a port number.` };
+  const port = Number(raw);
+  if (port < 1024 || port > 65535) return { ok: false, error: `${port} is outside 1024–65535.` };
+  return { ok: true, port };
+}
+
+/** Same rule as install-settings.mjs's validateDataDir: an absolute path
+ *  that is not an existing file. It need not exist yet. */
+function validateDataDir(candidate) {
+  const raw = String(candidate ?? '').trim();
+  if (!raw) return { ok: false, error: 'The data folder path is empty.' };
+  if (!isAbsolute(raw)) return { ok: false, error: `"${raw}" is not a full path.` };
+  const path = resolve(raw);
+  if (existsSync(path) && !statSync(path).isDirectory()) return { ok: false, error: `"${path}" is a file, not a folder.` };
+  return { ok: true, path };
 }
 
 /** Accepts a JSON boolean, or the DWORD-style 0/1 (as a number OR a string,
@@ -350,6 +375,25 @@ export function readPolicy() {
     }
     policy.installMethod = 'managed';
     locked.add('installMethod');
+  }
+
+  for (const [rawKey, key] of [['Port', 'port'], ['McpPort', 'mcpPort']]) {
+    if (merged[rawKey] === undefined) continue;
+    const v = validatePort(merged[rawKey]);
+    if (!v.ok) {
+      throw new Error(`Invalid policy ${rawKey} ("${merged[rawKey]}") from ${sourceOf[rawKey]}: ${v.error}`);
+    }
+    policy[key] = v.port;
+    locked.add(key);
+  }
+
+  if (merged.DataDir !== undefined) {
+    const v = validateDataDir(merged.DataDir);
+    if (!v.ok) {
+      throw new Error(`Invalid policy DataDir ("${merged.DataDir}") from ${sourceOf.DataDir}: ${v.error}`);
+    }
+    policy.dataDir = v.path;
+    locked.add('dataDir');
   }
 
   cached = { policy, locked };

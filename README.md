@@ -142,7 +142,22 @@ For laptops managed by a company's IT: no admin rights, no Node.js and no access
 
 **The installer is not signed by us.** IT checks where it comes from (`sha256sum -c SHA256SUMS` and `gh attestation verify <file> -R suverenai/suveren-gateway`, which shows the exact commit it was built from), signs it, and distributes it, e.g. with Intune. IT can preset the Authority Server, simulation mode, proxy and certificate centrally; the employee cannot change them, and updates come from IT. Step by step: [Windows IT guide](docs/windows-it-guide.md) · settings: [Managed settings](docs/managed-settings.md).
 
-Open `http://localhost:3400` (Start menu: *Suveren Gateway*). The MCP server is at `http://localhost:3430`.
+Open `http://localhost:3400` (Start menu: *Suveren Gateway*). The MCP server is at `http://localhost:3430`. Other ports or another data folder: `msiexec /i suveren-gateway.msi PORT=3500 MCP_PORT=3530 DATA_DIR="D:\Suveren"`, or the "Gateway settings" page of a double-click install — see the [IT guide](docs/windows-it-guide.md#port-and-data-folder-optional).
+
+### Ports and data folder
+
+npm and the Windows installer default to port 3400 (app), 3430 (AI assistants) and the data folder `~/.suveren`. To change them for good — kept across restarts, upgrades and autostart:
+
+```bash
+suveren-gateway stop                          # if you started it with --detach
+suveren-gateway config set port 3500
+suveren-gateway config set mcp-port 3530
+suveren-gateway config set data-dir /Volumes/Data/suveren
+suveren-gateway config get                    # shows each value and where it comes from
+suveren-gateway config unset port             # back to the default
+```
+
+Changing the data folder **does not move** existing data — copy the old folder yourself first if you want to keep it. After changing `mcp-port`, update the MCP address in every AI assistant you connected. Environment variables (`SUVEREN_CP_PORT`, `SUVEREN_MCP_PORT`, `SUVEREN_DATA_DIR`) still win over saved values; IT policy wins over both ([Managed settings](docs/managed-settings.md)).
 
 ### Connecting an MCP client
 
