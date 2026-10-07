@@ -48,7 +48,7 @@
 export type LockedReason = 'restart' | 'expired' | 'as-key-mismatch' | 'as-tls-mismatch' | 'as-url-changed';
 
 /** Address the person should open. Honours a non-default control-plane port. */
-function uiUrl(): string {
+export function uiUrl(): string {
   const port = process.env.SUVEREN_CP_PORT ?? '3400';
   return `http://localhost:${port}`;
 }
