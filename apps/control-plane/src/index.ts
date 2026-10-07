@@ -40,6 +40,7 @@ import { createAIRouter } from './routes/ai';
 import { createAIPromptsRouter } from './routes/ai-prompts';
 import { requireAuth, requireAuthQueryOrHeader } from './middleware/auth';
 import { requireAllowedHost } from './middleware/host-guard';
+import { mcpPublicPort } from './lib/mcp-public-port';
 import { getToolDisplay, pushGateContent, pushServiceCredentials, setInternalSecret, getManifests, getGateContent, getEnrichedAuthorizations, getSkippedCommitments, MCP_BASE, runCommittedProposals, resyncGates, setReadPolicy } from './lib/mcp-bridge';
 import { backfillReadPolicyDefaults } from './lib/read-policy-defaults';
 import { createMCPRouter } from './routes/mcp';
@@ -1096,6 +1097,9 @@ app.get('/health', async (req: Request, res: Response) => {
     // purely so Settings can render "set by your IT" instead of controls
     // that would silently do nothing.
     policyLocked: POLICY_LOCKED,
+    // Where AI assistants connect (the UI's setup snippet) — see
+    // lib/mcp-public-port.ts for why the UI must not guess it.
+    mcpPort: mcpPublicPort(process.env, MCP_BASE),
     session: buildSessionHealth(vault),
     security: {
       note: 'Gateway secures tool execution. Agent host isolation is the user\'s responsibility.',

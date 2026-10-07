@@ -282,6 +282,49 @@ jobs:
           fi
           echo "clean: no gateway or integration processes survived stop"
 
+      # Saved ports + data folder (`config set port|mcp-port|data-dir`), with
+      # NO env vars — the way a login service starts it. Uses the REAL storage
+      # on each OS: ~/Library/Application Support/Suveren/gateway.json (macOS),
+      # ~/.config/suveren/gateway.json (Linux), HKCU\Software\Suveren\Gateway
+      # (Windows). Runners are throwaway, and the step clears them anyway.
+      - name: Saved ports + data folder — no env vars, real storage
+        shell: bash
+        run: |
+          set -e
+          unset SUVEREN_CP_PORT SUVEREN_MCP_PORT SUVEREN_DATA_DIR
+          cli() { node bundle/dist/bin/suveren-gateway.js "$@"; }
+          data="${GITHUB_WORKSPACE}/.suveren-saved settings"
+          cleanup() {
+            cli stop || true
+            cli config unset port || true
+            cli config unset mcp-port || true
+            cli config unset data-dir || true
+          }
+          trap cleanup EXIT
+
+          cli config set port 3600
+          cli config set mcp-port 3630
+          cli config set data-dir "$data"
+          cli config get
+
+          # Refused: same port twice, a port below 1024.
+          if cli config set mcp-port 3600; then echo "::error::accepted mcp-port = port"; exit 1; fi
+          if cli config set port 80; then echo "::error::accepted port 80"; exit 1; fi
+
+          cli start --detach
+          curl -fsS http://localhost:3600/health | tee health.json; echo
+          # The UI's "connect your assistant" snippet reads this.
+          grep -q '"mcpPort":3630' health.json || { echo "::error::/health does not report mcpPort 3630"; exit 1; }
+          curl -fsS -o /dev/null http://localhost:3630/health
+          test -f "$data/gateway.log" || { echo "::error::no gateway.log in the saved data folder"; exit 1; }
+          cli status | grep -q "localhost:3600" || { echo "::error::status does not use the saved port"; exit 1; }
+
+          # Changing a setting under a running --detach gateway is refused.
+          if cli config set port 3601; then echo "::error::changed the port under a running gateway"; exit 1; fi
+
+          cli stop
+          echo "saved settings: started on 3600/3630 with data in the saved folder, refused bad values"
+
       # Always — the integration timings in this log are the point of the run,
       # not just failure forensics.
       - name: Show gateway log

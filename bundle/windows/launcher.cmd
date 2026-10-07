@@ -46,7 +46,8 @@ rem seeding a per-user copy: it's already per-user (this whole install is,
 rem under %LOCALAPPDATA%), and a major-upgrade MSI replacing this install dir
 rem is exactly how a new pinned connector set is meant to replace the old
 rem one. User data (vault, gates, execution log) is untouched — that lives in
-rem ~/.suveren, set by the gateway itself, never by this launcher.
+rem the data folder (default ~/.suveren; the installer's DATA_DIR or `config
+rem set data-dir` changes it), resolved by the gateway itself, never here.
 if not defined SUVEREN_INTEGRATIONS_DIR set "SUVEREN_INTEGRATIONS_DIR=%HERE%integrations"
 
 rem Every connector's node_modules\.bin shim (crm-mcp.cmd etc.) is a tiny
@@ -82,8 +83,9 @@ if errorlevel 1 (
 )
 
 "%HERE%node\node.exe" "%HERE%gateway\bin\suveren-gateway.js" start --detach
-if not defined SUVEREN_CP_PORT set "SUVEREN_CP_PORT=3400"
-start "" "http://localhost:%SUVEREN_CP_PORT%"
+rem `open` uses the configured port (installer PORT / `config set port`),
+rem not a fixed 3400.
+"%HERE%node\node.exe" "%HERE%gateway\bin\suveren-gateway.js" open
 exit /b 0
 
 :run_foreground

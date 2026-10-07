@@ -8,5 +8,8 @@ services:
       - ${HOME}/.suveren:/app/data
     environment:
       - SUVEREN_AS_URL=https://www.suveren.ai
+      # The host port AI assistants use (the container itself binds 3030) —
+      # shown in the UI's "connect your assistant" snippet.
+      - SUVEREN_MCP_PUBLIC_PORT=${SUVEREN_MCP_PORT:-7430}
     network_mode: bridge
     restart: unless-stopped

@@ -1102,6 +1102,191 @@ jobs:
             }
           $global:LASTEXITCODE = 0
 
+  # ─── Installer settings: PORT / MCP_PORT / DATA_DIR on the msiexec command
+  #     line (the Intune path), kept through an upgrade with NO properties,
+  #     removed on uninstall — the data folder itself never touched. The
+  #     gateway is started ONLY by the installer's own commit action and the
+  #     login task, which carry no environment: the saved registry values are
+  #     the only way it can know the port and folder. x64 only (the ARM
+  #     runner covers the same msi in install-test / upgrade-test). The
+  #     double-click settings page cannot be clicked in CI — untested here. ─
+  settings-test:
+    name: installer settings (port, mcp port, data folder)
+    needs: build-payload
+    runs-on: windows-latest
+    timeout-minutes: 25
+    env:
+      npm_config_registry: 'http://127.0.0.1:9'
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-payload
+          path: bundle/windows/payload
+
+      - name: Install WiX v5 (+ UI extension)
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          wix extension add -g WixToolset.UI.wixext/5.0.2
+
+      - name: Compute old/new versions
+        id: versions
+        shell: bash
+        run: |
+          set -e
+          OLD="${{ needs.build-payload.outputs.version }}"
+          IFS='.' read -r MA MI PA <<< "$OLD"
+          echo "old=$OLD" >> "$GITHUB_OUTPUT"
+          echo "new=$MA.$MI.$((PA + 1))" >> "$GITHUB_OUTPUT"
+
+      - name: wix build — old and new msi, same payload
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path bundle\windows\out | Out-Null
+          $payload = (Resolve-Path bundle\windows\payload).Path
+          $launcher = (Resolve-Path bundle\windows\launcher.cmd).Path
+          & bundle\windows\stage-msi.ps1 -PayloadDir $payload -StageDir bundle\windows\stage
+          $stage = (Resolve-Path bundle\windows\stage).Path
+          foreach ($pair in @(
+            @{ Version = "${{ steps.versions.outputs.old }}"; Out = 'old.msi' },
+            @{ Version = "${{ steps.versions.outputs.new }}"; Out = 'new.msi' }
+          )) {
+            wix build bundle\windows\wix\Product.wxs `
+              -ext WixToolset.UI.wixext/5.0.2 `
+              -d "ProductVersion=$($pair.Version)" `
+              -d "PayloadDir=$stage" `
+              -d "LauncherSource=$launcher" `
+              -arch x64 `
+              -out "bundle\windows\out\$($pair.Out)"
+            if ($LASTEXITCODE -ne 0) { throw "wix build failed for $($pair.Out)" }
+          }
+
+      - name: REFUSAL — invalid values stop the install before anything is installed
+        shell: pwsh
+        run: |
+          $msi = (Resolve-Path bundle\windows\out\old.msi).Path
+          foreach ($bad in @('PORT=80', 'PORT=15600 MCP_PORT=15600', 'MCP_PORT=3400', 'DATA_DIR=relative\folder', 'PORT=abc')) {
+            $log = "$env:RUNNER_TEMP\refused.log"
+            $p = Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /qn /norestart $bad /l*v `"$log`"" -Wait -PassThru
+            if ($p.ExitCode -eq 0) { throw "msiexec accepted invalid settings: $bad" }
+            if (-not (Select-String -Path $log -Pattern 'Invalid gateway settings' -Quiet)) {
+              Get-Content $log | Select-Object -Last 40
+              throw "msiexec failed for '$bad' but not on the settings check (exit $($p.ExitCode))"
+            }
+            if (Test-Path "$env:LOCALAPPDATA\Programs\Suveren\suveren-gateway.cmd") { throw "files were installed despite '$bad'" }
+            Write-Host "refused as expected: $bad (exit $($p.ExitCode))"
+          }
+
+      - name: Install OLD with custom port, MCP port and data folder (silent, the Intune path)
+        shell: pwsh
+        run: |
+          # A space in the folder name on purpose — quoting is where this breaks.
+          $data = "$env:RUNNER_TEMP\Suveren Custom Data"
+          "SUVEREN_TEST_DATA=$data" >> $env:GITHUB_ENV
+          $defaultDir = "$env:USERPROFILE\.suveren"
+          "SUVEREN_DEFAULT_EXISTED=$(Test-Path $defaultDir)" >> $env:GITHUB_ENV
+          $msi = (Resolve-Path bundle\windows\out\old.msi).Path
+          $log = "$env:RUNNER_TEMP\install-old.log"
+          $p = Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /qn /norestart PORT=15600 MCP_PORT=15630 DATA_DIR=`"$data`" /l*v `"$log`"" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content $log | Select-Object -Last 80; throw "msiexec /i exited $($p.ExitCode)" }
+
+          $reg = Get-ItemProperty 'HKCU:\Software\Suveren\Gateway'
+          Write-Host "registry: Port=$($reg.Port) McpPort=$($reg.McpPort) DataDir=$($reg.DataDir)"
+          if ($reg.Port -ne '15600' -or $reg.McpPort -ne '15630' -or $reg.DataDir -ne $data) { throw "installer did not save the settings" }
+
+      - name: The installer-started gateway uses them — no env, no CLI involved
+        shell: pwsh
+        run: |
+          function Wait-Gateway {
+            $deadline = (Get-Date).AddSeconds(240)
+            while ((Get-Date) -lt $deadline) {
+              try {
+                $h = Invoke-RestMethod -Uri 'http://localhost:15600/health' -TimeoutSec 5
+                if ($h.status -eq 'ok') { Invoke-RestMethod -Uri 'http://localhost:15630/health' -TimeoutSec 5 | Out-Null; return $h }
+              } catch {}
+              Start-Sleep -Seconds 3
+            }
+            throw "gateway never answered on 15600/15630"
+          }
+          $h = Wait-Gateway
+          if ($h.mcpPort -ne 15630) { throw "/health reports mcpPort=$($h.mcpPort), expected 15630" }
+          foreach ($port in 3400, 3430) {
+            if (Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue) { throw "something listens on the default port $port" }
+          }
+          if (-not (Test-Path "$env:SUVEREN_TEST_DATA\integrations.json")) { throw "nothing written to the custom data folder" }
+          if ($env:SUVEREN_DEFAULT_EXISTED -eq 'False' -and (Test-Path "$env:USERPROFILE\.suveren")) { throw "the default data folder was created anyway" }
+          Get-ChildItem $env:SUVEREN_TEST_DATA | Format-Table Name, Length | Out-String | Write-Host
+
+          # The CLI (through the launcher) reads the same saved values.
+          $cli = "$env:LOCALAPPDATA\Programs\Suveren\suveren-gateway.cmd"
+          $get = & $cli config get | Out-String
+          Write-Host $get
+          if ($get -notmatch 'port:\s+15600\s+\(saved\)' -or $get -notmatch 'mcp-port:\s+15630\s+\(saved\)') { throw "config get does not show the saved ports" }
+          $status = & $cli status | Out-String
+          Write-Host $status
+          if ($status -notmatch 'localhost:15600') { throw "status does not use the saved port" }
+
+          # Next logon: end the task's run, run it again — the login task has no
+          # environment, so only the registry can bring it back on 15600.
+          schtasks /End /TN Suveren | Out-Null
+          Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
+            Where-Object { $_.CommandLine -like '*gateway\server.js*' } |
+            ForEach-Object { taskkill /PID $_.ProcessId /T /F 2>$null }
+          $global:LASTEXITCODE = 0
+          Start-Sleep -Seconds 2
+          schtasks /Run /TN Suveren
+          $h = Wait-Gateway
+          Write-Host "login task brought it back on 15600/15630"
+
+      - name: Upgrade with NO properties keeps the settings
+        shell: pwsh
+        run: |
+          $msi = (Resolve-Path bundle\windows\out\new.msi).Path
+          $log = "$env:RUNNER_TEMP\install-new.log"
+          $p = Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /qn /norestart /l*v `"$log`"" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content $log | Select-Object -Last 80; throw "upgrade exited $($p.ExitCode)" }
+          $reg = Get-ItemProperty 'HKCU:\Software\Suveren\Gateway'
+          Write-Host "after upgrade: Port=$($reg.Port) McpPort=$($reg.McpPort) DataDir=$($reg.DataDir)"
+          if ($reg.Port -ne '15600' -or $reg.McpPort -ne '15630' -or $reg.DataDir -ne $env:SUVEREN_TEST_DATA) { throw "upgrade lost the settings" }
+
+          $deadline = (Get-Date).AddSeconds(240); $h = $null
+          while ((Get-Date) -lt $deadline) {
+            try { $h = Invoke-RestMethod -Uri 'http://localhost:15600/health' -TimeoutSec 5; if ($h.status -eq 'ok') { break } } catch {}
+            Start-Sleep -Seconds 3
+          }
+          # Both msi share one payload, so the gateway's own version is the same —
+          # what matters is that the restarted gateway is back on the saved port.
+          if (-not $h -or $h.status -ne 'ok') { throw "gateway not serving on 15600 after the upgrade" }
+          if ($h.mcpPort -ne 15630) { throw "after the upgrade /health reports mcpPort=$($h.mcpPort)" }
+          Write-Host "upgraded, still on 15600/15630"
+
+      - name: Uninstall removes the settings, keeps the data folder
+        shell: pwsh
+        run: |
+          $msi = (Resolve-Path bundle\windows\out\new.msi).Path
+          $log = "$env:RUNNER_TEMP\uninstall.log"
+          $p = Start-Process msiexec.exe -ArgumentList "/x `"$msi`" /qn /norestart /l*v `"$log`"" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content $log | Select-Object -Last 80; throw "msiexec /x exited $($p.ExitCode)" }
+          $reg = Get-ItemProperty 'HKCU:\Software\Suveren\Gateway' -ErrorAction SilentlyContinue
+          if ($reg -and ($reg.Port -or $reg.McpPort -or $reg.DataDir)) { throw "settings left in the registry after uninstall" }
+          if (-not (Test-Path "$env:SUVEREN_TEST_DATA\integrations.json")) { throw "uninstall touched the data folder" }
+          Write-Host "uninstalled: settings gone, data folder kept"
+
+      - name: Gateway log
+        if: always()
+        shell: pwsh
+        run: Get-Content "$env:SUVEREN_TEST_DATA\gateway.log" -ErrorAction SilentlyContinue
+
+      - name: Final cleanup
+        if: always()
+        shell: pwsh
+        run: |
+          Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
+            Where-Object { $_.CommandLine -like '*Suveren*' } |
+            ForEach-Object { taskkill /PID $_.ProcessId /T /F 2>$null }
+          $global:LASTEXITCODE = 0
+
   # ─── Attach unsigned msi + signing kit to the GitHub Release for the tag.
   #     Tag pushes and manual dispatch only — never on a PR. ─────────────────
   release:
@@ -1111,7 +1296,7 @@ jobs:
     # from a branch without a tag (see bundle/windows/* development), and
     # must never have a side effect of creating a release or a tag.
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build-payload, build-msi, install-test, prove-signing-kit, upgrade-test]
+    needs: [build-payload, build-msi, install-test, prove-signing-kit, upgrade-test, settings-test]
     runs-on: windows-latest
     timeout-minutes: 15
     permissions:

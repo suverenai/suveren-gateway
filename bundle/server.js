@@ -10,11 +10,12 @@
 import { spawn } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { homedir, tmpdir, constants as osConstants } from 'node:os';
+import { tmpdir, constants as osConstants } from 'node:os';
 import { existsSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { resolveCaFile, resolveProxyUrl, resolveSimulation } from './lib/config.mjs';
 import { readPolicy, isPolicyLocked } from './lib/policy.mjs';
 import { unsupportedNodeReason } from './lib/node-version.mjs';
+import { resolveInstallSettings } from './lib/install-settings.mjs';
 
 // Docker and the login service start this file directly, not through the CLI,
 // so it checks the Node version too (see lib/node-version.mjs).
@@ -63,7 +64,19 @@ function exitLikeChild(code, signal) {
 // MERGED into one combined PEM file instead. Comparing against that combined
 // path would never match the saved path alone, so the guard has to be a
 // dedicated marker, not a value comparison (which would also re-exec forever).
-const DATA_DIR = process.env.SUVEREN_DATA_DIR ?? join(homedir(), '.suveren');
+// Ports + data folder: IT policy > env > saved install setting > default
+// (see lib/install-settings.mjs). Resolved here, not just in the CLI,
+// because the login service starts this file directly. Refuses to start on
+// an invalid value rather than guessing a port or a folder.
+let INSTALL;
+try {
+  INSTALL = resolveInstallSettings();
+} catch (err) {
+  console.error(`[suveren-gateway] ${err instanceof Error ? err.message : String(err)}`);
+  console.error('[suveren-gateway] Fix it with `suveren-gateway config set …` (see `suveren-gateway config help`).');
+  process.exit(1);
+}
+const DATA_DIR = INSTALL.dataDir;
 const savedCaFile = resolveCaFile(DATA_DIR);
 if (savedCaFile && !process.env.SUVEREN_CA_REEXEC_DONE) {
   let effectiveCaFile = savedCaFile;
@@ -159,8 +172,8 @@ if (policyNoProxy) {
   process.env.NO_PROXY = policyNoProxy;
 }
 
-const CP_PORT = process.env.SUVEREN_CP_PORT ?? '3400';
-const MCP_PORT = process.env.SUVEREN_MCP_PORT ?? '3430';
+const CP_PORT = String(INSTALL.cpPort);
+const MCP_PORT = String(INSTALL.mcpPort);
 const UI_DIST = process.env.HAP_UI_DIST ?? join(__dirname, 'dist', 'ui');
 // Integration manifests + profile catalog ship inside the bundle so a
 // fresh `npm install -g` install has working integrations and profiles
@@ -176,6 +189,9 @@ const env = {
   NODE_ENV: 'production',
   SUVEREN_CP_PORT: CP_PORT,
   SUVEREN_MCP_PORT: MCP_PORT,
+  // Only when not the default: the control plane's one-time ~/.hap →
+  // ~/.suveren migration runs only while SUVEREN_DATA_DIR is unset.
+  ...(INSTALL.source.dataDir !== 'default' ? { SUVEREN_DATA_DIR: DATA_DIR } : {}),
   // The control plane talks to the MCP server over this URL. It defaults to
   // 127.0.0.1:3430 in mcp-bridge.ts, so if the user overrode SUVEREN_MCP_PORT
   // without also setting this, every CP→MCP internal call hit the wrong port
