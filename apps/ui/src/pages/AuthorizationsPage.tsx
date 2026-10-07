@@ -496,6 +496,11 @@ export function AuthorizationsPage() {
   const [modeFilter, setModeFilter] = useState<'auto' | 'review' | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const [showPicker, setShowPicker] = useState(() => searchParams.get('new') === '1');
+  // `?new=1&profile=<id>` — e.g. the dashboard's first-run card linking
+  // straight to Delegation — skips the picker grid (see AuthorizePicker's
+  // preselectProfileId). Read once at mount like `new`; AuthorizePicker
+  // falls back to the normal grid if the profile can't be preselected.
+  const [preselectProfileId] = useState(() => searchParams.get('profile'));
   // Captured at mount so the URL param can be stripped immediately without
   // killing the highlight CSS animation. Stays in state for ~3s then clears.
   const [highlightHash, setHighlightHash] = useState<string | null>(() => searchParams.get('highlight'));
@@ -856,8 +861,9 @@ export function AuthorizationsPage() {
           className="modal-backdrop"
           onClick={() => {
             setShowPicker(false);
-            if (searchParams.get('new')) {
+            if (searchParams.get('new') || searchParams.get('profile')) {
               searchParams.delete('new');
+              searchParams.delete('profile');
               setSearchParams(searchParams, { replace: true });
             }
           }}
@@ -873,8 +879,9 @@ export function AuthorizationsPage() {
                 className="modal-close"
                 onClick={() => {
                   setShowPicker(false);
-                  if (searchParams.get('new')) {
+                  if (searchParams.get('new') || searchParams.get('profile')) {
                     searchParams.delete('new');
+                    searchParams.delete('profile');
                     setSearchParams(searchParams, { replace: true });
                   }
                 }}
@@ -886,7 +893,7 @@ export function AuthorizationsPage() {
               <p style={{ color: 'var(--text-tertiary)', fontSize: '0.9rem', marginTop: 0, marginBottom: '1rem' }}>
                 What should your agent be able to do? Pick a profile, set limits, then authorize.
               </p>
-              <AuthorizePicker onDismiss={() => setShowPicker(false)} />
+              <AuthorizePicker onDismiss={() => setShowPicker(false)} preselectProfileId={preselectProfileId} />
             </div>
           </div>
         </div>

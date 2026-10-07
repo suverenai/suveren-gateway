@@ -25,7 +25,9 @@ export interface PickerEntry {
   unavailableReason?: string;
 }
 
-const shortOf = (id: string): string => id.replace(/@.*$/, '').split('/').pop() ?? id;
+/** Profile id without its host/path prefix or version — "delegation" from either
+ *  a short caller-supplied id or the full `github.com/.../delegation@0.1`. */
+export const shortOf = (id: string): string => id.replace(/@.*$/, '').split('/').pop() ?? id;
 const versionOf = (id: string): string => id.split('@')[1] ?? '';
 
 function latestByShort(profiles: ProfileSummary[], wanted: Set<string>): Map<string, ProfileSummary> {
@@ -84,4 +86,24 @@ export function pickerEntries(
     });
   }
   return entries;
+}
+
+/**
+ * The entry a caller asked to preselect — e.g. the dashboard's first-run card
+ * linking straight to Delegation instead of making the person find it in the
+ * grid. Matched by short id so the caller doesn't need to track which profile
+ * version is current. Returns undefined (never a dead redirect) when the
+ * profile isn't in the list, isn't ready yet (e.g. Delegation needs
+ * simulation mode on), or `canGive` refuses it (team approver rule) — all of
+ * which mean "fall through to the normal grid".
+ */
+export function findPreselectedEntry<E extends { profile: ProfileSummary; ready: boolean }>(
+  entries: readonly E[],
+  preselectProfileId: string | null | undefined,
+  canGive: (entry: E) => boolean,
+): E | undefined {
+  if (!preselectProfileId) return undefined;
+  return entries.find(
+    (e) => shortOf(e.profile.id) === shortOf(preselectProfileId) && e.ready && canGive(e),
+  );
 }

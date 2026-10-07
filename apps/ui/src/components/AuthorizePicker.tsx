@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import {
@@ -9,7 +9,7 @@ import {
   type ProfileConfig,
   type BuiltinStatus,
 } from '../lib/sp-client';
-import { pickerEntries } from '../lib/picker-entries';
+import { pickerEntries, findPreselectedEntry } from '../lib/picker-entries';
 import { mandateRight } from '../lib/mandate-rights';
 import { profileDisplayName } from '../lib/profile-display';
 import { profileIdentity } from '../lib/profile-identity';
@@ -17,6 +17,16 @@ import { ProfileIcon } from './ProfileIcon';
 
 interface Props {
   onDismiss?: () => void;
+  /**
+   * Skip the grid and go straight into Scope & Limits for this profile — e.g.
+   * the dashboard's first-run card linking to its one Delegation mandate
+   * instead of making the person find "Delegation" among every connector.
+   * Matched by short id (`delegation`) so the caller doesn't need to track
+   * which profile version is current. Silently falls back to the normal grid
+   * if the profile isn't found, isn't ready yet, or the person can't give it
+   * here — never a dead redirect.
+   */
+  preselectProfileId?: string | null;
 }
 
 /**
@@ -25,7 +35,7 @@ interface Props {
  * Authorizations page — the two used to be separate routes but are really
  * two halves of managing agent authority.
  */
-export function AuthorizePicker({ onDismiss }: Props) {
+export function AuthorizePicker({ onDismiss, preselectProfileId }: Props) {
   const navigate = useNavigate();
   const { group, groupId, domain, user } = useAuth();
   const [profiles, setProfiles] = useState<ProfileSummary[]>([]);
@@ -110,6 +120,20 @@ export function AuthorizePicker({ onDismiss }: Props) {
     if (!groupId) return;
     storeAuthAndNavigate(profileId);
   };
+
+  // Preselect: once the grid's data has loaded, skip straight to Scope &
+  // Limits for the requested profile (see findPreselectedEntry — matching,
+  // readiness and the team approver rule are all checked there). Guarded so
+  // it fires at most once.
+  const autoNavigated = useRef(false);
+  useEffect(() => {
+    if (loading || !preselectProfileId || autoNavigated.current) return;
+    const match = findPreselectedEntry(entries, preselectProfileId, (e) => rightFor(e.profile).can);
+    if (!match) return;
+    autoNavigated.current = true;
+    handleCreate(match.profile.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, preselectProfileId]);
 
   return (
     <>

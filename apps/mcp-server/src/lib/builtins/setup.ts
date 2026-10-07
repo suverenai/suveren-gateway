@@ -54,7 +54,11 @@ export function connectedSystems(im: IntegrationManager): SystemLine[] {
 export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
   return {
     id: 'setup',
-    name: 'Test setup',
+    // Shown as the picker card title (apps/ui AuthorizePicker) — the person
+    // reads this as the mandate they're giving, so it must match the profile
+    // name they'll see everywhere else (Mandates page, dashboard first-run
+    // card), not the internal "test setup" framing. Description is unchanged.
+    name: 'Delegation',
     description:
       'Your AI sets up a test of itself: it reads the setup guides and proposes its agent brief and its ' +
       'mandates. Every proposal waits for your approval. Simulation mode only.',

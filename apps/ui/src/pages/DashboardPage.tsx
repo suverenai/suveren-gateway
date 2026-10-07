@@ -1,11 +1,14 @@
 import { useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { spClient, type PendingItem, type Proposal } from '../lib/sp-client';
+import { spClient, type PendingItem, type Proposal, type AgentContact } from '../lib/sp-client';
 import { SetupGuide } from '../components/SetupGuide';
+import { FirstRunCard } from '../components/FirstRunCard';
 import { useVisiblePolling } from '../hooks/useVisiblePolling';
 import { useMcpEndpoint } from '../hooks/useMcpEndpoint';
 import { useSSEEvent } from '../contexts/EventSourceContext';
+import { useSimulationPolicy } from '../hooks/useSimulationPolicy';
+import { useManaged } from '../hooks/useManaged';
 import { isPendingProposal } from '../lib/pending';
 import { useIntegrationStatus } from '../contexts/IntegrationStatusContext';
 import { Skeleton, SkeletonAttentionRow } from '../components/Skeleton';
@@ -13,6 +16,7 @@ import { RecentBlocks } from '../components/RecentBlocks';
 import { SkippedCommitmentsCard } from '../components/SkippedCommitmentsCard';
 import { bucketAuths } from '../lib/auth-status';
 import { buildIntegrationAttentionItems, buildPausedSummary } from '../lib/integration-attention';
+import { deriveFirstRunCard } from '../lib/first-run-card';
 
 const EXPIRY_WARN_SECONDS = 30 * 60; // 30 minutes
 
@@ -38,9 +42,16 @@ export function DashboardPage() {
   const [archivedIds, setArchivedIds] = useState<string[]>([]);
   const [proposalsReady, setProposalsReady] = useState(false);
   const [aiReady, setAiReady] = useState(false);
+  const [contact, setContact] = useState<AgentContact | null>(null);
+  const [contactReady, setContactReady] = useState(false);
   const { entries: integrationEntries, activeSessions, loading: integrationsLoading } = useIntegrationStatus();
   const mcpEndpoint = useMcpEndpoint();
   const integrationsReady = !integrationsLoading;
+  // null until /health answers — the dashboard waits for it (allReady), so a
+  // simulation-mode user never sees the live-mode guide flash first.
+  const { simulation } = useSimulationPolicy();
+  const simulationOn = simulation === true;
+  const managed = useManaged();
 
   const refresh = useCallback(() => {
     // Fire-and-forget in parallel. Each call flips only its own ready flag,
@@ -63,6 +74,12 @@ export function DashboardPage() {
     spClient.getCredential('ai-config')
       .then(s => { setAiConfigured(s.configured); setAiReady(true); })
       .catch(() => setAiReady(true));
+    // Drives the first-run card's "Connect your AI" step — null means no AI
+    // has ever completed an MCP handshake with this gateway (not "none is
+    // connected right now", which would forget a closed Claude Desktop).
+    spClient.getAgentContact()
+      .then(v => { setContact(v.contact); setContactReady(true); })
+      .catch(() => setContactReady(true));
   }, [domain]);
 
   // SSE-driven refresh: fire on attestation, proposal, or team-membership changes.
@@ -74,7 +91,7 @@ export function DashboardPage() {
   // Fallback full-sync every 5min in case of missed events (reconnect race, etc.).
   useVisiblePolling(refresh, 300_000, domain);
 
-  const allReady = authsReady && proposalsReady && aiReady && integrationsReady;
+  const allReady = authsReady && proposalsReady && aiReady && integrationsReady && contactReady && simulation !== null;
 
   // Bucket through the shared helper so this surface, the Sidebar badge,
   // and the Authorizations page never disagree on what counts as
@@ -82,6 +99,29 @@ export function DashboardPage() {
   const buckets = bucketAuths(auths, { archivedSet: new Set(archivedIds) });
   const active = buckets.active;
   const expired = buckets.expired;
+  // First-run card inputs — see lib/first-run-card.ts. "Delegation" here
+  // means an ACTIVE mandate for that profile, not merely having once had one.
+  const hasDelegationMandate = active.some(a => shortProfile(a.profile_id) === 'delegation');
+  const otherMandateCount = active.filter(a => shortProfile(a.profile_id) !== 'delegation').length;
+  // getMyProposals returns the whole history for the domain (pending AND
+  // decided), which is exactly "has a proposal ever arrived" — see
+  // lib/pending.ts's isPendingProposal for the narrower "still waiting" filter
+  // used elsewhere on this page.
+  const delegationProposalCount = proposals.filter(p => shortProfile(p.profileId) === 'delegation').length;
+  const firstRun = deriveFirstRunCard({
+    hasContact: contact !== null,
+    hasDelegationMandate,
+    otherMandateCount,
+    delegationProposalCount,
+    managed,
+    simulationOn,
+  });
+  // The first-run card belongs to simulation mode, where the Delegation mandate
+  // exists and the person's AI sets up the rest. Outside it, the live-mode
+  // SetupGuide stays; inside it, that guide never shows — once the card is done
+  // the person is set up through their AI, and the guide's four steps would
+  // contradict it.
+  const showFirstRun = simulationOn && firstRun.visible;
   const soonExpiring = active.filter(a => a.remaining_seconds !== null && a.remaining_seconds <= EXPIRY_WARN_SECONDS);
   const pendingProposals = proposals.filter(isPendingProposal);
   const runningIntegrations = integrationEntries.filter(e => e.state === 'running');
@@ -174,22 +214,40 @@ export function DashboardPage() {
         <h1 className="page-title">Dashboard</h1>
       </div>
 
-      {/* Setup guide — gated on the data it reads. Rendering before auths,
-          ai config, and integrations have resolved caused a flicker: the
-          guide's default evaluation ("nothing is set up yet") made it visible
-          for a frame, then the real data flipped every step to "done" and it
-          vanished. Waiting for allReady means it either appears once with the
-          correct progress, or never appears at all for a fully-set-up user. */}
+      {/* First-run card takes over from the generic setup guide while there is
+          no mandate besides (maybe) Delegation — see lib/first-run-card.ts.
+          Both wait for allReady: rendering before auths, ai config,
+          integrations, and agent contact have resolved caused a flicker (the
+          guide's default evaluation made it visible for a frame, then the
+          real data flipped every step to "done" and it vanished). Waiting for
+          allReady means it either appears once with the correct progress, or
+          never appears at all for a fully-set-up user. */}
       {allReady && mcpEndpoint && (
-        <SetupGuide
-          aiConfigured={aiConfigured}
-          hasRunningIntegration={runningIntegrations.length > 0}
-          hasActiveAuth={active.length > 0}
-          hasAgentConnected={activeSessions > 0}
-          mcpEndpoint={mcpEndpoint}
-        />
+        showFirstRun ? (
+          <FirstRunCard
+            contact={contact}
+            hasDelegationMandate={hasDelegationMandate}
+            otherMandateCount={otherMandateCount}
+            delegationProposalCount={delegationProposalCount}
+            managed={managed}
+            simulationOn={simulationOn}
+            mcpEndpoint={mcpEndpoint}
+          />
+        ) : !simulationOn && (
+          <SetupGuide
+            aiConfigured={aiConfigured}
+            hasRunningIntegration={runningIntegrations.length > 0}
+            hasActiveAuth={active.length > 0}
+            hasAgentConnected={activeSessions > 0}
+            mcpEndpoint={mcpEndpoint}
+          />
+        )
       )}
 
+      {/* Stats + "Needs your attention" stay hidden while the first-run card
+          shows — an all-zero grid and an empty "All clear" ahead of the
+          card's one action would just be noise before anything exists yet. */}
+      {!showFirstRun && <>
       {/* Status bar */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(8rem, 1fr))', gap: '0.75rem', marginBottom: '1.5rem' }}>
         <Link to="/mandates" style={{ textDecoration: 'none' }}>
@@ -278,6 +336,7 @@ export function DashboardPage() {
           </div>
         )}
       </section>
+      </>}
 
       {/* Real systems paused by simulation mode — one calm line, not an
           attention row per connector. Only rendered while something IS

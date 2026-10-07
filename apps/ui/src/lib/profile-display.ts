@@ -3,11 +3,12 @@ const MAX_NAME_LENGTH = 40;
 /**
  * Display-name overrides by short profile id — what a person reads, never the
  * id. `delegation@0.1` is the gateway's test-setup tool group (propose
- * mandates and the brief, read setup guides); "Test Setup" says that plainly.
+ * mandates and the brief, read setup guides). It reads "Delegation", the word
+ * the dashboard's first-run card and the AI's instructions use for it.
  * Applied here so every surface (cards, filters, picker, wizard) agrees.
  */
 const DISPLAY_NAME_OVERRIDE: Readonly<Record<string, string>> = {
-  delegation: 'Test Setup',
+  delegation: 'Delegation',
 };
 
 /**

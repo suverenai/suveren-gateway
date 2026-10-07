@@ -22,6 +22,7 @@ import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { SharedState } from '../src/lib/shared-state';
 import { createMcpServer } from '../src/index';
+import { AgentContactStore } from '../src/lib/agent-contact';
 import { verifyGateContentHashes } from '../src/lib/gate-content';
 import type { GateContent } from '../src/lib/gate-store';
 import { IntegrationRegistry, type IntegrationConfig } from '../src/lib/integration-registry';
@@ -76,6 +77,8 @@ setAsBaseUrl(spUrl);
 // ─── Shared state (one instance for all connections) ───────────────────────
 
 const state = new SharedState(spUrl, undefined, dataDir);
+// Has a person's AI ever connected? Drives the dashboard's "Connect your AI" step.
+const agentContact = new AgentContactStore(dataDir);
 
 // What verifyReport (via ReportStore) reads evidence from: the local receipt
 // archive, and each simulator's own `export` CLI — same bin dir / data dir
@@ -566,6 +569,7 @@ app.get('/sse', guardAgent, async (_req: Request, res: Response) => {
   const transport = new SSEServerTransport('/messages', res);
   const { server, refreshTools, registerProxiedTools } = createMcpServer(state, integrationManager);
 
+  server.server.oninitialized = () => agentContact.record(server.server.getClientVersion());
   const sessionId = transport.sessionId;
   sseSessions.set(sessionId, transport);
   activeSessions.set(sessionId, { refreshTools, registerProxiedTools });
@@ -619,6 +623,7 @@ app.all('/mcp', guardAgent, async (req: Request, res: Response) => {
       };
 
       const { server, refreshTools, registerProxiedTools } = createMcpServer(state, integrationManager);
+      server.server.oninitialized = () => agentContact.record(server.server.getClientVersion());
       await server.connect(transport);
       await transport.handleRequest(req, res, req.body);
 
@@ -657,6 +662,13 @@ app.get('/health', (_req: Request, res: Response) => {
     // picker offers them so a person can give a mandate for them.
     builtins: integrationManager.getBuiltins(),
   });
+});
+
+// Has a person's AI ever connected, which one, and when last — for the dashboard's
+// first-run card. Internal (the control plane proxies it behind its auth guard),
+// so the client name is not on the unauthenticated /health.
+app.get('/internal/agent-contact', internalOnly, (_req: Request, res: Response) => {
+  res.json({ contact: agentContact.read() });
 });
 
 // Argument schemas + approvalView hints per tool, for the approval screen.

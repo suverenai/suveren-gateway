@@ -10,6 +10,7 @@ import {
   getManifests,
   removeIntegration,
   getMcpHealth,
+  getAgentContact,
 } from '../lib/mcp-bridge';
 import { eventBus } from '../lib/event-bus';
 
@@ -20,6 +21,14 @@ export function createMCPRouter(): Router {
     try {
       const data = await getMcpHealth();
       res.json(data);
+    } catch {
+      res.status(502).json({ error: 'MCP server unreachable' });
+    }
+  });
+
+  router.get('/agent-contact', async (_req: Request, res: Response) => {
+    try {
+      res.json(await getAgentContact());
     } catch {
       res.status(502).json({ error: 'MCP server unreachable' });
     }
