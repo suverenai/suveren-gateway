@@ -1610,6 +1610,10 @@ Environment:
   SUVEREN_DATA_DIR    Data directory (default ~/.suveren) — overrides a saved \`config set data-dir\`
   SUVEREN_AS_URL      Authority Server URL — overrides the saved as-url
   SUVEREN_SIMULATION  1 to force simulation mode for this run — overrides the saved setting
+  SUVEREN_BIND_HOST   Listen address (default 127.0.0.1 — this machine only). Anything
+                      else lets other machines connect as your agent, so it needs:
+  SUVEREN_MCP_TOKEN   Token an AI assistant must send to open a session
+                      (Authorization: Bearer <token>, or ?token=<token>)
   HTTP_PROXY / HTTPS_PROXY / NO_PROXY (upper or lower case)
                       Corporate proxy — honoured for every outbound call to the Authority
                       Server, the update checker, and a remote AI assistant endpoint. A

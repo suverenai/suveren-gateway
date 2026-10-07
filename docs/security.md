@@ -96,12 +96,28 @@ When a vault key is set, plaintext files are migrated to encrypted versions and 
 The MCP server exposes `/internal/*` endpoints for the control-plane:
 
 - **Loopback only** — restricted to `127.0.0.1`, `::1`, `::ffff:127.0.0.1`
-- **Shared secret** (optional) — `HAP_INTERNAL_SECRET` env var, validated via `X-Internal-Secret` header
+- **Shared secret** — `SUVEREN_INTERNAL_SECRET`, validated via the `X-Internal-Secret` header. The installed gateway generates a random one at every start; connectors never receive it (see below).
 - In Docker, both services run in the same container — loopback is sufficient
+
+## Agent Port
+
+Whoever connects to the MCP port (`/sse`, `/messages`, `/mcp`) acts as the signed-in person's agent, under their mandates. So:
+
+- **This machine only, by default.** Both the MCP server and the control plane listen on `127.0.0.1`. Set `SUVEREN_BIND_HOST` to listen elsewhere.
+- **A token for anything wider.** With `SUVEREN_MCP_TOKEN` set, opening a session requires `Authorization: Bearer <token>` (or `?token=<token>` for clients that cannot send headers). The gateway refuses to start with a non-local `SUVEREN_BIND_HOST` and no token.
+- **Docker.** The image listens on `0.0.0.0` inside the container; `docker-compose.yml` publishes the ports on the host's `127.0.0.1` only. To publish them more widely, set `SUVEREN_MCP_TOKEN` too.
+- **Host check.** Without a token, a session is only opened when the `Host` header names this machine or an IP address. That stops DNS rebinding — a web page whose domain points at `127.0.0.1`.
+- No CORS headers: no web page can read the MCP server's responses.
+
+## Connector Credentials
+
+Your AI never sees a credential. Each connector receives only the credential for its own system, and holds it while it runs. A compromised connector could misuse that one system's credential — not others. That is why connectors are pinned to exact versions and should come from sources you trust.
+
+A connector starts with a minimal environment: what the operating system needs to run a program, the proxy and company-certificate settings, variables its manifest names in `mcp.passEnv`, and its own credentials. It does not receive the gateway's own secrets or anything else from the environment the gateway was started in.
 
 ## Authentication
 
-The gateway does not authenticate agents directly. Authentication flows through the SP:
+The gateway does not authenticate agents directly (beyond the agent port rules above). Authentication flows through the SP:
 
 1. Human enters SP API key in the control-plane UI
 2. Control-plane validates key against SP, gets session cookie

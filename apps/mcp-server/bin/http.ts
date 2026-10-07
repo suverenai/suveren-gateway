@@ -3,13 +3,16 @@
 /**
  * Suveren MCP Server — HTTP entry point (supports both SSE and Streamable HTTP).
  *
- * Container mode: listens on 0.0.0.0:3030, accepts internal requests only
- * from the control-plane via loopback.
+ * Listens on SUVEREN_BIND_HOST (default 127.0.0.1; the Docker image sets
+ * 0.0.0.0). Internal requests are accepted only from the control-plane via
+ * loopback. Who may connect as the agent: see src/lib/agent-access.ts.
  *
  * Environment variables:
  * - SUVEREN_AS_URL — AS server URL (default: https://www.suveren.ai)
  * - SUVEREN_AS_API_KEY — AS API key for receipt requests (optional)
- * - SUVEREN_MCP_PORT — HTTP port (default: 3030)
+ * - SUVEREN_MCP_PORT — HTTP port (default: 3430)
+ * - SUVEREN_BIND_HOST — listen address (default: 127.0.0.1)
+ * - SUVEREN_MCP_TOKEN — when set, required to open an agent session
  */
 
 import { randomUUID } from 'node:crypto';
@@ -28,6 +31,7 @@ import type { ReportSources, ReceiptArchiveReader } from '../src/lib/report';
 import { scopeReportSources, scopeReportSourcesToStoredWindow } from '../src/lib/report/window';
 import type { StoredReport } from '../src/lib/report/report-store';
 import { isSimulationMode } from '../src/lib/simulation-mode';
+import { agentAccess, bindRefusal, resolveAgentToken, resolveBindHost } from '../src/lib/agent-access';
 import { readPairing } from '../src/lib/as-pairing';
 import { loadProfiles } from '../src/lib/profile-loader';
 import { loadManifests, getAllManifests, getManifest } from '../src/lib/manifest-loader';
@@ -55,6 +59,16 @@ const spUrl = resolveAsUrl(dataDir);
 // just a CLI-flag-time check, so a hand-edited config.json is caught too.
 validatePinTlsForUrl(resolvePinTls(dataDir), spUrl);
 const port = parseInt(process.env.SUVEREN_MCP_PORT ?? '3430', 10);
+
+// Who may connect as the agent — see agent-access.ts. Refuse to start rather
+// than expose the agent port to the network without a token.
+const bindHost = resolveBindHost();
+const agentToken = resolveAgentToken();
+const bindProblem = bindRefusal();
+if (bindProblem) {
+  console.error(`[Suveren MCP] Refusing to start: ${bindProblem}`);
+  process.exit(1);
+}
 
 // The receipt footer's link uses the SAME resolved URL — see receipt-footer.ts.
 setAsBaseUrl(spUrl);
@@ -164,18 +178,10 @@ integrationManager.setOnConfigMigrated((id, updates) => {
 const app = express();
 app.use(express.json());
 
-// ─── CORS for control-plane UI ────────────────────────────────────────────
-
-app.use((_req, res, next) => {
-  res.header('Access-Control-Allow-Origin', 'http://localhost:3000');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, mcp-session-id');
-  if (_req.method === 'OPTIONS') {
-    res.sendStatus(204);
-    return;
-  }
-  next();
-});
+// No CORS headers: no browser page calls this server (the UI talks to the
+// control plane, which reaches us over /internal on loopback). The old
+// `Access-Control-Allow-Origin: http://localhost:3000` named a port nothing
+// uses; without any such header a browser cannot read our responses at all.
 
 // ─── Internal-only middleware (loopback + shared secret) ──────────────────
 
@@ -548,8 +554,15 @@ app.post('/internal/stop-all-running', internalOnly, async (_req: Request, res: 
 
 const sseSessions = new Map<string, SSEServerTransport>();
 
+// GET /sse and a POST /mcp without a session id open a session; everything
+// else continues one (and is tied to it by the session id).
+const guardAgent = agentAccess(
+  agentToken,
+  (req) => (req.path === '/sse' && req.method === 'GET') || (req.path === '/mcp' && req.method === 'POST' && !req.headers['mcp-session-id']),
+);
+
 // GET /sse — client opens SSE stream
-app.get('/sse', async (_req: Request, res: Response) => {
+app.get('/sse', guardAgent, async (_req: Request, res: Response) => {
   const transport = new SSEServerTransport('/messages', res);
   const { server, refreshTools, registerProxiedTools } = createMcpServer(state, integrationManager);
 
@@ -564,15 +577,11 @@ app.get('/sse', async (_req: Request, res: Response) => {
     console.error(`[Suveren MCP] SSE session ${sessionId} closed`);
   });
 
-  // Debug: register a dummy tool to verify dynamic registration works
-  server.registerTool('debug_test_tool', { description: 'Debug test' }, async () => ({
-    content: [{ type: 'text' as const, text: 'debug' }],
-  }));
   await server.connect(transport);
 });
 
 // POST /messages — client sends JSON-RPC messages
-app.post('/messages', async (req: Request, res: Response) => {
+app.post('/messages', guardAgent, async (req: Request, res: Response) => {
   const sessionId = req.query.sessionId as string;
   const transport = sseSessions.get(sessionId);
   if (!transport) {
@@ -586,7 +595,7 @@ app.post('/messages', async (req: Request, res: Response) => {
 
 const streamableSessions = new Map<string, StreamableHTTPServerTransport>();
 
-app.all('/mcp', async (req: Request, res: Response) => {
+app.all('/mcp', guardAgent, async (req: Request, res: Response) => {
   const sessionId = req.headers['mcp-session-id'] as string | undefined;
 
   if (req.method === 'GET' || req.method === 'POST' || req.method === 'DELETE') {
@@ -1077,10 +1086,11 @@ process.on('SIGINT', async () => {
 
 // ─── Start server ───────────────────────────────────────────────────────────
 
-app.listen(port, '0.0.0.0', () => {
-  console.error(`[Suveren MCP] HTTP server listening on http://0.0.0.0:${port}`);
-  console.error(`[Suveren MCP]   SSE:        http://0.0.0.0:${port}/sse`);
-  console.error(`[Suveren MCP]   Streamable: http://0.0.0.0:${port}/mcp`);
+app.listen(port, bindHost, () => {
+  console.error(`[Suveren MCP] HTTP server listening on http://${bindHost}:${port}`);
+  console.error(`[Suveren MCP]   SSE:        http://${bindHost}:${port}/sse`);
+  console.error(`[Suveren MCP]   Streamable: http://${bindHost}:${port}/mcp`);
+  console.error(`[Suveren MCP]   Agent token: ${agentToken ? 'required' : 'not set (this machine only)'}`);
   console.error(`[Suveren MCP]   SP server:  ${spUrl}`);
 
   // Load profiles and integration manifests before starting integrations
