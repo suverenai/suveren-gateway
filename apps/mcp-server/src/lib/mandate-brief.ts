@@ -15,6 +15,8 @@ import { getProfile } from '@hap/core';
 import { getConsumptionState, formatConsumptionCompact } from './consumption';
 import { getContextForBrief } from './context-loader';
 import { agentVisibleAuthorizations } from './agent-visibility';
+import { isSimulationMode } from './simulation-mode';
+import { uiUrl } from './locked-notice';
 
 /** Extract short profile name from full ID (e.g., "github.com/.../charge@0.3" → "charge") */
 function shortProfileName(profileId: string): string {
@@ -140,6 +142,21 @@ export function buildMandateBrief(opts: MandateBriefOptions): string {
       lines.push(`[${auth.path}] ${auth.profileId} — needs: ${missing.join(', ')}`);
     }
 
+    lines.push('');
+  }
+
+  // First contact in simulation mode: a person asking their AI "how do I start
+  // with Suveren?" must get led into the setup guide, or told the one step only
+  // a person can take (the Delegation mandate). Neutral words — no "simulation"
+  // or "test" — because the working AI reads these lines too and must not be
+  // able to tell simulation from live (see agent-visibility.ts).
+  if (isSimulationMode()) {
+    const canSetUp = active.some(a => shortProfileName(a.profileId) === 'delegation');
+    lines.push('=== GETTING STARTED ===');
+    lines.push('');
+    lines.push(canSetUp
+      ? 'If the person asks how to start with Suveren or how to set up their work with it: call setup__get_guide first and follow its steps in order.'
+      : `If the person asks how to start with Suveren: they first create a "Delegation" mandate in the Suveren Gateway at ${uiUrl()}. With it you can read the setup guide and lead them through the setup.`);
     lines.push('');
   }
 

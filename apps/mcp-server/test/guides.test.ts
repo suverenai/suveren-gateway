@@ -93,6 +93,12 @@ describe('guideHeader', () => {
   it('no systems → says so, and what to do', () => {
     expect(guideHeader([])).toMatch(/none yet — ask the person to connect/);
   });
+  it('tells the AI where the person approves its proposals', () => {
+    process.env.SUVEREN_CP_PORT = '3500';
+    try {
+      expect(guideHeader([])).toContain('approves it in the Suveren Gateway at http://localhost:3500/approvals');
+    } finally { delete process.env.SUVEREN_CP_PORT; }
+  });
 });
 
 // ── setup__get_guide through the real gate ───────────────────────────────────

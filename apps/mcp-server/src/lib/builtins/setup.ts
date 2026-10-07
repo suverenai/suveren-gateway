@@ -96,6 +96,7 @@ export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
       {
         name: 'get_guide',
         description:
+          'Start here when the person asks how to begin with Suveren or how to set up their work with it. ' +
           'Simulation mode only: the setup guides — how to interview the person, build the test data, propose ' +
           'mandates and the agent brief, set up the working AI\'s process, and what can make a test misleading. ' +
           'Call without `topic` for the list and the order to follow; then read each topic before doing that step.',

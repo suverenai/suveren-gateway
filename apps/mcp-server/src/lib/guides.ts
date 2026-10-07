@@ -18,6 +18,7 @@
  */
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { uiUrl } from './locked-notice';
 
 export interface Guide {
   topic: string;
@@ -115,5 +116,7 @@ export function guideHeader(systems: SystemLine[]): string {
       lines.push(`- **${s.id}** — ${parts.join('; ')}`);
     }
   }
+  lines.push('');
+  lines.push(`**Approvals:** every mandate and brief you propose waits until the person approves it in the Suveren Gateway at ${uiUrl()}/approvals. Tell them each time you propose one.`);
   return lines.join('\n');
 }

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { buildMandateBrief } from '../src/lib/mandate-brief';
 import type { EnrichedAuthorization } from '../src/lib/shared-state';
 import type { ExecutionLog } from '../src/lib/execution-log';
@@ -90,5 +90,44 @@ describe('buildMandateBrief', () => {
     expect(brief).toContain('=== ACTIVE AUTHORITIES ===');
     // No context section since file doesn't exist
     expect(brief).not.toContain('=== CONTEXT ===');
+  });
+
+  describe('getting started (simulation mode only)', () => {
+    const delegation = () => mockAuth({
+      profileId: 'github.com/humanagencyprotocol/hap-profiles/delegation@0.1',
+      path: 'delegation',
+      frame: { profile: 'github.com/humanagencyprotocol/hap-profiles/delegation@0.1', read_access: 'unlimited', brief_daily_max: 5, mandate_daily_max: 30 },
+    });
+    // The setup built-in is what makes a delegation mandate visible in simulation mode (agent-visibility.ts).
+    const im = { getAllTools: () => [{ gating: { profile: 'github.com/humanagencyprotocol/hap-profiles/delegation@0.1' } }] } as never;
+    afterEach(() => { delete process.env.SUVEREN_SIMULATION; delete process.env.SUVEREN_CP_PORT; });
+
+    it('with a Delegation mandate: points the AI at the setup guide', () => {
+      process.env.SUVEREN_SIMULATION = '1';
+      const brief = buildMandateBrief({ authorizations: [delegation()], integrationManager: im });
+      expect(brief).toContain('=== GETTING STARTED ===');
+      expect(brief).toContain('call setup__get_guide first and follow its steps in order');
+    });
+
+    it('without one: names the one step a person takes, at the gateway\'s own address', () => {
+      process.env.SUVEREN_SIMULATION = '1';
+      process.env.SUVEREN_CP_PORT = '3500';
+      const brief = buildMandateBrief({ authorizations: [], integrationManager: im });
+      expect(brief).toContain('create a "Delegation" mandate in the Suveren Gateway at http://localhost:3500');
+      expect(brief).not.toContain('setup__get_guide first');
+    });
+
+    it('never says "simulation" or "test" — the working AI reads these lines too', () => {
+      process.env.SUVEREN_SIMULATION = '1';
+      for (const auths of [[delegation()], []]) {
+        const brief = buildMandateBrief({ authorizations: auths, integrationManager: im });
+        const section = brief.slice(brief.indexOf('=== GETTING STARTED ==='));
+        expect(section).not.toMatch(/simulat|\btest/i);
+      }
+    });
+
+    it('outside simulation mode: no such section', () => {
+      expect(buildMandateBrief({ authorizations: [delegation()] })).not.toContain('GETTING STARTED');
+    });
   });
 });
