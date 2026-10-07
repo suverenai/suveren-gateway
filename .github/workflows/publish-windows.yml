@@ -1266,8 +1266,20 @@ jobs:
         run: |
           $msi = (Resolve-Path bundle\windows\out\new.msi).Path
           $log = "$env:RUNNER_TEMP\uninstall.log"
-          $p = Start-Process msiexec.exe -ArgumentList "/x `"$msi`" /qn /norestart /l*v `"$log`"" -Wait -PassThru
-          if ($p.ExitCode -ne 0) { Get-Content $log | Select-Object -Last 80; throw "msiexec /x exited $($p.ExitCode)" }
+          # Bounded wait, like upgrade-test: an unbounded -Wait hung this step until the job
+          # timed out, and a timed-out job keeps no log to diagnose it from.
+          $proc = Start-Process msiexec.exe -ArgumentList "/x `"$msi`" /qn /norestart /l*v `"$log`"" -PassThru
+          if (-not $proc.WaitForExit(300000)) {
+            Write-Host "::error::msiexec /x did not finish within 5 minutes"
+            Write-Host "::group::processes"
+            Get-CimInstance Win32_Process | Where-Object { $_.Name -match 'msiexec|node|cmd|conhost|powershell|schtasks|tar' } |
+              ForEach-Object { "$($_.ProcessId) $($_.ParentProcessId) $($_.Name) $($_.CommandLine)" } | Write-Host
+            Write-Host "::endgroup::"
+            Write-Host "::group::uninstall log (last 150 lines)"; Get-Content $log -Tail 150 | Write-Host; Write-Host "::endgroup::"
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            throw "msiexec /x hung"
+          }
+          if ($proc.ExitCode -ne 0) { Get-Content $log -Tail 80 | Write-Host; throw "msiexec /x exited $($proc.ExitCode)" }
           $reg = Get-ItemProperty 'HKCU:\Software\Suveren\Gateway' -ErrorAction SilentlyContinue
           if ($reg -and ($reg.Port -or $reg.McpPort -or $reg.DataDir)) { throw "settings left in the registry after uninstall" }
           if (-not (Test-Path "$env:SUVEREN_TEST_DATA\integrations.json")) { throw "uninstall touched the data folder" }
