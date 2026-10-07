@@ -3765,6 +3765,8 @@ body.is-updating .simulation-banner {
 .flow-step-marker.flow-done { background: var(--success); color: #fff; border: 2px solid var(--success); font-size: 0.85rem; }
 .flow-step-title { font-size: 0.95rem; font-weight: 700; color: var(--text-primary); margin-top: 0.1rem; }
 .flow-step-title.flow-todo-title { font-weight: 500; color: var(--text-tertiary); }
+.flow-step-open-btn { background: none; border: 0; padding: 0; font: inherit; text-align: left; cursor: pointer; }
+.flow-step-open-btn:hover { color: var(--text-primary); text-decoration: underline; text-underline-offset: 3px; }
 .flow-step-title.flow-done-title { font-weight: 500; color: var(--text-secondary); }
 .flow-step-title.flow-done-title a { color: var(--text-secondary); }
 .flow-step-title.flow-done-title a:hover { color: var(--accent); }

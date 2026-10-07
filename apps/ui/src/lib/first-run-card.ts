@@ -9,9 +9,10 @@
  * connect their AI before or after giving the Delegation mandate, or IT might
  * set up the connection separately). Step 3 can't realistically be done
  * before both, but its completion is still checked independently (a proposal
- * either arrived or it didn't) rather than assumed from ordering. Only the
- * FIRST not-done step (by index) is ever "open" — the rest render as a single
- * muted line, so the card never asks for more than one thing at a time.
+ * either arrived or it didn't) rather than assumed from ordering. One step is
+ * "open" at a time — the first not-done one, or a not-done step the person
+ * picked (clicking its line) — the rest render as a single muted line, so the
+ * card never asks for more than one thing at a time.
  */
 export type FlowStepStatus = 'done' | 'open' | 'todo';
 export type FirstRunVariant = 'self' | 'managed';
@@ -51,16 +52,18 @@ export interface FirstRunCardState {
   step3: FirstRunStepState;
 }
 
-export function deriveFirstRunCard(input: FirstRunCardInput): FirstRunCardState {
+/** `chosen`: the step (0–2) the person clicked open; ignored once that step is done. */
+export function deriveFirstRunCard(input: FirstRunCardInput, chosen: number | null = null): FirstRunCardState {
   const done = [input.hasContact, input.hasDelegationMandate, input.delegationProposalCount > 0];
   const allDone = done.every(Boolean);
   const visible = input.otherMandateCount === 0 && !allDone;
   const firstOpenIndex = done.findIndex((d) => !d);
+  const openIndex = chosen !== null && done[chosen] === false ? chosen : firstOpenIndex;
   const variant: FirstRunVariant = input.managed ? 'managed' : 'self';
 
   const stepAt = (i: number): FirstRunStepState => {
     if (done[i]) return { status: 'done' };
-    if (i !== firstOpenIndex) return { status: 'todo' };
+    if (i !== openIndex) return { status: 'todo' };
     if (i === 1) return { status: 'open', variant, simulationOn: input.simulationOn };
     if (i === 0) return { status: 'open', variant };
     return { status: 'open' }; // step 3 has no self/managed variant

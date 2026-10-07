@@ -93,4 +93,19 @@ describe('deriveFirstRunCard', () => {
     });
     expect(r.step3).toEqual({ status: 'done' });
   });
+
+  describe('a step the person clicked open', () => {
+    const base = { hasContact: false, hasDelegationMandate: false, otherMandateCount: 0, delegationProposalCount: 0, managed: false, simulationOn: true };
+    it('opens step 2 before step 1 is done; step 1 goes muted', () => {
+      const s = deriveFirstRunCard(base, 1);
+      expect(s.step1.status).toBe('todo');
+      expect(s.step2.status).toBe('open');
+      expect(s.step2.simulationOn).toBe(true);
+    });
+    it('a chosen step that is already done falls back to the first open one', () => {
+      const s = deriveFirstRunCard({ ...base, hasDelegationMandate: true }, 1);
+      expect(s.step1.status).toBe('open');
+      expect(s.step2.status).toBe('done');
+    });
+  });
 });
