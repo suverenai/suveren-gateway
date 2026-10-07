@@ -315,7 +315,9 @@ jobs:
           curl -fsS http://localhost:3600/health | tee health.json; echo
           # The UI's "connect your assistant" snippet reads this.
           grep -q '"mcpPort":3630' health.json || { echo "::error::/health does not report mcpPort 3630"; exit 1; }
-          curl -fsS -o /dev/null http://localhost:3630/health
+          # `start` returns once the APP port answers; the MCP server can need a
+          # moment longer — retry instead of checking once (failed on macOS).
+          curl -fsS -o /dev/null --retry 30 --retry-delay 1 --retry-connrefused http://localhost:3630/health
           test -f "$data/gateway.log" || { echo "::error::no gateway.log in the saved data folder"; exit 1; }
           cli status | grep -q "localhost:3600" || { echo "::error::status does not use the saved port"; exit 1; }
 
