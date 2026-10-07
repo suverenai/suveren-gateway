@@ -857,8 +857,8 @@ packages:
   assertion-error@1.1.0:
     resolution: {integrity: sha512-jgsaNduz+ndvGyFt3uSuWqvy4lCnIJiovtouQN5JZHOKCS2QuhEdbcQHFhVksz2N2U9hXJo8odG7ETyWlEeuDw==}
 
-  baseline-browser-mapping@2.10.0:
-    resolution: {integrity: sha512-lIyg0szRfYbiy67j9KN8IyeD7q7hcmqnJ1ddWmNt19ItGpNN64mnllmxUNFIOdOm6by97jlL6wfpTTJrmnjWAA==}
+  baseline-browser-mapping@2.11.27:
+    resolution: {integrity: sha512-ElY12DaROGuan+lMmZ8Cvo/ZUbXPe7Enc/9VU/b1T3Kp4dwytRcNdR8DoSJN5SNJT/CuvcCA0DHDVmMOCePdRQ==}
     engines: {node: '>=6.0.0'}
     hasBin: true
 
@@ -2518,7 +2518,7 @@ snapshots:
 
   assertion-error@1.1.0: {}
 
-  baseline-browser-mapping@2.10.0: {}
+  baseline-browser-mapping@2.11.27: {}
 
   body-parser@1.20.8:
     dependencies:
@@ -2557,7 +2557,7 @@ snapshots:
 
   browserslist@4.28.1:
     dependencies:
-      baseline-browser-mapping: 2.10.0
+      baseline-browser-mapping: 2.11.27
       caniuse-lite: 1.0.30001776
       electron-to-chromium: 1.5.307
       node-releases: 2.0.36
