@@ -57,9 +57,9 @@ describe('profileIdentity — unknown profile', () => {
 });
 
 describe('profileIdentity — delegation display override', () => {
-  it('displays delegation as "Test Setup" and sets testSetup', () => {
+  it('displays delegation as "Delegation" and sets testSetup', () => {
     const identity = profileIdentity('delegation@0.1');
-    expect(identity.name).toBe('Test Setup');
+    expect(identity.name).toBe('Delegation');
     expect(identity.testSetup).toBe(true);
   });
 

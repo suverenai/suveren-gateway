@@ -438,6 +438,20 @@ export interface McpHealthResponse {
   builtins?: BuiltinStatus[];
 }
 
+/**
+ * Has a person's AI ever connected to this gateway, and which one? `null` =
+ * never. Backed by a file on disk (mcp-server's AgentContactStore), not a live
+ * session count: closing Claude Desktop between visits must not make the
+ * dashboard forget it was ever connected. See apps/mcp-server/src/lib/agent-contact.ts.
+ */
+export interface AgentContact {
+  clientName: string;
+  clientVersion?: string;
+  /** ISO 8601. */
+  firstSeenAt: string;
+  lastSeenAt: string;
+}
+
 /** A built-in tool group of the gateway, as /health reports it. */
 export interface BuiltinStatus {
   id: string;
@@ -1009,6 +1023,13 @@ class SPClient {
   async getMcpHealth(): Promise<McpHealthResponse> {
     const res = await this.fetch('/mcp/health');
     if (!res.ok) throw new Error(`MCP server unreachable: ${res.status}`);
+    return res.json();
+  }
+
+  /** See AgentContact — drives the dashboard first-run card's "Connect your AI" step. */
+  async getAgentContact(): Promise<{ contact: AgentContact | null }> {
+    const res = await this.fetch('/mcp/agent-contact');
+    if (!res.ok) throw new Error(`Failed to fetch agent contact: ${res.status}`);
     return res.json();
   }
 

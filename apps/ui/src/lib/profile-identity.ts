@@ -63,7 +63,7 @@ export function shortProfileId(profileId: string): string {
 
 export interface ProfileIdentity {
   icon: IconName;
-  /** The profile's display name, with the delegation → "Test Setup" override applied. */
+  /** The profile's display name, with the delegation → "Delegation" override applied. */
   name: string;
   /** True for the delegation profile — simulation-only, review-only test tooling. */
   testSetup: boolean;
@@ -88,7 +88,7 @@ export function profileIdentity(
       ? (declared.icon as IconName)
       : FALLBACK_ICON_BY_SHORT_ID[shortId] ?? 'help-circle';
 
-  // profileDisplayName applies the delegation → "Test Setup" override.
+  // profileDisplayName applies the delegation → "Delegation" override.
   const name = profileDisplayName(profileId, declared?.name);
 
   const testSetup = shortId === 'delegation';

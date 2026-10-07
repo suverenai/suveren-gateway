@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
+import { McpConnectDetails } from './McpConnectDetails';
 
 interface SetupGuideProps {
   aiConfigured: boolean;
@@ -33,36 +34,11 @@ function migrateLegacyLS() {
 }
 migrateLegacyLS();
 
-const MCP_CONFIGS: Record<string, { label: string; snippet: (endpoint: string) => string }> = {
-  'claude-code': {
-    label: 'Claude Code',
-    snippet: (ep) => JSON.stringify({
-      mcpServers: {
-        'suveren-gateway': { url: `${ep}/sse` },
-      },
-    }, null, 2),
-  },
-  'claude-desktop': {
-    label: 'Claude Desktop',
-    snippet: (ep) => `Add to ~/Library/Application Support/Claude/claude_desktop_config.json:\n\n${JSON.stringify({
-      mcpServers: {
-        'suveren-gateway': { url: `${ep}/sse` },
-      },
-    }, null, 2)}`,
-  },
-  other: {
-    label: 'Other',
-    snippet: (ep) => `Streamable HTTP:  POST ${ep}/mcp\nSSE transport:    GET  ${ep}/sse\nHealth check:     GET  ${ep}/health`,
-  },
-};
-
 export function SetupGuide({ aiConfigured, hasRunningIntegration, hasActiveAuth, hasAgentConnected, mcpEndpoint }: SetupGuideProps) {
   const [aiSkipped, setAiSkipped] = useState(() => localStorage.getItem(LS_AI_SKIPPED) === 'true');
   const [agentMarkedDone, setAgentMarkedDone] = useState(() => localStorage.getItem(LS_AGENT_DONE) === 'true');
   const [dismissed, setDismissed] = useState(() => localStorage.getItem(LS_DISMISSED) === 'true');
   const [expandedStep, setExpandedStep] = useState<number | null>(null);
-  const [configTab, setConfigTab] = useState('claude-code');
-  const [copied, setCopied] = useState(false);
 
   const steps: { label: string; detail?: string; to?: string; status: StepStatus; optional?: boolean }[] = [
     {
@@ -105,14 +81,6 @@ export function SetupGuide({ aiConfigured, hasRunningIntegration, hasActiveAuth,
   const handleDismiss = useCallback(() => {
     localStorage.setItem(LS_DISMISSED, 'true');
     setDismissed(true);
-  }, []);
-
-  const handleCopy = useCallback(async (text: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch { /* ignore */ }
   }, []);
 
   if (dismissed || allComplete) return null;
@@ -251,79 +219,18 @@ export function SetupGuide({ aiConfigured, hasRunningIntegration, hasActiveAuth,
                   marginTop: '0.75rem',
                   marginLeft: '1.5rem',
                   padding: '1rem',
-                  background: 'var(--bg)',
+                  background: 'var(--bg-main)',
                   border: '1px solid var(--border)',
                   borderRadius: '0.5rem',
                 }}>
-                  <div style={{ fontSize: '0.8rem', fontWeight: 600, marginBottom: '0.75rem', color: 'var(--text-primary)' }}>
-                    MCP Endpoint
-                  </div>
-                  <div style={{
-                    fontFamily: 'monospace',
-                    fontSize: '0.85rem',
-                    padding: '0.5rem 0.75rem',
-                    background: 'var(--bg-elevated)',
-                    border: '1px solid var(--border)',
-                    borderRadius: '0.375rem',
-                    marginBottom: '1rem',
-                    wordBreak: 'break-all',
-                  }}>
-                    {mcpEndpoint}
-                  </div>
-
-                  {/* Tabs */}
-                  <div style={{ display: 'flex', gap: '0.25rem', marginBottom: '0.75rem' }}>
-                    {Object.entries(MCP_CONFIGS).map(([key, cfg]) => (
-                      <button
-                        key={key}
-                        onClick={() => setConfigTab(key)}
-                        style={{
-                          padding: '0.375rem 0.75rem',
-                          fontSize: '0.75rem',
-                          fontWeight: configTab === key ? 600 : 400,
-                          background: configTab === key ? 'var(--accent-subtle)' : 'transparent',
-                          color: configTab === key ? 'var(--accent)' : 'var(--text-secondary)',
-                          border: `1px solid ${configTab === key ? 'var(--accent)' : 'var(--border)'}`,
-                          borderRadius: '0.375rem',
-                          cursor: 'pointer',
-                        }}
-                      >
-                        {cfg.label}
-                      </button>
-                    ))}
-                  </div>
-
-                  {/* Config snippet */}
-                  <pre style={{
-                    fontFamily: 'monospace',
-                    fontSize: '0.78rem',
-                    lineHeight: 1.6,
-                    padding: '0.75rem',
-                    background: 'var(--bg-elevated)',
-                    border: '1px solid var(--border)',
-                    borderRadius: '0.375rem',
-                    overflow: 'auto',
-                    whiteSpace: 'pre-wrap',
-                    margin: 0,
-                    marginBottom: '0.75rem',
-                  }}>
-                    {MCP_CONFIGS[configTab].snippet(mcpEndpoint)}
-                  </pre>
-
-                  <div style={{ display: 'flex', gap: '0.5rem' }}>
-                    <button
-                      className="btn btn-secondary btn-sm"
-                      onClick={() => handleCopy(MCP_CONFIGS[configTab].snippet(mcpEndpoint))}
-                    >
-                      {copied ? 'Copied' : 'Copy'}
-                    </button>
-                    <button
-                      className="btn btn-primary btn-sm"
-                      onClick={handleAgentDone}
-                    >
-                      Done
-                    </button>
-                  </div>
+                  <McpConnectDetails mcpEndpoint={mcpEndpoint} />
+                  <button
+                    className="btn btn-primary btn-sm"
+                    style={{ marginTop: '0.75rem' }}
+                    onClick={handleAgentDone}
+                  >
+                    Done
+                  </button>
                 </div>
               )}
             </div>

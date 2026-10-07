@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { pickerEntries } from './picker-entries';
+import { pickerEntries, findPreselectedEntry } from './picker-entries';
 import type { ProfileSummary, IntegrationManifest, McpIntegrationStatus, BuiltinStatus } from './sp-client';
 
 const P = 'github.com/humanagencyprotocol/hap-profiles';
@@ -33,5 +33,36 @@ describe('pickerEntries', () => {
 
   it('leaves out a built-in whose profile the Authority Server does not serve', () => {
     expect(pickerEntries([prof(`${P}/sales@0.2`)], [], [], [SETUP])).toEqual([]);
+  });
+});
+
+// The dashboard first-run card's "Give the Delegation mandate" button jumps
+// straight here via `?profile=delegation` — these are the rules for whether
+// that skip is safe, or whether it should fall through to the normal grid.
+describe('findPreselectedEntry', () => {
+  const entries = pickerEntries(PROFILES, MANIFESTS, RUNNING, [{ ...SETUP, available: true }]);
+  const canGive = () => true;
+
+  it('no preselect requested: undefined', () => {
+    expect(findPreselectedEntry(entries, null, canGive)).toBeUndefined();
+    expect(findPreselectedEntry(entries, undefined, canGive)).toBeUndefined();
+  });
+
+  it('matches by short id regardless of the version in the full id', () => {
+    expect(findPreselectedEntry(entries, 'delegation', canGive)?.key).toBe('builtin:setup');
+    expect(findPreselectedEntry(entries, `${P}/delegation@0.1`, canGive)?.key).toBe('builtin:setup');
+  });
+
+  it('not found: falls through (undefined), never throws', () => {
+    expect(findPreselectedEntry(entries, 'nonexistent', canGive)).toBeUndefined();
+  });
+
+  it('found but not ready (e.g. simulation mode off): falls through', () => {
+    const notReady = pickerEntries(PROFILES, MANIFESTS, RUNNING, [SETUP]); // available: false
+    expect(findPreselectedEntry(notReady, 'delegation', canGive)).toBeUndefined();
+  });
+
+  it('found and ready but canGive refuses (team approver rule): falls through', () => {
+    expect(findPreselectedEntry(entries, 'delegation', () => false)).toBeUndefined();
   });
 });

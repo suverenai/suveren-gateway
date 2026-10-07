@@ -428,6 +428,15 @@ export async function exportReport(gatewayVersion: string): Promise<{ html: stri
   return { html, filename };
 }
 
+/** Has a person's AI ever connected to this gateway — see mcp-server agent-contact.ts. */
+export async function getAgentContact(): Promise<unknown> {
+  const res = await fetch(`${MCP_BASE}/internal/agent-contact`, {
+    headers: internalHeaders(),
+  });
+  if (!res.ok) throw new Error('Failed to fetch agent contact');
+  return res.json();
+}
+
 export async function getMcpHealth(): Promise<unknown> {
   const res = await fetch(`${MCP_BASE}/health`);
   if (!res.ok) throw new Error('MCP server unreachable');
