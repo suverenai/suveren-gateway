@@ -1,0 +1,37 @@
+name: Dependency audit
+
+# Fails on any high or critical advisory in the production dependencies that
+# is not on .github/audit-allowlist.json (with a reason and a review date).
+# Weekly as well: new advisories are published without any change here.
+# See scripts/audit-check.mjs.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      # pnpm audit reads the lockfile; no install needed.
+      - name: Audit production dependencies
+        run: node scripts/audit-check.mjs
