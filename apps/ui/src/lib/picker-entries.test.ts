@@ -66,3 +66,15 @@ describe('findPreselectedEntry', () => {
     expect(findPreselectedEntry(entries, 'delegation', () => false)).toBeUndefined();
   });
 });
+
+describe('intentHint', () => {
+  it('carries the manifest\'s and the built-in\'s starter text for the intent', () => {
+    const manifests = [{ ...MANIFESTS[0], intentHint: 'Quotes up to my limit.' }] as unknown as IntegrationManifest[];
+    const e = pickerEntries(PROFILES, manifests, RUNNING, [{ ...SETUP, intentHint: 'Why — test.' }]);
+    expect(e.find((x) => x.key === 'connector:erp')?.intentHint).toBe('Quotes up to my limit.');
+    expect(e.find((x) => x.key === 'builtin:setup')?.intentHint).toBe('Why — test.');
+  });
+  it('no hint → none on the entry', () => {
+    expect(pickerEntries(PROFILES, MANIFESTS, RUNNING, [SETUP]).every((x) => x.intentHint === undefined)).toBe(true);
+  });
+});

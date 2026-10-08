@@ -128,6 +128,8 @@ export interface IntegrationManifest {
   name: string;
   version: string;
   description: string;
+  /** Starter text the mandate screen seeds the intent with (the person edits it). */
+  intentHint?: string;
   icon: string;
   profile: string;
   mcp: { command: string; args: string[]; env?: Record<string, string> };
@@ -457,8 +459,10 @@ export interface BuiltinStatus {
   id: string;
   name: string;
   description: string;
-  /** Full profile id governing its tools. */
+  /** Profile governing its tools (full id or short name). */
   profile: string;
+  /** Starter text the mandate screen seeds the intent with (the person edits it). */
+  intentHint?: string;
   /** Usable right now — false e.g. for test-setup tools outside simulation mode. */
   available: boolean;
 }

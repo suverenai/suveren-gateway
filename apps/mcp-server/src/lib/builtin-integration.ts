@@ -66,6 +66,8 @@ export interface BuiltinIntegration {
   name: string;
   /** One sentence for the person giving a mandate: what the agent can do with these tools. */
   description?: string;
+  /** Starter text for the mandate's intent — the same as a manifest's `intentHint`. */
+  intentHint?: string;
   /** Profile id governing every tool (full id or short name, as in a manifest). */
   profile: string;
   /** Per-tool gating, the `toolGating` block of a manifest. A tool without an entry is refused. */
@@ -97,6 +99,8 @@ export interface BuiltinStatus {
   description: string;
   /** Profile id governing the tools. */
   profile: string;
+  /** See BuiltinIntegration.intentHint. */
+  intentHint?: string;
   /** Usable right now — false for a simulationOnly group outside simulation mode. */
   available: boolean;
 }

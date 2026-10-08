@@ -23,6 +23,8 @@ export interface PickerEntry {
   setupId?: string;
   /** For a built-in that is not available: why. */
   unavailableReason?: string;
+  /** Starter text for the intent, from the manifest or built-in (`intentHint`). */
+  intentHint?: string;
 }
 
 /** Profile id without its host/path prefix or version — "delegation" from either
@@ -70,6 +72,7 @@ export function pickerEntries(
       kind: 'connector',
       ready: integrations.find(i => i.id === manifest.id)?.running === true,
       setupId: manifest.id,
+      ...(manifest.intentHint ? { intentHint: manifest.intentHint } : {}),
     });
   }
   for (const b of builtins) {
@@ -83,6 +86,7 @@ export function pickerEntries(
       kind: 'builtin',
       ready: b.available,
       unavailableReason: b.available ? undefined : 'Available only while simulation mode is on.',
+      ...(b.intentHint ? { intentHint: b.intentHint } : {}),
     });
   }
   return entries;

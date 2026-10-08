@@ -27,10 +27,15 @@ export function minForBound(field: NumericField): 0 | 1 {
  * Initial input string for the field. A provided seed (template / edit
  * prefill) is shown as-is — it is the stored truth, even when it is a 0 the
  * floor no longer allows; the input's `min` and the submit clamp handle it.
- * Without a seed, floor-1 fields start at '1'; everything else stays empty.
+ * Without a seed, the profile's own `default` — "the initial value the UI
+ * seeds the input with, not a fallback at enforcement time" (protocol 0.7,
+ * human-readable affordances) — then floor-1 fields start at '1'; everything
+ * else stays empty.
  */
 export function seedForBound(field: NumericField, seed: string | number | undefined): string {
   if (seed !== undefined) return String(seed);
+  const d = (field as { default?: unknown }).default;
+  if (typeof d === 'string' || (typeof d === 'number' && Number.isFinite(d))) return String(d);
   return minForBound(field) === 1 ? '1' : '';
 }
 

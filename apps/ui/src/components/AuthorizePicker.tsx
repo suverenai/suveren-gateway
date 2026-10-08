@@ -95,7 +95,7 @@ export function AuthorizePicker({ onDismiss, preselectProfileId }: Props) {
   // to be offered here first; they confused more than they helped and were
   // dropped from the flow (2026-09-22). Templates stay in the manifests for
   // the Copy/Edit prefill path only.
-  const storeAuthAndNavigate = (profileId: string) => {
+  const storeAuthAndNavigate = (profileId: string, intentHint?: string) => {
     if (!groupId) {
       console.error('No active group when creating authorization');
       return;
@@ -110,15 +110,17 @@ export function AuthorizePicker({ onDismiss, preselectProfileId }: Props) {
       // The AS's own discriminator (attest gates approvers on !group.isPersonal).
       // groupId is NOT a team signal — the personal workspace has one too.
       isPersonal: !!group?.isPersonal,
+      // The integration's starter text for the intent — the mandate screen seeds it.
+      ...(intentHint ? { intentHint } : {}),
     }));
     sessionStorage.removeItem('agentGate');
     onDismiss?.();
     navigate('/mandates/new/intent');
   };
 
-  const handleCreate = (profileId: string) => {
+  const handleCreate = (profileId: string, intentHint?: string) => {
     if (!groupId) return;
-    storeAuthAndNavigate(profileId);
+    storeAuthAndNavigate(profileId, intentHint);
   };
 
   // Preselect: once the grid's data has loaded, skip straight to Scope &
@@ -131,7 +133,7 @@ export function AuthorizePicker({ onDismiss, preselectProfileId }: Props) {
     const match = findPreselectedEntry(entries, preselectProfileId, (e) => rightFor(e.profile).can);
     if (!match) return;
     autoNavigated.current = true;
-    handleCreate(match.profile.id);
+    handleCreate(match.profile.id, match.intentHint);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading, preselectProfileId]);
 
@@ -205,7 +207,7 @@ export function AuthorizePicker({ onDismiss, preselectProfileId }: Props) {
                     </div>
                   </>
                 ) : entry.ready ? (
-                  <button className="btn btn-primary btn-sm" onClick={() => handleCreate(p.id)}>
+                  <button className="btn btn-primary btn-sm" onClick={() => handleCreate(p.id, entry.intentHint)}>
                     Give a mandate
                   </button>
                 ) : entry.kind === 'builtin' ? (

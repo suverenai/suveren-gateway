@@ -1,5 +1,5 @@
 import { useState, useEffect, type ReactNode } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { spClient, type ProfileConfig } from '../lib/sp-client';
 import { StepIndicator } from '../components/StepIndicator';
 import { ContextStrip } from '../components/ContextStrip';
@@ -24,6 +24,8 @@ interface AuthData {
   groupId?: string;
   groupName?: string;
   domain: string;
+  /** The integration's starter text for the intent (manifest / built-in `intentHint`). */
+  intentHint?: string;
 }
 
 /** A grant the intent cross-check compared against (for the clickable popup). */
@@ -71,6 +73,9 @@ export function GateWizardPage() {
   const [contextLabels, setContextLabels] = useState<Record<string, Record<string, string>>>({});
   const [intent, setIntent] = useState(INTENT_TEMPLATE);
   const [chatOpenMobile, setChatOpenMobile] = useState(false);
+  // The AI helper beside the intent only exists with an AI assistant set up
+  // (Settings) — without one it is an empty box. null until known.
+  const [aiConfigured, setAiConfigured] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(true);
   // Team profile config — null when not in team mode or no config set
   const [profileConfig, setProfileConfig] = useState<ProfileConfig | null>(null);
@@ -91,6 +96,12 @@ export function GateWizardPage() {
     if (!stored) { navigate('/mandates?new=1'); return; }
     const data: AuthData = JSON.parse(stored);
     setAuthData(data);
+    // Seed the intent with the integration's starter text, if it has one; a draft
+    // restored below (the person navigated back) wins over it.
+    if (data.intentHint) setIntent(data.intentHint);
+    spClient.getCredential('ai-config')
+      .then(c => setAiConfigured(c.configured))
+      .catch(() => setAiConfigured(false));
 
     // Restore previous selections if user navigated back
     const gateStored = sessionStorage.getItem('agentGate');
@@ -256,10 +267,11 @@ export function GateWizardPage() {
 
       {/* Step 3: Intent */}
       {step === 3 && (
-        <div className="intent-layout">
+        <div className={`intent-layout${aiConfigured ? '' : ' no-chat'}`}>
           {/* LEFT — AI chat (hidden on ≤768px; reachable via floating button + bottom sheet).
-              `tool` = dashed treatment: a helper, neither your content nor a record. */}
-          <div className="card intent-pane chat tool">
+              `tool` = dashed treatment: a helper, neither your content nor a record.
+              Only with an AI assistant set up — otherwise the document takes the width. */}
+          {aiConfigured && <div className="card intent-pane chat tool">
             <AssistantChatPanel
               target={{
                 kind: 'intent',
@@ -269,7 +281,7 @@ export function GateWizardPage() {
               currentText={intent}
               onApply={handleApplyDraft}
             />
-          </div>
+          </div>}
 
           {/* RIGHT — the document, the centerpiece */}
           <div className="card intent-pane document">
@@ -284,9 +296,15 @@ export function GateWizardPage() {
               />
               <div className="char-counter">{intent.length} / 2000</div>
             </div>
+            {aiConfigured === false && (
+              <p className="intent-ai-hint">
+                <Link to="/settings">Set up an AI assistant in Settings</Link> to get help writing this.
+              </p>
+            )}
 
-            {/* On-demand semantic cross-check against existing grants (Phase 2) */}
-            <div style={{ marginTop: '0.5rem' }}>
+            {/* On-demand semantic cross-check against existing grants (Phase 2) —
+                an AI call, so only with an AI assistant set up. */}
+            {aiConfigured && <div style={{ marginTop: '0.5rem' }}>
               <button
                 type="button"
                 className="btn btn-ghost"
@@ -321,7 +339,7 @@ export function GateWizardPage() {
                   </div>
                 </div>
               )}
-            </div>
+            </div>}
 
             <div className="intent-footer">
               <button className="btn btn-ghost" onClick={() => setStep(2)}>Back</button>
@@ -351,7 +369,8 @@ export function GateWizardPage() {
             )}
           </div>
 
-          {/* Mobile-only floating help button + bottom sheet */}
+          {/* Mobile-only floating help button + bottom sheet (only with an AI assistant) */}
+          {aiConfigured && <>
           <button
             type="button"
             className="floating-help"
@@ -379,6 +398,7 @@ export function GateWizardPage() {
               }}
             />
           </BottomSheet>
+          </>}
 
           {/* Popup: the existing authorization(s) the advisory refers to. A
               scope can match more than one grant (scope is not unique), so we

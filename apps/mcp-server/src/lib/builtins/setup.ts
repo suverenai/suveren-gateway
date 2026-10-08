@@ -24,7 +24,21 @@ import { controlPlaneMandate } from '../cp-mandate';
 import { loadGuides, guideHeader, type SystemLine } from '../guides';
 import type { IntegrationManager } from '../integration-manager';
 
-export const DELEGATION_PROFILE = 'github.com/humanagencyprotocol/hap-profiles/delegation@0.1';
+/** The delegation profile by its short name, as a manifest names it: a mandate under
+ *  any version governs these tools (0.1 grants keep working), and a new mandate is
+ *  created under the newest version the Authority Server serves. */
+export const DELEGATION_PROFILE = 'delegation';
+
+/** Seeded into the Delegation mandate's intent (the person edits it and signs their
+ *  own words). Written for two readers: the person signing — what they allow, in
+ *  plain words — and the setup AI, which reads it as standing instructions. */
+const DELEGATION_INTENT_HINT = [
+  'Why — With test data only, I want to find out which routine parts of my work an AI could take over, so people gain time — before anything touches real systems.',
+  '',
+  'Goal — Follow the setup guide: interview me about the company, the team and the work; prepare test data from real cases, renamed to .example names; propose the mandates and the working instructions (agent brief) that the AI doing the work will need.',
+  '',
+  'Watch out — You only propose; nothing happens until I approve it in the Suveren Gateway. Ask, don\'t guess: never invent a rule, a limit or a step. One proposal at a time. Steps customers would see start with my review. Never use real names or customer data — proposals are stored readable on the Suveren server. Never give the working AI a reporting mandate during a test run. Keep the setup and the working AI in separate conversations.',
+].join('\n');
 
 function briefRefusal(args: Record<string, unknown>): string | undefined {
   if (typeof args.content !== 'string' || args.content.trim() === '') return '`content` must be the complete new brief (markdown text).';
@@ -62,6 +76,7 @@ export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
     description:
       'Your AI sets up a test of itself: it reads the setup guides and proposes its agent brief and its ' +
       'mandates. Every proposal waits for your approval. Simulation mode only.',
+    intentHint: DELEGATION_INTENT_HINT,
     profile: DELEGATION_PROFILE,
     simulation: true,
     simulationOnly: true,
