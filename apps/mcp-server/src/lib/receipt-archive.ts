@@ -39,8 +39,8 @@ export interface ArchivedAuthorization {
   contextHash?: string;
   /**
    * Plaintext bounds and context VALUES, kept next to the hashes on purpose:
-   * the signed attestation payload commits to bounds_hash/context_hash only,
-   * so without the values the evidence reads as opaque hashes. A verifier
+   * the signed mandate payload commits to bounds_hash/scope_hash only, so
+   * without the values the evidence reads as opaque hashes. A verifier
    * recomputes the hash from these values and matches it against the signed
    * payload — readable AND checkable.
    */

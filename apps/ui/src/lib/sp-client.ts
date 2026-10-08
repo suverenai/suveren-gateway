@@ -38,9 +38,11 @@ export interface GroupMember {
 export interface AttestResponse {
   /** Per-ceremony identity — REQUIRED; its absence means a pre-identity AS. */
   authorization_id?: string;
-  attestation_id: string;
+  /** v0.7 (was `attestation_id`). */
+  mandate_id: string;
   bounds_hash?: string;
-  context_hash?: string;  // v0.4
+  /** v0.7 (was `context_hash`). */
+  scope_hash?: string;
   domain: string;
   blob: string;
   expires_at: number;
@@ -574,21 +576,30 @@ class SPClient {
     /** Edit lineage: the authorization_id this ceremony supersedes (provenance only). */
     replaces?: string;
     profile_id: string;
-    // v0.3
-    frame?: Record<string, string | number>;
-    path?: string;
+    /** v0.7 — the content address of the AS's own provisioned bytes for
+     *  this profile_id (protocol.md -> Profile hash); required. */
+    profile_hash: string;
+    /** v0.7 — version negotiation (protocol.md -> Version negotiation);
+     *  required. A gateway/UI speaking only pre-0.7 omits this and the AS
+     *  answers VERSION_UNSUPPORTED, "re-approve this mandate". */
+    supported_versions: string[];
     // v0.4
     bounds?: Record<string, string | number>;
     bounds_hash?: string;
-    context_hash?: string;
+    /** v0.7 (was `context_hash`). */
+    scope_hash?: string;
     // common
     domain: string;
     did: string;
+    /** v0.7 — exactly one entry today (no owner cosigning from this UI
+     *  yet); the AS falls back to `{ did }` alone when omitted, but this
+     *  states it explicitly rather than relying on that default. */
+    mandate_owners?: Array<{ did: string }>;
     gate_content_hashes: Record<string, string>;
     execution_context_hash: string;
     group_id: string;
     ttl?: number;
-    commitment_mode: 'automatic' | 'review';
+    commitment_mode: 'automatic' | 'review' | 'review_above_cap';
     title?: string;
     // Phase 5 — E2EE intent (all optional; if any present, all three required)
     intent_ciphertext?: string;
@@ -601,7 +612,7 @@ class SPClient {
     // is true AND the account is `high`-verified; the name then shows in the footer.
     disclose_identity?: boolean;
   }): Promise<AttestResponse> {
-    const res = await this.fetch('/api/as/attest', {
+    const res = await this.fetch('/api/as/mandate', {
       method: 'POST',
       body: JSON.stringify(body),
     });
@@ -613,7 +624,7 @@ class SPClient {
   }
 
   async getPending(domain: string): Promise<PendingItem[]> {
-    const res = await this.fetch(`/api/attestations/pending?domain=${encodeURIComponent(domain)}`);
+    const res = await this.fetch(`/api/mandates/pending?domain=${encodeURIComponent(domain)}`);
     if (!res.ok) throw new Error(`Failed to fetch pending: ${res.status}`);
     const data = await res.json();
     return data.pending ?? data;
@@ -621,11 +632,11 @@ class SPClient {
 
   async getMyAttestations(status?: string): Promise<PendingItem[]> {
     const qs = status ? `?status=${encodeURIComponent(status)}` : '';
-    const res = await this.fetch(`/api/attestations/mine${qs}`);
+    const res = await this.fetch(`/api/mandates/mine${qs}`);
     if (!res.ok) throw new Error(`Failed to fetch attestations: ${res.status}`);
     const data = await res.json();
     // Normalize mine response to PendingItem shape
-    return (data.attestations ?? []).map((a: Record<string, unknown>) => ({
+    return (data.mandates ?? []).map((a: Record<string, unknown>) => ({
       authorization_id: a.authorization_id,
       profile_id: a.profileId,
       path: a.path,
@@ -670,10 +681,10 @@ class SPClient {
     if (options?.profile) params.set('profile', options.profile);
     if (options?.limit) params.set('limit', String(options.limit));
     const qs = params.toString();
-    const res = await this.fetch(`/api/receipts/mine${qs ? '?' + qs : ''}`);
+    const res = await this.fetch(`/api/tickets/mine${qs ? '?' + qs : ''}`);
     if (!res.ok) throw new Error(`Failed to fetch receipts: ${res.status}`);
     const data = await res.json();
-    return data.receipts ?? [];
+    return data.tickets ?? [];
   }
 
   /**
@@ -780,9 +791,12 @@ class SPClient {
   }
 
   async getAttestations(authorizationId: string): Promise<AttestationsResult> {
-    const res = await this.fetch(`/api/attestations?authorization_id=${encodeURIComponent(authorizationId)}`);
+    const res = await this.fetch(`/api/mandates?authorization_id=${encodeURIComponent(authorizationId)}`);
     if (!res.ok) throw new Error(`Failed to fetch attestations: ${res.status}`);
-    return res.json();
+    // v0.7: the response key is `mandates` (was `attestations`) — map onto
+    // this client's own stable field name at the boundary.
+    const body = await res.json();
+    return { ...body, attestations: body.mandates ?? body.attestations ?? [] };
   }
 
   async getGroupById(id: string): Promise<{ id: string; name: string; members: Array<{ id: string; name: string; email: string; domains: string[]; role: string }>; inviteCode?: string }> {
@@ -1357,14 +1371,15 @@ class SPClient {
 
   /**
    * Fetch all authorizations for a group (admin-only).
-   * SP endpoint: GET /api/groups/:id/attestations
+   * SP endpoint: GET /api/groups/:id/mandates (v0.7; moved from
+   * .../attestations, which now answers 410).
    * Returns the standard PendingItem shape plus an `owner` field per item.
    */
   async listTeamAuthorizations(groupId: string): Promise<Array<PendingItem & { owner: { userId: string; name?: string; email?: string } }>> {
-    const res = await this.fetch(`/api/groups/${encodeURIComponent(groupId)}/attestations`);
+    const res = await this.fetch(`/api/groups/${encodeURIComponent(groupId)}/mandates`);
     if (!res.ok) throw new Error(`Failed to fetch team authorizations: ${res.status}`);
     const data = await res.json();
-    return (data.items ?? []).map((a: Record<string, unknown>) => {
+    return (data.mandates ?? []).map((a: Record<string, unknown>) => {
       const owner = (a.owner as { userId: string; name?: string; email?: string }) ?? { userId: '' };
       const item: PendingItem & { owner: { userId: string; name?: string; email?: string } } = {
         authorization_id: (a.authorization_id ?? a.authorizationId) as string,
@@ -1382,11 +1397,11 @@ class SPClient {
         approvers_frozen: (a.approversFrozen ?? a.approvers_frozen ?? []) as string[],
         above_cap: (a.aboveCap ?? a.above_cap ?? false) as boolean,
         created_at: a.createdAt ? new Date((a.createdAt as number) * 1000).toISOString() : (a.created_at as string ?? ''),
-        earliest_expiry: (a.attestations as Array<{ expiresAt: number }> | undefined)?.length
-          ? new Date(Math.min(...(a.attestations as Array<{ expiresAt: number }>).map(att => att.expiresAt)) * 1000).toISOString()
+        earliest_expiry: (a.mandates as Array<{ expiresAt: number }> | undefined)?.length
+          ? new Date(Math.min(...(a.mandates as Array<{ expiresAt: number }>).map(att => att.expiresAt)) * 1000).toISOString()
           : null,
-        remaining_seconds: (a.attestations as Array<{ expiresAt: number }> | undefined)?.length
-          ? Math.max(0, Math.min(...(a.attestations as Array<{ expiresAt: number }>).map(att => att.expiresAt)) - Math.floor(Date.now() / 1000))
+        remaining_seconds: (a.mandates as Array<{ expiresAt: number }> | undefined)?.length
+          ? Math.max(0, Math.min(...(a.mandates as Array<{ expiresAt: number }>).map(att => att.expiresAt)) - Math.floor(Date.now() / 1000))
           : null,
         owner,
       };
@@ -1396,13 +1411,14 @@ class SPClient {
 
   /**
    * Fetch execution receipts for a group (admin sees team-wide; others see own).
-   * SP endpoint: GET /api/groups/:id/receipts
+   * SP endpoint: GET /api/groups/:id/tickets (v0.7; moved from .../receipts,
+   * which now answers 410).
    */
   async listTeamReceipts(groupId: string): Promise<ExecutionReceipt[]> {
-    const res = await this.fetch(`/api/groups/${encodeURIComponent(groupId)}/receipts`);
+    const res = await this.fetch(`/api/groups/${encodeURIComponent(groupId)}/tickets`);
     if (!res.ok) throw new Error(`Failed to fetch team receipts: ${res.status}`);
     const data = await res.json();
-    return data.receipts ?? [];
+    return data.tickets ?? [];
   }
 
   /**
@@ -1417,10 +1433,10 @@ class SPClient {
     if (options?.profile) params.set('profile', options.profile);
     if (options?.limit) params.set('limit', String(options.limit));
     const qs = params.toString();
-    const res = await this.fetch(`/api/receipts/mine${qs ? '?' + qs : ''}`);
+    const res = await this.fetch(`/api/tickets/mine${qs ? '?' + qs : ''}`);
     if (!res.ok) throw new Error(`Failed to fetch receipts: ${res.status}`);
     const data = await res.json();
-    return { receipts: data.receipts ?? [], nextBefore: data.nextBefore ?? null };
+    return { receipts: data.tickets ?? [], nextBefore: data.nextBefore ?? null };
   }
 
   async listTeamReceiptsPage(groupId: string, options?: { before?: string; profile?: string; limit?: number }): Promise<ReceiptPage> {
@@ -1429,17 +1445,17 @@ class SPClient {
     if (options?.profile) params.set('profile', options.profile);
     if (options?.limit) params.set('limit', String(options.limit));
     const qs = params.toString();
-    const res = await this.fetch(`/api/groups/${encodeURIComponent(groupId)}/receipts${qs ? '?' + qs : ''}`);
+    const res = await this.fetch(`/api/groups/${encodeURIComponent(groupId)}/tickets${qs ? '?' + qs : ''}`);
     if (!res.ok) throw new Error(`Failed to fetch team receipts: ${res.status}`);
     const data = await res.json();
-    return { receipts: data.receipts ?? [], nextBefore: data.nextBefore ?? null };
+    return { receipts: data.tickets ?? [], nextBefore: data.nextBefore ?? null };
   }
 
   // ─── Action Thread (homepage feed) ──────────────────────────────────────
 
   /**
    * Fetch a merged stream of proposals + receipts for the Action Thread.
-   * The SP's `/api/receipts/mine` endpoint is date-keyed (one day at a
+   * The SP's `/api/tickets/mine` endpoint is date-keyed (one day at a
    * time), so multi-day history is assembled by looping over recent dates.
    */
   async getThread(options: {

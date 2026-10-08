@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { spClient, type PendingItem, type GateContentEntry } from '../lib/sp-client';
-import { computeBoundsHashBrowser, computeScopeHashBrowser, hashGateContent } from '../lib/frame';
+import { computeBoundsHashBrowser, computeScopeHashBrowser, computeProfileHashBrowser, hashGateContent } from '../lib/frame';
 import { buildGateForwardArgs } from '../lib/gate-forward';
 import { profileDisplayName } from '../lib/profile-display';
 import type { AgentProfile } from '@hap/core';
@@ -125,15 +125,19 @@ export function ExtendAuthModal({ item, onClose, onSuccess }: Props) {
       // Extend = RENEW: the SAME per-ceremony id with renew:true. The AS locks
       // the content (bounds/context/intent hashes must match) and only the
       // expiry moves — changing anything else requires a new ceremony.
+      const profileHash = await computeProfileHashBrowser(profile);
       const result = await spClient.attest({
         authorization_id: item.authorization_id,
         renew: true,
         profile_id: item.profile_id,
+        profile_hash: profileHash,
+        supported_versions: ['0.7'],
         bounds,
         bounds_hash: boundsHash,
-        context_hash: contextHash,
+        scope_hash: contextHash,
         domain,
         did: user.did,
+        mandate_owners: [{ did: user.did }],
         gate_content_hashes: { intent: intentHash },
         execution_context_hash: ecHash,
         group_id: groupId,

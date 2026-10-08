@@ -40,7 +40,8 @@ function keyOf(call: unknown[]): string | undefined {
 const RECEIPT = (id: string, idempotent = false) => ({
   approved: true,
   idempotent,
-  receipt: { id, cumulativeState: { daily: { amount: 10, count: 1 } } },
+  // v0.7: the AS's success body key is `ticket` (was `receipt`).
+  ticket: { id, cumulativeState: { daily: { amount: 10, count: 1 } } },
 });
 
 const baseArgs = {

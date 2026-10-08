@@ -128,7 +128,7 @@ describe('SPClient — session-end detection', () => {
     const client = new SPClient(BASE, { maxAttempts: 3, delaysMs: [0, 0] });
     client.setSessionCookie('hap-session=abc');
 
-    mockAsCall('/api/as/receipt', jsonResponse(401, { error: 'Authentication required' }));
+    mockAsCall('/api/as/ticket', jsonResponse(401, { error: 'Authentication required' }));
 
     await expect(
       client.postReceipt({

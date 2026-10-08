@@ -110,8 +110,8 @@ function receiptId(receipt: Record<string, unknown>): string {
  * plus what is needed to verify it (RR7 — closes the last SR2 gap):
  *   - a mandate goes in only when a verified element places it — an
  *     `sv-mandate`, or a full `sv-ticket` whose mandate group resolved;
- *   - always: its attestation blob(s) (signed; commit to the bounds/scope/
- *     intent by HASH only — `bounds_hash`, `context_hash`,
+ *   - always: its mandate blob(s) (signed; commit to the bounds/scope/
+ *     intent by HASH only — `bounds_hash`, `scope_hash`,
  *     `gate_content_hashes.intent`), its hashes, and its bounds VALUES (both
  *     elements draw them, render-report.ts `mandateRows`);
  *   - the intent TEXT only when an `sv-mandate` places the mandate — the one

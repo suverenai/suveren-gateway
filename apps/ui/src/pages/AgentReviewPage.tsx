@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { spClient } from '../lib/sp-client';
-import { computeBoundsHashBrowser, computeScopeHashBrowser, hashGateContent } from '../lib/frame';
+import { computeBoundsHashBrowser, computeScopeHashBrowser, computeProfileHashBrowser, hashGateContent } from '../lib/frame';
 import { buildGateForwardArgs } from '../lib/gate-forward';
 import { StepIndicator } from '../components/StepIndicator';
 import { DomainBadge } from '../components/DomainBadge';
@@ -324,15 +324,19 @@ export function AgentReviewPage() {
       // v0.4: commitment_mode is part of the signed payload. 'review' means
       // each action requires per-action human approval via a proposal;
       // 'automatic' lets the agent act within bounds without per-action review.
+      const profileHash = await computeProfileHashBrowser(profile);
       const result = await spClient.attest({
         authorization_id: authorizationId,
         replaces: replacesId,
         profile_id: authData.profileId,
+        profile_hash: profileHash,
+        supported_versions: ['0.7'],
         bounds: gateData.bounds,
         bounds_hash: boundsHash,
-        context_hash: contextHash,
+        scope_hash: contextHash,
         domain,
         did: user.did,
+        mandate_owners: [{ did: user.did }],
         gate_content_hashes: { intent: intentHashValue },
         execution_context_hash: ecHash,
         group_id: authData.groupId,

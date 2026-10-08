@@ -405,7 +405,8 @@ export class SPClient {
 
       let res: Response;
       try {
-        res = await this.fetch('/api/as/receipt', { method: 'POST', body });
+        // v0.7: moved from POST /api/as/receipt, which now answers 410.
+        res = await this.fetch('/api/as/ticket', { method: 'POST', body });
       } catch (err) {
         // Network-level failure (connection refused, reset, DNS). The request
         // may or may not have reached the AS — but because it carried the
@@ -447,8 +448,11 @@ export class SPClient {
       // replayed the original for a request it had already served (same
       // idempotencyKey, or a proposal already `executed`). The caller must
       // treat that as "you may already have run this", not as a fresh grant.
+      // v0.7: the success body's key is `ticket` (was `receipt`); this
+      // client's own return field name (`receipt`) stays, for every
+      // existing caller that destructures it.
       return {
-        receipt: respBody.receipt as Record<string, unknown>,
+        receipt: respBody.ticket as Record<string, unknown>,
         idempotent: respBody.idempotent === true,
       };
     }
