@@ -138,6 +138,53 @@ export function profileMatches(profileId: string, shortName: string): boolean {
 }
 
 /**
+ * Item 7 — filter the execution-context values this gateway puts ON THE
+ * WIRE (a ticket/proposal request to the AS) down to exactly the fields a
+ * `boundType` reads, plus `action_type`. The LOCAL `execution` object (used
+ * for the Gatekeeper's own verify() call and selection) is untouched —
+ * this is only about what crosses the network.
+ *
+ * Why: content/0.7/review.md -> "Scope values must not travel in the
+ * execution context" — a tool-gating manifest's single `executionMapping`
+ * entry can produce BOTH a bound field's value and a scope field's value
+ * from the same argument (the two are independently declared per field
+ * NAME, never per source), so the full `execution` object routinely
+ * carries scope-constrained values (e.g. `currency`, a scope `enum` field
+ * on both `charge` and `sales`) the AS has no bound to check them against
+ * and no plaintext to compare them to — the AS only ever holds
+ * `scope_hash` (protocol.md -> *Scope*). Sending them anyway buys nothing
+ * and costs the privacy the bounds/scope split exists to protect; the
+ * ledger entry's own proposed rule is exactly this filter. v0.7 itself
+ * does not yet REQUIRE this (the AS in #53 simply ignores fields it has no
+ * bound for), so this is a safe-and-allowed hardening applied now, not a
+ * protocol violation if omitted.
+ *
+ * Generic and profile-schema-driven (no field names, no per-profile code):
+ * the allow-list is exactly the profile's own `boundsSchema` declarations.
+ */
+export function wireExecutionContext(
+  profileId: string,
+  execution: Record<string, string | number>,
+): Record<string, string | number> {
+  const profile = getProfile(profileId);
+  const allowed = new Set<string>(['action_type']);
+  const fields = profile?.boundsSchema?.fields;
+  if (fields) {
+    for (const fieldDef of Object.values(fields)) {
+      const bt = (fieldDef as { boundType?: { kind?: string; of?: string } }).boundType;
+      if (bt && (bt.kind === 'per_transaction' || bt.kind === 'cumulative_sum') && bt.of) {
+        allowed.add(bt.of);
+      }
+    }
+  }
+  const out: Record<string, string | number> = {};
+  for (const [key, value] of Object.entries(execution)) {
+    if (allowed.has(key)) out[key] = value;
+  }
+  return out;
+}
+
+/**
  * Whether a `hideUnlessAuthorized` tool should be listed in `tools/list`,
  * given the COMPLETE authorizations already matched to its profile.
  *
@@ -941,6 +988,12 @@ function createGatedToolHandlerInner(
         if ((auth.deferredCommitmentDomains ?? []).length > 0) {
           try {
             const enrichedArgs = await attachImagePreview(args);
+            // Item 7 — never put scope-constrained values on the wire; see
+            // wireExecutionContext's doc comment. Both the submission and
+            // this gateway's own record of it use the SAME filtered value,
+            // so the later cross-check (commitments.ts) compares like for
+            // like.
+            const wireExecCtx = wireExecutionContext(auth.profileId, execution);
             const { proposal } = await state.spClient.submitProposal({
               authorizationId: authzId,
               profileId: auth.profileId,
@@ -948,7 +1001,7 @@ function createGatedToolHandlerInner(
               pendingDomains: auth.deferredCommitmentDomains,
               tool: tool.namespacedName,
               toolArgs: enrichedArgs,
-              executionContext: { ...execution },
+              executionContext: wireExecCtx,
             });
             // Record what WE submitted — ticket-verify.ts / commitments.ts
             // compares against this at execution time rather than trusting
@@ -957,7 +1010,7 @@ function createGatedToolHandlerInner(
               proposalId: proposal.id,
               tool: tool.namespacedName,
               toolArgs: enrichedArgs,
-              executionContext: { ...execution },
+              executionContext: wireExecCtx,
               authorizationId: authzId,
               profileId: auth.profileId,
             });
@@ -1020,6 +1073,12 @@ function createGatedToolHandlerInner(
           // ticket the AS signs — binding the ticket to THIS invocation, not
           // just to "a call shaped like this one". See ticket-verify.ts.
           const idempotencyKey = randomUUID();
+          // Item 7 — never put scope-constrained values on the wire; see
+          // wireExecutionContext's doc comment. Used for BOTH the request
+          // and the ticket-verify.ts cross-check below, so the ticket the
+          // AS echoes back (which only ever contains what it was sent) is
+          // compared against the same filtered shape, not the full one.
+          const wireExecCtx = wireExecutionContext(auth.profileId, execution);
           const { receipt } = await state.spClient.postReceipt({
             authorizationId: authzId,
             // Optional cross-check — the AS fails closed on a mismatch.
@@ -1027,7 +1086,7 @@ function createGatedToolHandlerInner(
             profileId: auth.profileId,
             action: tool.namespacedName,
             actionType,
-            executionContext: { ...execution },
+            executionContext: wireExecCtx,
             amount: typeof execution.amount === 'number' ? execution.amount : undefined,
             idempotencyKey,
             // Privacy: send the hash and how to reproduce it — never the
@@ -1050,7 +1109,7 @@ function createGatedToolHandlerInner(
           // didn't verify.
           await verifyTicket(state.cache, receipt, {
             action: tool.namespacedName,
-            executionContext: { ...execution },
+            executionContext: wireExecCtx,
             authorizationId: authzId,
             profileId: auth.profileId,
             idempotencyKey,
@@ -1224,6 +1283,9 @@ function createGatedToolHandlerInner(
 
             try {
               const enrichedArgs = await attachImagePreview(args);
+              // Item 7 — never put scope-constrained values on the wire;
+              // see wireExecutionContext's doc comment.
+              const wireExecCtx = wireExecutionContext(auth.profileId, execution);
               const { proposal } = await state.spClient.submitProposal({
                 authorizationId: authzId,
                 profileId: auth.profileId,
@@ -1231,14 +1293,14 @@ function createGatedToolHandlerInner(
                 pendingDomains: [],
                 tool: tool.namespacedName,
                 toolArgs: enrichedArgs,
-                executionContext: { ...execution },
+                executionContext: wireExecCtx,
                 pendingApprovers: uniqueApprovers,
               });
               state.proposalSubmissions.record({
                 proposalId: proposal.id,
                 tool: tool.namespacedName,
                 toolArgs: enrichedArgs,
-                executionContext: { ...execution },
+                executionContext: wireExecCtx,
                 authorizationId: authzId,
                 profileId: auth.profileId,
               });
