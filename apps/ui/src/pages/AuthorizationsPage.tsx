@@ -68,6 +68,11 @@ interface AuthCardProps {
   archivingHash?: string | null;
   onArchive?: (authorizationId: string, archived: boolean) => void;
   highlightHash?: string | null;
+  /** v0.7 item 9 — ids the gateway has flagged via a VERSION_UNSUPPORTED
+   *  ticket refusal: the Authority Server no longer verifies this
+   *  mandate's protocol version. Learned lazily (only once an execution
+   *  was actually attempted), so absence does not mean "confirmed fine". */
+  needsReapprovalSet?: Set<string>;
 }
 
 function AuthCard({
@@ -93,8 +98,10 @@ function AuthCard({
   archivingHash,
   onArchive,
   highlightHash,
+  needsReapprovalSet,
 }: AuthCardProps) {
   const status = getAuthStatus(item, { revokedSet });
+  const needsReapproval = status === 'active' && (needsReapprovalSet?.has(item.authorization_id) ?? false);
   const archived = isArchived(item, { revokedSet, archivedSet });
   const canArchive = !ownerLabel && !!onArchive && isArchivable(status);
   const isExpanded = expandedHash === item.authorization_id;
@@ -205,6 +212,21 @@ function AuthCard({
           {item.title || profileShortName}
         </span>
         <StatusBadge status={status} />
+        {needsReapproval && (
+          <span
+            title="The Authority Server no longer verifies this mandate's protocol version. Re-approve it to keep using this authority."
+            style={{
+              fontSize: '0.75rem',
+              fontWeight: 700,
+              color: 'var(--text-on-warning, #7a4a00)',
+              background: 'var(--warning-bg, #fff3cd)',
+              borderRadius: '4px',
+              padding: '2px 6px',
+            }}
+          >
+            Needs re-approval
+          </span>
+        )}
         {identity.testSetup && <span className="sim-mark">Test setup</span>}
         {status === 'active' && item.earliest_expiry && (
           <TTLBadge expiresAt={new Date(item.earliest_expiry).getTime() / 1000} />
@@ -425,12 +447,16 @@ function AuthCard({
                 for live grants — an expired one has nothing to revoke (use Copy). */}
             {!ownerLabel && (status === 'active' || status === 'pending') && (
               <button
-                className="btn btn-secondary btn-sm"
+                className={needsReapproval ? 'btn btn-primary btn-sm' : 'btn btn-secondary btn-sm'}
                 onClick={() => onCopy(item, { asEdit: true })}
                 disabled={copyingHash === item.authorization_id}
-                title="Adjust intent, bounds, or scope: opens the ceremony pre-filled; signing the new mandate revokes this one"
+                title={
+                  needsReapproval
+                    ? 'The Authority Server no longer verifies this mandate\'s protocol version. Re-approving opens the ceremony pre-filled with the same bounds, scope, and intent; signing it revokes this one.'
+                    : 'Adjust intent, bounds, or scope: opens the ceremony pre-filled; signing the new mandate revokes this one'
+                }
               >
-                ✎ Edit
+                {needsReapproval ? '⚠ Re-approve' : '✎ Edit'}
               </button>
             )}
             {/* Extend only in Mine tab */}
@@ -514,6 +540,11 @@ export function AuthorizationsPage() {
   const [archivedSet, setArchivedSet] = useState<Set<string>>(new Set());
   const [archivingHash, setArchivingHash] = useState<string | null>(null);
   const [copyingHash, setCopyingHash] = useState<string | null>(null);
+  // v0.7 item 9 — ids THIS gateway has flagged (via a VERSION_UNSUPPORTED
+  // ticket refusal) as carrying only a pre-0.7 mandate blob. Local-only
+  // (the gateway's own cache, not AS-sourced), so this only applies to the
+  // Mine tab — a team row's data comes straight from the Authority Server.
+  const [needsReapprovalSet, setNeedsReapprovalSet] = useState<Set<string>>(new Set());
 
   const navigate = useNavigate();
   const { group, groupId, domain: activeDomain, mode, activeTeam } = useAuth();
@@ -539,6 +570,18 @@ export function AuthorizationsPage() {
       .catch(() => {});
   }, []);
   useEffect(() => { fetchArchived(); }, [fetchArchived]);
+
+  // v0.7 item 9 — the gateway's own flag (see shared-state.ts's
+  // EnrichedAuthorization.needsReapproval), local to THIS gateway's cache.
+  // A failed load leaves nothing flagged — the safe direction, same as
+  // archive above: a false negative here is a missed badge, not a false
+  // "needs re-approval" on a mandate that is fine.
+  const fetchNeedsReapproval = useCallback(() => {
+    spClient.getEnrichedAuthorizations()
+      .then(entries => setNeedsReapprovalSet(new Set(entries.filter(e => e.needsReapproval).map(e => e.authorizationId))))
+      .catch(() => {});
+  }, []);
+  useEffect(() => { fetchNeedsReapproval(); }, [fetchNeedsReapproval]);
 
   const handleArchive = async (authorizationId: string, archived: boolean) => {
     setArchivingHash(authorizationId);
@@ -567,6 +610,7 @@ export function AuthorizationsPage() {
   useSSEEvent('attestation-changed', () => {
     fetchMineItems();
     if (isAdmin && groupId) fetchTeamItems();
+    fetchNeedsReapproval();
   });
 
   // Strip ?highlight= from the URL on mount and clear the in-state highlight
@@ -839,7 +883,7 @@ export function AuthorizationsPage() {
     onExtend: setExtendItem,
     highlightHash,
   };
-  const mineCardProps = { ...sharedCardProps, archivedSet, archivingHash, onArchive: handleArchive };
+  const mineCardProps = { ...sharedCardProps, archivedSet, archivingHash, onArchive: handleArchive, needsReapprovalSet };
 
   return (
     <>

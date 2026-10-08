@@ -711,6 +711,9 @@ app.get('/internal/authorizations', internalOnly, (_req: Request, res: Response)
     context: a.context ?? {},
     intent: a.gateContent?.intent ?? null,
     deferredCommitmentDomains: a.deferredCommitmentDomains ?? [],
+    // Item 9 (re-approval UX) — the AS told us, via a VERSION_UNSUPPORTED
+    // ticket refusal, that this authorization's mandate blob is pre-0.7.
+    needsReapproval: a.needsReapproval ?? false,
   }));
   res.json({ authorizations });
 });

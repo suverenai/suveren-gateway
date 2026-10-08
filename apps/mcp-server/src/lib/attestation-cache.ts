@@ -79,6 +79,19 @@ export class AttestationCache {
   /** Cache of authorizations by path (e.g., "payment-routine") */
   private authorizations = new Map<string, CachedAuthorization>();
   private lastSync = 0;
+  /**
+   * Re-approval UX (V9/item 9) — authorization ids the AS has told us, via a
+   * VERSION_UNSUPPORTED ticket refusal, carry only pre-0.7 mandate blobs.
+   * Learned lazily (only once an execution is actually attempted under
+   * them — nothing proactively re-verifies every cached blob's version),
+   * never cleared explicitly: re-approving replaces the authorization with
+   * a NEW id (the existing edit/replace ceremony), so the flagged id
+   * simply drops out of the active set on its own once revoked. In-memory
+   * only, same lifetime as the cache it annotates — a restart re-learns it
+   * on the next attempted execution, which is the gateway's only source for
+   * this fact to begin with.
+   */
+  private reapprovalNeeded = new Set<string>();
 
   /**
    * @param dataDir Where to look for a pinned key (as-pairing.json). Optional
@@ -265,5 +278,16 @@ export class AttestationCache {
    */
   invalidate(path: string): void {
     this.authorizations.delete(path);
+  }
+
+  /** Flag an authorization as needing re-approval (V9/item 9) — see
+   *  {@link reapprovalNeeded}'s doc comment. */
+  markNeedsReapproval(authorizationId: string): void {
+    this.reapprovalNeeded.add(authorizationId);
+  }
+
+  /** Whether this authorization was flagged by {@link markNeedsReapproval}. */
+  needsReapproval(authorizationId: string): boolean {
+    return this.reapprovalNeeded.has(authorizationId);
   }
 }

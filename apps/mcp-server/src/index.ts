@@ -2,7 +2,7 @@
  * Suveren MCP Server — Tool provider for the agent with embedded Gatekeeper.
  *
  * Registers:
- * - Suveren admin tools: list-authorizations, check-pending-attestations
+ * - Suveren admin tools: list-authorizations, check-pending-mandates
  * - Proxied tools: discovered from downstream MCP servers via IntegrationManager
  *
  * Builds a mandate brief from enriched authorizations and sets it as MCP instructions.
@@ -59,12 +59,12 @@ export function createMcpServer(
     listAuthorizationsHandler(state, integrationManager)
   );
 
-  // ─── check-pending-attestations ──────────────────────────────────────────
+  // ─── check-pending-mandates (v0.7; was check-pending-attestations) ───────
 
   server.registerTool(
-    'check-pending-attestations',
+    'check-pending-mandates',
     {
-      description: 'Check if any attestations are waiting for your owner\'s approval.',
+      description: 'Check if any mandates are waiting for your owner\'s approval.',
       inputSchema: {
         domain: z.string().describe('The owner\'s domain (e.g., "compliance")'),
       },

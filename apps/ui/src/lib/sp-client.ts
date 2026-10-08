@@ -216,6 +216,10 @@ export interface EnrichedAuthorizationEntry {
   context: Record<string, string | number>;
   intent: string | null;
   deferredCommitmentDomains: string[];
+  /** v0.7 item 9 — the AS no longer verifies this mandate's protocol
+   *  version (a VERSION_UNSUPPORTED ticket refusal). Learned lazily by the
+   *  gateway, only once an execution was actually attempted under it. */
+  needsReapproval?: boolean;
 }
 
 /** The owner's standing identity-disclosure choice, as the Authority Server holds it. */

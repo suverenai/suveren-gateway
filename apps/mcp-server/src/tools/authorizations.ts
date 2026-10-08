@@ -160,8 +160,14 @@ export function listAuthorizationsHandler(
           .map(([key, value]) => `${key}: ${value}`)
           .join(', ');
 
-        const statusLabel = auth.complete ? '' : ' (PENDING)';
+        // Item 9 (re-approval UX): generic, not per-profile — a mandate the
+        // AS can no longer verify (pre-0.7 blob) still shows, flagged, with
+        // the clear action named below rather than silently vanishing.
+        const statusLabel = !auth.complete ? ' (PENDING)' : auth.needsReapproval ? ' (NEEDS RE-APPROVAL)' : '';
         output.push(`[${auth.path}] ${auth.profileId} (${remainingMin} min remaining)${statusLabel}`);
+        if (auth.needsReapproval) {
+          output.push('  The Authority Server no longer verifies this mandate\'s protocol version. Ask the decision owner to re-approve it.');
+        }
         output.push('');
         output.push(`  Bounds: ${boundsDesc}`);
 
@@ -216,7 +222,7 @@ export function listAuthorizationsHandler(
         if (!auth.complete) {
           const missing = auth.requiredDomains.filter(d => !auth.attestedDomains.includes(d));
           output.push('');
-          output.push(`  Missing attestations: ${missing.join(', ')}`);
+          output.push(`  Missing mandates: ${missing.join(', ')}`);
         }
 
         // Capability map
@@ -253,8 +259,14 @@ export function listAuthorizationsHandler(
         .join(', ');
 
       if (auth.complete) {
-        const lines = [`  [${auth.path}] ${auth.profileId} — ${remainingMin} min remaining`];
+        const statusLabel = auth.needsReapproval ? ' (NEEDS RE-APPROVAL)' : '';
+        const lines = [`  [${auth.path}] ${auth.profileId} — ${remainingMin} min remaining${statusLabel}`];
         lines.push(`    Bounds: ${boundsDesc}`);
+
+        // Item 9 (re-approval UX): generic, not per-profile.
+        if (auth.needsReapproval) {
+          lines.push('    The Authority Server no longer verifies this mandate\'s protocol version. Ask the decision owner to re-approve it.');
+        }
 
         // Flag review mode in the compact view (automatic is the unremarkable default)
         if ((auth.deferredCommitmentDomains ?? []).length > 0) {
@@ -277,7 +289,7 @@ export function listAuthorizationsHandler(
       } else {
         const missing = auth.requiredDomains.filter(d => !auth.attestedDomains.includes(d));
         pending.push(
-          `  ${auth.path}: ${boundsDesc} — needs ${missing.join(', ')} attestation, ${remainingMin} min remaining`
+          `  ${auth.path}: ${boundsDesc} — needs ${missing.join(', ')} mandate, ${remainingMin} min remaining`
         );
       }
     }

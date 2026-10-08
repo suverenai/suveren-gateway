@@ -194,11 +194,11 @@ describe('list-authorizations', () => {
   });
 });
 
-describe('check-pending-attestations', () => {
+describe('check-pending-mandates', () => {
   it('returns empty message when no pending', async () => {
     const handler = checkPendingHandler(mockCache());
     const result = await handler({ domain: 'compliance' });
-    expect(result.content[0].text).toContain('No pending attestations');
+    expect(result.content[0].text).toContain('No pending mandates');
   });
 });
 

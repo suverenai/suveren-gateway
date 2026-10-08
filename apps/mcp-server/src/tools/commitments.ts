@@ -315,6 +315,17 @@ export async function executeCommitted(
           text: `Proposal ${proposal.id} has already been executed by another request.`,
         };
       }
+      // Item 9 (re-approval UX) — see tool-proxy.ts's
+      // isVersionUnsupportedRefusal doc comment: flag, never invalidate.
+      if (err.statusCode === 409 && code === 'VERSION_UNSUPPORTED') {
+        state.cache.markNeedsReapproval(proposal.authorizationId);
+        return {
+          text: `Proposal ${proposal.id}: blocked — mandate ${proposal.authorizationId} needs re-approval ` +
+            `— the Authority Server no longer verifies its protocol version. Ask the decision owner to ` +
+            `re-approve it (see list-authorizations). ${err.message}`,
+          isError: true,
+        };
+      }
       return {
         text: `Proposal ${proposal.id}: SP rejected receipt — ${err.message}`,
         isError: true,

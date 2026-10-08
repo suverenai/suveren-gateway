@@ -1,5 +1,6 @@
 /**
- * check-pending-attestations tool — checks for attestations needing owner approval.
+ * check-pending-mandates tool (v0.7; was check-pending-attestations) —
+ * checks for mandates needing owner approval.
  */
 
 import type { AttestationCache } from '../lib/attestation-cache';
@@ -19,12 +20,12 @@ export function checkPendingHandler(cache: AttestationCache) {
         return {
           content: [{
             type: 'text' as const,
-            text: `No pending attestations for domain "${domain}".`,
+            text: `No pending mandates for domain "${domain}".`,
           }],
         };
       }
 
-      const lines = [`Pending attestations needing your domain (${domain}):`];
+      const lines = [`Pending mandates needing your domain (${domain}):`];
       for (const item of pending) {
         const boundsDesc = Object.entries(item.frame)
           .filter(([key]) => key !== 'profile' && key !== 'path')
@@ -53,7 +54,7 @@ export function checkPendingHandler(cache: AttestationCache) {
       return {
         content: [{
           type: 'text' as const,
-          text: `Failed to check pending attestations: ${error}`,
+          text: `Failed to check pending mandates: ${error}`,
         }],
         isError: true,
       };

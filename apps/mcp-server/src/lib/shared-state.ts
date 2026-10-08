@@ -21,6 +21,8 @@ export interface EnrichedAuthorization extends CachedAuthorization {
   // v0.4 fields merged from gate store (may override cache values)
   context?: Record<string, string | number>;
   contextHash?: string;
+  /** V9/item 9 — see attestation-cache.ts's `reapprovalNeeded`. */
+  needsReapproval?: boolean;
 }
 
 export class SharedState {
@@ -247,6 +249,7 @@ export class SharedState {
           gateContent: gateEntry?.gateContent ?? null,
           context: auth.context ?? gateEntry?.context,
           contextHash: auth.contextHash ?? gateEntry?.contextHash,
+          needsReapproval: this.cache.needsReapproval(auth.authorizationId),
         };
       })
       .filter(auth => auth.gateContent !== null);

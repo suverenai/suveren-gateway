@@ -108,6 +108,25 @@ export function buildMandateBrief(opts: MandateBriefOptions): string {
   const pending = authorizations.filter(a => !a.complete);
   const now = Math.floor(Date.now() / 1000);
 
+  // Item 9 (re-approval UX) — generic, not per-profile: any authorization
+  // the AS has told us (via a VERSION_UNSUPPORTED ticket refusal) carries
+  // only a pre-0.7 mandate blob. Its own OWN section, ahead of the normal
+  // active list, so it is impossible to miss — the clear action is "ask
+  // the decision owner to re-approve it" (list-authorizations names it).
+  const needingReapproval = active.filter(a => a.needsReapproval);
+  if (needingReapproval.length > 0) {
+    lines.push('');
+    lines.push('=== NEEDS RE-APPROVAL ===');
+    lines.push('');
+    for (const auth of needingReapproval) {
+      lines.push(
+        `[${shortProfileName(auth.profileId)}] ${auth.authorizationId}: the Authority Server no longer ` +
+          'verifies this mandate\'s protocol version. Ask the decision owner to re-approve it.',
+      );
+    }
+    lines.push('');
+  }
+
   if (active.length > 0) {
     lines.push('');
     lines.push('=== ACTIVE AUTHORITIES ===');
@@ -152,7 +171,7 @@ export function buildMandateBrief(opts: MandateBriefOptions): string {
   }
 
   if (pending.length > 0) {
-    lines.push('=== PENDING (awaiting attestations) ===');
+    lines.push('=== PENDING (awaiting mandates) ===');
     lines.push('');
 
     for (const auth of pending) {

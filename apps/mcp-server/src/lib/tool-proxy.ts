@@ -386,6 +386,26 @@ function isStaleMandateRefusal(err: SPReceiptError): boolean {
   return false;
 }
 
+/**
+ * True when the AS refused a ticket because the selected authorization's
+ * stored mandate blob is pre-0.7 (protocol.md -> Error Codes:
+ * VERSION_UNSUPPORTED; the AS's ticket route returns it at 409 for exactly
+ * this case, with a "re-approve this mandate" message). Matched on the
+ * canonical code, never the free-text message (V6).
+ *
+ * Deliberately NOT folded into {@link isStaleMandateRefusal}: that helper's
+ * caller INVALIDATES (drops) the authorization from the cache — correct
+ * for revoked/expired/not-found, where the grant genuinely no longer
+ * exists, but wrong here. A VERSION_UNSUPPORTED authorization's RECORD is
+ * still live; only its signed blob's wire version is obsolete. It must
+ * keep showing (flagged) so a human knows to re-approve it (item 9) —
+ * disappearing it would hide exactly the authorization that needs action.
+ */
+function isVersionUnsupportedRefusal(err: SPReceiptError): boolean {
+  const errors = err.body?.errors as Array<{ code?: unknown }> | undefined;
+  return err.statusCode === 409 && errors?.[0]?.code === 'VERSION_UNSUPPORTED';
+}
+
 function createGatedToolHandlerInner(
   tool: DiscoveredTool,
   integrationManager: IntegrationManager,
@@ -1098,6 +1118,33 @@ function createGatedToolHandlerInner(
               }],
               isError: true,
             };
+          }
+
+          // Item 9 (re-approval UX): a pre-0.7 mandate. Flag it (never
+          // invalidate — see isVersionUnsupportedRefusal's doc comment) so
+          // list-authorizations and the mandate brief show it as needing
+          // re-approval, then fall back exactly like a stale mandate: retry
+          // with any OTHER eligible authorization on this profile, which
+          // may already be re-approved under 0.7.
+          if (err instanceof SPReceiptError && isVersionUnsupportedRefusal(err)) {
+            state.cache.markNeedsReapproval(auth.authorizationId);
+            const remaining = candidates.filter(c => c.authorizationId !== auth.authorizationId);
+            if (remaining.length === 0) {
+              return {
+                content: [{
+                  type: 'text',
+                  text: `Blocked: mandate ${auth.authorizationId} needs re-approval — the Authority Server ` +
+                    `no longer verifies its protocol version. Ask the decision owner to re-approve it ` +
+                    `(see list-authorizations). ${err.message}`,
+                }],
+                isError: true,
+              };
+            }
+            console.error(
+              `[Suveren MCP] fallback(${tool.namespacedName}): mandate ${auth.authorizationId} needs ` +
+                `re-approval (VERSION_UNSUPPORTED) → retrying with [${remaining.map(c => c.authorizationId).join(', ')}]`,
+            );
+            return attemptWithCandidates(remaining);
           }
 
           if (err instanceof SPReceiptError && isStaleMandateRefusal(err)) {
