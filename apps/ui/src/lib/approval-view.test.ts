@@ -19,7 +19,7 @@ const PROFILE = {
       discount_max: { type: 'number', displayName: 'Max discount', unit: 'percent' },
     },
   },
-  contextSchema: { keyOrder: ['currency'], fields: { currency: { type: 'string', displayName: 'Currency' } } },
+  scopeSchema: { keyOrder: ['currency'], fields: { currency: { type: 'string', displayName: 'Currency' } } },
 } as unknown as AgentProfile;
 
 describe('argRows — every tool, no declaration', () => {

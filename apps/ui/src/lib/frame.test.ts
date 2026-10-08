@@ -14,19 +14,14 @@
  * content/0.7/vectors/canonical-bounds-and-scope.json — 10 cases and 2 refusals
  * from protocol.md → *Bounds & Scope Canonicalization*.
  *
- * Vocabulary note: the vector file is v0.7, which renamed "context" to
- * "scope". The implementation is still on the v0.6 wire vocabulary, so
- * `kind: "scope"` cases run through computeContextHashBrowser and the refusal
- * code SCOPE_INVALID_VALUE is asserted as CONTEXT_INVALID_VALUE. The bytes and
- * hashes — what the vectors actually pin — are unaffected by the rename.
  */
 import { describe, it, expect } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import type { AgentProfile, AgentBoundsParams, AgentContextParams } from '@hap/core';
+import type { AgentProfile, AgentBoundsParams, AgentScopeParams } from '@hap/core';
 import {
   computeBoundsHashBrowser,
-  computeContextHashBrowser,
+  computeScopeHashBrowser,
   CanonicalValueError,
 } from './frame';
 
@@ -70,14 +65,7 @@ function profileFromCase(vc: VectorCase): AgentProfile {
 
   return vc.kind === 'bounds'
     ? { ...base, boundsSchema: { keyOrder: vc.key_order, fields } } as AgentProfile
-    : { ...base, contextSchema: { keyOrder: vc.key_order, fields } } as AgentProfile;
-}
-
-/** v0.7 vector code → the code this (v0.6-vocabulary) implementation throws. */
-function expectedCode(vc: VectorCase): string {
-  return vc.expected_error === 'SCOPE_INVALID_VALUE'
-    ? 'CONTEXT_INVALID_VALUE'
-    : String(vc.expected_error);
+    : { ...base, scopeSchema: { keyOrder: vc.key_order, fields } } as AgentProfile;
 }
 
 const haveVectors = existsSync(VECTORS_PATH);
@@ -109,7 +97,7 @@ describe.skipIf(!haveVectors)('UI canonicalizer — spec conformance vectors', (
         const profile = profileFromCase(vc);
         const hash = vc.kind === 'bounds'
           ? await computeBoundsHashBrowser(vc.values as AgentBoundsParams, profile)
-          : await computeContextHashBrowser(vc.values as AgentContextParams, profile);
+          : await computeScopeHashBrowser(vc.values as AgentScopeParams, profile);
 
         expect(hash).toBe(vc.hash);
       });
@@ -127,7 +115,7 @@ describe.skipIf(!haveVectors)('UI canonicalizer — spec conformance vectors', (
           if (vc.kind === 'bounds') {
             await computeBoundsHashBrowser(vc.values as AgentBoundsParams, profile);
           } else {
-            await computeContextHashBrowser(vc.values as AgentContextParams, profile);
+            await computeScopeHashBrowser(vc.values as AgentScopeParams, profile);
           }
         } catch (err) {
           thrown = err;
@@ -136,7 +124,7 @@ describe.skipIf(!haveVectors)('UI canonicalizer — spec conformance vectors', (
         expect(thrown, 'canonicalization should have refused this value').toBeInstanceOf(
           CanonicalValueError,
         );
-        expect((thrown as CanonicalValueError).code).toBe(expectedCode(vc));
+        expect((thrown as CanonicalValueError).code).toBe(vc.expected_error);
       });
     }
   });
@@ -148,14 +136,14 @@ describe('the rules the wizard hits every day', () => {
   // break on its own — it hides optional bounds, and it lets a human type into
   // a scope field.
   const emailish = {
-    id: 'email@0.6',
-    version: '0.6',
+    id: 'email@0.7',
+    version: '0.7',
     description: '',
     boundsSchema: {
       keyOrder: ['profile', 'recipient_max', 'send_daily_max', 'read_max_age_days', 'read_daily_max'],
       fields: {},
     },
-    contextSchema: { keyOrder: ['allowed_recipients', 'allowed_domains'], fields: {} },
+    scopeSchema: { keyOrder: ['allowed_recipients', 'allowed_domains'], fields: {} },
     executionContextSchema: { fields: {} },
     requiredGates: [],
     ttl: { default: 3600, max: 86400 },
@@ -179,20 +167,20 @@ describe('the rules the wizard hits every day', () => {
     // A raw LF inside a value would inject an extra `key=value` record into the
     // canonical string the human's signature covers.
     await expect(
-      computeContextHashBrowser(
-        { allowed_recipients: 'a@x.com\nallowed_domains=evil.example', allowed_domains: 'x.com' } as AgentContextParams,
+      computeScopeHashBrowser(
+        { allowed_recipients: 'a@x.com\nallowed_domains=evil.example', allowed_domains: 'x.com' } as AgentScopeParams,
         emailish,
       ),
     ).rejects.toThrow(CanonicalValueError);
   });
 
   it('percent-encodes `=` so a value cannot forge a record either', async () => {
-    const withEquals = await computeContextHashBrowser(
-      { allowed_recipients: 'a=b', allowed_domains: 'x.com' } as AgentContextParams,
+    const withEquals = await computeScopeHashBrowser(
+      { allowed_recipients: 'a=b', allowed_domains: 'x.com' } as AgentScopeParams,
       emailish,
     );
-    const encodedLiterally = await computeContextHashBrowser(
-      { allowed_recipients: 'a%3Db', allowed_domains: 'x.com' } as AgentContextParams,
+    const encodedLiterally = await computeScopeHashBrowser(
+      { allowed_recipients: 'a%3Db', allowed_domains: 'x.com' } as AgentScopeParams,
       emailish,
     );
 

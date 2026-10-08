@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { spClient, type PendingItem, type GateContentEntry } from '../lib/sp-client';
-import { computeBoundsHashBrowser, computeContextHashBrowser, hashGateContent } from '../lib/frame';
+import { computeBoundsHashBrowser, computeScopeHashBrowser, hashGateContent } from '../lib/frame';
 import { buildGateForwardArgs } from '../lib/gate-forward';
 import { profileDisplayName } from '../lib/profile-display';
 import type { AgentProfile } from '@hap/core';
@@ -100,7 +100,7 @@ export function ExtendAuthModal({ item, onClose, onSuccess }: Props) {
       const domain = item.attested_domains[0] || activeDomain || 'owner';
 
       const boundsHash = await computeBoundsHashBrowser(bounds, profile);
-      const contextHash = await computeContextHashBrowser(context, profile);
+      const contextHash = await computeScopeHashBrowser(context, profile);
 
       const [intentHash, ecHash] = await Promise.all([
         hashGateContent(gateEntry.gateContent.intent),

@@ -1,22 +1,24 @@
 /**
- * Frame / bounds / context hash computation for the Authority UI.
+ * Bounds / scope / profile hash computation for the Authority UI.
  *
  * Uses SubtleCrypto (browser) instead of Node crypto.
  *
- * This file is a DUPLICATE CANONICALIZER. The UI signs a bounds_hash and a
- * context_hash that the Authority Server (hap-core, Node) recomputes and
- * verifies, so the two must produce identical bytes for identical input — a
- * one-character disagreement means nothing the human authorizes here will ever
- * verify there. It exists because the @hap/core ESM bundle imports node:crypto
- * at module level (computeIntentHash and friends), which Vite rejects in a
- * browser build; only its TYPES are imported below. Keep the logic in
- * `canonicalRecords` byte-identical to hap-core's `canonicalRecords` in
- * src/frame.ts, and keep both aligned with protocol.md → *Bounds & Scope
- * Canonicalization*. The shared answer key is
+ * This file is a DUPLICATE CANONICALIZER. The UI signs a bounds_hash, a
+ * scope_hash, and (v0.7) a profile_hash that the Authority Server (hap-core,
+ * Node) recomputes and verifies, so the two must produce identical bytes for
+ * identical input — a one-character disagreement means nothing the human
+ * authorizes here will ever verify there. It exists because the @hap/core
+ * ESM bundle imports node:crypto at module level (computeIntentHash and
+ * friends), which Vite rejects in a browser build; only its TYPES are
+ * imported below. Keep the logic in `canonicalRecords` byte-identical to
+ * hap-core's `canonicalRecords` in src/frame.ts, and `canonicalizeJcs`
+ * byte-identical to hap-core's `canonicalize` in src/canonicalize.ts — both
+ * aligned with protocol.md → *Bounds & Scope Canonicalization* / *Profile
+ * hash*. The shared answer key is
  * content/0.7/vectors/canonical-bounds-and-scope.json (see frame.test.ts).
  */
 
-import type { AgentProfile, AgentFrameParams, AgentBoundsParams, AgentContextParams } from '@hap/core';
+import type { AgentProfile, AgentBoundsParams, AgentScopeParams } from '@hap/core';
 
 /**
  * Browser-safe re-implementation of hap-core's canonicalizeText.
@@ -44,34 +46,16 @@ async function sha256(input: string): Promise<string> {
 }
 
 /**
- * Compute frame hash client-side using the same canonical form as hap-core.
- */
-export async function computeFrameHashBrowser(
-  params: AgentFrameParams,
-  profile: AgentProfile
-): Promise<string> {
-  if (!profile.frameSchema) {
-    throw new Error('Profile is missing frameSchema; cannot compute frame hash');
-  }
-  const lines = profile.frameSchema.keyOrder.map(
-    (key) => `${key}=${String(params[key])}`
-  );
-  const canonical = lines.join('\n');
-  const hash = await sha256(canonical);
-  return `sha256:${hash}`;
-}
-
-/**
  * Thrown when a value cannot be canonicalized at all — currently only a raw
  * LF/CR inside a value. Mirrors hap-core's `CanonicalValueError`, including the
  * protocol error code, so the UI refuses the same input the AS would refuse
  * instead of signing a hash the AS will reject.
  */
 export class CanonicalValueError extends Error {
-  readonly code: 'BOUNDS_INVALID_VALUE' | 'CONTEXT_INVALID_VALUE';
+  readonly code: 'BOUNDS_INVALID_VALUE' | 'SCOPE_INVALID_VALUE';
   readonly field: string;
 
-  constructor(code: 'BOUNDS_INVALID_VALUE' | 'CONTEXT_INVALID_VALUE', field: string, message: string) {
+  constructor(code: 'BOUNDS_INVALID_VALUE' | 'SCOPE_INVALID_VALUE', field: string, message: string) {
     super(message);
     this.name = 'CanonicalValueError';
     this.code = code;
@@ -122,7 +106,7 @@ function percentEncodeCanonicalValue(raw: string): string {
 function canonicalRecords(
   params: Record<string, string | number | undefined>,
   keyOrder: string[],
-  code: 'BOUNDS_INVALID_VALUE' | 'CONTEXT_INVALID_VALUE',
+  code: 'BOUNDS_INVALID_VALUE' | 'SCOPE_INVALID_VALUE',
 ): string {
   const lines: string[] = [];
 
@@ -147,8 +131,7 @@ function canonicalRecords(
 }
 
 /**
- * Compute bounds hash client-side (v0.4).
- * Falls back to frameSchema if boundsSchema is not present.
+ * Compute bounds hash client-side.
  *
  * @throws CanonicalValueError (BOUNDS_INVALID_VALUE) if a value carries a raw LF/CR
  */
@@ -156,8 +139,8 @@ export async function computeBoundsHashBrowser(
   params: AgentBoundsParams,
   profile: AgentProfile
 ): Promise<string> {
-  const schema = profile.boundsSchema ?? profile.frameSchema;
-  if (!schema) throw new Error('Profile has no boundsSchema or frameSchema');
+  const schema = profile.boundsSchema;
+  if (!schema) throw new Error('Profile has no boundsSchema');
   const canonical = canonicalRecords(
     params as Record<string, string | number | undefined>,
     schema.keyOrder,
@@ -168,23 +151,71 @@ export async function computeBoundsHashBrowser(
 }
 
 /**
- * Compute context hash client-side (v0.4).
- * If the profile has no contextSchema or it has no keys, hashes the empty string.
+ * Compute scope hash client-side (renamed from `computeContextHashBrowser`
+ * in v0.7 — hap-core's `AgentProfile.contextSchema` -> `scopeSchema`).
+ * If the profile has no scopeSchema or it has no keys, hashes the empty
+ * string — protocol.md → *Scope*: "Empty scope ... is permitted; the hash
+ * is still computed and included."
  *
- * @throws CanonicalValueError (CONTEXT_INVALID_VALUE) if a value carries a raw LF/CR
+ * @throws CanonicalValueError (SCOPE_INVALID_VALUE) if a value carries a raw LF/CR
  */
-export async function computeContextHashBrowser(
-  params: AgentContextParams,
+export async function computeScopeHashBrowser(
+  params: AgentScopeParams,
   profile: AgentProfile
 ): Promise<string> {
-  const canonical = profile.contextSchema
+  const canonical = profile.scopeSchema
     ? canonicalRecords(
         params as Record<string, string | number | undefined>,
-        profile.contextSchema.keyOrder,
-        'CONTEXT_INVALID_VALUE',
+        profile.scopeSchema.keyOrder,
+        'SCOPE_INVALID_VALUE',
       )
     : '';
   const hash = await sha256(canonical);
+  return `sha256:${hash}`;
+}
+
+/**
+ * Browser-safe port of hap-core's `canonicalize` (src/canonicalize.ts) —
+ * RFC 8785 JSON Canonicalization. Byte-identical to the Node version: both
+ * rely only on `JSON.stringify`, `Object.keys`, `Array`, and `String` sort,
+ * which are environment-independent. See that file's doc comment for why
+ * this one can't be imported directly (the @hap/core ESM bundle pulls in
+ * node:crypto-importing modules at the top level, which Vite rejects).
+ */
+function canonicalizeJcs(value: unknown): string {
+  if (value === undefined) {
+    throw new Error('canonicalize: undefined is not serializable');
+  }
+  if (typeof value === 'number' && !Number.isFinite(value)) {
+    throw new Error(`canonicalize: ${value} is not a valid JSON number`);
+  }
+  if (value === null || typeof value !== 'object') {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    const items = value.map((el) => (el === undefined ? 'null' : canonicalizeJcs(el)));
+    return '[' + items.join(',') + ']';
+  }
+  const obj = value as Record<string, unknown>;
+  const parts: string[] = [];
+  for (const key of Object.keys(obj).sort()) {
+    const v = obj[key];
+    if (v === undefined) continue;
+    parts.push(JSON.stringify(key) + ':' + canonicalizeJcs(v));
+  }
+  return '{' + parts.join(',') + '}';
+}
+
+/**
+ * Compute the v0.7 `profile_hash` client-side — sha256 of the JCS
+ * serialization of the profile JSON exactly as the AS provisioned it
+ * (protocol.md → *Profile hash*), mirroring hap-core's `computeProfileHash`.
+ * The UI fetches the profile verbatim from `GET /api/profiles/:id`, so
+ * hashing the PARSED object here agrees with the AS's own computation
+ * regardless of either side's key order or whitespace.
+ */
+export async function computeProfileHashBrowser(profile: unknown): Promise<string> {
+  const hash = await sha256(canonicalizeJcs(profile));
   return `sha256:${hash}`;
 }
 

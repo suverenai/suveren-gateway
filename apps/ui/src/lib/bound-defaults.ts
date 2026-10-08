@@ -1,4 +1,4 @@
-import type { ProfileBoundsField, ProfileContextField } from '@hap/core';
+import type { ProfileBoundsField, ProfileScopeField } from '@hap/core';
 
 /**
  * Floor and seed for numeric bound fields — derived from the profile schema,
@@ -13,7 +13,7 @@ import type { ProfileBoundsField, ProfileContextField } from '@hap/core';
  * (`amount_max`, `read_max_age_days`) keep 0 as a legitimate value.
  */
 
-type NumericField = ProfileBoundsField | ProfileContextField;
+type NumericField = ProfileBoundsField | ProfileScopeField;
 
 /** Smallest value the field may hold: 1 for per-transaction counts, else 0. */
 export function minForBound(field: NumericField): 0 | 1 {

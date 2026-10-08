@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { spClient } from '../lib/sp-client';
-import { computeBoundsHashBrowser, computeContextHashBrowser, hashGateContent } from '../lib/frame';
+import { computeBoundsHashBrowser, computeScopeHashBrowser, hashGateContent } from '../lib/frame';
 import { buildGateForwardArgs } from '../lib/gate-forward';
 import { StepIndicator } from '../components/StepIndicator';
 import { DomainBadge } from '../components/DomainBadge';
@@ -11,20 +11,20 @@ import { offeredCommitModes, settleCommitMode, toProtocolMode } from '../lib/com
 import { scopesOverlap } from '../lib/scope-overlap';
 import { formatScopeValue } from '../lib/scope-labels';
 import { mandateRight } from '../lib/mandate-rights';
-import type { AgentProfile, AgentBoundsParams, AgentContextParams } from '@hap/core';
+import type { AgentProfile, AgentBoundsParams, AgentScopeParams } from '@hap/core';
 import type { ProfileConfig } from '../lib/sp-client';
 
 /** An existing active grant under the same profile, with its local scope. */
 interface ExistingGrant {
   authorizationId: string;
   bounds: Record<string, string | number>;
-  context: AgentContextParams;
+  context: AgentScopeParams;
   intent: string | null;
 }
 
 interface GateData {
   bounds: AgentBoundsParams;
-  context: AgentContextParams;
+  context: AgentScopeParams;
   /** Discovered display names per context field (value → label). */
   contextLabels?: Record<string, Record<string, string>>;
   gateContent: { intent: string };
@@ -153,8 +153,8 @@ export function AgentReviewPage() {
         if (!authTitle) {
           const shortName = p.name ?? auth.profileId.split('/').pop()?.replace(/@.*$/, '') ?? '';
           const contextParts: string[] = [];
-          if (normalizedGate.context && p.contextSchema) {
-            for (const key of p.contextSchema.keyOrder) {
+          if (normalizedGate.context && p.scopeSchema) {
+            for (const key of p.scopeSchema.keyOrder) {
               const val = normalizedGate.context[key];
               if (val !== undefined && val !== '') {
                 const values = String(val).split(',').map(s => s.trim()).filter(Boolean);
@@ -276,7 +276,7 @@ export function AgentReviewPage() {
       const domain = authDomain || authData.domain || 'owner';
 
       const boundsHash = await computeBoundsHashBrowser(gateData.bounds, profile);
-      const contextHash = await computeContextHashBrowser(gateData.context, profile);
+      const contextHash = await computeScopeHashBrowser(gateData.context, profile);
 
       const [intentHashValue, ecHash] = await Promise.all([
         hashGateContent(gateData.gateContent.intent),
@@ -464,13 +464,13 @@ export function AgentReviewPage() {
   // works for any profile. Always advisory — never blocks signing. Disjoint
   // scopes produce no warning. Semantic/intent overlap is the on-device AI
   // (Phase 2).
-  const contextKeys = profile?.contextSchema?.keyOrder ?? [];
+  const contextKeys = profile?.scopeSchema?.keyOrder ?? [];
   const overlappingGrants = existingSameProfile.filter(g =>
     scopesOverlap(contextKeys, gateData.context, g.context),
   );
   const hasOverlap = overlappingGrants.length > 0;
   const overlapProfileName = profileDisplayName(authData.profileId);
-  const describeScope = (ctx: AgentContextParams): string => {
+  const describeScope = (ctx: AgentScopeParams): string => {
     const vals = Object.values(ctx).map(v => String(v).trim()).filter(Boolean);
     return vals.length > 0 ? vals.join(', ') : 'all (unscoped)';
   };
