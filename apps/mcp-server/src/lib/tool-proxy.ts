@@ -451,6 +451,17 @@ function createGatedToolHandlerInner(
           isError: true,
         };
       }
+      // V7: fail closed when the AS this gateway is paired with does not
+      // support this package's protocol version
+      // (shared-state.ts#checkAsCompat). Checked on every call (not once at
+      // handler-construction time — the startup check runs concurrently
+      // with tool discovery and may still be in flight when handlers are
+      // first built). Only reached for tools that are actually gateable —
+      // a disabled/undescribed tool refuses on its own, above, without
+      // touching `state` at all.
+      if (state.asVersionRefusal) {
+        return { content: [{ type: 'text', text: `Refused: ${state.asVersionRefusal}` }], isError: true };
+      }
       return inner(args);
     };
 

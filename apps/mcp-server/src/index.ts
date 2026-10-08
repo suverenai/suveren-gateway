@@ -38,6 +38,7 @@ export function createMcpServer(
     authorizations: enriched,
     executionLog: state.executionLog,
     integrationManager,
+    asVersionRefusal: state.asVersionRefusal,
   });
 
   const server = new McpServer(

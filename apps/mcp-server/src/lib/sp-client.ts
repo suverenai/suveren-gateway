@@ -303,6 +303,22 @@ export class SPClient {
   }
 
   /**
+   * GET /api/as/compat — what this Authority Server speaks (protocol.md ->
+   * Version negotiation). Unauthenticated, so a gateway can check it at
+   * startup before any session exists (V7: fail closed when the AS does
+   * not list our protocol version among `supportedVersions`, rather than
+   * discovering it call-by-call once a tool is actually invoked).
+   */
+  async getCompat(): Promise<{ protocolVersion?: unknown; supportedVersions?: unknown }> {
+    const res = await this.fetch('/api/as/compat');
+    if (!res.ok) throw new Error(`SP compat request failed: ${res.status}`);
+    // A pre-v0.7 AS answers this path too, but without `supportedVersions`
+    // at all — the caller (shared-state.ts#checkAsCompat) reads this
+    // defensively rather than assuming the v0.7 shape.
+    return res.json() as Promise<{ protocolVersion?: unknown; supportedVersions?: unknown }>;
+  }
+
+  /**
    * Get all mandates for an authorization id.
    *
    * v0.7: moved from GET /api/attestations (which now answers 410) to

@@ -14,6 +14,7 @@ import { ExecutionJournal } from './execution-journal';
 import { ProposalSubmissionStore } from './proposal-submission-store';
 import { MCPGatekeeper } from './gatekeeper';
 import { ReportStore } from './report/report-store';
+import { PROTOCOL_VERSION } from '@hap/core';
 
 export interface EnrichedAuthorization extends CachedAuthorization {
   gateContent: GateContent | null;
@@ -40,6 +41,22 @@ export class SharedState {
   readonly gatekeeper: MCPGatekeeper;
 
   /**
+   * V7 — set by {@link checkAsCompat} (called once at process start, and
+   * again whenever the AS URL this process pairs with changes — which, in
+   * practice, only happens across a restart; see bin/http.ts's
+   * `repairIfAsUrlChanged`). Non-null means the AS this gateway is paired
+   * with does not list {@link PROTOCOL_VERSION} among its
+   * `supportedVersions` — every gated tool call MUST refuse with this
+   * message rather than reach the AS at all (checked in tool-proxy.ts,
+   * before anything else). `null` until the first check completes, which
+   * reads the SAME as "compatible" — fail-closed behaviour starts only
+   * once a check has actually run and failed, not merely "has not run
+   * yet" (the compat endpoint is best-effort: an AS that is briefly
+   * unreachable at boot must not permanently brick the gateway).
+   */
+  asVersionRefusal: string | null = null;
+
+  /**
    * @param dataDir Passed to the AttestationCache so it can enforce AS key
    *   pinning (as-pairing.ts), and to the SPClient so it can enforce opt-in
    *   TLS pinning (as-tls-pin.ts). Optional for backward compat with
@@ -60,6 +77,45 @@ export class SharedState {
     // display-only record (see gatekeeper.ts), and the AS is the sole
     // cumulative enforcer.
     this.gatekeeper = new MCPGatekeeper(this.cache);
+  }
+
+  /**
+   * V7 — call once at startup (and again if the AS URL this process pairs
+   * with changes). Fetches GET /api/as/compat and sets
+   * {@link asVersionRefusal} when the AS does not support this package's
+   * protocol version. A network failure (AS unreachable at boot) does NOT
+   * set a refusal — that is a connectivity problem every gated call
+   * already surfaces on its own merits (SPReceiptError etc.); this check
+   * exists to catch the specific, otherwise-silent-until-first-tool-call
+   * case of a genuinely incompatible AS, not to duplicate "AS is down".
+   */
+  async checkAsCompat(): Promise<void> {
+    let compat: { protocolVersion?: unknown; supportedVersions?: unknown };
+    try {
+      compat = await this.spClient.getCompat();
+    } catch {
+      return; // unreachable — not this check's concern; leave any prior result as-is
+    }
+    // A pre-v0.7 AS's /api/as/compat has no `supportedVersions` field at
+    // all (its own response shape predates this check) — read defensively
+    // rather than crashing (`undefined.includes` on a floating,
+    // fire-and-forget promise is an UNHANDLED REJECTION, which modern Node
+    // treats as fatal: this previously took the whole process down against
+    // a real pre-migration AS, every other in-flight request included).
+    // Missing/malformed is exactly as incompatible as a list that doesn't
+    // name our version — both get the same clear refusal.
+    const supported = Array.isArray(compat.supportedVersions) ? compat.supportedVersions : [];
+    if (!supported.includes(PROTOCOL_VERSION)) {
+      this.asVersionRefusal = supported.length > 0
+        ? `This Authority Server supports protocol version(s) [${supported.join(', ')}], not ${PROTOCOL_VERSION}. ` +
+          'Update the gateway or the Authority Server so the two agree, then restart. No gated action can run until then.'
+        : `This Authority Server's /api/as/compat does not name a supportedVersions list (it answered ` +
+          `${JSON.stringify(compat.protocolVersion ?? 'unknown')}), so it cannot be confirmed to support ` +
+          `protocol ${PROTOCOL_VERSION}. Update the gateway or the Authority Server, then restart. No gated action can run until then.`;
+      console.error(`[Suveren MCP] ${this.asVersionRefusal}`);
+    } else {
+      this.asVersionRefusal = null;
+    }
   }
 
   /**

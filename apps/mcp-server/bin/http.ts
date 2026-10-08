@@ -129,6 +129,14 @@ const reportSources: ReportSources = {
   writeMcpPairedAsUrl(dataDir, spUrl);
 })();
 
+// V7 — check the Authority Server's protocol compat once at startup (GET
+// /api/as/compat, unauthenticated). Fire-and-forget at module scope: this
+// file is a flat top-level script (no async main), and gated tool calls
+// already read `state.asVersionRefusal` lazily, so nothing here needs to
+// block the server from starting — it only needs to have RUN before the
+// first gated call could plausibly arrive, which this easily beats.
+void state.checkAsCompat();
+
 const spApiKey = process.env.SUVEREN_AS_API_KEY ?? '';
 if (spApiKey) {
   state.spClient.setApiKey(spApiKey);
@@ -996,6 +1004,7 @@ app.get('/internal/brief', internalOnly, (_req: Request, res: Response) => {
       authorizations: enriched,
       executionLog: state.executionLog,
       integrationManager,
+      asVersionRefusal: state.asVersionRefusal,
     });
     res.json({ brief });
   } catch (err) {

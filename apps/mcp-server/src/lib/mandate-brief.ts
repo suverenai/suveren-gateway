@@ -59,6 +59,12 @@ export interface MandateBriefOptions {
   executionLog?: ExecutionLog;
   integrationManager?: IntegrationManager;
   contextDir?: string;
+  /** V7 — shared-state.ts's `asVersionRefusal`. Non-null means the paired
+   *  Authority Server does not support this gateway's protocol version;
+   *  every gated tool call already refuses on its own (tool-proxy.ts), but
+   *  the agent should see this up front rather than discover it one
+   *  refused call at a time. */
+  asVersionRefusal?: string | null;
 }
 
 /**
@@ -77,6 +83,17 @@ export function buildMandateBrief(opts: MandateBriefOptions): string {
     'You have bounded authorities granted by human decision owners.',
     'You MUST stay within these bounds — the Gatekeeper will reject actions that exceed them.',
   ];
+
+  // V7 — fail closed, up front: if the paired Authority Server does not
+  // support this gateway's protocol version, no gated action can run at
+  // all this session. Every individual call already refuses on its own;
+  // this says so once, before the agent tries the first one.
+  if (opts.asVersionRefusal) {
+    lines.push('');
+    lines.push('=== AUTHORITY SERVER INCOMPATIBLE — NO GATED ACTION WILL RUN ===');
+    lines.push('');
+    lines.push(opts.asVersionRefusal);
+  }
 
   // === CONTEXT === (from user-maintained context.md)
   const { brief: contextBrief } = getContextForBrief(contextDir);
