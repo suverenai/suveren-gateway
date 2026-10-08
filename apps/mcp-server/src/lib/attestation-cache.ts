@@ -4,7 +4,7 @@
  * Fetches from SP on-demand and caches with TTL awareness.
  */
 
-import { decodeAttestationBlob, type Subject } from '@hap/core';
+import { decodeMandateBlob, encodeDidKey, type Subject } from '@hap/core';
 import { SPClient, type SPAttestationsResult, type SPPendingItem } from './sp-client';
 import { readPairing, fingerprintOf } from './as-pairing';
 
@@ -123,6 +123,22 @@ export class AttestationCache {
   }
 
   /**
+   * The pinned Authority Server, as a `did:key` — what hap-core 0.12's
+   * `verifyMandateSignature` / `verifyTicketSignature` take as
+   * `trustedIssuers` (they resolve the verification key from the artifact's
+   * OWN `issuer` DID, never from a key supplied alongside it — protocol.md ->
+   * *Ticket Verification* step 1). This derives the same did:key from the
+   * same pinned hex key {@link getPublicKey} already enforces, so a mandate
+   * or ticket whose signature verifies under a DIFFERENT key — even one that
+   * encodes a valid did:key of its own — still fails: the issuer named on the
+   * artifact must BE the pinned key, not merely resolve to some key.
+   */
+  async getTrustedIssuer(): Promise<string> {
+    const hex = await this.getPublicKey();
+    return encodeDidKey(Buffer.from(hex, 'hex'));
+  }
+
+  /**
    * Get a cached authorization by path. If not cached, returns null.
    * Use syncAuthorization() to fetch from SP.
    */
@@ -174,7 +190,7 @@ export class AttestationCache {
     const firstBlob = result.attestations[0]?.blob;
     if (firstBlob) {
       try {
-        const payload = decodeAttestationBlob(firstBlob).payload;
+        const payload = decodeMandateBlob(firstBlob).payload;
         signedCommitmentMode = payload.commitment_mode;
         subjects = payload.subjects; // v0.6 Identity Assurance — signed verified identity
       } catch {
@@ -185,7 +201,7 @@ export class AttestationCache {
     const auth: CachedAuthorization = {
       authorizationId: result.authorization_id,
       boundsHash: result.bounds_hash,  // content fingerprint (undefined for pre-v0.4 records)
-      contextHash: result.context_hash,
+      contextHash: result.scope_hash,  // v0.7: wire field renamed context_hash -> scope_hash
       profileId: result.profile_id,
       path: result.profile_id,
       frame: bounds,                   // compat alias

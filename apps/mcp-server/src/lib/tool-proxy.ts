@@ -364,22 +364,22 @@ export function createGatedToolHandler(
  * refusal or risk a double execution.
  *
  * Matched on the AS's structured `errors[0].code` (suveren-as's
- * `app/api/as/receipt/route.ts`), never on the free-text message — codes are
- * the contract. `ATTESTATION_REVOKED` / `ATTESTATION_EXPIRED` (403) cover a
- * mandate the AS actively invalidated; `ATTESTATION_NOT_FOUND` (404) covers
- * a cached mandate the AS has no record of at all (e.g. the cache is stale
- * about an id that was deleted). There is currently no distinct "superseded"
- * code on the wire — a renewal reuses the same authorizationId (see
+ * `app/api/as/ticket/route.ts`), never on the free-text message — codes are
+ * the contract. `MANDATE_REVOKED` / `MANDATE_EXPIRED` (403) cover a mandate
+ * the AS actively invalidated; `MANDATE_NOT_FOUND` (404) covers a cached
+ * mandate the AS has no record of at all (e.g. the cache is stale about an
+ * id that was deleted). There is currently no distinct "superseded" code on
+ * the wire — a renewal reuses the same authorizationId (see
  * `authz-store.ts`'s `renewAuthorization`) rather than minting a new one, so
  * a superseded mandate surfaces as one of these two codes, not a third.
  */
 function isStaleMandateRefusal(err: SPReceiptError): boolean {
   const errors = err.body?.errors as Array<{ code?: unknown }> | undefined;
   const code = errors?.[0]?.code;
-  if (err.statusCode === 403 && (code === 'ATTESTATION_REVOKED' || code === 'ATTESTATION_EXPIRED')) {
+  if (err.statusCode === 403 && (code === 'MANDATE_REVOKED' || code === 'MANDATE_EXPIRED')) {
     return true;
   }
-  if (err.statusCode === 404 && code === 'ATTESTATION_NOT_FOUND') {
+  if (err.statusCode === 404 && code === 'MANDATE_NOT_FOUND') {
     return true;
   }
   return false;
@@ -846,11 +846,11 @@ function createGatedToolHandlerInner(
       };
     }
 
-    // Most-specific-wins + fail-safe selection over the profile's context schema.
-    // Generic: specificity is set-containment over contextSchema.keyOrder — no
+    // Most-specific-wins + fail-safe selection over the profile's scope schema.
+    // Generic: specificity is set-containment over scopeSchema.keyOrder — no
     // per-profile code. A tie / partial overlap / no-scope profile falls back to
     // requiring approval if any passer does (never a silent bypass).
-    const contextKeys = getProfile(passers[0].profileId)?.contextSchema?.keyOrder ?? [];
+    const contextKeys = getProfile(passers[0].profileId)?.scopeSchema?.keyOrder ?? [];
 
     // Fallback on a stale-mandate refusal (see isStaleMandateRefusal): the AS
     // — not this process's local cache — is the source of truth on whether a
@@ -1195,9 +1195,11 @@ function createGatedToolHandlerInner(
 
           if (err instanceof SPReceiptError && err.statusCode === 403) {
             // SP rejected — limit exceeded or revoked. If revoked, purge the
-            // cached attestation so list-authorizations/list-integrations
+            // cached mandate so list-authorizations/list-integrations
             // reflect reality instead of serving a stale "authorized" view.
-            if (/revoked/i.test(err.message)) {
+            // Matched on the canonical code, never the free-text message.
+            const errors403 = err.body?.errors as Array<{ code?: unknown }> | undefined;
+            if (errors403?.[0]?.code === 'MANDATE_REVOKED') {
               state.cache.invalidate(auth.authorizationId);
             }
             return {

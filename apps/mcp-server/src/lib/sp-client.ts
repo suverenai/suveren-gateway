@@ -27,7 +27,10 @@ export interface SPAttestationResponse {
 export interface SPAttestationsResult {
   authorization_id: string;
   bounds_hash?: string;   // v0.4
-  context_hash?: string;  // v0.4
+  scope_hash?: string;    // v0.7 (was context_hash)
+  /** Gateway-internal field name, kept stable across the v0.7 rename —
+   *  populated from the wire's `mandates` key (GET /api/mandates answers
+   *  `mandates`, was `attestations` at GET /api/attestations). */
   attestations: (SPAttestationResponse & { commitment?: string })[];
   complete: boolean;
   frame?: Record<string, string | number>;
@@ -300,21 +303,34 @@ export class SPClient {
   }
 
   /**
-   * Get all attestations for a frame hash.
+   * Get all mandates for an authorization id.
+   *
+   * v0.7: moved from GET /api/attestations (which now answers 410) to
+   * GET /api/mandates.
    */
   async getAttestations(authorizationId: string): Promise<SPAttestationsResult> {
-    const res = await this.fetch(`/api/attestations?authorization_id=${encodeURIComponent(authorizationId)}`);
-    if (!res.ok) throw new Error(`SP attestations request failed: ${res.status}`);
-    return res.json() as Promise<SPAttestationsResult>;
+    const res = await this.fetch(`/api/mandates?authorization_id=${encodeURIComponent(authorizationId)}`);
+    if (!res.ok) throw new Error(`SP mandates request failed: ${res.status}`);
+    // v0.7: the response key is `mandates` (was `attestations`) — map onto
+    // this gateway's own stable internal field name at the boundary.
+    const body = await res.json() as Omit<SPAttestationsResult, 'attestations'> & {
+      mandates?: SPAttestationsResult['attestations'];
+      attestations?: SPAttestationsResult['attestations'];
+    };
+    return { ...body, attestations: body.mandates ?? body.attestations ?? [] };
   }
 
   /**
-   * Get pending attestations for a domain.
+   * Get pending mandates for a domain.
+   *
+   * v0.7: moved from GET /api/attestations/pending (which now answers 410)
+   * to GET /api/mandates/pending.
    */
   async getPendingAttestations(domain: string): Promise<SPPendingItem[]> {
-    const res = await this.fetch(`/api/attestations/pending?domain=${encodeURIComponent(domain)}`);
+    const res = await this.fetch(`/api/mandates/pending?domain=${encodeURIComponent(domain)}`);
     if (!res.ok) throw new Error(`SP pending request failed: ${res.status}`);
-    return res.json() as Promise<SPPendingItem[]>;
+    const data = await res.json() as { pending: SPPendingItem[] };
+    return data.pending;
   }
 
   /**
