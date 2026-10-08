@@ -9,7 +9,7 @@ import { AttestationCache, AsKeyMismatchError, type CachedAuthorization } from '
 import { GateStore, type GateContent, type GateEntry } from './gate-store';
 import { ExecutionLog } from './execution-log';
 import { DenialLog } from './denial-log';
-import { ReceiptArchive, type ArchivedAttestation } from './receipt-archive';
+import { ReceiptArchive, ArchiveWriteError, type ArchivedAttestation } from './receipt-archive';
 import { ExecutionJournal } from './execution-journal';
 import { ProposalSubmissionStore } from './proposal-submission-store';
 import { MCPGatekeeper } from './gatekeeper';
@@ -66,9 +66,20 @@ export class SharedState {
    * Archive a signed receipt into the local receipt archive — the subject's
    * own durable copy of the evidence (see receipt-archive.ts).
    *
-   * Best-effort by contract: the AS has already issued the receipt and holds
-   * the authoritative copy, so an archive failure logs loudly but MUST NOT
-   * block the execution it documents.
+   * FAIL-CLOSED (V8, reversed from the original "best-effort" contract):
+   * callers MUST call this BEFORE executing the downstream tool, and MUST
+   * NOT execute it if this throws. The AS's copy of the TICKET is
+   * authoritative, but this archive is the subject's ONLY copy of the
+   * intent/context plaintext the ticket's hashes commit to, and of the
+   * issuer key needed to verify it offline — an execution that ran with no
+   * way to produce that evidence later is worse than one that was refused
+   * up front.
+   *
+   * @throws AsKeyMismatchError when the pinned key is unavailable or
+   *   mismatched (propagated as-is — callers already react to this
+   *   specifically: refuse + lock, not a generic archive failure).
+   * @throws ArchiveWriteError for every other failure to produce a complete,
+   *   verifiable entry (no public key resolved, or the write itself failed).
    */
   async archiveReceipt(
     receipt: Record<string, unknown>,
@@ -87,23 +98,24 @@ export class SharedState {
       boundContent?: Record<string, unknown> | string;
     },
   ): Promise<void> {
+    // Store the AS pubkey alongside so the entry verifies offline even if
+    // the AS later disappears. By the time archiveReceipt runs,
+    // ticket-verify.ts has already required a clean getPublicKey() to get
+    // this far in the normal call path, so this is normally free (5 min
+    // cache) — but REQUIRED now (asPublicKey is no longer optional on the
+    // archive entry): an entry with no issuer key can never be verified, so
+    // failing to resolve one fails the whole write, not just that one field.
+    let asPublicKey: string;
     try {
-      // Store the AS pubkey alongside so the entry verifies offline even if
-      // the AS later disappears. Best-effort: cached 5 min, usually free —
-      // EXCEPT a pin mismatch, which must not be swallowed here. By the time
-      // archiveReceipt runs, ticket-verify.ts has already required a clean
-      // getPublicKey() to get this far in the normal call path; a mismatch
-      // surfacing here regardless means something call this out of order,
-      // and archiving a receipt from a server whose key we no longer trust
-      // silently would misrepresent it as verified evidence.
-      let asPublicKey: string | undefined;
-      try {
-        asPublicKey = await this.cache.getPublicKey();
-      } catch (err) {
-        if (err instanceof AsKeyMismatchError) throw err;
-        /* any other failure — archive without it, still verifiable via any saved key */
-      }
+      asPublicKey = await this.cache.getPublicKey();
+    } catch (err) {
+      if (err instanceof AsKeyMismatchError) throw err;
+      throw new ArchiveWriteError(
+        `Could not resolve the Authority Server's public key to archive this receipt against: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
 
+    try {
       this.receiptArchive.record({
         receipt,
         authorizationId: opts.authorizationId,
@@ -126,15 +138,7 @@ export class SharedState {
           : undefined,
       });
     } catch (err) {
-      // AsKeyMismatchError is not an archive-write failure — it means the
-      // gateway no longer trusts this Authority Server's key, which callers
-      // (tool-proxy.ts, commitments.ts) must react to (refuse + lock), so it
-      // must not be swallowed into a log line like a disk-write hiccup.
-      if (err instanceof AsKeyMismatchError) throw err;
-      console.error(
-        '[Suveren MCP] Receipt archive write failed (execution proceeds — AS retains authoritative copy):',
-        err,
-      );
+      throw new ArchiveWriteError(`Receipt archive write failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 

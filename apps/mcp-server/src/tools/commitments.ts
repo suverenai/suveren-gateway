@@ -27,6 +27,7 @@ import { hashToolArgs } from '../lib/execution-journal';
 import type { CommittedExecutor, ExecutionResult } from '../lib/committed-executor';
 import { ContentBindingError } from '@hap/core';
 import { AsKeyMismatchError } from '../lib/attestation-cache';
+import { ArchiveWriteError } from '../lib/receipt-archive';
 import { verifyTicket, TicketBindingMismatchError } from '../lib/ticket-verify';
 import { notifyControlPlane } from '../lib/cp-notify';
 
@@ -261,8 +262,10 @@ export async function executeCommitted(
     });
 
     // Subject custody: archive the complete signed receipt locally (parity
-    // with the automatic path). cachedAuth may be evicted — archive the
-    // receipt anyway; the attestation blobs merge in on a later call.
+    // with the automatic path). FAIL-CLOSED (V8) — written BEFORE the handler
+    // runs; a throw here (ArchiveWriteError) refuses below, same as the
+    // automatic path. cachedAuth may be evicted — the attestation blobs
+    // merge in on a later call, but the entry itself still MUST write.
     await state.archiveReceipt(receipt, {
       authorizationId: proposal.authorizationId,
       profileId: proposal.profileId,
@@ -285,6 +288,15 @@ export async function executeCommitted(
       void notifyControlPlane('as-key-mismatch');
       return {
         text: `Proposal ${proposal.id}: blocked — ${err.message}`,
+        isError: true,
+      };
+    }
+    // V8: the local evidence archive could not be written before the
+    // handler would have run. A local fault (disk, missing issuer key) —
+    // not a statement about the Authority Server, so no lock/invalidate.
+    if (err instanceof ArchiveWriteError) {
+      return {
+        text: `Proposal ${proposal.id}: blocked — the ticket could not be archived locally — ${err.message}. The action was not executed.`,
         isError: true,
       };
     }

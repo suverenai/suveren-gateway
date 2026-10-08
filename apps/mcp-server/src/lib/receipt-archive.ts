@@ -15,15 +15,36 @@
  *  - Attestation blobs dedup per authorization by (domain, blob).
  *  - Storage mirrors the GateStore/ExecutionLog pattern: plaintext until the
  *    vault key arrives, then encrypted (AES-256-GCM) with plaintext migration.
- *  - Archiving is best-effort by contract: callers MUST NOT let an archive
- *    failure block an execution the AS already authorized — the AS copy
- *    exists; this one is the subject's safety copy.
+ *  - Write-ahead and FAIL-CLOSED, by design (reversed from the original
+ *    "best-effort" contract — see shared-state.ts's `archiveReceipt`): the
+ *    archive entry is written BEFORE the gateway executes the downstream
+ *    tool, and a write failure (or a missing issuer key — `asPublicKey` is
+ *    required on every entry) blocks the execution rather than merely
+ *    logging. The AS holds the authoritative copy of the TICKET, but this
+ *    archive is the subject's ONLY copy of the intent/context plaintext the
+ *    ticket's hashes commit to — losing a write here silently would mean an
+ *    action ran with no local evidence of what was actually approved.
  */
 
 import { mkdirSync, readFileSync, writeFileSync, existsSync, unlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
+
+/**
+ * Thrown by {@link SharedState.archiveReceipt} (shared-state.ts) when a
+ * ticket cannot be archived with a complete, verifiable entry — a disk
+ * write failure, or no issuer key to resolve. Callers MUST treat this as a
+ * fail-closed refusal: the archive write happens BEFORE the downstream
+ * tool executes, and this error means that write did not happen, so the
+ * tool MUST NOT run (V8 — the archive is write-ahead and fail-closed).
+ */
+export class ArchiveWriteError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ArchiveWriteError';
+  }
+}
 
 export interface ArchivedAttestation {
   domain: string;
@@ -63,8 +84,14 @@ export interface ArchivedReceipt {
   authorizationId: string;
   /** AS base URL the receipt came from — which key/issuer this belongs to. */
   asUrl: string;
-  /** AS Ed25519 public key (hex) at archive time — enables offline verification. */
-  asPublicKey?: string;
+  /**
+   * AS Ed25519 public key (hex) at archive time — enables offline
+   * verification. REQUIRED (v0.7 / V8): an entry with no issuer key cannot
+   * ever be verified, so it is no longer accepted — see
+   * shared-state.ts#archiveReceipt, which now fails the WHOLE write (and
+   * therefore blocks execution) rather than archiving without it.
+   */
+  asPublicKey: string;
   /** The complete signed receipt exactly as the AS returned it. */
   receipt: Record<string, unknown>;
   /**
@@ -128,7 +155,8 @@ export interface ReceiptArchiveEntry {
   receipt: Record<string, unknown>;
   authorizationId: string;
   asUrl: string;
-  asPublicKey?: string;
+  /** REQUIRED (V8 / fail-closed archive) — see {@link ArchivedReceipt.asPublicKey}. */
+  asPublicKey: string;
   proposal?: Record<string, unknown>;
   boundContent?: Record<string, unknown> | string;
   authorization?: {

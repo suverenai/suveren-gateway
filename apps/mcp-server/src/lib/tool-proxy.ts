@@ -15,6 +15,7 @@ import { lockedNotice } from './locked-notice';
 import type { DenialReason } from './denial-log';
 import { SPReceiptError } from './sp-client';
 import { isCommitmentDowngrade, AsKeyMismatchError } from './attestation-cache';
+import { ArchiveWriteError } from './receipt-archive';
 import { appendVerificationFooter, shouldAttachFooter } from './receipt-footer';
 import { computeContentBinding, attachReceiptId } from './content-binding';
 import { hashToolArgs } from './execution-journal';
@@ -1028,7 +1029,10 @@ function createGatedToolHandlerInner(
 
           // Subject custody: keep the complete signed receipt (+ attestation
           // blobs) locally so the evidence stays verifiable without the AS.
-          // Best-effort — never blocks the execution the AS just authorized.
+          // FAIL-CLOSED (V8): written BEFORE the tool call below; if this
+          // throws, the catch block refuses and the tool never runs — see
+          // shared-state.ts#archiveReceipt / receipt-archive.ts's
+          // ArchiveWriteError.
           await state.archiveReceipt(receipt, {
             authorizationId: authzId,
             profileId: auth.profileId,
@@ -1052,6 +1056,22 @@ function createGatedToolHandlerInner(
             void notifyControlPlane('as-key-mismatch');
             return {
               content: [{ type: 'text', text: `Blocked: ${err.message}` }],
+              isError: true,
+            };
+          }
+
+          // V8: the local evidence archive could not be written (or had no
+          // issuer key to resolve) BEFORE this call reached the point of
+          // executing the downstream tool. Fail closed: a ticket already
+          // issued but never archived leaves no local proof of what was
+          // approved if the AS later becomes unreachable. This is a LOCAL
+          // fault (disk, or this process's own state) — unlike an
+          // AsKeyMismatchError, it says nothing about the Authority Server's
+          // trustworthiness, so it does not invalidate the mandate or lock
+          // the gateway.
+          if (err instanceof ArchiveWriteError) {
+            return {
+              content: [{ type: 'text', text: `Blocked: the ticket could not be archived locally — ${err.message}. The action was not executed.` }],
               isError: true,
             };
           }
