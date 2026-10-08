@@ -2902,6 +2902,9 @@ body.is-updating .simulation-banner {
   gap: 1.25rem;
   align-items: start;
 }
+/* No AI assistant set up: no helper column — the document takes the width. */
+.intent-layout.no-chat { grid-template-columns: minmax(0, 1fr); max-width: 56rem; }
+.intent-ai-hint { margin: 0.5rem 0 0; font-size: 0.8rem; color: var(--text-tertiary); }
 
 .intent-pane.chat {
   display: flex;

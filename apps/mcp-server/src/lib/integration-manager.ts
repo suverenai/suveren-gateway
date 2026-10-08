@@ -912,6 +912,7 @@ export class IntegrationManager {
       name: def.name,
       description: def.description ?? '',
       profile: def.profile,
+      ...(def.intentHint ? { intentHint: def.intentHint } : {}),
       available: !def.simulationOnly || isSimulationMode(),
     }));
   }

@@ -39,6 +39,14 @@ describe('minForBound', () => {
 });
 
 describe('seedForBound', () => {
+  it('seeds the profile field\'s own default when nothing is prefilled', () => {
+    expect(seedForBound({ type: 'number', default: 30, boundType: { kind: 'cumulative_count', window: 'daily' }, unit: 'count' } as never, undefined)).toBe('30');
+    expect(seedForBound({ type: 'string', default: 'unlimited', boundType: { kind: 'enum', values: ['unlimited', 'none'] } } as never, undefined)).toBe('unlimited');
+    expect(seedForBound({ type: 'number', default: 0 } as never, undefined)).toBe('0');
+  });
+  it('a prefilled value still wins over the default', () => {
+    expect(seedForBound({ type: 'number', default: 30 } as never, 7)).toBe('7');
+  });
   it('starts a floor-1 field at 1 when nothing is prefilled', () => {
     expect(seedForBound(recipientMax, undefined)).toBe('1');
   });

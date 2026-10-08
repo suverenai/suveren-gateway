@@ -61,6 +61,13 @@ export interface ManifestContextDiscovery {
 export interface IntegrationManifest {
   id: string;
   name: string;
+  /**
+   * Starter text for the intent of a mandate for this integration — what a
+   * person would typically want the agent to know here. The gateway UI seeds the
+   * intent with it; the person edits it and signs their own words. Protocol 0.7:
+   * profiles MUST NOT define the intent prompt; manifests MAY give this hint.
+   */
+  intentHint?: string;
   version: string;
   description: string;
   icon: string;

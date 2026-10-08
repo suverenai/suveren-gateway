@@ -322,4 +322,12 @@ describe('getBuiltins (for the mandate picker)', () => {
     process.env.SUVEREN_SIMULATION = '1';
     expect(im.getBuiltins()[0].available).toBe(true);
   });
+  it('passes the built-in\'s intentHint on to the picker; none when it has none', () => {
+    const im = new IntegrationManager();
+    im.registerBuiltin({ ...delegationBuiltin().def, intentHint: 'Why — find out.' });
+    expect(im.getBuiltins()[0].intentHint).toBe('Why — find out.');
+    const im2 = new IntegrationManager();
+    im2.registerBuiltin(delegationBuiltin().def);
+    expect('intentHint' in im2.getBuiltins()[0]).toBe(false);
+  });
 });
