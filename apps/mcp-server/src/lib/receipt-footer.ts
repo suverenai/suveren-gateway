@@ -32,11 +32,16 @@ export function setAsBaseUrl(url: string): void {
 
 // TODO(public-verification): once suveren.ai's public check page ships (see
 // doc/self-hosted-as.md §9), the footer's link should switch from
-// `<AS>/r/<id>` to the public-stamp form (`https://suveren.ai/v#<stamp>`) so
+// `<AS>/t/<id>` to the public-stamp form (`https://suveren.ai/v#<stamp>`) so
 // a self-hosted customer's internal AS URL is never handed to an outside
 // recipient who can't reach it. That is a separate, later step — not this
 // one — and needs the AS to seal a redacted "public stamp" alongside the
-// receipt (§9.1). Leaving today's `<AS>/r/<id>` link in place until then.
+// receipt (§9.1). Leaving today's `<AS>/t/<id>` link in place until then.
+//
+// v0.7 wire switch: the public page moved from /r/:id to /t/:id. /r/:id
+// still answers (a permanent 308 redirect, for links already sent/published
+// before this switch — unlike the internal API's hard 410), but a NEW
+// footer links straight to the canonical path.
 
 /** Operator display name for the footer ("verified by «operator»"). */
 const OPERATOR_NAME = process.env.SUVEREN_OPERATOR_NAME ?? 'Suveren';
@@ -73,7 +78,7 @@ export function shouldAttachFooter(): boolean {
 }
 
 function receiptUrl(receiptId: string): string {
-  return `${AS_BASE}/r/${receiptId}`;
+  return `${AS_BASE}/t/${receiptId}`;
 }
 
 /**

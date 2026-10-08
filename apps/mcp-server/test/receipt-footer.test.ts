@@ -8,7 +8,7 @@
  *
  * NOTE: the assurance wording ("of «name», verified by …") comes from hap-core
  * (deriveIdentityLine). These tests assert the gateway's own contribution
- * (verb, "Receipt:", the "--" lines, the HAP line, the /r/<id> link) and stay
+ * (verb, "Receipt:", the "--" lines, the HAP line, the /t/<id> link) and stay
  * decoupled from hap-core's exact separator punctuation.
  */
 import { describe, it, expect } from 'vitest';
@@ -45,20 +45,20 @@ describe('appendVerificationFooter', () => {
   it('appends the two-line footer to `body` for email (Sent + Receipt + HAP line)', () => {
     const out = appendVerificationFooter(tool('email', { body: STRING, subject: STRING }), { body: 'Hi' }, 'rcpt-1');
     expect(out.body).toBe(
-      `Hi\n\n-- Sent by an AI agent via Suveren. Receipt: https://www.suveren.ai/r/rcpt-1\n\n${HAP_LINE}`,
+      `Hi\n\n-- Sent by an AI agent via Suveren. Receipt: https://www.suveren.ai/t/rcpt-1\n\n${HAP_LINE}`,
     );
   });
 
   it('uses "Published" for the publish profile', () => {
     const out = appendVerificationFooter(tool('publish', { text: STRING }, 'create_post'), { text: 'Hello world' }, 'r2');
-    expect(out.text).toContain('-- Published by an AI agent via Suveren. Receipt: https://www.suveren.ai/r/r2');
+    expect(out.text).toContain('-- Published by an AI agent via Suveren. Receipt: https://www.suveren.ai/t/r2');
     expect(out.text).toContain(HAP_LINE);
   });
 
   it('appends to `description` for the calendar profile', () => {
     const out = appendVerificationFooter(tool('calendar', { summary: STRING, description: STRING }, 'create_event'), { description: 'Sync' }, 'r3');
     expect(out.description).toContain('-- Sent by an AI agent');
-    expect(out.description).toContain('/r/r3');
+    expect(out.description).toContain('/t/r3');
   });
 
   it('prefers `text` over `description` (detection order)', () => {
@@ -70,13 +70,13 @@ describe('appendVerificationFooter', () => {
   it('falls back to `content` when no body/text/description', () => {
     const out = appendVerificationFooter(tool('publish', { content: STRING, title: STRING }, 'create_record'), { content: 'Body', title: 'T' }, 'r4b');
     expect(out.content).toContain('by an AI agent');
-    expect(out.content).toContain('/r/r4b');
+    expect(out.content).toContain('/t/r4b');
     expect(out.title).toBe('T'); // untouched
   });
 
   it('links use full plain https URLs (no HTML anchors) — works across email/calendar/publish', () => {
     const out = appendVerificationFooter(tool('email', { body: STRING }), { body: 'Hi' }, 'r-links');
-    expect(out.body).toContain('Receipt: https://www.suveren.ai/r/r-links');
+    expect(out.body).toContain('Receipt: https://www.suveren.ai/t/r-links');
     expect(out.body).toContain('https://www.humanagencyprotocol.org/');
     expect(out.body).not.toContain('<a '); // no HTML
   });
@@ -94,7 +94,7 @@ describe('appendVerificationFooter', () => {
     const first = appendVerificationFooter(t, { body: 'Draft' }, 'old-id');
     const edited = appendVerificationFooter(t, { ...first }, 'new-id');
     expect(footerCount(edited.body as string)).toBe(1);
-    expect(edited.body).toContain('/r/new-id');
+    expect(edited.body).toContain('/t/new-id');
     expect(edited.body).not.toContain('old-id');
     expect(edited.body).toContain('Draft');
   });
@@ -106,7 +106,7 @@ describe('appendVerificationFooter', () => {
     expect(footerCount(out.body as string)).toBe(1);
     expect(out.body).toContain('Draft');
     expect(out.body).not.toContain('old');
-    expect(out.body).toContain('Receipt: https://www.suveren.ai/r/new-id');
+    expect(out.body).toContain('Receipt: https://www.suveren.ai/t/new-id');
   });
 
   it('does NOT footer non-Category-A profiles (records/customers/charge)', () => {
