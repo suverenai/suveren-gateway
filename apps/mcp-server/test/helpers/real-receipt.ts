@@ -19,6 +19,10 @@ import { canonicalize, encodeDidKey } from '@hap/core';
 
 export interface TestReceiptKeypair {
   privateKey: KeyObject;
+  /** Raw 32-byte Ed25519 seed — what hap-core's signMandate/signTicket (via
+   *  @noble/ed25519) take directly, for fixtures that sign through hap-core
+   *  itself rather than hand-rolling node:crypto signing. */
+  privateKeyRaw: Uint8Array;
   publicKeyHex: string;
   issuer: string;
 }
@@ -27,8 +31,15 @@ export function testReceiptKeypair(): TestReceiptKeypair {
   const { publicKey, privateKey } = generateKeyPairSync('ed25519');
   const raw = (publicKey.export({ format: 'jwk' }) as { x?: string }).x;
   if (!raw) throw new Error('test setup: could not extract raw Ed25519 public key');
+  const rawPrivate = (privateKey.export({ format: 'jwk' }) as { d?: string }).d;
+  if (!rawPrivate) throw new Error('test setup: could not extract raw Ed25519 private key');
   const rawBytes = Buffer.from(raw, 'base64url');
-  return { privateKey, publicKeyHex: rawBytes.toString('hex'), issuer: encodeDidKey(rawBytes) };
+  return {
+    privateKey,
+    privateKeyRaw: new Uint8Array(Buffer.from(rawPrivate, 'base64url')),
+    publicKeyHex: rawBytes.toString('hex'),
+    issuer: encodeDidKey(rawBytes),
+  };
 }
 
 /** Sign an arbitrary receipt-shaped payload (no `signature` field yet). */

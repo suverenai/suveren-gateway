@@ -9,13 +9,13 @@
  * not just a happy path.
  */
 import { describe, it, expect, afterEach } from 'vitest';
-import { decodeAttestationBlob, encodeAttestationBlob } from '@hap/core';
+import { decodeMandateBlob, encodeMandateBlob } from '@hap/core';
 import { verifyReport } from '../../src/lib/report/verify-report';
 import { buildExportBundle, buildExportDocument } from '../../src/lib/report/export-report';
 import { renderReportHtml } from '../../src/lib/report/render-report';
 import { verifyExportBundle, collectPresentedStates } from '../../src/lib/report/verify-export';
 import { runVerifyReportCli } from '../../bin/report-verify-cli';
-import { buildScenario, AS_URL, signAttestationPayload } from './fixtures/scenario';
+import { buildScenario, AS_URL, signMandatePayload } from './fixtures/scenario';
 import { testReceiptKeypair, signTestReceipt, type TestReceiptKeypair } from '../helpers/real-receipt';
 import type { RunConnectorExport, ExportSystem } from '../../src/lib/report/types';
 import type { ExportBundle } from '../../src/lib/report/export-types';
@@ -51,14 +51,18 @@ async function buildRealExport(html: string, archive: ReturnType<typeof buildSce
  *  both sides, not a stubbed failure. */
 function resignUnderDifferentKey(bundle: ExportBundle, newKp: TestReceiptKeypair): void {
   bundle.tickets = bundle.tickets.map(t => {
-    const { signature: _sig, ...rest } = t as Record<string, unknown>;
+    // issuer must name the key that will actually sign it below — a resigned
+    // artifact that still claims the OLD issuer would fail as an issuer
+    // mismatch, not as the "internally consistent, just a different key"
+    // case this tamper test exercises.
+    const { signature: _sig, ...rest } = { ...(t as Record<string, unknown>), issuer: newKp.issuer };
     return signTestReceipt(rest, newKp.privateKey);
   });
   for (const auth of Object.values(bundle.authorizations)) {
     auth.attestations = auth.attestations.map(att => {
-      const decoded = decodeAttestationBlob(att.blob);
-      const resigned = signAttestationPayload(decoded.payload, newKp);
-      return { ...att, blob: encodeAttestationBlob(resigned) };
+      const decoded = decodeMandateBlob(att.blob);
+      const resigned = signMandatePayload({ ...decoded.payload, issuer: newKp.issuer }, newKp);
+      return { ...att, blob: encodeMandateBlob(resigned) };
     });
   }
   bundle.authorityServer = { ...bundle.authorityServer, publicKeyHex: newKp.publicKeyHex };

@@ -5,7 +5,8 @@
  * — nothing about the cryptography is mocked here.
  */
 import { describe, it, expect } from 'vitest';
-import { verifyReceiptSignature, type ReceiptPayload } from '@hap/core';
+import { verifyTicketSignature, type TicketPayload } from '@hap/core';
+import { issuerFromPublicKeyHex } from '../../src/lib/issuer-from-hex';
 import { verifyReport } from '../../src/lib/report/verify-report';
 import { renderReportHtml, AI_ANALYSIS_LABEL, GLOSS_LEGEND_TEXT } from '../../src/lib/report/render-report';
 import { formatTimestamp } from '../../src/lib/report/format';
@@ -110,7 +111,9 @@ describe('buildExportDocument — round trip + safety', () => {
     // Independently of ANY verifier code this change set wrote — the exact
     // hap-core call a holder would make against a live Authority Server.
     await expect(
-      verifyReceiptSignature(extracted.tickets[0] as unknown as ReceiptPayload, extracted.authorityServer.publicKeyHex),
+      verifyTicketSignature(extracted.tickets[0] as unknown as TicketPayload, {
+        trustedIssuers: [issuerFromPublicKeyHex(extracted.authorityServer.publicKeyHex)],
+      }),
     ).resolves.toBeUndefined();
   });
 
@@ -303,7 +306,9 @@ describe('RR5 — the proof follows the report: mandate data only for a placed s
   it('the bare tickets still verify on their own — their signature covers the ticket itself', async () => {
     const { bundle } = await buildSlimExport();
     for (const t of bundle.tickets) {
-      await expect(verifyReceiptSignature(t as unknown as ReceiptPayload, bundle.authorityServer.publicKeyHex)).resolves.toBeUndefined();
+      await expect(verifyTicketSignature(t as unknown as TicketPayload, {
+        trustedIssuers: [issuerFromPublicKeyHex(bundle.authorityServer.publicKeyHex)],
+      })).resolves.toBeUndefined();
     }
   });
 
