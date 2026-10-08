@@ -16,7 +16,7 @@ import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { registerProfile } from '@hap/core';
-import { loadGuides, guideHeader, builtinGuidesDir } from '../src/lib/guides';
+import { loadGuides, guideHeader, builtinGuidesDir, limitsSection, packageSection, fillGenerated, scopeFieldsOf } from '../src/lib/guides';
 import { IntegrationManager } from '../src/lib/integration-manager';
 import { registerBuiltins } from '../src/lib/builtins';
 import { connectedSystems } from '../src/lib/builtins/setup';
@@ -92,6 +92,19 @@ describe('guideHeader', () => {
   });
   it('no systems → says so, and what to do', () => {
     expect(guideHeader([])).toMatch(/none yet — ask the person to connect/);
+  });
+  it('names simulated systems not activated yet, and where the person activates them', () => {
+    const h = guideHeader([], ['Email (simulation)']);
+    expect(h).toContain('**Available but not activated:** **Email (simulation)**');
+    expect(h).toContain('Integrations → the system\'s card → Activate');
+    expect(guideHeader([])).not.toContain('Available but not activated');
+  });
+  it('carries the rules: never the gateway page, the key or an approval; only the Suveren tools', () => {
+    const h = guideHeader([]);
+    expect(h).toMatch(/Never open or operate the Suveren Gateway's web page/);
+    expect(h).toMatch(/Never ask for, read or type the person's API key/);
+    expect(h).toMatch(/Never approve a proposal/);
+    expect(h).toMatch(/No terminal, HTTP or browser calls to the gateway's ports/);
   });
   it('tells the AI where the person approves its proposals', () => {
     process.env.SUVEREN_CP_PORT = '3500';
@@ -200,5 +213,46 @@ describe('setup__get_guide', () => {
       { id: 'crm', profile: `${P}/customers@0.8`, actionTypes: [], writeTools: [], readTools: ['find_contacts'] },
       { id: 'erp', profile: `${P}/sales@0.3`, actionTypes: ['quote', 'send'], writeTools: ['create_quote', 'send_quote'], readTools: ['list_items'] },
     ]);
+  });
+});
+
+describe('generated sections', () => {
+  const profile = {
+    id: 'p/sales@0.3',
+    boundsSchema: { keyOrder: ['profile', 'read_access', 'value_max', 'quote_daily_max'], fields: {
+      profile: { type: 'string' },
+      read_access: { type: 'string', displayName: 'Read', boundType: { kind: 'enum', values: ['unlimited', 'none'] }, default: 'unlimited' },
+      value_max: { type: 'number', unit: 'EUR', description: 'Highest quote value.' },
+      quote_daily_max: { type: 'number', unit: 'count', boundType: { kind: 'cumulative_count', window: 'daily' } },
+    } },
+    contextSchema: { keyOrder: ['currency'], fields: { currency: { type: 'string', description: 'Quote currency.' } } },
+  };
+  it('limitsSection lists every limit and scope field by its profile name, without `profile`', () => {
+    const t = limitsSection([{ id: 'erp', profile }]);
+    expect(t).toContain('### erp — profile `p/sales@0.3`');
+    expect(t).toContain('- `read_access` (Read) — one of `unlimited`, `none`, default `unlimited`');
+    expect(t).toContain('- `value_max` — number, EUR. Highest quote value.');
+    expect(t).toContain('- `quote_daily_max` — number, count, per day');
+    expect(t).toContain('**Scope:**\n- `currency` — string. Quote currency.');
+    expect(t).not.toContain('`profile` —');
+  });
+  it('scopeFieldsOf reads the v0.7 scopeSchema first, contextSchema until then', () => {
+    expect(scopeFieldsOf({ id: 'x', contextSchema: { fields: { a: {} } } })?.fields).toHaveProperty('a');
+    expect(scopeFieldsOf({ id: 'x', scopeSchema: { fields: { b: {} } }, contextSchema: { fields: { a: {} } } })?.fields).toHaveProperty('b');
+  });
+  it('packageSection shows the package schema and the systems\' own advice; says so when none is active', () => {
+    const t = packageSection({ description: 'Start from real cases.', inputSchema: { properties: { package: { type: 'object', required: ['name'] } } } });
+    expect(t).toContain('> Start from real cases.');
+    expect(t).toContain('"required": [\n    "name"\n  ]');
+    expect(packageSection(undefined)).toMatch(/No simulated system with `load_simulation` is active/);
+  });
+  it('fillGenerated replaces known placeholders and leaves unknown ones', () => {
+    expect(fillGenerated('a <!-- generated: limits --> b <!-- generated: other -->', { limits: () => 'L' })).toBe('a L b <!-- generated: other -->');
+  });
+  it('the built-in guides carry the placeholders where the setup AI needs them', () => {
+    const guides = loadGuides();
+    expect(guides.find((g) => g.topic === 'mandates')?.body).toContain('<!-- generated: limits -->');
+    expect(guides.find((g) => g.topic === 'package')?.body).toContain('<!-- generated: package -->');
+    expect(guides.find((g) => g.topic === 'interview')?.body).toMatch(/Before you start: the systems/);
   });
 });

@@ -19,6 +19,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { uiUrl } from './locked-notice';
+import { AGENT_RULES } from './agent-rules';
 
 export interface Guide {
   topic: string;
@@ -97,8 +98,9 @@ export interface SystemLine {
   readTools: string[];
 }
 
-/** "Every guide starts with" — the language rule and the systems actually connected. */
-export function guideHeader(systems: SystemLine[]): string {
+/** "Every guide starts with" — the language rule, the rules, the systems actually
+ *  connected, and the simulated systems not activated yet (`inactive`: their names). */
+export function guideHeader(systems: SystemLine[], inactive: string[] = []): string {
   const lines = [
     '> This guide is in English. Talk to the person in their language, and write the brief and mandate intents in the language the team uses.',
     '',
@@ -116,7 +118,83 @@ export function guideHeader(systems: SystemLine[]): string {
       lines.push(`- **${s.id}** — ${parts.join('; ')}`);
     }
   }
+  if (inactive.length) {
+    lines.push('');
+    lines.push('**Available but not activated:** ' + inactive.map(n => `**${n}**`).join(', ') + '. Before anything else, ask the person to activate the ones the work needs: in the Suveren Gateway, Integrations → the system\'s card → Activate. Then read this guide again — a system you cannot see here does not exist for the test.');
+  }
   lines.push('');
   lines.push(`**Approvals:** every mandate and brief you propose waits until the person approves it in the Suveren Gateway at ${uiUrl()}/approvals. Tell them each time you propose one.`);
+  lines.push('');
+  lines.push('**Rules:**');
+  for (const r of AGENT_RULES) lines.push(`- ${r}`);
   return lines.join('\n');
+}
+
+// ── Generated sections ────────────────────────────────────────────────────────
+// A guide may contain `<!-- generated: limits -->` or `<!-- generated: package -->`;
+// the gateway replaces them with what it reads from the connected systems, so the
+// setup AI can propose valid mandates and a valid package BEFORE it holds any
+// mandate for them (their own tools stay hidden until then). Placeholders, not
+// topic names: an override guide decides where (and whether) they appear.
+
+interface FieldDef {
+  type?: string; displayName?: string; description?: string; unit?: string; default?: unknown;
+  boundType?: { kind?: string; values?: unknown[]; window?: string };
+  enum?: unknown[]; maximum?: number;
+}
+interface FieldsSchema { keyOrder?: string[]; fields?: Record<string, FieldDef> }
+export interface ProfileLike { id: string; boundsSchema?: FieldsSchema; contextSchema?: FieldsSchema; scopeSchema?: FieldsSchema }
+
+/** A profile's scope fields. v0.7 renames `contextSchema` to `scopeSchema`; this is
+ *  the one place that knows (protocol 0.7 vocabulary: "scope"). */
+export function scopeFieldsOf(profile: ProfileLike): FieldsSchema | undefined {
+  return profile.scopeSchema ?? profile.contextSchema;
+}
+
+function fieldLine(name: string, f: FieldDef): string {
+  const kind: string[] = [];
+  const values = f.boundType?.values ?? f.enum;
+  if (Array.isArray(values)) kind.push(`one of ${values.map(v => `\`${String(v)}\``).join(', ')}`);
+  else if (f.type) kind.push(f.type);
+  if (f.unit) kind.push(f.unit);
+  if (f.boundType?.window) kind.push(`per ${f.boundType.window === 'daily' ? 'day' : f.boundType.window}`);
+  if (typeof f.maximum === 'number') kind.push(`at most ${f.maximum}`);
+  if (f.default !== undefined) kind.push(`default \`${String(f.default)}\``);
+  const label = f.displayName ? ` (${f.displayName})` : '';
+  return `- \`${name}\`${label} — ${kind.join(', ') || 'value'}${f.description ? `. ${f.description}` : ''}`;
+}
+
+function fieldLines(schema: FieldsSchema | undefined): string[] {
+  const fields = schema?.fields ?? {};
+  const order = (schema?.keyOrder ?? Object.keys(fields)).filter(k => k !== 'profile' && k !== 'path' && fields[k]);
+  return order.map(k => fieldLine(k, fields[k]));
+}
+
+/** "Limits and scope per system", from each connected system's profile. */
+export function limitsSection(systems: Array<{ id: string; profile: ProfileLike | undefined }>): string {
+  const out = ['## Limits and scope per system', '', 'From the profiles — use exactly these names in `create_mandate` (`limits` and `scope`). Every limit must be set.', ''];
+  for (const s of systems) {
+    if (!s.profile) continue;
+    out.push(`### ${s.id} — profile \`${s.profile.id}\``, '', '**Limits:**', ...fieldLines(s.profile.boundsSchema));
+    const scope = fieldLines(scopeFieldsOf(s.profile));
+    out.push('', '**Scope:**', ...(scope.length ? scope : ['- none']), '');
+  }
+  return out.join('\n');
+}
+
+/** "The package format", from a simulated system's `load_simulation` input schema. */
+export function packageSection(tool: { inputSchema?: Record<string, unknown>; description?: string } | undefined): string {
+  if (!tool?.inputSchema) return '## The package format\n\nNo simulated system with `load_simulation` is active — ask the person to activate one first.';
+  const pkg = (tool.inputSchema.properties as Record<string, unknown> | undefined)?.package ?? tool.inputSchema;
+  return [
+    '## The package format', '',
+    ...(tool.description ? ['What the simulated systems say about it:', '', `> ${tool.description}`, ''] : []),
+    'The `package` argument of `load_simulation` — the same package for every simulated system:', '',
+    '```json', JSON.stringify(pkg, null, 2), '```',
+  ].join('\n');
+}
+
+/** Replace the `<!-- generated: … -->` placeholders in a guide body. */
+export function fillGenerated(body: string, sections: Record<string, () => string>): string {
+  return body.replace(/<!--\s*generated:\s*([a-z-]+)\s*-->/g, (m, key: string) => (sections[key] ? sections[key]() : m));
 }

@@ -3,6 +3,8 @@ import { useAuth } from '../contexts/AuthContext';
 import { TopNav } from '../components/TopNav';
 import { UpdateBanner } from '../components/UpdateBanner';
 import { SimulationBanner } from '../components/SimulationBanner';
+import { HumanOnlyNote } from '../components/HumanOnlyNote';
+import { isAutomatedBrowser, AUTOMATION_REFUSAL } from '../lib/automation';
 import { DifferentAccountError, type DifferentAccountSummary } from '../lib/sp-client';
 
 export function LoginPage() {
@@ -10,8 +12,10 @@ export function LoginPage() {
   const { login, isLoading, error, clearError } = useAuth();
   const [wipeWarning, setWipeWarning] = useState<DifferentAccountSummary | null>(null);
 
+  // Automation that announces itself may not sign in (defense in depth — see lib/automation.ts).
+  const automated = isAutomatedBrowser();
   const handleLogin = async () => {
-    if (!apiKey.trim()) return;
+    if (!apiKey.trim() || automated) return;
     clearError();
     try {
       // No explicit navigate('/') here: login() sets `user` partway through
@@ -75,6 +79,8 @@ export function LoginPage() {
               </div>
             </div>
 
+            <HumanOnlyNote what="sign-in" />
+            {automated && <div className="error-message">{AUTOMATION_REFUSAL}</div>}
             {error && <div className="error-message">{error}</div>}
 
             <div className="form-group" style={{ marginBottom: '1.5rem' }}>
@@ -95,7 +101,7 @@ export function LoginPage() {
             <button
               className="btn btn-primary btn-full btn-lg"
               onClick={handleLogin}
-              disabled={isLoading}
+              disabled={isLoading || automated}
               style={{ marginBottom: '2rem' }}
             >
               {isLoading ? 'Signing in...' : 'Sign In'}

@@ -18,10 +18,12 @@
  */
 import { builtinText, type BuiltinIntegration } from '../builtin-integration';
 import { CONTEXT_MAX_BYTES, writeContextFile } from '../context-loader';
-import { isSimulationMode } from '../simulation-mode';
+import { isSimulationMode, manifestIsSimulated } from '../simulation-mode';
 import type { BuiltinDeps } from './index';
 import { controlPlaneMandate } from '../cp-mandate';
-import { loadGuides, guideHeader, type SystemLine } from '../guides';
+import { loadGuides, guideHeader, limitsSection, packageSection, fillGenerated, type SystemLine, type ProfileLike } from '../guides';
+import { getAllManifests } from '../manifest-loader';
+import { getProfile } from '@hap/core';
 import type { IntegrationManager } from '../integration-manager';
 
 /** The delegation profile by its short name, as a manifest names it: a mandate under
@@ -129,7 +131,12 @@ export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
         handler: async (args) => {
           if (!isSimulationMode()) return { ...builtinText('Refused: not available outside simulation mode.'), isError: true };
           const guides = loadGuides();
-          const header = guideHeader(connectedSystems(deps.integrationManager));
+          const systems = connectedSystems(deps.integrationManager);
+          const running = new Set(systems.map(s => s.id));
+          // Simulated systems this gateway knows but has not started — the person
+          // activates them in the gateway; the AI cannot.
+          const inactive = getAllManifests().filter(m => manifestIsSimulated(m) && !running.has(m.id)).map(m => m.name);
+          const header = guideHeader(systems, inactive);
           const topic = typeof args.topic === 'string' ? args.topic.trim().toLowerCase() : '';
           if (!topic) {
             const list = guides.map((g, i) => `${i + 1}. **${g.topic}** — ${g.summary}`).join('\n');
@@ -139,7 +146,13 @@ export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
           if (!guide) {
             return { ...builtinText(`Unknown topic "${topic}". Topics: ${guides.map(g => g.topic).join(', ') || 'none installed'}.`), isError: true };
           }
-          return builtinText(`${header}\n\n${guide.body.trim()}`);
+          const body = fillGenerated(guide.body.trim(), {
+            limits: () => limitsSection(systems.map(s => ({ id: s.id, profile: getProfile(s.profile) as ProfileLike | undefined }))),
+            package: () => packageSection(
+              deps.integrationManager.getAllTools().find(t => !deps.integrationManager.isBuiltin(t.integrationId) && t.originalName === 'load_simulation'),
+            ),
+          });
+          return builtinText(`${header}\n\n${body}`);
         },
       },
       {

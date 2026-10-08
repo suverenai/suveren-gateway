@@ -17,6 +17,7 @@ import { getContextForBrief } from './context-loader';
 import { agentVisibleAuthorizations } from './agent-visibility';
 import { isSimulationMode } from './simulation-mode';
 import { uiUrl } from './locked-notice';
+import { AGENT_RULES } from './agent-rules';
 
 /** Extract short profile name from full ID (e.g., "github.com/.../charge@0.3" → "charge") */
 function shortProfileName(profileId: string): string {
@@ -159,6 +160,12 @@ export function buildMandateBrief(opts: MandateBriefOptions): string {
       : `If the person asks how to start with Suveren: they first create a "Delegation" mandate in the Suveren Gateway at ${uiUrl()}. With it you can read the setup guide and lead them through the setup.`);
     lines.push('');
   }
+
+  // Always, in every mode: what an agent must never do with this gateway.
+  lines.push('=== RULES ===');
+  lines.push('');
+  for (const r of AGENT_RULES) lines.push(`- ${r}`);
+  lines.push('');
 
   // Instruction to use list-authorizations for detail
   lines.push('When you receive a task, call list-authorizations(domain) to load full details for the relevant domain.');

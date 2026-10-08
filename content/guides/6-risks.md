@@ -10,5 +10,7 @@ What can make a test say more than it should, and what to do about each. Read th
 | Mandates too loose | A wrong result can look like success | Start in review mode or with low caps; loosen by replacing the mandate |
 | Proposals are stored readable on the Authority Server | The content of every proposal, including intents, can be read there | Test data and renamed cases only — never real customer data in a setup |
 | Setup limit too low | A clear without the following load leaves empty systems | Use a setup limit of 4–6 per day; clear and load in one go |
+| An AI that can control a browser or the screen | It could open the gateway's page, read the API key there and approve its own proposals — the person would no longer decide | Never open or operate the gateway's page, never handle the API key, never approve. Tell the person to approve themselves, and to keep the gateway page out of any browser an AI controls |
+| Calls around the Suveren tools | A terminal, HTTP or browser call to the gateway's ports is not governed by a mandate | Use only the Suveren tools. If something is missing, tell the person what — do not probe the gateway |
 
 Next: start a run — the person asks the working AI to work the new requests.
