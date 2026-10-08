@@ -143,12 +143,14 @@ interface FieldDef {
   enum?: unknown[]; maximum?: number;
 }
 interface FieldsSchema { keyOrder?: string[]; fields?: Record<string, FieldDef> }
-export interface ProfileLike { id: string; boundsSchema?: FieldsSchema; contextSchema?: FieldsSchema; scopeSchema?: FieldsSchema }
+export interface ProfileLike { id: string; boundsSchema?: FieldsSchema; scopeSchema?: FieldsSchema }
 
-/** A profile's scope fields. v0.7 renames `contextSchema` to `scopeSchema`; this is
- *  the one place that knows (protocol 0.7 vocabulary: "scope"). */
+/** A profile's scope fields (protocol 0.7 vocabulary: "scope", `scopeSchema`
+ *  — no alias; every profile this gateway loads is v0.4+, which always
+ *  carries the field under one name or the other, but only the current one
+ *  is still typed since hap-core 0.12 dropped `contextSchema` entirely). */
 export function scopeFieldsOf(profile: ProfileLike): FieldsSchema | undefined {
-  return profile.scopeSchema ?? profile.contextSchema;
+  return profile.scopeSchema;
 }
 
 function fieldLine(name: string, f: FieldDef): string {

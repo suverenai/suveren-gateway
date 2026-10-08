@@ -225,7 +225,7 @@ describe('generated sections', () => {
       value_max: { type: 'number', unit: 'EUR', description: 'Highest quote value.' },
       quote_daily_max: { type: 'number', unit: 'count', boundType: { kind: 'cumulative_count', window: 'daily' } },
     } },
-    contextSchema: { keyOrder: ['currency'], fields: { currency: { type: 'string', description: 'Quote currency.' } } },
+    scopeSchema: { keyOrder: ['currency'], fields: { currency: { type: 'string', description: 'Quote currency.' } } },
   };
   it('limitsSection lists every limit and scope field by its profile name, without `profile`', () => {
     const t = limitsSection([{ id: 'erp', profile }]);
@@ -236,9 +236,9 @@ describe('generated sections', () => {
     expect(t).toContain('**Scope:**\n- `currency` — string. Quote currency.');
     expect(t).not.toContain('`profile` —');
   });
-  it('scopeFieldsOf reads the v0.7 scopeSchema first, contextSchema until then', () => {
-    expect(scopeFieldsOf({ id: 'x', contextSchema: { fields: { a: {} } } })?.fields).toHaveProperty('a');
-    expect(scopeFieldsOf({ id: 'x', scopeSchema: { fields: { b: {} } }, contextSchema: { fields: { a: {} } } })?.fields).toHaveProperty('b');
+  it('scopeFieldsOf reads scopeSchema — hap-core 0.12 dropped contextSchema, no alias', () => {
+    expect(scopeFieldsOf({ id: 'x', scopeSchema: { fields: { b: {} } } })?.fields).toHaveProperty('b');
+    expect(scopeFieldsOf({ id: 'x' })).toBeUndefined();
   });
   it('packageSection shows the package schema and the systems\' own advice; says so when none is active', () => {
     const t = packageSection({ description: 'Start from real cases.', inputSchema: { properties: { package: { type: 'object', required: ['name'] } } } });
