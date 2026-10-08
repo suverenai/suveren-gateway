@@ -114,7 +114,7 @@ describe('M3 gateway — receipt retry + idempotency', () => {
   it('does NOT retry a definitive 4xx rejection (fails closed on first answer)', async () => {
     const rejection = {
       approved: false,
-      errors: [{ code: 'LIMIT_EXCEEDED', message: 'Cumulative daily amount exceeds bound' }],
+      errors: [{ code: 'CUMULATIVE_LIMIT_EXCEEDED', message: 'Cumulative daily amount exceeds bound' }],
     };
     fetchMock.mockResolvedValueOnce(jsonResponse(403, rejection));
 
