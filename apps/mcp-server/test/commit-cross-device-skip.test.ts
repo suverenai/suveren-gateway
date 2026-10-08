@@ -94,7 +94,7 @@ describe('executeCommitted — a proposal submitted by a DIFFERENT gateway (same
 
     const state = {
       spClient: { postReceipt },
-      cache: { getAllAuthorizations: () => [], getPublicKey: async () => kp.publicKeyHex },
+      cache: { getAllAuthorizations: () => [], getPublicKey: async () => kp.publicKeyHex, getTrustedIssuer: async () => kp.issuer },
       proposalSubmissions: storeB, // gateway B's own store — the real class, not a stub
       executionLog: { record: vi.fn() },
       executionJournal: { begin: vi.fn(() => ({ ok: true })), complete: vi.fn() },
@@ -131,7 +131,7 @@ describe('executeCommitted — a proposal submitted by a DIFFERENT gateway (same
     const im = { getAllTools: () => [TOOL], callTool } as unknown as IntegrationManager;
     const state = {
       spClient: { postReceipt },
-      cache: { getAllAuthorizations: () => [], getPublicKey: async () => kp.publicKeyHex },
+      cache: { getAllAuthorizations: () => [], getPublicKey: async () => kp.publicKeyHex, getTrustedIssuer: async () => kp.issuer },
       proposalSubmissions: store,
       executionLog: { record: vi.fn() },
       executionJournal: { begin: vi.fn(() => ({ ok: true })), complete: vi.fn() },

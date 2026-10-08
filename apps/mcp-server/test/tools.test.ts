@@ -256,7 +256,7 @@ function mockGatedState(opts: {
       postReceipt: opts.postReceipt ?? defaultPostReceipt,
       isUnlocked: () => true,
     },
-    cache: { getPublicKey: async () => kp.publicKeyHex },
+    cache: { getPublicKey: async () => kp.publicKeyHex, getTrustedIssuer: async () => kp.issuer },
     proposalSubmissions: { record: vi.fn(), get: () => undefined },
     gatekeeper: {
       verifyExecution: vi.fn().mockResolvedValue({
@@ -320,7 +320,7 @@ describe('createGatedToolHandler — SP receipt integration', () => {
         idempotencyKey: req.idempotencyKey,
       }),
     }));
-    const state = { ...mockGatedState({ postReceipt }), cache: { getPublicKey: async () => kp.publicKeyHex } } as unknown as SharedState;
+    const state = { ...mockGatedState({ postReceipt }), cache: { getPublicKey: async () => kp.publicKeyHex, getTrustedIssuer: async () => kp.issuer } } as unknown as SharedState;
     const im = mockIntegrationManager();
     const handler = createGatedToolHandler(mockTool('charge'), im, state);
 

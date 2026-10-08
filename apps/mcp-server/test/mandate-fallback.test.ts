@@ -85,12 +85,12 @@ const SETUP = makeAuth('authz_b0000000-0000-4000-8000-00000000b002');
 
 const revokedError = () =>
   new SPReceiptError('This authorization has been revoked', 403, {
-    errors: [{ code: 'ATTESTATION_REVOKED', message: 'This authorization has been revoked' }],
+    errors: [{ code: 'MANDATE_REVOKED', message: 'This authorization has been revoked' }],
   });
 
 const limitExceededError = () =>
   new SPReceiptError('Cumulative daily count (2) exceeds setup_daily_max=1', 403, {
-    errors: [{ code: 'LIMIT_EXCEEDED', message: 'Cumulative daily count (2) exceeds setup_daily_max=1' }],
+    errors: [{ code: 'BOUND_EXCEEDED', message: 'Cumulative daily count (2) exceeds setup_daily_max=1' }],
   });
 
 function buildState(
@@ -102,7 +102,7 @@ function buildState(
   const state = {
     getEnrichedAuthorizations: () => enriched,
     spClient: { postReceipt, isUnlocked: () => true },
-    cache: { invalidate, getPublicKey: async () => kp.publicKeyHex },
+    cache: { invalidate, getPublicKey: async () => kp.publicKeyHex, getTrustedIssuer: async () => kp.issuer },
     gatekeeper: {
       // Local verification always approves here — the test is about the AS's
       // receipt-time refusal and the gateway's reaction to it, not local

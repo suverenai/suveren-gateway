@@ -25,13 +25,20 @@
  *   2. per-transaction bounds are still enforced locally (the local gate is
  *      dropped for cumulative bounds only, not gutted);
  *   3. the log is still recorded and still drives the consumption display.
+ *   4. (v0.7) the non-enforcement is no longer merely a gateway CHOICE (an
+ *      execution log the Gatekeeper declines to pass) — hap-core 0.12's
+ *      `verify()` takes no execution-log parameter at all, so there is no
+ *      argument left to reintroduce. This is asserted directly rather than
+ *      by showing "with a log, it refuses" (that call shape no longer
+ *      exists — see hap-core's CHANGELOG.md, "Local cumulative enforcement
+ *      is removed, not merely deprecated").
  */
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { generateKeyPairSync, sign as edSign } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { registerProfile, clearProfiles, verify, canonicalize, computeBoundsHash } from '@hap/core';
+import { registerProfile, clearProfiles, verify, canonicalize, computeBoundsHash, computeProfileHash, encodeMandateBlob, encodeDidKey, type Mandate } from '@hap/core';
 import { MCPGatekeeper } from '../src/lib/gatekeeper';
 import { ExecutionLog } from '../src/lib/execution-log';
 import { getConsumptionState } from '../src/lib/consumption';
@@ -84,8 +91,8 @@ const PROFILE = {
 const NOW = Math.floor(Date.now() / 1000);
 
 /**
- * A genuinely signed attestation, because `verify()` fails closed on an empty
- * attestation list (hap-core 0.10.0) — as it must: a call with nothing to
+ * A genuinely signed mandate, because `verify()` fails closed on an empty
+ * mandate list (hap-core 0.10.0) — as it must: a call with nothing to
  * verify is not a call that was authorised. An earlier version of this file
  * passed `attestations: []` and reached the bounds logic anyway, which was the
  * fail-open bug rather than a shortcut. Signing here costs ten lines and makes
@@ -93,16 +100,19 @@ const NOW = Math.floor(Date.now() / 1000);
  */
 const { privateKey: AS_PRIVATE, publicKey: AS_PUBLIC } = generateKeyPairSync('ed25519');
 const AS_PUBLIC_HEX = AS_PUBLIC.export({ format: 'der', type: 'spki' }).subarray(-32).toString('hex');
+const AS_ISSUER = encodeDidKey(new Uint8Array(Buffer.from(AS_PUBLIC_HEX, 'hex')));
 
-function signedAttestationBlob(): string {
+function signedMandateBlob(): string {
   const payload = {
-    attestation_id: '00000000-0000-4000-8000-0000000000cc',
-    version: '0.5' as const,
+    mandate_id: '00000000-0000-4000-8000-0000000000cc',
+    version: '0.7' as const,
     profile_id: PROFILE_ID,
     bounds_hash: computeBoundsHash(BOUNDS, PROFILE as never),
-    context_hash: 'sha256:' + 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+    scope_hash: 'sha256:' + 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
     execution_context_hash: 'sha256:' + '00'.repeat(32),
-    resolved_owners: ['did:key:test-owner'],
+    profile_hash: computeProfileHash(PROFILE as never),
+    issuer: AS_ISSUER,
+    mandate_owners: [{ did: 'did:key:test-owner' }],
     gate_content_hashes: { intent: 'sha256:' + '11'.repeat(32) },
     commitment_mode: 'automatic' as const,
     issued_at: NOW - 60,
@@ -110,10 +120,8 @@ function signedAttestationBlob(): string {
   };
   const signature = edSign(null, Buffer.from(canonicalize(payload), 'utf8'), AS_PRIVATE)
     .toString('base64url');
-  return Buffer.from(
-    JSON.stringify({ header: { typ: 'HAP-attestation', alg: 'EdDSA' }, payload, signature }),
-    'utf8',
-  ).toString('base64');
+  const mandate: Mandate = { header: { typ: 'HAP-mandate', alg: 'EdDSA' }, payload, signature };
+  return encodeMandateBlob(mandate);
 }
 
 const AUTH: CachedAuthorization = {
@@ -122,7 +130,7 @@ const AUTH: CachedAuthorization = {
   path: PATH,
   frame: { ...BOUNDS },
   bounds: { ...BOUNDS },
-  attestations: [{ domain: 'finance', blob: signedAttestationBlob(), expiresAt: NOW + 3600 }],
+  attestations: [{ domain: 'finance', blob: signedMandateBlob(), expiresAt: NOW + 3600 }],
   requiredDomains: [],
   attestedDomains: [],
   complete: true,
@@ -130,11 +138,12 @@ const AUTH: CachedAuthorization = {
 
 /**
  * Cache stub. Returns the grant by its per-ceremony id, exactly as the real
- * cache keys it, and the public key that verifies the blob above.
+ * cache keys it, and the public key / issuer that verifies the blob above.
  */
 const cache = {
   getAuthorization: (id: string) => (id === AUTH.authorizationId ? AUTH : null),
   getPublicKey: async () => AS_PUBLIC_HEX,
+  getTrustedIssuer: async () => AS_ISSUER,
 } as unknown as AttestationCache;
 
 let logDir: string;
@@ -183,26 +192,32 @@ describe('MCPGatekeeper — cumulative bounds are NOT enforced locally', () => {
     expect(result.approved).toBe(true);
   });
 
-  it('would be refused if the log were passed — so the approval above is a choice, not an accident', async () => {
-    // Non-vacuity guard. Same bounds, same execution, same log: handed to
-    // hap-core's `verify()` as a fourth argument (what the gateway used to do)
-    // this call is refused CUMULATIVE_LIMIT_EXCEEDED. The Gatekeeper approves
-    // it because it deliberately withholds the log — if someone reintroduces
-    // the argument, the test above starts failing and this one explains why.
+  it('non-vacuity: hap-core\'s own verify() has no log parameter left to reintroduce', async () => {
+    // v0.4-era hap-core took a 4th argument (an execution log) and refused
+    // CUMULATIVE_LIMIT_EXCEEDED when the running total exceeded a bound; this
+    // module's whole point was that the gateway's gatekeeper.ts deliberately
+    // WITHHELD that argument — a choice, not an accident. hap-core 0.12
+    // removed the capability outright (CHANGELOG.md: "Local cumulative
+    // enforcement is removed, not merely deprecated"): `verify()` takes a
+    // request and options, full stop. Calling it directly here — bypassing
+    // this gateway's own gatekeeper.ts wrapper entirely, with the SAME
+    // over-the-ceiling execution the first test above uses — still approves,
+    // proving the guarantee is now structural to hap-core itself, not merely
+    // this gateway's choice not to pass a log.
     const result = await verify(
       {
-        frame: { ...BOUNDS },
-        attestations: [signedAttestationBlob()],
+        bounds: { ...BOUNDS },
+        mandates: [signedMandateBlob()],
         execution: { amount: 50, action_type: 'charge' },
         path: PATH,
       },
-      AS_PUBLIC_HEX,
-      NOW,
-      log,
+      { trustedIssuers: [AS_ISSUER] },
     );
 
-    expect(result.approved).toBe(false);
-    expect((result.errors ?? []).map(e => e.code)).toContain('CUMULATIVE_LIMIT_EXCEEDED');
+    expect(result.approved).toBe(true);
+    expect((result as { errors?: Array<{ code: string }> }).errors ?? []).not.toContainEqual(
+      expect.objectContaining({ code: 'CUMULATIVE_LIMIT_EXCEEDED' }),
+    );
   });
 
   it('still refuses a call over the PER-TRANSACTION bound', async () => {
@@ -256,6 +271,7 @@ describe('the gated write path — the AS gets asked', () => {
         // G4: echo the idempotency key back, as a well-behaved AS does.
         idempotencyKey: req.idempotencyKey,
         timestamp: Math.floor(Date.now() / 1000),
+        issuer: AS_ISSUER,
       };
       const signature = edSign(null, Buffer.from(canonicalize(payload), 'utf8'), AS_PRIVATE).toString('base64url');
       return { receipt: { ...payload, signature } };

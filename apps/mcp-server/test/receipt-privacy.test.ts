@@ -138,7 +138,7 @@ function buildState() {
   const state = {
     getEnrichedAuthorizations: () => enriched,
     spClient: { postReceipt, isUnlocked: () => true },
-    cache: { getAllAuthorizations: () => [AUTH], getPublicKey: async () => kp.publicKeyHex },
+    cache: { getAllAuthorizations: () => [AUTH], getPublicKey: async () => kp.publicKeyHex, getTrustedIssuer: async () => kp.issuer },
     // The review path (commitments.ts) requires a matching local submission
     // record before it will even request a ticket — PROPOSAL (declared
     // below) is what the review-path tests execute, so this is its record.

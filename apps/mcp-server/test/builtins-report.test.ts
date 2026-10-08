@@ -115,7 +115,7 @@ function buildState(enriched: EnrichedAuthorization[], reportStore: ReportStore)
     spClient: { postReceipt, submitProposal, isUnlocked: () => true },
     cache: {
       invalidate: vi.fn(),
-      getPublicKey: async () => kp.publicKeyHex,
+      getPublicKey: async () => kp.publicKeyHex, getTrustedIssuer: async () => kp.issuer,
       getAllAuthorizations: () => enriched,
     },
     gatekeeper: { verifyExecution: vi.fn().mockResolvedValue({ result: { approved: true, errors: [] } }) },

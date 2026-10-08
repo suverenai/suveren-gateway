@@ -58,7 +58,7 @@ describe('SPClient — session-end detection', () => {
     client.setSessionCookie('hap-session=abc');
     expect(client.isUnlocked()).toBe(true);
 
-    mockAsCall('/api/attestations?authorization_id=x', jsonResponse(401, { error: 'Authentication required' }));
+    mockAsCall('/api/mandates?authorization_id=x', jsonResponse(401, { error: 'Authentication required' }));
 
     await expect(client.getAttestations('x')).rejects.toThrow();
 
@@ -92,7 +92,7 @@ describe('SPClient — session-end detection', () => {
     const client = new SPClient(BASE); // never logged in — sessionCookie is ''
     expect(client.isUnlocked()).toBe(false);
 
-    mockAsCall('/api/attestations?authorization_id=x', jsonResponse(401, { error: 'no cookie' }));
+    mockAsCall('/api/mandates?authorization_id=x', jsonResponse(401, { error: 'no cookie' }));
     await expect(client.getAttestations('x')).rejects.toThrow();
 
     expect(client.getLockReason()).toBeNull();
@@ -116,7 +116,7 @@ describe('SPClient — session-end detection', () => {
     const client = new SPClient(BASE);
     client.setSessionCookie('hap-session=abc');
 
-    mockAsCall('/api/attestations?authorization_id=x', jsonResponse(500, { error: 'upstream down' }));
+    mockAsCall('/api/mandates?authorization_id=x', jsonResponse(500, { error: 'upstream down' }));
     await expect(client.getAttestations('x')).rejects.toThrow();
 
     expect(client.isUnlocked()).toBe(true);
@@ -149,7 +149,7 @@ describe('SPClient — session-end detection', () => {
   it('a fresh login (setSessionCookie) clears a prior "expired" reason', async () => {
     const client = new SPClient(BASE);
     client.setSessionCookie('hap-session=abc');
-    mockAsCall('/api/attestations?authorization_id=x', jsonResponse(401, {}));
+    mockAsCall('/api/mandates?authorization_id=x', jsonResponse(401, {}));
     await expect(client.getAttestations('x')).rejects.toThrow();
     expect(client.getLockReason()).toBe('expired');
 

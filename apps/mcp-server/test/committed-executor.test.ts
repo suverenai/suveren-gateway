@@ -159,7 +159,7 @@ function buildState(dir: string, postReceipt: ReturnType<typeof vi.fn>) {
   const record = vi.fn();
   const state = {
     spClient: { postReceipt },
-    cache: { getAllAuthorizations: () => [], getPublicKey: async () => kp.publicKeyHex },
+    cache: { getAllAuthorizations: () => [], getPublicKey: async () => kp.publicKeyHex, getTrustedIssuer: async () => kp.issuer },
     // A local record matching PROPOSAL exactly — commitments.ts now REFUSES
     // to execute a proposal with no matching local submission record.
     proposalSubmissions: {
@@ -265,6 +265,7 @@ describe('executeCommitted × ExecutionJournal', () => {
       profileId: PROPOSAL.profileId,
       proposalId: PROPOSAL.id,
       timestamp: Math.floor(Date.now() / 1000),
+      issuer: kp.issuer,
     }, kp.privateKey);
     const postReceipt = vi.fn().mockResolvedValue({ receipt: idlessReceipt, idempotent: false });
     const { state } = buildState(dir, postReceipt);
