@@ -25,7 +25,8 @@
  *     Any difference between a drawn value and its signed source, or a
  *     recomputed number that does not come out the same, is a mismatch.
  */
-import { computeIntentHash, decodeAttestationBlob, verifyAttestationSignature, type AttestationPayload } from '@hap/core';
+import { computeIntentHash, decodeMandateBlob, verifyMandateSignature, type MandatePayload } from '@hap/core';
+import { issuerFromPublicKeyHex } from '../issuer-from-hex';
 import { checkedValueLine } from './render-report';
 import { buildExportDocument } from './export-report';
 import { computeMetric } from './metric-resolvers';
@@ -133,16 +134,16 @@ export function checkDocumentReproduces(bundle: ExportBundle, documentHtml: stri
 
 interface Attestations {
   /** authorizationId -> first attestation's payload, signature verified. */
-  first: Map<string, AttestationPayload | null>;
+  first: Map<string, MandatePayload | null>;
   /** did -> names disclosed at high assurance in ANY verified bundled blob. */
   names: Map<string, Set<string>>;
 }
 
-async function verifiedPayload(blob: string, publicKeyHex: string): Promise<AttestationPayload | null> {
+async function verifiedPayload(blob: string, publicKeyHex: string): Promise<MandatePayload | null> {
   try {
-    const att = decodeAttestationBlob(blob);
-    await verifyAttestationSignature(att, publicKeyHex);
-    return att.payload;
+    const mandate = decodeMandateBlob(blob);
+    await verifyMandateSignature(mandate, { trustedIssuers: [issuerFromPublicKeyHex(publicKeyHex)] });
+    return mandate.payload;
   } catch {
     return null;
   }
@@ -150,9 +151,9 @@ async function verifiedPayload(blob: string, publicKeyHex: string): Promise<Atte
 
 async function collectAttestations(bundle: ExportBundle): Promise<Attestations> {
   const key = bundle.authorityServer.publicKeyHex;
-  const first = new Map<string, AttestationPayload | null>();
+  const first = new Map<string, MandatePayload | null>();
   const names = new Map<string, Set<string>>();
-  const addNames = (p: AttestationPayload | null) => {
+  const addNames = (p: MandatePayload | null) => {
     for (const s of p?.subjects ?? []) {
       if (s.assurance === 'high' && s.disclose?.name) {
         if (!names.has(s.did)) names.set(s.did, new Set());
@@ -372,8 +373,10 @@ function checkMandateFields(ctx: DrawnCheckContext, att: Attestations, m: Data, 
   }
 }
 
-function checkOwners(att: Attestations, payload: AttestationPayload, labels: unknown[], box: BoxCheck, prefix: string): void {
-  const dids = payload.resolved_owners ?? [];
+function checkOwners(att: Attestations, payload: MandatePayload, labels: unknown[], box: BoxCheck, prefix: string): void {
+  // v0.7: `resolved_owners` is gone — `mandate_owners` carries exactly one
+  // entry (Mandate rule 7); map to its `.did`.
+  const dids = (payload.mandate_owners ?? []).map(o => o.did);
   if (labels.length !== dids.length) {
     box.mismatches.push(`${prefix}owner: the box shows ${labels.length} owner(s), the signed mandate names ${dids.length}.`);
     return;

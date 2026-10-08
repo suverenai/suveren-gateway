@@ -14,9 +14,14 @@
  *
  *  1. The receipt's Ed25519 signature must verify against the PINNED
  *     Authority Server key (attestation-cache.ts) — not whatever key a live
- *     `/api/as/pubkey` happens to answer with right now. A signature that
- *     doesn't verify means this is not the server the gateway paired with,
- *     or the receipt was tampered with in transit.
+ *     `/api/as/pubkey` happens to answer with right now, and not whatever
+ *     `issuer` DID the ticket itself claims. hap-core 0.12's
+ *     verifyTicketSignature() resolves the verification key from the
+ *     ticket's own `issuer`; this module restricts that resolution to the
+ *     did:key derived from the pinned hex (trustedIssuers), so a ticket
+ *     "signed" under a different key — even a validly-shaped one — still
+ *     fails. A signature that doesn't verify means this is not the server
+ *     the gateway paired with, or the receipt was tampered with in transit.
  *  2. The receipt's own `action`, `executionContext`, `authorizationId` and
  *     `profileId` — fields the AS itself signed — must match what this call
  *     is about to execute. `proposalId` is required to match too when the
@@ -54,7 +59,7 @@
  * refusing-as-an-attack — see its own docs for why (a genuine AS legitimately
  * lists proposals submitted by the same operator's other gateways too).
  */
-import { verifyReceiptSignature, type ReceiptPayload } from '@hap/core';
+import { verifyTicketSignature, type TicketPayload } from '@hap/core';
 import { AttestationCache, AsKeyMismatchError } from './attestation-cache';
 import { hashToolArgs } from './execution-journal';
 
@@ -143,7 +148,7 @@ export async function verifyTicket(
 ): Promise<void> {
   // Throws AsKeyMismatchError on its own if the pin disagrees with the live
   // key — propagate as-is, this IS the check we need.
-  const publicKeyHex = await cache.getPublicKey();
+  const trustedIssuer = await cache.getTrustedIssuer();
 
   if (typeof receipt.signature !== 'string' || !receipt.signature) {
     throw new AsKeyMismatchError('Ticket carries no signature — refusing to trust it.');
@@ -152,9 +157,11 @@ export async function verifyTicket(
   try {
     // hap-core canonicalizes and verifies over every field EXCEPT
     // `signature` — pass the receipt through unmodified (including any
-    // fields not in hap-core's own ReceiptPayload type) so this checks the
-    // EXACT bytes the Authority Server signed, not a re-shaped subset of them.
-    await verifyReceiptSignature(receipt as unknown as ReceiptPayload, publicKeyHex);
+    // fields not in hap-core's own TicketPayload type) so this checks the
+    // EXACT bytes the Authority Server signed, not a re-shaped subset of
+    // them. trustedIssuers restricts acceptance to the PINNED key's did:key
+    // — see the module doc comment, check 1.
+    await verifyTicketSignature(receipt as unknown as TicketPayload, { trustedIssuers: [trustedIssuer] });
   } catch (err) {
     throw new AsKeyMismatchError(
       `Ticket signature does not verify against the pinned Authority Server key — ` +

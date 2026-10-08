@@ -38,7 +38,7 @@ import { loadProfiles } from '../src/lib/profile-loader';
 import { loadManifests, getAllManifests, getManifest } from '../src/lib/manifest-loader';
 import { registerBuiltins } from '../src/lib/builtins';
 import { buildMandateBrief } from '../src/lib/mandate-brief';
-import { decodeAttestationBlob } from '@hap/core';
+import { decodeMandateBlob } from '@hap/core';
 import { executeCommitted, installCommittedExecutor, buildSkippedProposalNote } from '../src/tools/commitments';
 import { CommittedExecutor, ExecutorLock } from '../src/lib/committed-executor';
 import type { SPProposal } from '../src/lib/sp-client';
@@ -752,7 +752,7 @@ app.get('/internal/evidence', internalOnly, (_req: Request, res: Response) => {
     ...a,
     attestations: a.attestations.map(att => {
       try {
-        return { ...att, decoded: decodeAttestationBlob(att.blob) };
+        return { ...att, decoded: decodeMandateBlob(att.blob) };
       } catch {
         return att;
       }

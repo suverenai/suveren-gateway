@@ -4,9 +4,10 @@
  * Fetches from SP on-demand and caches with TTL awareness.
  */
 
-import { decodeMandateBlob, encodeDidKey, type Subject } from '@hap/core';
+import { decodeMandateBlob, type Subject } from '@hap/core';
 import { SPClient, type SPAttestationsResult, type SPPendingItem } from './sp-client';
 import { readPairing, fingerprintOf } from './as-pairing';
+import { issuerFromPublicKeyHex } from './issuer-from-hex';
 
 /**
  * Thrown by {@link AttestationCache.getPublicKey} when the Authority Server
@@ -135,7 +136,7 @@ export class AttestationCache {
    */
   async getTrustedIssuer(): Promise<string> {
     const hex = await this.getPublicKey();
-    return encodeDidKey(Buffer.from(hex, 'hex'));
+    return issuerFromPublicKeyHex(hex);
   }
 
   /**

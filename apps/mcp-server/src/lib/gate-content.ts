@@ -7,7 +7,7 @@
  */
 
 import { computeIntentHash } from '@hap/core';
-import { decodeAttestationBlob } from '@hap/core';
+import { decodeMandateBlob } from '@hap/core';
 import type { GateContent } from './gate-store';
 import type { CachedAuthorization } from './attestation-cache';
 
@@ -36,7 +36,7 @@ export function verifyGateContentHashes(
     return { valid: false, errors: ['No attestations available to verify against'] };
   }
 
-  const attestation = decodeAttestationBlob(auth.attestations[0].blob);
+  const attestation = decodeMandateBlob(auth.attestations[0].blob);
   const expectedHashes = attestation.payload.gate_content_hashes;
 
   if (!expectedHashes?.intent) {

@@ -14,7 +14,7 @@
  * Every dynamic string this module inserts outside that JSON block goes
  * through `escapeHtml`.
  */
-import { decodeAttestationBlob, getProfile } from '@hap/core';
+import { decodeMandateBlob, getProfile } from '@hap/core';
 import { escapeHtml, DRAWN_ELEMENT_STYLES, GLOSS_ON_STYLES, reportLegend, drawnElement, renderReportHtml, checkedValueLine } from './render-report';
 import { formatDateTime, UNDISCLOSED_OWNER_LABEL, withDrawingZone, zonedParts, offsetLabel } from './format';
 import type { ProofSummary, CoverageSummary, ReceiptArchiveReader } from './types';
@@ -63,7 +63,7 @@ function disclosedNames(blobs: string[]): Map<string, Set<string>> {
   const names = new Map<string, Set<string>>();
   for (const blob of blobs) {
     try {
-      for (const sub of decodeAttestationBlob(blob).payload.subjects ?? []) {
+      for (const sub of decodeMandateBlob(blob).payload.subjects ?? []) {
         if (sub.assurance === 'high' && sub.disclose?.name) {
           if (!names.has(sub.did)) names.set(sub.did, new Set());
           names.get(sub.did)!.add(sub.disclose.name);
@@ -80,7 +80,9 @@ function firstOwnerDids(auth: ArchivedAuthorization | undefined): string[] {
   const blob = auth?.attestations[0]?.blob;
   if (!blob) return [];
   try {
-    return decodeAttestationBlob(blob).payload.resolved_owners ?? [];
+    // v0.7: `resolved_owners` is gone — `mandate_owners` carries exactly
+    // one entry (Mandate rule 7); map to its `.did`.
+    return (decodeMandateBlob(blob).payload.mandate_owners ?? []).map(o => o.did);
   } catch {
     return [];
   }

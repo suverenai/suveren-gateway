@@ -6,23 +6,29 @@
  *
  * Uses Node's own `crypto.generateKeyPairSync('ed25519')` /
  * `crypto.sign(null, …)` — the same RFC 8032 Ed25519 scheme hap-core's
- * `verifyReceiptSignature` checks against (via @noble/ed25519), so a
+ * `verifyTicketSignature` checks against (via @noble/ed25519), so a
  * signature made here verifies for real. No mocking of the verification
  * itself — only the Authority Server's HTTP call is a test double.
+ *
+ * v0.7: `verifyTicketSignature` resolves the verification key from the
+ * ticket's own `issuer` did:key (never from a key supplied alongside it),
+ * so every test receipt now carries one matching its keypair.
  */
 import { generateKeyPairSync, sign as cryptoSign, type KeyObject } from 'node:crypto';
-import { canonicalize } from '@hap/core';
+import { canonicalize, encodeDidKey } from '@hap/core';
 
 export interface TestReceiptKeypair {
   privateKey: KeyObject;
   publicKeyHex: string;
+  issuer: string;
 }
 
 export function testReceiptKeypair(): TestReceiptKeypair {
   const { publicKey, privateKey } = generateKeyPairSync('ed25519');
   const raw = (publicKey.export({ format: 'jwk' }) as { x?: string }).x;
   if (!raw) throw new Error('test setup: could not extract raw Ed25519 public key');
-  return { privateKey, publicKeyHex: Buffer.from(raw, 'base64url').toString('hex') };
+  const rawBytes = Buffer.from(raw, 'base64url');
+  return { privateKey, publicKeyHex: rawBytes.toString('hex'), issuer: encodeDidKey(rawBytes) };
 }
 
 /** Sign an arbitrary receipt-shaped payload (no `signature` field yet). */
@@ -54,6 +60,7 @@ export function makeSignedReceipt(
       actionType: 'write',
       executionContext,
       timestamp: Math.floor(Date.now() / 1000),
+      issuer: kp.issuer,
       ...rest,
     },
     kp.privateKey,
