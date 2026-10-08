@@ -697,7 +697,7 @@ describe('reporting window (RR2) — simulation mode, and reporting@0.1 refused'
       for (const [name, args] of [['list_tickets', {}], ['get_ticket', { id: 'tk-1' }], ['list_cases', {}], ['get_records', { system: 'email' }]] as const) {
         const r = await createGatedToolHandler(t.tools[name], t.im, t.state)(args);
         expect(r.isError, name).toBe(true);
-        expect(r.content[0].text, name).toMatch(/older profile version — create a new reporting mandate \(reporting@0\.2\)/);
+        expect(r.content[0].text, name).toMatch(/older profile version — create a new reporting mandate/);
         expect(r.content[0].text, name).not.toContain('tk-1');
       }
       const w = await createGatedToolHandler(t.tools.write_report, t.im, t.state)({ html: '<sv-ai><p>x</p></sv-ai>' });

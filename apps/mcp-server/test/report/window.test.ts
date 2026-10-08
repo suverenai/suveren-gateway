@@ -12,7 +12,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { registerProfile } from '@hap/core';
+import { registerProfile, validateProfile, type AgentProfile } from '@hap/core';
 import {
   resolveReportWindow, windowArchive, windowExport, scopeReportSources, isInWindow,
   END_SKEW_SECONDS, OUTSIDE_WINDOW_PREFIX, type WindowAuthorization,
@@ -78,9 +78,28 @@ describe('resolveReportWindow', () => {
       const r = resolveReportWindow({ authorizations: [m01()], simulation, loadedAt, now: NOW });
       expect(r.ok).toBe(false);
       if (r.ok) return;
-      expect(r.reason).toBe('This reporting mandate is from an older profile version — create a new reporting mandate (reporting@0.2).');
+      expect(r.reason).toBe('This reporting mandate is from an older profile version — create a new reporting mandate.');
       expect(r.reason).not.toMatch(/simulat/i); // agent-facing (report.ts rule)
     }
+  });
+
+  // v0.7 regression: this refusal used to point at a HARDCODED version
+  // ("...create a new reporting mandate (reporting@0.2)."). The v0.7 switch
+  // proved exactly why that is fragile: reporting@0.2 itself is no longer
+  // issuable (its requiredGates still names the retired `decision_owner`
+  // gate -- hap-core's validateProfile refuses it, PROFILE_INVALID) once
+  // hap-profiles' v0.7 versions are live, so a message naming it as "the"
+  // fix would send someone to create a mandate the AS would then refuse.
+  // The message must never name a specific version.
+  it('the refusal never names a hardcoded profile version (one that itself could go stale)', () => {
+    const r = resolveReportWindow({ authorizations: [m01()], simulation: false, loadedAt: null, now: NOW });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.reason).not.toMatch(/@\d+\.\d+/);
+    // Demonstrates why: reporting@0.2 (what the old message pointed at) is
+    // itself PROFILE_INVALID under v0.7 -- never a safe thing to hardcode.
+    const errors = validateProfile(R02 as AgentProfile);
+    expect(errors.some((e) => e.message.includes('decision_owner'))).toBe(true);
   });
 
   it('REFUSAL: no reporting mandate (or only an incomplete one, or another profile)', () => {
