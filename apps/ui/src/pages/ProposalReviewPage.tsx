@@ -10,6 +10,8 @@ import { useSSEEvent } from '../contexts/EventSourceContext';
 import type { ToolDisplay } from '../lib/approval-view';
 import { resolveDomainFor } from '../lib/my-queue';
 import { ProfileRail } from '../components/ProfileRail';
+import { HumanOnlyNote } from '../components/HumanOnlyNote';
+import { isAutomatedBrowser, AUTOMATION_REFUSAL } from '../lib/automation';
 import { isTestSetupAction, profileIdentity } from '../lib/profile-identity';
 
 type QueueTab = 'awaiting-me' | 'awaiting-others' | 'all';
@@ -175,6 +177,8 @@ export function ProposalReviewPage() {
   useVisiblePolling(fetchThread, 30_000, `${domain}:${statusFilter}`);
 
   const handleResolve = async (id: string, action: 'commit' | 'reject') => {
+    // Automation that announces itself may not approve (defense in depth — lib/automation.ts).
+    if (action === 'commit' && isAutomatedBrowser()) { setMessage(AUTOMATION_REFUSAL); return; }
     setResolving(id);
     setMessage('');
     try {
@@ -242,6 +246,7 @@ export function ProposalReviewPage() {
         <p className="page-subtitle">
           Actions awaiting approval, plus recent activity from the last 7 days.
         </p>
+        <HumanOnlyNote what="approve" />
       </div>
 
       {/* Queue tab strip */}

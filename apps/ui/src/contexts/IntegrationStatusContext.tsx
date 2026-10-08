@@ -2,6 +2,8 @@ import { createContext, useCallback, useContext, useMemo, useRef, useState, type
 import { spClient, type IntegrationManifest, type McpIntegrationStatus } from '../lib/sp-client';
 import { useVisiblePolling } from '../hooks/useVisiblePolling';
 import { useSSEEvent } from './EventSourceContext';
+import { useSimulationMode } from '../hooks/useSimulationMode';
+import { declaresSimulation } from '../lib/simulation';
 
 export type IntegrationState =
   | 'loading'      // haven't fetched yet
@@ -183,11 +185,15 @@ export function IntegrationStatusProvider({ children }: { children: ReactNode })
     });
   }, [raw, anyNotRunning]);
 
+  // A real connector cannot run in simulation mode — never counted as an issue
+  // (same rule as integration-attention.ts's blockedBySimulation).
+  const simulationOn = useSimulationMode();
   const attentionCount = useMemo(
     () => entries.filter(
-      e => e.state === 'not-running' || e.state === 'error' || e.authStatus === 'failed',
+      e => !(simulationOn && !declaresSimulation(e.manifest))
+        && (e.state === 'not-running' || e.state === 'error' || e.authStatus === 'failed'),
     ).length,
-    [entries],
+    [entries, simulationOn],
   );
 
   const value: ContextValue = {

@@ -25,10 +25,20 @@ export interface AttentionItem {
  * one calm line instead); `starting` entries are handled separately by the
  * caller, same as before.
  */
-export function buildIntegrationAttentionItems(entries: IntegrationEntry[]): AttentionItem[] {
+/**
+ * A real connector (no manifest `simulation` marker) can never run while
+ * simulation mode is on — it is paused by design, so it is never something
+ * to fix: not in "Needs your attention", not in the Integrations badge.
+ */
+export function blockedBySimulation(e: IntegrationEntry, simulationOn: boolean): boolean {
+  return simulationOn && !declaresSimulation(e.manifest);
+}
+
+export function buildIntegrationAttentionItems(entries: IntegrationEntry[], simulationOn = false): AttentionItem[] {
   const items: AttentionItem[] = [];
 
   for (const e of entries) {
+    if (blockedBySimulation(e, simulationOn)) continue;
     if (e.state === 'error') {
       items.push({
         label: 'Integration error',

@@ -32,4 +32,7 @@ Apply this to whatever systems are connected: the header above lists each system
 - Sales, sending quotes and orders: review.
 - Email replies: review, recipients limited to the customers' domains.
 
+
+<!-- generated: limits -->
+
 Next: **brief**.

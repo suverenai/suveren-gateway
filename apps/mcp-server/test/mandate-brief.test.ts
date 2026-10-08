@@ -38,6 +38,17 @@ function mockLog(): ExecutionLog {
 }
 
 describe('buildMandateBrief', () => {
+  it('always carries the rules — never the gateway page, the key or an approval; only the Suveren tools', () => {
+    for (const sim of [undefined, '1']) {
+      if (sim) process.env.SUVEREN_SIMULATION = sim; else delete process.env.SUVEREN_SIMULATION;
+      const brief = buildMandateBrief({ authorizations: [] });
+      expect(brief).toContain('=== RULES ===');
+      expect(brief).toMatch(/Never open or operate the Suveren Gateway's web page/);
+      expect(brief).toMatch(/Use only the Suveren tools/);
+    }
+    delete process.env.SUVEREN_SIMULATION;
+  });
+
   it('includes Suveren preamble', () => {
     const brief = buildMandateBrief({ authorizations: [] });
     expect(brief).toContain('Human Agency Protocol');

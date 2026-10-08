@@ -4,7 +4,7 @@ Turn the confirmed cases into test data and load it into the simulated systems.
 
 ## Build the package
 
-One package feeds every simulated system. Its format, and how to build a good one, is described in the `load_simulation` tool of each simulated system — read it there; it is the authority. In short: the company's `name` and `currency`, the `customers`, `products` and `contacts` the cases need, and the `cases` themselves (each request as it arrived and the reply that was actually sent).
+One package feeds every simulated system. Its exact format is at the end of this guide (read from the simulated systems themselves), and how to build a good one is described there too. In short: the company's `name` and `currency`, the `customers`, `products` and `contacts` the cases need, and the `cases` themselves (each request as it arrived and the reply that was actually sent).
 
 - Include every customer, product and contact a case mentions, with stock, prices and credit limits that make each case answerable the way it really was.
 - Use only the renamed cases.
@@ -26,5 +26,8 @@ To run the same cases again under a different setup, or other cases under the sa
 Clear and load each count against the setup mandate's daily limit, so one re-run costs two per system. If the limit is too small, propose a new setup mandate with a higher limit.
 
 The real replies stay inside the simulated email system. They are never shown to the working AI; they exist for comparing afterwards.
+
+
+<!-- generated: package -->
 
 Next: **mandates**.

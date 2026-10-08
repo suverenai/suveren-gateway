@@ -4,6 +4,12 @@ Learn the company, the team and the work, and collect real cases. Nothing is loa
 
 You ask; the person answers and checks. Ask one topic at a time and write down what you learn.
 
+## Before you start: the systems
+
+Look at the systems in the header above. If a system the work needs is listed under **Available but not activated**, ask the person to activate it first (Integrations → its card → Activate) and read this guide again. Do not plan around a system you cannot see.
+
+Plan the test only with the actions the connected systems offer — the header lists each system's changes and reads. If the work needs an action no system offers (for example a refund when the ERP has only quotes and orders), say so and agree with the person on what to test instead. Never pretend a system can do more than it does.
+
 ## What to ask, in this order
 
 1. **Company:** what it sells, to whom, in which currency, and which systems it uses. The systems connected to this gateway are listed in the header above; ask about the ones that matter for the work.

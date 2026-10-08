@@ -21,6 +21,7 @@ import { formatTimeLeft } from '../lib/time-left';
 import { ProposalArgs } from './ProposalArgs';
 import { ProfileRail } from './ProfileRail';
 import { isTestSetupAction, profileIdentity } from '../lib/profile-identity';
+import { isAutomatedBrowser, AUTOMATION_REFUSAL } from '../lib/automation';
 import type { ToolDisplay } from '../lib/approval-view';
 
 
@@ -114,6 +115,8 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
   };
 
   const handleApprove = async () => {
+    // Automation that announces itself may not approve (defense in depth — lib/automation.ts).
+    if (isAutomatedBrowser()) { onMessage(AUTOMATION_REFUSAL); return; }
     setApproving(true);
     onMessage('');
     try {

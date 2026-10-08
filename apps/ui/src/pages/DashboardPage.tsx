@@ -174,7 +174,7 @@ export function DashboardPage() {
     });
   }
 
-  attentionItems.push(...buildIntegrationAttentionItems(integrationEntries));
+  attentionItems.push(...buildIntegrationAttentionItems(integrationEntries, simulationOn));
   for (const e of startingIntegrations) {
     attentionItems.push({
       label: 'Integration starting',
