@@ -20,7 +20,7 @@
  * `simulation: true`, the same rule as a manifest's `simulation` marker — a
  * built-in that could reach a real system must not run during a test.
  */
-import type { ProfileToolGating } from '@hap/core';
+import type { ProfileToolGating } from './tool-gating-types';
 
 /** What a tool returns — the same shape a connector's MCP tool call returns. */
 export interface BuiltinToolResult {

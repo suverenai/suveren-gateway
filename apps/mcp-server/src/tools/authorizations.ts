@@ -10,7 +10,6 @@ import type { SharedState } from '../lib/shared-state';
 import { lockedNotice } from '../lib/locked-notice';
 import type { IntegrationManager } from '../lib/integration-manager';
 import { getProfile } from '@hap/core';
-import type { ProfileToolGating } from '@hap/core';
 import { getConsumptionState, formatConsumptionCompact, formatConsumptionFull } from '../lib/consumption';
 import { readContextFile } from '../lib/context-loader';
 import { profileMatches } from '../lib/tool-proxy';
@@ -23,13 +22,23 @@ function shortProfileName(profileId: string): string {
   return parts[parts.length - 1];
 }
 
-/** Build a capability map for a profile from its toolGating + discovered tools */
+/**
+ * Build a capability map for a profile from the already-resolved per-tool
+ * gating (`tool.gating`, a `ToolGatingConfig` — integration-manager.ts's
+ * `resolveToolGating`) + discovered tools.
+ *
+ * Reads each tool's OWN resolved gating directly rather than re-deriving it
+ * from a profile-level `toolGating` block: hap-core 0.12 dropped
+ * `AgentProfile.toolGating` (never a protocol concept — see
+ * tool-gating-types.ts), and the manifest's per-tool entry was always the
+ * preferred source anyway (integration-manager.ts: "prefer manifest
+ * toolGating over profile's").
+ */
 function buildCapabilityMap(
   profileId: string,
-  toolGating: ProfileToolGating | undefined,
   integrationManager: IntegrationManager | undefined,
 ): string {
-  if (!integrationManager || !toolGating) return '';
+  if (!integrationManager) return '';
 
   const allTools = integrationManager.getAllTools();
   const shortName = shortProfileName(profileId);
@@ -49,15 +58,18 @@ function buildCapabilityMap(
       continue;
     }
 
-    const overrides = toolGating.overrides ?? {};
-    const override = overrides[tool.originalName];
+    const gating = tool.gating;
 
-    if (override === null) {
-      // Explicitly exempt from gating
+    if (gating.category === 'read') {
       readOnly.push(tool.originalName);
-    } else if (override !== undefined) {
-      // Has specific override — this is a gated tool
-      const mappingDesc = Object.entries(override.executionMapping ?? {})
+    } else if (gating.category === 'disabled') {
+      // Either explicitly disabled, or (disabledReason set) not described by
+      // any manifest entry — either way the gate refuses it; no permissive
+      // default exists to fall back on. Listing it as gated would tell the
+      // agent it may call something every call of which is refused.
+      undescribed.push(tool.originalName);
+    } else {
+      const mappingDesc = Object.entries(gating.executionMapping ?? {})
         .map(([arg, mapping]) => {
           if (typeof mapping === 'string') return `${mapping} from ${arg}`;
           if (Array.isArray(mapping)) return `${mapping.map(m => m.field).join('+')} from ${arg}`;
@@ -65,13 +77,8 @@ function buildCapabilityMap(
           return `${mapping.field} from ${arg}`;
         })
         .join(', ');
-      const actionType = override.staticExecution?.action_type ?? 'unknown';
+      const actionType = gating.staticExecution?.action_type ?? 'unknown';
       gated.push(`      - ${tool.originalName}: ${actionType}${mappingDesc ? `, ${mappingDesc}` : ''}`);
-    } else {
-      // No entry describes this tool, so the gate refuses it (there is no
-      // permissive default). Listing it as gated or default-gated would tell
-      // the agent it may call something every call of which is refused.
-      undescribed.push(tool.originalName);
     }
   }
 
@@ -215,7 +222,7 @@ export function listAuthorizationsHandler(
         // Capability map
         if (profile && integrationManager) {
           output.push('');
-          output.push(buildCapabilityMap(auth.profileId, profile.toolGating, integrationManager));
+          output.push(buildCapabilityMap(auth.profileId, integrationManager));
         }
 
         output.push('');

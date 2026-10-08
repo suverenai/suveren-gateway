@@ -7,7 +7,7 @@
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import type { ExecutionMappingValue, ProfileToolGating } from '@hap/core';
+import type { ExecutionMappingValue, ProfileToolGating } from './tool-gating-types';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
