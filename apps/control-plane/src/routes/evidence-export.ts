@@ -7,7 +7,7 @@
  *    issued, the attestation blobs they ran under, the issuer key at issuance,
  *    and the intent/context text whose hashes those attestations commit to.
  *    Covers only executions performed through THIS gateway.
- *  - AUTHORITY SERVER (/api/receipts/export, best-effort): the full account
+ *  - AUTHORITY SERVER (/api/tickets/export, best-effort): the full account
  *    history — other devices, review-mode approvals, up to the AS's index
  *    floor — available only while the account exists and the AS cooperates.
  *
@@ -60,7 +60,7 @@ export function createEvidenceExportRouter(
       try {
         const pin = readPairing(dataDir);
         const { res: asRes } = await fetchAs(
-          `${spUrl}/api/receipts/export`,
+          `${spUrl}/api/tickets/export`,
           { headers: { Cookie: cookie }, signal: controller.signal },
           {
             enforce: resolvePinTls(dataDir),

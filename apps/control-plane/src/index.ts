@@ -960,9 +960,9 @@ app.use(
         const path = url.split('?')[0];
 
         if (
-          (method === 'POST' && path === '/api/as/attest') ||
+          (method === 'POST' && path === '/api/as/mandate') ||
           (method === 'POST' && /^\/api\/attestations\/[^/]+\/revoke$/.test(path)) ||
-          (method === 'POST' && /^\/api\/authorizations\/[^/]+\/delete$/.test(path))
+          (method === 'POST' && /^\/api\/authorizations\/[^/]+\/(revoke|delete)$/.test(path))
         ) {
           eventBus.emit('attestation-changed');
           // Re-sync the MCP server's attestation cache against the AS.
