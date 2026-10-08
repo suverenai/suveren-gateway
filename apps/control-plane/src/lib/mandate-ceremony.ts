@@ -20,11 +20,13 @@
 import {
   allowedCommitmentModes,
   computeBoundsHash,
-  computeContextHash,
+  computeScopeHash,
   computeIntentHash,
+  computeProfileHash,
   isCommitmentModeAllowed,
   validateBoundsParams,
-  validateContextParams,
+  validateScopeParams,
+  PROTOCOL_VERSION,
   type AgentProfile,
 } from '@hap/core';
 
@@ -146,8 +148,8 @@ async function delegationWorkspace<G extends { id: string; name: string; isPerso
   groups: G[],
 ): Promise<G | undefined> {
   const personal = groups.find(g => g.isPersonal);
-  const mine = await deps.as('GET', '/api/attestations/mine?status=active');
-  const rows = (mine.status === 200 ? mine.body?.attestations ?? [] : []) as Array<{ profileId?: string; groupId?: string }>;
+  const mine = await deps.as('GET', '/api/mandates/mine?status=active');
+  const rows = (mine.status === 200 ? mine.body?.mandates ?? [] : []) as Array<{ profileId?: string; groupId?: string }>;
   const ids = new Set(rows.filter(r => r.profileId && shortOf(r.profileId) === 'delegation' && r.groupId).map(r => r.groupId!));
   const found = groups.filter(g => ids.has(g.id));
   if (found.length === 0) return personal;
@@ -204,7 +206,7 @@ export async function planMandate(req: MandateRequest, deps: CeremonyDeps): Prom
     }
   }
   const context = scalarRecord('scope', req.scope);
-  errors.push(...validateContextParams(context as never, profile).errors);
+  errors.push(...validateScopeParams(context as never, profile).errors);
   if (errors.length) refuse(`The mandate does not fit profile ${profile.id}: ${errors.join(' ')}`);
 
   if (!isCommitmentModeAllowed(profile, req.mode)) {
@@ -241,7 +243,7 @@ export async function createMandate(req: MandateRequest, deps: CeremonyDeps): Pr
   const user = deps.user!;
 
   const boundsHash = computeBoundsHash(plan.bounds as never, plan.profile);
-  const contextHash = computeContextHash(plan.context as never, plan.profile);
+  const scopeHash = computeScopeHash(plan.context as never, plan.profile);
   const intentHash = computeIntentHash(plan.intent);
   const ecHash = computeIntentHash(JSON.stringify({ profile: plan.profile.id, domain: plan.domain, group: plan.groupId }));
 
@@ -258,14 +260,17 @@ export async function createMandate(req: MandateRequest, deps: CeremonyDeps): Pr
   }
 
   const authorizationId = deps.newAuthorizationId();
-  const res = await deps.as('POST', '/api/as/attest', {
+  const res = await deps.as('POST', '/api/as/mandate', {
     authorization_id: authorizationId,
     profile_id: plan.profile.id,
+    profile_hash: computeProfileHash(plan.profile),
+    supported_versions: [PROTOCOL_VERSION],
     bounds: plan.bounds,
     bounds_hash: boundsHash,
-    context_hash: contextHash,
+    scope_hash: scopeHash,
     domain: plan.domain,
     did: user.did,
+    mandate_owners: [{ did: user.did }],
     gate_content_hashes: { intent: intentHash },
     execution_context_hash: ecHash,
     group_id: plan.groupId,
@@ -283,7 +288,7 @@ export async function createMandate(req: MandateRequest, deps: CeremonyDeps): Pr
   }
 
   try {
-    await deps.deliverGateContent({ authorizationId, boundsHash, contextHash, context: plan.context, gateContent: { intent: plan.intent } });
+    await deps.deliverGateContent({ authorizationId, boundsHash, contextHash: scopeHash, context: plan.context, gateContent: { intent: plan.intent } });
   } catch (err) {
     // Same rule as the sign page: a mandate whose intent never reached the
     // gateway must not stay active.
