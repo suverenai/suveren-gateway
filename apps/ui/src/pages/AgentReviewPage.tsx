@@ -44,6 +44,12 @@ interface AuthData {
    *  written before this flag existed; treated as "team" (the safe side —
    *  it can only block a ceremony the AS would refuse anyway, never unblock). */
   isPersonal?: boolean;
+  /** Set by Copy/Edit (AuthorizationsPage.handleCopy) when it moved this
+   *  mandate to a newer profile version — the original (pinned) profile id,
+   *  shown as a one-line notice below so the person sees the move before
+   *  signing. Absent for a brand-new mandate, or when the grant being
+   *  copied was already on the newest version. */
+  upgradedFromProfileId?: string;
 }
 
 export function AgentReviewPage() {
@@ -503,6 +509,18 @@ export function AgentReviewPage() {
         <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
           Review your mandate details before signing.
         </p>
+
+        {/* Copy/Edit moved this mandate to a newer profile version — the AS
+            refuses to sign a new one under the old version it was pinned to
+            (old versions stay listable for history, never issuable again). */}
+        {authData.upgradedFromProfileId && profile && (
+          <div className="hint-box" role="note" style={{ marginBottom: '1rem' }}>
+            <span className="hint-icon" aria-hidden="true">i</span>
+            <div className="hint-body">
+              Updated to {profileDisplayName(authData.profileId)} {profile.version} — the current version of this profile.
+            </div>
+          </div>
+        )}
 
         {error && <div className="error-message">{error}</div>}
 

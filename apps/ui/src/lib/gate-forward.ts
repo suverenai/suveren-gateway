@@ -37,13 +37,13 @@ export interface GateForwardArgs {
 }
 
 export function buildGateForwardArgs(result: AttestHashes, fields: GateForwardFields): GateForwardArgs {
-  // Lockstep guard: an attest result without an authorization_id means the
+  // Lockstep guard: a signing result without an authorization_id means the
   // Authority Server predates per-ceremony identity. Storing gate content
   // under any other key would silently reintroduce the fingerprint-merge
   // bug, so fail loudly instead.
   if (!result.authorization_id) {
     throw new Error(
-      'Attest result lacks authorization_id — the Authority Server predates ' +
+      'Signing result lacks authorization_id — the Authority Server predates ' +
       'per-ceremony identity. Update the Authority Server (lockstep deploy).',
     );
   }
