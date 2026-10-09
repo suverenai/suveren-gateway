@@ -47,7 +47,7 @@ afterEach(() => {
 });
 
 /** A delegation built-in with one review-only write tool (like S7's brief tool). */
-function delegationBuiltin(handler = vi.fn(async (args: Record<string, unknown>) => builtinText(`brief set (${String(args.receipt_id)})`)), simulation = true): {
+function delegationBuiltin(handler = vi.fn(async (args: Record<string, unknown>) => builtinText(`brief set (${String(args.ticket_id)})`)), simulation = true): {
   def: BuiltinIntegration; handler: typeof handler;
 } {
   return {
@@ -71,7 +71,7 @@ function delegationBuiltin(handler = vi.fn(async (args: Record<string, unknown>)
         description: 'Propose a new agent brief.',
         inputSchema: {
           type: 'object',
-          properties: { text: { type: 'string' }, receipt_id: { type: 'string' } },
+          properties: { text: { type: 'string' }, ticket_id: { type: 'string' } },
           required: ['text'],
         },
         handler,
@@ -234,7 +234,7 @@ describe('a built-in tool goes through the same gate as a connector tool', () =>
     expect(done.isError).toBeFalsy();
     expect(postReceipt).toHaveBeenCalledWith(expect.objectContaining({ proposalId: 'prop-1', action: 'setup__propose_brief' }));
     expect(handler).toHaveBeenCalledTimes(1);
-    expect(handler.mock.calls[0][0]).toMatchObject({ text: expect.stringContaining('new brief'), receipt_id: 'ticket-1' });
+    expect(handler.mock.calls[0][0]).toMatchObject({ text: expect.stringContaining('new brief'), ticket_id: 'ticket-1' });
   });
 
   it('automatic mandate (reporting): a second profile plugs in unchanged and runs with a ticket', async () => {
@@ -248,7 +248,7 @@ describe('a built-in tool goes through the same gate as a connector tool', () =>
       toolGating: { overrides: { write_report: { executionMapping: {}, staticExecution: { action_type: 'report' } } } } as unknown as BuiltinIntegration['toolGating'],
       tools: [{
         name: 'write_report', description: 'Store the report.',
-        inputSchema: { type: 'object', properties: { html: { type: 'string' }, receipt_id: { type: 'string' } } },
+        inputSchema: { type: 'object', properties: { html: { type: 'string' }, ticket_id: { type: 'string' } } },
         handler: write,
       }],
     });
@@ -259,7 +259,7 @@ describe('a built-in tool goes through the same gate as a connector tool', () =>
     expect(r.isError, r.content[0].text).toBeFalsy();
     expect(postReceipt).toHaveBeenCalledWith(expect.objectContaining({ action: 'report__write_report', actionType: 'report' }));
     expect(write).toHaveBeenCalledTimes(1);
-    expect(write.mock.calls[0][0]).toMatchObject({ receipt_id: 'ticket-1' });
+    expect(write.mock.calls[0][0]).toMatchObject({ ticket_id: 'ticket-1' });
   });
 
   it('a handler that throws is reported as a failed call', async () => {

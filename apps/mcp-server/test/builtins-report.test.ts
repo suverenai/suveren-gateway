@@ -9,7 +9,7 @@
  *
  * What must hold:
  * - under an automatic `reporting` mandate, write_report goes through the
- *   real tool-proxy, gets a ticket, the handler receives receipt_id, the
+ *   real tool-proxy, gets a ticket, the handler receives ticket_id, the
  *   report is stored + verified, and the AI gets a verification summary;
  * - read tools work with read_access: unlimited, and are refused with
  *   read_access: none — no data leaves either way;
@@ -380,7 +380,7 @@ describe('write_report', () => {
     const r = await createGatedToolHandler(tools.write_report, im, state)({ html: '<sv-ai><p>hello</p></sv-ai>' });
     expect(r.isError, r.content[0]?.text).toBeFalsy();
     expect(postReceipt).toHaveBeenCalledWith(expect.objectContaining({ action: 'report__write_report', actionType: 'report' }));
-    // content-binding.ts injects receipt_id because the input schema declares it.
+    // content-binding.ts injects ticket_id because the input schema declares it.
     expect(reportStore.getReport()?.html).toContain('hello');
     expect(r.content[0].text).toMatch(/stored/i);
     expect(r.content[0].text).toMatch(/0 element\(s\) verified, 0 warning\(s\), 0 not verifiable/);
@@ -410,7 +410,7 @@ describe('write_report', () => {
     cleanup();
   });
 
-  it('a ticket id reaches the handler via receipt_id, and the stored report is the actually-verified result', async () => {
+  it('a ticket id reaches the handler via ticket_id, and the stored report is the actually-verified result', async () => {
     const { tools, im, state, scenario, reportStore, cleanup } = setup([auth(REPORTING_BOUNDS)]);
     scenario.addTicket({ id: 'tk-real', action: 'erp__create_quote', authorizationId: 'authz-x', timestamp: nowS() - 1000 });
 

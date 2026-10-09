@@ -25,7 +25,7 @@ const PROFILE = {
 describe('argRows — every tool, no declaration', () => {
   it('labels from the key, hint from the schema, kind from the value; hides the ticket reference', () => {
     const rows = argRows(
-      { to: ['a@x.example', 'b@x.example'], subject: 'Hi', body: 'Line 1\nLine 2', receipt_id: 'r1', meta: { a: 1 } },
+      { to: ['a@x.example', 'b@x.example'], subject: 'Hi', body: 'Line 1\nLine 2', ticket_id: 'r1', meta: { a: 1 } },
       { inputSchema: { properties: { subject: { description: 'Subject line' }, to: {}, body: {} } } },
     );
     expect(rows.map((r) => [r.key, r.label, r.kind])).toEqual([
