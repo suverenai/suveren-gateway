@@ -17,6 +17,7 @@ import { IntegrationsPage } from './pages/IntegrationsPage';
 import { GroupsPage } from './pages/GroupsPage';
 import { AuthorizationsPage } from './pages/AuthorizationsPage';
 import { AuditPage } from './pages/AuditPage';
+import { BlockedPage } from './pages/BlockedPage';
 import { SettingsServicesPage } from './pages/SettingsServicesPage';
 import { ProposalReviewPage } from './pages/ProposalReviewPage';
 import { AgentBriefPage } from './pages/AgentBriefPage';
@@ -59,6 +60,7 @@ function AppRoutes() {
         <Route path="/integrations" element={<IntegrationsPage />} />
         <Route path="/team" element={<GroupsPage />} />
         <Route path="/tickets" element={<AuditPage />} />
+        <Route path="/blocked" element={<BlockedPage />} />
         <Route path="/approvals" element={<ProposalReviewPage />} />
         <Route path="/reports" element={<ReportsPage />} />
         {/* Pre-v0.7 addresses: bookmarks and links already sent keep working. */}
