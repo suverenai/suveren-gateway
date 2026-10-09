@@ -479,6 +479,29 @@ export interface BuiltinStatus {
  * a field the AS never sends — so the list was always empty and the sign page
  * silently skipped encrypting the intent for a team's approvers.
  */
+/**
+ * A human-readable message from a failed response body, for every call this
+ * client makes. v0.7 protocol refusals (attest, revoke, …) answer the spec
+ * envelope `{ approved: false, errors: [{ code, message, field? }] }` — read
+ * `errors[0]` first. Control-plane-local endpoints (vault, groups, settings,
+ * integrations, …) still answer the legacy `{ error }` / `{ detail }` shape;
+ * those are the fallback, never the primary read, so a protocol refusal is
+ * never silently swallowed into "Failed: 422". One place for every caller
+ * below, instead of re-deriving this per method (and re-missing the new
+ * envelope per method, which is exactly how this bug happened).
+ */
+export function asErrorMessage(body: unknown, fallback: string): string {
+  const b = (body ?? {}) as {
+    errors?: Array<{ code?: string; message?: string }>;
+    error?: string;
+    detail?: string;
+  };
+  const first = Array.isArray(b.errors) ? b.errors[0] : undefined;
+  if (first?.message) return first.code ? `${first.message} (${first.code})` : first.message;
+  if (first?.code) return first.code;
+  return b.error || b.detail || fallback;
+}
+
 export function parseApproverPubkeys(data: unknown): Array<{ userId: string; publicKey: string }> {
   const map = (data as { pubkeys?: unknown })?.pubkeys;
   if (!map || typeof map !== 'object' || Array.isArray(map)) return [];
@@ -540,7 +563,7 @@ class SPClient {
     }
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Invalid API key' }));
-      throw new Error(err.error || `Login failed: ${res.status}`);
+      throw new Error(asErrorMessage(err, `Login failed: ${res.status}`));
     }
     const data = await res.json();
     return data.user;
@@ -622,7 +645,7 @@ class SPClient {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Unknown error' }));
-      throw new Error(err.error || `Attest failed: ${res.status}`);
+      throw new Error(asErrorMessage(err, `Signing failed: ${res.status}`));
     }
     return res.json();
   }
@@ -701,7 +724,7 @@ class SPClient {
     const res = await this.fetch('/api/evidence-export');
     const bundle = (await res.json()) as Record<string, unknown>;
     if (!res.ok) {
-      throw new Error((bundle as { error?: string }).error ?? `Export failed (${res.status})`);
+      throw new Error(asErrorMessage(bundle, `Export failed (${res.status})`));
     }
     const filename =
       /filename="([^"]+)"/.exec(res.headers.get('content-disposition') ?? '')?.[1] ??
@@ -742,7 +765,7 @@ class SPClient {
     const res = await this.fetch('/api/report');
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: `Report unavailable (${res.status})` }));
-      throw new Error((err as { error?: string }).error ?? `Report unavailable (${res.status})`);
+      throw new Error(asErrorMessage(err, `Report unavailable (${res.status})`));
     }
     return res.json();
   }
@@ -751,7 +774,7 @@ class SPClient {
     const res = await this.fetch('/api/report', { method: 'POST', body: JSON.stringify({ html }) });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: `Save failed (${res.status})` }));
-      throw new Error((err as { error?: string }).error ?? `Save failed (${res.status})`);
+      throw new Error(asErrorMessage(err, `Save failed (${res.status})`));
     }
     return res.json();
   }
@@ -760,7 +783,7 @@ class SPClient {
     const res = await this.fetch('/api/report/recheck', { method: 'POST' });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: `Recheck failed (${res.status})` }));
-      throw new Error((err as { error?: string }).error ?? `Recheck failed (${res.status})`);
+      throw new Error(asErrorMessage(err, `Recheck failed (${res.status})`));
     }
     return res.json();
   }
@@ -774,7 +797,7 @@ class SPClient {
     const res = await this.fetch('/api/report/export');
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: `Export failed (${res.status})` }));
-      throw new Error((err as { error?: string }).error ?? `Export failed (${res.status})`);
+      throw new Error(asErrorMessage(err, `Export failed (${res.status})`));
     }
     const html = await res.text();
     const filename =
@@ -790,7 +813,7 @@ class SPClient {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Failed to revoke' }));
-      throw new Error(err.error || `Revoke failed: ${res.status}`);
+      throw new Error(asErrorMessage(err, `Revoke failed: ${res.status}`));
     }
   }
 
@@ -816,7 +839,7 @@ class SPClient {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Unknown error' }));
-      throw new Error(err.error || `Create group failed: ${res.status}`);
+      throw new Error(asErrorMessage(err, `Create group failed: ${res.status}`));
     }
     const data = await res.json();
     const g = data.group || data;
@@ -830,7 +853,7 @@ class SPClient {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Unknown error' }));
-      throw new Error(err.error || `Join group failed: ${res.status}`);
+      throw new Error(asErrorMessage(err, `Join group failed: ${res.status}`));
     }
     const data = await res.json();
     const g = data.group || data;
@@ -843,7 +866,7 @@ class SPClient {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Unknown error' }));
-      throw new Error(err.error || `Invite failed: ${res.status}`);
+      throw new Error(asErrorMessage(err, `Invite failed: ${res.status}`));
     }
     return res.json();
   }
@@ -878,7 +901,7 @@ class SPClient {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Failed to set pubkey' }));
-      throw new Error(err.error || `setPubkey failed: ${res.status}`);
+      throw new Error(asErrorMessage(err, `setPubkey failed: ${res.status}`));
     }
   }
 
@@ -896,7 +919,7 @@ class SPClient {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Failed to leave team' }));
-      throw new Error(err.error || `Leave failed: ${res.status}`);
+      throw new Error(asErrorMessage(err, `Leave failed: ${res.status}`));
     }
   }
 
@@ -991,7 +1014,7 @@ class SPClient {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'AI request failed' }));
-      return { success: false, error: err.error, disclaimer: 'AI surfaces reality. You supply intent.' };
+      return { success: false, error: asErrorMessage(err, 'AI request failed'), disclaimer: 'AI surfaces reality. You supply intent.' };
     }
     return res.json();
   }
@@ -1015,7 +1038,7 @@ class SPClient {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'AI request failed' }));
-      return { success: false, error: err.error };
+      return { success: false, error: asErrorMessage(err, 'AI request failed') };
     }
     return res.json();
   }
@@ -1100,7 +1123,7 @@ class SPClient {
     );
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: `Discovery failed: ${res.status}` }));
-      throw new Error((err as { error: string }).error);
+      throw new Error(asErrorMessage(err, `Discovery failed: ${res.status}`));
     }
     return res.json();
   }
@@ -1109,7 +1132,7 @@ class SPClient {
     const res = await this.fetch(`/mcp/integrations/${encodeURIComponent(id)}/activate`, { method: 'POST' });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Failed' }));
-      throw new Error(err.error || `Failed: ${res.status}`);
+      throw new Error(asErrorMessage(err, `Failed: ${res.status}`));
     }
     return res.json();
   }
@@ -1132,7 +1155,7 @@ class SPClient {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-      throw new Error((err as { error: string }).error);
+      throw new Error(asErrorMessage(err, `HTTP ${res.status}`));
     }
   }
 
@@ -1169,7 +1192,7 @@ class SPClient {
     );
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Failed to set profile config' }));
-      throw new Error((err as { error: string }).error || `setTeamProfileConfig failed: ${res.status}`);
+      throw new Error(asErrorMessage(err, `setTeamProfileConfig failed: ${res.status}`));
     }
   }
 
@@ -1192,7 +1215,7 @@ class SPClient {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Encryption failed' }));
-      throw new Error((err as { error: string }).error || `encryptIntent failed: ${res.status}`);
+      throw new Error(asErrorMessage(err, `encryptIntent failed: ${res.status}`));
     }
     return res.json();
   }
@@ -1230,7 +1253,7 @@ class SPClient {
     );
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Failed to delete profile config' }));
-      throw new Error((err as { error: string }).error || `deleteTeamProfileConfig failed: ${res.status}`);
+      throw new Error(asErrorMessage(err, `deleteTeamProfileConfig failed: ${res.status}`));
     }
   }
 
@@ -1270,7 +1293,7 @@ class SPClient {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Failed' }));
-      throw new Error(err.error || `Failed: ${res.status}`);
+      throw new Error(asErrorMessage(err, `Failed: ${res.status}`));
     }
     return res.json();
   }
@@ -1298,7 +1321,7 @@ class SPClient {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Failed' }));
-      throw new Error((err as { error: string }).error || `approveProposal failed: ${res.status}`);
+      throw new Error(asErrorMessage(err, `approveProposal failed: ${res.status}`));
     }
     return res.json();
   }
@@ -1314,7 +1337,7 @@ class SPClient {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Failed' }));
-      throw new Error((err as { error: string }).error || `rejectProposal failed: ${res.status}`);
+      throw new Error(asErrorMessage(err, `rejectProposal failed: ${res.status}`));
     }
     return res.json();
   }
@@ -1350,7 +1373,7 @@ class SPClient {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Decryption failed' }));
-      throw new Error((err as { error: string }).error || `decryptIntent failed: ${res.status}`);
+      throw new Error(asErrorMessage(err, `decryptIntent failed: ${res.status}`));
     }
     const data = await res.json() as { intent: string };
     return data.intent;
@@ -1367,7 +1390,7 @@ class SPClient {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Failed' }));
-      throw new Error((err as { error: string }).error || `storeApprovedIntent failed: ${res.status}`);
+      throw new Error(asErrorMessage(err, `storeApprovedIntent failed: ${res.status}`));
     }
   }
 
@@ -1597,7 +1620,7 @@ class SPClient {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Failed to push gate content' }));
-      throw new Error(err.error || `Push gate content failed: ${res.status}`);
+      throw new Error(asErrorMessage(err, `Push gate content failed: ${res.status}`));
     }
   }
 
@@ -1617,7 +1640,7 @@ class SPClient {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Failed to save agent context' }));
-      throw new Error((err as { error: string }).error || `Save failed: ${res.status}`);
+      throw new Error(asErrorMessage(err, `Save failed: ${res.status}`));
     }
   }
 
@@ -1634,7 +1657,7 @@ class SPClient {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'AI chat failed' }));
-      return { success: false, error: (err as { error: string }).error || `Chat failed: ${res.status}` };
+      return { success: false, error: asErrorMessage(err, `Chat failed: ${res.status}`) };
     }
     return res.json() as Promise<{ success: boolean; reply?: string; error?: string }>;
   }
@@ -1655,7 +1678,7 @@ class SPClient {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Save failed' }));
-      throw new Error((err as { error: string }).error || `Save failed: ${res.status}`);
+      throw new Error(asErrorMessage(err, `Save failed: ${res.status}`));
     }
   }
 }
