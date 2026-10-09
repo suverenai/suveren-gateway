@@ -6,10 +6,33 @@
  * saved draft as a sent email — trading an ugly card for a lying one. The label
  * therefore comes from the connector manifest, and an undeclared tool falls
  * back to something flat and true.
+ *
+ * A second trap, pinned since AU1: "allowed"/"used" must come from the
+ * profile's own schema (`scopeSchema.fields[key].displayName`,
+ * `boundsSchema.fields[key].boundType`) — never from a presumed field-name
+ * convention (`allowed_` prefix, `_daily_max` suffix). `charge`'s scope fields
+ * (`currency`, `action_type`) and a bound literally named `weekly_cap` with
+ * `window: "daily"` are the counter-examples that would silently break under
+ * the old name-pattern logic.
  */
 import { describe, it, expect } from 'vitest';
+import type { AgentProfile } from '@hap/core';
 import { actionLabel, scopeSummary, wasReviewed, profileVersionLabel, splitAction, usageSummary, allowedSummary } from './receipt-summary';
 import type { ExecutionReceipt, IntegrationManifest } from './sp-client';
+
+/** Minimal profile fixture — only the schema shapes these functions read. */
+function profile(over: {
+  scopeFields?: Record<string, unknown>;
+  boundsFields?: Record<string, unknown>;
+} = {}): AgentProfile {
+  return {
+    id: 'test/profile@1', version: '1', description: '',
+    executionContextSchema: { fields: {} },
+    requiredGates: [], ttl: { default: 0, max: 0 }, retention_minimum: 0,
+    scopeSchema: { keyOrder: [], fields: over.scopeFields ?? {} },
+    boundsSchema: { keyOrder: [], fields: over.boundsFields ?? {} },
+  } as unknown as AgentProfile;
+}
 
 const GMAIL = {
   id: 'gmail',
@@ -91,6 +114,16 @@ describe('scopeSummary — scope only, because receipts carry no content', () =>
     expect(out).toBe('a@x.com');
     expect(out).not.toMatch(/send|2/);
   });
+
+  it('with a profile, reads scope fields by their declared key — not an allowed_ prefix', () => {
+    // charge's real scope fields are "currency" and "action_type", neither
+    // prefixed — the allowed_* heuristic would find nothing here.
+    const chargeProfile = profile({ scopeFields: { currency: { displayName: 'Currency' } } });
+    const out = scopeSummary(receipt({
+      executionContext: { action_type: 'charge', currency: 'EUR', amount: 10 },
+    }), chargeProfile);
+    expect(out).toBe('EUR');
+  });
 });
 
 describe('supporting bits', () => {
@@ -110,32 +143,62 @@ describe('supporting bits', () => {
   });
 });
 
-describe('usageSummary — consumption paired with its limit', () => {
-  it('pairs the count with the bound for THIS action type', () => {
+describe('usageSummary — consumption paired with its limit, read from boundType', () => {
+  it('pairs the count with the bound declared for THIS action type via appliesTo', () => {
     const r = receipt({
       actionType: 'release',
       cumulativeState: { daily: { amount: 0, count: 2 }, monthly: { amount: 0, count: 9 } },
     });
-    // Two windows AND a decoy bound for a different action type.
     const bounds = { release_daily_max: 5, release_monthly_max: 30, write_daily_max: 99 };
-    expect(usageSummary(r, bounds)).toBe('2 of 5 today · 9 of 30 this month');
+    const p = profile({
+      boundsFields: {
+        release_daily_max: { boundType: { kind: 'cumulative_count', window: 'daily' }, appliesTo: ['release'] },
+        release_monthly_max: { boundType: { kind: 'cumulative_count', window: 'monthly' }, appliesTo: ['release'] },
+        write_daily_max: { boundType: { kind: 'cumulative_count', window: 'daily' }, appliesTo: ['write'] },
+      },
+    });
+    expect(usageSummary(r, bounds, p)).toBe('2 of 5 today · 9 of 30 this month');
   });
 
-  it('uses the summed amount for amount-shaped bounds, not the call count', () => {
+  it('a bound governs by window, never by its name — "weekly_cap" with window "daily" is a daily bound', () => {
+    const r = receipt({
+      actionType: 'release',
+      cumulativeState: { daily: { amount: 0, count: 3 } } as ExecutionReceipt['cumulativeState'],
+    });
+    const bounds = { weekly_cap: 10 };
+    const p = profile({
+      boundsFields: {
+        weekly_cap: { boundType: { kind: 'cumulative_count', window: 'daily' }, appliesTo: ['release'] },
+      },
+    });
+    expect(usageSummary(r, bounds, p)).toBe('3 of 10 today');
+  });
+
+  it('uses the summed amount for cumulative_sum bounds, not the call count', () => {
     const r = receipt({
       actionType: 'charge',
       cumulativeState: { daily: { amount: 45, count: 3 }, monthly: { amount: 45, count: 3 } },
     });
-    expect(usageSummary(r, { amount_daily_max: 100 })).toContain('45 of 100 today');
+    const p = profile({
+      boundsFields: {
+        amount_daily_max: { boundType: { kind: 'cumulative_sum', of: 'amount', window: 'daily' } },
+      },
+    });
+    expect(usageSummary(r, { amount_daily_max: 100 }, p)).toContain('45 of 100 today');
   });
 
-  it('never invents a denominator when no bound matches', () => {
+  it('never invents a denominator when no bound applies to this action type', () => {
     const r = receipt({
       actionType: 'release',
       cumulativeState: { daily: { amount: 0, count: 2 }, monthly: { amount: 0, count: 2 } },
     });
-    // Ambiguous: two bounds, neither for this action type → no guessing.
-    const out = usageSummary(r, { write_daily_max: 5, post_daily_max: 7 });
+    const p = profile({
+      boundsFields: {
+        write_daily_max: { boundType: { kind: 'cumulative_count', window: 'daily' }, appliesTo: ['write'] },
+        post_daily_max: { boundType: { kind: 'cumulative_count', window: 'daily' }, appliesTo: ['post'] },
+      },
+    });
+    const out = usageSummary(r, { write_daily_max: 5, post_daily_max: 7 }, p);
     expect(out).toContain('2 calls today');
     expect(out).not.toContain('of 5');
     expect(out).not.toContain('of 7');
@@ -145,20 +208,49 @@ describe('usageSummary — consumption paired with its limit', () => {
     const r = receipt({ cumulativeState: { daily: { amount: 0, count: 1 }, monthly: { amount: 0, count: 4 } } });
     expect(usageSummary(r, undefined)).toBe('1 call today · 4 calls this month');
   });
+
+  it('without a profile, never guesses a bound from the key — bare count only', () => {
+    // Pre-AU1, this exact dict would have paired via a `_daily_max` suffix
+    // match. With no profile there is no boundType to read, so no bound can
+    // be identified — even though a bound happens to exist with this name.
+    const r = receipt({
+      actionType: 'release',
+      cumulativeState: { daily: { amount: 0, count: 2 }, monthly: { amount: 0, count: 0 } },
+    });
+    const out = usageSummary(r, { release_daily_max: 5 });
+    expect(out).toContain('2 calls today');
+    expect(out).not.toContain('of 5');
+  });
 });
 
 describe('allowedSummary — what the grant permits', () => {
-  it('renders local context values, dropping the bounds category', () => {
+  it('is empty when no local context is held, rather than inventing scope', () => {
+    expect(allowedSummary(undefined)).toBe('');
+  });
+
+  it('without a profile, falls back to the plain key — never a guessed label', () => {
     const out = allowedSummary({
       action_type: 'release',
       allowed_repos: 'org/repo',
       allowed_environments: 'production',
     });
-    expect(out).toBe('repos org/repo · environments production');
+    expect(out).toBe('allowed_repos org/repo · allowed_environments production');
     expect(out).not.toContain('action_type');
   });
 
-  it('is empty when no local context is held, rather than inventing scope', () => {
-    expect(allowedSummary(undefined)).toBe('');
+  it('with a profile, labels come from the scope schema\'s displayName — not a stripped prefix', () => {
+    const p = profile({
+      scopeFields: {
+        allowed_repos: { displayName: 'Repositories' },
+        allowed_environments: { displayName: 'Environments' },
+      },
+    });
+    const out = allowedSummary({ allowed_repos: 'org/repo', allowed_environments: 'production' }, p);
+    expect(out).toBe('Repositories org/repo · Environments production');
+  });
+
+  it('charge-style scope fields (no allowed_ prefix) resolve correctly with a profile', () => {
+    const p = profile({ scopeFields: { currency: { displayName: 'Currency' } } });
+    expect(allowedSummary({ currency: 'EUR' }, p)).toBe('Currency EUR');
   });
 });
