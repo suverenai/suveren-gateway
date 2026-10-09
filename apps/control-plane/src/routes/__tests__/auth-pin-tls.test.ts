@@ -155,17 +155,36 @@ function startFakeHttpsAs(cert: Cert, getKeypair: () => SigningKeypair, port = 0
     { cert: readFileSync(cert.certFile), key: readFileSync(cert.keyFile) },
     app,
   );
-  return new Promise((resolve) => {
-    server.listen(port, '127.0.0.1', () => {
-      const addr = server.address();
-      const assigned = typeof addr === 'object' && addr ? addr.port : port;
-      resolve({
-        url: `https://127.0.0.1:${assigned}`,
-        port: assigned,
-        close: () => new Promise<void>((r) => server.close(() => r())),
-        sessionCalls,
+  return new Promise((resolve, reject) => {
+    // Rebinding an explicit port right after closing it can briefly hit
+    // EADDRINUSE on CI (the socket is not released yet) — retry a few times
+    // instead of failing the suite on a race outside what it tests.
+    let attempts = 0;
+    const tryListen = () => {
+      attempts++;
+      server.once('error', (err: NodeJS.ErrnoException) => {
+        if (err.code === 'EADDRINUSE' && port !== 0 && attempts < 20) {
+          setTimeout(tryListen, 100);
+          return;
+        }
+        reject(err);
       });
-    });
+      server.listen(port, '127.0.0.1', () => {
+        server.removeAllListeners('error');
+        const addr = server.address();
+        const assigned = typeof addr === 'object' && addr ? addr.port : port;
+        resolve({
+          url: `https://127.0.0.1:${assigned}`,
+          port: assigned,
+          // closeAllConnections: the gateway's fetch keeps connections alive,
+          // and close() alone waits for them — the test then timed out and the
+          // port stayed bound for the rebind (seen in CI).
+          close: () => new Promise<void>((r) => { server.close(() => r()); server.closeAllConnections(); }),
+          sessionCalls,
+        });
+      });
+    };
+    tryListen();
   });
 }
 
