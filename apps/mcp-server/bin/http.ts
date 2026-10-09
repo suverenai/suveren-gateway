@@ -565,6 +565,9 @@ app.post('/internal/stop-all-running', internalOnly, async (_req: Request, res: 
 
 const sseSessions = new Map<string, SSEServerTransport>();
 
+/** The MCP SDK's own body for an unknown session (JSON-RPC error -32001). */
+const SESSION_NOT_FOUND = { jsonrpc: '2.0', error: { code: -32001, message: 'Session not found' }, id: null } as const;
+
 // GET /sse and a POST /mcp without a session id open a session; everything
 // else continues one (and is tied to it by the session id).
 const guardAgent = agentAccess(
@@ -597,7 +600,10 @@ app.post('/messages', guardAgent, async (req: Request, res: Response) => {
   const sessionId = req.query.sessionId as string;
   const transport = sseSessions.get(sessionId);
   if (!transport) {
-    res.status(400).json({ error: 'Unknown session' });
+    // 404, not 400: the MCP transport spec tells a client that gets 404 for
+    // its session to open a new one — after a gateway restart that is what
+    // lets assistants reconnect without being restarted themselves.
+    res.status(404).json(SESSION_NOT_FOUND);
     return;
   }
   await transport.handlePostMessage(req, res, req.body);
@@ -644,6 +650,13 @@ app.all('/mcp', guardAgent, async (req: Request, res: Response) => {
       return;
     }
 
+    // A session id we do not know (the gateway restarted, or the session
+    // closed): 404 per the MCP Streamable HTTP spec ("Session Management"),
+    // so the client re-initializes on its own. 400 made clients give up.
+    if (sessionId) {
+      res.status(404).json(SESSION_NOT_FOUND);
+      return;
+    }
     res.status(400).json({ error: 'Bad request — missing or invalid session' });
   } else {
     res.status(405).json({ error: 'Method not allowed' });
