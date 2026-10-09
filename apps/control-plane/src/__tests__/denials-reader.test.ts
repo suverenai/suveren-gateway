@@ -47,6 +47,45 @@ describe('loadDenials (control-plane reads what the MCP server wrote)', () => {
     expect(got[0].detail).toBe('SENTINEL');
     expect(got[0].target).toBe('Family');
   });
+
+  // AU2 (work-plan.md "Added 2026-10-09") — the MCP server now also writes
+  // write/AS/simulation/not-authorized refusals (kind !== 'read') with the
+  // extra fields below. The control-plane side is a generic pass-through
+  // (same file, same crypto), so a round-trip proves the new fields survive
+  // encryption exactly like the original read-denial shape did above.
+  it('round-trips an AU2 blocked-write record (kind, mandate, field, value, limit, who, code)', () => {
+    const dir = tmp();
+    writeFileSync(join(dir, 'denials.json'), JSON.stringify({
+      version: 1,
+      records: [rec({
+        reason: undefined,
+        kind: 'bound',
+        detail: 'Refused locally by the Gatekeeper.',
+        mandateId: 'authz_e0000000-0000-4000-8000-00000000e001',
+        field: 'recipient_count',
+        value: 5,
+        limit: 3,
+        who: 'gateway',
+        code: 'BOUND_EXCEEDED',
+      })],
+    }));
+    const [got] = loadDenials(dir, () => { throw new Error('no'); });
+    expect(got.kind).toBe('bound');
+    expect(got.mandateId).toBe('authz_e0000000-0000-4000-8000-00000000e001');
+    expect(got.field).toBe('recipient_count');
+    expect(got.value).toBe(5);
+    expect(got.limit).toBe(3);
+    expect(got.who).toBe('gateway');
+    expect(got.code).toBe('BOUND_EXCEEDED');
+  });
+
+  it('an older on-disk record with no `kind` still loads — callers must treat it as a read block', () => {
+    const dir = tmp();
+    writeFileSync(join(dir, 'denials.json'), JSON.stringify({ version: 1, records: [rec({ reason: 'age' })] }));
+    const [got] = loadDenials(dir, () => { throw new Error('no'); });
+    expect(got.kind).toBeUndefined();
+    expect(got.reason).toBe('age');
+  });
 });
 
 describe('selectDenials', () => {
