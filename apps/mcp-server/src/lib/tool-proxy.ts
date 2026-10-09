@@ -594,7 +594,9 @@ function createGatedToolHandlerInner(
     const reasons = [...new Set(refusals)].join(' ');
     recordBlocked(state, tool, {
       kind: 'not_authorized',
-      detail: reasons || `No active authorization matching profile "${profile}".`,
+      // Fixed text only: `reasons` can name resources or correspondents (read
+      // refusals), and a blocked-action record carries no content.
+      detail: `No active authorization matching profile "${profile}".`,
       field: profile,
       who: 'gateway',
       code: 'NO_MATCHING_MANDATE',
