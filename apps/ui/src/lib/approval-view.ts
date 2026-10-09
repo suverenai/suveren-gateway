@@ -74,6 +74,22 @@ export function argRows(args: Record<string, unknown>, display?: ToolDisplay): A
   return rows;
 }
 
+/**
+ * Label for one execution-context / scope key — read from the profile's
+ * scope schema (`displayName`, `description`); the schema's own field, not a
+ * guess from the key's shape. Falls back to the plain key when the profile
+ * (or this field within it) is unavailable — an old grant, an unknown
+ * profile, or a field the schema doesn't declare (`action_type`,
+ * `recipient_count`: execution-only, not scope).
+ */
+export function contextFieldLabel(
+  key: string,
+  profile: AgentProfile | null | undefined,
+): { label: string; hint?: string } {
+  const field = profile?.scopeSchema?.fields?.[key];
+  return field ? { label: field.displayName ?? key, hint: field.description } : { label: key };
+}
+
 export interface FieldLine {
   key: string;
   label: string;
