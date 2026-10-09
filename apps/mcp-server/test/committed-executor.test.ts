@@ -159,7 +159,7 @@ function buildState(dir: string, postReceipt: ReturnType<typeof vi.fn>) {
   const record = vi.fn();
   const state = {
     spClient: { postReceipt },
-    cache: { getAllAuthorizations: () => [], getPublicKey: async () => kp.publicKeyHex },
+    cache: { getAllAuthorizations: () => [], getPublicKey: async () => kp.publicKeyHex, getTrustedIssuer: async () => kp.issuer },
     // A local record matching PROPOSAL exactly — commitments.ts now REFUSES
     // to execute a proposal with no matching local submission record.
     proposalSubmissions: {
@@ -265,6 +265,7 @@ describe('executeCommitted × ExecutionJournal', () => {
       profileId: PROPOSAL.profileId,
       proposalId: PROPOSAL.id,
       timestamp: Math.floor(Date.now() / 1000),
+      issuer: kp.issuer,
     }, kp.privateKey);
     const postReceipt = vi.fn().mockResolvedValue({ receipt: idlessReceipt, idempotent: false });
     const { state } = buildState(dir, postReceipt);
@@ -273,5 +274,24 @@ describe('executeCommitted × ExecutionJournal', () => {
     expect(r.isError).toBe(true);
     expect(r.text).toMatch(/carries no id/);
     expect(callTool).not.toHaveBeenCalled();
+  });
+
+  // V8: fail-closed, write-ahead archive — same guarantee as the automatic
+  // path (tools.test.ts), exercised here on the review path's executor.
+  it('a failed local archive write blocks execution, even though the AS already issued the ticket', async () => {
+    const postReceipt = vi.fn().mockResolvedValue({ receipt: receiptFor('rcpt-1'), idempotent: false });
+    const { state } = buildState(dir, postReceipt);
+    const { ArchiveWriteError } = await import('../src/lib/receipt-archive');
+    (state.archiveReceipt as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new ArchiveWriteError('disk full (simulated)'),
+    );
+    const { im, callTool } = buildIntegrationManager();
+
+    const r = await executeCommitted(PROPOSAL, state, im);
+
+    expect(postReceipt).toHaveBeenCalledOnce();
+    expect(callTool).not.toHaveBeenCalled();
+    expect(r.isError).toBe(true);
+    expect(r.text).toMatch(/could not be archived locally/);
   });
 });

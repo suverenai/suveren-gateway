@@ -197,7 +197,7 @@ describe('verifyTicket', () => {
     it('rejects a ticket older than the freshness window', async () => {
       const kp = testReceiptKeypair();
       const receipt = signTestReceipt(
-        { id: 'r1', ...BASE, timestamp: Math.floor(Date.now() / 1000) - 10 * 60 },
+        { id: 'r1', ...BASE, timestamp: Math.floor(Date.now() / 1000) - 10 * 60, issuer: kp.issuer },
         kp.privateKey,
       );
       await expect(verifyTicket(cacheWithKey(kp.publicKeyHex), receipt, BASE))
@@ -207,7 +207,7 @@ describe('verifyTicket', () => {
     it('rejects a ticket timestamped implausibly in the future', async () => {
       const kp = testReceiptKeypair();
       const receipt = signTestReceipt(
-        { id: 'r1', ...BASE, timestamp: Math.floor(Date.now() / 1000) + 120 },
+        { id: 'r1', ...BASE, timestamp: Math.floor(Date.now() / 1000) + 120, issuer: kp.issuer },
         kp.privateKey,
       );
       await expect(verifyTicket(cacheWithKey(kp.publicKeyHex), receipt, BASE))
@@ -216,7 +216,7 @@ describe('verifyTicket', () => {
 
     it('rejects a ticket with no timestamp at all', async () => {
       const kp = testReceiptKeypair();
-      const receipt = signTestReceipt({ id: 'r1', ...BASE }, kp.privateKey);
+      const receipt = signTestReceipt({ id: 'r1', ...BASE, issuer: kp.issuer }, kp.privateKey);
       await expect(verifyTicket(cacheWithKey(kp.publicKeyHex), receipt, BASE))
         .rejects.toBeInstanceOf(TicketBindingMismatchError);
     });
@@ -224,7 +224,7 @@ describe('verifyTicket', () => {
     it('accepts a ticket within the clock-skew tolerance, slightly in the future', async () => {
       const kp = testReceiptKeypair();
       const receipt = signTestReceipt(
-        { id: 'r1', ...BASE, timestamp: Math.floor(Date.now() / 1000) + 5 },
+        { id: 'r1', ...BASE, timestamp: Math.floor(Date.now() / 1000) + 5, issuer: kp.issuer },
         kp.privateKey,
       );
       await expect(verifyTicket(cacheWithKey(kp.publicKeyHex), receipt, BASE)).resolves.toBeUndefined();

@@ -59,6 +59,12 @@ export interface MandateBriefOptions {
   executionLog?: ExecutionLog;
   integrationManager?: IntegrationManager;
   contextDir?: string;
+  /** V7 — shared-state.ts's `asVersionRefusal`. Non-null means the paired
+   *  Authority Server does not support this gateway's protocol version;
+   *  every gated tool call already refuses on its own (tool-proxy.ts), but
+   *  the agent should see this up front rather than discover it one
+   *  refused call at a time. */
+  asVersionRefusal?: string | null;
 }
 
 /**
@@ -78,6 +84,17 @@ export function buildMandateBrief(opts: MandateBriefOptions): string {
     'You MUST stay within these bounds — the Gatekeeper will reject actions that exceed them.',
   ];
 
+  // V7 — fail closed, up front: if the paired Authority Server does not
+  // support this gateway's protocol version, no gated action can run at
+  // all this session. Every individual call already refuses on its own;
+  // this says so once, before the agent tries the first one.
+  if (opts.asVersionRefusal) {
+    lines.push('');
+    lines.push('=== AUTHORITY SERVER INCOMPATIBLE — NO GATED ACTION WILL RUN ===');
+    lines.push('');
+    lines.push(opts.asVersionRefusal);
+  }
+
   // === CONTEXT === (from user-maintained context.md)
   const { brief: contextBrief } = getContextForBrief(contextDir);
   if (contextBrief) {
@@ -90,6 +107,25 @@ export function buildMandateBrief(opts: MandateBriefOptions): string {
   const active = authorizations.filter(a => a.complete);
   const pending = authorizations.filter(a => !a.complete);
   const now = Math.floor(Date.now() / 1000);
+
+  // Item 9 (re-approval UX) — generic, not per-profile: any authorization
+  // the AS has told us (via a VERSION_UNSUPPORTED ticket refusal) carries
+  // only a pre-0.7 mandate blob. Its own OWN section, ahead of the normal
+  // active list, so it is impossible to miss — the clear action is "ask
+  // the decision owner to re-approve it" (list-authorizations names it).
+  const needingReapproval = active.filter(a => a.needsReapproval);
+  if (needingReapproval.length > 0) {
+    lines.push('');
+    lines.push('=== NEEDS RE-APPROVAL ===');
+    lines.push('');
+    for (const auth of needingReapproval) {
+      lines.push(
+        `[${shortProfileName(auth.profileId)}] ${auth.authorizationId}: the Authority Server no longer ` +
+          'verifies this mandate\'s protocol version. Ask the decision owner to re-approve it.',
+      );
+    }
+    lines.push('');
+  }
 
   if (active.length > 0) {
     lines.push('');
@@ -135,7 +171,7 @@ export function buildMandateBrief(opts: MandateBriefOptions): string {
   }
 
   if (pending.length > 0) {
-    lines.push('=== PENDING (awaiting attestations) ===');
+    lines.push('=== PENDING (awaiting mandates) ===');
     lines.push('');
 
     for (const auth of pending) {

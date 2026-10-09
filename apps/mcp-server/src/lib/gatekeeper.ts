@@ -44,11 +44,15 @@ export class MCPGatekeeper {
     const auth = this.cache.getAuthorization(authorizationPath);
 
     if (!auth) {
+      // No mandate at all for this path, locally — the closest canonical
+      // fit is MANDATE_NOT_FOUND (protocol.md -> Error Codes: "no mandate
+      // blob is stored for this authorization"). `DOMAIN_NOT_COVERED` is
+      // not a canonical v0.7 code (CHANGELOG.md -> "Removed (no alias)").
       return {
         result: {
           approved: false,
           errors: [{
-            code: 'DOMAIN_NOT_COVERED',
+            code: 'MANDATE_NOT_FOUND',
             message: `No active authorization for "${authorizationPath}". A decision owner must grant authority via the Authority UI.`,
           }],
         },
@@ -58,11 +62,13 @@ export class MCPGatekeeper {
 
     if (!auth.complete) {
       const missing = auth.requiredDomains.filter(d => !auth.attestedDomains.includes(d));
+      // A required owner's mandate is missing — protocol.md -> Multi-Owner
+      // Coverage Rule names exactly this COVERAGE_INSUFFICIENT.
       return {
         result: {
           approved: false,
           errors: [{
-            code: 'DOMAIN_NOT_COVERED',
+            code: 'COVERAGE_INSUFFICIENT',
             message: `Authorization "${authorizationPath}" is pending. Missing domains: ${missing.join(', ')}`,
           }],
         },
@@ -70,15 +76,22 @@ export class MCPGatekeeper {
       };
     }
 
-    // Get SP public key — pinned at pairing (see as-pairing.ts). A mismatch
-    // here means the AS this URL now resolves to is not the one we paired
-    // with, which is exactly the case pinning exists to catch: refuse this
-    // action AND lock the gateway, the same fail-closed shape as a session
-    // that ended mid-flight (session-lock.ts), rather than quietly trusting
-    // whatever key just answered.
-    let publicKeyHex: string;
+    // Get the pinned Authority Server's did:key — pinned at pairing (see
+    // as-pairing.ts). A mismatch here means the AS this URL now resolves to
+    // is not the one we paired with, which is exactly the case pinning
+    // exists to catch: refuse this action AND lock the gateway, the same
+    // fail-closed shape as a session that ended mid-flight (session-lock.ts),
+    // rather than quietly trusting whatever key just answered.
+    //
+    // hap-core 0.12's `verify()` no longer takes a raw public key — it
+    // resolves the verification key from each mandate's own `issuer` DID and
+    // only ACCEPTS the ones named in `trustedIssuers` (protocol.md -> *Ticket
+    // Verification* step 1, applied identically to mandates). Passing the
+    // did:key derived from our pinned hex preserves the same property: a
+    // mandate whose issuer does not decode to exactly that key is rejected.
+    let trustedIssuer: string;
     try {
-      publicKeyHex = await this.cache.getPublicKey();
+      trustedIssuer = await this.cache.getTrustedIssuer();
     } catch (err) {
       if (err instanceof AsKeyMismatchError) {
         void notifyControlPlane('as-key-mismatch');
@@ -98,25 +111,25 @@ export class MCPGatekeeper {
     }
 
     const resolvedBounds = override?.bounds ?? auth.bounds ?? auth.frame;
-    const resolvedContext = override?.context ?? auth.context;
+    const resolvedScope = override?.context ?? auth.context;
 
     // Ensure profile is present with the full URI — needed for profile resolution.
     // The bounds may have the short name ('customers') or full URI; use full URI from auth.
-    const frame = { ...resolvedBounds, profile: auth.profileId };
+    const bounds = { ...resolvedBounds, profile: auth.profileId };
 
-    // Context carries the declared allowed set (e.g., allowed_recipients).
-    // hap-core's checkContextConstraints compares execution values against it
-    // to enforce subset/enum/pattern constraints. Required locally per spec —
-    // the SP only holds context_hash and cannot enforce context constraints.
+    // Scope carries the declared allowed set (e.g., allowed_recipients).
+    // hap-core's checkScopeConstraints compares execution values against it
+    // to enforce subset/enum constraints. Required locally per spec — the AS
+    // only holds scope_hash and cannot enforce scope constraints.
     const request: GatekeeperRequest = {
-      frame,
-      attestations: auth.attestations.map(a => a.blob),
+      bounds,
+      mandates: auth.attestations.map(a => a.blob),
       execution,
-      context: resolvedContext,
+      scope: resolvedScope,
       // Identifies the grant whose bounds are being checked. hap-core reads it
       // only to scope a cumulative lookup, which no longer happens here (see
       // below); it is kept because it belongs to the request, not to the
-      // dropped check. It cannot go inside `frame`: that is validated against
+      // dropped check. It cannot go inside `bounds`: that is validated against
       // the profile's boundsSchema, which declares no `path` field in any
       // shipped profile, so an extra key there fails with "Unknown field".
       path: auth.path,
@@ -125,23 +138,23 @@ export class MCPGatekeeper {
     // NO execution log is passed, deliberately — so hap-core runs the local
     // checks and skips the cumulative ones.
     //
-    // Per-transaction bounds, enum bounds and context constraints are enforced
-    // here (the AS holds only `context_hash` and cannot inspect plaintext
-    // context, so the last of those is ours alone). Cumulative bounds
+    // Per-transaction bounds, enum bounds and scope constraints are enforced
+    // here (the AS holds only `scope_hash` and cannot inspect plaintext
+    // scope, so the last of those is ours alone). Cumulative bounds
     // (`cumulative_sum`, `cumulative_count`) are the AS's job ALONE: it holds
-    // the receipt history, and it is the only party that can refuse before a
-    // receipt exists. Our 31-day local log is display-only — checking it here
+    // the ticket history, and it is the only party that can refuse before a
+    // ticket exists. Our 31-day local log is display-only — checking it here
     // would be a second, drifting copy of the source of truth, and it fails in
     // both directions (a pruned or fresh log under-counts; a log holding
     // executions the AS never counted over-counts and blocks work the grant
-    // allows). protocol.md → "Executor Gating, Context vs Bounds, Display-Only
+    // allows). protocol.md → "Executor Gating, Scope vs Bounds, Display-Only
     // Logs": "v0.4 reference implementations that re-checked cumulative bounds
     // locally before calling the AS MUST drop the local check."
     //
     // hap-core skips a cumulative bound when no log is supplied (it `break`s
     // out of the case) — it does not fail closed on the missing log, so the
     // call proceeds to the AS pre-flight, which is what refuses it.
-    const result = await verify(request, publicKeyHex);
+    const result = await verify(request, { trustedIssuers: [trustedIssuer] });
     return { result, authorization: auth };
   }
 }

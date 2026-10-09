@@ -14,8 +14,8 @@
  *      never silently weaken.
  *
  * PROFILE-AGNOSTIC by construction: specificity is pure set-containment over
- * whatever context dimensions the profile declares (`contextKeys` =
- * `contextSchema.keyOrder`). No field names, no profile literals, no
+ * whatever scope dimensions the profile declares (`contextKeys` =
+ * `scopeSchema.keyOrder`). No field names, no profile literals, no
  * commitment-mode branching in the comparison. Mirrors the tokenSet semantics
  * of the UI's tested scope-overlap.ts; the two should converge into hap-core.
  */
@@ -26,7 +26,7 @@ export interface Passer<T = unknown> {
   /** Stable id (authorizationId) — used for a deterministic tie-break. */
   id: string;
   auth: T;
-  /** Declared scope values for this authorization (contextSchema fields). */
+  /** Declared scope values for this authorization (scopeSchema fields). */
   context: ScopeValues;
   /** True when this authorization routes actions to approval (review mode). */
   requiresApproval: boolean;
@@ -67,7 +67,7 @@ function atLeastAsSpecific(keys: string[], a: ScopeValues, b: ScopeValues): bool
 
 /**
  * A is STRICTLY more specific than B: A ⪰ B and not B ⪰ A. With no context
- * keys (a profile without a contextSchema), this is always false — no grant can
+ * keys (a profile without a scopeSchema), this is always false — no grant can
  * be more specific than another, so every overlap falls to the fail-safe path.
  */
 export function strictlyMoreSpecific(keys: string[], a: ScopeValues, b: ScopeValues): boolean {

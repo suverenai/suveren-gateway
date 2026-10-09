@@ -15,15 +15,21 @@
  * best available label.
  *
  * Linking an approver to a DID uses only signed data too: an archived
- * proposal's `committedBy` is keyed by the domain the approver acted for, and
- * each attestation's signed `resolved_domains` maps that domain to its owner
- * DID (in team mode the domain IS the approver's account id). No name is
- * guessed from an account id; with no verified link the approver is shown as
- * "a person (name not disclosed)" — never an id, nor part of one.
+ * proposal's `committedBy` is keyed by the domain the approver acted for.
+ * v0.7 dropped the mandate payload's `resolved_domains` (CHANGELOG.md ->
+ * "Removed (no alias)") — a mandate now carries exactly one `mandate_owners`
+ * entry (Mandate rule 7), so the domain -> owner-DID link comes from the
+ * ARCHIVE's own per-attestation `domain` field (receipt-archive.ts's
+ * `ArchivedAttestation.domain`, recorded alongside each blob) paired with
+ * that same blob's signed `mandate_owners[0].did` (in team mode the domain
+ * IS the approver's account id). No name is guessed from an account id;
+ * with no verified link the approver is shown as "a person (name not
+ * disclosed)" — never an id, nor part of one.
  */
-import { decodeAttestationBlob, verifyAttestationSignature } from '@hap/core';
+import { decodeMandateBlob, verifyMandateSignature } from '@hap/core';
 import type { ReceiptArchiveReader } from './types';
 import { formatOwnerLabel } from './format';
+import { issuerFromPublicKeyHex } from '../issuer-from-hex';
 
 export interface IdentityDirectory {
   /** did -> disclosed name (high assurance, from a verified attestation). */
@@ -50,14 +56,17 @@ async function build(archive: ReceiptArchiveReader): Promise<IdentityDirectory> 
     if (!key) continue;
     for (const att of auth.attestations) {
       try {
-        const attestation = decodeAttestationBlob(att.blob);
-        await verifyAttestationSignature(attestation, key);
-        for (const s of attestation.payload.subjects ?? []) {
+        const mandate = decodeMandateBlob(att.blob);
+        await verifyMandateSignature(mandate, { trustedIssuers: [issuerFromPublicKeyHex(key)] });
+        for (const s of mandate.payload.subjects ?? []) {
           if (s.assurance === 'high' && s.disclose?.name && !names.has(s.did)) names.set(s.did, s.disclose.name);
         }
-        for (const rd of attestation.payload.resolved_domains ?? []) {
-          if (rd?.domain && rd?.did && !domainDids.has(rd.domain)) domainDids.set(rd.domain, rd.did);
-        }
+        // v0.7: no `resolved_domains` on the payload — the domain -> owner
+        // link comes from the ARCHIVE's own per-attestation `domain` field
+        // (this blob was recorded under it) paired with the blob's one
+        // signed mandate_owners entry (Mandate rule 7).
+        const ownerDid = mandate.payload.mandate_owners?.[0]?.did;
+        if (att.domain && ownerDid && !domainDids.has(att.domain)) domainDids.set(att.domain, ownerDid);
       } catch {
         // Unverifiable blob — contributes nothing; never a name from unsigned data.
       }

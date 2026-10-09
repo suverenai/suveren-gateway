@@ -21,12 +21,13 @@ import { lockedNotice } from '../lib/locked-notice';
 import type { IntegrationManager } from '../lib/integration-manager';
 import { SPReceiptError, type SPProposal } from '../lib/sp-client';
 import { appendVerificationFooter, shouldAttachFooter } from '../lib/receipt-footer';
-import { computeContentBinding, attachReceiptId } from '../lib/content-binding';
+import { computeContentBinding, attachTicketId } from '../lib/content-binding';
 import { encodeOutgoingArgs } from '../lib/arg-encoding';
 import { hashToolArgs } from '../lib/execution-journal';
 import type { CommittedExecutor, ExecutionResult } from '../lib/committed-executor';
 import { ContentBindingError } from '@hap/core';
 import { AsKeyMismatchError } from '../lib/attestation-cache';
+import { ArchiveWriteError } from '../lib/receipt-archive';
 import { verifyTicket, TicketBindingMismatchError } from '../lib/ticket-verify';
 import { notifyControlPlane } from '../lib/cp-notify';
 
@@ -261,8 +262,10 @@ export async function executeCommitted(
     });
 
     // Subject custody: archive the complete signed receipt locally (parity
-    // with the automatic path). cachedAuth may be evicted — archive the
-    // receipt anyway; the attestation blobs merge in on a later call.
+    // with the automatic path). FAIL-CLOSED (V8) — written BEFORE the handler
+    // runs; a throw here (ArchiveWriteError) refuses below, same as the
+    // automatic path. cachedAuth may be evicted — the attestation blobs
+    // merge in on a later call, but the entry itself still MUST write.
     await state.archiveReceipt(receipt, {
       authorizationId: proposal.authorizationId,
       profileId: proposal.profileId,
@@ -288,6 +291,15 @@ export async function executeCommitted(
         isError: true,
       };
     }
+    // V8: the local evidence archive could not be written before the
+    // handler would have run. A local fault (disk, missing issuer key) —
+    // not a statement about the Authority Server, so no lock/invalidate.
+    if (err instanceof ArchiveWriteError) {
+      return {
+        text: `Proposal ${proposal.id}: blocked — the ticket could not be archived locally — ${err.message}. The action was not executed.`,
+        isError: true,
+      };
+    }
     // Approved content that cannot be bound. Refuse rather than execute on a
     // receipt that would verify while committing to less than the approver saw.
     if (err instanceof ContentBindingError) {
@@ -301,6 +313,17 @@ export async function executeCommitted(
       if (code === 'PROPOSAL_ALREADY_EXECUTED') {
         return {
           text: `Proposal ${proposal.id} has already been executed by another request.`,
+        };
+      }
+      // Item 9 (re-approval UX) — see tool-proxy.ts's
+      // isVersionUnsupportedRefusal doc comment: flag, never invalidate.
+      if (err.statusCode === 409 && code === 'VERSION_UNSUPPORTED') {
+        state.cache.markNeedsReapproval(proposal.authorizationId);
+        return {
+          text: `Proposal ${proposal.id}: blocked — mandate ${proposal.authorizationId} needs re-approval ` +
+            `— the Authority Server no longer verifies its protocol version. Ask the decision owner to ` +
+            `re-approve it (see list-authorizations). ${err.message}`,
+          isError: true,
         };
       }
       return {
@@ -375,7 +398,7 @@ export async function executeCommitted(
         // line instead of always footering as anonymous.
         outgoingArgs = appendVerificationFooter(discovered, outgoingArgs, receiptId, cachedAuth?.subjects?.[0]);
       }
-      outgoingArgs = attachReceiptId(discovered, outgoingArgs, receiptId);
+      outgoingArgs = attachTicketId(discovered, outgoingArgs, receiptId);
       // LAST: transport encoding — see arg-encoding.ts for why order matters.
       outgoingArgs = encodeOutgoingArgs(discovered, outgoingArgs);
     }

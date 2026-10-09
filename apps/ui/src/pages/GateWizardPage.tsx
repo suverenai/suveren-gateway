@@ -8,7 +8,7 @@ import { AssistantChatPanel } from '../components/AssistantChatPanel';
 import { BottomSheet } from '../components/BottomSheet';
 import { profileDisplayName } from '../lib/profile-display';
 import { resolveAdvisoryLinks, type AdvisoryGrant } from '../lib/advisory-links';
-import type { AgentProfile, AgentBoundsParams, AgentContextParams } from '@hap/core';
+import type { AgentProfile, AgentBoundsParams, AgentScopeParams } from '@hap/core';
 
 /** Initial textarea content for the Intent step. The user replaces
  *  these prompt lines with their own words; the Continue button stays
@@ -67,7 +67,7 @@ export function GateWizardPage() {
   const [profile, setProfile] = useState<AgentProfile | null>(null);
   const [step, setStep] = useState(initialStep); // 2=scope+limits, 3=intent
   const [bounds, setBounds] = useState<AgentBoundsParams | null>(null);
-  const [context, setContext] = useState<AgentContextParams | null>(null);
+  const [context, setContext] = useState<AgentScopeParams | null>(null);
   // Display names from scope discovery (value → label per context field);
   // stored with the local gate entry so IDs render as names everywhere.
   const [contextLabels, setContextLabels] = useState<Record<string, Record<string, string>>>({});
@@ -164,7 +164,7 @@ export function GateWizardPage() {
 
   const handleBoundsConfirm = (
     b: AgentBoundsParams,
-    c: AgentContextParams,
+    c: AgentScopeParams,
     labels?: Record<string, Record<string, string>>,
   ) => {
     setBounds(b);

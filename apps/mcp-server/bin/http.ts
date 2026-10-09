@@ -38,7 +38,7 @@ import { loadProfiles } from '../src/lib/profile-loader';
 import { loadManifests, getAllManifests, getManifest } from '../src/lib/manifest-loader';
 import { registerBuiltins } from '../src/lib/builtins';
 import { buildMandateBrief } from '../src/lib/mandate-brief';
-import { decodeAttestationBlob } from '@hap/core';
+import { decodeMandateBlob } from '@hap/core';
 import { executeCommitted, installCommittedExecutor, buildSkippedProposalNote } from '../src/tools/commitments';
 import { CommittedExecutor, ExecutorLock } from '../src/lib/committed-executor';
 import type { SPProposal } from '../src/lib/sp-client';
@@ -128,6 +128,14 @@ const reportSources: ReportSources = {
   }
   writeMcpPairedAsUrl(dataDir, spUrl);
 })();
+
+// V7 — check the Authority Server's protocol compat once at startup (GET
+// /api/as/compat, unauthenticated). Fire-and-forget at module scope: this
+// file is a flat top-level script (no async main), and gated tool calls
+// already read `state.asVersionRefusal` lazily, so nothing here needs to
+// block the server from starting — it only needs to have RUN before the
+// first gated call could plausibly arrive, which this easily beats.
+void state.checkAsCompat();
 
 const spApiKey = process.env.SUVEREN_AS_API_KEY ?? '';
 if (spApiKey) {
@@ -703,6 +711,9 @@ app.get('/internal/authorizations', internalOnly, (_req: Request, res: Response)
     context: a.context ?? {},
     intent: a.gateContent?.intent ?? null,
     deferredCommitmentDomains: a.deferredCommitmentDomains ?? [],
+    // Item 9 (re-approval UX) — the AS told us, via a VERSION_UNSUPPORTED
+    // ticket refusal, that this authorization's mandate blob is pre-0.7.
+    needsReapproval: a.needsReapproval ?? false,
   }));
   res.json({ authorizations });
 });
@@ -752,7 +763,7 @@ app.get('/internal/evidence', internalOnly, (_req: Request, res: Response) => {
     ...a,
     attestations: a.attestations.map(att => {
       try {
-        return { ...att, decoded: decodeAttestationBlob(att.blob) };
+        return { ...att, decoded: decodeMandateBlob(att.blob) };
       } catch {
         return att;
       }
@@ -996,6 +1007,7 @@ app.get('/internal/brief', internalOnly, (_req: Request, res: Response) => {
       authorizations: enriched,
       executionLog: state.executionLog,
       integrationManager,
+      asVersionRefusal: state.asVersionRefusal,
     });
     res.json({ brief });
   } catch (err) {

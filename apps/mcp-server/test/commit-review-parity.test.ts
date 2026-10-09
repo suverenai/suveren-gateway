@@ -86,7 +86,7 @@ function buildState(opts: { boundsHash?: string; subjects?: Subject[] }) {
       record: vi.fn(),
     },
     cache: {
-      getPublicKey: async () => kp.publicKeyHex,
+      getPublicKey: async () => kp.publicKeyHex, getTrustedIssuer: async () => kp.issuer,
       getAllAuthorizations: () => [
         {
           authorizationId: 'authz_1',

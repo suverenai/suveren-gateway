@@ -194,11 +194,11 @@ describe('list-authorizations', () => {
   });
 });
 
-describe('check-pending-attestations', () => {
+describe('check-pending-mandates', () => {
   it('returns empty message when no pending', async () => {
     const handler = checkPendingHandler(mockCache());
     const result = await handler({ domain: 'compliance' });
-    expect(result.content[0].text).toContain('No pending attestations');
+    expect(result.content[0].text).toContain('No pending mandates');
   });
 });
 
@@ -256,7 +256,7 @@ function mockGatedState(opts: {
       postReceipt: opts.postReceipt ?? defaultPostReceipt,
       isUnlocked: () => true,
     },
-    cache: { getPublicKey: async () => kp.publicKeyHex },
+    cache: { getPublicKey: async () => kp.publicKeyHex, getTrustedIssuer: async () => kp.issuer },
     proposalSubmissions: { record: vi.fn(), get: () => undefined },
     gatekeeper: {
       verifyExecution: vi.fn().mockResolvedValue({
@@ -320,7 +320,7 @@ describe('createGatedToolHandler — SP receipt integration', () => {
         idempotencyKey: req.idempotencyKey,
       }),
     }));
-    const state = { ...mockGatedState({ postReceipt }), cache: { getPublicKey: async () => kp.publicKeyHex } } as unknown as SharedState;
+    const state = { ...mockGatedState({ postReceipt }), cache: { getPublicKey: async () => kp.publicKeyHex, getTrustedIssuer: async () => kp.issuer } } as unknown as SharedState;
     const im = mockIntegrationManager();
     const handler = createGatedToolHandler(mockTool('charge'), im, state);
 
@@ -344,6 +344,48 @@ describe('createGatedToolHandler — SP receipt integration', () => {
     expect((receiptArg.idempotencyKey as string).length).toBeGreaterThan(0);
     expect((im.callTool as ReturnType<typeof vi.fn>)).toHaveBeenCalledOnce();
     expect(result.content[0].text).toBe('Payment processed');
+  });
+
+  // V8: the local evidence archive is write-ahead and fail-closed — a
+  // ticket already issued by the AS but that this gateway could not record
+  // locally MUST NOT be acted on (receipt-archive.ts's ArchiveWriteError;
+  // shared-state.ts#archiveReceipt; tool-proxy.ts's catch block).
+  it('blocks tool call when the local receipt archive write fails', async () => {
+    const kp = testReceiptKeypair();
+    const postReceipt = vi.fn().mockImplementation(async (req: {
+      action: string;
+      executionContext?: Record<string, unknown>;
+      authorizationId?: string;
+      profileId?: string;
+      idempotencyKey?: string;
+    }) => ({
+      receipt: makeSignedReceipt(kp, {
+        id: 'r1',
+        action: req.action,
+        executionContext: req.executionContext ?? {},
+        authorizationId: req.authorizationId,
+        profileId: req.profileId,
+        idempotencyKey: req.idempotencyKey,
+      }),
+    }));
+    const { ArchiveWriteError } = await import('../src/lib/receipt-archive');
+    const state = {
+      ...mockGatedState({ postReceipt }),
+      cache: { getPublicKey: async () => kp.publicKeyHex, getTrustedIssuer: async () => kp.issuer },
+      archiveReceipt: vi.fn().mockRejectedValue(new ArchiveWriteError('disk full (simulated)')),
+    } as unknown as SharedState;
+    const im = mockIntegrationManager();
+    const handler = createGatedToolHandler(mockTool('charge'), im, state);
+
+    const result = await handler({ amount: 50, currency: 'EUR' });
+
+    // The AS already issued a ticket (postReceipt succeeded) — but since it
+    // could not be archived locally, the downstream tool MUST NOT run.
+    expect(postReceipt).toHaveBeenCalledOnce();
+    expect((im.callTool as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('could not be archived locally');
+    expect(result.content[0].text).toContain('disk full (simulated)');
   });
 
   it('blocks tool call when SP rejects with 403', async () => {

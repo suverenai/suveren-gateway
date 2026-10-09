@@ -6,7 +6,7 @@
   "icon": "wrench",
   "profile": "deploy",
   "npmPackage": "@humanagencyp/deploy-mcp",
-  "npmVersion": "0.4.2",
+  "npmVersion": "0.5.0",
   "mcp": {
     "command": "deploy-mcp",
     "args": []

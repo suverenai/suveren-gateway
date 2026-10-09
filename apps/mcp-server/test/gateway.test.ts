@@ -237,7 +237,7 @@ describe('MCP Gateway', () => {
       // Tools with profile: null are disabled — they won't appear in the list
       // Only Suveren admin tools should be visible
       expect(toolNames).toContain('list-authorizations');
-      expect(toolNames).toContain('check-pending-attestations');
+      expect(toolNames).toContain('check-pending-mandates');
 
       // Calling a disabled tool should fail
       try {

@@ -6,7 +6,7 @@
  * counts visibly drifted whenever any one of them got patched in
  * isolation.
  *
- * The SP's `/api/attestations/mine` endpoint is the authoritative
+ * The SP's `/api/mandates/mine` endpoint is the authoritative
  * source — it computes `status` per row based on revoke + expiry +
  * completeness state. The gateway maps that to `PendingItem.sp_status`.
  * `getAuthStatus` honours `sp_status` first, with a time-based fallback

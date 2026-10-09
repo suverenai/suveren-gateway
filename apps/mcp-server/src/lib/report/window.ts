@@ -52,9 +52,15 @@ export const REPORT_AGE_FIELD = 'read_age_days';
 export const REPORTING_PROFILE = 'reporting';
 export const END_SKEW_SECONDS = 120;
 /** Shown when the only reporting mandate is from a profile version without
- *  a reporting window (reporting@0.1). */
+ *  a reporting window (reporting@0.1). Deliberately names NO specific
+ *  version: hardcoding one here is exactly what went stale across the v0.7
+ *  switch (the message used to say "...(reporting@0.2)", which itself
+ *  became un-issuable -- PROFILE_INVALID, retired decision_owner gate --
+ *  the moment hap-profiles' v0.7 versions went live). The gateway's own
+ *  mandate-creation UI always offers the current newest version; this
+ *  message only needs to say that a new one is required. */
 export const OLD_PROFILE_REFUSAL =
-  'this reporting mandate is from an older profile version — create a new reporting mandate (reporting@0.2).';
+  'this reporting mandate is from an older profile version — create a new reporting mandate.';
 const DAY = 86_400;
 
 export interface ReportWindow {

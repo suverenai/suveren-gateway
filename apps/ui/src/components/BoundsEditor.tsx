@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, type KeyboardEvent, type ClipboardEvent } from 'react';
 import { Link } from 'react-router-dom';
-import type { AgentProfile, AgentBoundsParams, AgentContextParams, AgentFrameParams, ProfileBoundsField, ProfileContextField } from '@hap/core';
+import type { AgentProfile, AgentBoundsParams, AgentScopeParams, ProfileBoundsField, ProfileScopeField } from '@hap/core';
 import { DiscoveredScopeField } from './DiscoveredScopeField';
 import { spClient, type IntegrationManifest, type ProfileConfig } from '../lib/sp-client';
 import { minForBound, maxForBound, seedForBound, numericBoundValue } from '../lib/bound-defaults';
@@ -10,7 +10,7 @@ interface Props {
   profile: AgentProfile;
   onConfirm: (
     bounds: AgentBoundsParams,
-    context: AgentContextParams,
+    context: AgentScopeParams,
     /** Discovered display names per context field: fieldKey → (value → label). */
     contextLabels?: Record<string, Record<string, string>>,
   ) => void;
@@ -18,8 +18,11 @@ interface Props {
   onCancel?: () => void;
   readOnly?: boolean;
   initialBounds?: AgentBoundsParams;
-  initialContext?: AgentContextParams;
-  initialFrame?: AgentFrameParams;
+  initialContext?: AgentScopeParams;
+  /** v0.3 compat fallback — AgentFrameParams was retired from hap-core (no
+   *  alias); no caller passes this prop any more, but the shape (a flat
+   *  bounds-like record) is unchanged, so it stays usable as a fallback. */
+  initialFrame?: Record<string, string | number>;
   /** Team profile config from SP. Null/undefined = no config, render as today. */
   profileConfig?: ProfileConfig | null;
   /** Display names for approver userIds. Parallel array to profileConfig.approvers. */
@@ -38,7 +41,18 @@ function shortProfileName(profileId: string): string {
   return withoutVersion.split('/').pop() ?? profileId;
 }
 
-type FieldDef = ProfileBoundsField | ProfileContextField;
+type FieldDef = ProfileBoundsField | ProfileScopeField;
+
+/**
+ * A SCOPE field with an `enum` constraint carries its allowed values in a
+ * top-level `enum: string[]` at runtime (see e.g. hap-profiles'
+ * sales/0.4.profile.json scopeSchema.currency) — but hap-core's
+ * `ProfileScopeField` TS type does not declare it (only `BOUNDS` fields'
+ * capability-flag shape, `boundType: { kind: 'enum', values }`, is typed).
+ * This widens the type to read the real data the schema carries; it changes
+ * nothing about what ships in a profile.
+ */
+type FieldDefWithEnum = FieldDef & { enum?: string[] };
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -54,7 +68,10 @@ function isTagField(field: FieldDef): boolean {
 }
 
 function isSubsetEnumField(field: FieldDef): boolean {
-  return !!(field.enum && field.constraint?.enforceable.includes('subset'));
+  // `constraint` (and the runtime-only `enum`) are a SCOPE-field concept —
+  // bounds fields use `boundType` instead and never reach this check true.
+  const f = field as ProfileScopeField & { enum?: string[] };
+  return !!(f.enum && f.constraint?.enforceable.includes('subset'));
 }
 
 function validateTag(value: string, format: string): boolean {
@@ -463,7 +480,7 @@ function FieldRow({
       {isSubsetEnumField(fieldDef) ? (
         <CheckboxGroup
           id={fieldId}
-          options={fieldDef.enum!}
+          options={(fieldDef as FieldDefWithEnum).enum!}
           value={value}
           onChange={v => onChange(fieldKey, v)}
           disabled={readOnly}
@@ -484,7 +501,7 @@ function FieldRow({
             <option key={v} value={v}>{v}</option>
           ))}
         </select>
-      ) : 'enum' in fieldDef && fieldDef.enum ? (
+      ) : (fieldDef as FieldDefWithEnum).enum ? (
         <select
           id={fieldId}
           className="form-select"
@@ -493,7 +510,7 @@ function FieldRow({
           disabled={readOnly}
         >
           <option value="">Select...</option>
-          {fieldDef.enum.map((v: string) => (
+          {(fieldDef as FieldDefWithEnum).enum!.map((v: string) => (
             <option key={v} value={v}>{v}</option>
           ))}
         </select>
@@ -631,8 +648,8 @@ export function BoundsEditor({
   approverNames,
   adminName,
 }: Props) {
-  const boundsSchema = profile.boundsSchema ?? profile.frameSchema;
-  const contextSchema = profile.contextSchema;
+  const boundsSchema = profile.boundsSchema;
+  const contextSchema = profile.scopeSchema;
 
   const boundsFields = boundsSchema
     ? Object.entries(boundsSchema.fields).filter(([key, def]) => {
@@ -714,7 +731,7 @@ export function BoundsEditor({
     setContextValues(prev => ({ ...prev, [key]: value }));
   };
 
-  const buildBoundsAndContext = (): [AgentBoundsParams, AgentContextParams] => {
+  const buildBoundsAndContext = (): [AgentBoundsParams, AgentScopeParams] => {
     const bounds: AgentBoundsParams = { profile: profile.id };
     for (const [key, fieldDef] of boundsFields) {
       if (fieldDef.type === 'number') {
@@ -723,7 +740,7 @@ export function BoundsEditor({
         bounds[key] = boundsValues[key];
       }
     }
-    const context: AgentContextParams = {};
+    const context: AgentScopeParams = {};
     for (const [key, fieldDef] of contextFields) {
       if (fieldDef.type === 'number') {
         context[key] = contextValues[key] === '' ? 0 : Number(contextValues[key]);
@@ -758,7 +775,7 @@ export function BoundsEditor({
         bounds[key] = clamped[key] ?? '';
       }
     }
-    const context: AgentContextParams = {};
+    const context: AgentScopeParams = {};
     for (const [key, fieldDef] of contextFields) {
       if (fieldDef.type === 'number') {
         context[key] = contextValues[key] === '' ? 0 : Number(contextValues[key]);

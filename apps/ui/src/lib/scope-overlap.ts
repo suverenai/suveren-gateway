@@ -6,9 +6,9 @@
  *   its context (scope). Bounds are MAGNITUDES (how much) — they don't decide
  *   *which* actions are covered. Context fields are ALLOWLISTS that PARTITION
  *   the action space (which recipients / domains / calendars / …). So two
- *   grants overlap iff their context scopes intersect — a pure context question.
+ *   grants overlap iff their scopes intersect — a pure scope question.
  *
- * Per context field (driven by the profile's contextSchema.keyOrder):
+ * Per scope field (driven by the profile's scopeSchema.keyOrder):
  *   - parse each side into a token set (comma-separated allowlist)
  *   - empty field = no constraint on that dimension = matches all (wildcard)
  *   - if both sides are non-empty and their sets are DISJOINT, that field

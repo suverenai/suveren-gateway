@@ -14,7 +14,7 @@
 
 import { readFileSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import type { ProfileToolGating } from '@hap/core';
+import type { ProfileToolGating } from './tool-gating-types';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 

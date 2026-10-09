@@ -16,7 +16,20 @@
 
 import { Router, type Request, type Response } from 'express';
 import { getLocalEvidence } from '../lib/mcp-bridge';
-import { verifyReceiptSignature } from '@hap/core';
+import { verifyTicketSignature, encodeDidKey } from '@hap/core';
+
+/**
+ * hap-core 0.12's verifyTicketSignature resolves the verification key from
+ * the ticket's own `issuer` did:key, restricted via `trustedIssuers` — it no
+ * longer takes a raw key (protocol.md -> *Ticket Verification* step 1). The
+ * archive stores the AS's raw hex key at archive time (`asPublicKey`); this
+ * derives the equivalent did:key to pass as the sole trusted issuer, so a
+ * ticket claiming a DIFFERENT issuer still fails, exactly as a raw-key
+ * comparison would have.
+ */
+function issuerFromPublicKeyHex(publicKeyHex: string): string {
+  return encodeDidKey(Buffer.from(publicKeyHex, 'hex'));
+}
 
 /**
  * Signature status for one archived receipt.
@@ -52,7 +65,7 @@ async function verifyAll(
     }
     try {
       // Throws on failure; returns void on success.
-      await verifyReceiptSignature(e.receipt as never, e.asPublicKey);
+      await verifyTicketSignature(e.receipt as never, { trustedIssuers: [issuerFromPublicKeyHex(e.asPublicKey)] });
       out[id] = 'valid';
     } catch {
       out[id] = 'invalid';

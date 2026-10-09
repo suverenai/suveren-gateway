@@ -55,6 +55,24 @@ describe('buildMandateBrief', () => {
     expect(brief).toContain('bounded authorities');
   });
 
+  // V7
+  it('leads with the Authority Server incompatibility when asVersionRefusal is set', () => {
+    const brief = buildMandateBrief({
+      authorizations: [mockAuth()],
+      asVersionRefusal: 'This Authority Server supports protocol version(s) [0.6], not 0.7.',
+    });
+    expect(brief).toContain('AUTHORITY SERVER INCOMPATIBLE');
+    expect(brief).toContain('supports protocol version(s) [0.6], not 0.7');
+    // It precedes the active-authorities section — the agent should not
+    // have to read past a list of grants it cannot act on to find out why.
+    expect(brief.indexOf('AUTHORITY SERVER INCOMPATIBLE')).toBeLessThan(brief.indexOf('ACTIVE AUTHORITIES'));
+  });
+
+  it('omits the incompatibility section when asVersionRefusal is absent', () => {
+    const brief = buildMandateBrief({ authorizations: [] });
+    expect(brief).not.toContain('AUTHORITY SERVER INCOMPATIBLE');
+  });
+
   it('includes active authority as a compact one-line summary', () => {
     const brief = buildMandateBrief({ authorizations: [mockAuth()] });
     expect(brief).toContain('=== ACTIVE AUTHORITIES ===');

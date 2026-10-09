@@ -6,7 +6,7 @@
  * review but the AS supplied no pending approvers, the Gatekeeper fails closed.
  */
 import { describe, it, expect } from 'vitest';
-import { encodeAttestationBlob, decodeAttestationBlob, type Attestation } from '@hap/core';
+import { encodeMandateBlob, decodeMandateBlob, type Mandate } from '@hap/core';
 import { isCommitmentDowngrade } from '../src/lib/attestation-cache';
 
 describe('isCommitmentDowngrade — signed commitment_mode enforcement', () => {
@@ -33,16 +33,18 @@ describe('isCommitmentDowngrade — signed commitment_mode enforcement', () => {
 
 describe('signed commitment_mode is readable from the attestation blob', () => {
   it('round-trips commitment_mode through the signed payload (the cache source)', () => {
-    const attestation: Attestation = {
-      header: { typ: 'HAP-attestation', alg: 'EdDSA' },
+    const mandate: Mandate = {
+      header: { typ: 'HAP-mandate', alg: 'EdDSA' },
       payload: {
-        attestation_id: 'a1',
-        version: '0.5',
+        mandate_id: 'a1',
+        version: '0.7',
         profile_id: 'records@0.5',
         bounds_hash: 'sha256:00',
-        context_hash: 'sha256:00',
+        scope_hash: 'sha256:00',
         execution_context_hash: 'sha256:00',
-        resolved_owners: ['did:key:alice'],
+        profile_hash: 'sha256:00',
+        issuer: 'did:key:zTest',
+        mandate_owners: [{ did: 'did:key:alice' }],
         gate_content_hashes: { intent: 'sha256:00' },
         commitment_mode: 'review',
         issued_at: 1,
@@ -50,7 +52,7 @@ describe('signed commitment_mode is readable from the attestation blob', () => {
       },
       signature: 'unsigned-test-blob',
     };
-    const blob = encodeAttestationBlob(attestation);
-    expect(decodeAttestationBlob(blob).payload.commitment_mode).toBe('review');
+    const blob = encodeMandateBlob(mandate);
+    expect(decodeMandateBlob(blob).payload.commitment_mode).toBe('review');
   });
 });

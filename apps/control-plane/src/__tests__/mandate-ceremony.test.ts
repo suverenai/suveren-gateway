@@ -14,11 +14,11 @@
 import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { computeBoundsHash, computeContextHash, computeIntentHash } from '@hap/core';
+import { computeBoundsHash, computeScopeHash, computeIntentHash, computeProfileHash } from '@hap/core';
 import { planMandate, createMandate, approverPubkeys, MandateRefused, type CeremonyDeps, type MandateRequest } from '../lib/mandate-ceremony';
 
 const profilesDir = process.env.SUVEREN_PROFILES_DIR ?? join(import.meta.dirname, '..', '..', '..', '..', '..', 'hap-profiles');
-const SALES = JSON.parse(readFileSync(join(profilesDir, 'sales', '0.3.profile.json'), 'utf8'));
+const SALES = JSON.parse(readFileSync(join(profilesDir, 'sales', '0.4.profile.json'), 'utf8'));
 const DELEGATION = JSON.parse(readFileSync(join(profilesDir, 'delegation', '0.1.profile.json'), 'utf8'));
 const REPORTING = JSON.parse(readFileSync(join(profilesDir, 'reporting', '0.2.profile.json'), 'utf8'));
 const USER = { id: 'u_anna', did: 'did:key:anna' };
@@ -30,14 +30,14 @@ const LIMITS = {
 
 function fakeAs(opts: { approvers?: string[]; attestStatus?: number; attestBody?: unknown; delegationIn?: string[] } = {}) {
   const calls: Array<{ method: string; path: string; body?: any }> = [];
-  const profiles = [SALES, DELEGATION, REPORTING, { ...SALES, id: SALES.id.replace('@0.3', '@0.2'), version: '0.2' }];
+  const profiles = [SALES, DELEGATION, REPORTING, { ...SALES, id: SALES.id.replace('@0.4', '@0.2'), version: '0.2' }];
   const as: CeremonyDeps['as'] = async (method, path, body) => {
     calls.push({ method, path, body });
     if (path === '/api/groups') return { status: 200, body: { groups: [
       { id: 'g_personal', name: 'Anna', isPersonal: true },
       { id: 'g_team', name: 'Sales Vienna', isPersonal: false },
     ] } };
-    if (path === '/api/attestations/mine?status=active') return { status: 200, body: { attestations: [
+    if (path === '/api/mandates/mine?status=active') return { status: 200, body: { mandates: [
       ...(opts.delegationIn ?? []).map((g) => ({ profileId: DELEGATION.id, groupId: g })),
       { profileId: SALES.id, groupId: 'g_other' },
     ] } };
@@ -52,7 +52,7 @@ function fakeAs(opts: { approvers?: string[]; attestStatus?: number; attestBody?
     if (path.includes('/profile-config/')) {
       return opts.approvers ? { status: 200, body: { config: { approvers: opts.approvers } } } : { status: 404, body: { error: 'No config' } };
     }
-    if (path === '/api/as/attest') return { status: opts.attestStatus ?? 201, body: opts.attestBody ?? { authorization_id: (body as { authorization_id?: string }).authorization_id } };
+    if (path === '/api/as/mandate') return { status: opts.attestStatus ?? 201, body: opts.attestBody ?? { authorization_id: (body as { authorization_id?: string }).authorization_id } };
     if (path.endsWith('/revoke')) return { status: 200, body: {} };
     return { status: 404, body: {} };
   };
@@ -82,12 +82,14 @@ describe('createMandate — the sign page\'s request, from the gateway', () => {
     expect(authorizationId).toBe('authz_new');
     expect(plan.profile.id).toBe(SALES.id); // the newest version of "sales"
 
-    const attest = calls.find((c) => c.path === '/api/as/attest')!.body;
+    const attest = calls.find((c) => c.path === '/api/as/mandate')!.body;
     const bounds = { ...LIMITS, profile: SALES.id };
     expect(attest).toMatchObject({
-      authorization_id: 'authz_new', profile_id: SALES.id, group_id: 'g_personal', domain: 'owner', did: USER.did,
+      authorization_id: 'authz_new', profile_id: SALES.id, profile_hash: computeProfileHash(SALES),
+      supported_versions: ['0.7'], group_id: 'g_personal', domain: 'owner', did: USER.did,
+      mandate_owners: [{ did: USER.did }],
       bounds, bounds_hash: computeBoundsHash(bounds as never, SALES),
-      context_hash: computeContextHash({ currency: 'EUR' } as never, SALES),
+      scope_hash: computeScopeHash({ currency: 'EUR' } as never, SALES),
       gate_content_hashes: { intent: computeIntentHash(REQ.intent) },
       execution_context_hash: computeIntentHash(JSON.stringify({ profile: SALES.id, domain: 'owner', group: 'g_personal' })),
       commitment_mode: 'automatic', ttl: 24 * 3600, title: 'Same-day quotes',
@@ -101,7 +103,7 @@ describe('createMandate — the sign page\'s request, from the gateway', () => {
     const { as, calls } = fakeAs({ approvers: ['u_anna', 'u_bernd'] });
     const { d, encrypt } = deps(as);
     await createMandate({ ...REQ, team: 'Sales Vienna' }, d);
-    const attest = calls.find((c) => c.path === '/api/as/attest')!.body;
+    const attest = calls.find((c) => c.path === '/api/as/mandate')!.body;
     expect(attest).toMatchObject({ group_id: 'g_team', domain: 'u_anna', approvers_frozen: ['u_anna', 'u_bernd'], intent_ciphertext: 'Y2lwaGVy' });
     expect(encrypt.mock.calls[0][1].map((r: { userId: string }) => r.userId)).toEqual(['u_anna', 'u_bernd']);
   });
@@ -139,7 +141,7 @@ describe('planMandate — every refusal comes before anything is created', () =>
     const { as, calls } = fakeAs(asOpts);
     await expect(planMandate({ ...REQ, ...over }, deps(as).d)).rejects.toThrow(msg);
     await expect(planMandate({ ...REQ, ...over }, deps(as).d)).rejects.toBeInstanceOf(MandateRefused);
-    expect(calls.some((c) => c.path === '/api/as/attest')).toBe(false);
+    expect(calls.some((c) => c.path === '/api/as/mandate')).toBe(false);
   });
 
   it('refuses when the gateway is not signed in', async () => {
@@ -184,7 +186,7 @@ describe('workspace when `team` is omitted — the Delegation mandate\'s', () =>
   it('Delegation mandates in two workspaces: refused, naming both — the AI must say which', async () => {
     const { as, calls } = fakeAs({ delegationIn: ['g_team', 'g_personal'], approvers: ['u_anna'] });
     await expect(planMandate(REQ, deps(as).d)).rejects.toThrow(/several workspaces.*"Sales Vienna".*personal/);
-    expect(calls.some((c) => c.path === '/api/as/attest')).toBe(false);
+    expect(calls.some((c) => c.path === '/api/as/mandate')).toBe(false);
   });
 
   it('`team: "personal"` picks the personal workspace even when a team holds the Delegation mandate', async () => {

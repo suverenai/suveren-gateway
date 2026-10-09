@@ -85,12 +85,19 @@ const SETUP = makeAuth('authz_b0000000-0000-4000-8000-00000000b002');
 
 const revokedError = () =>
   new SPReceiptError('This authorization has been revoked', 403, {
-    errors: [{ code: 'ATTESTATION_REVOKED', message: 'This authorization has been revoked' }],
+    errors: [{ code: 'MANDATE_REVOKED', message: 'This authorization has been revoked' }],
   });
 
 const limitExceededError = () =>
   new SPReceiptError('Cumulative daily count (2) exceeds setup_daily_max=1', 403, {
-    errors: [{ code: 'LIMIT_EXCEEDED', message: 'Cumulative daily count (2) exceeds setup_daily_max=1' }],
+    errors: [{ code: 'BOUND_EXCEEDED', message: 'Cumulative daily count (2) exceeds setup_daily_max=1' }],
+  });
+
+// Item 9 (re-approval UX) — the AS's ticket route returns this at 409 for a
+// stored pre-0.7 mandate (protocol.md -> Error Codes: VERSION_UNSUPPORTED).
+const versionUnsupportedError = () =>
+  new SPReceiptError('This authorization was signed under a pre-0.7 protocol version. Please re-approve this mandate.', 409, {
+    errors: [{ code: 'VERSION_UNSUPPORTED', message: 'Please re-approve this mandate.' }],
   });
 
 function buildState(
@@ -99,10 +106,16 @@ function buildState(
   kp: ReturnType<typeof testReceiptKeypair>,
 ) {
   const invalidate = vi.fn();
+  const markNeedsReapproval = vi.fn();
   const state = {
     getEnrichedAuthorizations: () => enriched,
     spClient: { postReceipt, isUnlocked: () => true },
-    cache: { invalidate, getPublicKey: async () => kp.publicKeyHex },
+    cache: {
+      invalidate,
+      markNeedsReapproval,
+      getPublicKey: async () => kp.publicKeyHex,
+      getTrustedIssuer: async () => kp.issuer,
+    },
     gatekeeper: {
       // Local verification always approves here — the test is about the AS's
       // receipt-time refusal and the gateway's reaction to it, not local
@@ -113,7 +126,7 @@ function buildState(
     executionJournal: { begin: () => ({ ok: true }), complete: () => {} },
     archiveReceipt: vi.fn().mockResolvedValue(undefined),
   } as unknown as SharedState;
-  return { state, invalidate };
+  return { state, invalidate, markNeedsReapproval };
 }
 
 function buildIntegrationManager() {
@@ -228,6 +241,65 @@ describe('stale-mandate fallback (revoked / expired / not-found)', () => {
     const triedIds = postReceipt.mock.calls.map((c) => c[0].authorizationId);
     expect(new Set(triedIds).size).toBe(3);
     expect(invalidate).toHaveBeenCalledTimes(3);
+    expect(callTool).not.toHaveBeenCalled();
+  });
+});
+
+describe('re-approval UX (item 9) — VERSION_UNSUPPORTED', () => {
+  it('flags the mandate (never invalidates it) and falls back to another candidate', async () => {
+    const enriched = [
+      { ...WORK, gateContent: null } as EnrichedAuthorization,
+      { ...SETUP, gateContent: null } as EnrichedAuthorization,
+    ];
+    const kp = testReceiptKeypair();
+    const postReceipt = vi.fn().mockImplementation(async (req: {
+      authorizationId: string;
+      action: string;
+      executionContext?: Record<string, unknown>;
+      idempotencyKey?: string;
+      contentHash?: string;
+      contentBinding?: { version: string; kind: string; fields?: string[] };
+    }) => {
+      if (req.authorizationId === WORK.authorizationId) throw versionUnsupportedError();
+      return { receipt: makeSignedReceipt(kp, {
+        action: req.action,
+        executionContext: req.executionContext ?? {},
+        authorizationId: req.authorizationId,
+        profileId: SALES.id,
+        idempotencyKey: req.idempotencyKey,
+        contentHash: req.contentHash,
+        contentBinding: req.contentBinding,
+      }) };
+    });
+    const { state, invalidate, markNeedsReapproval } = buildState(enriched, postReceipt, kp);
+    const { integrationManager, callTool } = buildIntegrationManager();
+
+    const result = await createGatedToolHandler(TOOL, integrationManager, state)({});
+
+    expect(result.isError).toBeFalsy();
+    expect(postReceipt).toHaveBeenCalledTimes(2);
+    expect(postReceipt.mock.calls[1][0].authorizationId).toBe(SETUP.authorizationId);
+    // Flagged for the UI/brief to surface — but NOT dropped from the cache:
+    // its record is still live, only its blob's wire version is obsolete.
+    expect(markNeedsReapproval).toHaveBeenCalledWith(WORK.authorizationId);
+    expect(invalidate).not.toHaveBeenCalled();
+    expect(callTool).toHaveBeenCalledTimes(1);
+  });
+
+  it('with no alternative mandate, refuses naming re-approval as the action — and still flags it', async () => {
+    const enriched = [{ ...WORK, gateContent: null } as EnrichedAuthorization];
+    const postReceipt = vi.fn().mockRejectedValue(versionUnsupportedError());
+    const { state, invalidate, markNeedsReapproval } = buildState(enriched, postReceipt, testReceiptKeypair());
+    const { integrationManager, callTool } = buildIntegrationManager();
+
+    const result = await createGatedToolHandler(TOOL, integrationManager, state)({});
+
+    expect(result.isError).toBe(true);
+    const text = (result.content[0] as { text: string }).text;
+    expect(text).toContain('needs re-approval');
+    expect(text).toContain('Ask the decision owner to re-approve it');
+    expect(markNeedsReapproval).toHaveBeenCalledWith(WORK.authorizationId);
+    expect(invalidate).not.toHaveBeenCalled();
     expect(callTool).not.toHaveBeenCalled();
   });
 });

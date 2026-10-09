@@ -40,7 +40,8 @@ function keyOf(call: unknown[]): string | undefined {
 const RECEIPT = (id: string, idempotent = false) => ({
   approved: true,
   idempotent,
-  receipt: { id, cumulativeState: { daily: { amount: 10, count: 1 } } },
+  // v0.7: the AS's success body key is `ticket` (was `receipt`).
+  ticket: { id, cumulativeState: { daily: { amount: 10, count: 1 } } },
 });
 
 const baseArgs = {
@@ -113,7 +114,7 @@ describe('M3 gateway — receipt retry + idempotency', () => {
   it('does NOT retry a definitive 4xx rejection (fails closed on first answer)', async () => {
     const rejection = {
       approved: false,
-      errors: [{ code: 'LIMIT_EXCEEDED', message: 'Cumulative daily amount exceeds bound' }],
+      errors: [{ code: 'CUMULATIVE_LIMIT_EXCEEDED', message: 'Cumulative daily amount exceeds bound' }],
     };
     fetchMock.mockResolvedValueOnce(jsonResponse(403, rejection));
 

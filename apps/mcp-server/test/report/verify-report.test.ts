@@ -597,7 +597,7 @@ describe('verifyReport — who approved / who owns, as a name (review SR6, 2026-
     const { archive, addTicket } = buildScenario();
     addTicket({
       id: 'a2', action: 'erp__send_quote', authorizationId: 'authz-team',
-      authorization: { authorizationId: 'authz-team', profileId: 'sales@0.3', owners: [DID], subjects: named, resolvedDomains: [{ domain: USER, did: DID }] },
+      authorization: { authorizationId: 'authz-team', profileId: 'sales@0.3', owners: [DID], subjects: named, domain: USER },
       proposal: { status: 'executed', createdAt: 1, committedBy: { [USER]: { userId: USER, at: 2 } } },
     });
     const result = await verifyReport('<sv-approval ticket="a2"></sv-approval>', { archive, runExport: makeRunExport({}) });
@@ -608,7 +608,7 @@ describe('verifyReport — who approved / who owns, as a name (review SR6, 2026-
     const { archive, addTicket } = buildScenario();
     addTicket({
       id: 'a3', action: 'erp__send_quote', authorizationId: 'authz-personal',
-      authorization: { authorizationId: 'authz-personal', profileId: 'sales@0.3', owners: [DID], subjects: named, resolvedDomains: [{ domain: 'owner', did: DID }] },
+      authorization: { authorizationId: 'authz-personal', profileId: 'sales@0.3', owners: [DID], subjects: named, domain: 'owner' },
       proposal: { status: 'executed', createdAt: 1, committedBy: { owner: { userId: USER, at: 2 } } },
     });
     const result = await verifyReport('<sv-approval ticket="a3"></sv-approval>', { archive, runExport: makeRunExport({}) });

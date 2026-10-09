@@ -36,7 +36,7 @@ export interface ArgRow {
 
 /** Never shown: the gateway's ticket reference and secret-looking values. */
 export const HIDDEN_ARG_KEYS = new Set([
-  'receipt_id', 'apiKey', 'api_key', 'accessToken', 'access_token', 'password', 'secret', 'signature',
+  'ticket_id', 'apiKey', 'api_key', 'accessToken', 'access_token', 'password', 'secret', 'signature',
   '_imagePreview',
 ]);
 
@@ -91,7 +91,7 @@ export function profileFieldLines(
   which: 'limits' | 'scope',
 ): FieldLine[] {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
-  const schema = which === 'limits' ? profile?.boundsSchema : profile?.contextSchema;
+  const schema = which === 'limits' ? profile?.boundsSchema : profile?.scopeSchema;
   const fields = (schema?.fields ?? {}) as Record<string, { displayName?: string; description?: string; unit?: string }>;
   const order = [...new Set([...(schema?.keyOrder ?? []), ...Object.keys(value as object)])];
   const lines: FieldLine[] = [];

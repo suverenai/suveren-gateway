@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, beforeAll } from 'vitest';
 import { registerProfile } from '@hap/core';
-import { computeContentBinding } from '../src/lib/content-binding';
+import { computeContentBinding, attachTicketId } from '../src/lib/content-binding';
 import type { DiscoveredTool } from '../src/lib/integration-manager';
 
 const JCS_PROFILE = 'records-test';
@@ -51,5 +51,21 @@ describe('computeContentBinding', () => {
 
   it('returns undefined for an unknown profile', () => {
     expect(computeContentBinding('does-not-exist', tool, { x: 1 })).toBeUndefined();
+  });
+});
+
+describe('attachTicketId — HAP v0.7 wire rename (was attachReceiptId / receipt_id)', () => {
+  it('injects ticket_id when the tool declares it in its input schema', () => {
+    const declaring = { inputSchema: { properties: { ticket_id: { type: 'string' } } } } as unknown as DiscoveredTool;
+    expect(attachTicketId(declaring, { a: 1 }, 'tk-1')).toEqual({ a: 1, ticket_id: 'tk-1' });
+  });
+
+  it('does NOT inject under the old receipt_id key — hard switch, no fallback', () => {
+    const oldKey = { inputSchema: { properties: { receipt_id: { type: 'string' } } } } as unknown as DiscoveredTool;
+    expect(attachTicketId(oldKey, { a: 1 }, 'tk-1')).toEqual({ a: 1 });
+  });
+
+  it('leaves args untouched when the tool declares neither field', () => {
+    expect(attachTicketId(tool, { a: 1 }, 'tk-1')).toEqual({ a: 1 });
   });
 });

@@ -15,8 +15,9 @@ import { lockedNotice } from './locked-notice';
 import type { DenialReason } from './denial-log';
 import { SPReceiptError } from './sp-client';
 import { isCommitmentDowngrade, AsKeyMismatchError } from './attestation-cache';
+import { ArchiveWriteError } from './receipt-archive';
 import { appendVerificationFooter, shouldAttachFooter } from './receipt-footer';
-import { computeContentBinding, attachReceiptId } from './content-binding';
+import { computeContentBinding, attachTicketId } from './content-binding';
 import { hashToolArgs } from './execution-journal';
 import { verifyTicket, TicketBindingMismatchError } from './ticket-verify';
 import { notifyControlPlane } from './cp-notify';
@@ -134,6 +135,53 @@ function applyMapping(
 /** Match a short profile name (e.g. "charge") against a full qualified ID (e.g. "github.com/.../charge@0.3") */
 export function profileMatches(profileId: string, shortName: string): boolean {
   return profileId === shortName || profileId.includes('/' + shortName + '@') || profileId.endsWith('/' + shortName);
+}
+
+/**
+ * Item 7 — filter the execution-context values this gateway puts ON THE
+ * WIRE (a ticket/proposal request to the AS) down to exactly the fields a
+ * `boundType` reads, plus `action_type`. The LOCAL `execution` object (used
+ * for the Gatekeeper's own verify() call and selection) is untouched —
+ * this is only about what crosses the network.
+ *
+ * Why: content/0.7/review.md -> "Scope values must not travel in the
+ * execution context" — a tool-gating manifest's single `executionMapping`
+ * entry can produce BOTH a bound field's value and a scope field's value
+ * from the same argument (the two are independently declared per field
+ * NAME, never per source), so the full `execution` object routinely
+ * carries scope-constrained values (e.g. `currency`, a scope `enum` field
+ * on both `charge` and `sales`) the AS has no bound to check them against
+ * and no plaintext to compare them to — the AS only ever holds
+ * `scope_hash` (protocol.md -> *Scope*). Sending them anyway buys nothing
+ * and costs the privacy the bounds/scope split exists to protect; the
+ * ledger entry's own proposed rule is exactly this filter. v0.7 itself
+ * does not yet REQUIRE this (the AS in #53 simply ignores fields it has no
+ * bound for), so this is a safe-and-allowed hardening applied now, not a
+ * protocol violation if omitted.
+ *
+ * Generic and profile-schema-driven (no field names, no per-profile code):
+ * the allow-list is exactly the profile's own `boundsSchema` declarations.
+ */
+export function wireExecutionContext(
+  profileId: string,
+  execution: Record<string, string | number>,
+): Record<string, string | number> {
+  const profile = getProfile(profileId);
+  const allowed = new Set<string>(['action_type']);
+  const fields = profile?.boundsSchema?.fields;
+  if (fields) {
+    for (const fieldDef of Object.values(fields)) {
+      const bt = (fieldDef as { boundType?: { kind?: string; of?: string } }).boundType;
+      if (bt && (bt.kind === 'per_transaction' || bt.kind === 'cumulative_sum') && bt.of) {
+        allowed.add(bt.of);
+      }
+    }
+  }
+  const out: Record<string, string | number> = {};
+  for (const [key, value] of Object.entries(execution)) {
+    if (allowed.has(key)) out[key] = value;
+  }
+  return out;
 }
 
 /**
@@ -364,25 +412,45 @@ export function createGatedToolHandler(
  * refusal or risk a double execution.
  *
  * Matched on the AS's structured `errors[0].code` (suveren-as's
- * `app/api/as/receipt/route.ts`), never on the free-text message — codes are
- * the contract. `ATTESTATION_REVOKED` / `ATTESTATION_EXPIRED` (403) cover a
- * mandate the AS actively invalidated; `ATTESTATION_NOT_FOUND` (404) covers
- * a cached mandate the AS has no record of at all (e.g. the cache is stale
- * about an id that was deleted). There is currently no distinct "superseded"
- * code on the wire — a renewal reuses the same authorizationId (see
+ * `app/api/as/ticket/route.ts`), never on the free-text message — codes are
+ * the contract. `MANDATE_REVOKED` / `MANDATE_EXPIRED` (403) cover a mandate
+ * the AS actively invalidated; `MANDATE_NOT_FOUND` (404) covers a cached
+ * mandate the AS has no record of at all (e.g. the cache is stale about an
+ * id that was deleted). There is currently no distinct "superseded" code on
+ * the wire — a renewal reuses the same authorizationId (see
  * `authz-store.ts`'s `renewAuthorization`) rather than minting a new one, so
  * a superseded mandate surfaces as one of these two codes, not a third.
  */
 function isStaleMandateRefusal(err: SPReceiptError): boolean {
   const errors = err.body?.errors as Array<{ code?: unknown }> | undefined;
   const code = errors?.[0]?.code;
-  if (err.statusCode === 403 && (code === 'ATTESTATION_REVOKED' || code === 'ATTESTATION_EXPIRED')) {
+  if (err.statusCode === 403 && (code === 'MANDATE_REVOKED' || code === 'MANDATE_EXPIRED')) {
     return true;
   }
-  if (err.statusCode === 404 && code === 'ATTESTATION_NOT_FOUND') {
+  if (err.statusCode === 404 && code === 'MANDATE_NOT_FOUND') {
     return true;
   }
   return false;
+}
+
+/**
+ * True when the AS refused a ticket because the selected authorization's
+ * stored mandate blob is pre-0.7 (protocol.md -> Error Codes:
+ * VERSION_UNSUPPORTED; the AS's ticket route returns it at 409 for exactly
+ * this case, with a "re-approve this mandate" message). Matched on the
+ * canonical code, never the free-text message (V6).
+ *
+ * Deliberately NOT folded into {@link isStaleMandateRefusal}: that helper's
+ * caller INVALIDATES (drops) the authorization from the cache — correct
+ * for revoked/expired/not-found, where the grant genuinely no longer
+ * exists, but wrong here. A VERSION_UNSUPPORTED authorization's RECORD is
+ * still live; only its signed blob's wire version is obsolete. It must
+ * keep showing (flagged) so a human knows to re-approve it (item 9) —
+ * disappearing it would hide exactly the authorization that needs action.
+ */
+function isVersionUnsupportedRefusal(err: SPReceiptError): boolean {
+  const errors = err.body?.errors as Array<{ code?: unknown }> | undefined;
+  return err.statusCode === 409 && errors?.[0]?.code === 'VERSION_UNSUPPORTED';
 }
 
 function createGatedToolHandlerInner(
@@ -449,6 +517,17 @@ function createGatedToolHandlerInner(
           content: [{ type: 'text', text: lockedNotice(`use ${tool.namespacedName}`, state.spClient.getLockReason() ?? 'restart') }],
           isError: true,
         };
+      }
+      // V7: fail closed when the AS this gateway is paired with does not
+      // support this package's protocol version
+      // (shared-state.ts#checkAsCompat). Checked on every call (not once at
+      // handler-construction time — the startup check runs concurrently
+      // with tool discovery and may still be in flight when handlers are
+      // first built). Only reached for tools that are actually gateable —
+      // a disabled/undescribed tool refuses on its own, above, without
+      // touching `state` at all.
+      if (state.asVersionRefusal) {
+        return { content: [{ type: 'text', text: `Refused: ${state.asVersionRefusal}` }], isError: true };
       }
       return inner(args);
     };
@@ -846,11 +925,11 @@ function createGatedToolHandlerInner(
       };
     }
 
-    // Most-specific-wins + fail-safe selection over the profile's context schema.
-    // Generic: specificity is set-containment over contextSchema.keyOrder — no
+    // Most-specific-wins + fail-safe selection over the profile's scope schema.
+    // Generic: specificity is set-containment over scopeSchema.keyOrder — no
     // per-profile code. A tie / partial overlap / no-scope profile falls back to
     // requiring approval if any passer does (never a silent bypass).
-    const contextKeys = getProfile(passers[0].profileId)?.contextSchema?.keyOrder ?? [];
+    const contextKeys = getProfile(passers[0].profileId)?.scopeSchema?.keyOrder ?? [];
 
     // Fallback on a stale-mandate refusal (see isStaleMandateRefusal): the AS
     // — not this process's local cache — is the source of truth on whether a
@@ -909,6 +988,12 @@ function createGatedToolHandlerInner(
         if ((auth.deferredCommitmentDomains ?? []).length > 0) {
           try {
             const enrichedArgs = await attachImagePreview(args);
+            // Item 7 — never put scope-constrained values on the wire; see
+            // wireExecutionContext's doc comment. Both the submission and
+            // this gateway's own record of it use the SAME filtered value,
+            // so the later cross-check (commitments.ts) compares like for
+            // like.
+            const wireExecCtx = wireExecutionContext(auth.profileId, execution);
             const { proposal } = await state.spClient.submitProposal({
               authorizationId: authzId,
               profileId: auth.profileId,
@@ -916,7 +1001,7 @@ function createGatedToolHandlerInner(
               pendingDomains: auth.deferredCommitmentDomains,
               tool: tool.namespacedName,
               toolArgs: enrichedArgs,
-              executionContext: { ...execution },
+              executionContext: wireExecCtx,
             });
             // Record what WE submitted — ticket-verify.ts / commitments.ts
             // compares against this at execution time rather than trusting
@@ -925,7 +1010,7 @@ function createGatedToolHandlerInner(
               proposalId: proposal.id,
               tool: tool.namespacedName,
               toolArgs: enrichedArgs,
-              executionContext: { ...execution },
+              executionContext: wireExecCtx,
               authorizationId: authzId,
               profileId: auth.profileId,
             });
@@ -988,6 +1073,12 @@ function createGatedToolHandlerInner(
           // ticket the AS signs — binding the ticket to THIS invocation, not
           // just to "a call shaped like this one". See ticket-verify.ts.
           const idempotencyKey = randomUUID();
+          // Item 7 — never put scope-constrained values on the wire; see
+          // wireExecutionContext's doc comment. Used for BOTH the request
+          // and the ticket-verify.ts cross-check below, so the ticket the
+          // AS echoes back (which only ever contains what it was sent) is
+          // compared against the same filtered shape, not the full one.
+          const wireExecCtx = wireExecutionContext(auth.profileId, execution);
           const { receipt } = await state.spClient.postReceipt({
             authorizationId: authzId,
             // Optional cross-check — the AS fails closed on a mismatch.
@@ -995,7 +1086,7 @@ function createGatedToolHandlerInner(
             profileId: auth.profileId,
             action: tool.namespacedName,
             actionType,
-            executionContext: { ...execution },
+            executionContext: wireExecCtx,
             amount: typeof execution.amount === 'number' ? execution.amount : undefined,
             idempotencyKey,
             // Privacy: send the hash and how to reproduce it — never the
@@ -1018,7 +1109,7 @@ function createGatedToolHandlerInner(
           // didn't verify.
           await verifyTicket(state.cache, receipt, {
             action: tool.namespacedName,
-            executionContext: { ...execution },
+            executionContext: wireExecCtx,
             authorizationId: authzId,
             profileId: auth.profileId,
             idempotencyKey,
@@ -1028,7 +1119,10 @@ function createGatedToolHandlerInner(
 
           // Subject custody: keep the complete signed receipt (+ attestation
           // blobs) locally so the evidence stays verifiable without the AS.
-          // Best-effort — never blocks the execution the AS just authorized.
+          // FAIL-CLOSED (V8): written BEFORE the tool call below; if this
+          // throws, the catch block refuses and the tool never runs — see
+          // shared-state.ts#archiveReceipt / receipt-archive.ts's
+          // ArchiveWriteError.
           await state.archiveReceipt(receipt, {
             authorizationId: authzId,
             profileId: auth.profileId,
@@ -1056,6 +1150,22 @@ function createGatedToolHandlerInner(
             };
           }
 
+          // V8: the local evidence archive could not be written (or had no
+          // issuer key to resolve) BEFORE this call reached the point of
+          // executing the downstream tool. Fail closed: a ticket already
+          // issued but never archived leaves no local proof of what was
+          // approved if the AS later becomes unreachable. This is a LOCAL
+          // fault (disk, or this process's own state) — unlike an
+          // AsKeyMismatchError, it says nothing about the Authority Server's
+          // trustworthiness, so it does not invalidate the mandate or lock
+          // the gateway.
+          if (err instanceof ArchiveWriteError) {
+            return {
+              content: [{ type: 'text', text: `Blocked: the ticket could not be archived locally — ${err.message}. The action was not executed.` }],
+              isError: true,
+            };
+          }
+
           // The profile binds a declared field set and this call cannot supply
           // it. Refuse: issuing the receipt anyway would produce one that
           // verifies while committing to less than it appears to.
@@ -1067,6 +1177,33 @@ function createGatedToolHandlerInner(
               }],
               isError: true,
             };
+          }
+
+          // Item 9 (re-approval UX): a pre-0.7 mandate. Flag it (never
+          // invalidate — see isVersionUnsupportedRefusal's doc comment) so
+          // list-authorizations and the mandate brief show it as needing
+          // re-approval, then fall back exactly like a stale mandate: retry
+          // with any OTHER eligible authorization on this profile, which
+          // may already be re-approved under 0.7.
+          if (err instanceof SPReceiptError && isVersionUnsupportedRefusal(err)) {
+            state.cache.markNeedsReapproval(auth.authorizationId);
+            const remaining = candidates.filter(c => c.authorizationId !== auth.authorizationId);
+            if (remaining.length === 0) {
+              return {
+                content: [{
+                  type: 'text',
+                  text: `Blocked: mandate ${auth.authorizationId} needs re-approval — the Authority Server ` +
+                    `no longer verifies its protocol version. Ask the decision owner to re-approve it ` +
+                    `(see list-authorizations). ${err.message}`,
+                }],
+                isError: true,
+              };
+            }
+            console.error(
+              `[Suveren MCP] fallback(${tool.namespacedName}): mandate ${auth.authorizationId} needs ` +
+                `re-approval (VERSION_UNSUPPORTED) → retrying with [${remaining.map(c => c.authorizationId).join(', ')}]`,
+            );
+            return attemptWithCandidates(remaining);
           }
 
           if (err instanceof SPReceiptError && isStaleMandateRefusal(err)) {
@@ -1146,6 +1283,9 @@ function createGatedToolHandlerInner(
 
             try {
               const enrichedArgs = await attachImagePreview(args);
+              // Item 7 — never put scope-constrained values on the wire;
+              // see wireExecutionContext's doc comment.
+              const wireExecCtx = wireExecutionContext(auth.profileId, execution);
               const { proposal } = await state.spClient.submitProposal({
                 authorizationId: authzId,
                 profileId: auth.profileId,
@@ -1153,14 +1293,14 @@ function createGatedToolHandlerInner(
                 pendingDomains: [],
                 tool: tool.namespacedName,
                 toolArgs: enrichedArgs,
-                executionContext: { ...execution },
+                executionContext: wireExecCtx,
                 pendingApprovers: uniqueApprovers,
               });
               state.proposalSubmissions.record({
                 proposalId: proposal.id,
                 tool: tool.namespacedName,
                 toolArgs: enrichedArgs,
-                executionContext: { ...execution },
+                executionContext: wireExecCtx,
                 authorizationId: authzId,
                 profileId: auth.profileId,
               });
@@ -1195,9 +1335,11 @@ function createGatedToolHandlerInner(
 
           if (err instanceof SPReceiptError && err.statusCode === 403) {
             // SP rejected — limit exceeded or revoked. If revoked, purge the
-            // cached attestation so list-authorizations/list-integrations
+            // cached mandate so list-authorizations/list-integrations
             // reflect reality instead of serving a stale "authorized" view.
-            if (/revoked/i.test(err.message)) {
+            // Matched on the canonical code, never the free-text message.
+            const errors403 = err.body?.errors as Array<{ code?: unknown }> | undefined;
+            if (errors403?.[0]?.code === 'MANDATE_REVOKED') {
               state.cache.invalidate(auth.authorizationId);
             }
             return {
@@ -1231,13 +1373,13 @@ function createGatedToolHandlerInner(
         });
 
         // Authorization verified. Append the verification footer (Category-A
-        // communicative profiles) and/or the store receipt_id (Category-B
+        // communicative profiles) and/or the store ticket_id (Category-B
         // structured stores that declare the field) to the outgoing call.
         let outgoingArgs =
           shouldAttachFooter() && receiptId
             ? appendVerificationFooter(tool, args, receiptId, auth.subjects?.[0])
             : args;
-        if (receiptId) outgoingArgs = attachReceiptId(tool, outgoingArgs, receiptId);
+        if (receiptId) outgoingArgs = attachTicketId(tool, outgoingArgs, receiptId);
         // LAST: transport encoding. After the hash and the footer, so the
         // binding stays over what was approved rather than over the wire form.
         outgoingArgs = encodeOutgoingArgs(tool, outgoingArgs);

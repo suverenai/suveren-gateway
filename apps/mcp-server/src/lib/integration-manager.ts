@@ -11,8 +11,7 @@ import { existsSync, writeFileSync, mkdirSync, readFileSync, rmSync } from 'node
 import { execFile } from 'node:child_process';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { getProfile } from '@hap/core';
-import type { ProfileToolGating } from '@hap/core';
+import type { ProfileToolGating } from './tool-gating-types';
 import type { IntegrationConfig, ToolGatingConfig } from './integration-registry';
 import { getManifest, isExactSemver } from './manifest-loader';
 import { remotePreflightTarget, preflightRemoteAuth } from './remote-auth-preflight';
@@ -794,10 +793,13 @@ export class IntegrationManager {
     await this.connectWithGuard(client, transport, config);
     console.error(`[IntegrationManager] Connected to ${config.id} (${config.command} ${config.args.join(' ')})`);
 
-    // Discover tools and resolve gating — prefer manifest toolGating over profile's
+    // Discover tools and resolve gating. The manifest's own `toolGating` is
+    // the sole source now: hap-core 0.12 dropped `AgentProfile.toolGating`
+    // (it was never a protocol concept — see tool-gating-types.ts), and no
+    // profile on the live index.json (hap-profiles/index.json) carried one
+    // anyway — only superseded 0.3 profile files did.
     const toolsResult = await client.listTools();
-    const profileGating = config.toolGating
-      ?? (config.profile ? getProfile(config.profile)?.toolGating ?? null : null);
+    const profileGating = config.toolGating ?? null;
 
     const tools: DiscoveredTool[] = (toolsResult.tools ?? []).map(tool => {
       const gating = this.resolveToolGating(config.profile, profileGating, tool.name);

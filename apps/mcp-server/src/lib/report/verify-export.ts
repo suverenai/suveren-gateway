@@ -28,7 +28,8 @@
  * checkable offline (archive/database values).
  */
 import { Parser } from 'htmlparser2';
-import { verifyReceiptSignature, verifyAttestationSignature, decodeAttestationBlob, computeBoundsHash, type AgentProfile } from '@hap/core';
+import { verifyTicketSignature, verifyMandateSignature, decodeMandateBlob, computeBoundsHash, type AgentProfile } from '@hap/core';
+import { issuerFromPublicKeyHex } from '../issuer-from-hex';
 import { checkDocumentReproduces, checkDrawnElements, type BoxCheck, type DocumentCheck } from './verify-drawn';
 import { parseElements } from './parse-elements';
 import { sanitizeReportHtml } from './sanitize';
@@ -264,8 +265,8 @@ async function checkAttestations(
   }
   for (const att of auth.attestations) {
     try {
-      const attestation = decodeAttestationBlob(att.blob);
-      await verifyAttestationSignature(attestation, publicKeyHex);
+      const mandate = decodeMandateBlob(att.blob);
+      await verifyMandateSignature(mandate, { trustedIssuers: [issuerFromPublicKeyHex(publicKeyHex)] });
     } catch (err) {
       return { valid: false, error: err instanceof Error ? err.message : String(err) };
     }
@@ -287,7 +288,9 @@ export async function verifyExportBundle(bundle: ExportBundle, opts: VerifyExpor
     }
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await verifyReceiptSignature(receipt as any, bundle.authorityServer.publicKeyHex);
+      await verifyTicketSignature(receipt as any, {
+        trustedIssuers: [issuerFromPublicKeyHex(bundle.authorityServer.publicKeyHex)],
+      });
       tickets.push({ ticketId: id, referenced: referencedIds.has(id), present: true, signatureValid: true });
     } catch (err) {
       tickets.push({
@@ -307,7 +310,7 @@ export async function verifyExportBundle(bundle: ExportBundle, opts: VerifyExpor
     if (auth.boundsHash) hashes.push({ from: 'the mandate record', value: auth.boundsHash, signed: false });
     for (const att of auth.attestations) {
       try {
-        const bh = decodeAttestationBlob(att.blob).payload.bounds_hash;
+        const bh = decodeMandateBlob(att.blob).payload.bounds_hash;
         if (bh) hashes.push({ from: 'the signed attestation', value: bh, signed: attestationValid });
       } catch {
         // undecodable — already an attestation error

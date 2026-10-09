@@ -2,7 +2,7 @@
  * Resolves `sv-ticket`, `sv-approval` and `sv-mandate` — the three element
  * kinds keyed by a ticket id, all backed by one `ReceiptArchive` entry.
  *
- * Signature checking reuses `verifyReceiptSignature`/`verifyAttestationSignature`
+ * Signature checking reuses `verifyTicketSignature`/`verifyMandateSignature`
  * from `@hap/core` — the SAME functions `ticket-verify.ts` uses before the
  * gateway executes anything on a ticket's strength (work-plan instruction:
  * "the verification the gateway already uses before execution — find it, no
@@ -13,14 +13,18 @@
  * at the time (`ArchivedReceipt.asPublicKey` — written by `receipt-archive.ts`
  * at archive time, from the same pinned cache `ticket-verify.ts` used when the
  * ticket was issued). A ticket with no archived key cannot be verified at all
- * and is reported as such, never silently trusted.
+ * and is reported as such, never silently trusted. hap-core 0.12 resolves the
+ * verification key from the artifact's own `issuer` DID, restricted to the
+ * did:key derived from this archived hex (`issuerFromPublicKeyHex`) — never
+ * from the hex directly.
  */
-import { verifyReceiptSignature, verifyAttestationSignature, decodeAttestationBlob, type ReceiptPayload } from '@hap/core';
+import { verifyTicketSignature, verifyMandateSignature, decodeMandateBlob, type TicketPayload } from '@hap/core';
 import type { ArchivedReceipt, ArchivedAuthorization } from '../receipt-archive';
 import type { ReceiptArchiveReader } from './types';
 import { formatActionLabel, formatDateTime, formatDuration, formatBoundLabel, profileShortLabel } from './format';
 import { getIdentityDirectory, ownerLabel, approverLabel } from './identity';
 import { scrubForbidden } from './agent-view';
+import { issuerFromPublicKeyHex } from '../issuer-from-hex';
 
 export function findReceiptEntry(archive: ReceiptArchiveReader, ticketId: string): ArchivedReceipt | undefined {
   return archive.getReceipts().find(r => (r.receipt as { id?: unknown }).id === ticketId);
@@ -62,7 +66,9 @@ export async function checkTicket(archive: ReceiptArchiveReader, ticketId: strin
     return { ok: false, reason: `Ticket "${ticketId}" has no archived Authority Server key to verify it against.`, entry };
   }
   try {
-    await verifyReceiptSignature(entry.receipt as unknown as ReceiptPayload, entry.asPublicKey);
+    await verifyTicketSignature(entry.receipt as unknown as TicketPayload, {
+      trustedIssuers: [issuerFromPublicKeyHex(entry.asPublicKey)],
+    });
   } catch (err) {
     return {
       ok: false,
@@ -173,11 +179,15 @@ export async function resolveMandateElement(archive: ReceiptArchiveReader, ticke
   const firstBlob = auth.attestations[0]?.blob;
   if (firstBlob && check.entry.asPublicKey) {
     try {
-      const attestation = decodeAttestationBlob(firstBlob);
-      await verifyAttestationSignature(attestation, check.entry.asPublicKey);
-      mode = attestation.payload.commitment_mode;
-      const dids = attestation.payload.resolved_owners ?? [];
-      const subjects = attestation.payload.subjects ?? [];
+      const mandate = decodeMandateBlob(firstBlob);
+      await verifyMandateSignature(mandate, {
+        trustedIssuers: [issuerFromPublicKeyHex(check.entry.asPublicKey)],
+      });
+      mode = mandate.payload.commitment_mode;
+      // v0.7: `resolved_owners` (plain DID array) is gone — `mandate_owners`
+      // carries exactly one entry (Mandate rule 7); map to its `.did`.
+      const dids = (mandate.payload.mandate_owners ?? []).map(o => o.did);
+      const subjects = mandate.payload.subjects ?? [];
       ownersRaw = dids;
       // A did:key is never shown — only a HIGH-assurance disclosed name
       // stands in its place; everything else falls back to the neutral

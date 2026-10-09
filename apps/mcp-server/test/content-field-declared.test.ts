@@ -125,9 +125,9 @@ describe('existing connectors are unaffected', () => {
 
   it('an unrelated extra argument does not change the hash', () => {
     // Only the bound field is hashed. If the whole args object were hashed, an
-    // injected receipt_id or footer would change the fingerprint after signing.
+    // injected ticket_id or footer would change the fingerprint after signing.
     const a = computeContentBinding(PROFILE, proseTool({ text: { type: 'string' } }), { text: 'a post' })!;
-    const b = computeContentBinding(PROFILE, proseTool({ text: { type: 'string' } }), { text: 'a post', sha: 'abc123', receipt_id: 'rct_1' })!;
+    const b = computeContentBinding(PROFILE, proseTool({ text: { type: 'string' } }), { text: 'a post', sha: 'abc123', ticket_id: 'rct_1' })!;
     expect(a.contentHash).toBe(b.contentHash);
   });
 

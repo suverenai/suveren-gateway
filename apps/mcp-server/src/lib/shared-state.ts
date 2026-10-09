@@ -9,17 +9,20 @@ import { AttestationCache, AsKeyMismatchError, type CachedAuthorization } from '
 import { GateStore, type GateContent, type GateEntry } from './gate-store';
 import { ExecutionLog } from './execution-log';
 import { DenialLog } from './denial-log';
-import { ReceiptArchive, type ArchivedAttestation } from './receipt-archive';
+import { ReceiptArchive, ArchiveWriteError, type ArchivedAttestation } from './receipt-archive';
 import { ExecutionJournal } from './execution-journal';
 import { ProposalSubmissionStore } from './proposal-submission-store';
 import { MCPGatekeeper } from './gatekeeper';
 import { ReportStore } from './report/report-store';
+import { PROTOCOL_VERSION } from '@hap/core';
 
 export interface EnrichedAuthorization extends CachedAuthorization {
   gateContent: GateContent | null;
   // v0.4 fields merged from gate store (may override cache values)
   context?: Record<string, string | number>;
   contextHash?: string;
+  /** V9/item 9 — see attestation-cache.ts's `reapprovalNeeded`. */
+  needsReapproval?: boolean;
 }
 
 export class SharedState {
@@ -38,6 +41,22 @@ export class SharedState {
    *  see ticket-verify.ts / commitments.ts. */
   readonly proposalSubmissions: ProposalSubmissionStore;
   readonly gatekeeper: MCPGatekeeper;
+
+  /**
+   * V7 — set by {@link checkAsCompat} (called once at process start, and
+   * again whenever the AS URL this process pairs with changes — which, in
+   * practice, only happens across a restart; see bin/http.ts's
+   * `repairIfAsUrlChanged`). Non-null means the AS this gateway is paired
+   * with does not list {@link PROTOCOL_VERSION} among its
+   * `supportedVersions` — every gated tool call MUST refuse with this
+   * message rather than reach the AS at all (checked in tool-proxy.ts,
+   * before anything else). `null` until the first check completes, which
+   * reads the SAME as "compatible" — fail-closed behaviour starts only
+   * once a check has actually run and failed, not merely "has not run
+   * yet" (the compat endpoint is best-effort: an AS that is briefly
+   * unreachable at boot must not permanently brick the gateway).
+   */
+  asVersionRefusal: string | null = null;
 
   /**
    * @param dataDir Passed to the AttestationCache so it can enforce AS key
@@ -63,12 +82,62 @@ export class SharedState {
   }
 
   /**
+   * V7 — call once at startup (and again if the AS URL this process pairs
+   * with changes). Fetches GET /api/as/compat and sets
+   * {@link asVersionRefusal} when the AS does not support this package's
+   * protocol version. A network failure (AS unreachable at boot) does NOT
+   * set a refusal — that is a connectivity problem every gated call
+   * already surfaces on its own merits (SPReceiptError etc.); this check
+   * exists to catch the specific, otherwise-silent-until-first-tool-call
+   * case of a genuinely incompatible AS, not to duplicate "AS is down".
+   */
+  async checkAsCompat(): Promise<void> {
+    let compat: { protocolVersion?: unknown; supportedVersions?: unknown };
+    try {
+      compat = await this.spClient.getCompat();
+    } catch {
+      return; // unreachable — not this check's concern; leave any prior result as-is
+    }
+    // A pre-v0.7 AS's /api/as/compat has no `supportedVersions` field at
+    // all (its own response shape predates this check) — read defensively
+    // rather than crashing (`undefined.includes` on a floating,
+    // fire-and-forget promise is an UNHANDLED REJECTION, which modern Node
+    // treats as fatal: this previously took the whole process down against
+    // a real pre-migration AS, every other in-flight request included).
+    // Missing/malformed is exactly as incompatible as a list that doesn't
+    // name our version — both get the same clear refusal.
+    const supported = Array.isArray(compat.supportedVersions) ? compat.supportedVersions : [];
+    if (!supported.includes(PROTOCOL_VERSION)) {
+      this.asVersionRefusal = supported.length > 0
+        ? `This Authority Server supports protocol version(s) [${supported.join(', ')}], not ${PROTOCOL_VERSION}. ` +
+          'Update the gateway or the Authority Server so the two agree, then restart. No gated action can run until then.'
+        : `This Authority Server's /api/as/compat does not name a supportedVersions list (it answered ` +
+          `${JSON.stringify(compat.protocolVersion ?? 'unknown')}), so it cannot be confirmed to support ` +
+          `protocol ${PROTOCOL_VERSION}. Update the gateway or the Authority Server, then restart. No gated action can run until then.`;
+      console.error(`[Suveren MCP] ${this.asVersionRefusal}`);
+    } else {
+      this.asVersionRefusal = null;
+    }
+  }
+
+  /**
    * Archive a signed receipt into the local receipt archive — the subject's
    * own durable copy of the evidence (see receipt-archive.ts).
    *
-   * Best-effort by contract: the AS has already issued the receipt and holds
-   * the authoritative copy, so an archive failure logs loudly but MUST NOT
-   * block the execution it documents.
+   * FAIL-CLOSED (V8, reversed from the original "best-effort" contract):
+   * callers MUST call this BEFORE executing the downstream tool, and MUST
+   * NOT execute it if this throws. The AS's copy of the TICKET is
+   * authoritative, but this archive is the subject's ONLY copy of the
+   * intent/context plaintext the ticket's hashes commit to, and of the
+   * issuer key needed to verify it offline — an execution that ran with no
+   * way to produce that evidence later is worse than one that was refused
+   * up front.
+   *
+   * @throws AsKeyMismatchError when the pinned key is unavailable or
+   *   mismatched (propagated as-is — callers already react to this
+   *   specifically: refuse + lock, not a generic archive failure).
+   * @throws ArchiveWriteError for every other failure to produce a complete,
+   *   verifiable entry (no public key resolved, or the write itself failed).
    */
   async archiveReceipt(
     receipt: Record<string, unknown>,
@@ -87,23 +156,24 @@ export class SharedState {
       boundContent?: Record<string, unknown> | string;
     },
   ): Promise<void> {
+    // Store the AS pubkey alongside so the entry verifies offline even if
+    // the AS later disappears. By the time archiveReceipt runs,
+    // ticket-verify.ts has already required a clean getPublicKey() to get
+    // this far in the normal call path, so this is normally free (5 min
+    // cache) — but REQUIRED now (asPublicKey is no longer optional on the
+    // archive entry): an entry with no issuer key can never be verified, so
+    // failing to resolve one fails the whole write, not just that one field.
+    let asPublicKey: string;
     try {
-      // Store the AS pubkey alongside so the entry verifies offline even if
-      // the AS later disappears. Best-effort: cached 5 min, usually free —
-      // EXCEPT a pin mismatch, which must not be swallowed here. By the time
-      // archiveReceipt runs, ticket-verify.ts has already required a clean
-      // getPublicKey() to get this far in the normal call path; a mismatch
-      // surfacing here regardless means something call this out of order,
-      // and archiving a receipt from a server whose key we no longer trust
-      // silently would misrepresent it as verified evidence.
-      let asPublicKey: string | undefined;
-      try {
-        asPublicKey = await this.cache.getPublicKey();
-      } catch (err) {
-        if (err instanceof AsKeyMismatchError) throw err;
-        /* any other failure — archive without it, still verifiable via any saved key */
-      }
+      asPublicKey = await this.cache.getPublicKey();
+    } catch (err) {
+      if (err instanceof AsKeyMismatchError) throw err;
+      throw new ArchiveWriteError(
+        `Could not resolve the Authority Server's public key to archive this receipt against: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
 
+    try {
       this.receiptArchive.record({
         receipt,
         authorizationId: opts.authorizationId,
@@ -126,15 +196,7 @@ export class SharedState {
           : undefined,
       });
     } catch (err) {
-      // AsKeyMismatchError is not an archive-write failure — it means the
-      // gateway no longer trusts this Authority Server's key, which callers
-      // (tool-proxy.ts, commitments.ts) must react to (refuse + lock), so it
-      // must not be swallowed into a log line like a disk-write hiccup.
-      if (err instanceof AsKeyMismatchError) throw err;
-      console.error(
-        '[Suveren MCP] Receipt archive write failed (execution proceeds — AS retains authoritative copy):',
-        err,
-      );
+      throw new ArchiveWriteError(`Receipt archive write failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -187,6 +249,7 @@ export class SharedState {
           gateContent: gateEntry?.gateContent ?? null,
           context: auth.context ?? gateEntry?.context,
           contextHash: auth.contextHash ?? gateEntry?.contextHash,
+          needsReapproval: this.cache.needsReapproval(auth.authorizationId),
         };
       })
       .filter(auth => auth.gateContent !== null);

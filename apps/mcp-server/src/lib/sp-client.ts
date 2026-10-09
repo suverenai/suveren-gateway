@@ -27,7 +27,10 @@ export interface SPAttestationResponse {
 export interface SPAttestationsResult {
   authorization_id: string;
   bounds_hash?: string;   // v0.4
-  context_hash?: string;  // v0.4
+  scope_hash?: string;    // v0.7 (was context_hash)
+  /** Gateway-internal field name, kept stable across the v0.7 rename —
+   *  populated from the wire's `mandates` key (GET /api/mandates answers
+   *  `mandates`, was `attestations` at GET /api/attestations). */
   attestations: (SPAttestationResponse & { commitment?: string })[];
   complete: boolean;
   frame?: Record<string, string | number>;
@@ -300,21 +303,50 @@ export class SPClient {
   }
 
   /**
-   * Get all attestations for a frame hash.
+   * GET /api/as/compat — what this Authority Server speaks (protocol.md ->
+   * Version negotiation). Unauthenticated, so a gateway can check it at
+   * startup before any session exists (V7: fail closed when the AS does
+   * not list our protocol version among `supportedVersions`, rather than
+   * discovering it call-by-call once a tool is actually invoked).
    */
-  async getAttestations(authorizationId: string): Promise<SPAttestationsResult> {
-    const res = await this.fetch(`/api/attestations?authorization_id=${encodeURIComponent(authorizationId)}`);
-    if (!res.ok) throw new Error(`SP attestations request failed: ${res.status}`);
-    return res.json() as Promise<SPAttestationsResult>;
+  async getCompat(): Promise<{ protocolVersion?: unknown; supportedVersions?: unknown }> {
+    const res = await this.fetch('/api/as/compat');
+    if (!res.ok) throw new Error(`SP compat request failed: ${res.status}`);
+    // A pre-v0.7 AS answers this path too, but without `supportedVersions`
+    // at all — the caller (shared-state.ts#checkAsCompat) reads this
+    // defensively rather than assuming the v0.7 shape.
+    return res.json() as Promise<{ protocolVersion?: unknown; supportedVersions?: unknown }>;
   }
 
   /**
-   * Get pending attestations for a domain.
+   * Get all mandates for an authorization id.
+   *
+   * v0.7: moved from GET /api/attestations (which now answers 410) to
+   * GET /api/mandates.
+   */
+  async getAttestations(authorizationId: string): Promise<SPAttestationsResult> {
+    const res = await this.fetch(`/api/mandates?authorization_id=${encodeURIComponent(authorizationId)}`);
+    if (!res.ok) throw new Error(`SP mandates request failed: ${res.status}`);
+    // v0.7: the response key is `mandates` (was `attestations`) — map onto
+    // this gateway's own stable internal field name at the boundary.
+    const body = await res.json() as Omit<SPAttestationsResult, 'attestations'> & {
+      mandates?: SPAttestationsResult['attestations'];
+      attestations?: SPAttestationsResult['attestations'];
+    };
+    return { ...body, attestations: body.mandates ?? body.attestations ?? [] };
+  }
+
+  /**
+   * Get pending mandates for a domain.
+   *
+   * v0.7: moved from GET /api/attestations/pending (which now answers 410)
+   * to GET /api/mandates/pending.
    */
   async getPendingAttestations(domain: string): Promise<SPPendingItem[]> {
-    const res = await this.fetch(`/api/attestations/pending?domain=${encodeURIComponent(domain)}`);
+    const res = await this.fetch(`/api/mandates/pending?domain=${encodeURIComponent(domain)}`);
     if (!res.ok) throw new Error(`SP pending request failed: ${res.status}`);
-    return res.json() as Promise<SPPendingItem[]>;
+    const data = await res.json() as { pending: SPPendingItem[] };
+    return data.pending;
   }
 
   /**
@@ -389,7 +421,8 @@ export class SPClient {
 
       let res: Response;
       try {
-        res = await this.fetch('/api/as/receipt', { method: 'POST', body });
+        // v0.7: moved from POST /api/as/receipt, which now answers 410.
+        res = await this.fetch('/api/as/ticket', { method: 'POST', body });
       } catch (err) {
         // Network-level failure (connection refused, reset, DNS). The request
         // may or may not have reached the AS — but because it carried the
@@ -431,8 +464,11 @@ export class SPClient {
       // replayed the original for a request it had already served (same
       // idempotencyKey, or a proposal already `executed`). The caller must
       // treat that as "you may already have run this", not as a fresh grant.
+      // v0.7: the success body's key is `ticket` (was `receipt`); this
+      // client's own return field name (`receipt`) stays, for every
+      // existing caller that destructures it.
       return {
-        receipt: respBody.receipt as Record<string, unknown>,
+        receipt: respBody.ticket as Record<string, unknown>,
         idempotent: respBody.idempotent === true,
       };
     }

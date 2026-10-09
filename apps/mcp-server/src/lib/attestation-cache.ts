@@ -4,9 +4,10 @@
  * Fetches from SP on-demand and caches with TTL awareness.
  */
 
-import { decodeAttestationBlob, type Subject } from '@hap/core';
+import { decodeMandateBlob, type Subject } from '@hap/core';
 import { SPClient, type SPAttestationsResult, type SPPendingItem } from './sp-client';
 import { readPairing, fingerprintOf } from './as-pairing';
+import { issuerFromPublicKeyHex } from './issuer-from-hex';
 
 /**
  * Thrown by {@link AttestationCache.getPublicKey} when the Authority Server
@@ -78,6 +79,19 @@ export class AttestationCache {
   /** Cache of authorizations by path (e.g., "payment-routine") */
   private authorizations = new Map<string, CachedAuthorization>();
   private lastSync = 0;
+  /**
+   * Re-approval UX (V9/item 9) — authorization ids the AS has told us, via a
+   * VERSION_UNSUPPORTED ticket refusal, carry only pre-0.7 mandate blobs.
+   * Learned lazily (only once an execution is actually attempted under
+   * them — nothing proactively re-verifies every cached blob's version),
+   * never cleared explicitly: re-approving replaces the authorization with
+   * a NEW id (the existing edit/replace ceremony), so the flagged id
+   * simply drops out of the active set on its own once revoked. In-memory
+   * only, same lifetime as the cache it annotates — a restart re-learns it
+   * on the next attempted execution, which is the gateway's only source for
+   * this fact to begin with.
+   */
+  private reapprovalNeeded = new Set<string>();
 
   /**
    * @param dataDir Where to look for a pinned key (as-pairing.json). Optional
@@ -120,6 +134,22 @@ export class AttestationCache {
     }
 
     return this.spPublicKey;
+  }
+
+  /**
+   * The pinned Authority Server, as a `did:key` — what hap-core 0.12's
+   * `verifyMandateSignature` / `verifyTicketSignature` take as
+   * `trustedIssuers` (they resolve the verification key from the artifact's
+   * OWN `issuer` DID, never from a key supplied alongside it — protocol.md ->
+   * *Ticket Verification* step 1). This derives the same did:key from the
+   * same pinned hex key {@link getPublicKey} already enforces, so a mandate
+   * or ticket whose signature verifies under a DIFFERENT key — even one that
+   * encodes a valid did:key of its own — still fails: the issuer named on the
+   * artifact must BE the pinned key, not merely resolve to some key.
+   */
+  async getTrustedIssuer(): Promise<string> {
+    const hex = await this.getPublicKey();
+    return issuerFromPublicKeyHex(hex);
   }
 
   /**
@@ -174,7 +204,7 @@ export class AttestationCache {
     const firstBlob = result.attestations[0]?.blob;
     if (firstBlob) {
       try {
-        const payload = decodeAttestationBlob(firstBlob).payload;
+        const payload = decodeMandateBlob(firstBlob).payload;
         signedCommitmentMode = payload.commitment_mode;
         subjects = payload.subjects; // v0.6 Identity Assurance — signed verified identity
       } catch {
@@ -185,7 +215,7 @@ export class AttestationCache {
     const auth: CachedAuthorization = {
       authorizationId: result.authorization_id,
       boundsHash: result.bounds_hash,  // content fingerprint (undefined for pre-v0.4 records)
-      contextHash: result.context_hash,
+      contextHash: result.scope_hash,  // v0.7: wire field renamed context_hash -> scope_hash
       profileId: result.profile_id,
       path: result.profile_id,
       frame: bounds,                   // compat alias
@@ -248,5 +278,16 @@ export class AttestationCache {
    */
   invalidate(path: string): void {
     this.authorizations.delete(path);
+  }
+
+  /** Flag an authorization as needing re-approval (V9/item 9) — see
+   *  {@link reapprovalNeeded}'s doc comment. */
+  markNeedsReapproval(authorizationId: string): void {
+    this.reapprovalNeeded.add(authorizationId);
+  }
+
+  /** Whether this authorization was flagged by {@link markNeedsReapproval}. */
+  needsReapproval(authorizationId: string): boolean {
+    return this.reapprovalNeeded.has(authorizationId);
   }
 }

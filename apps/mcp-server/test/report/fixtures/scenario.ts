@@ -2,29 +2,42 @@
  * A REAL, verifiably-signed scenario for report-verifier tests: a real
  * `ReceiptArchive` (temp dir, plaintext — no vault key involved), real
  * Ed25519-signed tickets (reuses `test/helpers/real-receipt.ts`) and real
- * Ed25519-signed attestation blobs, built the same way hap-core's own
- * `verifyAttestationSignature`/`verifyReceiptSignature` check them — nothing
- * about the cryptography here is mocked, only the Authority Server's HTTP
- * round-trip is replaced by writing the archive directly.
+ * Ed25519-signed mandate blobs, signed through hap-core's own
+ * `signMandate`/`encodeMandateBlob` — the same functions `verifyMandateSignature`
+ * checks against — so nothing about the cryptography here is mocked, only
+ * the Authority Server's HTTP round-trip is replaced by writing the archive
+ * directly.
+ *
+ * v0.7: a mandate carries exactly one `mandate_owners` entry (Mandate rule
+ * 7) — multi-owner coverage is multiple SEPARATE attestation blobs, one per
+ * domain, not a `resolved_domains` map inside one blob. `owners` here is
+ * therefore a single DID; a scenario that needs a domain -> DID link sets
+ * `domain` (the ARCHIVED attestation's own field — see identity.ts), which
+ * defaults to 'default'.
  */
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { sign as cryptoSign } from 'node:crypto';
-import { canonicalize, computeIntentHash, encodeAttestationBlob, type Attestation, type AttestationPayload } from '@hap/core';
+import { canonicalize, encodeMandateBlob, computeIntentHash, type Mandate, type MandatePayload } from '@hap/core';
 import { ReceiptArchive } from '../../../src/lib/receipt-archive';
 import { recomputeBoundsHash } from '../../../src/lib/report/verify-export';
 import { testReceiptKeypair, makeSignedReceipt, type TestReceiptKeypair } from '../../helpers/real-receipt';
 
 export const AS_URL = 'https://as.example';
 
-/** Signs an attestation PAYLOAD the same way the real Authority Server does
- *  (`suveren-as/src/lib/keys.ts`: JCS-canonical bytes, Ed25519, plain base64 —
- *  NOT base64url, unlike receipts; see hap-core's `verifyAttestationSignature`). */
-export function signAttestationPayload(payload: AttestationPayload, kp: TestReceiptKeypair): Attestation {
+/**
+ * Signs a mandate payload the same way the real Authority Server does
+ * (`suveren-as/src/lib/keys.ts`: JCS-canonical bytes, Ed25519) — base64url,
+ * like every other v0.7 signature (README.md: "strict base64url ... not
+ * silently repaired"). Hand-rolled with node:crypto rather than hap-core's
+ * own (async) `signMandate` so this stays synchronous — `addTicket` below is
+ * called synchronously throughout the test suite.
+ */
+export function signMandatePayload(payload: MandatePayload, kp: TestReceiptKeypair): Mandate {
   const bytes = Buffer.from(canonicalize(payload), 'utf-8');
-  const signature = cryptoSign(null, bytes, kp.privateKey).toString('base64');
-  return { header: { typ: 'HAP-attestation', alg: 'EdDSA' }, payload, signature };
+  const signature = cryptoSign(null, bytes, kp.privateKey).toString('base64url');
+  return { header: { typ: 'HAP-mandate', alg: 'EdDSA' }, payload, signature };
 }
 
 export interface ScenarioAuthorization {
@@ -37,11 +50,14 @@ export interface ScenarioAuthorization {
   contextHash?: string;
   intent?: string;
   commitmentMode?: 'automatic' | 'review' | 'review_above_cap';
-  owners?: string[]; // resolved_owners DIDs
+  /** The single mandate_owners DID for this mandate (v0.7: exactly one). */
+  owners?: string[];
   /** Signed identity overlay (v0.6 subjects) — a name only at assurance "high". */
-  subjects?: AttestationPayload['subjects'];
-  /** Signed domain -> owner DID map (in team mode the domain is the approver's account id). */
-  resolvedDomains?: Array<{ domain: string; did: string }>;
+  subjects?: MandatePayload['subjects'];
+  /** The ARCHIVED attestation's own `domain` field (in team mode the domain
+   *  is the approver's account id) — defaults to 'default'. Replaces the
+   *  removed per-payload `resolved_domains` map. */
+  domain?: string;
 }
 
 export function buildScenario() {
@@ -84,24 +100,29 @@ export function buildScenario() {
 
     let attestations: Array<{ domain: string; blob: string; expiresAt: number }> = [];
     if (authorization) {
-      const payload: AttestationPayload = {
-        attestation_id: `att-${authorization.authorizationId}`,
-        version: '0.6',
+      const ownerDid = authorization.owners?.[0] ?? 'did:key:zOwner1';
+      const payload: MandatePayload = {
+        mandate_id: `mandate-${authorization.authorizationId}`,
+        version: '0.7',
         profile_id: authorization.profileId,
-        bounds_hash: authorization.boundsHash,
-        ...(authorization.contextHash ? { context_hash: authorization.contextHash } : {}),
+        bounds_hash: authorization.boundsHash ?? 'sha256:test',
+        scope_hash: authorization.contextHash ?? 'sha256:test',
         execution_context_hash: 'sha256:test',
+        profile_hash: 'sha256:test',
+        // Always signed with the archive's main key (`kp`), independent of
+        // `signWithKeypair` — that override is for the TICKET's own "wrong
+        // key" test case, exactly as before this rewrite.
+        issuer: kp.issuer,
+        mandate_owners: [{ did: ownerDid }],
         // Like a real mandate ceremony: the intent is committed by its hash.
         gate_content_hashes: authorization.intent ? { intent: computeIntentHash(authorization.intent) } : {},
-        resolved_owners: authorization.owners ?? ['did:key:zOwner1'],
         commitment_mode: authorization.commitmentMode ?? 'automatic',
         ...(authorization.subjects ? { subjects: authorization.subjects } : {}),
-        ...(authorization.resolvedDomains ? { resolved_domains: authorization.resolvedDomains } : {}),
         issued_at: Math.floor(Date.now() / 1000) - 3600,
         expires_at: Math.floor(Date.now() / 1000) + 3600 * 24,
       };
-      const attestation = signAttestationPayload(payload, kp);
-      attestations = [{ domain: 'default', blob: encodeAttestationBlob(attestation), expiresAt: payload.expires_at }];
+      const mandate = signMandatePayload(payload, kp);
+      attestations = [{ domain: authorization.domain ?? 'default', blob: encodeMandateBlob(mandate), expiresAt: payload.expires_at }];
     }
 
     archive.record({
