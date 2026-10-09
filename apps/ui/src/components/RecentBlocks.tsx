@@ -33,8 +33,10 @@ const REASON: Record<DenialReason, { chip: string; sev: Severity; fixTo?: string
   ungoverned:   { chip: 'Unconfigured', sev: 'act' },
   query_unsafe: { chip: 'Unsafe search', sev: 'info' },
 };
-export function denialView(reason: DenialReason): { chip: string; sev: Severity; fixTo?: string } {
-  return REASON[reason] ?? { chip: 'Blocked', sev: 'info' };
+export function denialView(reason: DenialReason | undefined): { chip: string; sev: Severity; fixTo?: string } {
+  // `reason` is only ever absent on a non-read record (AU2 kinds) — this
+  // widget only ever renders read blocks in practice, but stays safe either way.
+  return (reason && REASON[reason]) ?? { chip: 'Blocked', sev: 'info' };
 }
 
 /** The plain-language sentence (presentation). Coarse target only, never content. */
