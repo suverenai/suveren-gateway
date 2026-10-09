@@ -21,8 +21,8 @@
  * `write_report` is a write tool gated like any other: `staticExecution: {
  * action_type: 'report' }` maps onto the profile's `report_daily_max`
  * cumulative bound, so the Authority Server enforces how many times per day
- * the report may be replaced, the same receipt-precondition path a connector's
- * write tool goes through (ticket requested pre-flight, `receipt_id` injected
+ * the report may be replaced, the same ticket-precondition path a connector's
+ * write tool goes through (ticket requested pre-flight, `ticket_id` injected
  * via the declared input-schema property — see content-binding.ts).
  *
  * All four tools reuse the SAME resolvers `verify-report.ts` uses to check a
@@ -351,7 +351,7 @@ function writeReportTool(deps: BuiltinDeps): BuiltinTool {
       type: 'object',
       properties: {
         html: { type: 'string', description: 'The full report HTML — see the tool description for how to write it.' },
-        receipt_id: { type: 'string' },
+        ticket_id: { type: 'string' },
       },
       required: ['html'],
     },

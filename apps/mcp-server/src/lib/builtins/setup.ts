@@ -166,7 +166,7 @@ export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
           type: 'object',
           properties: {
             content: { type: 'string', description: 'The complete new agent brief, in markdown (at most 16 KB).' },
-            receipt_id: {
+            ticket_id: {
               type: 'string',
               description: 'Authorization reference for this call, set by the governing gateway — agents do not set this.',
             },
@@ -204,7 +204,7 @@ export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
             mode: { type: 'string', enum: ['review', 'automatic'], description: 'review = each action needs approval; automatic = within the limits.' },
             duration_hours: { type: 'number', description: 'How long the mandate is valid, in hours. Omit for the profile default.' },
             title: { type: 'string', description: 'A short name for the mandate.' },
-            receipt_id: {
+            ticket_id: {
               type: 'string',
               description: 'Authorization reference for this call, set by the governing gateway — agents do not set this.',
             },

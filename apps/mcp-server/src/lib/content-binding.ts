@@ -153,22 +153,25 @@ export function computeContentBinding(
 }
 
 /**
- * Store provenance (Content Provenance §4.1): record the authorizing receipt id
+ * Store provenance (Content Provenance §4.1): record the authorizing ticket id
  * alongside the written artifact, so a row can be reconciled against the AS's
- * signed receipt list (deleted/edited/fabricated rows are all caught).
+ * signed ticket list (deleted/edited/fabricated rows are all caught).
  *
  * Injected into the outgoing tool args ONLY when the downstream tool opts in by
- * declaring a `receipt_id` field in its input schema — the same decoupled,
+ * declaring a `ticket_id` field in its input schema (HAP v0.7 wire vocabulary —
+ * was `receipt_id`; hard switch, no fallback) — the same decoupled,
  * schema-driven approach the footer uses to find its content field. Structured
  * (Category-B) stores like records/customers declare it; communicative tools
- * (email/calendar) don't, so they're untouched.
+ * (email/calendar) don't, so they're untouched. Connectors may still store the
+ * value in a column or export field literally named `receipt_id` — that is
+ * their internal storage, not the wire.
  */
-export function attachReceiptId(
+export function attachTicketId(
   tool: DiscoveredTool,
   args: Record<string, unknown>,
-  receiptId: string,
+  ticketId: string,
 ): Record<string, unknown> {
   const schema = tool.inputSchema as { properties?: Record<string, unknown> } | undefined;
-  if (!schema?.properties || !('receipt_id' in schema.properties)) return args;
-  return { ...args, receipt_id: receiptId };
+  if (!schema?.properties || !('ticket_id' in schema.properties)) return args;
+  return { ...args, ticket_id: ticketId };
 }

@@ -36,7 +36,7 @@ export interface ArgRow {
 
 /** Never shown: the gateway's ticket reference and secret-looking values. */
 export const HIDDEN_ARG_KEYS = new Set([
-  'receipt_id', 'apiKey', 'api_key', 'accessToken', 'access_token', 'password', 'secret', 'signature',
+  'ticket_id', 'apiKey', 'api_key', 'accessToken', 'access_token', 'password', 'secret', 'signature',
   '_imagePreview',
 ]);
 

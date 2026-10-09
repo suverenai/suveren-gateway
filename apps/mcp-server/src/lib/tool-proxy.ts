@@ -17,7 +17,7 @@ import { SPReceiptError } from './sp-client';
 import { isCommitmentDowngrade, AsKeyMismatchError } from './attestation-cache';
 import { ArchiveWriteError } from './receipt-archive';
 import { appendVerificationFooter, shouldAttachFooter } from './receipt-footer';
-import { computeContentBinding, attachReceiptId } from './content-binding';
+import { computeContentBinding, attachTicketId } from './content-binding';
 import { hashToolArgs } from './execution-journal';
 import { verifyTicket, TicketBindingMismatchError } from './ticket-verify';
 import { notifyControlPlane } from './cp-notify';
@@ -1373,13 +1373,13 @@ function createGatedToolHandlerInner(
         });
 
         // Authorization verified. Append the verification footer (Category-A
-        // communicative profiles) and/or the store receipt_id (Category-B
+        // communicative profiles) and/or the store ticket_id (Category-B
         // structured stores that declare the field) to the outgoing call.
         let outgoingArgs =
           shouldAttachFooter() && receiptId
             ? appendVerificationFooter(tool, args, receiptId, auth.subjects?.[0])
             : args;
-        if (receiptId) outgoingArgs = attachReceiptId(tool, outgoingArgs, receiptId);
+        if (receiptId) outgoingArgs = attachTicketId(tool, outgoingArgs, receiptId);
         // LAST: transport encoding. After the hash and the footer, so the
         // binding stays over what was approved rather than over the wire form.
         outgoingArgs = encodeOutgoingArgs(tool, outgoingArgs);

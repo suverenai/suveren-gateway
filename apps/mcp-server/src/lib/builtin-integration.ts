@@ -7,7 +7,7 @@
  * read gate, `hideUnlessAuthorized`). `IntegrationManager.registerBuiltin` turns it
  * into ordinary `DiscoveredTool`s named `<id>__<tool>`, so everything downstream is
  * shared, not duplicated: tool listing and hiding, mandate selection, the local
- * gatekeeper, the read gate, ticket requests and `receipt_id` injection, review-mode
+ * gatekeeper, the read gate, ticket requests and `ticket_id` injection, review-mode
  * proposals and their execution after approval (committed executor), the execution
  * journal, and simulation-mode visibility. Only the last step differs: the manager
  * calls `handler` instead of a child MCP client.
@@ -36,7 +36,7 @@ export interface BuiltinTool {
   inputSchema: Record<string, unknown>;
   /**
    * Runs the action. Called only after the call passed the gatekeeper — for a
-   * write, with a ticket (its id in `args.receipt_id` when the tool declares it);
+   * write, with a ticket (its id in `args.ticket_id` when the tool declares it);
    * for review mode, only after a person approved it, possibly in another trigger.
    * Throwing is reported to the agent as a failed call.
    */

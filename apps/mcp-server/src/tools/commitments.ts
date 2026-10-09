@@ -21,7 +21,7 @@ import { lockedNotice } from '../lib/locked-notice';
 import type { IntegrationManager } from '../lib/integration-manager';
 import { SPReceiptError, type SPProposal } from '../lib/sp-client';
 import { appendVerificationFooter, shouldAttachFooter } from '../lib/receipt-footer';
-import { computeContentBinding, attachReceiptId } from '../lib/content-binding';
+import { computeContentBinding, attachTicketId } from '../lib/content-binding';
 import { encodeOutgoingArgs } from '../lib/arg-encoding';
 import { hashToolArgs } from '../lib/execution-journal';
 import type { CommittedExecutor, ExecutionResult } from '../lib/committed-executor';
@@ -398,7 +398,7 @@ export async function executeCommitted(
         // line instead of always footering as anonymous.
         outgoingArgs = appendVerificationFooter(discovered, outgoingArgs, receiptId, cachedAuth?.subjects?.[0]);
       }
-      outgoingArgs = attachReceiptId(discovered, outgoingArgs, receiptId);
+      outgoingArgs = attachTicketId(discovered, outgoingArgs, receiptId);
       // LAST: transport encoding — see arg-encoding.ts for why order matters.
       outgoingArgs = encodeOutgoingArgs(discovered, outgoingArgs);
     }
