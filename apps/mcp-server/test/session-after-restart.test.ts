@@ -37,6 +37,9 @@ function start(): ChildProcess {
       SUVEREN_MCP_TOKEN: '',
     },
     stdio: ['pipe', 'pipe', 'pipe'],
+    // Own process group, so stop() can kill npx AND the server it started —
+    // on Linux killing only npx left the server running (seen in CI).
+    detached: process.platform !== 'win32',
   });
   child.stderr?.on('data', (d: Buffer) => process.stderr.write(`  [server] ${d}`));
   return child;
@@ -51,12 +54,28 @@ async function waitUp(): Promise<void> {
   throw new Error('server did not start');
 }
 
+function killTree(child: ChildProcess, signal: NodeJS.Signals): void {
+  if (!child.pid) return;
+  if (process.platform === 'win32') {
+    spawn('taskkill', ['/pid', String(child.pid), '/T', '/F']);
+    return;
+  }
+  try { process.kill(-child.pid, signal); } catch { /* already gone */ }
+}
+
+/** Stop the server AND prove it is gone — a "restart" that leaves the old
+ *  process answering would make this test pass or fail for the wrong reason. */
 async function stop(child: ChildProcess | undefined): Promise<void> {
-  if (!child || child.exitCode !== null) return;
-  const exited = new Promise(r => child.once('exit', r));
-  child.kill('SIGTERM');
-  await Promise.race([exited, new Promise(r => setTimeout(r, 5000))]);
-  if (child.exitCode === null) child.kill('SIGKILL');
+  if (!child) return;
+  killTree(child, 'SIGTERM');
+  const t0 = Date.now();
+  while (Date.now() - t0 < 15000) {
+    try { await fetch(`${BASE}/health`, { signal: AbortSignal.timeout(500) }); }
+    catch { return; } // port no longer answers — the server is gone
+    if (Date.now() - t0 > 5000) killTree(child, 'SIGKILL');
+    await new Promise(r => setTimeout(r, 200));
+  }
+  throw new Error('the old gateway process is still answering — restart did not happen');
 }
 
 afterAll(async () => {
