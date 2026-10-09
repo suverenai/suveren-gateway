@@ -67,15 +67,14 @@ export function actionLabel(
  * schema (its field keys, declared there — not guessed from the key's shape:
  * `charge`'s scope fields are `currency`/`action_type`, with no `allowed_`
  * prefix at all). Without a profile (old grant, unknown id) there is nothing
- * to read that from, so this falls back to the `allowed_*` convention most
- * profiles still use — a heuristic, kept only for that one case.
+ * to read that from, so nothing is shown — never a guess from the key's shape.
  */
 export function scopeSummary(receipt: ExecutionReceipt, profile?: AgentProfile | null): string {
   const scopeFields = profile?.scopeSchema?.fields;
+  if (!scopeFields) return '';
   const parts: string[] = [];
   for (const [key, value] of Object.entries(receipt.executionContext ?? {})) {
-    const inScope = scopeFields ? key in scopeFields : key.startsWith('allowed_');
-    if (!inScope) continue;
+    if (!(key in scopeFields)) continue;
     const text = String(value ?? '').trim();
     if (!text) continue;
     parts.push(text.split(',').map(v => v.trim()).filter(Boolean).join(', '));

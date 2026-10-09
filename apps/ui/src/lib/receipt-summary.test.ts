@@ -87,30 +87,39 @@ describe('actionLabel — declared, never inferred', () => {
 });
 
 describe('scopeSummary — scope only, because receipts carry no content', () => {
-  it('reads allowed_* fields without knowing any profile', () => {
+  const emailProfile = profile({ scopeFields: { allowed_recipients: { displayName: 'Allowed recipients' } } });
+  const deployProfile = profile({ scopeFields: { allowed_environments: { displayName: 'Environments' } } });
+
+  it('reads the scope fields the profile declares', () => {
     expect(scopeSummary(receipt({
       executionContext: {
         action_type: 'send',
         recipient_count: 2,
         allowed_recipients: 'andreas@sublin.app,second@x.com',
       },
-    }))).toBe('andreas@sublin.app, second@x.com');
+    }), emailProfile)).toBe('andreas@sublin.app, second@x.com');
   });
 
   it('works the same for a different profile with different fields', () => {
     expect(scopeSummary(receipt({
       executionContext: { action_type: 'release', allowed_environments: 'production' },
-    }))).toBe('production');
+    }), deployProfile)).toBe('production');
   });
 
   it('says nothing rather than filler when a profile has no scope', () => {
-    expect(scopeSummary(receipt({ executionContext: { action_type: 'write' } }))).toBe('');
+    expect(scopeSummary(receipt({ executionContext: { action_type: 'write' } }), profile({ scopeFields: {} }))).toBe('');
+  });
+
+  it('without a profile shows nothing — never guesses scope from a key prefix', () => {
+    expect(scopeSummary(receipt({
+      executionContext: { action_type: 'send', allowed_recipients: 'a@x.com' },
+    }))).toBe('');
   });
 
   it('omits counts and action_type — they are not scope', () => {
     const out = scopeSummary(receipt({
       executionContext: { action_type: 'send', recipient_count: 2, allowed_recipients: 'a@x.com' },
-    }));
+    }), emailProfile);
     expect(out).toBe('a@x.com');
     expect(out).not.toMatch(/send|2/);
   });
