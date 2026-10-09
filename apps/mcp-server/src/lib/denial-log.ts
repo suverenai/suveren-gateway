@@ -1,13 +1,35 @@
 /**
- * Denial Log — durable, local, encrypted record of READ blocks (F7.4 / the
- * read-denial-recording design). When the Gatekeeper refuses a read, we record
- * *that it happened* so the owner can tell "a limit I set fired" from "the
- * gateway is broken" (surfaced later via a control-plane endpoint + UI panel).
+ * Denial Log — durable, local, encrypted record of refused tool calls. Started
+ * as READ blocks only (F7.4 / the read-denial-recording design); AU2 (2026-10-09
+ * work-plan) extends it to every refusal of a gated call — local Gatekeeper
+ * refusals (bounds/scope/action type), Authority Server ticket refusals (by
+ * canonical code), simulation-mode blocks, and "no matching mandate" — so the
+ * owner can tell "a limit I set fired" from "the gateway is broken" (surfaced
+ * via a control-plane endpoint + UI).
  *
- * DELIBERATELY records DENIALS ONLY — never successful reads (a full read log
- * would be a correspondence-metadata trail). Records carry NO message/event
- * content: a reason, a human sentence, and an OPTIONAL coarse target token
- * (e.g. a calendar name) — never a subject, body, address, or id.
+ * DELIBERATELY records DENIALS ONLY — never successful calls (a full log would
+ * be a correspondence/content-metadata trail). Records carry NO message/event
+ * content and no action arguments: a `kind`, a human sentence, which field/
+ * limit was checked and its value — never a subject, body, recipient, or
+ * record content.
+ *
+ * `kind` discriminates the refusal:
+ *  - 'read'          — a read the Gatekeeper refused (original F7.4 shape;
+ *                       `reason`/`target` carry the detail, as before).
+ *  - 'bound'         — a local per_transaction/enum bound, or a manifest
+ *                       action_type defect, refused by this gateway.
+ *  - 'scope'         — a local scope constraint (enum/subset) refused by
+ *                       this gateway.
+ *  - 'cumulative'     — a cumulative (daily/weekly/monthly) limit refused by
+ *                       the Authority Server (local Gatekeepers never enforce
+ *                       cumulative bounds — AS-only, protocol.md).
+ *  - 'simulation'     — the call is refused because simulation mode is on.
+ *  - 'not_authorized' — no mandate currently covers the call (no matching
+ *                       grant, a mandate the AS no longer honours, or no
+ *                       approver path configured).
+ *
+ * Absent `kind` on an older on-disk record means 'read' — every record ever
+ * written before AU2 was a read block.
  *
  * Mirrors ExecutionLog: encrypted at rest with the vault key, plaintext fallback
  * until the key is set. Retention: the most recent MAX_RECORDS, and nothing
@@ -29,14 +51,43 @@ export type DenialReason =
   | 'spam'          // item in an excluded container (SPAM/TRASH)
   | 'query_unsafe'; // F8 — agent query couldn't be safely combined
 
+/** Discriminates every refusal recorded here. See the module doc above.
+ * Absent on an on-disk record ⇒ 'read' (every record predating AU2 was one). */
+export type DenialKind = 'read' | 'bound' | 'scope' | 'cumulative' | 'simulation' | 'not_authorized';
+
+/** Who made the refusal. Local Gatekeeper checks (bounds, scope, action type,
+ * simulation mode, no matching mandate) are 'gateway'; cumulative bounds and
+ * mandate-validity refusals the Authority Server makes at ticket time are
+ * 'authority-server'. */
+export type DenialWho = 'gateway' | 'authority-server';
+
 export interface DenialRecord {
   ts: number;               // Date.now() ms at the block
   tool: string;             // provider tool name, e.g. "get_message"
   integrationId: string;
   profile: string | null;
-  reason: DenialReason;
+  /** Omitted ⇒ 'read' (pre-AU2 records). */
+  kind?: DenialKind;
   detail: string;           // human sentence — no content
+  // kind === 'read' only (unchanged F7.4 shape):
+  reason?: DenialReason;
   target?: string;          // OPTIONAL coarse target (e.g. calendar name)
+  // kind !== 'read' — AU2 fields. Never content: identifiers and numbers only.
+  /** The authorizationId evaluated, when a specific mandate was in play. */
+  mandateId?: string;
+  /** Local title for that mandate, when the gateway has one on record. */
+  mandateTitle?: string;
+  /** Which bound/scope field (or 'action_type') the call was checked against. */
+  field?: string;
+  /** The value that was checked — never the action's content, just the
+   * number/token the limit compares against. */
+  value?: number | string;
+  /** The limit it was checked against. */
+  limit?: number | string;
+  who?: DenialWho;
+  /** The canonical error code (hap-core Gatekeeper or Authority Server ticket
+   * route) — never derived from free-text messages. */
+  code?: string;
 }
 
 interface LogFile { version: 1; records: DenialRecord[]; }

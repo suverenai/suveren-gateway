@@ -12,7 +12,7 @@
 import type { IntegrationManager, DiscoveredTool } from './integration-manager';
 import type { SharedState, EnrichedAuthorization } from './shared-state';
 import { lockedNotice } from './locked-notice';
-import type { DenialReason } from './denial-log';
+import type { DenialReason, DenialKind } from './denial-log';
 import { SPReceiptError } from './sp-client';
 import { isCommitmentDowngrade, AsKeyMismatchError } from './attestation-cache';
 import { ArchiveWriteError } from './receipt-archive';
@@ -303,12 +303,101 @@ function denyRead(
       tool: tool.originalName,
       integrationId: tool.integrationId,
       profile: tool.gating?.profile ?? null,
+      kind: 'read',
       reason,
       detail,
       target,
     });
   } catch { /* recording must never break the denial */ }
   return { content: [{ type: 'text', text: `Read blocked by Gatekeeper: ${detail}` }], isError: true };
+}
+
+/**
+ * Record a refused write/gating decision for the "Blocked" view (AU2,
+ * work-plan.md "Added 2026-10-09"). Deliberately separate from the ToolResult
+ * returned to the agent — this never participates in building that message,
+ * so a later rewrite of the AI-facing text (tracked separately) never has to
+ * touch a call site here. Never throws: `denialLog.record` already catches
+ * internally, and `denialLog` may be absent in tests.
+ */
+function recordBlocked(
+  state: SharedState,
+  tool: DiscoveredTool,
+  rec: {
+    kind: Exclude<DenialKind, 'read'>;
+    detail: string;
+    mandateId?: string;
+    field?: string;
+    value?: number | string;
+    limit?: number | string;
+    who: 'gateway' | 'authority-server';
+    code?: string;
+  },
+): void {
+  state.denialLog?.record({
+    ts: Date.now(),
+    tool: tool.originalName,
+    integrationId: tool.integrationId,
+    profile: tool.gating?.profile ?? null,
+    ...rec,
+  });
+}
+
+/**
+ * Classify + record a local Gatekeeper refusal (bounds, scope, or a manifest
+ * action_type defect) collected across every candidate mandate tried. Picks
+ * the most informative entry (one with both a checked value and a limit, if
+ * any) rather than recording every candidate — the agent-facing message above
+ * already lists them all; this is for the owner's "Blocked" view, not a full
+ * dump. `scope` vs `bound` is read from the profile's own schemas, never
+ * guessed from the field name.
+ */
+function recordGatekeeperRefusal(
+  state: SharedState,
+  tool: DiscoveredTool,
+  refusals: Array<{ authorizationId: string; profileId: string; code: string; field?: string; bound?: unknown; actual?: unknown }>,
+): void {
+  if (refusals.length === 0) return;
+  const pick = refusals.find(r => r.bound !== undefined && r.actual !== undefined) ?? refusals[0];
+  const scoped = pick.field ? Boolean(getProfile(pick.profileId)?.scopeSchema?.fields?.[pick.field]) : false;
+  const asValueOrString = (v: unknown): number | string | undefined =>
+    typeof v === 'number' || typeof v === 'string' ? v : undefined;
+  recordBlocked(state, tool, {
+    kind: scoped ? 'scope' : 'bound',
+    detail: 'Refused locally by the Gatekeeper.',
+    mandateId: pick.authorizationId,
+    field: pick.field,
+    value: asValueOrString(pick.actual),
+    limit: asValueOrString(pick.bound),
+    who: 'gateway',
+    code: pick.code,
+  });
+}
+
+/**
+ * Record a refusal the Authority Server made at ticket time, by its canonical
+ * `errors[0].code` only — never by free-text message. One call per AS-refusal
+ * branch, so a later rewrite of the AI-facing text does not need to change it.
+ */
+function recordAsRefusal(
+  state: SharedState,
+  tool: DiscoveredTool,
+  authorizationId: string,
+  err: { code?: unknown; field?: unknown; expected?: unknown; actual?: unknown } | undefined,
+): void {
+  const code = typeof err?.code === 'string' ? err.code : undefined;
+  const asValueOrString = (v: unknown): number | string | undefined =>
+    typeof v === 'number' || typeof v === 'string' ? v : undefined;
+  recordBlocked(state, tool, {
+    kind: code === 'CUMULATIVE_LIMIT_EXCEEDED' ? 'cumulative' : code === 'BOUND_EXCEEDED' ? 'bound' : 'not_authorized',
+    detail: 'Refused by the Authority Server.',
+    mandateId: authorizationId,
+    field: typeof err?.field === 'string' ? err.field : undefined,
+    value: asValueOrString(err?.actual),
+    limit: asValueOrString(err?.expected),
+    who: 'authority-server',
+    code,
+  });
 }
 
 /**
@@ -350,13 +439,21 @@ export function createGatedToolHandler(
   // on the human side — SIMULATION_BLOCK_REASON in the integration status, the
   // UI banner and `suveren-gateway simulation status`.
   if (isSimulationMode() && !integrationManager.isSimulationSafe(tool.integrationId)) {
-    return async () => ({
-      content: [{
-        type: 'text',
-        text: `Refused: "${tool.namespacedName}" is not available. No ticket was requested.`,
-      }],
-      isError: true,
-    });
+    return async () => {
+      recordBlocked(state, tool, {
+        kind: 'simulation',
+        detail: 'Real systems are blocked while simulation mode is on.',
+        who: 'gateway',
+        code: 'SIMULATION_MODE',
+      });
+      return {
+        content: [{
+          type: 'text',
+          text: `Refused: "${tool.namespacedName}" is not available. No ticket was requested.`,
+        }],
+        isError: true,
+      };
+    };
   }
 
   const gated = createGatedToolHandlerInner(tool, integrationManager, state);
@@ -495,6 +592,13 @@ function createGatedToolHandlerInner(
   };
   const noEligibleMandate = (refusals: string[]): ToolResult => {
     const reasons = [...new Set(refusals)].join(' ');
+    recordBlocked(state, tool, {
+      kind: 'not_authorized',
+      detail: reasons || `No active authorization matching profile "${profile}".`,
+      field: profile,
+      who: 'gateway',
+      code: 'NO_MATCHING_MANDATE',
+    });
     return {
       content: [{
         type: 'text',
@@ -850,6 +954,13 @@ function createGatedToolHandlerInner(
         ? execution.action_type
         : undefined;
     if (!declaredActionType) {
+      recordBlocked(state, tool, {
+        kind: 'bound',
+        detail: `${tool.namespacedName} declares no action_type in its manifest's staticExecution.`,
+        field: 'action_type',
+        who: 'gateway',
+        code: 'MISSING_ACTION_TYPE',
+      });
       return {
         content: [{
           type: 'text',
@@ -869,6 +980,14 @@ function createGatedToolHandlerInner(
       const registry = (profileDef?.boundsSchema as { actionTypes?: unknown } | undefined)
         ?.actionTypes;
       if (Array.isArray(registry) && registry.length > 0 && !registry.includes(declaredActionType)) {
+        recordBlocked(state, tool, {
+          kind: 'bound',
+          detail: `action_type "${declaredActionType}" is not in profile ${profile}'s actionTypes registry.`,
+          field: 'action_type',
+          value: declaredActionType,
+          who: 'gateway',
+          code: 'INVALID_ACTION_TYPE',
+        });
         return {
           content: [{
             type: 'text',
@@ -890,6 +1009,10 @@ function createGatedToolHandlerInner(
     // overlapping grant silently override a stricter one by cache order.
     const errors: string[] = [];
     const passers: EnrichedAuthorization[] = [];
+    // AU2: the same checks, captured structurally (code/field/bound/actual)
+    // alongside the strings above — for the "Blocked" record only, never for
+    // the agent-facing message built from `errors`.
+    const structuredRefusals: Array<{ authorizationId: string; profileId: string; code: string; field?: string; bound?: unknown; actual?: unknown }> = [];
     for (const candidate of matchingAuths) {
       // Pass v0.4 enriched fields (bounds/context from gate store) to gatekeeper
       const { result } = await state.gatekeeper.verifyExecution(candidate.authorizationId, execution, {
@@ -901,6 +1024,13 @@ function createGatedToolHandlerInner(
         : null;
       if (result.approved && capped) {
         errors.push(`${candidate.path}: ${capped} is 0 — this mandate does not allow "${execution.action_type}"`);
+        structuredRefusals.push({
+          authorizationId: candidate.authorizationId,
+          profileId: candidate.profileId,
+          code: 'BOUND_EXCEEDED',
+          field: typeof execution.action_type === 'string' ? execution.action_type : undefined,
+          bound: 0,
+        });
       } else if (result.approved) {
         passers.push(candidate);
       } else {
@@ -911,10 +1041,21 @@ function createGatedToolHandlerInner(
           return `${candidate.path}: ${e.message}`;
         });
         errors.push(...reasons);
+        for (const e of result.errors) {
+          structuredRefusals.push({
+            authorizationId: candidate.authorizationId,
+            profileId: candidate.profileId,
+            code: e.code,
+            field: e.field,
+            bound: e.bound,
+            actual: e.actual,
+          });
+        }
       }
     }
 
     if (passers.length === 0) {
+      recordGatekeeperRefusal(state, tool, structuredRefusals);
       return {
         content: [{
           type: 'text',
@@ -1189,6 +1330,7 @@ function createGatedToolHandlerInner(
             state.cache.markNeedsReapproval(auth.authorizationId);
             const remaining = candidates.filter(c => c.authorizationId !== auth.authorizationId);
             if (remaining.length === 0) {
+              recordAsRefusal(state, tool, auth.authorizationId, { code: 'VERSION_UNSUPPORTED' });
               return {
                 content: [{
                   type: 'text',
@@ -1219,13 +1361,15 @@ function createGatedToolHandlerInner(
             // in flight keeps its own pool, so this never cross-cancels
             // another invocation's in-progress selection.
             state.cache.invalidate(auth.authorizationId);
-            const code = (err.body?.errors as Array<{ code?: unknown }> | undefined)?.[0]?.code ?? 'unknown';
+            const staleErr = (err.body?.errors as Array<{ code?: unknown }> | undefined)?.[0];
+            const code = staleErr?.code ?? 'unknown';
             const remaining = candidates.filter(c => c.authorizationId !== auth.authorizationId);
             if (remaining.length === 0) {
               // Nothing left to fall back to — fail closed with the Authority
               // Server's own reason, exactly as a single-candidate refusal
               // always has, rather than a generic "exhausted" message that
               // would hide WHY (revoked vs. expired vs. not found).
+              recordAsRefusal(state, tool, auth.authorizationId, staleErr);
               console.error(
                 `[Suveren MCP] fallback(${tool.namespacedName}): mandate ${auth.authorizationId} invalid ` +
                   `(${code}) — no remaining candidates`,
@@ -1327,6 +1471,7 @@ function createGatedToolHandlerInner(
 
           if (err instanceof SPReceiptError && err.statusCode === 422) {
             // Hard ceiling — no approver path configured. Bubble as a hard error.
+            recordAsRefusal(state, tool, auth.authorizationId, (err.body?.errors as Array<{ code?: unknown }> | undefined)?.[0]);
             return {
               content: [{ type: 'text', text: `Action blocked: ${err.message} (hard team ceiling — contact the team admin)` }],
               isError: true,
@@ -1338,10 +1483,11 @@ function createGatedToolHandlerInner(
             // cached mandate so list-authorizations/list-integrations
             // reflect reality instead of serving a stale "authorized" view.
             // Matched on the canonical code, never the free-text message.
-            const errors403 = err.body?.errors as Array<{ code?: unknown }> | undefined;
+            const errors403 = err.body?.errors as Array<{ code?: unknown; field?: unknown; expected?: unknown; actual?: unknown }> | undefined;
             if (errors403?.[0]?.code === 'MANDATE_REVOKED') {
               state.cache.invalidate(auth.authorizationId);
             }
+            recordAsRefusal(state, tool, auth.authorizationId, errors403?.[0]);
             return {
               content: [{ type: 'text', text: `Blocked by SP: ${err.message}` }],
               isError: true,
