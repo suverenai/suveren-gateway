@@ -771,30 +771,23 @@ export function AuthorizationsPage() {
 
       // The v0.7 Authority Server refuses to sign a NEW mandate under an old
       // profile version (PROFILE_INVALID) — old versions stay listable for
-      // history but are never issuable again. So Copy/Edit always resolves
-      // to the newest version of the same profile, never the grant's pinned
-      // one: there is no "still valid, stay put" case the AS treats
-      // differently from "upgrade" (see profile-upgrade.ts). Falls back to
-      // the grant's own profile_id if the catalog fetch fails or has no
-      // matching short name — the ceremony then runs exactly as it did
-      // before this fix, rather than blocking Copy/Edit on this lookup.
+      // history but are never issuable again.
+      // Always move to the newest version of this profile: the AS only issues
+      // mandates under v0.7-conformant versions, so the grant's pinned (older)
+      // version would be refused. No silent fallback to the pinned version —
+      // if the catalog cannot be read, the outer catch shows the error.
       let resolvedProfileId = item.profile_id;
       let resolvedBounds = bounds;
       let resolvedContext = context;
       let upgradedFromProfileId: string | undefined;
-      try {
-        const catalog = await spClient.listProfiles();
-        const newest = newestProfileOf(item.profile_id, catalog);
-        if (newest && newest.id !== item.profile_id) {
-          const newProfile = await spClient.getProfile(newest.id);
-          resolvedProfileId = newest.id;
-          resolvedBounds = carryBoundsForward(bounds, newProfile);
-          resolvedContext = carryContextForward(context, newProfile);
-          upgradedFromProfileId = item.profile_id;
-        }
-      } catch {
-        // Non-critical: Copy/Edit still works on the grant's pinned version;
-        // the AS makes the final, authoritative call either way.
+      const catalog = await spClient.listProfiles();
+      const newest = newestProfileOf(item.profile_id, catalog);
+      if (newest && newest.id !== item.profile_id) {
+        const newProfile = await spClient.getProfile(newest.id);
+        resolvedProfileId = newest.id;
+        resolvedBounds = carryBoundsForward(bounds, newProfile);
+        resolvedContext = carryContextForward(context, newProfile);
+        upgradedFromProfileId = item.profile_id;
       }
 
       sessionStorage.setItem('agentAuth', JSON.stringify({
