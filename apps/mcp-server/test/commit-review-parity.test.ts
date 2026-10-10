@@ -214,7 +214,15 @@ describe('executeCommitted — a connector refusal is a failure, not an executio
 
     await executeCommitted(PROPOSAL, state, integrationManager);
 
-    expect(complete).toHaveBeenCalledWith(expect.any(String), 'failed', 'refused');
+    // AU4: the connector's own refusal text is stored as `detail` (capped —
+    // see execution-journal.ts) so the control plane's outcome endpoint can
+    // show "Refused by <system>: <text>" instead of a bare label.
+    expect(complete).toHaveBeenCalledWith(
+      expect.any(String),
+      'failed',
+      'refused',
+      expect.stringContaining('Q-0001 is at revision 2'),
+    );
     expect((state as unknown as { executionLog: { record: ReturnType<typeof vi.fn> } }).executionLog.record).not.toHaveBeenCalled();
   });
 });

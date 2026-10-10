@@ -148,6 +148,54 @@ export function hashPreviewBody(body: Pick<PreviewBody, 'structured' | 'text'>):
 }
 
 /**
+ * AU4 fallback snapshot at proposal submission, for a preview WITHOUT a
+ * declared `version` (a connector with no document-version enforcement of
+ * its own — e.g. nothing like ERP 0.6.0's own revision refusal). Reads the
+ * preview ONCE with the action's bound args and hashes the result.
+ *
+ * Returns undefined when: the tool declares no preview; it declares one
+ * WITH a version (the connector refuses a stale version itself — no
+ * fallback needed, see executeCommitted); or the read didn't succeed —
+ * nothing to compare against later is better than snapshotting an error and
+ * refusing every future execution because of it.
+ */
+export async function computeSubmissionPreviewHash(
+  integrationManager: IntegrationManager,
+  integrationId: string,
+  toolName: string,
+  actionArgs: Record<string, unknown>,
+): Promise<string | undefined> {
+  const preview = getToolPreviewConfig(integrationId, toolName);
+  if (!preview || preview.version) return undefined;
+  const mapped = mapPreviewArgs(preview, actionArgs);
+  const read = await readPreview(integrationManager, integrationId, preview.tool, mapped);
+  if (read.status !== 'ok') return undefined;
+  return hashPreviewBody(read.body);
+}
+
+/**
+ * AU4 — re-read and compare against a `previewHash` stored at submission,
+ * right before executing a committed proposal. True means "do not run":
+ * the record provably changed, OR the re-read could not positively confirm
+ * it did NOT — fail-closed, the same way an unreadable execution journal
+ * refuses rather than guessing (see execution-journal.ts).
+ */
+export async function previewChangedSinceSubmission(
+  integrationManager: IntegrationManager,
+  integrationId: string,
+  toolName: string,
+  actionArgs: Record<string, unknown>,
+  previousHash: string,
+): Promise<boolean> {
+  const preview = getToolPreviewConfig(integrationId, toolName);
+  if (!preview) return true; // nothing to re-verify against — fail closed
+  const mapped = mapPreviewArgs(preview, actionArgs);
+  const read = await readPreview(integrationManager, integrationId, preview.tool, mapped);
+  if (read.status !== 'ok') return true; // can't confirm unchanged — fail closed
+  return hashPreviewBody(read.body) !== previousHash;
+}
+
+/**
  * Full orchestration for one `/internal/preview` call: resolves the
  * manifest's declared preview (if any), reads it, and — when the manifest
  * declares `version` — performs the SECOND read (mapped args minus the

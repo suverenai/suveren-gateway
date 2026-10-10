@@ -24,6 +24,7 @@ import { appendVerificationFooter, shouldAttachFooter } from '../lib/receipt-foo
 import { computeContentBinding, attachTicketId } from '../lib/content-binding';
 import { encodeOutgoingArgs } from '../lib/arg-encoding';
 import { hashToolArgs } from '../lib/execution-journal';
+import { previewChangedSinceSubmission } from '../lib/preview';
 import type { CommittedExecutor, ExecutionResult } from '../lib/committed-executor';
 import { ContentBindingError } from '@hap/core';
 import { AsKeyMismatchError } from '../lib/attestation-cache';
@@ -389,6 +390,33 @@ export async function executeCommitted(
     );
   }
 
+  // AU4 fallback — for a tool whose declared preview carries NO `version`
+  // (the connector has no revision enforcement of its own, unlike ERP
+  // 0.6.0's send_quote/convert_quote_to_order), re-read now and compare
+  // against the hash snapshotted at submission (tool-proxy.ts). Any
+  // difference — or a read that cannot positively confirm "unchanged" —
+  // refuses rather than running on a record the approver no longer saw.
+  // The ticket is already spent (journal row written above); a retry needs
+  // a fresh request and approval, same as a connector 'refused' outcome.
+  if (submitted.previewHash) {
+    const changed = await previewChangedSinceSubmission(
+      integrationManager,
+      integrationId,
+      toolName,
+      proposal.toolArgs,
+      submitted.previewHash,
+    );
+    if (changed) {
+      state.executionJournal.complete(receiptId, 'failed', 'changed');
+      return {
+        text:
+          `Proposal ${proposal.id} was approved, but the record changed in ${integrationId} since it was ` +
+          `requested — nothing was done. A new attempt needs a new request and approval.`,
+        isError: true,
+      };
+    }
+  }
+
   // Receipt issued — now execute the tool, appending the verification footer
   // (Category-A profiles) just like the automatic-send path does.
   try {
@@ -419,7 +447,7 @@ export async function executeCommitted(
     // not happen — never report it as executed, never count it. The ticket
     // is spent (one execution per ticket); a retry needs a new approval.
     if ((result as { isError?: boolean }).isError) {
-      state.executionJournal.complete(receiptId, 'failed', 'refused');
+      state.executionJournal.complete(receiptId, 'failed', 'refused', resultText);
       return {
         text:
           `Proposal ${proposal.id} was approved, but ${integrationId} refused to run it — nothing was done.\n` +
@@ -463,6 +491,9 @@ function localOutcomeOfExecuted(proposal: SPProposal, state: SharedState): { tex
       text: entry.outcome === 'refused'
         ? `Proposal ${proposal.id} was approved, but ${integration} refused to run it — nothing was done. ` +
           `Do not call the tool again with the same values; a new attempt needs a new request and approval.`
+        : entry.outcome === 'changed'
+        ? `Proposal ${proposal.id} was approved, but the record changed in ${integration} since it was ` +
+          `requested — nothing was done. A new attempt needs a new request and approval.`
         : `Proposal ${proposal.id} was approved, but running it failed — whether anything happened in ${integration} is unknown. ` +
           `Check ${integration} before trying again; a new attempt needs a new request and approval.`,
       isError: true,
