@@ -41,10 +41,10 @@
   "oauth": null,
   "toolGating": {
     "default": {
-      "executionMapping": {},
-      "staticExecution": {
-        "contact_type": "customer"
-      }
+      "executionMapping": {
+        "contact_type": "contact_type"
+      },
+      "staticExecution": {}
     },
     "overrides": {
       "create_contact": {
@@ -57,46 +57,70 @@
         "actionLabel": "Contact created"
       },
       "update_contact": {
-        "executionMapping": {},
+        "executionMapping": {
+          "contact_type": "contact_type"
+        },
         "staticExecution": {
-          "contact_type": "customer",
           "action_type": "write"
         },
         "actionLabel": "Contact updated"
       },
       "delete_contact": {
-        "executionMapping": {},
+        "executionMapping": {
+          "contact_type": "contact_type"
+        },
         "staticExecution": {
-          "contact_type": "customer",
           "action_type": "delete"
         },
-        "actionLabel": "Contact deleted"
+        "actionLabel": "Contact archived"
+      },
+      "restore_contact": {
+        "executionMapping": {
+          "contact_type": "contact_type"
+        },
+        "staticExecution": {
+          "action_type": "delete"
+        },
+        "actionLabel": "Contact restored"
+      },
+      "convert_contact": {
+        "executionMapping": {
+          "contact_type": "contact_type"
+        },
+        "staticExecution": {
+          "action_type": "write"
+        },
+        "actionLabel": "Contact type changed"
       },
       "log_activity": {
-        "executionMapping": {},
+        "executionMapping": {
+          "contact_type": "contact_type"
+        },
         "staticExecution": {
-          "contact_type": "customer",
           "action_type": "write"
         }
       },
       "create_deal": {
-        "executionMapping": {},
+        "executionMapping": {
+          "contact_type": "contact_type"
+        },
         "staticExecution": {
-          "contact_type": "customer",
           "action_type": "write"
         }
       },
       "update_deal": {
-        "executionMapping": {},
+        "executionMapping": {
+          "contact_type": "contact_type"
+        },
         "staticExecution": {
-          "contact_type": "customer",
           "action_type": "write"
         }
       },
       "create_task": {
-        "executionMapping": {},
+        "executionMapping": {
+          "contact_type": "contact_type"
+        },
         "staticExecution": {
-          "contact_type": "customer",
           "action_type": "write"
         }
       },
@@ -112,6 +136,11 @@
         "boundField": "read_access",
         "requiredValue": "unlimited"
       },
+      "get_contact": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
       "get_timeline": {
         "category": "read",
         "boundField": "read_access",
@@ -122,7 +151,17 @@
         "boundField": "read_access",
         "requiredValue": "unlimited"
       },
+      "get_deal": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
       "list_tasks": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "get_task": {
         "category": "read",
         "boundField": "read_access",
         "requiredValue": "unlimited"
