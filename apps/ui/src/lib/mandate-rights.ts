@@ -36,7 +36,7 @@ export function mandateRight(i: MandateRightInput): MandateRight {
       can: false,
       code: 'PROFILE_NOT_ENABLED_FOR_GROUP',
       reason: `Not enabled in ${team}.`,
-      fix: `A team admin names who may give ${i.profileName} mandates.`,
+      fix: `Ask an admin of ${team} to enable ${i.profileName} and name who may give its mandates.`,
     };
   }
   if (!i.userId || !i.approvers!.includes(i.userId)) {
