@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { AgentProfile } from '@hap/core';
-import { argRows, profileFieldLines, humanizeKey } from './approval-view';
+import { argRows, profileFieldLines, humanizeKey, toolHeadline, systemDisplayName } from './approval-view';
+import type { IntegrationManifest } from './sp-client';
 
 /**
  * The approval screen showed raw `key: value` pairs (JSON for objects) for every
@@ -89,5 +90,31 @@ describe('profileFieldLines — limits and scope the way the mandate screen name
   it('humanizeKey', () => {
     expect(humanizeKey('duration_hours')).toBe('Duration hours');
     expect(humanizeKey('inReplyTo')).toBe('In reply to');
+  });
+});
+
+describe('toolHeadline — the approval card headline (AU5)', () => {
+  it('splits the namespaced tool into "integration · tool"', () => {
+    expect(toolHeadline('erp__send_quote')).toBe('erp · send_quote');
+  });
+
+  it('falls back to the bare name when there is no namespace separator', () => {
+    expect(toolHeadline('send_quote')).toBe('send_quote');
+  });
+});
+
+describe('systemDisplayName — "From <System>, before it runs" (AU5)', () => {
+  const MANIFESTS = [{ id: 'erp', name: 'Our ERP' } as unknown as IntegrationManifest];
+
+  it('uses the manifest\'s own declared name', () => {
+    expect(systemDisplayName('erp', MANIFESTS)).toBe('Our ERP');
+  });
+
+  it('falls back to the uppercased integration id without a manifest', () => {
+    expect(systemDisplayName('mollie', MANIFESTS)).toBe('MOLLIE');
+  });
+
+  it('falls back to "the system" when there is no integration id at all', () => {
+    expect(systemDisplayName('', undefined)).toBe('the system');
   });
 });

@@ -1,10 +1,14 @@
 /**
  * ApproverProposalCard — Phase 6 per-action approval card.
  *
- * Shown in the "Awaiting me" tab. Displays:
- *  - Profile + authority bounds (with above-cap annotation)
- *  - Intent (HPKE-decrypted on demand)
- *  - Proposed tool + args
+ * Shown in the "Awaiting me" tab (AU5, work-plan.md "Added 2026-10-09";
+ * approved mockup temp/mockups/gateway-ux-v7.html §6):
+ *  - Headline (the tool, "erp · send_quote")
+ *  - Preview box — the system's own read of the record, before it runs
+ *    (components/PreviewBox.tsx; gateway-internal, never shown to the AI)
+ *  - "Within your limits" — per-call bound checks (lib/receipt-summary.ts)
+ *  - Mandate + intent (two lines, "Show full intent")
+ *  - Details (exactly what is bound) — folded
  *  - Approve / Reject buttons
  *
  * On approve:
@@ -14,16 +18,20 @@
  *  4. Persists to ~/.suveren/approved-intents.enc.json via POST /api/approved-intents (CP)
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { resolveProposalLinks, type ProposalLink } from '../lib/proposal-links';
-import { spClient, type Proposal } from '../lib/sp-client';
+import { spClient, type IntegrationManifest, type Proposal } from '../lib/sp-client';
 import { formatTimeLeft } from '../lib/time-left';
 import { ProposalArgs } from './ProposalArgs';
 import { ProfileRail } from './ProfileRail';
+import { PreviewBox } from './PreviewBox';
 import { isTestSetupAction, profileIdentity } from '../lib/profile-identity';
 import { isAutomatedBrowser, AUTOMATION_REFUSAL } from '../lib/automation';
-import { contextFieldLabel, type ToolDisplay } from '../lib/approval-view';
+import { contextFieldLabel, splitTool, systemDisplayName, toolHeadline, type ToolDisplay } from '../lib/approval-view';
 import { useProfile } from '../lib/profile-cache';
+import { useMandateBounds } from '../lib/mandate-bounds-cache';
+import { limitChecks } from '../lib/receipt-summary';
+import { profileDisplayName } from '../lib/profile-display';
 
 
 // NEVER truncate: approvers commit to exactly what they can read here, so
@@ -56,12 +64,14 @@ interface Props {
   proposalLinks?: ProposalLink[];
   /** Labels and display kinds for the arguments (lib/approval-view.ts). */
   toolDisplay?: ToolDisplay;
+  /** For the preview box's "From <System>, before it runs" (lib/approval-view.ts systemDisplayName). */
+  manifests?: IntegrationManifest[];
   currentUserId: string;
   onAction: () => void;
   onMessage: (msg: string) => void;
 }
 
-export function ApproverProposalCard({ proposal, currentUserId, onAction, onMessage, proposalLinks, toolDisplay }: Props) {
+export function ApproverProposalCard({ proposal, currentUserId, onAction, onMessage, proposalLinks, toolDisplay, manifests }: Props) {
   const [approving, setApproving] = useState(false);
   const [rejecting, setRejecting] = useState(false);
   const [intent, setIntent] = useState<string | null>(null);
@@ -69,10 +79,14 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
   const [intentError, setIntentError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
 
-  const toolShort = proposal.tool.split('__').pop() ?? proposal.tool;
   const boundsEntries = Object.entries(proposal.executionContext);
   const profile = useProfile(proposal.profileId);
+  const mandateBounds = useMandateBounds(proposal.authorizationId);
+  const checks = limitChecks(proposal.executionContext, mandateBounds, profile);
   const inspectLinks = resolveProposalLinks(proposalLinks, proposal.toolArgs);
+  const headline = toolHeadline(proposal.tool);
+  const { integrationId } = splitTool(proposal.tool);
+  const systemName = systemDisplayName(integrationId, manifests);
   // Test setup: the delegation profile, OR a setup__* tool.
   const testSetup = profileIdentity(proposal.profileId).testSetup || isTestSetupAction(proposal.tool);
 
@@ -107,14 +121,13 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
     }
   };
 
-  const handleExpand = async () => {
-    if (!expanded) {
-      setExpanded(true);
-      await loadIntent();
-    } else {
-      setExpanded(false);
-    }
-  };
+  // AU5: the mockup always shows the intent's first two lines — not lazy on
+  // click, as Phase 6 had it — with "Show full intent" only toggling the
+  // clamp. The approver already has standing to see it on this card.
+  useEffect(() => {
+    void loadIntent();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [proposal.authorizationId]);
 
   const handleApprove = async () => {
     // Automation that announces itself may not approve (defense in depth — lib/automation.ts).
@@ -214,15 +227,66 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
         })}
       </div>
 
-      {/* Proposed tool */}
-      <div style={{ marginBottom: '0.5rem' }}>
-        <div style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.25rem' }}>
-          Proposed action
+      {/* Headline — the tool's display name. No invented label: the tool-name
+          pattern ("erp · send_quote"), as in the approved mockup. */}
+      <div className="approval-headline">{headline}</div>
+
+      {/* Preview box — the system's own read, before it runs. Gateway-internal
+          (decision 1); every fallback keeps the bound values below visible
+          and Approve/Reject enabled (decisions 2-3). */}
+      <PreviewBox proposalId={proposal.id} systemName={systemName} />
+
+      {/* Within your limits — per-call bound checks only (lib/receipt-summary.ts
+          limitChecks); cumulative bounds are deliberately not shown here (no
+          usage figure exists for a pending proposal). */}
+      {checks.length > 0 && (
+        <div className="limit-checks">
+          <h4>Within your limits</h4>
+          <ul className="limit-check-list">
+            {checks.map((c) => (
+              <li key={c.key} className={c.ok ? 'ok' : 'bad'}>
+                <span className="limit-check-icon">{c.ok ? '✓' : '✗'}</span>
+                <span>{c.label} {c.valueText} — your limit {c.limitText}</span>
+              </li>
+            ))}
+          </ul>
         </div>
-        <code style={{ fontSize: '0.85rem' }}>{toolShort}</code>
+      )}
+
+      {/* Mandate + intent */}
+      <div className="mandate-intent">
+        <dl>
+          <dt>Mandate</dt>
+          <dd>
+            <strong>{profile?.name ?? profileDisplayName(proposal.profileId)}</strong>
+            <span className="src-tag src-tag-local">local</span>
+          </dd>
+        </dl>
+        <dl>
+          <dt>Intent</dt>
+          <dd>
+            {intentError ? (
+              <p style={{ color: 'var(--danger)', fontSize: '0.8rem', margin: 0 }}>{intentError}</p>
+            ) : intent !== null ? (
+              <>
+                <p className={`intent-text${expanded ? '' : ' intent-clamped'}`}>{intent}</p>
+                <button
+                  className="btn btn-ghost btn-sm intent-toggle"
+                  onClick={() => setExpanded(!expanded)}
+                >
+                  {expanded ? 'Show less' : 'Show full intent'}
+                </button>
+              </>
+            ) : intentLoading ? (
+              <p style={{ color: 'var(--text-tertiary)', fontSize: '0.8rem', margin: 0 }}>Loading intent…</p>
+            ) : (
+              <p style={{ color: 'var(--text-tertiary)', fontSize: '0.8rem', margin: 0 }}>No intent available for this mandate.</p>
+            )}
+          </dd>
+        </dl>
       </div>
 
-      {/* Inspection links — ABOVE the arguments on purpose. The point of
+      {/* Inspection links — ABOVE the folded Details on purpose. The point of
           review mode is judging the action, and an identifier cannot be judged.
           Whatever can actually be looked at has to come before the raw values. */}
       {inspectLinks.length > 0 && (
@@ -243,48 +307,33 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
         </div>
       )}
 
-      {/* Arguments */}
-      <ProposalArgs args={proposal.toolArgs} display={toolDisplay} />
-
-      {/* Execution context — labelled from the profile's scope schema, never
-          guessed from the key's shape (AU1). */}
-      {boundsEntries.length > 0 && (
-        <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
-          {boundsEntries.map(([k, v], i) => {
-            const { label, hint } = contextFieldLabel(k, profile);
-            return (
-              <span key={k}>
-                {i > 0 && ' · '}
-                <span title={hint}>{label}={formatArgValue(v)}</span>
-              </span>
-            );
-          })}
+      {/* Details (exactly what is bound) — folded; the preview box above
+          already shows the system's own read, so the raw arguments are not
+          the first thing to read, but every one of them is still here —
+          the call's arguments AND the execution-context fields the
+          Gatekeeper actually checked (never both hidden behind separate
+          toggles: one fold, everything that is bound). */}
+      <details className="proposal-args-fold" style={{ marginBottom: '0.75rem' }}>
+        <summary style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', cursor: 'pointer' }}>
+          Details (exactly what is bound)
+        </summary>
+        <div style={{ marginTop: '0.5rem' }}>
+          <ProposalArgs args={proposal.toolArgs} display={toolDisplay} heading="" />
+          {boundsEntries.length > 0 && (
+            <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+              {boundsEntries.map(([k, v], i) => {
+                const { label, hint } = contextFieldLabel(k, profile);
+                return (
+                  <span key={k}>
+                    {i > 0 && ' · '}
+                    <span title={hint}>{label}={formatArgValue(v)}</span>
+                  </span>
+                );
+              })}
+            </div>
+          )}
         </div>
-      )}
-
-      {/* Intent (lazy-loaded HPKE decrypt) */}
-      <div style={{ marginBottom: '0.75rem' }}>
-        <button
-          className="btn btn-ghost btn-sm"
-          style={{ padding: '0.2rem 0', fontSize: '0.75rem' }}
-          onClick={handleExpand}
-          disabled={intentLoading}
-        >
-          {expanded ? '▲ Hide intent' : '▼ Show intent'}
-          {intentLoading && ' (decrypting...)'}
-        </button>
-        {expanded && (
-          <div style={{ marginTop: '0.5rem', padding: '0.75rem', background: 'var(--bg-main)', borderRadius: '0.375rem', border: '1px solid var(--border)' }}>
-            {intentError ? (
-              <p style={{ color: 'var(--danger)', fontSize: '0.8rem', margin: 0 }}>{intentError}</p>
-            ) : intent !== null ? (
-              <p style={{ fontSize: '0.85rem', margin: 0, whiteSpace: 'pre-wrap', color: 'var(--text-primary)' }}>{intent}</p>
-            ) : (
-              <p style={{ color: 'var(--text-tertiary)', fontSize: '0.8rem', margin: 0 }}>No intent available for this mandate.</p>
-            )}
-          </div>
-        )}
-      </div>
+      </details>
 
       {/* Action buttons */}
       {!alreadyApproved && (
