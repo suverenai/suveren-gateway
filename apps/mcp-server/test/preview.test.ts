@@ -124,7 +124,9 @@ function buildIntegrationManager(opts: { currentRevision?: number; tools?: Disco
       gating: { profile: 'sales', executionMapping: {}, staticExecution: {} } as unknown as DiscoveredTool['gating'],
     },
   ];
-  const integrationManager = { getAllTools: () => tools, callTool } as unknown as IntegrationManager;
+  // isBuiltin: false — getToolPreviewConfig/computeSubmissionPreviewHash read
+  // the erp manifest (DL1 widened them to also check a built-in's own def).
+  const integrationManager = { getAllTools: () => tools, callTool, isBuiltin: () => false } as unknown as IntegrationManager;
   return { integrationManager, callTool };
 }
 
@@ -141,8 +143,10 @@ describe('mapPreviewArgs', () => {
 });
 
 describe('getToolPreviewConfig', () => {
+  const { integrationManager } = buildIntegrationManager();
+
   it('returns the declared preview for a tool that has one', () => {
-    expect(getToolPreviewConfig('erp', 'send_quote')).toEqual({
+    expect(getToolPreviewConfig(integrationManager, 'erp', 'send_quote')).toEqual({
       tool: 'get_quote',
       args: { id: 'id', revision: 'revision' },
       version: { arg: 'revision', field: 'revision' },
@@ -151,13 +155,25 @@ describe('getToolPreviewConfig', () => {
   });
 
   it('returns undefined for a tool with no preview declared — including the read tool ITSELF', () => {
-    expect(getToolPreviewConfig('erp', 'create_quote')).toBeUndefined();
-    expect(getToolPreviewConfig('erp', 'get_quote')).toBeUndefined();
-    expect(getToolPreviewConfig('erp', 'list_quotes')).toBeUndefined();
+    expect(getToolPreviewConfig(integrationManager, 'erp', 'create_quote')).toBeUndefined();
+    expect(getToolPreviewConfig(integrationManager, 'erp', 'get_quote')).toBeUndefined();
+    expect(getToolPreviewConfig(integrationManager, 'erp', 'list_quotes')).toBeUndefined();
   });
 
   it('returns undefined for an unknown integration', () => {
-    expect(getToolPreviewConfig('does-not-exist', 'send_quote')).toBeUndefined();
+    expect(getToolPreviewConfig(integrationManager, 'does-not-exist', 'send_quote')).toBeUndefined();
+  });
+
+  it('DL1 — a built-in reads its preview from its own def, not a manifest', () => {
+    const builtinIm = {
+      isBuiltin: (id: string) => id === 'setup',
+      getBuiltinToolPreview: (id: string, tool: string) =>
+        id === 'setup' && tool === 'create_mandate' ? { tool: 'describe_mandate_proposal', args: { profile: 'profile' } } : undefined,
+    } as unknown as IntegrationManager;
+    expect(getToolPreviewConfig(builtinIm, 'setup', 'create_mandate')).toEqual({
+      tool: 'describe_mandate_proposal', args: { profile: 'profile' },
+    });
+    expect(getToolPreviewConfig(builtinIm, 'setup', 'get_guide')).toBeUndefined();
   });
 });
 

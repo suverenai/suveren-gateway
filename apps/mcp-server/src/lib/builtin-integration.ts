@@ -26,6 +26,13 @@ import type { ProfileToolGating } from './tool-gating-types';
 export interface BuiltinToolResult {
   content: Array<{ type: 'text'; text: string }>;
   isError?: boolean;
+  /**
+   * MCP `structuredContent` — populated by the two AU3 internal preview tools
+   * (describe_mandate_proposal / describe_brief_proposal; temp/briefs/
+   * dl-delegation-brief.md "Interface contract"). A regular builtin tool
+   * returns prose only, same as before this existed.
+   */
+  structuredContent?: Record<string, unknown>;
 }
 
 export interface BuiltinTool {
@@ -34,6 +41,31 @@ export interface BuiltinTool {
   description: string;
   /** JSON Schema of the arguments, as a connector would publish it. */
   inputSchema: Record<string, unknown>;
+  /**
+   * MCP `outputSchema` — declared by a tool whose result carries
+   * `structuredContent` (AU3 internal preview tools). Forwarded onto the
+   * `DiscoveredTool` exactly like a connector's own declared output schema,
+   * so `preview.ts`'s generic rendering path needs no built-in-specific case.
+   */
+  outputSchema?: Record<string, unknown>;
+  /**
+   * Never listed in `tools/list`, never callable by an agent (`tools/call`) —
+   * reachable only through `IntegrationManager.callTool` called directly by
+   * gateway-internal code (AU3's `/internal/preview`; see preview.ts). Two
+   * uses today: `describe_mandate_proposal` / `describe_brief_proposal`, the
+   * builtin's own preview helpers for `create_mandate` / `set_agent_brief`.
+   * `index.ts` skips registering these with the MCP server at all (so they
+   * are never reachable over MCP even by name); `tool-proxy.ts`'s gated
+   * handler refuses them too, as a second, independent check.
+   */
+  internal?: boolean;
+  /**
+   * Available ONLY while simulation mode is on — the per-tool version of
+   * {@link BuiltinIntegration.simulationOnly}, for a group where only SOME
+   * tools are test-setup-only (e.g. `setup`'s `get_guide`, DL1: Delegation
+   * outside simulation). Checked the same way, OR'd with the group-level flag.
+   */
+  simulationOnly?: boolean;
   /**
    * Runs the action. Called only after the call passed the gatekeeper — for a
    * write, with a ticket (its id in `args.ticket_id` when the tool declares it);
@@ -75,8 +107,11 @@ export interface BuiltinIntegration {
   /** Safe while simulation mode is on (touches no real system). Default false = refused there. */
   simulation?: boolean;
   /**
-   * Available ONLY while simulation mode is on: refused outside it before any
-   * proposal or ticket (e.g. the AI creating its own mandates — test setups only).
+   * Available ONLY while simulation mode is on, for the WHOLE group: refused
+   * outside it before any proposal or ticket. Since DL1 (Delegation outside
+   * simulation) `setup` no longer sets this at group level — only its
+   * `get_guide` tool declares the per-tool {@link BuiltinTool.simulationOnly}.
+   * Kept for a group where every tool is test-setup-only.
    */
   simulationOnly?: boolean;
   /**
@@ -108,4 +143,14 @@ export interface BuiltinStatus {
 /** Shorthand for a successful text result. */
 export function builtinText(text: string): BuiltinToolResult {
   return { content: [{ type: 'text', text }] };
+}
+
+/**
+ * Shorthand for an internal preview tool's result: `structuredContent` is
+ * the whole point (AU3 — see {@link BuiltinTool.internal}); `content` is a
+ * plain-text fallback for a caller that only reads `content[0].text` (none
+ * does today, kept so this never looks like a tool with no result at all).
+ */
+export function builtinStructured(structuredContent: Record<string, unknown>): BuiltinToolResult {
+  return { content: [{ type: 'text', text: JSON.stringify(structuredContent) }], structuredContent };
 }

@@ -11,6 +11,7 @@ import { offeredCommitModes, settleCommitMode, toProtocolMode } from '../lib/com
 import { scopesOverlap } from '../lib/scope-overlap';
 import { formatScopeValue } from '../lib/scope-labels';
 import { mandateRight } from '../lib/mandate-rights';
+import { EDIT_BEFORE_SIGNING_WITHDRAWAL_REASON } from '../lib/create-mandate-prefill';
 import type { AgentProfile, AgentBoundsParams, AgentScopeParams } from '@hap/core';
 import type { ProfileConfig } from '../lib/sp-client';
 
@@ -327,6 +328,11 @@ export function AgentReviewPage() {
       // content-immutable (the attestation signature freezes bounds/scope/
       // intent), so "edit" = sign a NEW grant, then revoke the old one below.
       const replacesId = sessionStorage.getItem('agentEditReplaces') || undefined;
+      // DL6 "Edit before signing": this ceremony was opened from a pending
+      // setup__create_mandate PROPOSAL, not an existing grant — withdrawn
+      // (rejected) below only once this signing fully succeeds, never before
+      // (decision 6: "nothing is created until the person signs there").
+      const replacesProposalId = sessionStorage.getItem('agentReplacesProposal') || undefined;
       // v0.4: commitment_mode is part of the signed payload. 'review' means
       // each action requires per-action human approval via a proposal;
       // 'automatic' lets the agent act within bounds without per-action review.
@@ -397,9 +403,24 @@ export function AgentReviewPage() {
         }
       }
 
+      // DL6 "Edit before signing": the mandate is signed AND delivered —
+      // withdraw the proposal it was opened from, so the two can never both
+      // exist (decision 6, "no double"). Best effort, same reasoning as the
+      // grant-replace block above: the new mandate is live either way; a
+      // proposal left pending here is still visible for manual rejection.
+      if (replacesProposalId) {
+        try {
+          await spClient.rejectProposal(replacesProposalId, EDIT_BEFORE_SIGNING_WITHDRAWAL_REASON);
+        } catch {
+          // Proposal may already be resolved (expired/rejected/approved
+          // elsewhere) — the new mandate is live either way.
+        }
+      }
+
       sessionStorage.removeItem('agentAuth');
       sessionStorage.removeItem('agentGate');
       sessionStorage.removeItem('agentEditReplaces');
+      sessionStorage.removeItem('agentReplacesProposal');
       navigate(`/mandates?highlight=${encodeURIComponent(authorizationId)}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Signing the mandate failed');

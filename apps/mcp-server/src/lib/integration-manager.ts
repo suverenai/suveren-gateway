@@ -137,9 +137,13 @@ export interface DiscoveredTool {
    * the downstream server advertises one. AU3: the preview card renders a
    * read's `structuredContent` generically from this — field labels (schema
    * `title`), order, nesting — instead of raw JSON. Absent for a connector
-   * that predates structured output, or a built-in.
+   * that predates structured output. Since DL1 (Delegation outside
+   * simulation) a built-in MAY also declare one — see
+   * `BuiltinTool.outputSchema` — for its own internal preview tools.
    */
   outputSchema?: Record<string, unknown>;
+  /** See `BuiltinTool.internal` — undefined (falsy) for every connector tool. */
+  internal?: boolean;
   gating: ToolGatingConfig | null;
 }
 
@@ -908,6 +912,8 @@ export class IntegrationManager {
         integrationId: def.id,
         description: tool.description,
         inputSchema: withoutBlockedArgs(tool.inputSchema, gating?.blockedArgs),
+        ...(tool.outputSchema ? { outputSchema: tool.outputSchema } : {}),
+        ...(tool.internal ? { internal: true } : {}),
         gating,
       };
     });
@@ -958,18 +964,40 @@ export class IntegrationManager {
 
   /**
    * The built-in's own refusal for this call, checked before the gate (no proposal,
-   * no ticket): `simulationOnly` outside simulation mode, then the tool's `validate`.
-   * Null for connector tools and for calls that may proceed.
+   * no ticket): an `internal` tool (defence in depth — `index.ts` already never
+   * registers one with the MCP server, so an agent cannot reach this in the first
+   * place), `simulationOnly` outside simulation mode (group-level OR this one
+   * tool's — DL1: a group may now mix test-setup-only tools with ones that work
+   * outside simulation), then the tool's `validate`. Null for connector tools and
+   * for calls that may proceed.
    */
   async precheckBuiltin(tool: DiscoveredTool, args: Record<string, unknown>): Promise<string | null> {
     const builtin = this.builtins.get(tool.integrationId);
     if (!builtin) return null;
-    if (builtin.def.simulationOnly && !isSimulationMode()) {
+    const def = builtin.def.tools.find(t => t.name === tool.originalName);
+    if (def?.internal) {
+      return `Refused: "${tool.namespacedName}" is internal and cannot be called directly. No ticket was requested.`;
+    }
+    if ((builtin.def.simulationOnly || def?.simulationOnly) && !isSimulationMode()) {
       return `Refused: "${tool.namespacedName}" is not available. No ticket was requested.`;
     }
-    const def = builtin.def.tools.find(t => t.name === tool.originalName);
     const refusal = await def?.validate?.(args);
     return refusal ? `Refused: ${refusal} No ticket was requested.` : null;
+  }
+
+  /**
+   * A built-in's own declared preview (AU3 — `BuiltinTool`/toolGating override's
+   * `preview`, same shape a manifest declares for a connector tool). `preview.ts`'s
+   * `getToolPreviewConfig` reads a connector's declared preview from its loaded
+   * manifest (`getManifest`); a built-in has no manifest, so it reads it from here
+   * instead — same override object, widened the same way `resolveToolGating`
+   * already widens it for `approvalView`/`hideUnlessAuthorized`.
+   */
+  getBuiltinToolPreview(integrationId: string, toolName: string): import('./preview').ToolPreviewConfig | undefined {
+    const builtin = this.builtins.get(integrationId);
+    const override = builtin?.def.toolGating.overrides?.[toolName] as
+      { preview?: import('./preview').ToolPreviewConfig } | null | undefined;
+    return override?.preview;
   }
 
   /**
@@ -1010,7 +1038,14 @@ export class IntegrationManager {
       }
       try {
         const result = await tool.handler(args);
-        return { content: result.content.map(c => ({ type: c.type, text: c.text })), isError: result.isError };
+        return {
+          content: result.content.map(c => ({ type: c.type, text: c.text })),
+          isError: result.isError,
+          // DL1: a built-in's internal preview tools (describe_mandate_proposal /
+          // describe_brief_proposal) return structuredContent, same as a connector's
+          // declared-output-schema read — see the field's doc comment above.
+          ...(result.structuredContent ? { structuredContent: result.structuredContent } : {}),
+        };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         return { content: [{ type: 'text', text: `Tool call failed: ${message}` }], isError: true };

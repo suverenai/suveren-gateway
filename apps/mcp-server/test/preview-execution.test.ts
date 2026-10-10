@@ -163,6 +163,8 @@ function buildIntegrationManager() {
   const integrationManager = {
     getAllTools: () => [TOOL, PREVIEW_TOOL],
     callTool,
+    // DL1: getToolPreviewConfig checks isBuiltin before reading a manifest.
+    isBuiltin: () => false,
   } as unknown as IntegrationManager;
   return { integrationManager, callTool };
 }

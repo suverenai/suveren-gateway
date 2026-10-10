@@ -119,6 +119,13 @@ export function createMcpServer(
 
     // Register new tools
     for (const tool of allTools) {
+      // DL1 — a built-in's own internal preview tools (describe_mandate_proposal /
+      // describe_brief_proposal) are never listed and never callable by an agent:
+      // reachable only via IntegrationManager.callTool, called directly by
+      // gateway-internal code (AU3's /internal/preview). Never register them with
+      // the MCP server at all, so `tools/list` never names them and `tools/call`
+      // answers "not found" exactly as it would for a name that never existed.
+      if (tool.internal) continue;
       // Same name but a different DiscoveredTool object means the integration
       // restarted — possibly with different gating. The registered handler
       // closed over the OLD tool (and its gating), so it must be replaced;
