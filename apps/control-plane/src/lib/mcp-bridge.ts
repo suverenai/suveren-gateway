@@ -7,6 +7,8 @@
  * Each request includes an X-Internal-Secret header for authentication.
  */
 
+import type { InternalPreviewResult } from './preview-types';
+
 export const MCP_BASE = process.env.SUVEREN_MCP_INTERNAL_URL ?? 'http://127.0.0.1:3430';
 
 let internalSecret = '';
@@ -426,6 +428,36 @@ export async function exportReport(gatewayVersion: string): Promise<{ html: stri
   const html = await res.text();
   const filename = /filename="([^"]+)"/.exec(res.headers.get('content-disposition') ?? '')?.[1] ?? 'suveren-report.html';
   return { html, filename };
+}
+
+/**
+ * AU3 — the approver's pre-approval read. `toolArgs` carries the action's
+ * FULL bound arguments (including any declared version arg); the MCP server
+ * alone decides, from the manifest, which read tool (if any) may be called
+ * and whether a second, version-less read is needed to detect staleness.
+ */
+export async function getToolPreview(data: {
+  proposalId: string;
+  tool: string;
+  toolArgs: Record<string, unknown>;
+}): Promise<InternalPreviewResult> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 12_000);
+  try {
+    const res = await fetch(`${MCP_BASE}/internal/preview`, {
+      method: 'POST',
+      headers: internalHeaders(),
+      body: JSON.stringify(data),
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+      throw new Error(`MCP preview failed: ${(err as { error?: string }).error ?? res.status}`);
+    }
+    return res.json() as Promise<InternalPreviewResult>;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 /** Has a person's AI ever connected to this gateway — see mcp-server agent-contact.ts. */
