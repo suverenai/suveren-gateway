@@ -1,5 +1,5 @@
 /**
- * AU3/AU5 — GET /proposals/:id/preview and GET /proposals/:id/outcome, over
+ * AU3/AU5 — GET /proposal-status/:id/preview and GET /proposal-status/:id/outcome, over
  * real HTTP (same pattern as archived-mandates-route.test.ts). `preview`'s
  * two outbound calls (the Authority Server, then the MCP server) go through
  * the global `fetch`, stubbed here; `outcome` needs no network at all — it
@@ -33,9 +33,9 @@ async function withServer(
   run: (base: string) => Promise<void>,
 ): Promise<void> {
   const app = express();
-  app.use('/proposals', createProposalStatusRouter(SP_URL, fakeVault(cookie), dataDir, () => {}));
+  app.use('/proposal-status', createProposalStatusRouter(SP_URL, fakeVault(cookie), dataDir, () => {}));
   const srv = app.listen(0);
-  const base = `http://127.0.0.1:${(srv.address() as AddressInfo).port}/proposals`;
+  const base = `http://127.0.0.1:${(srv.address() as AddressInfo).port}/proposal-status`;
   try {
     await run(base);
   } finally {
@@ -43,7 +43,7 @@ async function withServer(
   }
 }
 
-describe('GET /proposals/:id/preview', () => {
+describe('GET /proposal-status/:id/preview', () => {
   afterEach(() => { vi.unstubAllGlobals(); });
 
   it('401s with no Authority Server session — never reaches the network', async () => {
@@ -134,7 +134,7 @@ describe('GET /proposals/:id/preview', () => {
   });
 });
 
-describe('GET /proposals/:id/outcome', () => {
+describe('GET /proposal-status/:id/outcome', () => {
   it('"none" when no journal row exists for this proposal (incl. no journal file at all)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'outcome-route-'));
     try {

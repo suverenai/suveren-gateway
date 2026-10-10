@@ -1,5 +1,5 @@
 /**
- * AU3/AU5 — GET /proposals/:id/preview and GET /proposals/:id/outcome.
+ * AU3/AU5 — GET /proposal-status/:id/preview and GET /proposal-status/:id/outcome.
  *
  * `preview` fetches the proposal from the Authority Server with THIS
  * gateway's own session (same pattern as evidence-export.ts: fetchAs + TLS

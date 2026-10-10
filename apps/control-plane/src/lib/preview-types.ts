@@ -1,6 +1,6 @@
 /**
  * AU3/AU5 wire shapes — the interface contract in
- * temp/briefs/au3-au5-brief.md ("Control plane — GET /proposals/:id/preview").
+ * temp/briefs/au3-au5-brief.md ("Control plane — GET /proposal-status/:id/preview").
  * The UI card is built in parallel against exactly this; don't change field
  * names here without the owner.
  */
@@ -33,7 +33,7 @@ export type InternalPreviewResult =
   | { status: 'not_found'; message?: string }
   | { status: 'ok'; integration: string; tool: string; body: PreviewBody; version?: PreviewVersionInfo };
 
-/** GET /proposals/:id/preview's response (always 200 unless auth/proposal fetch fails). */
+/** GET /proposal-status/:id/preview's response (always 200 unless auth/proposal fetch fails). */
 export type PreviewResponse =
   | { status: 'none' }
   | { status: 'unavailable'; reason: 'no_connector' | 'connector_error' | 'timeout'; message?: string }
@@ -47,7 +47,7 @@ export type PreviewResponse =
       version?: PreviewVersionInfo;
     };
 
-/** GET /proposals/:id/outcome's response. */
+/** GET /proposal-status/:id/outcome's response. */
 export interface ProposalOutcome {
   state: 'none' | 'intent' | 'done' | 'failed';
   outcome?: 'refused' | 'changed';

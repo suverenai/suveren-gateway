@@ -529,7 +529,7 @@ app.use('/api/evidence-export', authGuard, createEvidenceExportRouter(SP_URL, va
 // AU3/AU5 — the approver's pre-approval preview + "what really happened"
 // outcome. Deliberately NOT under /api (that prefix proxies straight to the
 // Authority Server) — both routes answer locally or via the MCP server.
-app.use('/proposals', authGuard, createProposalStatusRouter(SP_URL, vault, DATA_DIR, lockAsTlsMismatch));
+app.use('/proposal-status', authGuard, createProposalStatusRouter(SP_URL, vault, DATA_DIR, lockAsTlsMismatch));
 
 // Local evidence for the Receipts page (grant context/intent, archived
 // receipts). Mounted BEFORE the /api proxy so it wins the route.

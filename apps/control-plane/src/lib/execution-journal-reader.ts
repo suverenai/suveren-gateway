@@ -1,7 +1,7 @@
 /**
  * Execution-journal reader (control-plane side). The MCP server's
  * execution-journal.ts WRITES `execution-journal.json`; this READS it for
- * the AU5 "what really happened" card (GET /proposals/:id/outcome).
+ * the AU5 "what really happened" card (GET /proposal-status/:id/outcome).
  *
  * Plaintext, like proposal-submission-store.ts and the journal itself — same
  * reasoning: no content, just ticket ids, a tool name, and an outcome label

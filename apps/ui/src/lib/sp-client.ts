@@ -149,7 +149,7 @@ export interface PreviewVersionInfo {
   currentBody?: PreviewBody;
 }
 
-/** `GET /proposals/:id/preview` — always 200 unless auth/proposal fetch fails. */
+/** `GET /proposal-status/:id/preview` — always 200 unless auth/proposal fetch fails. */
 export type PreviewResponse =
   | { status: 'none' }
   | { status: 'unavailable'; reason: 'no_connector' | 'connector_error' | 'timeout'; message?: string }
@@ -163,7 +163,7 @@ export type PreviewResponse =
       version?: PreviewVersionInfo;
     };
 
-/** `GET /proposals/:id/outcome` — the local execution journal's latest entry. */
+/** `GET /proposal-status/:id/outcome` — the local execution journal's latest entry. */
 export interface OutcomeResponse {
   state: 'none' | 'intent' | 'done' | 'failed';
   outcome?: 'refused' | 'changed';
@@ -1403,11 +1403,11 @@ class SPClient {
   /**
    * The system's "before it runs" read for a pending proposal — gateway-
    * internal, never returned to the AI (AU3/AU5, decision 1). Control-plane
-   * `GET /proposals/:id/preview`, not under `/api` (same convention as
+   * `GET /proposal-status/:id/preview`, not under `/api` (same convention as
    * `/denials`).
    */
   async getProposalPreview(id: string): Promise<PreviewResponse> {
-    const res = await this.fetch(`/proposals/${encodeURIComponent(id)}/preview`);
+    const res = await this.fetch(`/proposal-status/${encodeURIComponent(id)}/preview`);
     if (!res.ok) throw new Error(`Failed to fetch preview: ${res.status}`);
     return res.json();
   }
@@ -1416,10 +1416,10 @@ class SPClient {
    * What actually happened after an AS-"executed" proposal — the local
    * execution journal, which knows about a connector refusal or a changed
    * record that the AS's own status does not (AU4/AU5). Control-plane
-   * `GET /proposals/:id/outcome`.
+   * `GET /proposal-status/:id/outcome`.
    */
   async getProposalOutcome(id: string): Promise<OutcomeResponse> {
-    const res = await this.fetch(`/proposals/${encodeURIComponent(id)}/outcome`);
+    const res = await this.fetch(`/proposal-status/${encodeURIComponent(id)}/outcome`);
     if (!res.ok) throw new Error(`Failed to fetch outcome: ${res.status}`);
     return res.json();
   }
