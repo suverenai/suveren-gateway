@@ -21,7 +21,7 @@ describe('mandateRight', () => {
       expect(r).toMatchObject({ can: false, code: 'PROFILE_NOT_ENABLED_FOR_GROUP' });
       if (!r.can) {
         expect(r.reason).toContain('"Sales Vienna"');
-        expect(r.fix).toMatch(/team admin/);
+        expect(r.fix).toMatch(/Ask an admin of .* to enable /);
       }
     }
   });

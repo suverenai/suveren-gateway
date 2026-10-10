@@ -5,8 +5,10 @@ import { ProposalArgs } from './ProposalArgs';
 import { ProfileRail } from './ProfileRail';
 import { OutcomeBox } from './OutcomeBox';
 import { ApprovalBody } from './ApprovalBody';
+import { TicketWhatWasDone } from './TicketWhatWasDone';
 import { isTestSetupAction, profileIdentity } from '../lib/profile-identity';
 import { splitTool, systemDisplayName, type ToolDisplay } from '../lib/approval-view';
+import { useProfile } from '../lib/profile-cache';
 import type { IntegrationManifest } from '../lib/sp-client';
 
 type CardStatus = 'pending' | 'committed' | 'executed' | 'rejected' | 'expired';
@@ -97,6 +99,9 @@ export function ActionCard({ item, onApprove, onReject, resolving, proposalLinks
   const destructive = isDestructive(toolFull);
   const { integrationId } = splitTool(toolFull);
   const systemName = systemDisplayName(integrationId, manifests);
+  // AU6: "What was done" needs the profile for the no-bound-content fallback
+  // (checked values labelled from the profile's scope schema).
+  const profile = useProfile(item.profileId);
 
   const args = isProposal ? item.proposal.toolArgs : null;
   const executionContext = isProposal ? item.proposal.executionContext : item.receipt.executionContext;
@@ -220,12 +225,20 @@ export function ActionCard({ item, onApprove, onReject, resolving, proposalLinks
             </div>
           )}
 
-          {isProposal && args && <ProposalArgs args={args} display={toolDisplay} />}
-
-          {ctxEntries.length > 0 && (
-            <div style={{ marginBottom: '0.75rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-              {ctxEntries.map(([k, v]) => `${k}=${formatArgValue(v)}`).join(' · ')}
-            </div>
+          {isProposal ? (
+            <>
+              {args && <ProposalArgs args={args} display={toolDisplay} />}
+              {ctxEntries.length > 0 && (
+                <div style={{ marginBottom: '0.75rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                  {ctxEntries.map(([k, v]) => `${k}=${formatArgValue(v)}`).join(' · ')}
+                </div>
+              )}
+            </>
+          ) : (
+            /* A ticket (receipt) — "What was done" first, same treatment as
+               ReceiptCard.tsx (AU6). Self-contained: fetches its own local
+               archive entry, so this card needs no extra wiring. */
+            <TicketWhatWasDone receipt={item.receipt} profile={profile} />
           )}
         </>
       )}

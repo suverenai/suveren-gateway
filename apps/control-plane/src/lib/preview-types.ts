@@ -28,7 +28,7 @@ export interface PreviewVersionInfo {
  * from outside).
  */
 export type InternalPreviewResult =
-  | { status: 'none' }
+  | { status: 'none'; reason?: 'no_target' }
   | { status: 'unavailable'; reason: 'no_connector' | 'connector_error' | 'timeout'; message?: string }
   | { status: 'not_found'; message?: string }
   | {
@@ -43,7 +43,7 @@ export type InternalPreviewResult =
 
 /** GET /proposal-status/:id/preview's response (always 200 unless auth/proposal fetch fails). */
 export type PreviewResponse =
-  | { status: 'none' }
+  | { status: 'none'; reason?: 'no_target' }
   | { status: 'unavailable'; reason: 'no_connector' | 'connector_error' | 'timeout'; message?: string }
   | { status: 'not_found'; message?: string }
   | {

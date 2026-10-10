@@ -15,6 +15,13 @@ describe('previewBoxView', () => {
     expect(v.rendered).toBeUndefined();
   });
 
+  it('none/no_target: says the action names no existing record — never "No preview declared"', () => {
+    const v = previewBoxView({ status: 'none', reason: 'no_target' }, 'CRM');
+    expect(v.note).toBe('This action does not refer to an existing record — nothing to read beforehand. Showing exactly what will be sent to CRM.');
+    expect(v.heading).not.toMatch(/no preview declared/i);
+    expect(v.rendered).toBeUndefined();
+  });
+
   it('unavailable/no_connector: "on this gateway" (decision 3)', () => {
     const v = previewBoxView({ status: 'unavailable', reason: 'no_connector' }, 'ERP');
     expect(v.note).toBe('Preview not available on this gateway.');

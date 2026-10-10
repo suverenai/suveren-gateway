@@ -21,6 +21,21 @@
  *    null/""/[]) is shown, in schema/declared order — no fixed count. Either
  *    way, "All fields (n)" folds the complete list, including empty ones —
  *    nothing is ever truly hidden, only de-prioritized.
+ *  - WHICH keys inside a nested array item/object show (second real-world
+ *    follow-up, 2026-10-10): when the outputSchema declares `items.properties`
+ *    for an array field (or `properties` for a nested object field), only
+ *    those declared properties are shown, in declared order, labelled by
+ *    their `title` — an internal id the schema never named (quote_id,
+ *    item_id) is dropped rather than shown as noise. Without such a
+ *    declaration for that specific field, every one of the nested object's
+ *    OWN keys is still shown (today's behaviour, unchanged) — this is an
+ *    allow-list that narrows, never a requirement that would otherwise hide
+ *    data no schema ever spoke to.
+ *  - Non-integer numbers display rounded to at most 2 decimals, no trailing
+ *    zeros (44.44444444444444 → "44.44"), with the exact value available on
+ *    hover (title attribute) — display only; integers and strings are never
+ *    touched, and this never reaches the bound "Details" values, which stay
+ *    exact (see ProposalArgs.tsx, unaffected by this module).
  */
 import { humanizeKey } from './approval-view';
 import type { PreviewBody } from './sp-client';
@@ -30,8 +45,14 @@ export interface PreviewFieldRow {
   label: string;
   /** Scalar or plain-object value, rendered as one line. Absent when `lines` is set. */
   value?: string;
+  /** Hover text for `value` — the same line with every number at full
+   *  precision. Present only when rounding actually changed something. */
+  valueTitle?: string;
   /** Array-of-objects: one compact line per item (never raw JSON). */
   lines?: string[];
+  /** Hover text per entry of `lines`, same length when present; an entry is
+   *  undefined where that line needed no correction. */
+  lineTitles?: Array<string | undefined>;
 }
 
 export interface RenderedPreview {
@@ -53,16 +74,31 @@ export interface RenderOptions {
   fields?: string[];
 }
 
-type JsonSchema = { properties?: Record<string, { title?: string }> };
+/** A JSON-Schema-shaped property declaration — only the bits this module
+ *  reads: a display `title`, nested `properties` (object), or `items`
+ *  (array, itself a property declaration for one element). */
+interface JsonSchemaProperty {
+  title?: string;
+  properties?: Record<string, JsonSchemaProperty>;
+  items?: JsonSchemaProperty;
+}
+type JsonSchema = { properties?: Record<string, JsonSchemaProperty> };
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
-function formatScalar(v: unknown): string {
+/** Non-integer numbers round to at most 2 decimals (no trailing zeros —
+ *  JS's own Number→string conversion drops them); integers and strings are
+ *  never touched. `exact`=true skips the rounding, for the hover title. */
+function formatScalar(v: unknown, exact = false): string {
   if (v === null || v === undefined) return '—';
   if (typeof v === 'string') return v;
-  if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+  if (typeof v === 'boolean') return String(v);
+  if (typeof v === 'number') {
+    if (exact || Number.isInteger(v)) return String(v);
+    return String(Math.round(v * 100) / 100);
+  }
   return '—';
 }
 
@@ -75,28 +111,53 @@ function hasValue(v: unknown): boolean {
   return true;
 }
 
-/** One compact line for an object: "Label: value · Label2: value2" — the
- *  object's OWN keys, in their own order; never raw JSON. */
-function compactObjectLine(obj: Record<string, unknown>): string {
-  const entries = Object.entries(obj);
-  if (entries.length === 0) return '—';
-  return entries
-    .map(([k, v]) => `${humanizeKey(k)}: ${isPlainObject(v) ? compactObjectLine(v) : formatScalar(v)}`)
+/**
+ * One compact line for an object: "Label: value · Label2: value2" — never
+ * raw JSON. With a declared `properties` map, ONLY those keys show, in
+ * their declared order, labelled by `title` — an id the schema never named
+ * is dropped. Without one, every one of the object's OWN keys shows,
+ * humanized (today's behaviour, unchanged — this allow-list only ever
+ * narrows what a declared schema already named).
+ */
+function compactObjectLine(
+  obj: Record<string, unknown>,
+  declaredProps: Record<string, JsonSchemaProperty> | undefined,
+  exact: boolean,
+): string {
+  const keys = declaredProps ? Object.keys(declaredProps).filter((k) => k in obj) : Object.keys(obj);
+  if (keys.length === 0) return '—';
+  return keys
+    .map((k) => {
+      const v = obj[k];
+      const label = declaredProps?.[k]?.title ?? humanizeKey(k);
+      const shown = isPlainObject(v) ? compactObjectLine(v, declaredProps?.[k]?.properties, exact) : formatScalar(v, exact);
+      return `${label}: ${shown}`;
+    })
     .join(' · ');
 }
 
-function renderValue(value: unknown): Pick<PreviewFieldRow, 'value' | 'lines'> {
+function renderValue(value: unknown, fieldSchema: JsonSchemaProperty | undefined): Pick<PreviewFieldRow, 'value' | 'valueTitle' | 'lines' | 'lineTitles'> {
   if (Array.isArray(value)) {
     if (value.length === 0) return { value: '—' };
     if (value.every((x) => !isPlainObject(x) && !Array.isArray(x))) {
-      return { value: value.map(formatScalar).join(', ') };
+      const display = value.map((x) => formatScalar(x)).join(', ');
+      const exact = value.map((x) => formatScalar(x, true)).join(', ');
+      return exact === display ? { value: display } : { value: display, valueTitle: exact };
     }
-    return { lines: value.map((x) => (isPlainObject(x) ? compactObjectLine(x) : formatScalar(x))) };
+    const itemProps = fieldSchema?.items?.properties;
+    const displayLines = value.map((x) => (isPlainObject(x) ? compactObjectLine(x, itemProps, false) : formatScalar(x)));
+    const exactLines = value.map((x) => (isPlainObject(x) ? compactObjectLine(x, itemProps, true) : formatScalar(x, true)));
+    const lineTitles = displayLines.map((d, i) => (d === exactLines[i] ? undefined : exactLines[i]));
+    return lineTitles.some((t) => t !== undefined) ? { lines: displayLines, lineTitles } : { lines: displayLines };
   }
   if (isPlainObject(value)) {
-    return { value: compactObjectLine(value) };
+    const display = compactObjectLine(value, fieldSchema?.properties, false);
+    const exact = compactObjectLine(value, fieldSchema?.properties, true);
+    return exact === display ? { value: display } : { value: display, valueTitle: exact };
   }
-  return { value: formatScalar(value) };
+  const display = formatScalar(value);
+  const exact = formatScalar(value, true);
+  return exact === display ? { value: display } : { value: display, valueTitle: exact };
 }
 
 /**
@@ -144,8 +205,9 @@ export function allPreviewFields(body: PreviewBody | undefined): PreviewFieldRow
   const rows: PreviewFieldRow[] = [];
   for (const key of order) {
     if (!(key in obj)) continue;
-    const label = props[key]?.title ?? humanizeKey(key);
-    rows.push({ key, label, ...renderValue(obj[key]) });
+    const fieldSchema = props[key];
+    const label = fieldSchema?.title ?? humanizeKey(key);
+    rows.push({ key, label, ...renderValue(obj[key], fieldSchema) });
   }
   return rows;
 }
@@ -214,7 +276,10 @@ function toRendered(rows: PreviewFieldRow[]): RenderedPreview {
  * dropped from the comparison because it is EXPECTED to differ; it is not
  * itself the change being shown. Arrays (e.g. quote lines) compare and
  * render as whole rows (one line per item) rather than element-by-element —
- * any difference inside the array is a difference in that field.
+ * any difference inside the array is a difference in that field. The same
+ * schema-declared nested-property allow-list and number rounding that
+ * `renderPreviewBody` applies carries through here too, since both build on
+ * the same `allPreviewFields`.
  *
  * Free-text (non-structured) bodies fall back to a whole-text compare: no
  * fields to diff, so it is either identical (`unchanged`) or shown in full
