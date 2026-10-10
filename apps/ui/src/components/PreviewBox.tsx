@@ -9,51 +9,10 @@
  * Approve/Reject enabled (decisions 2–3, temp/briefs/au3-au5-brief.md) — this
  * box only ever ADDS information, never gates the buttons.
  */
-import { Fragment, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { spClient, type PreviewResponse } from '../lib/sp-client';
 import { previewBoxView } from '../lib/approval-preview-view';
-import type { PreviewFieldRow, RenderedPreview } from '../lib/preview-render';
-
-function FieldRows({ rows }: { rows: PreviewFieldRow[] }) {
-  return (
-    <dl style={{ display: 'grid', gridTemplateColumns: 'max-content 1fr', gap: '0.3rem 0.75rem', fontSize: '0.85rem', margin: '0.4rem 0' }}>
-      {rows.map((r) => (
-        <Fragment key={r.key}>
-          <dt style={{ color: 'var(--text-tertiary)', whiteSpace: 'nowrap', alignSelf: 'start' }}>{r.label}</dt>
-          <dd style={{ margin: 0, wordBreak: 'break-word' }}>
-            {r.lines ? (
-              <div>
-                {r.lines.map((l, i) => <div key={i} title={r.lineTitles?.[i]}>{l}</div>)}
-              </div>
-            ) : (
-              <span title={r.valueTitle}>{r.value}</span>
-            )}
-          </dd>
-        </Fragment>
-      ))}
-    </dl>
-  );
-}
-
-function RenderedBody({ rendered }: { rendered: RenderedPreview }) {
-  if (rendered.kind === 'empty') {
-    return <p style={{ color: 'var(--text-tertiary)', fontSize: '0.85rem', margin: '0.4rem 0' }}>No fields returned.</p>;
-  }
-  if (rendered.kind === 'text') {
-    return <div style={{ whiteSpace: 'pre-wrap', fontSize: '0.85rem', margin: '0.4rem 0' }}>{rendered.text}</div>;
-  }
-  return (
-    <>
-      <FieldRows rows={rendered.fields} />
-      {rendered.moreFields.length > 0 && (
-        <details style={{ fontSize: '0.8rem' }}>
-          <summary style={{ cursor: 'pointer', color: 'var(--text-tertiary)' }}>All fields ({rendered.totalFields})</summary>
-          <FieldRows rows={rendered.moreFields} />
-        </details>
-      )}
-    </>
-  );
-}
+import { RenderedPreviewView as RenderedBody } from './RenderedPreviewView';
 
 interface Props {
   proposalId: string;

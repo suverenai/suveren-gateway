@@ -15,6 +15,7 @@
  * another device. That absence is stated, never quietly rendered as blank.
  */
 
+import { useState } from 'react';
 import {
   actionLabel,
   scopeSummary,
@@ -26,6 +27,7 @@ import {
 import { profileIdentity, isTestSetupAction } from '../lib/profile-identity';
 import { useProfile } from '../lib/profile-cache';
 import { ProfileRail } from './ProfileRail';
+import { TicketWhatWasDone } from './TicketWhatWasDone';
 import type {
   ExecutionReceipt,
   IntegrationManifest,
@@ -89,6 +91,10 @@ export function ReceiptCard({
   // Test setup: the delegation profile, OR a setup__* tool — both run only
   // while simulation mode is on (see lib/profile-identity.ts).
   const testSetup = profileIdentity(receipt.profileId).testSetup || isTestSetupAction(receipt.action);
+  // AU6: the mockup always shows the intent's first two lines, with "Show
+  // full intent" only toggling the clamp — same pattern as the approval
+  // card's mandate+intent block (components/ApprovalBody.tsx, AU5).
+  const [intentExpanded, setIntentExpanded] = useState(false);
 
   return (
     <div className="card id-card" style={{ marginBottom: 0 }}>
@@ -115,21 +121,47 @@ export function ReceiptCard({
       {/* What THIS call touched (from the signed receipt). */}
       {scope && <div className="receipt-scope">{scope}</div>}
 
+      {/* "What was done" FIRST — the ticket's bound content (sealed), or the
+          checked values when it binds none, or an off-device notice. See
+          components/TicketWhatWasDone.tsx (AU6). */}
+      <TicketWhatWasDone receipt={receipt} profile={profile} />
+
       {/* The record, as stored. */}
       <dl className="receipt-rows">
         <Row label="mandate">
-          <strong>{grantTitle || profileVersionLabel(receipt.profileId)}</strong>
+          <strong>{grantTitle || profileVersionLabel(receipt.profileId)}</strong>{' '}
+          <span className="src-tag src-tag-local">local</span>
         </Row>
 
         {ownerLabel && <Row label="owner">{ownerLabel}</Row>}
 
-        {allowed && <Row label="allowed">{allowed}</Row>}
+        {allowed && (
+          <Row label="allowed">
+            {allowed} <span className="src-tag src-tag-local">local</span>
+          </Row>
+        )}
 
-        {usage && <Row label="used"><span className="receipt-num">{usage}</span></Row>}
+        {usage && (
+          <Row label="used">
+            <span className="receipt-num">{usage}</span> <span className="src-tag src-tag-sealed">sealed</span>
+          </Row>
+        )}
 
         <Row label="intent">
           {intent
-            ? <span className="receipt-intent">{intent}</span>
+            ? (
+              <>
+                <span className={`intent-text${intentExpanded ? '' : ' intent-clamped'}`}>{intent}</span>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm intent-toggle"
+                  onClick={() => setIntentExpanded(!intentExpanded)}
+                >
+                  {intentExpanded ? 'Show less' : 'Show full intent'}
+                </button>{' '}
+                <span className="src-tag src-tag-local">local</span>
+              </>
+            )
             : <span className="receipt-absent">
                 {localUnavailable
                   ? 'local store unreachable — sign in to the gateway to read it'

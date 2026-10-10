@@ -3854,6 +3854,23 @@ body.is-updating .simulation-banner {
 .mandate-intent dd { margin: 0; }
 .src-tag { font-size: 0.65rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; border-radius: 0.25rem; padding: 0.05rem 0.3rem; margin-left: 0.35rem; }
 .src-tag-local { color: var(--text-muted); border: 1px solid var(--border); }
+.src-tag-sealed { color: var(--success); border: 1px solid var(--success); }
 .intent-text { font-style: italic; color: var(--text-secondary); margin: 0; }
 .intent-text.intent-clamped { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .intent-toggle { margin-top: 0.3rem; }
+
+/* ── AU6 ticket card: "What was done" (work-plan.md "Added 2026-10-09";
+   approved mockup: temp/mockups/gateway-ux-v7.html §3)
+   components/TicketWhatWasDone.tsx, ReceiptCard.tsx, ActionCard.tsx. */
+.ticket-done-box { background: var(--bg-elevated); border: 1px solid var(--success); border-radius: 0.5rem; padding: 0.75rem 0.875rem; margin-bottom: 0.75rem; font-size: 0.85rem; }
+.ticket-done-box h4 { font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-tertiary); margin-bottom: 0.3rem; }
+.ticket-done-loading { border-color: var(--border); color: var(--text-tertiary); font-size: 0.82rem; }
+.ticket-done-off-device, .ticket-done-box[data-bound="none"] { border-color: var(--border); background: var(--bg-main); }
+.ticket-done-mismatch { border-color: var(--danger); background: var(--danger-subtle); }
+.ticket-done-note { font-size: 0.78rem; color: var(--text-tertiary); margin: 0.4rem 0 0; line-height: 1.45; }
+.ticket-done-note-ok { color: var(--success); }
+.ticket-done-note-bad { color: var(--danger); font-weight: 600; }
+.ticket-done-fields { display: grid; grid-template-columns: max-content 1fr; gap: 0.3rem 0.75rem; margin: 0.4rem 0 0; }
+.ticket-done-field-row { display: contents; }
+.ticket-done-field-row dt { color: var(--text-tertiary); white-space: nowrap; align-self: start; }
+.ticket-done-field-row dd { margin: 0; word-break: break-word; }
