@@ -90,7 +90,7 @@ describe('crm.json — approval preview', () => {
   it('create_task WITHOUT a contact shows no preview — no read, no error card', async () => {
     const { im, callTool } = crm();
     const r = await buildInternalPreview(im, 'crm', 'create_task', { title: 'Order paper', contact_type: 'customer' });
-    expect(r).toEqual({ status: 'none' });
+    expect(r).toEqual({ status: 'none', reason: 'no_target' });
     expect(callTool).not.toHaveBeenCalled();
   });
 

@@ -76,8 +76,8 @@ export function mapPreviewArgs(
 /**
  * True when the preview declares args but the action carries none of them —
  * an optional link left out (crm create_task without a contact_id). There is
- * no record to show, so this is "no preview", never a read with empty args
- * that the connector would answer with "not found".
+ * no record to show, so this is `none` with reason `no_target`, never a read
+ * with empty args that the connector would answer with "not found".
  */
 export function previewHasNoTarget(
   preview: Pick<ToolPreviewConfig, 'args'>,
@@ -218,7 +218,8 @@ export async function previewChangedSinceSubmission(
  * control plane relaying its answer) never see a connector-specific name.
  */
 export type InternalPreviewResult =
-  | { status: 'none' }
+  /** `no_target`: a preview is declared, but the action names no record to read. */
+  | { status: 'none'; reason?: 'no_target' }
   | { status: 'unavailable'; reason: 'no_connector' | 'connector_error' | 'timeout'; message?: string }
   | { status: 'not_found'; message?: string }
   | {
@@ -249,7 +250,7 @@ export async function buildInternalPreview(
   if (!preview) return { status: 'none' };
 
   const mappedArgs = mapPreviewArgs(preview, actionArgs);
-  if (previewHasNoTarget(preview, mappedArgs)) return { status: 'none' };
+  if (previewHasNoTarget(preview, mappedArgs)) return { status: 'none', reason: 'no_target' };
   const read1 = await readPreview(integrationManager, integrationId, preview.tool, mappedArgs);
   if (read1.status !== 'ok') return read1;
 

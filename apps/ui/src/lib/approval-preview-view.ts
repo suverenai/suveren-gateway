@@ -54,6 +54,12 @@ export interface PreviewBoxView {
 export function previewBoxView(resp: PreviewResponse, systemName: string): PreviewBoxView {
   switch (resp.status) {
     case 'none':
+      if (resp.reason === 'no_target') {
+        return {
+          heading: 'Nothing to read beforehand',
+          note: `This action does not refer to an existing record — nothing to read beforehand. Showing exactly what will be sent to ${systemName}.`,
+        };
+      }
       return {
         heading: 'No preview declared',
         note: `No preview declared for this tool — showing exactly what will be sent to ${systemName}.`,
