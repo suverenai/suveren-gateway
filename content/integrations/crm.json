@@ -63,7 +63,27 @@
         "staticExecution": {
           "action_type": "write"
         },
-        "actionLabel": "Contact updated"
+        "actionLabel": "Contact updated",
+        "preview": {
+          "tool": "get_contact",
+          "args": {
+            "id": "id",
+            "revision": "revision"
+          },
+          "version": {
+            "arg": "revision",
+            "field": "revision"
+          },
+          "fields": [
+            "name",
+            "company",
+            "type",
+            "stage",
+            "email",
+            "archived",
+            "revision"
+          ]
+        }
       },
       "delete_contact": {
         "executionMapping": {
@@ -72,7 +92,27 @@
         "staticExecution": {
           "action_type": "delete"
         },
-        "actionLabel": "Contact archived"
+        "actionLabel": "Contact archived",
+        "preview": {
+          "tool": "get_contact",
+          "args": {
+            "id": "id",
+            "revision": "revision"
+          },
+          "version": {
+            "arg": "revision",
+            "field": "revision"
+          },
+          "fields": [
+            "name",
+            "company",
+            "type",
+            "stage",
+            "email",
+            "archived",
+            "revision"
+          ]
+        }
       },
       "restore_contact": {
         "executionMapping": {
@@ -81,7 +121,27 @@
         "staticExecution": {
           "action_type": "delete"
         },
-        "actionLabel": "Contact restored"
+        "actionLabel": "Contact restored",
+        "preview": {
+          "tool": "get_contact",
+          "args": {
+            "id": "id",
+            "revision": "revision"
+          },
+          "version": {
+            "arg": "revision",
+            "field": "revision"
+          },
+          "fields": [
+            "name",
+            "company",
+            "type",
+            "stage",
+            "email",
+            "archived",
+            "revision"
+          ]
+        }
       },
       "convert_contact": {
         "executionMapping": {
@@ -90,7 +150,27 @@
         "staticExecution": {
           "action_type": "write"
         },
-        "actionLabel": "Contact type changed"
+        "actionLabel": "Contact type changed",
+        "preview": {
+          "tool": "get_contact",
+          "args": {
+            "id": "id",
+            "revision": "revision"
+          },
+          "version": {
+            "arg": "revision",
+            "field": "revision"
+          },
+          "fields": [
+            "name",
+            "company",
+            "type",
+            "stage",
+            "email",
+            "archived",
+            "revision"
+          ]
+        }
       },
       "log_activity": {
         "executionMapping": {
@@ -98,6 +178,17 @@
         },
         "staticExecution": {
           "action_type": "write"
+        },
+        "preview": {
+          "tool": "get_contact",
+          "args": {
+            "id": "contact_id"
+          },
+          "fields": [
+            "name",
+            "company",
+            "type"
+          ]
         }
       },
       "create_deal": {
@@ -106,6 +197,17 @@
         },
         "staticExecution": {
           "action_type": "write"
+        },
+        "preview": {
+          "tool": "get_contact",
+          "args": {
+            "id": "contact_id"
+          },
+          "fields": [
+            "name",
+            "company",
+            "type"
+          ]
         }
       },
       "update_deal": {
@@ -114,6 +216,26 @@
         },
         "staticExecution": {
           "action_type": "write"
+        },
+        "preview": {
+          "tool": "get_deal",
+          "args": {
+            "id": "id",
+            "revision": "revision"
+          },
+          "version": {
+            "arg": "revision",
+            "field": "revision"
+          },
+          "fields": [
+            "title",
+            "value",
+            "currency",
+            "stage",
+            "expected_close",
+            "contact_id",
+            "revision"
+          ]
         }
       },
       "create_task": {
@@ -122,6 +244,17 @@
         },
         "staticExecution": {
           "action_type": "write"
+        },
+        "preview": {
+          "tool": "get_contact",
+          "args": {
+            "id": "contact_id"
+          },
+          "fields": [
+            "name",
+            "company",
+            "type"
+          ]
         }
       },
       "complete_task": {
@@ -130,6 +263,24 @@
         },
         "staticExecution": {
           "action_type": "write"
+        },
+        "preview": {
+          "tool": "get_task",
+          "args": {
+            "id": "id",
+            "revision": "revision"
+          },
+          "version": {
+            "arg": "revision",
+            "field": "revision"
+          },
+          "fields": [
+            "title",
+            "status",
+            "due_date",
+            "contact_id",
+            "revision"
+          ]
         }
       },
       "find_contacts": {

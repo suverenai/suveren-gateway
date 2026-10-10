@@ -73,6 +73,19 @@ export function mapPreviewArgs(
   return mapped;
 }
 
+/**
+ * True when the preview declares args but the action carries none of them —
+ * an optional link left out (crm create_task without a contact_id). There is
+ * no record to show, so this is "no preview", never a read with empty args
+ * that the connector would answer with "not found".
+ */
+export function previewHasNoTarget(
+  preview: Pick<ToolPreviewConfig, 'args'>,
+  mapped: Record<string, unknown>,
+): boolean {
+  return Object.keys(preview.args).length > 0 && Object.keys(mapped).length === 0;
+}
+
 export class PreviewTimeoutError extends Error {}
 
 function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
@@ -168,6 +181,7 @@ export async function computeSubmissionPreviewHash(
   const preview = getToolPreviewConfig(integrationId, toolName);
   if (!preview || preview.version) return undefined;
   const mapped = mapPreviewArgs(preview, actionArgs);
+  if (previewHasNoTarget(preview, mapped)) return undefined;
   const read = await readPreview(integrationManager, integrationId, preview.tool, mapped);
   if (read.status !== 'ok') return undefined;
   return hashPreviewBody(read.body);
@@ -235,6 +249,7 @@ export async function buildInternalPreview(
   if (!preview) return { status: 'none' };
 
   const mappedArgs = mapPreviewArgs(preview, actionArgs);
+  if (previewHasNoTarget(preview, mappedArgs)) return { status: 'none' };
   const read1 = await readPreview(integrationManager, integrationId, preview.tool, mappedArgs);
   if (read1.status !== 'ok') return read1;
 
