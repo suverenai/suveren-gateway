@@ -9,14 +9,25 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+/** See apps/mcp-server/src/lib/denial-log.ts for the full discriminator doc.
+ * Absent `kind` on an on-disk record ⇒ 'read' (every record predating AU2
+ * was a read block). */
 export interface DenialRecordView {
   ts: number;
   tool: string;
   integrationId: string;
   profile: string | null;
-  reason: string;
+  kind?: string;
+  reason?: string;
   detail: string;
   target?: string;
+  mandateId?: string;
+  mandateTitle?: string;
+  field?: string;
+  value?: number | string;
+  limit?: number | string;
+  who?: string;
+  code?: string;
 }
 
 export interface EncBlob { iv: string; ciphertext: string; tag: string }

@@ -3458,6 +3458,29 @@ body.is-updating .simulation-banner {
 .recent-blocks .rb-empty { text-align: center; padding: 1.25rem 1rem 0.25rem; }
 .all-clear { text-align: center; padding: 1.25rem 1rem 0.25rem; }
 
+/* ── Blocked actions page (AU2, work-plan.md "Added 2026-10-09") ─────────────
+   Every refusal of a gated call, not only reads — same visual language as
+   .recent-blocks above (hairline rows, a coloured dot per refusal kind). */
+.blocked-header { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; }
+.blocked-today { font-size: 0.85rem; color: var(--text-muted); white-space: nowrap; }
+.blocked-list { display: flex; flex-direction: column; }
+.blocked-row {
+  display: grid; grid-template-columns: auto 1fr auto; gap: 0.75rem 0.85rem;
+  align-items: start; padding: 0.9rem 0; border-top: 1px solid var(--border);
+}
+.blocked-row:first-child { border-top: none; }
+.blocked-dot { width: 0.5rem; height: 0.5rem; border-radius: 999px; margin-top: 0.4rem; background: var(--danger); }
+.blocked-dot-cumulative, .blocked-dot-not_authorized { background: var(--warning); }
+.blocked-dot-simulation { background: var(--text-muted); }
+.blocked-row-main { min-width: 0; }
+.blocked-title { font-weight: 600; font-size: 0.92rem; margin-bottom: 0.2rem; }
+.blocked-sentence { font-size: 0.86rem; color: var(--text-primary); line-height: 1.4; }
+.blocked-source { font-size: 0.74rem; color: var(--text-muted); margin-top: 0.3rem; }
+.blocked-row details { margin-top: 0.4rem; font-size: 0.8rem; }
+.blocked-row summary { cursor: pointer; color: var(--text-muted); }
+.blocked-advice { margin-top: 0.3rem; color: var(--text-secondary); }
+.blocked-when { font-size: 0.74rem; color: var(--text-muted); white-space: nowrap; }
+
 /* Dashboard "Needs your attention" card: rows separated by hairlines. */
 .attention .card-header { margin-bottom: 0.5rem; }
 .attention-rows { display: flex; flex-direction: column; }

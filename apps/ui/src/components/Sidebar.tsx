@@ -6,12 +6,13 @@ import { bucketAuths } from '../lib/auth-status';
 import { useVisiblePolling } from '../hooks/useVisiblePolling';
 import { useSSEEvent } from '../contexts/EventSourceContext';
 import { useIntegrationStatus } from '../contexts/IntegrationStatusContext';
+import { todaysCount } from '../lib/blocked-view';
 
 export interface NavItem {
   to: string;
   icon: string;
   label: string;
-  statusKey?: 'integrations' | 'assistant' | 'authorizations' | 'proposals' | 'brief';
+  statusKey?: 'integrations' | 'assistant' | 'authorizations' | 'proposals' | 'brief' | 'blocked';
   teamOnly?: boolean;
 }
 
@@ -24,6 +25,7 @@ export const NAV_ITEMS: NavItem[] = [
   { to: '/mandates', icon: '☰', label: 'Mandates', statusKey: 'authorizations' },
   { to: '/agent-brief', icon: '▤', label: 'Agent Brief', statusKey: 'brief' },
   { to: '/tickets', icon: '▣', label: 'Tickets' },
+  { to: '/blocked', icon: '⛔', label: 'Blocked', statusKey: 'blocked' },
   { to: '/reports', icon: '▥', label: 'Reports' },
   { to: '/team', icon: '◉', label: 'Team', teamOnly: true },
   { to: '/integrations', icon: '⧗', label: 'Integrations', statusKey: 'integrations' },
@@ -41,13 +43,14 @@ function useOtherNavStatus() {
 
   const poll = useCallback(async () => {
     try {
-      const [aiStatus, authData, proposalData, approverProposals, briefText, archivedIds] = await Promise.all([
+      const [aiStatus, authData, proposalData, approverProposals, briefText, archivedIds, denials] = await Promise.all([
         spClient.getCredential('ai-config').catch(() => null),
         spClient.getMyAttestations().catch(() => null),
         spClient.getMyProposals(activeDomain).catch(() => null),
         spClient.getProposalsForApprover().catch(() => null),
         spClient.getAgentContext().catch(() => ''),
         spClient.getArchivedMandates().catch(() => [] as string[]),
+        spClient.getDenials({ limit: 200 }).catch(() => null),
       ]);
 
       const next: Record<string, number> = {};
@@ -69,6 +72,12 @@ function useOtherNavStatus() {
       }
       // Empty agent brief → badge nudges the owner to author one.
       if (!briefText || !briefText.trim()) next.brief = 1;
+      // AU2 — today's blocked-action count. No notification (decided); this
+      // static nav count is the only surfacing.
+      if (denials) {
+        const today = todaysCount(denials.records, Date.now());
+        if (today > 0) next.blocked = today;
+      }
       setCounts(next);
     } catch {
       // ignore

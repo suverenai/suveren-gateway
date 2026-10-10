@@ -103,14 +103,28 @@ export interface VaultStatus {
 /** A single read block from the Gatekeeper (no message content). */
 export type DenialReason =
   | 'ungoverned' | 'read_gate' | 'unset_age' | 'age' | 'resource' | 'spam' | 'query_unsafe';
+/** Every refusal the gateway records — reads (original F7.4 shape, via
+ * `reason`/`target`) and, since AU2 (work-plan.md "Added 2026-10-09"), every
+ * other refusal of a gated call. Absent `kind` ⇒ 'read' (every record
+ * predating AU2). Never carries message content — identifiers, field names
+ * and numbers only. */
+export type DenialKind = 'read' | 'bound' | 'scope' | 'cumulative' | 'simulation' | 'not_authorized';
 export interface DenialRecord {
   ts: number;
   tool: string;
   integrationId: string;
   profile: string | null;
-  reason: DenialReason;
+  kind?: DenialKind;
+  reason?: DenialReason;
   detail: string;
   target?: string;
+  mandateId?: string;
+  mandateTitle?: string;
+  field?: string;
+  value?: number | string;
+  limit?: number | string;
+  who?: 'gateway' | 'authority-server';
+  code?: string;
 }
 
 export interface AuthTemplate {
