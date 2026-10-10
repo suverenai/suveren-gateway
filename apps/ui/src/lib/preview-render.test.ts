@@ -65,10 +65,20 @@ describe('renderPreviewBody — structured results', () => {
     expect(r.fields[1].label).toBe('Surprise');
   });
 
-  it('renders a scalar array joined, never one row per primitive', () => {
-    const body: PreviewBody = { structured: { tags: ['a', 'b', 'c'] } };
+  it('renders a non-string scalar array joined, never one row per primitive', () => {
+    // Was ['a', 'b', 'c'] (strings) before DL4 — a string array now renders
+    // as a list (see the dedicated describe block below); a non-string
+    // scalar array keeps the original compact join unchanged.
+    const body: PreviewBody = { structured: { counts: [1, 2, 3] } };
     const r = renderPreviewBody(body);
-    expect(r.fields[0].value).toBe('a, b, c');
+    expect(r.fields[0].value).toBe('1, 2, 3');
+    expect(r.fields[0].lines).toBeUndefined();
+  });
+
+  it('a mixed scalar array (not every element a string) still joins, never lists', () => {
+    const body: PreviewBody = { structured: { mixed: ['a', 1, true] } };
+    const r = renderPreviewBody(body);
+    expect(r.fields[0].value).toBe('a, 1, true');
     expect(r.fields[0].lines).toBeUndefined();
   });
 
@@ -89,10 +99,17 @@ describe('renderPreviewBody — structured results', () => {
     expect(row.lines![0]).not.toMatch(/[{}[\]]/);
   });
 
-  it('renders a nested plain object as one compact line, never raw JSON', () => {
-    const body: PreviewBody = { structured: { customer: { name: 'Hofer', id: 'cust-1' } } };
+  it('renders a nested object with a non-scalar value as one compact line, never raw JSON', () => {
+    // Was { name: 'Hofer', id: 'cust-1' } (every value scalar) before DL4 —
+    // that shape now renders as a labelled sub-list instead (see the DL4
+    // describe block below); a nested value that is itself an object/array
+    // keeps the original one-line compact render, unchanged.
+    const body: PreviewBody = {
+      structured: { customer: { name: 'Hofer', address: { city: 'Linz' } } },
+    };
     const r = renderPreviewBody(body);
-    expect(r.fields[0].value).toBe('Name: Hofer · Id: cust-1');
+    expect(r.fields[0].value).toBe('Name: Hofer · Address: City: Linz');
+    expect(r.fields[0].sublist).toBeUndefined();
   });
 
   it('ignores an empty structured object and falls through to text', () => {
@@ -130,30 +147,37 @@ describe('renderPreviewBody — nested schema narrows array-item / object fields
     expect(r.fields[0].lines![0]).not.toContain('item-1');
   });
 
-  it('a nested object field with declared properties shows ONLY those, titled, in declared order', () => {
+  it('a nested object field with declared properties shows ONLY those, titled, in declared order (DL4: as a sub-list row)', () => {
     const body: PreviewBody = {
       structured: { customer: { id: 'cust-internal-1', name: 'Hofer', crm_sync_token: 'xyz' } },
       outputSchema: { properties: { customer: { properties: { name: { title: 'Customer' } } } } },
     };
     const r = renderPreviewBody(body);
-    expect(r.fields[0].value).toBe('Customer: Hofer');
-    expect(r.fields[0].value).not.toContain('cust-internal-1');
-    expect(r.fields[0].value).not.toContain('xyz');
+    expect(r.fields[0].value).toBeUndefined();
+    expect(r.fields[0].sublist).toEqual([{ key: 'name', label: 'Customer', value: 'Hofer' }]);
+    expect(JSON.stringify(r.fields[0].sublist)).not.toContain('cust-internal-1');
+    expect(JSON.stringify(r.fields[0].sublist)).not.toContain('xyz');
   });
 
-  it('without a declared schema for that field, every one of the object\'s own keys still shows (today\'s behaviour)', () => {
+  it('without a declared schema for that field, every one of the object\'s own keys still shows, as a sub-list (DL4)', () => {
     const body: PreviewBody = {
       structured: { customer: { id: 'cust-1', name: 'Hofer' } },
       outputSchema: { properties: {} }, // schema present, but says nothing about `customer`
     };
     const r = renderPreviewBody(body);
-    expect(r.fields[0].value).toBe('Id: cust-1 · Name: Hofer');
+    expect(r.fields[0].sublist).toEqual([
+      { key: 'id', label: 'Id', value: 'cust-1' },
+      { key: 'name', label: 'Name', value: 'Hofer' },
+    ]);
   });
 
-  it('without ANY schema at all, every key still shows (today\'s behaviour, unchanged)', () => {
+  it('without ANY schema at all, every key still shows, as a sub-list (DL4)', () => {
     const body: PreviewBody = { structured: { customer: { id: 'cust-1', name: 'Hofer' } } };
     const r = renderPreviewBody(body);
-    expect(r.fields[0].value).toBe('Id: cust-1 · Name: Hofer');
+    expect(r.fields[0].sublist).toEqual([
+      { key: 'id', label: 'Id', value: 'cust-1' },
+      { key: 'name', label: 'Name', value: 'Hofer' },
+    ]);
   });
 
   it('a declared property absent from the item is simply skipped, never invented', () => {
@@ -198,6 +222,135 @@ describe('renderPreviewBody — nested schema narrows array-item / object fields
   });
 });
 
+describe('renderPreviewBody — DL4 (Delegation outside simulation): sub-list, string list, diff, description', () => {
+  it('a nested object whose own values are every one scalar renders as a labelled sub-list, not a one-line compact row', () => {
+    const body: PreviewBody = { structured: { customer: { name: 'Hofer', id: 'cust-1' } } };
+    const r = renderPreviewBody(body);
+    expect(r.fields[0].value).toBeUndefined();
+    expect(r.fields[0].sublist).toEqual([
+      { key: 'name', label: 'Name', value: 'Hofer' },
+      { key: 'id', label: 'Id', value: 'cust-1' },
+    ]);
+  });
+
+  it('a sub-list row\'s own label is schema `title`, else humanized — same resolution as a top-level field', () => {
+    const body: PreviewBody = {
+      structured: { limits: { value_max: 1000, discount_max: 5 } },
+      outputSchema: {
+        properties: {
+          limits: {
+            title: 'Limits',
+            properties: {
+              value_max: { title: 'Max value per quote' },
+              discount_max: { title: 'Max discount' },
+            },
+          },
+        },
+      },
+    };
+    const r = renderPreviewBody(body);
+    expect(r.fields[0].label).toBe('Limits');
+    expect(r.fields[0].sublist).toEqual([
+      { key: 'value_max', label: 'Max value per quote', value: '1000' },
+      { key: 'discount_max', label: 'Max discount', value: '5' },
+    ]);
+  });
+
+  it('an empty object never produces an empty sub-list — falls back to the "—" compact row', () => {
+    const r = renderPreviewBody({ structured: { customer: {} } });
+    expect(r.fields[0].sublist).toBeUndefined();
+    expect(r.fields[0].value).toBe('—');
+  });
+
+  it('an array of strings renders as a list, not comma-joined', () => {
+    const body: PreviewBody = {
+      structured: {
+        checks: ['Sales is allowed by your Delegation mandate', 'review — within the modes it allows'],
+      },
+    };
+    const r = renderPreviewBody(body);
+    expect(r.fields[0].value).toBeUndefined();
+    expect(r.fields[0].lines).toEqual([
+      'Sales is allowed by your Delegation mandate',
+      'review — within the modes it allows',
+    ]);
+  });
+
+  it('a single-string array still renders as a (one-item) list, consistent with any other count', () => {
+    const r = renderPreviewBody({ structured: { checks: ['Delegation itself can never be proposed'] } });
+    expect(r.fields[0].lines).toEqual(['Delegation itself can never be proposed']);
+  });
+
+  it('a string field declared contentMediaType text/x-diff renders line by line, classified by its own +/- prefix', () => {
+    const body: PreviewBody = {
+      structured: {
+        change: '## Hausregeln\n- Preise: Listenpreis.\n-6-10% nur nach Freigabe\n+6-8% nur nach Freigabe',
+      },
+      outputSchema: { properties: { change: { title: 'Change', contentMediaType: 'text/x-diff' } } },
+    };
+    const r = renderPreviewBody(body);
+    expect(r.fields[0].value).toBeUndefined();
+    expect(r.fields[0].diffLines).toEqual([
+      { text: '## Hausregeln', kind: 'context' },
+      { text: '- Preise: Listenpreis.', kind: 'remove' },
+      { text: '-6-10% nur nach Freigabe', kind: 'remove' },
+      { text: '+6-8% nur nach Freigabe', kind: 'add' },
+    ]);
+  });
+
+  it('text/x-diff: unified-diff file-header lines (+++/---) are context, never mistaken for a changed line', () => {
+    const body: PreviewBody = {
+      structured: { change: '--- old\n+++ new\n-removed line\n+added line\n unchanged line' },
+      outputSchema: { properties: { change: { contentMediaType: 'text/x-diff' } } },
+    };
+    const r = renderPreviewBody(body);
+    expect(r.fields[0].diffLines).toEqual([
+      { text: '--- old', kind: 'context' },
+      { text: '+++ new', kind: 'context' },
+      { text: '-removed line', kind: 'remove' },
+      { text: '+added line', kind: 'add' },
+      { text: ' unchanged line', kind: 'context' },
+    ]);
+  });
+
+  it('a string WITHOUT the text/x-diff media type renders as a normal value, not diffLines', () => {
+    const r = renderPreviewBody({
+      structured: { notes: '-not a diff-' },
+      outputSchema: { properties: { notes: {} } },
+    });
+    expect(r.fields[0].value).toBe('-not a diff-');
+    expect(r.fields[0].diffLines).toBeUndefined();
+  });
+
+  it('a schema property\'s own `description` carries through to the row, shown as a note beside the label', () => {
+    const body: PreviewBody = {
+      structured: { intent: 'Why — Answer quote requests the same day.' },
+      outputSchema: {
+        properties: {
+          intent: { title: 'Intent', description: 'Written by the AI — becomes your words when you sign' },
+        },
+      },
+    };
+    const r = renderPreviewBody(body);
+    expect(r.fields[0].description).toBe('Written by the AI — becomes your words when you sign');
+  });
+
+  it('a field with no declared `description` simply has none — never a fabricated note', () => {
+    const r = renderPreviewBody({ structured: { mode: 'review' }, outputSchema: { properties: { mode: { title: 'Mode' } } } });
+    expect(r.fields[0].description).toBeUndefined();
+  });
+
+  it('description is independent of the row shape — present on a sub-list field too', () => {
+    const body: PreviewBody = {
+      structured: { scope: { currency: 'EUR' } },
+      outputSchema: { properties: { scope: { title: 'Scope', description: 'What the mandate is limited to' } } },
+    };
+    const r = renderPreviewBody(body);
+    expect(r.fields[0].sublist).toEqual([{ key: 'currency', label: 'Currency', value: 'EUR' }]);
+    expect(r.fields[0].description).toBe('What the mandate is limited to');
+  });
+});
+
 describe('renderPreviewBody — numbers: rounded display, exact value on hover (2026-10-10 follow-up)', () => {
   it('rounds a non-integer to at most 2 decimals, no trailing zeros, and carries the exact value as a title', () => {
     const r = renderPreviewBody({ structured: { amount: 44.44444444444444 } });
@@ -223,11 +376,20 @@ describe('renderPreviewBody — numbers: rounded display, exact value on hover (
     expect(r.fields[0].valueTitle).toBe('44.001');
   });
 
-  it('rounds a number inside a compact object line, title carries the exact line', () => {
+  it('rounds a number inside a sub-list row, with a per-row title only where it changed something (DL4)', () => {
     const body: PreviewBody = { structured: { totals: { net: 44.44444444444444, qty: 4 } } };
     const r = renderPreviewBody(body);
-    expect(r.fields[0].value).toBe('Net: 44.44 · Qty: 4');
-    expect(r.fields[0].valueTitle).toBe('Net: 44.44444444444444 · Qty: 4');
+    expect(r.fields[0].sublist).toEqual([
+      { key: 'net', label: 'Net', value: '44.44', valueTitle: '44.44444444444444' },
+      { key: 'qty', label: 'Qty', value: '4' },
+    ]);
+  });
+
+  it('rounds a number inside a compact object line (a non-scalar sibling keeps the old shape), title carries the exact line', () => {
+    const body: PreviewBody = { structured: { totals: { net: 44.44444444444444, breakdown: { qty: 4 } } } };
+    const r = renderPreviewBody(body);
+    expect(r.fields[0].value).toBe('Net: 44.44 · Breakdown: Qty: 4');
+    expect(r.fields[0].valueTitle).toBe('Net: 44.44444444444444 · Breakdown: Qty: 4');
   });
 
   it('rounds numbers inside array-item lines, with a per-line title only where it changed something', () => {

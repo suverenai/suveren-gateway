@@ -18,8 +18,9 @@
  *    execution-context fields the Gatekeeper actually checked, together.
  */
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { resolveProposalLinks, type ProposalLink } from '../lib/proposal-links';
-import type { IntegrationManifest, Proposal } from '../lib/sp-client';
+import { spClient, type IntegrationManifest, type Proposal } from '../lib/sp-client';
 import { ProposalArgs } from './ProposalArgs';
 import { PreviewBox } from './PreviewBox';
 import { contextFieldLabel, splitTool, systemDisplayName, toolHeadline, type ToolDisplay } from '../lib/approval-view';
@@ -28,6 +29,9 @@ import { useMandateBounds } from '../lib/mandate-bounds-cache';
 import { useProposalIntent } from '../lib/use-proposal-intent';
 import { limitChecks } from '../lib/receipt-summary';
 import { profileDisplayName } from '../lib/profile-display';
+import { useAuth } from '../contexts/AuthContext';
+import { newestProfileOf, carryBoundsForward, carryContextForward } from '../lib/profile-upgrade';
+import { mandatePrefillGate, type CreateMandateProposalArgs } from '../lib/create-mandate-prefill';
 
 // NEVER truncate: approvers commit to exactly what they can read here, so
 // the full content must be visible at once (an email body cut at 200 chars
@@ -55,8 +59,18 @@ interface Props {
   manifests?: IntegrationManifest[];
 }
 
+/** DL6: tool-specific on purpose — this builtin is the gateway's own, so
+ *  pre-filling the mandate screen from ITS particular argument shape (profile/
+ *  limits/scope/intent/mode/duration_hours) is acceptable even though every
+ *  other part of this module stays generic (brief decision 6). */
+const CREATE_MANDATE_TOOL = 'setup__create_mandate';
+
 export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDisplay, manifests }: Props) {
   const [expanded, setExpanded] = useState(false);
+  const [editingBeforeSigning, setEditingBeforeSigning] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+  const navigate = useNavigate();
+  const { group, groupId, domain } = useAuth();
 
   const boundsEntries = Object.entries(proposal.executionContext);
   const profile = useProfile(proposal.profileId);
@@ -67,6 +81,52 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
   const { integrationId } = splitTool(proposal.tool);
   const systemName = systemDisplayName(integrationId, manifests);
   const { intent, loading: intentLoading, error: intentError } = useProposalIntent(proposal.authorizationId, currentUserId);
+
+  // DL6 — "Edit before signing": opens the mandate screen pre-filled from
+  // THIS proposal's own arguments (lib/create-mandate-prefill.ts), exactly
+  // the way Copy/Edit prefills it from an existing grant
+  // (AuthorizationsPage.handleCopy) — newest profile version, limits/scope
+  // carried onto its schema, current active workspace (never the proposal's
+  // own `team`). Nothing is created here; AgentReviewPage withdraws THIS
+  // proposal only after the person actually signs (sessionStorage
+  // `agentReplacesProposal`, read in its handleCommit).
+  const handleEditBeforeSigning = async () => {
+    if (!groupId) {
+      setEditError('No active workspace; cannot open the mandate screen.');
+      return;
+    }
+    setEditingBeforeSigning(true);
+    setEditError(null);
+    try {
+      const args = proposal.toolArgs as CreateMandateProposalArgs;
+      const requested = typeof args.profile === 'string' ? args.profile : '';
+      const catalog = await spClient.listProfiles();
+      const newest = newestProfileOf(requested, catalog);
+      if (!newest) {
+        setEditError(`Unknown profile "${requested}".`);
+        return;
+      }
+      const newProfile = await spClient.getProfile(newest.id);
+      const prefill = mandatePrefillGate(args);
+      const bounds = carryBoundsForward(prefill.bounds, newProfile);
+      const context = carryContextForward(prefill.context, newProfile);
+
+      sessionStorage.setItem('agentAuth', JSON.stringify({
+        profileId: newest.id,
+        groupId,
+        groupName: group?.name ?? null,
+        domain,
+        isPersonal: !!group?.isPersonal,
+      }));
+      sessionStorage.setItem('agentGate', JSON.stringify({ ...prefill, bounds, context }));
+      sessionStorage.setItem('agentReplacesProposal', proposal.id);
+      navigate('/mandates/new/intent');
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : 'Could not open the mandate screen.');
+    } finally {
+      setEditingBeforeSigning(false);
+    }
+  };
 
   return (
     <>
@@ -177,6 +237,33 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
           )}
         </div>
       </details>
+
+      {/* DL6 — "Edit before signing": this proposal's own tool is the
+          gateway's builtin mandate-creation proposal (CREATE_MANDATE_TOOL) —
+          the only case where editing the intent before approving makes
+          sense, since the intent becomes the person's own signed words.
+          Approve/Reject (owned by the caller) stay exactly as they are;
+          this is an additional way out, never a replacement for either. */}
+      {proposal.tool === CREATE_MANDATE_TOOL && (
+        <div style={{ marginBottom: '0.75rem' }}>
+          <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0 0 0.4rem' }}>
+            The intent above is written by the AI, but it becomes <strong>your words</strong> once you approve.
+            Edit it first — nothing is created until you sign on the mandate screen.
+          </p>
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            data-testid="edit-before-signing"
+            onClick={handleEditBeforeSigning}
+            disabled={editingBeforeSigning}
+          >
+            {editingBeforeSigning ? 'Opening…' : 'Edit before signing'}
+          </button>
+          {editError && (
+            <p style={{ color: 'var(--danger)', fontSize: '0.8rem', margin: '0.4rem 0 0' }}>{editError}</p>
+          )}
+        </div>
+      )}
     </>
   );
 }
