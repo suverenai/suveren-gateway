@@ -411,6 +411,20 @@ export async function executeCommitted(
       state.executionJournal.complete(receiptId, 'failed');
       throw err;
     }
+    const resultText = (result.content as Array<{ text: string }>)?.[0]?.text ?? JSON.stringify(result);
+    // The connector answered but REFUSED (e.g. the ERP: "Quote Q-0001 is at
+    // revision 2; this request is for revision 1"). The approved action did
+    // not happen — never report it as executed, never count it. The ticket
+    // is spent (one execution per ticket); a retry needs a new approval.
+    if ((result as { isError?: boolean }).isError) {
+      state.executionJournal.complete(receiptId, 'failed');
+      return {
+        text:
+          `Proposal ${proposal.id} was approved, but ${integrationId} refused to run it — nothing was done.\n` +
+          `Reason: ${resultText}`,
+        isError: true,
+      };
+    }
     state.executionJournal.complete(receiptId, 'done');
     // Record locally for cumulative tracking (parity with the automatic path).
     // Reached once per ticket, by construction of the journal above.
@@ -420,7 +434,6 @@ export async function executeCommitted(
       execution: proposal.executionContext,
       timestamp: Math.floor(Date.now() / 1000),
     });
-    const resultText = (result.content as Array<{ text: string }>)?.[0]?.text ?? JSON.stringify(result);
     return { text: `Proposal ${proposal.id} committed and executed.\nResult: ${resultText}` };
   } catch (err) {
     // Receipt is already signed at the SP — the user got credit for this

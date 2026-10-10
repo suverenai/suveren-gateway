@@ -175,3 +175,46 @@ describe('executeCommitted — review path parity with the automatic path', () =
     expect(call.proposalId).toBe(PROPOSAL.id);
   });
 });
+
+/**
+ * A connector that REFUSES an approved action must not be reported as executed.
+ *
+ * Found in the ERP revision real-stack run (2026-10-09): the human approved
+ * "send quote revision 1", the draft had moved to revision 2, the ERP refused —
+ * and the gateway reported "committed and executed" because it never looked at
+ * the tool result's isError. The person would believe the quote went out.
+ */
+describe('executeCommitted — a connector refusal is a failure, not an execution', () => {
+  function refusingIntegrationManager() {
+    const callTool = vi.fn().mockResolvedValue({
+      content: [{ type: 'text', text: 'Refused: revision mismatch — declared 1, expected 2. Quote Q-0001 is at revision 2; this request is for revision 1.' }],
+      isError: true,
+    });
+    return { integrationManager: { getAllTools: () => [TOOL], callTool } as unknown as IntegrationManager, callTool };
+  }
+
+  it('reports the refusal as an error, never as "executed"', async () => {
+    const { state } = buildState({});
+    const { integrationManager } = refusingIntegrationManager();
+
+    const out = await executeCommitted(PROPOSAL, state, integrationManager);
+
+    expect(out.isError).toBe(true);
+    expect(out.text).not.toMatch(/executed/);
+    expect(out.text).toMatch(/refused/i);
+    expect(out.text).toContain('Q-0001 is at revision 2');
+  });
+
+  it('records the ticket as failed and does not count it as an execution', async () => {
+    const { state } = buildState({});
+    const complete = vi.fn();
+    (state as unknown as { executionJournal: { begin: () => { ok: true }; complete: typeof complete } }).executionJournal =
+      { begin: () => ({ ok: true }), complete };
+    const { integrationManager } = refusingIntegrationManager();
+
+    await executeCommitted(PROPOSAL, state, integrationManager);
+
+    expect(complete).toHaveBeenCalledWith(expect.any(String), 'failed');
+    expect((state as unknown as { executionLog: { record: ReturnType<typeof vi.fn> } }).executionLog.record).not.toHaveBeenCalled();
+  });
+});
