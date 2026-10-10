@@ -177,6 +177,11 @@ export function ReceiptCard({
             &#10003; Verified on this device
           </span>
         )}
+        {signature === 'valid-legacy' && (
+          <span className="receipt-verified" title="Ed25519 signature checked on this device against the issuer key archived when the ticket was issued. This ticket was issued before protocol 0.7 and is checked with that version's format.">
+            &#10003; Verified on this device · issued before protocol 0.7
+          </span>
+        )}
         {signature === 'invalid' && (
           <span className="receipt-tamper" title="The stored ticket does not match what was signed.">
             &#9888; Signature check FAILED

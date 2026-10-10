@@ -16,7 +16,8 @@
 
 import { Router, type Request, type Response } from 'express';
 import { getLocalEvidence } from '../lib/mcp-bridge';
-import { verifyTicketSignature, encodeDidKey } from '@hap/core';
+import { createPublicKey, verify as verifyEd25519 } from 'node:crypto';
+import { verifyTicketSignature, encodeDidKey, canonicalize } from '@hap/core';
 
 /**
  * hap-core 0.12's verifyTicketSignature resolves the verification key from
@@ -43,7 +44,40 @@ function issuerFromPublicKeyHex(publicKeyHex: string): string {
  *                     to check against. Distinct from `invalid`; conflating the
  *                     two would either cry tamper or imply a check that never ran.
  */
-export type SignatureStatus = 'valid' | 'invalid' | 'unverifiable';
+export type SignatureStatus = 'valid' | 'valid-legacy' | 'invalid' | 'unverifiable';
+
+/** Ed25519 SPKI DER prefix for a raw 32-byte public key. */
+const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
+
+/**
+ * A ticket issued before the v0.7 wire switch (gateway <= 0.19, until
+ * 2026-10-09): no `issuer` field, and the signature is standard base64 over
+ * the JCS of every other field. hap-core 0.12 verifies only the v0.7 shape,
+ * so without this every pre-switch ticket in a person's archive read as
+ * "Signature check FAILED" although its signature is genuine.
+ *
+ * Only the absence of `issuer` selects this path; it is still a real Ed25519
+ * check against the key archived at issuance, so a forged or altered ticket
+ * fails here exactly as it would under the v0.7 rule.
+ */
+export function isPreV07Ticket(receipt: Record<string, unknown>): boolean {
+  return receipt.issuer === undefined || receipt.issuer === null;
+}
+
+export function verifyPreV07TicketSignature(receipt: Record<string, unknown>, asPublicKeyHex: string): boolean {
+  const { signature, ...signed } = receipt;
+  if (typeof signature !== 'string' || !/^[0-9a-f]{64}$/i.test(asPublicKeyHex)) return false;
+  try {
+    const key = createPublicKey({
+      key: Buffer.concat([ED25519_SPKI_PREFIX, Buffer.from(asPublicKeyHex, 'hex')]), format: 'der', type: 'spki',
+    });
+    const sig = Buffer.from(signature, 'base64');
+    if (sig.length !== 64) return false;
+    return verifyEd25519(null, Buffer.from(canonicalize(signed), 'utf8'), key, sig);
+  } catch {
+    return false;
+  }
+}
 
 interface ArchiveEntryShape {
   receipt?: { id?: unknown };
@@ -61,6 +95,11 @@ async function verifyAll(
     if (!id) continue;
     if (!e.asPublicKey) {
       out[id] = 'unverifiable';
+      continue;
+    }
+    const receipt = e.receipt as Record<string, unknown>;
+    if (isPreV07Ticket(receipt)) {
+      out[id] = verifyPreV07TicketSignature(receipt, e.asPublicKey) ? 'valid-legacy' : 'invalid';
       continue;
     }
     try {

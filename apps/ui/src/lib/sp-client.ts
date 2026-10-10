@@ -367,7 +367,7 @@ export interface LocalAuthorization {
  * ran and failed): showing "no key" as a failure would cry tamper, and showing
  * a failure as "no key" would hide one.
  */
-export type SignatureStatus = 'valid' | 'invalid' | 'unverifiable';
+export type SignatureStatus = 'valid' | 'valid-legacy' | 'invalid' | 'unverifiable';
 
 /** One receipt-archive entry: the signed receipt as issued, plus its grant. */
 export interface LocalReceiptEntry {
