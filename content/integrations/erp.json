@@ -117,7 +117,12 @@
         "staticExecution": {
           "action_type": "send"
         },
-        "actionLabel": "Quote sent"
+        "actionLabel": "Quote sent",
+        "preview": {
+          "tool": "get_quote",
+          "args": { "id": "id", "revision": "revision" },
+          "version": { "arg": "revision", "field": "revision" }
+        }
       },
       "convert_quote_to_order": {
         "executionMapping": {
@@ -128,7 +133,12 @@
         "staticExecution": {
           "action_type": "order"
         },
-        "actionLabel": "Quote converted to order"
+        "actionLabel": "Quote converted to order",
+        "preview": {
+          "tool": "get_quote",
+          "args": { "id": "id", "revision": "revision" },
+          "version": { "arg": "revision", "field": "revision" }
+        }
       },
       "load_simulation": {
         "executionMapping": {},

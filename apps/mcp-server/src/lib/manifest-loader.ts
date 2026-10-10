@@ -14,7 +14,7 @@
 
 import { readFileSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import type { ProfileToolGating } from './tool-gating-types';
+import type { ProfileToolGating, ToolPreviewConfig } from './tool-gating-types';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -164,6 +164,68 @@ export function invalidNpmPinReason(
   return null;
 }
 
+// ─── AU3 preview shape validation ──────────────────────────────────────────
+
+/**
+ * Returns a human-readable refusal reason if `entry.preview` (an override's
+ * optional AU3 declaration — see tool-gating-types.ts) is malformed, or null
+ * if it's absent or well-formed. Shape-only: whether `preview.tool` actually
+ * exists on the integration is a RUNTIME question (the connector may not be
+ * started yet when manifests load), checked at call time by the
+ * `/internal/preview` route instead — see preview.ts's `readPreview`.
+ */
+export function invalidPreviewReason(toolName: string, entry: unknown): string | null {
+  if (entry === null || typeof entry !== 'object') return null; // read-tool shorthand, nothing to check
+  const preview = (entry as { preview?: unknown }).preview;
+  if (preview === undefined) return null;
+  if (preview === null || typeof preview !== 'object' || Array.isArray(preview)) {
+    return `override "${toolName}".preview must be an object`;
+  }
+  const p = preview as Record<string, unknown>;
+  if (typeof p.tool !== 'string' || p.tool.length === 0) {
+    return `override "${toolName}".preview.tool must be a non-empty string`;
+  }
+  if (p.args === undefined || p.args === null || typeof p.args !== 'object' || Array.isArray(p.args)) {
+    return `override "${toolName}".preview.args must be an object mapping preview-tool arg names to action arg names`;
+  }
+  for (const [argName, source] of Object.entries(p.args as Record<string, unknown>)) {
+    if (typeof source !== 'string' || source.length === 0) {
+      return `override "${toolName}".preview.args.${argName} must name a non-empty source argument (string)`;
+    }
+  }
+  if (p.version !== undefined) {
+    if (p.version === null || typeof p.version !== 'object' || Array.isArray(p.version)) {
+      return `override "${toolName}".preview.version must be an object`;
+    }
+    const v = p.version as Record<string, unknown>;
+    if (typeof v.arg !== 'string' || v.arg.length === 0) {
+      return `override "${toolName}".preview.version.arg must be a non-empty string`;
+    }
+    if (typeof v.field !== 'string' || v.field.length === 0) {
+      return `override "${toolName}".preview.version.field must be a non-empty string`;
+    }
+  }
+  return null;
+}
+
+/** Shared control type, exported so callers can narrow a validated entry. */
+export type ValidatedPreviewConfig = ToolPreviewConfig;
+
+/**
+ * Checks every override's `preview` (if any) in one manifest. Returns the
+ * first refusal reason found, or null if the whole manifest's overrides are
+ * clean. Shares the single predicate above with any future lint test, same
+ * reasoning as `invalidNpmPinReason`/`isExactSemver`.
+ */
+export function invalidManifestPreviewReason(manifest: Pick<IntegrationManifest, 'toolGating'>): string | null {
+  const overrides = manifest.toolGating?.overrides ?? {};
+  for (const [toolName, entry] of Object.entries(overrides)) {
+    const reason = invalidPreviewReason(toolName, entry);
+    if (reason) return reason;
+  }
+  return null;
+}
+
 // ─── Module state ───────────────────────────────────────────────────────────
 
 const manifests = new Map<string, IntegrationManifest>();
@@ -204,6 +266,11 @@ export function loadManifests(integrationsDir?: string): number {
       const pinReason = invalidNpmPinReason(manifest);
       if (pinReason) {
         console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${pinReason}`);
+        continue;
+      }
+      const previewReason = invalidManifestPreviewReason(manifest);
+      if (previewReason) {
+        console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${previewReason}`);
         continue;
       }
       manifests.set(id, manifest);
