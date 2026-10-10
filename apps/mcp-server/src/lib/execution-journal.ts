@@ -45,6 +45,9 @@ export interface JournalEntry {
   /** Stable hash of the tool arguments, so a replay with different args is visible. */
   argsHash: string;
   state: JournalState;
+  /** Set with state 'failed' when the connector answered but refused the
+   *  action (as opposed to throwing). No reason text — this file is plaintext. */
+  outcome?: 'refused';
   /** Unix seconds. */
   startedAt: number;
   finishedAt?: number;
@@ -117,13 +120,22 @@ export class ExecutionJournal {
   }
 
   /** Close an `intent` row. Missing row is a programming error, not a silent no-op. */
-  complete(ticketId: string, state: 'done' | 'failed'): void {
+  complete(ticketId: string, state: 'done' | 'failed', outcome?: 'refused'): void {
     const file = this.load();
     const row = file.entries.find(e => e.ticketId === ticketId);
     if (!row) throw new Error(`execution journal: no row for ticket ${ticketId} to complete`);
     row.state = state;
+    if (outcome) row.outcome = outcome;
     row.finishedAt = nowSec();
     this.persist(file);
+  }
+
+  /** The newest row for a review-path proposal — what really happened when it
+   *  ran on this gateway (the AS marks a proposal "executed" when it issues the
+   *  ticket, before the action runs). Undefined when it never ran here. */
+  findByProposal(proposalId: string): JournalEntry | undefined {
+    const rows = this.load().entries.filter(e => e.proposalId === proposalId);
+    return rows[rows.length - 1];
   }
 
   /** All rows, newest last. Diagnostic. */

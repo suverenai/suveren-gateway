@@ -52,6 +52,30 @@ describe('computeContentBinding', () => {
   it('returns undefined for an unknown profile', () => {
     expect(computeContentBinding('does-not-exist', tool, { x: 1 })).toBeUndefined();
   });
+
+  // ERP1-3 (quote revisions, hap-erp-mcp): a `revision` argument on a write
+  // tool call is a generic new field, not special-cased anywhere in the
+  // gateway. The sales profile's jcs binding hashes `toolArgs` whole (no
+  // `fields` allowlist — see the non-field branch above), so a tool call
+  // that adds `revision` is covered automatically. This is the evidence for
+  // "already bound by the whole-args binding" — no erp-specific code needed.
+  it('a jcs (whole-payload) binding automatically covers a new call argument like `revision` — no per-field change needed', () => {
+    const withoutRevision = computeContentBinding(JCS_PROFILE, tool, {
+      id: 'q-1', value: 100, discount_pct: 0, currency: 'EUR',
+    });
+    const withRevision = computeContentBinding(JCS_PROFILE, tool, {
+      id: 'q-1', value: 100, discount_pct: 0, currency: 'EUR', revision: 1,
+    });
+    const staleRevision = computeContentBinding(JCS_PROFILE, tool, {
+      id: 'q-1', value: 100, discount_pct: 0, currency: 'EUR', revision: 2,
+    });
+    // Adding the field changes the hash (it is part of what gets signed)...
+    expect(withRevision?.contentHash).not.toBe(withoutRevision?.contentHash);
+    // ...and a different revision value produces a different hash too — a
+    // receipt signed over revision 1 does not verify against revision 2.
+    expect(withRevision?.contentHash).not.toBe(staleRevision?.contentHash);
+    expect(withRevision?.boundContent).toMatchObject({ revision: 1 });
+  });
 });
 
 describe('attachTicketId — HAP v0.7 wire rename (was attachReceiptId / receipt_id)', () => {

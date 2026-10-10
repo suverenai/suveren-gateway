@@ -311,6 +311,8 @@ export async function executeCommitted(
     if (err instanceof SPReceiptError) {
       const code = (err.body.errors as Array<{ code?: string }> | undefined)?.[0]?.code;
       if (code === 'PROPOSAL_ALREADY_EXECUTED') {
+        const local = localOutcomeOfExecuted(proposal, state);
+        if (local) return local;
         return {
           text: `Proposal ${proposal.id} has already been executed by another request.`,
         };
@@ -411,6 +413,20 @@ export async function executeCommitted(
       state.executionJournal.complete(receiptId, 'failed');
       throw err;
     }
+    const resultText = (result.content as Array<{ text: string }>)?.[0]?.text ?? JSON.stringify(result);
+    // The connector answered but REFUSED (e.g. the ERP: "Quote Q-0001 is at
+    // revision 2; this request is for revision 1"). The approved action did
+    // not happen — never report it as executed, never count it. The ticket
+    // is spent (one execution per ticket); a retry needs a new approval.
+    if ((result as { isError?: boolean }).isError) {
+      state.executionJournal.complete(receiptId, 'failed', 'refused');
+      return {
+        text:
+          `Proposal ${proposal.id} was approved, but ${integrationId} refused to run it — nothing was done.\n` +
+          `Reason: ${resultText}`,
+        isError: true,
+      };
+    }
     state.executionJournal.complete(receiptId, 'done');
     // Record locally for cumulative tracking (parity with the automatic path).
     // Reached once per ticket, by construction of the journal above.
@@ -420,7 +436,6 @@ export async function executeCommitted(
       execution: proposal.executionContext,
       timestamp: Math.floor(Date.now() / 1000),
     });
-    const resultText = (result.content as Array<{ text: string }>)?.[0]?.text ?? JSON.stringify(result);
     return { text: `Proposal ${proposal.id} committed and executed.\nResult: ${resultText}` };
   } catch (err) {
     // Receipt is already signed at the SP — the user got credit for this
@@ -431,6 +446,32 @@ export async function executeCommitted(
       isError: true,
     };
   }
+}
+
+/**
+ * What really happened to a proposal the AS reports as executed. The AS marks
+ * "executed" when it issues the ticket — before the action runs — so the
+ * gateway's own execution journal decides what to say. Null when this
+ * gateway holds no failed / unfinished record (then the AS status stands).
+ */
+function localOutcomeOfExecuted(proposal: SPProposal, state: SharedState): { text: string; isError: boolean } | null {
+  const entry = state.executionJournal?.findByProposal?.(proposal.id);
+  if (!entry || entry.state === 'done') return null;
+  const integration = proposal.tool.split('__')[0];
+  if (entry.state === 'failed') {
+    return {
+      text: entry.outcome === 'refused'
+        ? `Proposal ${proposal.id} was approved, but ${integration} refused to run it — nothing was done. ` +
+          `Do not call the tool again with the same values; a new attempt needs a new request and approval.`
+        : `Proposal ${proposal.id} was approved, but running it failed — whether anything happened in ${integration} is unknown. ` +
+          `Check ${integration} before trying again; a new attempt needs a new request and approval.`,
+      isError: true,
+    };
+  }
+  return {
+    text: `Proposal ${proposal.id} was approved and started running; the outcome is not known yet. Do not call the tool again.`,
+    isError: false,
+  };
 }
 
 export function checkPendingCommitmentsHandler(
@@ -472,6 +513,13 @@ export function checkPendingCommitmentsHandler(
         }
 
         if (match.status === 'executed') {
+          const local = localOutcomeOfExecuted(match, state);
+          if (local) {
+            return {
+              content: [{ type: 'text' as const, text: local.text }],
+              ...(local.isError ? { isError: true } : {}),
+            };
+          }
           const result = match.executionResult
             ? `\nResult: ${JSON.stringify(match.executionResult, null, 2)}`
             : ' The action ran; the gateway did not retain its output.';

@@ -136,3 +136,54 @@ describe('the states cannot be confused with one another', () => {
     expect(state.spClient.getCommittedProposals).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * The AS marks a proposal "executed" when it issues the ticket — before the
+ * action runs. Found on the real stack (CRM revisions, 2026-10-10): the CRM
+ * refused the approved action, yet asking about the proposal answered
+ * "approved and has already been EXECUTED". The gateway's own execution
+ * journal knows what really happened; this answer must follow it.
+ */
+describe('EXECUTED on the AS but refused by the connector here', () => {
+  function handlerWithJournal(entry: { state: 'intent' | 'done' | 'failed'; outcome?: 'refused'; tool?: string } | undefined) {
+    const state = {
+      spClient: {
+        isUnlocked: () => true,
+        getProposalById: vi.fn().mockResolvedValue({ ...BASE, status: 'executed', executionResult: null, tool: 'erp__send_quote' }),
+        getCommittedProposals: vi.fn().mockResolvedValue([]),
+      },
+      executionJournal: {
+        findByProposal: vi.fn().mockReturnValue(entry && { ticketId: 't-1', proposalId: BASE.id, tool: entry.tool ?? 'erp__send_quote', argsHash: 'h', state: entry.state, outcome: entry.outcome, startedAt: 0, pid: 1 }),
+      },
+    } as unknown as SharedState;
+    return checkPendingCommitmentsHandler(state);
+  }
+
+  it('a refused run is reported as refused — nothing was done — never EXECUTED', async () => {
+    const res = await handlerWithJournal({ state: 'failed', outcome: 'refused' })({ proposal_id: BASE.id });
+    const text = (res.content[0] as { text: string }).text;
+    expect(text).not.toMatch(/EXECUTED/);
+    expect(text).toMatch(/refused/i);
+    expect(text).toMatch(/nothing was done/i);
+    expect(res.isError).toBe(true);
+  });
+
+  it('a run that failed is reported as failed, never EXECUTED', async () => {
+    const res = await handlerWithJournal({ state: 'failed' })({ proposal_id: BASE.id });
+    const text = (res.content[0] as { text: string }).text;
+    expect(text).not.toMatch(/EXECUTED/);
+    expect(text).toMatch(/failed/i);
+  });
+
+  it('a run still in progress says the outcome is not known yet', async () => {
+    const res = await handlerWithJournal({ state: 'intent' })({ proposal_id: BASE.id });
+    const text = (res.content[0] as { text: string }).text;
+    expect(text).not.toMatch(/EXECUTED/);
+    expect(text).toMatch(/not known/i);
+  });
+
+  it('a completed run is still EXECUTED', async () => {
+    const res = await handlerWithJournal({ state: 'done' })({ proposal_id: BASE.id });
+    expect((res.content[0] as { text: string }).text).toMatch(/EXECUTED/);
+  });
+});
