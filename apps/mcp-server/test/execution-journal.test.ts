@@ -61,6 +61,40 @@ describe('ExecutionJournal', () => {
     expect(() => j.complete('never-begun', 'done')).toThrow(/no row/);
   });
 
+  // AU4 — a tool whose declared preview showed the record changed since
+  // submission is a distinct outcome from a connector-side refusal.
+  it('complete() records outcome "changed" (AU4 previewHash fallback)', () => {
+    const j = new ExecutionJournal(dir);
+    j.begin({ ticketId: 't1', tool: 'x__y', argsHash: 'sha256:a' });
+    j.complete('t1', 'failed', 'changed');
+    expect(j.get('t1')?.state).toBe('failed');
+    expect(j.get('t1')?.outcome).toBe('changed');
+  });
+
+  // AU3/5 — the connector's own refusal text is stored (capped) so the
+  // control plane's outcome endpoint can show it instead of a bare label.
+  it('complete() stores a `detail` alongside outcome "refused"', () => {
+    const j = new ExecutionJournal(dir);
+    j.begin({ ticketId: 't1', tool: 'x__y', argsHash: 'sha256:a' });
+    j.complete('t1', 'failed', 'refused', 'Quote Q-0001 is at revision 2; this request is for revision 1.');
+    expect(j.get('t1')?.outcome).toBe('refused');
+    expect(j.get('t1')?.detail).toBe('Quote Q-0001 is at revision 2; this request is for revision 1.');
+  });
+
+  it('complete() caps a `detail` longer than 500 chars', () => {
+    const j = new ExecutionJournal(dir);
+    j.begin({ ticketId: 't1', tool: 'x__y', argsHash: 'sha256:a' });
+    j.complete('t1', 'failed', 'refused', 'x'.repeat(900));
+    expect(j.get('t1')?.detail).toHaveLength(500);
+  });
+
+  it('complete() with no `detail` argument stores none', () => {
+    const j = new ExecutionJournal(dir);
+    j.begin({ ticketId: 't1', tool: 'x__y', argsHash: 'sha256:a' });
+    j.complete('t1', 'failed', 'refused');
+    expect(j.get('t1')?.detail).toBeUndefined();
+  });
+
   it('sees rows written by another instance (cross-process semantics)', () => {
     const a = new ExecutionJournal(dir);
     const b = new ExecutionJournal(dir);
