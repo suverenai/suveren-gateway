@@ -127,6 +127,50 @@ export interface DenialRecord {
   code?: string;
 }
 
+// ─── AU3/AU5: approval preview + after-execution outcome ───────────────────
+// Interface contract: temp/briefs/au3-au5-brief.md. Built against by two
+// agents in parallel (UI here, control-plane + mcp-server elsewhere) — do
+// not change these shapes without the brief's owner.
+
+/** The read tool's structured/text answer, generic across any MCP server. */
+export interface PreviewBody {
+  structured?: Record<string, unknown>;
+  outputSchema?: Record<string, unknown>;
+  text?: string;
+}
+
+export interface PreviewVersionInfo {
+  /** The action argument carrying the document version, e.g. "revision". */
+  field: string;
+  approved: string | number;
+  current: string | number;
+  stale: boolean;
+  /** Only present when `stale` — the re-read without the version arg. */
+  currentBody?: PreviewBody;
+}
+
+/** `GET /proposals/:id/preview` — always 200 unless auth/proposal fetch fails. */
+export type PreviewResponse =
+  | { status: 'none' }
+  | { status: 'unavailable'; reason: 'no_connector' | 'connector_error' | 'timeout'; message?: string }
+  | { status: 'not_found'; message?: string }
+  | {
+      status: 'ok';
+      integration: string;
+      tool: string;
+      readAt: number;
+      body: PreviewBody;
+      version?: PreviewVersionInfo;
+    };
+
+/** `GET /proposals/:id/outcome` — the local execution journal's latest entry. */
+export interface OutcomeResponse {
+  state: 'none' | 'intent' | 'done' | 'failed';
+  outcome?: 'refused' | 'changed';
+  detail?: string;
+  at?: number;
+}
+
 export interface AuthTemplate {
   name: string;
   description: string;
@@ -1353,6 +1397,30 @@ class SPClient {
       const err = await res.json().catch(() => ({ error: 'Failed' }));
       throw new Error(asErrorMessage(err, `rejectProposal failed: ${res.status}`));
     }
+    return res.json();
+  }
+
+  /**
+   * The system's "before it runs" read for a pending proposal — gateway-
+   * internal, never returned to the AI (AU3/AU5, decision 1). Control-plane
+   * `GET /proposals/:id/preview`, not under `/api` (same convention as
+   * `/denials`).
+   */
+  async getProposalPreview(id: string): Promise<PreviewResponse> {
+    const res = await this.fetch(`/proposals/${encodeURIComponent(id)}/preview`);
+    if (!res.ok) throw new Error(`Failed to fetch preview: ${res.status}`);
+    return res.json();
+  }
+
+  /**
+   * What actually happened after an AS-"executed" proposal — the local
+   * execution journal, which knows about a connector refusal or a changed
+   * record that the AS's own status does not (AU4/AU5). Control-plane
+   * `GET /proposals/:id/outcome`.
+   */
+  async getProposalOutcome(id: string): Promise<OutcomeResponse> {
+    const res = await this.fetch(`/proposals/${encodeURIComponent(id)}/outcome`);
+    if (!res.ok) throw new Error(`Failed to fetch outcome: ${res.status}`);
     return res.json();
   }
 
