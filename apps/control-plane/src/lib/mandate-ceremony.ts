@@ -185,7 +185,10 @@ export async function planMandate(req: MandateRequest, deps: CeremonyDeps): Prom
   if (!isPersonal) {
     const cfg = await deps.as('GET', `/api/groups/${encodeURIComponent(group.id)}/profile-config/${encodeURIComponent(profile.id)}`);
     approvers = (cfg.status === 200 ? cfg.body?.config?.approvers : undefined) ?? [];
-    if (approvers.length === 0) refuse(`${name} is not enabled in "${group.name}": a team admin must name who may give ${name} mandates.`);
+    // The AS carries a team's settings over from an older version of the same
+    // profile; an empty answer here means nothing could be carried (none
+    // configured, or the new version adds a limit that needs a value).
+    if (approvers.length === 0) refuse(`${name} ${versionOf(profile.id)} is not enabled in "${group.name}". Ask an admin of "${group.name}" to enable ${name} ${versionOf(profile.id)} and name who may give its mandates.`);
     if (!approvers.includes(user.id)) refuse(`Only ${name}'s approvers in "${group.name}" can give this mandate, and the signed-in person is not one of them.`);
   }
 
