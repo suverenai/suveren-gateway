@@ -96,7 +96,7 @@ export function TicketWhatWasDone({ receipt, profile }: Props) {
   }
 
   if (status === 'none') {
-    const rows = checkedValueRows(receipt.executionContext as Record<string, unknown>, profile);
+    const rows = checkedValueRows(receipt.executionContext, profile);
     return (
       <div className="ticket-done-box" data-testid="ticket-what-was-done" data-bound="none">
         <h4>What was done</h4>
