@@ -97,6 +97,12 @@ export function ReceiptCompleteDialog({ receipt, onClose }: Props) {
               when this ticket was issued.
             </p>
           )}
+          {signature === 'valid-legacy' && (
+            <p className="receipt-verified" style={{ margin: '0 0 0.5rem', fontSize: '0.8rem' }}>
+              &#10003; Ed25519 signature verified on this device, against the issuer key archived
+              when this ticket was issued. Issued before protocol 0.7 — checked with that version's format.
+            </p>
+          )}
           {signature === 'invalid' && (
             <p className="receipt-tamper" style={{ margin: '0 0 0.5rem', fontSize: '0.8rem' }}>
               &#9888; Signature check FAILED — the stored ticket does not match what was signed.
