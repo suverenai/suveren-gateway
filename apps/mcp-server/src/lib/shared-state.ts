@@ -12,6 +12,7 @@ import { DenialLog } from './denial-log';
 import { ReceiptArchive, ArchiveWriteError, type ArchivedAttestation } from './receipt-archive';
 import { ExecutionJournal } from './execution-journal';
 import { ProposalSubmissionStore } from './proposal-submission-store';
+import { PreviewLog } from './preview-log';
 import { MCPGatekeeper } from './gatekeeper';
 import { ReportStore } from './report/report-store';
 import { PROTOCOL_VERSION } from '@hap/core';
@@ -40,6 +41,8 @@ export class SharedState {
   /** What THIS gateway submitted for each review-mode proposal it created —
    *  see ticket-verify.ts / commitments.ts. */
   readonly proposalSubmissions: ProposalSubmissionStore;
+  /** AU3 — local, content-free record of preview reads. See preview-log.ts. */
+  readonly previewLog: PreviewLog;
   readonly gatekeeper: MCPGatekeeper;
 
   /**
@@ -75,6 +78,7 @@ export class SharedState {
     this.reportStore = new ReportStore(gateStorePath);
     this.executionJournal = new ExecutionJournal(gateStorePath);
     this.proposalSubmissions = new ProposalSubmissionStore(gateStorePath);
+    this.previewLog = new PreviewLog(gateStorePath);
     // The execution log is deliberately NOT handed to the Gatekeeper: it is a
     // display-only record (see gatekeeper.ts), and the AS is the sole
     // cumulative enforcer.

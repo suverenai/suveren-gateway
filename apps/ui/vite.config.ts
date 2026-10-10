@@ -32,6 +32,11 @@ export default defineConfig({
         target: 'http://localhost:3402',
         changeOrigin: true,
       },
+      // Bare path; NOT `/proposals` (a UI page route).
+      '/proposal-status': {
+        target: 'http://localhost:3402',
+        changeOrigin: true,
+      },
       '/denials': {
         target: 'http://localhost:3402',
         changeOrigin: true,

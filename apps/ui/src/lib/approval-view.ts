@@ -15,6 +15,7 @@
  */
 import type { AgentProfile } from '@hap/core';
 import { formatUnit } from './bound-format';
+import type { IntegrationManifest } from './sp-client';
 
 export type ApprovalViewKind = 'text' | 'markdown' | 'list' | 'money' | 'profile' | 'profile-limits' | 'profile-scope';
 export type ApprovalView = Record<string, { label?: string; kind?: ApprovalViewKind; currencyArg?: string; profileArg?: string }>;
@@ -43,6 +44,29 @@ export const HIDDEN_ARG_KEYS = new Set([
 export function humanizeKey(key: string): string {
   const words = key.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ').trim().toLowerCase();
   return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+/** `erp__send_quote` → `{ integrationId: 'erp', toolName: 'send_quote' }`. */
+export function splitTool(tool: string): { integrationId: string; toolName: string } {
+  const sep = tool.indexOf('__');
+  if (sep < 0) return { integrationId: '', toolName: tool };
+  return { integrationId: tool.slice(0, sep), toolName: tool.slice(sep + 2) };
+}
+
+/** "erp · send_quote" — the headline pattern the AU5 approval card uses when
+ *  there is no declared display name (manifest `actionLabel` is past tense,
+ *  so unusable as a headline — see work-plan.md "Added 2026-10-09"). */
+export function toolHeadline(tool: string): string {
+  const { integrationId, toolName } = splitTool(tool);
+  return integrationId ? `${integrationId} · ${toolName}` : toolName;
+}
+
+/** The system's display name for the preview/outcome boxes ("From ERP,
+ *  before it runs") — the manifest's own `name`, never a per-connector guess. */
+export function systemDisplayName(integrationId: string, manifests: IntegrationManifest[] | undefined): string {
+  const manifest = manifests?.find((m) => m.id === integrationId);
+  if (manifest?.name) return manifest.name;
+  return integrationId ? integrationId.toUpperCase() : 'the system';
 }
 
 function inferKind(value: unknown): RowKind {

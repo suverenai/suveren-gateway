@@ -24,6 +24,8 @@
 import type { AgentProfile, ProfileBoundsField } from '@hap/core';
 import type { ExecutionReceipt, IntegrationManifest } from './sp-client';
 import { profileDisplayName } from './profile-display';
+import { humanizeKey } from './approval-view';
+import { formatUnit } from './bound-format';
 
 /** `gmail__send_message` → `{ integrationId: 'gmail', toolName: 'send_message' }`. */
 export function splitAction(action: string): { integrationId: string; toolName: string } {
@@ -192,6 +194,58 @@ export function usageSummary(
     }
   }
   return parts.join(' · ');
+}
+
+/** One per-call bound check — "Within your limits" on the approval card. */
+export interface LimitCheck {
+  key: string;
+  label: string;
+  ok: boolean;
+  /** "480 EUR" — ready to show next to "your limit". */
+  valueText: string;
+  limitText: string;
+}
+
+/**
+ * Per-call ("per_transaction") bound checks for a PENDING proposal — "Within
+ * your limits" (AU5, work-plan.md "Added 2026-10-09"). A `per_transaction`
+ * bound's key (e.g. `value_max`) names the limit in the mandate's bounds;
+ * its `boundType.of` names the EXECUTION-CONTEXT field the call is checked
+ * against (e.g. `value`) — the same indirection blocked-view.ts's
+ * `fieldLabel` uses for a refusal record. Never a field-name convention.
+ *
+ * Deliberately excludes `cumulative_sum`/`cumulative_count` bounds: those
+ * are AS-enforced against a running total a pending proposal does not carry,
+ * and no endpoint in the AU3/AU5 contract supplies it ahead of the request
+ * actually being issued. Showing a limit with no usage ("limit 10 per day")
+ * would read as a verified check it is not — so that row is left out rather
+ * than guessed at.
+ */
+export function limitChecks(
+  executionContext: Record<string, string | number> | undefined,
+  mandateBounds: Record<string, string | number> | undefined,
+  profile?: AgentProfile | null,
+): LimitCheck[] {
+  const boundsFields = profile?.boundsSchema?.fields;
+  if (!executionContext || !mandateBounds || !boundsFields) return [];
+
+  const checks: LimitCheck[] = [];
+  for (const [key, def] of Object.entries(boundsFields)) {
+    const bt = def.boundType;
+    if (!bt || bt.kind !== 'per_transaction') continue;
+    const of = bt.of;
+    if (!(of in executionContext) || !(key in mandateBounds)) continue;
+
+    const value = Number(executionContext[of]);
+    const limit = Number(mandateBounds[key]);
+    if (!Number.isFinite(value) || !Number.isFinite(limit)) continue;
+
+    const unit = formatUnit(def.unit);
+    const label = def.displayName ?? humanizeKey(of);
+    const fmt = (n: number) => (unit ? `${n.toLocaleString()} ${unit}` : n.toLocaleString());
+    checks.push({ key, label, ok: value <= limit, valueText: fmt(value), limitText: fmt(limit) });
+  }
+  return checks;
 }
 
 /** Review-mode receipts reference the proposal a human approved. */

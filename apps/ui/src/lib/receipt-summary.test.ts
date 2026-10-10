@@ -17,7 +17,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import type { AgentProfile } from '@hap/core';
-import { actionLabel, scopeSummary, wasReviewed, profileVersionLabel, splitAction, usageSummary, allowedSummary } from './receipt-summary';
+import { actionLabel, scopeSummary, wasReviewed, profileVersionLabel, splitAction, usageSummary, allowedSummary, limitChecks } from './receipt-summary';
 import type { ExecutionReceipt, IntegrationManifest } from './sp-client';
 
 /** Minimal profile fixture — only the schema shapes these functions read. */
@@ -261,5 +261,76 @@ describe('allowedSummary — what the grant permits', () => {
   it('charge-style scope fields (no allowed_ prefix) resolve correctly with a profile', () => {
     const p = profile({ scopeFields: { currency: { displayName: 'Currency' } } });
     expect(allowedSummary({ currency: 'EUR' }, p)).toBe('Currency EUR');
+  });
+});
+
+describe('limitChecks — "Within your limits" on a pending proposal (AU5)', () => {
+  const salesProfile = profile({
+    boundsFields: {
+      value_max: {
+        displayName: 'Value', unit: 'currency:EUR',
+        boundType: { kind: 'per_transaction', of: 'value' },
+      },
+      discount_pct_max: {
+        displayName: 'Discount', unit: 'percent',
+        boundType: { kind: 'per_transaction', of: 'discount_pct' },
+      },
+      quotes_daily_max: {
+        // Cumulative — must never appear: no usage figure for a proposal.
+        boundType: { kind: 'cumulative_count', window: 'daily' },
+        appliesTo: ['send'],
+      },
+    },
+  });
+
+  it('checks every per_transaction bound the call and the mandate both carry', () => {
+    const out = limitChecks(
+      { value: 480, discount_pct: 0, action_type: 'send' },
+      { value_max: 1000, discount_pct_max: 5 },
+      salesProfile,
+    );
+    expect(out).toHaveLength(2);
+    expect(out[0]).toMatchObject({ key: 'value_max', label: 'Value', ok: true, valueText: '480 EUR', limitText: '1,000 EUR' });
+    expect(out[1]).toMatchObject({ key: 'discount_pct_max', label: 'Discount', ok: true, valueText: '0 %', limitText: '5 %' });
+  });
+
+  it('marks a check failed when the value exceeds the mandate bound', () => {
+    const out = limitChecks({ value: 1440 }, { value_max: 1000 }, salesProfile);
+    expect(out).toEqual([
+      expect.objectContaining({ key: 'value_max', ok: false, valueText: '1,440 EUR', limitText: '1,000 EUR' }),
+    ]);
+  });
+
+  it('never shows a cumulative bound — no usage figure exists for a pending proposal', () => {
+    const out = limitChecks(
+      { value: 480, discount_pct: 0, action_type: 'send' },
+      { value_max: 1000, discount_pct_max: 5, quotes_daily_max: 10 },
+      salesProfile,
+    );
+    expect(out.map((c) => c.key)).not.toContain('quotes_daily_max');
+  });
+
+  it('skips a bound field whose execution-context value is absent from this call', () => {
+    const out = limitChecks({ value: 480 }, { value_max: 1000, discount_pct_max: 5 }, salesProfile);
+    expect(out.map((c) => c.key)).toEqual(['value_max']);
+  });
+
+  it('skips a bound the mandate does not carry', () => {
+    const out = limitChecks({ value: 480, discount_pct: 0 }, { value_max: 1000 }, salesProfile);
+    expect(out.map((c) => c.key)).toEqual(['value_max']);
+  });
+
+  it('falls back to a humanized field name without a profile displayName', () => {
+    const p = profile({
+      boundsFields: { amount_max: { boundType: { kind: 'per_transaction', of: 'amount' } } },
+    });
+    const out = limitChecks({ amount: 10 }, { amount_max: 50 }, p);
+    expect(out[0].label).toBe('Amount');
+  });
+
+  it('is empty without a profile, without a mandate, or without execution context — never a guess', () => {
+    expect(limitChecks({ value: 480 }, { value_max: 1000 }, undefined)).toEqual([]);
+    expect(limitChecks({ value: 480 }, undefined, salesProfile)).toEqual([]);
+    expect(limitChecks(undefined, { value_max: 1000 }, salesProfile)).toEqual([]);
   });
 });

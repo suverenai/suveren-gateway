@@ -45,9 +45,22 @@ export interface JournalEntry {
   /** Stable hash of the tool arguments, so a replay with different args is visible. */
   argsHash: string;
   state: JournalState;
-  /** Set with state 'failed' when the connector answered but refused the
-   *  action (as opposed to throwing). No reason text — this file is plaintext. */
-  outcome?: 'refused';
+  /**
+   * Set with state 'failed': 'refused' when the connector answered but
+   * refused the action (as opposed to throwing); 'changed' (AU4) when the
+   * gateway itself refused to call the tool because a declared preview read
+   * (with no `version` of its own) showed the record had changed since the
+   * proposal was submitted.
+   */
+  outcome?: 'refused' | 'changed';
+  /**
+   * The connector's own refusal text, for outcome 'refused' only — capped
+   * (see `complete`'s DETAIL_CAP). This file is otherwise plaintext with no
+   * content; a connector's refusal sentence ("quote is at revision 2…") is
+   * judged safe to keep here because it is the SAME text already shown to
+   * the agent/approver, never the record itself.
+   */
+  detail?: string;
   /** Unix seconds. */
   startedAt: number;
   finishedAt?: number;
@@ -64,6 +77,8 @@ const DEFAULT_DIR = process.env.SUVEREN_DATA_DIR ?? join(homedir(), '.suveren');
 const FILE_NAME = 'execution-journal.json';
 /** Rows older than this are pruned. Longer than any ticket validity window in use. */
 const MAX_AGE_SECONDS = 90 * 24 * 60 * 60;
+/** Cap on a stored 'refused' detail string — a connector's refusal sentence, never the record. */
+const DETAIL_CAP = 500;
 
 export type BeginResult =
   | { ok: true }
@@ -119,13 +134,20 @@ export class ExecutionJournal {
     return { ok: true };
   }
 
-  /** Close an `intent` row. Missing row is a programming error, not a silent no-op. */
-  complete(ticketId: string, state: 'done' | 'failed', outcome?: 'refused'): void {
+  /**
+   * Close an `intent` row. Missing row is a programming error, not a silent
+   * no-op. `detail` (capped to DETAIL_CAP) is stored only alongside outcome
+   * 'refused' — see JournalEntry's doc comment.
+   */
+  complete(ticketId: string, state: 'done' | 'failed', outcome?: 'refused' | 'changed', detail?: string): void {
     const file = this.load();
     const row = file.entries.find(e => e.ticketId === ticketId);
     if (!row) throw new Error(`execution journal: no row for ticket ${ticketId} to complete`);
     row.state = state;
     if (outcome) row.outcome = outcome;
+    if (detail !== undefined) {
+      row.detail = detail.length > DETAIL_CAP ? detail.slice(0, DETAIL_CAP) : detail;
+    }
     row.finishedAt = nowSec();
     this.persist(file);
   }

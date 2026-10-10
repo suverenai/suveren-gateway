@@ -132,6 +132,14 @@ export interface DiscoveredTool {
   integrationId: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  /**
+   * The tool's declared structured-output schema (MCP `outputSchema`), when
+   * the downstream server advertises one. AU3: the preview card renders a
+   * read's `structuredContent` generically from this — field labels (schema
+   * `title`), order, nesting — instead of raw JSON. Absent for a connector
+   * that predates structured output, or a built-in.
+   */
+  outputSchema?: Record<string, unknown>;
   gating: ToolGatingConfig | null;
 }
 
@@ -817,6 +825,7 @@ export class IntegrationManager {
           (tool.inputSchema ?? {}) as Record<string, unknown>,
           gating?.blockedArgs,
         ),
+        outputSchema: tool.outputSchema as Record<string, unknown> | undefined,
         gating,
       };
     });
@@ -980,7 +989,19 @@ export class IntegrationManager {
     integrationId: string,
     toolName: string,
     args: Record<string, unknown>,
-  ): Promise<{ content: Array<{ type: string; text: string }>; isError?: boolean }> {
+  ): Promise<{
+    content: Array<{ type: string; text: string }>;
+    isError?: boolean;
+    /**
+     * The downstream's structured result (MCP `structuredContent`), when it
+     * returned one. Only ever populated for a real connector call — a
+     * built-in's handler predates structured output and returns prose only.
+     * AU3's preview path is the first consumer; every other caller already
+     * ignored this field by construction (it didn't exist), so adding it is
+     * additive.
+     */
+    structuredContent?: Record<string, unknown>;
+  }> {
     const builtin = this.builtins.get(integrationId);
     if (builtin) {
       const tool = builtin.def.tools.find(t => t.name === toolName);
@@ -1011,7 +1032,11 @@ export class IntegrationManager {
           type: item.type,
           text: item.text ?? JSON.stringify(item),
         }));
-      return { content, isError: result.isError as boolean | undefined };
+      return {
+        content,
+        isError: result.isError as boolean | undefined,
+        structuredContent: result.structuredContent as Record<string, unknown> | undefined,
+      };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return {

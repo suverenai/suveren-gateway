@@ -21,6 +21,14 @@ export interface SubmittedProposal {
   authorizationId: string;
   profileId: string;
   submittedAt: number;
+  /**
+   * AU4 — snapshot hash of a declared preview read taken at submission, for
+   * a tool whose preview carries NO `version` (see preview.ts's
+   * computeSubmissionPreviewHash). executeCommitted re-reads and compares
+   * against this right before the tool runs; a mismatch means the record
+   * changed since approval and the action must not execute.
+   */
+  previewHash?: string;
 }
 
 interface StoreFile {
@@ -53,6 +61,7 @@ export class ProposalSubmissionStore {
     executionContext: Record<string, unknown>;
     authorizationId: string;
     profileId: string;
+    previewHash?: string;
   }): void {
     const file = this.load();
     file.entries = file.entries.filter(e => e.proposalId !== entry.proposalId);
@@ -64,6 +73,7 @@ export class ProposalSubmissionStore {
       authorizationId: entry.authorizationId,
       profileId: entry.profileId,
       submittedAt: nowSec(),
+      ...(entry.previewHash ? { previewHash: entry.previewHash } : {}),
     });
     this.persist(file);
   }

@@ -309,4 +309,51 @@ describe('MCP Gateway', () => {
       await del('/internal/remove-integration/test-tools');
     }
   }, 15000);
+
+  // AU3 — POST /internal/preview, over the REAL route + REAL shipped
+  // manifests (this server loads content/integrations with no override),
+  // so erp.json's ERP3 preview declarations are exercised for real, not
+  // just via a test fixture manifest (see preview.test.ts for the unit-level
+  // coverage of the mechanism itself).
+  describe('/internal/preview', () => {
+    it('400s on a malformed body', async () => {
+      const { status } = await post('/internal/preview', { proposalId: 'p1' });
+      expect(status).toBe(400);
+    });
+
+    it('400s on a non-namespaced tool name', async () => {
+      const { status } = await post('/internal/preview', { proposalId: 'p1', tool: 'notnamespaced', toolArgs: {} });
+      expect(status).toBe(400);
+    });
+
+    it('status "none" for an erp action tool that declares no preview', async () => {
+      const { status, data } = await post('/internal/preview', {
+        proposalId: 'p1',
+        tool: 'erp__create_quote',
+        toolArgs: { value: 100 },
+      });
+      expect(status).toBe(200);
+      expect(data).toEqual({ status: 'none' });
+    });
+
+    it('status "none" when asked about the read tool itself (erp__get_quote) — cannot bootstrap an arbitrary call', async () => {
+      const { status, data } = await post('/internal/preview', {
+        proposalId: 'p1',
+        tool: 'erp__get_quote',
+        toolArgs: { id: 'Q1' },
+      });
+      expect(status).toBe(200);
+      expect(data).toEqual({ status: 'none' });
+    });
+
+    it('status "unavailable"/"no_connector" for erp__send_quote (preview declared, but the erp connector is not running)', async () => {
+      const { status, data } = await post('/internal/preview', {
+        proposalId: 'p1',
+        tool: 'erp__send_quote',
+        toolArgs: { id: 'Q1', revision: 1, value: 100 },
+      });
+      expect(status).toBe(200);
+      expect(data).toEqual({ status: 'unavailable', reason: 'no_connector' });
+    });
+  });
 });

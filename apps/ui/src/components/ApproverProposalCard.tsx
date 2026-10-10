@@ -1,11 +1,12 @@
 /**
  * ApproverProposalCard — Phase 6 per-action approval card.
  *
- * Shown in the "Awaiting me" tab. Displays:
- *  - Profile + authority bounds (with above-cap annotation)
- *  - Intent (HPKE-decrypted on demand)
- *  - Proposed tool + args
- *  - Approve / Reject buttons
+ * Shown in the "Awaiting me" tab (AU5, work-plan.md "Added 2026-10-09";
+ * approved mockup temp/mockups/gateway-ux-v7.html §6). The headline/preview/
+ * limits/mandate+intent/folded-details body is shared with ActionCard's
+ * review-mode pending proposals via components/ApprovalBody.tsx — this card
+ * owns only its own header (above-cap badge, approver progress) and the
+ * approve/reject buttons.
  *
  * On approve:
  *  1. Calls POST /api/proposals/:id/approve (SP)
@@ -15,31 +16,14 @@
  */
 
 import { useState } from 'react';
-import { resolveProposalLinks, type ProposalLink } from '../lib/proposal-links';
-import { spClient, type Proposal } from '../lib/sp-client';
+import type { ProposalLink } from '../lib/proposal-links';
+import { spClient, type IntegrationManifest, type Proposal } from '../lib/sp-client';
 import { formatTimeLeft } from '../lib/time-left';
-import { ProposalArgs } from './ProposalArgs';
 import { ProfileRail } from './ProfileRail';
+import { ApprovalBody } from './ApprovalBody';
 import { isTestSetupAction, profileIdentity } from '../lib/profile-identity';
 import { isAutomatedBrowser, AUTOMATION_REFUSAL } from '../lib/automation';
-import { contextFieldLabel, type ToolDisplay } from '../lib/approval-view';
-import { useProfile } from '../lib/profile-cache';
-
-
-// NEVER truncate: approvers commit to exactly what they can read here, so
-// the full content must be visible at once (an email body cut at 200 chars
-// was approvable but not reviewable).
-function formatArgValue(v: unknown): string {
-  if (v == null) return '—';
-  if (typeof v === 'string') return v;
-  if (typeof v === 'number' || typeof v === 'boolean') return String(v);
-  if (Array.isArray(v)) return v.map((x) => formatArgValue(x)).join(', ');
-  try {
-    return JSON.stringify(v, null, 2);
-  } catch {
-    return String(v);
-  }
-}
+import type { ToolDisplay } from '../lib/approval-view';
 
 function formatAge(unixSeconds: number): string {
   const ageMs = Date.now() - unixSeconds * 1000;
@@ -56,23 +40,17 @@ interface Props {
   proposalLinks?: ProposalLink[];
   /** Labels and display kinds for the arguments (lib/approval-view.ts). */
   toolDisplay?: ToolDisplay;
+  /** For the preview box's "From <System>, before it runs" (lib/approval-view.ts systemDisplayName). */
+  manifests?: IntegrationManifest[];
   currentUserId: string;
   onAction: () => void;
   onMessage: (msg: string) => void;
 }
 
-export function ApproverProposalCard({ proposal, currentUserId, onAction, onMessage, proposalLinks, toolDisplay }: Props) {
+export function ApproverProposalCard({ proposal, currentUserId, onAction, onMessage, proposalLinks, toolDisplay, manifests }: Props) {
   const [approving, setApproving] = useState(false);
   const [rejecting, setRejecting] = useState(false);
-  const [intent, setIntent] = useState<string | null>(null);
-  const [intentLoading, setIntentLoading] = useState(false);
-  const [intentError, setIntentError] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState(false);
 
-  const toolShort = proposal.tool.split('__').pop() ?? proposal.tool;
-  const boundsEntries = Object.entries(proposal.executionContext);
-  const profile = useProfile(proposal.profileId);
-  const inspectLinks = resolveProposalLinks(proposalLinks, proposal.toolArgs);
   // Test setup: the delegation profile, OR a setup__* tool.
   const testSetup = profileIdentity(proposal.profileId).testSetup || isTestSetupAction(proposal.tool);
 
@@ -83,39 +61,6 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
 
   const alreadyApproved = currentUserId in approvedBy;
 
-  // Fetch + decrypt intent from SP
-  const loadIntent = async () => {
-    if (intent !== null) return; // already loaded
-    setIntentLoading(true);
-    setIntentError(null);
-    try {
-      const intentData = await spClient.getAttestationIntent(proposal.authorizationId);
-      if (!intentData) {
-        setIntentError('Intent not available or you are not an authorized approver.');
-        return;
-      }
-      const decrypted = await spClient.decryptIntent({
-        intentCiphertext: intentData.intentCiphertext,
-        encryptedKey: intentData.encryptedKey,
-        approverId: currentUserId,
-      });
-      setIntent(decrypted);
-    } catch (err) {
-      setIntentError(err instanceof Error ? err.message : 'Failed to decrypt intent');
-    } finally {
-      setIntentLoading(false);
-    }
-  };
-
-  const handleExpand = async () => {
-    if (!expanded) {
-      setExpanded(true);
-      await loadIntent();
-    } else {
-      setExpanded(false);
-    }
-  };
-
   const handleApprove = async () => {
     // Automation that announces itself may not approve (defense in depth — lib/automation.ts).
     if (isAutomatedBrowser()) { onMessage(AUTOMATION_REFUSAL); return; }
@@ -124,21 +69,20 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
     try {
       await spClient.approveProposal(proposal.id);
 
-      // Fetch + store the intent as accountability record (best-effort).
+      // Fetch + decrypt + store the intent as an accountability record
+      // (best-effort; ApprovalBody above already fetched one for display,
+      // but keeps its own state — this is a separate, independent decrypt
+      // rather than a shared one, deliberately: it never blocks on, or
+      // depends on, how the body rendered).
       try {
-        if (intent === null) {
-          const intentData = await spClient.getAttestationIntent(proposal.authorizationId);
-          if (intentData) {
-            const decrypted = await spClient.decryptIntent({
-              intentCiphertext: intentData.intentCiphertext,
-              encryptedKey: intentData.encryptedKey,
-              approverId: currentUserId,
-            });
-            setIntent(decrypted);
-            await spClient.storeApprovedIntent(proposal.authorizationId, decrypted);
-          }
-        } else {
-          await spClient.storeApprovedIntent(proposal.authorizationId, intent);
+        const intentData = await spClient.getAttestationIntent(proposal.authorizationId);
+        if (intentData) {
+          const decrypted = await spClient.decryptIntent({
+            intentCiphertext: intentData.intentCiphertext,
+            encryptedKey: intentData.encryptedKey,
+            approverId: currentUserId,
+          });
+          await spClient.storeApprovedIntent(proposal.authorizationId, decrypted);
         }
       } catch {
         // Non-fatal: approval already recorded on SP; local store is best-effort.
@@ -214,77 +158,16 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
         })}
       </div>
 
-      {/* Proposed tool */}
-      <div style={{ marginBottom: '0.5rem' }}>
-        <div style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.25rem' }}>
-          Proposed action
-        </div>
-        <code style={{ fontSize: '0.85rem' }}>{toolShort}</code>
-      </div>
-
-      {/* Inspection links — ABOVE the arguments on purpose. The point of
-          review mode is judging the action, and an identifier cannot be judged.
-          Whatever can actually be looked at has to come before the raw values. */}
-      {inspectLinks.length > 0 && (
-        <div style={{ marginBottom: '0.75rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-          {inspectLinks.map(l => (
-            <a
-              key={l.label}
-              href={l.href}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="btn btn-secondary btn-sm"
-              style={{ textDecoration: 'none' }}
-              title={l.description ?? l.href}
-            >
-              {l.label} &#8599;
-            </a>
-          ))}
-        </div>
-      )}
-
-      {/* Arguments */}
-      <ProposalArgs args={proposal.toolArgs} display={toolDisplay} />
-
-      {/* Execution context — labelled from the profile's scope schema, never
-          guessed from the key's shape (AU1). */}
-      {boundsEntries.length > 0 && (
-        <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
-          {boundsEntries.map(([k, v], i) => {
-            const { label, hint } = contextFieldLabel(k, profile);
-            return (
-              <span key={k}>
-                {i > 0 && ' · '}
-                <span title={hint}>{label}={formatArgValue(v)}</span>
-              </span>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Intent (lazy-loaded HPKE decrypt) */}
-      <div style={{ marginBottom: '0.75rem' }}>
-        <button
-          className="btn btn-ghost btn-sm"
-          style={{ padding: '0.2rem 0', fontSize: '0.75rem' }}
-          onClick={handleExpand}
-          disabled={intentLoading}
-        >
-          {expanded ? '▲ Hide intent' : '▼ Show intent'}
-          {intentLoading && ' (decrypting...)'}
-        </button>
-        {expanded && (
-          <div style={{ marginTop: '0.5rem', padding: '0.75rem', background: 'var(--bg-main)', borderRadius: '0.375rem', border: '1px solid var(--border)' }}>
-            {intentError ? (
-              <p style={{ color: 'var(--danger)', fontSize: '0.8rem', margin: 0 }}>{intentError}</p>
-            ) : intent !== null ? (
-              <p style={{ fontSize: '0.85rem', margin: 0, whiteSpace: 'pre-wrap', color: 'var(--text-primary)' }}>{intent}</p>
-            ) : (
-              <p style={{ color: 'var(--text-tertiary)', fontSize: '0.8rem', margin: 0 }}>No intent available for this mandate.</p>
-            )}
-          </div>
-        )}
-      </div>
+      {/* Shared with ActionCard's review-mode pending proposals — headline,
+          preview box, "Within your limits", mandate + intent, inspect links,
+          folded "Details (exactly what is bound)". See ApprovalBody.tsx. */}
+      <ApprovalBody
+        proposal={proposal}
+        currentUserId={currentUserId}
+        proposalLinks={proposalLinks}
+        toolDisplay={toolDisplay}
+        manifests={manifests}
+      />
 
       {/* Action buttons */}
       {!alreadyApproved && (

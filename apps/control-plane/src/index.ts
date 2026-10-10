@@ -48,6 +48,7 @@ import { createAutostartRouter } from './routes/autostart';
 import { notify, lockedNotification } from './lib/desktop-notify';
 import { createEncryptIntentRouter } from './routes/encrypt-intent';
 import { createEvidenceExportRouter } from './routes/evidence-export';
+import { createProposalStatusRouter } from './routes/proposal-preview';
 import { createEvidenceRouter } from './routes/evidence';
 import { createReportRouter } from './routes/report';
 import { createDecryptIntentRouter } from './routes/decrypt-intent';
@@ -524,6 +525,11 @@ app.use('/api/encrypt-intent', jsonParser, authGuard, createEncryptIntentRouter(
 // Evidence download — local receipt archive + gate store, merged with a
 // best-effort AS export. Mounted BEFORE the /api proxy so it wins the route.
 app.use('/api/evidence-export', authGuard, createEvidenceExportRouter(SP_URL, vault, DATA_DIR, lockAsTlsMismatch));
+
+// AU3/AU5 — the approver's pre-approval preview + "what really happened"
+// outcome. Deliberately NOT under /api (that prefix proxies straight to the
+// Authority Server) — both routes answer locally or via the MCP server.
+app.use('/proposal-status', authGuard, createProposalStatusRouter(SP_URL, vault, DATA_DIR, lockAsTlsMismatch));
 
 // Local evidence for the Receipts page (grant context/intent, archived
 // receipts). Mounted BEFORE the /api proxy so it wins the route.

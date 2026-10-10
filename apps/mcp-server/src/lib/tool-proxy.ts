@@ -19,6 +19,7 @@ import { ArchiveWriteError } from './receipt-archive';
 import { appendVerificationFooter, shouldAttachFooter } from './receipt-footer';
 import { computeContentBinding, attachTicketId } from './content-binding';
 import { hashToolArgs } from './execution-journal';
+import { computeSubmissionPreviewHash } from './preview';
 import { verifyTicket, TicketBindingMismatchError } from './ticket-verify';
 import { notifyControlPlane } from './cp-notify';
 import { encodeOutgoingArgs } from './arg-encoding';
@@ -1146,6 +1147,16 @@ function createGatedToolHandlerInner(
               toolArgs: enrichedArgs,
               executionContext: wireExecCtx,
             });
+            // AU4 — snapshot a preview read NOW, for a tool whose declared
+            // preview carries no `version` (the connector has no revision
+            // enforcement of its own). undefined for everything else — see
+            // computeSubmissionPreviewHash's doc comment.
+            const previewHash = await computeSubmissionPreviewHash(
+              integrationManager,
+              tool.integrationId,
+              tool.originalName,
+              enrichedArgs,
+            );
             // Record what WE submitted — ticket-verify.ts / commitments.ts
             // compares against this at execution time rather than trusting
             // the AS's echoed-back tool/args at face value.
@@ -1156,6 +1167,7 @@ function createGatedToolHandlerInner(
               executionContext: wireExecCtx,
               authorizationId: authzId,
               profileId: auth.profileId,
+              previewHash,
             });
             return {
               content: [{
@@ -1442,6 +1454,13 @@ function createGatedToolHandlerInner(
                 executionContext: wireExecCtx,
                 pendingApprovers: uniqueApprovers,
               });
+              // AU4 — see the deferred-commitment branch above for why.
+              const previewHash = await computeSubmissionPreviewHash(
+                integrationManager,
+                tool.integrationId,
+                tool.originalName,
+                enrichedArgs,
+              );
               state.proposalSubmissions.record({
                 proposalId: proposal.id,
                 tool: tool.namespacedName,
@@ -1449,6 +1468,7 @@ function createGatedToolHandlerInner(
                 executionContext: wireExecCtx,
                 authorizationId: authzId,
                 profileId: auth.profileId,
+                previewHash,
               });
               return {
                 content: [{

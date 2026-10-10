@@ -3,8 +3,11 @@ import type { ThreadItem } from '../lib/thread-aggregator';
 import { formatTimeLeft } from '../lib/time-left';
 import { ProposalArgs } from './ProposalArgs';
 import { ProfileRail } from './ProfileRail';
+import { OutcomeBox } from './OutcomeBox';
+import { ApprovalBody } from './ApprovalBody';
 import { isTestSetupAction, profileIdentity } from '../lib/profile-identity';
-import type { ToolDisplay } from '../lib/approval-view';
+import { splitTool, systemDisplayName, type ToolDisplay } from '../lib/approval-view';
+import type { IntegrationManifest } from '../lib/sp-client';
 
 type CardStatus = 'pending' | 'committed' | 'executed' | 'rejected' | 'expired';
 
@@ -77,17 +80,23 @@ interface Props {
   proposalLinks?: ProposalLink[];
   /** Labels and display kinds for the arguments (lib/approval-view.ts). */
   toolDisplay?: ToolDisplay;
+  /** For the outcome box's "Refused by <System>" (lib/approval-view.ts systemDisplayName). */
+  manifests?: IntegrationManifest[];
+  /** Needed only for a PENDING proposal's ApprovalBody (intent decrypt). */
+  currentUserId?: string;
   onApprove?: (id: string) => void;
   onReject?: (id: string) => void;
   resolving?: boolean;
 }
 
-export function ActionCard({ item, onApprove, onReject, resolving, proposalLinks, toolDisplay }: Props) {
+export function ActionCard({ item, onApprove, onReject, resolving, proposalLinks, toolDisplay, manifests, currentUserId }: Props) {
   const isProposal = item.kind === 'proposal';
   const status: CardStatus = isProposal ? item.proposal.status : 'executed';
   const toolFull = isProposal ? item.proposal.tool : item.receipt.action;
   const toolShort = shortToolName(toolFull);
   const destructive = isDestructive(toolFull);
+  const { integrationId } = splitTool(toolFull);
+  const systemName = systemDisplayName(integrationId, manifests);
 
   const args = isProposal ? item.proposal.toolArgs : null;
   const executionContext = isProposal ? item.proposal.executionContext : item.receipt.executionContext;
@@ -134,6 +143,14 @@ export function ActionCard({ item, onApprove, onReject, resolving, proposalLinks
         </span>
       </div>
 
+      {/* AU4/AU5: the AS marks a proposal "executed" once the ticket is
+          issued, even when the connector then refused the call or the
+          record changed underneath it. Reads the local execution journal —
+          renders nothing when there is nothing beyond the AS's own status. */}
+      {isProposal && item.proposal.status === 'executed' && (
+        <OutcomeBox proposalId={item.proposal.id} systemName={systemName} />
+      )}
+
       {destructive && (
         <div style={{
           display: 'flex', alignItems: 'center', gap: '0.4rem',
@@ -167,32 +184,50 @@ export function ActionCard({ item, onApprove, onReject, resolving, proposalLinks
         </div>
       )}
 
-      {/* Above the arguments on purpose: what can be looked at should come
-          before what can only be read. */}
-      {inspectLinks.length > 0 && (
-        <div style={{ marginBottom: '0.75rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-          {inspectLinks.map(l => (
-            <a
-              key={l.label}
-              href={l.href}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="btn btn-secondary btn-sm"
-              style={{ textDecoration: 'none' }}
-              title={l.description ?? l.href}
-            >
-              {l.label} &#8599;
-            </a>
-          ))}
-        </div>
-      )}
+      {/* A PENDING proposal (review mode — the main approval case, not just
+          above-cap) gets the same headline/preview/limits/mandate+intent/
+          folded-details body as ApproverProposalCard — see
+          components/ApprovalBody.tsx. Anything else (committed/rejected/
+          expired proposals, tickets/receipts) keeps the existing raw-args
+          rendering below; this is a review surface, not a history view. */}
+      {isProposal && status === 'pending' ? (
+        <ApprovalBody
+          proposal={item.proposal}
+          currentUserId={currentUserId ?? ''}
+          proposalLinks={proposalLinks}
+          toolDisplay={toolDisplay}
+          manifests={manifests}
+        />
+      ) : (
+        <>
+          {/* Above the arguments on purpose: what can be looked at should come
+              before what can only be read. */}
+          {inspectLinks.length > 0 && (
+            <div style={{ marginBottom: '0.75rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+              {inspectLinks.map(l => (
+                <a
+                  key={l.label}
+                  href={l.href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="btn btn-secondary btn-sm"
+                  style={{ textDecoration: 'none' }}
+                  title={l.description ?? l.href}
+                >
+                  {l.label} &#8599;
+                </a>
+              ))}
+            </div>
+          )}
 
-      {isProposal && args && <ProposalArgs args={args} display={toolDisplay} />}
+          {isProposal && args && <ProposalArgs args={args} display={toolDisplay} />}
 
-      {ctxEntries.length > 0 && (
-        <div style={{ marginBottom: '0.75rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-          {ctxEntries.map(([k, v]) => `${k}=${formatArgValue(v)}`).join(' · ')}
-        </div>
+          {ctxEntries.length > 0 && (
+            <div style={{ marginBottom: '0.75rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+              {ctxEntries.map(([k, v]) => `${k}=${formatArgValue(v)}`).join(' · ')}
+            </div>
+          )}
+        </>
       )}
 
       {cumulative && (

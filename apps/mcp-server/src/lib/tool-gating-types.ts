@@ -30,6 +30,48 @@ export type ExecutionMappingValue =
   | Array<{ field: string; divisor?: number; transform?: ExecutionMappingTransform }>;
 
 /**
+ * Preview declaration (AU3) — a manifest's description of how an action
+ * tool's approval card can show "what will happen" before it runs, by
+ * calling a READ tool of the same integration with the action's own bound
+ * arguments. Gateway-internal only: shown to the approver, never to the AI
+ * or any MCP client, never ticketed, never read-gated.
+ *
+ * See `temp/briefs/au3-au5-brief.md` decisions 1–4 (binding) and the
+ * "Interface contract" there — this shape is load-bearing for a UI built in
+ * parallel against it; don't change field names without the owner.
+ */
+export interface ToolPreviewConfig {
+  /** A tool of the SAME integration — the read tool called for the preview. */
+  tool: string;
+  /**
+   * Preview-tool argument name -> name of the ACTION's argument whose value
+   * is passed. Same direction as `executionMapping`: key = target (the
+   * preview tool's arg), value = source (the action's arg). Only plain
+   * top-level argument names.
+   */
+  args: Record<string, string>;
+  /**
+   * Optional staleness check for connectors with no document-version
+   * enforcement of their own. `arg` is the ACTION argument carrying the
+   * document version (bound like every arg); `field` is the top-level field
+   * in the preview tool's structured result that holds the CURRENT version.
+   */
+  version?: { arg: string; field: string };
+  /**
+   * Optional top-level field allow-list, shown first and in this order on
+   * the approval card's preview box, regardless of value (see
+   * lib/preview-render.ts in apps/ui). Added after a real erp get_quote
+   * answer (15 fields) showed that "first 6 in schema order" buries the
+   * fields that actually matter (e.g. the quote's lines, its net total)
+   * under "All fields" while surfacing id/status/currency. Without this,
+   * every field that HAS a value is shown instead — still no fixed count,
+   * but a connector with a field order that doesn't match what the approver
+   * needs to see first should declare one.
+   */
+  fields?: string[];
+}
+
+/**
  * Tool gating entry — how a tool's calls map to execution context fields.
  * Read-only tools use { category: "read" } — they require authorization
  * but skip execution context verification.
@@ -39,6 +81,8 @@ export interface ProfileToolGatingEntry {
   staticExecution?: Record<string, string | number>;
   /** Read-only tools: require authorization but no execution context checks */
   category?: 'read';
+  /** AU3 — see {@link ToolPreviewConfig}. */
+  preview?: ToolPreviewConfig;
 }
 
 /**
