@@ -22,8 +22,12 @@ function FieldRows({ rows }: { rows: PreviewFieldRow[] }) {
           <dt style={{ color: 'var(--text-tertiary)', whiteSpace: 'nowrap', alignSelf: 'start' }}>{r.label}</dt>
           <dd style={{ margin: 0, wordBreak: 'break-word' }}>
             {r.lines ? (
-              <div>{r.lines.map((l, i) => <div key={i}>{l}</div>)}</div>
-            ) : r.value}
+              <div>
+                {r.lines.map((l, i) => <div key={i} title={r.lineTitles?.[i]}>{l}</div>)}
+              </div>
+            ) : (
+              <span title={r.valueTitle}>{r.value}</span>
+            )}
           </dd>
         </Fragment>
       ))}

@@ -102,6 +102,151 @@ describe('renderPreviewBody — structured results', () => {
   });
 });
 
+describe('renderPreviewBody — nested schema narrows array-item / object fields (2026-10-10 follow-up)', () => {
+  it('an array field with declared items.properties shows ONLY those properties, in declared order, titled', () => {
+    const body: PreviewBody = {
+      structured: {
+        lines: [
+          { id: '9c3c...', quote_id: '994a...', item_id: 'item-1', qty: 4, sku: 'CH-120' },
+        ],
+      },
+      outputSchema: {
+        properties: {
+          lines: {
+            items: {
+              properties: {
+                qty: { title: 'Qty' },
+                sku: { title: 'SKU' },
+              },
+            },
+          },
+        },
+      },
+    };
+    const r = renderPreviewBody(body);
+    expect(r.fields[0].lines![0]).toBe('Qty: 4 · SKU: CH-120');
+    expect(r.fields[0].lines![0]).not.toContain('9c3c');
+    expect(r.fields[0].lines![0]).not.toContain('994a');
+    expect(r.fields[0].lines![0]).not.toContain('item-1');
+  });
+
+  it('a nested object field with declared properties shows ONLY those, titled, in declared order', () => {
+    const body: PreviewBody = {
+      structured: { customer: { id: 'cust-internal-1', name: 'Hofer', crm_sync_token: 'xyz' } },
+      outputSchema: { properties: { customer: { properties: { name: { title: 'Customer' } } } } },
+    };
+    const r = renderPreviewBody(body);
+    expect(r.fields[0].value).toBe('Customer: Hofer');
+    expect(r.fields[0].value).not.toContain('cust-internal-1');
+    expect(r.fields[0].value).not.toContain('xyz');
+  });
+
+  it('without a declared schema for that field, every one of the object\'s own keys still shows (today\'s behaviour)', () => {
+    const body: PreviewBody = {
+      structured: { customer: { id: 'cust-1', name: 'Hofer' } },
+      outputSchema: { properties: {} }, // schema present, but says nothing about `customer`
+    };
+    const r = renderPreviewBody(body);
+    expect(r.fields[0].value).toBe('Id: cust-1 · Name: Hofer');
+  });
+
+  it('without ANY schema at all, every key still shows (today\'s behaviour, unchanged)', () => {
+    const body: PreviewBody = { structured: { customer: { id: 'cust-1', name: 'Hofer' } } };
+    const r = renderPreviewBody(body);
+    expect(r.fields[0].value).toBe('Id: cust-1 · Name: Hofer');
+  });
+
+  it('a declared property absent from the item is simply skipped, never invented', () => {
+    const body: PreviewBody = {
+      structured: { lines: [{ qty: 4 }] },
+      outputSchema: { properties: { lines: { items: { properties: { qty: { title: 'Qty' }, sku: { title: 'SKU' } } } } } },
+    };
+    const r = renderPreviewBody(body);
+    expect(r.fields[0].lines![0]).toBe('Qty: 4');
+  });
+
+  it('nested narrowing recurses — an object inside a declared array item is itself narrowed', () => {
+    const body: PreviewBody = {
+      structured: { lines: [{ qty: 4, product: { sku: 'CH-120', internal_cost: 42 } }] },
+      outputSchema: {
+        properties: {
+          lines: {
+            items: {
+              properties: {
+                qty: { title: 'Qty' },
+                product: { properties: { sku: { title: 'SKU' } } },
+              },
+            },
+          },
+        },
+      },
+    };
+    const r = renderPreviewBody(body);
+    expect(r.fields[0].lines![0]).toBe('Qty: 4 · Product: SKU: CH-120');
+    expect(r.fields[0].lines![0]).not.toContain('internal_cost');
+    expect(r.fields[0].lines![0]).not.toContain('42');
+  });
+
+  it('applies the same narrowing inside the stale diff', () => {
+    const schema = { properties: { lines: { items: { properties: { qty: { title: 'Qty' }, sku: { title: 'SKU' } } } } } };
+    const approved: PreviewBody = { structured: { lines: [{ id: 'row-1', qty: 4, sku: 'CH-120' }] }, outputSchema: schema };
+    const current: PreviewBody = { structured: { lines: [{ id: 'row-2', qty: 2, sku: 'HP-40' }] }, outputSchema: schema };
+    const diff = diffPreviewBodies(approved, current);
+    expect(diff.approved.fields[0].lines![0]).toBe('Qty: 4 · SKU: CH-120');
+    expect(diff.current.fields[0].lines![0]).toBe('Qty: 2 · SKU: HP-40');
+    expect(diff.approved.fields[0].lines![0]).not.toContain('row-1');
+  });
+});
+
+describe('renderPreviewBody — numbers: rounded display, exact value on hover (2026-10-10 follow-up)', () => {
+  it('rounds a non-integer to at most 2 decimals, no trailing zeros, and carries the exact value as a title', () => {
+    const r = renderPreviewBody({ structured: { amount: 44.44444444444444 } });
+    expect(r.fields[0].value).toBe('44.44');
+    expect(r.fields[0].valueTitle).toBe('44.44444444444444');
+  });
+
+  it('never touches an integer — no title either, since nothing was rounded', () => {
+    const r = renderPreviewBody({ structured: { count: 480 } });
+    expect(r.fields[0].value).toBe('480');
+    expect(r.fields[0].valueTitle).toBeUndefined();
+  });
+
+  it('never touches a string that merely looks numeric', () => {
+    const r = renderPreviewBody({ structured: { id: '44.44444444444444' } });
+    expect(r.fields[0].value).toBe('44.44444444444444');
+    expect(r.fields[0].valueTitle).toBeUndefined();
+  });
+
+  it('a number that happens to round to a whole value drops its decimals, same as any number', () => {
+    const r = renderPreviewBody({ structured: { amount: 44.001 } });
+    expect(r.fields[0].value).toBe('44');
+    expect(r.fields[0].valueTitle).toBe('44.001');
+  });
+
+  it('rounds a number inside a compact object line, title carries the exact line', () => {
+    const body: PreviewBody = { structured: { totals: { net: 44.44444444444444, qty: 4 } } };
+    const r = renderPreviewBody(body);
+    expect(r.fields[0].value).toBe('Net: 44.44 · Qty: 4');
+    expect(r.fields[0].valueTitle).toBe('Net: 44.44444444444444 · Qty: 4');
+  });
+
+  it('rounds numbers inside array-item lines, with a per-line title only where it changed something', () => {
+    const body: PreviewBody = {
+      structured: { lines: [{ qty: 4, unit_price: 33.333333 }, { qty: 1, unit_price: 480 }] },
+    };
+    const r = renderPreviewBody(body);
+    expect(r.fields[0].lines).toEqual(['Qty: 4 · Unit price: 33.33', 'Qty: 1 · Unit price: 480']);
+    expect(r.fields[0].lineTitles![0]).toBe('Qty: 4 · Unit price: 33.333333');
+    expect(r.fields[0].lineTitles![1]).toBeUndefined();
+  });
+
+  it('rounds numbers inside a scalar array, title carries the exact list', () => {
+    const r = renderPreviewBody({ structured: { amounts: [1.005, 2, 3.14159] } });
+    expect(r.fields[0].value).toBe('1, 2, 3.14');
+    expect(r.fields[0].valueTitle).toBe('1.005, 2, 3.14159');
+  });
+});
+
 describe('renderPreviewBody — without declared fields: every field WITH a value, no fixed count', () => {
   it('a 15-field answer shows every field that has a value — not a fixed 6', () => {
     const structured = Object.fromEntries(Array.from({ length: 15 }, (_, i) => [`f${i}`, i]));
