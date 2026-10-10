@@ -17,9 +17,12 @@ import { RenderedPreviewView as RenderedBody } from './RenderedPreviewView';
 interface Props {
   proposalId: string;
   systemName: string;
+  /** Told the box's state once known (ok | stale | none | unavailable | not_found)
+   *  so the card can decide whether the bound values are shown open. */
+  onTone?: (tone: string) => void;
 }
 
-export function PreviewBox({ proposalId, systemName }: Props) {
+export function PreviewBox({ proposalId, systemName, onTone }: Props) {
   const [resp, setResp] = useState<PreviewResponse | null>(null);
   const [failed, setFailed] = useState(false);
 
@@ -39,6 +42,13 @@ export function PreviewBox({ proposalId, systemName }: Props) {
   // "unavailable" on data-preview-status — the e2e harness only distinguishes
   // what it can act on (none/unavailable/not_found/ok/stale), not WHY the
   // fetch itself never answered.
+  useEffect(() => {
+    if (failed) { onTone?.('unavailable'); return; }
+    if (!resp) return;
+    const v = previewBoxView(resp, systemName);
+    onTone?.(resp.status === 'ok' ? (v.stale ? 'stale' : 'ok') : resp.status);
+  }, [resp, failed, systemName, onTone]);
+
   if (failed) {
     return (
       <div className="preview-box preview-box-unavailable" data-testid="approval-preview" data-preview-status="unavailable">
@@ -58,6 +68,14 @@ export function PreviewBox({ proposalId, systemName }: Props) {
 
   const view = previewBoxView(resp, systemName);
   const tone = resp.status === 'ok' ? (view.stale ? 'stale' : 'ok') : resp.status;
+
+  // No preview declared: the card shows what will be sent, open, right above —
+  // so this is only a short note, not a box competing with the content.
+  if (tone === 'none') {
+    return (
+      <p className="preview-note" data-testid="approval-preview" data-preview-status="none">{view.note}</p>
+    );
+  }
 
   return (
     <div className={`preview-box preview-box-${tone}`} data-testid="approval-preview" data-preview-status={tone}>

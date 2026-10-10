@@ -144,3 +144,17 @@ export function outcomeBoxView(outcome: OutcomeResponse, systemName: string): Ou
     note: `${systemName} refused it${detail ? `: ${detail}` : ''} — nothing was done. Ask the AI to request it again.`,
   };
 }
+
+
+/**
+ * Whether the card shows the bound values OPEN, as "What will be sent", rather
+ * than folded under "Details". Only a working preview (`ok`, `stale`) may push
+ * the bound values into the fold — it already shows the record from the system.
+ * Without one (no preview declared, unavailable, not found) the bound values ARE
+ * the content the person approves: hiding them would hide the action itself
+ * (found 2026-10-10 on a Gmail send: the email text sat folded under Details).
+ * While the preview is still loading the answer is not known yet: folded.
+ */
+export function boundValuesOpen(tone: string | null): boolean {
+  return tone !== null && tone !== 'loading' && tone !== 'ok' && tone !== 'stale';
+}
