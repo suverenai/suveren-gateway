@@ -3,8 +3,10 @@ import type { ThreadItem } from '../lib/thread-aggregator';
 import { formatTimeLeft } from '../lib/time-left';
 import { ProposalArgs } from './ProposalArgs';
 import { ProfileRail } from './ProfileRail';
+import { OutcomeBox } from './OutcomeBox';
 import { isTestSetupAction, profileIdentity } from '../lib/profile-identity';
-import type { ToolDisplay } from '../lib/approval-view';
+import { splitTool, systemDisplayName, type ToolDisplay } from '../lib/approval-view';
+import type { IntegrationManifest } from '../lib/sp-client';
 
 type CardStatus = 'pending' | 'committed' | 'executed' | 'rejected' | 'expired';
 
@@ -77,17 +79,21 @@ interface Props {
   proposalLinks?: ProposalLink[];
   /** Labels and display kinds for the arguments (lib/approval-view.ts). */
   toolDisplay?: ToolDisplay;
+  /** For the outcome box's "Refused by <System>" (lib/approval-view.ts systemDisplayName). */
+  manifests?: IntegrationManifest[];
   onApprove?: (id: string) => void;
   onReject?: (id: string) => void;
   resolving?: boolean;
 }
 
-export function ActionCard({ item, onApprove, onReject, resolving, proposalLinks, toolDisplay }: Props) {
+export function ActionCard({ item, onApprove, onReject, resolving, proposalLinks, toolDisplay, manifests }: Props) {
   const isProposal = item.kind === 'proposal';
   const status: CardStatus = isProposal ? item.proposal.status : 'executed';
   const toolFull = isProposal ? item.proposal.tool : item.receipt.action;
   const toolShort = shortToolName(toolFull);
   const destructive = isDestructive(toolFull);
+  const { integrationId } = splitTool(toolFull);
+  const systemName = systemDisplayName(integrationId, manifests);
 
   const args = isProposal ? item.proposal.toolArgs : null;
   const executionContext = isProposal ? item.proposal.executionContext : item.receipt.executionContext;
@@ -133,6 +139,14 @@ export function ActionCard({ item, onApprove, onReject, resolving, proposalLinks
           </span>
         </span>
       </div>
+
+      {/* AU4/AU5: the AS marks a proposal "executed" once the ticket is
+          issued, even when the connector then refused the call or the
+          record changed underneath it. Reads the local execution journal —
+          renders nothing when there is nothing beyond the AS's own status. */}
+      {isProposal && item.proposal.status === 'executed' && (
+        <OutcomeBox proposalId={item.proposal.id} systemName={systemName} />
+      )}
 
       {destructive && (
         <div style={{

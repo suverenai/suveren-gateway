@@ -83,15 +83,27 @@ function Value({ row, altText }: { row: ArgRow; altText?: string }) {
   }
 }
 
-export function ProposalArgs({ args, display }: { args: Record<string, unknown>; display?: ToolDisplay }) {
+interface ProposalArgsProps {
+  args: Record<string, unknown>;
+  display?: ToolDisplay;
+  /** Section heading. AU5 passes '' to omit it (e.g. nested inside its own
+   *  <details> fold, "Details (exactly what is bound)" — see
+   *  ApproverProposalCard). */
+  heading?: string;
+}
+
+export function ProposalArgs({ args, display, heading = 'Details' }: ProposalArgsProps) {
   const rows = argRows(args, display);
   if (rows.length === 0) return null;
   const altText = typeof args.altText === 'string' ? args.altText : undefined;
+
   return (
     <div style={{ marginBottom: '0.75rem' }}>
-      <div style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.35rem' }}>
-        Details
-      </div>
+      {heading && (
+        <div style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.35rem' }}>
+          {heading}
+        </div>
+      )}
       <dl style={{ display: 'grid', gridTemplateColumns: 'max-content 1fr', gap: '0.35rem 0.75rem', fontSize: '0.85rem', margin: 0 }}>
         {rows.map(row => (
           <Fragment key={row.key}>

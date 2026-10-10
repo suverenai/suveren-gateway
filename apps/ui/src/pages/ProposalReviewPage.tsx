@@ -296,6 +296,7 @@ export function ProposalReviewPage() {
                   key={item.id}
                   proposalLinks={item.kind === 'proposal' ? linksForTool(item.proposal.tool) : undefined}
                   toolDisplay={item.kind === 'proposal' ? toolDisplay[item.proposal.tool] : undefined}
+                  manifests={manifests}
                   item={item}
                   onApprove={(id) => handleResolve(id, 'commit')}
                   onReject={(id) => handleResolve(id, 'reject')}
@@ -312,6 +313,7 @@ export function ProposalReviewPage() {
                   onMessage={setApproverMessage}
                   proposalLinks={linksForTool(proposal.tool)}
                   toolDisplay={toolDisplay[proposal.tool]}
+                  manifests={manifests}
                 />
               ))}
             </div>
@@ -423,6 +425,7 @@ export function ProposalReviewPage() {
                   key={item.id}
                   proposalLinks={item.kind === 'proposal' ? linksForTool(item.proposal.tool) : undefined}
                   toolDisplay={item.kind === 'proposal' ? toolDisplay[item.proposal.tool] : undefined}
+                  manifests={manifests}
                   item={item}
                   onApprove={(id) => handleResolve(id, 'commit')}
                   onReject={(id) => handleResolve(id, 'reject')}

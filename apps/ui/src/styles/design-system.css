@@ -3818,3 +3818,42 @@ body.is-updating .simulation-banner {
 /* "Only you" — sign-in and Approvals (components/HumanOnlyNote.tsx). */
 .human-only-note { margin: 0.75rem 0 1rem; padding: 0.6rem 0.8rem; border-left: 3px solid var(--warning); background: var(--bg-elevated); font-size: 0.85rem; line-height: 1.45; color: var(--text-secondary); }
 .human-only-note strong { color: var(--text-primary); }
+
+/* ── AU5 approval card: headline, preview box, limit checks, outcome box ──
+   (work-plan.md "Added 2026-10-09"; approved mockup: temp/mockups/gateway-ux-v7.html §6)
+   components/PreviewBox.tsx, OutcomeBox.tsx, ApproverProposalCard.tsx. */
+.approval-headline { font-size: 1.05rem; font-weight: 600; color: var(--text-primary); margin-bottom: 0.6rem; }
+
+.preview-box {
+  background: var(--bg-main); border: 1px solid var(--border); border-left: 3px solid var(--accent);
+  border-radius: 0.5rem; padding: 0.75rem 0.875rem; margin-bottom: 0.75rem; font-size: 0.85rem;
+}
+.preview-box h4 { font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-tertiary); margin-bottom: 0.3rem; }
+.preview-box-loading { color: var(--text-tertiary); font-size: 0.82rem; }
+.preview-box-unavailable, .preview-box-not_found { border-left-color: var(--text-muted); }
+.preview-box-stale { border-left-color: var(--danger); background: var(--danger-subtle); }
+.preview-note { font-size: 0.78rem; color: var(--text-tertiary); margin-top: 0.4rem; line-height: 1.45; }
+.preview-stale { margin-top: 0.6rem; padding-top: 0.6rem; border-top: 1px solid var(--border); }
+.preview-stale h5 { font-size: 0.85rem; font-weight: 600; margin-bottom: 0.3rem; }
+
+.limit-checks { background: var(--bg-main); border: 1px solid var(--border); border-radius: 0.5rem; padding: 0.75rem 0.875rem; margin-bottom: 0.75rem; }
+.limit-checks h4 { font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-tertiary); margin-bottom: 0.35rem; }
+.limit-check-list { list-style: none; margin: 0; padding: 0; font-size: 0.85rem; display: flex; flex-direction: column; gap: 0.2rem; }
+.limit-check-list li { display: flex; gap: 0.45rem; }
+.limit-check-icon { font-weight: 700; flex-shrink: 0; }
+.limit-check-list li.ok .limit-check-icon { color: var(--success); }
+.limit-check-list li.bad .limit-check-icon { color: var(--danger); }
+
+.outcome-box { border: 1px solid var(--danger); background: var(--danger-subtle); border-radius: 0.5rem; padding: 0.75rem 0.875rem; margin: 0.5rem 0 0.75rem; }
+.outcome-box h4 { font-size: 0.85rem; font-weight: 600; color: var(--text-primary); margin-bottom: 0.3rem; }
+.outcome-note { font-size: 0.83rem; color: var(--text-secondary); line-height: 1.45; margin: 0; }
+
+.mandate-intent { margin-bottom: 0.75rem; font-size: 0.85rem; }
+.mandate-intent dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.35rem 0.75rem; margin: 0 0 0.5rem; }
+.mandate-intent dt { color: var(--text-tertiary); white-space: nowrap; align-self: start; }
+.mandate-intent dd { margin: 0; }
+.src-tag { font-size: 0.65rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; border-radius: 0.25rem; padding: 0.05rem 0.3rem; margin-left: 0.35rem; }
+.src-tag-local { color: var(--text-muted); border: 1px solid var(--border); }
+.intent-text { font-style: italic; color: var(--text-secondary); margin: 0; }
+.intent-text.intent-clamped { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.intent-toggle { margin-top: 0.3rem; }
