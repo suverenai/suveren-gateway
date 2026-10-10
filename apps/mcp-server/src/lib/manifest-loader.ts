@@ -205,6 +205,16 @@ export function invalidPreviewReason(toolName: string, entry: unknown): string |
       return `override "${toolName}".preview.version.field must be a non-empty string`;
     }
   }
+  if (p.fields !== undefined) {
+    if (!Array.isArray(p.fields)) {
+      return `override "${toolName}".preview.fields must be an array of field names`;
+    }
+    for (const [i, f] of p.fields.entries()) {
+      if (typeof f !== 'string' || f.length === 0) {
+        return `override "${toolName}".preview.fields[${i}] must be a non-empty string`;
+      }
+    }
+  }
   return null;
 }
 

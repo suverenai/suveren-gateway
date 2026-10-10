@@ -161,6 +161,9 @@ export type PreviewResponse =
       readAt: number;
       body: PreviewBody;
       version?: PreviewVersionInfo;
+      /** Manifest-declared `preview.fields` — the top-level fields to show
+       *  first, in that order (see tool-gating-types.ts ToolPreviewConfig). */
+      fields?: string[];
     };
 
 /** `GET /proposal-status/:id/outcome` — the local execution journal's latest entry. */

@@ -58,6 +58,17 @@ beforeAll(() => {
               tool: 'get_quote',
               args: { id: 'id', revision: 'revision' },
               version: { arg: 'revision', field: 'revision' },
+              fields: ['revision', 'net_total'],
+            },
+          },
+          // No `fields` declared — proves the key is OMITTED (never an
+          // invented empty array) when the manifest doesn't declare one.
+          convert_quote_to_order: {
+            executionMapping: { value: 'value' },
+            staticExecution: { action_type: 'order' },
+            preview: {
+              tool: 'get_quote',
+              args: { id: 'id' },
             },
           },
         },
@@ -135,6 +146,7 @@ describe('getToolPreviewConfig', () => {
       tool: 'get_quote',
       args: { id: 'id', revision: 'revision' },
       version: { arg: 'revision', field: 'revision' },
+      fields: ['revision', 'net_total'],
     });
   });
 
@@ -268,6 +280,10 @@ describe('buildInternalPreview', () => {
 
     expect(result.status).toBe('ok');
     expect((result as { version?: unknown }).version).toBeUndefined();
+    // The manifest's declared `fields` passes through untouched, on every
+    // "ok" branch — real-world follow-up (2026-10-10): the UI must not
+    // re-derive or guess this from anywhere else.
+    expect((result as { fields?: string[] }).fields).toEqual(['revision', 'net_total']);
     // Only ONE read happens — nothing to compare "current" against.
     expect(callTool).toHaveBeenCalledTimes(1);
   });
@@ -280,12 +296,13 @@ describe('buildInternalPreview', () => {
     });
 
     expect(result.status).toBe('ok');
+    expect((result as { fields?: string[] }).fields).toEqual(['revision', 'net_total']);
     const version = (result as { version?: { approved: unknown; current: unknown; stale: boolean; currentBody?: unknown } }).version;
     expect(version).toMatchObject({ field: 'revision', approved: 2, current: 2, stale: false });
     expect(version?.currentBody).toBeUndefined();
   });
 
-  it('version declared, STALE: current differs from approved, carries currentBody', async () => {
+  it('version declared, STALE: current differs from approved, carries currentBody and still passes fields through', async () => {
     const { integrationManager } = buildIntegrationManager({ currentRevision: 3 });
 
     const result = await buildInternalPreview(integrationManager, 'erp', 'send_quote', {
@@ -293,9 +310,19 @@ describe('buildInternalPreview', () => {
     });
 
     expect(result.status).toBe('ok');
+    expect((result as { fields?: string[] }).fields).toEqual(['revision', 'net_total']);
     const version = (result as { version?: { approved: unknown; current: unknown; stale: boolean; currentBody?: { structured?: Record<string, unknown> } } }).version;
     expect(version).toMatchObject({ field: 'revision', approved: 2, current: 3, stale: true });
     expect(version?.currentBody?.structured).toMatchObject({ revision: 3 });
+  });
+
+  it('a tool with no declared `fields` carries NONE through — omitted, never an invented empty array', async () => {
+    const { integrationManager } = buildIntegrationManager();
+
+    const result = await buildInternalPreview(integrationManager, 'erp', 'convert_quote_to_order', { id: 'Q1', value: 100 });
+
+    expect(result.status).toBe('ok');
+    expect('fields' in result).toBe(false);
   });
 
   it('passes through "unavailable"/"not_found" from the first read untouched', async () => {

@@ -10,7 +10,7 @@
  * them); no AI-written text is ever surfaced; a connector's own refusal text
  * is labelled as coming from the system, capped at 500 chars.
  */
-import { renderPreviewBody, type RenderedPreview } from './preview-render';
+import { diffPreviewBodies, renderPreviewBody, type RenderedPreview } from './preview-render';
 import type { OutcomeResponse, PreviewResponse } from './sp-client';
 
 const MESSAGE_CAP = 500;
@@ -27,8 +27,11 @@ export interface PreviewStaleView {
   heading: string;
   approvedLabel: string;
   currentLabel: string;
-  approvedRendered: RenderedPreview;
-  currentRendered: RenderedPreview;
+  /** Present when something besides the version field itself differs. */
+  approvedRendered?: RenderedPreview;
+  currentRendered?: RenderedPreview;
+  /** Present instead of the two renders when nothing else differs. */
+  unchangedNote?: string;
 }
 
 export interface PreviewBoxView {
@@ -79,7 +82,7 @@ export function previewBoxView(resp: PreviewResponse, systemName: string): Previ
       };
 
     case 'ok': {
-      const rendered = renderPreviewBody(resp.body);
+      const rendered = renderPreviewBody(resp.body, { fields: resp.fields });
       const view: PreviewBoxView = {
         heading: `From ${systemName}, before it runs`,
         note: `Read by the gateway with ${resp.tool} when you opened this card — the AI is not involved.`,
@@ -89,12 +92,17 @@ export function previewBoxView(resp: PreviewResponse, systemName: string): Previ
       if (version) {
         view.versionNote = `You approve ${version.field} ${version.approved}; if it changes, ${systemName} refuses it.`;
         if (version.stale) {
+          const diff = diffPreviewBodies(resp.body, version.currentBody, {
+            fields: resp.fields,
+            excludeKey: version.field,
+          });
           view.stale = {
             heading: `A newer ${version.field} exists (${version.current})`,
             approvedLabel: `${capitalize(version.field)} ${version.approved}`,
             currentLabel: `${capitalize(version.field)} ${version.current}`,
-            approvedRendered: rendered,
-            currentRendered: renderPreviewBody(version.currentBody),
+            ...(diff.unchanged
+              ? { unchangedNote: 'No visible change in the fields.' }
+              : { approvedRendered: diff.approved, currentRendered: diff.current }),
           };
         }
       }

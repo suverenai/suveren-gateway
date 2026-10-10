@@ -31,7 +31,15 @@ export type InternalPreviewResult =
   | { status: 'none' }
   | { status: 'unavailable'; reason: 'no_connector' | 'connector_error' | 'timeout'; message?: string }
   | { status: 'not_found'; message?: string }
-  | { status: 'ok'; integration: string; tool: string; body: PreviewBody; version?: PreviewVersionInfo };
+  | {
+      status: 'ok';
+      integration: string;
+      tool: string;
+      body: PreviewBody;
+      version?: PreviewVersionInfo;
+      /** Manifest-declared `preview.fields` — see tool-gating-types.ts in apps/mcp-server. */
+      fields?: string[];
+    };
 
 /** GET /proposal-status/:id/preview's response (always 200 unless auth/proposal fetch fails). */
 export type PreviewResponse =
@@ -45,6 +53,7 @@ export type PreviewResponse =
       readAt: number;
       body: PreviewBody;
       version?: PreviewVersionInfo;
+      fields?: string[];
     };
 
 /** GET /proposal-status/:id/outcome's response. */

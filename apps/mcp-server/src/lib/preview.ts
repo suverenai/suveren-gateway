@@ -219,6 +219,10 @@ export type InternalPreviewResult =
         stale: boolean;
         currentBody?: PreviewBody;
       };
+      /** The manifest's declared `preview.fields`, passed through untouched
+       *  so the UI's field order/priority comes from the same one place —
+       *  never re-declared or guessed on the wire. */
+      fields?: string[];
     };
 
 export async function buildInternalPreview(
@@ -234,8 +238,20 @@ export async function buildInternalPreview(
   const read1 = await readPreview(integrationManager, integrationId, preview.tool, mappedArgs);
   if (read1.status !== 'ok') return read1;
 
+  // One place builds every "ok" return from here on, so `fields` (the
+  // manifest's declared field priority — see tool-gating-types.ts) can
+  // never be forgotten on one of the several early-return branches below.
+  const ok = (extra: Partial<Extract<InternalPreviewResult, { status: 'ok' }>> = {}): InternalPreviewResult => ({
+    status: 'ok',
+    integration: integrationId,
+    tool: preview.tool,
+    body: read1.body,
+    ...(preview.fields ? { fields: preview.fields } : {}),
+    ...extra,
+  });
+
   if (!preview.version) {
-    return { status: 'ok', integration: integrationId, tool: preview.tool, body: read1.body };
+    return ok();
   }
 
   const approved = actionArgs[preview.version.arg];
@@ -243,7 +259,7 @@ export async function buildInternalPreview(
     // The action arg the manifest says carries the version is absent or the
     // wrong type at call time — a manifest/call mismatch, not a connector
     // fault. Degrade to "no version info" rather than fail the whole read.
-    return { status: 'ok', integration: integrationId, tool: preview.tool, body: read1.body };
+    return ok();
   }
 
   const { [preview.version.arg]: _omit, ...withoutVersion } = actionArgs;
@@ -252,20 +268,16 @@ export async function buildInternalPreview(
   if (read2.status !== 'ok' || read2.body.structured === undefined) {
     // Can't determine staleness — show the approved read without a version
     // comparison rather than failing the whole preview.
-    return { status: 'ok', integration: integrationId, tool: preview.tool, body: read1.body };
+    return ok();
   }
 
   const current = read2.body.structured[preview.version.field];
   if (typeof current !== 'string' && typeof current !== 'number') {
-    return { status: 'ok', integration: integrationId, tool: preview.tool, body: read1.body };
+    return ok();
   }
 
   const stale = String(current) !== String(approved);
-  return {
-    status: 'ok',
-    integration: integrationId,
-    tool: preview.tool,
-    body: read1.body,
+  return ok({
     version: {
       field: preview.version.field,
       approved,
@@ -273,5 +285,5 @@ export async function buildInternalPreview(
       stale,
       ...(stale ? { currentBody: read2.body } : {}),
     },
-  };
+  });
 }

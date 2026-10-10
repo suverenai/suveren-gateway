@@ -60,6 +60,26 @@ describe('invalidPreviewReason — the shared predicate', () => {
     expect(invalidPreviewReason('x', { preview: { tool: 'get_x', args: {}, version: { field: 'revision' } } })).toMatch(/preview\.version\.arg/);
     expect(invalidPreviewReason('x', { preview: { tool: 'get_x', args: {}, version: { arg: '', field: 'revision' } } })).toMatch(/preview\.version\.arg/);
   });
+
+  it('a well-formed `fields` allow-list is fine', () => {
+    expect(
+      invalidPreviewReason('x', { preview: { tool: 'get_x', args: {}, fields: ['number', 'lines', 'net_total'] } }),
+    ).toBeNull();
+  });
+
+  it('an empty `fields` array is fine (falls back to the no-declaration behaviour)', () => {
+    expect(invalidPreviewReason('x', { preview: { tool: 'get_x', args: {}, fields: [] } })).toBeNull();
+  });
+
+  it('rejects a non-array `fields`', () => {
+    expect(invalidPreviewReason('x', { preview: { tool: 'get_x', args: {}, fields: 'number' } })).toMatch(/preview\.fields/);
+    expect(invalidPreviewReason('x', { preview: { tool: 'get_x', args: {}, fields: { 0: 'number' } } })).toMatch(/preview\.fields/);
+  });
+
+  it('rejects a `fields` entry that is not a non-empty string', () => {
+    expect(invalidPreviewReason('x', { preview: { tool: 'get_x', args: {}, fields: ['number', 5] } })).toMatch(/preview\.fields\[1\]/);
+    expect(invalidPreviewReason('x', { preview: { tool: 'get_x', args: {}, fields: [''] } })).toMatch(/preview\.fields\[0\]/);
+  });
 });
 
 describe('invalidManifestPreviewReason', () => {
@@ -160,7 +180,7 @@ describe('real manifests — preview declarations are well-formed', () => {
     });
   }
 
-  it('erp.json declares the ERP3 preview for send_quote and convert_quote_to_order', () => {
+  it('erp.json declares the ERP3 preview for send_quote and convert_quote_to_order, with the fields that matter shown first', () => {
     const manifest = JSON.parse(readFileSync(join(MANIFESTS_DIR, 'erp.json'), 'utf8'));
     const overrides = manifest.toolGating.overrides;
     for (const tool of ['send_quote', 'convert_quote_to_order']) {
@@ -168,6 +188,7 @@ describe('real manifests — preview declarations are well-formed', () => {
         tool: 'get_quote',
         args: { id: 'id', revision: 'revision' },
         version: { arg: 'revision', field: 'revision' },
+        fields: ['number', 'revision', 'status', 'customer_id', 'lines', 'net_total', 'discount_pct', 'valid_until'],
       });
     }
   });

@@ -57,6 +57,18 @@ export interface ToolPreviewConfig {
    * in the preview tool's structured result that holds the CURRENT version.
    */
   version?: { arg: string; field: string };
+  /**
+   * Optional top-level field allow-list, shown first and in this order on
+   * the approval card's preview box, regardless of value (see
+   * lib/preview-render.ts in apps/ui). Added after a real erp get_quote
+   * answer (15 fields) showed that "first 6 in schema order" buries the
+   * fields that actually matter (e.g. the quote's lines, its net total)
+   * under "All fields" while surfacing id/status/currency. Without this,
+   * every field that HAS a value is shown instead — still no fixed count,
+   * but a connector with a field order that doesn't match what the approver
+   * needs to see first should declare one.
+   */
+  fields?: string[];
 }
 
 /**

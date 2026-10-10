@@ -4,11 +4,21 @@
  * Pins: schema titles become labels in the schema's OWN property order (not
  * the result's order); nested arrays/objects become compact rows, never raw
  * JSON; a third-party server's text-only JSON answer is treated as
- * structured; genuinely plain text is shown as text; the field list folds
- * past the limit but a value's own content never does.
+ * structured; genuinely plain text is shown as text; "All fields (n)" folds
+ * the complete field list but a value's own content never does.
+ *
+ * Real-world follow-up (2026-10-10): a real erp get_quote answer has 15
+ * fields. "First 6 in schema order" buried the ones that matter (lines, net
+ * total) under "All fields" while surfacing id/status/currency, and the
+ * stale-version compare showed the SAME first-6 on both sides — identical,
+ * because the actual change (the lines) was never in view. Fixed by:
+ *  (a) an optional manifest `fields` allow-list, shown first regardless of
+ *      value;
+ *  (b) without one, every field that HAS a value, no fixed count;
+ *  (c) the stale compare shows ONLY what differs, not a field slice.
  */
 import { describe, it, expect } from 'vitest';
-import { renderPreviewBody, parseJsonObject, DEFAULT_PREVIEW_FIELD_LIMIT } from './preview-render';
+import { renderPreviewBody, parseJsonObject, allPreviewFields, diffPreviewBodies } from './preview-render';
 import type { PreviewBody } from './sp-client';
 
 describe('renderPreviewBody — structured results', () => {
@@ -55,12 +65,6 @@ describe('renderPreviewBody — structured results', () => {
     expect(r.fields[1].label).toBe('Surprise');
   });
 
-  it('renders null/undefined as an em dash, never "null" or "undefined"', () => {
-    const body: PreviewBody = { structured: { notes: null } };
-    const r = renderPreviewBody(body);
-    expect(r.fields[0].value).toBe('—');
-  });
-
   it('renders a scalar array joined, never one row per primitive', () => {
     const body: PreviewBody = { structured: { tags: ['a', 'b', 'c'] } };
     const r = renderPreviewBody(body);
@@ -91,25 +95,81 @@ describe('renderPreviewBody — structured results', () => {
     expect(r.fields[0].value).toBe('Name: Hofer · Id: cust-1');
   });
 
-  it('folds fields past the limit into moreFields, keeping the total count', () => {
-    const structured = Object.fromEntries(Array.from({ length: 9 }, (_, i) => [`f${i}`, i]));
-    const r = renderPreviewBody({ structured });
-    expect(r.fields).toHaveLength(DEFAULT_PREVIEW_FIELD_LIMIT);
-    expect(r.moreFields).toHaveLength(9 - DEFAULT_PREVIEW_FIELD_LIMIT);
-    expect(r.totalFields).toBe(9);
-  });
-
-  it('respects a custom limit', () => {
-    const structured = { a: 1, b: 2, c: 3 };
-    const r = renderPreviewBody({ structured }, 1);
-    expect(r.fields).toHaveLength(1);
-    expect(r.moreFields).toHaveLength(2);
-  });
-
   it('ignores an empty structured object and falls through to text', () => {
     const r = renderPreviewBody({ structured: {}, text: 'fallback text' });
     expect(r.kind).toBe('text');
     expect(r.text).toBe('fallback text');
+  });
+});
+
+describe('renderPreviewBody — without declared fields: every field WITH a value, no fixed count', () => {
+  it('a 15-field answer shows every field that has a value — not a fixed 6', () => {
+    const structured = Object.fromEntries(Array.from({ length: 15 }, (_, i) => [`f${i}`, i]));
+    const r = renderPreviewBody({ structured });
+    expect(r.fields).toHaveLength(15);
+    expect(r.moreFields).toHaveLength(0);
+    expect(r.totalFields).toBe(15);
+  });
+
+  it('skips null, "", and [] — but keeps them counted and reachable under "All fields"', () => {
+    const body: PreviewBody = {
+      structured: { id: 'Q1', notes: null, tags: [], label: '', net_total: 480 },
+    };
+    const r = renderPreviewBody(body);
+    expect(r.fields.map((f) => f.key)).toEqual(['id', 'net_total']);
+    expect(r.moreFields.map((f) => f.key)).toEqual(['notes', 'tags', 'label']);
+    expect(r.totalFields).toBe(5);
+    // Still rendered with the honest em-dash once reached, never "null".
+    expect(r.moreFields.find((f) => f.key === 'notes')!.value).toBe('—');
+  });
+
+  it('0 and false are real values, not skipped like null/""/[]', () => {
+    const body: PreviewBody = { structured: { discount_pct: 0, sent: false } };
+    const r = renderPreviewBody(body);
+    expect(r.fields.map((f) => f.key)).toEqual(['discount_pct', 'sent']);
+    expect(r.moreFields).toEqual([]);
+  });
+
+  it('a nested object is always "has a value" (not checked for its own emptiness)', () => {
+    const body: PreviewBody = { structured: { customer: {} } };
+    const r = renderPreviewBody(body);
+    expect(r.fields.map((f) => f.key)).toEqual(['customer']);
+  });
+});
+
+describe('renderPreviewBody — with a declared `fields` allow-list', () => {
+  const GET_QUOTE_15_FIELDS: PreviewBody = {
+    structured: {
+      id: 'q-internal-1', number: 'Q-0001', customer_id: 'cust-1', status: 'draft',
+      currency: 'EUR', discount_pct: 0, net_total: 480, valid_until: '2026-11-08',
+      notes: null, created_at: '2026-10-09', updated_at: '2026-10-09', sent_at: null,
+      revision: 1, lines: [{ qty: 4, sku: 'CH-120' }], extra_field_no_one_declared: 'x',
+    },
+  };
+  const FIELDS = ['number', 'revision', 'status', 'customer_id', 'lines', 'net_total', 'discount_pct', 'valid_until'];
+
+  it('shows exactly the declared fields, in that order, regardless of value', () => {
+    const r = renderPreviewBody(GET_QUOTE_15_FIELDS, { fields: FIELDS });
+    expect(r.fields.map((f) => f.key)).toEqual(FIELDS);
+    expect(r.totalFields).toBe(15);
+    expect(r.moreFields).toHaveLength(15 - FIELDS.length);
+  });
+
+  it('the fields that matter (lines, net total) are no longer buried under "All fields"', () => {
+    const r = renderPreviewBody(GET_QUOTE_15_FIELDS, { fields: FIELDS });
+    expect(r.fields.map((f) => f.key)).toContain('lines');
+    expect(r.fields.map((f) => f.key)).toContain('net_total');
+    expect(r.moreFields.map((f) => f.key)).not.toContain('lines');
+  });
+
+  it('a declared field absent from the result is simply skipped, never invented', () => {
+    const r = renderPreviewBody({ structured: { number: 'Q-0001' } }, { fields: ['number', 'does_not_exist'] });
+    expect(r.fields.map((f) => f.key)).toEqual(['number']);
+  });
+
+  it('an empty `fields` array falls back to the no-declaration (has-a-value) behaviour', () => {
+    const r = renderPreviewBody({ structured: { a: 1, b: null } }, { fields: [] });
+    expect(r.fields.map((f) => f.key)).toEqual(['a']);
   });
 });
 
@@ -155,6 +215,98 @@ describe('renderPreviewBody — empty', () => {
   it('undefined body is empty', () => {
     const r = renderPreviewBody(undefined);
     expect(r.kind).toBe('empty');
+  });
+});
+
+describe('allPreviewFields', () => {
+  it('every top-level field, in schema order, no folding and no value-based filtering', () => {
+    const body: PreviewBody = {
+      structured: { b: 1, a: null },
+      outputSchema: { properties: { a: { title: 'A' }, b: { title: 'B' } } },
+    };
+    const rows = allPreviewFields(body);
+    expect(rows.map((r) => r.key)).toEqual(['a', 'b']);
+  });
+
+  it('empty for a non-object (text-only) body', () => {
+    expect(allPreviewFields({ text: 'plain prose' })).toEqual([]);
+  });
+
+  it('empty for an undefined body', () => {
+    expect(allPreviewFields(undefined)).toEqual([]);
+  });
+});
+
+describe('diffPreviewBodies — the stale-version compare shows ONLY what differs', () => {
+  const approved: PreviewBody = {
+    structured: {
+      id: 'q-1', number: 'Q-0001', revision: 1, status: 'draft',
+      net_total: 480, lines: [{ qty: 4, sku: 'CH-120' }],
+    },
+  };
+
+  it('a field that actually changed (lines) is in the diff; unchanged fields (id, number, status) are not', () => {
+    const current: PreviewBody = {
+      structured: {
+        id: 'q-1', number: 'Q-0001', revision: 2, status: 'draft',
+        net_total: 480, lines: [{ qty: 2, sku: 'HP-40' }],
+      },
+    };
+    const diff = diffPreviewBodies(approved, current, { excludeKey: 'revision' });
+    expect(diff.unchanged).toBe(false);
+    expect(diff.approved.fields.map((f) => f.key)).toEqual(['lines']);
+    expect(diff.current.fields.map((f) => f.key)).toEqual(['lines']);
+    expect(diff.approved.fields[0].lines![0]).toContain('CH-120');
+    expect(diff.current.fields[0].lines![0]).toContain('HP-40');
+  });
+
+  it('the excluded (version) field itself is never listed as a difference', () => {
+    const current: PreviewBody = { structured: { ...approved.structured, revision: 2 } };
+    const diff = diffPreviewBodies(approved, current, { excludeKey: 'revision' });
+    expect(diff.approved.fields.map((f) => f.key)).not.toContain('revision');
+    expect(diff.current.fields.map((f) => f.key)).not.toContain('revision');
+  });
+
+  it('"unchanged" when nothing differs besides the excluded field', () => {
+    const current: PreviewBody = { structured: { ...approved.structured, revision: 2 } };
+    const diff = diffPreviewBodies(approved, current, { excludeKey: 'revision' });
+    expect(diff.unchanged).toBe(true);
+    expect(diff.approved.fields).toEqual([]);
+    expect(diff.current.fields).toEqual([]);
+  });
+
+  it('a field present on only one side counts as a difference', () => {
+    const current: PreviewBody = { structured: { id: 'q-1', number: 'Q-0001', revision: 2, new_field: 'surprise' } };
+    const diff = diffPreviewBodies(
+      { structured: { id: 'q-1', number: 'Q-0001', revision: 1 } },
+      current,
+      { excludeKey: 'revision' },
+    );
+    expect(diff.unchanged).toBe(false);
+    expect(diff.current.fields.map((f) => f.key)).toContain('new_field');
+  });
+
+  it('respects a declared field order for the diff rows', () => {
+    const current: PreviewBody = {
+      structured: { ...approved.structured, revision: 2, status: 'sent', lines: [{ qty: 2, sku: 'HP-40' }] },
+    };
+    const diff = diffPreviewBodies(approved, current, {
+      excludeKey: 'revision',
+      fields: ['status', 'lines', 'net_total'],
+    });
+    expect(diff.approved.fields.map((f) => f.key)).toEqual(['status', 'lines']);
+  });
+
+  it('free-text (non-structured) bodies: identical text is "unchanged"', () => {
+    const diff = diffPreviewBodies({ text: 'same answer' }, { text: 'same answer' });
+    expect(diff.unchanged).toBe(true);
+  });
+
+  it('free-text bodies: different text shows both in full, never a field diff', () => {
+    const diff = diffPreviewBodies({ text: 'old answer' }, { text: 'new answer' });
+    expect(diff.unchanged).toBe(false);
+    expect(diff.approved.text).toBe('old answer');
+    expect(diff.current.text).toBe('new answer');
   });
 });
 

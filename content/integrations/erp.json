@@ -121,7 +121,8 @@
         "preview": {
           "tool": "get_quote",
           "args": { "id": "id", "revision": "revision" },
-          "version": { "arg": "revision", "field": "revision" }
+          "version": { "arg": "revision", "field": "revision" },
+          "fields": ["number", "revision", "status", "customer_id", "lines", "net_total", "discount_pct", "valid_until"]
         }
       },
       "convert_quote_to_order": {
@@ -137,7 +138,8 @@
         "preview": {
           "tool": "get_quote",
           "args": { "id": "id", "revision": "revision" },
-          "version": { "arg": "revision", "field": "revision" }
+          "version": { "arg": "revision", "field": "revision" },
+          "fields": ["number", "revision", "status", "customer_id", "lines", "net_total", "discount_pct", "valid_until"]
         }
       },
       "load_simulation": {

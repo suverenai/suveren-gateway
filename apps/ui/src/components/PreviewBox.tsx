@@ -105,12 +105,16 @@ export function PreviewBox({ proposalId, systemName }: Props) {
       {view.stale && (
         <div className="preview-stale">
           <h5>{view.stale.heading}</h5>
-          <dl style={{ display: 'grid', gridTemplateColumns: 'max-content 1fr', gap: '0.3rem 0.75rem', fontSize: '0.85rem', margin: '0.5rem 0 0' }}>
-            <dt>{view.stale.approvedLabel}</dt>
-            <dd><RenderedBody rendered={view.stale.approvedRendered} /></dd>
-            <dt>{view.stale.currentLabel}</dt>
-            <dd><RenderedBody rendered={view.stale.currentRendered} /></dd>
-          </dl>
+          {view.stale.unchangedNote ? (
+            <p className="preview-note">{view.stale.unchangedNote}</p>
+          ) : (
+            <dl style={{ display: 'grid', gridTemplateColumns: 'max-content 1fr', gap: '0.3rem 0.75rem', fontSize: '0.85rem', margin: '0.5rem 0 0' }}>
+              <dt>{view.stale.approvedLabel}</dt>
+              <dd><RenderedBody rendered={view.stale.approvedRendered!} /></dd>
+              <dt>{view.stale.currentLabel}</dt>
+              <dd><RenderedBody rendered={view.stale.currentRendered!} /></dd>
+            </dl>
+          )}
         </div>
       )}
     </div>
