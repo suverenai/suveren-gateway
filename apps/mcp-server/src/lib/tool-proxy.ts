@@ -426,6 +426,20 @@ export function createGatedToolHandler(
   integrationManager: IntegrationManager,
   state: SharedState,
 ): (args: Record<string, unknown>) => Promise<ToolResult> {
+  // DL1, defence in depth: a built-in's `internal` tool (its own preview
+  // helper, e.g. describe_mandate_proposal) is never registered with the MCP
+  // server in the first place (index.ts) — an agent cannot reach this call
+  // over MCP at all. This is a second, independent refusal at call time, so
+  // a bug in that registration filter — or any future caller that builds a
+  // handler directly, as this function's own tests do — can never let an
+  // agent invoke it. No ticket is requested.
+  if (tool.internal) {
+    return async () => ({
+      content: [{ type: 'text', text: `Refused: "${tool.namespacedName}" is internal and cannot be called directly. No ticket was requested.` }],
+      isError: true,
+    });
+  }
+
   // Simulation mode, defence in depth: integration-manager already refuses to
   // START a connector whose manifest carries no `simulation` marker while
   // simulation mode is on, so in the normal case this tool never exists to be

@@ -46,8 +46,11 @@ function crm(current = 2) {
   const tools = [
     { originalName: 'get_contact', namespacedName: 'crm__get_contact', integrationId: 'crm', description: '', inputSchema: { type: 'object' }, outputSchema: CONTACT_SCHEMA, gating: null },
   ] as unknown as DiscoveredTool[];
-  return { im: { getAllTools: () => tools, callTool } as unknown as IntegrationManager, callTool };
+  return { im: { getAllTools: () => tools, callTool, isBuiltin: () => false } as unknown as IntegrationManager, callTool };
 }
+
+/** A bare manager — enough for getToolPreviewConfig to read the real crm manifest (DL1: it now checks `isBuiltin` first). */
+const NOT_BUILTIN = { isBuiltin: () => false } as unknown as IntegrationManager;
 
 describe('crm.json — approval preview', () => {
   it('passes the loader’s preview check', () => {
@@ -60,7 +63,7 @@ describe('crm.json — approval preview', () => {
       update_deal: 'get_deal', complete_task: 'get_task',
     };
     for (const [tool, read] of Object.entries(expected)) {
-      expect(getToolPreviewConfig('crm', tool), tool).toMatchObject({
+      expect(getToolPreviewConfig(NOT_BUILTIN, 'crm', tool), tool).toMatchObject({
         tool: read, args: { id: 'id', revision: 'revision' }, version: { arg: 'revision', field: 'revision' },
       });
     }
@@ -68,7 +71,7 @@ describe('crm.json — approval preview', () => {
 
   it('activity, deal and task creation preview the linked contact, without a version', () => {
     for (const tool of ['log_activity', 'create_deal', 'create_task']) {
-      const p = getToolPreviewConfig('crm', tool);
+      const p = getToolPreviewConfig(NOT_BUILTIN, 'crm', tool);
       expect(p, tool).toMatchObject({ tool: 'get_contact', args: { id: 'contact_id' } });
       expect(p!.version, tool).toBeUndefined();
     }

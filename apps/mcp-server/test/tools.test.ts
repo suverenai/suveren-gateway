@@ -298,6 +298,10 @@ function mockIntegrationManager(readAgeDays: number | null = null): IntegrationM
       content: [{ type: 'text', text: 'Payment processed' }],
     }),
     getReadAgeDays: vi.fn().mockReturnValue(readAgeDays),
+    // DL1: computeSubmissionPreviewHash (tool-proxy.ts's proposal-submission
+    // paths) now asks isBuiltin before reading a manifest — none of these
+    // mock tools is one.
+    isBuiltin: () => false,
   } as unknown as IntegrationManager;
 }
 

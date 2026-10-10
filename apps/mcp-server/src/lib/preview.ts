@@ -48,8 +48,21 @@ export function capText(text: string | undefined, max = PREVIEW_MESSAGE_CAP): st
   return text.length > max ? text.slice(0, max) : text;
 }
 
-/** The manifest's declared preview for a tool, or undefined — never inferred. */
-export function getToolPreviewConfig(integrationId: string, toolName: string): ToolPreviewConfig | undefined {
+/**
+ * The declared preview for a tool, or undefined — never inferred. A connector
+ * tool's comes from its loaded manifest; a built-in has no manifest, so its
+ * declaration (DL1 — `create_mandate` / `set_agent_brief`'s own internal
+ * preview tools) is read from the registered `BuiltinIntegration` instead
+ * (`IntegrationManager.getBuiltinToolPreview`) — same shape either way.
+ */
+export function getToolPreviewConfig(
+  integrationManager: IntegrationManager,
+  integrationId: string,
+  toolName: string,
+): ToolPreviewConfig | undefined {
+  if (integrationManager.isBuiltin(integrationId)) {
+    return integrationManager.getBuiltinToolPreview(integrationId, toolName);
+  }
   const manifest = getManifest(integrationId);
   const overrides = manifest?.toolGating?.overrides ?? {};
   const entry = overrides[toolName] as { preview?: ToolPreviewConfig } | null | undefined;
@@ -168,9 +181,14 @@ export function hashPreviewBody(body: Pick<PreviewBody, 'structured' | 'text'>):
  *
  * Returns undefined when: the tool declares no preview; it declares one
  * WITH a version (the connector refuses a stale version itself — no
- * fallback needed, see executeCommitted); or the read didn't succeed —
+ * fallback needed, see executeCommitted); the read didn't succeed —
  * nothing to compare against later is better than snapshotting an error and
- * refusing every future execution because of it.
+ * refusing every future execution because of it; OR the tool is a built-in
+ * (DL1 — Interface contract, "previewHash is skipped for builtin previews"):
+ * `create_mandate` / `set_agent_brief` are CREATE actions, there is no
+ * document to go stale, and the proposal's own args already are "what will
+ * happen" — AU4's re-read fallback would just re-run the preview tool for
+ * nothing, so it never runs and no hash is ever stored for these.
  */
 export async function computeSubmissionPreviewHash(
   integrationManager: IntegrationManager,
@@ -178,7 +196,8 @@ export async function computeSubmissionPreviewHash(
   toolName: string,
   actionArgs: Record<string, unknown>,
 ): Promise<string | undefined> {
-  const preview = getToolPreviewConfig(integrationId, toolName);
+  if (integrationManager.isBuiltin(integrationId)) return undefined;
+  const preview = getToolPreviewConfig(integrationManager, integrationId, toolName);
   if (!preview || preview.version) return undefined;
   const mapped = mapPreviewArgs(preview, actionArgs);
   if (previewHasNoTarget(preview, mapped)) return undefined;
@@ -201,7 +220,7 @@ export async function previewChangedSinceSubmission(
   actionArgs: Record<string, unknown>,
   previousHash: string,
 ): Promise<boolean> {
-  const preview = getToolPreviewConfig(integrationId, toolName);
+  const preview = getToolPreviewConfig(integrationManager, integrationId, toolName);
   if (!preview) return true; // nothing to re-verify against — fail closed
   const mapped = mapPreviewArgs(preview, actionArgs);
   const read = await readPreview(integrationManager, integrationId, preview.tool, mapped);
@@ -246,7 +265,7 @@ export async function buildInternalPreview(
   toolName: string,
   actionArgs: Record<string, unknown>,
 ): Promise<InternalPreviewResult> {
-  const preview = getToolPreviewConfig(integrationId, toolName);
+  const preview = getToolPreviewConfig(integrationManager, integrationId, toolName);
   if (!preview) return { status: 'none' };
 
   const mappedArgs = mapPreviewArgs(preview, actionArgs);
