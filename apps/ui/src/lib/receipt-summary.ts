@@ -21,6 +21,7 @@
  *    to something dull and true rather than fluent and wrong.
  */
 
+import type { AgentProfile, ProfileBoundsField } from '@hap/core';
 import type { ExecutionReceipt, IntegrationManifest } from './sp-client';
 import { profileDisplayName } from './profile-display';
 
@@ -62,15 +63,18 @@ export function actionLabel(
  * The one line worth reading under the headline: the SCOPE this action ran
  * within — who it went to, which environment, which calendar.
  *
- * Built from `allowed_*` execution-context fields, which is where every profile
- * puts the values checked against the grant's context. Profile-agnostic by
- * construction: no field names, no per-connector cases. Profiles with no scope
- * dimension (records has none) correctly produce nothing rather than filler.
+ * Which execution-context keys ARE scope is read from the profile's scope
+ * schema (its field keys, declared there — not guessed from the key's shape:
+ * `charge`'s scope fields are `currency`/`action_type`, with no `allowed_`
+ * prefix at all). Without a profile (old grant, unknown id) there is nothing
+ * to read that from, so nothing is shown — never a guess from the key's shape.
  */
-export function scopeSummary(receipt: ExecutionReceipt): string {
+export function scopeSummary(receipt: ExecutionReceipt, profile?: AgentProfile | null): string {
+  const scopeFields = profile?.scopeSchema?.fields;
+  if (!scopeFields) return '';
   const parts: string[] = [];
   for (const [key, value] of Object.entries(receipt.executionContext ?? {})) {
-    if (!key.startsWith('allowed_')) continue;
+    if (!(key in scopeFields)) continue;
     const text = String(value ?? '').trim();
     if (!text) continue;
     parts.push(text.split(',').map(v => v.trim()).filter(Boolean).join(', '));
@@ -81,22 +85,47 @@ export function scopeSummary(receipt: ExecutionReceipt): string {
 /**
  * What the GRANT permits — as opposed to `scopeSummary`, which reports what
  * this one call touched. Built from the grant's local context values, which
- * exist only on this machine (the AS holds `context_hash` alone).
+ * exist only on this machine (the AS holds `scope_hash` alone).
+ *
+ * Labels come from the profile's scope schema `displayName` — never from
+ * stripping a presumed `allowed_` prefix off the key, which is not a rule
+ * every profile follows. Without the profile (old grant, unknown id) the
+ * plain key is shown: honest, never a guess at what it means.
  *
  * `action_type` is dropped: it is the bounds category, already carried by the
  * headline, and reads as noise next to the dimensions a person chose.
  */
-export function allowedSummary(context: Record<string, string | number> | undefined): string {
+export function allowedSummary(
+  context: Record<string, string | number> | undefined,
+  profile?: AgentProfile | null,
+): string {
   if (!context) return '';
+  const scopeFields = profile?.scopeSchema?.fields ?? {};
   const parts: string[] = [];
   for (const [key, value] of Object.entries(context)) {
     if (key === 'action_type') continue;
     const text = String(value ?? '').trim();
     if (!text) continue;
-    const label = key.replace(/^allowed_/, '').replace(/_/g, ' ');
+    const label = scopeFields[key]?.displayName ?? key;
     parts.push(`${label} ${text.split(',').map(v => v.trim()).filter(Boolean).join(', ')}`);
   }
   return parts.join(' · ');
+}
+
+/**
+ * Which action types a cumulative bound governs — `appliesTo` when declared;
+ * otherwise every action type (protocol.md → Bounds Schema rule 7: absence on
+ * a `cumulative_sum` bound, or on any bound in a pre-v0.7 profile, means "all").
+ * Never a field-name suffix. hap-core exports the same read as
+ * `boundActionTypes`, but its ESM bundle imports `node:crypto` at module level
+ * (see lib/frame.ts) and cannot be pulled into this browser bundle even for
+ * one unrelated function — so this is a deliberately minimal, browser-safe
+ * copy of just the `appliesTo` read, with none of hap-core's own legacy
+ * name-suffix fallback for pre-registry profiles (that fallback is itself the
+ * pattern this rule forbids, so it has no place in the UI's display code).
+ */
+function cumulativeAppliesTo(fieldDef: ProfileBoundsField): readonly string[] | undefined {
+  return fieldDef.appliesTo;
 }
 
 /**
@@ -104,15 +133,19 @@ export function allowedSummary(context: Record<string, string | number> | undefi
  * "2 calls". A count on its own says nothing about how close the agent is to
  * the ceiling the human set, which is the only reason to show it.
  *
- * Which bound governs is read from the bounds keys, preferring one that starts
- * with this receipt's `actionType` (a grant may carry several windows, e.g.
- * `release_daily_max` beside `write_daily_max`). Amount-shaped bounds pair with
- * the summed amount; everything else counts calls. With no matching bound the
- * raw count is shown rather than a fabricated denominator.
+ * Which bound governs is read from the profile's bounds schema: `boundType.kind`
+ * says whether a field is a window bound at all and whether it pairs with the
+ * summed amount (`cumulative_sum`) or the call count (`cumulative_count`);
+ * `boundType.window` says which window; `appliesTo` says which action types it
+ * governs — never a field-name suffix (HAP v0.7 Bounds Schema rule 3: a bound
+ * named `weekly_cap` with `window: "daily"` is a DAILY bound, whatever its name
+ * says). Without the profile there is no `boundType` to read, so no bound can
+ * be identified — the bare call count is shown rather than a guess.
  */
 export function usageSummary(
   receipt: ExecutionReceipt,
   bounds: Record<string, string | number> | undefined,
+  profile?: AgentProfile | null,
 ): string {
   const windows: Array<{ window: 'daily' | 'monthly'; label: string }> = [
     { window: 'daily', label: 'today' },
@@ -124,23 +157,35 @@ export function usageSummary(
       ? (receipt.executionContext.action_type as string)
       : undefined);
 
+  const boundsFields = profile?.boundsSchema?.fields;
+
   const parts: string[] = [];
   for (const { window, label } of windows) {
     const state = receipt.cumulativeState?.[window];
     if (!state) continue;
 
-    const suffix = `_${window}_max`;
-    const keys = Object.keys(bounds ?? {}).filter(k => k.endsWith(suffix));
-    // Prefer the bound for THIS action type; otherwise the only one present.
-    const key =
-      (actionType && keys.find(k => k.startsWith(`${actionType}_`))) ??
-      (keys.length === 1 ? keys[0] : undefined);
+    let chosen: { key: string; isAmount: boolean } | undefined;
+    if (boundsFields && bounds) {
+      const candidates = Object.entries(boundsFields).filter(([key, def]) => {
+        if (!(key in bounds)) return false;
+        const bt = def.boundType;
+        if (!bt || (bt.kind !== 'cumulative_sum' && bt.kind !== 'cumulative_count')) return false;
+        if (bt.window !== window) return false;
+        const governs = cumulativeAppliesTo(def);
+        return !governs || !actionType || governs.includes(actionType);
+      });
+      // Prefer one declared for THIS action type; otherwise the only one present.
+      const named = actionType
+        ? candidates.find(([, def]) => cumulativeAppliesTo(def)?.includes(actionType))
+        : undefined;
+      const pick = named ?? (candidates.length === 1 ? candidates[0] : undefined);
+      if (pick) chosen = { key: pick[0], isAmount: pick[1].boundType?.kind === 'cumulative_sum' };
+    }
 
-    const isAmount = key ? /^(amount|spend)_/.test(key) : false;
-    const used = isAmount ? state.amount : state.count;
-    const limit = key ? Number(bounds?.[key]) : NaN;
+    const used = chosen ? (chosen.isAmount ? state.amount : state.count) : undefined;
+    const limit = chosen ? Number(bounds?.[chosen.key]) : NaN;
 
-    if (key && Number.isFinite(limit)) {
+    if (chosen && Number.isFinite(limit)) {
       parts.push(`${used} of ${limit} ${label}`);
     } else {
       parts.push(`${state.count} ${state.count === 1 ? 'call' : 'calls'} ${label}`);

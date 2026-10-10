@@ -3,48 +3,10 @@
  * tool (see lib/approval-view.ts). Never truncates: the person approves exactly
  * what they can read here.
  */
-import { Fragment, useEffect, useState } from 'react';
-import type { AgentProfile } from '@hap/core';
-import { spClient } from '../lib/sp-client';
+import { Fragment } from 'react';
 import { argRows, profileFieldLines, type ArgRow, type ToolDisplay } from '../lib/approval-view';
 import { profileDisplayName } from '../lib/profile-display';
-
-const profileCache = new Map<string, Promise<AgentProfile | null>>();
-
-/** Full id or short name ("sales" → its newest version), cached per page load. */
-function loadProfile(ref: string): Promise<AgentProfile | null> {
-  let p = profileCache.get(ref);
-  if (!p) {
-    p = (async () => {
-      try {
-        let id = ref;
-        if (!ref.includes('@')) {
-          const all = await spClient.listProfiles();
-          const short = (x: string) => x.replace(/@.*$/, '').split('/').pop();
-          const matches = all.filter(x => short(x.id) === ref)
-            .sort((a, b) => (b.id.split('@')[1] ?? '').localeCompare(a.id.split('@')[1] ?? '', undefined, { numeric: true }));
-          if (!matches[0]) return null;
-          id = matches[0].id;
-        }
-        return (await spClient.getProfile(id)) as AgentProfile;
-      } catch {
-        return null;
-      }
-    })();
-    profileCache.set(ref, p);
-  }
-  return p;
-}
-
-function useProfile(ref: string | undefined): AgentProfile | null {
-  const [profile, setProfile] = useState<AgentProfile | null>(null);
-  useEffect(() => {
-    let live = true;
-    if (ref) void loadProfile(ref).then(p => { if (live) setProfile(p); });
-    return () => { live = false; };
-  }, [ref]);
-  return profile;
-}
+import { useProfile } from '../lib/profile-cache';
 
 const IMAGE_FIELD_RE = /^(image|img|photo|picture|thumbnail)(_?url)?$/i;
 function isImageArg(key: string, value: unknown): value is string {

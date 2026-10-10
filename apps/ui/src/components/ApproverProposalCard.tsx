@@ -22,7 +22,8 @@ import { ProposalArgs } from './ProposalArgs';
 import { ProfileRail } from './ProfileRail';
 import { isTestSetupAction, profileIdentity } from '../lib/profile-identity';
 import { isAutomatedBrowser, AUTOMATION_REFUSAL } from '../lib/automation';
-import type { ToolDisplay } from '../lib/approval-view';
+import { contextFieldLabel, type ToolDisplay } from '../lib/approval-view';
+import { useProfile } from '../lib/profile-cache';
 
 
 // NEVER truncate: approvers commit to exactly what they can read here, so
@@ -70,6 +71,7 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
 
   const toolShort = proposal.tool.split('__').pop() ?? proposal.tool;
   const boundsEntries = Object.entries(proposal.executionContext);
+  const profile = useProfile(proposal.profileId);
   const inspectLinks = resolveProposalLinks(proposalLinks, proposal.toolArgs);
   // Test setup: the delegation profile, OR a setup__* tool.
   const testSetup = profileIdentity(proposal.profileId).testSetup || isTestSetupAction(proposal.tool);
@@ -244,10 +246,19 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
       {/* Arguments */}
       <ProposalArgs args={proposal.toolArgs} display={toolDisplay} />
 
-      {/* Execution context */}
+      {/* Execution context — labelled from the profile's scope schema, never
+          guessed from the key's shape (AU1). */}
       {boundsEntries.length > 0 && (
         <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
-          {boundsEntries.map(([k, v]) => `${k}=${formatArgValue(v)}`).join(' · ')}
+          {boundsEntries.map(([k, v], i) => {
+            const { label, hint } = contextFieldLabel(k, profile);
+            return (
+              <span key={k}>
+                {i > 0 && ' · '}
+                <span title={hint}>{label}={formatArgValue(v)}</span>
+              </span>
+            );
+          })}
         </div>
       )}
 

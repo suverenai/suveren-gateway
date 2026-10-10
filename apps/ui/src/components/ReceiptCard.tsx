@@ -24,6 +24,7 @@ import {
   usageSummary,
 } from '../lib/receipt-summary';
 import { profileIdentity, isTestSetupAction } from '../lib/profile-identity';
+import { useProfile } from '../lib/profile-cache';
 import { ProfileRail } from './ProfileRail';
 import type {
   ExecutionReceipt,
@@ -80,9 +81,10 @@ export function ReceiptCard({
   formatDate,
   onOpenComplete,
 }: Props) {
-  const scope = scopeSummary(receipt);
-  const allowed = allowedSummary(localAuth?.context);
-  const usage = usageSummary(receipt, localAuth?.bounds ?? receipt.limits);
+  const profile = useProfile(receipt.profileId);
+  const scope = scopeSummary(receipt, profile);
+  const allowed = allowedSummary(localAuth?.context, profile);
+  const usage = usageSummary(receipt, localAuth?.bounds ?? receipt.limits, profile);
   const intent = localAuth?.intent;
   // Test setup: the delegation profile, OR a setup__* tool — both run only
   // while simulation mode is on (see lib/profile-identity.ts).
