@@ -125,9 +125,10 @@
         }
       },
       "complete_task": {
-        "executionMapping": {},
+        "executionMapping": {
+          "contact_type": "contact_type"
+        },
         "staticExecution": {
-          "contact_type": "customer",
           "action_type": "write"
         }
       },

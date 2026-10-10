@@ -14,7 +14,7 @@ const o = crm.toolGating.overrides as Record<string, { executionMapping?: Record
 
 describe('crm.json — the contact type is declared per call, not fixed', () => {
   it('writes on a contact map contact_type from the call and carry no fixed value', () => {
-    for (const t of ['create_contact', 'update_contact', 'delete_contact', 'restore_contact', 'convert_contact', 'log_activity', 'create_deal', 'update_deal', 'create_task']) {
+    for (const t of ['create_contact', 'update_contact', 'delete_contact', 'restore_contact', 'convert_contact', 'log_activity', 'create_deal', 'update_deal', 'create_task', 'complete_task']) {
       const g = o[t];
       expect(g, t).toBeDefined();
       expect(Object.values(g.executionMapping ?? {}), t).toContain('contact_type');
