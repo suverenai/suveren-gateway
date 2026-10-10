@@ -72,10 +72,13 @@ export function PreviewBox({ proposalId, systemName }: Props) {
 
   // The preview fetch itself failed (network/auth, not a connector answer).
   // Decision 2: the bound values are shown elsewhere on the card regardless —
-  // this box never blocks Approve/Reject, it only has less to say.
+  // this box never blocks Approve/Reject, it only has less to say. Counted as
+  // "unavailable" on data-preview-status — the e2e harness only distinguishes
+  // what it can act on (none/unavailable/not_found/ok/stale), not WHY the
+  // fetch itself never answered.
   if (failed) {
     return (
-      <div className="preview-box preview-box-unavailable">
+      <div className="preview-box preview-box-unavailable" data-testid="approval-preview" data-preview-status="unavailable">
         <h4>Preview not available</h4>
         <p className="preview-note">Preview not available on this gateway.</p>
       </div>
@@ -84,7 +87,7 @@ export function PreviewBox({ proposalId, systemName }: Props) {
 
   if (!resp) {
     return (
-      <div className="preview-box preview-box-loading" aria-busy="true">
+      <div className="preview-box preview-box-loading" data-testid="approval-preview" data-preview-status="loading" aria-busy="true">
         Reading from {systemName}…
       </div>
     );
@@ -94,7 +97,7 @@ export function PreviewBox({ proposalId, systemName }: Props) {
   const tone = resp.status === 'ok' ? (view.stale ? 'stale' : 'ok') : resp.status;
 
   return (
-    <div className={`preview-box preview-box-${tone}`}>
+    <div className={`preview-box preview-box-${tone}`} data-testid="approval-preview" data-preview-status={tone}>
       <h4>{view.heading}</h4>
       {view.rendered && <RenderedBody rendered={view.rendered} />}
       <p className="preview-note">{view.note}</p>
