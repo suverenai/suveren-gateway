@@ -3867,9 +3867,11 @@ body.is-updating .simulation-banner {
 .ticket-done-loading { border-color: var(--border); color: var(--text-tertiary); font-size: 0.82rem; }
 .ticket-done-off-device, .ticket-done-box[data-bound="none"] { border-color: var(--border); background: var(--bg-main); }
 .ticket-done-mismatch { border-color: var(--danger); background: var(--danger-subtle); }
+.ticket-done-unchecked { border-color: var(--border); background: var(--bg-main); }
 .ticket-done-note { font-size: 0.78rem; color: var(--text-tertiary); margin: 0.4rem 0 0; line-height: 1.45; }
 .ticket-done-note-ok { color: var(--success); }
 .ticket-done-note-bad { color: var(--danger); font-weight: 600; }
+.ticket-done-note-neutral { color: var(--text-tertiary); }
 .ticket-done-fields { display: grid; grid-template-columns: max-content 1fr; gap: 0.3rem 0.75rem; margin: 0.4rem 0 0; }
 .ticket-done-field-row { display: contents; }
 .ticket-done-field-row dt { color: var(--text-tertiary); white-space: nowrap; align-self: start; }

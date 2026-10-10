@@ -1,5 +1,5 @@
 /**
- * "What was done" (AU6) — the four ticket-bound states, the generic
+ * "What was done" (AU6) — the five ticket-bound states, the generic
  * bound-content renderer (reusing preview-render.ts), and the
  * no-bound-content fallback (profile-labelled executionContext).
  */
@@ -19,24 +19,28 @@ function profile(scopeFields: Record<string, unknown> = {}): AgentProfile {
 
 describe('ticketBoundStatus', () => {
   it('off-device wins over everything else — no local copy, nothing else to say', () => {
-    expect(ticketBoundStatus({ offDevice: true, boundContent: { a: 1 }, hashVerified: true })).toBe('off-device');
-    expect(ticketBoundStatus({ offDevice: true, boundContent: undefined, hashVerified: null })).toBe('off-device');
+    expect(ticketBoundStatus({ offDevice: true, boundContent: { a: 1 }, hasHashToCheck: true, hashVerified: true })).toBe('off-device');
+    expect(ticketBoundStatus({ offDevice: true, boundContent: undefined, hasHashToCheck: false, hashVerified: null })).toBe('off-device');
   });
 
   it('none: a local copy exists but carries no bound content', () => {
-    expect(ticketBoundStatus({ offDevice: false, boundContent: undefined, hashVerified: null })).toBe('none');
+    expect(ticketBoundStatus({ offDevice: false, boundContent: undefined, hasHashToCheck: false, hashVerified: null })).toBe('none');
   });
 
-  it('verified: bound content present and the hash check passed', () => {
-    expect(ticketBoundStatus({ offDevice: false, boundContent: { a: 1 }, hashVerified: true })).toBe('verified');
+  it('verified: bound content present, a hash check ran, and it passed', () => {
+    expect(ticketBoundStatus({ offDevice: false, boundContent: { a: 1 }, hasHashToCheck: true, hashVerified: true })).toBe('verified');
   });
 
-  it('mismatch: bound content present but the hash check failed', () => {
-    expect(ticketBoundStatus({ offDevice: false, boundContent: { a: 1 }, hashVerified: false })).toBe('mismatch');
+  it('mismatch: bound content present, a hash check ran, and it FAILED', () => {
+    expect(ticketBoundStatus({ offDevice: false, boundContent: { a: 1 }, hasHashToCheck: true, hashVerified: false })).toBe('mismatch');
   });
 
-  it('mismatch: bound content present but there was nothing to check against (never silently "verified")', () => {
-    expect(ticketBoundStatus({ offDevice: false, boundContent: { a: 1 }, hashVerified: null })).toBe('mismatch');
+  it('unchecked (2026-10-10 correction): bound content present but no signed hash/binding to check against at all — NEVER "mismatch" (that would claim a check failed when none ran)', () => {
+    expect(ticketBoundStatus({ offDevice: false, boundContent: { a: 1 }, hasHashToCheck: false, hashVerified: null })).toBe('unchecked');
+  });
+
+  it('unchecked, not verified, when there is bound content but a string/object instead of a real hash would be — still gated on hasHashToCheck alone', () => {
+    expect(ticketBoundStatus({ offDevice: false, boundContent: 'free text', hasHashToCheck: false, hashVerified: null })).toBe('unchecked');
   });
 });
 

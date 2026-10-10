@@ -8,8 +8,9 @@
  * then — only when there IS bound content and a signed `contentHash` to check
  * it against — recomputes the hash locally (lib/content-hash.ts, a browser
  * mirror of hap-core's content-binding.ts) and compares. Never claims
- * "bound by hash" without that check passing; a mismatch is shown in red,
- * never silently treated as verified.
+ * "bound by hash" without that check passing, and never calls it a mismatch
+ * when no check could run at all (2026-10-10 correction) — that is `unchecked`,
+ * a neutral state, not an alarm.
  *
  * No AI text, no lookups in another system: everything here is either the
  * ticket's own signed content, or this device's local evidence of it.
@@ -31,6 +32,11 @@ export function TicketWhatWasDone({ receipt, profile }: Props) {
   const [entry, setEntry] = useState<LocalReceiptEntry | null | undefined>(undefined);
   const [hashVerified, setHashVerified] = useState<boolean | null>(null);
 
+  // Whether the ticket even carries a signed hash/binding to check against —
+  // read once per receipt, not async, so `unchecked` never needs to wait on
+  // anything (unlike `verified`/`mismatch`, which need the recomputed hash).
+  const hasHashToCheck = Boolean(receipt.contentHash && receipt.contentBinding);
+
   useEffect(() => {
     let live = true;
     setEntry(undefined);
@@ -51,9 +57,12 @@ export function TicketWhatWasDone({ receipt, profile }: Props) {
 
       let verified: boolean | null = null;
       const boundContent = found?.entry.boundContent;
-      if (boundContent !== undefined && receipt.contentHash && receipt.contentBinding) {
+      // Only attempt the check when there IS a hash to check against — a
+      // ticket with bound content but no signed hash (hasHashToCheck false)
+      // is `unchecked`, computed without needing this async step at all.
+      if (boundContent !== undefined && hasHashToCheck) {
         try {
-          const recomputed = await computeContentHashBrowser(receipt.contentBinding.kind, boundContent);
+          const recomputed = await computeContentHashBrowser(receipt.contentBinding!.kind, boundContent);
           verified = recomputed === receipt.contentHash;
         } catch {
           // Could not even recompute (e.g. the archived shape no longer
@@ -70,7 +79,7 @@ export function TicketWhatWasDone({ receipt, profile }: Props) {
     })();
 
     return () => { live = false; };
-  }, [receipt.id, receipt.contentHash, receipt.contentBinding]);
+  }, [receipt.id, receipt.contentHash, receipt.contentBinding, hasHashToCheck]);
 
   if (entry === undefined) {
     // Transitional — not one of the four states the owner's e2e asserts on;
@@ -85,7 +94,7 @@ export function TicketWhatWasDone({ receipt, profile }: Props) {
 
   const offDevice = entry === null;
   const boundContent = entry?.entry.boundContent;
-  const status: TicketBoundStatus = ticketBoundStatus({ offDevice, boundContent, hashVerified });
+  const status: TicketBoundStatus = ticketBoundStatus({ offDevice, boundContent, hasHashToCheck, hashVerified });
 
   if (status === 'off-device') {
     return (
@@ -117,24 +126,27 @@ export function TicketWhatWasDone({ receipt, profile }: Props) {
   }
 
   const rendered = boundContentView(boundContent, receipt.contentBinding?.fields);
+  const toneClass = status === 'verified' ? 'ticket-done-verified' : status === 'mismatch' ? 'ticket-done-mismatch' : 'ticket-done-unchecked';
 
   return (
-    <div
-      className={`ticket-done-box ${status === 'verified' ? 'ticket-done-verified' : 'ticket-done-mismatch'}`}
-      data-testid="ticket-what-was-done"
-      data-bound={status}
-    >
+    <div className={`ticket-done-box ${toneClass}`} data-testid="ticket-what-was-done" data-bound={status}>
       <h4>
-        What was done <span className="src-tag src-tag-sealed">sealed</span>
+        What was done{status !== 'unchecked' && <> <span className="src-tag src-tag-sealed">sealed</span></>}
       </h4>
       <RenderedPreviewView rendered={rendered} />
-      {status === 'verified' ? (
+      {status === 'verified' && (
         <p className="ticket-done-note ticket-done-note-ok">
           &#10003; This exact content is bound by hash — any change after the fact would break the ticket.
         </p>
-      ) : (
+      )}
+      {status === 'mismatch' && (
         <p className="ticket-done-note ticket-done-note-bad">
           &#9888; This content does NOT match the ticket's signed hash — it may have been altered since archiving.
+        </p>
+      )}
+      {status === 'unchecked' && (
+        <p className="ticket-done-note ticket-done-note-neutral">
+          This content is kept on this device, but the ticket carries no content hash — it cannot be checked against the ticket.
         </p>
       )}
     </div>

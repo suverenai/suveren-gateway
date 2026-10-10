@@ -5,13 +5,21 @@
  * (components/TicketWhatWasDone.tsx) only renders what these functions
  * return and runs the one async hash check (lib/content-hash.ts).
  *
- * Four states, matching the mockup + the owner's follow-up:
+ * Five states (2026-10-10 correction: a real receipt can carry bound
+ * content with no signed hash to check it against — that is NOT the same
+ * claim as a check that ran and failed, and showing it as "mismatch" would
+ * be a false alarm: it says a check failed when none ran):
  *  - `verified`   — the archived `boundContent` recomputes to the ticket's
  *                   own signed `contentHash`. Only state that may say "this
  *                   exact content is bound by hash".
- *  - `mismatch`   — bound content exists but does NOT recompute to the
- *                   signed hash (or there is no hash to check against) —
- *                   shown in red, NEVER claimed as bound.
+ *  - `mismatch`   — a hash check DID run (a signed `contentHash` and
+ *                   `contentBinding` both exist) and the recomputed hash
+ *                   does NOT match — shown in red, the only state that may
+ *                   say the content looks altered.
+ *  - `unchecked`  — bound content exists but the ticket carries no signed
+ *                   hash/binding to check it against at all — content is
+ *                   shown, neutrally, with neither a bound claim nor an
+ *                   alarm.
  *  - `none`       — the ticket carries no bound content at all (the profile
  *                   declares no content_binding, or this action type is
  *                   outside it) — show the checked values instead.
@@ -22,20 +30,27 @@ import type { AgentProfile } from '@hap/core';
 import { contextFieldLabel } from './approval-view';
 import { renderPreviewBody, type RenderedPreview } from './preview-render';
 
-export type TicketBoundStatus = 'verified' | 'mismatch' | 'none' | 'off-device';
+export type TicketBoundStatus = 'verified' | 'mismatch' | 'unchecked' | 'none' | 'off-device';
 
 /**
- * The status to show, given what is already known. `hashVerified` is the
- * async check's result — `null` when there was nothing to check (no bound
- * content, so the question doesn't arise) or not yet computed.
+ * The status to show, given what is already known.
+ *
+ * `hasHashToCheck` is whether the ticket even carries a signed `contentHash`
+ * + `contentBinding` to check against — false means no check was possible,
+ * which is `unchecked`, never `mismatch` (that would claim a check failed
+ * when none ran). `hashVerified` is the async check's result, read only
+ * when `hasHashToCheck` is true; callers are expected to wait for it to
+ * resolve before calling this (components/TicketWhatWasDone.tsx does).
  */
 export function ticketBoundStatus(opts: {
   offDevice: boolean;
   boundContent: Record<string, unknown> | string | undefined;
+  hasHashToCheck: boolean;
   hashVerified: boolean | null;
 }): TicketBoundStatus {
   if (opts.offDevice) return 'off-device';
   if (opts.boundContent === undefined) return 'none';
+  if (!opts.hasHashToCheck) return 'unchecked';
   return opts.hashVerified === true ? 'verified' : 'mismatch';
 }
 
