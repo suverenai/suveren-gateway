@@ -36,23 +36,80 @@
  *    hover (title attribute) — display only; integers and strings are never
  *    touched, and this never reaches the bound "Details" values, which stay
  *    exact (see ProposalArgs.tsx, unaffected by this module).
+ *
+ *  DL4 (Delegation outside simulation, temp/briefs/dl-delegation-brief.md —
+ *  the two internal preview tools behind "What you would sign" / "Change"):
+ *  — a top-level field that is a plain object whose OWN values are every one
+ *    scalar (string/number/boolean/null — never itself an object or array)
+ *    renders as a labelled SUB-LIST: one row per key, the key IS that row's
+ *    label (schema `title`, else humanized) — not the one-line compact row
+ *    above. Supersedes the prior pinned behaviour for this exact shape (a
+ *    plain object of scalars at the top level always used to compact to one
+ *    line); an object with any non-scalar value still compacts as before —
+ *    unaffected, and so is a nested object compacted inside an ARRAY item's
+ *    line (compactObjectLine), which this rule never reaches.
+ *  — a top-level array whose every element is a STRING renders as a LIST
+ *    (one line per string, via the same `lines` an array-of-objects already
+ *    uses) rather than comma-joined on one line — a sentence-shaped value
+ *    ("Sales is allowed by your Delegation mandate") read far worse joined
+ *    with others than a short tag does. An array of any other scalar type
+ *    (numbers, booleans, a mix) keeps the comma-joined compact value,
+ *    unchanged.
+ *  — a top-level STRING field whose schema property declares
+ *    `contentMediaType: "text/x-diff"` renders line by line as `diffLines`
+ *    (kind `'add'`/`'remove'`/`'context'` from the line's own leading `+`/
+ *    `-`), for a unified diff of two texts (e.g. the proposed agent brief
+ *    against the current one) — never a wall of raw diff text.
+ *  — a schema property's own `description` carries through to the row as
+ *    `description`, shown as a small note beside the label (used for
+ *    "Written by the AI — becomes your words when you sign" on `intent`) —
+ *    independent of the three rules above, applies to any field.
  */
 import { humanizeKey } from './approval-view';
 import type { PreviewBody } from './sp-client';
 
+/** One row of a labelled sub-list (DL4) — a nested object field whose own
+ *  values are every one scalar. `label` is the nested key's own label
+ *  (schema `title`, else humanized), never the outer field's. */
+export interface PreviewSubRow {
+  key: string;
+  label: string;
+  value: string;
+  valueTitle?: string;
+}
+
+/** One line of a `text/x-diff` field (DL4), classified by its own leading
+ *  character — `'+'` → add, `'-'` → remove (but not the unified-diff file
+ *  headers `+++`/`---`, which are context), everything else → context. */
+export interface PreviewDiffLine {
+  text: string;
+  kind: 'add' | 'remove' | 'context';
+}
+
 export interface PreviewFieldRow {
   key: string;
   label: string;
-  /** Scalar or plain-object value, rendered as one line. Absent when `lines` is set. */
+  /** Scalar or plain-object value, rendered as one line. Absent when `lines`,
+   *  `sublist`, or `diffLines` is set — the four are mutually exclusive. */
   value?: string;
   /** Hover text for `value` — the same line with every number at full
    *  precision. Present only when rounding actually changed something. */
   valueTitle?: string;
-  /** Array-of-objects: one compact line per item (never raw JSON). */
+  /** Array-of-objects, or (DL4) an array of strings: one line per item
+   *  (never raw JSON, never comma-joined). */
   lines?: string[];
   /** Hover text per entry of `lines`, same length when present; an entry is
    *  undefined where that line needed no correction. */
   lineTitles?: Array<string | undefined>;
+  /** DL4: a nested object field whose own values are every one scalar — one
+   *  row per key, instead of `value`'s one-line compact row. */
+  sublist?: PreviewSubRow[];
+  /** DL4: a string field declared `contentMediaType: "text/x-diff"` — one
+   *  entry per line of the diff text, instead of `value`. */
+  diffLines?: PreviewDiffLine[];
+  /** DL4: the schema property's own `description`, shown as a small note
+   *  beside the label — independent of which of the above the row uses. */
+  description?: string;
 }
 
 export interface RenderedPreview {
@@ -81,6 +138,10 @@ interface JsonSchemaProperty {
   title?: string;
   properties?: Record<string, JsonSchemaProperty>;
   items?: JsonSchemaProperty;
+  /** DL4: `"text/x-diff"` switches a string field to line-by-line diff rendering. */
+  contentMediaType?: string;
+  /** DL4: shown as a small note beside the label. */
+  description?: string;
 }
 type JsonSchema = { properties?: Record<string, JsonSchemaProperty> };
 
@@ -136,10 +197,30 @@ function compactObjectLine(
     .join(' · ');
 }
 
-function renderValue(value: unknown, fieldSchema: JsonSchemaProperty | undefined): Pick<PreviewFieldRow, 'value' | 'valueTitle' | 'lines' | 'lineTitles'> {
+/**
+ * DL4: one line per entry of a unified diff, classified by its own leading
+ * character — the file-header lines a real unified diff may carry (`+++`/
+ * `---`) are context, never mistaken for a single changed line.
+ */
+function diffTextLines(text: string): PreviewDiffLine[] {
+  return text.split('\n').map((line) => {
+    if (line.startsWith('+') && !line.startsWith('+++')) return { text: line, kind: 'add' };
+    if (line.startsWith('-') && !line.startsWith('---')) return { text: line, kind: 'remove' };
+    return { text: line, kind: 'context' };
+  });
+}
+
+type RenderedValue = Pick<PreviewFieldRow, 'value' | 'valueTitle' | 'lines' | 'lineTitles' | 'sublist' | 'diffLines'>;
+
+function renderValue(value: unknown, fieldSchema: JsonSchemaProperty | undefined): RenderedValue {
   if (Array.isArray(value)) {
     if (value.length === 0) return { value: '—' };
     if (value.every((x) => !isPlainObject(x) && !Array.isArray(x))) {
+      // DL4: a list of sentences reads far worse comma-joined than a short
+      // tag does — every element a STRING renders one per line instead.
+      if (value.every((x) => typeof x === 'string')) {
+        return { lines: value as string[] };
+      }
       const display = value.map((x) => formatScalar(x)).join(', ');
       const exact = value.map((x) => formatScalar(x, true)).join(', ');
       return exact === display ? { value: display } : { value: display, valueTitle: exact };
@@ -151,9 +232,31 @@ function renderValue(value: unknown, fieldSchema: JsonSchemaProperty | undefined
     return lineTitles.some((t) => t !== undefined) ? { lines: displayLines, lineTitles } : { lines: displayLines };
   }
   if (isPlainObject(value)) {
-    const display = compactObjectLine(value, fieldSchema?.properties, false);
-    const exact = compactObjectLine(value, fieldSchema?.properties, true);
+    // DL4: when every one of THIS object's own values is itself scalar, show
+    // a labelled sub-list (one row per key) instead of compacting to one
+    // line — a nested object whose values are objects/arrays still compacts
+    // (unchanged), and this never applies inside an array item's own compact
+    // line (compactObjectLine, used only there).
+    const declaredProps = fieldSchema?.properties;
+    const keys = declaredProps ? Object.keys(declaredProps).filter((k) => k in value) : Object.keys(value);
+    if (keys.length > 0 && keys.every((k) => !isPlainObject(value[k]) && !Array.isArray(value[k]))) {
+      const sublist: PreviewSubRow[] = keys.map((k) => {
+        const v = value[k];
+        const label = declaredProps?.[k]?.title ?? humanizeKey(k);
+        const display = formatScalar(v);
+        const exact = formatScalar(v, true);
+        return exact === display ? { key: k, label, value: display } : { key: k, label, value: display, valueTitle: exact };
+      });
+      return { sublist };
+    }
+    const display = compactObjectLine(value, declaredProps, false);
+    const exact = compactObjectLine(value, declaredProps, true);
     return exact === display ? { value: display } : { value: display, valueTitle: exact };
+  }
+  // DL4: a string declared `contentMediaType: "text/x-diff"` renders line by
+  // line instead of as one block of text.
+  if (typeof value === 'string' && fieldSchema?.contentMediaType === 'text/x-diff') {
+    return { diffLines: diffTextLines(value) };
   }
   const display = formatScalar(value);
   const exact = formatScalar(value, true);
@@ -207,7 +310,9 @@ export function allPreviewFields(body: PreviewBody | undefined): PreviewFieldRow
     if (!(key in obj)) continue;
     const fieldSchema = props[key];
     const label = fieldSchema?.title ?? humanizeKey(key);
-    rows.push({ key, label, ...renderValue(obj[key], fieldSchema) });
+    const row: PreviewFieldRow = { key, label, ...renderValue(obj[key], fieldSchema) };
+    if (fieldSchema?.description) row.description = fieldSchema.description;
+    rows.push(row);
   }
   return rows;
 }
@@ -262,7 +367,10 @@ export interface PreviewDiff {
 
 function rowKey(r: PreviewFieldRow | undefined): string {
   if (!r) return '';
-  return r.lines ? `lines:${JSON.stringify(r.lines)}` : `value:${r.value ?? ''}`;
+  if (r.lines) return `lines:${JSON.stringify(r.lines)}`;
+  if (r.sublist) return `sublist:${JSON.stringify(r.sublist.map((s) => [s.key, s.value]))}`;
+  if (r.diffLines) return `diffLines:${JSON.stringify(r.diffLines)}`;
+  return `value:${r.value ?? ''}`;
 }
 
 function toRendered(rows: PreviewFieldRow[]): RenderedPreview {
