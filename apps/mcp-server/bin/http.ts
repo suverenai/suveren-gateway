@@ -36,6 +36,7 @@ import { agentAccess, bindRefusal, resolveAgentToken, resolveBindHost } from '..
 import { readPairing } from '../src/lib/as-pairing';
 import { loadProfiles } from '../src/lib/profile-loader';
 import { loadManifests, getAllManifests, getManifest } from '../src/lib/manifest-loader';
+import { buildInternalPreview } from '../src/lib/preview';
 import { registerBuiltins } from '../src/lib/builtins';
 import { buildMandateBrief } from '../src/lib/mandate-brief';
 import { decodeMandateBlob } from '@hap/core';
@@ -433,6 +434,45 @@ app.post('/internal/resync-gates', internalOnly, async (_req: Request, res: Resp
   }
 
   res.json({ ok: true, synced, orphaned });
+});
+
+/**
+ * AU3 — the approver's pre-approval read. Gateway-internal only (decision 1,
+ * temp/briefs/au3-au5-brief.md): never exposed to an MCP client, no ticket,
+ * no read gate. `tool` is the ACTION's namespaced tool name (as carried on
+ * the proposal); the manifest alone decides which read tool (if any) may be
+ * called for it — the control plane can never name an arbitrary tool here.
+ *
+ * Recorded locally with NO content (time, proposal id, integration, preview
+ * tool, status) — see preview-log.ts.
+ */
+app.post('/internal/preview', internalOnly, async (req: Request, res: Response) => {
+  const { proposalId, tool, toolArgs } = req.body as {
+    proposalId?: string;
+    tool?: string;
+    toolArgs?: Record<string, unknown>;
+  };
+  if (!proposalId || !tool || typeof toolArgs !== 'object' || toolArgs === null) {
+    res.status(400).json({ error: 'Missing proposalId, tool, or toolArgs' });
+    return;
+  }
+  const sep = tool.indexOf('__');
+  if (sep < 0) {
+    res.status(400).json({ error: `Invalid tool name: ${tool}` });
+    return;
+  }
+  const integrationId = tool.slice(0, sep);
+  const toolName = tool.slice(sep + 2);
+
+  const result = await buildInternalPreview(integrationManager, integrationId, toolName, toolArgs);
+  state.previewLog.record({
+    ts: Date.now(),
+    proposalId,
+    integrationId,
+    tool: toolName,
+    status: result.status,
+  });
+  res.json(result);
 });
 
 // ─── Integration management endpoints ──────────────────────────────────────
