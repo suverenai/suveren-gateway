@@ -293,6 +293,11 @@ export interface IdentityDisclosure {
   verified_at: number | null;
 }
 
+/** RJ1/RJ2 — the three ways a reject can resolve (2026-10-11 "Reject or ask
+ *  for a change" brief, decisions 1-2). Absent on an on-disk row ⇒
+ *  'rejected' (every row predating this never had an outcome). */
+export type ProposalOutcome = 'rejected' | 'change_needed' | 'replaced';
+
 export interface Proposal {
   id: string;
   authorizationId: string;
@@ -300,7 +305,7 @@ export interface Proposal {
   path: string;
   pendingDomains: string[];
   committedBy: Record<string, { userId: string; at: number }>;
-  rejectedBy: { domain: string; userId: string; at: number } | null;
+  rejectedBy: { domain: string; userId: string; at: number; outcome?: ProposalOutcome; note?: string } | null;
   tool: string;
   toolArgs: Record<string, unknown>;
   executionContext: Record<string, string | number>;
@@ -311,7 +316,7 @@ export interface Proposal {
   // Phase 6 fields
   pendingApprovers?: string[];
   approvedBy?: Record<string, { receiptId: string; at: number }>;
-  approverRejectedBy?: { userId: string; reason?: string; at: number };
+  approverRejectedBy?: { userId: string; reason?: string; at: number; outcome?: ProposalOutcome; note?: string };
   createdBy?: string;
 }
 
@@ -1347,10 +1352,22 @@ class SPClient {
     return mergeProposals(lists);
   }
 
-  async resolveProposal(id: string, action: 'commit' | 'reject', domain: string): Promise<{ status: string }> {
+  /**
+   * RJ2/RJ5 — `outcome`/`note` are additive (decisions 1-2): omitted, a
+   * reject behaves exactly as before (AS default: `outcome: 'rejected'`).
+   * `note` is required by the AS only when `outcome: 'change_needed'`, and
+   * rejected only with `outcome: 'change_needed'` there — see
+   * `POST /api/proposals/:id/resolve` in the brief's contract.
+   */
+  async resolveProposal(
+    id: string,
+    action: 'commit' | 'reject',
+    domain: string,
+    outcome?: { outcome?: ProposalOutcome; note?: string },
+  ): Promise<{ status: string }> {
     const res = await this.fetch(`/api/proposals/${encodeURIComponent(id)}/resolve`, {
       method: 'POST',
-      body: JSON.stringify({ action, domain }),
+      body: JSON.stringify({ action, domain, ...outcome }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Failed' }));
@@ -1390,11 +1407,22 @@ class SPClient {
   /**
    * Reject an above-cap action proposal.
    * SP endpoint: POST /api/proposals/:id/reject
+   *
+   * RJ2/RJ5 — a plain string stays the legacy shape (stored as `reason`,
+   * `outcome: 'rejected'`, per the brief's contract). An opts object is the
+   * new shape: `outcome` (default 'rejected' server-side) and `note`
+   * (required by the AS only with `outcome: 'change_needed'`). "Edit before
+   * signing" (AgentReviewPage.tsx) withdraws with `{ outcome: 'replaced' }`
+   * — no note, no reason.
    */
-  async rejectProposal(id: string, reason?: string): Promise<{ receipt: Record<string, unknown>; status: string }> {
+  async rejectProposal(
+    id: string,
+    reasonOrOutcome?: string | { outcome?: ProposalOutcome; note?: string },
+  ): Promise<{ receipt: Record<string, unknown>; status: string }> {
+    const body = typeof reasonOrOutcome === 'string' ? { reason: reasonOrOutcome } : (reasonOrOutcome ?? {});
     const res = await this.fetch(`/api/proposals/${encodeURIComponent(id)}/reject`, {
       method: 'POST',
-      body: JSON.stringify({ reason }),
+      body: JSON.stringify(body),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Failed' }));

@@ -43,6 +43,7 @@ import { decodeMandateBlob } from '@hap/core';
 import { executeCommitted, installCommittedExecutor, buildSkippedProposalNote } from '../src/tools/commitments';
 import { CommittedExecutor, ExecutorLock } from '../src/lib/committed-executor';
 import type { SPProposal } from '../src/lib/sp-client';
+import { resolveWhoLabel } from '../src/lib/who-label';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { resolveAsUrl, resolvePinTls, validatePinTlsForUrl } from '../src/lib/as-config';
@@ -236,7 +237,8 @@ app.post('/internal/configure', internalOnly, (req: Request, res: Response) => {
     state.denialLog.setVaultKey(key);
     state.receiptArchive.setVaultKey(key);
     state.reportStore.setVaultKey(key);
-    console.error('[Suveren MCP] Vault key configured — gate store + denial log + receipt archive + report store encryption active');
+    state.outcomeOutbox.setVaultKey(key);
+    console.error('[Suveren MCP] Vault key configured — gate store + denial log + receipt archive + report store + outcome outbox encryption active');
   }
 
   if (apiKey) {
@@ -1260,8 +1262,44 @@ app.listen(port, bindHost, () => {
     process.once(sig, () => executorLock.release());
   }
 
+  // ─── RJ4 — learn rejection/change-needed/replaced outcomes ──────────────
+  // Same tick as the committed-proposal poll below (no second AS polling
+  // loop): whichever proposals the AS now reports `status: 'rejected'` (all
+  // three outcomes live under it — see ProposalOutcome) that this outbox has
+  // not already recorded are queued for one-time delivery on this gateway's
+  // next tool reply (outcome-outbox.ts's wrapWithOutcomeOutbox).
+  //
+  // Deliberately NOT gated on executorLock.isHeld(): every gateway process
+  // serving this agent's tool calls must learn these outcomes, not only the
+  // one process that auto-executes committed proposals.
+  async function pollRejectedOutcomes(): Promise<void> {
+    try {
+      const rejected = await state.spClient.getRejectedProposals();
+      for (const proposal of rejected) {
+        const by = proposal.approverRejectedBy ?? proposal.rejectedBy;
+        if (!by) continue;
+        const outcome = by.outcome ?? 'rejected';
+        const who = await resolveWhoLabel(
+          state.receiptArchive,
+          'domain' in by ? by.domain : by.userId,
+          by.userId,
+        );
+        state.outcomeOutbox.recordIfNew({
+          proposalId: proposal.id,
+          outcome,
+          note: by.note,
+          who,
+          decidedAt: Date.now(),
+        });
+      }
+    } catch {
+      // SP unreachable or no session — skip this cycle, same as executeCommittedProposals.
+    }
+  }
+
   let draining = false;
   async function executeCommittedProposals(): Promise<void> {
+    void pollRejectedOutcomes();
     if (!executorLock.isHeld()) return;
     // Overlapping ticks would only re-fetch the same list; the executor
     // already dedups per proposal, so this is economy, not correctness.

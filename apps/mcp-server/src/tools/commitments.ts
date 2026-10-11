@@ -31,6 +31,7 @@ import { AsKeyMismatchError } from '../lib/attestation-cache';
 import { ArchiveWriteError } from '../lib/receipt-archive';
 import { verifyTicket, TicketBindingMismatchError } from '../lib/ticket-verify';
 import { notifyControlPlane } from '../lib/cp-notify';
+import { resolveWhoLabel } from '../lib/who-label';
 
 /**
  * The message shown for a committed proposal this gateway has no local
@@ -564,14 +565,49 @@ export function checkPendingCommitmentsHandler(
         }
 
         if (match.status === 'rejected') {
+          // RJ3 — three outcomes under one status (decisions 1-2 of the
+          // 2026-10-11 "Reject or ask for a change" brief). A row with no
+          // `outcome` at all predates this feature and reads as 'rejected',
+          // same as the AS stores it.
           const by = match.approverRejectedBy ?? match.rejectedBy;
-          const reason = match.approverRejectedBy?.reason;
+          const outcome = by?.outcome ?? 'rejected';
+          const legacyReason = match.approverRejectedBy?.reason;
+          const who = by
+            ? await resolveWhoLabel(
+                state.receiptArchive,
+                'domain' in by ? by.domain : by.userId,
+                by.userId,
+              )
+            : 'a person';
+
+          if (outcome === 'change_needed') {
+            return {
+              content: [{
+                type: 'text' as const,
+                text: `Proposal ${match.id} was SENT BACK FOR A CHANGE by ${who}: "${by?.note ?? ''}". ` +
+                  `The action did not run. You may adjust it and propose again — a new proposal the ` +
+                  `person approves again. Do not resend the same values.`,
+              }],
+            };
+          }
+
+          if (outcome === 'replaced') {
+            return {
+              content: [{
+                type: 'text' as const,
+                text: `Proposal ${match.id} was REPLACED: the person signed their own version of this ` +
+                  `mandate on the mandate screen. Nothing was created from this proposal. Use the ` +
+                  `person's mandate — check list-authorizations.`,
+              }],
+            };
+          }
+
+          const reasonSuffix = legacyReason ? `: "${legacyReason}".` : '.';
           return {
             content: [{
               type: 'text' as const,
-              text: `Proposal ${match.id} was REJECTED${by ? ` by ${by.userId}` : ''}` +
-                `${reason ? `: ${reason}` : '.'} The action did not run and must not be retried — ` +
-                `a decision owner declined it. Ask before proposing anything similar.`,
+              text: `Proposal ${match.id} was REJECTED by ${who}${reasonSuffix} The action did not run ` +
+                `and must not be retried. Ask the person before proposing anything similar.`,
             }],
           };
         }
