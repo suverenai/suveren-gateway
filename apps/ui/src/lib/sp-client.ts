@@ -1344,16 +1344,20 @@ class SPClient {
 
   // ─── Proposals ──────────────────────────────────────────────────────────
 
-  async getProposals(domain: string): Promise<Proposal[]> {
-    const res = await this.fetch(`/api/proposals?domain=${encodeURIComponent(domain)}`);
+  /** `status: 'all'` also returns proposals DECIDED in the last 7 days (rejected /
+   *  sent back / replaced, as stored) — the All view's history (RJ2). An older AS
+   *  ignores the parameter and returns pending only, as before. */
+  async getProposals(domain: string, status: 'pending' | 'all' = 'pending'): Promise<Proposal[]> {
+    const q = status === 'all' ? '&status=all' : '';
+    const res = await this.fetch(`/api/proposals?domain=${encodeURIComponent(domain)}${q}`);
     if (!res.ok) throw new Error(`Failed to fetch proposals: ${res.status}`);
     const data = await res.json();
     return data.proposals ?? [];
   }
 
   /** The user's whole queue: the active workspace plus the personal one — see lib/my-queue. */
-  async getMyProposals(activeDomain: string | null | undefined): Promise<Proposal[]> {
-    const lists = await Promise.all(queueDomains(activeDomain).map((d) => this.getProposals(d)));
+  async getMyProposals(activeDomain: string | null | undefined, status: 'pending' | 'all' = 'pending'): Promise<Proposal[]> {
+    const lists = await Promise.all(queueDomains(activeDomain).map((d) => this.getProposals(d, status)));
     return mergeProposals(lists);
   }
 
@@ -1613,7 +1617,7 @@ class SPClient {
     const status = options.status ?? 'pending';
 
     // The active workspace plus the personal one (no active domain = personal only).
-    const proposals = await this.getMyProposals(options.domain);
+    const proposals = await this.getMyProposals(options.domain, status);
 
     let receipts: ExecutionReceipt[] = [];
     if (status === 'all') {
