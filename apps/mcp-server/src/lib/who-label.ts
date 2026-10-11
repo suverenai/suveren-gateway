@@ -25,18 +25,22 @@ import type { ReceiptArchiveReader } from './report/types';
  *   above-cap approver rejection with no domain, the same value as `userId` —
  *   in team mode the domain IS the approver's account id, see identity.ts).
  */
+/** Shown to the AI when no display name is known locally — never the internal
+ *  user id (an AI-facing text, and report output, must not carry ids). */
+export const UNKNOWN_DECIDER = 'the person';
+
 export async function resolveWhoLabel(
   archive: ReceiptArchiveReader | undefined,
   domainKey: string,
   userId: string,
 ): Promise<string> {
-  if (!archive) return userId;
+  if (!archive) return UNKNOWN_DECIDER;
   try {
     const dir = await getIdentityDirectory(archive);
     const did = dir.domainDids.get(domainKey) ?? dir.domainDids.get(userId);
     const name = did ? dir.names.get(did) : undefined;
-    return name ?? userId;
+    return name ?? UNKNOWN_DECIDER;
   } catch {
-    return userId;
+    return UNKNOWN_DECIDER;
   }
 }

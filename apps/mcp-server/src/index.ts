@@ -158,7 +158,10 @@ export function createMcpServer(
             description,
             ...(Object.keys(zodShape).length > 0 ? { inputSchema: zodShape } : {}),
           },
-          withOutcomeOutbox(handler) as Parameters<typeof server.registerTool>[2],
+          // Built-in tools (reports, setup) never carry the outcome line: a
+          // report's output is evidence and must not mix in a notice (nor the
+          // decider's identity); setup tools are not the working agent's.
+          (integrationManager?.isBuiltin?.(tool.integrationId) ? handler : withOutcomeOutbox(handler)) as Parameters<typeof server.registerTool>[2],
         );
         proxiedTools.set(tool.namespacedName, { tool, registered });
       } catch (err) {

@@ -49,13 +49,13 @@ const textOf = async (proposal: SPProposal, archive?: unknown) => {
 describe('rejected — domain-owner path', () => {
   it('no outcome on the row at all (legacy, pre-RJ1) reads as a plain REJECTED', async () => {
     const text = await textOf({ ...BASE, rejectedBy: { domain: 'owner', userId: 'andreas', at: 0 } });
-    expect(text).toMatch(/^Proposal p1 was REJECTED by andreas\. The action did not run and must not be retried\. Ask the person before proposing anything similar\.$/);
+    expect(text).toMatch(/^Proposal p1 was REJECTED by the person\. The action did not run and must not be retried\. Ask the person before proposing anything similar\.$/);
   });
 
   it('outcome: rejected, no note — exact wording', async () => {
     const text = await textOf({ ...BASE, rejectedBy: { domain: 'owner', userId: 'andreas', at: 0, outcome: 'rejected' } });
     expect(text).toBe(
-      'Proposal p1 was REJECTED by andreas. The action did not run and must not be retried. ' +
+      'Proposal p1 was REJECTED by the person. The action did not run and must not be retried. ' +
       'Ask the person before proposing anything similar.',
     );
   });
@@ -66,7 +66,7 @@ describe('rejected — domain-owner path', () => {
       rejectedBy: { domain: 'owner', userId: 'andreas', at: 0, outcome: 'change_needed', note: 'Lower the discount' },
     });
     expect(text).toBe(
-      'Proposal p1 was SENT BACK FOR A CHANGE by andreas: "Lower the discount". The action did not run. ' +
+      'Proposal p1 was SENT BACK FOR A CHANGE by the person: "Lower the discount". The action did not run. ' +
       'You may adjust it and propose again — a new proposal the person approves again. Do not resend the same values.',
     );
   });
@@ -91,7 +91,7 @@ describe('rejected — above-cap approver path', () => {
       approverRejectedBy: { userId: 'andreas', reason: 'wrong recipient', at: 0 },
     });
     expect(text).toBe(
-      'Proposal p1 was REJECTED by andreas: "wrong recipient". The action did not run and must not be retried. ' +
+      'Proposal p1 was REJECTED by the person: "wrong recipient". The action did not run and must not be retried. ' +
       'Ask the person before proposing anything similar.',
     );
   });
@@ -101,7 +101,7 @@ describe('rejected — above-cap approver path', () => {
       ...BASE,
       approverRejectedBy: { userId: 'andreas', at: 0, outcome: 'change_needed', note: 'Different wording' },
     });
-    expect(text).toContain('SENT BACK FOR A CHANGE by andreas: "Different wording"');
+    expect(text).toContain('SENT BACK FOR A CHANGE by the person: "Different wording"');
   });
 
   it('outcome: replaced from "Edit before signing" (RJ5) — no reason, no note needed', async () => {
@@ -113,10 +113,10 @@ describe('rejected — above-cap approver path', () => {
   });
 });
 
-describe('<who> — display name if known locally, else the user id', () => {
+describe('<who> — display name if known locally, else "the person" — never the internal user id', () => {
   it('falls back to the user id with no receipt archive at all (today\'s behaviour)', async () => {
     const text = await textOf({ ...BASE, rejectedBy: { domain: 'owner', userId: 'andreas', at: 0 } });
-    expect(text).toContain('by andreas.');
+    expect(text).toContain('by the person.');
   });
 
   it('falls back to the user id when the archive has no verified name for this domain', async () => {
@@ -125,7 +125,7 @@ describe('<who> — display name if known locally, else the user id', () => {
       { ...BASE, rejectedBy: { domain: 'owner', userId: 'andreas', at: 0 } },
       archive,
     );
-    expect(text).toContain('by andreas.');
+    expect(text).toContain('by the person.');
   });
 
   it('uses the disclosed name when a verified archived mandate links this domain to it', async () => {
