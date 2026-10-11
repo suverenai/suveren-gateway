@@ -79,7 +79,9 @@ describe('a distinct, actionable answer per state', () => {
       approverRejectedBy: { userId: 'andreas', reason: 'wrong recipient', at: 0 },
     });
     expect(text).toMatch(/REJECTED/);
-    expect(text).toContain('andreas');
+    // No locally known name → "the person", never the internal user id.
+    expect(text).toContain('by the person');
+    expect(text).not.toContain('andreas');
     expect(text).toContain('wrong recipient');
     expect(text).toMatch(/must not be retried/i);
   });

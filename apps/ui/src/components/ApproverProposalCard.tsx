@@ -21,9 +21,11 @@ import { spClient, type IntegrationManifest, type Proposal } from '../lib/sp-cli
 import { formatTimeLeft } from '../lib/time-left';
 import { ProfileRail } from './ProfileRail';
 import { ApprovalBody } from './ApprovalBody';
+import { ChangeNeededPanel } from './ChangeNeededPanel';
 import { isTestSetupAction, profileIdentity } from '../lib/profile-identity';
 import { isAutomatedBrowser, AUTOMATION_REFUSAL } from '../lib/automation';
 import type { ToolDisplay } from '../lib/approval-view';
+import { validateChangeNote, rejectOutcomeArgs, changeNeededOutcomeArgs } from '../lib/reject-outcome';
 
 function formatAge(unixSeconds: number): string {
   const ageMs = Date.now() - unixSeconds * 1000;
@@ -50,6 +52,12 @@ interface Props {
 export function ApproverProposalCard({ proposal, currentUserId, onAction, onMessage, proposalLinks, toolDisplay, manifests }: Props) {
   const [approving, setApproving] = useState(false);
   const [rejecting, setRejecting] = useState(false);
+  // RJ2 — "Change needed" panel, local UI-only state (never persisted; see
+  // ActionCard's identical treatment of the same panel).
+  const [changePanelOpen, setChangePanelOpen] = useState(false);
+  const [changeNote, setChangeNote] = useState('');
+  const [changeError, setChangeError] = useState('');
+  const [sendingChange, setSendingChange] = useState(false);
 
   // Test setup: the delegation profile, OR a setup__* tool.
   const testSetup = profileIdentity(proposal.profileId).testSetup || isTestSetupAction(proposal.tool);
@@ -97,13 +105,15 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
     }
   };
 
+  // One click, no reason — outcome `rejected` (RJ2 decision 1). Rejecting
+  // (unlike approving) only ever says no or asks for a change — never commits
+  // anything — so there is no automation defense-in-depth check here, same
+  // as before this change.
   const handleReject = async () => {
-    const reason = prompt('Rejection reason (optional):');
-    if (reason === null) return; // user cancelled
     setRejecting(true);
     onMessage('');
     try {
-      await spClient.rejectProposal(proposal.id, reason || undefined);
+      await spClient.rejectProposal(proposal.id, rejectOutcomeArgs());
       onMessage('Action rejected.');
       onAction();
     } catch (err) {
@@ -113,7 +123,24 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
     }
   };
 
-  const isBusy = approving || rejecting;
+  const handleSendChange = async () => {
+    const result = validateChangeNote(changeNote);
+    if (!result.valid) { setChangeError(result.error); return; }
+    setChangeError('');
+    setSendingChange(true);
+    onMessage('');
+    try {
+      await spClient.rejectProposal(proposal.id, changeNeededOutcomeArgs(result.trimmed));
+      onMessage('Sent back for a change.');
+      onAction();
+    } catch (err) {
+      onMessage(err instanceof Error ? err.message : 'Failed to send back');
+    } finally {
+      setSendingChange(false);
+    }
+  };
+
+  const isBusy = approving || rejecting || sendingChange;
 
   return (
     <div className="card id-card">
@@ -171,23 +198,44 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
 
       {/* Action buttons */}
       {!alreadyApproved && (
-        <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.25rem' }}>
-          <button
-            className="btn btn-primary"
-            onClick={handleApprove}
-            disabled={isBusy}
-          >
-            {approving ? 'Approving...' : 'Approve'}
-          </button>
-          <button
-            className="btn btn-ghost"
-            style={{ color: 'var(--danger)' }}
-            onClick={handleReject}
-            disabled={isBusy}
-          >
-            {rejecting ? 'Rejecting...' : 'Reject'}
-          </button>
-        </div>
+        changePanelOpen ? (
+          <ChangeNeededPanel
+            note={changeNote}
+            onNoteChange={setChangeNote}
+            onSend={handleSendChange}
+            onCancel={() => { setChangePanelOpen(false); setChangeNote(''); setChangeError(''); }}
+            sending={sendingChange}
+            error={changeError}
+          />
+        ) : (
+          <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.25rem' }}>
+            <button
+              className="btn btn-primary"
+              onClick={handleApprove}
+              disabled={isBusy}
+            >
+              {approving ? 'Approving...' : 'Approve'}
+            </button>
+            <button
+              data-testid="btn-change-needed"
+              className="btn"
+              style={{ background: '#fff', color: 'var(--warning)', border: '1px solid var(--warning)' }}
+              onClick={() => setChangePanelOpen(true)}
+              disabled={isBusy}
+            >
+              Change needed
+            </button>
+            <button
+              data-testid="btn-reject"
+              className="btn btn-ghost"
+              style={{ color: 'var(--danger)' }}
+              onClick={handleReject}
+              disabled={isBusy}
+            >
+              {rejecting ? 'Rejecting...' : 'Reject'}
+            </button>
+          </div>
+        )
       )}
 
       {alreadyApproved && (

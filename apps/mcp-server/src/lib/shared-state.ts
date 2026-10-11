@@ -13,6 +13,7 @@ import { ReceiptArchive, ArchiveWriteError, type ArchivedAttestation } from './r
 import { ExecutionJournal } from './execution-journal';
 import { ProposalSubmissionStore } from './proposal-submission-store';
 import { PreviewLog } from './preview-log';
+import { OutcomeOutbox } from './outcome-outbox';
 import { MCPGatekeeper } from './gatekeeper';
 import { ReportStore } from './report/report-store';
 import { PROTOCOL_VERSION } from '@hap/core';
@@ -43,6 +44,9 @@ export class SharedState {
   readonly proposalSubmissions: ProposalSubmissionStore;
   /** AU3 — local, content-free record of preview reads. See preview-log.ts. */
   readonly previewLog: PreviewLog;
+  /** RJ4 — rejection/change-needed/replaced outcomes awaiting one-time
+   *  delivery to the AI on its next tool call. See outcome-outbox.ts. */
+  readonly outcomeOutbox: OutcomeOutbox;
   readonly gatekeeper: MCPGatekeeper;
 
   /**
@@ -79,6 +83,7 @@ export class SharedState {
     this.executionJournal = new ExecutionJournal(gateStorePath);
     this.proposalSubmissions = new ProposalSubmissionStore(gateStorePath);
     this.previewLog = new PreviewLog(gateStorePath);
+    this.outcomeOutbox = new OutcomeOutbox(gateStorePath);
     // The execution log is deliberately NOT handed to the Gatekeeper: it is a
     // display-only record (see gatekeeper.ts), and the AS is the sole
     // cumulative enforcer.

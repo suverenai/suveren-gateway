@@ -761,6 +761,11 @@ code {
 .status-pending { background: var(--danger-subtle); color: var(--danger); }
 .status-expired { background: var(--bg-elevated); color: var(--text-tertiary); }
 .status-revoked { background: var(--danger-subtle); color: var(--danger); }
+/* RJ2: "Change needed" (not a no — the AI may adjust and propose again) and
+   "Replaced" (not a refusal at all — the person signed their own version)
+   get their own look, distinct from a plain reject. */
+.status-change-needed { background: color-mix(in srgb, var(--warning) 14%, transparent); color: var(--warning); }
+.status-replaced { background: var(--success-subtle); color: var(--success); }
 
 /* Integration status chips — binary (ok/bad) + neutral (idle), with a dot.
    Two are shown per integration: Process (running) and Auth (can authenticate). */

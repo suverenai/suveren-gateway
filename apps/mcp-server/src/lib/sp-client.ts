@@ -45,6 +45,10 @@ export interface SPAttestationsResult {
   revoked_at?: number;
 }
 
+/** RJ1 — the three ways a reject can resolve. Absent on an on-disk row ⇒
+ *  'rejected' (every row predating this never had an outcome). */
+export type ProposalOutcome = 'rejected' | 'change_needed' | 'replaced';
+
 export interface SPProposal {
   id: string;
   authorizationId: string;
@@ -52,7 +56,7 @@ export interface SPProposal {
   path: string;
   pendingDomains: string[];
   committedBy: Record<string, { userId: string; at: number }>;
-  rejectedBy: { domain: string; userId: string; at: number } | null;
+  rejectedBy: { domain: string; userId: string; at: number; outcome?: ProposalOutcome; note?: string } | null;
   tool: string;
   toolArgs: Record<string, unknown>;
   executionContext: Record<string, string | number>;
@@ -63,7 +67,7 @@ export interface SPProposal {
   // Phase 6 fields
   pendingApprovers?: string[];
   approvedBy?: Record<string, { receiptId: string; at: number }>;
-  approverRejectedBy?: { userId: string; reason?: string; at: number };
+  approverRejectedBy?: { userId: string; reason?: string; at: number; outcome?: ProposalOutcome; note?: string };
   createdBy?: string;
 }
 
@@ -542,6 +546,20 @@ export class SPClient {
   async getCommittedProposals(): Promise<SPProposal[]> {
     const res = await this.fetch('/api/proposals?status=committed');
     if (!res.ok) throw new Error(`SP committed proposals request failed: ${res.status}`);
+    const data = await res.json() as { proposals: SPProposal[] };
+    return data.proposals;
+  }
+
+  /**
+   * RJ4 — the same proposals a human just rejected, sent back for a change,
+   * or replaced with their own mandate (all three outcomes live under
+   * `status: 'rejected'`, see `ProposalOutcome`). Polled on the SAME tick as
+   * {@link getCommittedProposals} (bin/http.ts) so the outcome outbox learns
+   * about them without a second AS polling loop.
+   */
+  async getRejectedProposals(): Promise<SPProposal[]> {
+    const res = await this.fetch('/api/proposals?status=rejected');
+    if (!res.ok) throw new Error(`SP rejected proposals request failed: ${res.status}`);
     const data = await res.json() as { proposals: SPProposal[] };
     return data.proposals;
   }

@@ -11,7 +11,7 @@ import { offeredCommitModes, settleCommitMode, toProtocolMode } from '../lib/com
 import { scopesOverlap } from '../lib/scope-overlap';
 import { formatScopeValue } from '../lib/scope-labels';
 import { mandateRight } from '../lib/mandate-rights';
-import { EDIT_BEFORE_SIGNING_WITHDRAWAL_REASON } from '../lib/create-mandate-prefill';
+import { replacedOutcomeArgs } from '../lib/reject-outcome';
 import type { AgentProfile, AgentBoundsParams, AgentScopeParams } from '@hap/core';
 import type { ProfileConfig } from '../lib/sp-client';
 
@@ -408,9 +408,12 @@ export function AgentReviewPage() {
       // exist (decision 6, "no double"). Best effort, same reasoning as the
       // grant-replace block above: the new mandate is live either way; a
       // proposal left pending here is still visible for manual rejection.
+      // RJ2/RJ5: this is not a refusal — the person signed their own version
+      // — so it carries outcome `replaced`, not a plain reject (the AI must
+      // use the mandate, not retry the proposal's own values).
       if (replacesProposalId) {
         try {
-          await spClient.rejectProposal(replacesProposalId, EDIT_BEFORE_SIGNING_WITHDRAWAL_REASON);
+          await spClient.rejectProposal(replacesProposalId, replacedOutcomeArgs());
         } catch {
           // Proposal may already be resolved (expired/rejected/approved
           // elsewhere) — the new mandate is live either way.

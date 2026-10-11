@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { spClient, type Proposal, type ExecutionReceipt, type IntegrationManifest } from '../lib/sp-client';
+import { spClient, type Proposal, type ExecutionReceipt, type IntegrationManifest, type ProposalOutcome } from '../lib/sp-client';
 import { aggregateThread, type ThreadItem } from '../lib/thread-aggregator';
 import { ActionCard } from '../components/ActionCard';
 import { ApproverProposalCard } from '../components/ApproverProposalCard';
@@ -13,6 +13,7 @@ import { ProfileRail } from '../components/ProfileRail';
 import { HumanOnlyNote } from '../components/HumanOnlyNote';
 import { isAutomatedBrowser, AUTOMATION_REFUSAL } from '../lib/automation';
 import { isTestSetupAction, profileIdentity } from '../lib/profile-identity';
+import { rejectOutcomeArgs, changeNeededOutcomeArgs } from '../lib/reject-outcome';
 
 type QueueTab = 'awaiting-me' | 'awaiting-others' | 'all';
 type StatusFilter = 'pending' | 'all';
@@ -176,7 +177,11 @@ export function ProposalReviewPage() {
 
   useVisiblePolling(fetchThread, 30_000, `${domain}:${statusFilter}`);
 
-  const handleResolve = async (id: string, action: 'commit' | 'reject') => {
+  const handleResolve = async (
+    id: string,
+    action: 'commit' | 'reject',
+    opts?: { outcome?: ProposalOutcome; note?: string },
+  ) => {
     // Automation that announces itself may not approve (defense in depth — lib/automation.ts).
     if (action === 'commit' && isAutomatedBrowser()) { setMessage(AUTOMATION_REFUSAL); return; }
     setResolving(id);
@@ -185,8 +190,12 @@ export function ProposalReviewPage() {
       // Resolve under the proposal's own queue — a personal one stays 'owner' in team context.
       const proposal = proposals.find(p => p.id === id) ?? myProposals.find(p => p.id === id);
       const resolveDomain = resolveDomainFor(proposal, domain);
-      const result = await spClient.resolveProposal(id, action, resolveDomain);
-      setMessage(action === 'commit' ? `Action approved. Status: ${result.status}` : 'Action rejected.');
+      const result = await spClient.resolveProposal(id, action, resolveDomain, opts);
+      setMessage(
+        action === 'commit'
+          ? `Action approved. Status: ${result.status}`
+          : opts?.outcome === 'change_needed' ? 'Sent back for a change.' : 'Action rejected.',
+      );
       // Refresh the All thread AND the awaiting-me domain queue so a just-approved
       // review-mode proposal leaves the "Awaiting me" tab immediately.
       await Promise.all([fetchThread(), fetchMyProposals()]);
@@ -196,6 +205,10 @@ export function ProposalReviewPage() {
       setResolving(null);
     }
   };
+
+  /** "Send back for change" (RJ2) — note already validated by ActionCard. */
+  const handleChangeNeeded = (id: string, note: string) =>
+    handleResolve(id, 'reject', changeNeededOutcomeArgs(note));
 
   const profileIds = useMemo(() => {
     const set = new Set<string>();
@@ -300,7 +313,8 @@ export function ProposalReviewPage() {
                   currentUserId={userId}
                   item={item}
                   onApprove={(id) => handleResolve(id, 'commit')}
-                  onReject={(id) => handleResolve(id, 'reject')}
+                  onReject={(id) => handleResolve(id, 'reject', rejectOutcomeArgs())}
+                  onChangeNeeded={handleChangeNeeded}
                   resolving={resolving === item.id}
                 />
               ))}
@@ -343,7 +357,7 @@ export function ProposalReviewPage() {
                   currentUserId={userId}
                   onCancel={async () => {
                     try {
-                      await spClient.rejectProposal(proposal.id, 'cancelled by creator');
+                      await spClient.rejectProposal(proposal.id, { reason: 'cancelled by creator' });
                       void fetchApprovedByMe();
                       void fetchMyProposals();
                     } catch (err) {
@@ -430,7 +444,8 @@ export function ProposalReviewPage() {
                   currentUserId={userId}
                   item={item}
                   onApprove={(id) => handleResolve(id, 'commit')}
-                  onReject={(id) => handleResolve(id, 'reject')}
+                  onReject={(id) => handleResolve(id, 'reject', rejectOutcomeArgs())}
+                  onChangeNeeded={handleChangeNeeded}
                   resolving={resolving === item.id}
                 />
               ))}

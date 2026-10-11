@@ -20,6 +20,7 @@ import { checkPendingCommitmentsHandler } from './tools/commitments';
 import type { IntegrationManager, DiscoveredTool } from './lib/integration-manager';
 import { createGatedToolHandler, buildProxiedToolDescription, profileMatches, toolIsAuthorizedForDisplay, toolAlwaysListed } from './lib/tool-proxy';
 import { jsonSchemaToZodShape } from './lib/json-schema-to-zod';
+import { wrapWithOutcomeOutbox } from './lib/outcome-outbox';
 
 // ─── JSON Schema → Zod conversion ──────────────────────────────────────────
 
@@ -46,6 +47,15 @@ export function createMcpServer(
     { instructions },
   );
 
+  // RJ4 — the ONE wrapper every registered tool's handler goes through, so a
+  // pending rejection/change-needed/replaced outcome reaches the AI on its
+  // next call to ANY of them (proxied, builtin, or a gateway tool below) —
+  // see outcome-outbox.ts. Never an internal tool: those are filtered out
+  // before `server.registerTool` is ever called for them (see
+  // `registerProxiedTools` below).
+  const withOutcomeOutbox = <T>(handler: T): T =>
+    wrapWithOutcomeOutbox(state.outcomeOutbox, handler as Parameters<typeof wrapWithOutcomeOutbox>[1]) as T;
+
   // ─── list-authorizations ─────────────────────────────────────────────────
 
   server.registerTool(
@@ -56,7 +66,7 @@ export function createMcpServer(
         domain: z.string().optional().describe('Profile domain to show full details for (e.g., "charge", "deploy"). Omit for compact overview.'),
       },
     },
-    listAuthorizationsHandler(state, integrationManager)
+    withOutcomeOutbox(listAuthorizationsHandler(state, integrationManager))
   );
 
   // ─── check-pending-mandates (v0.7; was check-pending-attestations) ───────
@@ -69,7 +79,7 @@ export function createMcpServer(
         domain: z.string().describe('The owner\'s domain (e.g., "compliance")'),
       },
     },
-    checkPendingHandler(cache)
+    withOutcomeOutbox(checkPendingHandler(cache))
   );
 
   // ─── list-integrations ─────────────────────────────────────────────────
@@ -80,7 +90,7 @@ export function createMcpServer(
       description: 'List all running integrations and their authorization status. Returns a compact overview — use list-authorizations(domain) for full details on a specific profile.',
       inputSchema: {},
     },
-    listIntegrationsHandler(state, integrationManager)
+    withOutcomeOutbox(listIntegrationsHandler(state, integrationManager))
   );
 
   // ─── check-pending-commitments ─────────────────────────────────────────
@@ -93,7 +103,7 @@ export function createMcpServer(
         proposal_id: z.string().optional().describe('Specific proposal ID to check. Omit to see all.'),
       },
     },
-    checkPendingCommitmentsHandler(state, integrationManager)
+    withOutcomeOutbox(checkPendingCommitmentsHandler(state, integrationManager))
   );
 
   // ─── Proxied tools from downstream integrations ──────────────────────────
@@ -148,7 +158,10 @@ export function createMcpServer(
             description,
             ...(Object.keys(zodShape).length > 0 ? { inputSchema: zodShape } : {}),
           },
-          handler as Parameters<typeof server.registerTool>[2],
+          // Built-in tools (reports, setup) never carry the outcome line: a
+          // report's output is evidence and must not mix in a notice (nor the
+          // decider's identity); setup tools are not the working agent's.
+          (integrationManager?.isBuiltin?.(tool.integrationId) ? handler : withOutcomeOutbox(handler)) as Parameters<typeof server.registerTool>[2],
         );
         proxiedTools.set(tool.namespacedName, { tool, registered });
       } catch (err) {
