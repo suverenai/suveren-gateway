@@ -84,12 +84,6 @@ export function mandatePrefillGate(args: CreateMandateProposalArgs): MandatePref
   return gate;
 }
 
-/** Text passed to `spClient.rejectProposal` once the person has actually
- *  signed on the mandate screen (DL6 decision 6) — fixed, so every "Edit
- *  before signing" withdrawal reads the same, recognisable reason under
- *  Blocked/history. */
-export const EDIT_BEFORE_SIGNING_WITHDRAWAL_REASON = 'Signed by the person on the mandate screen instead';
-
 /**
  * Whether finishing the mandate screen should withdraw (reject) the
  * proposal "Edit before signing" opened it from. Only ever `true` for

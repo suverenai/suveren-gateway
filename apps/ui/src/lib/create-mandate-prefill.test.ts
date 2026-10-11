@@ -9,7 +9,6 @@ import {
   scalarRecord,
   mandatePrefillGate,
   shouldWithdrawProposalAfter,
-  EDIT_BEFORE_SIGNING_WITHDRAWAL_REASON,
   type CreateMandateProposalArgs,
 } from './create-mandate-prefill';
 
@@ -95,11 +94,5 @@ describe('shouldWithdrawProposalAfter', () => {
 
   it('leaves the proposal pending when signing failed', () => {
     expect(shouldWithdrawProposalAfter('failed')).toBe(false);
-  });
-});
-
-describe('EDIT_BEFORE_SIGNING_WITHDRAWAL_REASON', () => {
-  it('is the fixed reason text decision 6 specifies', () => {
-    expect(EDIT_BEFORE_SIGNING_WITHDRAWAL_REASON).toBe('Signed by the person on the mandate screen instead');
   });
 });

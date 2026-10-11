@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { resolveProposalLinks, type ProposalLink } from '../lib/proposal-links';
 import type { ThreadItem } from '../lib/thread-aggregator';
 import { formatTimeLeft } from '../lib/time-left';
@@ -6,10 +7,12 @@ import { ProfileRail } from './ProfileRail';
 import { OutcomeBox } from './OutcomeBox';
 import { ApprovalBody } from './ApprovalBody';
 import { TicketWhatWasDone } from './TicketWhatWasDone';
+import { ChangeNeededPanel } from './ChangeNeededPanel';
 import { isTestSetupAction, profileIdentity } from '../lib/profile-identity';
 import { splitTool, systemDisplayName, type ToolDisplay } from '../lib/approval-view';
 import { useProfile } from '../lib/profile-cache';
 import type { IntegrationManifest } from '../lib/sp-client';
+import { validateChangeNote, outcomeAfterView, type OutcomeKindLabel } from '../lib/reject-outcome';
 
 type CardStatus = 'pending' | 'committed' | 'executed' | 'rejected' | 'expired';
 
@@ -28,6 +31,15 @@ const STATUS_CLASS: Record<CardStatus, string> = {
   executed: 'status-active',
   rejected: 'status-revoked',
   expired: 'status-expired',
+};
+
+// RJ2: once a proposal is resolved, the badge shows the actual outcome
+// (REJECTED / CHANGE NEEDED / REPLACED) instead of the generic "Rejected" —
+// see lib/reject-outcome.ts outcomeAfterView.
+const OUTCOME_CLASS: Record<OutcomeKindLabel, string> = {
+  REJECTED: 'status-revoked',
+  'CHANGE NEEDED': 'status-change-needed',
+  REPLACED: 'status-replaced',
 };
 
 function formatTimestamp(unixSeconds: number): string {
@@ -84,14 +96,18 @@ interface Props {
   toolDisplay?: ToolDisplay;
   /** For the outcome box's "Refused by <System>" (lib/approval-view.ts systemDisplayName). */
   manifests?: IntegrationManifest[];
-  /** Needed only for a PENDING proposal's ApprovalBody (intent decrypt). */
+  /** Needed only for a PENDING proposal's ApprovalBody (intent decrypt), and
+   *  to resolve a resolved proposal's "who" to "You" (lib/reject-outcome.ts). */
   currentUserId?: string;
   onApprove?: (id: string) => void;
+  /** One click, no note — outcome `rejected` (decision 1). */
   onReject?: (id: string) => void;
+  /** "Send back for change" — outcome `change_needed`, note required. */
+  onChangeNeeded?: (id: string, note: string) => void;
   resolving?: boolean;
 }
 
-export function ActionCard({ item, onApprove, onReject, resolving, proposalLinks, toolDisplay, manifests, currentUserId }: Props) {
+export function ActionCard({ item, onApprove, onReject, onChangeNeeded, resolving, proposalLinks, toolDisplay, manifests, currentUserId }: Props) {
   const isProposal = item.kind === 'proposal';
   const status: CardStatus = isProposal ? item.proposal.status : 'executed';
   const toolFull = isProposal ? item.proposal.tool : item.receipt.action;
@@ -99,6 +115,26 @@ export function ActionCard({ item, onApprove, onReject, resolving, proposalLinks
   const destructive = isDestructive(toolFull);
   const { integrationId } = splitTool(toolFull);
   const systemName = systemDisplayName(integrationId, manifests);
+
+  // RJ2 — "Change needed" panel, local UI-only state (never persisted; the
+  // card's actual state always comes from the server, per project rule).
+  const [changePanelOpen, setChangePanelOpen] = useState(false);
+  const [changeNote, setChangeNote] = useState('');
+  const [changeError, setChangeError] = useState('');
+
+  const handleSendChange = () => {
+    const result = validateChangeNote(changeNote);
+    if (!result.valid) { setChangeError(result.error); return; }
+    setChangeError('');
+    onChangeNeeded?.(item.id, result.trimmed);
+  };
+
+  // The after-state (mockup §3): what the server stored once this proposal
+  // was resolved. Only ever set for a rejected/change-needed/replaced
+  // proposal — null for anything else (pending/committed/executed/expired).
+  const outcome = isProposal && status === 'rejected'
+    ? outcomeAfterView(item.proposal, currentUserId ?? '')
+    : null;
   // AU6: "What was done" needs the profile for the no-bound-content fallback
   // (checked values labelled from the profile's scope schema).
   const profile = useProfile(item.profileId);
@@ -141,7 +177,12 @@ export function ActionCard({ item, onApprove, onReject, resolving, proposalLinks
               </span>
             );
           })()}
-          <span className={`status-badge ${STATUS_CLASS[status]}`}>{STATUS_LABEL[status]}</span>
+          <span
+            data-testid={outcome ? 'outcome-kind' : undefined}
+            className={`status-badge ${outcome ? OUTCOME_CLASS[outcome.kind] : STATUS_CLASS[status]}`}
+          >
+            {outcome ? outcome.kind : STATUS_LABEL[status]}
+          </span>
           <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
             {formatTimestamp(item.sortTimestamp)}
           </span>
@@ -154,6 +195,20 @@ export function ActionCard({ item, onApprove, onReject, resolving, proposalLinks
           renders nothing when there is nothing beyond the AS's own status. */}
       {isProposal && item.proposal.status === 'executed' && (
         <OutcomeBox proposalId={item.proposal.id} systemName={systemName} />
+      )}
+
+      {/* RJ2 — the after-state: what the person decided, by whom, and (for
+          "Change needed") the note the AI will read. Read straight off the
+          server's own rejectedBy/approverRejectedBy — no lookups. */}
+      {outcome && (
+        <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>
+          <div>By {outcome.who}, {formatTimestamp(outcome.at)}</div>
+          {outcome.note && (
+            <div data-testid="outcome-note" style={{ marginTop: '0.2rem' }}>
+              {outcome.kind === 'CHANGE NEEDED' ? 'Change: ' : 'Note: '}{outcome.note}
+            </div>
+          )}
+        </div>
       )}
 
       {destructive && (
@@ -253,23 +308,44 @@ export function ActionCard({ item, onApprove, onReject, resolving, proposalLinks
       )}
 
       {isProposal && status === 'pending' && (
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
-          <button
-            className="btn btn-primary"
-            onClick={() => onApprove?.(item.id)}
-            disabled={resolving}
-          >
-            {resolving ? 'Approving…' : 'Approve'}
-          </button>
-          <button
-            className="btn btn-ghost"
-            style={{ color: 'var(--danger)' }}
-            onClick={() => onReject?.(item.id)}
-            disabled={resolving}
-          >
-            Reject
-          </button>
-        </div>
+        changePanelOpen ? (
+          <ChangeNeededPanel
+            note={changeNote}
+            onNoteChange={setChangeNote}
+            onSend={handleSendChange}
+            onCancel={() => { setChangePanelOpen(false); setChangeNote(''); setChangeError(''); }}
+            sending={!!resolving}
+            error={changeError}
+          />
+        ) : (
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            <button
+              className="btn btn-primary"
+              onClick={() => onApprove?.(item.id)}
+              disabled={resolving}
+            >
+              {resolving ? 'Approving…' : 'Approve'}
+            </button>
+            <button
+              data-testid="btn-change-needed"
+              className="btn"
+              style={{ background: '#fff', color: 'var(--warning)', border: '1px solid var(--warning)' }}
+              onClick={() => setChangePanelOpen(true)}
+              disabled={resolving}
+            >
+              Change needed
+            </button>
+            <button
+              data-testid="btn-reject"
+              className="btn btn-ghost"
+              style={{ color: 'var(--danger)' }}
+              onClick={() => onReject?.(item.id)}
+              disabled={resolving}
+            >
+              Reject
+            </button>
+          </div>
+        )
       )}
 
       <div style={{ marginTop: '0.5rem', fontSize: '0.7rem', color: 'var(--text-tertiary)' }}>

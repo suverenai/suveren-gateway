@@ -293,6 +293,16 @@ export interface IdentityDisclosure {
   verified_at: number | null;
 }
 
+/**
+ * RJ1–RJ6 (temp/briefs/rj-reject-brief.md, decision 2): the three ways a
+ * pending proposal can end without executing. `rejected` = no, don't retry.
+ * `change_needed` = not like this — the AI may adjust and propose again.
+ * `replaced` = "Edit before signing" — the person signed their own version;
+ * nothing here was a refusal at all. A row with no `outcome` predates this
+ * feature and reads as `rejected` (the brief's stated default).
+ */
+export type ProposalOutcome = 'rejected' | 'change_needed' | 'replaced';
+
 export interface Proposal {
   id: string;
   authorizationId: string;
@@ -300,7 +310,7 @@ export interface Proposal {
   path: string;
   pendingDomains: string[];
   committedBy: Record<string, { userId: string; at: number }>;
-  rejectedBy: { domain: string; userId: string; at: number } | null;
+  rejectedBy: { domain: string; userId: string; at: number; outcome?: ProposalOutcome; note?: string } | null;
   tool: string;
   toolArgs: Record<string, unknown>;
   executionContext: Record<string, string | number>;
@@ -311,7 +321,7 @@ export interface Proposal {
   // Phase 6 fields
   pendingApprovers?: string[];
   approvedBy?: Record<string, { receiptId: string; at: number }>;
-  approverRejectedBy?: { userId: string; reason?: string; at: number };
+  approverRejectedBy?: { userId: string; reason?: string; at: number; outcome?: ProposalOutcome; note?: string };
   createdBy?: string;
 }
 
@@ -1347,10 +1357,22 @@ class SPClient {
     return mergeProposals(lists);
   }
 
-  async resolveProposal(id: string, action: 'commit' | 'reject', domain: string): Promise<{ status: string }> {
+  /**
+   * `opts` is the RJ1–RJ6 contract (temp/briefs/rj-reject-brief.md) — only
+   * meaningful with `action: 'reject'`; the AS 400s if sent with 'commit'.
+   * `domain` stays a required positional argument: the AS's `/resolve` body
+   * always carries it (contract, decision — unrelated to outcome/note), and
+   * every existing caller already has it in hand.
+   */
+  async resolveProposal(
+    id: string,
+    action: 'commit' | 'reject',
+    domain: string,
+    opts?: { outcome?: ProposalOutcome; note?: string },
+  ): Promise<{ status: string }> {
     const res = await this.fetch(`/api/proposals/${encodeURIComponent(id)}/resolve`, {
       method: 'POST',
-      body: JSON.stringify({ action, domain }),
+      body: JSON.stringify({ action, domain, ...opts }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Failed' }));
@@ -1388,13 +1410,20 @@ class SPClient {
   }
 
   /**
-   * Reject an above-cap action proposal.
-   * SP endpoint: POST /api/proposals/:id/reject
+   * Reject (above-cap approver path) or withdraw a proposal.
+   * SP endpoint: POST /api/proposals/:id/reject — accepts the legacy
+   * `{ reason }` body (older gateways) as well as the RJ1–RJ6 contract
+   * `{ outcome?, note? }` (temp/briefs/rj-reject-brief.md). `reason` and
+   * `outcome`/`note` are mutually exclusive callers in this codebase — no
+   * call site here needs both at once.
    */
-  async rejectProposal(id: string, reason?: string): Promise<{ receipt: Record<string, unknown>; status: string }> {
+  async rejectProposal(
+    id: string,
+    opts?: { reason?: string; outcome?: ProposalOutcome; note?: string },
+  ): Promise<{ receipt: Record<string, unknown>; status: string }> {
     const res = await this.fetch(`/api/proposals/${encodeURIComponent(id)}/reject`, {
       method: 'POST',
-      body: JSON.stringify({ reason }),
+      body: JSON.stringify(opts ?? {}),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Failed' }));
