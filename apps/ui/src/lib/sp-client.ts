@@ -293,9 +293,14 @@ export interface IdentityDisclosure {
   verified_at: number | null;
 }
 
-/** RJ1/RJ2 — the three ways a reject can resolve (2026-10-11 "Reject or ask
- *  for a change" brief, decisions 1-2). Absent on an on-disk row ⇒
- *  'rejected' (every row predating this never had an outcome). */
+/**
+ * RJ1–RJ6 (temp/briefs/rj-reject-brief.md, decision 2): the three ways a
+ * pending proposal can end without executing. `rejected` = no, don't retry.
+ * `change_needed` = not like this — the AI may adjust and propose again.
+ * `replaced` = "Edit before signing" — the person signed their own version;
+ * nothing here was a refusal at all. A row with no `outcome` predates this
+ * feature and reads as `rejected` (the brief's stated default).
+ */
 export type ProposalOutcome = 'rejected' | 'change_needed' | 'replaced';
 
 export interface Proposal {
@@ -1353,21 +1358,21 @@ class SPClient {
   }
 
   /**
-   * RJ2/RJ5 — `outcome`/`note` are additive (decisions 1-2): omitted, a
-   * reject behaves exactly as before (AS default: `outcome: 'rejected'`).
-   * `note` is required by the AS only when `outcome: 'change_needed'`, and
-   * rejected only with `outcome: 'change_needed'` there — see
-   * `POST /api/proposals/:id/resolve` in the brief's contract.
+   * `opts` is the RJ1–RJ6 contract (temp/briefs/rj-reject-brief.md) — only
+   * meaningful with `action: 'reject'`; the AS 400s if sent with 'commit'.
+   * `domain` stays a required positional argument: the AS's `/resolve` body
+   * always carries it (contract, decision — unrelated to outcome/note), and
+   * every existing caller already has it in hand.
    */
   async resolveProposal(
     id: string,
     action: 'commit' | 'reject',
     domain: string,
-    outcome?: { outcome?: ProposalOutcome; note?: string },
+    opts?: { outcome?: ProposalOutcome; note?: string },
   ): Promise<{ status: string }> {
     const res = await this.fetch(`/api/proposals/${encodeURIComponent(id)}/resolve`, {
       method: 'POST',
-      body: JSON.stringify({ action, domain, ...outcome }),
+      body: JSON.stringify({ action, domain, ...opts }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Failed' }));
@@ -1405,21 +1410,19 @@ class SPClient {
   }
 
   /**
-   * Reject an above-cap action proposal.
-   * SP endpoint: POST /api/proposals/:id/reject
-   *
-   * RJ2/RJ5 — a plain string stays the legacy shape (stored as `reason`,
-   * `outcome: 'rejected'`, per the brief's contract). An opts object is the
-   * new shape: `outcome` (default 'rejected' server-side) and `note`
-   * (required by the AS only with `outcome: 'change_needed'`). "Edit before
-   * signing" (AgentReviewPage.tsx) withdraws with `{ outcome: 'replaced' }`
-   * — no note, no reason.
+   * Reject (above-cap approver path) or withdraw a proposal.
+   * SP endpoint: POST /api/proposals/:id/reject — accepts the legacy
+   * `{ reason }` body (older gateways) as well as the RJ1–RJ6 contract
+   * `{ outcome?, note? }` (temp/briefs/rj-reject-brief.md). `reason` and
+   * `outcome`/`note` are mutually exclusive callers in this codebase — no
+   * call site here needs both at once.
    */
   async rejectProposal(
     id: string,
-    reasonOrOutcome?: string | { outcome?: ProposalOutcome; note?: string },
+    opts?: string | { reason?: string; outcome?: ProposalOutcome; note?: string },
   ): Promise<{ receipt: Record<string, unknown>; status: string }> {
-    const body = typeof reasonOrOutcome === 'string' ? { reason: reasonOrOutcome } : (reasonOrOutcome ?? {});
+    // A plain string is the legacy shape (stored as `reason`, outcome rejected).
+    const body = typeof opts === 'string' ? { reason: opts } : (opts ?? {});
     const res = await this.fetch(`/api/proposals/${encodeURIComponent(id)}/reject`, {
       method: 'POST',
       body: JSON.stringify(body),
