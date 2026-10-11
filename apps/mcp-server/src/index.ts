@@ -18,7 +18,7 @@ import { checkPendingHandler } from './tools/pending';
 import { listIntegrationsHandler } from './tools/integrations';
 import { checkPendingCommitmentsHandler } from './tools/commitments';
 import type { IntegrationManager, DiscoveredTool } from './lib/integration-manager';
-import { createGatedToolHandler, buildProxiedToolDescription, profileMatches, toolIsAuthorizedForDisplay } from './lib/tool-proxy';
+import { createGatedToolHandler, buildProxiedToolDescription, profileMatches, toolIsAuthorizedForDisplay, toolAlwaysListed } from './lib/tool-proxy';
 import { jsonSchemaToZodShape } from './lib/json-schema-to-zod';
 
 // ─── JSON Schema → Zod conversion ──────────────────────────────────────────
@@ -139,7 +139,7 @@ export function createMcpServer(
 
       const handler = createGatedToolHandler(tool, integrationManager, state);
       const zodShape = jsonSchemaToZodShape(tool.inputSchema);
-      const description = buildProxiedToolDescription(tool, state);
+      const description = buildProxiedToolDescription(tool);
 
       try {
         const registered = server.registerTool(
@@ -157,18 +157,20 @@ export function createMcpServer(
     }
   }
 
-  // ─── Dynamic tool descriptions ──────────────────────────────────────────
+  // ─── Tool visibility ────────────────────────────────────────────────────
 
   function refreshTools() {
     const auths = state.getEnrichedAuthorizations();
+    const isBuiltin = (id: string) => integrationManager?.isBuiltin?.(id) ?? false;
 
-    // Update proxied tool descriptions and visibility
+    // Descriptions are fixed per tool (see buildProxiedToolDescription); only
+    // visibility is recomputed here.
     for (const [, { tool, registered }] of proxiedTools) {
-      const description = buildProxiedToolDescription(tool, state);
-      registered.update({ description });
-
-      // All tools require authorization — enable/disable based on matching authorizations
-      if (tool.gating?.profile) {
+      // Connector tools are listed whether or not a mandate exists — the gate
+      // refuses an uncovered call (see toolAlwaysListed).
+      if (toolAlwaysListed(tool, isBuiltin)) {
+        registered.enable();
+      } else if (tool.gating?.profile) {
         const matchingAuths = auths.filter(
           a => a.complete && profileMatches(a.profileId, tool.gating!.profile!),
         );
