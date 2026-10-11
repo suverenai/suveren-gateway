@@ -12,7 +12,7 @@ import type { IntegrationManager } from '../lib/integration-manager';
 import { getProfile } from '@hap/core';
 import { getConsumptionState, formatConsumptionCompact, formatConsumptionFull } from '../lib/consumption';
 import { readContextFile } from '../lib/context-loader';
-import { profileMatches } from '../lib/tool-proxy';
+import { profileMatches, toolAlwaysListed } from '../lib/tool-proxy';
 import { agentVisibleAuthorizations } from '../lib/agent-visibility';
 
 /** Extract short profile name from full ID */
@@ -49,7 +49,9 @@ function buildCapabilityMap(
   const undescribed: string[] = [];
 
   for (const tool of allTools) {
-    if (!tool.gating || !tool.gating.profile) {
+    // A built-in's internal tools are never listed or callable by an agent —
+    // naming them here (even as "refused") only invites a call.
+    if (tool.internal || !tool.gating || !tool.gating.profile) {
       continue;
     }
 
@@ -107,6 +109,33 @@ function buildCapabilityMap(
   return lines.join('\n');
 }
 
+/**
+ * Tools listed to the agent (toolAlwaysListed) that no complete mandate
+ * covers yet, grouped by profile — "listed, but a call is refused until the
+ * person grants a mandate". Without this the agent cannot tell a listed tool
+ * it may use from one it may not, and calls blind.
+ */
+function listedWithoutMandate(
+  authorizations: Array<{ profileId: string; complete: boolean }>,
+  integrationManager: IntegrationManager | undefined,
+): string[] {
+  if (!integrationManager) return [];
+  // Optional call: test doubles of the manager predate this hook.
+  const isBuiltin = (id: string) => integrationManager.isBuiltin?.(id) ?? false;
+  const byProfile = new Map<string, string[]>();
+  for (const tool of integrationManager.getAllTools()) {
+    if (!toolAlwaysListed(tool, isBuiltin)) continue;
+    const profile = tool.gating!.profile!;
+    if (authorizations.some(a => a.complete && profileMatches(a.profileId, profile))) continue;
+    const short = shortProfileName(profile);
+    byProfile.set(short, [...(byProfile.get(short) ?? []), tool.namespacedName]);
+  }
+  return [...byProfile.entries()].map(([profile, tools]) => `  ${profile}: ${tools.join(', ')}`);
+}
+
+const LISTED_WITHOUT_MANDATE_HEADING =
+  'Listed but not usable yet — no mandate covers these; every call is refused until the person grants one:';
+
 export function listAuthorizationsHandler(
   state: SharedState,
   integrationManager?: IntegrationManager,
@@ -123,13 +152,12 @@ export function listAuthorizationsHandler(
     const now = Math.floor(Date.now() / 1000);
     const domain = args?.domain;
 
+    const notYet = listedWithoutMandate(authorizations, integrationManager);
+
     if (authorizations.length === 0) {
-      return {
-        content: [{
-          type: 'text' as const,
-          text: 'No active authorizations. A decision owner must grant authority via the Authority UI.',
-        }],
-      };
+      const text = ['No active authorizations — no tool is usable yet. Ask the person to grant a mandate in the gateway.'];
+      if (notYet.length > 0) text.push('', LISTED_WITHOUT_MANDATE_HEADING, ...notYet);
+      return { content: [{ type: 'text' as const, text: text.join('\n') }] };
     }
 
     // ── Domain-scoped detail view ──────────────────────────────────────────
@@ -303,13 +331,18 @@ export function listAuthorizationsHandler(
     }
 
     if (active.length > 0) {
-      output.push('Active authorizations:');
+      output.push('Active authorizations (usable now):');
       output.push(...active);
     }
     if (pending.length > 0) {
       if (output.length > 0) output.push('');
       output.push('Pending (missing owners):');
       output.push(...pending);
+    }
+    if (notYet.length > 0) {
+      if (output.length > 0) output.push('');
+      output.push(LISTED_WITHOUT_MANDATE_HEADING);
+      output.push(...notYet);
     }
 
     return {

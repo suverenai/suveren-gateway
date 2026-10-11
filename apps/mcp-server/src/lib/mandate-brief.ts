@@ -85,6 +85,8 @@ export function buildMandateBrief(opts: MandateBriefOptions): string {
     'Suveren implements the bounded-authority model from the open Human Agency Protocol (HAP).',
     'You have bounded authorities granted by human decision owners.',
     'You MUST stay within these bounds — the Gatekeeper will reject actions that exceed them.',
+    'Tools are listed even where no mandate covers them yet. If a call is refused because no mandate covers it, ' +
+      'tell the person and ask them to grant one — do not retry it or work around it with another tool.',
   ];
 
   // V7 — fail closed, up front: if the paired Authority Server does not

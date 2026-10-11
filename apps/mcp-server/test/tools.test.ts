@@ -637,7 +637,7 @@ describe('buildProxiedToolDescription', () => {
       gating: null,
     };
     const state = mockState();
-    const desc = buildProxiedToolDescription(tool, state);
+    const desc = buildProxiedToolDescription(tool);
     expect(desc).toBe('[Suveren: no gating config] List all products');
   });
 
@@ -667,14 +667,14 @@ describe('buildProxiedToolDescription', () => {
       complete: true,
     }]);
 
-    const desc = buildProxiedToolDescription(tool, state);
+    const desc = buildProxiedToolDescription(tool);
     expect(desc).toContain('[Suveren: charge');
     expect(desc).toContain('charge');
     expect(desc).toContain('amount, currency checked');
     expect(desc).toContain('Create a payment link');
   });
 
-  it('returns no active authorization tag for gated tool without auth', () => {
+  it('the description is fixed — the same with or without a mandate, and says it needs one', () => {
     const tool: DiscoveredTool = {
       originalName: 'create_payment_link',
       namespacedName: 'stripe__create_payment_link',
@@ -687,11 +687,11 @@ describe('buildProxiedToolDescription', () => {
         staticExecution: { action_type: 'charge' },
       },
     };
-    const state = mockState(); // no authorizations
-
-    const desc = buildProxiedToolDescription(tool, state);
-    expect(desc).toContain('[Suveren: charge — no active authorization]');
-    expect(desc).toContain('Create a payment link');
+    // Clients that ignore tools/list_changed keep the first description they
+    // saw, so it must not depend on mandate state at all.
+    const desc = buildProxiedToolDescription(tool);
+    expect(desc).toBe('[Suveren: charge — charge, amount checked; works only under a charge mandate, check list-authorizations] Create a payment link');
+    expect(desc).not.toMatch(/no active authorization|no mandate yet/i);
   });
 });
 
@@ -736,7 +736,7 @@ describe('createGatedToolHandler — F9 ungoverned read is denied', () => {
 
     expect(result.isError).toBe(true);
     expect(result.content[0].text).not.toContain('declares no read governance');
-    expect(result.content[0].text).toContain('No active authorization');
+    expect(result.content[0].text).toContain('no mandate covers crm__');
   });
 });
 
