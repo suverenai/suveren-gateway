@@ -23,6 +23,7 @@ import { resolveProposalLinks, type ProposalLink } from '../lib/proposal-links';
 import { spClient, type IntegrationManifest, type Proposal } from '../lib/sp-client';
 import { ProposalArgs } from './ProposalArgs';
 import { PreviewBox } from './PreviewBox';
+import { boundValuesOpen } from '../lib/approval-preview-view';
 import { contextFieldLabel, splitTool, systemDisplayName, toolHeadline, type ToolDisplay } from '../lib/approval-view';
 import { useProfile } from '../lib/profile-cache';
 import { useMandateBounds } from '../lib/mandate-bounds-cache';
@@ -128,6 +129,31 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
     }
   };
 
+  // The bound values — the content the person approves. Shown OPEN as "What
+  // will be sent" when there is no working preview (lib/approval-preview-view.ts
+  // boundValuesOpen); folded under Details only when a preview already shows the
+  // record from the system.
+  const [previewTone, setPreviewTone] = useState<string | null>(null);
+  const boundOpen = boundValuesOpen(previewTone);
+  const boundContent = (
+    <>
+          <ProposalArgs args={proposal.toolArgs} display={toolDisplay} heading="" />
+          {boundsEntries.length > 0 && (
+            <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+              {boundsEntries.map(([k, v], i) => {
+                const { label, hint } = contextFieldLabel(k, profile);
+                return (
+                  <span key={k}>
+                    {i > 0 && ' · '}
+                    <span title={hint}>{label}={formatArgValue(v)}</span>
+                  </span>
+                );
+              })}
+            </div>
+          )}
+        </>
+  );
+
   return (
     <>
       {/* Headline — the tool's display name. No invented label: the tool-name
@@ -137,7 +163,13 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
       {/* Preview box — the system's own read, before it runs. Gateway-internal
           (decision 1); every fallback keeps the bound values below visible
           and Approve/Reject enabled (decisions 2-3). */}
-      <PreviewBox proposalId={proposal.id} systemName={systemName} />
+      {boundOpen && (
+        <div className="preview-box preview-box-ok" data-testid="bound-values-open" style={{ marginBottom: '0.5rem' }}>
+          <h4>What will be sent <span className="src-tag src-tag-sealed">sealed</span></h4>
+          {boundContent}
+        </div>
+      )}
+      <PreviewBox proposalId={proposal.id} systemName={systemName} onTone={setPreviewTone} />
 
       {/* Within your limits — per-call bound checks only (lib/receipt-summary.ts
           limitChecks); cumulative bounds are deliberately not shown here (no
@@ -216,27 +248,14 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
           the call's arguments AND the execution-context fields the
           Gatekeeper actually checked (never both hidden behind separate
           toggles: one fold, everything that is bound). */}
+      {!boundOpen && (
       <details className="proposal-args-fold" style={{ marginBottom: '0.75rem' }}>
         <summary style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', cursor: 'pointer' }}>
           Details (exactly what is bound)
         </summary>
-        <div style={{ marginTop: '0.5rem' }}>
-          <ProposalArgs args={proposal.toolArgs} display={toolDisplay} heading="" />
-          {boundsEntries.length > 0 && (
-            <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-              {boundsEntries.map(([k, v], i) => {
-                const { label, hint } = contextFieldLabel(k, profile);
-                return (
-                  <span key={k}>
-                    {i > 0 && ' · '}
-                    <span title={hint}>{label}={formatArgValue(v)}</span>
-                  </span>
-                );
-              })}
-            </div>
-          )}
-        </div>
+        <div style={{ marginTop: '0.5rem' }}>{boundContent}</div>
       </details>
+      )}
 
       {/* DL6 — "Edit before signing": this proposal's own tool is the
           gateway's builtin mandate-creation proposal (CREATE_MANDATE_TOOL) —

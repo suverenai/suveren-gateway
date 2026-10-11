@@ -115,9 +115,9 @@ describe('simulation mode — tool-proxy defence in depth', () => {
 
     // No active authorization — expected to be refused for THAT reason, not
     // the simulation check, proving the simulation gate did not short-circuit
-    // (it would say "No active authorization", not "simulation mode").
+    // (it would say "no mandate covers", not "simulation mode").
     const result = await handler({});
-    expect(result.content[0].text).toContain('No active authorization');
+    expect(result.content[0].text).toContain('no mandate covers');
   });
 
   it('ON: refuses a call to a tool of a non-simulated connector with a neutral text (agent cannot tell simulation) — no ticket requested', async () => {
@@ -160,7 +160,7 @@ describe('simulation mode — tool-proxy defence in depth', () => {
     const result = await handler({});
     // Falls through past the simulation check to the normal "no mandate" path
     // — proving the simulated connector was NOT caught by the simulation gate.
-    expect(result.content[0].text).toContain('No active authorization');
+    expect(result.content[0].text).toContain('no mandate covers');
     expect(result.content[0].text).not.toContain('is not available');
   });
 });

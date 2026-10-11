@@ -193,3 +193,14 @@ describe('outcomeBoxView', () => {
     expect(v!.note.length).toBeLessThan(580);
   });
 });
+
+describe('boundValuesOpen — the bound values are the content when nothing else shows it', () => {
+  it('open when no preview is declared, unavailable or not found', async () => {
+    const { boundValuesOpen } = await import('./approval-preview-view');
+    for (const tone of ['none', 'unavailable', 'not_found']) expect(boundValuesOpen(tone)).toBe(true);
+  });
+  it('folded while a working preview shows the record (ok, stale) or while still loading', async () => {
+    const { boundValuesOpen } = await import('./approval-preview-view');
+    for (const tone of ['ok', 'stale', 'loading', null]) expect(boundValuesOpen(tone)).toBe(false);
+  });
+});

@@ -242,6 +242,26 @@ export function zeroCappedBound(
   return null;
 }
 
+/**
+ * Whether a tool is listed in `tools/list` regardless of mandates: every
+ * gated tool of a running CONNECTOR. Many AI clients (ChatGPT among them)
+ * ignore `tools/list_changed`, so a tool that appears only once a mandate
+ * exists stays invisible for the rest of the chat when the mandate is granted
+ * mid-session. Listing it does not authorize it — a call without a mandate is
+ * refused by the gate (noEligibleMandate) and recorded under Blocked.
+ *
+ * Not always listed, unchanged: built-in tools (setup/report — the working
+ * agent must not see the setup tools), `hideUnlessAuthorized` tools, tools
+ * the gate always refuses (`category: 'disabled'`), and `internal` tools
+ * (never registered at all — see index.ts). A paused connector (simulation
+ * mode) is not running, so its tools are not discovered in the first place.
+ */
+export function toolAlwaysListed(tool: DiscoveredTool, isBuiltin: (integrationId: string) => boolean): boolean {
+  if (tool.internal || !tool.gating?.profile) return false;
+  if (tool.gating.hideUnlessAuthorized || tool.gating.category === 'disabled') return false;
+  return !isBuiltin(tool.integrationId);
+}
+
 export function toolIsAuthorizedForDisplay(
   tool: DiscoveredTool,
   matchingAuths: EnrichedAuthorization[],
@@ -621,8 +641,7 @@ function createGatedToolHandlerInner(
         type: 'text',
         text: refusals.length > 0
           ? `Refused: ${reasons.charAt(0).toUpperCase() + reasons.slice(1)} No ticket was requested.`
-          : `No active authorization matching profile "${profile}". ` +
-            `A decision owner must grant authority via the Authority UI before this tool can be used.`,
+          : noMandateRefusal(tool.namespacedName, profile!),
       }],
       isError: true,
     };
@@ -1601,34 +1620,37 @@ function createGatedToolHandlerInner(
   });
 }
 
+/** The refusal an agent gets for a listed tool no mandate covers — says what to do. */
+export function noMandateRefusal(toolName: string, profile: string): string {
+  return `Refused: no mandate covers ${toolName} (${shortProfile(profile)}). Nothing was done. ` +
+    `Ask the person to grant a ${shortProfile(profile)} mandate in the gateway, then try again. No ticket was requested.`;
+}
+
+function shortProfile(profileId: string): string {
+  const parts = profileId.replace(/@.*$/, '').split('/');
+  return parts[parts.length - 1];
+}
+
 /**
- * Build a description for a proxied tool that includes a short gating tag.
+ * The tool description an agent sees. FIXED per tool — it never changes with
+ * mandate state, because clients that ignore `tools/list_changed` also keep
+ * the description they first saw: a "no mandate yet" text would stay wrong
+ * after the mandate is granted. The current state is in list-authorizations.
  *
- * Tags:
- * - [Suveren: charge — read] — read-only, requires authorization
- * - [Suveren: charge — charge, amount checked] — gated with specific checks
- * - [Suveren: charge — no active authorization] — gated but no auth available
+ * - [Suveren: no gating config] — no profile, every call refused
+ * - [Suveren: crm — read; works only under a crm mandate, check list-authorizations]
+ * - [Suveren: charge — charge, amount checked; works only under a charge mandate, check list-authorizations]
  */
-export function buildProxiedToolDescription(
-  tool: DiscoveredTool,
-  state: SharedState,
-): string {
+export function buildProxiedToolDescription(tool: DiscoveredTool): string {
   if (!tool.gating || !tool.gating.profile) {
     return `[Suveren: no gating config] ${tool.description}`;
   }
 
   const profile = tool.gating.profile;
-  const auths = state.getEnrichedAuthorizations();
-  const hasAuth = auths.some(
-    a => a.complete && profileMatches(a.profileId, profile),
-  );
-
-  if (!hasAuth) {
-    return `[Suveren: ${profile} — no active authorization] ${tool.description}`;
-  }
+  const condition = `works only under a ${shortProfile(profile)} mandate, check list-authorizations`;
 
   if (tool.gating.category === 'read') {
-    return `[Suveren: ${profile} — read] ${tool.description}`;
+    return `[Suveren: ${profile} — read; ${condition}] ${tool.description}`;
   }
 
   // Build a short tag describing what's checked
@@ -1644,5 +1666,5 @@ export function buildProxiedToolDescription(
   }
 
   const tag = parts.length > 0 ? parts.join(', ') : 'gated';
-  return `[Suveren: ${profile} — ${tag}] ${tool.description}`;
+  return `[Suveren: ${profile} — ${tag}; ${condition}] ${tool.description}`;
 }
