@@ -44,6 +44,7 @@ import { executeCommitted, installCommittedExecutor, buildSkippedProposalNote } 
 import { CommittedExecutor, ExecutorLock } from '../src/lib/committed-executor';
 import type { SPProposal } from '../src/lib/sp-client';
 import { resolveWhoLabel } from '../src/lib/who-label';
+import { outcomeEntryFor } from '../src/lib/outcome-outbox';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { resolveAsUrl, resolvePinTls, validatePinTlsForUrl } from '../src/lib/as-config';
@@ -1278,19 +1279,16 @@ app.listen(port, bindHost, () => {
       for (const proposal of rejected) {
         const by = proposal.approverRejectedBy ?? proposal.rejectedBy;
         if (!by) continue;
-        const outcome = by.outcome ?? 'rejected';
+        const submittedHere = state.proposalSubmissions.get(proposal.id) !== undefined;
+        // Cheap admission check first: no name lookup for proposals we will skip.
+        if (!outcomeEntryFor(proposal, submittedHere, by.userId, Date.now())) continue;
         const who = await resolveWhoLabel(
           state.receiptArchive,
           'domain' in by ? by.domain : by.userId,
           by.userId,
         );
-        state.outcomeOutbox.recordIfNew({
-          proposalId: proposal.id,
-          outcome,
-          note: by.note,
-          who,
-          decidedAt: Date.now(),
-        });
+        const entry = outcomeEntryFor(proposal, submittedHere, who, Date.now());
+        if (entry) state.outcomeOutbox.recordIfNew(entry);
       }
     } catch {
       // SP unreachable or no session — skip this cycle, same as executeCommittedProposals.

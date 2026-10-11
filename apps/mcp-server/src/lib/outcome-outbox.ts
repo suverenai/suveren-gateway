@@ -34,9 +34,10 @@ export interface OutcomeOutboxEntry {
   note?: string;
   /** Display name if known locally, else the user id — see who-label.ts. */
   who: string;
-  /** Unix ms when THIS GATEWAY learned about (recorded) the outcome — drives
-   *  the 7-day retention window. Not the AS's own `at` timestamp on the
-   *  rejection, whose units vary by call site elsewhere in this codebase. */
+  /** Unix ms when the PERSON decided (the AS's rejection `at`, which is unix
+   *  seconds, × 1000) — drives the 7-day window. It must be the decision time,
+   *  not the time this gateway first saw it: otherwise every old rejection
+   *  arrives as "new" after an update, and again after each 7-day prune. */
   decidedAt: number;
   /** Unix ms when this entry was appended to a tool reply. Absent = not yet delivered. */
   deliveredAt?: number;
@@ -49,6 +50,34 @@ interface EncryptedStoreFile { version: 1; blob: EncryptedBlob; }
 const DEFAULT_DIR = process.env.SUVEREN_DATA_DIR ?? join(homedir(), '.suveren');
 /** Undelivered AND delivered rows older than this are dropped — see module doc. */
 const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** The 7-day window, exported for the poller's admission rule. */
+export const OUTCOME_MAX_AGE_MS = MAX_AGE_MS;
+
+/**
+ * Which rejected proposals become an outbox entry. Only proposals THIS gateway
+ * submitted (a local submission record exists) — another device's proposals
+ * are not this gateway's AI's business — and only decisions inside the 7-day
+ * window, by the decision time itself, so an entry pruned after 7 days can
+ * never be re-admitted as new.
+ */
+export function outcomeEntryFor(
+  proposal: {
+    id: string;
+    rejectedBy?: { userId: string; at: number; outcome?: ProposalOutcome; note?: string; domain?: string } | null;
+    approverRejectedBy?: { userId: string; at: number; outcome?: ProposalOutcome; note?: string };
+  },
+  submittedHere: boolean,
+  who: string,
+  nowMs: number,
+): Omit<OutcomeOutboxEntry, 'deliveredAt'> | null {
+  if (!submittedHere) return null;
+  const by = proposal.approverRejectedBy ?? proposal.rejectedBy;
+  if (!by || typeof by.at !== 'number') return null;
+  const decidedAt = by.at * 1000; // AS stores unix seconds
+  if (nowMs - decidedAt > MAX_AGE_MS) return null;
+  return { proposalId: proposal.id, outcome: by.outcome ?? 'rejected', note: by.note, who, decidedAt };
+}
 
 export class OutcomeOutbox {
   private entries: OutcomeOutboxEntry[] = [];

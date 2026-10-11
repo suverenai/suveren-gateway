@@ -245,3 +245,36 @@ describe('wrapWithOutcomeOutbox — the one wrapper', () => {
     expect(box.getUndelivered()).toHaveLength(1);
   });
 });
+
+describe('outcomeEntryFor — which rejections become an outbox entry', () => {
+  const NOW = 1_800_000_000_000;
+  const sec = (ms: number) => Math.floor(ms / 1000);
+  const p = (atMs: number, extra: Record<string, unknown> = {}) => ({
+    id: 'p1', rejectedBy: { userId: 'u', domain: 'owner', at: sec(atMs), ...extra },
+  });
+
+  it('only proposals this gateway submitted', async () => {
+    const { outcomeEntryFor } = await import('../src/lib/outcome-outbox');
+    expect(outcomeEntryFor(p(NOW - 1000), false, 'u', NOW)).toBeNull();
+    expect(outcomeEntryFor(p(NOW - 1000), true, 'u', NOW)).not.toBeNull();
+  });
+
+  it('uses the DECISION time (AS seconds → ms), not the time first seen', async () => {
+    const { outcomeEntryFor } = await import('../src/lib/outcome-outbox');
+    const e = outcomeEntryFor(p(NOW - 60_000, { outcome: 'change_needed', note: 'n' }), true, 'u', NOW)!;
+    expect(e.decidedAt).toBe(sec(NOW - 60_000) * 1000);
+    expect(e).toMatchObject({ outcome: 'change_needed', note: 'n' });
+  });
+
+  it('a decision older than 7 days is never admitted — so a pruned entry cannot come back as new', async () => {
+    const { outcomeEntryFor, OUTCOME_MAX_AGE_MS } = await import('../src/lib/outcome-outbox');
+    expect(outcomeEntryFor(p(NOW - OUTCOME_MAX_AGE_MS - 5_000), true, 'u', NOW)).toBeNull();
+  });
+
+  it('a row without an outcome reads as rejected; the above-cap rejection wins', async () => {
+    const { outcomeEntryFor } = await import('../src/lib/outcome-outbox');
+    expect(outcomeEntryFor(p(NOW - 1000), true, 'u', NOW)!.outcome).toBe('rejected');
+    const both = { id: 'p2', rejectedBy: { userId: 'a', at: sec(NOW - 1000) }, approverRejectedBy: { userId: 'b', at: sec(NOW - 500), outcome: 'change_needed' as const, note: 'x' } };
+    expect(outcomeEntryFor(both, true, 'b', NOW)).toMatchObject({ outcome: 'change_needed', note: 'x' });
+  });
+});
