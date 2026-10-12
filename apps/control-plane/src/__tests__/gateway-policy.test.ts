@@ -128,6 +128,19 @@ describe('policy.mjs — policy file', () => {
     expect(r.locked.has('installMethod')).toBe(true);
   });
 
+  it('locks Team to the id as-is (WS4 — an account is Personal OR in one team)', () => {
+    process.env.SUVEREN_POLICY_FILE = tmpPolicyFile({ Team: 'grp_abc123' });
+    const r = readPolicy();
+    expect(r.policy.team).toBe('grp_abc123');
+    expect(r.locked.has('team')).toBe(true);
+    expect(isPolicyLocked('team')).toBe(true);
+  });
+
+  it('REFUSAL: throws on an empty Team', () => {
+    process.env.SUVEREN_POLICY_FILE = tmpPolicyFile({ Team: '   ' });
+    expect(() => readPolicy()).toThrow(/Invalid policy Team/);
+  });
+
   it('REFUSAL: throws on a policy file that is not valid JSON — fails closed, not silently empty', () => {
     const dir = mkdtempSync(join(tmpdir(), 'gateway-policy-'));
     dirs.push(dir);
@@ -166,6 +179,7 @@ describe('policy.mjs — registry (parsing logic, platform-independent)', () => 
       '    NoProxy    REG_SZ    internal.example.com',
       '    Simulation    REG_DWORD    0x0',
       '    InstallMethod    REG_SZ    managed',
+      '    Team    REG_SZ    grp_abc123',
       '',
     ].join('\r\n');
     expect(parseRegQueryOutput(stdout)).toEqual({
@@ -175,6 +189,7 @@ describe('policy.mjs — registry (parsing logic, platform-independent)', () => 
       NoProxy: 'internal.example.com',
       Simulation: 0,
       InstallMethod: 'managed',
+      Team: 'grp_abc123',
     });
   });
 

@@ -35,6 +35,42 @@ export interface GroupMember {
   disabledBy?: string;
 }
 
+/**
+ * Work-plan "Added 2026-10-11 — an account is Personal OR in one team":
+ * what joining/creating a team would end for the caller — their OWN live
+ * (unrevoked) Personal mandates, and how many still-pending proposals ride
+ * on them. Shown by the join/create previews BEFORE the person confirms;
+ * `ended` on the real join-confirm/create calls reports the same counts
+ * AFTER the fact.
+ */
+export interface PersonalMandateSummary {
+  id: string;
+  profileId: string;
+  title: string | null;
+  commitmentMode: 'automatic' | 'review' | 'review_above_cap' | null;
+}
+
+export interface PersonalEndingPreview {
+  personalMandates: PersonalMandateSummary[];
+  pendingPersonalProposals: number;
+}
+
+export interface JoinPreview extends PersonalEndingPreview {
+  groupId: string;
+  groupName: string;
+  admin: { name: string };
+}
+
+/** The caller's own pending request to join a team — created by
+ *  `requestToJoinGroup`, ended by `withdrawJoinRequest` or by the team
+ *  admin confirming/declining it (not from this gateway's UI — that
+ *  happens on the Authority Server dashboard). */
+export interface PendingJoinRequest {
+  groupId: string;
+  groupName: string;
+  requestedAt: number;
+}
+
 export interface AttestResponse {
   /** Per-ceremony identity — REQUIRED; its absence means a pre-identity AS. */
   authorization_id?: string;
@@ -903,7 +939,14 @@ class SPClient {
     return res.json();
   }
 
-  async createGroup(name: string): Promise<SPGroup> {
+  /**
+   * Creating a team MOVES the account (work-plan "Added 2026-10-11 — an
+   * account is Personal OR in one team", decision 3): the caller's
+   * Personal mandates are revoked (kept as history) and its pending
+   * Personal proposals are rejected. `ended` is what that cost — the SAME
+   * counts {@link getCreatePreview} shows BEFORE the person confirms.
+   */
+  async createGroup(name: string): Promise<SPGroup & { ended: { mandates: number; proposals: number } }> {
     const res = await this.fetch('/api/groups', {
       method: 'POST',
       body: JSON.stringify({ name }),
@@ -914,21 +957,77 @@ class SPClient {
     }
     const data = await res.json();
     const g = data.group || data;
-    return { id: g.id, name: g.name, myDomains: g.myDomains || [], isAdmin: true };
+    return {
+      id: g.id, name: g.name, myDomains: g.myDomains || [], isAdmin: true,
+      ended: data.ended ?? { mandates: 0, proposals: 0 },
+    };
   }
 
-  async joinGroup(inviteCode: string): Promise<SPGroup> {
+  /**
+   * What creating a team would end for the caller (decision 3) — the
+   * create screen shows this BEFORE "Create team and move my account".
+   * No state change. `GET /api/groups/create/preview`.
+   */
+  async getCreatePreview(): Promise<PersonalEndingPreview> {
+    const res = await this.fetch('/api/groups/create/preview');
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+      throw new Error(asErrorMessage(err, `Failed to preview team creation: ${res.status}`));
+    }
+    return res.json();
+  }
+
+  /**
+   * What joining `inviteCode`'s team would end for the caller — the join
+   * screen's preview, shown BEFORE "Ask to join" even exists as a request.
+   * No state change. `GET /api/groups/join/preview?inviteCode=…`.
+   * 404 (invalid/expired code) surfaces as a thrown Error.
+   */
+  async getJoinPreview(inviteCode: string): Promise<JoinPreview> {
+    const res = await this.fetch(`/api/groups/join/preview?inviteCode=${encodeURIComponent(inviteCode)}`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Invalid or expired invite code' }));
+      throw new Error(asErrorMessage(err, `Invalid invite code: ${res.status}`));
+    }
+    return res.json();
+  }
+
+  /**
+   * Entering an invite code no longer makes the caller a member (work-plan
+   * "Added 2026-10-11"): it creates a PENDING REQUEST the team admin
+   * confirms or declines. 202, not 200 — nothing has moved yet. Throws on
+   * 404 (bad code), 409 (already in a team, or already has a pending
+   * request — `code: 'REQUEST_PENDING'`), 403 (previously disabled in that
+   * team).
+   */
+  async requestToJoinGroup(inviteCode: string): Promise<PendingJoinRequest> {
     const res = await this.fetch('/api/groups/join', {
       method: 'POST',
       body: JSON.stringify({ inviteCode }),
     });
-    if (!res.ok) {
+    if (res.status !== 202) {
       const err = await res.json().catch(() => ({ error: 'Unknown error' }));
-      throw new Error(asErrorMessage(err, `Join group failed: ${res.status}`));
+      throw new Error(asErrorMessage(err, `Request to join failed: ${res.status}`));
     }
     const data = await res.json();
-    const g = data.group || data;
-    return { id: g.id, name: g.name, myDomains: g.myDomains || [], isAdmin: g.isAdmin || false };
+    return data.request;
+  }
+
+  /**
+   * Withdraw the caller's own pending join request — the account stays
+   * Personal, nothing else changes. Returns false (not an error) when there
+   * was no pending request to withdraw (404) — the UI treats that as
+   * already-resolved, not a failure.
+   */
+  async withdrawJoinRequest(): Promise<boolean> {
+    const res = await this.fetch('/api/groups/join', { method: 'DELETE' });
+    if (res.status === 404) return false;
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+      throw new Error(asErrorMessage(err, `Withdraw failed: ${res.status}`));
+    }
+    const data = await res.json();
+    return data.withdrawn === true;
   }
 
   async inviteToGroup(groupId: string): Promise<{ inviteCode?: string; code?: string }> {
@@ -943,14 +1042,21 @@ class SPClient {
   }
 
   /**
-   * Returns the caller's active team group + membership, or null for personal-only users.
-   * SP endpoint: GET /api/groups/me (Phase 1 addition).
+   * The caller's active team group + membership (null for personal-only
+   * users) PLUS their own pending join request, if any (work-plan "Added
+   * 2026-10-11" — mutually exclusive with an active team by construction,
+   * but reported independently so the caller never has to assume that).
+   * `GET /api/groups/me`.
    */
-  async getMyTeam(): Promise<{ group: SPGroup; membership: GroupMember } | null> {
+  async getMyTeam(): Promise<{ group: SPGroup | null; membership: GroupMember | null; pendingRequest: PendingJoinRequest | null }> {
     const res = await this.fetch('/api/groups/me');
-    if (!res.ok) return null;
+    if (!res.ok) return { group: null, membership: null, pendingRequest: null };
     const data = await res.json();
-    return data.group ? { group: data.group, membership: data.membership } : null;
+    return {
+      group: data.group ?? null,
+      membership: data.membership ?? null,
+      pendingRequest: data.pendingRequest ?? null,
+    };
   }
 
   /**

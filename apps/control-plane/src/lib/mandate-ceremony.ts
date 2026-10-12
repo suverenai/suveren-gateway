@@ -31,7 +31,17 @@ import {
 } from '@hap/core';
 
 export interface MandateRequest {
-  /** Team id or name; absent = the personal workspace. */
+  /**
+   * Team id or name, or `"personal"`; absent = resolve via
+   * {@link delegationWorkspace} (the workspace of the caller's own
+   * Delegation mandate, else personal). `setup__create_mandate` (WS3,
+   * work-plan "Added 2026-10-11 — an account is Personal OR in one team")
+   * no longer sends this at all, so for that caller it is always absent —
+   * which, since an account is active in only one workspace at a time,
+   * always resolves to that active workspace. Kept here (not removed) for
+   * any other direct caller of this module that still wants to name one
+   * explicitly; the Authority Server re-checks membership either way.
+   */
   team?: string;
   /** Full profile id, or the short name ("sales") for its newest version. */
   profile: string;

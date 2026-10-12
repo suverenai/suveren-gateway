@@ -371,14 +371,34 @@ describe('setup__create_mandate', () => {
 });
 
 describe('setup__describe_mandate_proposal (AU3 internal preview — DL1 Interface contract)', () => {
+  // WS3 (work-plan "Added 2026-10-11 — an account is Personal OR in one
+  // team"): no `team` argument any more — the preview's `workspace` field
+  // now comes from the SAME dry-run control-plane check create_mandate's
+  // own `validate` runs (controlPlaneMandate), never echoed from an arg.
   const MANDATE_ARGS = {
-    team: 'Sales Vienna', profile: 'sales',
+    profile: 'sales',
     limits: { value_max: 1000, discount_max: 5 },
     scope: { currency: 'EUR' },
     intent: 'Why — test.', mode: 'review', duration_hours: 720, title: 'Innendienst',
   };
 
+  /** Mirrors setup__create_mandate's own stubControlPlane above — answers
+   *  every /internal/mandate call (dry-run and real) the same way. */
+  function stubControlPlane(answer: (dryRun: boolean, request: any) => { status: number; body: any }) {
+    process.env.SUVEREN_INTERNAL_SECRET = 'sec';
+    const realFetch = globalThis.fetch;
+    vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
+      if (!String(url).endsWith('/internal/mandate')) return realFetch(url, init);
+      const { dryRun, request } = JSON.parse(String(init.body));
+      const a = answer(dryRun, request);
+      return new Response(JSON.stringify(a.body), { status: a.status, headers: { 'Content-Type': 'application/json' } });
+    });
+  }
+
+  afterEach(() => { vi.unstubAllGlobals(); delete process.env.SUVEREN_INTERNAL_SECRET; });
+
   it('returns the contract shape, with labels/units from the TARGET profile (sales 0.4)', async () => {
+    stubControlPlane(() => ({ status: 200, body: { ok: true, groupName: 'Sales Vienna' } }));
     const { im } = setup([AUTH_04]);
     const result = await im.callTool('setup', 'describe_mandate_proposal', MANDATE_ARGS);
     expect(result.isError).toBeFalsy();
@@ -399,16 +419,23 @@ describe('setup__describe_mandate_proposal (AU3 internal preview — DL1 Interfa
     expect(checks.join(' ')).toMatch(/Sales is allowed by your Delegation mandate/);
   });
 
-  it('workspace defaults to "Personal" when no team is given (or "personal" is passed)', async () => {
+  it('workspace reflects the account\'s OWN Personal workspace name, not a fixed "Personal"', async () => {
+    stubControlPlane(() => ({ status: 200, body: { ok: true, groupName: "Anna's Workspace" } }));
     const { im } = setup([AUTH_04]);
-    const { team: _omit, ...rest } = MANDATE_ARGS;
-    const noTeam = await im.callTool('setup', 'describe_mandate_proposal', rest);
-    expect(noTeam.structuredContent!.workspace).toBe('Personal');
-    const explicit = await im.callTool('setup', 'describe_mandate_proposal', { ...rest, team: 'personal' });
-    expect(explicit.structuredContent!.workspace).toBe('Personal');
+    const result = await im.callTool('setup', 'describe_mandate_proposal', MANDATE_ARGS);
+    expect(result.structuredContent!.workspace).toBe("Anna's Workspace");
+  });
+
+  it('workspace falls back to "Personal" when the control-plane check cannot be reached', async () => {
+    // No stubControlPlane — the real fetch runs and fails (nothing is
+    // listening), exactly like a genuinely unreachable control plane.
+    const { im } = setup([AUTH_04]);
+    const result = await im.callTool('setup', 'describe_mandate_proposal', MANDATE_ARGS);
+    expect(result.structuredContent!.workspace).toBe('Personal');
   });
 
   it('title is null, not omitted, when no title is given', async () => {
+    stubControlPlane(() => ({ status: 200, body: { ok: true, groupName: 'Sales Vienna' } }));
     const { im } = setup([AUTH_04]);
     const { title: _omit, ...rest } = MANDATE_ARGS;
     const result = await im.callTool('setup', 'describe_mandate_proposal', rest);

@@ -572,7 +572,7 @@ function printConfigHelp() {
   console.log(`suveren-gateway config — read or save gateway settings
 
 Usage:
-  suveren-gateway config get [as-url|ca-file|pin-tls|proxy|port|mcp-port|data-dir]
+  suveren-gateway config get [as-url|ca-file|pin-tls|proxy|port|mcp-port|data-dir|team]
                                                         Print the resolved value(s)
   suveren-gateway config set as-url <url>              Save the Authority Server URL
   suveren-gateway config set ca-file <path>            Save a CA bundle for internal TLS
@@ -598,6 +598,11 @@ as-url > default (${DEFAULT_AS_URL}).
 A setting your organization's IT has set centrally (Windows registry policy,
 or a policy file — see docs/managed-settings.md) is LOCKED: \`config get\`
 shows "(set by your IT)" next to it, and \`config set\` refuses to change it.
+
+team (IT policy only, no \`config set\`) binds this gateway to one team: only
+shown by \`config get\` when IT has set it. Sign-in is refused for an account
+not in that team, and the gateway locks if the signed-in account later
+leaves it — see docs/managed-settings.md.
 
 proxy is a convenience for operators without shell access to set
 HTTP_PROXY/HTTPS_PROXY themselves — those environment variables remain the
@@ -787,6 +792,9 @@ async function config(args) {
       console.log(`port:     ${INSTALL.cpPort}  (${describeSource(INSTALL.source.cpPort, 'cpPort')})`);
       console.log(`mcp-port: ${INSTALL.mcpPort}  (${describeSource(INSTALL.source.mcpPort, 'mcpPort')})`);
       console.log(`data-dir: ${INSTALL.dataDir}  (${describeSource(INSTALL.source.dataDir, 'dataDir')})`);
+      if (isPolicyLocked('team')) {
+        console.log(`team:    ${readPolicy().policy.team}${policySuffix('team')}`);
+      }
       return;
     }
     const install = INSTALL_KEYS[key];
@@ -798,6 +806,7 @@ async function config(args) {
     if (key === 'ca-file') { console.log(`${(policyCaFile ?? saved.caFile) ?? ''}${policySuffix('caFile')}`); return; }
     if (key === 'pin-tls') { console.log(`${resolvePinTls(DATA_DIR) ? 'on' : 'off'}${policySuffix('pinTls')}`); return; }
     if (key === 'proxy') { console.log(`${(policyProxy ?? saved.proxyUrl) ?? ''}${policySuffix('proxy')}`); return; }
+    if (key === 'team') { console.log(`${readPolicy().policy.team ?? '(not set)'}${policySuffix('team')}`); return; }
     console.error(`Unknown config key: ${key}\n`);
     printConfigHelp();
     process.exit(2);

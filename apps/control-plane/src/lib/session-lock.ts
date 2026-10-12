@@ -45,6 +45,15 @@ export const AS_TLS_MISMATCH_MESSAGE =
   'at pairing. The connection was refused before anything was sent. If the certificate changed ' +
   'intentionally (a new key, not just renewal), clear the pairing and sign in again to re-pin it.';
 
+/** Same channel, for WS4's managed-team case (see managed-team.ts) — the
+ *  team name/id is filled in by the caller, which knows it. */
+export function managedWrongTeamMessage(team: string): string {
+  return (
+    `This gateway is set up by your IT for team ${team}. Your account is no longer in this team. ` +
+    'Sign in with your team account, or ask your IT.'
+  );
+}
+
 export function createSessionLock(deps: SessionLockDeps): () => void {
   const { vault, port } = deps;
   const notifyFn = deps.notifyFn ?? notify;
@@ -131,5 +140,38 @@ export function createAsTlsMismatchLock(deps: SessionLockDeps): () => void {
 
     const { title, url } = sessionExpiredNotification(port);
     notifyFn(title, AS_TLS_MISMATCH_MESSAGE, process.platform, url);
+  };
+}
+
+/**
+ * WS4 (work-plan "Added 2026-10-11 — an account is Personal OR in one
+ * team"): mirrors {@link createAsKeyMismatchLock} for a managed gateway
+ * (IT policy `Team`, lib/policy.ts) whose signed-in account has left the
+ * locked team (or was removed) — found by lib/managed-team.ts's periodic
+ * check. `team` is the policy value (an id, or a name when known) so the
+ * message names what the account is no longer in.
+ */
+export function createManagedWrongTeamLock(deps: SessionLockDeps): (team: string) => void {
+  const { vault, port } = deps;
+  const notifyFn = deps.notifyFn ?? notify;
+  const unconfigureSessionFn = deps.unconfigureSessionFn ?? unconfigureSession;
+  const emit = deps.emit ?? eventBus.emit.bind(eventBus);
+
+  return function lockOnManagedWrongTeam(team: string): void {
+    if (!vault.isUnlocked()) return; // already locked — nothing to do (single-flight)
+    vault.lockManagedWrongTeam();
+
+    console.error('[Control Plane] Managed gateway: signed-in account is no longer in the locked team — gateway LOCKED');
+
+    const message = managedWrongTeamMessage(team);
+
+    void unconfigureSessionFn('managed-wrong-team').catch(err => {
+      console.error('[Control Plane] Failed to push cleared session to MCP:', err);
+    });
+
+    emit('session-locked', { reason: 'managed-wrong-team', message });
+
+    const { title, url } = sessionExpiredNotification(port);
+    notifyFn(title, message, process.platform, url);
   };
 }

@@ -9,7 +9,7 @@
 
 export type PolicyKey =
   | 'asUrl' | 'caFile' | 'pinTls' | 'proxy' | 'noProxy' | 'simulation' | 'installMethod'
-  | 'port' | 'mcpPort' | 'dataDir';
+  | 'port' | 'mcpPort' | 'dataDir' | 'team';
 
 export interface GatewayPolicy {
   asUrl?: string;
@@ -22,6 +22,8 @@ export interface GatewayPolicy {
   port?: number;
   mcpPort?: number;
   dataDir?: string;
+  /** The team id this gateway is locked to (WS4) — an id, never a name. */
+  team?: string;
 }
 
 export interface ResolvedPolicy {

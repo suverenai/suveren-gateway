@@ -1,6 +1,7 @@
 import { useAuth } from '../contexts/AuthContext';
 import { useTheme } from '../hooks/useTheme';
 import { useUpdateCheck } from '../hooks/useUpdateCheck';
+import { useWorkspacePolicy } from '../hooks/useWorkspacePolicy';
 import { BrandMark } from './BrandMark';
 
 /** Render the gateway's running version compactly. Docker stamps a
@@ -25,10 +26,19 @@ interface TopNavProps {
 }
 
 export function TopNav({ onMenuToggle }: TopNavProps) {
-  const { user, logout } = useAuth();
+  const { user, logout, mode, activeTeam } = useAuth();
   const { theme, toggle } = useTheme();
   const { version, updateAvailable, latestVersion } = useUpdateCheck();
+  const { managed } = useWorkspacePolicy();
   const versionLabel = formatVersion(version);
+  // WS3 (work-plan "Added 2026-10-11 — an account is Personal OR in one
+  // team"): no picker — the gateway shows the account's OWN workspace,
+  // taken from the Authority Server (AuthContext.refreshGroups), never a
+  // locally-chosen one. Managed installs (IT policy `Team`) append the
+  // same "set by your IT" wording Settings already uses for other locked
+  // keys, since the value here isn't something this gateway's own UI could
+  // have offered to change anyway.
+  const workspaceLabel = mode === 'team' && activeTeam ? `Team ${activeTeam.name}` : 'Personal';
 
   return (
     <nav className="top-nav">
@@ -62,6 +72,13 @@ export function TopNav({ onMenuToggle }: TopNavProps) {
         <div className="nav-actions nav-actions-desktop">
           {user ? (
             <>
+              <span
+                className="workspace-pill"
+                data-managed={managed ? 'true' : undefined}
+                title={managed ? `${workspaceLabel} — set by your IT` : workspaceLabel}
+              >
+                {workspaceLabel}{managed && <span className="workspace-pill-it"> · set by your IT</span>}
+              </span>
               <span className="user-chip">
                 <strong>{user.name}</strong>
               </span>

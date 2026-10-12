@@ -97,8 +97,14 @@ export class ApiKeyUnsealProvider implements UnsealProvider {
  *    transport layer, before any application-level signature is even checked.
  *  'as-url-changed' — the resolved Authority Server URL differs from the one
  *    this gateway was last paired with (boot-time only; re-pairing is
- *    required — see as-config.ts / as-pairing.ts). */
-export type VaultLockReason = 'expired' | 'as-key-mismatch' | 'as-tls-mismatch' | 'as-url-changed';
+ *    required — see as-config.ts / as-pairing.ts).
+ *  'managed-wrong-team' — WS4 (work-plan "Added 2026-10-11 — an account is
+ *    Personal OR in one team"): IT policy locks this gateway to one team
+ *    (`Team`, see lib/policy.ts) and the signed-in account's active
+ *    workspace is no longer that team — either it never was (refused at
+ *    sign-in, see routes/auth.ts) or the account left/was removed while
+ *    signed in (caught by lib/managed-team.ts's periodic check). */
+export type VaultLockReason = 'expired' | 'as-key-mismatch' | 'as-tls-mismatch' | 'as-url-changed' | 'managed-wrong-team';
 
 export class Vault {
   private vaultKey: Buffer | null = null;
@@ -213,6 +219,14 @@ export class Vault {
   lockAsTlsMismatch(): void {
     this.clearKey();
     this.lockedReason = 'as-tls-mismatch';
+  }
+
+  /** Lock because this is a managed gateway (IT policy `Team`) and the
+   *  signed-in account's active workspace is no longer that team — see
+   *  lib/managed-team.ts. Mirrors lockAsKeyMismatch() exactly. */
+  lockManagedWrongTeam(): void {
+    this.clearKey();
+    this.lockedReason = 'managed-wrong-team';
   }
 
   /**

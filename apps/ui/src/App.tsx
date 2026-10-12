@@ -33,7 +33,7 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
 }
 
 function AppRoutes() {
-  const { user, handleSessionLocked } = useAuth();
+  const { user, handleSessionLocked, refreshGroups } = useAuth();
 
   // The gateway locked ITSELF (AS session ended: 30-day expiry, or revoked)
   // — return to the sign-in screen with a reason, exactly like the UI
@@ -42,6 +42,16 @@ function AppRoutes() {
   useSSEEvent('session-locked', (payload) => {
     const message = (payload as { message?: string } | null)?.message;
     handleSessionLocked(message);
+  });
+
+  // WS3 (work-plan "Added 2026-10-11 — an account is Personal OR in one
+  // team"): re-read the active workspace the moment membership can have
+  // changed through THIS gateway's own proxy (join/withdraw/leave/create —
+  // see control-plane/src/index.ts's proxyRes handler), so the header pill
+  // and every mandate list reflect it immediately rather than waiting for
+  // the next tab refocus (AuthContext's own visibilitychange fallback).
+  useSSEEvent('team-membership-changed', () => {
+    void refreshGroups();
   });
 
   return (

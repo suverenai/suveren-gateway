@@ -16,6 +16,8 @@ import { readPairing, writePairing, recordTlsPin, fingerprintOf } from '../lib/a
 import { verifyAsHoldsKey, AsChallengeUnreachableError, AsChallengeInvalidError, AsTlsMismatchError } from '../lib/as-challenge';
 import { resolvePinTls, resolvePinTlsExpectedFingerprint, clearPinTlsExpectedFingerprint } from '../lib/as-config';
 import { fetchAs, type AsFetchPinning } from '../lib/as-tls-pin';
+import { activeTeamId } from '../lib/managed-team';
+import { managedWrongTeamMessage } from '../lib/session-lock';
 
 const DEFAULT_SP_URL = process.env.SUVEREN_AS_URL ?? 'https://www.suveren.ai';
 
@@ -233,6 +235,13 @@ export function createAuthRouter(
    * doesn't pass one can't accidentally touch global state.
    */
   lockAsTlsMismatch: () => void = () => {},
+  /**
+   * WS4 (work-plan "Added 2026-10-11 — an account is Personal OR in one
+   * team"): IT policy's locked team id (lib/policy.ts's `Team`), undefined
+   * on an unmanaged gateway. When set, `/login` refuses (403) any account
+   * whose active workspace is not this team — see managed-team.ts.
+   */
+  managedTeamId?: string,
 ): Router {
   const router = Router();
   const SP_URL = pairing?.asUrl ?? DEFAULT_SP_URL;
@@ -376,6 +385,37 @@ export function createAuthRouter(
       // Capture SP session cookie — store server-side, never send to browser
       const setCookieHeaders = spRes.headers.getSetCookie?.() ?? [];
       const sessionCookie = setCookieHeaders.join('; ');
+
+      // WS4 (work-plan "Added 2026-10-11 — an account is Personal OR in one
+      // team"): a managed gateway (IT policy `Team`, lib/policy.ts) only
+      // signs in an account whose ACTIVE workspace is that one team.
+      // Checked here — credentials already proved good, but BEFORE the
+      // vault stores anything — so a refusal leaves no half-signed-in
+      // state. Any failure to even perform the check (network, malformed
+      // reply) also refuses: this is sign-in time, where this file already
+      // fails closed rather than proceed unverified (see
+      // checkAsKeyBeforeLogin above).
+      if (managedTeamId) {
+        let activeTeam: string | null;
+        try {
+          activeTeam = await activeTeamId(SP_URL, sessionCookie, sessionPinning);
+        } catch (err) {
+          res.status(502).json({
+            error: 'as_unreachable',
+            message: `Could not confirm your team membership with the Authority Server — ` +
+              `${err instanceof Error ? err.message : String(err)}. Refusing to sign in.`,
+          });
+          return;
+        }
+        if (activeTeam !== managedTeamId) {
+          res.status(403).json({
+            error: 'managed_wrong_team',
+            message: managedWrongTeamMessage(managedTeamId),
+          });
+          return;
+        }
+      }
+
       vault.setSpCookie(sessionCookie);
 
       // Derive vault encryption key from API key

@@ -266,7 +266,9 @@ app.post('/internal/configure', internalOnly, (req: Request, res: Response) => {
 app.post('/internal/clear-session', internalOnly, (req: Request, res: Response) => {
   const reason = (req.body as { reason?: unknown })?.reason;
   const validReason =
-    reason === 'as-key-mismatch' || reason === 'as-tls-mismatch' || reason === 'as-url-changed' ? reason : undefined;
+    reason === 'as-key-mismatch' || reason === 'as-tls-mismatch' || reason === 'as-url-changed' || reason === 'managed-wrong-team'
+      ? reason
+      : undefined;
   state.spClient.clearSession(validReason);
   console.error(`[Suveren MCP] Session cleared by control-plane (${validReason ?? 'expired'})`);
   res.json({ ok: true });
@@ -384,6 +386,15 @@ app.post('/internal/run-committed', internalOnly, (_req: Request, res: Response)
 });
 
 app.post('/internal/resync-gates', internalOnly, async (_req: Request, res: Response) => {
+  // WS3 defence-in-depth (work-plan "Added 2026-10-11 — an account is
+  // Personal OR in one team"): refresh which workspace is active BEFORE
+  // syncing each gate below, so a per-authorization groupId learned in
+  // THIS pass is checked against the current workspace, not a stale one.
+  // Always run, even with zero gates — the account may have changed
+  // workspace with nothing cached yet, and the next cache write should
+  // still see the current value.
+  await state.cache.refreshActiveWorkspace();
+
   const gates = state.gateStore.getAll();
   if (gates.length === 0) {
     res.json({ ok: true, synced: 0 });

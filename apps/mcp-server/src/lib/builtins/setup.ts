@@ -253,7 +253,6 @@ function resolveTargetProfile(input: unknown): { profile: AgentProfile; shortNam
 const CREATE_MANDATE_INPUT_SCHEMA = {
   type: 'object',
   properties: {
-    team: { type: 'string', description: 'Team name or id, or "personal". Omit to use the workspace of your Delegation mandate.' },
     // Short name only (e.g. "sales") — a full profile id is refused here, at input
     // validation, before the tool ever runs (DL1 Interface contract).
     profile: { type: 'string', pattern: '^[a-z][a-z0-9-]*$', description: 'Profile short name, e.g. "sales" (newest version).' },
@@ -349,7 +348,6 @@ export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
           hideUnlessAuthorized: true,
           // Shown like the mandate screen: limits and scope by the profile's own names.
           approvalView: {
-            team: { label: 'Team' },
             profile: { label: 'Profile', kind: 'profile' },
             limits: { label: 'Limits', kind: 'profile-limits', profileArg: 'profile' },
             scope: { label: 'Scope', kind: 'profile-scope', profileArg: 'profile' },
@@ -358,7 +356,7 @@ export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
             duration_hours: { label: 'Valid for (hours)' },
             title: { label: 'Title' },
           },
-          preview: { tool: 'describe_mandate_proposal', args: { team: 'team', profile: 'profile', limits: 'limits', scope: 'scope', intent: 'intent', mode: 'mode', duration_hours: 'duration_hours', title: 'title' } },
+          preview: { tool: 'describe_mandate_proposal', args: { profile: 'profile', limits: 'limits', scope: 'scope', intent: 'intent', mode: 'mode', duration_hours: 'duration_hours', title: 'title' } },
         },
         // Internal preview tools (DL1): never listed, never callable by an
         // agent (BuiltinTool.internal — enforced in index.ts and
@@ -436,12 +434,13 @@ export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
         name: 'create_mandate',
         description:
           'Propose a new mandate for the person running this gateway — the authority another tool needs (e.g. ' +
-          'sales quotes up to a value). A person approves or rejects the proposal; only after approval is the ' +
-          'mandate created, exactly as if they had signed it on the mandate screen. Checked against the profile ' +
-          'before the proposal: unknown limits, a mode the profile does not allow, or a team where the person ' +
-          'may not give this mandate are refused at once. Outside simulation mode, the profile and mode you may ' +
-          'propose are themselves limited by your Delegation mandate\'s scope — Delegation itself can never be ' +
-          'proposed. Create only.',
+          'sales quotes up to a value). Always goes to the person\'s current workspace (their team, or Personal ' +
+          'if they are not in one) — there is no way to name a different one. A person approves or rejects the ' +
+          'proposal; only after approval is the mandate created, exactly as if they had signed it on the mandate ' +
+          'screen. Checked against the profile before the proposal: unknown limits, a mode the profile does not ' +
+          'allow, or a team where the person may not give this mandate are refused at once. Outside simulation ' +
+          'mode, the profile and mode you may propose are themselves limited by your Delegation mandate\'s scope ' +
+          '— Delegation itself can never be proposed. Create only.',
         inputSchema: CREATE_MANDATE_INPUT_SCHEMA,
         validate: async (args) => {
           const fixed = delegationItselfRefusal(args);
@@ -486,8 +485,14 @@ export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
           }
           const { profile, shortName: targetShortName } = resolved;
           const displayName = profile.name ?? targetShortName;
-          const rawTeam = typeof args.team === 'string' ? args.team.trim() : '';
-          const workspace = rawTeam && rawTeam.toLowerCase() !== 'personal' ? rawTeam : 'Personal';
+          // WS3 (work-plan "Added 2026-10-11 — an account is Personal OR
+          // in one team"): `create_mandate` no longer takes `team` — the
+          // mandate always goes to the person's active workspace. Read the
+          // REAL one from the same dry-run check `create_mandate`'s own
+          // `validate` already runs, rather than echoing back anything the
+          // AI said (there is nothing left to echo — the field is gone).
+          const check = await controlPlaneMandate(true, mandateRequest(args));
+          const workspace = check.ok && check.groupName ? check.groupName : 'Personal';
           const mode = typeof args.mode === 'string' ? args.mode : '';
           const structured = {
             proposal: `New mandate · ${displayName}`,
@@ -525,10 +530,16 @@ export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
   };
 }
 
-/** The tool's arguments as the control plane's MandateRequest. */
+/**
+ * The tool's arguments as the control plane's MandateRequest. No `team` —
+ * WS3 dropped that argument; mandate-ceremony.ts's own `team`-omitted
+ * fallback (the workspace of the person's Delegation mandate) now always
+ * resolves to the active workspace, since an account can only ever be
+ * active in one place at a time (decision 1, WS1/WS2 on the Authority
+ * Server side).
+ */
 function mandateRequest(args: Record<string, unknown>): Record<string, unknown> {
   return {
-    team: typeof args.team === 'string' && args.team.trim() ? args.team.trim() : undefined,
     profile: args.profile,
     limits: args.limits,
     scope: args.scope,

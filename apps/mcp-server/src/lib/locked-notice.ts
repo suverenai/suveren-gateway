@@ -30,6 +30,11 @@
  *    matches the one this gateway was paired with; re-pairing (a fresh
  *    sign-in against the new server) is exactly what's needed here, unlike
  *    the key-mismatch case.
+ *  - **'managed-wrong-team'** — WS4 (work-plan "Added 2026-10-11 — an
+ *    account is Personal OR in one team"): IT policy locks this gateway to
+ *    one team, and the signed-in account's active workspace is no longer
+ *    that team (it left, or was removed, while signed in). Signing in again
+ *    is refused for the same reason until the account is back in the team.
  *
  * Before any of these existed, this state was reported as "No authorizations
  * found" — indistinguishable from a correctly configured gateway belonging to
@@ -45,7 +50,7 @@
  */
 
 /** Why the gateway is locked right now. */
-export type LockedReason = 'restart' | 'expired' | 'as-key-mismatch' | 'as-tls-mismatch' | 'as-url-changed';
+export type LockedReason = 'restart' | 'expired' | 'as-key-mismatch' | 'as-tls-mismatch' | 'as-url-changed' | 'managed-wrong-team';
 
 /** Address the person should open. Honours a non-default control-plane port. */
 export function uiUrl(): string {
@@ -108,6 +113,16 @@ function asUrlChangedNotice(what: string): string {
   );
 }
 
+function managedWrongTeamNotice(what: string): string {
+  return (
+    `${what} Suveren gateway is LOCKED because it is set up by IT for one specific team, and the ` +
+    `signed-in account is no longer in that team (it left, or was removed). This is NOT an ended ` +
+    `sign-in — signing in again will be refused until the account is back in that team.\n\n` +
+    `TELL THE USER: ask your IT administrator, or sign in with an account that is in the team this ` +
+    `gateway is set up for, at ${uiUrl()}. Nothing ran while unsigned.`
+  );
+}
+
 /**
  * The notice, addressed to the AGENT but written to be relayed verbatim to the
  * person — the agent is the only thing that can see this state, and the person
@@ -120,6 +135,7 @@ export function lockedNotice(action?: string, reason: LockedReason = 'restart'):
     case 'as-key-mismatch': return asKeyMismatchNotice(what);
     case 'as-tls-mismatch': return asTlsMismatchNotice(what);
     case 'as-url-changed': return asUrlChangedNotice(what);
+    case 'managed-wrong-team': return managedWrongTeamNotice(what);
     default: return bootLockedNotice(what);
   }
 }
