@@ -26,6 +26,30 @@
 export interface ExecutionResult {
   text: string;
   isError?: boolean;
+  /**
+   * True when nothing ran — e.g. a committed proposal this gateway never
+   * submitted (see commitments.ts's cross-device skip). Distinct from
+   * success/failure: a skipped outcome is neither. Callers (the poll loop)
+   * must not log this as "executed" just because isError is falsy.
+   */
+  skipped?: boolean;
+}
+
+/**
+ * What the committed-proposal poll loop should log for one proposal's
+ * outcome, or null to log nothing. Pulled out of the loop so "skipped never
+ * reads as executed" is a single, unit-testable decision rather than inline
+ * console.error logic repeated at every call site.
+ */
+export function describeAutoExecutionLog(
+  proposalId: string,
+  tool: string,
+  result: ExecutionResult,
+): string | null {
+  if (result.skipped) return null;
+  return result.isError
+    ? `[Suveren MCP] Auto-exec proposal ${proposalId}: ${result.text}`
+    : `[Suveren MCP] Auto-executed proposal ${proposalId}: ${tool}`;
 }
 
 export class CommittedExecutor<P extends { id: string }> {

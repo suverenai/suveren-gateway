@@ -41,7 +41,7 @@ import { registerBuiltins } from '../src/lib/builtins';
 import { buildMandateBrief } from '../src/lib/mandate-brief';
 import { decodeMandateBlob } from '@hap/core';
 import { executeCommitted, installCommittedExecutor, buildSkippedProposalNote } from '../src/tools/commitments';
-import { CommittedExecutor, ExecutorLock } from '../src/lib/committed-executor';
+import { CommittedExecutor, ExecutorLock, describeAutoExecutionLog } from '../src/lib/committed-executor';
 import type { SPProposal } from '../src/lib/sp-client';
 import { resolveWhoLabel } from '../src/lib/who-label';
 import { outcomeEntryFor } from '../src/lib/outcome-outbox';
@@ -1318,12 +1318,11 @@ app.listen(port, bindHost, () => {
       const committed = await state.spClient.getCommittedProposals();
       for (const proposal of committed) {
         try {
-          const { text, isError } = await committedExecutor.execute(proposal);
-          console.error(
-            isError
-              ? `[Suveren MCP] Auto-exec proposal ${proposal.id}: ${text}`
-              : `[Suveren MCP] Auto-executed proposal ${proposal.id}: ${proposal.tool}`,
-          );
+          const result = await committedExecutor.execute(proposal);
+          // Skipped (e.g. another gateway of the same operator submitted
+          // this one) means nothing ran — never log that as "Auto-executed".
+          const line = describeAutoExecutionLog(proposal.id, proposal.tool, result);
+          if (line) console.error(line);
         } catch (err) {
           console.error(`[Suveren MCP] Failed to execute proposal ${proposal.id}:`, err);
         }
