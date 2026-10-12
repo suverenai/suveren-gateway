@@ -12,10 +12,10 @@ import { isTestSetupAction, profileIdentity } from '../lib/profile-identity';
 import { splitTool, systemDisplayName, type ToolDisplay } from '../lib/approval-view';
 import { useProfile } from '../lib/profile-cache';
 import type { IntegrationManifest } from '../lib/sp-client';
-import { validateChangeNote, outcomeAfterView, type OutcomeKindLabel } from '../lib/reject-outcome';
+import { validateChangeNote, outcomeAfterView, refusedAfterView, type OutcomeKindLabel } from '../lib/reject-outcome';
 import { useProposalContent, useDecryptedNote, decisionButtonsVisible } from '../lib/use-proposal-content';
 
-type CardStatus = 'pending' | 'committed' | 'executed' | 'rejected' | 'expired';
+type CardStatus = 'pending' | 'committed' | 'executed' | 'rejected' | 'expired' | 'refused';
 
 // Maps thread/proposal statuses to the existing design-system CSS classes.
 // Keeps this component independent of StatusBadge's narrower status union.
@@ -25,6 +25,10 @@ const STATUS_LABEL: Record<CardStatus, string> = {
   executed: 'Executed',
   rejected: 'Rejected',
   expired: 'Expired',
+  // 2026-10-12 fix — overridden below by the REFUSED badge (via `refused`),
+  // same pattern as 'rejected' is overridden by `outcome`; kept here only so
+  // STATUS_LABEL/STATUS_CLASS stay total over CardStatus.
+  refused: 'Refused',
 };
 const STATUS_CLASS: Record<CardStatus, string> = {
   pending: 'status-pending',
@@ -32,15 +36,19 @@ const STATUS_CLASS: Record<CardStatus, string> = {
   executed: 'status-active',
   rejected: 'status-revoked',
   expired: 'status-expired',
+  refused: 'status-revoked',
 };
 
 // RJ2: once a proposal is resolved, the badge shows the actual outcome
 // (REJECTED / CHANGE NEEDED / REPLACED) instead of the generic "Rejected" —
-// see lib/reject-outcome.ts outcomeAfterView.
+// see lib/reject-outcome.ts outcomeAfterView. REFUSED (2026-10-12 fix) is the
+// Authority Server's own terminal refusal of an approved proposal's ticket —
+// see refusedAfterView.
 const OUTCOME_CLASS: Record<OutcomeKindLabel, string> = {
   REJECTED: 'status-revoked',
   'CHANGE NEEDED': 'status-change-needed',
   REPLACED: 'status-replaced',
+  REFUSED: 'status-revoked',
 };
 
 function formatTimestamp(unixSeconds: number): string {
@@ -136,6 +144,11 @@ export function ActionCard({ item, onApprove, onReject, onChangeNeeded, resolvin
   const outcome = isProposal && status === 'rejected'
     ? outcomeAfterView(item.proposal, currentUserId ?? '')
     : null;
+  // 2026-10-12 fix — the Authority Server's own terminal refusal of an
+  // APPROVED proposal's ticket (a bound exceeded), distinct from `outcome`
+  // above (a human decision). Backend truth: reads `proposal.refusal`
+  // directly, no lookups — see refusedAfterView.
+  const refused = isProposal && status === 'refused' ? refusedAfterView(item.proposal) : null;
   // PE1 G5 — a change-needed note is sealed; decrypt it for this after-
   // state display (a legacy row's plain note passes through unchanged).
   const decryptedNote = useDecryptedNote(
@@ -198,10 +211,10 @@ export function ActionCard({ item, onApprove, onReject, onChangeNeeded, resolvin
             );
           })()}
           <span
-            data-testid={outcome ? 'outcome-kind' : undefined}
-            className={`status-badge ${outcome ? OUTCOME_CLASS[outcome.kind] : STATUS_CLASS[status]}`}
+            data-testid={outcome || refused ? 'outcome-kind' : undefined}
+            className={`status-badge ${outcome ? OUTCOME_CLASS[outcome.kind] : refused ? OUTCOME_CLASS.REFUSED : STATUS_CLASS[status]}`}
           >
-            {outcome ? outcome.kind : STATUS_LABEL[status]}
+            {outcome ? outcome.kind : refused ? refused.kind : STATUS_LABEL[status]}
           </span>
           <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
             {formatTimestamp(item.sortTimestamp)}
@@ -228,6 +241,16 @@ export function ActionCard({ item, onApprove, onReject, onChangeNeeded, resolvin
               {outcome.kind === 'CHANGE NEEDED' ? 'Change: ' : 'Note: '}{decryptedNote ?? outcome.note}
             </div>
           )}
+        </div>
+      )}
+
+      {/* 2026-10-12 fix — the Authority Server's own terminal refusal
+          (a bound exceeded after approval). Backend truth, straight off
+          `proposal.refusal` — never EXECUTED for this. */}
+      {refused && (
+        <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>
+          <div>By the Authority Server, {formatTimestamp(refused.at)}</div>
+          <div data-testid="outcome-note" style={{ marginTop: '0.2rem' }}>Reason: {refused.message}</div>
         </div>
       )}
 

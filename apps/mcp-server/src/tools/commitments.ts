@@ -296,6 +296,17 @@ export async function executeCommitted(
           text: `Proposal ${proposal.id} has already been executed by another request.`,
         };
       }
+      // 2026-10-12 fix (AS docs/architecture.md §3.4): this gateway (or
+      // another one for the same operator) already had this exact proposal
+      // refused by the Authority Server — a terminal state, same footing as
+      // PROPOSAL_ALREADY_EXECUTED above. Never retried.
+      if (code === 'PROPOSAL_REFUSED') {
+        return {
+          text: `Proposal ${proposal.id}: the Authority Server refused this proposal's ticket earlier — ${err.message} ` +
+            `Nothing ran. Do not retry the same values; ask the person (e.g. for a higher limit).`,
+          isError: true,
+        };
+      }
       // Item 9 (re-approval UX) — see tool-proxy.ts's
       // isVersionUnsupportedRefusal doc comment: flag, never invalidate.
       if (err.statusCode === 409 && code === 'VERSION_UNSUPPORTED') {
@@ -307,8 +318,36 @@ export async function executeCommitted(
           isError: true,
         };
       }
+      // Every OTHER refusal here (BOUND_EXCEEDED, CUMULATIVE_LIMIT_EXCEEDED,
+      // APPROVAL_REQUIRED, ...) means the Authority Server refused THIS
+      // request's ticket — see the live bug this fixes in the file header.
+      // For a review-mode request riding an approved proposal, the AS has
+      // (2026-10-12 fix) ALSO just marked that proposal `refused` — so a
+      // LATER check-pending-commitments(proposal_id) call reads that status
+      // directly (see checkPendingCommitmentsHandler below) and needs
+      // nothing from this gateway. This local journal row exists ONLY for
+      // the deploy-window/compat case: an AS that has not yet deployed its
+      // own fix still (incorrectly) marks the proposal `executed` — without
+      // this row, `localOutcomeOfExecuted` would have nothing to override
+      // that with, and a later call would repeat the original bug. Keyed by
+      // the proposalId (there is no ticketId — none was ever issued), not by
+      // a real ticket: `begin()`'s dedup on that synthetic id keeps a second
+      // identical write here a no-op rather than an error.
+      if (proposal.id) {
+        const asRefusedTicketId = `as_refused:${proposal.id}`;
+        const begun = state.executionJournal.begin({
+          ticketId: asRefusedTicketId,
+          proposalId: proposal.id,
+          tool: proposal.tool,
+          argsHash: hashToolArgs(toolArgs),
+        });
+        if (begun.ok) {
+          state.executionJournal.complete(asRefusedTicketId, 'failed', 'as_refused', `${code ?? 'TICKET_REFUSED'}: ${err.message}`);
+        }
+      }
       return {
-        text: `Proposal ${proposal.id}: SP rejected receipt — ${err.message}`,
+        text: `Proposal ${proposal.id}: the Authority Server refused its ticket — ${err.message} Nothing ran. ` +
+          `Do not retry the same values; ask the person (e.g. for a higher limit).`,
         isError: true,
       };
     }
@@ -573,7 +612,17 @@ function localOutcomeOfExecuted(proposal: SPProposal, state: SharedState): { tex
     // check never learns it.
     const reasonSuffix = entry.detail ? `\nReason: ${entry.detail}` : '';
     return {
-      text: entry.outcome === 'refused'
+      text: entry.outcome === 'as_refused'
+        // 2026-10-12 fix — the AS itself refused this proposal's ticket (a
+        // bound exceeded after approval), not the connector: never say
+        // EXECUTED for it. Only reached via this LOCAL journal row when an
+        // older/not-yet-fixed AS still reports `status: 'executed'` here —
+        // see checkPendingCommitmentsHandler's `refused` branch below for
+        // the normal (fixed-AS) path, which reads the AS's own status/
+        // refusal fields directly.
+        ? `Proposal ${proposal.id} was approved, but the Authority Server refused its ticket — nothing ran. ` +
+          `Do not retry the same values; ask the person (e.g. for a higher limit).${reasonSuffix}`
+        : entry.outcome === 'refused'
         ? `Proposal ${proposal.id} was approved, but ${integration} refused to run it — nothing was done. ` +
           `Do not call the tool again with the same values; a new attempt needs a new request and approval.${reasonSuffix}`
         : entry.outcome === 'changed'
@@ -645,6 +694,25 @@ export function checkPendingCommitmentsHandler(
               text: `Proposal ${match.id} was approved and has already been EXECUTED — ` +
                 `it is finished, do not call the tool again.${result}`,
             }],
+          };
+        }
+
+        // 2026-10-12 fix — the Authority Server refused this proposal's
+        // ticket AFTER it was approved (a bound exceeded; see
+        // docs/architecture.md §3.4 on the AS). Distinct from `rejected`
+        // (a human decision before commit) and `executed` (the AS's own
+        // status, is never wrong about this once fixed): read straight off
+        // the AS's own `refusal` field — backend truth, no local lookup
+        // needed for a fixed AS. Never EXECUTED for it.
+        if (match.status === 'refused') {
+          const detail = match.refusal ? match.refusal.message : 'a bound was exceeded';
+          return {
+            content: [{
+              type: 'text' as const,
+              text: `Proposal ${match.id} was approved, but the Authority Server refused its ticket — ${detail} ` +
+                `Nothing ran. Do not retry the same values; ask the person (e.g. for a higher limit).`,
+            }],
+            isError: true,
           };
         }
 

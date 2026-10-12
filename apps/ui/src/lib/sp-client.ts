@@ -370,10 +370,18 @@ export interface Proposal {
   /** PE1: the fingerprint over JCS(toolArgs) — present on every row, legacy or encrypted. */
   contentHash?: string;
   executionContext: Record<string, string | number>;
-  status: 'pending' | 'committed' | 'rejected' | 'expired' | 'executed';
+  /**
+   * `refused` (2026-10-12 fix): the Authority Server refused the ticket for
+   * an APPROVED proposal — a bound exceeded after approval — so it can never
+   * be executed. See `refusal` and `apps/mcp-server/src/lib/sp-client.ts`'s
+   * matching field for why this is distinct from a human `rejected` decision.
+   */
+  status: 'pending' | 'committed' | 'rejected' | 'expired' | 'executed' | 'refused';
   executionResult: unknown | null;
   createdAt: number;
   expiresAt: number;
+  /** Set iff status === 'refused' — the AS's own code/message for why. */
+  refusal?: { code: string; message: string; at: number };
   // Phase 6 fields
   pendingApprovers?: string[];
   approvedBy?: Record<string, { receiptId: string; at: number }>;

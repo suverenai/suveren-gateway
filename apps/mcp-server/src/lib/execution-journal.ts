@@ -50,9 +50,20 @@ export interface JournalEntry {
    * refused the action (as opposed to throwing); 'changed' (AU4) when the
    * gateway itself refused to call the tool because a declared preview read
    * (with no `version` of its own) showed the record had changed since the
-   * proposal was submitted.
+   * proposal was submitted; 'as_refused' (2026-10-12 fix) when the
+   * AUTHORITY SERVER itself refused to issue a ticket for an approved
+   * proposal (a bound exceeded after approval) — distinct from 'refused'
+   * (the connector ran and said no): here nothing was ever attempted
+   * downstream, and there is no ticket to key this row by (postReceipt threw
+   * before one was issued) — see commitments.ts's `postReceipt` catch block,
+   * which synthesizes a stable ticketId from the proposalId itself. Kept
+   * even after the Authority Server itself started reporting
+   * `status: 'refused'` directly (the primary signal going forward) as a
+   * deploy-window/compat fallback: a gateway running this fix against an AS
+   * that has not yet deployed its own still shows the truth locally instead
+   * of the AS's stale `executed`.
    */
-  outcome?: 'refused' | 'changed';
+  outcome?: 'refused' | 'changed' | 'as_refused';
   /**
    * The connector's own refusal text, for outcome 'refused' only — capped
    * (see `complete`'s DETAIL_CAP). This file is otherwise plaintext with no
@@ -139,7 +150,7 @@ export class ExecutionJournal {
    * no-op. `detail` (capped to DETAIL_CAP) is stored only alongside outcome
    * 'refused' — see JournalEntry's doc comment.
    */
-  complete(ticketId: string, state: 'done' | 'failed', outcome?: 'refused' | 'changed', detail?: string): void {
+  complete(ticketId: string, state: 'done' | 'failed', outcome?: 'refused' | 'changed' | 'as_refused', detail?: string): void {
     const file = this.load();
     const row = file.entries.find(e => e.ticketId === ticketId);
     if (!row) throw new Error(`execution journal: no row for ticket ${ticketId} to complete`);

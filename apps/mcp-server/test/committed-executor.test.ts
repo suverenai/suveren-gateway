@@ -23,7 +23,7 @@ import { ExecutionJournal, hashToolArgs } from '../src/lib/execution-journal';
 import { executeCommitted, checkPendingCommitmentsHandler } from '../src/tools/commitments';
 import type { SharedState } from '../src/lib/shared-state';
 import type { IntegrationManager, DiscoveredTool } from '../src/lib/integration-manager';
-import type { SPProposal } from '../src/lib/sp-client';
+import { SPReceiptError, type SPProposal } from '../src/lib/sp-client';
 import { testReceiptKeypair, makeSignedReceipt, signTestReceipt } from './helpers/real-receipt';
 
 // ─── 1. Executor ────────────────────────────────────────────────────────────
@@ -375,5 +375,111 @@ describe('executeCommitted × ExecutionJournal', () => {
     const text = (r.content as Array<{ text: string }>)[0].text;
     expect(text).toMatch(/the record changed in/);
     expect(text).toMatch(/Reason: The record changed in deploy-github since it was requested\./);
+  });
+});
+
+// ─── 2026-10-12 fix: the Authority Server itself refuses the ticket ────────
+//
+// Live bug (demo gateway log): "Auto-exec proposal 4a0de6460d47: SP rejected
+// receipt — Cumulative daily count (3) exceeds setup_daily_max=2", then a
+// LATER check-pending-commitments(proposal_id) call said the proposal "was
+// approved and has already been EXECUTED ... the gateway did not retain its
+// output" — though nothing ran. The Authority Server side of this is fixed
+// (it now answers `status: 'refused'` with a `refusal` field — see
+// commitment-status.test.ts's REFUSED tests, which cover that primary path).
+// These tests cover the OTHER half: this gateway's own catch block in
+// commitments.ts, which (a) never says EXECUTED on the immediate response,
+// and (b) journals the refusal locally (keyed by proposalId — no ticket was
+// ever issued) so a LATER call stays correct even talking to an AS that has
+// not yet deployed its own fix (still answers `status: 'executed'`).
+describe('executeCommitted: the Authority Server refuses the ticket (bound exceeded after approval)', () => {
+  let dir: string;
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'hap-as-refused-')); });
+  afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
+
+  it('the immediate response names the refusal, says nothing ran, and never claims EXECUTED', async () => {
+    const postReceipt = vi.fn().mockRejectedValue(
+      new SPReceiptError('Cumulative daily count (3) exceeds setup_daily_max=2', 403, {
+        approved: false,
+        errors: [{ code: 'CUMULATIVE_LIMIT_EXCEEDED', message: 'Cumulative daily count (3) exceeds setup_daily_max=2' }],
+      }),
+    );
+    const { state } = buildState(dir, postReceipt);
+    const { im, callTool } = buildIntegrationManager();
+
+    const r = await executeCommitted(PROPOSAL, state, im);
+
+    expect(r.isError).toBe(true);
+    expect(r.text).toMatch(/Authority Server refused its ticket/i);
+    expect(r.text).toContain('Cumulative daily count (3) exceeds setup_daily_max=2');
+    expect(r.text).toMatch(/nothing ran/i);
+    expect(r.text).toMatch(/do not retry/i);
+    expect(r.text).not.toMatch(/EXECUTED/);
+    expect(callTool).not.toHaveBeenCalled();
+  });
+
+  it('journals the refusal locally, keyed by the proposal (no ticket was ever issued)', async () => {
+    const postReceipt = vi.fn().mockRejectedValue(
+      new SPReceiptError('Cumulative daily count (3) exceeds setup_daily_max=2', 403, {
+        approved: false,
+        errors: [{ code: 'CUMULATIVE_LIMIT_EXCEEDED', message: 'Cumulative daily count (3) exceeds setup_daily_max=2' }],
+      }),
+    );
+    const { state } = buildState(dir, postReceipt);
+    const { im } = buildIntegrationManager();
+
+    await executeCommitted(PROPOSAL, state, im);
+
+    const row = state.executionJournal.findByProposal(PROPOSAL.id);
+    expect(row?.state).toBe('failed');
+    expect(row?.outcome).toBe('as_refused');
+    expect(row?.detail).toContain('CUMULATIVE_LIMIT_EXCEEDED');
+    expect(row?.detail).toContain('Cumulative daily count (3) exceeds setup_daily_max=2');
+  });
+
+  it('a LATER check-pending-commitments(proposal_id) call — AS not yet fixed, still says executed — still never says EXECUTED', async () => {
+    const postReceipt = vi.fn().mockRejectedValue(
+      new SPReceiptError('Cumulative daily count (3) exceeds setup_daily_max=2', 403, {
+        approved: false,
+        errors: [{ code: 'CUMULATIVE_LIMIT_EXCEEDED', message: 'Cumulative daily count (3) exceeds setup_daily_max=2' }],
+      }),
+    );
+    const { state } = buildState(dir, postReceipt);
+    const { im } = buildIntegrationManager();
+    await executeCommitted(PROPOSAL, state, im);
+
+    // Simulate an AS that has NOT yet deployed the 2026-10-12 fix: it still
+    // answers `status: 'executed'` for this proposal (the old, buggy
+    // behaviour) — the local journal row from above is what keeps this
+    // gateway honest regardless.
+    (state.spClient.getProposalById as ReturnType<typeof vi.fn>).mockResolvedValue({ ...PROPOSAL, status: 'executed' });
+    const handler = checkPendingCommitmentsHandler(state, im);
+    const r = await handler({ proposal_id: PROPOSAL.id });
+
+    expect(r.isError).toBe(true);
+    const text = (r.content as Array<{ text: string }>)[0].text;
+    expect(text).toMatch(/Authority Server refused its ticket/i);
+    expect(text).not.toMatch(/EXECUTED/);
+  });
+
+  it('a retry of an already-refused proposal (PROPOSAL_REFUSED) is a terminal stop, not journaled as a fresh refusal', async () => {
+    const postReceipt = vi.fn().mockRejectedValue(
+      new SPReceiptError('This proposal was refused by the Authority Server and can never be executed. Submit a new proposal.', 409, {
+        approved: false,
+        errors: [{ code: 'PROPOSAL_REFUSED', message: 'This proposal was refused by the Authority Server and can never be executed. Submit a new proposal.' }],
+      }),
+    );
+    const { state } = buildState(dir, postReceipt);
+    const { im, callTool } = buildIntegrationManager();
+
+    const r = await executeCommitted(PROPOSAL, state, im);
+
+    expect(r.isError).toBe(true);
+    expect(r.text).toMatch(/refused this proposal's ticket earlier/i);
+    expect(r.text).not.toMatch(/EXECUTED/);
+    expect(callTool).not.toHaveBeenCalled();
+    // PROPOSAL_REFUSED returns before the as_refused journal write — that
+    // write exists only for the generic "this call was just refused" case.
+    expect(state.executionJournal.findByProposal(PROPOSAL.id)).toBeUndefined();
   });
 });

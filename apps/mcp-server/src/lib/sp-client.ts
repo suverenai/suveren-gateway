@@ -71,10 +71,22 @@ export interface SPProposal {
   /** PE1: the fingerprint over JCS(toolArgs) — present on every row, legacy or encrypted. */
   contentHash?: string;
   executionContext: Record<string, string | number>;
-  status: 'pending' | 'committed' | 'rejected' | 'expired' | 'executed';
+  /**
+   * `refused` (2026-10-12 fix, AS docs/architecture.md §3.4): the Authority
+   * Server refused the ticket for an APPROVED proposal — a bound exceeded,
+   * discovered after approval — and the proposal can never be executed. The
+   * old bug this fixes: the AS used to leave it `executed` in this case
+   * (though no ticket was ever issued), which `check-pending-commitments`
+   * then reported as a quiet success. An AS without the fix never sends this
+   * value — see `refusal`'s doc comment for how this gateway stays correct
+   * even talking to one.
+   */
+  status: 'pending' | 'committed' | 'rejected' | 'expired' | 'executed' | 'refused';
   executionResult: unknown | null;
   createdAt: number;
   expiresAt: number;
+  /** Set iff status === 'refused' — the AS's own code/message for why. */
+  refusal?: { code: string; message: string; at: number };
   // Phase 6 fields
   pendingApprovers?: string[];
   approvedBy?: Record<string, { receiptId: string; at: number }>;

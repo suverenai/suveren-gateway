@@ -93,6 +93,32 @@ describe('a distinct, actionable answer per state', () => {
     expect(text).toMatch(/re-submit/i);
   });
 
+  // 2026-10-12 fix — live bug (demo gateway log): "Auto-exec proposal
+  // 4a0de6460d47: SP rejected receipt — Cumulative daily count (3) exceeds
+  // setup_daily_max=2", then this same tool told the agent the proposal
+  // "was approved and has already been EXECUTED ... the gateway did not
+  // retain its output" — though nothing ran. The Authority Server now marks
+  // such a proposal `refused` (never `executed`) and carries why in
+  // `refusal`; this reads that straight off the AS, no local lookup.
+  it('REFUSED says the Authority Server refused the ticket, with its own reason, and never says EXECUTED', async () => {
+    const text = await textOf({
+      ...BASE,
+      status: 'refused',
+      refusal: { code: 'CUMULATIVE_LIMIT_EXCEEDED', message: 'Cumulative daily count (3) exceeds setup_daily_max=2', at: 0 },
+    });
+    expect(text).toMatch(/Authority Server refused/i);
+    expect(text).toContain('Cumulative daily count (3) exceeds setup_daily_max=2');
+    expect(text).toMatch(/nothing ran/i);
+    expect(text).toMatch(/do not retry/i);
+    expect(text).not.toMatch(/EXECUTED/);
+  });
+
+  it('REFUSED with no refusal field recorded still says refused, not EXECUTED', async () => {
+    const text = await textOf({ ...BASE, status: 'refused' });
+    expect(text).toMatch(/Authority Server refused/i);
+    expect(text).not.toMatch(/EXECUTED/);
+  });
+
   it('UNKNOWN id warns against retrying, which would double-propose', async () => {
     const text = await textOf(null);
     expect(text).toMatch(/No proposal with id/i);
@@ -108,6 +134,7 @@ describe('the states cannot be confused with one another', () => {
       textOf({ ...BASE, status: 'executed' }),
       textOf({ ...BASE, status: 'rejected' }),
       textOf({ ...BASE, status: 'expired' }),
+      textOf({ ...BASE, status: 'refused' }),
       textOf(null),
     ]);
     expect(new Set(texts).size).toBe(texts.length);
@@ -119,6 +146,7 @@ describe('the states cannot be confused with one another', () => {
       { ...BASE, status: 'executed' as const },
       { ...BASE, status: 'rejected' as const },
       { ...BASE, status: 'expired' as const },
+      { ...BASE, status: 'refused' as const },
     ]) {
       expect(await textOf(p)).not.toMatch(/still pending or not found/i);
     }
@@ -187,5 +215,50 @@ describe('EXECUTED on the AS but refused by the connector here', () => {
   it('a completed run is still EXECUTED', async () => {
     const res = await handlerWithJournal({ state: 'done' })({ proposal_id: BASE.id });
     expect((res.content[0] as { text: string }).text).toMatch(/EXECUTED/);
+  });
+});
+
+/**
+ * 2026-10-12 fix, deploy-window/compat case: an Authority Server that has
+ * NOT yet deployed its own fix still (incorrectly) reports `status:
+ * 'executed'` after refusing a bound — same old bug, from the AS's side.
+ * This gateway's own `commitments.ts` catch block journals that refusal
+ * locally (keyed by proposalId — there is no ticket), under outcome
+ * 'as_refused', so a LATER check-pending-commitments(proposal_id) call still
+ * tells the truth instead of repeating the AS's stale "EXECUTED".
+ */
+describe('EXECUTED on the AS, but this gateway itself journaled an AS refusal (pre-fix AS compat)', () => {
+  function handlerWithAsRefusedJournal(detail?: string) {
+    const state = {
+      spClient: {
+        isUnlocked: () => true,
+        getProposalById: vi.fn().mockResolvedValue({ ...BASE, status: 'executed', executionResult: null, tool: 'erp__send_quote' }),
+        getCommittedProposals: vi.fn().mockResolvedValue([]),
+      },
+      executionJournal: {
+        findByProposal: vi.fn().mockReturnValue({
+          ticketId: `as_refused:${BASE.id}`,
+          proposalId: BASE.id,
+          tool: 'erp__send_quote',
+          argsHash: 'h',
+          state: 'failed',
+          outcome: 'as_refused',
+          detail,
+          startedAt: 0,
+          pid: 1,
+        }),
+      },
+    } as unknown as SharedState;
+    return checkPendingCommitmentsHandler(state);
+  }
+
+  it('says the Authority Server refused the ticket — never EXECUTED, never the connector-refused wording', async () => {
+    const res = await handlerWithAsRefusedJournal('CUMULATIVE_LIMIT_EXCEEDED: over the cap')({ proposal_id: BASE.id });
+    const text = (res.content[0] as { text: string }).text;
+    expect(text).not.toMatch(/EXECUTED/);
+    expect(text).toMatch(/Authority Server refused/i);
+    expect(text).toMatch(/nothing ran/i);
+    expect(text).not.toMatch(/erp refused to run it/i);
+    expect(res.isError).toBe(true);
   });
 });
