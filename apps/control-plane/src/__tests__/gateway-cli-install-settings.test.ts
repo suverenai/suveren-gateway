@@ -4,7 +4,7 @@
  * Saved values go to a temp SUVEREN_INSTALL_SETTINGS_FILE, never the real
  * per-user file or registry.
  */
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -49,6 +49,11 @@ function run(c: Ctx, args: string[], env: Record<string, string> = {}) {
 }
 
 const saved = (c: Ctx) => JSON.parse(readFileSync(c.settings, 'utf8'));
+
+// Every test spawns the real CLI 3–5 times (each spawn may take 15 s, see
+// run()). On the Windows runner a node start costs 1–2 s, so a test can't fit
+// vitest's 5 s default — the budget is the spawns', not a looser assertion.
+vi.setConfig({ testTimeout: 60_000 });
 
 describe('config set / get / unset', () => {
   it('saves the ports and the data folder, and get shows them as saved', () => {
