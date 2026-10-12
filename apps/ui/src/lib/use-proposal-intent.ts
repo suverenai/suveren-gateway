@@ -7,6 +7,15 @@
  * AU5: loads eagerly (not lazy-on-click, as Phase 6 had it) — the mockup
  * always shows the intent's first two lines. The approver already has
  * standing to see it on this card.
+ *
+ * PE1 Finding #1: tries THIS gateway's own local gate store first
+ * (GET /gate-content, exactly as AuthorizationsPage's "Mandates" page
+ * reads its own intent) before asking the AS at all. A personal mandate's
+ * intent is never on the AS (mandate-ceremony.ts only sends it for a team
+ * mandate), so asking first always failed for one — the gate store has it
+ * whenever THIS device is the one that created the mandate (team or
+ * personal), which covers every self-review case; a genuine OTHER-member
+ * approval (no local entry) falls back to the AS exactly as before.
  */
 import { useEffect, useState } from 'react';
 import { spClient } from './sp-client';
@@ -29,6 +38,18 @@ export function useProposalIntent(authorizationId: string, currentUserId: string
     setLoading(true);
     (async () => {
       try {
+        // PE1 Finding #1 — this gateway's own local record first (see the
+        // module doc comment). A miss here is NOT an error; it just means
+        // this device didn't create the mandate, so the AS is asked next.
+        try {
+          const local = await spClient.getGateContent(authorizationId);
+          if (local?.gateContent?.intent) {
+            if (live) setIntent(local.gateContent.intent);
+            return;
+          }
+        } catch {
+          // Local lookup failed (e.g. not signed in yet) — fall through to the AS.
+        }
         const intentData = await spClient.getAttestationIntent(authorizationId);
         if (!intentData) {
           if (live) setError('Intent not available or you are not an authorized approver.');

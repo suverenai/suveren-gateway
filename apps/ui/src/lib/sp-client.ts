@@ -339,6 +339,21 @@ export interface IdentityDisclosure {
  */
 export type ProposalOutcome = 'rejected' | 'change_needed' | 'replaced';
 
+/** PE1 — a proposal's content, sealed: HPKE broadcast over JCS(toolArgs). */
+export interface ProposalContentWire {
+  v: 1;
+  alg: string;
+  ciphertext: string;
+  keys: Record<string, { ct: string; enc: string }>;
+  hash: string;
+}
+
+/** PE1 — a sealed change-needed note (same shape, no `v`/`alg`/`hash` — see encrypt-proposal-note.ts). */
+export interface NoteEncryptedWire {
+  ciphertext: string;
+  keys: Record<string, { ct: string; enc: string }>;
+}
+
 export interface Proposal {
   id: string;
   authorizationId: string;
@@ -346,9 +361,14 @@ export interface Proposal {
   path: string;
   pendingDomains: string[];
   committedBy: Record<string, { userId: string; at: number }>;
-  rejectedBy: { domain: string; userId: string; at: number; outcome?: ProposalOutcome; note?: string } | null;
+  rejectedBy: { domain: string; userId: string; at: number; outcome?: ProposalOutcome; note?: string; noteEncrypted?: NoteEncryptedWire } | null;
   tool: string;
-  toolArgs: Record<string, unknown>;
+  /** PE1: present only on a legacy (pre-encryption) row — see `content`. */
+  toolArgs?: Record<string, unknown>;
+  /** PE1: the sealed toolArgs — present iff `toolArgs` is absent. Decrypt via lib/use-proposal-content.ts. */
+  content?: ProposalContentWire;
+  /** PE1: the fingerprint over JCS(toolArgs) — present on every row, legacy or encrypted. */
+  contentHash?: string;
   executionContext: Record<string, string | number>;
   status: 'pending' | 'committed' | 'rejected' | 'expired' | 'executed';
   executionResult: unknown | null;
@@ -357,7 +377,7 @@ export interface Proposal {
   // Phase 6 fields
   pendingApprovers?: string[];
   approvedBy?: Record<string, { receiptId: string; at: number }>;
-  approverRejectedBy?: { userId: string; reason?: string; at: number; outcome?: ProposalOutcome; note?: string };
+  approverRejectedBy?: { userId: string; reason?: string; at: number; outcome?: ProposalOutcome; note?: string; noteEncrypted?: NoteEncryptedWire };
   createdBy?: string;
 }
 
@@ -1478,11 +1498,28 @@ class SPClient {
     id: string,
     action: 'commit' | 'reject',
     domain: string,
-    opts?: { outcome?: ProposalOutcome; note?: string },
+    opts?: {
+      outcome?: ProposalOutcome;
+      note?: string;
+      /** PE1 G5 — replaces `note` when the note was sealed (change_needed). */
+      noteEncrypted?: NoteEncryptedWire;
+      /** PE1 — the fingerprint of the toolArgs THIS device decrypted and
+       *  showed for approval/commit; the AS refuses (409 CONTENT_MISMATCH)
+       *  rather than acting on a hash it does not recognize. */
+      contentHash?: string;
+    },
   ): Promise<{ status: string }> {
+    const { noteEncrypted, contentHash, note, ...rest } = opts ?? {};
     const res = await this.fetch(`/api/proposals/${encodeURIComponent(id)}/resolve`, {
       method: 'POST',
-      body: JSON.stringify({ action, domain, ...opts }),
+      body: JSON.stringify({
+        action,
+        domain,
+        ...rest,
+        // Mutually exclusive on the wire: a sealed note replaces the plain one.
+        ...(noteEncrypted ? { note_encrypted: noteEncrypted } : (note ? { note } : {})),
+        ...(contentHash ? { content_hash: contentHash } : {}),
+      }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Failed' }));
@@ -1508,9 +1545,11 @@ class SPClient {
    * Approve an above-cap action proposal.
    * SP endpoint: POST /api/proposals/:id/approve
    */
-  async approveProposal(id: string): Promise<{ receipt: Record<string, unknown>; status: string; approvedBy: Record<string, { receiptId: string; at: number }> }> {
+  async approveProposal(id: string, contentHash?: string): Promise<{ receipt: Record<string, unknown>; status: string; approvedBy: Record<string, { receiptId: string; at: number }> }> {
     const res = await this.fetch(`/api/proposals/${encodeURIComponent(id)}/approve`, {
       method: 'POST',
+      // PE1 — the fingerprint of the toolArgs THIS device decrypted and showed.
+      body: contentHash ? JSON.stringify({ content_hash: contentHash }) : undefined,
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Failed' }));
@@ -1529,10 +1568,23 @@ class SPClient {
    */
   async rejectProposal(
     id: string,
-    opts?: string | { reason?: string; outcome?: ProposalOutcome; note?: string },
+    opts?: string | { reason?: string; outcome?: ProposalOutcome; note?: string; noteEncrypted?: NoteEncryptedWire },
+    /** PE1 — the fingerprint of the toolArgs THIS device decrypted and showed. */
+    contentHash?: string,
   ): Promise<{ receipt: Record<string, unknown>; status: string }> {
     // A plain string is the legacy shape (stored as `reason`, outcome rejected).
-    const body = typeof opts === 'string' ? { reason: opts } : (opts ?? {});
+    let body: Record<string, unknown>;
+    if (typeof opts === 'string') {
+      body = { reason: opts };
+    } else {
+      const { noteEncrypted, note, ...rest } = opts ?? {};
+      body = {
+        ...rest,
+        // Mutually exclusive on the wire: a sealed note replaces the plain one.
+        ...(noteEncrypted ? { note_encrypted: noteEncrypted } : (note ? { note } : {})),
+      };
+    }
+    if (contentHash) body.content_hash = contentHash;
     const res = await this.fetch(`/api/proposals/${encodeURIComponent(id)}/reject`, {
       method: 'POST',
       body: JSON.stringify(body),
@@ -1603,6 +1655,42 @@ class SPClient {
     }
     const data = await res.json() as { intent: string };
     return data.intent;
+  }
+
+  /**
+   * PE1 — decrypt a proposal's sealed content (toolArgs, JCS-encoded — the
+   * caller JSON.parses the result) or a change-needed note, using the
+   * vault's private HPKE key. CP endpoint: POST /api/decrypt-proposal-content.
+   * Throws (never silently returns empty) on a device with no key wrap for
+   * this content — callers show "Encrypted for another device" (mockup §4),
+   * never a blank card.
+   */
+  async decryptProposalContent(wire: { ciphertext: string; keys: Record<string, { ct: string; enc: string }> }): Promise<{ plaintext: string }> {
+    const res = await this.fetch('/api/decrypt-proposal-content', {
+      method: 'POST',
+      body: JSON.stringify(wire),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Decryption failed' }));
+      throw new Error(asErrorMessage(err, `decryptProposalContent failed: ${res.status}`));
+    }
+    return res.json();
+  }
+
+  /**
+   * PE1 G5 — encrypt a "change needed" note on this (the deciding) gateway,
+   * for the submitter + mandate owner. CP endpoint: POST /api/encrypt-proposal-note.
+   */
+  async encryptProposalNote(note: string, recipientUserIds: string[]): Promise<{ noteEncrypted: NoteEncryptedWire; unreadableFor: string[] }> {
+    const res = await this.fetch('/api/encrypt-proposal-note', {
+      method: 'POST',
+      body: JSON.stringify({ note, recipientUserIds }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Encryption failed' }));
+      throw new Error(asErrorMessage(err, `encryptProposalNote failed: ${res.status}`));
+    }
+    return res.json();
   }
 
   /**

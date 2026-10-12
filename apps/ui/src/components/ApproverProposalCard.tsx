@@ -25,7 +25,8 @@ import { ChangeNeededPanel } from './ChangeNeededPanel';
 import { isTestSetupAction, profileIdentity } from '../lib/profile-identity';
 import { isAutomatedBrowser, AUTOMATION_REFUSAL } from '../lib/automation';
 import type { ToolDisplay } from '../lib/approval-view';
-import { validateChangeNote, rejectOutcomeArgs, changeNeededOutcomeArgs } from '../lib/reject-outcome';
+import { validateChangeNote, rejectOutcomeArgs } from '../lib/reject-outcome';
+import { contentHashForDecision } from '../lib/use-proposal-content';
 
 function formatAge(unixSeconds: number): string {
   const ageMs = Date.now() - unixSeconds * 1000;
@@ -75,7 +76,8 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
     setApproving(true);
     onMessage('');
     try {
-      await spClient.approveProposal(proposal.id);
+      const contentHash = await contentHashForDecision(proposal);
+      await spClient.approveProposal(proposal.id, contentHash);
 
       // Fetch + decrypt + store the intent as an accountability record
       // (best-effort; ApprovalBody above already fetched one for display,
@@ -113,7 +115,8 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
     setRejecting(true);
     onMessage('');
     try {
-      await spClient.rejectProposal(proposal.id, rejectOutcomeArgs());
+      const contentHash = await contentHashForDecision(proposal);
+      await spClient.rejectProposal(proposal.id, rejectOutcomeArgs(), contentHash);
       onMessage('Action rejected.');
       onAction();
     } catch (err) {
@@ -130,7 +133,13 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
     setSendingChange(true);
     onMessage('');
     try {
-      await spClient.rejectProposal(proposal.id, changeNeededOutcomeArgs(result.trimmed));
+      // G5 — sealed on THIS (the deciding) gateway for the submitter + the
+      // mandate owner. `pendingApprovers` already carries the owner first
+      // (tool-proxy.ts prepends the mandate's creator) — the same roster
+      // this proposal's own content was sealed for.
+      const { noteEncrypted } = await spClient.encryptProposalNote(result.trimmed, proposal.pendingApprovers ?? []);
+      const contentHash = await contentHashForDecision(proposal);
+      await spClient.rejectProposal(proposal.id, { outcome: 'change_needed', noteEncrypted }, contentHash);
       onMessage('Sent back for a change.');
       onAction();
     } catch (err) {

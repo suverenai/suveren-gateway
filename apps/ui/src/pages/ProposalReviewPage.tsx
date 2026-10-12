@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { spClient, type Proposal, type ExecutionReceipt, type IntegrationManifest, type ProposalOutcome } from '../lib/sp-client';
+import { spClient, type Proposal, type ExecutionReceipt, type IntegrationManifest, type ProposalOutcome, type NoteEncryptedWire } from '../lib/sp-client';
 import { aggregateThread, type ThreadItem } from '../lib/thread-aggregator';
 import { ActionCard } from '../components/ActionCard';
 import { ApproverProposalCard } from '../components/ApproverProposalCard';
@@ -14,6 +14,7 @@ import { HumanOnlyNote } from '../components/HumanOnlyNote';
 import { isAutomatedBrowser, AUTOMATION_REFUSAL } from '../lib/automation';
 import { isTestSetupAction, profileIdentity } from '../lib/profile-identity';
 import { rejectOutcomeArgs, changeNeededOutcomeArgs } from '../lib/reject-outcome';
+import { contentHashForDecision } from '../lib/use-proposal-content';
 
 type QueueTab = 'awaiting-me' | 'awaiting-others' | 'all';
 type StatusFilter = 'pending' | 'all';
@@ -190,7 +191,23 @@ export function ProposalReviewPage() {
       // Resolve under the proposal's own queue — a personal one stays 'owner' in team context.
       const proposal = proposals.find(p => p.id === id) ?? myProposals.find(p => p.id === id);
       const resolveDomain = resolveDomainFor(proposal, domain);
-      const result = await spClient.resolveProposal(id, action, resolveDomain, opts);
+      // PE1 — the fingerprint of what THIS device decrypted and showed.
+      const contentHash = proposal ? await contentHashForDecision(proposal) : undefined;
+      // G5 — a change-needed note is sealed on THIS (the deciding) gateway
+      // for the submitter + the mandate owner before it ever reaches the AS.
+      // `pendingDomains` is the closest roster this page has to "who this
+      // concerns" in the deferred-domain (non-above-cap) path — there is no
+      // separate per-proposal "submitter" id on the wire yet.
+      let resolveOpts: { outcome?: ProposalOutcome; note?: string; noteEncrypted?: NoteEncryptedWire } = opts ?? {};
+      if (opts?.outcome === 'change_needed' && opts.note) {
+        const recipientUserIds = Array.from(new Set([
+          ...(proposal?.createdBy ? [proposal.createdBy] : []),
+          ...(proposal?.pendingDomains ?? []),
+        ]));
+        const { noteEncrypted } = await spClient.encryptProposalNote(opts.note, recipientUserIds);
+        resolveOpts = { outcome: 'change_needed', noteEncrypted };
+      }
+      const result = await spClient.resolveProposal(id, action, resolveDomain, { ...resolveOpts, contentHash });
       setMessage(
         action === 'commit'
           ? `Action approved. Status: ${result.status}`

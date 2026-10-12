@@ -32,6 +32,7 @@ import { ArchiveWriteError } from '../lib/receipt-archive';
 import { verifyTicket, TicketBindingMismatchError } from '../lib/ticket-verify';
 import { notifyControlPlane } from '../lib/cp-notify';
 import { resolveWhoLabel } from '../lib/who-label';
+import { resolveProposalToolArgs, decryptRejectionNote, computeProposalContentHash, ProposalContentError } from '../lib/proposal-content';
 
 /**
  * The message shown for a committed proposal this gateway has no local
@@ -185,10 +186,25 @@ export async function executeCommitted(
     // must not be logged as "Auto-executed" — see describeAutoExecutionLog.
     return { text: buildSkippedProposalNote(proposal.id), skipped: true };
   }
+  // PE1 — resolve the approved content: the plain field on a legacy row, or
+  // decrypt + verify the fingerprint on an encrypted one. Every later
+  // reference to what was approved uses this local, resolved copy — never
+  // `proposal.toolArgs`/`proposal.content` directly.
+  let toolArgs: Record<string, unknown>;
+  try {
+    toolArgs = await resolveProposalToolArgs(proposal);
+  } catch (err) {
+    const msg = err instanceof ProposalContentError ? err.message : `Could not resolve the approved content on this device: ${err instanceof Error ? err.message : String(err)}`;
+    return {
+      text: `Proposal ${proposal.id}: blocked — ${msg} The action was not executed.`,
+      isError: true,
+    };
+  }
+
   {
     const mismatches: string[] = [];
     if (submitted.tool !== proposal.tool) mismatches.push('tool');
-    if (submitted.toolArgsHash !== hashToolArgs(proposal.toolArgs)) mismatches.push('arguments');
+    if (submitted.toolArgsHash !== hashToolArgs(toolArgs)) mismatches.push('arguments');
     if (submitted.executionContextHash !== hashToolArgs(proposal.executionContext)) mismatches.push('executionContext');
     if (submitted.authorizationId !== proposal.authorizationId) mismatches.push('authorizationId');
     if (submitted.profileId !== proposal.profileId) mismatches.push('profileId');
@@ -213,12 +229,13 @@ export async function executeCommitted(
   let replayed = false;
   try {
     // The receipt references the grant by its per-ceremony id — no hash surgery.
-    // v0.5 Content Provenance: hash the approved content (proposal.toolArgs is
-    // the pre-footer content captured at proposal time) when the profile binds.
+    // v0.5 Content Provenance: hash the approved content (toolArgs is the
+    // pre-footer content captured at proposal time, resolved above) when the
+    // profile binds.
     const binding = computeContentBinding(
       proposal.profileId,
       discovered,
-      proposal.toolArgs,
+      toolArgs,
       proposalActionType,
     );
     const { receipt, idempotent } = await state.spClient.postReceipt({
@@ -234,7 +251,12 @@ export async function executeCommitted(
         ? proposal.executionContext.amount
         : undefined,
       proposalId: proposal.id,
-      toolArgs: proposal.toolArgs,
+      toolArgs,
+      // PE1 — the fingerprint of what THIS gateway resolved (decrypted, or
+      // read plain on a legacy row) and is about to execute. The AS compares
+      // it against its own stored content_hash and refuses without echoing
+      // content on a mismatch.
+      proposalContentHash: computeProposalContentHash(toolArgs),
       // Deliberately NO idempotencyKey: the spec has review-mode commits carry
       // a proposalId INSTEAD of a key — the proposal's committed→executed
       // transition is their replay protection, and the AS replays the ORIGINAL
@@ -291,7 +313,11 @@ export async function executeCommitted(
       attestations: cachedAuth?.attestations,
       // What the human actually approved, kept next to the receipt that cites
       // it — otherwise `proposalId` is a pointer to a server we may not have.
-      proposal: proposal as unknown as Record<string, unknown>,
+      // PE1: the archived copy carries the RESOLVED (decrypted on an
+      // encrypted row) toolArgs, never the sealed `content` — this archive
+      // is this gateway's own local evidence and has always stored it
+      // readable, same as every legacy row.
+      proposal: { ...proposal, toolArgs } as unknown as Record<string, unknown>,
       boundContent: binding?.boundContent,
     });
   } catch (err) {
@@ -370,7 +396,7 @@ export async function executeCommitted(
     ticketId: receiptId,
     proposalId: proposal.id,
     tool: proposal.tool,
-    argsHash: hashToolArgs(proposal.toolArgs),
+    argsHash: hashToolArgs(toolArgs),
   });
   if (!begun.ok) {
     const prior = begun.existing;
@@ -417,7 +443,7 @@ export async function executeCommitted(
       integrationManager,
       integrationId,
       toolName,
-      proposal.toolArgs,
+      toolArgs,
       submitted.previewHash,
     );
     if (changed) {
@@ -434,7 +460,7 @@ export async function executeCommitted(
   // Receipt issued — now execute the tool, appending the verification footer
   // (Category-A profiles) just like the automatic-send path does.
   try {
-    let outgoingArgs = proposal.toolArgs;
+    let outgoingArgs = toolArgs;
     if (discovered && receiptId) {
       if (shouldAttachFooter()) {
         // Parity with the automatic path: pass the cached authorization's
@@ -594,10 +620,13 @@ export function checkPendingCommitmentsHandler(
             : 'a person';
 
           if (outcome === 'change_needed') {
+            // PE1 G5 — the note is sealed for the submitter + owner; decrypt
+            // it for the AI line (legacy plaintext rows pass through).
+            const note = await decryptRejectionNote(by);
             return {
               content: [{
                 type: 'text' as const,
-                text: `Proposal ${match.id} was SENT BACK FOR A CHANGE by ${who}: "${by?.note ?? ''}". ` +
+                text: `Proposal ${match.id} was SENT BACK FOR A CHANGE by ${who}: "${note ?? ''}". ` +
                   `The action did not run. You may adjust it and propose again — a new proposal the ` +
                   `person approves again. Do not resend the same values.`,
               }],

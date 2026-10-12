@@ -11,6 +11,7 @@ import { clientVersionHeaders } from './client-version';
 import { readPairing } from './as-pairing';
 import { resolvePinTls } from './as-config';
 import { fetchAs, AsTlsMismatchError, type AsFetchPinning } from './as-tls-pin';
+import { cpEncryptContent, type ProposalContentWire } from './cp-content-client';
 
 /** Why the client currently has no session — distinguishes the default
  *  boot-locked state from one that WAS active and ended, and carries the
@@ -56,9 +57,19 @@ export interface SPProposal {
   path: string;
   pendingDomains: string[];
   committedBy: Record<string, { userId: string; at: number }>;
-  rejectedBy: { domain: string; userId: string; at: number; outcome?: ProposalOutcome; note?: string } | null;
+  rejectedBy: { domain: string; userId: string; at: number; outcome?: ProposalOutcome; note?: string; noteEncrypted?: { ciphertext: string; keys: Record<string, { ct: string; enc: string }> } } | null;
   tool: string;
-  toolArgs: Record<string, unknown>;
+  /**
+   * PE1: present only on a legacy (pre-encryption) row. An encrypted row
+   * carries `content` instead and `toolArgs` is absent — see
+   * resolveProposalToolArgs (lib/proposal-content.ts), the one place that
+   * should ever read either field.
+   */
+  toolArgs?: Record<string, unknown>;
+  /** PE1: the sealed toolArgs — present iff `toolArgs` is absent. */
+  content?: ProposalContentWire;
+  /** PE1: the fingerprint over JCS(toolArgs) — present on every row, legacy or encrypted. */
+  contentHash?: string;
   executionContext: Record<string, string | number>;
   status: 'pending' | 'committed' | 'rejected' | 'expired' | 'executed';
   executionResult: unknown | null;
@@ -67,7 +78,7 @@ export interface SPProposal {
   // Phase 6 fields
   pendingApprovers?: string[];
   approvedBy?: Record<string, { receiptId: string; at: number }>;
-  approverRejectedBy?: { userId: string; reason?: string; at: number; outcome?: ProposalOutcome; note?: string };
+  approverRejectedBy?: { userId: string; reason?: string; at: number; outcome?: ProposalOutcome; note?: string; noteEncrypted?: { ciphertext: string; keys: Record<string, { ct: string; enc: string }> } };
   createdBy?: string;
 }
 
@@ -438,8 +449,20 @@ export class SPClient {
      * profile, so they are not sent, and the hash preimage never is.
      */
     contentBinding?: Pick<ContentBinding, 'version' | 'kind' | 'fields'>;
+    /**
+     * PE1 (review path only): the fingerprint — sha256: + hex over
+     * hap-core JCS(toolArgs) — of the toolArgs this gateway resolved
+     * (decrypted, or read plain on a legacy row) and is about to execute.
+     * The AS compares it against its own stored `content_hash` and refuses
+     * (no content echoed) on a mismatch — see computeProposalContentHash.
+     */
+    proposalContentHash?: string;
   }): Promise<{ receipt: Record<string, unknown>; idempotent: boolean }> {
-    const body = JSON.stringify(data);
+    const { proposalContentHash, ...rest } = data;
+    const body = JSON.stringify({
+      ...rest,
+      ...(proposalContentHash ? { proposal_content_hash: proposalContentHash } : {}),
+    });
     // Retries are only safe when the AS can dedup them: an idempotencyKey on
     // the synchronous path, or a proposalId on the review path (the AS replays
     // the original receipt to the same caller after the proposal committed).
@@ -512,6 +535,17 @@ export class SPClient {
   /**
    * Submit a proposal for deferred commitment review.
    * Phase 6: accepts optional pendingApprovers and createdBy for above-cap routing.
+   *
+   * PE1: toolArgs is encrypted (via the control plane's vault + the AS's
+   * registered public keys — cp-content-client.ts) before it ever reaches
+   * this method's request body; only the sealed `content` is sent, never
+   * `tool_args`. `recipientUserIds` are who besides the submitter (added by
+   * the control plane itself) must be able to read it back: the mandate
+   * owner, every pending approver (above-cap path), or every active member
+   * holding a pending domain (deferred-domain path) — decision 3 of the
+   * PE1 brief. `unreadableFor` is G4: anyone in that set with no registered
+   * end-to-end key — the proposal is still created for everyone who CAN
+   * read it; the caller reports who cannot.
    */
   async submitProposal(data: {
     authorizationId: string;
@@ -521,10 +555,13 @@ export class SPClient {
     tool: string;
     toolArgs: Record<string, unknown>;
     executionContext: Record<string, string | number>;
+    recipientUserIds: string[];
     // Phase 6
     pendingApprovers?: string[];
     createdBy?: string;
-  }): Promise<{ proposal: SPProposal }> {
+  }): Promise<{ proposal: SPProposal; unreadableFor: string[] }> {
+    const { content, unreadableFor } = await cpEncryptContent(data.toolArgs, data.recipientUserIds);
+
     const res = await this.fetch('/api/proposals', {
       method: 'POST',
       body: JSON.stringify({
@@ -533,7 +570,7 @@ export class SPClient {
         path: data.path,
         pending_domains: data.pendingDomains,
         tool: data.tool,
-        tool_args: data.toolArgs,
+        content,
         execution_context: data.executionContext,
         // Phase 6
         ...(data.pendingApprovers && data.pendingApprovers.length > 0
@@ -554,7 +591,8 @@ export class SPClient {
     // proposal that was created successfully.
     void notifyControlPlane('proposal-added');
 
-    return res.json() as Promise<{ proposal: SPProposal }>;
+    const body = await res.json() as { proposal: SPProposal };
+    return { proposal: body.proposal, unreadableFor };
   }
 
   /**

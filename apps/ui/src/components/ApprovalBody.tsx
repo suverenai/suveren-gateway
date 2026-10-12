@@ -17,7 +17,7 @@
  *  - "Details (exactly what is bound)" — folded; tool args + the
  *    execution-context fields the Gatekeeper actually checked, together.
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { resolveProposalLinks, type ProposalLink } from '../lib/proposal-links';
 import { spClient, type IntegrationManifest, type Proposal } from '../lib/sp-client';
@@ -28,6 +28,7 @@ import { contextFieldLabel, splitTool, systemDisplayName, toolHeadline, type Too
 import { useProfile } from '../lib/profile-cache';
 import { useMandateBounds } from '../lib/mandate-bounds-cache';
 import { useProposalIntent } from '../lib/use-proposal-intent';
+import { useProposalContent, missingRecipients } from '../lib/use-proposal-content';
 import { limitChecks } from '../lib/receipt-summary';
 import { profileDisplayName } from '../lib/profile-display';
 import { useAuth } from '../contexts/AuthContext';
@@ -58,6 +59,13 @@ interface Props {
   toolDisplay?: ToolDisplay;
   /** For "From <System>, before it runs" (lib/approval-view.ts systemDisplayName). */
   manifests?: IntegrationManifest[];
+  /**
+   * PE1 (mockup §4) — told once this card's content has settled, so the
+   * CALLER (ActionCard/ApproverProposalCard — they own the decision buttons)
+   * can hide Approve/Change needed/Reject on a card this device cannot
+   * decrypt. Same pattern as PreviewBox's `onTone`.
+   */
+  onContentState?: (state: { loading: boolean; readable: boolean }) => void;
 }
 
 /** DL6: tool-specific on purpose — this builtin is the gateway's own, so
@@ -66,7 +74,7 @@ interface Props {
  *  other part of this module stays generic (brief decision 6). */
 const CREATE_MANDATE_TOOL = 'setup__create_mandate';
 
-export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDisplay, manifests }: Props) {
+export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDisplay, manifests, onContentState }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [editingBeforeSigning, setEditingBeforeSigning] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
@@ -77,11 +85,22 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
   const profile = useProfile(proposal.profileId);
   const mandateBounds = useMandateBounds(proposal.authorizationId);
   const checks = limitChecks(proposal.executionContext, mandateBounds, profile);
-  const inspectLinks = resolveProposalLinks(proposalLinks, proposal.toolArgs);
   const headline = toolHeadline(proposal.tool);
   const { integrationId } = splitTool(proposal.tool);
   const systemName = systemDisplayName(integrationId, manifests);
   const { intent, loading: intentLoading, error: intentError } = useProposalIntent(proposal.authorizationId, currentUserId);
+
+  // PE1 — decrypt this proposal's sealed toolArgs (or pass a legacy row's
+  // plain ones through). `content.toolArgs` is null while loading AND when
+  // this device has no key wrap for it — the two are told apart by `loading`.
+  const content = useProposalContent(proposal);
+  const readable = content.toolArgs !== null;
+  useEffect(() => {
+    onContentState?.({ loading: content.loading, readable });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [content.loading, readable]);
+  const cannotRead = missingRecipients(proposal);
+  const inspectLinks = content.toolArgs ? resolveProposalLinks(proposalLinks, content.toolArgs) : [];
 
   // DL6 — "Edit before signing": opens the mandate screen pre-filled from
   // THIS proposal's own arguments (lib/create-mandate-prefill.ts), exactly
@@ -99,7 +118,11 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
     setEditingBeforeSigning(true);
     setEditError(null);
     try {
-      const args = proposal.toolArgs as CreateMandateProposalArgs;
+      if (!content.toolArgs) {
+        setEditError('This content is not readable on this device yet.');
+        return;
+      }
+      const args = content.toolArgs as CreateMandateProposalArgs;
       const requested = typeof args.profile === 'string' ? args.profile : '';
       const catalog = await spClient.listProfiles();
       const newest = newestProfileOf(requested, catalog);
@@ -135,9 +158,9 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
   // record from the system.
   const [previewTone, setPreviewTone] = useState<string | null>(null);
   const boundOpen = boundValuesOpen(previewTone);
-  const boundContent = (
+  const boundContent = content.toolArgs ? (
     <>
-          <ProposalArgs args={proposal.toolArgs} display={toolDisplay} heading="" />
+          <ProposalArgs args={content.toolArgs} display={toolDisplay} heading="" />
           {boundsEntries.length > 0 && (
             <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
               {boundsEntries.map(([k, v], i) => {
@@ -152,7 +175,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
             </div>
           )}
         </>
-  );
+  ) : null;
 
   return (
     <>
@@ -160,16 +183,55 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
           pattern ("erp · send_quote"), as in the approved mockup. */}
       <div className="approval-headline">{headline}</div>
 
+      {/* PE1 mockup §4 — a device added after the proposal was made has no
+          key wrap for it: no "What will be sent" box (nothing TO show), and
+          — see ActionCard/ApproverProposalCard — no decision buttons either,
+          via onContentState above. Takes priority over the preview box and
+          every other content-shaped section below. */}
+      {content.sealed && content.undecryptable && (
+        <div className="preview-box" data-testid="proposal-undecryptable" style={{ marginBottom: '0.5rem' }}>
+          <strong>Encrypted for another device.</strong>
+          <p style={{ margin: '0.35rem 0 0', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+            This device was added after the proposal was made, and no device of yours has shared it yet.
+            It is shared automatically once a device that can read it comes online — or open it there.
+          </p>
+        </div>
+      )}
+      {content.sealed && content.loading && (
+        <div className="preview-box" data-testid="proposal-decrypting" style={{ marginBottom: '0.5rem' }}>
+          Decrypting…
+        </div>
+      )}
+
       {/* Preview box — the system's own read, before it runs. Gateway-internal
           (decision 1); every fallback keeps the bound values below visible
           and Approve/Reject enabled (decisions 2-3). */}
-      {boundOpen && (
+      {boundOpen && readable && (
         <div className="preview-box preview-box-ok" data-testid="bound-values-open" style={{ marginBottom: '0.5rem' }}>
-          <h4>What will be sent <span className="src-tag src-tag-sealed">sealed</span></h4>
+          <h4>
+            What will be sent
+            {content.sealed
+              ? <><span className="src-tag src-tag-sealed">sealed</span> <span className="lock-tag">end-to-end encrypted</span></>
+              : <span className="src-tag src-tag-sealed">sealed</span>}
+          </h4>
           {boundContent}
+          {content.sealed && (
+            <p style={{ margin: '0.5rem 0 0', fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
+              Decrypted on this device. suveren.ai stores only an unreadable copy and its fingerprint.
+            </p>
+          )}
         </div>
       )}
-      <PreviewBox proposalId={proposal.id} systemName={systemName} onTone={setPreviewTone} />
+      {/* G4 — some recipients could not be reached when this was submitted
+          (no registered end-to-end key); the submission itself was never
+          blocked on it. Computed from fields already on the wire — see
+          missingRecipients's doc comment — never a lookup. */}
+      {cannotRead.length > 0 && (
+        <p data-testid="proposal-cannot-read" style={{ margin: '0 0 0.5rem', fontSize: '0.78rem', color: 'var(--text-tertiary)' }}>
+          Cannot read this proposal yet: {cannotRead.join(', ')} — shared automatically once they sign in on a device.
+        </p>
+      )}
+      {readable && <PreviewBox proposalId={proposal.id} systemName={systemName} onTone={setPreviewTone} />}
 
       {/* Within your limits — per-call bound checks only (lib/receipt-summary.ts
           limitChecks); cumulative bounds are deliberately not shown here (no
@@ -224,7 +286,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
       {/* Inspection links — ABOVE the folded Details on purpose. The point of
           review mode is judging the action, and an identifier cannot be judged.
           Whatever can actually be looked at has to come before the raw values. */}
-      {inspectLinks.length > 0 && (
+      {readable && inspectLinks.length > 0 && (
         <div style={{ marginBottom: '0.75rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
           {inspectLinks.map(l => (
             <a
@@ -248,7 +310,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
           the call's arguments AND the execution-context fields the
           Gatekeeper actually checked (never both hidden behind separate
           toggles: one fold, everything that is bound). */}
-      {!boundOpen && (
+      {!boundOpen && readable && (
       <details className="proposal-args-fold" style={{ marginBottom: '0.75rem' }}>
         <summary style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', cursor: 'pointer' }}>
           Details (exactly what is bound)
@@ -263,7 +325,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
           sense, since the intent becomes the person's own signed words.
           Approve/Reject (owned by the caller) stay exactly as they are;
           this is an additional way out, never a replacement for either. */}
-      {proposal.tool === CREATE_MANDATE_TOOL && (
+      {readable && proposal.tool === CREATE_MANDATE_TOOL && (
         <div style={{ marginBottom: '0.75rem' }}>
           <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0 0 0.4rem' }}>
             The intent above is written by the AI, but it becomes <strong>your words</strong> once you approve.
