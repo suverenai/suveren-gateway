@@ -227,18 +227,20 @@ export async function executeCommitted(
   // moments ago) already got this far. Not by itself proof the tool ran;
   // the execution journal below is.
   let replayed = false;
+  let binding: ReturnType<typeof computeContentBinding>;
+  let receipt: Record<string, unknown>;
   try {
     // The receipt references the grant by its per-ceremony id — no hash surgery.
     // v0.5 Content Provenance: hash the approved content (toolArgs is the
     // pre-footer content captured at proposal time, resolved above) when the
     // profile binds.
-    const binding = computeContentBinding(
+    binding = computeContentBinding(
       proposal.profileId,
       discovered,
       toolArgs,
       proposalActionType,
     );
-    const { receipt, idempotent } = await state.spClient.postReceipt({
+    const { receipt: r, idempotent } = await state.spClient.postReceipt({
       authorizationId: proposal.authorizationId,
       // Optional cross-check — the AS fails closed on a mismatch. Parity
       // with the automatic path (tool-proxy.ts).
@@ -271,9 +273,145 @@ export async function executeCommitted(
         ? { contentHash: binding.contentHash, contentBinding: binding.contentBinding }
         : {}),
     });
+    receipt = r;
     receiptId = typeof receipt?.id === 'string' ? receipt.id : undefined;
     replayed = idempotent;
+  } catch (err) {
+    // Approved content that cannot be bound. Refuse rather than execute on a
+    // receipt that would verify while committing to less than the approver saw.
+    // (computeContentBinding is the only thing in this block that can throw
+    // this — postReceipt never does.)
+    if (err instanceof ContentBindingError) {
+      return {
+        text: `Proposal ${proposal.id}: blocked — the approved content cannot be bound to the receipt. ${err.message}`,
+        isError: true,
+      };
+    }
+    if (err instanceof SPReceiptError) {
+      const code = (err.body.errors as Array<{ code?: string }> | undefined)?.[0]?.code;
+      if (code === 'PROPOSAL_ALREADY_EXECUTED') {
+        const local = localOutcomeOfExecuted(proposal, state);
+        if (local) return local;
+        return {
+          text: `Proposal ${proposal.id} has already been executed by another request.`,
+        };
+      }
+      // 2026-10-12 fix (AS docs/architecture.md §3.4): this gateway (or
+      // another one for the same operator) already had this exact proposal
+      // refused by the Authority Server — a terminal state, same footing as
+      // PROPOSAL_ALREADY_EXECUTED above. Never retried.
+      if (code === 'PROPOSAL_REFUSED') {
+        return {
+          text: `Proposal ${proposal.id}: the Authority Server refused this proposal's ticket earlier — ${err.message} ` +
+            `Nothing ran. Do not retry the same values; ask the person (e.g. for a higher limit).`,
+          isError: true,
+        };
+      }
+      // Item 9 (re-approval UX) — see tool-proxy.ts's
+      // isVersionUnsupportedRefusal doc comment: flag, never invalidate.
+      if (err.statusCode === 409 && code === 'VERSION_UNSUPPORTED') {
+        state.cache.markNeedsReapproval(proposal.authorizationId);
+        return {
+          text: `Proposal ${proposal.id}: blocked — mandate ${proposal.authorizationId} needs re-approval ` +
+            `— the Authority Server no longer verifies its protocol version. Ask the decision owner to ` +
+            `re-approve it (see list-authorizations). ${err.message}`,
+          isError: true,
+        };
+      }
+      // Every OTHER refusal here (BOUND_EXCEEDED, CUMULATIVE_LIMIT_EXCEEDED,
+      // APPROVAL_REQUIRED, ...) means the Authority Server refused THIS
+      // request's ticket — see the live bug this fixes in the file header.
+      // For a review-mode request riding an approved proposal, the AS has
+      // (2026-10-12 fix) ALSO just marked that proposal `refused` — so a
+      // LATER check-pending-commitments(proposal_id) call reads that status
+      // directly (see checkPendingCommitmentsHandler below) and needs
+      // nothing from this gateway. This local journal row exists ONLY for
+      // the deploy-window/compat case: an AS that has not yet deployed its
+      // own fix still (incorrectly) marks the proposal `executed` — without
+      // this row, `localOutcomeOfExecuted` would have nothing to override
+      // that with, and a later call would repeat the original bug. Keyed by
+      // the proposalId (there is no ticketId — none was ever issued), not by
+      // a real ticket: `begin()`'s dedup on that synthetic id keeps a second
+      // identical write here a no-op rather than an error.
+      if (proposal.id) {
+        const asRefusedTicketId = `as_refused:${proposal.id}`;
+        const begun = state.executionJournal.begin({
+          ticketId: asRefusedTicketId,
+          proposalId: proposal.id,
+          tool: proposal.tool,
+          argsHash: hashToolArgs(toolArgs),
+        });
+        if (begun.ok) {
+          state.executionJournal.complete(asRefusedTicketId, 'failed', 'as_refused', `${code ?? 'TICKET_REFUSED'}: ${err.message}`);
+        }
+      }
+      return {
+        text: `Proposal ${proposal.id}: the Authority Server refused its ticket — ${err.message} Nothing ran. ` +
+          `Do not retry the same values; ask the person (e.g. for a higher limit).`,
+        isError: true,
+      };
+    }
+    return {
+      text: `Proposal ${proposal.id}: receipt request failed — ${err instanceof Error ? err.message : String(err)}`,
+      isError: true,
+    };
+  }
 
+  // A ticket without an id cannot be journaled, so it cannot be proven to have
+  // run once. Refuse rather than execute unrecorded.
+  if (!receiptId) {
+    return {
+      text: `Proposal ${proposal.id}: the ticket carries no id — refusing to execute an action that could not be recorded.`,
+      isError: true,
+    };
+  }
+
+  // ── One execution per ticket ──────────────────────────────────────────────
+  // The AS guarantees one ticket per execution; this journal row is what
+  // guarantees one execution per ticket. Written BEFORE the tool is called —
+  // and, just as importantly, BEFORE verifyTicket/archiveReceipt below: by
+  // the time postReceipt returns, the AS has ALREADY committed the
+  // committed→executed transition (status is "executed" there from this
+  // point on), whatever happens next on this gateway. Originally this begin()
+  // ran only after verifyTicket/archiveReceipt succeeded, so a throw in that
+  // window (a ticket-binding mismatch, a local archive-write failure) left
+  // the AS saying "executed" with NO local record at all and the downstream
+  // tool never called. A later check-pending-commitments(proposal_id) call
+  // then found no journal entry, fell through to the generic "approved and
+  // has already been EXECUTED ... the gateway did not retain its output"
+  // text (checkPendingCommitmentsHandler) — reading exactly like a quiet
+  // success for an action that never ran. Beginning the journal entry here,
+  // before that window, means any failure in it is captured below and
+  // surfaces honestly instead.
+  const begun = state.executionJournal.begin({
+    ticketId: receiptId,
+    proposalId: proposal.id,
+    tool: proposal.tool,
+    argsHash: hashToolArgs(toolArgs),
+  });
+  if (!begun.ok) {
+    const prior = begun.existing;
+    const when = new Date(prior.startedAt * 1000).toISOString();
+    if (prior.state === 'done') {
+      return {
+        text:
+          `Proposal ${proposal.id} was already executed under ticket ${receiptId} at ${when}. ` +
+          'Not running it again.',
+      };
+    }
+    // `intent` or `failed`: an earlier attempt got as far as calling the tool
+    // and this process cannot know whether the effect happened. Guessing
+    // either way is wrong; the person who approved it has to look.
+    return {
+      text:
+        `Proposal ${proposal.id}: an execution under ticket ${receiptId} started at ${when} ` +
+        `(pid ${prior.pid}) and ${prior.state === 'failed' ? 'reported failure' : 'never reported completion'}. ` +
+        'Not re-running: the action may already have taken effect. Check the downstream system before deciding.',
+      isError: true,
+    };
+  }
+
+  try {
     // Verify the ticket BEFORE trusting it for anything — signature against
     // the PINNED key, and its own bound fields against the proposal,
     // INCLUDING proposalId: a receipt minted for some other request (or for
@@ -321,6 +459,15 @@ export async function executeCommitted(
       boundContent: binding?.boundContent,
     });
   } catch (err) {
+    // The ticket is already begun in the journal (above) — close it as
+    // 'failed' so a LATER check-pending-commitments call finds this record
+    // instead of the ambiguous "approved and already EXECUTED ... the
+    // gateway did not retain its output" default (see the comment on begin()
+    // above). The downstream tool was never called in this branch, so
+    // nothing happened — the detail (surfaced by localOutcomeOfExecuted)
+    // says why.
+    const detail = err instanceof Error ? err.message : String(err);
+    state.executionJournal.complete(receiptId, 'failed', undefined, detail);
     // The ticket didn't verify — signature disagrees with the pinned
     // Authority Server key, or its own bound fields disagree with the
     // proposal. Refuse AND lock: a server that can do this is exactly what
@@ -341,84 +488,12 @@ export async function executeCommitted(
         isError: true,
       };
     }
-    // Approved content that cannot be bound. Refuse rather than execute on a
-    // receipt that would verify while committing to less than the approver saw.
-    if (err instanceof ContentBindingError) {
-      return {
-        text: `Proposal ${proposal.id}: blocked — the approved content cannot be bound to the receipt. ${err.message}`,
-        isError: true,
-      };
-    }
-    if (err instanceof SPReceiptError) {
-      const code = (err.body.errors as Array<{ code?: string }> | undefined)?.[0]?.code;
-      if (code === 'PROPOSAL_ALREADY_EXECUTED') {
-        const local = localOutcomeOfExecuted(proposal, state);
-        if (local) return local;
-        return {
-          text: `Proposal ${proposal.id} has already been executed by another request.`,
-        };
-      }
-      // Item 9 (re-approval UX) — see tool-proxy.ts's
-      // isVersionUnsupportedRefusal doc comment: flag, never invalidate.
-      if (err.statusCode === 409 && code === 'VERSION_UNSUPPORTED') {
-        state.cache.markNeedsReapproval(proposal.authorizationId);
-        return {
-          text: `Proposal ${proposal.id}: blocked — mandate ${proposal.authorizationId} needs re-approval ` +
-            `— the Authority Server no longer verifies its protocol version. Ask the decision owner to ` +
-            `re-approve it (see list-authorizations). ${err.message}`,
-          isError: true,
-        };
-      }
-      return {
-        text: `Proposal ${proposal.id}: SP rejected receipt — ${err.message}`,
-        isError: true,
-      };
-    }
     return {
-      text: `Proposal ${proposal.id}: receipt request failed — ${err instanceof Error ? err.message : String(err)}`,
+      text: `Proposal ${proposal.id}: blocked — ${detail}`,
       isError: true,
     };
   }
 
-  // A ticket without an id cannot be journaled, so it cannot be proven to have
-  // run once. Refuse rather than execute unrecorded.
-  if (!receiptId) {
-    return {
-      text: `Proposal ${proposal.id}: the ticket carries no id — refusing to execute an action that could not be recorded.`,
-      isError: true,
-    };
-  }
-
-  // ── One execution per ticket ──────────────────────────────────────────────
-  // The AS guarantees one ticket per execution; this journal row is what
-  // guarantees one execution per ticket. Written BEFORE the tool is called.
-  const begun = state.executionJournal.begin({
-    ticketId: receiptId,
-    proposalId: proposal.id,
-    tool: proposal.tool,
-    argsHash: hashToolArgs(toolArgs),
-  });
-  if (!begun.ok) {
-    const prior = begun.existing;
-    const when = new Date(prior.startedAt * 1000).toISOString();
-    if (prior.state === 'done') {
-      return {
-        text:
-          `Proposal ${proposal.id} was already executed under ticket ${receiptId} at ${when}. ` +
-          'Not running it again.',
-      };
-    }
-    // `intent` or `failed`: an earlier attempt got as far as calling the tool
-    // and this process cannot know whether the effect happened. Guessing
-    // either way is wrong; the person who approved it has to look.
-    return {
-      text:
-        `Proposal ${proposal.id}: an execution under ticket ${receiptId} started at ${when} ` +
-        `(pid ${prior.pid}) and ${prior.state === 'failed' ? 'reported failure' : 'never reported completion'}. ` +
-        'Not re-running: the action may already have taken effect. Check the downstream system before deciding.',
-      isError: true,
-    };
-  }
   if (replayed) {
     // The AS replayed the ticket but we hold no record of executing under it:
     // an earlier attempt lost the AS response before it could record intent.
@@ -447,7 +522,9 @@ export async function executeCommitted(
       submitted.previewHash,
     );
     if (changed) {
-      state.executionJournal.complete(receiptId, 'failed', 'changed');
+      // Detail (not just the outcome tag) so a LATER check-pending-commitments
+      // call — localOutcomeOfExecuted below — can say WHY, not just THAT.
+      state.executionJournal.complete(receiptId, 'failed', 'changed', `The record changed in ${integrationId} since it was requested.`);
       return {
         text:
           `Proposal ${proposal.id} was approved, but the record changed in ${integrationId} since it was ` +
@@ -527,15 +604,32 @@ function localOutcomeOfExecuted(proposal: SPProposal, state: SharedState): { tex
   if (!entry || entry.state === 'done') return null;
   const integration = proposal.tool.split('__')[0];
   if (entry.state === 'failed') {
+    // The execution journal is the only place that stores WHY (row.detail) —
+    // the connector's own refusal text, or why AU4 called it stale. Without
+    // it, a LATER check-pending-commitments(proposal_id) call (this
+    // function) said only THAT it was refused/changed, dropping the reason
+    // the FIRST call's own response showed — someone reading only this later
+    // check never learns it.
+    const reasonSuffix = entry.detail ? `\nReason: ${entry.detail}` : '';
     return {
-      text: entry.outcome === 'refused'
+      text: entry.outcome === 'as_refused'
+        // 2026-10-12 fix — the AS itself refused this proposal's ticket (a
+        // bound exceeded after approval), not the connector: never say
+        // EXECUTED for it. Only reached via this LOCAL journal row when an
+        // older/not-yet-fixed AS still reports `status: 'executed'` here —
+        // see checkPendingCommitmentsHandler's `refused` branch below for
+        // the normal (fixed-AS) path, which reads the AS's own status/
+        // refusal fields directly.
+        ? `Proposal ${proposal.id} was approved, but the Authority Server refused its ticket — nothing ran. ` +
+          `Do not retry the same values; ask the person (e.g. for a higher limit).${reasonSuffix}`
+        : entry.outcome === 'refused'
         ? `Proposal ${proposal.id} was approved, but ${integration} refused to run it — nothing was done. ` +
-          `Do not call the tool again with the same values; a new attempt needs a new request and approval.`
+          `Do not call the tool again with the same values; a new attempt needs a new request and approval.${reasonSuffix}`
         : entry.outcome === 'changed'
         ? `Proposal ${proposal.id} was approved, but the record changed in ${integration} since it was ` +
-          `requested — nothing was done. A new attempt needs a new request and approval.`
+          `requested — nothing was done. A new attempt needs a new request and approval.${reasonSuffix}`
         : `Proposal ${proposal.id} was approved, but running it failed — whether anything happened in ${integration} is unknown. ` +
-          `Check ${integration} before trying again; a new attempt needs a new request and approval.`,
+          `Check ${integration} before trying again; a new attempt needs a new request and approval.${reasonSuffix}`,
       isError: true,
     };
   }
@@ -600,6 +694,25 @@ export function checkPendingCommitmentsHandler(
               text: `Proposal ${match.id} was approved and has already been EXECUTED — ` +
                 `it is finished, do not call the tool again.${result}`,
             }],
+          };
+        }
+
+        // 2026-10-12 fix — the Authority Server refused this proposal's
+        // ticket AFTER it was approved (a bound exceeded; see
+        // docs/architecture.md §3.4 on the AS). Distinct from `rejected`
+        // (a human decision before commit) and `executed` (the AS's own
+        // status, is never wrong about this once fixed): read straight off
+        // the AS's own `refusal` field — backend truth, no local lookup
+        // needed for a fixed AS. Never EXECUTED for it.
+        if (match.status === 'refused') {
+          const detail = match.refusal ? match.refusal.message : 'a bound was exceeded';
+          return {
+            content: [{
+              type: 'text' as const,
+              text: `Proposal ${match.id} was approved, but the Authority Server refused its ticket — ${detail} ` +
+                `Nothing ran. Do not retry the same values; ask the person (e.g. for a higher limit).`,
+            }],
+            isError: true,
           };
         }
 

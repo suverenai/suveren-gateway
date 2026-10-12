@@ -9,6 +9,7 @@ import {
   changeNeededOutcomeArgs,
   replacedOutcomeArgs,
   outcomeAfterView,
+  refusedAfterView,
 } from './reject-outcome';
 import type { Proposal } from './sp-client';
 
@@ -157,6 +158,24 @@ describe('outcomeAfterView', () => {
       'u_me',
     );
     expect(v?.note).toBe('from domain path');
+  });
+});
+
+// ─── REFUSED after-state (2026-10-12 fix) ──────────────────────────────────
+// The Authority Server's own terminal refusal of an APPROVED proposal's
+// ticket (a bound exceeded) — distinct from outcomeAfterView above, which is
+// always a HUMAN decision made before commit. Backend truth: reads
+// `proposal.refusal` directly, no lookups.
+describe('refusedAfterView', () => {
+  it('returns null when the proposal carries no refusal', () => {
+    expect(refusedAfterView({ refusal: undefined })).toBeNull();
+  });
+
+  it('carries the Authority Server\'s own message and timestamp verbatim', () => {
+    const v = refusedAfterView({
+      refusal: { code: 'CUMULATIVE_LIMIT_EXCEEDED', message: 'Cumulative daily count (3) exceeds setup_daily_max=2', at: 100 },
+    });
+    expect(v).toEqual({ kind: 'REFUSED', at: 100, message: 'Cumulative daily count (3) exceeds setup_daily_max=2' });
   });
 });
 

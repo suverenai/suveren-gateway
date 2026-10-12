@@ -104,7 +104,7 @@ export function replacedWithdrawRoute(
 
 // ─── After-state view (mockup §3 — "Afterwards, on the card") ──────────────
 
-export type OutcomeKindLabel = 'REJECTED' | 'CHANGE NEEDED' | 'REPLACED';
+export type OutcomeKindLabel = 'REJECTED' | 'CHANGE NEEDED' | 'REPLACED' | 'REFUSED';
 
 const KIND_LABEL: Record<ProposalOutcome, OutcomeKindLabel> = {
   rejected: 'REJECTED',
@@ -148,4 +148,26 @@ export function outcomeAfterView(
     at: source.at,
     note,
   };
+}
+
+export interface RefusedAfterView {
+  kind: 'REFUSED';
+  /** Unix seconds. */
+  at: number;
+  /** The Authority Server's own message for why — backend truth, read
+   *  straight off `proposal.refusal`, never re-derived. */
+  message: string;
+}
+
+/**
+ * 2026-10-12 fix — the card's after-state for a proposal the Authority
+ * Server refused a ticket for AFTER approval (a bound exceeded), distinct
+ * from `outcomeAfterView` above (a HUMAN reject/change/replace decision made
+ * BEFORE commit). There is no "who" here other than the Authority Server
+ * itself — no reviewer made this call. Returns `null` for a proposal with no
+ * `refusal` recorded (not refused, or an older row this field predates).
+ */
+export function refusedAfterView(proposal: Pick<Proposal, 'refusal'>): RefusedAfterView | null {
+  if (!proposal.refusal) return null;
+  return { kind: 'REFUSED', at: proposal.refusal.at, message: proposal.refusal.message };
 }
