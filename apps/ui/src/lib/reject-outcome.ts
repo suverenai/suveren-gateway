@@ -84,6 +84,24 @@ export function replacedOutcomeArgs(): { outcome: ProposalOutcome; note?: string
   return { outcome: 'replaced' };
 }
 
+/**
+ * Which route withdraws the proposal an "Edit before signing" replaced.
+ * A review proposal is decided per domain (POST /resolve — 'owner' in a
+ * personal workspace, the member's own id in a team); only an above-cap
+ * proposal that names the person as approver uses POST /reject. Null when
+ * the person may decide neither — the caller must say so, not fail silently.
+ */
+export function replacedWithdrawRoute(
+  proposal: { pendingDomains?: string[]; pendingApprovers?: string[] },
+  userId: string,
+): { route: 'approver' } | { route: 'resolve'; domain: string } | null {
+  if ((proposal.pendingApprovers ?? []).includes(userId)) return { route: 'approver' };
+  const domains = proposal.pendingDomains ?? [];
+  if (domains.includes(userId)) return { route: 'resolve', domain: userId };
+  if (domains.includes('owner')) return { route: 'resolve', domain: 'owner' };
+  return null;
+}
+
 // ─── After-state view (mockup §3 — "Afterwards, on the card") ──────────────
 
 export type OutcomeKindLabel = 'REJECTED' | 'CHANGE NEEDED' | 'REPLACED';

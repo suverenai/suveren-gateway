@@ -1534,6 +1534,17 @@ class SPClient {
    * Fetch proposals where the caller is a required approver and has not yet approved.
    * SP endpoint: GET /api/proposals?approver=me
    */
+  /** One proposal (backend truth), e.g. to pick the route that may decide it. */
+  async getProposal(id: string): Promise<Proposal> {
+    const res = await this.fetch(`/api/proposals/${encodeURIComponent(id)}`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Failed' }));
+      throw new Error(asErrorMessage(err, `getProposal failed: ${res.status}`));
+    }
+    const data = await res.json();
+    return (data.proposal ?? data) as Proposal;
+  }
+
   async getProposalsForApprover(): Promise<Proposal[]> {
     const res = await this.fetch('/api/proposals?approver=me');
     if (!res.ok) throw new Error(`Failed to fetch approver proposals: ${res.status}`);

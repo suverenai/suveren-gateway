@@ -11,7 +11,7 @@ import { offeredCommitModes, settleCommitMode, toProtocolMode } from '../lib/com
 import { scopesOverlap } from '../lib/scope-overlap';
 import { formatScopeValue } from '../lib/scope-labels';
 import { mandateRight } from '../lib/mandate-rights';
-import { replacedOutcomeArgs } from '../lib/reject-outcome';
+import { replacedOutcomeArgs, replacedWithdrawRoute } from '../lib/reject-outcome';
 import type { AgentProfile, AgentBoundsParams, AgentScopeParams } from '@hap/core';
 import type { ProfileConfig } from '../lib/sp-client';
 
@@ -411,12 +411,26 @@ export function AgentReviewPage() {
       // RJ2/RJ5: this is not a refusal — the person signed their own version
       // — so it carries outcome `replaced`, not a plain reject (the AI must
       // use the mandate, not retry the proposal's own values).
+      // The route depends on the proposal: a review proposal is decided per
+      // domain (/resolve), an above-cap one by its approvers (/reject). Using
+      // /reject for everything left review proposals PENDING (found live
+      // 2026-10-12). A failure is shown, never swallowed.
+      let withdrawProblem = '';
       if (replacesProposalId) {
         try {
-          await spClient.rejectProposal(replacesProposalId, replacedOutcomeArgs());
-        } catch {
-          // Proposal may already be resolved (expired/rejected/approved
-          // elsewhere) — the new mandate is live either way.
+          const proposal = await spClient.getProposal(replacesProposalId);
+          if (proposal.status === 'pending') {
+            const route = replacedWithdrawRoute(proposal, user?.id ?? '');
+            if (!route) {
+              withdrawProblem = 'you are not one of the people who may decide it';
+            } else if (route.route === 'approver') {
+              await spClient.rejectProposal(replacesProposalId, replacedOutcomeArgs());
+            } else {
+              await spClient.resolveProposal(replacesProposalId, 'reject', route.domain, replacedOutcomeArgs());
+            }
+          }
+        } catch (e) {
+          withdrawProblem = e instanceof Error ? e.message : 'unknown error';
         }
       }
 
@@ -424,6 +438,12 @@ export function AgentReviewPage() {
       sessionStorage.removeItem('agentGate');
       sessionStorage.removeItem('agentEditReplaces');
       sessionStorage.removeItem('agentReplacesProposal');
+      if (withdrawProblem) {
+        // The mandate is live; only the AI's proposal is still open. Stay on
+        // the page and say what to do instead of hiding it.
+        setError(`Your mandate is signed and active. The AI's proposal could not be withdrawn (${withdrawProblem}) — reject it under Approvals.`);
+        return;
+      }
       navigate(`/mandates?highlight=${encodeURIComponent(authorizationId)}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Signing the mandate failed');

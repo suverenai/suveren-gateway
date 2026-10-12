@@ -607,6 +607,37 @@ describe('createGatedToolHandler — SP receipt integration', () => {
     expect(submitCall.recipientUserIds).toEqual(expect.arrayContaining(['owner-alice', 'finance-domain-owner']));
   });
 
+  it('PE1 G4: a personal review proposal does not list the "owner" placeholder as a recipient', async () => {
+    // Found live on the demo gateway (0.27.0): 'owner' is a domain, not a user
+    // id — it has no key, so the AI was told "the person cannot read this".
+    const submitProposal = vi.fn().mockResolvedValue({
+      proposal: { id: 'prop-review-2', status: 'pending' },
+      unreadableFor: [],
+    });
+    const getAuthorizationSummary = vi.fn().mockResolvedValue({
+      authorization_id: 'authz_00000000-0000-4000-8000-0000000000ac',
+      profile_id: 'github.com/humanagencyprotocol/hap-profiles/charge@0.3',
+      created_by: 'owner-alice',
+    });
+    const state = {
+      ...mockGatedState(),
+      spClient: { submitProposal, getAuthorizationSummary, isUnlocked: () => true },
+    } as unknown as import('../src/lib/shared-state').SharedState;
+    const authPersonal = {
+      ...(state.getEnrichedAuthorizations()[0]),
+      deferredCommitmentDomains: ['owner'],
+      signedCommitmentMode: 'review',
+    };
+    state.getEnrichedAuthorizations = () => [authPersonal as never];
+
+    await createGatedToolHandler(mockTool('charge'), mockIntegrationManager(), state)({ amount: 50, currency: 'EUR' });
+
+    const submitCall = (submitProposal as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(submitCall.recipientUserIds).not.toContain('owner');
+    expect(submitCall.recipientUserIds).toContain('owner-alice');
+    expect(submitCall.pendingDomains).toEqual(['owner']); // the domain itself is unchanged
+  });
+
   it('P8.2: returns hard error when SP returns 422 (no approver path)', async () => {
     const postReceipt = vi.fn().mockRejectedValue(
       new SPReceiptError('cap_exceeded', 422, { error: 'cap_exceeded', field: 'amount_max', cap: 500 }),

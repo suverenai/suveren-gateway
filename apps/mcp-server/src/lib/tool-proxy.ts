@@ -1192,7 +1192,10 @@ function createGatedToolHandlerInner(
             // automatically by the control plane): the mandate owner, plus
             // every member whose domain is still pending (in team mode the
             // domain IS the member's account id — see who-label.ts).
-            let recipientUserIds: string[] = [...auth.deferredCommitmentDomains];
+            // 'owner' is the personal domain placeholder, not a user id — the owner
+            // themselves is added from the mandate below (and the submitter by
+            // the control plane), so it must not count as an unreadable recipient.
+            let recipientUserIds: string[] = auth.deferredCommitmentDomains.filter((d) => d !== 'owner');
             try {
               const summary = await state.spClient.getAuthorizationSummary(authzId);
               if (summary?.created_by) recipientUserIds = [summary.created_by, ...recipientUserIds];
