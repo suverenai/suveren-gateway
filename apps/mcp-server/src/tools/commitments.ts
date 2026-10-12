@@ -227,18 +227,20 @@ export async function executeCommitted(
   // moments ago) already got this far. Not by itself proof the tool ran;
   // the execution journal below is.
   let replayed = false;
+  let binding: ReturnType<typeof computeContentBinding>;
+  let receipt: Record<string, unknown>;
   try {
     // The receipt references the grant by its per-ceremony id — no hash surgery.
     // v0.5 Content Provenance: hash the approved content (toolArgs is the
     // pre-footer content captured at proposal time, resolved above) when the
     // profile binds.
-    const binding = computeContentBinding(
+    binding = computeContentBinding(
       proposal.profileId,
       discovered,
       toolArgs,
       proposalActionType,
     );
-    const { receipt, idempotent } = await state.spClient.postReceipt({
+    const { receipt: r, idempotent } = await state.spClient.postReceipt({
       authorizationId: proposal.authorizationId,
       // Optional cross-check — the AS fails closed on a mismatch. Parity
       // with the automatic path (tool-proxy.ts).
@@ -271,78 +273,14 @@ export async function executeCommitted(
         ? { contentHash: binding.contentHash, contentBinding: binding.contentBinding }
         : {}),
     });
+    receipt = r;
     receiptId = typeof receipt?.id === 'string' ? receipt.id : undefined;
     replayed = idempotent;
-
-    // Verify the ticket BEFORE trusting it for anything — signature against
-    // the PINNED key, and its own bound fields against the proposal,
-    // INCLUDING proposalId: a receipt minted for some other request (or for
-    // no proposal — a plain automatic-mode ticket) must never be accepted
-    // just because its action/executionContext happen to match. This is the
-    // review path's whole defense against a server that hands the gateway a
-    // tool call it never approved: everything else here (tool name,
-    // arguments, "committed" status) comes from the AS, so without this
-    // check a receipt minted by ANY key at all — valid or not — would be
-    // enough to make the gateway run it.
-    // No `idempotencyKey` here, matching the postReceipt call above: this
-    // path's retry-safe key is `proposalId`, not an idempotency key, so
-    // ticket-verify.ts's idempotencyKey check (G4) simply does not apply —
-    // `proposalId` above is this path's equivalent binding.
-    await verifyTicket(state.cache, receipt, {
-      action: proposal.tool,
-      executionContext: proposal.executionContext,
-      authorizationId: proposal.authorizationId,
-      profileId: proposal.profileId,
-      proposalId: proposal.id,
-      contentHash: binding?.contentHash,
-      contentBinding: binding?.contentBinding,
-    });
-
-    // Subject custody: archive the complete signed receipt locally (parity
-    // with the automatic path). FAIL-CLOSED (V8) — written BEFORE the handler
-    // runs; a throw here (ArchiveWriteError) refuses below, same as the
-    // automatic path. cachedAuth may be evicted — the attestation blobs
-    // merge in on a later call, but the entry itself still MUST write.
-    await state.archiveReceipt(receipt, {
-      authorizationId: proposal.authorizationId,
-      profileId: proposal.profileId,
-      boundsHash: cachedAuth?.boundsHash,
-      contextHash: cachedAuth?.contextHash,
-      bounds: cachedAuth?.bounds ?? cachedAuth?.frame,
-      context: cachedAuth?.context,
-      attestations: cachedAuth?.attestations,
-      // What the human actually approved, kept next to the receipt that cites
-      // it — otherwise `proposalId` is a pointer to a server we may not have.
-      // PE1: the archived copy carries the RESOLVED (decrypted on an
-      // encrypted row) toolArgs, never the sealed `content` — this archive
-      // is this gateway's own local evidence and has always stored it
-      // readable, same as every legacy row.
-      proposal: { ...proposal, toolArgs } as unknown as Record<string, unknown>,
-      boundContent: binding?.boundContent,
-    });
   } catch (err) {
-    // The ticket didn't verify — signature disagrees with the pinned
-    // Authority Server key, or its own bound fields disagree with the
-    // proposal. Refuse AND lock: a server that can do this is exactly what
-    // pinning exists to catch, on the path with the least other protection.
-    if (err instanceof AsKeyMismatchError || err instanceof TicketBindingMismatchError) {
-      void notifyControlPlane('as-key-mismatch');
-      return {
-        text: `Proposal ${proposal.id}: blocked — ${err.message}`,
-        isError: true,
-      };
-    }
-    // V8: the local evidence archive could not be written before the
-    // handler would have run. A local fault (disk, missing issuer key) —
-    // not a statement about the Authority Server, so no lock/invalidate.
-    if (err instanceof ArchiveWriteError) {
-      return {
-        text: `Proposal ${proposal.id}: blocked — the ticket could not be archived locally — ${err.message}. The action was not executed.`,
-        isError: true,
-      };
-    }
     // Approved content that cannot be bound. Refuse rather than execute on a
     // receipt that would verify while committing to less than the approver saw.
+    // (computeContentBinding is the only thing in this block that can throw
+    // this — postReceipt never does.)
     if (err instanceof ContentBindingError) {
       return {
         text: `Proposal ${proposal.id}: blocked — the approved content cannot be bound to the receipt. ${err.message}`,
@@ -391,7 +329,21 @@ export async function executeCommitted(
 
   // ── One execution per ticket ──────────────────────────────────────────────
   // The AS guarantees one ticket per execution; this journal row is what
-  // guarantees one execution per ticket. Written BEFORE the tool is called.
+  // guarantees one execution per ticket. Written BEFORE the tool is called —
+  // and, just as importantly, BEFORE verifyTicket/archiveReceipt below: by
+  // the time postReceipt returns, the AS has ALREADY committed the
+  // committed→executed transition (status is "executed" there from this
+  // point on), whatever happens next on this gateway. Originally this begin()
+  // ran only after verifyTicket/archiveReceipt succeeded, so a throw in that
+  // window (a ticket-binding mismatch, a local archive-write failure) left
+  // the AS saying "executed" with NO local record at all and the downstream
+  // tool never called. A later check-pending-commitments(proposal_id) call
+  // then found no journal entry, fell through to the generic "approved and
+  // has already been EXECUTED ... the gateway did not retain its output"
+  // text (checkPendingCommitmentsHandler) — reading exactly like a quiet
+  // success for an action that never ran. Beginning the journal entry here,
+  // before that window, means any failure in it is captured below and
+  // surfaces honestly instead.
   const begun = state.executionJournal.begin({
     ticketId: receiptId,
     proposalId: proposal.id,
@@ -419,6 +371,90 @@ export async function executeCommitted(
       isError: true,
     };
   }
+
+  try {
+    // Verify the ticket BEFORE trusting it for anything — signature against
+    // the PINNED key, and its own bound fields against the proposal,
+    // INCLUDING proposalId: a receipt minted for some other request (or for
+    // no proposal — a plain automatic-mode ticket) must never be accepted
+    // just because its action/executionContext happen to match. This is the
+    // review path's whole defense against a server that hands the gateway a
+    // tool call it never approved: everything else here (tool name,
+    // arguments, "committed" status) comes from the AS, so without this
+    // check a receipt minted by ANY key at all — valid or not — would be
+    // enough to make the gateway run it.
+    // No `idempotencyKey` here, matching the postReceipt call above: this
+    // path's retry-safe key is `proposalId`, not an idempotency key, so
+    // ticket-verify.ts's idempotencyKey check (G4) simply does not apply —
+    // `proposalId` above is this path's equivalent binding.
+    await verifyTicket(state.cache, receipt, {
+      action: proposal.tool,
+      executionContext: proposal.executionContext,
+      authorizationId: proposal.authorizationId,
+      profileId: proposal.profileId,
+      proposalId: proposal.id,
+      contentHash: binding?.contentHash,
+      contentBinding: binding?.contentBinding,
+    });
+
+    // Subject custody: archive the complete signed receipt locally (parity
+    // with the automatic path). FAIL-CLOSED (V8) — written BEFORE the handler
+    // runs; a throw here (ArchiveWriteError) refuses below, same as the
+    // automatic path. cachedAuth may be evicted — the attestation blobs
+    // merge in on a later call, but the entry itself still MUST write.
+    await state.archiveReceipt(receipt, {
+      authorizationId: proposal.authorizationId,
+      profileId: proposal.profileId,
+      boundsHash: cachedAuth?.boundsHash,
+      contextHash: cachedAuth?.contextHash,
+      bounds: cachedAuth?.bounds ?? cachedAuth?.frame,
+      context: cachedAuth?.context,
+      attestations: cachedAuth?.attestations,
+      // What the human actually approved, kept next to the receipt that cites
+      // it — otherwise `proposalId` is a pointer to a server we may not have.
+      // PE1: the archived copy carries the RESOLVED (decrypted on an
+      // encrypted row) toolArgs, never the sealed `content` — this archive
+      // is this gateway's own local evidence and has always stored it
+      // readable, same as every legacy row.
+      proposal: { ...proposal, toolArgs } as unknown as Record<string, unknown>,
+      boundContent: binding?.boundContent,
+    });
+  } catch (err) {
+    // The ticket is already begun in the journal (above) — close it as
+    // 'failed' so a LATER check-pending-commitments call finds this record
+    // instead of the ambiguous "approved and already EXECUTED ... the
+    // gateway did not retain its output" default (see the comment on begin()
+    // above). The downstream tool was never called in this branch, so
+    // nothing happened — the detail (surfaced by localOutcomeOfExecuted)
+    // says why.
+    const detail = err instanceof Error ? err.message : String(err);
+    state.executionJournal.complete(receiptId, 'failed', undefined, detail);
+    // The ticket didn't verify — signature disagrees with the pinned
+    // Authority Server key, or its own bound fields disagree with the
+    // proposal. Refuse AND lock: a server that can do this is exactly what
+    // pinning exists to catch, on the path with the least other protection.
+    if (err instanceof AsKeyMismatchError || err instanceof TicketBindingMismatchError) {
+      void notifyControlPlane('as-key-mismatch');
+      return {
+        text: `Proposal ${proposal.id}: blocked — ${err.message}`,
+        isError: true,
+      };
+    }
+    // V8: the local evidence archive could not be written before the
+    // handler would have run. A local fault (disk, missing issuer key) —
+    // not a statement about the Authority Server, so no lock/invalidate.
+    if (err instanceof ArchiveWriteError) {
+      return {
+        text: `Proposal ${proposal.id}: blocked — the ticket could not be archived locally — ${err.message}. The action was not executed.`,
+        isError: true,
+      };
+    }
+    return {
+      text: `Proposal ${proposal.id}: blocked — ${detail}`,
+      isError: true,
+    };
+  }
+
   if (replayed) {
     // The AS replayed the ticket but we hold no record of executing under it:
     // an earlier attempt lost the AS response before it could record intent.
@@ -447,7 +483,9 @@ export async function executeCommitted(
       submitted.previewHash,
     );
     if (changed) {
-      state.executionJournal.complete(receiptId, 'failed', 'changed');
+      // Detail (not just the outcome tag) so a LATER check-pending-commitments
+      // call — localOutcomeOfExecuted below — can say WHY, not just THAT.
+      state.executionJournal.complete(receiptId, 'failed', 'changed', `The record changed in ${integrationId} since it was requested.`);
       return {
         text:
           `Proposal ${proposal.id} was approved, but the record changed in ${integrationId} since it was ` +
@@ -527,15 +565,22 @@ function localOutcomeOfExecuted(proposal: SPProposal, state: SharedState): { tex
   if (!entry || entry.state === 'done') return null;
   const integration = proposal.tool.split('__')[0];
   if (entry.state === 'failed') {
+    // The execution journal is the only place that stores WHY (row.detail) —
+    // the connector's own refusal text, or why AU4 called it stale. Without
+    // it, a LATER check-pending-commitments(proposal_id) call (this
+    // function) said only THAT it was refused/changed, dropping the reason
+    // the FIRST call's own response showed — someone reading only this later
+    // check never learns it.
+    const reasonSuffix = entry.detail ? `\nReason: ${entry.detail}` : '';
     return {
       text: entry.outcome === 'refused'
         ? `Proposal ${proposal.id} was approved, but ${integration} refused to run it — nothing was done. ` +
-          `Do not call the tool again with the same values; a new attempt needs a new request and approval.`
+          `Do not call the tool again with the same values; a new attempt needs a new request and approval.${reasonSuffix}`
         : entry.outcome === 'changed'
         ? `Proposal ${proposal.id} was approved, but the record changed in ${integration} since it was ` +
-          `requested — nothing was done. A new attempt needs a new request and approval.`
+          `requested — nothing was done. A new attempt needs a new request and approval.${reasonSuffix}`
         : `Proposal ${proposal.id} was approved, but running it failed — whether anything happened in ${integration} is unknown. ` +
-          `Check ${integration} before trying again; a new attempt needs a new request and approval.`,
+          `Check ${integration} before trying again; a new attempt needs a new request and approval.${reasonSuffix}`,
       isError: true,
     };
   }

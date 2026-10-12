@@ -20,7 +20,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CommittedExecutor, ExecutorLock } from '../src/lib/committed-executor';
 import { ExecutionJournal, hashToolArgs } from '../src/lib/execution-journal';
-import { executeCommitted } from '../src/tools/commitments';
+import { executeCommitted, checkPendingCommitmentsHandler } from '../src/tools/commitments';
 import type { SharedState } from '../src/lib/shared-state';
 import type { IntegrationManager, DiscoveredTool } from '../src/lib/integration-manager';
 import type { SPProposal } from '../src/lib/sp-client';
@@ -155,10 +155,18 @@ function receiptFor(id: string): Record<string, unknown> {
   });
 }
 
-function buildState(dir: string, postReceipt: ReturnType<typeof vi.fn>) {
+function buildState(dir: string, postReceipt: ReturnType<typeof vi.fn>, getProposalById?: ReturnType<typeof vi.fn>) {
   const record = vi.fn();
   const state = {
-    spClient: { postReceipt },
+    spClient: {
+      postReceipt,
+      isUnlocked: () => true,
+      // A LATER check-pending-commitments(proposal_id) call sees the AS's
+      // view of the proposal — 'executed', by construction, since postReceipt
+      // already performed that transition even when this gateway's own run
+      // failed afterwards (ticket-verify/archive window — see commitments.ts).
+      getProposalById: getProposalById ?? vi.fn().mockResolvedValue({ ...PROPOSAL, status: 'executed' }),
+    },
     cache: { getAllAuthorizations: () => [], getPublicKey: async () => kp.publicKeyHex, getTrustedIssuer: async () => kp.issuer },
     // A local record matching PROPOSAL exactly — commitments.ts now REFUSES
     // to execute a proposal with no matching local submission record.
@@ -293,5 +301,79 @@ describe('executeCommitted × ExecutionJournal', () => {
     expect(callTool).not.toHaveBeenCalled();
     expect(r.isError).toBe(true);
     expect(r.text).toMatch(/could not be archived locally/);
+
+    // Root cause, pinned: before the fix, the journal `begin()` ran only
+    // AFTER archiveReceipt succeeded, so a throw here (the AS having ALREADY
+    // committed→executed via postReceipt above) left no local row at all. A
+    // later check-pending-commitments(proposal_id) call then found nothing,
+    // and defaulted to "approved and already EXECUTED ... the gateway did
+    // not retain its output" — indistinguishable from a real success, even
+    // though the downstream tool was never called. The row must exist now,
+    // 'failed', with the real reason.
+    const row = state.executionJournal.get('rcpt-1');
+    expect(row?.state).toBe('failed');
+    expect(row?.detail).toMatch(/disk full \(simulated\)/);
+  });
+
+  // The live bug this test file is named for, reproduced at the unit level:
+  // the FIRST call (status still 'committed') gets an honest error. The
+  // regression was a SECOND, LATER call — once the AS already shows
+  // 'executed' — silently reading like a success.
+  it('check-pending-commitments on a LATER call (status already "executed") surfaces the real failure, not a silent success', async () => {
+    const postReceipt = vi.fn().mockResolvedValue({ receipt: receiptFor('rcpt-1'), idempotent: false });
+    const { state } = buildState(dir, postReceipt);
+    const { ArchiveWriteError } = await import('../src/lib/receipt-archive');
+    (state.archiveReceipt as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new ArchiveWriteError('disk full (simulated)'),
+    );
+    const { im, callTool } = buildIntegrationManager();
+
+    const first = await executeCommitted(PROPOSAL, state, im);
+    expect(first.isError).toBe(true);
+
+    // The AS's own view, as a LATER caller would see it: already 'executed'
+    // (postReceipt committed it before the archive write even ran).
+    const handler = checkPendingCommitmentsHandler(state, im);
+    const second = await handler({ proposal_id: PROPOSAL.id });
+
+    expect(callTool).not.toHaveBeenCalled();
+    expect(second.isError).toBe(true);
+    const text = (second.content as Array<{ text: string }>)[0].text;
+    expect(text).not.toMatch(/gateway did not retain its output/);
+    expect(text).toMatch(/disk full \(simulated\)/);
+  });
+
+  // Task: localOutcomeOfExecuted dropped the stored reason for 'refused' and
+  // 'changed' — the connector's/AU4's own detail, already shown on the FIRST
+  // call, went missing on a LATER check-pending-commitments(proposal_id)
+  // call, which said only "X refused to run it" with no reason at all.
+  it('a LATER check surfaces the connector refusal reason, not just that it refused', async () => {
+    const postReceipt = vi.fn();
+    const { state } = buildState(dir, postReceipt);
+    state.executionJournal.begin({ ticketId: 'rcpt-refused', proposalId: PROPOSAL.id, tool: PROPOSAL.tool, argsHash: 'x' });
+    state.executionJournal.complete('rcpt-refused', 'failed', 'refused', 'Quote Q-0001 is at revision 2; this request is for revision 1.');
+
+    const handler = checkPendingCommitmentsHandler(state, undefined);
+    const r = await handler({ proposal_id: PROPOSAL.id });
+
+    expect(r.isError).toBe(true);
+    const text = (r.content as Array<{ text: string }>)[0].text;
+    expect(text).toMatch(/refused to run it/);
+    expect(text).toMatch(/Reason: Quote Q-0001 is at revision 2; this request is for revision 1\./);
+  });
+
+  it('a LATER check surfaces the AU4 "record changed" reason, not just that it changed', async () => {
+    const postReceipt = vi.fn();
+    const { state } = buildState(dir, postReceipt);
+    state.executionJournal.begin({ ticketId: 'rcpt-changed', proposalId: PROPOSAL.id, tool: PROPOSAL.tool, argsHash: 'x' });
+    state.executionJournal.complete('rcpt-changed', 'failed', 'changed', 'The record changed in deploy-github since it was requested.');
+
+    const handler = checkPendingCommitmentsHandler(state, undefined);
+    const r = await handler({ proposal_id: PROPOSAL.id });
+
+    expect(r.isError).toBe(true);
+    const text = (r.content as Array<{ text: string }>)[0].text;
+    expect(text).toMatch(/the record changed in/);
+    expect(text).toMatch(/Reason: The record changed in deploy-github since it was requested\./);
   });
 });

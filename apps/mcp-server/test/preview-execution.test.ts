@@ -196,7 +196,10 @@ describe('executeCommitted — AU4 previewHash fallback', () => {
     // detected — only the preview read (get_message) runs.
     expect(callTool).not.toHaveBeenCalledWith('gmail', 'send_message', expect.anything());
     expect(callTool).toHaveBeenCalledWith('gmail', 'get_message', expect.anything());
-    expect(completeSpy).toHaveBeenCalledWith('rcpt-preview-1', 'failed', 'changed');
+    // A detail string too (not just the outcome tag), so a LATER
+    // check-pending-commitments call can say WHY, via Reason: <detail>
+    // (localOutcomeOfExecuted) — not just THAT it changed.
+    expect(completeSpy).toHaveBeenCalledWith('rcpt-preview-1', 'failed', 'changed', expect.stringContaining('gmail'));
   });
 
   it('no previewHash on the submission record: runs exactly like before AU4', async () => {
