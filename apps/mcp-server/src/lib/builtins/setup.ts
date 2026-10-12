@@ -54,7 +54,7 @@ const DELEGATION_INTENT_HINT = [
   '',
   'Goal — Follow the setup guide: interview me about the company, the team and the work; prepare test data from real cases, renamed to .example names; propose the mandates and the working instructions (agent brief) that the AI doing the work will need.',
   '',
-  'Watch out — You only propose; nothing happens until I approve it in the Suveren Gateway. Ask, don\'t guess: never invent a rule, a limit or a step. One proposal at a time. Steps customers would see start with my review. Never use real names or customer data — proposals are stored readable on the Suveren server. Never give the working AI a reporting mandate during a test run. Keep the setup and the working AI in separate conversations.',
+  'Watch out — You only propose; nothing happens until I approve it in the Suveren Gateway. Ask, don\'t guess: never invent a rule, a limit or a step. One proposal at a time. Steps customers would see start with my review. Never use real names or customer data in a test run — test data only. Never give the working AI a reporting mandate during a test run. Keep the setup and the working AI in separate conversations.',
   '',
   // DL1 — outside simulation, the same mandate also covers ongoing, real-system
   // use: the Scope above (which profiles, which mode) is what actually bounds
