@@ -8,6 +8,12 @@
  * gated (decision 1, temp/briefs/au3-au5-brief.md). Always 200 unless the
  * caller's own session or the proposal fetch itself fails.
  *
+ * PE1: a proposal fetched here may carry `content` (sealed) instead of
+ * `toolArgs` — decrypted locally with the vault's private key (same
+ * construction as /api/decrypt-proposal-content) before it ever reaches
+ * getToolPreview. A device that cannot decrypt it (no key wrap for this
+ * user) answers `unavailable` rather than failing the whole page.
+ *
  * `outcome` reads the LOCAL execution journal (plaintext, like denials-
  * reader.ts reads denials.enc.json) so the UI can show what this gateway
  * actually did, instead of the Authority Server's "executed" (which it
@@ -15,6 +21,8 @@
  */
 import { Router, type Request, type Response } from 'express';
 import { getToolPreview } from '../lib/mcp-bridge';
+import { decryptProposalContent, type ProposalContentWire } from '../lib/content-crypto';
+import { loadOrGenerateKeyPair } from '../lib/e2e-key-manager';
 import type { Vault } from '../lib/vault';
 import { readPairing } from '../lib/as-pairing';
 import { resolvePinTls } from '../lib/as-config';
@@ -26,7 +34,10 @@ const AS_FETCH_TIMEOUT_MS = 10_000;
 
 interface ProposalForPreview {
   tool: string;
-  toolArgs: Record<string, unknown>;
+  /** Present only on a legacy (pre-encryption) row. */
+  toolArgs?: Record<string, unknown>;
+  /** PE1 — present iff `toolArgs` is absent. */
+  content?: ProposalContentWire;
 }
 
 export function createProposalStatusRouter(
@@ -84,8 +95,30 @@ export function createProposalStatusRouter(
       return;
     }
 
+    // PE1 — resolve toolArgs: the plain field on a legacy row, or decrypt
+    // `content` with this device's own vault key. A device added after the
+    // proposal was made (no key wrap for this user) cannot preview it —
+    // answered as `unavailable`, same shape as a connector that refused.
+    let toolArgs: Record<string, unknown>;
+    if (proposal.toolArgs) {
+      toolArgs = proposal.toolArgs;
+    } else if (proposal.content) {
+      try {
+        const kp = await loadOrGenerateKeyPair(vault);
+        const me = vault.getSessionUser();
+        const plaintext = await decryptProposalContent(proposal.content, me?.id ?? '', kp.privateKey);
+        toolArgs = JSON.parse(plaintext) as Record<string, unknown>;
+      } catch (err) {
+        res.json({ status: 'unavailable', reason: 'connector_error', message: `Could not decrypt this proposal's content on this device: ${err instanceof Error ? err.message : String(err)}` } satisfies PreviewResponse);
+        return;
+      }
+    } else {
+      res.status(502).json({ error: `Proposal ${proposalId} carries neither tool_args nor content.` });
+      return;
+    }
+
     try {
-      const result = await getToolPreview({ proposalId, tool: proposal.tool, toolArgs: proposal.toolArgs });
+      const result = await getToolPreview({ proposalId, tool: proposal.tool, toolArgs });
       if (result.status !== 'ok') {
         res.json(result);
         return;

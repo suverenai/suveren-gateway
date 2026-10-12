@@ -13,6 +13,7 @@ import { splitTool, systemDisplayName, type ToolDisplay } from '../lib/approval-
 import { useProfile } from '../lib/profile-cache';
 import type { IntegrationManifest } from '../lib/sp-client';
 import { validateChangeNote, outcomeAfterView, type OutcomeKindLabel } from '../lib/reject-outcome';
+import { useProposalContent, useDecryptedNote, decisionButtonsVisible } from '../lib/use-proposal-content';
 
 type CardStatus = 'pending' | 'committed' | 'executed' | 'rejected' | 'expired';
 
@@ -135,18 +136,37 @@ export function ActionCard({ item, onApprove, onReject, onChangeNeeded, resolvin
   const outcome = isProposal && status === 'rejected'
     ? outcomeAfterView(item.proposal, currentUserId ?? '')
     : null;
+  // PE1 G5 — a change-needed note is sealed; decrypt it for this after-
+  // state display (a legacy row's plain note passes through unchanged).
+  const decryptedNote = useDecryptedNote(
+    isProposal ? (item.proposal.rejectedBy ?? item.proposal.approverRejectedBy ?? null) : null,
+  );
   // AU6: "What was done" needs the profile for the no-bound-content fallback
   // (checked values labelled from the profile's scope schema).
   const profile = useProfile(item.profileId);
 
-  const args = isProposal ? item.proposal.toolArgs : null;
+  // PE1 — decrypt this proposal's sealed toolArgs (or pass a legacy row's
+  // plain ones through) for the non-pending display branch below (pending
+  // uses ApprovalBody's own, with the card-level decision-button gating
+  // wired through onContentState). A receipt (ticket) item never has this —
+  // its "What was done" always reads the local archive (TicketWhatWasDone).
+  const content = useProposalContent(isProposal ? item.proposal : { toolArgs: undefined, content: undefined });
+  const args = isProposal ? content.toolArgs : null;
   const executionContext = isProposal ? item.proposal.executionContext : item.receipt.executionContext;
   const cumulative = !isProposal ? item.receipt.cumulativeState : null;
+
+  // Whether THIS device can decrypt a pending proposal's content — decision
+  // buttons (further down) show only once this is settled and readable
+  // (mockup §4: "no Approve button: nothing can be approved that this
+  // device cannot show you"). Not loading pending at all is readable (true)
+  // by definition — only set once ApprovalBody's own decrypt resolves.
+  const [pendingReadable, setPendingReadable] = useState(true);
+  const [pendingContentLoading, setPendingContentLoading] = useState(false);
 
   // Links the reviewer can open. This is the card review mode actually uses —
   // ApproverProposalCard is only for above-cap approvals — so a link wired only
   // there never reaches the person deciding.
-  const inspectLinks = isProposal ? resolveProposalLinks(proposalLinks, item.proposal.toolArgs) : [];
+  const inspectLinks = isProposal && content.toolArgs ? resolveProposalLinks(proposalLinks, content.toolArgs) : [];
   const ctxEntries = Object.entries(executionContext ?? {});
   // Test setup: the delegation profile, OR a setup__* tool.
   const testSetup = profileIdentity(item.profileId).testSetup || isTestSetupAction(toolFull);
@@ -203,9 +223,9 @@ export function ActionCard({ item, onApprove, onReject, onChangeNeeded, resolvin
       {outcome && (
         <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>
           <div>By {outcome.who}, {formatTimestamp(outcome.at)}</div>
-          {outcome.note && (
+          {(decryptedNote ?? outcome.note) && (
             <div data-testid="outcome-note" style={{ marginTop: '0.2rem' }}>
-              {outcome.kind === 'CHANGE NEEDED' ? 'Change: ' : 'Note: '}{outcome.note}
+              {outcome.kind === 'CHANGE NEEDED' ? 'Change: ' : 'Note: '}{decryptedNote ?? outcome.note}
             </div>
           )}
         </div>
@@ -257,6 +277,10 @@ export function ActionCard({ item, onApprove, onReject, onChangeNeeded, resolvin
           proposalLinks={proposalLinks}
           toolDisplay={toolDisplay}
           manifests={manifests}
+          onContentState={({ loading, readable }) => {
+            setPendingContentLoading(loading);
+            setPendingReadable(readable);
+          }}
         />
       ) : (
         <>
@@ -307,7 +331,11 @@ export function ActionCard({ item, onApprove, onReject, onChangeNeeded, resolvin
         </div>
       )}
 
-      {isProposal && status === 'pending' && (
+      {/* PE1 mockup §4 — "no Approve button: nothing can be approved that
+          this device cannot show you." A still-decrypting card shows
+          neither the buttons nor a false negative; only a settled,
+          undecryptable one hides them for good (until shared). */}
+      {isProposal && status === 'pending' && decisionButtonsVisible({ loading: pendingContentLoading, readable: pendingReadable }) && (
         changePanelOpen ? (
           <ChangeNeededPanel
             note={changeNote}

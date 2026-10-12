@@ -45,6 +45,7 @@ import { CommittedExecutor, ExecutorLock, describeAutoExecutionLog } from '../sr
 import type { SPProposal } from '../src/lib/sp-client';
 import { resolveWhoLabel } from '../src/lib/who-label';
 import { outcomeEntryFor } from '../src/lib/outcome-outbox';
+import { decryptRejectionNote } from '../src/lib/proposal-content';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { resolveAsUrl, resolvePinTls, validatePinTlsForUrl } from '../src/lib/as-config';
@@ -1291,14 +1292,24 @@ app.listen(port, bindHost, () => {
         const by = proposal.approverRejectedBy ?? proposal.rejectedBy;
         if (!by) continue;
         const submittedHere = state.proposalSubmissions.get(proposal.id) !== undefined;
-        // Cheap admission check first: no name lookup for proposals we will skip.
+        // Cheap admission check first: no name lookup or decryption for
+        // proposals we will skip (outcomeEntryFor's admission rule never
+        // looks at the note itself, only `submittedHere`/`decidedAt`).
         if (!outcomeEntryFor(proposal, submittedHere, by.userId, Date.now())) continue;
         const who = await resolveWhoLabel(
           state.receiptArchive,
           'domain' in by ? by.domain : by.userId,
           by.userId,
         );
-        const entry = outcomeEntryFor(proposal, submittedHere, who, Date.now());
+        // PE1 G5 — the note is sealed for the submitter + owner; decrypt it
+        // before it reaches the outbox (legacy plaintext rows pass through).
+        const note = await decryptRejectionNote(by);
+        const proposalWithDecryptedNote = {
+          ...proposal,
+          rejectedBy: proposal.rejectedBy ? { ...proposal.rejectedBy, note } : null,
+          approverRejectedBy: proposal.approverRejectedBy ? { ...proposal.approverRejectedBy, note } : undefined,
+        };
+        const entry = outcomeEntryFor(proposalWithDecryptedNote, submittedHere, who, Date.now());
         if (entry) state.outcomeOutbox.recordIfNew(entry);
       }
     } catch {

@@ -22,6 +22,7 @@ import { hashToolArgs } from './execution-journal';
 import { computeSubmissionPreviewHash } from './preview';
 import { verifyTicket, TicketBindingMismatchError } from './ticket-verify';
 import { notifyControlPlane } from './cp-notify';
+import { resolveWhoLabel } from './who-label';
 import { encodeOutgoingArgs } from './arg-encoding';
 import { normalizeIncomingArgs } from './arg-normalization';
 import { selectAuthorization } from './scope-specificity';
@@ -85,6 +86,22 @@ async function attachImagePreview(args: Record<string, unknown>): Promise<Record
   } catch {
     return args; // file unreadable — show path only
   }
+}
+
+/**
+ * PE1 G4: some recipients the submission wanted to reach had no registered
+ * end-to-end key, so the proposal's content was sealed for everyone ELSE
+ * only (the submission itself is never blocked on this). Tells the AI who —
+ * resolved to a display name where this gateway can verify one locally
+ * (resolveWhoLabel), falling back to the raw user id otherwise, same as
+ * every other "who" shown to the AI in this file.
+ */
+async function unreadableForNote(unreadableFor: string[], state: SharedState): Promise<string> {
+  if (unreadableFor.length === 0) return '';
+  const labels = await Promise.all(
+    unreadableFor.map((id) => resolveWhoLabel(state.receiptArchive, id, id)),
+  );
+  return `\nNote: ${labels.join(', ')} cannot read this proposal's content yet — no device of theirs has registered an end-to-end key.`;
 }
 
 /**
@@ -1171,7 +1188,19 @@ function createGatedToolHandlerInner(
             // so the later cross-check (commitments.ts) compares like for
             // like.
             const wireExecCtx = wireExecutionContext(auth.profileId, execution);
-            const { proposal } = await state.spClient.submitProposal({
+            // PE1 decision 3 — recipients besides the submitter (added
+            // automatically by the control plane): the mandate owner, plus
+            // every member whose domain is still pending (in team mode the
+            // domain IS the member's account id — see who-label.ts).
+            let recipientUserIds: string[] = [...auth.deferredCommitmentDomains];
+            try {
+              const summary = await state.spClient.getAuthorizationSummary(authzId);
+              if (summary?.created_by) recipientUserIds = [summary.created_by, ...recipientUserIds];
+            } catch {
+              // best effort — proceed with just the domain members
+            }
+            recipientUserIds = [...new Set(recipientUserIds)];
+            const { proposal, unreadableFor } = await state.spClient.submitProposal({
               authorizationId: authzId,
               profileId: auth.profileId,
               path: auth.path,
@@ -1179,6 +1208,7 @@ function createGatedToolHandlerInner(
               tool: tool.namespacedName,
               toolArgs: enrichedArgs,
               executionContext: wireExecCtx,
+              recipientUserIds,
             });
             // AU4 — snapshot a preview read NOW, for a tool whose declared
             // preview carries no `version` (the connector has no revision
@@ -1207,7 +1237,8 @@ function createGatedToolHandlerInner(
                 type: 'text',
                 text: `Awaiting commitment from domain${auth.deferredCommitmentDomains.length > 1 ? 's' : ''} ` +
                   `"${auth.deferredCommitmentDomains.join('", "')}" for tool ${tool.originalName}.\n` +
-                  `Proposal ID: ${proposal.id}. Check status with check-pending-commitments(proposal_id: "${proposal.id}").`,
+                  `Proposal ID: ${proposal.id}. Check status with check-pending-commitments(proposal_id: "${proposal.id}").` +
+                  (await unreadableForNote(unreadableFor ?? [], state)),
               }],
             };
           } catch (err) {
@@ -1477,7 +1508,11 @@ function createGatedToolHandlerInner(
               // Item 7 — never put scope-constrained values on the wire;
               // see wireExecutionContext's doc comment.
               const wireExecCtx = wireExecutionContext(auth.profileId, execution);
-              const { proposal } = await state.spClient.submitProposal({
+              // PE1 decision 3 — `uniqueApprovers` already carries the
+              // creator (owner) first, so it IS the full recipient set
+              // besides the submitter (added automatically by the control
+              // plane) — see the dedup above.
+              const { proposal, unreadableFor } = await state.spClient.submitProposal({
                 authorizationId: authzId,
                 profileId: auth.profileId,
                 path: auth.path,
@@ -1486,6 +1521,7 @@ function createGatedToolHandlerInner(
                 toolArgs: enrichedArgs,
                 executionContext: wireExecCtx,
                 pendingApprovers: uniqueApprovers,
+                recipientUserIds: uniqueApprovers,
               });
               // AU4 — see the deferred-commitment branch above for why.
               const previewHash = await computeSubmissionPreviewHash(
@@ -1507,7 +1543,8 @@ function createGatedToolHandlerInner(
                 content: [{
                   type: 'text',
                   text: `Action exceeds team cap. Approval required from ${uniqueApprovers.length} reviewer(s).\n` +
-                    `Proposal ID: ${proposal.id}. Use check-pending-commitments to track status.`,
+                    `Proposal ID: ${proposal.id}. Use check-pending-commitments to track status.` +
+                    (await unreadableForNote(unreadableFor ?? [], state)),
                 }],
               };
             } catch (proposalErr) {

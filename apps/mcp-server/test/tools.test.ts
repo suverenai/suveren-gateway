@@ -520,6 +520,93 @@ describe('createGatedToolHandler — SP receipt integration', () => {
     expect(result.content[0].text).toContain('prop-123');
   });
 
+  it('PE1 G4: submits proposal content for the full approver set, and names who cannot read it', async () => {
+    const approvers = ['bob', 'carol'];
+    const postReceipt = vi.fn().mockRejectedValue(
+      new SPReceiptError('Approval required', 409, {
+        error: 'approval_required',
+        approvers,
+        authorizationId: 'authz_00000000-0000-4000-8000-0000000000ab',
+        field: 'amount_daily_max',
+        cap: 1000,
+      }),
+    );
+    const submitProposal = vi.fn().mockResolvedValue({
+      proposal: { id: 'prop-124', status: 'pending' },
+      unreadableFor: ['carol'],
+    });
+    const getAuthorizationSummary = vi.fn().mockResolvedValue({
+      authorization_id: 'authz_00000000-0000-4000-8000-0000000000ab',
+      profile_id: 'github.com/humanagencyprotocol/hap-profiles/charge@0.3',
+      above_cap: true,
+      approvers_frozen: ['bob', 'carol'],
+      created_by: 'alice',
+    });
+
+    const state = {
+      ...mockGatedState({ postReceipt }),
+      spClient: {
+        postReceipt,
+        submitProposal,
+        getAuthorizationSummary,
+        isUnlocked: () => true,
+      },
+    } as unknown as import('../src/lib/shared-state').SharedState;
+
+    const im = mockIntegrationManager();
+    const handler = createGatedToolHandler(mockTool('charge'), im, state);
+    const result = await handler({ amount: 50, currency: 'EUR' });
+
+    const submitCall = (submitProposal as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    // The recipient set is EXACTLY the approver set (creator included) — PE1
+    // decision 3's "submitter + owner + pending approvers"; the submitter
+    // itself is added by the control plane, not listed here.
+    expect(submitCall.recipientUserIds).toEqual(submitCall.pendingApprovers);
+    expect(submitCall.recipientUserIds).toContain('alice');
+    expect(submitCall.recipientUserIds).toContain('bob');
+    expect(submitCall.recipientUserIds).toContain('carol');
+
+    // G4 — the submission is never blocked on a missing key; the reply names
+    // who cannot read it instead of silently dropping them.
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0].text).toMatch(/cannot read this proposal's content yet/);
+  });
+
+  it('PE1 G4: the deferred-domain (review) path sends the owner + pending domains as recipients', async () => {
+    const submitProposal = vi.fn().mockResolvedValue({
+      proposal: { id: 'prop-review-1', status: 'pending' },
+      unreadableFor: [],
+    });
+    const getAuthorizationSummary = vi.fn().mockResolvedValue({
+      authorization_id: 'authz_00000000-0000-4000-8000-0000000000ab',
+      profile_id: 'github.com/humanagencyprotocol/hap-profiles/charge@0.3',
+      created_by: 'owner-alice',
+    });
+    const state = {
+      ...mockGatedState(),
+      spClient: {
+        submitProposal,
+        getAuthorizationSummary,
+        isUnlocked: () => true,
+      },
+    } as unknown as import('../src/lib/shared-state').SharedState;
+
+    const im = mockIntegrationManager();
+    const tool = mockTool('charge');
+    const authWithDeferred = {
+      ...(state.getEnrichedAuthorizations()[0]),
+      deferredCommitmentDomains: ['finance-domain-owner'],
+      signedCommitmentMode: 'review',
+    };
+    state.getEnrichedAuthorizations = () => [authWithDeferred as never];
+
+    const handler = createGatedToolHandler(tool, im, state);
+    await handler({ amount: 50, currency: 'EUR' });
+
+    const submitCall = (submitProposal as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(submitCall.recipientUserIds).toEqual(expect.arrayContaining(['owner-alice', 'finance-domain-owner']));
+  });
+
   it('P8.2: returns hard error when SP returns 422 (no approver path)', async () => {
     const postReceipt = vi.fn().mockRejectedValue(
       new SPReceiptError('cap_exceeded', 422, { error: 'cap_exceeded', field: 'amount_max', cap: 500 }),

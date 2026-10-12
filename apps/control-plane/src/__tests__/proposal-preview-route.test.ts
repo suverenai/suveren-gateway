@@ -13,6 +13,9 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createProposalStatusRouter } from '../routes/proposal-preview';
+import { encryptForRecipients } from '../lib/e2e-crypto';
+import { loadOrGenerateKeyPair } from '../lib/e2e-key-manager';
+import { computeProposalContentHash } from '../lib/content-crypto';
 import type { Vault } from '../lib/vault';
 
 const SP_URL = 'https://as.example.test';
@@ -23,17 +26,24 @@ const SP_URL = 'https://as.example.test';
 // the real network stack, never the stub.
 const realFetch = globalThis.fetch;
 
-function fakeVault(cookie: string | null): Vault {
-  return { getSpCookie: () => cookie } as unknown as Vault;
+function fakeVault(cookie: string | null, sessionUser: { id: string; did: string } | null = null): Vault {
+  const credentials = new Map<string, Record<string, string>>();
+  return {
+    getSpCookie: () => cookie,
+    getSessionUser: () => sessionUser,
+    getCredential: (name: string) => credentials.get(name) ?? null,
+    setCredential: (name: string, fields: Record<string, string>) => { credentials.set(name, fields); },
+  } as unknown as Vault;
 }
 
 async function withServer(
   dataDir: string,
   cookie: string | null,
   run: (base: string) => Promise<void>,
+  vaultOverride?: Vault,
 ): Promise<void> {
   const app = express();
-  app.use('/proposal-status', createProposalStatusRouter(SP_URL, fakeVault(cookie), dataDir, () => {}));
+  app.use('/proposal-status', createProposalStatusRouter(SP_URL, vaultOverride ?? fakeVault(cookie), dataDir, () => {}));
   const srv = app.listen(0);
   const base = `http://127.0.0.1:${(srv.address() as AddressInfo).port}/proposal-status`;
   try {
@@ -128,6 +138,72 @@ describe('GET /proposal-status/:id/preview', () => {
         expect(data).toMatchObject(okBody);
         expect(data.readAt).toBeGreaterThanOrEqual(before);
       });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('PE1: decrypts a sealed proposal (content, no toolArgs) before asking the MCP server to preview it', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'preview-route-'));
+    const vault = fakeVault('cookie', { id: 'alice', did: 'did:key:zAlice' });
+    const kp = await loadOrGenerateKeyPair(vault);
+    const toolArgs = { id: 'Q1', revision: 1, value: 100 };
+    const encrypted = await encryptForRecipients(JSON.stringify(toolArgs), [{ userId: 'alice', publicKey: kp.publicKey }]);
+    const content = {
+      v: 1,
+      alg: 'HPKE-X25519-HKDF-SHA256-AES256GCM',
+      ciphertext: Buffer.from(encrypted.intentCiphertext).toString('base64'),
+      keys: { alice: { ct: Buffer.from(encrypted.encryptedKeys.alice.ct).toString('base64'), enc: Buffer.from(encrypted.encryptedKeys.alice.enc).toString('base64') } },
+      hash: computeProposalContentHash(toolArgs),
+    };
+
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.includes('/api/proposals/')) {
+        return new Response(JSON.stringify({ proposal: { tool: 'erp__send_quote', content } }), { status: 200 });
+      }
+      if (url.includes('/internal/preview')) {
+        // The MCP server must receive the DECRYPTED toolArgs, never the ciphertext.
+        const body = JSON.parse(String(init?.body)) as { toolArgs: unknown };
+        expect(body.toolArgs).toEqual(toolArgs);
+        return new Response(JSON.stringify({ status: 'ok', integration: 'erp', tool: 'get_quote', body: { structured: { id: 'Q1', revision: 1 } } }), { status: 200 });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }));
+    try {
+      await withServer(dir, 'cookie', async (base) => {
+        const res = await realFetch(`${base}/prop-1/preview`);
+        expect(res.status).toBe(200);
+        const data = await res.json() as { status: string };
+        expect(data.status).toBe('ok');
+      }, vault);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('PE1: a device with no key wrap for this content answers unavailable, not an error', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'preview-route-'));
+    const vault = fakeVault('cookie', { id: 'mallory', did: 'did:key:zMallory' });
+    const content = {
+      v: 1,
+      alg: 'HPKE-X25519-HKDF-SHA256-AES256GCM',
+      ciphertext: 'YQ==',
+      keys: { alice: { ct: 'YQ==', enc: 'YQ==' } }, // no wrap for "mallory"
+      hash: 'sha256:0000000000000000000000000000000000000000000000000000000000000000',
+    };
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('/api/proposals/')) {
+        return new Response(JSON.stringify({ proposal: { tool: 'erp__send_quote', content } }), { status: 200 });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }));
+    try {
+      await withServer(dir, 'cookie', async (base) => {
+        const res = await realFetch(`${base}/prop-1/preview`);
+        expect(res.status).toBe(200);
+        const data = await res.json() as { status: string };
+        expect(data.status).toBe('unavailable');
+      }, vault);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

@@ -53,6 +53,9 @@ import { createEvidenceRouter } from './routes/evidence';
 import { createReportRouter } from './routes/report';
 import { createDecryptIntentRouter } from './routes/decrypt-intent';
 import { createApprovedIntentsRouter } from './routes/approved-intents';
+import { createDecryptProposalContentRouter } from './routes/decrypt-proposal-content';
+import { createEncryptProposalNoteRouter } from './routes/encrypt-proposal-note';
+import { createInternalContentCryptoRouter } from './routes/internal-content-crypto';
 import { startUpdateChecker, getUpdateStatus, forceCheck, type InstallMethod } from './lib/update-checker';
 import { createEventsHandler } from './routes/events';
 import { createGatewaySettingsRouter } from './routes/gateway-settings';
@@ -534,6 +537,11 @@ app.use('/internal', jsonParser, createInternalMandateRouter(() => internalSecre
   deliverGateContent: (args) => pushGateContent(args),
 })));
 
+// PE1 — the MCP server sealing/opening proposal content (toolArgs, change-
+// needed notes) for recipients it does not itself have key material for.
+// See routes/internal-content-crypto.ts.
+app.use('/internal', jsonParser, createInternalContentCryptoRouter(() => internalSecret, vault, SP_URL, DATA_DIR));
+
 // Vault routes
 app.use('/vault', jsonParser, authGuard, createVaultRouter(vault));
 
@@ -578,6 +586,14 @@ app.use('/api/report', jsonParser, authGuard, createReportRouter(() => RUNNING_V
 
 // E2EE intent decryption (P6.4) — approver-side, uses vault private key
 app.use('/api/decrypt-intent', jsonParser, authGuard, createDecryptIntentRouter(vault));
+
+// PE1 — proposal content encryption. Decrypt (approval cards, AU3 preview,
+// "Edit before signing" prefill) uses the same vault private key as
+// decrypt-intent above, generalized to toolArgs/notes. Encrypt (the
+// change-needed note, G5) resolves recipients' keys via the AS, same as
+// the internal route below.
+app.use('/api/decrypt-proposal-content', jsonParser, authGuard, createDecryptProposalContentRouter(vault));
+app.use('/api/encrypt-proposal-note', jsonParser, authGuard, createEncryptProposalNoteRouter(vault, SP_URL, DATA_DIR));
 
 // Approved intents local store (P6.4) — approver accountability record
 app.use('/api/approved-intents', jsonParser, authGuard, createApprovedIntentsRouter(vault));
