@@ -159,3 +159,29 @@ describe('outcomeAfterView', () => {
     expect(v?.note).toBe('from domain path');
   });
 });
+
+// ─── "Edit before signing" withdraws the AI's proposal by the right route ──
+// Found live on the demo gateway (0.27.0): the withdraw always used the
+// above-cap approver route (POST /reject), which refuses anyone not in
+// pendingApprovers — so a review proposal stayed PENDING after the person
+// signed their own version.
+import { replacedWithdrawRoute } from './reject-outcome';
+
+describe('replacedWithdrawRoute', () => {
+  it('a personal review proposal is withdrawn through resolve, in the owner domain', () => {
+    expect(replacedWithdrawRoute({ pendingDomains: ['owner'], pendingApprovers: [] }, 'u_alice'))
+      .toEqual({ route: 'resolve', domain: 'owner' });
+  });
+  it('a team review proposal is withdrawn in the person\'s own domain', () => {
+    expect(replacedWithdrawRoute({ pendingDomains: ['u_bob', 'u_alice'] }, 'u_alice'))
+      .toEqual({ route: 'resolve', domain: 'u_alice' });
+  });
+  it('an above-cap proposal naming the person as approver uses the approver route', () => {
+    expect(replacedWithdrawRoute({ pendingDomains: [], pendingApprovers: ['u_alice', 'u_carol'] }, 'u_alice'))
+      .toEqual({ route: 'approver' });
+  });
+  it('nothing the person may decide → no route (the page says so instead of failing silently)', () => {
+    expect(replacedWithdrawRoute({ pendingDomains: ['u_bob'], pendingApprovers: ['u_carol'] }, 'u_alice'))
+      .toBeNull();
+  });
+});
