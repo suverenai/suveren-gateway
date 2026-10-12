@@ -14,7 +14,7 @@ import { HumanOnlyNote } from '../components/HumanOnlyNote';
 import { isAutomatedBrowser, AUTOMATION_REFUSAL } from '../lib/automation';
 import { isTestSetupAction, profileIdentity } from '../lib/profile-identity';
 import { rejectOutcomeArgs, changeNeededOutcomeArgs } from '../lib/reject-outcome';
-import { contentHashForDecision } from '../lib/use-proposal-content';
+import { contentHashForDecision, noteRecipients } from '../lib/use-proposal-content';
 
 type QueueTab = 'awaiting-me' | 'awaiting-others' | 'all';
 type StatusFilter = 'pending' | 'all';
@@ -194,16 +194,12 @@ export function ProposalReviewPage() {
       // PE1 — the fingerprint of what THIS device decrypted and showed.
       const contentHash = proposal ? await contentHashForDecision(proposal) : undefined;
       // G5 — a change-needed note is sealed on THIS (the deciding) gateway
-      // for the submitter + the mandate owner before it ever reaches the AS.
-      // `pendingDomains` is the closest roster this page has to "who this
-      // concerns" in the deferred-domain (non-above-cap) path — there is no
-      // separate per-proposal "submitter" id on the wire yet.
+      // for exactly who can already read the proposal's own content
+      // (content.keys' own userIds — the submitter, the owner, every
+      // approver) plus this device's own signed-in user.
       let resolveOpts: { outcome?: ProposalOutcome; note?: string; noteEncrypted?: NoteEncryptedWire } = opts ?? {};
       if (opts?.outcome === 'change_needed' && opts.note) {
-        const recipientUserIds = Array.from(new Set([
-          ...(proposal?.createdBy ? [proposal.createdBy] : []),
-          ...(proposal?.pendingDomains ?? []),
-        ]));
+        const recipientUserIds = proposal ? noteRecipients(proposal, userId) : [userId];
         const { noteEncrypted } = await spClient.encryptProposalNote(opts.note, recipientUserIds);
         resolveOpts = { outcome: 'change_needed', noteEncrypted };
       }

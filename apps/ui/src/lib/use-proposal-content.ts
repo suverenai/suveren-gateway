@@ -70,6 +70,50 @@ export function missingRecipients(proposal: Pick<Proposal, 'content' | 'createdB
 }
 
 /**
+ * Decision 10 (mockup §4) — whether a pending proposal's decision buttons
+ * (Approve/Change needed/Reject) may show at all: "no Approve button:
+ * nothing can be approved that this device cannot show you." Pulled out as
+ * a pure function so the gating logic itself is testable without a
+ * component — both ActionCard and ApproverProposalCard call it from their
+ * own `onContentState` callback (passed to ApprovalBody).
+ *
+ * False while still loading (never render buttons on a guess) and once
+ * settled-but-unreadable; true only once settled AND readable.
+ */
+export function decisionButtonsVisible(state: { loading: boolean; readable: boolean }): boolean {
+  return !state.loading && state.readable;
+}
+
+/**
+ * G5 — who a change-needed note must be sealed for: EXACTLY the user ids
+ * who can already read the proposal's own content — `content.keys`' own
+ * keys, resolved once at submit time (the submitter, the owner, every
+ * approver — whoever a registered key let the gateway reach, decision 3) —
+ * plus the deciding gateway's own signed-in user, always (covers a device
+ * added after submission, or any gap in that roster). A legacy row (no
+ * `content`) has no such roster to read; falls back to `createdBy` +
+ * `pendingApprovers` + self, the closest approximation available. Never
+ * `pendingDomains` — a domain name is not a user id (team mode's "domain
+ * IS the account id" convention applies to PROFILE delegation, not to
+ * arbitrary proposal routing fields), and this function's signature does
+ * not accept it.
+ */
+export function noteRecipients(
+  proposal: Pick<Proposal, 'content' | 'createdBy' | 'pendingApprovers'>,
+  selfUserId: string,
+): string[] {
+  const roster = new Set<string>();
+  if (proposal.content) {
+    for (const id of Object.keys(proposal.content.keys)) roster.add(id);
+  } else {
+    if (proposal.createdBy) roster.add(proposal.createdBy);
+    for (const id of proposal.pendingApprovers ?? []) roster.add(id);
+  }
+  if (selfUserId) roster.add(selfUserId);
+  return Array.from(roster);
+}
+
+/**
  * PE1 wire contract — "Decisions send content_hash of what was decrypted
  * and shown". Re-decrypts (independently of whatever a card's own display
  * hook already resolved — same "separate, best-effort decrypt" philosophy

@@ -86,6 +86,42 @@ describe('POST /api/encrypt-proposal-note', () => {
     expect(decrypted).toBe('Please use the smaller logo.');
   });
 
+  it('a personal proposal: recipientUserIds = exactly content.keys\' one user id (the UI\'s noteRecipients for that case) — the submitting gateway\'s own user can decrypt the note', async () => {
+    // A personal mandate: the proposal's own content was sealed for exactly
+    // one user ("alice", the submitter/owner/decider — all the same
+    // account). The UI's noteRecipients(proposal, selfUserId) would compute
+    // exactly ['alice'] here (content.keys has one entry, self is already
+    // in it) — this is that call, not the above-cap "decider + owner" case.
+    const kpAlice = await generateKeyPair();
+    fetchAsMock.mockImplementation((reqUrl: string) => {
+      if (reqUrl.includes('/users/alice/pubkey')) return Promise.resolve(jsonResponse(200, { pubkey: Buffer.from(kpAlice.publicKey).toString('base64') }));
+      return Promise.resolve(jsonResponse(404, {}));
+    });
+
+    const { url, close } = await startServer(makeFakeVault({ sessionUser: { id: 'alice', did: 'did:key:zAlice' } }));
+    stop = close;
+    const res = await post(url, { note: 'Please lower the amount.', recipientUserIds: ['alice'] });
+    expect(res.status).toBe(200);
+    const { noteEncrypted, unreadableFor } = await res.json() as { noteEncrypted: { ciphertext: string; keys: Record<string, { ct: string; enc: string }> }; unreadableFor: string[] };
+    expect(unreadableFor).toEqual([]);
+    expect(Object.keys(noteEncrypted.keys)).toEqual(['alice']);
+
+    const decrypted = await decryptIntent(
+      {
+        intentCiphertext: new Uint8Array(Buffer.from(noteEncrypted.ciphertext, 'base64')),
+        encryptedKeys: {
+          alice: {
+            ct: new Uint8Array(Buffer.from(noteEncrypted.keys.alice.ct, 'base64')),
+            enc: new Uint8Array(Buffer.from(noteEncrypted.keys.alice.enc, 'base64')),
+          },
+        },
+      },
+      'alice',
+      kpAlice.privateKey,
+    );
+    expect(decrypted).toBe('Please lower the amount.');
+  });
+
   it('400s on an empty note', async () => {
     const { url, close } = await startServer(makeFakeVault());
     stop = close;

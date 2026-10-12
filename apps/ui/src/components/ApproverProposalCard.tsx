@@ -26,7 +26,7 @@ import { isTestSetupAction, profileIdentity } from '../lib/profile-identity';
 import { isAutomatedBrowser, AUTOMATION_REFUSAL } from '../lib/automation';
 import type { ToolDisplay } from '../lib/approval-view';
 import { validateChangeNote, rejectOutcomeArgs } from '../lib/reject-outcome';
-import { contentHashForDecision } from '../lib/use-proposal-content';
+import { contentHashForDecision, noteRecipients, decisionButtonsVisible } from '../lib/use-proposal-content';
 
 function formatAge(unixSeconds: number): string {
   const ageMs = Date.now() - unixSeconds * 1000;
@@ -59,6 +59,13 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
   const [changeNote, setChangeNote] = useState('');
   const [changeError, setChangeError] = useState('');
   const [sendingChange, setSendingChange] = useState(false);
+
+  // Decision 10 (mockup §4) — whether THIS device can decrypt the
+  // proposal's content, told by ApprovalBody's own decrypt via
+  // onContentState (same mechanism ActionCard uses). Not-yet-pending at
+  // all is readable (true) by default; only set once the decrypt settles.
+  const [contentLoading, setContentLoading] = useState(false);
+  const [contentReadable, setContentReadable] = useState(true);
 
   // Test setup: the delegation profile, OR a setup__* tool.
   const testSetup = profileIdentity(proposal.profileId).testSetup || isTestSetupAction(proposal.tool);
@@ -133,11 +140,11 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
     setSendingChange(true);
     onMessage('');
     try {
-      // G5 — sealed on THIS (the deciding) gateway for the submitter + the
-      // mandate owner. `pendingApprovers` already carries the owner first
-      // (tool-proxy.ts prepends the mandate's creator) — the same roster
-      // this proposal's own content was sealed for.
-      const { noteEncrypted } = await spClient.encryptProposalNote(result.trimmed, proposal.pendingApprovers ?? []);
+      // G5 — sealed on THIS (the deciding) gateway for exactly who can
+      // already read the proposal's own content (content.keys' own
+      // userIds — the submitter, the owner, every approver) plus this
+      // device's own signed-in user.
+      const { noteEncrypted } = await spClient.encryptProposalNote(result.trimmed, noteRecipients(proposal, currentUserId));
       const contentHash = await contentHashForDecision(proposal);
       await spClient.rejectProposal(proposal.id, { outcome: 'change_needed', noteEncrypted }, contentHash);
       onMessage('Sent back for a change.');
@@ -203,10 +210,15 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
         proposalLinks={proposalLinks}
         toolDisplay={toolDisplay}
         manifests={manifests}
+        onContentState={({ loading, readable }) => {
+          setContentLoading(loading);
+          setContentReadable(readable);
+        }}
       />
 
-      {/* Action buttons */}
-      {!alreadyApproved && (
+      {/* Action buttons — decision 10 (mockup §4): "no Approve button:
+          nothing can be approved that this device cannot show you." */}
+      {!alreadyApproved && decisionButtonsVisible({ loading: contentLoading, readable: contentReadable }) && (
         changePanelOpen ? (
           <ChangeNeededPanel
             note={changeNote}

@@ -13,7 +13,7 @@ import { splitTool, systemDisplayName, type ToolDisplay } from '../lib/approval-
 import { useProfile } from '../lib/profile-cache';
 import type { IntegrationManifest } from '../lib/sp-client';
 import { validateChangeNote, outcomeAfterView, type OutcomeKindLabel } from '../lib/reject-outcome';
-import { useProposalContent, useDecryptedNote } from '../lib/use-proposal-content';
+import { useProposalContent, useDecryptedNote, decisionButtonsVisible } from '../lib/use-proposal-content';
 
 type CardStatus = 'pending' | 'committed' | 'executed' | 'rejected' | 'expired';
 
@@ -335,7 +335,7 @@ export function ActionCard({ item, onApprove, onReject, onChangeNeeded, resolvin
           this device cannot show you." A still-decrypting card shows
           neither the buttons nor a false negative; only a settled,
           undecryptable one hides them for good (until shared). */}
-      {isProposal && status === 'pending' && pendingReadable && !pendingContentLoading && (
+      {isProposal && status === 'pending' && decisionButtonsVisible({ loading: pendingContentLoading, readable: pendingReadable }) && (
         changePanelOpen ? (
           <ChangeNeededPanel
             note={changeNote}
