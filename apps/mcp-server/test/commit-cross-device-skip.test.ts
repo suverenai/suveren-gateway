@@ -117,6 +117,11 @@ describe('executeCommitted — a proposal submitted by a DIFFERENT gateway (same
     // nothing must never read as a bug with no explanation.
     expect(result.text).toMatch(/approved/i);
     expect(result.text).toMatch(/re-run/i);
+    // `skipped: true` is what tells the poll loop (bin/http.ts) this is NOT
+    // an execution — without it, every 5s tick would misleadingly log
+    // "Auto-executed" for a proposal that never ran. See
+    // test/committed-poll-log.test.ts for that logging decision pinned.
+    expect(result.skipped).toBe(true);
   });
 
   it('an impostor-injected proposal (no record on ANY real gateway) is skipped the same way, not executed', async () => {

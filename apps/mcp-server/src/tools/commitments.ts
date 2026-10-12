@@ -65,6 +65,10 @@ export function installCommittedExecutor(executor: CommittedExecutor<SPProposal>
   installedExecutor = executor;
 }
 
+// Proposal ids already explained as "skipped, submitted elsewhere" — so the
+// reason is logged at most once per proposal, not on every 5s poll tick.
+const warnedSkippedProposalIds = new Set<string>();
+
 function runCommitted(
   proposal: SPProposal,
   state: SharedState,
@@ -84,7 +88,7 @@ export async function executeCommitted(
   proposal: SPProposal,
   state: SharedState,
   integrationManager: IntegrationManager | undefined,
-): Promise<{ text: string; isError?: boolean }> {
+): Promise<ExecutionResult> {
   if (!integrationManager) {
     return { text: `Proposal ${proposal.id} committed but integration manager unavailable for execution.`, isError: true };
   }
@@ -163,14 +167,23 @@ export async function executeCommitted(
   // needs the Authority Server itself to attest who submitted a proposal.
   const submitted = state.proposalSubmissions.get(proposal.id);
   if (!submitted) {
-    console.error(
-      `[Suveren MCP] Proposal ${proposal.id} is committed but has no local submission record on this ` +
-        'gateway — leaving it for whichever gateway submitted it (this is normal for a different device ' +
-        'of the same operator, or the AS lists a proposal we never submitted).',
-    );
+    // The poll loop calls executeCommitted again every 5s for as long as
+    // this proposal stays committed (skipping never transitions it to
+    // executed) — log the explanation at most once per proposal, not on
+    // every tick.
+    if (!warnedSkippedProposalIds.has(proposal.id)) {
+      warnedSkippedProposalIds.add(proposal.id);
+      console.error(
+        `[Suveren MCP] Proposal ${proposal.id} is committed but has no local submission record on this ` +
+          'gateway — leaving it for whichever gateway submitted it (this is normal for a different device ' +
+          'of the same operator, or the AS lists a proposal we never submitted).',
+      );
+    }
     // Visible, not silent: the human approved this, and nothing ran — see
     // buildSkippedProposalNote's doc comment for why the wording matters.
-    return { text: buildSkippedProposalNote(proposal.id) };
+    // `skipped: true` tells callers (the poll loop) that nothing ran, so it
+    // must not be logged as "Auto-executed" — see describeAutoExecutionLog.
+    return { text: buildSkippedProposalNote(proposal.id), skipped: true };
   }
   {
     const mismatches: string[] = [];
