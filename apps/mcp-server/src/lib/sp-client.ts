@@ -16,7 +16,7 @@ import { fetchAs, AsTlsMismatchError, type AsFetchPinning } from './as-tls-pin';
  *  boot-locked state from one that WAS active and ended, and carries the
  *  REAL reason (not always 'expired') so the agent is told the truth — see
  *  locked-notice.ts. */
-export type SPLockReason = 'expired' | 'as-key-mismatch' | 'as-tls-mismatch' | 'as-url-changed' | null;
+export type SPLockReason = 'expired' | 'as-key-mismatch' | 'as-tls-mismatch' | 'as-url-changed' | 'managed-wrong-team' | null;
 
 export interface SPAttestationResponse {
   domain: string;
@@ -320,6 +320,34 @@ export class SPClient {
     // at all — the caller (shared-state.ts#checkAsCompat) reads this
     // defensively rather than assuming the v0.7 shape.
     return res.json() as Promise<{ protocolVersion?: unknown; supportedVersions?: unknown }>;
+  }
+
+  /**
+   * WS3 defence-in-depth (work-plan "Added 2026-10-11 — an account is
+   * Personal OR in one team"): the account's active TEAM id, or null when
+   * it currently has none (Personal mode) — `GET /api/groups/me`. Used only
+   * by AttestationCache.refreshActiveWorkspace, never on the hot tool-call
+   * path (it makes a live AS call).
+   */
+  async getActiveTeamGroupId(): Promise<string | null> {
+    const res = await this.fetch('/api/groups/me');
+    if (!res.ok) throw new Error(`SP groups/me request failed: ${res.status}`);
+    const data = await res.json() as { group?: { id?: string } | null };
+    return data.group?.id ?? null;
+  }
+
+  /**
+   * The account's own Personal group id — `GET /api/groups`, the entry
+   * with `isPersonal`. Same caller/purpose as {@link getActiveTeamGroupId}:
+   * together they resolve "the active workspace" (the active team if any,
+   * else Personal) without the gateway ever guessing at an id shape.
+   */
+  async getPersonalGroupId(): Promise<string | null> {
+    const res = await this.fetch('/api/groups');
+    if (!res.ok) throw new Error(`SP groups request failed: ${res.status}`);
+    const data = await res.json() as { groups?: Array<{ id?: string; isPersonal?: boolean }> };
+    const personal = (data.groups ?? []).find(g => g.isPersonal);
+    return personal?.id ?? null;
   }
 
   /**

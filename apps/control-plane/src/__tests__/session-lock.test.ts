@@ -9,7 +9,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Vault } from '../lib/vault';
-import { createSessionLock, SESSION_LOCKED_MESSAGE } from '../lib/session-lock';
+import { createSessionLock, createManagedWrongTeamLock, SESSION_LOCKED_MESSAGE, managedWrongTeamMessage } from '../lib/session-lock';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'session-lock-'));
 
@@ -107,5 +107,60 @@ describe('createSessionLock', () => {
     expect(vault.isUnlocked()).toBe(false);
     // Let the rejected promise's .catch() run before the test ends.
     await new Promise(r => setTimeout(r, 0));
+  });
+});
+
+/** WS4 — a managed gateway (IT policy `Team`) whose signed-in account has
+ *  left the locked team. Mirrors createSessionLock's own single-flight and
+ *  "say why" behaviour, so only what's distinct is asserted here. */
+describe('createManagedWrongTeamLock', () => {
+  function managedHarness(vault: Vault) {
+    const notifyFn = vi.fn();
+    const unconfigureSessionFn = vi.fn().mockResolvedValue(undefined);
+    const emit = vi.fn();
+    const lock = createManagedWrongTeamLock({ vault, port: 3402, notifyFn, unconfigureSessionFn, emit });
+    return { lock, notifyFn, unconfigureSessionFn, emit };
+  }
+
+  it('locks the vault with reason "managed-wrong-team"', async () => {
+    const vault = await unlockedVault();
+    const { lock } = managedHarness(vault);
+    lock('Alpenwerk Ersatzteile');
+    expect(vault.isUnlocked()).toBe(false);
+    expect(vault.getLockedReason()).toBe('managed-wrong-team');
+  });
+
+  it('names the team in the emitted message', async () => {
+    const vault = await unlockedVault();
+    const { lock, emit } = managedHarness(vault);
+    lock('Alpenwerk Ersatzteile');
+    expect(emit).toHaveBeenCalledWith('session-locked', {
+      reason: 'managed-wrong-team',
+      message: managedWrongTeamMessage('Alpenwerk Ersatzteile'),
+    });
+    expect(managedWrongTeamMessage('Alpenwerk Ersatzteile')).toContain('Alpenwerk Ersatzteile');
+  });
+
+  it('pushes the reason to the MCP server so the agent is told why', async () => {
+    const vault = await unlockedVault();
+    const { lock, unconfigureSessionFn } = managedHarness(vault);
+    lock('g_team');
+    expect(unconfigureSessionFn).toHaveBeenCalledWith('managed-wrong-team');
+  });
+
+  it('is single-flight, like the other locks', async () => {
+    const vault = await unlockedVault();
+    const { lock, notifyFn, emit } = managedHarness(vault);
+    lock('g_team');
+    lock('g_team');
+    expect(notifyFn).toHaveBeenCalledOnce();
+    expect(emit).toHaveBeenCalledOnce();
+  });
+
+  it('is a no-op when already locked', () => {
+    const vault = new Vault(tmp());
+    const { lock, emit } = managedHarness(vault);
+    lock('g_team');
+    expect(emit).not.toHaveBeenCalled();
   });
 });

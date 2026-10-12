@@ -241,6 +241,33 @@ code {
   gap: 0.75rem;
 }
 
+/* WS3 (work-plan "Added 2026-10-11 — an account is Personal OR in one
+   team"): the workspace pill, every page. Same shape as .status-badge but
+   with a visible border rather than a filled background — this is a
+   statement of fact ("where you are"), not a status to react to. Managed
+   installs (IT policy `Team`) borrow the accent colour, matching the
+   "set by your IT" treatment used elsewhere in Settings. */
+.workspace-pill {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.2rem 0.65rem;
+  border-radius: 9999px;
+  border: 1px solid var(--text-primary);
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.workspace-pill[data-managed='true'] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.workspace-pill-it {
+  font-weight: 400;
+}
+
 .user-chip {
   display: flex;
   align-items: center;

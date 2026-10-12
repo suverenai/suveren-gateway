@@ -88,6 +88,23 @@ describe('config get — shows IT-locked settings', () => {
     expect(stdout).toContain('http://proxy.corp.example:8080');
     expect(stdout).toContain('(set by your IT)');
   });
+
+  it('WS4 — "team" shows the policy-locked id with the IT suffix, both bare and explicit', () => {
+    const dataDir = tmp();
+    const policy = policyFile({ Team: 'grp_abc123' });
+    const bare = run(dataDir, ['config', 'get'], { SUVEREN_POLICY_FILE: policy });
+    expect(bare.stdout).toContain('grp_abc123');
+    expect(bare.stdout).toContain('(set by your IT)');
+    const explicit = run(dataDir, ['config', 'get', 'team'], { SUVEREN_POLICY_FILE: policy });
+    expect(explicit.stdout).toContain('grp_abc123');
+    expect(explicit.stdout).toContain('(set by your IT)');
+  });
+
+  it('WS4 — an unmanaged gateway\'s bare "config get" says nothing about team', () => {
+    const dataDir = tmp();
+    const { stdout } = run(dataDir, ['config', 'get']);
+    expect(stdout).not.toContain('team');
+  });
 });
 
 describe('REFUSAL: config set on a policy-locked key', () => {

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { spClient } from '../lib/sp-client';
 
@@ -24,6 +25,7 @@ interface GroupDetail {
  */
 export function GroupsPage() {
   const { activeTeam, activeMembership, refreshGroups, user } = useAuth();
+  const navigate = useNavigate();
   const [groupDetail, setGroupDetail] = useState<GroupDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -176,19 +178,24 @@ export function GroupsPage() {
         <div className="card" style={{ textAlign: 'center', padding: '2rem 1.5rem' }}>
           <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '1rem' }}>You are working solo.</h3>
           <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '1rem', maxWidth: 480, marginLeft: 'auto', marginRight: 'auto' }}>
-            Every mandate you create here is in your personal context. You can join an existing
-            team or create a new one in your Authority Server dashboard.
+            Every mandate you create here is in your personal context. An account is Personal or in
+            one team — joining or creating a team moves it.
           </p>
-          {browseTeamsHref && (
-            <a
-              className="btn btn-primary btn-sm"
-              href={browseTeamsHref}
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Open Authority Server dashboard &rarr;
-            </a>
-          )}
+          <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', flexWrap: 'wrap' }}>
+            <button className="btn btn-primary btn-sm" onClick={() => navigate('/onboarding')}>
+              Join or create a team
+            </button>
+            {browseTeamsHref && (
+              <a
+                className="btn btn-ghost btn-sm"
+                href={browseTeamsHref}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Manage teams in your Authority Server &rarr;
+              </a>
+            )}
+          </div>
         </div>
       )}
 

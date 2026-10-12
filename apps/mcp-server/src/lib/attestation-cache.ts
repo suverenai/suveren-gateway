@@ -69,6 +69,15 @@ export interface CachedAuthorization {
    */
   subjects?: Subject[];
   complete: boolean;
+  /**
+   * WS3 defence-in-depth (work-plan "Added 2026-10-11 — an account is
+   * Personal OR in one team"): which group this authorization was created
+   * under — from `GET /api/authorizations/:id`'s `group_id` (the same
+   * field Phase 6's above-cap routing already reads). Undefined when that
+   * lookup hasn't succeeded yet or failed — never guessed, so an unknown
+   * groupId never triggers the foreign-workspace check below.
+   */
+  groupId?: string;
 }
 
 export class AttestationCache {
@@ -92,6 +101,52 @@ export class AttestationCache {
    * this fact to begin with.
    */
   private reapprovalNeeded = new Set<string>();
+
+  /**
+   * WS3 defence-in-depth (work-plan "Added 2026-10-11 — an account is
+   * Personal OR in one team"): the account's current active workspace's
+   * group id — its active team, else its Personal group. `null` = not yet
+   * known (before the first {@link refreshActiveWorkspace}, or every
+   * lookup it tried failed) — filtering is then SKIPPED rather than
+   * refusing everything, because the Authority Server itself is the
+   * fail-closed authority at ticket time (decision 6, WS2); this is a
+   * second, narrower check for a window a buggy/stale cache entry could
+   * otherwise slip through in, not a replacement for that enforcement.
+   */
+  private activeWorkspaceGroupId: string | null = null;
+
+  /**
+   * Re-resolve {@link activeWorkspaceGroupId} from the Authority Server.
+   * Called by the resync-gates flow (http.ts's `/internal/resync-gates`),
+   * never on the hot tool-call path — it makes up to two AS calls. Leaves
+   * the previous value in place on any failure (network error, unexpected
+   * shape): losing a known-good value on a transient blip would turn this
+   * defence-in-depth check into a false refusal of every cached mandate,
+   * which is worse than leaving it momentarily stale.
+   */
+  async refreshActiveWorkspace(): Promise<void> {
+    try {
+      const activeTeam = await this.spClient.getActiveTeamGroupId();
+      if (activeTeam) {
+        this.activeWorkspaceGroupId = activeTeam;
+        return;
+      }
+      const personalId = await this.spClient.getPersonalGroupId();
+      if (personalId) this.activeWorkspaceGroupId = personalId;
+    } catch {
+      // leave the previous value — see doc comment above.
+    }
+  }
+
+  /**
+   * True only when `groupId` is KNOWN (not undefined) and the active
+   * workspace is ALSO known (not null) and they differ. Either side
+   * unknown ⇒ false: this check only ever narrows what gets selected, it
+   * never substitutes for the Authority Server's own enforcement.
+   */
+  private isForeignWorkspace(groupId: string | undefined): boolean {
+    return groupId !== undefined && this.activeWorkspaceGroupId !== null && groupId !== this.activeWorkspaceGroupId;
+  }
 
   /**
    * @param dataDir Where to look for a pinned key (as-pairing.json). Optional
@@ -160,6 +215,13 @@ export class AttestationCache {
     const auth = this.authorizations.get(path);
     if (!auth) return null;
 
+    // WS3 defence-in-depth: never hand back a mandate of another workspace
+    // — drop it from the cache so the next sync re-learns it clean.
+    if (this.isForeignWorkspace(auth.groupId)) {
+      this.authorizations.delete(path);
+      return null;
+    }
+
     // Check if all attestations have expired
     const now = Math.floor(Date.now() / 1000);
     const hasValid = auth.attestations.some(a => a.expiresAt > now);
@@ -196,6 +258,25 @@ export class AttestationCache {
     }
     const bounds = result.bounds ?? result.frame ?? {};
 
+    // WS3 defence-in-depth: learn which group this authorization belongs
+    // to from the SAME per-id summary Phase 6's above-cap routing already
+    // calls (getAuthorizationSummary → GET /api/authorizations/:id). A
+    // failure here (network blip, older AS, or — in a unit test — a fake
+    // SPClient that doesn't implement this method at all) must not drop
+    // the mandates data this function already fetched successfully above
+    // — groupId just stays undefined, which the foreign-workspace check
+    // below treats as "unknown, don't filter" rather than as a refusal.
+    // try/catch, not `.then().catch()`: a missing method throws
+    // SYNCHRONOUSLY on the call itself, before any Promise exists to
+    // attach a rejection handler to.
+    let groupId: string | undefined;
+    try {
+      const summary = await this.spClient.getAuthorizationSummary(authorizationId);
+      groupId = summary?.group_id ?? undefined;
+    } catch {
+      groupId = undefined;
+    }
+
     // Read the commitment mode from the SIGNED payload (all of an authorization's
     // attestations share it). This — not the AS's unsigned deferred_commitment_domains
     // — is the authoritative review-vs-automatic signal.
@@ -231,6 +312,7 @@ export class AttestationCache {
       signedCommitmentMode,
       subjects,
       complete: result.complete,
+      groupId,
     };
 
     // Key by the per-ceremony id — grants can never merge or overwrite.
@@ -246,6 +328,11 @@ export class AttestationCache {
     const results: CachedAuthorization[] = [];
 
     for (const [path, auth] of this.authorizations) {
+      // WS3 defence-in-depth — see isForeignWorkspace's doc comment.
+      if (this.isForeignWorkspace(auth.groupId)) {
+        this.authorizations.delete(path);
+        continue;
+      }
       const hasValid = auth.attestations.some(a => a.expiresAt > now);
       if (hasValid) {
         results.push(auth);

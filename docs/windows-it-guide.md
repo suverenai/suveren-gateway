@@ -117,8 +117,8 @@ To lock them so the user cannot change them, use the `Port`, `McpPort` and
 ## 5. IT-managed settings
 
 Your policy settings — Authority Server address, a TLS certificate for a
-company proxy, TLS pinning, simulation mode, the corporate proxy itself, and
-the gateway's ports and data folder —
+company proxy, TLS pinning, simulation mode, the corporate proxy itself, the
+gateway's ports and data folder, and which team a gateway is bound to —
 are set centrally via the Windows registry (`HKLM\SOFTWARE\Policies\Suveren\
 Gateway`, or `HKCU` for the same key) and read by every installed gateway.
 Settings made this way are shown to the user as "set by your IT" and cannot be
@@ -136,6 +136,15 @@ machines that already have one. See the README's
 [**"Behind a company proxy"**](../README.md#behind-a-company-proxy) section
 for the full behaviour (what gets proxied, TLS inspection, and the one
 combination — proxy plus TLS pinning — that refuses on purpose).
+
+**Binding a gateway to one team:** push the `Team` registry key (the
+team's **id**, not its name — names are not unique across accounts; find it
+on your Authority Server's team page) to lock a gateway to that one team.
+Sign-in is refused for any account not currently in it, naming the team and
+the account; the gateway locks itself (same as a session ending) if the
+signed-in account later leaves or is removed. See
+[`managed-settings.md`](managed-settings.md#team--binding-a-managed-gateway-to-one-team)
+for the exact refusal text and how the check is re-run while signed in.
 
 ## 6. Network requirements
 

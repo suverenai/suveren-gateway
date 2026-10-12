@@ -63,8 +63,9 @@ import { encryptIntentForRecipients } from './lib/intent-encryption';
 import { fetchAs as fetchAsForMandate, AsTlsMismatchError as MandateTlsMismatch } from './lib/as-tls-pin';
 import { startNotificationDispatcher } from './lib/notification-dispatcher';
 import { eventBus } from './lib/event-bus';
-import { createSessionLock, createAsKeyMismatchLock, createAsTlsMismatchLock } from './lib/session-lock';
+import { createSessionLock, createAsKeyMismatchLock, createAsTlsMismatchLock, createManagedWrongTeamLock } from './lib/session-lock';
 import { SessionExpiryScheduler } from './lib/session-expiry-scheduler';
+import { activeTeamId, ManagedTeamScheduler } from './lib/managed-team';
 import { buildSessionHealth } from './lib/session-health';
 import { loadDenials, selectDenials } from './lib/denials-reader';
 import { AGENT_CONTEXT_MAX_BYTES, agentBriefPath, readAgentBrief } from './lib/agent-brief-store';
@@ -93,6 +94,10 @@ validatePinTlsForUrl(resolvePinTls(DATA_DIR), SP_URL);
 // it already ran above via resolveAsUrl/resolvePinTls.
 const POLICY_LOCKED = [...readPolicy().locked];
 const POLICY_LOCKED_INSTALL_METHOD = readPolicy().policy.installMethod;
+// WS4 (work-plan "Added 2026-10-11 — an account is Personal OR in one
+// team"): the team id this gateway is locked to, or undefined when IT has
+// not set the `Team` policy — see lib/policy.ts / lib/managed-team.ts.
+const POLICY_LOCKED_TEAM = readPolicy().policy.team;
 const port = parseInt(process.env.SUVEREN_CP_PORT ?? '3402', 10);
 const HAP_MODE = (process.env.HAP_MODE ?? 'personal') as 'personal' | 'team';
 
@@ -170,6 +175,7 @@ function loginRateLimit(req: Request, res: Response, next: NextFunction): void {
 const lockExpiredSession = createSessionLock({ vault, port });
 const lockAsKeyMismatch = createAsKeyMismatchLock({ vault, port });
 const lockAsTlsMismatch = createAsTlsMismatchLock({ vault, port });
+const lockManagedWrongTeam = createManagedWrongTeamLock({ vault, port });
 const sessionExpiryScheduler = new SessionExpiryScheduler(
   () => vault.getSessionExpiresAt(),
   lockExpiredSession,
@@ -183,7 +189,38 @@ app.use('/auth', jsonParser, createAuthRouter(
   loginRateLimit,
   () => sessionExpiryScheduler.reschedule(),
   { asUrl: SP_URL, dataDir: DATA_DIR },
+  lockAsTlsMismatch,
+  POLICY_LOCKED_TEAM,
 ));
+
+// ─── WS4: periodic check for a managed gateway's signed-in account
+// leaving/being removed from its locked team ─────────────────────────────
+//
+// The Authority Server has no channel to PUSH this to the gateway (the
+// leave/removal happens in a browser, on a DIFFERENT device in general), so
+// this polls — same reasoning as SessionExpiryScheduler's coarse timer.
+// Fails OPEN on a check it could not perform (network blip): a managed
+// gateway must not lock a working session over a transient outage, unlike
+// the strict (fail-closed) version of this same check at sign-in time
+// (routes/auth.ts) where nothing has been granted yet.
+const managedTeamScheduler = POLICY_LOCKED_TEAM
+  ? new ManagedTeamScheduler(async () => {
+      if (!vault.isUnlocked()) return;
+      const cookie = vault.getSpCookie();
+      if (!cookie) return;
+      try {
+        const pin = readPairing(DATA_DIR);
+        const team = await activeTeamId(SP_URL, cookie, {
+          enforce: resolvePinTls(DATA_DIR),
+          pinnedSpkiHex: pin && pin.asUrl === SP_URL ? pin.tlsSpkiPinHex : undefined,
+        });
+        if (team !== POLICY_LOCKED_TEAM) lockManagedWrongTeam(POLICY_LOCKED_TEAM);
+      } catch (err) {
+        console.error('[Control Plane] Managed-team check failed (will retry):', err);
+      }
+    })
+  : null;
+managedTeamScheduler?.start();
 
 // ─── Origin helper (respects proxy headers) ─────────────────────────────
 
@@ -998,13 +1035,25 @@ app.use(
         } else if (method === 'POST' && /^\/api\/proposals\/[^/]+\/reject$/.test(path)) {
           eventBus.emit('proposal-rejected');
         } else if (
-          method === 'POST' && (
+          (method === 'POST' && (
             path === '/api/groups' ||
             path === '/api/groups/join' ||
             /^\/api\/groups\/[^/]+\/(leave|disable|reactivate|admin-transfer)$/.test(path)
-          )
+          )) ||
+          // WS0 (work-plan "Added 2026-10-11"): withdrawing a pending join
+          // request — the account stays Personal, but the onboarding UI's
+          // waiting state ends, same as every other membership-affecting
+          // call here.
+          (method === 'DELETE' && path === '/api/groups/join')
         ) {
           eventBus.emit('team-membership-changed');
+          // WS4: a leave/join/withdraw this gateway's OWN session just made
+          // may have just created (or ended) a mismatch with a
+          // policy-locked team — check immediately rather than waiting for
+          // the next poll tick (managedTeamScheduler.runNow() is a no-op
+          // call wrapper, not awaited: the HTTP response for the action
+          // that triggered this must not wait on it).
+          if (managedTeamScheduler) void managedTeamScheduler.runNow();
         }
       },
     },

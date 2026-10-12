@@ -31,6 +31,39 @@ Registry value names = JSON file keys (PascalCase):
 | `Port` | DWORD or string | Gateway port (1024–65535) |
 | `McpPort` | DWORD or string | Port AI assistants connect to (1024–65535, ≠ `Port`) |
 | `DataDir` | string | Data folder — a full path. Changing it does not move existing data |
+| `Team` | string | Binds this gateway to one team — an **id**, never a name (see below) |
+
+### `Team` — binding a managed gateway to one team
+
+WS4 (work-plan "Added 2026-10-11 — an account is Personal OR in one team"):
+every account is Personal or in exactly one team at a time (never both). This
+key locks a managed gateway to one of those teams by **id** — team NAMES are
+not unique across accounts, so a name could silently match the wrong team on
+a different customer's Authority Server.
+
+- Sign-in (`POST /auth/login`) is refused — before the vault stores
+  anything — unless the signing-in account's ACTIVE workspace is exactly
+  this team: `GET /api/groups/me` on the Authority Server, compared by id.
+  The refusal names the team and the account: *"This gateway is set up by
+  your IT for team \<id\>. The account \<email\> is not in this team. Sign
+  in with your team account, or ask your IT."*
+- While signed in, a periodic check (every 5 minutes; immediately after any
+  team-membership action made through this gateway's own `/api/groups/*`
+  proxy — join, leave, create, admin actions) re-reads the same fact. If the
+  account has left or been removed from the team, the gateway locks itself
+  — same mechanism as a session ending (`lockedReason: "managed-wrong-team"`
+  on `/health`), not a silent no-op.
+- The check is deliberately asymmetric: at sign-in, any failure to even
+  perform the check (Authority Server unreachable) also refuses — nothing
+  has been granted yet, so this file's usual "fail closed before a session
+  exists" rule applies. The PERIODIC check, once already signed in, fails
+  OPEN on a transient network error instead — a brief outage must not lock
+  a working session; only a confirmed mismatch does. See
+  `apps/control-plane/src/lib/managed-team.ts`.
+- There is no `config set team` / `config get team` write path — like
+  `InstallMethod`, this is IT-only. `config get` (bare, or `config get
+  team`) shows the id with `(set by your IT)` when locked, and says nothing
+  about `team` at all when unmanaged.
 
 `Port`, `McpPort` and `DataDir` are read by the CLI and `bundle/server.js`
 only (see `bundle/lib/install-settings.mjs`), which pass the result to the
@@ -83,6 +116,10 @@ established pattern):
 Wired into every settings resolver: `resolveAsUrl`, `resolveCaFile`,
 `resolvePinTls` (`as-config.ts` / `config.mjs`), and `resolveSimulation` /
 `isSimulationMode` (`config.mjs` / `simulation-mode.ts` in both apps).
+`Team` is read directly where it's used — `routes/auth.ts` (sign-in) and
+`lib/managed-team.ts` (the periodic check) — rather than through a
+resolver, since it has no env/CLI-flag/saved-config tier to merge with (an
+IT policy is the only place it can ever come from).
 
 ## What the employee sees
 
@@ -97,6 +134,10 @@ Wired into every settings resolver: `resolveAsUrl`, `resolveCaFile`,
   (an employee on a managed install has no permission to run it) and say
   instead that updates come from the company's IT. `/as-pairing` reports
   `asUrlLockedByPolicy` / `pinTlsLockedByPolicy` for the Settings page.
+- A managed gateway with `Team` set refuses sign-in for any account not in
+  that team, and `/health`'s `session.lockedReason` reports
+  `"managed-wrong-team"` if the signed-in account leaves/is removed while
+  signed in — see the `Team` section above.
 
 ## Install method
 
@@ -144,6 +185,14 @@ test asserting exactly that.
   set/get proxy` and `start --proxy`.
 - `apps/*/src/lib/__tests__/as-config.test.ts` /
   `simulation-mode.test.ts` — policy-locked precedence for each resolver.
+- `apps/control-plane/src/__tests__/managed-team.test.ts` — the
+  `GET /api/groups/me` read and the periodic-check scheduler.
+- `apps/control-plane/src/routes/__tests__/auth-managed-team.test.ts` — the
+  sign-in refusal end to end (match / wrong team / Personal / AS
+  unreachable), against a real Express router with the Authority Server
+  call stubbed.
+- `apps/control-plane/src/__tests__/session-lock.test.ts` —
+  `createManagedWrongTeamLock`'s single-flight lock + emitted message.
 - `Proxy`/`NoProxy` end to end: a built bundle, started with
   `SUVEREN_POLICY_FILE` pointing at `{"Proxy": "http://127.0.0.1:<port>"}`
   and a real local CONNECT proxy listening there, shows a real Authority

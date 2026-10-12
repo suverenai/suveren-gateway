@@ -33,7 +33,14 @@
  *
  * Registry value names = JSON file keys (PascalCase, matching what an IT
  * admin would see in either place): AsUrl, CaFile, PinTls, Proxy, NoProxy,
- * Simulation, InstallMethod.
+ * Simulation, InstallMethod, Team.
+ *
+ * `Team` (work-plan "Added 2026-10-11 — an account is Personal OR in one
+ * team", WS4) binds a managed gateway to one team id (not name — names are
+ * not unique across accounts): sign-in is refused unless the signing-in
+ * account's ACTIVE workspace is that team, and the gateway locks itself
+ * (same mechanism as a session ending) if the account later leaves it. See
+ * routes/auth.ts and lib/managed-team.ts.
  *
  * Mirrored (same logic, duplicated — no shared runtime package between the
  * CLI and the two apps, see as-config.ts's doc comment for the established
@@ -45,7 +52,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
-export type PolicyKey = 'asUrl' | 'caFile' | 'pinTls' | 'proxy' | 'noProxy' | 'simulation' | 'installMethod';
+export type PolicyKey = 'asUrl' | 'caFile' | 'pinTls' | 'proxy' | 'noProxy' | 'simulation' | 'installMethod' | 'team';
 
 export interface GatewayPolicy {
   asUrl?: string;
@@ -55,6 +62,8 @@ export interface GatewayPolicy {
   noProxy?: string;
   simulation?: boolean;
   installMethod?: 'managed';
+  /** The team id this gateway is locked to (WS4) — an id, never a name. */
+  team?: string;
 }
 
 export interface ResolvedPolicy {
@@ -64,7 +73,7 @@ export interface ResolvedPolicy {
   locked: Set<PolicyKey>;
 }
 
-const POLICY_KEYS = ['AsUrl', 'CaFile', 'PinTls', 'Proxy', 'NoProxy', 'Simulation', 'InstallMethod'] as const;
+const POLICY_KEYS = ['AsUrl', 'CaFile', 'PinTls', 'Proxy', 'NoProxy', 'Simulation', 'InstallMethod', 'Team'] as const;
 
 /** The documented production path, relative to the hive — never changes for
  *  a real install. Overridable ONLY via `SUVEREN_POLICY_REGISTRY_KEY`, which
@@ -124,6 +133,16 @@ function validateCaFile(candidate: string): { ok: boolean; path?: string; error?
   if (!trimmed) return { ok: false, error: 'The CA file path is empty.' };
   if (!existsSync(trimmed)) return { ok: false, error: `No file at "${trimmed}".` };
   return { ok: true, path: trimmed };
+}
+
+/** WS4: a team id — just a non-empty string, same tolerance as NoProxy's
+ *  grammar-free validation. Not a specific id SHAPE (e.g. `grp_…`) on
+ *  purpose — the gateway has no business hard-coding the Authority Server's
+ *  internal id format, only requiring that IT actually set something. */
+function validateTeamId(candidate: string): { ok: boolean; id?: string; error?: string } {
+  const trimmed = candidate.trim();
+  if (!trimmed) return { ok: false, error: 'The team id is empty.' };
+  return { ok: true, id: trimmed };
 }
 
 /** Same rule as proxy-env.ts's companion in config.mjs's validateProxyUrl:
@@ -379,6 +398,15 @@ export function readPolicy(): ResolvedPolicy {
     }
     policy.installMethod = 'managed';
     locked.add('installMethod');
+  }
+
+  if (merged.Team !== undefined) {
+    const v = validateTeamId(String(merged.Team));
+    if (!v.ok) {
+      throw new Error(`Invalid policy Team ("${String(merged.Team)}") from ${sourceOf.Team}: ${v.error}`);
+    }
+    policy.team = v.id;
+    locked.add('team');
   }
 
   cached = { policy, locked };

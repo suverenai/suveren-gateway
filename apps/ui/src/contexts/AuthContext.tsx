@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from 'react';
-import { spClient, type SPUser, type SPGroup, type GroupMember } from '../lib/sp-client';
+import { spClient, type SPUser, type SPGroup, type GroupMember, type PendingJoinRequest } from '../lib/sp-client';
 
 export type GatewayMode = 'personal' | 'team';
 
@@ -19,6 +19,14 @@ interface AuthContextValue {
   activeTeam: SPGroup | null;
   /** The caller's active membership record (null for personal-only users). */
   activeMembership: GroupMember | null;
+  /**
+   * The caller's own pending request to join a team (work-plan "Added
+   * 2026-10-11 — an account is Personal OR in one team") — null when there
+   * is none. Mutually exclusive with `activeTeam` by construction (the
+   * Authority Server refuses a new request while one is active), but kept
+   * independent here so OnboardingPage never has to assume that itself.
+   */
+  pendingRequest: PendingJoinRequest | null;
   isLoading: boolean;
   error: string;
   /**
@@ -62,6 +70,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [domain, setDomain] = useState('');
   const [activeTeam, setActiveTeam] = useState<SPGroup | null>(null);
   const [activeMembership, setActiveMembership] = useState<GroupMember | null>(null);
+  const [pendingRequest, setPendingRequest] = useState<PendingJoinRequest | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -75,15 +84,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const userIdRef = useRef<string | null>(null);
 
   /**
-   * Fetches /api/groups/me, updates activeTeam + activeMembership,
-   * and computes mode = activeMembership ? 'team' : 'personal'.
-   * Also syncs the legacy `group` / `domain` state for back-compat.
+   * Fetches /api/groups/me, updates activeTeam + activeMembership +
+   * pendingRequest, and computes mode = activeMembership ? 'team' :
+   * 'personal'. Also syncs the legacy `group` / `domain` state for
+   * back-compat.
    */
   const refreshGroups = useCallback(async () => {
     if (!hasApiKey.current) return;
     try {
       const result = await spClient.getMyTeam();
-      if (result) {
+      setPendingRequest(result.pendingRequest);
+      if (result.group && result.membership) {
         const { group: teamGroup, membership } = result;
         setActiveTeam(teamGroup);
         setActiveMembership(membership);
@@ -180,6 +191,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setDomain('');
     setActiveTeam(null);
     setActiveMembership(null);
+    setPendingRequest(null);
     setMode('personal');
     setError('');
   }, []);
@@ -193,6 +205,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setDomain('');
     setActiveTeam(null);
     setActiveMembership(null);
+    setPendingRequest(null);
     setMode('personal');
     setError(message ?? 'Your sign-in ended after 30 days or was revoked. Sign in again.');
   }, []);
@@ -211,6 +224,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       groupId: group?.id ?? null,
       activeTeam,
       activeMembership,
+      pendingRequest,
       isLoading, error, login, logout, clearError, handleSessionLocked,
       // Backward compat aliases
       activeGroup: group,
