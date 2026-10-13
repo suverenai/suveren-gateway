@@ -23,6 +23,11 @@ function capitalize(s: string): string {
   return s.length ? s[0].toUpperCase() + s.slice(1) : s;
 }
 
+/** AU8 renderer rule — "show when the context was read ('read at 10:42')". */
+function formatReadAt(ms: number): string {
+  return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
 export interface PreviewStaleView {
   heading: string;
   approvedLabel: string;
@@ -101,7 +106,7 @@ export function previewBoxView(resp: PreviewResponse, systemName: string, toolAr
       if ('reads' in resp) {
         return {
           heading: `What will be created in ${systemName}`,
-          note: `Read by the gateway when you opened this card — the AI is not involved.`,
+          note: `Read by the gateway, not by the AI — read at ${formatReadAt(resp.readAt)}.`,
           creation: buildCreationView(toolArgs ?? {}, resp.reads, resp.display),
         };
       }
