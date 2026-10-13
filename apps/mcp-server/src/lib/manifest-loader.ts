@@ -277,6 +277,16 @@ export function invalidDisplayHintsReason(toolName: string, entry: unknown): str
   if (d.currencyField !== undefined && (typeof d.currencyField !== 'string' || d.currencyField.length === 0)) {
     return `override "${toolName}".display.currencyField must be a non-empty string`;
   }
+  if (d.labels !== undefined) {
+    if (d.labels === null || typeof d.labels !== 'object' || Array.isArray(d.labels)) {
+      return `override "${toolName}".display.labels must be an object mapping field paths to labels`;
+    }
+    for (const [path, label] of Object.entries(d.labels as Record<string, unknown>)) {
+      if (typeof label !== 'string' || label.length === 0) {
+        return `override "${toolName}".display.labels.${path} must be a non-empty string`;
+      }
+    }
+  }
   return null;
 }
 

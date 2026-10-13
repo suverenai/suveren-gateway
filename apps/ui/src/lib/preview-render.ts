@@ -576,10 +576,20 @@ export interface AttachedIdentity {
   unresolved?: string;
 }
 
-/** `rawId` is the bound value itself (e.g. `"cust-1"`) — always from the
- *  action's own args, never from the read (decision: a system value never
- *  REPLACES a bound one, only explains it). */
-export function resolveAttachedIdentity(outcome: PreviewReadOutcome | undefined, rawId: unknown): AttachedIdentity {
+/**
+ * `rawId` is the bound value itself (e.g. `"cust-1"`) — always from the
+ * action's own args, never from the read (decision: a system value never
+ * REPLACES a bound one, only explains it). `opts.pathPrefix` (the top-level
+ * bound key this attach resolves, e.g. `"customer_id"`) enables manifest
+ * `labels`/`money`/`percent` on the context rows (path `"<prefix>.<key>"`)
+ * — absent for a `forEach` element's attach (handled separately, inside the
+ * table, which has its own `[]`-shaped paths).
+ */
+export function resolveAttachedIdentity(
+  outcome: PreviewReadOutcome | undefined,
+  rawId: unknown,
+  opts?: { pathPrefix?: string; displayHints?: ToolDisplayHints; currency?: string },
+): AttachedIdentity {
   const rows = attachedFields(outcome);
   if (rows.length === 0) {
     return { rawId: formatScalar(rawId), context: [], unresolved: unresolvedNote(outcome) };
@@ -590,32 +600,53 @@ export function resolveAttachedIdentity(outcome: PreviewReadOutcome | undefined,
   const rawObj = outcome && outcome.status === 'ok' ? resolveBodyObject(outcome.body)?.obj : undefined;
   const nameRow = rows.find((r) => ['name', 'title', 'label'].includes(r.key))
     ?? rows.find((r) => typeof rawObj?.[r.key] === 'string' && !r.lines && !r.sublist && !r.diffLines);
-  return {
-    name: nameRow?.value,
-    rawId: formatScalar(rawId),
+  const prefix = opts?.pathPrefix;
+  const context = rows
     // `id` is already shown as the (bound) raw id — never repeated as context.
-    context: rows.filter((r) => r.key !== nameRow?.key && r.key !== 'id'),
-  };
+    .filter((r) => r.key !== nameRow?.key && r.key !== 'id')
+    .map((r) => {
+      if (!prefix) return r;
+      const path = `${prefix}.${r.key}`;
+      const label = resolveLabel(opts?.displayHints, path, r.label);
+      // Only reformat a SCALAR row whose path is actually money/percent-
+      // hinted — reformatting every row from its raw value would lose
+      // lines/sublist/diffLines for anything without a matching hint.
+      if (!pathMatches(opts?.displayHints?.money, path) && !pathMatches(opts?.displayHints?.percent, path)) {
+        return label === r.label ? r : { ...r, label };
+      }
+      const { value, valueTitle } = formatHinted(rawObj?.[r.key], opts?.displayHints, path, opts?.currency);
+      return { ...r, label, value, valueTitle };
+    });
+  return { name: nameRow?.value, rawId: formatScalar(rawId), context };
 }
 
 /** Fields an {@link AttachedIdentity} always folds into name/rawId, never
  *  shown again as their own table column (see `buildForEachTable`). */
 const IDENTITY_KEYS = new Set(['id', 'name', 'title', 'label']);
 
-// ─── display hints: money / percent / hidden paths ─────────────────────────
+// ─── display hints: field paths (labels / money / percent / hidden) ───────
+// See ToolDisplayHints.labels' doc comment (sp-client.ts) for the full path
+// grammar — every hint here (`labels`, `money`, `percent`, `hidden`) is
+// keyed by the exact same kind of path string.
 
-/** `topKey` alone for a top-level bound field; `topKey`+`innerKey` for
- *  `<topKey>[].<innerKey>` — a `forEach` field's own element field. */
-function pathMatches(hints: string[] | undefined, topKey: string, innerKey?: string): boolean {
-  if (!hints) return false;
-  const path = innerKey === undefined ? topKey : `${topKey}[].${innerKey}`;
-  return hints.includes(path);
+function pathMatches(hints: string[] | undefined, path: string): boolean {
+  return !!hints?.includes(path);
+}
+
+/** Manifest label for this exact path, else `fallback` (already resolved by
+ *  the caller — schema title or humanized key, per field). */
+function resolveLabel(hints: ToolDisplayHints | undefined, path: string, fallback: string): string {
+  return hints?.labels?.[path] ?? fallback;
 }
 
 function formatMoney(value: unknown, currency: string | undefined): { value: string; valueTitle?: string } {
   const n = typeof value === 'number' ? value : Number(value);
   if (!Number.isFinite(n)) return cellFor(value);
-  const display = `${n.toFixed(2)}${currency ? ` ${currency}` : ''}`;
+  // Fixed 'en-US' grouping (not the runtime's locale) so "10,000.00 EUR"
+  // reads the same regardless of where the gateway runs — the thousands
+  // comma is the mockup's own formatting, not a locale feature.
+  const amount = n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const display = `${amount}${currency ? ` ${currency}` : ''}`;
   return { value: display };
 }
 
@@ -626,22 +657,46 @@ function formatPercent(value: unknown): { value: string; valueTitle?: string } {
 
 /** One bound (sealed) or system (read) value, formatted per `hints` for
  *  this exact path (money/percent), else plainly. `currency` is resolved by
- *  the caller (from the action's own bound args, via `hints.currencyField`)
- *  since this function never looks anything up itself. */
+ *  the caller (`resolveCurrency`) since this function never looks anything
+ *  up itself. */
 function formatHinted(
   value: unknown,
   hints: ToolDisplayHints | undefined,
-  topKey: string,
-  innerKey: string | undefined,
+  path: string,
   currency: string | undefined,
 ): { value: string; valueTitle?: string } {
-  if (pathMatches(hints?.money, topKey, innerKey)) return formatMoney(value, currency);
-  if (pathMatches(hints?.percent, topKey, innerKey)) return formatPercent(value);
+  if (pathMatches(hints?.money, path)) return formatMoney(value, currency);
+  if (pathMatches(hints?.percent, path)) return formatPercent(value);
   return cellFor(value);
 }
 
-function isHidden(hints: ToolDisplayHints | undefined, topKey: string, innerKey?: string): boolean {
-  return pathMatches(hints?.hidden, topKey, innerKey);
+function isHidden(hints: ToolDisplayHints | undefined, path: string): boolean {
+  return pathMatches(hints?.hidden, path);
+}
+
+/**
+ * Resolves `hints.currencyField` for every `money` path in one display
+ * block: either a plain bound action-arg name (`"currency"`) or a dotted
+ * path into a NON-forEach attach's own field (`"customer_id.currency"`).
+ * `attachedBody(topKey)` resolves that attach's raw body — supplied by the
+ * caller (`buildCreationView`), which already has every section's result.
+ * Undefined (money still shows, just with no currency suffix) rather than
+ * guessing when the field is absent or not a string.
+ */
+function resolveCurrency(
+  hints: ToolDisplayHints | undefined,
+  toolArgs: Record<string, unknown>,
+  attachedBody: (topKey: string) => Record<string, unknown> | undefined,
+): string | undefined {
+  const field = hints?.currencyField;
+  if (!field) return undefined;
+  const dot = field.indexOf('.');
+  if (dot < 0) {
+    const v = toolArgs[field];
+    return typeof v === 'string' ? v : undefined;
+  }
+  const v = attachedBody(field.slice(0, dot))?.[field.slice(dot + 1)];
+  return typeof v === 'string' ? v : undefined;
 }
 
 // ─── forEach -> table ────────────────────────────────────────────────────
@@ -663,6 +718,7 @@ export function buildForEachTable(
   currency: string | undefined,
 ): PreviewTable {
   const forEachKey = section.forEach ?? '';
+  const attach = section.attach;
   const outcomes = section.elements ?? [];
   const rowCount = Math.min(boundElements.length, outcomes.length);
   const bound = boundElements.slice(0, rowCount);
@@ -670,35 +726,51 @@ export function buildForEachTable(
 
   const boundKeys = [...new Set(bound.flatMap((el) => Object.keys(el)))]
     .filter((k) => k !== section.sourceArg)
-    .filter((k) => !isHidden(displayHints, forEachKey, k));
+    .filter((k) => !isHidden(displayHints, `${forEachKey}[].${k}`));
 
-  const attachedKeys = section.attach
-    ? [...new Set(reads.flatMap((r) => attachedFields(r).map((f) => f.key)))].filter((k) => !IDENTITY_KEYS.has(k))
+  // Schema-driven fallback label per attached key — the FIRST read that
+  // resolved it wins (every element of the same read tool shares a schema).
+  const attachedLabelFallback = new Map<string, string>();
+  if (attach) {
+    for (const r of reads) {
+      for (const f of attachedFields(r)) if (!attachedLabelFallback.has(f.key)) attachedLabelFallback.set(f.key, f.label);
+    }
+  }
+  const attachedKeys = attach
+    ? [...attachedLabelFallback.keys()].filter((k) => !IDENTITY_KEYS.has(k))
     : [];
 
   const columns: PreviewTableColumn[] = [];
-  if (section.attach) columns.push({ key: `__attach:${section.attach}`, label: humanizeKey(section.sourceArg ?? section.attach) });
-  for (const k of boundKeys) columns.push({ key: `bound:${k}`, label: humanizeKey(k) });
-  for (const k of attachedKeys) columns.push({ key: `attached:${k}`, label: humanizeKey(k) });
+  if (attach) {
+    columns.push({
+      key: `__attach:${attach}`,
+      label: resolveLabel(displayHints, `${forEachKey}[].${attach}`, humanizeKey(section.sourceArg ?? attach)),
+    });
+  }
+  for (const k of boundKeys) columns.push({ key: `bound:${k}`, label: resolveLabel(displayHints, `${forEachKey}[].${k}`, humanizeKey(k)) });
+  for (const k of attachedKeys) {
+    columns.push({
+      key: `attached:${k}`,
+      label: resolveLabel(displayHints, `${forEachKey}[].${attach}.${k}`, attachedLabelFallback.get(k) ?? humanizeKey(k)),
+    });
+  }
 
   const rows: PreviewTableRow[] = bound.map((el, i) => {
     const outcome = reads[i];
     const cells: PreviewTableCell[] = [];
-    if (section.attach) {
+    if (attach) {
       const identity = resolveAttachedIdentity(outcome, section.sourceArg ? el[section.sourceArg] : undefined);
       const text = identity.name ? `${identity.name} (${identity.rawId})` : identity.unresolved ? `${identity.rawId} — ${identity.unresolved}` : identity.rawId;
       cells.push({ value: text, sealed: false });
     }
     for (const k of boundKeys) {
-      const { value, valueTitle } = formatHinted(el[k], displayHints, forEachKey, k, currency);
+      const { value, valueTitle } = formatHinted(el[k], displayHints, `${forEachKey}[].${k}`, currency);
       cells.push({ value, valueTitle, sealed: true });
     }
-    const fields = attachedFields(outcome);
-    const byKey = new Map(fields.map((f) => [f.key, f]));
+    const rawObj = outcome && outcome.status === 'ok' ? resolveBodyObject(outcome.body)?.obj : undefined;
     for (const k of attachedKeys) {
-      const row = byKey.get(k);
-      const raw = row?.value;
-      const { value, valueTitle } = raw !== undefined ? formatHinted(raw, displayHints, forEachKey, k, currency) : { value: '—', valueTitle: undefined };
+      const raw = rawObj?.[k];
+      const { value, valueTitle } = raw !== undefined ? formatHinted(raw, displayHints, `${forEachKey}[].${attach}.${k}`, currency) : { value: '—', valueTitle: undefined };
       cells.push({ value, valueTitle, sealed: false });
     }
     return { cells };
@@ -775,8 +847,14 @@ export function buildCreationView(
   const byForEachKey = new Map(sections.filter((s) => s.forEach).map((s) => [s.forEach!, s]));
   const ownSections = sections.filter((s) => !s.attach && !s.forEach);
 
-  const currency = displayHints?.currencyField ? toolArgs[displayHints.currencyField] : undefined;
-  const currencyStr = typeof currency === 'string' ? currency : undefined;
+  // `resolveCurrency`'s dotted-path form reads a NON-forEach attach's own
+  // raw body — resolved lazily (only when `currencyField` actually points
+  // into one) from the same sections this view already has.
+  const attachedBody = (topKey: string): Record<string, unknown> | undefined => {
+    const result = byAttachKey.get(topKey)?.result;
+    return result && result.status === 'ok' ? resolveBodyObject(result.body)?.obj : undefined;
+  };
+  const currencyStr = resolveCurrency(displayHints, toolArgs, attachedBody);
 
   const order = displayHints?.order ?? [];
   const allKeys = [...new Set([...order, ...Object.keys(toolArgs)])];
@@ -785,7 +863,7 @@ export function buildCreationView(
   for (const key of allKeys) {
     if (!(key in toolArgs)) continue;
     if (isHidden(displayHints, key)) continue;
-    const label = humanizeKey(key);
+    const label = resolveLabel(displayHints, key, humanizeKey(key));
 
     const forEachSection = byForEachKey.get(key);
     if (forEachSection) {
@@ -796,21 +874,12 @@ export function buildCreationView(
 
     const attachSection = byAttachKey.get(key);
     if (attachSection) {
-      rows.push({ kind: 'identity', key, label, identity: resolveAttachedIdentity(attachSection.result, toolArgs[key]) });
+      const identity = resolveAttachedIdentity(attachSection.result, toolArgs[key], { pathPrefix: key, displayHints, currency: currencyStr });
+      rows.push({ kind: 'identity', key, label, identity });
       continue;
     }
 
-    if (pathMatches(displayHints?.money, key)) {
-      const { value, valueTitle } = formatMoney(toolArgs[key], currencyStr);
-      rows.push({ kind: 'scalar', key, label, value, valueTitle });
-      continue;
-    }
-    if (pathMatches(displayHints?.percent, key)) {
-      const { value, valueTitle } = formatPercent(toolArgs[key]);
-      rows.push({ kind: 'scalar', key, label, value, valueTitle });
-      continue;
-    }
-    const { value, valueTitle } = cellFor(toolArgs[key]);
+    const { value, valueTitle } = formatHinted(toolArgs[key], displayHints, key, currencyStr);
     rows.push({ kind: 'scalar', key, label, value, valueTitle });
   }
 

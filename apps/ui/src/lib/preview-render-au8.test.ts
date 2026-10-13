@@ -75,8 +75,8 @@ describe('buildForEachTable', () => {
     expect(stockCell).toMatchObject({ value: '40', sealed: false });
   });
 
-  it('applies a money display hint to the attached field (lines[].list_price)', () => {
-    const table = buildForEachTable(section, [{ item_id: 'item-1', qty: 10 }], { money: ['lines[].list_price'], currencyField: 'currency' }, 'EUR');
+  it('applies a money display hint to the attached field (lines[].item.list_price — the attach-key segment disambiguates it from a bound element field)', () => {
+    const table = buildForEachTable(section, [{ item_id: 'item-1', qty: 10 }], { money: ['lines[].item.list_price'], currencyField: 'currency' }, 'EUR');
     const priceCell = table.rows[0].cells[2];
     expect(priceCell.value).toBe('38.50 EUR');
   });
@@ -229,5 +229,76 @@ describe('buildCreationView — the combined "What will be created" view', () =>
     const view = buildCreationView({ a: 1, b: 'x' }, [], undefined);
     expect(view.rows.map((r) => r.key)).toEqual(['a', 'b']);
     expect(view.rows.every((r) => r.kind === 'scalar')).toBe(true);
+  });
+});
+
+describe('display.labels — the manifest is the one place for display (2026-10-13 follow-up)', () => {
+  const sections: PreviewReadSection[] = [
+    { tool: 'get_customer', attach: 'customer_id', sourceArg: 'customer_id', result: textOk({ id: 'cust-1', name: 'Steiner Landtechnik GmbH', credit_limit: 10000, open_balance: 1200 }) },
+    { tool: 'get_item', forEach: 'lines', attach: 'item', sourceArg: 'item_id', elements: [textOk({ id: 'item-1', name: 'Keilriemen SPB 2000', list_price: 38.5 })] },
+  ];
+  const toolArgs = { customer_id: 'cust-1', lines: [{ item_id: 'item-1', qty: 10 }], discount_pct: 0, value: 385, currency: 'EUR' };
+  const displayHints = {
+    order: ['customer_id', 'lines', 'discount_pct', 'value'],
+    money: ['value', 'customer_id.credit_limit', 'customer_id.open_balance', 'lines[].item.list_price'],
+    percent: ['discount_pct'],
+    currencyField: 'currency',
+    labels: {
+      customer_id: 'Customer', discount_pct: 'Discount', value: 'Total (net)',
+      'customer_id.credit_limit': 'Credit limit', 'customer_id.open_balance': 'Open balance',
+      'lines[].item': 'Item', 'lines[].item.list_price': 'List price',
+    },
+  };
+
+  it('a manifest label overrides the humanized key for a top-level bound field', () => {
+    const view = buildCreationView(toolArgs, sections, displayHints);
+    expect(view.rows.find((r) => r.key === 'customer_id')?.label).toBe('Customer');
+    expect(view.rows.find((r) => r.key === 'discount_pct')?.label).toBe('Discount');
+    expect(view.rows.find((r) => r.key === 'value')?.label).toBe('Total (net)');
+  });
+
+  it('a manifest label overrides the identity row\'s context field label AND formats it as money', () => {
+    const view = buildCreationView(toolArgs, sections, displayHints);
+    const row = view.rows.find((r) => r.key === 'customer_id');
+    expect(row?.kind).toBe('identity');
+    if (row?.kind !== 'identity') throw new Error('not identity');
+    const credit = row.identity.context.find((c) => c.key === 'credit_limit');
+    expect(credit?.label).toBe('Credit limit');
+    expect(credit?.value).toBe('10,000.00 EUR');
+    const balance = row.identity.context.find((c) => c.key === 'open_balance');
+    expect(balance?.label).toBe('Open balance');
+    expect(balance?.value).toBe('1,200.00 EUR');
+  });
+
+  it('a manifest label overrides the forEach attach identity column AND an attached field column', () => {
+    const view = buildCreationView(toolArgs, sections, displayHints);
+    const row = view.rows.find((r) => r.key === 'lines');
+    expect(row?.kind).toBe('table');
+    if (row?.kind !== 'table') throw new Error('not table');
+    expect(row.table.columns.map((c) => c.label)).toContain('Item');
+    expect(row.table.columns.map((c) => c.label)).toContain('List price');
+    const priceCol = row.table.columns.findIndex((c) => c.label === 'List price');
+    expect(row.table.rows[0].cells[priceCol].value).toBe('38.50 EUR');
+  });
+
+  it('without a manifest label, the existing schema-title-or-humanized fallback still applies', () => {
+    const view = buildCreationView(toolArgs, sections, { ...displayHints, labels: {} });
+    expect(view.rows.find((r) => r.key === 'customer_id')?.label).toBe('Customer id'); // humanized
+  });
+
+  it('a dotted currencyField resolves into a NON-forEach attach\'s own field', () => {
+    const custSections: PreviewReadSection[] = [
+      { tool: 'get_customer', attach: 'customer_id', result: textOk({ id: 'cust-1', name: 'X', credit_limit: 500 }) },
+    ];
+    const view = buildCreationView(
+      { customer_id: 'cust-1' },
+      custSections,
+      { money: ['customer_id.credit_limit'], currencyField: 'customer_id.currency' },
+    );
+    // The attached body here has no `currency` field at all — money still
+    // renders, just with no currency suffix, never a guess.
+    const row = view.rows.find((r) => r.key === 'customer_id');
+    if (row?.kind !== 'identity') throw new Error('not identity');
+    expect(row.identity.context.find((c) => c.key === 'credit_limit')?.value).toBe('500.00');
   });
 });

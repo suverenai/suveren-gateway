@@ -164,6 +164,34 @@ describe('invalidDisplayHintsReason', () => {
   it('rejects a non-string currencyField', () => {
     expect(invalidDisplayHintsReason('x', { display: { currencyField: 5 } })).toMatch(/display\.currencyField/);
   });
+
+  // ─── 2026-10-13 follow-up — display.labels ────────────────────────────
+
+  it('a well-formed labels map is fine, incl. every path grammar shape', () => {
+    expect(
+      invalidDisplayHintsReason('x', {
+        display: {
+          labels: {
+            customer_id: 'Customer',
+            'customer_id.credit_limit': 'Credit limit',
+            'lines[].qty': 'Quantity',
+            'lines[].item': 'Item',
+            'lines[].item.list_price': 'List price',
+          },
+        },
+      }),
+    ).toBeNull();
+  });
+
+  it('rejects a non-object labels', () => {
+    expect(invalidDisplayHintsReason('x', { display: { labels: 'oops' } })).toMatch(/display\.labels must be an object/);
+    expect(invalidDisplayHintsReason('x', { display: { labels: ['oops'] } })).toMatch(/display\.labels must be an object/);
+  });
+
+  it('rejects a non-string or empty label value', () => {
+    expect(invalidDisplayHintsReason('x', { display: { labels: { customer_id: 5 } } })).toMatch(/display\.labels\.customer_id/);
+    expect(invalidDisplayHintsReason('x', { display: { labels: { customer_id: '' } } })).toMatch(/display\.labels\.customer_id/);
+  });
 });
 
 describe('invalidManifestPreviewReason', () => {

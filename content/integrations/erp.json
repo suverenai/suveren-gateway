@@ -102,9 +102,21 @@
         ],
         "display": {
           "order": ["customer_id", "lines", "discount_pct", "value", "valid_until", "notes"],
-          "money": ["value", "lines[].list_price"],
+          "money": ["value", "customer_id.credit_limit", "customer_id.open_balance", "customer_id.available_credit", "lines[].item.list_price"],
           "percent": ["discount_pct"],
-          "currencyField": "currency"
+          "currencyField": "currency",
+          "labels": {
+            "customer_id": "Customer",
+            "discount_pct": "Discount",
+            "value": "Total (net)",
+            "customer_id.credit_limit": "Credit limit",
+            "customer_id.open_balance": "Open balance",
+            "customer_id.available_credit": "Available credit",
+            "customer_id.payment_terms": "Payment terms",
+            "lines[].item": "Item",
+            "lines[].item.list_price": "List price",
+            "lines[].item.stock": "In stock"
+          }
         }
       },
       "update_quote": {
@@ -122,9 +134,16 @@
         ],
         "display": {
           "order": ["lines", "discount_pct", "value", "valid_until", "notes"],
-          "money": ["value", "lines[].list_price"],
+          "money": ["value", "lines[].item.list_price"],
           "percent": ["discount_pct"],
-          "currencyField": "currency"
+          "currencyField": "currency",
+          "labels": {
+            "discount_pct": "Discount",
+            "value": "Total (net)",
+            "lines[].item": "Item",
+            "lines[].item.list_price": "List price",
+            "lines[].item.stock": "In stock"
+          }
         }
       },
       "send_quote": {

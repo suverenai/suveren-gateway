@@ -3910,6 +3910,14 @@ body.is-updating .simulation-banner {
 .preview-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; margin: 0.3rem 0; }
 .preview-table th { text-align: left; font-size: 0.68rem; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-tertiary); font-weight: 600; border-bottom: 1px solid var(--border); padding: 0.3rem 0.45rem; }
 .preview-table td { padding: 0.35rem 0.45rem; border-bottom: 1px solid var(--accent-subtle); vertical-align: top; }
+
+/* AU8 follow-up (2026-10-13) — the "What will be created" box's own legend
+ * (mockup temp/mockups/approval-card-au8-v1.html's .legend2), spelling out
+ * the sealed/system colour convention on the card itself. */
+.creation-legend { display: flex; gap: 1.1rem; flex-wrap: wrap; font-size: 0.72rem; color: var(--text-tertiary); margin: 0.6rem 0 0; }
+.creation-legend-dot { display: inline-block; width: 0.5rem; height: 0.5rem; border-radius: 0.12rem; margin-right: 0.3rem; vertical-align: 1px; }
+.creation-legend-dot-sealed { background: var(--text-primary); }
+.creation-legend-dot-system { background: var(--info); }
 .intent-text { font-style: italic; color: var(--text-secondary); margin: 0; }
 .intent-text.intent-clamped { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .intent-toggle { margin-top: 0.3rem; }

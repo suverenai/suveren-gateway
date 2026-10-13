@@ -145,15 +145,42 @@ export interface ToolDisplayHints {
    *  `["customer_id", "lines", "discount_pct", "value"]`. Fields not listed
    *  are appended afterward, in their own declared order. */
   order?: string[];
-  /** Paths rendered as money (two decimals, with the `currencyField`'s
-   *  value, e.g. "385.00 EUR"). */
+  /**
+   * Paths rendered as money (two decimals, with the resolved `currencyField`
+   * value, e.g. "385.00 EUR"). Accepts an attached read's own field too
+   * (`"customer_id.credit_limit"`, `"lines[].item.list_price"`) — see
+   * `labels`' doc comment for the full path grammar.
+   */
   money?: string[];
-  /** The bound action-arg name holding the currency code for `money` paths. */
+  /**
+   * The currency for every `money` path in this block — either a plain
+   * bound action-arg name (`"currency"`) or a dotted path into a NON-
+   * forEach attach's own field (`"customer_id.currency"`).
+   */
   currencyField?: string;
-  /** Paths rendered as a percentage, e.g. "0 %". */
+  /** Paths rendered as a percentage, e.g. "0 %". Same path grammar as `money`. */
   percent?: string[];
-  /** Paths never shown. */
+  /** Paths never shown. Same path grammar as `money`. */
   hidden?: string[];
+  /**
+   * AU8 follow-up (2026-10-13) — the manifest is the one place for display,
+   * for Suveren's own AND third-party connectors: a field path -> its
+   * readable label. A connector's own JSON Schema `title` (the read's
+   * `outputSchema`, when declared) is only a fallback when the manifest
+   * says nothing here; a humanized key is the last fallback.
+   *
+   * Path grammar (shared by `labels`/`money`/`percent`/`hidden`):
+   *   - `"<key>"`                 a top-level bound field, e.g. `"customer_id"`
+   *   - `"<key>.<subKey>"`        a field of a NON-forEach attach's own read,
+   *                               e.g. `"customer_id.credit_limit"`
+   *   - `"<key>[].<elementField>"` a `forEach` field's own bound element
+   *                               field, e.g. `"lines[].qty"`
+   *   - `"<key>[].<attach>"`      a `forEach`'s attach IDENTITY column
+   *                               itself (labels only), e.g. `"lines[].item"`
+   *   - `"<key>[].<attach>.<sub>"` a field of a `forEach` attach's own read,
+   *                               e.g. `"lines[].item.list_price"`
+   */
+  labels?: Record<string, string>;
 }
 
 /**

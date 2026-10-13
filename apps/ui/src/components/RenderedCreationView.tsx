@@ -75,6 +75,10 @@ export function RenderedCreationView({ view }: { view: CreationView }) {
           {section.note && <p className="preview-note">{section.note}</p>}
         </div>
       ))}
+      <p className="creation-legend">
+        <span><i className="creation-legend-dot creation-legend-dot-sealed" />bold black = sealed: approved and executed exactly so</span>
+        <span><i className="creation-legend-dot creation-legend-dot-system" />blue = from the system: read by the gateway, not by the AI</span>
+      </p>
     </>
   );
 }

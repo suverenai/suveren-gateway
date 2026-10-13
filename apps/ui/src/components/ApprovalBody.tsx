@@ -231,7 +231,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
           Cannot read this proposal yet: {cannotRead.join(', ')} — shared automatically once they sign in on a device.
         </p>
       )}
-      {readable && <PreviewBox proposalId={proposal.id} systemName={systemName} toolArgs={content.toolArgs} onTone={setPreviewTone} />}
+      {readable && <PreviewBox proposalId={proposal.id} systemName={systemName} toolArgs={content.toolArgs} sealed={content.sealed} onTone={setPreviewTone} />}
 
       {/* Within your limits — per-call bound checks only (lib/receipt-summary.ts
           limitChecks); cumulative bounds are deliberately not shown here (no

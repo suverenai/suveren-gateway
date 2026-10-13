@@ -207,6 +207,17 @@ export interface ToolDisplayHints {
   currencyField?: string;
   percent?: string[];
   hidden?: string[];
+  /**
+   * Field path -> label — the manifest is the one place for display, for
+   * Suveren's own AND third-party connectors; a connector's own JSON Schema
+   * `title` is only a fallback when this says nothing, a humanized key the
+   * last fallback. Path grammar: `"<key>"` (top-level bound field),
+   * `"<key>.<subKey>"` (a NON-forEach attach's own field),
+   * `"<key>[].<elementField>"` (a forEach field's own bound element field),
+   * `"<key>[].<attach>"` (a forEach's attach identity column itself),
+   * `"<key>[].<attach>.<sub>"` (a forEach attach's own field).
+   */
+  labels?: Record<string, string>;
 }
 
 /** One declared read's outcome within a multi-read preview. */

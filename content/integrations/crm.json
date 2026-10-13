@@ -57,7 +57,14 @@
         "actionLabel": "Contact created",
         "preview": [
           { "tool": "find_contacts", "args": { "query": "email" } }
-        ]
+        ],
+        "display": {
+          "order": ["name", "email", "company", "role", "type", "stage", "tags", "notes"],
+          "labels": {
+            "name": "Name", "email": "Email", "company": "Company", "role": "Role",
+            "type": "Type", "stage": "Stage", "tags": "Tags", "notes": "Notes"
+          }
+        }
       },
       "update_contact": {
         "executionMapping": {

@@ -36,6 +36,9 @@ export interface ToolDisplayHints {
   currencyField?: string;
   percent?: string[];
   hidden?: string[];
+  /** Field path -> label. See apps/mcp-server/src/lib/tool-gating-types.ts
+   *  `ToolDisplayHints.labels` for the full path grammar. */
+  labels?: Record<string, string>;
 }
 
 /** AU8 — one declared read's outcome within a multi-read preview. */

@@ -22,12 +22,17 @@ interface Props {
    *  reads ("What will be created") preview; absent/undecrypted is fine
    *  (that preview then renders with nothing to merge, same as no reads). */
   toolArgs?: Record<string, unknown> | null;
+  /** AU8 follow-up — PE1's own `content.sealed`, so the "What will be
+   *  created" box can show the same sealed + "end-to-end encrypted" marker
+   *  the "What will be sent" box shows (ApprovalBody.tsx), instead of
+   *  inventing a second convention for it. */
+  sealed?: boolean;
   /** Told the box's state once known (ok | stale | none | unavailable | not_found)
    *  so the card can decide whether the bound values are shown open. */
   onTone?: (tone: string) => void;
 }
 
-export function PreviewBox({ proposalId, systemName, toolArgs, onTone }: Props) {
+export function PreviewBox({ proposalId, systemName, toolArgs, sealed, onTone }: Props) {
   const [resp, setResp] = useState<PreviewResponse | null>(null);
   const [failed, setFailed] = useState(false);
 
@@ -85,7 +90,14 @@ export function PreviewBox({ proposalId, systemName, toolArgs, onTone }: Props) 
 
   return (
     <div className={`preview-box preview-box-${tone}`} data-testid="approval-preview" data-preview-status={tone}>
-      <h4>{view.heading}</h4>
+      <h4>
+        {view.heading}
+        {view.creation && (
+          sealed
+            ? <><span className="src-tag src-tag-sealed">sealed</span> <span className="lock-tag">end-to-end encrypted</span></>
+            : <span className="src-tag src-tag-sealed">sealed</span>
+        )}
+      </h4>
       {view.creation && <RenderedCreationView view={view.creation} />}
       {view.rendered && <RenderedBody rendered={view.rendered} />}
       <p className="preview-note">{view.note}</p>
