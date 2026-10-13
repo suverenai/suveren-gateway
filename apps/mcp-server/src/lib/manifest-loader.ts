@@ -14,7 +14,7 @@
 
 import { readFileSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import type { ProfileToolGating, ToolPreviewConfig } from './tool-gating-types';
+import { MAX_PREVIEW_READS, type ProfileToolGating, type ToolPreviewConfig } from './tool-gating-types';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -167,51 +167,123 @@ export function invalidNpmPinReason(
 // ─── AU3 preview shape validation ──────────────────────────────────────────
 
 /**
+ * Checks ONE read config — the legacy object shape (`idx === null`, label
+ * "preview") or one element of an AU8 list (`idx` is its index, label
+ * "preview[idx]"). `forEach`/`attach` are AU8-only but shape-checked the
+ * same way regardless — an object preview with a stray `forEach` is just as
+ * malformed as a list entry missing `tool`.
+ */
+function invalidReadConfigReason(toolName: string, idx: number | null, entry: unknown): string | null {
+  const label = idx === null ? `override "${toolName}".preview` : `override "${toolName}".preview[${idx}]`;
+  if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) {
+    return `${label} must be an object`;
+  }
+  const p = entry as Record<string, unknown>;
+  if (typeof p.tool !== 'string' || p.tool.length === 0) {
+    return `${label}.tool must be a non-empty string`;
+  }
+  if (p.args === undefined || p.args === null || typeof p.args !== 'object' || Array.isArray(p.args)) {
+    return `${label}.args must be an object mapping preview-tool arg names to action arg names`;
+  }
+  for (const [argName, source] of Object.entries(p.args as Record<string, unknown>)) {
+    if (typeof source !== 'string' || source.length === 0) {
+      return `${label}.args.${argName} must name a non-empty source argument (string)`;
+    }
+  }
+  if (p.forEach !== undefined && (typeof p.forEach !== 'string' || p.forEach.length === 0)) {
+    return `${label}.forEach must be a non-empty string naming an action argument`;
+  }
+  if (p.attach !== undefined && (typeof p.attach !== 'string' || p.attach.length === 0)) {
+    return `${label}.attach must be a non-empty string`;
+  }
+  if (p.version !== undefined) {
+    if (p.version === null || typeof p.version !== 'object' || Array.isArray(p.version)) {
+      return `${label}.version must be an object`;
+    }
+    const v = p.version as Record<string, unknown>;
+    if (typeof v.arg !== 'string' || v.arg.length === 0) {
+      return `${label}.version.arg must be a non-empty string`;
+    }
+    if (typeof v.field !== 'string' || v.field.length === 0) {
+      return `${label}.version.field must be a non-empty string`;
+    }
+  }
+  if (p.fields !== undefined) {
+    if (!Array.isArray(p.fields)) {
+      return `${label}.fields must be an array of field names`;
+    }
+    for (const [i, f] of p.fields.entries()) {
+      if (typeof f !== 'string' || f.length === 0) {
+        return `${label}.fields[${i}] must be a non-empty string`;
+      }
+    }
+  }
+  return null;
+}
+
+/**
  * Returns a human-readable refusal reason if `entry.preview` (an override's
- * optional AU3 declaration — see tool-gating-types.ts) is malformed, or null
- * if it's absent or well-formed. Shape-only: whether `preview.tool` actually
- * exists on the integration is a RUNTIME question (the connector may not be
- * started yet when manifests load), checked at call time by the
- * `/internal/preview` route instead — see preview.ts's `readPreview`.
+ * optional AU3/AU8 declaration — see tool-gating-types.ts) is malformed, or
+ * null if it's absent or well-formed. Shape-only: whether a declared
+ * `preview[].tool` actually exists on the integration is a RUNTIME question
+ * (the connector may not be started yet when manifests load), checked at
+ * call time by the `/internal/preview` route instead — see preview.ts's
+ * `readPreview`.
  */
 export function invalidPreviewReason(toolName: string, entry: unknown): string | null {
   if (entry === null || typeof entry !== 'object') return null; // read-tool shorthand, nothing to check
   const preview = (entry as { preview?: unknown }).preview;
   if (preview === undefined) return null;
-  if (preview === null || typeof preview !== 'object' || Array.isArray(preview)) {
-    return `override "${toolName}".preview must be an object`;
+  if (Array.isArray(preview)) {
+    if (preview.length === 0) {
+      return `override "${toolName}".preview must not be an empty list — omit it, or use the single-object form`;
+    }
+    if (preview.length > MAX_PREVIEW_READS) {
+      return `override "${toolName}".preview declares ${preview.length} reads — max ${MAX_PREVIEW_READS}`;
+    }
+    for (const [i, read] of preview.entries()) {
+      const reason = invalidReadConfigReason(toolName, i, read);
+      if (reason) return reason;
+    }
+    return null;
   }
-  const p = preview as Record<string, unknown>;
-  if (typeof p.tool !== 'string' || p.tool.length === 0) {
-    return `override "${toolName}".preview.tool must be a non-empty string`;
+  return invalidReadConfigReason(toolName, null, preview);
+}
+
+/**
+ * AU8 — checks an override's optional `display` (rendering hints, a sibling
+ * of `preview`). Shape-only, same spirit as `invalidPreviewReason`: every
+ * field is an optional string or string array.
+ */
+export function invalidDisplayHintsReason(toolName: string, entry: unknown): string | null {
+  if (entry === null || typeof entry !== 'object') return null;
+  const display = (entry as { display?: unknown }).display;
+  if (display === undefined) return null;
+  if (display === null || typeof display !== 'object' || Array.isArray(display)) {
+    return `override "${toolName}".display must be an object`;
   }
-  if (p.args === undefined || p.args === null || typeof p.args !== 'object' || Array.isArray(p.args)) {
-    return `override "${toolName}".preview.args must be an object mapping preview-tool arg names to action arg names`;
-  }
-  for (const [argName, source] of Object.entries(p.args as Record<string, unknown>)) {
-    if (typeof source !== 'string' || source.length === 0) {
-      return `override "${toolName}".preview.args.${argName} must name a non-empty source argument (string)`;
+  const d = display as Record<string, unknown>;
+  for (const key of ['order', 'money', 'percent', 'hidden'] as const) {
+    if (d[key] === undefined) continue;
+    if (!Array.isArray(d[key])) {
+      return `override "${toolName}".display.${key} must be an array of field paths`;
+    }
+    for (const [i, v] of (d[key] as unknown[]).entries()) {
+      if (typeof v !== 'string' || v.length === 0) {
+        return `override "${toolName}".display.${key}[${i}] must be a non-empty string`;
+      }
     }
   }
-  if (p.version !== undefined) {
-    if (p.version === null || typeof p.version !== 'object' || Array.isArray(p.version)) {
-      return `override "${toolName}".preview.version must be an object`;
-    }
-    const v = p.version as Record<string, unknown>;
-    if (typeof v.arg !== 'string' || v.arg.length === 0) {
-      return `override "${toolName}".preview.version.arg must be a non-empty string`;
-    }
-    if (typeof v.field !== 'string' || v.field.length === 0) {
-      return `override "${toolName}".preview.version.field must be a non-empty string`;
-    }
+  if (d.currencyField !== undefined && (typeof d.currencyField !== 'string' || d.currencyField.length === 0)) {
+    return `override "${toolName}".display.currencyField must be a non-empty string`;
   }
-  if (p.fields !== undefined) {
-    if (!Array.isArray(p.fields)) {
-      return `override "${toolName}".preview.fields must be an array of field names`;
+  if (d.labels !== undefined) {
+    if (d.labels === null || typeof d.labels !== 'object' || Array.isArray(d.labels)) {
+      return `override "${toolName}".display.labels must be an object mapping field paths to labels`;
     }
-    for (const [i, f] of p.fields.entries()) {
-      if (typeof f !== 'string' || f.length === 0) {
-        return `override "${toolName}".preview.fields[${i}] must be a non-empty string`;
+    for (const [path, label] of Object.entries(d.labels as Record<string, unknown>)) {
+      if (typeof label !== 'string' || label.length === 0) {
+        return `override "${toolName}".display.labels.${path} must be a non-empty string`;
       }
     }
   }
@@ -230,7 +302,7 @@ export type ValidatedPreviewConfig = ToolPreviewConfig;
 export function invalidManifestPreviewReason(manifest: Pick<IntegrationManifest, 'toolGating'>): string | null {
   const overrides = manifest.toolGating?.overrides ?? {};
   for (const [toolName, entry] of Object.entries(overrides)) {
-    const reason = invalidPreviewReason(toolName, entry);
+    const reason = invalidPreviewReason(toolName, entry) ?? invalidDisplayHintsReason(toolName, entry);
     if (reason) return reason;
   }
   return null;

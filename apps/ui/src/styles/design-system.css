@@ -60,6 +60,10 @@
   --success: #16a34a;
   --success-subtle: #f0fdf4;
   --warning: #d97706;
+  /* AU8 — "from the system" (read by the gateway, not by the AI), vs. the
+   * existing --success used for "sealed" (bound — approved and executed
+   * exactly so). See RenderedCreationView.tsx. */
+  --info: #1d4ed8;
   /* Primary button = inverse of page background */
   --btn-primary-bg: #111111;
   --btn-primary-fg: #ffffff;
@@ -98,6 +102,7 @@
   --edit-border: #4a4a4a;
   --danger-subtle: #2a0a0a;
   --success-subtle: #0a2a0a;
+  --info: #60a5fa;
   --btn-primary-bg: #ffffff;
   --btn-primary-fg: #000000;
   --btn-primary-bg-hover: #e5e5e5;
@@ -3887,6 +3892,32 @@ body.is-updating .simulation-banner {
 .src-tag { font-size: 0.65rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; border-radius: 0.25rem; padding: 0.05rem 0.3rem; margin-left: 0.35rem; }
 .src-tag-local { color: var(--text-muted); border: 1px solid var(--border); }
 .src-tag-sealed { color: var(--success); border: 1px solid var(--success); }
+/* AU8 — "from the system" badge (temp/briefs/au8-brief.md), the blue
+ * counterpart to the existing green "sealed" badge above. */
+.src-tag-system { color: var(--info); border: 1px solid var(--info); }
+
+/* AU8 — inline VALUE colouring (not a small badge): bold black = sealed
+ * (bound — approved and executed exactly so); blue = from the system (read
+ * by the gateway, not by the AI). A system value never replaces a bound
+ * one — see RenderedCreationView.tsx. */
+.src-tag-value.src-tag-sealed-cell { font-weight: 600; color: var(--text-primary); }
+.src-tag-value.src-tag-system-cell { color: var(--info); }
+.id-raw { font: 0.78rem ui-monospace, Menlo, monospace; color: var(--text-muted); }
+.creation-context { color: var(--text-tertiary); font-size: 0.82rem; }
+.creation-own-section { margin-top: 0.75rem; padding-top: 0.6rem; border-top: 1px solid var(--border); }
+.creation-own-section h5 { font-size: 0.8rem; font-weight: 600; margin-bottom: 0.3rem; }
+
+.preview-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; margin: 0.3rem 0; }
+.preview-table th { text-align: left; font-size: 0.68rem; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-tertiary); font-weight: 600; border-bottom: 1px solid var(--border); padding: 0.3rem 0.45rem; }
+.preview-table td { padding: 0.35rem 0.45rem; border-bottom: 1px solid var(--accent-subtle); vertical-align: top; }
+
+/* AU8 follow-up (2026-10-13) — the "What will be created" box's own legend
+ * (mockup temp/mockups/approval-card-au8-v1.html's .legend2), spelling out
+ * the sealed/system colour convention on the card itself. */
+.creation-legend { display: flex; gap: 1.1rem; flex-wrap: wrap; font-size: 0.72rem; color: var(--text-tertiary); margin: 0.6rem 0 0; }
+.creation-legend-dot { display: inline-block; width: 0.5rem; height: 0.5rem; border-radius: 0.12rem; margin-right: 0.3rem; vertical-align: 1px; }
+.creation-legend-dot-sealed { background: var(--text-primary); }
+.creation-legend-dot-system { background: var(--info); }
 .intent-text { font-style: italic; color: var(--text-secondary); margin: 0; }
 .intent-text.intent-clamped { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .intent-toggle { margin-top: 0.3rem; }

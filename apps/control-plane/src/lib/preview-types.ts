@@ -20,6 +20,41 @@ export interface PreviewVersionInfo {
   currentBody?: PreviewBody;
 }
 
+/** AU8 — a read's outcome where "nothing to read" (no_target) is itself a
+ *  valid, non-error outcome (see apps/mcp-server/src/lib/preview.ts). */
+export type PreviewReadOutcome =
+  | { status: 'ok'; body: PreviewBody }
+  | { status: 'unavailable'; reason: 'no_connector' | 'connector_error' | 'timeout'; message?: string }
+  | { status: 'not_found'; message?: string }
+  | { status: 'none'; reason: 'no_target' };
+
+/** AU8 — optional per-tool rendering hints (manifest `display`) — see
+ *  tool-gating-types.ts `ToolDisplayHints` in apps/mcp-server. */
+export interface ToolDisplayHints {
+  order?: string[];
+  money?: string[];
+  currencyField?: string;
+  percent?: string[];
+  hidden?: string[];
+  /** Field path -> label. See apps/mcp-server/src/lib/tool-gating-types.ts
+   *  `ToolDisplayHints.labels` for the full path grammar. */
+  labels?: Record<string, string>;
+}
+
+/** AU8 — one declared read's outcome within a multi-read preview. */
+export interface PreviewReadSection {
+  tool: string;
+  attach?: string;
+  forEach?: string;
+  /** Rendering aid — see apps/mcp-server/src/lib/preview.ts's doc comment. */
+  sourceArg?: string;
+  fields?: string[];
+  result?: PreviewReadOutcome;
+  elements?: PreviewReadOutcome[];
+  overflow?: { shown: number; total: number };
+  version?: PreviewVersionInfo;
+}
+
 /**
  * What the MCP server's POST /internal/preview answers — identical to
  * {@link PreviewResponse}'s 'ok' branch minus `readAt`, which the control
@@ -39,7 +74,10 @@ export type InternalPreviewResult =
       version?: PreviewVersionInfo;
       /** Manifest-declared `preview.fields` — see tool-gating-types.ts in apps/mcp-server. */
       fields?: string[];
-    };
+    }
+  /** AU8 — several reads (manifest `preview` is a list). Distinguished from
+   *  the single-read "ok" above by `reads` (never both on the same object). */
+  | { status: 'ok'; integration: string; reads: PreviewReadSection[]; display?: ToolDisplayHints };
 
 /** GET /proposal-status/:id/preview's response (always 200 unless auth/proposal fetch fails). */
 export type PreviewResponse =
@@ -54,7 +92,8 @@ export type PreviewResponse =
       body: PreviewBody;
       version?: PreviewVersionInfo;
       fields?: string[];
-    };
+    }
+  | { status: 'ok'; integration: string; readAt: number; reads: PreviewReadSection[]; display?: ToolDisplayHints };
 
 /** GET /proposal-status/:id/outcome's response. */
 export interface ProposalOutcome {

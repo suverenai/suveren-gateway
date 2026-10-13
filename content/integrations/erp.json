@@ -95,7 +95,29 @@
         "staticExecution": {
           "action_type": "quote"
         },
-        "actionLabel": "Quote drafted"
+        "actionLabel": "Quote drafted",
+        "preview": [
+          { "tool": "get_customer", "args": { "id": "customer_id" }, "attach": "customer_id" },
+          { "tool": "get_item", "forEach": "lines", "args": { "id": "item_id" }, "attach": "item" }
+        ],
+        "display": {
+          "order": ["customer_id", "lines", "discount_pct", "value", "valid_until", "notes"],
+          "money": ["value", "customer_id.credit_limit", "customer_id.open_balance", "customer_id.available_credit", "lines[].item.list_price"],
+          "percent": ["discount_pct"],
+          "currencyField": "currency",
+          "labels": {
+            "customer_id": "Customer",
+            "discount_pct": "Discount",
+            "value": "Total (net)",
+            "customer_id.credit_limit": "Credit limit",
+            "customer_id.open_balance": "Open balance",
+            "customer_id.available_credit": "Available credit",
+            "customer_id.payment_terms": "Payment terms",
+            "lines[].item": "Item",
+            "lines[].item.list_price": "List price",
+            "lines[].item.stock": "In stock"
+          }
+        }
       },
       "update_quote": {
         "executionMapping": {
@@ -106,7 +128,23 @@
         "staticExecution": {
           "action_type": "quote"
         },
-        "actionLabel": "Quote updated"
+        "actionLabel": "Quote updated",
+        "preview": [
+          { "tool": "get_item", "forEach": "lines", "args": { "id": "item_id" }, "attach": "item" }
+        ],
+        "display": {
+          "order": ["lines", "discount_pct", "value", "valid_until", "notes"],
+          "money": ["value", "lines[].item.list_price"],
+          "percent": ["discount_pct"],
+          "currencyField": "currency",
+          "labels": {
+            "discount_pct": "Discount",
+            "value": "Total (net)",
+            "lines[].item": "Item",
+            "lines[].item.list_price": "List price",
+            "lines[].item.stock": "In stock"
+          }
+        }
       },
       "send_quote": {
         "executionMapping": {

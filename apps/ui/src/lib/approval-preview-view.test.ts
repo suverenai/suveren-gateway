@@ -194,6 +194,30 @@ describe('outcomeBoxView', () => {
   });
 });
 
+describe('previewBoxView — AU8 several reads ("reads" in the response)', () => {
+  const readsResp: PreviewResponse = {
+    status: 'ok', integration: 'erp', readAt: new Date('2026-10-13T10:42:00').getTime(),
+    reads: [{ tool: 'get_customer', attach: 'customer_id', result: { status: 'ok', body: { text: '{"id":"cust-1","name":"X"}' } } }],
+  };
+
+  it('a different heading than the single-read box, and builds a `creation` view instead of `rendered`', () => {
+    const v = previewBoxView(readsResp, 'ERP', { customer_id: 'cust-1' });
+    expect(v.heading).toBe('What will be created in ERP');
+    expect(v.creation).toBeDefined();
+    expect(v.rendered).toBeUndefined();
+  });
+
+  it('the note says when the context was read, not which single tool (there may be several)', () => {
+    const v = previewBoxView(readsResp, 'ERP', {});
+    expect(v.note).toMatch(/read at \d{1,2}:\d{2}/i);
+    expect(v.note).toContain('not by the AI');
+  });
+
+  it('works with no toolArgs at all (defensive — the creation view just has nothing to merge)', () => {
+    expect(() => previewBoxView(readsResp, 'ERP')).not.toThrow();
+  });
+});
+
 describe('boundValuesOpen — the bound values are the content when nothing else shows it', () => {
   it('open when no preview is declared, unavailable or not found', async () => {
     const { boundValuesOpen } = await import('./approval-preview-view');

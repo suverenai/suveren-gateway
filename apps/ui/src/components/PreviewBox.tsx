@@ -13,16 +13,26 @@ import { useEffect, useState } from 'react';
 import { spClient, type PreviewResponse } from '../lib/sp-client';
 import { previewBoxView } from '../lib/approval-preview-view';
 import { RenderedPreviewView as RenderedBody } from './RenderedPreviewView';
+import { RenderedCreationView } from './RenderedCreationView';
 
 interface Props {
   proposalId: string;
   systemName: string;
+  /** AU8 — the proposal's own bound args, needed ONLY to render a several-
+   *  reads ("What will be created") preview; absent/undecrypted is fine
+   *  (that preview then renders with nothing to merge, same as no reads). */
+  toolArgs?: Record<string, unknown> | null;
+  /** AU8 follow-up — PE1's own `content.sealed`, so the "What will be
+   *  created" box can show the same sealed + "end-to-end encrypted" marker
+   *  the "What will be sent" box shows (ApprovalBody.tsx), instead of
+   *  inventing a second convention for it. */
+  sealed?: boolean;
   /** Told the box's state once known (ok | stale | none | unavailable | not_found)
    *  so the card can decide whether the bound values are shown open. */
   onTone?: (tone: string) => void;
 }
 
-export function PreviewBox({ proposalId, systemName, onTone }: Props) {
+export function PreviewBox({ proposalId, systemName, toolArgs, sealed, onTone }: Props) {
   const [resp, setResp] = useState<PreviewResponse | null>(null);
   const [failed, setFailed] = useState(false);
 
@@ -45,8 +55,9 @@ export function PreviewBox({ proposalId, systemName, onTone }: Props) {
   useEffect(() => {
     if (failed) { onTone?.('unavailable'); return; }
     if (!resp) return;
-    const v = previewBoxView(resp, systemName);
+    const v = previewBoxView(resp, systemName, toolArgs ?? undefined);
     onTone?.(resp.status === 'ok' ? (v.stale ? 'stale' : 'ok') : resp.status);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resp, failed, systemName, onTone]);
 
   if (failed) {
@@ -66,7 +77,7 @@ export function PreviewBox({ proposalId, systemName, onTone }: Props) {
     );
   }
 
-  const view = previewBoxView(resp, systemName);
+  const view = previewBoxView(resp, systemName, toolArgs ?? undefined);
   const tone = resp.status === 'ok' ? (view.stale ? 'stale' : 'ok') : resp.status;
 
   // No preview declared: the card shows what will be sent, open, right above —
@@ -79,7 +90,15 @@ export function PreviewBox({ proposalId, systemName, onTone }: Props) {
 
   return (
     <div className={`preview-box preview-box-${tone}`} data-testid="approval-preview" data-preview-status={tone}>
-      <h4>{view.heading}</h4>
+      <h4>
+        {view.heading}
+        {view.creation && (
+          sealed
+            ? <><span className="src-tag src-tag-sealed">sealed</span> <span className="lock-tag">end-to-end encrypted</span></>
+            : <span className="src-tag src-tag-sealed">sealed</span>
+        )}
+      </h4>
+      {view.creation && <RenderedCreationView view={view.creation} />}
       {view.rendered && <RenderedBody rendered={view.rendered} />}
       <p className="preview-note">{view.note}</p>
       {view.versionNote && !view.stale && <p className="preview-note">{view.versionNote}</p>}
