@@ -185,6 +185,53 @@ export interface PreviewVersionInfo {
   currentBody?: PreviewBody;
 }
 
+// ─── AU8: several reads per preview ────────────────────────────────────────
+// Interface contract: temp/briefs/au8-brief.md. Mirrors
+// apps/control-plane/src/lib/preview-types.ts and apps/mcp-server/src/lib/
+// preview.ts's `PreviewReadSection`/`ToolDisplayHints` — do not change these
+// shapes without the brief's owner.
+
+/** A read's outcome where "nothing to read" (no_target) is itself a valid,
+ *  non-error outcome. */
+export type PreviewReadOutcome =
+  | { status: 'ok'; body: PreviewBody }
+  | { status: 'unavailable'; reason: 'no_connector' | 'connector_error' | 'timeout'; message?: string }
+  | { status: 'not_found'; message?: string }
+  | { status: 'none'; reason: 'no_target' };
+
+/** Manifest `display` hints, a sibling of `preview` on the same tool
+ *  override — purely cosmetic, every field optional. */
+export interface ToolDisplayHints {
+  order?: string[];
+  money?: string[];
+  currencyField?: string;
+  percent?: string[];
+  hidden?: string[];
+}
+
+/** One declared read's outcome within a multi-read preview. */
+export interface PreviewReadSection {
+  tool: string;
+  /** See ToolPreviewConfig-style `attach` — non-`forEach` reads only: the
+   *  bound action-arg name this read's result enriches. */
+  attach?: string;
+  /** Present only for a `forEach` read — the bound action-arg name (an
+   *  array) this read ran once per element of. */
+  forEach?: string;
+  /** Rendering aid — the single bound field (non-`forEach`) or bound
+   *  element field (`forEach`) this read's own `args` named — so the UI can
+   *  tell which of the bound element's own fields the attach column
+   *  replaces, instead of showing it twice. */
+  sourceArg?: string;
+  fields?: string[];
+  /** Non-`forEach` reads only. */
+  result?: PreviewReadOutcome;
+  /** `forEach` reads only — one outcome per (capped) source element, same order. */
+  elements?: PreviewReadOutcome[];
+  overflow?: { shown: number; total: number };
+  version?: PreviewVersionInfo;
+}
+
 /** `GET /proposal-status/:id/preview` — always 200 unless auth/proposal fetch fails. */
 export type PreviewResponse =
   | { status: 'none'; reason?: 'no_target' }
@@ -200,7 +247,10 @@ export type PreviewResponse =
       /** Manifest-declared `preview.fields` — the top-level fields to show
        *  first, in that order (see tool-gating-types.ts ToolPreviewConfig). */
       fields?: string[];
-    };
+    }
+  /** AU8 — several reads (manifest `preview` is a list). Distinguished from
+   *  the single-read "ok" above by `reads` (never both on the same object). */
+  | { status: 'ok'; integration: string; readAt: number; reads: PreviewReadSection[]; display?: ToolDisplayHints };
 
 /** `GET /proposal-status/:id/outcome` — the local execution journal's latest entry. */
 export interface OutcomeResponse {

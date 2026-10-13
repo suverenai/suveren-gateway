@@ -8,7 +8,8 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { invalidPreviewReason, invalidManifestPreviewReason, loadManifests, getManifest } from '../src/lib/manifest-loader';
+import { invalidPreviewReason, invalidManifestPreviewReason, invalidDisplayHintsReason, loadManifests, getManifest } from '../src/lib/manifest-loader';
+import { MAX_PREVIEW_READS } from '../src/lib/tool-gating-types';
 
 const MANIFESTS_DIR = join(import.meta.dirname, '..', '..', '..', 'content', 'integrations');
 
@@ -79,6 +80,89 @@ describe('invalidPreviewReason — the shared predicate', () => {
   it('rejects a `fields` entry that is not a non-empty string', () => {
     expect(invalidPreviewReason('x', { preview: { tool: 'get_x', args: {}, fields: ['number', 5] } })).toMatch(/preview\.fields\[1\]/);
     expect(invalidPreviewReason('x', { preview: { tool: 'get_x', args: {}, fields: [''] } })).toMatch(/preview\.fields\[0\]/);
+  });
+
+  // ─── AU8 — a preview may be a LIST of reads, each with forEach/attach ────
+
+  it('a well-formed list of reads is fine', () => {
+    expect(
+      invalidPreviewReason('x', {
+        preview: [
+          { tool: 'get_customer', args: { id: 'customer_id' }, attach: 'customer_id' },
+          { tool: 'get_item', forEach: 'lines', args: { id: 'item_id' }, attach: 'item' },
+        ],
+      }),
+    ).toBeNull();
+  });
+
+  it('a list read with no attach (its own section) is fine', () => {
+    expect(invalidPreviewReason('x', { preview: [{ tool: 'find_contacts', args: { query: 'email' } }] })).toBeNull();
+  });
+
+  it('rejects an empty list — use the single-object form instead', () => {
+    expect(invalidPreviewReason('x', { preview: [] })).toMatch(/must not be an empty list/);
+  });
+
+  it('rejects more than the max reads', () => {
+    const preview = Array.from({ length: MAX_PREVIEW_READS + 1 }, () => ({ tool: 'get_x', args: {} }));
+    expect(invalidPreviewReason('x', { preview })).toMatch(new RegExp(`max ${MAX_PREVIEW_READS}`));
+  });
+
+  it('accepts exactly the max reads', () => {
+    const preview = Array.from({ length: MAX_PREVIEW_READS }, () => ({ tool: 'get_x', args: {} }));
+    expect(invalidPreviewReason('x', { preview })).toBeNull();
+  });
+
+  it('surfaces the first bad read in the list, with its index', () => {
+    expect(
+      invalidPreviewReason('x', { preview: [{ tool: 'get_x', args: {} }, { tool: '', args: {} }] }),
+    ).toMatch(/preview\[1\]\.tool/);
+  });
+
+  it('rejects a non-string, empty `forEach`/`attach`', () => {
+    expect(invalidPreviewReason('x', { preview: [{ tool: 'get_x', args: {}, forEach: '' }] })).toMatch(/preview\[0\]\.forEach/);
+    expect(invalidPreviewReason('x', { preview: [{ tool: 'get_x', args: {}, forEach: 5 }] })).toMatch(/preview\[0\]\.forEach/);
+    expect(invalidPreviewReason('x', { preview: [{ tool: 'get_x', args: {}, attach: '' }] })).toMatch(/preview\[0\]\.attach/);
+    expect(invalidPreviewReason('x', { preview: [{ tool: 'get_x', args: {}, attach: 5 }] })).toMatch(/preview\[0\]\.attach/);
+  });
+
+  it('a list read may still declare its own version and fields', () => {
+    expect(
+      invalidPreviewReason('x', {
+        preview: [{ tool: 'get_quote', args: { id: 'id', revision: 'revision' }, version: { arg: 'revision', field: 'revision' }, fields: ['revision'] }],
+      }),
+    ).toBeNull();
+  });
+});
+
+describe('invalidDisplayHintsReason', () => {
+  it('null when absent', () => {
+    expect(invalidDisplayHintsReason('x', { executionMapping: {} })).toBeNull();
+  });
+
+  it('a well-formed display is fine', () => {
+    expect(
+      invalidDisplayHintsReason('x', {
+        display: { order: ['customer_id', 'lines'], money: ['value', 'lines[].list_price'], currencyField: 'currency', percent: ['discount_pct'], hidden: ['notes'] },
+      }),
+    ).toBeNull();
+  });
+
+  it('rejects a non-object display', () => {
+    expect(invalidDisplayHintsReason('x', { display: 'oops' })).toMatch(/display must be an object/);
+  });
+
+  it('rejects a non-array order/money/percent/hidden', () => {
+    expect(invalidDisplayHintsReason('x', { display: { order: 'x' } })).toMatch(/display\.order/);
+    expect(invalidDisplayHintsReason('x', { display: { money: 'x' } })).toMatch(/display\.money/);
+  });
+
+  it('rejects a non-string entry inside one of those arrays', () => {
+    expect(invalidDisplayHintsReason('x', { display: { order: [5] } })).toMatch(/display\.order\[0\]/);
+  });
+
+  it('rejects a non-string currencyField', () => {
+    expect(invalidDisplayHintsReason('x', { display: { currencyField: 5 } })).toMatch(/display\.currencyField/);
   });
 });
 

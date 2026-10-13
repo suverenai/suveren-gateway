@@ -66,7 +66,7 @@
  *    independent of the three rules above, applies to any field.
  */
 import { humanizeKey } from './approval-view';
-import type { PreviewBody } from './sp-client';
+import type { PreviewBody, PreviewReadOutcome, PreviewReadSection, ToolDisplayHints } from './sp-client';
 
 /** One row of a labelled sub-list (DL4) — a nested object field whose own
  *  values are every one scalar. `label` is the nested key's own label
@@ -101,6 +101,15 @@ export interface PreviewFieldRow {
   /** Hover text per entry of `lines`, same length when present; an entry is
    *  undefined where that line needed no correction. */
   lineTitles?: Array<string | undefined>;
+  /**
+   * AU8 ("send_quote card gets the table rendering") — present ADDITIONALLY
+   * whenever `lines` came from an array of OBJECTS (never for DL4's array-
+   * of-strings case): the same data as a real table (columns from the
+   * items' own keys). `RenderedPreviewView.tsx` prefers rendering this over
+   * the compact `lines` rows when present; `lines`/`lineTitles` stay set
+   * regardless, since `diffPreviewBodies`' `rowKey` compares on them.
+   */
+  table?: PreviewTable;
   /** DL4: a nested object field whose own values are every one scalar — one
    *  row per key, instead of `value`'s one-line compact row. */
   sublist?: PreviewSubRow[];
@@ -198,6 +207,32 @@ function compactObjectLine(
 }
 
 /**
+ * AU8 — a real table for an array of objects (e.g. quote lines): columns
+ * from the declared item schema (in its own order), else the union of every
+ * row's own keys, in first-seen order; a cell whose own value is a nested
+ * object compacts the same way `compactObjectLine` always has (unchanged —
+ * this never expands into a nested table).
+ */
+function tableForObjectArray(
+  rows: Record<string, unknown>[],
+  itemProps: Record<string, JsonSchemaProperty> | undefined,
+): PreviewTable {
+  const keys = itemProps
+    ? Object.keys(itemProps).filter((k) => rows.some((r) => k in r))
+    : [...new Set(rows.flatMap((r) => Object.keys(r)))];
+  const columns = keys.map((k) => ({ key: k, label: itemProps?.[k]?.title ?? humanizeKey(k) }));
+  const tableRows = rows.map((r) => ({
+    cells: keys.map((k) => {
+      const v = r[k];
+      const display = isPlainObject(v) ? compactObjectLine(v, itemProps?.[k]?.properties, false) : formatScalar(v);
+      const exact = isPlainObject(v) ? compactObjectLine(v, itemProps?.[k]?.properties, true) : formatScalar(v, true);
+      return exact === display ? { value: display, sealed: false } : { value: display, valueTitle: exact, sealed: false };
+    }),
+  }));
+  return { columns, rows: tableRows };
+}
+
+/**
  * DL4: one line per entry of a unified diff, classified by its own leading
  * character — the file-header lines a real unified diff may carry (`+++`/
  * `---`) are context, never mistaken for a single changed line.
@@ -210,7 +245,7 @@ function diffTextLines(text: string): PreviewDiffLine[] {
   });
 }
 
-type RenderedValue = Pick<PreviewFieldRow, 'value' | 'valueTitle' | 'lines' | 'lineTitles' | 'sublist' | 'diffLines'>;
+type RenderedValue = Pick<PreviewFieldRow, 'value' | 'valueTitle' | 'lines' | 'lineTitles' | 'sublist' | 'diffLines' | 'table'>;
 
 function renderValue(value: unknown, fieldSchema: JsonSchemaProperty | undefined): RenderedValue {
   if (Array.isArray(value)) {
@@ -229,7 +264,20 @@ function renderValue(value: unknown, fieldSchema: JsonSchemaProperty | undefined
     const displayLines = value.map((x) => (isPlainObject(x) ? compactObjectLine(x, itemProps, false) : formatScalar(x)));
     const exactLines = value.map((x) => (isPlainObject(x) ? compactObjectLine(x, itemProps, true) : formatScalar(x, true)));
     const lineTitles = displayLines.map((d, i) => (d === exactLines[i] ? undefined : exactLines[i]));
-    return lineTitles.some((t) => t !== undefined) ? { lines: displayLines, lineTitles } : { lines: displayLines };
+    // AU8 ("send_quote card gets the table rendering") — an array of OBJECTS
+    // (e.g. quote lines) ADDITIONALLY gets a real table (columns from the
+    // items' own keys, same labelling rule as `compactObjectLine`) — never
+    // REPLACING `lines`/`lineTitles` above, so the stale-version diff
+    // (`rowKey`, which compares on `.lines`) and every pinned test of the
+    // existing compact-row behaviour stay exactly as they were; the table is
+    // simply what the renderer SHOWS when a table fits better than one
+    // joined line per item (RenderedPreviewView.tsx prefers it when present).
+    const table = value.every(isPlainObject) ? tableForObjectArray(value as Record<string, unknown>[], itemProps) : undefined;
+    return {
+      lines: displayLines,
+      ...(lineTitles.some((t) => t !== undefined) ? { lineTitles } : {}),
+      ...(table ? { table } : {}),
+    };
   }
   if (isPlainObject(value)) {
     // DL4: when every one of THIS object's own values is itself scalar, show
@@ -284,7 +332,7 @@ export function parseJsonObject(text: string): Record<string, unknown> | null {
  *  genuinely free text (or empty). A schema only ever applies to a
  *  genuinely structured result; text that merely parses as JSON has no
  *  declared schema of its own. */
-function resolveBodyObject(body: PreviewBody | undefined): { obj: Record<string, unknown>; schema?: JsonSchema } | null {
+export function resolveBodyObject(body: PreviewBody | undefined): { obj: Record<string, unknown>; schema?: JsonSchema } | null {
   const structured = body?.structured && Object.keys(body.structured).length > 0 ? body.structured : undefined;
   if (structured) return { obj: structured, schema: body?.outputSchema as JsonSchema | undefined };
   const fromText = body?.text ? parseJsonObject(body.text) : null;
@@ -430,4 +478,341 @@ export function diffPreviewBodies(
   const currentRows = order.map((k) => currentByKey.get(k)).filter((r): r is PreviewFieldRow => r !== undefined);
 
   return { approved: toRendered(approvedRows), current: toRendered(currentRows), unchanged: diffKeys.length === 0 };
+}
+
+// ─── AU8 — several reads per preview (temp/briefs/au8-brief.md) ───────────
+// A multi-read preview's card ("What will be created") merges the action's
+// own bound args with its declared reads into ONE generic view:
+//  - a bound field with an ATTACHED (non-forEach) read -> an "identity" row
+//    (the read's own name/title/label field, the raw bound id small and
+//    grey, the read's other fields as context);
+//  - a bound field that is a `forEach` source -> a TABLE, one row per bound
+//    element, merging the element's own fields with its attached read;
+//  - every other bound field -> shown as itself (money/percent/plain, per
+//    the manifest's `display` hints);
+//  - a read with NO attach -> its own section, below the ordered fields
+//    (e.g. a CRM duplicate-contact check).
+// Every value is marked sealed (bound) or system (read) by the CALLER
+// (RenderedCreationView.tsx) from each row's own `sealed` flag — never
+// guessed from shape here.
+
+/** Resolves a `PreviewBody` to the array of plain objects it carries
+ *  (structured, or text that parses as a JSON array of objects) — the
+ *  shape a connector with no `structuredContent`/`outputSchema` of its own
+ *  returns for a list tool (e.g. crm's `find_contacts`). Null for anything
+ *  else (an object, free text, empty). */
+function resolveBodyArray(body: PreviewBody | undefined): Record<string, unknown>[] | null {
+  const structured = body?.structured;
+  if (Array.isArray(structured) && structured.every(isPlainObject)) return structured as Record<string, unknown>[];
+  if (body?.text) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(body.text);
+    } catch {
+      return null;
+    }
+    if (Array.isArray(parsed) && parsed.every(isPlainObject)) return parsed as Record<string, unknown>[];
+  }
+  return null;
+}
+
+export interface PreviewTableColumn {
+  key: string;
+  label: string;
+}
+export interface PreviewTableCell {
+  value: string;
+  valueTitle?: string;
+  /** True for a column built from the action's OWN bound value (sealed —
+   *  approved and executed exactly so); false for one read from the system. */
+  sealed: boolean;
+}
+export interface PreviewTableRow {
+  cells: PreviewTableCell[];
+}
+export interface PreviewTable {
+  columns: PreviewTableColumn[];
+  rows: PreviewTableRow[];
+  /** Present when the source list was capped (AU8: max 50 elements). */
+  overflowNote?: string;
+}
+
+function cellFor(value: unknown): { value: string; valueTitle?: string } {
+  const display = formatScalar(value);
+  const exact = formatScalar(value, true);
+  return exact === display ? { value: display } : { value: display, valueTitle: exact };
+}
+
+/** A read's own fields — resolved from its `outcome.body`, regardless of
+ *  whether the connector declared a schema (see `resolveBodyObject`).
+ *  Returns an EMPTY row set (never throws) for anything but 'ok'. */
+function attachedFields(outcome: PreviewReadOutcome | undefined): PreviewFieldRow[] {
+  if (!outcome || outcome.status !== 'ok') return [];
+  return allPreviewFields(outcome.body);
+}
+
+/** One line of plain prose for an unresolved attach — never a raw error
+ *  object, never the connector's own message (that's `message`'s job
+ *  elsewhere; this is purely "could we show a name here or not"). */
+function unresolvedNote(outcome: PreviewReadOutcome | undefined): string {
+  if (!outcome) return 'Not read.';
+  switch (outcome.status) {
+    case 'not_found': return 'Not found in the system.';
+    case 'none': return 'Nothing to read.';
+    default: return 'Not available right now.';
+  }
+}
+
+export interface AttachedIdentity {
+  /** The read's own name/title/label field (schema-driven: `name`, `title`,
+   *  `label`, else the first string field) — undefined when unresolved. */
+  name?: string;
+  /** The bound value this read explains, always shown (small/grey) —
+   *  formatted, never invented. */
+  rawId: string;
+  /** The read's other fields, as context — excludes whichever one became `name`. */
+  context: PreviewFieldRow[];
+  /** Present only when the read did not resolve (no `name`). */
+  unresolved?: string;
+}
+
+/** `rawId` is the bound value itself (e.g. `"cust-1"`) — always from the
+ *  action's own args, never from the read (decision: a system value never
+ *  REPLACES a bound one, only explains it). */
+export function resolveAttachedIdentity(outcome: PreviewReadOutcome | undefined, rawId: unknown): AttachedIdentity {
+  const rows = attachedFields(outcome);
+  if (rows.length === 0) {
+    return { rawId: formatScalar(rawId), context: [], unresolved: unresolvedNote(outcome) };
+  }
+  // Schema-driven: name/title/label field, else the first field whose own
+  // (unformatted) value is actually a string — a number merely rendered as
+  // a string (e.g. list_price) never qualifies as "the name".
+  const rawObj = outcome && outcome.status === 'ok' ? resolveBodyObject(outcome.body)?.obj : undefined;
+  const nameRow = rows.find((r) => ['name', 'title', 'label'].includes(r.key))
+    ?? rows.find((r) => typeof rawObj?.[r.key] === 'string' && !r.lines && !r.sublist && !r.diffLines);
+  return {
+    name: nameRow?.value,
+    rawId: formatScalar(rawId),
+    // `id` is already shown as the (bound) raw id — never repeated as context.
+    context: rows.filter((r) => r.key !== nameRow?.key && r.key !== 'id'),
+  };
+}
+
+/** Fields an {@link AttachedIdentity} always folds into name/rawId, never
+ *  shown again as their own table column (see `buildForEachTable`). */
+const IDENTITY_KEYS = new Set(['id', 'name', 'title', 'label']);
+
+// ─── display hints: money / percent / hidden paths ─────────────────────────
+
+/** `topKey` alone for a top-level bound field; `topKey`+`innerKey` for
+ *  `<topKey>[].<innerKey>` — a `forEach` field's own element field. */
+function pathMatches(hints: string[] | undefined, topKey: string, innerKey?: string): boolean {
+  if (!hints) return false;
+  const path = innerKey === undefined ? topKey : `${topKey}[].${innerKey}`;
+  return hints.includes(path);
+}
+
+function formatMoney(value: unknown, currency: string | undefined): { value: string; valueTitle?: string } {
+  const n = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(n)) return cellFor(value);
+  const display = `${n.toFixed(2)}${currency ? ` ${currency}` : ''}`;
+  return { value: display };
+}
+
+function formatPercent(value: unknown): { value: string; valueTitle?: string } {
+  if (typeof value !== 'number' && typeof value !== 'string') return cellFor(value);
+  return { value: `${value} %` };
+}
+
+/** One bound (sealed) or system (read) value, formatted per `hints` for
+ *  this exact path (money/percent), else plainly. `currency` is resolved by
+ *  the caller (from the action's own bound args, via `hints.currencyField`)
+ *  since this function never looks anything up itself. */
+function formatHinted(
+  value: unknown,
+  hints: ToolDisplayHints | undefined,
+  topKey: string,
+  innerKey: string | undefined,
+  currency: string | undefined,
+): { value: string; valueTitle?: string } {
+  if (pathMatches(hints?.money, topKey, innerKey)) return formatMoney(value, currency);
+  if (pathMatches(hints?.percent, topKey, innerKey)) return formatPercent(value);
+  return cellFor(value);
+}
+
+function isHidden(hints: ToolDisplayHints | undefined, topKey: string, innerKey?: string): boolean {
+  return pathMatches(hints?.hidden, topKey, innerKey);
+}
+
+// ─── forEach -> table ────────────────────────────────────────────────────
+
+/**
+ * Builds the table for a `forEach` read: one row per (capped) bound
+ * element, columns = [the attach identity, if `section.attach` is set] +
+ * [the element's own OTHER fields] + [the attached read's own OTHER
+ * fields, when it resolved] — "columns from the element keys... labels from
+ * the connector's schema titles/descriptions; fallback: humanized key".
+ * `boundElements` is the action's OWN bound array (e.g. `lines`) — the
+ * table always has exactly as many rows as bound elements the gateway
+ * actually read for (capped at 50; `section.overflow` notes the rest).
+ */
+export function buildForEachTable(
+  section: PreviewReadSection,
+  boundElements: Record<string, unknown>[],
+  displayHints: ToolDisplayHints | undefined,
+  currency: string | undefined,
+): PreviewTable {
+  const forEachKey = section.forEach ?? '';
+  const outcomes = section.elements ?? [];
+  const rowCount = Math.min(boundElements.length, outcomes.length);
+  const bound = boundElements.slice(0, rowCount);
+  const reads = outcomes.slice(0, rowCount);
+
+  const boundKeys = [...new Set(bound.flatMap((el) => Object.keys(el)))]
+    .filter((k) => k !== section.sourceArg)
+    .filter((k) => !isHidden(displayHints, forEachKey, k));
+
+  const attachedKeys = section.attach
+    ? [...new Set(reads.flatMap((r) => attachedFields(r).map((f) => f.key)))].filter((k) => !IDENTITY_KEYS.has(k))
+    : [];
+
+  const columns: PreviewTableColumn[] = [];
+  if (section.attach) columns.push({ key: `__attach:${section.attach}`, label: humanizeKey(section.sourceArg ?? section.attach) });
+  for (const k of boundKeys) columns.push({ key: `bound:${k}`, label: humanizeKey(k) });
+  for (const k of attachedKeys) columns.push({ key: `attached:${k}`, label: humanizeKey(k) });
+
+  const rows: PreviewTableRow[] = bound.map((el, i) => {
+    const outcome = reads[i];
+    const cells: PreviewTableCell[] = [];
+    if (section.attach) {
+      const identity = resolveAttachedIdentity(outcome, section.sourceArg ? el[section.sourceArg] : undefined);
+      const text = identity.name ? `${identity.name} (${identity.rawId})` : identity.unresolved ? `${identity.rawId} — ${identity.unresolved}` : identity.rawId;
+      cells.push({ value: text, sealed: false });
+    }
+    for (const k of boundKeys) {
+      const { value, valueTitle } = formatHinted(el[k], displayHints, forEachKey, k, currency);
+      cells.push({ value, valueTitle, sealed: true });
+    }
+    const fields = attachedFields(outcome);
+    const byKey = new Map(fields.map((f) => [f.key, f]));
+    for (const k of attachedKeys) {
+      const row = byKey.get(k);
+      const raw = row?.value;
+      const { value, valueTitle } = raw !== undefined ? formatHinted(raw, displayHints, forEachKey, k, currency) : { value: '—', valueTitle: undefined };
+      cells.push({ value, valueTitle, sealed: false });
+    }
+    return { cells };
+  });
+
+  return {
+    columns,
+    rows,
+    ...(section.overflow ? { overflowNote: `${section.overflow.total - section.overflow.shown} more not shown` } : {}),
+  };
+}
+
+// ─── a read with no attach -> its own section ──────────────────────────────
+
+export interface PreviewOwnSection {
+  /** A generic heading built from the read tool's own name — never
+   *  connector-specific copy. */
+  heading: string;
+  /** Present when the read's result is a list of objects. */
+  table?: PreviewTable;
+  /** Present when the read's result is a single object/text (or didn't
+   *  resolve) — the same generic field-row rendering every preview uses. */
+  body?: RenderedPreview;
+  note?: string;
+}
+
+function ownSectionHeading(tool: string): string {
+  return `${humanizeKey(tool)} — from the system`;
+}
+
+export function buildOwnSection(section: PreviewReadSection): PreviewOwnSection {
+  const heading = ownSectionHeading(section.tool);
+  const outcome = section.result;
+  if (!outcome || outcome.status !== 'ok') {
+    return { heading, note: unresolvedNote(outcome) };
+  }
+  const list = resolveBodyArray(outcome.body);
+  if (list) {
+    if (list.length === 0) return { heading, note: 'Nothing found.' };
+    const keys = [...new Set(list.flatMap((o) => Object.keys(o)))];
+    const columns = keys.map((k) => ({ key: k, label: humanizeKey(k) }));
+    const rows = list.map((o) => ({ cells: keys.map((k) => ({ ...cellFor(o[k]), sealed: false })) }));
+    return { heading, table: { columns, rows } };
+  }
+  return { heading, body: renderPreviewBody(outcome.body, { fields: section.fields }) };
+}
+
+// ─── the combined "creation" view ──────────────────────────────────────────
+
+export type CreationRow =
+  | { kind: 'identity'; key: string; label: string; identity: AttachedIdentity }
+  | { kind: 'table'; key: string; label: string; table: PreviewTable }
+  | { kind: 'scalar'; key: string; label: string; value: string; valueTitle?: string };
+
+export interface CreationView {
+  rows: CreationRow[];
+  /** Reads with no attach — own sections, shown after the ordered rows. */
+  sections: PreviewOwnSection[];
+}
+
+/**
+ * Merges the action's bound args (`toolArgs`) with its declared reads
+ * (`sections`) into one ordered view: `displayHints.order` first (fields
+ * not listed are appended afterward, in their own key order); `hidden`
+ * fields are dropped entirely; a field linked to an `attach` or `forEach`
+ * read renders via that read (identity/table) instead of as a plain scalar.
+ */
+export function buildCreationView(
+  toolArgs: Record<string, unknown>,
+  sections: PreviewReadSection[],
+  displayHints: ToolDisplayHints | undefined,
+): CreationView {
+  const byAttachKey = new Map(sections.filter((s) => s.attach && !s.forEach).map((s) => [s.attach!, s]));
+  const byForEachKey = new Map(sections.filter((s) => s.forEach).map((s) => [s.forEach!, s]));
+  const ownSections = sections.filter((s) => !s.attach && !s.forEach);
+
+  const currency = displayHints?.currencyField ? toolArgs[displayHints.currencyField] : undefined;
+  const currencyStr = typeof currency === 'string' ? currency : undefined;
+
+  const order = displayHints?.order ?? [];
+  const allKeys = [...new Set([...order, ...Object.keys(toolArgs)])];
+
+  const rows: CreationRow[] = [];
+  for (const key of allKeys) {
+    if (!(key in toolArgs)) continue;
+    if (isHidden(displayHints, key)) continue;
+    const label = humanizeKey(key);
+
+    const forEachSection = byForEachKey.get(key);
+    if (forEachSection) {
+      const elements = Array.isArray(toolArgs[key]) ? (toolArgs[key] as Record<string, unknown>[]) : [];
+      rows.push({ kind: 'table', key, label, table: buildForEachTable(forEachSection, elements, displayHints, currencyStr) });
+      continue;
+    }
+
+    const attachSection = byAttachKey.get(key);
+    if (attachSection) {
+      rows.push({ kind: 'identity', key, label, identity: resolveAttachedIdentity(attachSection.result, toolArgs[key]) });
+      continue;
+    }
+
+    if (pathMatches(displayHints?.money, key)) {
+      const { value, valueTitle } = formatMoney(toolArgs[key], currencyStr);
+      rows.push({ kind: 'scalar', key, label, value, valueTitle });
+      continue;
+    }
+    if (pathMatches(displayHints?.percent, key)) {
+      const { value, valueTitle } = formatPercent(toolArgs[key]);
+      rows.push({ kind: 'scalar', key, label, value, valueTitle });
+      continue;
+    }
+    const { value, valueTitle } = cellFor(toolArgs[key]);
+    rows.push({ kind: 'scalar', key, label, value, valueTitle });
+  }
+
+  return { rows, sections: ownSections.map(buildOwnSection) };
 }

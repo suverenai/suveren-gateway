@@ -329,11 +329,36 @@ describe('MCP Gateway', () => {
     it('status "none" for an erp action tool that declares no preview', async () => {
       const { status, data } = await post('/internal/preview', {
         proposalId: 'p1',
+        tool: 'erp__clear_simulation',
+        toolArgs: {},
+      });
+      expect(status).toBe(200);
+      expect(data).toEqual({ status: 'none' });
+    });
+
+    // AU8 — erp__create_quote now declares SEVERAL reads (get_customer +
+    // one get_item per line, content/integrations/erp.json). With no
+    // customer_id/lines bound and the erp connector not running under THIS
+    // test, every section degrades independently — the overall status
+    // still stays "ok" (never blocks the decision), display hints pass
+    // through untouched. See test/preview-reads.test.ts for the mechanism
+    // itself (forEach/attach/caps/combined hash) with a live mock connector.
+    it('AU8 — status "ok" with a `reads` section per declared read for erp__create_quote', async () => {
+      const { status, data } = await post('/internal/preview', {
+        proposalId: 'p1',
         tool: 'erp__create_quote',
         toolArgs: { value: 100 },
       });
       expect(status).toBe(200);
-      expect(data).toEqual({ status: 'none' });
+      expect(data).toMatchObject({
+        status: 'ok',
+        integration: 'erp',
+        reads: [
+          { tool: 'get_customer', attach: 'customer_id', sourceArg: 'customer_id', result: { status: 'none', reason: 'no_target' } },
+          { tool: 'get_item', forEach: 'lines', attach: 'item', sourceArg: 'item_id', elements: [] },
+        ],
+        display: { currencyField: 'currency' },
+      });
     });
 
     it('status "none" when asked about the read tool itself (erp__get_quote) — cannot bootstrap an arbitrary call', async () => {

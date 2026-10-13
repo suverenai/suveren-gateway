@@ -10,7 +10,7 @@
  * them); no AI-written text is ever surfaced; a connector's own refusal text
  * is labelled as coming from the system, capped at 500 chars.
  */
-import { diffPreviewBodies, renderPreviewBody, type RenderedPreview } from './preview-render';
+import { buildCreationView, diffPreviewBodies, renderPreviewBody, type CreationView, type RenderedPreview } from './preview-render';
 import type { OutcomeResponse, PreviewResponse } from './sp-client';
 
 const MESSAGE_CAP = 500;
@@ -39,19 +39,25 @@ export interface PreviewBoxView {
   heading: string;
   /** One line of lead text — always present, always honest about what this is. */
   note: string;
-  /** Present only for status 'ok'. */
+  /** Present only for status 'ok' with a SINGLE read (the AU3 legacy shape). */
   rendered?: RenderedPreview;
-  /** Present only when a version was declared (status 'ok'). */
+  /** AU8 — present only for status 'ok' with SEVERAL reads (manifest
+   *  `preview` is a list); mutually exclusive with `rendered`. */
+  creation?: CreationView;
+  /** Present only when a version was declared (status 'ok', single read). */
   versionNote?: string;
-  /** Present only when the declared version is stale. */
+  /** Present only when the declared version is stale (single read). */
   stale?: PreviewStaleView;
 }
 
 /**
  * `systemName` is the integration's display name ("ERP"), already resolved
  * by the caller — this module does no manifest lookups of its own.
+ * `toolArgs` (the proposal's own bound args) is needed ONLY for the AU8
+ * `reads` shape, to merge the bound values with the declared reads into one
+ * view — the single-read (legacy) shape never needs it.
  */
-export function previewBoxView(resp: PreviewResponse, systemName: string): PreviewBoxView {
+export function previewBoxView(resp: PreviewResponse, systemName: string, toolArgs?: Record<string, unknown>): PreviewBoxView {
   switch (resp.status) {
     case 'none':
       if (resp.reason === 'no_target') {
@@ -88,6 +94,18 @@ export function previewBoxView(resp: PreviewResponse, systemName: string): Previ
       };
 
     case 'ok': {
+      // AU8 — several reads: distinguished from the legacy single-read "ok"
+      // by `reads` (never both on the same response). The combined view
+      // replaces the separate "What will be sent" box entirely, so the bound
+      // values never need to be shown twice.
+      if ('reads' in resp) {
+        return {
+          heading: `What will be created in ${systemName}`,
+          note: `Read by the gateway when you opened this card — the AI is not involved.`,
+          creation: buildCreationView(toolArgs ?? {}, resp.reads, resp.display),
+        };
+      }
+
       const rendered = renderPreviewBody(resp.body, { fields: resp.fields });
       const view: PreviewBoxView = {
         heading: `From ${systemName}, before it runs`,

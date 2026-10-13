@@ -95,7 +95,17 @@
         "staticExecution": {
           "action_type": "quote"
         },
-        "actionLabel": "Quote drafted"
+        "actionLabel": "Quote drafted",
+        "preview": [
+          { "tool": "get_customer", "args": { "id": "customer_id" }, "attach": "customer_id" },
+          { "tool": "get_item", "forEach": "lines", "args": { "id": "item_id" }, "attach": "item" }
+        ],
+        "display": {
+          "order": ["customer_id", "lines", "discount_pct", "value", "valid_until", "notes"],
+          "money": ["value", "lines[].list_price"],
+          "percent": ["discount_pct"],
+          "currencyField": "currency"
+        }
       },
       "update_quote": {
         "executionMapping": {
@@ -106,7 +116,16 @@
         "staticExecution": {
           "action_type": "quote"
         },
-        "actionLabel": "Quote updated"
+        "actionLabel": "Quote updated",
+        "preview": [
+          { "tool": "get_item", "forEach": "lines", "args": { "id": "item_id" }, "attach": "item" }
+        ],
+        "display": {
+          "order": ["lines", "discount_pct", "value", "valid_until", "notes"],
+          "money": ["value", "lines[].list_price"],
+          "percent": ["discount_pct"],
+          "currencyField": "currency"
+        }
       },
       "send_quote": {
         "executionMapping": {

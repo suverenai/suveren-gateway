@@ -15,6 +15,7 @@
  */
 import { Fragment } from 'react';
 import type { PreviewFieldRow, RenderedPreview } from '../lib/preview-render';
+import { PreviewTableView } from './PreviewTableView';
 
 function FieldLabel({ row }: { row: PreviewFieldRow }) {
   return (
@@ -62,6 +63,13 @@ function FieldValue({ row }: { row: PreviewFieldRow }) {
       </div>
     );
   }
+  // AU8 ("send_quote card gets the table rendering") — an array of objects
+  // (e.g. quote lines) renders as a real table when one is available;
+  // `lines` stays set alongside it (diffPreviewBodies' rowKey compares on
+  // it) but is never shown once a table can be.
+  if (row.table) {
+    return <PreviewTableView table={row.table} />;
+  }
   if (row.lines) {
     return (
       <div>
@@ -75,14 +83,29 @@ function FieldValue({ row }: { row: PreviewFieldRow }) {
 export function PreviewFieldRows({ rows }: { rows: PreviewFieldRow[] }) {
   return (
     <dl style={{ display: 'grid', gridTemplateColumns: 'max-content 1fr', gap: '0.3rem 0.75rem', fontSize: '0.85rem', margin: '0.4rem 0' }}>
-      {rows.map((r) => (
-        <Fragment key={r.key}>
-          <FieldLabel row={r} />
-          <dd style={{ margin: 0, wordBreak: 'break-word' }}>
-            <FieldValue row={r} />
-          </dd>
-        </Fragment>
-      ))}
+      {rows.map((r) => {
+        // AU8 — a table needs the row's FULL width, not the narrow second
+        // grid column (a `max-content`/`1fr` dl squeezes a wide table's
+        // columns down to the width of the SHORTEST other row's label,
+        // wrapping every header to one letter per line). Label above,
+        // full-width table below, spanning both grid columns.
+        if (r.table) {
+          return (
+            <div key={r.key} style={{ gridColumn: '1 / -1' }}>
+              <FieldLabel row={r} />
+              <PreviewTableView table={r.table} />
+            </div>
+          );
+        }
+        return (
+          <Fragment key={r.key}>
+            <FieldLabel row={r} />
+            <dd style={{ margin: 0, wordBreak: 'break-word' }}>
+              <FieldValue row={r} />
+            </dd>
+          </Fragment>
+        );
+      })}
     </dl>
   );
 }

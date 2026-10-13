@@ -22,9 +22,15 @@
 import { computeContentHash } from '@hap/core';
 import type { IntegrationManager } from './integration-manager';
 import { getManifest } from './manifest-loader';
-import type { ToolPreviewConfig } from './tool-gating-types';
+import {
+  MAX_FOREACH_ELEMENTS,
+  type PreviewDeclaration,
+  type PreviewReadConfig,
+  type ToolDisplayHints,
+  type ToolPreviewConfig,
+} from './tool-gating-types';
 
-export type { ToolPreviewConfig };
+export type { ToolPreviewConfig, PreviewReadConfig, PreviewDeclaration, ToolDisplayHints };
 
 /** A read's body, generic across connectors. */
 export interface PreviewBody {
@@ -59,14 +65,32 @@ export function getToolPreviewConfig(
   integrationManager: IntegrationManager,
   integrationId: string,
   toolName: string,
-): ToolPreviewConfig | undefined {
+): PreviewDeclaration | undefined {
   if (integrationManager.isBuiltin(integrationId)) {
     return integrationManager.getBuiltinToolPreview(integrationId, toolName);
   }
   const manifest = getManifest(integrationId);
   const overrides = manifest?.toolGating?.overrides ?? {};
-  const entry = overrides[toolName] as { preview?: ToolPreviewConfig } | null | undefined;
+  const entry = overrides[toolName] as { preview?: PreviewDeclaration } | null | undefined;
   return entry?.preview;
+}
+
+/**
+ * AU8 — a tool's manifest-declared `display` hints (tool-gating-types.ts
+ * `ToolDisplayHints`), a sibling of `preview` on the same override entry.
+ * Builtins have no manifest and no display concept of their own — always
+ * undefined for them, same as a connector tool with no `display` declared.
+ */
+export function getToolDisplayHints(
+  integrationManager: IntegrationManager,
+  integrationId: string,
+  toolName: string,
+): ToolDisplayHints | undefined {
+  if (integrationManager.isBuiltin(integrationId)) return undefined;
+  const manifest = getManifest(integrationId);
+  const overrides = manifest?.toolGating?.overrides ?? {};
+  const entry = overrides[toolName] as { display?: ToolDisplayHints } | null | undefined;
+  return entry?.display;
 }
 
 /**
@@ -173,6 +197,173 @@ export function hashPreviewBody(body: Pick<PreviewBody, 'structured' | 'text'>):
   return computeContentHash({ kind: 'text', version: '1' }, body.text ?? '');
 }
 
+// ─── AU8 — several reads per preview ───────────────────────────────────────
+// "run sequentially with the existing timeout per read; a failing read
+// degrades that part only, never blocks the decision" (temp/briefs/au8-brief.md).
+
+/** One planned (not-yet-executed) read, resolved from a {@link PreviewReadConfig}
+ *  against the action's bound args. Exported for testing (planning is pure;
+ *  only `runPreviewReadPlan` below does I/O). */
+export interface ReadPlanItem {
+  tool: string;
+  attach?: string;
+  fields?: string[];
+  version?: { arg: string; field: string };
+  /** Non-`forEach` only — the mapped args for the one read. */
+  args?: Record<string, unknown>;
+  /** Non-`forEach` only — the UNMAPPED source object `version.arg` is read
+   *  from (the action's own bound args) — needed to redo the mapping minus
+   *  the version arg for the second (version-less) read. */
+  rawSource?: Record<string, unknown>;
+  /** Non-`forEach` only — true when `args` named a source the action didn't
+   *  carry (see `previewHasNoTarget`): nothing to read, never attempted. */
+  noTarget?: boolean;
+  /** `forEach` only — the source action-arg name. */
+  forEach?: string;
+  /** `forEach` only — one planned read per (capped) source element, in order. */
+  elements?: Array<{ args: Record<string, unknown> }>;
+  /** `forEach` only — present when the source array exceeded the cap. */
+  overflow?: { shown: number; total: number };
+  /**
+   * The read's own `args` MAPPING (preview-tool arg name -> source name),
+   * kept so the version-less re-read can be re-mapped with the version arg
+   * omitted (same as the single-object path). Internal planning detail —
+   * never sent over the wire (only {@link PreviewReadSection} is).
+   */
+  argsMapping: Record<string, string>;
+}
+
+function isPlainRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+/**
+ * Resolves a {@link PreviewDeclaration} (object or list) against the
+ * action's bound args into an ordered list of planned reads — pure, no I/O.
+ * A `forEach` read's source array is capped at {@link MAX_FOREACH_ELEMENTS}
+ * elements ("over the cap -> show the first N and 'N more not shown'"); a
+ * source that is absent or not an array plans ZERO elements (nothing to
+ * iterate, not an error — same spirit as `previewHasNoTarget`). Any element
+ * that isn't itself a plain object is skipped (there is nothing to map
+ * `args` against).
+ */
+export function planPreviewReads(
+  declaration: PreviewDeclaration,
+  actionArgs: Record<string, unknown>,
+): ReadPlanItem[] {
+  const reads: PreviewReadConfig[] = Array.isArray(declaration) ? declaration : [declaration];
+  return reads.map((config): ReadPlanItem => {
+    const base = {
+      tool: config.tool,
+      attach: config.attach,
+      fields: config.fields,
+      version: config.version,
+      argsMapping: config.args,
+    };
+    if (config.forEach) {
+      const source = actionArgs[config.forEach];
+      const list = Array.isArray(source) ? source : [];
+      const capped = list.slice(0, MAX_FOREACH_ELEMENTS);
+      const elements = capped
+        .filter(isPlainRecord)
+        .map((el) => ({ args: mapPreviewArgs(config, el) }));
+      return {
+        ...base,
+        forEach: config.forEach,
+        elements,
+        ...(list.length > MAX_FOREACH_ELEMENTS ? { overflow: { shown: MAX_FOREACH_ELEMENTS, total: list.length } } : {}),
+      };
+    }
+    const mapped = mapPreviewArgs(config, actionArgs);
+    return { ...base, args: mapped, rawSource: actionArgs, noTarget: previewHasNoTarget(config, mapped) };
+  });
+}
+
+/**
+ * Executes a plan from {@link planPreviewReads} sequentially (each read its
+ * own `readPreview` call, so the existing per-read timeout applies
+ * unchanged), building one {@link PreviewReadSection} per planned read. A
+ * non-`forEach` read that declares `version` gets the same two-read
+ * staleness check `buildInternalPreview` does for a single-object preview —
+ * generalized here to run per read rather than once for the whole preview.
+ * (A `forEach` read never declares `version` in practice — none of the
+ * shipped manifests need per-element staleness — so elements are read
+ * plainly, same as a read with no version at all.)
+ */
+async function runPreviewReadPlan(
+  integrationManager: IntegrationManager,
+  integrationId: string,
+  plan: ReadPlanItem[],
+): Promise<PreviewReadSection[]> {
+  const sections: PreviewReadSection[] = [];
+  for (const item of plan) {
+    const sourceArgNames = Object.values(item.argsMapping);
+    const base = {
+      tool: item.tool,
+      ...(item.attach ? { attach: item.attach } : {}),
+      ...(sourceArgNames.length === 1 ? { sourceArg: sourceArgNames[0] } : {}),
+      ...(item.fields ? { fields: item.fields } : {}),
+    };
+    if (item.elements !== undefined) {
+      const elements: PreviewReadOutcome[] = [];
+      for (const el of item.elements) {
+        elements.push(await readPreview(integrationManager, integrationId, item.tool, el.args));
+      }
+      sections.push({
+        ...base,
+        forEach: item.forEach,
+        elements,
+        ...(item.overflow ? { overflow: item.overflow } : {}),
+      });
+      continue;
+    }
+
+    if (item.noTarget) {
+      sections.push({ ...base, result: { status: 'none', reason: 'no_target' } });
+      continue;
+    }
+
+    const read1 = await readPreview(integrationManager, integrationId, item.tool, item.args!);
+    if (read1.status !== 'ok' || !item.version) {
+      sections.push({ ...base, result: read1 });
+      continue;
+    }
+
+    // Same staleness check buildInternalPreview applies for a single-object
+    // preview, scoped to THIS one read's own `args`/`version`.
+    const approved = item.rawSource?.[item.version.arg];
+    if (typeof approved !== 'string' && typeof approved !== 'number') {
+      sections.push({ ...base, result: read1 });
+      continue;
+    }
+    const { [item.version.arg]: _omit, ...withoutVersion } = item.rawSource!;
+    const mappedCurrentArgs = mapPreviewArgs({ args: item.argsMapping }, withoutVersion);
+    const read2 = await readPreview(integrationManager, integrationId, item.tool, mappedCurrentArgs);
+    if (read2.status !== 'ok' || read2.body.structured === undefined) {
+      sections.push({ ...base, result: read1 });
+      continue;
+    }
+    const current = read2.body.structured[item.version.field];
+    if (typeof current !== 'string' && typeof current !== 'number') {
+      sections.push({ ...base, result: read1 });
+      continue;
+    }
+    const stale = String(current) !== String(approved);
+    sections.push({
+      ...base,
+      result: read1,
+      version: {
+        field: item.version.field,
+        approved,
+        current,
+        stale,
+        ...(stale ? { currentBody: read2.body } : {}),
+      },
+    });
+  }
+  return sections;
+}
+
 /**
  * AU4 fallback snapshot at proposal submission, for a preview WITHOUT a
  * declared `version` (a connector with no document-version enforcement of
@@ -198,7 +389,12 @@ export async function computeSubmissionPreviewHash(
 ): Promise<string | undefined> {
   if (integrationManager.isBuiltin(integrationId)) return undefined;
   const preview = getToolPreviewConfig(integrationManager, integrationId, toolName);
-  if (!preview || preview.version) return undefined;
+  if (!preview) return undefined;
+  // AU8 — several reads: cover ALL of them in one combined hash (see
+  // combinedPreviewReadsHash's doc comment); the single-object path below is
+  // untouched, so every pre-AU8 caller/test keeps its exact behaviour.
+  if (Array.isArray(preview)) return combinedPreviewReadsHash(integrationManager, integrationId, preview, actionArgs);
+  if (preview.version) return undefined;
   const mapped = mapPreviewArgs(preview, actionArgs);
   if (previewHasNoTarget(preview, mapped)) return undefined;
   const read = await readPreview(integrationManager, integrationId, preview.tool, mapped);
@@ -222,6 +418,11 @@ export async function previewChangedSinceSubmission(
 ): Promise<boolean> {
   const preview = getToolPreviewConfig(integrationManager, integrationId, toolName);
   if (!preview) return true; // nothing to re-verify against — fail closed
+  if (Array.isArray(preview)) {
+    const hash = await combinedPreviewReadsHash(integrationManager, integrationId, preview, actionArgs);
+    if (hash === undefined) return true; // can't confirm unchanged — fail closed
+    return hash !== previousHash;
+  }
   const mapped = mapPreviewArgs(preview, actionArgs);
   const read = await readPreview(integrationManager, integrationId, preview.tool, mapped);
   if (read.status !== 'ok') return true; // can't confirm unchanged — fail closed
@@ -229,13 +430,93 @@ export async function previewChangedSinceSubmission(
 }
 
 /**
- * Full orchestration for one `/internal/preview` call: resolves the
- * manifest's declared preview (if any), reads it, and — when the manifest
- * declares `version` — performs the SECOND read (mapped args minus the
- * version arg) to detect staleness. Everything the manifest knows about this
- * connector (which field, which arg) stays here; callers (http.ts, and the
- * control plane relaying its answer) never see a connector-specific name.
+ * AU8 — the combined AU4 hash across every read of a multi-read preview that
+ * has NO declared `version` (a read WITH one is enforced by the connector's
+ * own revision mechanism instead — "version stays per read where declared",
+ * temp/briefs/au8-brief.md). Each read without a version contributes its own
+ * `hashPreviewBody`, in declared order; a `forEach` read contributes one hash
+ * per (capped) element, in source order. Combined via the same jcs hashing
+ * `hashPreviewBody` uses, over the ordered list of those hashes.
+ *
+ * Returns undefined — "nothing to compare against later is better than
+ * snapshotting an error" (same reasoning as the single-read fallback) —
+ * when: every read is version-protected or has no target to read (nothing
+ * to hash at all); or any read that DOES have a target fails.
  */
+async function combinedPreviewReadsHash(
+  integrationManager: IntegrationManager,
+  integrationId: string,
+  reads: PreviewReadConfig[],
+  actionArgs: Record<string, unknown>,
+): Promise<string | undefined> {
+  const plan = planPreviewReads(reads, actionArgs).filter((item) => !item.version);
+  const hashes: string[] = [];
+  for (const item of plan) {
+    if (item.elements !== undefined) {
+      for (const el of item.elements) {
+        const read = await readPreview(integrationManager, integrationId, item.tool, el.args);
+        if (read.status !== 'ok') return undefined;
+        hashes.push(hashPreviewBody(read.body));
+      }
+      continue;
+    }
+    if (item.noTarget) continue; // nothing to read for this one — contributes nothing
+    const read = await readPreview(integrationManager, integrationId, item.tool, item.args!);
+    if (read.status !== 'ok') return undefined;
+    hashes.push(hashPreviewBody(read.body));
+  }
+  if (hashes.length === 0) return undefined;
+  return computeContentHash({ kind: 'jcs', version: '1' }, { reads: hashes });
+}
+
+// ─── buildInternalPreview's result shape ───────────────────────────────────
+
+export interface PreviewVersionInfo {
+  field: string;
+  approved: string | number;
+  current: string | number;
+  stale: boolean;
+  currentBody?: PreviewBody;
+}
+
+/** A read's outcome where "nothing to read" (no_target) is itself a valid,
+ *  non-error outcome — AU8's per-section degrade uses this union (a PLAIN
+ *  {@link PreviewReadResult} has no `none` branch, since the single-read path
+ *  above already handles `no_target` as a whole-preview early return). */
+export type PreviewReadOutcome = PreviewReadResult | { status: 'none'; reason: 'no_target' };
+
+/**
+ * AU8 — one declared read's outcome within a multi-read preview, generic
+ * across connectors: the UI (apps/ui/src/lib/preview-render.ts) decides HOW
+ * to show `attach`/`forEach` from this shape alone, never a tool name.
+ */
+export interface PreviewReadSection {
+  tool: string;
+  /** See {@link PreviewReadConfig.attach} — non-`forEach` reads only. */
+  attach?: string;
+  /** See {@link PreviewReadConfig.forEach} — present only for a forEach read. */
+  forEach?: string;
+  /**
+   * Rendering aid, derived (never declared): when this read's `args` names
+   * exactly one source — the bound action-arg name (non-`forEach`) or the
+   * bound element field (`forEach`) it reads by — so the UI can tell which
+   * of the bound element's own fields the attach column replaces (e.g.
+   * `item_id`), instead of showing it twice. Absent when `args` has zero or
+   * more than one entry (nothing single to point at).
+   */
+  sourceArg?: string;
+  /** The manifest's declared `fields` for THIS read, passed through untouched. */
+  fields?: string[];
+  /** Non-`forEach` reads only. */
+  result?: PreviewReadOutcome;
+  /** `forEach` reads only — one outcome per (capped) source element, same order. */
+  elements?: PreviewReadOutcome[];
+  /** Present only when the `forEach` source array exceeded {@link MAX_FOREACH_ELEMENTS}. */
+  overflow?: { shown: number; total: number };
+  /** Non-`forEach` reads only — see {@link PreviewReadConfig.version}. */
+  version?: PreviewVersionInfo;
+}
+
 export type InternalPreviewResult =
   /** `no_target`: a preview is declared, but the action names no record to read. */
   | { status: 'none'; reason?: 'no_target' }
@@ -246,19 +527,28 @@ export type InternalPreviewResult =
       integration: string;
       tool: string;
       body: PreviewBody;
-      version?: {
-        field: string;
-        approved: string | number;
-        current: string | number;
-        stale: boolean;
-        currentBody?: PreviewBody;
-      };
+      version?: PreviewVersionInfo;
       /** The manifest's declared `preview.fields`, passed through untouched
        *  so the UI's field order/priority comes from the same one place —
        *  never re-declared or guessed on the wire. */
       fields?: string[];
-    };
+    }
+  /** AU8 — several reads (manifest `preview` is a list): one section per
+   *  declared read, degraded independently (a failing read never blocks the
+   *  others, or the decision — temp/briefs/au8-brief.md). Distinguished from
+   *  the single-read "ok" above by `reads` (never both on the same object). */
+  | { status: 'ok'; integration: string; reads: PreviewReadSection[]; display?: ToolDisplayHints };
 
+/**
+ * Full orchestration for one `/internal/preview` call: resolves the
+ * manifest's declared preview (if any), reads it, and — when the manifest
+ * declares `version` — performs the SECOND read (mapped args minus the
+ * version arg) to detect staleness. Everything the manifest knows about this
+ * connector (which field, which arg) stays here; callers (http.ts, and the
+ * control plane relaying its answer) never see a connector-specific name.
+ * AU8 — several reads: delegates to `planPreviewReads`/`runPreviewReadPlan`
+ * instead, returning the `reads` shape of {@link InternalPreviewResult}.
+ */
 export async function buildInternalPreview(
   integrationManager: IntegrationManager,
   integrationId: string,
@@ -267,6 +557,12 @@ export async function buildInternalPreview(
 ): Promise<InternalPreviewResult> {
   const preview = getToolPreviewConfig(integrationManager, integrationId, toolName);
   if (!preview) return { status: 'none' };
+
+  if (Array.isArray(preview)) {
+    const reads = await runPreviewReadPlan(integrationManager, integrationId, planPreviewReads(preview, actionArgs));
+    const display = getToolDisplayHints(integrationManager, integrationId, toolName);
+    return { status: 'ok', integration: integrationId, reads, ...(display ? { display } : {}) };
+  }
 
   const mappedArgs = mapPreviewArgs(preview, actionArgs);
   if (previewHasNoTarget(preview, mappedArgs)) return { status: 'none', reason: 'no_target' };

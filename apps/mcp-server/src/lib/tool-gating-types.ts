@@ -72,6 +72,91 @@ export interface ToolPreviewConfig {
 }
 
 /**
+ * AU8 — one declared read within a multi-read preview list. Same shape as
+ * {@link ToolPreviewConfig} plus `forEach`/`attach`; reads in a list run
+ * SEQUENTIALLY (temp/briefs/au8-brief.md).
+ */
+export interface PreviewReadConfig {
+  /** A tool of the SAME integration — the read tool called for this read. */
+  tool: string;
+  /**
+   * Preview-tool argument name -> source argument name. Outside `forEach`,
+   * the source names a top-level ACTION argument (same direction/meaning as
+   * {@link ToolPreviewConfig.args}). Inside `forEach`, the source instead
+   * names a FIELD of each element of the `forEach` action argument (e.g.
+   * `item_id` on each element of `lines`) — never a top-level action arg.
+   */
+  args: Record<string, string>;
+  /**
+   * Run this read once per element of this action argument (which must
+   * resolve to an array at call time — otherwise there is nothing to read,
+   * same as `previewHasNoTarget`). Capped at `MAX_FOREACH_ELEMENTS`
+   * elements; the rest are simply not read (over-cap is reported, not
+   * refused — see planPreviewReads in preview.ts).
+   */
+  forEach?: string;
+  /**
+   * Names what this read's result resolves, so the UI can merge it into the
+   * approval card instead of showing it as its own section:
+   *  - outside `forEach`: one of THIS read's `args` source names — the bound
+   *    action-arg value that read explains (shown as name+id instead of a
+   *    raw id);
+   *  - inside `forEach`: the key merged into each element, holding that
+   *    element's read result.
+   * Always explicit — never inferred from the read tool's own argument
+   * names. Absent in either case -> shown as the read's OWN section (e.g. a
+   * CRM duplicate-contact check).
+   */
+  attach?: string;
+  /** Same meaning as {@link ToolPreviewConfig.version} — staleness check for
+   *  THIS read only ("version stays per read where declared"). */
+  version?: { arg: string; field: string };
+  /** Same meaning as {@link ToolPreviewConfig.fields} — for THIS read only. */
+  fields?: string[];
+}
+
+/** Manifest cap (temp/briefs/au8-brief.md) — a preview may declare at most
+ *  this many reads. Validated at manifest-load time (manifest-loader.ts). */
+export const MAX_PREVIEW_READS = 10;
+/** Manifest cap — a `forEach` read runs for at most this many elements of
+ *  the source array; the rest are reported, not refused (preview.ts). */
+export const MAX_FOREACH_ELEMENTS = 50;
+
+/**
+ * AU8 — a tool's preview is either ONE read (the original AU3 shape, an
+ * object — unchanged meaning and wire shape) or a LIST of reads run
+ * sequentially (`PreviewReadConfig[]`, max {@link MAX_PREVIEW_READS}).
+ */
+export type PreviewDeclaration = ToolPreviewConfig | PreviewReadConfig[];
+
+/**
+ * AU8 — optional per-tool rendering hints, a sibling of `preview` on the
+ * same override entry. Purely cosmetic: every field is optional, and its
+ * absence falls back to schema-driven defaults (see
+ * apps/ui/src/lib/preview-render.ts) — a manifest with no `display` at all
+ * keeps working exactly as before. Paths use `<forEachArg>[].<field>` to
+ * reach into a `forEach`/array field's own elements (e.g.
+ * "lines[].list_price") — the field is looked up on the bound element
+ * first, then on its attached read's result, so a path works whether the
+ * field is bound or only known after the attached read.
+ */
+export interface ToolDisplayHints {
+  /** Top-level (bound) field order for the combined card, e.g.
+   *  `["customer_id", "lines", "discount_pct", "value"]`. Fields not listed
+   *  are appended afterward, in their own declared order. */
+  order?: string[];
+  /** Paths rendered as money (two decimals, with the `currencyField`'s
+   *  value, e.g. "385.00 EUR"). */
+  money?: string[];
+  /** The bound action-arg name holding the currency code for `money` paths. */
+  currencyField?: string;
+  /** Paths rendered as a percentage, e.g. "0 %". */
+  percent?: string[];
+  /** Paths never shown. */
+  hidden?: string[];
+}
+
+/**
  * Tool gating entry — how a tool's calls map to execution context fields.
  * Read-only tools use { category: "read" } — they require authorization
  * but skip execution context verification.
@@ -81,8 +166,10 @@ export interface ProfileToolGatingEntry {
   staticExecution?: Record<string, string | number>;
   /** Read-only tools: require authorization but no execution context checks */
   category?: 'read';
-  /** AU3 — see {@link ToolPreviewConfig}. */
-  preview?: ToolPreviewConfig;
+  /** AU3/AU8 — see {@link ToolPreviewConfig} / {@link PreviewReadConfig}. */
+  preview?: PreviewDeclaration;
+  /** AU8 — see {@link ToolDisplayHints}. */
+  display?: ToolDisplayHints;
 }
 
 /**
