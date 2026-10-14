@@ -23,6 +23,32 @@ export function BlockedPage() {
   const [profiles, setProfiles] = useState<Record<string, AgentProfile>>({});
   const [failed, setFailed] = useState(false);
 
+  // Mandate title, by authorization_id — the SAME list the Mandates page
+  // already loads (getMyAttestations), not a new external lookup. Resolved
+  // here at display time rather than stamped on the record, because the
+  // MCP server has no local copy of titles to stamp with (see
+  // blocked-view.ts's module doc) — and because a live lookup also covers
+  // a mandate renamed since the block happened, or a block recorded before
+  // this existed. An id missing from this map (unknown/revoked mandate)
+  // falls back to the id alone, same as before.
+  const [mandateTitlesById, setMandateTitlesById] = useState<Record<string, string>>({});
+  const loadMandateTitles = useCallback(() => {
+    spClient.getMyAttestations()
+      .then(items => {
+        const next: Record<string, string> = {};
+        for (const item of items) {
+          if (item.title) next[item.authorization_id] = item.title;
+        }
+        setMandateTitlesById(next);
+      })
+      .catch(() => {
+        // A failed load just means ids show instead of titles — never blocks the page.
+      });
+  }, []);
+  useEffect(() => { loadMandateTitles(); }, [loadMandateTitles]);
+  // Same cadence as the Mandates page's own background refresh.
+  useVisiblePolling(loadMandateTitles, 300_000);
+
   // The cutoff for "new", captured ONCE per visit, from the value on disk
   // BEFORE this visit marks it forward. Items newer than this OLD value
   // stay "New" for the rest of this visit even once seen is recorded —
@@ -86,12 +112,15 @@ export function BlockedPage() {
   // THIS visit (same rule as the initial capture above, applied live).
   const handleNewDenial = useCallback(() => {
     load();
+    // The new block may be under a mandate created moments ago — refresh
+    // the title lookup too instead of waiting on the 5-minute poll above.
+    loadMandateTitles();
     if (seenCutoff === null) return; // the initial capture hasn't landed yet
     if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
     spClient.markBlockedSeen(Date.now())
       .then(() => { window.dispatchEvent(new Event('suveren:blocked-seen-changed')); })
       .catch(() => {});
-  }, [load, seenCutoff]);
+  }, [load, loadMandateTitles, seenCutoff]);
   useSSEEvent('denial-recorded', handleNewDenial);
 
   if (failed) {
@@ -117,7 +146,7 @@ export function BlockedPage() {
       ) : (
         <div className="blocked-list">
           {records.map((r, i) => {
-            const view = blockedView(r, r.profile ? profiles[r.profile] : undefined);
+            const view = blockedView(r, r.profile ? profiles[r.profile] : undefined, mandateTitlesById);
             const unseen = seenCutoff !== null && r.ts > seenCutoff;
             return (
               <div

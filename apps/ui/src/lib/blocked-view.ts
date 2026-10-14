@@ -14,6 +14,17 @@
  * Field labels: the profile's own `displayName` where available, otherwise
  * the raw field name (never per-connector/per-profile code — generic lookup
  * over the profile's own bounds/scope schemas).
+ *
+ * Mandate title: `DenialRecord.mandateTitle` exists on the wire type but
+ * nothing on the write side (recordBlocked in tool-proxy.ts) ever sets it —
+ * the MCP server has no local copy of mandate titles to stamp at record
+ * time. Resolved here instead, at DISPLAY time, from the SAME mandates list
+ * the Mandates page already loads for this gateway (`getMyAttestations`) —
+ * not a new external lookup, the gateway's own already-fetched data, keyed
+ * by `authorization_id`. This is deliberately not "decision 1 broken": it
+ * also means a renamed mandate shows its CURRENT title, and a denial
+ * recorded before this fix shipped gets a title too. Unknown/revoked
+ * mandate (not in that list) → the id alone, same as before.
  */
 import type { AgentProfile } from '@hap/core';
 import type { DenialRecord, DenialKind } from './sp-client';
@@ -108,13 +119,31 @@ function sentenceFor(r: DenialRecord, label: string): string {
   }
 }
 
+/**
+ * The title to show for this record's mandate: a live lookup by
+ * `mandateId` (`mandateTitlesById`, keyed by `authorization_id` — see the
+ * module doc above) wins whenever it has an entry, so a rename or a title
+ * that only exists today (never stamped on the old record) still shows.
+ * Falls back to whatever the record itself carries (legacy/hand-set data,
+ * or a future record-time stamp), then to nothing — never the lookup table
+ * absent an entry AND the record's own field both ignored.
+ */
+function resolveMandateTitle(r: DenialRecord, mandateTitlesById?: Readonly<Record<string, string>>): string | undefined {
+  if (r.mandateId) {
+    const fromLookup = mandateTitlesById?.[r.mandateId];
+    if (fromLookup) return fromLookup;
+  }
+  return r.mandateTitle;
+}
+
 /** Title first, id second in small/dimmed text — never the raw id alone
- * once a title is on record. Falls back to the id alone only when no title
- * is known locally (unmodified mandates, or a pre-AU2 denial that never
- * carried one). */
-function mandateParts(r: DenialRecord): SourcePart[] {
-  if (r.mandateTitle) {
-    const parts: SourcePart[] = [{ text: ` · mandate "${r.mandateTitle}"` }];
+ * once a title is known (looked up or on-record). Falls back to the id
+ * alone only when no title is known at all (an unknown/revoked mandate not
+ * in the owner's mandate list, or — pre this fix — any denial at all). */
+function mandateParts(r: DenialRecord, mandateTitlesById?: Readonly<Record<string, string>>): SourcePart[] {
+  const title = resolveMandateTitle(r, mandateTitlesById);
+  if (title) {
+    const parts: SourcePart[] = [{ text: ` · mandate "${title}"` }];
     if (r.mandateId) parts.push({ text: ` (${r.mandateId.slice(0, 14)}…)`, dim: true });
     return parts;
   }
@@ -122,7 +151,7 @@ function mandateParts(r: DenialRecord): SourcePart[] {
   return [];
 }
 
-function sourceLine(r: DenialRecord): SourcePart[] {
+function sourceLine(r: DenialRecord, mandateTitlesById?: Readonly<Record<string, string>>): SourcePart[] {
   const kind = kindOf(r);
   const src = sourceName(r.integrationId);
   const who = r.who === 'authority-server'
@@ -133,7 +162,7 @@ function sourceLine(r: DenialRecord): SourcePart[] {
   const code = r.code ? ` (${r.code})` : '';
   return [
     { text: `${src} · ${r.tool}` },
-    ...mandateParts(r),
+    ...mandateParts(r, mandateTitlesById),
     { text: ` · ${who}${code}` },
   ];
 }
@@ -144,16 +173,27 @@ export function sourceLineText(parts: SourcePart[]): string {
   return parts.map(p => p.text).join('');
 }
 
-/** Build the full view for one record. `profile`, when supplied, is the
- * record's own profile (fetched once, generically, via `getProfile`) — used
- * only to resolve a field's display name; its absence never blocks display. */
-export function blockedView(r: DenialRecord, profile?: AgentProfile): BlockedView {
+/**
+ * Build the full view for one record.
+ * @param profile `profile`, when supplied, is the record's own profile
+ *   (fetched once, generically, via `getProfile`) — used only to resolve a
+ *   field's display name; its absence never blocks display.
+ * @param mandateTitlesById Live title-by-id lookup — the owner's current
+ *   mandate list (`authorization_id` -> title), already loaded for the
+ *   Mandates page. See the module doc above for why this exists and the
+ *   resolution order.
+ */
+export function blockedView(
+  r: DenialRecord,
+  profile?: AgentProfile,
+  mandateTitlesById?: Readonly<Record<string, string>>,
+): BlockedView {
   const kind = kindOf(r);
   const label = fieldLabel(profile, r.field);
   return {
     title: TITLE[kind],
     sentence: sentenceFor(r, label),
-    sourceLine: sourceLine(r),
+    sourceLine: sourceLine(r, mandateTitlesById),
     whatYouCanDo: WHAT_YOU_CAN_DO[kind],
   };
 }

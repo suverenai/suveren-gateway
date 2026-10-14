@@ -131,6 +131,64 @@ describe('blockedView — one generic sentence per kind, never per-action advice
   });
 });
 
+describe('blockedView — mandate title resolved at DISPLAY time, not stamped on the record', () => {
+  // The real shape: recordBlocked (tool-proxy.ts) never sets mandateTitle —
+  // only mandateId. Every test above that passed mandateTitle by hand would
+  // have missed exactly the bug this closes, so these build records the
+  // way the MCP server actually does: mandateId only.
+  const realRecord = (mandateId: string) => base({
+    kind: 'scope',
+    field: 'allowed_domains',
+    value: 'partner',
+    mandateId,
+    // deliberately NOT setting mandateTitle — see above
+  });
+
+  it('shows the looked-up title (dimmed id alongside), with no mandateTitle on the record at all', () => {
+    const id = 'authz_1e862ebb-0000-4000-8000-000000000001';
+    const v = blockedView(realRecord(id), EMAIL_PROFILE, { [id]: 'Blocked e2e customer care' });
+    expect(sourceLineText(v.sourceLine)).toContain('mandate "Blocked e2e customer care" (authz_1e862ebb…)');
+    const dimParts = v.sourceLine.filter(p => p.dim);
+    expect(dimParts).toHaveLength(1);
+    expect(dimParts[0].text).toBe(' (authz_1e862ebb…)');
+  });
+
+  it('falls back to the id alone when the id has no entry in the lookup (unknown/revoked mandate)', () => {
+    const id = 'authz_dead0000-0000-4000-8000-000000000001';
+    const v = blockedView(realRecord(id), EMAIL_PROFILE, { 'authz_other-0000-4000-8000-000000000001': 'Some other mandate' });
+    expect(v.sourceLine.some(p => p.dim)).toBe(false);
+    expect(sourceLineText(v.sourceLine)).toContain(`mandate ${id.slice(0, 14)}…`);
+  });
+
+  it('falls back to the id alone when no lookup table is supplied at all', () => {
+    const id = 'authz_1e862ebb-0000-4000-8000-000000000001';
+    const v = blockedView(realRecord(id), EMAIL_PROFILE);
+    expect(v.sourceLine.some(p => p.dim)).toBe(false);
+    expect(sourceLineText(v.sourceLine)).toContain(`mandate ${id.slice(0, 14)}…`);
+  });
+
+  it('the live lookup wins over a stale/hand-set mandateTitle on the record (handles a rename)', () => {
+    const id = 'authz_f86b3a1e-0000-4000-8000-000000000001';
+    const v = blockedView(
+      base({ kind: 'scope', mandateId: id, mandateTitle: 'Old name before rename' }),
+      EMAIL_PROFILE,
+      { [id]: 'Renamed mandate' },
+    );
+    expect(sourceLineText(v.sourceLine)).toContain('mandate "Renamed mandate"');
+    expect(sourceLineText(v.sourceLine)).not.toContain('Old name before rename');
+  });
+
+  it('still falls back to the record\'s own mandateTitle when the lookup table has no entry for it', () => {
+    const id = 'authz_f86b3a1e-0000-4000-8000-000000000001';
+    const v = blockedView(
+      base({ kind: 'scope', mandateId: id, mandateTitle: 'Legacy hand-set title' }),
+      EMAIL_PROFILE,
+      {},
+    );
+    expect(sourceLineText(v.sourceLine)).toContain('mandate "Legacy hand-set title"');
+  });
+});
+
 describe('todaysCount', () => {
   it('counts only records at or after local midnight', () => {
     const now = new Date(2026, 9, 9, 15, 0, 0).getTime(); // 9 Oct 2026, 15:00 local
