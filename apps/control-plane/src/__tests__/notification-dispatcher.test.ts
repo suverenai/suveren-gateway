@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { NotificationDispatcher, type DispatcherOptions } from '../lib/notification-dispatcher';
+import { eventBus } from '../lib/event-bus';
 
 /**
  * The dispatcher's job is to be quiet. These tests pin the behaviours that make
@@ -183,5 +184,55 @@ describe('NotificationDispatcher — execution-failed', () => {
     d.onTrigger('failure');
     vi.advanceTimersByTime(5_000);
     expect(notifyFn).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * AU2's 'denial-recorded' is presence for the Blocked badge/page ONLY —
+ * explicitly not in REVIEW_EVENTS or FAILURE_EVENTS. A block is "nothing
+ * ran", not "something needs you"; this doorbell must stay silent for it,
+ * subscribed through the REAL event bus (not d.onTrigger() directly), so a
+ * regression that adds it to either list would be caught here.
+ */
+describe('NotificationDispatcher — AU2 denial-recorded never rings the doorbell', () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  function make(overrides: Partial<DispatcherOptions> = {}) {
+    const notifyFn = vi.fn();
+    const d = new NotificationDispatcher({
+      notifyFn: notifyFn as never,
+      settingsFn: (() => ({ desktopNotifications: true })) as never,
+      ...overrides,
+    });
+    return { d, notifyFn };
+  }
+
+  it('a denial-recorded bus event produces no notification, even after the debounce window', () => {
+    const { d, notifyFn } = make();
+    const stop = d.start();
+    try {
+      eventBus.emit('denial-recorded');
+      vi.advanceTimersByTime(5_000);
+      expect(notifyFn).not.toHaveBeenCalled();
+    } finally {
+      stop();
+    }
+  });
+
+  it('a denial-recorded event does not get bundled into a nearby review notification either', () => {
+    const { d, notifyFn } = make();
+    const stop = d.start();
+    try {
+      eventBus.emit('proposal-added');
+      eventBus.emit('denial-recorded');
+      vi.advanceTimersByTime(5_000);
+      // Still the plain review message — denial-recorded contributed nothing
+      // to the count or the wording.
+      expect(notifyFn).toHaveBeenCalledTimes(1);
+      expect(notifyFn.mock.calls[0][1]).toBe('Something is waiting for your review.');
+    } finally {
+      stop();
+    }
   });
 });

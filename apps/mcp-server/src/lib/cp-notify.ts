@@ -43,7 +43,16 @@ export type NotifiableEvent =
   // AFTER the Authority Server already issued the ticket — see
   // commitments.ts. Presence only, like every other event here: the human
   // learns something failed, never what or how much.
-  | 'execution-failed';
+  | 'execution-failed'
+  // A refusal of a gated call was just appended to the denial log (AU2) —
+  // local Gatekeeper refusal, Authority Server ticket refusal, simulation
+  // block, or "no matching mandate". See denial-log.ts, the single place
+  // every kind of denial funnels through. Deliberately NOT one of the
+  // review/failure events the desktop doorbell reacts to — a block is
+  // "nothing happened", not "something needs you" — so this exists only to
+  // move the Blocked sidebar badge and an open Blocked page, never to ring
+  // anything.
+  | 'denial-recorded';
 
 export async function notifyControlPlane(type: NotifiableEvent): Promise<void> {
   const secret = process.env.SUVEREN_INTERNAL_SECRET ?? '';

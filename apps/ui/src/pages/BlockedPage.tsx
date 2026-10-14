@@ -5,6 +5,7 @@ import { blockedView, kindOf, todaysCount, formatBlockedWhen } from '../lib/bloc
 import { EmptyState } from '../components/EmptyState';
 import { ProfileRail } from '../components/ProfileRail';
 import { useVisiblePolling } from '../hooks/useVisiblePolling';
+import { useSSEEvent } from '../contexts/EventSourceContext';
 
 /**
  * Every refusal of a gated tool call (AU2, work-plan.md "Added 2026-10-09") —
@@ -75,6 +76,23 @@ export function BlockedPage() {
         // must never block the page from showing the actual blocks.
       });
   }, [records]);
+
+  // A new block happened while this page is open (MCP server -> control
+  // plane -> SSE 'denial-recorded', see cp-notify.ts). Refresh the list so
+  // it appears without a reload. If the owner is actually looking at this
+  // page right now, push the PERSISTED cutoff forward too — so this item
+  // won't come back as unseen on a later visit — but leave the local
+  // `seenCutoff` state alone, so it still renders "New" for the rest of
+  // THIS visit (same rule as the initial capture above, applied live).
+  const handleNewDenial = useCallback(() => {
+    load();
+    if (seenCutoff === null) return; // the initial capture hasn't landed yet
+    if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+    spClient.markBlockedSeen(Date.now())
+      .then(() => { window.dispatchEvent(new Event('suveren:blocked-seen-changed')); })
+      .catch(() => {});
+  }, [load, seenCutoff]);
+  useSSEEvent('denial-recorded', handleNewDenial);
 
   if (failed) {
     return <EmptyState icon="⛔" title="Could not load blocked actions" text="Try again shortly." />;
