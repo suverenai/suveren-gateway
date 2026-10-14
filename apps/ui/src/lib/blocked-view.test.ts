@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import type { AgentProfile } from '@hap/core';
-import { blockedView, fieldLabel, kindOf, todaysCount } from './blocked-view';
+import {
+  blockedView, fieldLabel, kindOf, todaysCount, unseenCount, isUnseen,
+  formatBlockedWhen, sourceLineText,
+} from './blocked-view';
 import type { DenialRecord } from './sp-client';
 
 // Pure logic only (presentation is verified in the browser layer, same
@@ -77,8 +80,8 @@ describe('blockedView — one generic sentence per kind, never per-action advice
   it('cumulative: X of Y used', () => {
     const v = blockedView(base({ kind: 'cumulative', value: 7, limit: 6, who: 'authority-server', code: 'CUMULATIVE_LIMIT_EXCEEDED' }));
     expect(v.sentence).toBe('7 of 6 used — the limit is reached.');
-    expect(v.sourceLine).toContain('Authority Server');
-    expect(v.sourceLine).toContain('CUMULATIVE_LIMIT_EXCEEDED');
+    expect(sourceLineText(v.sourceLine)).toContain('Authority Server');
+    expect(sourceLineText(v.sourceLine)).toContain('CUMULATIVE_LIMIT_EXCEEDED');
     expect(v.whatYouCanDo).toMatch(/resets/);
   });
 
@@ -102,8 +105,29 @@ describe('blockedView — one generic sentence per kind, never per-action advice
 
   it('never leaks the mandate title/id beyond a short reference, and never action content', () => {
     const v = blockedView(base({ kind: 'bound', value: 5, limit: 3, mandateId: 'authz_abcdef01-2345-4000-8000-000000000001' }));
-    expect(v.sourceLine).not.toContain('authz_abcdef01-2345-4000-8000-000000000001'); // truncated
-    expect(v.sourceLine).toContain('authz_abcdef01…'); // short reference only
+    const text = sourceLineText(v.sourceLine);
+    expect(text).not.toContain('authz_abcdef01-2345-4000-8000-000000000001'); // truncated
+    expect(text).toContain('authz_abcdef01…'); // short reference only
+  });
+
+  it('mandate reference: title first, id second and dimmed — never the id alone once a title is known', () => {
+    const v = blockedView(base({
+      kind: 'scope',
+      field: 'allowed_domains',
+      value: 'other.example',
+      mandateTitle: 'Customer outreach',
+      mandateId: 'authz_f86b3a1e-0000-4000-8000-000000000001',
+    }), EMAIL_PROFILE);
+    const dimParts = v.sourceLine.filter(p => p.dim);
+    expect(dimParts).toHaveLength(1);
+    expect(dimParts[0].text).toBe(' (authz_f86b3a1e…)');
+    expect(sourceLineText(v.sourceLine)).toContain('mandate "Customer outreach" (authz_f86b3a1e…)');
+  });
+
+  it('mandate reference: falls back to the id alone (not dimmed) when no title is on record', () => {
+    const v = blockedView(base({ kind: 'bound', value: 5, limit: 3, mandateId: 'authz_2dd091a4-0000-4000-8000-000000000001' }));
+    expect(v.sourceLine.some(p => p.dim)).toBe(false);
+    expect(sourceLineText(v.sourceLine)).toContain('mandate authz_2dd091a4…');
   });
 });
 
@@ -116,5 +140,55 @@ describe('todaysCount', () => {
   });
   it('is zero for an empty list', () => {
     expect(todaysCount([], Date.now())).toBe(0);
+  });
+});
+
+describe('unseenCount / isUnseen — the sidebar badge, not "today"', () => {
+  it('counts only records strictly after lastSeenAt', () => {
+    const records = [{ ts: 100 }, { ts: 200 }, { ts: 300 }];
+    expect(unseenCount(records, 200)).toBe(1); // only ts:300
+    expect(unseenCount(records, 0)).toBe(3);
+    expect(unseenCount(records, 300)).toBe(0);
+  });
+
+  it('never seen (lastSeenAt=0) counts every retained record as new', () => {
+    expect(unseenCount([{ ts: 1 }, { ts: 2 }], 0)).toBe(2);
+  });
+
+  it('isUnseen agrees with unseenCount on the same boundary', () => {
+    expect(isUnseen(300, 200)).toBe(true);
+    expect(isUnseen(200, 200)).toBe(false);
+    expect(isUnseen(100, 200)).toBe(false);
+  });
+
+  it('is zero for an empty list', () => {
+    expect(unseenCount([], Date.now())).toBe(0);
+  });
+});
+
+describe('formatBlockedWhen', () => {
+  it('shows "Today · <time>" for a timestamp at or after local midnight', () => {
+    const now = new Date(2026, 9, 9, 15, 0, 0).getTime();
+    const todayMorning = new Date(2026, 9, 9, 6, 39, 0).getTime();
+    expect(formatBlockedWhen(todayMorning, now)).toMatch(/^Today · /);
+  });
+
+  it('shows "Yesterday · <time>" for a timestamp in the previous calendar day', () => {
+    const now = new Date(2026, 9, 9, 15, 0, 0).getTime();
+    const yesterday = new Date(2026, 9, 8, 11, 2, 0).getTime();
+    expect(formatBlockedWhen(yesterday, now)).toMatch(/^Yesterday · /);
+  });
+
+  it('falls through to "<Mon D> · <time>" beyond yesterday', () => {
+    const now = new Date(2026, 9, 14, 15, 0, 0).getTime();
+    const older = new Date(2026, 9, 12, 9, 15, 0).getTime();
+    const out = formatBlockedWhen(older, now);
+    expect(out).toMatch(/^Oct 12 · /);
+    expect(out).not.toMatch(/Today|Yesterday/);
+  });
+
+  it('always appends the time, for every bucket', () => {
+    const now = new Date(2026, 9, 9, 15, 0, 0).getTime();
+    expect(formatBlockedWhen(now, now)).toContain(' · ');
   });
 });
