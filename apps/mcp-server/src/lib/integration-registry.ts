@@ -265,6 +265,10 @@ export interface ToolGatingConfig {
    * exercise exactly that path. A tool without this flag is unaffected.
    */
   simulationOnly?: boolean;
+  /** AU10 — see tool-gating-types.ts `ContextKeysDeclaration`. */
+  contextKeys?: Record<string, string>;
+  /** AU10 — see tool-gating-types.ts `SourceFromArgDeclaration`. */
+  sourceFromArg?: { kind: string; arg: string };
 }
 
 /**

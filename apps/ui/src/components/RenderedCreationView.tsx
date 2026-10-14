@@ -78,6 +78,9 @@ export function RenderedCreationView({ view }: { view: CreationView }) {
       <p className="creation-legend">
         <span><i className="creation-legend-dot creation-legend-dot-sealed" />bold black = sealed: approved and executed exactly so</span>
         <span><i className="creation-legend-dot creation-legend-dot-system" />blue = from the system: read by the gateway, not by the AI</span>
+        {/* AU10 — the Request/History blocks below use this same colour for
+            the AI's own claim or text (doc/au10-request-context.md §3). */}
+        <span><i className="creation-legend-dot au10-dot-ai" />amber = the AI's own claim or text: not checked</span>
       </p>
     </>
   );

@@ -271,6 +271,60 @@ export interface OutcomeResponse {
   at?: number;
 }
 
+// ─── AU10 — Request + History (doc/au10-request-context.md) ───────────────
+
+export interface RequestChainItem {
+  author?: string;
+  at?: string;
+  title?: string;
+  body?: string;
+}
+
+export type RequestResult =
+  | { status: 'none' }
+  | { status: 'unreadable'; reason: string }
+  | { status: 'not_found' }
+  | {
+      status: 'ok';
+      connector: string;
+      kind: string;
+      implicit: boolean;
+      author?: string;
+      at?: string;
+      title?: string;
+      body?: string;
+      chain: RequestChainItem[];
+    };
+
+export interface HistoryItem {
+  kind?: string;
+  title?: string;
+  body?: string;
+  at?: string;
+  author?: string;
+  type?: string;
+  aiWritten?: { at?: number };
+}
+
+export interface ConnectorHistoryMatch {
+  connectorId: string;
+  matchedKeyType: 'email' | 'email_domain';
+  matchedKeyValue: string;
+  items: HistoryItem[];
+}
+
+export type HistoryResult =
+  | { status: 'no_customer_link' }
+  | { status: 'no_match' }
+  | { status: 'unreachable'; connectorIds: string[] }
+  | { status: 'ok'; matches: ConnectorHistoryMatch[]; unreachableConnectorIds: string[] };
+
+/** `GET /proposal-status/:id/request-context` response. */
+export interface RequestContextResponse {
+  request: RequestResult;
+  history: HistoryResult;
+}
+
 export interface AuthTemplate {
   name: string;
   description: string;
@@ -1685,6 +1739,16 @@ class SPClient {
   async getProposalPreview(id: string): Promise<PreviewResponse> {
     const res = await this.fetch(`/proposal-status/${encodeURIComponent(id)}/preview`);
     if (!res.ok) throw new Error(`Failed to fetch preview: ${res.status}`);
+    return res.json();
+  }
+
+  /**
+   * AU10 — the Request + History blocks for a pending proposal. Same
+   * gateway-internal-only path as `getProposalPreview`.
+   */
+  async getProposalRequestContext(id: string): Promise<RequestContextResponse> {
+    const res = await this.fetch(`/proposal-status/${encodeURIComponent(id)}/request-context`);
+    if (!res.ok) throw new Error(`Failed to fetch request context: ${res.status}`);
     return res.json();
   }
 

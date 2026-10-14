@@ -39,6 +39,32 @@
   },
   "personalDefault": true,
   "oauth": null,
+  "context": {
+    "sources": {
+      "activity": {
+        "read": { "tool": "get_activity", "args": { "id": "$id" } },
+        "title": "summary",
+        "author": "created_by",
+        "at": "date",
+        "body": "detail"
+      }
+    },
+    "history": {
+      "byKey": "email_domain",
+      "read": { "tool": "get_timeline", "args": { "email_domain": "$key", "since": "$since", "limit": "$limit" } },
+      "limit": 5,
+      "maxAgeDays": 14,
+      "item": {
+        "kind": "activity",
+        "title": "summary",
+        "body": "detail",
+        "at": "date",
+        "author": "created_by",
+        "type": "type",
+        "ticket": "ticket_id"
+      }
+    }
+  },
   "toolGating": {
     "default": {
       "executionMapping": {
@@ -55,6 +81,7 @@
           "action_type": "write"
         },
         "actionLabel": "Contact created",
+        "contextKeys": { "email": "email" },
         "preview": [
           { "tool": "find_contacts", "args": { "query": "email" } }
         ],
@@ -304,6 +331,11 @@
         "requiredValue": "unlimited"
       },
       "get_timeline": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "get_activity": {
         "category": "read",
         "boundField": "read_access",
         "requiredValue": "unlimited"

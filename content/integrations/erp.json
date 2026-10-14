@@ -40,6 +40,14 @@
   },
   "personalDefault": true,
   "oauth": null,
+  "context": {
+    "recordKeys": {
+      "customer": {
+        "read": { "tool": "get_customer", "args": { "id": "$id" } },
+        "keys": { "email": "email" }
+      }
+    }
+  },
   "toolGating": {
     "default": {
       "executionMapping": {},
@@ -96,6 +104,7 @@
           "action_type": "quote"
         },
         "actionLabel": "Quote drafted",
+        "contextKeys": { "customer": "customer_id" },
         "preview": [
           { "tool": "get_customer", "args": { "id": "customer_id" }, "attach": "customer_id" },
           { "tool": "get_item", "forEach": "lines", "args": { "id": "item_id" }, "attach": "item" }

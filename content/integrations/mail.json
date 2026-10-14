@@ -39,6 +39,19 @@
   },
   "personalDefault": false,
   "oauth": null,
+  "context": {
+    "sources": {
+      "message": {
+        "read": { "tool": "get_message", "args": { "id": "$id" } },
+        "keys": { "email": "from.email" },
+        "title": "subject",
+        "author": "from.name",
+        "at": "received_at",
+        "body": "body",
+        "chain": { "field": "in_reply_to", "max": 5 }
+      }
+    }
+  },
   "toolGating": {
     "default": {
       "executionMapping": {},
@@ -75,7 +88,9 @@
         "staticExecution": {
           "action_type": "send"
         },
-        "actionLabel": "Email sent"
+        "actionLabel": "Email sent",
+        "sourceFromArg": { "kind": "message", "arg": "in_reply_to" },
+        "contextKeys": { "email": "to" }
       },
       "load_simulation": {
         "executionMapping": {},

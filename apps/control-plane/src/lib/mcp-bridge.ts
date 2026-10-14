@@ -8,6 +8,7 @@
  */
 
 import type { InternalPreviewResult } from './preview-types';
+import type { RequestContextResult } from './request-context-types';
 
 export const MCP_BASE = process.env.SUVEREN_MCP_INTERNAL_URL ?? 'http://127.0.0.1:3430';
 
@@ -455,6 +456,35 @@ export async function getToolPreview(data: {
       throw new Error(`MCP preview failed: ${(err as { error?: string }).error ?? res.status}`);
     }
     return res.json() as Promise<InternalPreviewResult>;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/**
+ * AU10 — the approval card's Request + History blocks
+ * (doc/au10-request-context.md). Same gateway-internal-only path as
+ * `getToolPreview`: never ticketed, never read-gated, and (per the
+ * contract) never counted against the AI's own read limits.
+ */
+export async function getToolRequestContext(data: {
+  tool: string;
+  toolArgs: Record<string, unknown>;
+}): Promise<RequestContextResult> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 12_000);
+  try {
+    const res = await fetch(`${MCP_BASE}/internal/request-context`, {
+      method: 'POST',
+      headers: internalHeaders(),
+      body: JSON.stringify(data),
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+      throw new Error(`MCP request-context failed: ${(err as { error?: string }).error ?? res.status}`);
+    }
+    return res.json() as Promise<RequestContextResult>;
   } finally {
     clearTimeout(timeout);
   }

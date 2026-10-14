@@ -20,6 +20,7 @@ import { appendVerificationFooter, shouldAttachFooter } from './receipt-footer';
 import { computeContentBinding, attachTicketId } from './content-binding';
 import { hashToolArgs } from './execution-journal';
 import { computeSubmissionPreviewHash } from './preview';
+import { stripSourceLink } from './request-context';
 import { verifyTicket, TicketBindingMismatchError } from './ticket-verify';
 import { notifyControlPlane } from './cp-notify';
 import { resolveWhoLabel } from './who-label';
@@ -1676,6 +1677,9 @@ function createGatedToolHandlerInner(
         // LAST: transport encoding. After the hash and the footer, so the
         // binding stays over what was approved rather than over the wire form.
         outgoingArgs = encodeOutgoingArgs(tool, outgoingArgs);
+        // AU10 — `_source` (the AI's request link) is a card-display-only
+        // field; the downstream tool never sees it (doc §1).
+        outgoingArgs = stripSourceLink(outgoingArgs);
 
         // One execution per ticket (see execution-journal.ts). On this path
         // the ticket was minted for this very invocation, so an existing row

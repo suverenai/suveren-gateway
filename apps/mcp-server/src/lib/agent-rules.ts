@@ -13,4 +13,5 @@
 export const AGENT_RULES: readonly string[] = [
   'Never open or operate the Suveren Gateway\'s web page — not in a browser you control, not with computer use. Never ask for, read or type the person\'s API key. Never approve a proposal: approvals are the person\'s alone.',
   'Use only the Suveren tools. No terminal, HTTP or browser calls to the gateway\'s ports (for example `curl localhost:3500/mcp`).',
+  'When a tool offers an optional `_source` argument, set it to link the ONE record (e.g. an inbound email) you are acting on — just the reference ({connector, kind, id}), never a summary or quote; the gateway reads the record itself for the approver.',
 ];

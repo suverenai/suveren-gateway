@@ -23,6 +23,7 @@ import { resolveProposalLinks, type ProposalLink } from '../lib/proposal-links';
 import { spClient, type IntegrationManifest, type Proposal } from '../lib/sp-client';
 import { ProposalArgs } from './ProposalArgs';
 import { PreviewBox } from './PreviewBox';
+import { RequestContextBox } from './RequestContextBox';
 import { boundValuesOpen } from '../lib/approval-preview-view';
 import { contextFieldLabel, splitTool, systemDisplayName, toolHeadline, type ToolDisplay } from '../lib/approval-view';
 import { useProfile } from '../lib/profile-cache';
@@ -232,6 +233,9 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
         </p>
       )}
       {readable && <PreviewBox proposalId={proposal.id} systemName={systemName} toolArgs={content.toolArgs} sealed={content.sealed} onTone={setPreviewTone} />}
+      {/* AU10 — Request + History, right after the AU8 "What will be
+          created" box and before the legend (doc/au10-request-context.md §3). */}
+      {readable && <RequestContextBox proposalId={proposal.id} />}
 
       {/* Within your limits — per-call bound checks only (lib/receipt-summary.ts
           limitChecks); cumulative bounds are deliberately not shown here (no

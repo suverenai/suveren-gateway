@@ -184,6 +184,27 @@ export interface ToolDisplayHints {
 }
 
 /**
+ * AU10 — per-tool declaration of which action args identify "the customer"
+ * (doc/au10-request-context.md §2). Key = either one of the connector's own
+ * `context.recordKeys` entry names, or a direct identity key type (`email`);
+ * value = the action's own argument name carrying that id/email. Resolved
+ * generically by request-context.ts — never a hardcoded field name.
+ */
+export type ContextKeysDeclaration = Record<string, string>;
+
+/**
+ * AU10 — declares that this tool's call ALREADY carries a reference to the
+ * request it answers (e.g. `send_message.in_reply_to`), so no `_source` is
+ * needed from the AI. `kind` must be one the SAME connector's
+ * `context.sources` declares; `arg` is the action's own argument holding the
+ * id.
+ */
+export interface SourceFromArgDeclaration {
+  kind: string;
+  arg: string;
+}
+
+/**
  * Tool gating entry — how a tool's calls map to execution context fields.
  * Read-only tools use { category: "read" } — they require authorization
  * but skip execution context verification.
@@ -197,6 +218,63 @@ export interface ProfileToolGatingEntry {
   preview?: PreviewDeclaration;
   /** AU8 — see {@link ToolDisplayHints}. */
   display?: ToolDisplayHints;
+  /** AU10 — see {@link ContextKeysDeclaration}. */
+  contextKeys?: ContextKeysDeclaration;
+  /** AU10 — see {@link SourceFromArgDeclaration}. */
+  sourceFromArg?: SourceFromArgDeclaration;
+}
+
+// ─── AU10 — manifest `context` block (doc/au10-request-context.md §2) ──────
+
+/** One declared way to read a single record the AI may link to via `_source`. */
+export interface ContextSourceConfig {
+  read: { tool: string; args: Record<string, string> };
+  /** Identity key type (always `email` today — `email_domain` is always
+   *  derived from it, never declared directly) -> dotted field path into the
+   *  read's structured result. */
+  keys?: Record<string, string>;
+  /** Dotted field paths into the read's structured result. */
+  title?: string;
+  author?: string;
+  at?: string;
+  body?: string;
+  /** Optional thread/reply chain to follow, same connector + kind. */
+  chain?: { field: string; max: number };
+}
+
+/** The identity key types the history engine matches on (doc §2). */
+export type HistoryKeyType = 'email' | 'email_domain';
+
+export interface ContextHistoryItemMapping {
+  kind?: string;
+  title?: string;
+  body?: string;
+  at?: string;
+  author?: string;
+  type?: string;
+  /** Field holding the ticket id a gateway's own journal can look up (AU10 §3). */
+  ticket?: string;
+}
+
+export interface ContextHistoryConfig {
+  byKey: HistoryKeyType;
+  read: { tool: string; args: Record<string, string> };
+  limit: number;
+  maxAgeDays: number;
+  item: ContextHistoryItemMapping;
+}
+
+/** Turns an id carried on the action into identity keys (doc §2). */
+export interface ContextRecordKeyConfig {
+  read: { tool: string; args: Record<string, string> };
+  keys: Record<string, string>;
+}
+
+/** AU10 manifest top-level `context` block. */
+export interface ManifestContext {
+  sources?: Record<string, ContextSourceConfig>;
+  history?: ContextHistoryConfig;
+  recordKeys?: Record<string, ContextRecordKeyConfig>;
 }
 
 /**

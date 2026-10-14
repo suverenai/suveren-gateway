@@ -14,7 +14,12 @@
 
 import { readFileSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { MAX_PREVIEW_READS, type ProfileToolGating, type ToolPreviewConfig } from './tool-gating-types';
+import {
+  MAX_PREVIEW_READS,
+  type ProfileToolGating,
+  type ToolPreviewConfig,
+  type ManifestContext,
+} from './tool-gating-types';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -124,6 +129,8 @@ export interface IntegrationManifest {
   setupHint?: string;
   /** Optional per-context-field discovery config (wizard-only). */
   contextDiscovery?: Record<string, ManifestContextDiscovery>;
+  /** AU10 — request/history card reads (doc/au10-request-context.md §2). */
+  context?: ManifestContext;
 }
 
 interface ManifestIndex {
@@ -308,6 +315,177 @@ export function invalidManifestPreviewReason(manifest: Pick<IntegrationManifest,
   return null;
 }
 
+// ─── AU10 — `context` shape validation (doc/au10-request-context.md §2) ────
+
+function isNonEmptyString(v: unknown): v is string {
+  return typeof v === 'string' && v.length > 0;
+}
+
+/** Checks a `{ tool, args }` read descriptor shared by sources/history/recordKeys. */
+function invalidContextReadReason(label: string, entry: unknown): string | null {
+  if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) {
+    return `${label} must be an object`;
+  }
+  const r = entry as Record<string, unknown>;
+  if (!isNonEmptyString(r.tool)) return `${label}.tool must be a non-empty string`;
+  if (r.args === undefined || r.args === null || typeof r.args !== 'object' || Array.isArray(r.args)) {
+    return `${label}.args must be an object`;
+  }
+  for (const [k, v] of Object.entries(r.args as Record<string, unknown>)) {
+    if (typeof v !== 'string' || v.length === 0) {
+      return `${label}.args.${k} must be a non-empty string`;
+    }
+  }
+  return null;
+}
+
+function invalidContextSourceReason(toolName: string, entry: unknown): string | null {
+  const label = `context.sources.${toolName}`;
+  if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) {
+    return `${label} must be an object`;
+  }
+  const s = entry as Record<string, unknown>;
+  const readReason = invalidContextReadReason(`${label}.read`, s.read);
+  if (readReason) return readReason;
+  for (const field of ['title', 'author', 'at', 'body'] as const) {
+    if (s[field] !== undefined && !isNonEmptyString(s[field])) {
+      return `${label}.${field} must be a non-empty string`;
+    }
+  }
+  if (s.keys !== undefined) {
+    if (s.keys === null || typeof s.keys !== 'object' || Array.isArray(s.keys)) {
+      return `${label}.keys must be an object`;
+    }
+    for (const [k, v] of Object.entries(s.keys as Record<string, unknown>)) {
+      if (k !== 'email') return `${label}.keys.${k}: only "email" is a recognized identity key type`;
+      if (!isNonEmptyString(v)) return `${label}.keys.${k} must be a non-empty string`;
+    }
+  }
+  if (s.chain !== undefined) {
+    if (s.chain === null || typeof s.chain !== 'object' || Array.isArray(s.chain)) {
+      return `${label}.chain must be an object`;
+    }
+    const c = s.chain as Record<string, unknown>;
+    if (!isNonEmptyString(c.field)) return `${label}.chain.field must be a non-empty string`;
+    if (typeof c.max !== 'number' || c.max <= 0) return `${label}.chain.max must be a positive number`;
+  }
+  return null;
+}
+
+function invalidContextHistoryReason(history: unknown): string | null {
+  const label = 'context.history';
+  if (history === null || typeof history !== 'object' || Array.isArray(history)) {
+    return `${label} must be an object`;
+  }
+  const h = history as Record<string, unknown>;
+  if (h.byKey !== 'email' && h.byKey !== 'email_domain') {
+    return `${label}.byKey must be "email" or "email_domain"`;
+  }
+  const readReason = invalidContextReadReason(`${label}.read`, h.read);
+  if (readReason) return readReason;
+  if (typeof h.limit !== 'number' || h.limit <= 0) return `${label}.limit must be a positive number`;
+  if (typeof h.maxAgeDays !== 'number' || h.maxAgeDays <= 0) return `${label}.maxAgeDays must be a positive number`;
+  if (h.item === null || typeof h.item !== 'object' || Array.isArray(h.item)) {
+    return `${label}.item must be an object`;
+  }
+  for (const [k, v] of Object.entries(h.item as Record<string, unknown>)) {
+    if (!isNonEmptyString(v)) return `${label}.item.${k} must be a non-empty string`;
+  }
+  return null;
+}
+
+function invalidContextRecordKeyReason(name: string, entry: unknown): string | null {
+  const label = `context.recordKeys.${name}`;
+  if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) {
+    return `${label} must be an object`;
+  }
+  const rk = entry as Record<string, unknown>;
+  const readReason = invalidContextReadReason(`${label}.read`, rk.read);
+  if (readReason) return readReason;
+  if (rk.keys === null || typeof rk.keys !== 'object' || Array.isArray(rk.keys)) {
+    return `${label}.keys must be an object`;
+  }
+  for (const [k, v] of Object.entries(rk.keys as Record<string, unknown>)) {
+    if (k !== 'email') return `${label}.keys.${k}: only "email" is a recognized identity key type`;
+    if (!isNonEmptyString(v)) return `${label}.keys.${k} must be a non-empty string`;
+  }
+  return null;
+}
+
+/**
+ * Returns a human-readable refusal reason if `manifest.context` (AU10,
+ * doc/au10-request-context.md §2) is malformed, or null if absent/well-formed.
+ * Shape-only, same spirit as `invalidManifestPreviewReason` — whether a
+ * declared tool actually exists on the connector is a runtime question
+ * (checked by request-context.ts's own reads, same pattern as preview.ts).
+ */
+export function invalidManifestContextReason(
+  manifest: Pick<IntegrationManifest, 'context' | 'toolGating'>,
+): string | null {
+  const ctx = manifest.context;
+  const recordKeyNames = new Set(Object.keys(ctx?.recordKeys ?? {}));
+  if (ctx) {
+    if (ctx.sources !== undefined) {
+      if (ctx.sources === null || typeof ctx.sources !== 'object' || Array.isArray(ctx.sources)) {
+        return 'context.sources must be an object';
+      }
+      for (const [kind, entry] of Object.entries(ctx.sources)) {
+        const reason = invalidContextSourceReason(kind, entry);
+        if (reason) return reason;
+      }
+    }
+    if (ctx.history !== undefined) {
+      const reason = invalidContextHistoryReason(ctx.history);
+      if (reason) return reason;
+    }
+    if (ctx.recordKeys !== undefined) {
+      if (ctx.recordKeys === null || typeof ctx.recordKeys !== 'object' || Array.isArray(ctx.recordKeys)) {
+        return 'context.recordKeys must be an object';
+      }
+      for (const [name, entry] of Object.entries(ctx.recordKeys)) {
+        const reason = invalidContextRecordKeyReason(name, entry);
+        if (reason) return reason;
+      }
+    }
+  }
+
+  // Per-tool contextKeys/sourceFromArg overrides — cross-checked against this
+  // SAME manifest's declared sources/recordKeys (never a runtime guess).
+  const sourceKinds = new Set(Object.keys(ctx?.sources ?? {}));
+  const overrides = manifest.toolGating?.overrides ?? {};
+  for (const [toolName, entry] of Object.entries(overrides)) {
+    if (entry === null || typeof entry !== 'object') continue;
+    const e = entry as { contextKeys?: unknown; sourceFromArg?: unknown };
+    if (e.contextKeys !== undefined) {
+      if (e.contextKeys === null || typeof e.contextKeys !== 'object' || Array.isArray(e.contextKeys)) {
+        return `override "${toolName}".contextKeys must be an object`;
+      }
+      for (const [name, argName] of Object.entries(e.contextKeys as Record<string, unknown>)) {
+        if (!isNonEmptyString(argName)) {
+          return `override "${toolName}".contextKeys.${name} must be a non-empty string naming an action argument`;
+        }
+        if (name !== 'email' && !recordKeyNames.has(name)) {
+          return `override "${toolName}".contextKeys.${name}: "${name}" is neither "email" nor a ` +
+            `context.recordKeys entry on this manifest`;
+        }
+      }
+    }
+    if (e.sourceFromArg !== undefined) {
+      if (e.sourceFromArg === null || typeof e.sourceFromArg !== 'object' || Array.isArray(e.sourceFromArg)) {
+        return `override "${toolName}".sourceFromArg must be an object`;
+      }
+      const sfa = e.sourceFromArg as Record<string, unknown>;
+      if (!isNonEmptyString(sfa.kind)) return `override "${toolName}".sourceFromArg.kind must be a non-empty string`;
+      if (!isNonEmptyString(sfa.arg)) return `override "${toolName}".sourceFromArg.arg must be a non-empty string`;
+      if (!sourceKinds.has(sfa.kind as string)) {
+        return `override "${toolName}".sourceFromArg.kind "${String(sfa.kind)}" is not declared in this ` +
+          `manifest's context.sources`;
+      }
+    }
+  }
+  return null;
+}
+
 // ─── Module state ───────────────────────────────────────────────────────────
 
 const manifests = new Map<string, IntegrationManifest>();
@@ -353,6 +531,11 @@ export function loadManifests(integrationsDir?: string): number {
       const previewReason = invalidManifestPreviewReason(manifest);
       if (previewReason) {
         console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${previewReason}`);
+        continue;
+      }
+      const contextReason = invalidManifestContextReason(manifest);
+      if (contextReason) {
+        console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${contextReason}`);
         continue;
       }
       manifests.set(id, manifest);
