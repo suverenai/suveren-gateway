@@ -245,6 +245,26 @@ export interface ToolGatingConfig {
    */
   approvalView?: ApprovalView;
   hideUnlessAuthorized?: boolean;
+  /**
+   * SIM1 — this `hideUnlessAuthorized` tool is ALSO listed unconditionally
+   * (like every other connector tool since 0.25) while GATEWAY-WIDE
+   * simulation mode is ON (`SUVEREN_SIMULATION=1` — simulation-mode.ts), so
+   * an agent sees it before a setup mandate exists and the list does not
+   * change once one is granted. The motivating case: `load_simulation` /
+   * `clear_simulation` on erp/crm/mail.
+   *
+   * Purely ADDITIVE, on purpose: outside gateway-wide simulation mode this
+   * flag changes NOTHING — visibility and the refusal text stay exactly the
+   * pre-SIM1, mandate-bound-check behaviour (`toolIsAuthorizedForDisplay`
+   * carries no logic for this flag at all). The "three-week test" onboarding
+   * flow loads test data into these connectors via an ordinary setup
+   * mandate WITHOUT ever setting the gateway-wide switch — see
+   * `toolAlwaysListed` in tool-proxy.ts for why a stricter "never visible
+   * outside simulation mode" rule would have broken that, and `hap-e2e`'s
+   * simulation-setup/simulation-rerun/review-load-simulation suites, which
+   * exercise exactly that path. A tool without this flag is unaffected.
+   */
+  simulationOnly?: boolean;
 }
 
 /**

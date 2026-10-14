@@ -83,7 +83,8 @@
           "action_type": "setup"
         },
         "actionLabel": "Test data loaded",
-        "hideUnlessAuthorized": true
+        "hideUnlessAuthorized": true,
+        "simulationOnly": true
       },
       "clear_simulation": {
         "executionMapping": {},
@@ -91,7 +92,8 @@
           "action_type": "setup"
         },
         "actionLabel": "Test data cleared",
-        "hideUnlessAuthorized": true
+        "hideUnlessAuthorized": true,
+        "simulationOnly": true
       }
     }
   },
