@@ -14,13 +14,18 @@
  * THIS gateway's signed-in user's own entry (lib/au10-shown-view.ts
  * `matchShownHashEntry`) — never claims "verified" without that check
  * actually running, same discipline as lib/ticket-what-was-done.ts.
+ *
+ * Renders the snapshot's preview/request/history data through the EXACT
+ * SAME body components the live card uses (`PreviewBoxBody`,
+ * `RequestContextBoxBody`) — never a second, hand-rolled rendering of the
+ * same data, so the two can't drift (2026-10-14 correction: the first
+ * version here reimplemented a subset and silently dropped the bound
+ * values plus every non-'ok' Request/History state).
  */
 import { useEffect, useState } from 'react';
 import { spClient, type ShownSnapshotResponse, type Proposal, type IntegrationManifest } from '../lib/sp-client';
-import { previewBoxView } from '../lib/approval-preview-view';
-import { requestBlockView, historyBlockView } from '../lib/request-context-view';
-import { RenderedPreviewView as RenderedBody } from './RenderedPreviewView';
-import { RenderedCreationView } from './RenderedCreationView';
+import { PreviewBoxBody } from './PreviewBox';
+import { RequestContextBoxBody } from './RequestContextBox';
 import { systemDisplayName, splitTool } from '../lib/approval-view';
 import { matchShownHashEntry, shownStatus, otherApproversNote, formatReadAt } from '../lib/au10-shown-view';
 import { useAuth } from '../contexts/AuthContext';
@@ -71,9 +76,6 @@ export function TicketWhatYouSaw({ proposalId, tool, manifests }: Props) {
   const { snapshot } = resp;
   const { integrationId } = splitTool(tool);
   const systemName = systemDisplayName(integrationId, manifests);
-  const previewView = previewBoxView(snapshot.preview, systemName);
-  const request = requestBlockView(snapshot.requestContext.request);
-  const history = historyBlockView(snapshot.requestContext.history);
 
   return (
     <div className={`ticket-box ticket-shown-${status}`} data-testid="au10-shown" data-shown-status={status}>
@@ -83,55 +85,25 @@ export function TicketWhatYouSaw({ proposalId, tool, manifests }: Props) {
         {status === 'mismatch' && <span className="src-tag src-tag-danger">does not match what was approved</span>}
       </h4>
 
-      {previewView.creation && (
-        <>
-          <div className="ticket-sub-head">{previewView.heading} — as shown</div>
-          <RenderedCreationView view={previewView.creation} />
-        </>
-      )}
-      {previewView.rendered && (
-        <>
-          <div className="ticket-sub-head">{previewView.heading} — as shown</div>
-          <RenderedBody rendered={previewView.rendered} />
-        </>
-      )}
-
-      {request.state === 'ok' && (
-        <>
-          <div className="ticket-sub-head">Request — {request.tag}</div>
-          {request.metaLine && <p className="au10-req-meta">{request.metaLine}{request.title ? ` — "${request.title}"` : ''}</p>}
-        </>
-      )}
-
-      {history.state === 'ok' && (
-        <>
-          <div className="ticket-sub-head">History — read by the gateway</div>
-          <ul className="au10-hist-list">
-            {history.items.map((item, i) => (
-              <li className="au10-hist-item" key={i}>
-                <div className="au10-hist-head"><span>{item.headLabel}</span><span>{item.at}</span></div>
-                {item.title && <div className="au10-hist-title">{item.title}</div>}
-                <p className="au10-hist-attrib">{item.attribution}</p>
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
+      {/* Exactly the live card's own boxes, fed from the stored snapshot —
+          same components, so rendering can never drift from the card. */}
+      <PreviewBoxBody resp={snapshot.preview} systemName={systemName} toolArgs={snapshot.toolArgs} sealed={snapshot.sealed} />
+      <RequestContextBoxBody resp={snapshot.requestContext} />
 
       {status === 'verified' && (
         <p className="ticket-done-note ticket-done-note-ok">
-          &#10003; This exact context is bound by hash — any change after the fact would break the ticket.
+          &#10003; Matches the fingerprint recorded with your approval.
         </p>
       )}
       {status === 'mismatch' && (
         <p className="ticket-done-note ticket-done-note-bad">
-          &#9888; This does NOT match what the Authority Server recorded for this decision.
+          &#9888; This copy differs from the fingerprint recorded with your approval.
         </p>
       )}
       {status === 'unchecked' && (
         <p className="ticket-done-note ticket-done-note-neutral">
-          This device's copy of what was shown, kept locally — the Authority Server for this ticket does not
-          record a hash for you to check it against.
+          This device's copy of what was shown, kept locally — the Authority Server does not record a
+          fingerprint for you to check it against.
         </p>
       )}
       {/* AU10 §8.4 coordinator decision — several required approvers each

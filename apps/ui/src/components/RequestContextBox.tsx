@@ -7,44 +7,21 @@
  *
  * Neither block ever gates Approve/Reject — a missing/invalid/unreachable
  * read always degrades to a visible note, never a block (doc §0).
+ *
+ * The RESOLVED-data rendering lives in {@link RequestContextBoxBody} (a pure
+ * function of `resp`, no fetch) so the ticket view's "What you saw"
+ * (TicketWhatYouSaw.tsx, AU10 §8.4) can render the SAME markup from a
+ * stored snapshot instead of reimplementing it — "so it can't drift"
+ * (doc §8.4), including every non-'ok' state ("No request linked.", "no
+ * customer link", etc.) the live card shows.
  */
 import { useEffect, useState } from 'react';
 import { spClient, type RequestContextResponse } from '../lib/sp-client';
 import { requestBlockView, historyBlockView } from '../lib/request-context-view';
 
-interface Props {
-  proposalId: string;
-  /** AU10 §8.4 — told the RAW response every time it changes (including
-   *  `null` while loading/unavailable), so the card can assemble the exact
-   *  "what you saw" snapshot from the SAME data this box renders. */
-  onData?: (resp: RequestContextResponse | null) => void;
-}
-
-export function RequestContextBox({ proposalId, onData }: Props) {
-  const [resp, setResp] = useState<RequestContextResponse | null>(null);
-  const [failed, setFailed] = useState(false);
-
-  useEffect(() => {
-    let live = true;
-    setResp(null);
-    setFailed(false);
-    spClient.getProposalRequestContext(proposalId)
-      .then((r) => { if (live) setResp(r); })
-      .catch(() => { if (live) setFailed(true); });
-    return () => { live = false; };
-  }, [proposalId]);
-
-  useEffect(() => {
-    onData?.(failed ? null : resp);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resp, failed, onData]);
-
-  if (failed || !resp) {
-    // Never a block — same spirit as PreviewBox's own loading/unavailable
-    // fallback. Kept minimal: this box only ever ADDS information.
-    return null;
-  }
-
+/** The pure, resolved-data render — same output for the live card and the
+ *  ticket's "What you saw" snapshot. See the module doc comment. */
+export function RequestContextBoxBody({ resp }: { resp: RequestContextResponse }) {
   const req = requestBlockView(resp.request);
   const hist = historyBlockView(resp.history);
 
@@ -143,4 +120,40 @@ export function RequestContextBox({ proposalId, onData }: Props) {
       </div>
     </>
   );
+}
+
+interface Props {
+  proposalId: string;
+  /** AU10 §8.4 — told the RAW response every time it changes (including
+   *  `null` while loading/unavailable), so the card can assemble the exact
+   *  "what you saw" snapshot from the SAME data this box renders. */
+  onData?: (resp: RequestContextResponse | null) => void;
+}
+
+export function RequestContextBox({ proposalId, onData }: Props) {
+  const [resp, setResp] = useState<RequestContextResponse | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let live = true;
+    setResp(null);
+    setFailed(false);
+    spClient.getProposalRequestContext(proposalId)
+      .then((r) => { if (live) setResp(r); })
+      .catch(() => { if (live) setFailed(true); });
+    return () => { live = false; };
+  }, [proposalId]);
+
+  useEffect(() => {
+    onData?.(failed ? null : resp);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resp, failed, onData]);
+
+  if (failed || !resp) {
+    // Never a block — same spirit as PreviewBox's own loading/unavailable
+    // fallback. Kept minimal: this box only ever ADDS information.
+    return null;
+  }
+
+  return <RequestContextBoxBody resp={resp} />;
 }

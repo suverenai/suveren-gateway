@@ -329,15 +329,24 @@ export interface RequestContextResponse {
 
 /**
  * Exactly what the approval card rendered at decision time — the AU8 preview
- * result, the AU10 request/history result, and the one read time shown on
- * the card (doc §3: "Read time shown once"). Sent to the control plane on
- * approve/change-needed/reject so it can hash and store it (§8.4) — never
- * re-read there, so no second read can disagree with what was shown.
+ * result, the AU10 request/history result, the bound values the preview
+ * merges them with (`toolArgs`/`sealed` — PreviewBoxBody needs both to
+ * reproduce the SAME "What will be created" box, see PreviewBox.tsx), and
+ * the one read time shown on the card (doc §3: "Read time shown once").
+ * Sent to the control plane on approve/change-needed/reject so it can hash
+ * and store it (§8.4) — never re-read there, so no second read can
+ * disagree with what was shown.
  */
 export interface ShownSnapshotPayload {
   readAt: number;
   preview: PreviewResponse;
   requestContext: RequestContextResponse;
+  /** The proposal's own bound args, as decrypted on THIS device — absent
+   *  when undecryptable (never reachable in practice: the decision buttons
+   *  are hidden until this is readable, see use-proposal-content.ts
+   *  `decisionButtonsVisible`). */
+  toolArgs?: Record<string, unknown>;
+  sealed?: boolean;
 }
 
 /** `GET /proposal-status/:id/shown-snapshot` — the ticket view's "What you saw". */

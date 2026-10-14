@@ -188,9 +188,19 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
   useEffect(() => {
     if (!previewData || !requestContextData) { onShownSnapshot?.(null); return; }
     const readAt = previewData.status === 'ok' ? previewData.readAt : Date.now();
-    onShownSnapshot?.({ readAt, preview: previewData, requestContext: requestContextData });
+    // `toolArgs`/`sealed` travel too — PreviewBoxBody needs the bound values
+    // to reproduce the SAME "What will be created" box later (the ticket
+    // view's "What you saw", TicketWhatYouSaw.tsx), not just the preview's
+    // own read result.
+    onShownSnapshot?.({
+      readAt,
+      preview: previewData,
+      requestContext: requestContextData,
+      ...(content.toolArgs ? { toolArgs: content.toolArgs } : {}),
+      sealed: content.sealed,
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [previewData, requestContextData, onShownSnapshot]);
+  }, [previewData, requestContextData, content.toolArgs, content.sealed, onShownSnapshot]);
   const boundContent = content.toolArgs ? (
     <>
           <ProposalArgs args={content.toolArgs} display={toolDisplay} heading="" />

@@ -8,6 +8,12 @@
  * Every branch keeps the bound values visible elsewhere on the card and
  * Approve/Reject enabled (decisions 2–3, temp/briefs/au3-au5-brief.md) — this
  * box only ever ADDS information, never gates the buttons.
+ *
+ * The RESOLVED-data rendering lives in {@link PreviewBoxBody} (a pure
+ * function of `resp`/`systemName`/`toolArgs`/`sealed`, no fetch, no loading
+ * state) so the ticket view's "What you saw" (TicketWhatYouSaw.tsx, AU10
+ * §8.4) can render the SAME markup from a stored snapshot instead of
+ * reimplementing it — "so it can't drift" (doc §8.4).
  */
 import { useEffect, useState } from 'react';
 import { spClient, type PreviewResponse } from '../lib/sp-client';
@@ -15,8 +21,8 @@ import { previewBoxView } from '../lib/approval-preview-view';
 import { RenderedPreviewView as RenderedBody } from './RenderedPreviewView';
 import { RenderedCreationView } from './RenderedCreationView';
 
-interface Props {
-  proposalId: string;
+export interface PreviewBoxBodyProps {
+  resp: PreviewResponse;
   systemName: string;
   /** AU8 — the proposal's own bound args, needed ONLY to render a several-
    *  reads ("What will be created") preview; absent/undecrypted is fine
@@ -26,6 +32,60 @@ interface Props {
    *  created" box can show the same sealed + "end-to-end encrypted" marker
    *  the "What will be sent" box shows (ApprovalBody.tsx), instead of
    *  inventing a second convention for it. */
+  sealed?: boolean;
+}
+
+/** The pure, resolved-data render — same output for the live card and the
+ *  ticket's "What you saw" snapshot. See the module doc comment. */
+export function PreviewBoxBody({ resp, systemName, toolArgs, sealed }: PreviewBoxBodyProps) {
+  const view = previewBoxView(resp, systemName, toolArgs ?? undefined);
+  const tone = resp.status === 'ok' ? (view.stale ? 'stale' : 'ok') : resp.status;
+
+  // No preview declared: the card shows what will be sent, open, right above —
+  // so this is only a short note, not a box competing with the content.
+  if (tone === 'none') {
+    return (
+      <p className="preview-note" data-testid="approval-preview" data-preview-status="none">{view.note}</p>
+    );
+  }
+
+  return (
+    <div className={`preview-box preview-box-${tone}`} data-testid="approval-preview" data-preview-status={tone}>
+      <h4>
+        {view.heading}
+        {view.creation && (
+          sealed
+            ? <><span className="src-tag src-tag-sealed">sealed</span> <span className="lock-tag">end-to-end encrypted</span></>
+            : <span className="src-tag src-tag-sealed">sealed</span>
+        )}
+      </h4>
+      {view.creation && <RenderedCreationView view={view.creation} />}
+      {view.rendered && <RenderedBody rendered={view.rendered} />}
+      <p className="preview-note">{view.note}</p>
+      {view.versionNote && !view.stale && <p className="preview-note">{view.versionNote}</p>}
+      {view.stale && (
+        <div className="preview-stale">
+          <h5>{view.stale.heading}</h5>
+          {view.stale.unchangedNote ? (
+            <p className="preview-note">{view.stale.unchangedNote}</p>
+          ) : (
+            <dl style={{ display: 'grid', gridTemplateColumns: 'max-content 1fr', gap: '0.3rem 0.75rem', fontSize: '0.85rem', margin: '0.5rem 0 0' }}>
+              <dt>{view.stale.approvedLabel}</dt>
+              <dd><RenderedBody rendered={view.stale.approvedRendered!} /></dd>
+              <dt>{view.stale.currentLabel}</dt>
+              <dd><RenderedBody rendered={view.stale.currentRendered!} /></dd>
+            </dl>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface Props {
+  proposalId: string;
+  systemName: string;
+  toolArgs?: Record<string, unknown> | null;
   sealed?: boolean;
   /** Told the box's state once known (ok | stale | none | unavailable | not_found)
    *  so the card can decide whether the bound values are shown open. */
@@ -83,46 +143,5 @@ export function PreviewBox({ proposalId, systemName, toolArgs, sealed, onTone, o
     );
   }
 
-  const view = previewBoxView(resp, systemName, toolArgs ?? undefined);
-  const tone = resp.status === 'ok' ? (view.stale ? 'stale' : 'ok') : resp.status;
-
-  // No preview declared: the card shows what will be sent, open, right above —
-  // so this is only a short note, not a box competing with the content.
-  if (tone === 'none') {
-    return (
-      <p className="preview-note" data-testid="approval-preview" data-preview-status="none">{view.note}</p>
-    );
-  }
-
-  return (
-    <div className={`preview-box preview-box-${tone}`} data-testid="approval-preview" data-preview-status={tone}>
-      <h4>
-        {view.heading}
-        {view.creation && (
-          sealed
-            ? <><span className="src-tag src-tag-sealed">sealed</span> <span className="lock-tag">end-to-end encrypted</span></>
-            : <span className="src-tag src-tag-sealed">sealed</span>
-        )}
-      </h4>
-      {view.creation && <RenderedCreationView view={view.creation} />}
-      {view.rendered && <RenderedBody rendered={view.rendered} />}
-      <p className="preview-note">{view.note}</p>
-      {view.versionNote && !view.stale && <p className="preview-note">{view.versionNote}</p>}
-      {view.stale && (
-        <div className="preview-stale">
-          <h5>{view.stale.heading}</h5>
-          {view.stale.unchangedNote ? (
-            <p className="preview-note">{view.stale.unchangedNote}</p>
-          ) : (
-            <dl style={{ display: 'grid', gridTemplateColumns: 'max-content 1fr', gap: '0.3rem 0.75rem', fontSize: '0.85rem', margin: '0.5rem 0 0' }}>
-              <dt>{view.stale.approvedLabel}</dt>
-              <dd><RenderedBody rendered={view.stale.approvedRendered!} /></dd>
-              <dt>{view.stale.currentLabel}</dt>
-              <dd><RenderedBody rendered={view.stale.currentRendered!} /></dd>
-            </dl>
-          )}
-        </div>
-      )}
-    </div>
-  );
+  return <PreviewBoxBody resp={resp} systemName={systemName} toolArgs={toolArgs} sealed={sealed} />;
 }
