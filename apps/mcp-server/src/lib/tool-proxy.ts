@@ -814,16 +814,40 @@ function createGatedToolHandlerInner(
       // read and silently get NO enforcement because its profile happened not
       // to list one — fail-open by omission, the exact shape of the original
       // hole.
+      //
+      // TR7 (work-plan "Added 2026-10-14" — team permissions, above-cap
+      // approval, read limits; direction: content/0.7/review.md "A group can
+      // cap reads and capability switches"): the "local wins" rule above is
+      // Personal-mode only (protocol.md rule 8, unchanged). In a TEAM
+      // workspace the local setting must never reach PAST what the team
+      // signed into the mandate as its read ceiling (TR6, AS-side — a team
+      // read cap is always hard and gets signed into `read_max_age_days`) —
+      // otherwise an owner's own generous integration setting would silently
+      // override a limit their team admin deliberately capped. So in team
+      // mode the effective window is `min(local, signed)`, not "local wins".
+      // `isTeamGroup` returns `undefined` when either the authorization's own
+      // groupId or the account's Personal group id isn't known yet (still
+      // loading, or `state.cache` is a bare test double that doesn't
+      // implement it) — read as Personal/unchanged in that case: there is no
+      // Authority Server backstop for read enforcement to fail closed to
+      // (reads carry no ticket), so an uncertain status must never be read as
+      // "team" and apply a ceiling nobody actually confirmed.
       const hasAgeDimension = Boolean(readAdapter?.ageField);
       let readMaxAge: number | null = null;
       if (hasAgeDimension) {
         const localAge = integrationManager.getReadAgeDays(tool.integrationId);
-        readMaxAge = localAge ?? (ageBoundField
+        const signedAge = ageBoundField
           ? maxReadAgeDays(
               matchingAuths.map(a => (a.bounds ?? a.frame) as Record<string, string | number> | undefined),
               ageBoundField,
             )
-          : null);
+          : null;
+        const isTeam = typeof state.cache?.isTeamGroup === 'function'
+          ? state.cache.isTeamGroup(matchingAuths[0]?.groupId)
+          : undefined;
+        readMaxAge = isTeam === true && signedAge !== null
+          ? (localAge !== null ? Math.min(localAge, signedAge) : signedAge)
+          : (localAge ?? signedAge);
         // FAIL-CLOSED (F11): no window from either source. An omitted window
         // must never be read as "all history" — that was the pentest hole.
         if (readMaxAge === null) {

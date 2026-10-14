@@ -734,11 +734,61 @@ export class DifferentAccountError extends Error {
   }
 }
 
+/**
+ * TR5 (work-plan "Added 2026-10-14 — Team: permissions, above-cap approval,
+ * read limits"; direction: content/0.7/review.md "Group roles: who may
+ * grant, who approves above the cap"): whether an above-cap request on this
+ * field is refused outright at signing time (`hard`) or promoted into a
+ * signed `review_above_cap` mandate that a run-time approver can clear
+ * (`approval`). Mirrors suveren-as's `CapKind` — do not import from there.
+ */
+export type CapKind = 'hard' | 'approval';
+
+/**
+ * Per-profile team configuration (admin-set). TR5 splits the single
+ * `approvers` role (grant + above-cap control conflated) into `grantors`
+ * (who may SIGN a mandate) and `approvers` (who may clear an above-cap
+ * proposal), adds `approvals` (distinct approvals needed), and gives each
+ * cap a `kind`.
+ *
+ * Wire shape (suveren-as fix/profile-config-compat, branch merged after
+ * #86 broke every installed gateway's numeric cap comparison by nesting
+ * `caps` values in `{value, kind}` objects): `caps` stays the OLD plain
+ * `Record<string, number | string>` shape; `kind` travels in a SEPARATE
+ * `capKinds` field. Read a cap's value from `caps[field]` and its kind from
+ * `capKinds?.[field]` — NEVER assume `caps[field]` is an object. A config
+ * from an AS that predates `capKinds` entirely (or a cap this admin set
+ * before TR5 shipped) omits the entry for that field; `effectiveCapKind`
+ * below is the one place that resolves the fallback.
+ */
 export interface ProfileConfig {
-  /** userIds of required approvers for above-cap actions */
+  /** Who may grant (sign) this profile for the team. `'all'` = every member.
+   *  Absent → falls back to `approvers` (pre-TR5 behaviour). */
+  grantors?: string[] | 'all';
+  /** userIds who may approve an above-cap proposal. May be empty — with no
+   *  approvers every cap collapses to hard. */
   approvers: string[];
-  /** Optional per-bound ceiling. Key = bound field name, value = max allowed. */
-  caps?: Record<string, number>;
+  /** Distinct approvals needed before an above-cap proposal commits.
+   *  Absent → defaults to 1 ("one approval is enough"). */
+  approvals?: number;
+  /** Per-bound cap VALUE. Key = bound field name. Plain number/string — the
+   *  pre-TR5 shape, kept so an installed gateway's existing numeric
+   *  comparisons keep working unchanged. */
+  caps?: Record<string, number | string>;
+  /** Per-bound cap KIND (TR5), keyed the same as `caps`. Absent per-field
+   *  (or absent entirely, from an AS that predates it) — see
+   *  `effectiveCapKind`'s fallback. */
+  capKinds?: Record<string, CapKind>;
+}
+
+/** `config.grantors`, defaulted — mirrors suveren-as's `effectiveGrantors`. */
+export function effectiveGrantors(config: Pick<ProfileConfig, 'grantors' | 'approvers'>): string[] | 'all' {
+  return config.grantors ?? config.approvers;
+}
+
+/** `config.approvals`, defaulted — mirrors suveren-as's `effectiveApprovals`. */
+export function effectiveApprovals(config: Pick<ProfileConfig, 'approvals'>): number {
+  return config.approvals ?? 1;
 }
 
 export interface McpHealthResponse {
@@ -1746,7 +1796,22 @@ class SPClient {
     contentHash?: string,
     /** AU10 §8.4 — see {@link resolveProposal}'s matching parameter. */
     shownHash?: string,
-  ): Promise<{ receipt: Record<string, unknown>; status: string; approvedBy: Record<string, { receiptId: string; at: number }> }> {
+  ): Promise<{
+    receipt: Record<string, unknown>;
+    status: string;
+    approvedBy: Record<string, { receiptId: string; at: number }>;
+    /**
+     * TR5 (work-plan "Added 2026-10-14") — how many distinct approvals this
+     * proposal needs, and how many it has NOW, straight from the AS's own
+     * response to THIS approve call. Absent on an older AS (pre-TR5) —
+     * callers must not assume these are always present, and must never
+     * compute their own guess instead (UI reflects AS truth, never
+     * optimistic state).
+     */
+    requiredApprovals?: number;
+    approvedCount?: number;
+    remainingApprovers?: string[];
+  }> {
     const body: Record<string, string> = {};
     // PE1 — the fingerprint of the toolArgs THIS device decrypted and showed.
     if (contentHash) body.content_hash = contentHash;

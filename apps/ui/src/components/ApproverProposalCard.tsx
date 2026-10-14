@@ -27,6 +27,7 @@ import { isAutomatedBrowser, AUTOMATION_REFUSAL } from '../lib/automation';
 import type { ToolDisplay } from '../lib/approval-view';
 import { validateChangeNote, rejectOutcomeArgs } from '../lib/reject-outcome';
 import { contentHashForDecision, noteRecipients, decisionButtonsVisible } from '../lib/use-proposal-content';
+import { useApprovalTeamInfo } from '../lib/approval-team-info';
 
 function formatAge(unixSeconds: number): string {
   const ageMs = Date.now() - unixSeconds * 1000;
@@ -92,10 +93,36 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
 
   const pendingApprovers = proposal.pendingApprovers ?? [];
   const approvedBy = proposal.approvedBy ?? {};
+  // AS truth, never optimistic: exactly what the proposal's own record says
+  // right now — the same count a fresh re-fetch after onAction() would show.
   const approvedCount = Object.keys(approvedBy).length;
-  const remainingCount = pendingApprovers.filter(uid => !(uid in approvedBy)).length;
 
   const alreadyApproved = currentUserId in approvedBy;
+
+  // TR5 (work-plan "Added 2026-10-14 — Team: permissions, above-cap
+  // approval, read limits"): how many DISTINCT approvals this proposal
+  // needs (default 1, never "every pendingApprover"), who the configured
+  // approvers are by name, and — when derivable from real data — why this
+  // specific proposal is above cap.
+  const team = useApprovalTeamInfo(proposal);
+  const isProposer = !!proposal.createdBy && proposal.createdBy === currentUserId;
+
+  /** TR5 — the AS's own clear refusal text already explains both cases;
+   *  this only replaces the trailing "(CODE)" suffix asErrorMessage adds
+   *  with something a non-technical reader doesn't have to parse. Defensive:
+   *  APPROVER_IS_PROPOSER is already prevented client-side (the Approve
+   *  button is replaced below), so this mainly covers a race (another
+   *  device's state going stale) or a gateway that still shows the button. */
+  const friendlyApprovalError = (err: unknown): string => {
+    const msg = err instanceof Error ? err.message : 'Approval failed';
+    if (msg.includes('APPROVER_IS_PROPOSER')) {
+      return "You can't approve your own action. Ask another approver.";
+    }
+    if (msg.includes('APPROVAL_IMPOSSIBLE')) {
+      return 'This action cannot be approved — there is no one else eligible to approve it. Ask a team admin to add another approver.';
+    }
+    return msg;
+  };
 
   const handleApprove = async () => {
     // Automation that announces itself may not approve (defense in depth — lib/automation.ts).
@@ -105,7 +132,7 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
     try {
       const contentHash = await contentHashForDecision(proposal);
       const shownHash = await saveShownHash();
-      await spClient.approveProposal(proposal.id, contentHash, shownHash);
+      const result = await spClient.approveProposal(proposal.id, contentHash, shownHash);
 
       // Fetch + decrypt + store the intent as an accountability record
       // (best-effort; ApprovalBody above already fetched one for display,
@@ -126,10 +153,24 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
         // Non-fatal: approval already recorded on SP; local store is best-effort.
       }
 
-      onMessage(`Approved. ${remainingCount - 1 > 0 ? `${remainingCount - 1} more approver(s) still needed.` : 'All approvers signed off — action is ready to execute.'}`);
+      // AS truth from THIS call's own response — never a client-side guess
+      // (the old "every pendingApprover" tally). Older AS (pre-TR5) sends
+      // neither field; fall back to a message that names no number at all
+      // rather than compute one.
+      const { requiredApprovals, approvedCount: newApprovedCount } = result;
+      const stillNeeded = requiredApprovals !== undefined && newApprovedCount !== undefined
+        ? requiredApprovals - newApprovedCount
+        : undefined;
+      onMessage(
+        stillNeeded === undefined
+          ? 'Approved.'
+          : stillNeeded > 0
+            ? `Approved. ${stillNeeded} more approval${stillNeeded === 1 ? '' : 's'} still needed.`
+            : 'Approved — the required number of approvals is met; the action is ready to execute.',
+      );
       onAction();
     } catch (err) {
-      onMessage(err instanceof Error ? err.message : 'Approval failed');
+      onMessage(friendlyApprovalError(err));
     } finally {
       setApproving(false);
     }
@@ -211,18 +252,41 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
         </span>
       </div>
 
-      {/* Approver progress */}
-      <div style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginBottom: '0.5rem' }}>
-        {approvedCount} of {pendingApprovers.length} approver{pendingApprovers.length === 1 ? '' : 's'} signed off
-        {pendingApprovers.map(uid => {
-          const done = uid in approvedBy;
-          return (
-            <span key={uid} style={{ marginLeft: '0.5rem', color: done ? 'var(--success, green)' : 'var(--text-tertiary)' }}>
-              {done ? '✓' : '○'} {uid === currentUserId ? 'You' : uid}
-            </span>
-          );
-        })}
+      {/* Approver progress — TR5: "needs N approval(s) from: ..." (N =
+          requiredApprovals, default 1), never the old "all approvers"
+          tally. A "X of N" count is only shown when N > 1 — with N === 1
+          it is redundant (either nobody has approved, or the card would
+          no longer be pending). */}
+      <div className="approver-progress" style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginBottom: '0.5rem' }}>
+        Needs {team.requiredApprovals} approval{team.requiredApprovals === 1 ? '' : 's'} from:{' '}
+        {pendingApprovers.map((uid, i) => (
+          <span key={uid} className={`who${uid in approvedBy ? ' done' : ''}`} style={{ marginLeft: i === 0 ? '0.25rem' : '0.5rem', color: uid in approvedBy ? 'var(--success, green)' : undefined }}>
+            {uid in approvedBy ? '✓ ' : ''}{team.nameOf(uid)}{uid === currentUserId ? ' (you)' : ''}
+            {i < pendingApprovers.length - 1 ? ',' : ''}
+          </span>
+        ))}
+        {team.requiredApprovals > 1 && (
+          <span style={{ marginLeft: '0.5rem' }}>({approvedCount} of {team.requiredApprovals})</span>
+        )}
       </div>
+
+      {/* TR5 — "Above the team limit: <field> <value> (limit <cap>). Requested
+          by <proposer>." Only shown when it can be built from real data
+          (team-caps.ts's findAboveCapViolation) — never a guess. */}
+      {team.aboveCapReason && (
+        <div className="over-limit-box" data-testid="above-cap-reason" style={{
+          display: 'flex', gap: '0.5rem', alignItems: 'flex-start',
+          background: 'var(--warning-subtle, #fdf4e8)', border: '1px solid var(--warning)',
+          borderRadius: '0.5rem', padding: '0.6rem 0.8rem', marginBottom: '0.6rem', fontSize: '0.82rem',
+        }}>
+          <span style={{ color: 'var(--warning)', fontWeight: 700, whiteSpace: 'nowrap' }}>Above the team limit:</span>
+          <span>
+            {team.aboveCapReason.fieldLabel}
+            {team.aboveCapReason.value !== undefined ? ` ${team.aboveCapReason.value}` : ''} (limit {String(team.aboveCapReason.cap)}).{' '}
+            {proposal.createdBy ? `Requested by ${team.nameOf(proposal.createdBy)}.` : ''}
+          </span>
+        </div>
+      )}
 
       {/* Shared with ActionCard's review-mode pending proposals — headline,
           preview box, "Within your limits", mandate + intent, inspect links,
@@ -253,14 +317,25 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
             error={changeError}
           />
         ) : (
-          <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.25rem' }}>
-            <button
-              className="btn btn-primary"
-              onClick={handleApprove}
-              disabled={isBusy}
-            >
-              {approving ? 'Approving...' : 'Approve'}
-            </button>
+          <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.25rem', flexWrap: 'wrap', alignItems: 'center' }}>
+            {/* TR5 (content/0.7/review.md "Group roles…", rule 4): the
+                proposer of an above-cap action can never approve their own
+                action — REPLACED, not merely disabled, so the reason is
+                visible without the person having to wonder why a button is
+                greyed out (signed-off mockup, screen 3 state B). */}
+            {isProposer ? (
+              <p className="blocked-note" data-testid="cant-approve-own-action" style={{ fontSize: '0.82rem', color: 'var(--text-tertiary)', margin: 0 }}>
+                <strong style={{ color: 'var(--danger)' }}>You can&apos;t approve your own action.</strong>
+              </p>
+            ) : (
+              <button
+                className="btn btn-primary"
+                onClick={handleApprove}
+                disabled={isBusy}
+              >
+                {approving ? 'Approving...' : 'Approve'}
+              </button>
+            )}
             <button
               data-testid="btn-change-needed"
               className="btn"
@@ -285,7 +360,10 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
 
       {alreadyApproved && (
         <p style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginTop: '0.25rem' }}>
-          You approved this action. Waiting on other approvers.
+          You approved this action.
+          {team.requiredApprovals > 1 && approvedCount < team.requiredApprovals
+            ? ` Waiting on ${team.requiredApprovals - approvedCount} more approval(s).`
+            : ''}
         </p>
       )}
 

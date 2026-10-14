@@ -116,25 +116,48 @@ export class AttestationCache {
   private activeWorkspaceGroupId: string | null = null;
 
   /**
-   * Re-resolve {@link activeWorkspaceGroupId} from the Authority Server.
-   * Called by the resync-gates flow (http.ts's `/internal/resync-gates`),
-   * never on the hot tool-call path — it makes up to two AS calls. Leaves
-   * the previous value in place on any failure (network error, unexpected
-   * shape): losing a known-good value on a transient blip would turn this
-   * defence-in-depth check into a false refusal of every cached mandate,
-   * which is worse than leaving it momentarily stale.
+   * TR7 (work-plan "Added 2026-10-14"): the account's own Personal group id
+   * — learned alongside {@link activeWorkspaceGroupId} so {@link isTeamGroup}
+   * can tell a TEAM-owned authorization apart from a Personal one without a
+   * live AS call on the hot read path. `null` = not yet known, same
+   * "skip rather than guess" posture as `activeWorkspaceGroupId`.
+   */
+  private personalGroupId: string | null = null;
+
+  /**
+   * Re-resolve {@link activeWorkspaceGroupId} and {@link personalGroupId}
+   * from the Authority Server. Called by the resync-gates flow (http.ts's
+   * `/internal/resync-gates`), never on the hot tool-call path — it makes up
+   * to two AS calls (`getActiveTeamGroupId` + `getPersonalGroupId`, the
+   * second already needed for both values). Leaves the previous value(s) in
+   * place on any failure (network error, unexpected shape): losing a
+   * known-good value on a transient blip would turn this defence-in-depth
+   * check into a false refusal of every cached mandate, which is worse than
+   * leaving it momentarily stale.
    */
   async refreshActiveWorkspace(): Promise<void> {
+    let activeTeam: string | null = null;
     try {
-      const activeTeam = await this.spClient.getActiveTeamGroupId();
-      if (activeTeam) {
-        this.activeWorkspaceGroupId = activeTeam;
-        return;
-      }
-      const personalId = await this.spClient.getPersonalGroupId();
-      if (personalId) this.activeWorkspaceGroupId = personalId;
+      activeTeam = await this.spClient.getActiveTeamGroupId();
+      if (activeTeam) this.activeWorkspaceGroupId = activeTeam;
     } catch {
       // leave the previous value — see doc comment above.
+    }
+    // TR7 (work-plan "Added 2026-10-14"): the Personal group id, learned
+    // regardless of whether the account is currently active in a team — an
+    // account active in a team still HAS a Personal group, and isTeamGroup
+    // needs it to tell a cached authorization's own groupId apart from
+    // Personal, independent of which workspace is active right now. Also
+    // doubles as activeWorkspaceGroupId's own fallback when there is no
+    // active team, same as before this existed.
+    try {
+      const personalId = await this.spClient.getPersonalGroupId();
+      if (personalId) {
+        this.personalGroupId = personalId;
+        if (!activeTeam) this.activeWorkspaceGroupId = personalId;
+      }
+    } catch {
+      // leave the previous value.
     }
   }
 
@@ -146,6 +169,20 @@ export class AttestationCache {
    */
   private isForeignWorkspace(groupId: string | undefined): boolean {
     return groupId !== undefined && this.activeWorkspaceGroupId !== null && groupId !== this.activeWorkspaceGroupId;
+  }
+
+  /**
+   * TR7 — is `groupId` a TEAM group (not the account's own Personal
+   * workspace)? `undefined` ("don't know") when either `groupId` itself or
+   * the account's Personal group id hasn't been learned yet — callers MUST
+   * treat that the same as Personal (read enforcement has no Authority
+   * Server backstop to fail closed to, unlike {@link isForeignWorkspace}'s
+   * ticket-time safety net, so an unknown status must never be read as
+   * "team" — that would apply a ceiling nobody has actually confirmed).
+   */
+  isTeamGroup(groupId: string | undefined): boolean | undefined {
+    if (groupId === undefined || this.personalGroupId === null) return undefined;
+    return groupId !== this.personalGroupId;
   }
 
   /**

@@ -8,6 +8,7 @@ import {
   type McpIntegrationStatus,
   type ProfileConfig,
   type BuiltinStatus,
+  effectiveGrantors,
 } from '../lib/sp-client';
 import { pickerEntries, findPreselectedEntry } from '../lib/picker-entries';
 import { mandateRight } from '../lib/mandate-rights';
@@ -80,14 +81,18 @@ export function AuthorizePicker({ onDismiss, preselectProfileId }: Props) {
 
   // Whether this person may give a mandate for a profile here — the Authority
   // Server's team rule, shown at selection instead of on the last page.
-  const rightFor = (profile: ProfileSummary) => mandateRight({
-    isPersonal: !!group?.isPersonal,
-    configLoaded: !loading,
-    approvers: teamProfiles[profile.id]?.approvers,
-    userId: user?.id,
-    profileName: profileDisplayName(profile.id),
-    teamName: group?.name,
-  });
+  const rightFor = (profile: ProfileSummary) => {
+    const config = teamProfiles[profile.id];
+    return mandateRight({
+      isPersonal: !!group?.isPersonal,
+      configLoaded: !loading,
+      // TR5 — who may GRANT, not who may approve above cap.
+      grantors: config ? effectiveGrantors(config) : undefined,
+      userId: user?.id,
+      profileName: profileDisplayName(profile.id),
+      teamName: group?.name,
+    });
+  };
 
   const isTeamManaged = (profileId: string): boolean => profileId in teamProfiles;
 
