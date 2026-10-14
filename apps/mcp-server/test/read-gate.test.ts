@@ -17,6 +17,8 @@ import {
   emailDomain,
   extractParticipants,
   buildScopeQuery,
+  classifyEnumSwitches,
+  uncoveredReadSwitchReason,
 } from '../src/lib/read-gate';
 
 describe('boundsSatisfyReadGate', () => {
@@ -282,6 +284,92 @@ describe('resolveAgeBoundField (schema-driven, no field literal)', () => {
   it('returns null when no matching bound is declared', () => {
     expect(resolveAgeBoundField(emailSchema, 'nonexistent')).toBeNull();
     expect(resolveAgeBoundField(undefined, 'read_age_days')).toBeNull();
+  });
+});
+
+// ── D6: shipped-manifest coverage for enum ("capability flag") bounds ──────
+describe('classifyEnumSwitches', () => {
+  it('classifies a {unlimited,none} switch as READ-side', () => {
+    const schema = { fields: { read_access: { boundType: { kind: 'enum', values: ['unlimited', 'none'] } } } };
+    expect(classifyEnumSwitches(schema)).toEqual({ readSide: ['read_access'], writeSide: [] });
+  });
+  it('classifies a {allowed,none} switch as WRITE-side', () => {
+    const schema = { fields: { delete_access: { boundType: { kind: 'enum', values: ['allowed', 'none'] } } } };
+    expect(classifyEnumSwitches(schema)).toEqual({ readSide: [], writeSide: ['delete_access'] });
+  });
+  it('ignores non-enum bounds and an enum bound without "none"', () => {
+    const schema = {
+      fields: {
+        recipient_max: { boundType: { kind: 'per_transaction', of: 'recipient_count' } },
+        weird: { boundType: { kind: 'enum', values: ['a', 'b'] } },
+      },
+    };
+    expect(classifyEnumSwitches(schema)).toEqual({ readSide: [], writeSide: [] });
+  });
+  it('a 3+-value enum including "none" and "unlimited" is WRITE-side (not the exact 2-value read shape)', () => {
+    const schema = { fields: { odd: { boundType: { kind: 'enum', values: ['unlimited', 'partial', 'none'] } } } };
+    expect(classifyEnumSwitches(schema)).toEqual({ readSide: [], writeSide: ['odd'] });
+  });
+  it('undefined/empty schema ⇒ no switches', () => {
+    expect(classifyEnumSwitches(undefined)).toEqual({ readSide: [], writeSide: [] });
+  });
+});
+
+describe('uncoveredReadSwitchReason', () => {
+  const EMAIL_SCHEMA = { fields: { read_access: { boundType: { kind: 'enum', values: ['unlimited', 'none'] } } } };
+
+  it('THE GMAIL DEFECT — a `null` override (shorthand for category:"read") under a profile ' +
+    'with a switch is uncovered, same as an explicit category:"read" entry', () => {
+    expect(uncoveredReadSwitchReason({ list_messages: null }, EMAIL_SCHEMA)).toMatch(/does not reference/);
+  });
+  it('a category:"read" entry with a read adapter but no boundField is uncovered', () => {
+    expect(
+      uncoveredReadSwitchReason({ list_messages: { category: 'read', read: { ageField: 'x' } } }, EMAIL_SCHEMA),
+    ).toMatch(/does not reference/);
+  });
+  it('covered via boundField + the correct requiredValue', () => {
+    expect(
+      uncoveredReadSwitchReason(
+        { list_messages: { category: 'read', boundField: 'read_access', requiredValue: 'unlimited' } },
+        EMAIL_SCHEMA,
+      ),
+    ).toBeNull();
+  });
+  it('requiredValue:"none" would invert the gate — rejected', () => {
+    expect(
+      uncoveredReadSwitchReason(
+        { list_messages: { category: 'read', boundField: 'read_access', requiredValue: 'none' } },
+        EMAIL_SCHEMA,
+      ),
+    ).toMatch(/invert the gate/);
+  });
+  it('an unreasoned readGovernance:"none" is rejected; a reasoned one passes', () => {
+    expect(uncoveredReadSwitchReason({ x: { category: 'read', readGovernance: 'none' } }, EMAIL_SCHEMA))
+      .toMatch(/needs a written reason/);
+    expect(
+      uncoveredReadSwitchReason({ x: { category: 'read', readGovernance: 'none', readGovernanceReason: 'why' } }, EMAIL_SCHEMA),
+    ).toBeNull();
+  });
+  it('a write-side-only switch is not forced onto reads, but IS accepted when a read tool legitimately uses it', () => {
+    const schema = {
+      fields: {
+        read_access: { boundType: { kind: 'enum', values: ['unlimited', 'none'] } },
+        export_access: { boundType: { kind: 'enum', values: ['allowed', 'none'] } },
+      },
+    };
+    expect(
+      uncoveredReadSwitchReason(
+        { export_crm: { category: 'read', boundField: 'export_access', requiredValue: 'allowed' } },
+        schema,
+      ),
+    ).toBeNull();
+  });
+  it('no switches at all ⇒ every read tool passes unconditionally', () => {
+    expect(uncoveredReadSwitchReason({ list_events: { category: 'read' } }, undefined)).toBeNull();
+    expect(uncoveredReadSwitchReason({ list_events: null }, undefined)).toBeNull();
+  });
+  it('a non-read override is never checked', () => {
+    expect(uncoveredReadSwitchReason({ send_message: { executionMapping: {} } }, EMAIL_SCHEMA)).toBeNull();
   });
 });
 
