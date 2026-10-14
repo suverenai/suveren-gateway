@@ -27,6 +27,7 @@ import { resolveWhoLabel } from './who-label';
 import { encodeOutgoingArgs } from './arg-encoding';
 import { normalizeIncomingArgs } from './arg-normalization';
 import { selectAuthorization } from './scope-specificity';
+import { coerceDeclaredNumericFields } from './numeric-execution';
 import {
   boundsSatisfyReadGate,
   resolveAgeBoundField,
@@ -1017,6 +1018,18 @@ function createGatedToolHandlerInner(
         }
       }
     }
+
+    // A connector's OWN tool schema may require the same value as a STRING
+    // (Mollie: `amount: str`, e.g. "0.10") while the profile's bound maths
+    // need a number to compare against amount_max/amount_daily_max/
+    // amount_monthly_max — the direct-mapping branch above intentionally
+    // keeps a string a string (`String(value)`) so it still matches what the
+    // connector's schema demands; this is the one place that value is ALSO
+    // parsed for the Gatekeeper/Authority-Server side, without touching
+    // `args` below, which still carries the agent's original value unchanged
+    // to the downstream tool call. Schema-driven (declaredNumericFields),
+    // not Mollie-specific — see numeric-execution.ts.
+    coerceDeclaredNumericFields(profile!, execution);
 
     // v0.5+ actionType discipline (protocol.md → Tool-Gating Manifests). A
     // write whose manifest declares no action_type used to log a warning and
