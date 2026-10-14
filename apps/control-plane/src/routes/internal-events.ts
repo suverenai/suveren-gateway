@@ -26,7 +26,7 @@ import { eventBus, type EventType } from '../lib/event-bus';
  * unauthenticated-by-session call from a sibling process; it does not get to
  * inject arbitrary events into the UI's stream.
  */
-const ALLOWED: readonly EventType[] = ['proposal-added', 'action-approval-needed'] as const;
+const ALLOWED: readonly EventType[] = ['proposal-added', 'action-approval-needed', 'execution-failed'] as const;
 
 /**
  * Not a bus event — a command. The MCP server sends this the instant one of

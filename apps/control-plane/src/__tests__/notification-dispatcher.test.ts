@@ -98,3 +98,90 @@ describe('NotificationDispatcher', () => {
     expect(notifyFn).toHaveBeenCalledTimes(1);
   });
 });
+
+/**
+ * execution-failed: a proposal already approved and ticketed whose downstream
+ * tool call then failed (isError or thrown) — see commitments.ts. Same
+ * doorbell as a pending review, distinct wording, same content rule.
+ */
+describe('NotificationDispatcher — execution-failed', () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  function make(overrides: Partial<DispatcherOptions> = {}) {
+    const notifyFn = vi.fn();
+    const d = new NotificationDispatcher({
+      notifyFn: notifyFn as never,
+      settingsFn: (() => ({ desktopNotifications: true })) as never,
+      ...overrides,
+    });
+    return { d, notifyFn };
+  }
+
+  it('fires a distinct message, with no tool, amount, or error text', () => {
+    const { d, notifyFn } = make();
+    d.onTrigger('failure');
+    vi.advanceTimersByTime(5_000);
+
+    expect(notifyFn).toHaveBeenCalledTimes(1);
+    const [title, message] = notifyFn.mock.calls[0];
+    expect(title).toBe('Suveren');
+    expect(message).toBe('An approved action failed.');
+    expect(message).not.toMatch(/€|\$|@|proposal|mollie|refund/i);
+  });
+
+  it('does not fire the review message for a pure failure window', () => {
+    const { d, notifyFn } = make();
+    d.onTrigger('failure');
+    vi.advanceTimersByTime(5_000);
+    expect(notifyFn.mock.calls[0][1]).not.toBe('Something is waiting for your review.');
+  });
+
+  it('a window with ONLY review events keeps the original wording (no regression)', () => {
+    const { d, notifyFn } = make();
+    d.onTrigger('review');
+    vi.advanceTimersByTime(5_000);
+    expect(notifyFn.mock.calls[0][1]).toBe('Something is waiting for your review.');
+  });
+
+  it('a window mixing review and failure events uses a combined, still content-free message', () => {
+    const { d, notifyFn } = make();
+    d.onTrigger('review');
+    d.onTrigger('failure');
+    vi.advanceTimersByTime(5_000);
+    expect(notifyFn.mock.calls[0][1]).toBe('Something needs your attention.');
+  });
+
+  it('a flood of failures still reports presence and a count, never content', () => {
+    const { d, notifyFn } = make();
+    for (let i = 0; i < 12; i++) d.onTrigger('failure');
+    vi.advanceTimersByTime(5_000);
+    expect(notifyFn.mock.calls[0][1]).toBe('Unusual volume: 12 requests in the last minute.');
+  });
+
+  it('collapses several failures in one window into exactly one notification', () => {
+    const { d, notifyFn } = make();
+    for (let i = 0; i < 5; i++) d.onTrigger('failure');
+    vi.advanceTimersByTime(5_000);
+    expect(notifyFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('respects the cooldown the same way a review event does', () => {
+    const { d, notifyFn } = make();
+    d.onTrigger('failure');
+    vi.advanceTimersByTime(5_000);
+    expect(notifyFn).toHaveBeenCalledTimes(1);
+    d.onTrigger('failure');
+    vi.advanceTimersByTime(10_000);
+    expect(notifyFn).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(60_000);
+    expect(notifyFn).toHaveBeenCalledTimes(2);
+  });
+
+  it('honours the desktop-notifications setting, same as a review event', () => {
+    const { d, notifyFn } = make({ settingsFn: (() => ({ desktopNotifications: false })) as never });
+    d.onTrigger('failure');
+    vi.advanceTimersByTime(5_000);
+    expect(notifyFn).not.toHaveBeenCalled();
+  });
+});

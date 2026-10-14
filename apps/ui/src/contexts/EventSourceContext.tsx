@@ -39,7 +39,8 @@ export type SSEEventType =
   | 'action-resolved'
   | 'proposal-approved'
   | 'proposal-rejected'
-  | 'session-locked';
+  | 'session-locked'
+  | 'execution-failed';
 
 // ─── Context value ────────────────────────────────────────────────────────────
 
@@ -116,6 +117,7 @@ export function EventSourceProvider({ children }: { children: ReactNode }) {
       'proposal-approved',
       'proposal-rejected',
       'session-locked',
+      'execution-failed',
     ];
 
     for (const type of eventTypes) {
