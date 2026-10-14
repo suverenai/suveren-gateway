@@ -644,7 +644,7 @@ function createGatedToolHandlerInner(
     };
   }
 
-  const { profile, executionMapping, staticExecution, category } = tool.gating;
+  const { profile, executionMapping, staticExecution, category, boundField: toolBoundField, requiredValue: toolRequiredValue } = tool.gating;
 
   // The held mandates this tool may be called under: complete, on its
   // profile, and not refused by the tool's own integration (a built-in's
@@ -1133,6 +1133,41 @@ function createGatedToolHandlerInner(
     // the agent-facing message built from `errors`.
     const structuredRefusals: Array<{ authorizationId: string; profileId: string; code: string; field?: string; bound?: unknown; actual?: unknown }> = [];
     for (const candidate of matchingAuths) {
+      // Capability gate (enum boundType, e.g. records.json's archive_access/
+      // delete_access on archive_record/delete_record): checked BEFORE the
+      // Gatekeeper, same mechanism as the read branch's static read gate
+      // above (`boundsSatisfyReadGate`) and for the same reason — hap-core's
+      // Gatekeeper deliberately never compares an `enum` bound against
+      // execution (gatekeeper.ts's 'enum' case): "the gateway tool-proxy
+      // gates tool calls ... before they reach the Gatekeeper". Previously
+      // this field was read ONLY inside the `category:"read"` branch, so a
+      // write override declaring boundField/requiredValue had it silently
+      // dropped at resolution time (integration-manager.ts's
+      // resolveToolGating) and NEVER enforced anywhere — not here, not by
+      // the Authority Server (its receipt route makes the identical "capability
+      // flags are checked at attest time and at tool-proxy time, not here"
+      // call). Fails this ONE candidate, same shape as a Gatekeeper refusal,
+      // so selection still tries every other matching authorization.
+      if (toolBoundField) {
+        const gateOk = boundsSatisfyReadGate(
+          (candidate.bounds ?? candidate.frame) as Record<string, string | number> | undefined,
+          { boundField: toolBoundField, requiredValue: toolRequiredValue },
+        );
+        if (!gateOk) {
+          errors.push(
+            `${candidate.path}: requires "${toolBoundField}: ${toolRequiredValue}", ` +
+            `but this authorization does not grant it`,
+          );
+          structuredRefusals.push({
+            authorizationId: candidate.authorizationId,
+            profileId: candidate.profileId,
+            code: 'BOUND_EXCEEDED',
+            field: toolBoundField,
+            bound: toolRequiredValue,
+          });
+          continue;
+        }
+      }
       // Pass v0.4 enriched fields (bounds/context from gate store) to gatekeeper
       const { result } = await state.gatekeeper.verifyExecution(candidate.authorizationId, execution, {
         bounds: candidate.bounds,

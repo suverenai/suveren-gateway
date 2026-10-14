@@ -129,9 +129,18 @@ export interface ToolGatingConfig {
    * operator has to be told what to add.
    */
   disabledReason?: string;
-  /** Static read gate (manifest): the bound that must hold to use a read tool. */
+  /**
+   * Capability gate (manifest): an `enum`-boundType bound the caller's
+   * authorization must hold this exact value for, to use this tool. Named
+   * "read gate" historically (it started on `category:"read"` tools only,
+   * e.g. records' `read_access`), but the SAME mechanism now also gates
+   * write overrides that declare one (e.g. records' `delete_access` on
+   * `delete_record`) — hap-core's Gatekeeper deliberately never checks an
+   * `enum` bound itself (gatekeeper.ts's 'enum' case), so tool-proxy.ts is
+   * the only enforcement point, on the read AND write path alike.
+   */
   boundField?: string;
-  /** The exact value `boundField` must have for the read to be permitted. */
+  /** The exact value `boundField` must have for the call to be permitted. */
   requiredValue?: string;
   /** Per-item read enforcement descriptor (age/scope) for read tools. */
   read?: ReadAdapter;

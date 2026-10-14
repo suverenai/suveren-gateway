@@ -316,9 +316,11 @@ export function detectAgeConflict(
   return worst;
 }
 
-/** Minimal view of a profile's boundsSchema needed to resolve the age bound. */
+/** Minimal view of a profile's boundsSchema needed to resolve the age bound
+ *  (and, below, D6's enum-switch coverage check — same shape, widened with
+ *  `values` so one interface serves both). */
 export interface BoundsSchemaLike {
-  fields?: Record<string, { boundType?: { kind?: string; of?: string } }>;
+  fields?: Record<string, { boundType?: { kind?: string; of?: string; values?: readonly string[] } }>;
 }
 
 /**
@@ -334,6 +336,122 @@ export function resolveAgeBoundField(boundsSchema: BoundsSchemaLike | undefined,
   if (!fields) return null;
   for (const [name, def] of Object.entries(fields)) {
     if (def?.boundType?.kind === 'per_transaction' && def.boundType.of === ageExecField) return name;
+  }
+  return null;
+}
+
+// ── D6: shipped-manifest coverage for capability-flag ("enum") bounds ──────
+//
+// hap-core's Gatekeeper deliberately never compares an `enum`-boundType bound
+// against runtime execution (hap-core/src/gatekeeper.ts's 'enum' case): "the
+// gateway tool-proxy gates tool calls ... based on the manifest's required
+// value" IS the enforcement, by design. So a manifest that forgets to wire
+// `boundField`/`requiredValue` on a tool the switch is meant to gate leaves
+// that switch silently unenforced — the gmail.json defect this generalizes
+// past gmail: the SAME gap is possible on any connector, for any such switch.
+//
+// Switches don't yet declare WHICH category they gate — that needs a
+// protocol-level marker that doesn't exist today (hap-core's `BoundType.enum`
+// doc comment: "Used by: read_access, delete_access, archive_access", naming
+// examples, not a machine-readable "this one gates reads" flag). Until that
+// exists, this classifies by the only structural signal a profile's `values`
+// set already carries, verified by hand against every profile shipped in
+// hap-profiles at the time this was written:
+//   - values is EXACTLY {"unlimited","none"}        → READ-side.
+//   - values includes "none" but not "unlimited"     → WRITE-side
+//     (the delete_access/archive_access/export_access shape).
+//
+// The ENFORCED rule is deliberately coarser than the classification: every
+// `category:"read"` tool must reference SOME declared switch of its profile
+// (read- or write-side) or carry an explicit exemption — not specifically a
+// READ-side one. Two reasons: (1) crm.json's `export_crm` is `category:"read"`
+// but correctly gates on `export_access` (WRITE-side by this heuristic) —
+// requiring READ-side coverage specifically would make a correct manifest
+// fail; (2) the classification itself is a stand-in for a marker the
+// protocol doesn't have yet, so this check cannot safely assume it knows
+// which exact switch a given read tool SHOULD use, only that the manifest
+// author connected it to *something* real rather than nothing (gmail's
+// defect) or an undocumented exemption. `writeSide` is still computed and
+// reported (by the caller / the CI test) so a human can see the split —
+// it is just never the sole basis for refusing a manifest.
+// If a future profile's read-side switch ever uses different values, this
+// heuristic needs the real protocol marker, not a widened guess here.
+
+/** One profile's enum ("capability flag") switches, classified by what their
+ *  value set implies they gate. See the module-level comment above. */
+export interface ClassifiedSwitches {
+  /** Gates reads — values exactly {"unlimited","none"}. */
+  readSide: string[];
+  /** Gates a write-ish action (delete/archive/export-shaped) — values
+   *  include "none" but not "unlimited". Never required of a read tool. */
+  writeSide: string[];
+}
+
+export function classifyEnumSwitches(boundsSchema: BoundsSchemaLike | undefined): ClassifiedSwitches {
+  const readSide: string[] = [];
+  const writeSide: string[] = [];
+  for (const [name, def] of Object.entries(boundsSchema?.fields ?? {})) {
+    if (def?.boundType?.kind !== 'enum') continue;
+    const values = new Set(def.boundType.values ?? []);
+    if (!values.has('none')) continue; // not a "something vs none" capability flag
+    if (values.size === 2 && values.has('unlimited')) readSide.push(name);
+    else writeSide.push(name);
+  }
+  return { readSide, writeSide };
+}
+
+/**
+ * D6 — the single predicate shared by the manifest loader (refuses the
+ * manifest) and the shipped-manifest lint test, same pattern as every other
+ * `invalid*Reason` check in manifest-loader.ts. Returns a human-readable
+ * refusal reason, or null when every `category:"read"` override either
+ * references one of the profile's declared enum switches (with the correct
+ * `requiredValue` — the one member of that switch's value set that is NOT
+ * "none") or carries an explicit `readGovernance:"none"` exemption WITH a
+ * written `readGovernanceReason`.
+ *
+ * No switches at all (e.g. calendar, publish, deploy, charge) always
+ * passes: there is nothing for a read tool to reference.
+ */
+export function uncoveredReadSwitchReason(
+  overrides: Record<string, unknown>,
+  boundsSchema: BoundsSchemaLike | undefined,
+): string | null {
+  const { readSide, writeSide } = classifyEnumSwitches(boundsSchema);
+  const anySwitch = [...readSide, ...writeSide];
+  if (anySwitch.length === 0) return null;
+  const valuesOf = (field: string): readonly string[] => boundsSchema?.fields?.[field]?.boundType?.values ?? [];
+
+  for (const [toolName, entry] of Object.entries(overrides)) {
+    // `null` is shorthand for `{ category: "read" }` (integration-manager.ts's
+    // resolveToolGating: "null override ... = read-only tool") — it must be
+    // checked exactly like an explicit category:"read" entry, not skipped:
+    // it declares NO governance at all, so under a profile with a switch it
+    // is uncovered by definition.
+    if (entry !== null && typeof entry !== 'object') continue;
+    const e = (entry ?? {}) as { category?: string; boundField?: string; requiredValue?: string; readGovernance?: string; readGovernanceReason?: string };
+    if (entry !== null && e.category !== 'read') continue;
+
+    if (e.readGovernance === 'none') {
+      if (!e.readGovernanceReason) {
+        return `override "${toolName}" declares readGovernance:"none" with no readGovernanceReason — ` +
+          `an exemption from this profile's switch(es) [${anySwitch.join(', ')}] needs a written reason`;
+      }
+      continue;
+    }
+
+    if (!e.boundField || !anySwitch.includes(e.boundField)) {
+      return `override "${toolName}" is category:"read" under a profile that declares enum switch(es) ` +
+        `[${anySwitch.join(', ')}] (read-side: [${readSide.join(', ')}], write-side: [${writeSide.join(', ')}]), ` +
+        `but does not reference one via boundField (and carries no readGovernance exemption) — it would ` +
+        `silently ignore e.g. "${anySwitch[0]}: none"`;
+    }
+    const positiveValues = valuesOf(e.boundField).filter(v => v !== 'none');
+    if (!e.requiredValue || !positiveValues.includes(e.requiredValue)) {
+      return `override "${toolName}".requiredValue for boundField "${e.boundField}" must be ` +
+        `${positiveValues.map(v => `"${v}"`).join(' or ')}, not ${JSON.stringify(e.requiredValue)} — ` +
+        `requiring "none" (or an unlisted value) would invert the gate`;
+    }
   }
   return null;
 }

@@ -1337,6 +1337,17 @@ export class IntegrationManager {
         approvalView: ext.approvalView,
         contextKeys: ext.contextKeys,
         sourceFromArg: ext.sourceFromArg,
+        // A WRITE override may ALSO declare a capability-gate (enum boundType,
+        // e.g. records.json's archive_access/delete_access) — the same
+        // mechanism the read branch uses, now generalized: hap-core's
+        // Gatekeeper deliberately never compares an `enum` bound against
+        // execution (gatekeeper.ts's 'enum' case: "the gateway tool-proxy
+        // gates tool calls ... before they reach the Gatekeeper"), so if this
+        // branch dropped it, nothing anywhere would ever enforce it. Before
+        // this, boundField/requiredValue on a non-"read" override was silently
+        // discarded here — the config in the manifest existed but did nothing.
+        boundField: ext.boundField,
+        requiredValue: ext.requiredValue,
       };
     }
 
