@@ -25,7 +25,18 @@ import { notify } from './desktop-notify';
 import { readSettings } from './gateway-settings';
 
 /** Events that mean "a human now has something to decide". */
-const TRIGGER_EVENTS: EventType[] = ['proposal-added', 'action-approval-needed'];
+const REVIEW_EVENTS: EventType[] = ['proposal-added', 'action-approval-needed'];
+
+/**
+ * An approved proposal's downstream tool call failed AFTER the Authority
+ * Server already issued the ticket (see commitments.ts) — distinct from
+ * REVIEW_EVENTS: there is nothing left to decide, something that already ran
+ * needs attention. Same doorbell, different wording (see `fire()`); same
+ * content rule (no tool, no amount, no error text).
+ */
+const FAILURE_EVENTS: EventType[] = ['execution-failed'];
+
+const TRIGGER_EVENTS: EventType[] = [...REVIEW_EVENTS, ...FAILURE_EVENTS];
 
 const TITLE = 'Suveren';
 
@@ -39,6 +50,15 @@ const TITLE = 'Suveren';
  * count; a doorbell does not need to say how many people are outside.
  */
 const WAITING_MESSAGE = 'Something is waiting for your review.';
+
+/**
+ * Shown when every event observed in the window was an execution failure —
+ * no amount, no tool name, no error text, same as every other string here.
+ */
+const FAILURE_MESSAGE = 'An approved action failed.';
+
+/** Shown when a window mixed review-needed and execution-failed events. */
+const MIXED_MESSAGE = 'Something needs your attention.';
 
 /**
  * A flood is an anomaly, not just noise. Fifty requests in a minute is a broken
@@ -80,6 +100,9 @@ export class NotificationDispatcher {
   private pendingWhileCoolingDown = false;
   /** Events observed since the current window opened — the flood signal only. */
   private observedInWindow = 0;
+  /** Which kinds were observed since the current window opened — selects the message. */
+  private reviewSeenInWindow = false;
+  private failureSeenInWindow = false;
   private unsubscribe: (() => void) | null = null;
 
   private readonly now: () => number;
@@ -100,7 +123,8 @@ export class NotificationDispatcher {
   start(): () => void {
     if (this.unsubscribe) return this.unsubscribe;
     const off = eventBus.subscribe(event => {
-      if (TRIGGER_EVENTS.includes(event.type)) this.onTrigger();
+      if (FAILURE_EVENTS.includes(event.type)) this.onTrigger('failure');
+      else if (REVIEW_EVENTS.includes(event.type)) this.onTrigger('review');
     });
     this.unsubscribe = () => {
       off();
@@ -113,9 +137,15 @@ export class NotificationDispatcher {
     return this.unsubscribe;
   }
 
-  /** Exposed for tests; the bus subscription calls this. */
-  onTrigger(): void {
+  /**
+   * Exposed for tests; the bus subscription calls this. `kind` defaults to
+   * 'review' so every existing call site/test (written before FAILURE_EVENTS
+   * existed) keeps its exact behaviour.
+   */
+  onTrigger(kind: 'review' | 'failure' = 'review'): void {
     this.observedInWindow += 1;
+    if (kind === 'failure') this.failureSeenInWindow = true;
+    else this.reviewSeenInWindow = true;
 
     if (this.cooldownTimer) {
       // Inside the quiet period — remember that something happened.
@@ -132,7 +162,11 @@ export class NotificationDispatcher {
 
   private fire(): void {
     const count = this.observedInWindow;
+    const sawReview = this.reviewSeenInWindow;
+    const sawFailure = this.failureSeenInWindow;
     this.observedInWindow = 0;
+    this.reviewSeenInWindow = false;
+    this.failureSeenInWindow = false;
 
     // Checked at fire time, not at subscribe time, so toggling the setting
     // takes effect without restarting the gateway.
@@ -148,7 +182,13 @@ export class NotificationDispatcher {
     );
 
     if (enabled) {
-      const message = count >= FLOOD_THRESHOLD ? floodMessage(count) : WAITING_MESSAGE;
+      const message = count >= FLOOD_THRESHOLD
+        ? floodMessage(count)
+        : sawReview && sawFailure
+        ? MIXED_MESSAGE
+        : sawFailure
+        ? FAILURE_MESSAGE
+        : WAITING_MESSAGE;
       // notify() never throws and never blocks: a missing notify-send, a denied
       // macOS permission or a locked-down PowerShell must not affect the gateway.
       this.notifyFn(TITLE, message, process.platform, this.url);

@@ -36,6 +36,43 @@ import { resolveWhoLabel } from '../lib/who-label';
 import { resolveProposalToolArgs, decryptRejectionNote, computeProposalContentHash, ProposalContentError } from '../lib/proposal-content';
 
 /**
+ * Retain what a committed proposal's execution actually produced — the
+ * content half of the execution journal's done/failed row (see
+ * execution-result-store.ts's doc comment for why this exists). Best-effort:
+ * a store write failure must never be why an already-decided outcome fails
+ * to return to the caller, so this swallows its own errors. Optional
+ * chaining on `state.executionResults` keeps every existing test fixture
+ * (partial `SharedState` mocks) working unchanged.
+ */
+function recordExecutionOutcome(
+  state: SharedState,
+  proposalId: string,
+  ticketId: string,
+  ok: boolean,
+  text: string,
+  structuredContent?: Record<string, unknown>,
+): void {
+  try {
+    state.executionResults?.record({ proposalId, ticketId, ok, text, structuredContent });
+  } catch (err) {
+    console.error(`[Suveren MCP] Could not record the execution result for proposal ${proposalId}:`, err);
+  }
+}
+
+/**
+ * One line to gateway.log per execution attempt — presence and a short,
+ * generic classification, never the tool's actual content (no args, no
+ * amounts, no connector response text). `shortMessage` must stay a fixed
+ * label or an error's type name — never `err.message`/the connector's own
+ * text, which can carry whatever the downstream system put in it.
+ */
+function logExecutionOutcome(proposalId: string, ok: boolean, shortMessage?: string): void {
+  console.error(
+    `[Suveren MCP] Proposal ${proposalId}: execution outcome=${ok ? 'ok' : `error (${shortMessage ?? 'unknown'})`}`,
+  );
+}
+
+/**
  * The message shown for a committed proposal this gateway has no local
  * submission record for — used both when an agent asks about it directly
  * (executeCommitted's skip path, below) and when listing every committed
@@ -558,8 +595,14 @@ export async function executeCommitted(
       result = await integrationManager.callTool(integrationId, toolName, outgoingArgs);
     } catch (err) {
       // The tool threw. Whether the effect happened is unknown — record that
-      // honestly so no later trigger re-runs it on the same ticket.
+      // honestly so no later trigger re-runs it on the same ticket. Retain
+      // the error text (capped, encrypted) so a LATER check-pending-commitments
+      // call can still say what went wrong, not just that something did.
+      const msg = err instanceof Error ? err.message : String(err);
       state.executionJournal.complete(receiptId, 'failed');
+      recordExecutionOutcome(state, proposal.id, receiptId, false, `The tool call threw: ${msg}`);
+      logExecutionOutcome(proposal.id, false, err instanceof Error ? err.name : 'thrown error');
+      void notifyControlPlane('execution-failed');
       throw err;
     }
     const resultText = (result.content as Array<{ text: string }>)?.[0]?.text ?? JSON.stringify(result);
@@ -569,6 +612,9 @@ export async function executeCommitted(
     // is spent (one execution per ticket); a retry needs a new approval.
     if ((result as { isError?: boolean }).isError) {
       state.executionJournal.complete(receiptId, 'failed', 'refused', resultText);
+      recordExecutionOutcome(state, proposal.id, receiptId, false, resultText);
+      logExecutionOutcome(proposal.id, false, 'the connector returned an error');
+      void notifyControlPlane('execution-failed');
       return {
         text:
           `Proposal ${proposal.id} was approved, but ${integrationId} refused to run it — nothing was done.\n` +
@@ -577,6 +623,8 @@ export async function executeCommitted(
       };
     }
     state.executionJournal.complete(receiptId, 'done');
+    recordExecutionOutcome(state, proposal.id, receiptId, true, resultText, (result as { structuredContent?: Record<string, unknown> }).structuredContent);
+    logExecutionOutcome(proposal.id, true);
     // Record locally for cumulative tracking (parity with the automatic path).
     // Reached once per ticket, by construction of the journal above.
     state.executionLog.record({
@@ -590,6 +638,20 @@ export async function executeCommitted(
     // Receipt is already signed at the SP — the user got credit for this
     // commitment. The tool itself failed, which is a local error.
     const msg = err instanceof Error ? err.message : String(err);
+    // The inner try above already journals/retains/notifies for every error
+    // that originates from the actual tool call. This outer catch ALSO
+    // catches errors from the footer/ticket-id/encoding steps BEFORE the
+    // tool is ever called — those never ran the inner try, so the journal
+    // row (begun above, still 'intent') and the retained result would
+    // otherwise be left incomplete. Idempotent: `complete()` on an
+    // already-'failed' row from the inner catch is a harmless overwrite with
+    // the same state.
+    if (state.executionJournal.get(receiptId)?.state === 'intent') {
+      state.executionJournal.complete(receiptId, 'failed');
+      recordExecutionOutcome(state, proposal.id, receiptId, false, `Receipt issued but tool execution failed: ${msg}`);
+      logExecutionOutcome(proposal.id, false, err instanceof Error ? err.name : 'error');
+      void notifyControlPlane('execution-failed');
+    }
     return {
       text: `Proposal ${proposal.id} receipt issued but tool execution failed: ${msg}`,
       isError: true,
@@ -605,16 +667,36 @@ export async function executeCommitted(
  */
 function localOutcomeOfExecuted(proposal: SPProposal, state: SharedState): { text: string; isError: boolean } | null {
   const entry = state.executionJournal?.findByProposal?.(proposal.id);
-  if (!entry || entry.state === 'done') return null;
+  if (!entry) return null;
   const integration = proposal.tool.split('__')[0];
+  if (entry.state === 'done') {
+    // 2026-10-13 fix: this used to return null here unconditionally, so a
+    // LATER check-pending-commitments(proposal_id) call fell through to the
+    // AS's own (always-null) `executionResult` field and said "the gateway
+    // did not retain its output" — on a SUCCESSFUL execution, not just a
+    // failed one. The execution result store (execution-result-store.ts) is
+    // the gateway's own retained copy of what the tool actually returned;
+    // null here only when this row predates that store, or the vault is
+    // still locked — in which case the AS-field fallback below stands.
+    const stored = state.executionResults?.get(proposal.id);
+    if (!stored || !stored.ok) return null;
+    return {
+      text: `Proposal ${proposal.id} was approved and executed.\nResult: ${stored.text}`,
+      isError: false,
+    };
+  }
   if (entry.state === 'failed') {
     // The execution journal is the only place that stores WHY (row.detail) —
     // the connector's own refusal text, or why AU4 called it stale. Without
     // it, a LATER check-pending-commitments(proposal_id) call (this
     // function) said only THAT it was refused/changed, dropping the reason
     // the FIRST call's own response showed — someone reading only this later
-    // check never learns it.
-    const reasonSuffix = entry.detail ? `\nReason: ${entry.detail}` : '';
+    // check never learns it. Prefer the execution result store's full text
+    // (up to 16 KB) over the journal's own short, capped `detail` when both
+    // exist — same reason the store exists at all.
+    const stored = state.executionResults?.get(proposal.id);
+    const detail = (stored && !stored.ok ? stored.text : undefined) ?? entry.detail;
+    const reasonSuffix = detail ? `\nReason: ${detail}` : '';
     return {
       text: entry.outcome === 'as_refused'
         // 2026-10-12 fix — the AS itself refused this proposal's ticket (a
