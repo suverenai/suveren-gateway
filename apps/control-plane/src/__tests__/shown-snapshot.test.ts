@@ -85,7 +85,10 @@ describe('ShownSnapshotStore', () => {
     store.save('old', { readAt: 1, preview: { status: 'none' }, requestContext: { request: { status: 'none' }, history: { status: 'no_customer_link' } } }, vault);
     // save() itself prunes against "now" — directly exercise pruneWithVault
     // with a FUTURE "now" to simulate the entry aging out.
-    store.pruneWithVault(vault, now + SHOWN_SNAPSHOT_MAX_AGE_SECONDS + 1);
+    // +60 s margin: save() stamps its own clock, which can tick past `now` on
+    // a slow runner (seen on Windows CI), and an entry exactly at the cutoff
+    // is kept.
+    store.pruneWithVault(vault, now + SHOWN_SNAPSHOT_MAX_AGE_SECONDS + 60);
     expect(store.get('old', vault)).toBeNull();
   });
 
