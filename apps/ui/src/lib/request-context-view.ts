@@ -40,11 +40,28 @@ export interface RequestChainItemView {
   body?: string;
 }
 
+/** AU10 F3 — the ONE tag string for a resolved link, regardless of whether
+ *  it came from an explicit `_source` or a manifest's `sourceFromArg`: an
+ *  implicit link is still the AI's own choice of what it's replying to, not
+ *  checked, same as an explicit one (contract + mockup case 5). Exported so
+ *  the component never hardcodes it a second time. */
+export const REQUEST_LINKED_TAG = 'Linked by the AI';
+
+/** AU10 F3 — shown ONLY for an implicit (sourceFromArg) link, additionally
+ *  to {@link REQUEST_LINKED_TAG} — explains HOW it was linked without
+ *  changing WHO gets credit for it. */
+export const REQUEST_IMPLICIT_NOTE = "linked automatically — this action already carried a reference to it";
+
 export interface RequestBlockView {
   state: 'none' | 'unreadable' | 'not_found' | 'ok';
   /** Set for 'none' | 'unreadable' | 'not_found' — the contract's own exact wording. */
   note?: string;
   implicit?: boolean;
+  /** AU10 F3 — set ONLY for state 'ok' (a resolved link); the "No request
+   *  linked."/unreadable/not_found states show no tag at all. */
+  tag?: string;
+  /** AU10 F3 — set ONLY alongside `tag` when `implicit` is true. */
+  implicitNote?: string;
   metaLine?: string;
   title?: string;
   bodyFirst?: string;
@@ -71,6 +88,8 @@ export function requestBlockView(result: RequestResult): RequestBlockView {
   return {
     state: 'ok',
     implicit: result.implicit,
+    tag: REQUEST_LINKED_TAG,
+    ...(result.implicit ? { implicitNote: REQUEST_IMPLICIT_NOTE } : {}),
     metaLine: metaParts.join(' · '),
     title: result.title,
     bodyFirst: first,
@@ -89,8 +108,16 @@ export interface HistoryItemView {
   aiWritten: boolean;
 }
 
+/** AU10 F2 — shown in EVERY History state, not just 'ok': the reader must
+ *  always know who produced this block, even when there's nothing in it
+ *  (no customer link, not reachable, nothing recent). Exported so the
+ *  component never hardcodes it a second time. */
+export const HISTORY_LABEL = 'Read by the gateway — same customer, not matched to this request';
+
 export interface HistoryBlockView {
   state: 'no_customer_link' | 'no_match' | 'unreachable' | 'empty' | 'ok';
+  /** AU10 F2 — always set, regardless of state. */
+  label: string;
   note: string;
   /** doc §2 — "The card states the match" (per connector that matched). */
   matchNotes: string[];
@@ -129,11 +156,12 @@ function itemView(item: HistoryItem): HistoryItemView {
  *  not reachable, nothing in the last N days. */
 export function historyBlockView(result: HistoryResult): HistoryBlockView {
   if (result.status === 'no_customer_link') {
-    return { state: 'no_customer_link', note: 'No customer link — nothing to match history against.', matchNotes: [], items: [] };
+    return { state: 'no_customer_link', label: HISTORY_LABEL, note: 'No customer link — nothing to match history against.', matchNotes: [], items: [] };
   }
   if (result.status === 'no_match') {
     return {
       state: 'no_match',
+      label: HISTORY_LABEL,
       note: 'No match — no connector here matches on this customer\'s available identity key.',
       matchNotes: [],
       items: [],
@@ -142,6 +170,7 @@ export function historyBlockView(result: HistoryResult): HistoryBlockView {
   if (result.status === 'unreachable') {
     return {
       state: 'unreachable',
+      label: HISTORY_LABEL,
       note: `${result.connectorIds.join(', ')} not reachable — history could not be read.`,
       matchNotes: [],
       items: [],
@@ -156,7 +185,7 @@ export function historyBlockView(result: HistoryResult): HistoryBlockView {
     ? `${result.unreachableConnectorIds.join(', ')} not reachable — showing what could be read.`
     : undefined;
   if (items.length === 0) {
-    return { state: 'empty', note: 'Nothing in the last few days.', matchNotes, items: [], unreachableNote };
+    return { state: 'empty', label: HISTORY_LABEL, note: 'Nothing in the last few days.', matchNotes, items: [], unreachableNote };
   }
-  return { state: 'ok', note: '', matchNotes, items, unreachableNote };
+  return { state: 'ok', label: HISTORY_LABEL, note: '', matchNotes, items, unreachableNote };
 }

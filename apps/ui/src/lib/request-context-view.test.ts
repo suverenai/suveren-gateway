@@ -4,7 +4,7 @@
  * strings where it specifies them.
  */
 import { describe, it, expect } from 'vitest';
-import { requestBlockView, historyBlockView, splitBodyPreview } from './request-context-view';
+import { requestBlockView, historyBlockView, splitBodyPreview, REQUEST_LINKED_TAG, HISTORY_LABEL } from './request-context-view';
 import type { RequestResult, HistoryResult } from './sp-client';
 
 describe('requestBlockView', () => {
@@ -56,6 +56,29 @@ describe('requestBlockView', () => {
     const result: RequestResult = { status: 'ok', connector: 'mail', kind: 'message', implicit: true, chain: [] };
     expect(requestBlockView(result).implicit).toBe(true);
   });
+
+  // AU10 F3 — "Linked by the AI" regardless of implicit/explicit (an
+  // implicit link is still the AI's own choice of what it answers).
+  it('F3 — the tag is "Linked by the AI" for an EXPLICIT _source link', () => {
+    const result: RequestResult = { status: 'ok', connector: 'mail', kind: 'message', implicit: false, chain: [] };
+    const view = requestBlockView(result);
+    expect(view.tag).toBe(REQUEST_LINKED_TAG);
+    expect(view.tag).toBe('Linked by the AI');
+    expect(view.implicitNote).toBeUndefined();
+  });
+
+  it('F3 — the SAME tag "Linked by the AI" for an IMPLICIT (sourceFromArg) link, plus an explanatory note', () => {
+    const result: RequestResult = { status: 'ok', connector: 'mail', kind: 'message', implicit: true, chain: [] };
+    const view = requestBlockView(result);
+    expect(view.tag).toBe('Linked by the AI');
+    expect(view.implicitNote).toBeTruthy();
+  });
+
+  it('F3 — no tag at all for none/unreadable/not_found (nothing to credit the AI for)', () => {
+    expect(requestBlockView({ status: 'none' }).tag).toBeUndefined();
+    expect(requestBlockView({ status: 'unreadable', reason: 'x' }).tag).toBeUndefined();
+    expect(requestBlockView({ status: 'not_found' }).tag).toBeUndefined();
+  });
 });
 
 describe('historyBlockView', () => {
@@ -82,6 +105,25 @@ describe('historyBlockView', () => {
     const result: HistoryResult = { status: 'ok', matches: [{ connectorId: 'crm', matchedKeyType: 'email_domain', matchedKeyValue: 'x.de', items: [] }], unreachableConnectorIds: [] };
     const view = historyBlockView(result);
     expect(view.state).toBe('empty');
+  });
+
+  // AU10 F2 — the label must be present in EVERY state, not just 'ok': the
+  // reader must always know who produced the block.
+  it('F2 — the label is present in every state', () => {
+    const cases: HistoryResult[] = [
+      { status: 'no_customer_link' },
+      { status: 'no_match' },
+      { status: 'unreachable', connectorIds: ['crm'] },
+      { status: 'ok', matches: [{ connectorId: 'crm', matchedKeyType: 'email_domain', matchedKeyValue: 'x.de', items: [] }], unreachableConnectorIds: [] }, // -> 'empty'
+      { status: 'ok', matches: [{ connectorId: 'crm', matchedKeyType: 'email_domain', matchedKeyValue: 'x.de', items: [{ title: 't' }] }], unreachableConnectorIds: [] }, // -> 'ok'
+    ];
+    const states = cases.map((c) => historyBlockView(c).state);
+    expect(states).toEqual(['no_customer_link', 'no_match', 'unreachable', 'empty', 'ok']);
+    for (const c of cases) {
+      const view = historyBlockView(c);
+      expect(view.label).toBe(HISTORY_LABEL);
+      expect(view.label).toBe('Read by the gateway — same customer, not matched to this request');
+    }
   });
 
   it('ok — items sorted newest-first across connectors, with the match note', () => {

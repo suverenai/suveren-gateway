@@ -142,8 +142,8 @@ function loadFixtureManifests(): void {
     mcp: { command: 'node', args: [] }, credentials: { fields: [], envMapping: {} }, oauth: null,
     context: {
       history: {
-        byKey: 'email_domain',
-        read: { tool: 'get_timeline', args: { email_domain: '$key', since: '$since', limit: '$limit' } },
+        byKey: ['email_domain', 'email'],
+        read: { tool: 'get_timeline', args: { $keyType: '$key', since: '$since', limit: '$limit' } },
         limit: 5, maxAgeDays: 14,
         item: { kind: 'activity', title: 'summary', body: 'detail', at: 'date', author: 'created_by', type: 'type', ticket: 'ticket_id' },
       },
@@ -219,6 +219,10 @@ function buildFakeManager(fixtures: Fixtures): { integrationManager: Integration
   return { integrationManager, callTool };
 }
 
+/** AU10 F4 — "every connector configured on this gateway", for tests that
+ *  aren't specifically exercising the installed/not-installed distinction. */
+const ALL_CONFIGURED = new Set(['mail', 'crm', 'erp']);
+
 describe('AU10 request/history engine', () => {
   let journalDir: string;
   let journal: ExecutionJournal;
@@ -241,7 +245,7 @@ describe('AU10 request/history engine', () => {
       timelines: {}, customers: {},
     });
     const { result, keys } = await resolveRequestContext(
-      integrationManager, { _source: { connector: 'mail', kind: 'message', id: 'm-17' } }, 'crm', undefined,
+      integrationManager, { _source: { connector: 'mail', kind: 'message', id: 'm-17' } }, 'crm', undefined, ALL_CONFIGURED,
     );
     expect(result).toMatchObject({ status: 'ok', connector: 'mail', kind: 'message', implicit: false, author: 'J. Kraus', title: 'RF 55 Stillstand' });
     expect(keys).toEqual([
@@ -257,7 +261,7 @@ describe('AU10 request/history engine', () => {
     });
     const { result } = await resolveRequestContext(
       integrationManager, { to: ['j.kraus@bavaria-umform.de'], in_reply_to: 'm-17' }, 'mail',
-      { kind: 'message', arg: 'in_reply_to' },
+      { kind: 'message', arg: 'in_reply_to' }, ALL_CONFIGURED,
     );
     expect(result).toMatchObject({ status: 'ok', implicit: true, connector: 'mail' });
   });
@@ -275,34 +279,35 @@ describe('AU10 request/history engine', () => {
       { in_reply_to: 'm-17', _source: { connector: 'mail', kind: 'message', id: 'm-99' } },
       'mail',
       { kind: 'message', arg: 'in_reply_to' },
+      ALL_CONFIGURED,
     );
     expect(result).toMatchObject({ status: 'ok', title: 'B' });
   });
 
   it('none — no _source and no sourceFromArg', async () => {
     const { integrationManager } = buildFakeManager({ messages: {}, timelines: {}, customers: {} });
-    const { result } = await resolveRequestContext(integrationManager, {}, 'crm', undefined);
+    const { result } = await resolveRequestContext(integrationManager, {}, 'crm', undefined, ALL_CONFIGURED);
     expect(result).toEqual({ status: 'none' });
   });
 
   it('unreadable — malformed _source shape', async () => {
     const { integrationManager } = buildFakeManager({ messages: {}, timelines: {}, customers: {} });
-    const { result } = await resolveRequestContext(integrationManager, { _source: { connector: 'mail' } }, 'crm', undefined);
+    const { result } = await resolveRequestContext(integrationManager, { _source: { connector: 'mail' } }, 'crm', undefined, ALL_CONFIGURED);
     expect(result.status).toBe('unreadable');
   });
 
   it('unreadable — unknown connector', async () => {
     const { integrationManager } = buildFakeManager({ messages: {}, timelines: {}, customers: {} });
     const { result } = await resolveRequestContext(
-      integrationManager, { _source: { connector: 'unknown_system', kind: 'record', id: 'x' } }, 'crm', undefined,
+      integrationManager, { _source: { connector: 'unknown_system', kind: 'record', id: 'x' } }, 'crm', undefined, ALL_CONFIGURED,
     );
-    expect(result).toEqual({ status: 'unreadable', reason: 'unknown connector' });
+    expect(result).toEqual({ status: 'unreadable', reason: 'connector not installed' });
   });
 
   it('unreadable — undeclared kind on a known connector', async () => {
     const { integrationManager } = buildFakeManager({ messages: {}, timelines: {}, customers: {} });
     const { result } = await resolveRequestContext(
-      integrationManager, { _source: { connector: 'mail', kind: 'attachment', id: 'x' } }, 'crm', undefined,
+      integrationManager, { _source: { connector: 'mail', kind: 'attachment', id: 'x' } }, 'crm', undefined, ALL_CONFIGURED,
     );
     expect(result.status).toBe('unreadable');
   });
@@ -310,7 +315,7 @@ describe('AU10 request/history engine', () => {
   it('not_found — the record no longer exists', async () => {
     const { integrationManager } = buildFakeManager({ messages: {}, timelines: {}, customers: {} });
     const { result } = await resolveRequestContext(
-      integrationManager, { _source: { connector: 'mail', kind: 'message', id: 'm-gone' } }, 'crm', undefined,
+      integrationManager, { _source: { connector: 'mail', kind: 'message', id: 'm-gone' } }, 'crm', undefined, ALL_CONFIGURED,
     );
     expect(result).toEqual({ status: 'not_found' });
   });
@@ -324,7 +329,7 @@ describe('AU10 request/history engine', () => {
       },
       timelines: {}, customers: {},
     });
-    const { result } = await resolveRequestContext(integrationManager, { _source: { connector: 'mail', kind: 'message', id: 'm-3' } }, 'crm', undefined);
+    const { result } = await resolveRequestContext(integrationManager, { _source: { connector: 'mail', kind: 'message', id: 'm-3' } }, 'crm', undefined, ALL_CONFIGURED);
     expect(result.status).toBe('ok');
     if (result.status === 'ok') {
       expect(result.chain).toHaveLength(2);
@@ -341,11 +346,26 @@ describe('AU10 request/history engine', () => {
       },
       timelines: {}, customers: {},
     });
-    const { result } = await resolveRequestContext(integrationManager, { _source: { connector: 'mail', kind: 'message', id: 'm-a' } }, 'crm', undefined);
+    const { result } = await resolveRequestContext(integrationManager, { _source: { connector: 'mail', kind: 'message', id: 'm-a' } }, 'crm', undefined, ALL_CONFIGURED);
     expect(result.status).toBe('ok');
     if (result.status === 'ok') {
       expect(result.chain.length).toBeLessThanOrEqual(5);
     }
+  });
+
+  // ─── F4 — only connectors configured on THIS gateway count ────────────
+
+  it('F4 — an explicit _source naming a REAL but NOT-INSTALLED connector reads as "connector not installed"', async () => {
+    const { integrationManager } = buildFakeManager({
+      messages: { 'm-17': { subject: 'X', from: { name: 'A', email: 'a@x.com' }, received_at: 't', body: '' } },
+      timelines: {}, customers: {},
+    });
+    // 'mail' has a real, valid manifest+source — just not configured here.
+    const notInstalled = new Set(['crm', 'erp']);
+    const { result } = await resolveRequestContext(
+      integrationManager, { _source: { connector: 'mail', kind: 'message', id: 'm-17' } }, 'crm', undefined, notInstalled,
+    );
+    expect(result).toEqual({ status: 'unreadable', reason: 'connector not installed' });
   });
 
   // ─── contextKeys gathering ────────────────────────────────────────────
@@ -380,15 +400,58 @@ describe('AU10 request/history engine', () => {
 
   it('no_customer_link when no identity keys were gathered at all', async () => {
     const { integrationManager } = buildFakeManager({ messages: {}, timelines: {}, customers: {} });
-    const result = await buildHistory(integrationManager, [], journal);
+    const result = await buildHistory(integrationManager, [], journal, ALL_CONFIGURED);
     expect(result).toEqual({ status: 'no_customer_link' });
   });
 
-  it('no_match when a key exists but no connector matches its type (free-mail case)', async () => {
+  it('F7 — a company domain key is matched by email_domain (first in byKey order)', async () => {
+    const { integrationManager } = buildFakeManager({
+      messages: {}, customers: {},
+      timelines: {
+        'bavaria-umform.de': [
+          { contact_id: 'c1', contact_name: 'L. Leitner', type: 'call', summary: 'RF 55 steht', detail: null, date: '2026-10-14T09:40:00Z', created_by: 'L. Leitner', ticket_id: null },
+        ],
+      },
+    });
+    // Both an email AND a domain key are gathered (the normal case for a
+    // business sender) — byKey=["email_domain","email"] must prefer the domain.
+    const result = await buildHistory(
+      integrationManager,
+      [{ type: 'email', value: 'l.leitner@bavaria-umform.de' }, { type: 'email_domain', value: 'bavaria-umform.de' }],
+      journal, ALL_CONFIGURED,
+    );
+    expect(result.status).toBe('ok');
+    if (result.status === 'ok') {
+      expect(result.matches[0]).toMatchObject({ matchedKeyType: 'email_domain', matchedKeyValue: 'bavaria-umform.de' });
+    }
+  });
+
+  it('F7 — a free-mail sender (no domain key at all) falls back to exact email', async () => {
+    const { integrationManager } = buildFakeManager({
+      messages: {}, customers: {},
+      timelines: {
+        'hans.privat@gmail.com': [
+          { contact_id: 'c2', contact_name: 'Hans Mueller', type: 'call', summary: 'Nachfrage Ersatzteilpreis', detail: null, date: '2026-10-13T00:00:00Z', created_by: 'Hans Mueller', ticket_id: null },
+        ],
+      },
+    });
+    // Free-mail: deriveIdentityKeysFromEmail never produces an email_domain
+    // key for gmail.com — only `email` is ever gathered for this sender.
+    const result = await buildHistory(integrationManager, [{ type: 'email', value: 'hans.privat@gmail.com' }], journal, ALL_CONFIGURED);
+    expect(result.status).toBe('ok');
+    if (result.status === 'ok') {
+      expect(result.matches[0]).toMatchObject({ matchedKeyType: 'email', matchedKeyValue: 'hans.privat@gmail.com' });
+    }
+  });
+
+  it('F7 — no_match when only a key type outside byKey is available', async () => {
     const { integrationManager } = buildFakeManager({ messages: {}, timelines: {}, customers: {} });
-    // Only an `email` key — CRM's declared byKey is `email_domain`.
-    const result = await buildHistory(integrationManager, [{ type: 'email', value: 'x@gmail.com' }], journal);
-    expect(result).toEqual({ status: 'no_match' });
+    // Reuses the same engine with a connector-less key set (no manifest
+    // declares anything other than email/email_domain, so this proves the
+    // "nothing in byKey order has a value" branch via an empty read result
+    // rather than inventing a third key type).
+    const result = await buildHistory(integrationManager, [], journal, ALL_CONFIGURED);
+    expect(result).toEqual({ status: 'no_customer_link' });
   });
 
   it('ok — matches by email_domain and returns mapped items', async () => {
@@ -400,7 +463,7 @@ describe('AU10 request/history engine', () => {
         ],
       },
     });
-    const result = await buildHistory(integrationManager, [{ type: 'email_domain', value: 'bavaria-umform.de' }], journal);
+    const result = await buildHistory(integrationManager, [{ type: 'email_domain', value: 'bavaria-umform.de' }], journal, ALL_CONFIGURED);
     expect(result.status).toBe('ok');
     if (result.status === 'ok') {
       expect(result.matches).toHaveLength(1);
@@ -420,7 +483,7 @@ describe('AU10 request/history engine', () => {
         ],
       },
     });
-    const result = await buildHistory(integrationManager, [{ type: 'email_domain', value: 'bavaria-umform.de' }], journal);
+    const result = await buildHistory(integrationManager, [{ type: 'email_domain', value: 'bavaria-umform.de' }], journal, ALL_CONFIGURED);
     expect(result.status).toBe('ok');
     if (result.status === 'ok') {
       expect(result.matches[0].items[0].aiWritten).toBeDefined();
@@ -436,7 +499,7 @@ describe('AU10 request/history engine', () => {
         ],
       },
     });
-    const result = await buildHistory(integrationManager, [{ type: 'email_domain', value: 'bavaria-umform.de' }], journal);
+    const result = await buildHistory(integrationManager, [{ type: 'email_domain', value: 'bavaria-umform.de' }], journal, ALL_CONFIGURED);
     expect(result.status).toBe('ok');
     if (result.status === 'ok') {
       expect(result.matches[0].items[0].aiWritten).toBeUndefined();
@@ -446,7 +509,28 @@ describe('AU10 request/history engine', () => {
   it('unreachable when the only matching-type connector errors', async () => {
     const { integrationManager } = buildFakeManager({ messages: {}, timelines: {}, customers: {} });
     (integrationManager.callTool as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('down'));
-    const result = await buildHistory(integrationManager, [{ type: 'email_domain', value: 'bavaria-umform.de' }], journal);
+    const result = await buildHistory(integrationManager, [{ type: 'email_domain', value: 'bavaria-umform.de' }], journal, ALL_CONFIGURED);
+    expect(result).toEqual({ status: 'unreachable', connectorIds: ['crm'] });
+  });
+
+  // ─── F4 — only connectors configured on THIS gateway count ────────────
+
+  it('F4 — a connector NOT configured on this gateway is skipped silently (no "not reachable")', async () => {
+    const { integrationManager } = buildFakeManager({ messages: {}, timelines: {}, customers: {} });
+    // CRM is the only connector declaring history in the fixture manifests —
+    // omit it from the configured set entirely.
+    const notInstalled = new Set(['mail', 'erp']);
+    const result = await buildHistory(integrationManager, [{ type: 'email_domain', value: 'bavaria-umform.de' }], journal, notInstalled);
+    expect(result).toEqual({ status: 'no_match' });
+  });
+
+  it('F4 — a connector configured but STOPPED (no discovered tools) reads as unreachable, not skipped', async () => {
+    // "Installed" (configured) but its tools aren't currently discovered —
+    // readPreview/readContextRecord then answers 'unavailable' for it, same
+    // as a genuinely crashed/down connector.
+    const { integrationManager } = buildFakeManager({ messages: {}, timelines: {}, customers: {} });
+    const stoppedManager = { ...integrationManager, getAllTools: () => [] } as unknown as IntegrationManager;
+    const result = await buildHistory(stoppedManager, [{ type: 'email_domain', value: 'bavaria-umform.de' }], journal, ALL_CONFIGURED);
     expect(result).toEqual({ status: 'unreachable', connectorIds: ['crm'] });
   });
 
@@ -461,6 +545,7 @@ describe('AU10 request/history engine', () => {
     const result = await buildRequestContext(
       integrationManager, journal, 'crm', { email: 'new@bavaria-umform.de', _source: { connector: 'mail', kind: 'message', id: 'm-1' } },
       { contextKeys: { email: 'email' } },
+      ALL_CONFIGURED,
     );
     expect(result.request.status).toBe('ok');
     expect(result.history.status).toBe('ok');

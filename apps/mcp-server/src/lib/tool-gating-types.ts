@@ -257,7 +257,24 @@ export interface ContextHistoryItemMapping {
 }
 
 export interface ContextHistoryConfig {
-  byKey: HistoryKeyType;
+  /**
+   * AU10 F7 — one key type, or an ORDERED preference list, e.g.
+   * `["email_domain", "email"]`: the gateway uses the FIRST type it has a
+   * gathered value for (a company domain when there is one; the exact
+   * address when the sender is free-mail or no domain key exists at all —
+   * doc §2's free-mail exclusion means a company domain and an exact
+   * address are never BOTH available for the same key, so this is a
+   * fallback chain, not a widening of the match).
+   */
+  byKey: HistoryKeyType | HistoryKeyType[];
+  /**
+   * `args` keys are normally literal argument names; the ONE special key
+   * `"$keyType"` is replaced with whichever key type `byKey` actually
+   * resolved to for this read (e.g. `email_domain` or `email`) — lets one
+   * declared read serve every key type in `byKey` when the connector's own
+   * read tool names its argument after the key type, as `get_timeline`
+   * does (`email` / `email_domain`, both literal parameter names).
+   */
   read: { tool: string; args: Record<string, string> };
   limit: number;
   maxAgeDays: number;

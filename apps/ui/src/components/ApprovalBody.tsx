@@ -234,8 +234,19 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
       )}
       {readable && <PreviewBox proposalId={proposal.id} systemName={systemName} toolArgs={content.toolArgs} sealed={content.sealed} onTone={setPreviewTone} />}
       {/* AU10 — Request + History, right after the AU8 "What will be
-          created" box and before the legend (doc/au10-request-context.md §3). */}
+          created" box (doc/au10-request-context.md §3). */}
       {readable && <RequestContextBox proposalId={proposal.id} />}
+      {/* AU10 F1 — ONE legend for the whole card, after History (mockup:
+          temp/au10-mockup/index.html) — not duplicated inside the AU8 box
+          any more (RenderedCreationView used to render its own, incl. in
+          cards where Request/History never show). */}
+      {readable && (
+        <p className="creation-legend" data-testid="au10-legend">
+          <span><i className="creation-legend-dot creation-legend-dot-sealed" />sealed — approved and executed exactly so</span>
+          <span><i className="creation-legend-dot creation-legend-dot-system" />from the system — read by the gateway, not by the AI</span>
+          <span><i className="creation-legend-dot au10-dot-ai" />the AI's own claim or text — not checked</span>
+        </p>
+      )}
 
       {/* Within your limits — per-call bound checks only (lib/receipt-summary.ts
           limitChecks); cumulative bounds are deliberately not shown here (no

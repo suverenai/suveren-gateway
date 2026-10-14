@@ -50,8 +50,8 @@
       }
     },
     "history": {
-      "byKey": "email_domain",
-      "read": { "tool": "get_timeline", "args": { "email_domain": "$key", "since": "$since", "limit": "$limit" } },
+      "byKey": ["email_domain", "email"],
+      "read": { "tool": "get_timeline", "args": { "$keyType": "$key", "since": "$since", "limit": "$limit" } },
       "limit": 5,
       "maxAgeDays": 14,
       "item": {

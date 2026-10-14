@@ -378,8 +378,14 @@ function invalidContextHistoryReason(history: unknown): string | null {
     return `${label} must be an object`;
   }
   const h = history as Record<string, unknown>;
-  if (h.byKey !== 'email' && h.byKey !== 'email_domain') {
-    return `${label}.byKey must be "email" or "email_domain"`;
+  const isKeyType = (v: unknown): boolean => v === 'email' || v === 'email_domain';
+  if (Array.isArray(h.byKey)) {
+    if (h.byKey.length === 0) return `${label}.byKey must not be an empty array`;
+    for (const [i, v] of h.byKey.entries()) {
+      if (!isKeyType(v)) return `${label}.byKey[${i}] must be "email" or "email_domain"`;
+    }
+  } else if (!isKeyType(h.byKey)) {
+    return `${label}.byKey must be "email" or "email_domain" (or an array of those, in preference order)`;
   }
   const readReason = invalidContextReadReason(`${label}.read`, h.read);
   if (readReason) return readReason;

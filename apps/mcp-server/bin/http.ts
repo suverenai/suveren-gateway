@@ -521,12 +521,16 @@ app.post('/internal/request-context', internalOnly, async (req: Request, res: Re
     | null
     | undefined;
 
+  // AU10 F4 — only connectors actually configured on THIS gateway (the
+  // persisted registry, not every manifest this build happens to ship).
+  const configuredConnectorIds = new Set(integrationRegistry.getAll().map((c) => c.id));
   const result = await buildRequestContext(
     integrationManager,
     state.executionJournal,
     integrationId,
     toolArgs,
     actionGating ?? undefined,
+    configuredConnectorIds,
   );
   res.json(result);
 });

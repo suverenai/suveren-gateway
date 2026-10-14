@@ -48,14 +48,20 @@ export function RequestContextBox({ proposalId }: Props) {
       >
         <h4>
           Request
-          {req.state === 'ok' && (
-            <span className="src-tag src-tag-ai">{req.implicit ? 'Linked automatically' : 'Linked by the AI'}</span>
-          )}
+          {/* AU10 F3 — the SAME tag regardless of implicit/explicit: an
+              implicit link (manifest sourceFromArg, e.g. in_reply_to) is
+              still the AI's own choice of what it's replying to — not
+              checked, same as an explicit _source (contract + mockup case 5).
+              Only present for state 'ok' — "No request linked." etc. get no tag. */}
+          {req.tag && <span className="src-tag src-tag-ai">{req.tag}</span>}
         </h4>
         {req.state !== 'ok' ? (
           <p className="au10-req-state">{req.note}</p>
         ) : (
           <>
+            {req.implicitNote && (
+              <p className="au10-req-meta" style={{ marginTop: '-0.1rem' }}>{req.implicitNote}</p>
+            )}
             {req.metaLine && <p className="au10-req-meta">{req.metaLine}</p>}
             {req.title && <p className="au10-req-meta"><b>{req.title}</b></p>}
             {req.bodyFirst && <p className="au10-req-quote">{req.bodyFirst}</p>}
@@ -94,7 +100,10 @@ export function RequestContextBox({ proposalId }: Props) {
       >
         <h4>
           History
-          {hist.state === 'ok' && <span className="src-tag src-tag-system">Read by the gateway — same customer, not matched to this request</span>}
+          {/* AU10 F2 — shown in EVERY state (not just ok): the reader must
+              always know who produced this block, even when there's nothing
+              to show (no customer link, not reachable, nothing recent). */}
+          <span className="src-tag src-tag-system">{hist.label}</span>
         </h4>
         {hist.state !== 'ok' ? (
           <p className="au10-hist-state">{hist.note}</p>

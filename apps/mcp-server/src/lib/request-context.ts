@@ -279,15 +279,24 @@ export async function resolveRequestContext(
   toolArgs: Record<string, unknown>,
   actionConnectorId: string,
   sourceFromArg: SourceFromArgDeclaration | undefined,
+  /** AU10 F4 — connector ids actually configured on THIS gateway (installed,
+   *  whether currently running or not) — see buildRequestContext's doc
+   *  comment. An explicit `_source` may name any connector id; a gateway
+   *  that never set that connector up at all must say so plainly rather
+   *  than guess at a manifest it merely happens to have on disk. */
+  configuredConnectorIds: ReadonlySet<string>,
 ): Promise<{ result: RequestResult; keys: IdentityKey[] }> {
   const link = resolveSourceLink(toolArgs, actionConnectorId, sourceFromArg);
   if (link === undefined) return { result: { status: 'none' }, keys: [] };
   if (link === 'invalid') {
     return { result: { status: 'unreadable', reason: 'malformed link' }, keys: [] };
   }
+  if (!configuredConnectorIds.has(link.connector)) {
+    return { result: { status: 'unreadable', reason: 'connector not installed' }, keys: [] };
+  }
   const connectorManifest = getManifest(link.connector);
   if (!connectorManifest) {
-    return { result: { status: 'unreadable', reason: 'unknown connector' }, keys: [] };
+    return { result: { status: 'unreadable', reason: 'connector not installed' }, keys: [] };
   }
   const sourceConfig = connectorManifest.context?.sources?.[link.kind];
   if (!sourceConfig) {
@@ -428,11 +437,43 @@ function withinWindow(at: string | undefined, cutoffMs: number): boolean {
 }
 
 /**
+ * AU10 F7 — `byKey` is a preference-ordered list (a single type is just a
+ * list of one): the FIRST type in that order a gathered key exists for
+ * wins. A company domain and an exact address for the SAME sender are never
+ * both available (doc §2's free-mail exclusion), so this is a fallback
+ * chain — "use the domain when there is one, else the exact address" — not
+ * a widening of the match.
+ */
+function chooseHistoryKey(byKey: HistoryKeyType | HistoryKeyType[], keys: IdentityKey[]): IdentityKey | undefined {
+  const order = Array.isArray(byKey) ? byKey : [byKey];
+  for (const type of order) {
+    const found = keys.find((k) => k.type === type);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+/**
+ * AU10 F7 — `read.args`' one special KEY name `"$keyType"` is replaced with
+ * the resolved key type itself (e.g. `email_domain`), so one declared read
+ * can serve a connector tool that names its filter argument after the key
+ * type (`get_timeline`'s `email` / `email_domain`). Every other key is a
+ * literal argument name, unchanged.
+ */
+function resolveHistoryArgsTemplate(template: Record<string, string>, keyType: HistoryKeyType): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [argName, token] of Object.entries(template)) {
+    out[argName === '$keyType' ? keyType : argName] = token;
+  }
+  return out;
+}
+
+/**
  * Reads this ONE connector's declared history for the first gathered key
- * matching its `byKey` type. Defensively re-applies `maxAgeDays` client-side
- * (the connector is ASKED to filter by `since`, but a card read never trusts
- * a downstream to enforce the window it was given — same spirit as AU8's
- * own fail-closed checks).
+ * matching its `byKey` preference order. Defensively re-applies
+ * `maxAgeDays` client-side (the connector is ASKED to filter by `since`,
+ * but a card read never trusts a downstream to enforce the window it was
+ * given — same spirit as AU8's own fail-closed checks).
  */
 async function readConnectorHistory(
   integrationManager: IntegrationManager,
@@ -441,11 +482,11 @@ async function readConnectorHistory(
   keys: IdentityKey[],
   executionJournal: ExecutionJournal,
 ): Promise<{ status: 'no_match' } | { status: 'unreachable' } | { status: 'ok'; match: ConnectorHistoryMatch }> {
-  const key = keys.find((k) => k.type === history.byKey);
+  const key = chooseHistoryKey(history.byKey, keys);
   if (!key) return { status: 'no_match' };
 
   const sinceMs = Date.now() - history.maxAgeDays * 24 * 60 * 60 * 1000;
-  const args = substitute(history.read.args, {
+  const args = substitute(resolveHistoryArgsTemplate(history.read.args, key.type), {
     key: key.value,
     since: new Date(sinceMs).toISOString(),
     limit: history.limit,
@@ -477,10 +518,17 @@ export async function buildHistory(
   integrationManager: IntegrationManager,
   keys: IdentityKey[],
   executionJournal: ExecutionJournal,
+  /** AU10 F4 — only connectors actually configured on THIS gateway count. A
+   *  manifest this gateway has on disk but whose connector was never
+   *  installed is skipped SILENTLY — never surfaced as "not reachable",
+   *  which would wrongly imply something is broken rather than merely
+   *  absent. An installed-but-stopped/crashed connector still counts here
+   *  (its read then genuinely fails → 'unreachable', below). */
+  configuredConnectorIds: ReadonlySet<string>,
 ): Promise<HistoryResult> {
   if (keys.length === 0) return { status: 'no_customer_link' };
 
-  const connectors = getAllManifests().filter((m) => m.context?.history);
+  const connectors = getAllManifests().filter((m) => m.context?.history && configuredConnectorIds.has(m.id));
   if (connectors.length === 0) return { status: 'no_match' };
 
   const matches: ConnectorHistoryMatch[] = [];
@@ -517,6 +565,12 @@ export interface RequestContextResult {
  * `contextKeys`/`sourceFromArg`, if any) — resolved by the caller the same
  * way it already resolves `preview`/`display` (see preview.ts's
  * `getToolPreviewConfig`).
+ *
+ * `configuredConnectorIds` (AU10 F4) — every connector id actually set up on
+ * THIS gateway (`IntegrationRegistry.getAll()`, not `getAllManifests()`): a
+ * manifest shipped in `content/integrations/` is not the same as a connector
+ * the owner installed. Governs both which connector a `_source` may name and
+ * which connectors' `context.history` are consulted.
  */
 export async function buildRequestContext(
   integrationManager: IntegrationManager,
@@ -524,12 +578,14 @@ export async function buildRequestContext(
   actionConnectorId: string,
   toolArgs: Record<string, unknown>,
   actionGating: { contextKeys?: ContextKeysDeclaration; sourceFromArg?: SourceFromArgDeclaration } | undefined,
+  configuredConnectorIds: ReadonlySet<string>,
 ): Promise<RequestContextResult> {
   const { result: request, keys: sourceKeys } = await resolveRequestContext(
     integrationManager,
     toolArgs,
     actionConnectorId,
     actionGating?.sourceFromArg,
+    configuredConnectorIds,
   );
   const actionKeys = await gatherContextKeysFromAction(
     integrationManager,
@@ -538,6 +594,6 @@ export async function buildRequestContext(
     toolArgs,
   );
   const keys = dedupeKeys([...actionKeys, ...sourceKeys]);
-  const history = await buildHistory(integrationManager, keys, executionJournal);
+  const history = await buildHistory(integrationManager, keys, executionJournal, configuredConnectorIds);
   return { request, history };
 }
