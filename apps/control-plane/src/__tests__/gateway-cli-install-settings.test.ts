@@ -43,17 +43,21 @@ function run(c: Ctx, args: string[], env: Record<string, string> = {}) {
   const res = spawnSync(process.execPath, [CLI, ...args], {
     env: { ...base, SUVEREN_INSTALL_SETTINGS_FILE: c.settings, SUVEREN_POLICY_FILE: c.policy, ...env },
     encoding: 'utf-8',
-    timeout: 15_000,
+    // A spawn budget, not an assertion: the first node start on the Windows
+    // runner has passed 15 s while the other workspaces' suites run in
+    // parallel (seen 2026-10-14 when mcp-server grew its manifest-coverage
+    // tests). A hang still fails, just later.
+    timeout: 45_000,
   });
   return { status: res.status ?? -1, stdout: res.stdout ?? '', stderr: res.stderr ?? '' };
 }
 
 const saved = (c: Ctx) => JSON.parse(readFileSync(c.settings, 'utf8'));
 
-// Every test spawns the real CLI 3–5 times (each spawn may take 15 s, see
+// Every test spawns the real CLI 3–5 times (each spawn may take 45 s, see
 // run()). On the Windows runner a node start costs 1–2 s, so a test can't fit
 // vitest's 5 s default — the budget is the spawns', not a looser assertion.
-vi.setConfig({ testTimeout: 60_000 });
+vi.setConfig({ testTimeout: 180_000 });
 
 describe('config set / get / unset', () => {
   it('saves the ports and the data folder, and get shows them as saved', () => {
