@@ -45,6 +45,10 @@
       "customer": {
         "read": { "tool": "get_customer", "args": { "id": "$id" } },
         "keys": { "email": "email" }
+      },
+      "quote": {
+        "read": { "tool": "get_quote", "args": { "id": "$id" } },
+        "next": { "recordKey": "customer", "field": "customer_id" }
       }
     }
   },
@@ -138,6 +142,7 @@
           "action_type": "quote"
         },
         "actionLabel": "Quote updated",
+        "contextKeys": { "quote": "id" },
         "preview": [
           { "tool": "get_item", "forEach": "lines", "args": { "id": "item_id" }, "attach": "item" }
         ],
@@ -165,6 +170,7 @@
           "action_type": "send"
         },
         "actionLabel": "Quote sent",
+        "contextKeys": { "quote": "id" },
         "preview": {
           "tool": "get_quote",
           "args": { "id": "id", "revision": "revision" },
@@ -182,6 +188,7 @@
           "action_type": "order"
         },
         "actionLabel": "Quote converted to order",
+        "contextKeys": { "quote": "id" },
         "preview": {
           "tool": "get_quote",
           "args": { "id": "id", "revision": "revision" },

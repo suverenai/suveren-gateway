@@ -19,15 +19,17 @@
  *     declared `byKey` type (§2–§3).
  */
 import { getByDottedPath } from './read-gate';
+import { resolveFieldPath } from './field-path';
 import { readPreview, type PreviewBody } from './preview';
-import { getManifest, getAllManifests } from './manifest-loader';
-import type {
-  ContextSourceConfig,
-  ContextHistoryConfig,
-  ContextRecordKeyConfig,
-  ContextKeysDeclaration,
-  SourceFromArgDeclaration,
-  HistoryKeyType,
+import { getManifest, getAllManifests, type IntegrationManifest } from './manifest-loader';
+import {
+  MAX_RECORD_KEY_STEPS,
+  type ContextSourceConfig,
+  type ContextHistoryConfig,
+  type ContextRecordKeyConfig,
+  type ContextKeysDeclaration,
+  type SourceFromArgDeclaration,
+  type HistoryKeyType,
 } from './tool-gating-types';
 import type { IntegrationManager } from './integration-manager';
 import type { ExecutionJournal } from './execution-journal';
@@ -264,7 +266,7 @@ async function readSourceOnce(
   if (read.status === 'unavailable') return { status: 'unreadable', reason: read.reason };
   const keys: IdentityKey[] = [];
   if (sourceConfig.keys?.email) {
-    const v = getByDottedPath(read.record, sourceConfig.keys.email);
+    const v = resolveFieldPath(read.record, sourceConfig.keys.email);
     if (typeof v === 'string' && v) keys.push(...deriveIdentityKeysFromEmail(v));
   }
   return { record: read.record, keys };
@@ -314,10 +316,10 @@ export async function resolveRequestContext(
     connector: link.connector,
     kind: link.kind,
     implicit,
-    ...(sourceConfig.title ? { title: asString(getByDottedPath(primary.record, sourceConfig.title)) } : {}),
-    ...(sourceConfig.author ? { author: asString(getByDottedPath(primary.record, sourceConfig.author)) } : {}),
-    ...(sourceConfig.at ? { at: asString(getByDottedPath(primary.record, sourceConfig.at)) } : {}),
-    ...(sourceConfig.body ? { body: asBody(getByDottedPath(primary.record, sourceConfig.body)) } : {}),
+    ...(sourceConfig.title ? { title: asString(resolveFieldPath(primary.record, sourceConfig.title)) } : {}),
+    ...(sourceConfig.author ? { author: asString(resolveFieldPath(primary.record, sourceConfig.author)) } : {}),
+    ...(sourceConfig.at ? { at: asString(resolveFieldPath(primary.record, sourceConfig.at)) } : {}),
+    ...(sourceConfig.body ? { body: asBody(resolveFieldPath(primary.record, sourceConfig.body)) } : {}),
   };
 
   const chain: RequestChainItem[] = [];
@@ -332,10 +334,10 @@ export async function resolveRequestContext(
       hops++;
       if ('status' in hop) break; // chain stops here, primary result stands
       chain.push({
-        ...(sourceConfig.author ? { author: asString(getByDottedPath(hop.record, sourceConfig.author)) } : {}),
-        ...(sourceConfig.at ? { at: asString(getByDottedPath(hop.record, sourceConfig.at)) } : {}),
-        ...(sourceConfig.title ? { title: asString(getByDottedPath(hop.record, sourceConfig.title)) } : {}),
-        ...(sourceConfig.body ? { body: asBody(getByDottedPath(hop.record, sourceConfig.body)) } : {}),
+        ...(sourceConfig.author ? { author: asString(resolveFieldPath(hop.record, sourceConfig.author)) } : {}),
+        ...(sourceConfig.at ? { at: asString(resolveFieldPath(hop.record, sourceConfig.at)) } : {}),
+        ...(sourceConfig.title ? { title: asString(resolveFieldPath(hop.record, sourceConfig.title)) } : {}),
+        ...(sourceConfig.body ? { body: asBody(resolveFieldPath(hop.record, sourceConfig.body)) } : {}),
       });
       currentId = sourceConfig.chain ? asString(getByDottedPath(hop.record, sourceConfig.chain.field)) : undefined;
     }
@@ -358,6 +360,54 @@ function asBody(v: unknown): string | undefined {
 
 // ─── 2. Identity keys from the action's own contextKeys (doc §2) ──────────
 
+/**
+ * AU10 §8.2 — resolves ONE `recordKeys` entry's own identity keys, and
+ * (when it declares `next`) follows that second record too. `stepsLeft`
+ * guards the manifest-validated cap ({@link MAX_RECORD_KEY_STEPS}) again at
+ * runtime — a manifest that passed validation cannot exceed it, but this
+ * keeps the function correct on its own rather than trusting the caller.
+ */
+async function resolveRecordKeyChain(
+  integrationManager: IntegrationManager,
+  connectorId: string,
+  manifest: IntegrationManifest,
+  recordKeyName: string,
+  idValue: string,
+  stepsLeft: number,
+): Promise<IdentityKey[]> {
+  if (stepsLeft <= 0) return [];
+  const recordKey: ContextRecordKeyConfig | undefined = manifest.context?.recordKeys?.[recordKeyName];
+  if (!recordKey) return [];
+  const args = substitute(recordKey.read.args, { id: idValue });
+  const read = await readContextRecord(integrationManager, connectorId, recordKey.read.tool, args);
+  if (read.status !== 'ok') return [];
+
+  const out: IdentityKey[] = [];
+  const emailField = recordKey.keys?.email;
+  if (emailField) {
+    const v = resolveFieldPath(read.record, emailField);
+    if (typeof v === 'string' && v) out.push(...deriveIdentityKeysFromEmail(v));
+  }
+  if (recordKey.next) {
+    // `next.field` is a plain dotted path, not a FieldPath object (doc §8.2
+    // declares it separately from `keys.*`).
+    const nextId = asString(getByDottedPath(read.record, recordKey.next.field));
+    if (nextId) {
+      out.push(
+        ...(await resolveRecordKeyChain(
+          integrationManager,
+          connectorId,
+          manifest,
+          recordKey.next.recordKey,
+          nextId,
+          stepsLeft - 1,
+        )),
+      );
+    }
+  }
+  return out;
+}
+
 export async function gatherContextKeysFromAction(
   integrationManager: IntegrationManager,
   connectorId: string,
@@ -374,15 +424,8 @@ export async function gatherContextKeysFromAction(
       out.push(...deriveIdentityKeysFromValue(raw));
       continue;
     }
-    const recordKey: ContextRecordKeyConfig | undefined = manifest?.context?.recordKeys?.[name];
-    if (!recordKey || typeof raw !== 'string' || !raw) continue;
-    const args = substitute(recordKey.read.args, { id: raw });
-    const read = await readContextRecord(integrationManager, connectorId, recordKey.read.tool, args);
-    if (read.status !== 'ok') continue;
-    const emailField = recordKey.keys.email;
-    if (!emailField) continue;
-    const v = getByDottedPath(read.record, emailField);
-    if (typeof v === 'string' && v) out.push(...deriveIdentityKeysFromEmail(v));
+    if (!manifest?.context?.recordKeys?.[name] || typeof raw !== 'string' || !raw) continue;
+    out.push(...(await resolveRecordKeyChain(integrationManager, connectorId, manifest, name, raw, MAX_RECORD_KEY_STEPS)));
   }
   return out;
 }
@@ -420,12 +463,13 @@ export type HistoryResult =
 
 function mapHistoryItem(raw: unknown, mapping: ContextHistoryConfig['item']): HistoryItem {
   return {
+    // `kind` is a literal label, copied as-is — never a path (doc §8.1).
     ...(mapping.kind ? { kind: mapping.kind } : {}),
-    ...(mapping.title ? { title: asString(getByDottedPath(raw, mapping.title)) } : {}),
-    ...(mapping.body ? { body: asBody(getByDottedPath(raw, mapping.body)) } : {}),
-    ...(mapping.at ? { at: asString(getByDottedPath(raw, mapping.at)) } : {}),
-    ...(mapping.author ? { author: asString(getByDottedPath(raw, mapping.author)) } : {}),
-    ...(mapping.type ? { type: asString(getByDottedPath(raw, mapping.type)) } : {}),
+    ...(mapping.title ? { title: asString(resolveFieldPath(raw, mapping.title)) } : {}),
+    ...(mapping.body ? { body: asBody(resolveFieldPath(raw, mapping.body)) } : {}),
+    ...(mapping.at ? { at: asString(resolveFieldPath(raw, mapping.at)) } : {}),
+    ...(mapping.author ? { author: asString(resolveFieldPath(raw, mapping.author)) } : {}),
+    ...(mapping.type ? { type: asString(resolveFieldPath(raw, mapping.type)) } : {}),
   };
 }
 
@@ -500,7 +544,7 @@ async function readConnectorHistory(
     const item = mapHistoryItem(row, history.item);
     if (!withinWindow(item.at, sinceMs)) continue;
     if (history.item.ticket) {
-      const ticketId = asString(getByDottedPath(row, history.item.ticket));
+      const ticketId = asString(resolveFieldPath(row, history.item.ticket));
       if (ticketId) {
         const entry = executionJournal.get(ticketId);
         if (entry?.state === 'done') {

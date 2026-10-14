@@ -15,9 +15,9 @@
  *  4. Persists to ~/.suveren/approved-intents.enc.json via POST /api/approved-intents (CP)
  */
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { ProposalLink } from '../lib/proposal-links';
-import { spClient, type IntegrationManifest, type Proposal } from '../lib/sp-client';
+import { spClient, type IntegrationManifest, type Proposal, type ShownSnapshotPayload } from '../lib/sp-client';
 import { formatTimeLeft } from '../lib/time-left';
 import { ProfileRail } from './ProfileRail';
 import { ApprovalBody } from './ApprovalBody';
@@ -67,6 +67,26 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
   const [contentLoading, setContentLoading] = useState(false);
   const [contentReadable, setContentReadable] = useState(true);
 
+  // AU10 §8.4 — the exact AU8/AU10 payload this card is CURRENTLY showing,
+  // kept in a ref (not state) so handleApprove/handleReject/handleSendChange
+  // read it synchronously at decision time without waiting on a render.
+  const shownSnapshotRef = useRef<ShownSnapshotPayload | null>(null);
+
+  /** Best-effort: stores the snapshot and returns its hash, or undefined on
+   *  any failure (no snapshot yet, or the store call itself failed) — never
+   *  blocks the decision (doc §8.4's whole engine never blocks, same as AU10
+   *  §0's invariants). */
+  const saveShownHash = async (): Promise<string | undefined> => {
+    const snapshot = shownSnapshotRef.current;
+    if (!snapshot) return undefined;
+    try {
+      const { shownHash } = await spClient.saveShownSnapshot(proposal.id, snapshot);
+      return shownHash;
+    } catch {
+      return undefined;
+    }
+  };
+
   // Test setup: the delegation profile, OR a setup__* tool.
   const testSetup = profileIdentity(proposal.profileId).testSetup || isTestSetupAction(proposal.tool);
 
@@ -84,7 +104,8 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
     onMessage('');
     try {
       const contentHash = await contentHashForDecision(proposal);
-      await spClient.approveProposal(proposal.id, contentHash);
+      const shownHash = await saveShownHash();
+      await spClient.approveProposal(proposal.id, contentHash, shownHash);
 
       // Fetch + decrypt + store the intent as an accountability record
       // (best-effort; ApprovalBody above already fetched one for display,
@@ -123,7 +144,8 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
     onMessage('');
     try {
       const contentHash = await contentHashForDecision(proposal);
-      await spClient.rejectProposal(proposal.id, rejectOutcomeArgs(), contentHash);
+      const shownHash = await saveShownHash();
+      await spClient.rejectProposal(proposal.id, rejectOutcomeArgs(), contentHash, shownHash);
       onMessage('Action rejected.');
       onAction();
     } catch (err) {
@@ -146,7 +168,8 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
       // device's own signed-in user.
       const { noteEncrypted } = await spClient.encryptProposalNote(result.trimmed, noteRecipients(proposal, currentUserId));
       const contentHash = await contentHashForDecision(proposal);
-      await spClient.rejectProposal(proposal.id, { outcome: 'change_needed', noteEncrypted }, contentHash);
+      const shownHash = await saveShownHash();
+      await spClient.rejectProposal(proposal.id, { outcome: 'change_needed', noteEncrypted }, contentHash, shownHash);
       onMessage('Sent back for a change.');
       onAction();
     } catch (err) {
@@ -214,6 +237,7 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
           setContentLoading(loading);
           setContentReadable(readable);
         }}
+        onShownSnapshot={(snapshot) => { shownSnapshotRef.current = snapshot; }}
       />
 
       {/* Action buttons — decision 10 (mockup §4): "no Approve button:

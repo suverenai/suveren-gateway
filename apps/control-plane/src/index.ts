@@ -33,6 +33,7 @@ import { homedir } from 'node:os';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import { createProxyMiddleware } from 'http-proxy-middleware';
 import { Vault } from './lib/vault';
+import { ShownSnapshotStore } from './lib/shown-snapshot';
 import { detectInstallMethod as detectInstallMethodFrom } from './lib/install-method';
 import { createAuthRouter } from './routes/auth';
 import { createVaultRouter } from './routes/vault';
@@ -110,6 +111,10 @@ const UI_DIST = process.env.HAP_UI_DIST ?? join(import.meta.dirname ?? __dirname
 // ─── Shared vault instance ───────────────────────────────────────────────
 
 const vault = new Vault(DATA_DIR);
+
+// AU10 §8.4 — "what you saw" snapshots, encrypted at rest with the same
+// vault key as the credential store (shown-snapshot.ts).
+const shownSnapshotStore = new ShownSnapshotStore(DATA_DIR);
 
 // ─── Re-pair when the Authority Server URL changes ──────────────────────
 //
@@ -572,9 +577,13 @@ app.use('/api/encrypt-intent', jsonParser, authGuard, createEncryptIntentRouter(
 app.use('/api/evidence-export', authGuard, createEvidenceExportRouter(SP_URL, vault, DATA_DIR, lockAsTlsMismatch));
 
 // AU3/AU5 — the approver's pre-approval preview + "what really happened"
-// outcome. Deliberately NOT under /api (that prefix proxies straight to the
-// Authority Server) — both routes answer locally or via the MCP server.
-app.use('/proposal-status', authGuard, createProposalStatusRouter(SP_URL, vault, DATA_DIR, lockAsTlsMismatch));
+// outcome. AU10 §8.4 adds the "what you saw" snapshot (POST to store +
+// hash, GET to re-verify for the ticket view) — also local-only. Deliberately
+// NOT under /api (that prefix proxies straight to the Authority Server) —
+// every route here answers locally or via the MCP server. `jsonParser` is
+// needed only by the new POST; GET requests carry no body, so this is a
+// no-op for them.
+app.use('/proposal-status', jsonParser, authGuard, createProposalStatusRouter(SP_URL, vault, DATA_DIR, lockAsTlsMismatch, shownSnapshotStore));
 
 // Local evidence for the Receipts page (grant context/intent, archived
 // receipts). Mounted BEFORE the /api proxy so it wins the route.

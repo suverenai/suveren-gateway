@@ -14,9 +14,13 @@ import { requestBlockView, historyBlockView } from '../lib/request-context-view'
 
 interface Props {
   proposalId: string;
+  /** AU10 §8.4 — told the RAW response every time it changes (including
+   *  `null` while loading/unavailable), so the card can assemble the exact
+   *  "what you saw" snapshot from the SAME data this box renders. */
+  onData?: (resp: RequestContextResponse | null) => void;
 }
 
-export function RequestContextBox({ proposalId }: Props) {
+export function RequestContextBox({ proposalId, onData }: Props) {
   const [resp, setResp] = useState<RequestContextResponse | null>(null);
   const [failed, setFailed] = useState(false);
 
@@ -29,6 +33,11 @@ export function RequestContextBox({ proposalId }: Props) {
       .catch(() => { if (live) setFailed(true); });
     return () => { live = false; };
   }, [proposalId]);
+
+  useEffect(() => {
+    onData?.(failed ? null : resp);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resp, failed, onData]);
 
   if (failed || !resp) {
     // Never a block — same spirit as PreviewBox's own loading/unavailable

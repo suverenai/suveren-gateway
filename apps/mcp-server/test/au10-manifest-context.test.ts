@@ -106,10 +106,10 @@ describe('invalidManifestContextReason — context.recordKeys', () => {
     }))).toBeNull();
   });
 
-  it('rejects a missing keys object', () => {
+  it('rejects an entry with neither keys nor next (AU10 §8.2: at least one required)', () => {
     expect(invalidManifestContextReason(baseManifest({
       context: { recordKeys: { customer: { read: { tool: 'get_customer', args: {} } } } },
-    }))).toMatch(/recordKeys\.customer\.keys/);
+    }))).toMatch(/recordKeys\.customer.*"keys".*"next"/);
   });
 });
 
@@ -165,6 +165,146 @@ describe('loader integration — a manifest with a malformed context is refused,
     })));
     loadManifests(dir);
     expect(getManifest('bad')).toBeUndefined();
+  });
+});
+
+describe('invalidManifestContextReason — §8.1 field-path helpers', () => {
+  it('a well-formed field-path object (Gmail-style) is fine', () => {
+    expect(invalidManifestContextReason(baseManifest({
+      context: {
+        sources: {
+          message: {
+            read: { tool: 'get_message', args: { id: '$id' } },
+            title: { path: 'payload.headers', where: { name: 'Subject' }, pick: 'value' },
+            author: { path: 'payload.headers', where: { name: 'From' }, pick: 'value', parse: 'address.name' },
+            at: { path: 'internalDate', parse: 'epoch-ms' },
+            keys: { email: { path: 'payload.headers', where: { name: 'From' }, pick: 'value', parse: 'address.email' } },
+          },
+        },
+      },
+    }))).toBeNull();
+  });
+
+  it('rejects a field-path object missing path', () => {
+    expect(invalidManifestContextReason(baseManifest({
+      context: { sources: { message: { read: { tool: 'get_message', args: {} }, title: { pick: 'value' } } } },
+    }))).toMatch(/title\.path/);
+  });
+
+  it('rejects an unknown parse value', () => {
+    expect(invalidManifestContextReason(baseManifest({
+      context: { sources: { message: { read: { tool: 'get_message', args: {} }, at: { path: 'internalDate', parse: 'nonsense' } } } },
+    }))).toMatch(/\.parse must be one of/);
+  });
+
+  it('rejects a non-string/number/boolean in where', () => {
+    expect(invalidManifestContextReason(baseManifest({
+      context: { sources: { message: { read: { tool: 'get_message', args: {} }, title: { path: 'headers', where: { name: null } } } } },
+    }))).toMatch(/\.where\.name/);
+  });
+
+  it('applies the same field-path check to history item mappings', () => {
+    expect(invalidManifestContextReason(baseManifest({
+      context: {
+        history: {
+          byKey: 'email', read: { tool: 'get_timeline', args: {} }, limit: 5, maxAgeDays: 14,
+          item: { title: { pick: 'value' } },
+        },
+      },
+    }))).toMatch(/item\.title\.path/);
+  });
+
+  it('history item.kind stays a literal label, not a field-path object', () => {
+    expect(invalidManifestContextReason(baseManifest({
+      context: {
+        history: {
+          byKey: 'email', read: { tool: 'get_timeline', args: {} }, limit: 5, maxAgeDays: 14,
+          item: { kind: { path: 'x' } },
+        },
+      },
+    }))).toMatch(/item\.kind must be a non-empty string/);
+  });
+});
+
+describe('invalidManifestContextReason — §8.2 two-step recordKeys (next)', () => {
+  it('a recordKey with only next (no keys) is fine', () => {
+    expect(invalidManifestContextReason(baseManifest({
+      context: {
+        recordKeys: {
+          quote: { read: { tool: 'get_quote', args: { id: '$id' } }, next: { recordKey: 'customer', field: 'customer_id' } },
+          customer: { read: { tool: 'get_customer', args: { id: '$id' } }, keys: { email: 'email' } },
+        },
+      },
+    }))).toBeNull();
+  });
+
+  it('a recordKey with both keys and next is fine', () => {
+    expect(invalidManifestContextReason(baseManifest({
+      context: {
+        recordKeys: {
+          quote: {
+            read: { tool: 'get_quote', args: { id: '$id' } },
+            keys: { email: 'contact_email' },
+            next: { recordKey: 'customer', field: 'customer_id' },
+          },
+          customer: { read: { tool: 'get_customer', args: { id: '$id' } }, keys: { email: 'email' } },
+        },
+      },
+    }))).toBeNull();
+  });
+
+  it('rejects next.recordKey naming an entry this manifest does not declare', () => {
+    expect(invalidManifestContextReason(baseManifest({
+      context: {
+        recordKeys: {
+          quote: { read: { tool: 'get_quote', args: { id: '$id' } }, next: { recordKey: 'ghost', field: 'customer_id' } },
+        },
+      },
+    }))).toMatch(/next\.recordKey names an entry this manifest does not declare/);
+  });
+
+  it('rejects a 2-hop cycle (a -> b -> a)', () => {
+    expect(invalidManifestContextReason(baseManifest({
+      context: {
+        recordKeys: {
+          a: { read: { tool: 'get_a', args: { id: '$id' } }, next: { recordKey: 'b', field: 'b_id' } },
+          b: { read: { tool: 'get_b', args: { id: '$id' } }, next: { recordKey: 'a', field: 'a_id' } },
+        },
+      },
+    }))).toMatch(/forms a cycle/);
+  });
+
+  it('rejects a self-referencing recordKey', () => {
+    expect(invalidManifestContextReason(baseManifest({
+      context: {
+        recordKeys: {
+          a: { read: { tool: 'get_a', args: { id: '$id' } }, next: { recordKey: 'a', field: 'a_id' } },
+        },
+      },
+    }))).toMatch(/forms a cycle/);
+  });
+
+  it('rejects a chain longer than MAX_RECORD_KEY_STEPS (3 hops)', () => {
+    expect(invalidManifestContextReason(baseManifest({
+      context: {
+        recordKeys: {
+          a: { read: { tool: 'get_a', args: { id: '$id' } }, next: { recordKey: 'b', field: 'b_id' } },
+          b: { read: { tool: 'get_b', args: { id: '$id' } }, next: { recordKey: 'c', field: 'c_id' } },
+          c: { read: { tool: 'get_c', args: { id: '$id' } }, keys: { email: 'email' } },
+        },
+      },
+    }))).toMatch(/max 2/);
+  });
+
+  it('rejects a malformed next (missing field)', () => {
+    expect(invalidManifestContextReason(baseManifest({
+      context: {
+        recordKeys: {
+          quote: { read: { tool: 'get_quote', args: { id: '$id' } }, next: { recordKey: 'customer' } },
+          customer: { read: { tool: 'get_customer', args: { id: '$id' } }, keys: { email: 'email' } },
+        },
+      },
+    }))).toMatch(/next\.field/);
   });
 });
 

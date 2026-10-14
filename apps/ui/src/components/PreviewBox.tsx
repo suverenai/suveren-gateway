@@ -30,9 +30,14 @@ interface Props {
   /** Told the box's state once known (ok | stale | none | unavailable | not_found)
    *  so the card can decide whether the bound values are shown open. */
   onTone?: (tone: string) => void;
+  /** AU10 §8.4 — told the RAW response every time it changes (including
+   *  `null` while loading, and a synthesized `unavailable` on fetch
+   *  failure), so the card can assemble the exact "what you saw" snapshot
+   *  from the SAME data this box renders — never a second read. */
+  onData?: (resp: PreviewResponse | null) => void;
 }
 
-export function PreviewBox({ proposalId, systemName, toolArgs, sealed, onTone }: Props) {
+export function PreviewBox({ proposalId, systemName, toolArgs, sealed, onTone, onData }: Props) {
   const [resp, setResp] = useState<PreviewResponse | null>(null);
   const [failed, setFailed] = useState(false);
 
@@ -53,12 +58,13 @@ export function PreviewBox({ proposalId, systemName, toolArgs, sealed, onTone }:
   // what it can act on (none/unavailable/not_found/ok/stale), not WHY the
   // fetch itself never answered.
   useEffect(() => {
-    if (failed) { onTone?.('unavailable'); return; }
-    if (!resp) return;
+    if (failed) { onTone?.('unavailable'); onData?.({ status: 'unavailable', reason: 'connector_error' }); return; }
+    if (!resp) { onData?.(null); return; }
     const v = previewBoxView(resp, systemName, toolArgs ?? undefined);
     onTone?.(resp.status === 'ok' ? (v.stale ? 'stale' : 'ok') : resp.status);
+    onData?.(resp);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resp, failed, systemName, onTone]);
+  }, [resp, failed, systemName, onTone, onData]);
 
   if (failed) {
     return (

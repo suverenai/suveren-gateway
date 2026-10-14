@@ -110,7 +110,7 @@ let manifestDir: string;
 
 function loadFixtureManifests(): void {
   manifestDir = mkdtempSync(join(tmpdir(), 'hap-au10-manifests-'));
-  const index = { integrations: { mail: 'mail.json', crm: 'crm.json', erp: 'erp.json' } };
+  const index = { integrations: { mail: 'mail.json', crm: 'crm.json', erp: 'erp.json', gmail: 'gmail.json' } };
   writeFileSync(join(manifestDir, 'index.json'), JSON.stringify(index));
   writeFileSync(join(manifestDir, 'mail.json'), JSON.stringify({
     id: 'mail', name: 'Email', version: '1', profile: 'email',
@@ -165,17 +165,46 @@ function loadFixtureManifests(): void {
     context: {
       recordKeys: {
         customer: { read: { tool: 'get_customer', args: { id: '$id' } }, keys: { email: 'email' } },
+        // AU10 §8.2 — two-step: quote -> (next) customer -> email.
+        quote: { read: { tool: 'get_quote', args: { id: '$id' } }, next: { recordKey: 'customer', field: 'customer_id' } },
       },
     },
     toolGating: {
       default: { executionMapping: {}, staticExecution: {} },
       overrides: {
         get_customer: { category: 'read', boundField: 'read_access', requiredValue: 'unlimited' },
+        get_quote: { category: 'read', boundField: 'read_access', requiredValue: 'unlimited' },
         create_quote: {
           executionMapping: {}, staticExecution: { action_type: 'quote' },
           contextKeys: { customer: 'customer_id' },
         },
+        update_quote: {
+          executionMapping: {}, staticExecution: { action_type: 'quote' },
+          contextKeys: { quote: 'id' },
+        },
       },
+    },
+  }));
+  // AU10 §8.1 — Gmail-style field-path source (header list + address/epoch-ms parse),
+  // byte-for-byte the shape shipped in content/integrations/gmail.json.
+  writeFileSync(join(manifestDir, 'gmail.json'), JSON.stringify({
+    id: 'gmail', name: 'Gmail', version: '1', profile: 'email',
+    mcp: { command: 'node', args: [] }, credentials: { fields: [], envMapping: {} }, oauth: null,
+    context: {
+      sources: {
+        message: {
+          read: { tool: 'get_message', args: { id: '$id' } },
+          keys: { email: { path: 'payload.headers', where: { name: 'From' }, pick: 'value', parse: 'address.email' } },
+          title: { path: 'payload.headers', where: { name: 'Subject' }, pick: 'value' },
+          author: { path: 'payload.headers', where: { name: 'From' }, pick: 'value', parse: 'address.name' },
+          at: { path: 'internalDate', parse: 'epoch-ms' },
+          body: 'snippet',
+        },
+      },
+    },
+    toolGating: {
+      default: { executionMapping: {}, staticExecution: {} },
+      overrides: { get_message: { category: 'read', boundField: 'read_access', requiredValue: 'unlimited' } },
     },
   }));
   loadManifests(manifestDir);
@@ -189,6 +218,10 @@ interface Fixtures {
   messages: Record<string, { subject: string; from: { name: string; email: string }; received_at: string; body: string; in_reply_to?: string | null }>;
   timelines: Record<string, Array<Record<string, unknown>>>;
   customers: Record<string, { email: string }>;
+  /** AU10 §8.2 — ERP quotes, each carrying a customer_id to follow via `next`. */
+  quotes?: Record<string, { customer_id: string }>;
+  /** AU10 §8.1 — Gmail-shaped messages (payload.headers list, epoch-ms internalDate). */
+  gmailMessages?: Record<string, { payload: { headers: Array<{ name: string; value: string }> }; internalDate: string; snippet: string }>;
 }
 
 function buildFakeManager(fixtures: Fixtures): { integrationManager: IntegrationManager; callTool: ReturnType<typeof vi.fn> } {
@@ -196,12 +229,24 @@ function buildFakeManager(fixtures: Fixtures): { integrationManager: Integration
     { originalName: 'get_message', namespacedName: 'mail__get_message', integrationId: 'mail', description: '', inputSchema: {}, gating: null },
     { originalName: 'get_timeline', namespacedName: 'crm__get_timeline', integrationId: 'crm', description: '', inputSchema: {}, gating: null },
     { originalName: 'get_customer', namespacedName: 'erp__get_customer', integrationId: 'erp', description: '', inputSchema: {}, gating: null },
+    { originalName: 'get_quote', namespacedName: 'erp__get_quote', integrationId: 'erp', description: '', inputSchema: {}, gating: null },
+    { originalName: 'get_message', namespacedName: 'gmail__get_message', integrationId: 'gmail', description: '', inputSchema: {}, gating: null },
   ];
   const callTool = vi.fn().mockImplementation(async (integrationId: string, toolName: string, args: Record<string, unknown>) => {
     if (integrationId === 'mail' && toolName === 'get_message') {
       const msg = fixtures.messages[args.id as string];
       if (!msg) return { content: [{ type: 'text', text: 'not found' }], isError: true };
       return { content: [{ type: 'text', text: JSON.stringify(msg) }] };
+    }
+    if (integrationId === 'gmail' && toolName === 'get_message') {
+      const msg = fixtures.gmailMessages?.[args.id as string];
+      if (!msg) return { content: [{ type: 'text', text: 'not found' }], isError: true };
+      return { content: [{ type: 'text', text: JSON.stringify(msg) }] };
+    }
+    if (integrationId === 'erp' && toolName === 'get_quote') {
+      const q = fixtures.quotes?.[args.id as string];
+      if (!q) return { content: [{ type: 'text', text: 'not found' }], isError: true };
+      return { content: [{ type: 'text', text: JSON.stringify(q) }] };
     }
     if (integrationId === 'crm' && toolName === 'get_timeline') {
       const key = (args.email_domain ?? args.email) as string | undefined;
@@ -221,7 +266,7 @@ function buildFakeManager(fixtures: Fixtures): { integrationManager: Integration
 
 /** AU10 F4 — "every connector configured on this gateway", for tests that
  *  aren't specifically exercising the installed/not-installed distinction. */
-const ALL_CONFIGURED = new Set(['mail', 'crm', 'erp']);
+const ALL_CONFIGURED = new Set(['mail', 'crm', 'erp', 'gmail']);
 
 describe('AU10 request/history engine', () => {
   let journalDir: string;
@@ -396,6 +441,76 @@ describe('AU10 request/history engine', () => {
     expect(keys).toEqual([]);
   });
 
+  // ─── §8.2 — two-step recordKeys (quote -> next: customer -> email) ────
+
+  it('§8.2 — follows a two-step recordKeys chain (quote -> customer -> email)', async () => {
+    const { integrationManager, callTool } = buildFakeManager({
+      messages: {}, timelines: {},
+      customers: { 'cust-77': { email: 'buyer@bavaria-umform.de' } },
+      quotes: { 'q-1': { customer_id: 'cust-77' } },
+    });
+    const keys = await gatherContextKeysFromAction(integrationManager, 'erp', { quote: 'id' }, { id: 'q-1' });
+    expect(keys).toEqual([
+      { type: 'email', value: 'buyer@bavaria-umform.de' },
+      { type: 'email_domain', value: 'bavaria-umform.de' },
+    ]);
+    // Both hops actually ran — this is reading two records, not inferring.
+    expect(callTool).toHaveBeenCalledWith('erp', 'get_quote', { id: 'q-1' });
+    expect(callTool).toHaveBeenCalledWith('erp', 'get_customer', { id: 'cust-77' });
+  });
+
+  it('§8.2 — a quote whose customer_id resolves to nothing yields no keys (never throws)', async () => {
+    const { integrationManager } = buildFakeManager({
+      messages: {}, timelines: {}, customers: {},
+      quotes: { 'q-2': { customer_id: 'cust-missing' } },
+    });
+    const keys = await gatherContextKeysFromAction(integrationManager, 'erp', { quote: 'id' }, { id: 'q-2' });
+    expect(keys).toEqual([]);
+  });
+
+  it('§8.2 — a quote that itself cannot be read yields no keys', async () => {
+    const { integrationManager } = buildFakeManager({ messages: {}, timelines: {}, customers: {}, quotes: {} });
+    const keys = await gatherContextKeysFromAction(integrationManager, 'erp', { quote: 'id' }, { id: 'q-gone' });
+    expect(keys).toEqual([]);
+  });
+
+  // ─── §8.1 — field-path helpers (Gmail-style source) ────────────────────
+
+  it('§8.1 — resolves a Gmail-style field-path source: header where/pick + address/epoch-ms parse', async () => {
+    const { integrationManager } = buildFakeManager({
+      messages: {}, timelines: {}, customers: {},
+      gmailMessages: {
+        'g-1': {
+          payload: {
+            headers: [
+              { name: 'Subject', value: 'RF 55 Stillstand – Seriennummer 55-2291' },
+              { name: 'From', value: 'Jürgen Kraus <j.kraus@bavaria-umform.de>' },
+              { name: 'To', value: 'verkauf@alpenwerk.example' },
+            ],
+          },
+          internalDate: '1760000000000',
+          snippet: 'Guten Morgen, unsere Anlage RF 55 steht...',
+        },
+      },
+    });
+    const { result, keys } = await resolveRequestContext(
+      integrationManager, { _source: { connector: 'gmail', kind: 'message', id: 'g-1' } }, 'erp', undefined, ALL_CONFIGURED,
+    );
+    expect(result).toMatchObject({
+      status: 'ok',
+      connector: 'gmail',
+      kind: 'message',
+      title: 'RF 55 Stillstand – Seriennummer 55-2291',
+      author: 'Jürgen Kraus',
+      at: new Date(1760000000000).toISOString(),
+      body: 'Guten Morgen, unsere Anlage RF 55 steht...',
+    });
+    expect(keys).toEqual([
+      { type: 'email', value: 'j.kraus@bavaria-umform.de' },
+      { type: 'email_domain', value: 'bavaria-umform.de' },
+    ]);
+  });
+
   // ─── History ──────────────────────────────────────────────────────────
 
   it('no_customer_link when no identity keys were gathered at all', async () => {
@@ -558,7 +673,7 @@ describe('AU10 request/history engine', () => {
 describe('fixture manifests load cleanly', () => {
   beforeEach(loadFixtureManifests);
   afterEach(cleanupFixtureManifests);
-  it('loads mail, crm, erp', () => {
-    expect(getAllManifests().map((m) => m.id).sort()).toEqual(['crm', 'erp', 'mail']);
+  it('loads mail, crm, erp, gmail', () => {
+    expect(getAllManifests().map((m) => m.id).sort()).toEqual(['crm', 'erp', 'gmail', 'mail']);
   });
 });

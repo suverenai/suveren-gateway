@@ -3967,3 +3967,15 @@ body.is-updating .simulation-banner {
 .ticket-done-field-row { display: contents; }
 .ticket-done-field-row dt { color: var(--text-tertiary); white-space: nowrap; align-self: start; }
 .ticket-done-field-row dd { margin: 0; word-break: break-word; }
+
+/* ── AU10 §8.4 ticket card: "What you saw" (doc/au10-request-context.md;
+   mockup temp/au10-mockup/index.html variant 6)
+   components/TicketWhatYouSaw.tsx, ReceiptCard.tsx. Same chrome as
+   .ticket-done-box, one class per ShownStatus (lib/au10-shown-view.ts). */
+.ticket-box { background: var(--bg-elevated); border: 1px solid var(--success); border-radius: 0.5rem; padding: 0.75rem 0.875rem; margin-bottom: 0.75rem; font-size: 0.85rem; }
+.ticket-box h4 { font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-tertiary); margin-bottom: 0.3rem; }
+.ticket-shown-off-device, .ticket-shown-unchecked { border-color: var(--border); background: var(--bg-main); }
+.ticket-shown-mismatch { border-color: var(--danger); background: var(--danger-subtle); }
+.ticket-sub-head { font-size: 0.65rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-tertiary); margin: 0.65rem 0 0.3rem; }
+.ticket-sub-head:first-of-type { margin-top: 0; }
+.src-tag-danger { color: var(--danger); border: 1px solid var(--danger); }

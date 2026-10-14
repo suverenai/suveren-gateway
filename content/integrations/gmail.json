@@ -38,6 +38,20 @@
       "REFRESH_TOKEN": "refreshToken"
     }
   },
+  "context": {
+    "sources": {
+      "message": {
+        "read": { "tool": "get_message", "args": { "id": "$id" } },
+        "keys": {
+          "email": { "path": "payload.headers", "where": { "name": "From" }, "pick": "value", "parse": "address.email" }
+        },
+        "title": { "path": "payload.headers", "where": { "name": "Subject" }, "pick": "value" },
+        "author": { "path": "payload.headers", "where": { "name": "From" }, "pick": "value", "parse": "address.name" },
+        "at": { "path": "internalDate", "parse": "epoch-ms" },
+        "body": "snippet"
+      }
+    }
+  },
   "oauth": {
     "authUrl": "https://accounts.google.com/o/oauth2/v2/auth",
     "tokenUrl": "https://oauth2.googleapis.com/token",

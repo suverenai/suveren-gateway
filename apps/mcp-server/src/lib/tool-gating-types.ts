@@ -224,20 +224,51 @@ export interface ProfileToolGatingEntry {
   sourceFromArg?: SourceFromArgDeclaration;
 }
 
+// ─── AU10 §8.1 — field helpers (doc/au10-request-context.md §8.1) ─────────
+
+/**
+ * How a `FieldPath`'s `parse` reshapes the picked value.
+ *  - `address.name` / `address.email`: RFC 5322 `"Name" <a@b>` or a bare
+ *    address — `address.name` is undefined for a bare address.
+ *  - `epoch-ms`: milliseconds since 1970, as a number or a numeric string,
+ *    turned into an ISO timestamp string (the shape every other `at` field
+ *    already uses).
+ */
+export type FieldPathParse = 'address.name' | 'address.email' | 'epoch-ms';
+
+/**
+ * AU10 §8.1 — wherever a field mapping is a dotted path (`title`, `author`,
+ * `at`, `body`, `keys.*`, history `item.*`), it may instead be this object:
+ * read `path` (as a plain string path would), optionally narrow a LIST
+ * result to the first element matching every `where` field (case-
+ * insensitive for strings — e.g. Gmail's `payload.headers`, a list of
+ * `{name, value}`), optionally `pick` one field of that element, optionally
+ * `parse` the result. Generic — no connector name in code.
+ */
+export interface FieldPathObject {
+  path: string;
+  where?: Record<string, string | number | boolean>;
+  pick?: string;
+  parse?: FieldPathParse;
+}
+
+/** A field mapping: a plain dotted path (as before), or a {@link FieldPathObject}. */
+export type FieldPath = string | FieldPathObject;
+
 // ─── AU10 — manifest `context` block (doc/au10-request-context.md §2) ──────
 
 /** One declared way to read a single record the AI may link to via `_source`. */
 export interface ContextSourceConfig {
   read: { tool: string; args: Record<string, string> };
   /** Identity key type (always `email` today — `email_domain` is always
-   *  derived from it, never declared directly) -> dotted field path into the
+   *  derived from it, never declared directly) -> field path into the
    *  read's structured result. */
-  keys?: Record<string, string>;
-  /** Dotted field paths into the read's structured result. */
-  title?: string;
-  author?: string;
-  at?: string;
-  body?: string;
+  keys?: Record<string, FieldPath>;
+  /** Field paths into the read's structured result. */
+  title?: FieldPath;
+  author?: FieldPath;
+  at?: FieldPath;
+  body?: FieldPath;
   /** Optional thread/reply chain to follow, same connector + kind. */
   chain?: { field: string; max: number };
 }
@@ -246,14 +277,15 @@ export interface ContextSourceConfig {
 export type HistoryKeyType = 'email' | 'email_domain';
 
 export interface ContextHistoryItemMapping {
+  /** Literal label, copied as-is — never a path (unlike every other field here). */
   kind?: string;
-  title?: string;
-  body?: string;
-  at?: string;
-  author?: string;
-  type?: string;
+  title?: FieldPath;
+  body?: FieldPath;
+  at?: FieldPath;
+  author?: FieldPath;
+  type?: FieldPath;
   /** Field holding the ticket id a gateway's own journal can look up (AU10 §3). */
-  ticket?: string;
+  ticket?: FieldPath;
 }
 
 export interface ContextHistoryConfig {
@@ -281,11 +313,26 @@ export interface ContextHistoryConfig {
   item: ContextHistoryItemMapping;
 }
 
-/** Turns an id carried on the action into identity keys (doc §2). */
+/**
+ * AU10 §8.2 — turns an id carried on the action into identity keys (doc §2),
+ * optionally by following a SECOND record first (`next`) — e.g. ERP's quote
+ * doesn't carry the customer's email itself, only a `customer_id` that names
+ * another recordKey. `keys` and `next` may both be set (gather this record's
+ * own keys AND follow the chain); at least one of them must be. Chains are
+ * capped at {@link MAX_RECORD_KEY_STEPS} steps and must not cycle — checked
+ * at manifest-load time (manifest-loader.ts).
+ */
 export interface ContextRecordKeyConfig {
   read: { tool: string; args: Record<string, string> };
-  keys: Record<string, string>;
+  keys?: Record<string, FieldPath>;
+  /** `field` is a dotted path into THIS read's result (not a {@link FieldPath}
+   *  object — doc §8.2 declares it as a plain field name, unlike `keys.*`). */
+  next?: { recordKey: string; field: string };
 }
+
+/** AU10 §8.2 — a recordKeys chain (this entry, plus every `next` it follows)
+ *  may resolve at most this many records. */
+export const MAX_RECORD_KEY_STEPS = 2;
 
 /** AU10 manifest top-level `context` block. */
 export interface ManifestContext {

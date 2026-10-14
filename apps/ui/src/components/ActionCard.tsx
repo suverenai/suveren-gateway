@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { resolveProposalLinks, type ProposalLink } from '../lib/proposal-links';
 import type { ThreadItem } from '../lib/thread-aggregator';
 import { formatTimeLeft } from '../lib/time-left';
@@ -7,11 +7,12 @@ import { ProfileRail } from './ProfileRail';
 import { OutcomeBox } from './OutcomeBox';
 import { ApprovalBody } from './ApprovalBody';
 import { TicketWhatWasDone } from './TicketWhatWasDone';
+import { TicketWhatYouSaw } from './TicketWhatYouSaw';
 import { ChangeNeededPanel } from './ChangeNeededPanel';
 import { isTestSetupAction, profileIdentity } from '../lib/profile-identity';
 import { splitTool, systemDisplayName, type ToolDisplay } from '../lib/approval-view';
 import { useProfile } from '../lib/profile-cache';
-import type { IntegrationManifest } from '../lib/sp-client';
+import { spClient, type IntegrationManifest, type ShownSnapshotPayload } from '../lib/sp-client';
 import { validateChangeNote, outcomeAfterView, refusedAfterView, type OutcomeKindLabel } from '../lib/reject-outcome';
 import { useProposalContent, useDecryptedNote, decisionButtonsVisible } from '../lib/use-proposal-content';
 
@@ -108,11 +109,14 @@ interface Props {
   /** Needed only for a PENDING proposal's ApprovalBody (intent decrypt), and
    *  to resolve a resolved proposal's "who" to "You" (lib/reject-outcome.ts). */
   currentUserId?: string;
-  onApprove?: (id: string) => void;
+  /** AU10 §8.4's `shownHash` — this card computes it (POSTing its own
+   *  current ApprovalBody snapshot) right before calling this, and passes
+   *  it on so the caller's actual approve/resolve call can carry it. */
+  onApprove?: (id: string, shownHash?: string) => void;
   /** One click, no note — outcome `rejected` (decision 1). */
-  onReject?: (id: string) => void;
+  onReject?: (id: string, shownHash?: string) => void;
   /** "Send back for change" — outcome `change_needed`, note required. */
-  onChangeNeeded?: (id: string, note: string) => void;
+  onChangeNeeded?: (id: string, note: string, shownHash?: string) => void;
   resolving?: boolean;
 }
 
@@ -131,11 +135,25 @@ export function ActionCard({ item, onApprove, onReject, onChangeNeeded, resolvin
   const [changeNote, setChangeNote] = useState('');
   const [changeError, setChangeError] = useState('');
 
-  const handleSendChange = () => {
+  // AU10 §8.4 — see ApproverProposalCard's identical ref/helper.
+  const shownSnapshotRef = useRef<ShownSnapshotPayload | null>(null);
+  const saveShownHash = async (): Promise<string | undefined> => {
+    const snapshot = shownSnapshotRef.current;
+    if (!snapshot || !isProposal) return undefined;
+    try {
+      const { shownHash } = await spClient.saveShownSnapshot(item.proposal.id, snapshot);
+      return shownHash;
+    } catch {
+      return undefined;
+    }
+  };
+
+  const handleSendChange = async () => {
     const result = validateChangeNote(changeNote);
     if (!result.valid) { setChangeError(result.error); return; }
     setChangeError('');
-    onChangeNeeded?.(item.id, result.trimmed);
+    const shownHash = await saveShownHash();
+    onChangeNeeded?.(item.id, result.trimmed, shownHash);
   };
 
   // The after-state (mockup §3): what the server stored once this proposal
@@ -304,6 +322,7 @@ export function ActionCard({ item, onApprove, onReject, onChangeNeeded, resolvin
             setPendingContentLoading(loading);
             setPendingReadable(readable);
           }}
+          onShownSnapshot={(snapshot) => { shownSnapshotRef.current = snapshot; }}
         />
       ) : (
         <>
@@ -339,8 +358,20 @@ export function ActionCard({ item, onApprove, onReject, onChangeNeeded, resolvin
           ) : (
             /* A ticket (receipt) — "What was done" first, same treatment as
                ReceiptCard.tsx (AU6). Self-contained: fetches its own local
-               archive entry, so this card needs no extra wiring. */
-            <TicketWhatWasDone receipt={item.receipt} profile={profile} />
+               archive entry, so this card needs no extra wiring. AU10 §8.4's
+               "What you saw" follows, only for a receipt that ran via a
+               committed (review-mode) proposal. */
+            <>
+              <TicketWhatWasDone receipt={item.receipt} profile={profile} />
+              {item.receipt.proposalId && (
+                <TicketWhatYouSaw
+                  proposalId={item.receipt.proposalId}
+                  tool={item.receipt.action}
+                  recordedHash={item.receipt.shownHash}
+                  manifests={manifests}
+                />
+              )}
+            </>
           )}
         </>
       )}
@@ -372,7 +403,7 @@ export function ActionCard({ item, onApprove, onReject, onChangeNeeded, resolvin
           <div style={{ display: 'flex', gap: '0.5rem' }}>
             <button
               className="btn btn-primary"
-              onClick={() => onApprove?.(item.id)}
+              onClick={async () => onApprove?.(item.id, await saveShownHash())}
               disabled={resolving}
             >
               {resolving ? 'Approving…' : 'Approve'}
@@ -390,7 +421,7 @@ export function ActionCard({ item, onApprove, onReject, onChangeNeeded, resolvin
               data-testid="btn-reject"
               className="btn btn-ghost"
               style={{ color: 'var(--danger)' }}
-              onClick={() => onReject?.(item.id)}
+              onClick={async () => onReject?.(item.id, await saveShownHash())}
               disabled={resolving}
             >
               Reject

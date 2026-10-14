@@ -30,6 +30,7 @@ import { fetchAs, AsTlsMismatchError } from '../lib/as-tls-pin';
 import { findLatestByProposal } from '../lib/execution-journal-reader';
 import type { PreviewResponse, ProposalOutcome } from '../lib/preview-types';
 import type { RequestContextResult } from '../lib/request-context-types';
+import { computeShownHash, type ShownSnapshotStore } from '../lib/shown-snapshot';
 
 const AS_FETCH_TIMEOUT_MS = 10_000;
 
@@ -125,6 +126,8 @@ export function createProposalStatusRouter(
   dataDir: string,
   /** Same AS-TLS-mismatch lock every other call site uses — see evidence-export.ts. */
   lockAsTlsMismatch: () => void,
+  /** AU10 §8.4 — the "what you saw" snapshot store. */
+  shownSnapshotStore: ShownSnapshotStore,
 ): Router {
   const router = Router();
 
@@ -187,6 +190,56 @@ export function createProposalStatusRouter(
       res.json(failed);
     } catch (err) {
       res.status(500).json({ error: `Could not read the execution journal: ${err instanceof Error ? err.message : String(err)}` });
+    }
+  });
+
+  // AU10 §8.4 — store exactly what the card rendered, return its hash. The
+  // UI sends the SAME payload it just displayed (request/history/preview
+  // results + read time) — never re-read here, so no second read can
+  // disagree with what the approver actually saw.
+  router.post('/:id/shown-snapshot', (req: Request, res: Response) => {
+    if (!vault.isUnlocked()) {
+      res.status(401).json({ error: 'Vault is locked.' });
+      return;
+    }
+    const snapshot = req.body;
+    if (snapshot === undefined || snapshot === null || typeof snapshot !== 'object') {
+      res.status(400).json({ error: 'Request body must be the rendered snapshot (an object).' });
+      return;
+    }
+    try {
+      const shownHash = shownSnapshotStore.save(req.params.id, snapshot, vault);
+      res.json({ shownHash });
+    } catch (err) {
+      res.status(500).json({ error: `Could not store the snapshot: ${err instanceof Error ? err.message : String(err)}` });
+    }
+  });
+
+  // AU10 §8.4 — ticket view's "What you saw": the LOCAL snapshot, re-hashed
+  // here and compared to what was stored at decision time. No local
+  // snapshot (a different device approved it, or this gateway never had
+  // one) -> `status: 'off_device'`, never an error.
+  router.get('/:id/shown-snapshot', (req: Request, res: Response) => {
+    if (!vault.isUnlocked()) {
+      res.status(401).json({ error: 'Vault is locked.' });
+      return;
+    }
+    try {
+      const entry = shownSnapshotStore.get(req.params.id, vault);
+      if (!entry) {
+        res.json({ status: 'off_device' });
+        return;
+      }
+      const recomputed = computeShownHash(entry.snapshot);
+      res.json({
+        status: 'ok',
+        snapshot: entry.snapshot,
+        shownHash: entry.shownHash,
+        storedAt: entry.storedAt,
+        verifiedLocally: recomputed === entry.shownHash,
+      });
+    } catch (err) {
+      res.status(500).json({ error: `Could not read the snapshot: ${err instanceof Error ? err.message : String(err)}` });
     }
   });
 
