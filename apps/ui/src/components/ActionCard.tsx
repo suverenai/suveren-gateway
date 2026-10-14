@@ -367,7 +367,6 @@ export function ActionCard({ item, onApprove, onReject, onChangeNeeded, resolvin
                 <TicketWhatYouSaw
                   proposalId={item.receipt.proposalId}
                   tool={item.receipt.action}
-                  recordedHash={item.receipt.shownHash}
                   manifests={manifests}
                 />
               )}

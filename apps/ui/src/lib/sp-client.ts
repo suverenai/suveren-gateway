@@ -345,6 +345,19 @@ export type ShownSnapshotResponse =
   | { status: 'off_device' }
   | { status: 'ok'; snapshot: ShownSnapshotPayload; shownHash: string; storedAt: number; verifiedLocally: boolean };
 
+/**
+ * One decider's recorded `shown_hash`, as the Authority Server stores it —
+ * see `Proposal.shownHashes`'s doc comment for the key shapes. Mirrors
+ * suveren-as's `ShownHashEntry` (proposal-store.ts) field for field.
+ */
+export interface ShownHashEntry {
+  hash: string;
+  by: string;
+  at: number;
+}
+
+export type ShownHashes = Record<string, ShownHashEntry>;
+
 export interface AuthTemplate {
   name: string;
   description: string;
@@ -504,10 +517,18 @@ export interface Proposal {
   content?: ProposalContentWire;
   /** PE1: the fingerprint over JCS(toolArgs) — present on every row, legacy or encrypted. */
   contentHash?: string;
-  /** AU10 §8.4 — the hash of exactly what the approving gateway's card showed
-   *  when this proposal was decided. Absent on a row decided by a gateway
-   *  that predates this feature, or on one still pending. */
-  shownHash?: string;
+  /**
+   * AU10 §8.4 — one entry PER DECIDER: the resolve flow (a team domain
+   * commits/rejects) keys its entry `domain:<domain>`, the above-cap
+   * approve/reject flow keys ITS entry `approver:<userId>` — both share
+   * this one map because a `review_above_cap` mandate can carry both a
+   * pending domain and pending approvers at once (suveren-as
+   * proposal-store.ts `ShownHashes`/`shownHashKey`). `by`/`at` are always
+   * the deciding user id / unix seconds regardless of which key shape was
+   * used. First write per key wins — never overwritten by a later resolve.
+   * Absent entirely on a row decided before this feature, or still pending.
+   */
+  shownHashes?: ShownHashes;
   executionContext: Record<string, string | number>;
   /**
    * `refused` (2026-10-12 fix): the Authority Server refused the ticket for
@@ -554,9 +575,9 @@ export interface ExecutionReceipt {
   /** Level-2 content proof. Present only when the profile declares content_binding. */
   contentHash?: string;
   contentBinding?: { version: string; kind: 'jcs' | 'text'; fields?: string[] };
-  /** AU10 §8.4 — see {@link Proposal.shownHash}; present only for a ticket
-   *  that ran via a committed (review-mode) proposal. */
-  shownHash?: string;
+  // AU10 §8.4 — `shownHashes` lives on the PROPOSAL, not the receipt (the
+  // Authority Server's receipts-store.ts carries no such field): a ticket
+  // that ran via review mode looks it up via `proposalId` + `getProposal`.
 }
 
 /**

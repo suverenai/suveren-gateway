@@ -131,7 +131,7 @@ export function ReceiptCard({
           via a committed (review-mode) proposal — an automatic action's
           card never showed a Request/History box to begin with. */}
       {receipt.proposalId && (
-        <TicketWhatYouSaw proposalId={receipt.proposalId} tool={receipt.action} recordedHash={receipt.shownHash} manifests={manifests} />
+        <TicketWhatYouSaw proposalId={receipt.proposalId} tool={receipt.action} manifests={manifests} />
       )}
 
       {/* The record, as stored. */}

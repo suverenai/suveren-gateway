@@ -8,51 +8,56 @@
  * /proposal-status/:id/shown-snapshot`) — never a fresh read of the
  * downstream systems, which could show something that has since changed
  * (the mockup's own point: CRM stock moved from 4 to 0 after approval, and
- * this box still shows exactly what was read at decision time). Compares the
- * snapshot's hash to the receipt/proposal's OWN `shownHash` (as the
- * Authority Server has it) — never claims "verified" without that check
+ * this box still shows exactly what was read at decision time) — AND the
+ * proposal itself, to read its `shownHashes` map (one entry PER DECIDER;
+ * suveren-as proposal-store.ts). Compares the local snapshot's hash against
+ * THIS gateway's signed-in user's own entry (lib/au10-shown-view.ts
+ * `matchShownHashEntry`) — never claims "verified" without that check
  * actually running, same discipline as lib/ticket-what-was-done.ts.
  */
 import { useEffect, useState } from 'react';
-import { spClient, type ShownSnapshotResponse, type IntegrationManifest } from '../lib/sp-client';
+import { spClient, type ShownSnapshotResponse, type Proposal, type IntegrationManifest } from '../lib/sp-client';
 import { previewBoxView } from '../lib/approval-preview-view';
 import { requestBlockView, historyBlockView } from '../lib/request-context-view';
 import { RenderedPreviewView as RenderedBody } from './RenderedPreviewView';
 import { RenderedCreationView } from './RenderedCreationView';
 import { systemDisplayName, splitTool } from '../lib/approval-view';
-import { shownStatus, formatReadAt } from '../lib/au10-shown-view';
+import { matchShownHashEntry, shownStatus, otherApproversNote, formatReadAt } from '../lib/au10-shown-view';
+import { useAuth } from '../contexts/AuthContext';
 
 interface Props {
   proposalId: string;
   tool: string;
-  /** The ticket/proposal's own `shownHash`, as the Authority Server has it —
-   *  undefined on an older AS, or a row decided before this feature shipped. */
-  recordedHash: string | undefined;
   manifests?: IntegrationManifest[];
 }
 
-export function TicketWhatYouSaw({ proposalId, tool, recordedHash, manifests }: Props) {
+export function TicketWhatYouSaw({ proposalId, tool, manifests }: Props) {
+  const { user, domain } = useAuth();
   const [resp, setResp] = useState<ShownSnapshotResponse | null>(null);
+  const [proposal, setProposal] = useState<Proposal | null>(null);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     let live = true;
     setResp(null);
+    setProposal(null);
     setFailed(false);
-    spClient.getShownSnapshot(proposalId)
-      .then((r) => { if (live) setResp(r); })
+    Promise.all([spClient.getShownSnapshot(proposalId), spClient.getProposal(proposalId)])
+      .then(([snapshotResp, prop]) => { if (live) { setResp(snapshotResp); setProposal(prop); } })
       .catch(() => { if (live) setFailed(true); });
     return () => { live = false; };
   }, [proposalId]);
 
-  if (failed || !resp) return null; // never a block — same spirit as the live card's boxes
+  if (failed || !resp || !proposal) return null; // never a block — same spirit as the live card's boxes
 
   const offDevice = resp.status === 'off_device';
+  const { entry, otherCount } = matchShownHashEntry(proposal.shownHashes, user?.id ?? '', domain);
   const status = shownStatus({
     offDevice,
-    recordedHash,
+    recordedHash: entry?.hash,
     localHash: resp.status === 'ok' ? resp.shownHash : undefined,
   });
+  const othersNote = otherApproversNote(otherCount);
 
   if (offDevice) {
     return (
@@ -126,9 +131,13 @@ export function TicketWhatYouSaw({ proposalId, tool, recordedHash, manifests }: 
       {status === 'unchecked' && (
         <p className="ticket-done-note ticket-done-note-neutral">
           This device's copy of what was shown, kept locally — the Authority Server for this ticket does not
-          record a hash to check it against.
+          record a hash for you to check it against.
         </p>
       )}
+      {/* AU10 §8.4 coordinator decision — several required approvers each
+          record their OWN entry; only "your" entry is ever shown as
+          verified/mismatch, never someone else's. */}
+      {othersNote && <p className="ticket-done-note ticket-done-note-neutral" data-testid="au10-shown-others">{othersNote}</p>}
     </div>
   );
 }
