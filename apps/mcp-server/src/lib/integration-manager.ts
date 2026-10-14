@@ -1284,6 +1284,7 @@ export class IntegrationManager {
         argEncoding?: Record<string, string>;
         argNormalization?: Record<string, string>;
         hideUnlessAuthorized?: boolean;
+        simulationOnly?: boolean;
         approvalView?: import('./integration-registry').ApprovalView;
       };
       // 'disabled' = declared unavailable → block at the gating layer.
@@ -1304,6 +1305,7 @@ export class IntegrationManager {
           readGovernanceReason: ext.readGovernanceReason,
           blockedArgs: ext.blockedArgs,
           hideUnlessAuthorized: ext.hideUnlessAuthorized,
+          simulationOnly: ext.simulationOnly,
           approvalView: ext.approvalView,
         };
       }
@@ -1320,6 +1322,7 @@ export class IntegrationManager {
         argEncoding: ext.argEncoding,
         argNormalization: ext.argNormalization,
         hideUnlessAuthorized: ext.hideUnlessAuthorized,
+        simulationOnly: ext.simulationOnly,
         approvalView: ext.approvalView,
       };
     }

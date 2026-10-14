@@ -275,8 +275,30 @@ export function zeroCappedBound(
  */
 export function toolAlwaysListed(tool: DiscoveredTool, isBuiltin: (integrationId: string) => boolean): boolean {
   if (tool.internal || !tool.gating?.profile) return false;
-  if (tool.gating.hideUnlessAuthorized || tool.gating.category === 'disabled') return false;
-  return !isBuiltin(tool.integrationId);
+  if (tool.gating.category === 'disabled') return false;
+  if (isBuiltin(tool.integrationId)) return false;
+  if (!tool.gating.hideUnlessAuthorized) return true;
+  // SIM1: a `hideUnlessAuthorized` tool that also declares `simulationOnly`
+  // — the simulation setup tools, load_simulation/clear_simulation on
+  // erp/crm/mail — is listed unconditionally too, but only while GATEWAY-WIDE
+  // simulation mode is ON (`SUVEREN_SIMULATION=1`, e.g. a demo run): like
+  // every other connector tool since 0.25, so an agent sees it before a
+  // setup mandate exists and the list does not change once one is granted.
+  // A call without a setup mandate is refused by the ordinary gate (see
+  // `toolIsAuthorizedForDisplay` and the write path's `noMandateRefusal`).
+  //
+  // Purely ADDITIVE: outside gateway-wide simulation mode this stays false,
+  // falling through to the normal mandate-gated branch in refreshTools,
+  // completely UNCHANGED from before SIM1 — `toolIsAuthorizedForDisplay`
+  // below carries no simulationOnly logic at all. That matters: the
+  // "three-week test" onboarding flow (hap-e2e simulation-setup.test.ts and
+  // friends) loads test data into erp/crm/mail via an ordinary setup mandate
+  // (setup_daily_max > 0) WITHOUT ever setting SUVEREN_SIMULATION=1 — that
+  // switch is a separate, stronger, gateway-wide kill-switch (simulation-
+  // mode.ts), not a precondition every simulated connector needs. A rule
+  // that hid or refused load_simulation whenever that switch happened to be
+  // off would have broken that flow for every real customer trial.
+  return Boolean(tool.gating.simulationOnly) && isSimulationMode();
 }
 
 export function toolIsAuthorizedForDisplay(
@@ -1054,6 +1076,36 @@ function createGatedToolHandlerInner(
 
     // Find all active authorizations matching this profile
     const { matching: matchingAuths, refusals } = eligibleMandates();
+
+    // SIM1: a `simulationOnly` tool (load_simulation/clear_simulation) is
+    // always listed in GATEWAY-WIDE simulation mode (toolAlwaysListed), so an
+    // agent can see it before a setup mandate exists — or holding only the
+    // ordinary day-to-day mandate (setup_daily_max: 0). Refuse with the SAME
+    // "no mandate covers ..." wording used everywhere else (noMandateRefusal),
+    // naming the action type in place of the profile: "a setup mandate" reads
+    // clearer than "a sales mandate" here. Takes priority over the generic
+    // checks below so the agent never sees a bound-exceeded message for a
+    // tool it was never meant to have.
+    //
+    // Gated on `isSimulationMode()` too (not just `simulationOnly`): outside
+    // gateway-wide simulation mode this must NOT fire — that would change the
+    // refusal text of the existing, mandate-bound-check path the "three-week
+    // test" onboarding flow already exercises without the gateway-wide
+    // switch (hap-e2e simulation-setup.test.ts's "switching to work
+    // mandates" case asserts the OLD setup_daily_max-exceeded wording).
+    if (tool.gating?.simulationOnly && isSimulationMode() && !toolIsAuthorizedForDisplay(tool, matchingAuths)) {
+      const actionType = staticExecution?.action_type;
+      const mandateLabel = typeof actionType === 'string' ? actionType : profile!;
+      recordBlocked(state, tool, {
+        kind: 'not_authorized',
+        detail: `No active authorization grants "${mandateLabel}" under profile "${profile}".`,
+        field: mandateLabel,
+        who: 'gateway',
+        code: 'NO_MATCHING_MANDATE',
+      });
+      return { content: [{ type: 'text', text: noMandateRefusal(tool.namespacedName, mandateLabel) }], isError: true };
+    }
+
     if (matchingAuths.length === 0) return noEligibleMandate(refusals);
 
     // Verify EVERY matching authorization and collect the ones that pass
