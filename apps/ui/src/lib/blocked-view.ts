@@ -42,10 +42,18 @@ export function fieldLabel(profile: AgentProfile | undefined, field: string | un
   return field;
 }
 
+/** One fragment of the "source" line. `dim` marks the mandate id, shown
+ * small/muted next to its title — never the id alone when a title is known
+ * locally (see `mandateParts` below). */
+export interface SourcePart {
+  text: string;
+  dim?: boolean;
+}
+
 export interface BlockedView {
   title: string;
   sentence: string;
-  sourceLine: string;
+  sourceLine: SourcePart[];
   whatYouCanDo: string;
 }
 
@@ -100,21 +108,40 @@ function sentenceFor(r: DenialRecord, label: string): string {
   }
 }
 
-function sourceLine(r: DenialRecord): string {
+/** Title first, id second in small/dimmed text — never the raw id alone
+ * once a title is on record. Falls back to the id alone only when no title
+ * is known locally (unmodified mandates, or a pre-AU2 denial that never
+ * carried one). */
+function mandateParts(r: DenialRecord): SourcePart[] {
+  if (r.mandateTitle) {
+    const parts: SourcePart[] = [{ text: ` · mandate "${r.mandateTitle}"` }];
+    if (r.mandateId) parts.push({ text: ` (${r.mandateId.slice(0, 14)}…)`, dim: true });
+    return parts;
+  }
+  if (r.mandateId) return [{ text: ` · mandate ${r.mandateId.slice(0, 14)}…` }];
+  return [];
+}
+
+function sourceLine(r: DenialRecord): SourcePart[] {
   const kind = kindOf(r);
   const src = sourceName(r.integrationId);
-  const mandate = r.mandateTitle
-    ? ` · mandate "${r.mandateTitle}"`
-    : r.mandateId
-      ? ` · mandate ${r.mandateId.slice(0, 14)}…`
-      : '';
   const who = r.who === 'authority-server'
     ? 'refused by the Authority Server'
     : kind === 'read'
       ? 'refused by this gateway'
       : 'refused by this gateway, before anything ran';
   const code = r.code ? ` (${r.code})` : '';
-  return `${src} · ${r.tool}${mandate} · ${who}${code}`;
+  return [
+    { text: `${src} · ${r.tool}` },
+    ...mandateParts(r),
+    { text: ` · ${who}${code}` },
+  ];
+}
+
+/** Flattens `sourceLine` back to plain text — for places that can't render
+ * the dim-id span (tests, anywhere non-JSX). */
+export function sourceLineText(parts: SourcePart[]): string {
+  return parts.map(p => p.text).join('');
 }
 
 /** Build the full view for one record. `profile`, when supplied, is the
@@ -136,4 +163,40 @@ export function todaysCount(records: Pick<DenialRecord, 'ts'>[], now: number): n
   const startOfToday = new Date(now);
   startOfToday.setHours(0, 0, 0, 0);
   return records.filter(r => r.ts >= startOfToday.getTime()).length;
+}
+
+/**
+ * The sidebar badge count: blocks that arrived strictly after the owner last
+ * opened the Blocked page, never "today's total" (that's `todaysCount`,
+ * still shown in the page's own header line). `lastSeenAt` of 0 (never
+ * opened) counts every retained record as new.
+ */
+export function unseenCount(records: Pick<DenialRecord, 'ts'>[], lastSeenAt: number): number {
+  return records.filter(r => r.ts > lastSeenAt).length;
+}
+
+/** Whether a single record counts as unseen against a given cutoff. */
+export function isUnseen(ts: number, lastSeenAt: number): boolean {
+  return ts > lastSeenAt;
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * "Today · 06:39 PM" / "Yesterday · 11:02 AM" for the last two days
+ * (matching RecentBlocks.tsx's relative convention), falling through to
+ * "Oct 12 · 09:15 AM" beyond that (matching the short month/day format
+ * already used for mandate expiry in AuthorizationsPage.tsx) — always with
+ * the time appended, which neither existing page does today. Locale-driven
+ * (`undefined`/`[]` locale), same as the rest of the UI.
+ */
+export function formatBlockedWhen(ts: number, now: number): string {
+  const time = new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const startOfToday = new Date(now);
+  startOfToday.setHours(0, 0, 0, 0);
+  const todayStart = startOfToday.getTime();
+  if (ts >= todayStart) return `Today · ${time}`;
+  if (ts >= todayStart - DAY_MS) return `Yesterday · ${time}`;
+  const date = new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return `${date} · ${time}`;
 }

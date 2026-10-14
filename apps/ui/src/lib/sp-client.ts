@@ -1344,6 +1344,24 @@ class SPClient {
     return ((await res.json()) as { archived: string[] }).archived;
   }
 
+  // ─── Blocked actions: local "last seen" flag (deletes nothing) ───
+
+  async getLastSeenBlockedAt(): Promise<number> {
+    const res = await this.fetch('/api/blocked-seen');
+    if (!res.ok) throw new Error(`Failed to load last-seen: ${res.status}`);
+    return ((await res.json()) as { lastSeenBlockedAt: number }).lastSeenBlockedAt;
+  }
+
+  /** Returns the PERSISTED cutoff, so callers render backend truth. */
+  async markBlockedSeen(ts: number = Date.now()): Promise<number> {
+    const res = await this.fetch('/api/blocked-seen', {
+      method: 'POST',
+      body: JSON.stringify({ ts }),
+    });
+    if (!res.ok) throw new Error(`Failed to mark blocked seen: ${res.status}`);
+    return ((await res.json()) as { lastSeenBlockedAt: number }).lastSeenBlockedAt;
+  }
+
   /**
    * Credential metadata. `fields` carries only manifest-declared `text` values;
    * secret fields arrive as recognition hints (prefix + last 4, or null for

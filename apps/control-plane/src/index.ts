@@ -61,6 +61,7 @@ import { startUpdateChecker, getUpdateStatus, forceCheck, type InstallMethod } f
 import { createEventsHandler } from './routes/events';
 import { createGatewaySettingsRouter } from './routes/gateway-settings';
 import { createArchivedMandatesRouter } from './routes/archived-mandates';
+import { createBlockedSeenRouter } from './routes/blocked-seen';
 import { createInternalEventsRouter } from './routes/internal-events';
 import { createInternalMandateRouter } from './routes/internal-mandate';
 import { encryptIntentForRecipients } from './lib/intent-encryption';
@@ -569,6 +570,10 @@ app.use('/api/gateway-settings', jsonParser, authGuard, createGatewaySettingsRou
 
 // Archived mandates: a local display flag (hides expired/revoked mandates; deletes nothing)
 app.use('/api/archived-mandates', jsonParser, authGuard, createArchivedMandatesRouter());
+
+// Blocked actions: local "last seen" flag, used by the Blocked page + the
+// sidebar badge to tell new refusals from ones already looked at.
+app.use('/api/blocked-seen', jsonParser, authGuard, createBlockedSeenRouter());
 
 app.use('/api/encrypt-intent', jsonParser, authGuard, createEncryptIntentRouter());
 
