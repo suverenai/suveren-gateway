@@ -105,6 +105,74 @@ describe('POST /internal/event', () => {
   });
 });
 
+describe('POST /internal/event — execution-failed (an approved, ticketed proposal whose downstream call then failed)', () => {
+  let stop: (() => Promise<void>) | null = null;
+  afterEach(async () => { await stop?.(); stop = null; });
+
+  it('emits on the bus, same as proposal-added, so the doorbell fires', async () => {
+    const { url, close } = await startServer(); stop = close;
+    const seen: string[] = [];
+    const off = eventBus.subscribe(e => seen.push(e.type));
+
+    const res = await post(url, { type: 'execution-failed' }, SECRET);
+    off();
+
+    expect(res.status).toBe(200);
+    expect(seen).toContain('execution-failed');
+  });
+
+  it('drops any payload the caller attaches — presence, never content', async () => {
+    const { url, close } = await startServer(); stop = close;
+    const payloads: unknown[] = [];
+    const off = eventBus.subscribe(e => payloads.push(e.payload));
+
+    await post(url, { type: 'execution-failed', error: 'invalid profileId', amount: 0.1 }, SECRET);
+    off();
+
+    expect(payloads).toEqual([undefined]);
+  });
+
+  it('still requires the shared secret', async () => {
+    const { url, close } = await startServer(); stop = close;
+    const res = await post(url, { type: 'execution-failed' }, 'wrong-secret-0123456789012345');
+    expect(res.status).toBe(401);
+  });
+});
+
+describe('POST /internal/event — denial-recorded (AU2 — a block just happened)', () => {
+  let stop: (() => Promise<void>) | null = null;
+  afterEach(async () => { await stop?.(); stop = null; });
+
+  it('emits on the bus so the Blocked badge/page can refresh live', async () => {
+    const { url, close } = await startServer(); stop = close;
+    const seen: string[] = [];
+    const off = eventBus.subscribe(e => seen.push(e.type));
+
+    const res = await post(url, { type: 'denial-recorded' }, SECRET);
+    off();
+
+    expect(res.status).toBe(200);
+    expect(seen).toContain('denial-recorded');
+  });
+
+  it('drops any payload the caller attaches — presence, never content', async () => {
+    const { url, close } = await startServer(); stop = close;
+    const payloads: unknown[] = [];
+    const off = eventBus.subscribe(e => payloads.push(e.payload));
+
+    await post(url, { type: 'denial-recorded', tool: 'create_contact', field: 'contact_type', value: 'partner' }, SECRET);
+    off();
+
+    expect(payloads).toEqual([undefined]);
+  });
+
+  it('still requires the shared secret', async () => {
+    const { url, close } = await startServer(); stop = close;
+    const res = await post(url, { type: 'denial-recorded' }, 'wrong-secret-0123456789012345');
+    expect(res.status).toBe(401);
+  });
+});
+
 describe('POST /internal/event — session-expired (the MCP server -> control plane lock signal)', () => {
   let stop: (() => Promise<void>) | null = null;
   afterEach(async () => { await stop?.(); stop = null; });

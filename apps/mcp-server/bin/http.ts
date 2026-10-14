@@ -241,7 +241,8 @@ app.post('/internal/configure', internalOnly, (req: Request, res: Response) => {
     state.receiptArchive.setVaultKey(key);
     state.reportStore.setVaultKey(key);
     state.outcomeOutbox.setVaultKey(key);
-    console.error('[Suveren MCP] Vault key configured — gate store + denial log + receipt archive + report store + outcome outbox encryption active');
+    state.executionResults.setVaultKey(key);
+    console.error('[Suveren MCP] Vault key configured — gate store + denial log + receipt archive + report store + outcome outbox + execution results encryption active');
   }
 
   if (apiKey) {

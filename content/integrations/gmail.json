@@ -145,6 +145,8 @@
       },
       "list_messages": {
         "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited",
         "read": {
           "ageField": "read_age_days",
           "queryArg": "q",
@@ -158,6 +160,8 @@
       },
       "get_message": {
         "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited",
         "read": {
           "ageField": "read_age_days",
           "resultDatePath": "internalDate",
@@ -175,6 +179,8 @@
       },
       "list_drafts": {
         "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited",
         "read": {
           "ageField": "read_age_days",
           "queryArg": "q",
@@ -187,6 +193,8 @@
       },
       "get_draft": {
         "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited",
         "read": {
           "ageField": "read_age_days",
           "resultDatePath": "message.internalDate",
@@ -207,8 +215,11 @@
       },
       "get_attachment": {
         "category": "read",
-        "readGovernance": "none",
-        "readGovernanceReason": "Transitively age-gated: an attachmentId is only obtainable from get_message, which enforces the read-age window. No independently addressable content."
+        "boundField": "read_access",
+        "requiredValue": "unlimited",
+        "read": {
+          "ageField": "read_age_days"
+        }
       },
       "list_labels": {
         "category": "read",

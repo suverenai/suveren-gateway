@@ -78,6 +78,10 @@ export function ProposalReviewPage() {
   useSSEEvent('proposal-approved', fetchMyProposals);
   useSSEEvent('proposal-rejected', fetchMyProposals);
   useSSEEvent('proposal-resolved', fetchMyProposals);
+  // An approved proposal here can still fail downstream, after the ticket —
+  // see commitments.ts / OutcomeBox. Refresh so the failure is visible
+  // without waiting for the next poll.
+  useSSEEvent('execution-failed', fetchMyProposals);
   useVisiblePolling(fetchMyProposals, 30_000, domain);
 
   // Review-mode (domain-scoped) proposals I'm responsible for approving: pending

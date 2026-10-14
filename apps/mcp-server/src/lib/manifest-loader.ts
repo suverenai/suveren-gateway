@@ -14,6 +14,7 @@
 
 import { readFileSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { getProfile } from '@hap/core';
 import {
   MAX_PREVIEW_READS,
   MAX_RECORD_KEY_STEPS,
@@ -22,6 +23,7 @@ import {
   type ManifestContext,
   type FieldPathParse,
 } from './tool-gating-types';
+import { uncoveredReadSwitchReason, type BoundsSchemaLike } from './read-gate';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -596,6 +598,36 @@ export function invalidManifestContextReason(
   return null;
 }
 
+// ─── D6 — read-gate coverage for the profile's enum switches ───────────────
+
+/**
+ * Returns a human-readable refusal reason if `manifest`'s `category:"read"`
+ * overrides fail to cover its profile's read-side enum switch(es) (D6 —
+ * `read-gate.ts`'s `uncoveredReadSwitchReason`, the shared predicate), or
+ * null if clean. Resolves the profile the SAME way the running gateway does
+ * — `getProfile(manifest.profile)`, after `loadProfiles()` has registered
+ * every hap-profiles version under both its full id and its short name,
+ * last-registered-wins (profile-loader.ts), which hap-profiles/index.json
+ * orders oldest→newest per family, so the short name always resolves to the
+ * latest version.
+ *
+ * Skips (returns null) when the profile isn't registered — e.g. a unit test
+ * that loads manifests without first loading profiles. That is a GAP in
+ * what gets checked, not a pass on a real defect: `loadManifests()` always
+ * runs after `loadProfiles()` at real startup (bin/http.ts), so production
+ * manifests are never silently exempted; only isolated tests are, the same
+ * way they already are for the runtime "Unknown profile" refusal this check
+ * does not replace.
+ */
+export function invalidManifestReadGateReason(
+  manifest: Pick<IntegrationManifest, 'profile' | 'toolGating'>,
+): string | null {
+  const profileDef = getProfile(manifest.profile);
+  if (!profileDef) return null;
+  const overrides = manifest.toolGating?.overrides ?? {};
+  return uncoveredReadSwitchReason(overrides, profileDef.boundsSchema as BoundsSchemaLike | undefined);
+}
+
 // ─── Module state ───────────────────────────────────────────────────────────
 
 const manifests = new Map<string, IntegrationManifest>();
@@ -646,6 +678,11 @@ export function loadManifests(integrationsDir?: string): number {
       const contextReason = invalidManifestContextReason(manifest);
       if (contextReason) {
         console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${contextReason}`);
+        continue;
+      }
+      const readGateReason = invalidManifestReadGateReason(manifest);
+      if (readGateReason) {
+        console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${readGateReason}`);
         continue;
       }
       manifests.set(id, manifest);

@@ -129,6 +129,16 @@
         "staticExecution": {
           "action_type": "charge"
         }
+      },
+      "ListProfiles": {
+        "category": "read",
+        "readGovernance": "none",
+        "readGovernanceReason": "Returns the organisation's own payment profile configuration (names, websites, status) — no customer or payment data."
+      },
+      "GetOrganizationDetails": {
+        "category": "read",
+        "readGovernance": "none",
+        "readGovernanceReason": "Returns the connected Mollie organisation's own name/registration details — no customer or payment data."
       }
     }
   },

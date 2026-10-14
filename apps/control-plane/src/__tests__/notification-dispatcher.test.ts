@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { NotificationDispatcher, type DispatcherOptions } from '../lib/notification-dispatcher';
+import { eventBus } from '../lib/event-bus';
 
 /**
  * The dispatcher's job is to be quiet. These tests pin the behaviours that make
@@ -96,5 +97,142 @@ describe('NotificationDispatcher', () => {
     vi.advanceTimersByTime(5_000);
     // A broken preferences file must not silence the doorbell.
     expect(notifyFn).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * execution-failed: a proposal already approved and ticketed whose downstream
+ * tool call then failed (isError or thrown) — see commitments.ts. Same
+ * doorbell as a pending review, distinct wording, same content rule.
+ */
+describe('NotificationDispatcher — execution-failed', () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  function make(overrides: Partial<DispatcherOptions> = {}) {
+    const notifyFn = vi.fn();
+    const d = new NotificationDispatcher({
+      notifyFn: notifyFn as never,
+      settingsFn: (() => ({ desktopNotifications: true })) as never,
+      ...overrides,
+    });
+    return { d, notifyFn };
+  }
+
+  it('fires a distinct message, with no tool, amount, or error text', () => {
+    const { d, notifyFn } = make();
+    d.onTrigger('failure');
+    vi.advanceTimersByTime(5_000);
+
+    expect(notifyFn).toHaveBeenCalledTimes(1);
+    const [title, message] = notifyFn.mock.calls[0];
+    expect(title).toBe('Suveren');
+    expect(message).toBe('An approved action failed.');
+    expect(message).not.toMatch(/€|\$|@|proposal|mollie|refund/i);
+  });
+
+  it('does not fire the review message for a pure failure window', () => {
+    const { d, notifyFn } = make();
+    d.onTrigger('failure');
+    vi.advanceTimersByTime(5_000);
+    expect(notifyFn.mock.calls[0][1]).not.toBe('Something is waiting for your review.');
+  });
+
+  it('a window with ONLY review events keeps the original wording (no regression)', () => {
+    const { d, notifyFn } = make();
+    d.onTrigger('review');
+    vi.advanceTimersByTime(5_000);
+    expect(notifyFn.mock.calls[0][1]).toBe('Something is waiting for your review.');
+  });
+
+  it('a window mixing review and failure events uses a combined, still content-free message', () => {
+    const { d, notifyFn } = make();
+    d.onTrigger('review');
+    d.onTrigger('failure');
+    vi.advanceTimersByTime(5_000);
+    expect(notifyFn.mock.calls[0][1]).toBe('Something needs your attention.');
+  });
+
+  it('a flood of failures still reports presence and a count, never content', () => {
+    const { d, notifyFn } = make();
+    for (let i = 0; i < 12; i++) d.onTrigger('failure');
+    vi.advanceTimersByTime(5_000);
+    expect(notifyFn.mock.calls[0][1]).toBe('Unusual volume: 12 requests in the last minute.');
+  });
+
+  it('collapses several failures in one window into exactly one notification', () => {
+    const { d, notifyFn } = make();
+    for (let i = 0; i < 5; i++) d.onTrigger('failure');
+    vi.advanceTimersByTime(5_000);
+    expect(notifyFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('respects the cooldown the same way a review event does', () => {
+    const { d, notifyFn } = make();
+    d.onTrigger('failure');
+    vi.advanceTimersByTime(5_000);
+    expect(notifyFn).toHaveBeenCalledTimes(1);
+    d.onTrigger('failure');
+    vi.advanceTimersByTime(10_000);
+    expect(notifyFn).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(60_000);
+    expect(notifyFn).toHaveBeenCalledTimes(2);
+  });
+
+  it('honours the desktop-notifications setting, same as a review event', () => {
+    const { d, notifyFn } = make({ settingsFn: (() => ({ desktopNotifications: false })) as never });
+    d.onTrigger('failure');
+    vi.advanceTimersByTime(5_000);
+    expect(notifyFn).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * AU2's 'denial-recorded' is presence for the Blocked badge/page ONLY —
+ * explicitly not in REVIEW_EVENTS or FAILURE_EVENTS. A block is "nothing
+ * ran", not "something needs you"; this doorbell must stay silent for it,
+ * subscribed through the REAL event bus (not d.onTrigger() directly), so a
+ * regression that adds it to either list would be caught here.
+ */
+describe('NotificationDispatcher — AU2 denial-recorded never rings the doorbell', () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  function make(overrides: Partial<DispatcherOptions> = {}) {
+    const notifyFn = vi.fn();
+    const d = new NotificationDispatcher({
+      notifyFn: notifyFn as never,
+      settingsFn: (() => ({ desktopNotifications: true })) as never,
+      ...overrides,
+    });
+    return { d, notifyFn };
+  }
+
+  it('a denial-recorded bus event produces no notification, even after the debounce window', () => {
+    const { d, notifyFn } = make();
+    const stop = d.start();
+    try {
+      eventBus.emit('denial-recorded');
+      vi.advanceTimersByTime(5_000);
+      expect(notifyFn).not.toHaveBeenCalled();
+    } finally {
+      stop();
+    }
+  });
+
+  it('a denial-recorded event does not get bundled into a nearby review notification either', () => {
+    const { d, notifyFn } = make();
+    const stop = d.start();
+    try {
+      eventBus.emit('proposal-added');
+      eventBus.emit('denial-recorded');
+      vi.advanceTimersByTime(5_000);
+      // Still the plain review message — denial-recorded contributed nothing
+      // to the count or the wording.
+      expect(notifyFn).toHaveBeenCalledTimes(1);
+      expect(notifyFn.mock.calls[0][1]).toBe('Something is waiting for your review.');
+    } finally {
+      stop();
+    }
   });
 });

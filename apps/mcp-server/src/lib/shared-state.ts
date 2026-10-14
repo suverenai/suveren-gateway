@@ -11,6 +11,7 @@ import { ExecutionLog } from './execution-log';
 import { DenialLog } from './denial-log';
 import { ReceiptArchive, ArchiveWriteError, type ArchivedAttestation } from './receipt-archive';
 import { ExecutionJournal } from './execution-journal';
+import { ExecutionResultStore } from './execution-result-store';
 import { ProposalSubmissionStore } from './proposal-submission-store';
 import { PreviewLog } from './preview-log';
 import { OutcomeOutbox } from './outcome-outbox';
@@ -39,6 +40,8 @@ export class SharedState {
   readonly reportStore: ReportStore;
   /** Which tickets this Gatekeeper has executed — the "one execution per ticket" half of exactly-once. */
   readonly executionJournal: ExecutionJournal;
+  /** The content half of what executionJournal records — see execution-result-store.ts. */
+  readonly executionResults: ExecutionResultStore;
   /** What THIS gateway submitted for each review-mode proposal it created —
    *  see ticket-verify.ts / commitments.ts. */
   readonly proposalSubmissions: ProposalSubmissionStore;
@@ -81,6 +84,7 @@ export class SharedState {
     this.receiptArchive = new ReceiptArchive(gateStorePath);
     this.reportStore = new ReportStore(gateStorePath);
     this.executionJournal = new ExecutionJournal(gateStorePath);
+    this.executionResults = new ExecutionResultStore(gateStorePath);
     this.proposalSubmissions = new ProposalSubmissionStore(gateStorePath);
     this.previewLog = new PreviewLog(gateStorePath);
     this.outcomeOutbox = new OutcomeOutbox(gateStorePath);

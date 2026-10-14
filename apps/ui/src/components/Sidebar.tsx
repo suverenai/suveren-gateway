@@ -94,6 +94,10 @@ function useOtherNavStatus() {
   useSSEEvent('proposal-approved', poll);
   useSSEEvent('proposal-rejected', poll);
   useSSEEvent('team-membership-changed', poll);
+  // AU2 — a new block just happened (MCP server -> control plane -> SSE,
+  // see cp-notify.ts / denial-log.ts). Moves the Blocked badge without
+  // waiting on the 5-minute fallback poll below.
+  useSSEEvent('denial-recorded', poll);
   // Archive is a local flag (no SSE event): the Mandates page announces it.
   useEffect(() => {
     window.addEventListener('suveren:archived-changed', poll);

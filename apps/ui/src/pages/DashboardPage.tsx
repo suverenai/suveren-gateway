@@ -88,6 +88,7 @@ export function DashboardPage() {
   useSSEEvent('proposal-resolved', refresh);
   useSSEEvent('proposal-approved', refresh);
   useSSEEvent('proposal-rejected', refresh);
+  useSSEEvent('execution-failed', refresh);
   // Fallback full-sync every 5min in case of missed events (reconnect race, etc.).
   useVisiblePolling(refresh, 300_000, domain);
 
