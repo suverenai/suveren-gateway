@@ -182,6 +182,9 @@ export function ProposalReviewPage() {
     id: string,
     action: 'commit' | 'reject',
     opts?: { outcome?: ProposalOutcome; note?: string },
+    /** AU10 §8.4 — already computed by ActionCard (it owns the ApprovalBody
+     *  snapshot and POSTs it to the control plane before calling this). */
+    shownHash?: string,
   ) => {
     // Automation that announces itself may not approve (defense in depth — lib/automation.ts).
     if (action === 'commit' && isAutomatedBrowser()) { setMessage(AUTOMATION_REFUSAL); return; }
@@ -203,7 +206,7 @@ export function ProposalReviewPage() {
         const { noteEncrypted } = await spClient.encryptProposalNote(opts.note, recipientUserIds);
         resolveOpts = { outcome: 'change_needed', noteEncrypted };
       }
-      const result = await spClient.resolveProposal(id, action, resolveDomain, { ...resolveOpts, contentHash });
+      const result = await spClient.resolveProposal(id, action, resolveDomain, { ...resolveOpts, contentHash, shownHash });
       setMessage(
         action === 'commit'
           ? `Action approved. Status: ${result.status}`
@@ -219,9 +222,12 @@ export function ProposalReviewPage() {
     }
   };
 
+  const handleApprove = (id: string, shownHash?: string) => handleResolve(id, 'commit', undefined, shownHash);
+  const handleReject = (id: string, shownHash?: string) => handleResolve(id, 'reject', rejectOutcomeArgs(), shownHash);
+
   /** "Send back for change" (RJ2) — note already validated by ActionCard. */
-  const handleChangeNeeded = (id: string, note: string) =>
-    handleResolve(id, 'reject', changeNeededOutcomeArgs(note));
+  const handleChangeNeeded = (id: string, note: string, shownHash?: string) =>
+    handleResolve(id, 'reject', changeNeededOutcomeArgs(note), shownHash);
 
   const profileIds = useMemo(() => {
     const set = new Set<string>();
@@ -325,8 +331,8 @@ export function ProposalReviewPage() {
                   manifests={manifests}
                   currentUserId={userId}
                   item={item}
-                  onApprove={(id) => handleResolve(id, 'commit')}
-                  onReject={(id) => handleResolve(id, 'reject', rejectOutcomeArgs())}
+                  onApprove={handleApprove}
+                  onReject={handleReject}
                   onChangeNeeded={handleChangeNeeded}
                   resolving={resolving === item.id}
                 />
@@ -456,8 +462,8 @@ export function ProposalReviewPage() {
                   manifests={manifests}
                   currentUserId={userId}
                   item={item}
-                  onApprove={(id) => handleResolve(id, 'commit')}
-                  onReject={(id) => handleResolve(id, 'reject', rejectOutcomeArgs())}
+                  onApprove={handleApprove}
+                  onReject={handleReject}
                   onChangeNeeded={handleChangeNeeded}
                   resolving={resolving === item.id}
                 />

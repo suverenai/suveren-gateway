@@ -20,9 +20,17 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { resolveProposalLinks, type ProposalLink } from '../lib/proposal-links';
-import { spClient, type IntegrationManifest, type Proposal } from '../lib/sp-client';
+import {
+  spClient,
+  type IntegrationManifest,
+  type Proposal,
+  type PreviewResponse,
+  type RequestContextResponse,
+  type ShownSnapshotPayload,
+} from '../lib/sp-client';
 import { ProposalArgs } from './ProposalArgs';
 import { PreviewBox } from './PreviewBox';
+import { RequestContextBox } from './RequestContextBox';
 import { boundValuesOpen } from '../lib/approval-preview-view';
 import { contextFieldLabel, splitTool, systemDisplayName, toolHeadline, type ToolDisplay } from '../lib/approval-view';
 import { useProfile } from '../lib/profile-cache';
@@ -66,6 +74,16 @@ interface Props {
    * decrypt. Same pattern as PreviewBox's `onTone`.
    */
   onContentState?: (state: { loading: boolean; readable: boolean }) => void;
+  /**
+   * AU10 §8.4 — told the exact combined payload this card's AU8/AU10 boxes
+   * are CURRENTLY showing (preview + request/history + one read time),
+   * every time either box's own data changes; `null` until both have
+   * resolved at least once. The caller (ApproverProposalCard/ActionCard)
+   * reads this the moment a decision button is clicked and sends it as-is —
+   * "the UI sends the same payload it rendered, so no second read can
+   * differ" (doc §8.4).
+   */
+  onShownSnapshot?: (snapshot: ShownSnapshotPayload | null) => void;
 }
 
 /** DL6: tool-specific on purpose — this builtin is the gateway's own, so
@@ -74,7 +92,7 @@ interface Props {
  *  other part of this module stays generic (brief decision 6). */
 const CREATE_MANDATE_TOOL = 'setup__create_mandate';
 
-export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDisplay, manifests, onContentState }: Props) {
+export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDisplay, manifests, onContentState, onShownSnapshot }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [editingBeforeSigning, setEditingBeforeSigning] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
@@ -158,6 +176,31 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
   // record from the system.
   const [previewTone, setPreviewTone] = useState<string | null>(null);
   const boundOpen = boundValuesOpen(previewTone);
+
+  // AU10 §8.4 — the raw AU8/AU10 data, as it is CURRENTLY rendered (set via
+  // PreviewBox/RequestContextBox's own `onData`), combined into one snapshot
+  // the moment both have resolved at least once. `readAt` mirrors the card's
+  // single "Context read HH:MM" note (doc §3) — the preview's own `readAt`
+  // when it has one, else the moment this box last combined the two (a
+  // preview-less tool still has a request-context read worth timestamping).
+  const [previewData, setPreviewData] = useState<PreviewResponse | null>(null);
+  const [requestContextData, setRequestContextData] = useState<RequestContextResponse | null>(null);
+  useEffect(() => {
+    if (!previewData || !requestContextData) { onShownSnapshot?.(null); return; }
+    const readAt = previewData.status === 'ok' ? previewData.readAt : Date.now();
+    // `toolArgs`/`sealed` travel too — PreviewBoxBody needs the bound values
+    // to reproduce the SAME "What will be created" box later (the ticket
+    // view's "What you saw", TicketWhatYouSaw.tsx), not just the preview's
+    // own read result.
+    onShownSnapshot?.({
+      readAt,
+      preview: previewData,
+      requestContext: requestContextData,
+      ...(content.toolArgs ? { toolArgs: content.toolArgs } : {}),
+      sealed: content.sealed,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [previewData, requestContextData, content.toolArgs, content.sealed, onShownSnapshot]);
   const boundContent = content.toolArgs ? (
     <>
           <ProposalArgs args={content.toolArgs} display={toolDisplay} heading="" />
@@ -231,7 +274,30 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
           Cannot read this proposal yet: {cannotRead.join(', ')} — shared automatically once they sign in on a device.
         </p>
       )}
-      {readable && <PreviewBox proposalId={proposal.id} systemName={systemName} toolArgs={content.toolArgs} sealed={content.sealed} onTone={setPreviewTone} />}
+      {readable && (
+        <PreviewBox
+          proposalId={proposal.id}
+          systemName={systemName}
+          toolArgs={content.toolArgs}
+          sealed={content.sealed}
+          onTone={setPreviewTone}
+          onData={setPreviewData}
+        />
+      )}
+      {/* AU10 — Request + History, right after the AU8 "What will be
+          created" box (doc/au10-request-context.md §3). */}
+      {readable && <RequestContextBox proposalId={proposal.id} onData={setRequestContextData} />}
+      {/* AU10 F1 — ONE legend for the whole card, after History (mockup:
+          temp/au10-mockup/index.html) — not duplicated inside the AU8 box
+          any more (RenderedCreationView used to render its own, incl. in
+          cards where Request/History never show). */}
+      {readable && (
+        <p className="creation-legend" data-testid="au10-legend">
+          <span><i className="creation-legend-dot creation-legend-dot-sealed" />sealed — approved and executed exactly so</span>
+          <span><i className="creation-legend-dot creation-legend-dot-system" />from the system — read by the gateway, not by the AI</span>
+          <span><i className="creation-legend-dot au10-dot-ai" />the AI's own claim or text — not checked</span>
+        </p>
+      )}
 
       {/* Within your limits — per-call bound checks only (lib/receipt-summary.ts
           limitChecks); cumulative bounds are deliberately not shown here (no

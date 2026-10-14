@@ -81,6 +81,19 @@ describe('mandatePrefillGate', () => {
     expect(gate.bounds).toEqual({});
     expect(gate.context).toEqual({});
   });
+
+  // AU10 (doc/au10-request-context.md §1) — "stripped before execution ...
+  // edit-before-signing". This module only ever reads the NAMED fields of
+  // CreateMandateProposalArgs (limits/scope/intent/mode/duration/title); an
+  // AI-supplied `_source` on the underlying proposal is simply never one of
+  // them, so it can never reach the mandate screen through this path even
+  // if a future manifest ever let a mandate-creation tool carry one.
+  it('an AI-supplied _source on the proposal never reaches the prefilled gate, under any key', () => {
+    const withSource = { ...FULL_ARGS, _source: { connector: 'mail', kind: 'message', id: 'm-17' } } as CreateMandateProposalArgs;
+    const gate = mandatePrefillGate(withSource);
+    expect(JSON.stringify(gate)).not.toContain('_source');
+    expect(JSON.stringify(gate)).not.toContain('m-17');
+  });
 });
 
 describe('shouldWithdrawProposalAfter', () => {

@@ -37,6 +37,7 @@ import { readPairing } from '../src/lib/as-pairing';
 import { loadProfiles } from '../src/lib/profile-loader';
 import { loadManifests, getAllManifests, getManifest } from '../src/lib/manifest-loader';
 import { buildInternalPreview } from '../src/lib/preview';
+import { buildRequestContext } from '../src/lib/request-context';
 import { registerBuiltins } from '../src/lib/builtins';
 import { buildMandateBrief } from '../src/lib/mandate-brief';
 import { decodeMandateBlob } from '@hap/core';
@@ -487,6 +488,50 @@ app.post('/internal/preview', internalOnly, async (req: Request, res: Response) 
     tool: toolName,
     status: result.status,
   });
+  res.json(result);
+});
+
+/**
+ * AU10 — the approval card's Request + History blocks (doc/au10-request-
+ * context.md). Gateway-internal only, same decisions as `/internal/preview`:
+ * never exposed to an MCP client, no ticket, no read gate, never counted
+ * against the AI's own read limits. `toolArgs` is the proposal's RESOLVED
+ * content (decrypted if needed) — the control plane never hands this route
+ * an encrypted envelope.
+ */
+app.post('/internal/request-context', internalOnly, async (req: Request, res: Response) => {
+  const { tool, toolArgs } = req.body as {
+    tool?: string;
+    toolArgs?: Record<string, unknown>;
+  };
+  if (!tool || typeof toolArgs !== 'object' || toolArgs === null) {
+    res.status(400).json({ error: 'Missing tool or toolArgs' });
+    return;
+  }
+  const sep = tool.indexOf('__');
+  if (sep < 0) {
+    res.status(400).json({ error: `Invalid tool name: ${tool}` });
+    return;
+  }
+  const integrationId = tool.slice(0, sep);
+  const toolName = tool.slice(sep + 2);
+  const manifest = getManifest(integrationId);
+  const actionGating = manifest?.toolGating?.overrides?.[toolName] as
+    | { contextKeys?: Record<string, string>; sourceFromArg?: { kind: string; arg: string } }
+    | null
+    | undefined;
+
+  // AU10 F4 — only connectors actually configured on THIS gateway (the
+  // persisted registry, not every manifest this build happens to ship).
+  const configuredConnectorIds = new Set(integrationRegistry.getAll().map((c) => c.id));
+  const result = await buildRequestContext(
+    integrationManager,
+    state.executionJournal,
+    integrationId,
+    toolArgs,
+    actionGating ?? undefined,
+    configuredConnectorIds,
+  );
   res.json(result);
 });
 

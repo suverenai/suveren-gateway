@@ -14,7 +14,14 @@
 
 import { readFileSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { MAX_PREVIEW_READS, type ProfileToolGating, type ToolPreviewConfig } from './tool-gating-types';
+import {
+  MAX_PREVIEW_READS,
+  MAX_RECORD_KEY_STEPS,
+  type ProfileToolGating,
+  type ToolPreviewConfig,
+  type ManifestContext,
+  type FieldPathParse,
+} from './tool-gating-types';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -124,6 +131,8 @@ export interface IntegrationManifest {
   setupHint?: string;
   /** Optional per-context-field discovery config (wizard-only). */
   contextDiscovery?: Record<string, ManifestContextDiscovery>;
+  /** AU10 — request/history card reads (doc/au10-request-context.md §2). */
+  context?: ManifestContext;
 }
 
 interface ManifestIndex {
@@ -308,6 +317,285 @@ export function invalidManifestPreviewReason(manifest: Pick<IntegrationManifest,
   return null;
 }
 
+// ─── AU10 — `context` shape validation (doc/au10-request-context.md §2) ────
+
+function isNonEmptyString(v: unknown): v is string {
+  return typeof v === 'string' && v.length > 0;
+}
+
+/**
+ * AU10 §8.1 — checks one field mapping: a non-empty string (unchanged), or a
+ * `{ path, where?, pick?, parse? }` object. Shape-only, same spirit as
+ * `invalidContextReadReason` — whether `path`/`pick` actually resolve on a
+ * real record is a runtime question.
+ */
+const VALID_FIELD_PATH_PARSE: readonly FieldPathParse[] = ['address.name', 'address.email', 'epoch-ms'];
+
+function invalidFieldPathReason(label: string, value: unknown): string | null {
+  if (isNonEmptyString(value)) return null;
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return `${label} must be a non-empty string or a field-path object`;
+  }
+  const f = value as Record<string, unknown>;
+  if (!isNonEmptyString(f.path)) return `${label}.path must be a non-empty string`;
+  if (f.where !== undefined) {
+    if (f.where === null || typeof f.where !== 'object' || Array.isArray(f.where)) {
+      return `${label}.where must be an object`;
+    }
+    for (const [k, v] of Object.entries(f.where as Record<string, unknown>)) {
+      if (typeof v !== 'string' && typeof v !== 'number' && typeof v !== 'boolean') {
+        return `${label}.where.${k} must be a string, number, or boolean`;
+      }
+    }
+  }
+  if (f.pick !== undefined && !isNonEmptyString(f.pick)) {
+    return `${label}.pick must be a non-empty string`;
+  }
+  if (f.parse !== undefined && !VALID_FIELD_PATH_PARSE.includes(f.parse as FieldPathParse)) {
+    return `${label}.parse must be one of ${VALID_FIELD_PATH_PARSE.join(', ')}`;
+  }
+  return null;
+}
+
+/** Checks a `{ tool, args }` read descriptor shared by sources/history/recordKeys. */
+function invalidContextReadReason(label: string, entry: unknown): string | null {
+  if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) {
+    return `${label} must be an object`;
+  }
+  const r = entry as Record<string, unknown>;
+  if (!isNonEmptyString(r.tool)) return `${label}.tool must be a non-empty string`;
+  if (r.args === undefined || r.args === null || typeof r.args !== 'object' || Array.isArray(r.args)) {
+    return `${label}.args must be an object`;
+  }
+  for (const [k, v] of Object.entries(r.args as Record<string, unknown>)) {
+    if (typeof v !== 'string' || v.length === 0) {
+      return `${label}.args.${k} must be a non-empty string`;
+    }
+  }
+  return null;
+}
+
+function invalidContextSourceReason(toolName: string, entry: unknown): string | null {
+  const label = `context.sources.${toolName}`;
+  if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) {
+    return `${label} must be an object`;
+  }
+  const s = entry as Record<string, unknown>;
+  const readReason = invalidContextReadReason(`${label}.read`, s.read);
+  if (readReason) return readReason;
+  for (const field of ['title', 'author', 'at', 'body'] as const) {
+    if (s[field] !== undefined) {
+      const reason = invalidFieldPathReason(`${label}.${field}`, s[field]);
+      if (reason) return reason;
+    }
+  }
+  if (s.keys !== undefined) {
+    if (s.keys === null || typeof s.keys !== 'object' || Array.isArray(s.keys)) {
+      return `${label}.keys must be an object`;
+    }
+    for (const [k, v] of Object.entries(s.keys as Record<string, unknown>)) {
+      if (k !== 'email') return `${label}.keys.${k}: only "email" is a recognized identity key type`;
+      const reason = invalidFieldPathReason(`${label}.keys.${k}`, v);
+      if (reason) return reason;
+    }
+  }
+  if (s.chain !== undefined) {
+    if (s.chain === null || typeof s.chain !== 'object' || Array.isArray(s.chain)) {
+      return `${label}.chain must be an object`;
+    }
+    const c = s.chain as Record<string, unknown>;
+    if (!isNonEmptyString(c.field)) return `${label}.chain.field must be a non-empty string`;
+    if (typeof c.max !== 'number' || c.max <= 0) return `${label}.chain.max must be a positive number`;
+  }
+  return null;
+}
+
+function invalidContextHistoryReason(history: unknown): string | null {
+  const label = 'context.history';
+  if (history === null || typeof history !== 'object' || Array.isArray(history)) {
+    return `${label} must be an object`;
+  }
+  const h = history as Record<string, unknown>;
+  const isKeyType = (v: unknown): boolean => v === 'email' || v === 'email_domain';
+  if (Array.isArray(h.byKey)) {
+    if (h.byKey.length === 0) return `${label}.byKey must not be an empty array`;
+    for (const [i, v] of h.byKey.entries()) {
+      if (!isKeyType(v)) return `${label}.byKey[${i}] must be "email" or "email_domain"`;
+    }
+  } else if (!isKeyType(h.byKey)) {
+    return `${label}.byKey must be "email" or "email_domain" (or an array of those, in preference order)`;
+  }
+  const readReason = invalidContextReadReason(`${label}.read`, h.read);
+  if (readReason) return readReason;
+  if (typeof h.limit !== 'number' || h.limit <= 0) return `${label}.limit must be a positive number`;
+  if (typeof h.maxAgeDays !== 'number' || h.maxAgeDays <= 0) return `${label}.maxAgeDays must be a positive number`;
+  if (h.item === null || typeof h.item !== 'object' || Array.isArray(h.item)) {
+    return `${label}.item must be an object`;
+  }
+  for (const [k, v] of Object.entries(h.item as Record<string, unknown>)) {
+    // `kind` is a literal label, copied as-is — never a path (doc §8.1).
+    if (k === 'kind') {
+      if (!isNonEmptyString(v)) return `${label}.item.kind must be a non-empty string`;
+      continue;
+    }
+    const reason = invalidFieldPathReason(`${label}.item.${k}`, v);
+    if (reason) return reason;
+  }
+  return null;
+}
+
+/**
+ * AU10 §8.2 — shape of one recordKeys entry: `keys` (identity fields of
+ * THIS record) and/or `next` (a second record to follow). At least one must
+ * be present — an entry with neither reads a record and learns nothing from
+ * it, which is never useful.
+ */
+function invalidContextRecordKeyReason(name: string, entry: unknown): string | null {
+  const label = `context.recordKeys.${name}`;
+  if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) {
+    return `${label} must be an object`;
+  }
+  const rk = entry as Record<string, unknown>;
+  const readReason = invalidContextReadReason(`${label}.read`, rk.read);
+  if (readReason) return readReason;
+  if (rk.keys !== undefined) {
+    if (rk.keys === null || typeof rk.keys !== 'object' || Array.isArray(rk.keys)) {
+      return `${label}.keys must be an object`;
+    }
+    for (const [k, v] of Object.entries(rk.keys as Record<string, unknown>)) {
+      if (k !== 'email') return `${label}.keys.${k}: only "email" is a recognized identity key type`;
+      const reason = invalidFieldPathReason(`${label}.keys.${k}`, v);
+      if (reason) return reason;
+    }
+  }
+  if (rk.next !== undefined) {
+    if (rk.next === null || typeof rk.next !== 'object' || Array.isArray(rk.next)) {
+      return `${label}.next must be an object`;
+    }
+    const next = rk.next as Record<string, unknown>;
+    if (!isNonEmptyString(next.recordKey)) return `${label}.next.recordKey must be a non-empty string`;
+    if (!isNonEmptyString(next.field)) return `${label}.next.field must be a non-empty string`;
+  }
+  if (rk.keys === undefined && rk.next === undefined) {
+    return `${label} must declare "keys", "next", or both — an entry with neither learns nothing from the record it reads`;
+  }
+  return null;
+}
+
+/**
+ * AU10 §8.2 — walks a recordKeys entry's `next` chain, counting steps
+ * (this entry counts as step 1). Returns the chain length, `'cycle'` when a
+ * name reappears, or `'missing'` when `next.recordKey` names an entry this
+ * SAME manifest does not declare (a cross-manifest reference is never
+ * meaningful — recordKeys are always read on the connector that declares
+ * them).
+ */
+function recordKeyChainLength(
+  name: string,
+  recordKeys: Record<string, unknown>,
+  seen: ReadonlySet<string>,
+): number | 'cycle' | 'missing' {
+  if (seen.has(name)) return 'cycle';
+  const entry = recordKeys[name];
+  if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) return 'missing';
+  const next = (entry as Record<string, unknown>).next as Record<string, unknown> | undefined;
+  if (!next || typeof next !== 'object') return 1;
+  const nextName = next.recordKey;
+  if (typeof nextName !== 'string' || !(nextName in recordKeys)) return 'missing';
+  const rest = recordKeyChainLength(nextName, recordKeys, new Set([...seen, name]));
+  if (rest === 'cycle' || rest === 'missing') return rest;
+  return 1 + rest;
+}
+
+/**
+ * Returns a human-readable refusal reason if `manifest.context` (AU10,
+ * doc/au10-request-context.md §2) is malformed, or null if absent/well-formed.
+ * Shape-only, same spirit as `invalidManifestPreviewReason` — whether a
+ * declared tool actually exists on the connector is a runtime question
+ * (checked by request-context.ts's own reads, same pattern as preview.ts).
+ */
+export function invalidManifestContextReason(
+  manifest: Pick<IntegrationManifest, 'context' | 'toolGating'>,
+): string | null {
+  const ctx = manifest.context;
+  const recordKeyNames = new Set(Object.keys(ctx?.recordKeys ?? {}));
+  if (ctx) {
+    if (ctx.sources !== undefined) {
+      if (ctx.sources === null || typeof ctx.sources !== 'object' || Array.isArray(ctx.sources)) {
+        return 'context.sources must be an object';
+      }
+      for (const [kind, entry] of Object.entries(ctx.sources)) {
+        const reason = invalidContextSourceReason(kind, entry);
+        if (reason) return reason;
+      }
+    }
+    if (ctx.history !== undefined) {
+      const reason = invalidContextHistoryReason(ctx.history);
+      if (reason) return reason;
+    }
+    if (ctx.recordKeys !== undefined) {
+      if (ctx.recordKeys === null || typeof ctx.recordKeys !== 'object' || Array.isArray(ctx.recordKeys)) {
+        return 'context.recordKeys must be an object';
+      }
+      for (const [name, entry] of Object.entries(ctx.recordKeys)) {
+        const reason = invalidContextRecordKeyReason(name, entry);
+        if (reason) return reason;
+      }
+      // AU10 §8.2 — max MAX_RECORD_KEY_STEPS steps, no cycles, no dangling
+      // `next.recordKey` reference. Checked once every entry's own shape is
+      // known to be well-formed.
+      for (const name of Object.keys(ctx.recordKeys)) {
+        const length = recordKeyChainLength(name, ctx.recordKeys, new Set());
+        if (length === 'cycle') {
+          return `context.recordKeys.${name}.next forms a cycle`;
+        }
+        if (length === 'missing') {
+          return `context.recordKeys.${name}.next.recordKey names an entry this manifest does not declare`;
+        }
+        if (length > MAX_RECORD_KEY_STEPS) {
+          return `context.recordKeys.${name}.next chain is ${length} steps long — max ${MAX_RECORD_KEY_STEPS}`;
+        }
+      }
+    }
+  }
+
+  // Per-tool contextKeys/sourceFromArg overrides — cross-checked against this
+  // SAME manifest's declared sources/recordKeys (never a runtime guess).
+  const sourceKinds = new Set(Object.keys(ctx?.sources ?? {}));
+  const overrides = manifest.toolGating?.overrides ?? {};
+  for (const [toolName, entry] of Object.entries(overrides)) {
+    if (entry === null || typeof entry !== 'object') continue;
+    const e = entry as { contextKeys?: unknown; sourceFromArg?: unknown };
+    if (e.contextKeys !== undefined) {
+      if (e.contextKeys === null || typeof e.contextKeys !== 'object' || Array.isArray(e.contextKeys)) {
+        return `override "${toolName}".contextKeys must be an object`;
+      }
+      for (const [name, argName] of Object.entries(e.contextKeys as Record<string, unknown>)) {
+        if (!isNonEmptyString(argName)) {
+          return `override "${toolName}".contextKeys.${name} must be a non-empty string naming an action argument`;
+        }
+        if (name !== 'email' && !recordKeyNames.has(name)) {
+          return `override "${toolName}".contextKeys.${name}: "${name}" is neither "email" nor a ` +
+            `context.recordKeys entry on this manifest`;
+        }
+      }
+    }
+    if (e.sourceFromArg !== undefined) {
+      if (e.sourceFromArg === null || typeof e.sourceFromArg !== 'object' || Array.isArray(e.sourceFromArg)) {
+        return `override "${toolName}".sourceFromArg must be an object`;
+      }
+      const sfa = e.sourceFromArg as Record<string, unknown>;
+      if (!isNonEmptyString(sfa.kind)) return `override "${toolName}".sourceFromArg.kind must be a non-empty string`;
+      if (!isNonEmptyString(sfa.arg)) return `override "${toolName}".sourceFromArg.arg must be a non-empty string`;
+      if (!sourceKinds.has(sfa.kind as string)) {
+        return `override "${toolName}".sourceFromArg.kind "${String(sfa.kind)}" is not declared in this ` +
+          `manifest's context.sources`;
+      }
+    }
+  }
+  return null;
+}
+
 // ─── Module state ───────────────────────────────────────────────────────────
 
 const manifests = new Map<string, IntegrationManifest>();
@@ -353,6 +641,11 @@ export function loadManifests(integrationsDir?: string): number {
       const previewReason = invalidManifestPreviewReason(manifest);
       if (previewReason) {
         console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${previewReason}`);
+        continue;
+      }
+      const contextReason = invalidManifestContextReason(manifest);
+      if (contextReason) {
+        console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${contextReason}`);
         continue;
       }
       manifests.set(id, manifest);

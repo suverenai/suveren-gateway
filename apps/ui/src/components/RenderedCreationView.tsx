@@ -8,8 +8,10 @@
  *
  * Marking: every value is either SEALED (bound — approved and executed
  * exactly so) or FROM THE SYSTEM (read by the gateway, not by the AI) — the
- * mockup's "bold black" vs "blue" legend, here `.src-tag-sealed` (existing)
- * vs `.src-tag-system` (new, see design-system.css).
+ * mockup's "bold black" vs "blue" marking, here `.src-tag-sealed` (existing)
+ * vs `.src-tag-system` (new, see design-system.css). The legend itself is
+ * NOT rendered here (AU10 F1) — one legend for the whole card, after the
+ * History block — see ApprovalBody.tsx's `CardLegend`.
  */
 import { Fragment } from 'react';
 import type { AttachedIdentity, CreationView } from '../lib/preview-render';
@@ -75,10 +77,6 @@ export function RenderedCreationView({ view }: { view: CreationView }) {
           {section.note && <p className="preview-note">{section.note}</p>}
         </div>
       ))}
-      <p className="creation-legend">
-        <span><i className="creation-legend-dot creation-legend-dot-sealed" />bold black = sealed: approved and executed exactly so</span>
-        <span><i className="creation-legend-dot creation-legend-dot-system" />blue = from the system: read by the gateway, not by the AI</span>
-      </p>
     </>
   );
 }

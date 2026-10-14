@@ -28,6 +28,7 @@ import { profileIdentity, isTestSetupAction } from '../lib/profile-identity';
 import { useProfile } from '../lib/profile-cache';
 import { ProfileRail } from './ProfileRail';
 import { TicketWhatWasDone } from './TicketWhatWasDone';
+import { TicketWhatYouSaw } from './TicketWhatYouSaw';
 import type {
   ExecutionReceipt,
   IntegrationManifest,
@@ -125,6 +126,13 @@ export function ReceiptCard({
           checked values when it binds none, or an off-device notice. See
           components/TicketWhatWasDone.tsx (AU6). */}
       <TicketWhatWasDone receipt={receipt} profile={profile} />
+
+      {/* AU10 §8.4 — "What you saw": only meaningful for a ticket that ran
+          via a committed (review-mode) proposal — an automatic action's
+          card never showed a Request/History box to begin with. */}
+      {receipt.proposalId && (
+        <TicketWhatYouSaw proposalId={receipt.proposalId} tool={receipt.action} manifests={manifests} />
+      )}
 
       {/* The record, as stored. */}
       <dl className="receipt-rows">

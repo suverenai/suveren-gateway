@@ -25,6 +25,7 @@ import { computeContentBinding, attachTicketId } from '../lib/content-binding';
 import { encodeOutgoingArgs } from '../lib/arg-encoding';
 import { hashToolArgs } from '../lib/execution-journal';
 import { previewChangedSinceSubmission } from '../lib/preview';
+import { stripSourceLink } from '../lib/request-context';
 import type { CommittedExecutor, ExecutionResult } from '../lib/committed-executor';
 import { ContentBindingError } from '@hap/core';
 import { AsKeyMismatchError } from '../lib/attestation-cache';
@@ -549,6 +550,9 @@ export async function executeCommitted(
       // LAST: transport encoding — see arg-encoding.ts for why order matters.
       outgoingArgs = encodeOutgoingArgs(discovered, outgoingArgs);
     }
+    // AU10 — `_source` never reaches the downstream tool (doc §1), on this
+    // path too — the review/committed executor, not just the automatic one.
+    outgoingArgs = stripSourceLink(outgoingArgs);
     let result;
     try {
       result = await integrationManager.callTool(integrationId, toolName, outgoingArgs);

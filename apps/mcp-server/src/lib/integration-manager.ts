@@ -17,6 +17,7 @@ import { getManifest, isExactSemver } from './manifest-loader';
 import { remotePreflightTarget, preflightRemoteAuth } from './remote-auth-preflight';
 import { isSimulationMode, manifestIsSimulated, SIMULATION_BLOCK_REASON } from './simulation-mode';
 import { inheritedConnectorEnv } from './connector-env';
+import { withSourceLink } from './request-context';
 import type { BuiltinIntegration, BuiltinStatus, MandateCandidate } from './builtin-integration';
 
 const DEFAULT_DATA_DIR = process.env.SUVEREN_DATA_DIR ?? join(homedir(), '.suveren');
@@ -816,19 +817,27 @@ export class IntegrationManager {
     const tools: DiscoveredTool[] = (toolsResult.tools ?? []).map(tool => {
       const gating = this.resolveToolGating(config.profile, profileGating, tool.name);
 
+      // A downstream schema otherwise reaches the agent verbatim, so a
+      // connector can offer a control-bypassing argument and we would pass it
+      // straight on. Anything the manifest blocks is removed here, before the
+      // agent ever sees it exists.
+      let inputSchema = withoutBlockedArgs(
+        (tool.inputSchema ?? {}) as Record<string, unknown>,
+        gating?.blockedArgs,
+      );
+      // AU10 — every non-read, non-disabled connector tool offers `_source`
+      // (doc/au10-request-context.md §1), regardless of the mandate's
+      // current commitment mode (that can change after tools/list).
+      if (gating && gating.category !== 'read' && gating.category !== 'disabled') {
+        inputSchema = withSourceLink(inputSchema);
+      }
+
       return {
         originalName: tool.name,
         namespacedName: `${config.id}__${tool.name}`,
         integrationId: config.id,
         description: tool.description ?? '',
-        // A downstream schema otherwise reaches the agent verbatim, so a
-        // connector can offer a control-bypassing argument and we would pass it
-        // straight on. Anything the manifest blocks is removed here, before the
-        // agent ever sees it exists.
-        inputSchema: withoutBlockedArgs(
-          (tool.inputSchema ?? {}) as Record<string, unknown>,
-          gating?.blockedArgs,
-        ),
+        inputSchema,
         outputSchema: tool.outputSchema as Record<string, unknown> | undefined,
         gating,
       };
@@ -1286,6 +1295,8 @@ export class IntegrationManager {
         hideUnlessAuthorized?: boolean;
         simulationOnly?: boolean;
         approvalView?: import('./integration-registry').ApprovalView;
+        contextKeys?: Record<string, string>;
+        sourceFromArg?: { kind: string; arg: string };
       };
       // 'disabled' = declared unavailable → block at the gating layer.
       if (ext.category === 'disabled') {
@@ -1324,6 +1335,8 @@ export class IntegrationManager {
         hideUnlessAuthorized: ext.hideUnlessAuthorized,
         simulationOnly: ext.simulationOnly,
         approvalView: ext.approvalView,
+        contextKeys: ext.contextKeys,
+        sourceFromArg: ext.sourceFromArg,
       };
     }
 

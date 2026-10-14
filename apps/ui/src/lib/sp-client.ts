@@ -271,6 +271,102 @@ export interface OutcomeResponse {
   at?: number;
 }
 
+// ─── AU10 — Request + History (doc/au10-request-context.md) ───────────────
+
+export interface RequestChainItem {
+  author?: string;
+  at?: string;
+  title?: string;
+  body?: string;
+}
+
+export type RequestResult =
+  | { status: 'none' }
+  | { status: 'unreadable'; reason: string }
+  | { status: 'not_found' }
+  | {
+      status: 'ok';
+      connector: string;
+      kind: string;
+      implicit: boolean;
+      author?: string;
+      at?: string;
+      title?: string;
+      body?: string;
+      chain: RequestChainItem[];
+    };
+
+export interface HistoryItem {
+  kind?: string;
+  title?: string;
+  body?: string;
+  at?: string;
+  author?: string;
+  type?: string;
+  aiWritten?: { at?: number };
+}
+
+export interface ConnectorHistoryMatch {
+  connectorId: string;
+  matchedKeyType: 'email' | 'email_domain';
+  matchedKeyValue: string;
+  items: HistoryItem[];
+}
+
+export type HistoryResult =
+  | { status: 'no_customer_link' }
+  | { status: 'no_match' }
+  | { status: 'unreachable'; connectorIds: string[] }
+  | { status: 'ok'; matches: ConnectorHistoryMatch[]; unreachableConnectorIds: string[] };
+
+/** `GET /proposal-status/:id/request-context` response. */
+export interface RequestContextResponse {
+  request: RequestResult;
+  history: HistoryResult;
+}
+
+// ─── AU10 §8.4 — "What you saw" snapshot ───────────────────────────────────
+
+/**
+ * Exactly what the approval card rendered at decision time — the AU8 preview
+ * result, the AU10 request/history result, the bound values the preview
+ * merges them with (`toolArgs`/`sealed` — PreviewBoxBody needs both to
+ * reproduce the SAME "What will be created" box, see PreviewBox.tsx), and
+ * the one read time shown on the card (doc §3: "Read time shown once").
+ * Sent to the control plane on approve/change-needed/reject so it can hash
+ * and store it (§8.4) — never re-read there, so no second read can
+ * disagree with what was shown.
+ */
+export interface ShownSnapshotPayload {
+  readAt: number;
+  preview: PreviewResponse;
+  requestContext: RequestContextResponse;
+  /** The proposal's own bound args, as decrypted on THIS device — absent
+   *  when undecryptable (never reachable in practice: the decision buttons
+   *  are hidden until this is readable, see use-proposal-content.ts
+   *  `decisionButtonsVisible`). */
+  toolArgs?: Record<string, unknown>;
+  sealed?: boolean;
+}
+
+/** `GET /proposal-status/:id/shown-snapshot` — the ticket view's "What you saw". */
+export type ShownSnapshotResponse =
+  | { status: 'off_device' }
+  | { status: 'ok'; snapshot: ShownSnapshotPayload; shownHash: string; storedAt: number; verifiedLocally: boolean };
+
+/**
+ * One decider's recorded `shown_hash`, as the Authority Server stores it —
+ * see `Proposal.shownHashes`'s doc comment for the key shapes. Mirrors
+ * suveren-as's `ShownHashEntry` (proposal-store.ts) field for field.
+ */
+export interface ShownHashEntry {
+  hash: string;
+  by: string;
+  at: number;
+}
+
+export type ShownHashes = Record<string, ShownHashEntry>;
+
 export interface AuthTemplate {
   name: string;
   description: string;
@@ -430,6 +526,18 @@ export interface Proposal {
   content?: ProposalContentWire;
   /** PE1: the fingerprint over JCS(toolArgs) — present on every row, legacy or encrypted. */
   contentHash?: string;
+  /**
+   * AU10 §8.4 — one entry PER DECIDER: the resolve flow (a team domain
+   * commits/rejects) keys its entry `domain:<domain>`, the above-cap
+   * approve/reject flow keys ITS entry `approver:<userId>` — both share
+   * this one map because a `review_above_cap` mandate can carry both a
+   * pending domain and pending approvers at once (suveren-as
+   * proposal-store.ts `ShownHashes`/`shownHashKey`). `by`/`at` are always
+   * the deciding user id / unix seconds regardless of which key shape was
+   * used. First write per key wins — never overwritten by a later resolve.
+   * Absent entirely on a row decided before this feature, or still pending.
+   */
+  shownHashes?: ShownHashes;
   executionContext: Record<string, string | number>;
   /**
    * `refused` (2026-10-12 fix): the Authority Server refused the ticket for
@@ -476,6 +584,9 @@ export interface ExecutionReceipt {
   /** Level-2 content proof. Present only when the profile declares content_binding. */
   contentHash?: string;
   contentBinding?: { version: string; kind: 'jcs' | 'text'; fields?: string[] };
+  // AU10 §8.4 — `shownHashes` lives on the PROPOSAL, not the receipt (the
+  // Authority Server's receipts-store.ts carries no such field): a ticket
+  // that ran via review mode looks it up via `proposalId` + `getProposal`.
 }
 
 /**
@@ -1576,9 +1687,13 @@ class SPClient {
        *  showed for approval/commit; the AS refuses (409 CONTENT_MISMATCH)
        *  rather than acting on a hash it does not recognize. */
       contentHash?: string;
+      /** AU10 §8.4 — the hash of exactly what THIS device's card showed
+       *  (preview + request/history + read time), from `saveShownSnapshot`.
+       *  Nullable on the wire: an older AS ignores an unknown field. */
+      shownHash?: string;
     },
   ): Promise<{ status: string }> {
-    const { noteEncrypted, contentHash, note, ...rest } = opts ?? {};
+    const { noteEncrypted, contentHash, shownHash, note, ...rest } = opts ?? {};
     const res = await this.fetch(`/api/proposals/${encodeURIComponent(id)}/resolve`, {
       method: 'POST',
       body: JSON.stringify({
@@ -1588,6 +1703,7 @@ class SPClient {
         // Mutually exclusive on the wire: a sealed note replaces the plain one.
         ...(noteEncrypted ? { note_encrypted: noteEncrypted } : (note ? { note } : {})),
         ...(contentHash ? { content_hash: contentHash } : {}),
+        ...(shownHash ? { shown_hash: shownHash } : {}),
       }),
     });
     if (!res.ok) {
@@ -1625,11 +1741,19 @@ class SPClient {
    * Approve an above-cap action proposal.
    * SP endpoint: POST /api/proposals/:id/approve
    */
-  async approveProposal(id: string, contentHash?: string): Promise<{ receipt: Record<string, unknown>; status: string; approvedBy: Record<string, { receiptId: string; at: number }> }> {
+  async approveProposal(
+    id: string,
+    contentHash?: string,
+    /** AU10 §8.4 — see {@link resolveProposal}'s matching parameter. */
+    shownHash?: string,
+  ): Promise<{ receipt: Record<string, unknown>; status: string; approvedBy: Record<string, { receiptId: string; at: number }> }> {
+    const body: Record<string, string> = {};
+    // PE1 — the fingerprint of the toolArgs THIS device decrypted and showed.
+    if (contentHash) body.content_hash = contentHash;
+    if (shownHash) body.shown_hash = shownHash;
     const res = await this.fetch(`/api/proposals/${encodeURIComponent(id)}/approve`, {
       method: 'POST',
-      // PE1 — the fingerprint of the toolArgs THIS device decrypted and showed.
-      body: contentHash ? JSON.stringify({ content_hash: contentHash }) : undefined,
+      body: Object.keys(body).length > 0 ? JSON.stringify(body) : undefined,
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Failed' }));
@@ -1651,6 +1775,8 @@ class SPClient {
     opts?: string | { reason?: string; outcome?: ProposalOutcome; note?: string; noteEncrypted?: NoteEncryptedWire },
     /** PE1 — the fingerprint of the toolArgs THIS device decrypted and showed. */
     contentHash?: string,
+    /** AU10 §8.4 — see {@link resolveProposal}'s matching parameter. */
+    shownHash?: string,
   ): Promise<{ receipt: Record<string, unknown>; status: string }> {
     // A plain string is the legacy shape (stored as `reason`, outcome rejected).
     let body: Record<string, unknown>;
@@ -1665,6 +1791,7 @@ class SPClient {
       };
     }
     if (contentHash) body.content_hash = contentHash;
+    if (shownHash) body.shown_hash = shownHash;
     const res = await this.fetch(`/api/proposals/${encodeURIComponent(id)}/reject`, {
       method: 'POST',
       body: JSON.stringify(body),
@@ -1685,6 +1812,40 @@ class SPClient {
   async getProposalPreview(id: string): Promise<PreviewResponse> {
     const res = await this.fetch(`/proposal-status/${encodeURIComponent(id)}/preview`);
     if (!res.ok) throw new Error(`Failed to fetch preview: ${res.status}`);
+    return res.json();
+  }
+
+  /**
+   * AU10 — the Request + History blocks for a pending proposal. Same
+   * gateway-internal-only path as `getProposalPreview`.
+   */
+  async getProposalRequestContext(id: string): Promise<RequestContextResponse> {
+    const res = await this.fetch(`/proposal-status/${encodeURIComponent(id)}/request-context`);
+    if (!res.ok) throw new Error(`Failed to fetch request context: ${res.status}`);
+    return res.json();
+  }
+
+  /**
+   * AU10 §8.4 — stores exactly what this device's card rendered (the SAME
+   * payload, not a fresh read) and returns its hash, to send with the
+   * decision. Control-plane `POST /proposal-status/:id/shown-snapshot`.
+   */
+  async saveShownSnapshot(id: string, snapshot: ShownSnapshotPayload): Promise<{ shownHash: string }> {
+    const res = await this.fetch(`/proposal-status/${encodeURIComponent(id)}/shown-snapshot`, {
+      method: 'POST',
+      body: JSON.stringify(snapshot),
+    });
+    if (!res.ok) throw new Error(`Failed to store the shown snapshot: ${res.status}`);
+    return res.json();
+  }
+
+  /**
+   * AU10 §8.4 — the ticket view's "What you saw": the local snapshot (if any
+   * is on THIS device) plus the control plane's own re-hash check.
+   */
+  async getShownSnapshot(id: string): Promise<ShownSnapshotResponse> {
+    const res = await this.fetch(`/proposal-status/${encodeURIComponent(id)}/shown-snapshot`);
+    if (!res.ok) throw new Error(`Failed to fetch the shown snapshot: ${res.status}`);
     return res.json();
   }
 

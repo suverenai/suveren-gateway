@@ -16,7 +16,9 @@ import { createProposalStatusRouter } from '../routes/proposal-preview';
 import { encryptForRecipients } from '../lib/e2e-crypto';
 import { loadOrGenerateKeyPair } from '../lib/e2e-key-manager';
 import { computeProposalContentHash } from '../lib/content-crypto';
+import { ShownSnapshotStore } from '../lib/shown-snapshot';
 import type { Vault } from '../lib/vault';
+import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 
 const SP_URL = 'https://as.example.test';
 
@@ -26,13 +28,29 @@ const SP_URL = 'https://as.example.test';
 // the real network stack, never the stub.
 const realFetch = globalThis.fetch;
 
-function fakeVault(cookie: string | null, sessionUser: { id: string; did: string } | null = null): Vault {
+/** AU10 §8.4 — a fixed test key, so `encrypt`/`decrypt` behave like the real
+ *  Vault's (AES-256-GCM) without needing a real unseal. */
+const TEST_VAULT_KEY = randomBytes(32);
+
+function fakeVault(cookie: string | null, sessionUser: { id: string; did: string } | null = null, unlocked = true): Vault {
   const credentials = new Map<string, Record<string, string>>();
   return {
     getSpCookie: () => cookie,
     getSessionUser: () => sessionUser,
     getCredential: (name: string) => credentials.get(name) ?? null,
     setCredential: (name: string, fields: Record<string, string>) => { credentials.set(name, fields); },
+    isUnlocked: () => unlocked,
+    encrypt: (plaintext: string) => {
+      const iv = randomBytes(12);
+      const cipher = createCipheriv('aes-256-gcm', TEST_VAULT_KEY, iv);
+      const ciphertext = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
+      return { iv: iv.toString('hex'), ciphertext: ciphertext.toString('hex'), tag: cipher.getAuthTag().toString('hex') };
+    },
+    decrypt: (blob: { iv: string; ciphertext: string; tag: string }) => {
+      const decipher = createDecipheriv('aes-256-gcm', TEST_VAULT_KEY, Buffer.from(blob.iv, 'hex'));
+      decipher.setAuthTag(Buffer.from(blob.tag, 'hex'));
+      return Buffer.concat([decipher.update(Buffer.from(blob.ciphertext, 'hex')), decipher.final()]).toString('utf8');
+    },
   } as unknown as Vault;
 }
 
@@ -43,7 +61,8 @@ async function withServer(
   vaultOverride?: Vault,
 ): Promise<void> {
   const app = express();
-  app.use('/proposal-status', createProposalStatusRouter(SP_URL, vaultOverride ?? fakeVault(cookie), dataDir, () => {}));
+  app.use(express.json());
+  app.use('/proposal-status', createProposalStatusRouter(SP_URL, vaultOverride ?? fakeVault(cookie), dataDir, () => {}, new ShownSnapshotStore(dataDir)));
   const srv = app.listen(0);
   const base = `http://127.0.0.1:${(srv.address() as AddressInfo).port}/proposal-status`;
   try {
@@ -303,6 +322,139 @@ describe('GET /proposal-status/:id/outcome', () => {
       await withServer(dir, null, async (base) => {
         const res = await fetch(`${base}/prop-1/outcome`);
         expect(await res.json()).toEqual({ state: 'done', at: 201 });
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('POST + GET /proposal-status/:id/shown-snapshot (AU10 §8.4)', () => {
+  const sampleSnapshot = {
+    readAt: 1_760_000_000_000,
+    preview: { status: 'none' as const },
+    requestContext: { request: { status: 'none' as const }, history: { status: 'no_customer_link' as const } },
+  };
+
+  it('POST stores the snapshot and returns its hash', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'shown-route-'));
+    try {
+      await withServer(dir, null, async (base) => {
+        const res = await fetch(`${base}/prop-1/shown-snapshot`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(sampleSnapshot),
+        });
+        expect(res.status).toBe(200);
+        const { shownHash } = await res.json() as { shownHash: string };
+        expect(shownHash).toMatch(/^sha256:[0-9a-f]{64}$/);
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('GET returns the stored snapshot, its hash, and verifiedLocally: true', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'shown-route-'));
+    try {
+      await withServer(dir, null, async (base) => {
+        const postRes = await fetch(`${base}/prop-1/shown-snapshot`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(sampleSnapshot),
+        });
+        const { shownHash } = await postRes.json() as { shownHash: string };
+
+        const getRes = await fetch(`${base}/prop-1/shown-snapshot`);
+        expect(getRes.status).toBe(200);
+        const body = await getRes.json() as { storedAt: number };
+        expect(body).toEqual({
+          status: 'ok',
+          snapshot: sampleSnapshot,
+          shownHash,
+          storedAt: body.storedAt,
+          verifiedLocally: true,
+        });
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('GET returns off_device for a proposal never saved on this gateway', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'shown-route-'));
+    try {
+      await withServer(dir, null, async (base) => {
+        const res = await fetch(`${base}/never-saved/shown-snapshot`);
+        expect(res.status).toBe(200);
+        expect(await res.json()).toEqual({ status: 'off_device' });
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('POST 401s when the vault is locked', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'shown-route-'));
+    try {
+      await withServer(dir, null, async (base) => {
+        const res = await fetch(`${base}/prop-1/shown-snapshot`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(sampleSnapshot),
+        });
+        expect(res.status).toBe(401);
+      }, fakeVault(null, null, false));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('GET 401s when the vault is locked', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'shown-route-'));
+    try {
+      await withServer(dir, null, async (base) => {
+        const res = await fetch(`${base}/prop-1/shown-snapshot`);
+        expect(res.status).toBe(401);
+      }, fakeVault(null, null, false));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('POST 400s on a non-object body', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'shown-route-'));
+    try {
+      await withServer(dir, null, async (base) => {
+        const res = await fetch(`${base}/prop-1/shown-snapshot`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify('not an object'),
+        });
+        expect(res.status).toBe(400);
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('two different proposals get independent snapshots', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'shown-route-'));
+    try {
+      await withServer(dir, null, async (base) => {
+        await fetch(`${base}/prop-a/shown-snapshot`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...sampleSnapshot, readAt: 1 }),
+        });
+        await fetch(`${base}/prop-b/shown-snapshot`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...sampleSnapshot, readAt: 2 }),
+        });
+        const a = await (await fetch(`${base}/prop-a/shown-snapshot`)).json() as { snapshot: { readAt: number }; shownHash: string };
+        const b = await (await fetch(`${base}/prop-b/shown-snapshot`)).json() as { snapshot: { readAt: number }; shownHash: string };
+        expect(a.snapshot.readAt).toBe(1);
+        expect(b.snapshot.readAt).toBe(2);
+        expect(a.shownHash).not.toBe(b.shownHash);
       });
     } finally {
       rmSync(dir, { recursive: true, force: true });
