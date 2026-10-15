@@ -556,6 +556,14 @@ export interface Proposal {
   approvedBy?: Record<string, { receiptId: string; at: number }>;
   approverRejectedBy?: { userId: string; reason?: string; at: number; outcome?: ProposalOutcome; note?: string; noteEncrypted?: NoteEncryptedWire };
   createdBy?: string;
+  /**
+   * suveren-as#89 — set only by `POST /api/proposals/:id/withdraw` (the
+   * proposal's own creator declining to pursue it — status flips to
+   * 'rejected', same as every other terminal decision here, but this field
+   * is what tells "the proposer backed out" apart from someone else's
+   * reject/change_needed/replaced). Never set by any other route.
+   */
+  withdrawnBy?: { userId: string; at: number; note?: string; noteEncrypted?: NoteEncryptedWire };
 }
 
 export interface ExecutionReceipt {
@@ -734,11 +742,61 @@ export class DifferentAccountError extends Error {
   }
 }
 
+/**
+ * TR5 (work-plan "Added 2026-10-14 — Team: permissions, above-cap approval,
+ * read limits"; direction: content/0.7/review.md "Group roles: who may
+ * grant, who approves above the cap"): whether an above-cap request on this
+ * field is refused outright at signing time (`hard`) or promoted into a
+ * signed `review_above_cap` mandate that a run-time approver can clear
+ * (`approval`). Mirrors suveren-as's `CapKind` — do not import from there.
+ */
+export type CapKind = 'hard' | 'approval';
+
+/**
+ * Per-profile team configuration (admin-set). TR5 splits the single
+ * `approvers` role (grant + above-cap control conflated) into `grantors`
+ * (who may SIGN a mandate) and `approvers` (who may clear an above-cap
+ * proposal), adds `approvals` (distinct approvals needed), and gives each
+ * cap a `kind`.
+ *
+ * Wire shape (suveren-as fix/profile-config-compat, branch merged after
+ * #86 broke every installed gateway's numeric cap comparison by nesting
+ * `caps` values in `{value, kind}` objects): `caps` stays the OLD plain
+ * `Record<string, number | string>` shape; `kind` travels in a SEPARATE
+ * `capKinds` field. Read a cap's value from `caps[field]` and its kind from
+ * `capKinds?.[field]` — NEVER assume `caps[field]` is an object. A config
+ * from an AS that predates `capKinds` entirely (or a cap this admin set
+ * before TR5 shipped) omits the entry for that field; `effectiveCapKind`
+ * below is the one place that resolves the fallback.
+ */
 export interface ProfileConfig {
-  /** userIds of required approvers for above-cap actions */
+  /** Who may grant (sign) this profile for the team. `'all'` = every member.
+   *  Absent → falls back to `approvers` (pre-TR5 behaviour). */
+  grantors?: string[] | 'all';
+  /** userIds who may approve an above-cap proposal. May be empty — with no
+   *  approvers every cap collapses to hard. */
   approvers: string[];
-  /** Optional per-bound ceiling. Key = bound field name, value = max allowed. */
-  caps?: Record<string, number>;
+  /** Distinct approvals needed before an above-cap proposal commits.
+   *  Absent → defaults to 1 ("one approval is enough"). */
+  approvals?: number;
+  /** Per-bound cap VALUE. Key = bound field name. Plain number/string — the
+   *  pre-TR5 shape, kept so an installed gateway's existing numeric
+   *  comparisons keep working unchanged. */
+  caps?: Record<string, number | string>;
+  /** Per-bound cap KIND (TR5), keyed the same as `caps`. Absent per-field
+   *  (or absent entirely, from an AS that predates it) — see
+   *  `effectiveCapKind`'s fallback. */
+  capKinds?: Record<string, CapKind>;
+}
+
+/** `config.grantors`, defaulted — mirrors suveren-as's `effectiveGrantors`. */
+export function effectiveGrantors(config: Pick<ProfileConfig, 'grantors' | 'approvers'>): string[] | 'all' {
+  return config.grantors ?? config.approvers;
+}
+
+/** `config.approvals`, defaulted — mirrors suveren-as's `effectiveApprovals`. */
+export function effectiveApprovals(config: Pick<ProfileConfig, 'approvals'>): number {
+  return config.approvals ?? 1;
 }
 
 export interface McpHealthResponse {
@@ -1764,7 +1822,22 @@ class SPClient {
     contentHash?: string,
     /** AU10 §8.4 — see {@link resolveProposal}'s matching parameter. */
     shownHash?: string,
-  ): Promise<{ receipt: Record<string, unknown>; status: string; approvedBy: Record<string, { receiptId: string; at: number }> }> {
+  ): Promise<{
+    receipt: Record<string, unknown>;
+    status: string;
+    approvedBy: Record<string, { receiptId: string; at: number }>;
+    /**
+     * TR5 (work-plan "Added 2026-10-14") — how many distinct approvals this
+     * proposal needs, and how many it has NOW, straight from the AS's own
+     * response to THIS approve call. Absent on an older AS (pre-TR5) —
+     * callers must not assume these are always present, and must never
+     * compute their own guess instead (UI reflects AS truth, never
+     * optimistic state).
+     */
+    requiredApprovals?: number;
+    approvedCount?: number;
+    remainingApprovers?: string[];
+  }> {
     const body: Record<string, string> = {};
     // PE1 — the fingerprint of the toolArgs THIS device decrypted and showed.
     if (contentHash) body.content_hash = contentHash;
@@ -1781,12 +1854,15 @@ class SPClient {
   }
 
   /**
-   * Reject (above-cap approver path) or withdraw a proposal.
-   * SP endpoint: POST /api/proposals/:id/reject — accepts the legacy
-   * `{ reason }` body (older gateways) as well as the RJ1–RJ6 contract
-   * `{ outcome?, note? }` (temp/briefs/rj-reject-brief.md). `reason` and
-   * `outcome`/`note` are mutually exclusive callers in this codebase — no
-   * call site here needs both at once.
+   * Reject a proposal — the above-cap approver path (requires the caller to
+   * be in `pendingApprovers`; the proposer's OWN proposal uses
+   * {@link withdrawProposal} instead, a separate route, since TR5
+   * deliberately excludes the proposer from that list — see its doc
+   * comment). SP endpoint: POST /api/proposals/:id/reject — accepts the
+   * legacy `{ reason }` body (older gateways) as well as the RJ1–RJ6
+   * contract `{ outcome?, note? }` (temp/briefs/rj-reject-brief.md).
+   * `reason` and `outcome`/`note` are mutually exclusive callers in this
+   * codebase — no call site here needs both at once.
    */
   async rejectProposal(
     id: string,
@@ -1817,6 +1893,57 @@ class SPClient {
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Failed' }));
       throw new Error(asErrorMessage(err, `rejectProposal failed: ${res.status}`));
+    }
+    return res.json();
+  }
+
+  /**
+   * GET /api/proposals?creator=me (suveren-as#89) — the caller's OWN
+   * still-pending proposals (above-cap or not), active workspace only,
+   * same encrypted-content shape as every other list mode. Returns `null`
+   * on a 400 — the one way to tell an older AS that does not support this
+   * mode yet (its `GET /api/proposals` 400s with no `creator`/`domain`/
+   * `status`/`approver` match) from "genuinely nothing pending" (`[]`).
+   * Callers MUST fall back to something else on `null`, never show an
+   * empty list as if it were authoritative.
+   */
+  async getProposalsCreatedByMe(): Promise<Proposal[] | null> {
+    const res = await this.fetch('/api/proposals?creator=me');
+    if (res.status === 400) return null;
+    if (!res.ok) throw new Error(`Failed to fetch my proposals: ${res.status}`);
+    const data = await res.json();
+    return (data.proposals ?? []) as Proposal[];
+  }
+
+  /**
+   * POST /api/proposals/:id/withdraw (suveren-as#89) — the proposal's own
+   * creator declines to pursue their still-pending above-cap action. The
+   * ONLY way the proposer can end their own proposal: `rejectProposal`
+   * requires `pendingApprovers` membership, which TR5 deliberately excludes
+   * them from. Same note/encrypted-note shape as {@link rejectProposal}
+   * (mutually exclusive — a sealed note replaces the plain one) and the
+   * same `content_hash`/`shown_hash` fingerprint parameters as every other
+   * decision here.
+   */
+  async withdrawProposal(
+    id: string,
+    opts?: { note?: string; noteEncrypted?: NoteEncryptedWire },
+    contentHash?: string,
+    shownHash?: string,
+  ): Promise<{ status: string; proposalId: string; withdrawnBy: { userId: string; at: number; note?: string; noteEncrypted?: NoteEncryptedWire } }> {
+    const { noteEncrypted, note } = opts ?? {};
+    const body: Record<string, unknown> = {
+      ...(noteEncrypted ? { note_encrypted: noteEncrypted } : (note ? { note } : {})),
+    };
+    if (contentHash) body.content_hash = contentHash;
+    if (shownHash) body.shown_hash = shownHash;
+    const res = await this.fetch(`/api/proposals/${encodeURIComponent(id)}/withdraw`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Failed' }));
+      throw new Error(asErrorMessage(err, `withdrawProposal failed: ${res.status}`));
     }
     return res.json();
   }
@@ -2142,6 +2269,26 @@ class SPClient {
     const res = await this.fetch('/skipped-commitments');
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.json();
+  }
+
+  /**
+   * "Awaiting others" stand-in (2026-10-15, real-gateway e2e): above-cap
+   * proposals THIS gateway submitted that are still pending — the
+   * Authority Server has no endpoint yet to list "proposals I created"
+   * (only `?domain=`, which an above-cap proposal's empty pendingDomains
+   * can never match, `?status=committed/rejected`, and `?approver=me`).
+   * Round-trips through the gateway's own local submission record
+   * (control-plane → MCP server's `/internal/my-pending-proposals`) — see
+   * that route's doc comment for the real limitation this has until the
+   * AS gets a creator-scoped query: only ever sees proposals submitted
+   * through THIS gateway install. Fails soft (empty list) so a gateway
+   * that predates this endpoint (404) never breaks the page.
+   */
+  async getMyPendingProposals(): Promise<Proposal[]> {
+    const res = await this.fetch('/my-pending-proposals');
+    if (!res.ok) return [];
+    const data = await res.json().catch(() => ({ proposals: [] }));
+    return (data.proposals ?? []) as Proposal[];
   }
 
   // ─── Gate Content ───────────────────────────────────────────────────────

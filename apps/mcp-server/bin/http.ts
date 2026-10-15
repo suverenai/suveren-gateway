@@ -855,6 +855,43 @@ app.get('/internal/skipped-commitments', internalOnly, async (_req: Request, res
   }
 });
 
+/**
+ * "Awaiting others" stand-in (2026-10-15, real-gateway e2e): a proposer
+ * (Tom) correctly excluded from his own above-cap proposal's
+ * pendingApprovers (TR5) has no way to SEE it either — the AS has no
+ * endpoint to list "proposals I created" scoped by creator; only
+ * `?domain=` (review-mode only — an above-cap proposal always submits
+ * `pendingDomains: []`, which a domain query can never match), `?status=
+ * committed/rejected` (terminal states only), and `?approver=me` (which
+ * only ever matched him by ACCIDENT, back when he was wrongly listed as
+ * his own approver). Until the AS gets a creator-scoped query (reported;
+ * same shape as `getCommittedProposals`'s existing ownership rule —
+ * `created_by = me`, but for `status = 'pending'`), this resolves every
+ * id THIS gateway has a local submission record for
+ * (proposal-submission-store.ts) against its CURRENT state and returns
+ * the still-pending ones. Real limitation: only ever sees proposals
+ * submitted through THIS gateway install, never one submitted from
+ * another of the same person's devices.
+ */
+app.get('/internal/my-pending-proposals', internalOnly, async (_req: Request, res: Response) => {
+  try {
+    const submitted = state.proposalSubmissions.list();
+    const resolved = await Promise.all(
+      submitted.map(async (s) => {
+        try {
+          return await state.spClient.getProposal(s.proposalId);
+        } catch {
+          return null; // one unreachable id must not fail the whole list
+        }
+      }),
+    );
+    const pending = resolved.filter((p): p is SPProposal => p !== null && p.status === 'pending');
+    res.json({ proposals: pending });
+  } catch (err) {
+    res.status(502).json({ error: err instanceof Error ? err.message : 'Could not reach the Authority Server' });
+  }
+});
+
 // Local evidence — everything this machine holds that proves what ran and
 // under which mandate: the receipt archive (complete signed receipts +
 // attestation blobs + issuer keys, append-only, never pruned) joined with the

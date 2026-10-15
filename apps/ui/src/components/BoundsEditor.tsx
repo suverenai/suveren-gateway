@@ -1,10 +1,11 @@
-import { useState, useRef, useEffect, type KeyboardEvent, type ClipboardEvent } from 'react';
+import { useState, useRef, useEffect, type KeyboardEvent, type ClipboardEvent, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import type { AgentProfile, AgentBoundsParams, AgentScopeParams, ProfileBoundsField, ProfileScopeField } from '@hap/core';
 import { DiscoveredScopeField } from './DiscoveredScopeField';
-import { spClient, type IntegrationManifest, type ProfileConfig } from '../lib/sp-client';
+import { spClient, type IntegrationManifest, type ProfileConfig, type CapKind } from '../lib/sp-client';
 import { minForBound, maxForBound, seedForBound, numericBoundValue } from '../lib/bound-defaults';
 import { formatUnit } from '../lib/bound-format';
+import { effectiveCapKind, enumExceedsCap, isCapped, type CapFieldShape } from '../lib/team-caps';
 
 interface Props {
   profile: AgentProfile;
@@ -56,7 +57,7 @@ type FieldDefWithEnum = FieldDef & { enum?: string[] };
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-function humanizeFieldName(key: string, field: FieldDef): string {
+export function humanizeFieldName(key: string, field: FieldDef): string {
   if (field.displayName) return field.displayName;
   return key
     .replace(/_/g, ' ')
@@ -458,6 +459,8 @@ function FieldRow({
   twoColumn,
   discoveryIntegrationId,
   onLabels,
+  capMax,
+  enumAllowedFrom,
 }: {
   fieldKey: string;
   fieldDef: FieldDef;
@@ -471,6 +474,20 @@ function FieldRow({
   discoveryIntegrationId?: string;
   /** Discovered value→label map for this field (display names). */
   onLabels?: (fieldKey: string, labels: Record<string, string>) => void;
+  /**
+   * TR5 — a HARD team cap on a numeric field: further narrows the profile's
+   * own `maximum` (bound-defaults.ts's `maxForBound`), so the stepper stops
+   * at whichever of the two is stricter and cannot be raised past it here.
+   */
+  capMax?: number;
+  /**
+   * TR5 — a HARD team cap on an enum (capability-switch) field: the index
+   * (into the field's own permissive-first `boundType.values`) of the most
+   * permissive value still allowed. Options before that index are disabled
+   * — see team-caps.ts's `enumExceedsCap` doc comment for the ordering
+   * convention this assumes.
+   */
+  enumAllowedFrom?: number;
 }) {
   const label = humanizeFieldName(fieldKey, fieldDef);
   const fieldId = `${prefix}-field-${fieldKey}`;
@@ -494,11 +511,19 @@ function FieldRow({
           className="form-select"
           value={value}
           onChange={e => onChange(fieldKey, e.target.value)}
-          disabled={readOnly}
+          disabled={
+            readOnly ||
+            // Only one value remains choosable (the cap left no freedom at
+            // all, e.g. capped at the most restrictive value) — disable the
+            // whole control rather than a <select> with exactly one enabled
+            // option, which reads as broken, not "no choice".
+            (enumAllowedFrom !== undefined &&
+              (fieldDef as unknown as { boundType: { values: string[] } }).boundType.values.length - enumAllowedFrom <= 1)
+          }
         >
           <option value="">Select...</option>
-          {((fieldDef as unknown as { boundType: { values: string[] } }).boundType.values).map((v: string) => (
-            <option key={v} value={v}>{v}</option>
+          {((fieldDef as unknown as { boundType: { values: string[] } }).boundType.values).map((v: string, i: number) => (
+            <option key={v} value={v} disabled={enumAllowedFrom !== undefined && i < enumAllowedFrom}>{v}</option>
           ))}
         </select>
       ) : (fieldDef as FieldDefWithEnum).enum ? (
@@ -522,7 +547,7 @@ function FieldRow({
           disabled={readOnly}
           unit={(fieldDef as { unit?: string }).unit}
           min={minForBound(fieldDef)}
-          max={maxForBound(fieldDef)}
+          max={capMax !== undefined ? Math.min(capMax, maxForBound(fieldDef) ?? capMax) : maxForBound(fieldDef)}
         />
       ) : isTagField(fieldDef) ? (
         <TagInput
@@ -573,65 +598,140 @@ function FieldRow({
   );
 }
 
-// ─── Cap helpers ────────────────────────────────────────────────────────────
+// ─── Cap helpers (TR5 — per-field, kind-aware; team-caps.ts) ───────────────
 
-/**
- * Determine which zone we are in based on current bound values + profile config.
- * Returns one of:
- *   'no-config'         — profileConfig is null/undefined; render as today
- *   'approvers-dormant' — approvers configured, no caps. Intent is still
- *                          encrypted for them but they don't gate any action.
- *   'within-cap'        — caps configured, all bounds at or below every cap
- *   'above-approvers'   — at least one bound exceeds its cap, AND approvers set
- *   'hard-ceiling'      — at least one bound exceeds its cap, AND no approvers
- */
-type CapZone = 'no-config' | 'approvers-dormant' | 'within-cap' | 'above-approvers' | 'hard-ceiling';
-
-function computeCapZone(
-  boundsValues: Record<string, string>,
-  profileConfig: ProfileConfig | null | undefined,
-): CapZone {
-  if (!profileConfig) return 'no-config';
-  const caps = profileConfig.caps;
-  // Defensive: legacy / partial records may be missing `approvers`. Treat
-  // missing or non-array as "no approvers".
-  const hasApprovers = Array.isArray(profileConfig.approvers) && profileConfig.approvers.length > 0;
-  const hasCaps = caps && Object.keys(caps).length > 0;
-
-  if (!hasCaps) {
-    // No caps configured: the only opt-in left is approvers + intent
-    // encryption. If neither, render as today.
-    return hasApprovers ? 'approvers-dormant' : 'no-config';
-  }
-
-  let anyViolating = false;
-  for (const [key, cap] of Object.entries(caps)) {
-    const raw = boundsValues[key];
-    if (raw === '' || raw === undefined) continue;
-    const val = Number(raw);
-    if (!isNaN(val) && val > cap) {
-      anyViolating = true;
-      break;
-    }
-  }
-  if (!anyViolating) return 'within-cap';
-  return hasApprovers ? 'above-approvers' : 'hard-ceiling';
+/** This field's team-cap state, or null when it carries no cap at all. */
+export interface FieldCapState {
+  kind: CapKind;
+  cap: number | string;
+  /** Current input value exceeds the cap. */
+  violating: boolean;
 }
 
-/** Returns the set of bound keys that currently violate their cap. */
-function violatingKeys(
-  boundsValues: Record<string, string>,
-  caps: Record<string, number> | undefined,
-): Set<string> {
-  const out = new Set<string>();
-  if (!caps) return out;
-  for (const [key, cap] of Object.entries(caps)) {
-    const raw = boundsValues[key];
-    if (raw === '' || raw === undefined) continue;
-    const val = Number(raw);
-    if (!isNaN(val) && val > cap) out.add(key);
+export function fieldCapState(
+  key: string,
+  fieldDef: FieldDef,
+  value: string,
+  profileConfig: ProfileConfig | null | undefined,
+): FieldCapState | null {
+  if (!profileConfig || !isCapped(profileConfig, key)) return null;
+  const cap = profileConfig.caps![key];
+  const kind = effectiveCapKind(profileConfig, fieldDef as CapFieldShape, key);
+  let violating = false;
+  if (typeof cap === 'number') {
+    const n = value === '' ? NaN : Number(value);
+    violating = !Number.isNaN(n) && n > cap;
+  } else if (typeof cap === 'string' && value !== '') {
+    const bt = (fieldDef as { boundType?: { kind?: string; values?: readonly string[] } }).boundType;
+    violating = bt?.kind === 'enum' ? enumExceedsCap(bt.values ?? [], cap, value) : false;
   }
-  return out;
+  return { kind, cap, violating };
+}
+
+/**
+ * The seed value for ONE bound field, with a hard team cap applied —
+ * shared by the initial `useState` seed and the late-arriving-config
+ * re-seed effect below (GateWizardPage fetches `profile` and the team
+ * `profileConfig` independently; `profile` — and so this editor's mount —
+ * routinely resolves first, with `profileConfig` still null). Pulled out
+ * as its own pure function specifically so the "config arrives after
+ * mount" ordering is unit-testable without rendering the component.
+ *
+ * `rawValue` is the value BEFORE any cap is considered (the profile's own
+ * seed/default, or whatever is already in the input). A HARD numeric cap
+ * clamps it down (or seeds AT the cap when there is nothing else to
+ * default to — the mockup's "Max email age" starts at exactly the team
+ * limit, never empty); a HARD enum cap clamps it down to the cap only
+ * when it would otherwise exceed it (never changes an already-compliant
+ * choice, e.g. "none" is left as "none" under a cap of "none"). No cap, or
+ * an 'approval' kind cap (above-cap is allowed, not clamped away): the raw
+ * value passes through unchanged.
+ */
+export function seedBoundValue(
+  key: string,
+  fieldDef: FieldDef,
+  rawValue: string,
+  profileConfig: ProfileConfig | null | undefined,
+): string {
+  if (!profileConfig || !isCapped(profileConfig, key)) return rawValue;
+  const kind = effectiveCapKind(profileConfig, fieldDef as CapFieldShape, key);
+  const cap = profileConfig.caps![key];
+  if (kind !== 'hard') return rawValue;
+  if (typeof cap === 'number') {
+    const n = rawValue === '' ? NaN : Number(rawValue);
+    return String(Number.isNaN(n) ? cap : Math.min(n, cap));
+  }
+  if (typeof cap === 'string') {
+    const bt = (fieldDef as { boundType?: { kind?: string; values?: readonly string[] } }).boundType;
+    const values = bt?.kind === 'enum' ? bt.values ?? [] : [];
+    return rawValue !== '' && enumExceedsCap(values, cap, rawValue) ? cap : rawValue;
+  }
+  return rawValue;
+}
+
+/** The index of `cap` in an enum field's (permissive-first) `values`, for
+ *  FieldRow's `enumAllowedFrom` — undefined when not an enum cap. */
+export function enumAllowedFromIndex(fieldDef: FieldDef, cap: number | string): number | undefined {
+  if (typeof cap !== 'string') return undefined;
+  const bt = (fieldDef as { boundType?: { kind?: string; values?: readonly string[] } }).boundType;
+  if (bt?.kind !== 'enum') return undefined;
+  const idx = (bt.values ?? []).indexOf(cap);
+  return idx === -1 ? undefined : idx;
+}
+
+/** "Every <unit> above <cap>..." — `<unit>` is the field's declared unit
+ *  when it has a real one (days, %, a currency symbol), else the field's
+ *  own human label, lower-cased (a count field, e.g. "emails per day", has
+ *  no unit word of its own — "every count above 50" would read as nonsense). */
+export function capUnitLabel(key: string, fieldDef: FieldDef): string {
+  const u = formatUnit((fieldDef as { unit?: string }).unit);
+  return u || humanizeFieldName(key, fieldDef).toLowerCase();
+}
+
+export function approverListLabel(profileConfig: ProfileConfig | null | undefined, approverNames: string[] | undefined): string {
+  if (approverNames && approverNames.length > 0) return approverNames.join(' or ');
+  const ids = profileConfig?.approvers ?? [];
+  return ids.length > 0 ? ids.join(' or ') : 'your team\'s approvers';
+}
+
+/** One field's cap note — rendered directly under its input. Matches the
+ *  signed-off mockup (temp/team-caps-mockup/index.html, screen 2) wording. */
+function renderFieldCapNote(
+  key: string,
+  fieldDef: FieldDef,
+  state: FieldCapState,
+  profileConfig: ProfileConfig | null | undefined,
+  approverNames: string[] | undefined,
+): ReactNode {
+  const isReadLimit = (fieldDef as { enforcedBy?: string }).enforcedBy === 'gatekeeper';
+  const isEnum = (fieldDef as { boundType?: { kind?: string } }).boundType?.kind === 'enum';
+
+  if (state.kind === 'hard') {
+    if (isEnum) {
+      return (
+        <span className="cap-note hard" data-testid={`cap-note-${key}`}>
+          Disabled by your team&apos;s policy — {humanizeFieldName(key, fieldDef).toLowerCase()} is capped at{' '}
+          {String(state.cap)} for this profile.
+        </span>
+      );
+    }
+    return (
+      <span className="cap-note hard" data-testid={`cap-note-${key}`}>
+        Team limit {String(state.cap)}
+        {isReadLimit ? ' — read limits are always hard, no approval path exists for this cap.' : ''}
+      </span>
+    );
+  }
+
+  // 'approval' — never reachable for an enum or read-limit field (both are
+  // forced to 'hard' by effectiveCapKind), so this is always a plain number.
+  const unit = capUnitLabel(key, fieldDef);
+  const approvers = approverListLabel(profileConfig, approverNames);
+  return (
+    <span className="cap-note soft" data-testid={`cap-note-${key}`}>
+      Every {unit} above {String(state.cap)} goes to {approvers} for approval.
+    </span>
+  );
 }
 
 // ─── BoundsEditor ───────────────────────────────────────────────────────────
@@ -651,6 +751,17 @@ export function BoundsEditor({
   const boundsSchema = profile.boundsSchema;
   const contextSchema = profile.scopeSchema;
 
+  // TR7/TR6 (work-plan "Added 2026-10-14"): a gatekeeper-enforced (read
+  // limit) field normally stays hidden here (enforcement is local, not the
+  // Authority Server's) — EXCEPT when the team has put a cap on it. A team
+  // read cap is always hard and gets SIGNED into the mandate as a ceiling
+  // (suveren-as TR6), so the AS now refuses a team mandate that omits it —
+  // it must become an editable (if capped/clamped) control here, or mandate
+  // creation would break for every team that caps a read field. See mockup
+  // screen 2's "Max email age" row.
+  const isTeamCappedLocalField = (key: string): boolean =>
+    !!profileConfig && isCapped(profileConfig, key);
+
   const boundsFields = boundsSchema
     ? Object.entries(boundsSchema.fields).filter(([key, def]) => {
         if (key === 'profile' || key === 'path') return false;
@@ -666,15 +777,18 @@ export function BoundsEditor({
         // integration, where they are live-editable; the grant keeps its copy
         // only as a fallback for authorizations issued before that existed.
         // Profile-driven, so any bound can declare where it is enforced.
-        if ((def as { enforcedBy?: string }).enforcedBy === 'gatekeeper') return false;
+        // TR6/TR7: unless the team capped it — see isTeamCappedLocalField above.
+        if ((def as { enforcedBy?: string }).enforcedBy === 'gatekeeper' && !isTeamCappedLocalField(key)) return false;
         return true;
       })
     : [];
 
-  /** Locally-enforced bounds, hidden above — surfaced as a pointer, not a control. */
+  /** Locally-enforced bounds, hidden above — surfaced as a pointer, not a
+   *  control. Excludes any the team capped (TR6/TR7) — those are shown
+   *  above instead, not pointed at. */
   const localBoundNames = boundsSchema
     ? Object.entries(boundsSchema.fields)
-        .filter(([, def]) => (def as { enforcedBy?: string }).enforcedBy === 'gatekeeper')
+        .filter(([key, def]) => (def as { enforcedBy?: string }).enforcedBy === 'gatekeeper' && !isTeamCappedLocalField(key))
         .filter(([, def]) => (def as { enforced?: boolean }).enforced !== false)
         .map(([key, def]) => (def as { displayName?: string }).displayName ?? key)
     : [];
@@ -688,7 +802,9 @@ export function BoundsEditor({
 
   const initialBoundsValues: Record<string, string> = {};
   for (const [key, fieldDef] of boundsFields) {
-    initialBoundsValues[key] = seedForBound(fieldDef, seedBounds[key]);
+    // TR5 — a HARD team cap: never seed (or carry forward, e.g. Copy/Edit) a
+    // value already above it. See seedBoundValue's doc comment.
+    initialBoundsValues[key] = seedBoundValue(key, fieldDef, seedForBound(fieldDef, seedBounds[key]), profileConfig);
   }
 
   const initialContextValues: Record<string, string> = {};
@@ -701,6 +817,43 @@ export function BoundsEditor({
   // Display names from scope discovery (e.g. calendar IDs → calendar names).
   // Values stay the enforced truth; labels are UI sugar stored locally.
   const [contextLabels, setContextLabels] = useState<Record<string, Record<string, string>>>({});
+
+  // Bug (real-gateway e2e, 2026-10-15): GateWizardPage fetches `profile` and
+  // the team `profileConfig` independently — `profile` routinely resolves
+  // first, mounting this editor (and running the `initialBoundsValues` seed
+  // above) while `profileConfig` is still null. The result: a hard-capped
+  // numeric field seeded '' instead of its cap, and a hard-capped enum field
+  // kept its UNCAPPED default selected inside a now-disabled control — both
+  // sign as a value the team cap refuses (422 cap_exceeded). Root fix: when
+  // `profileConfig` later arrives (or changes), re-apply `seedBoundValue` for
+  // every field the person has not yet touched — `touchedBoundsKeys` is the
+  // one place "touched" is recorded (handleBoundsChange below), so a value
+  // the person already typed is never clobbered. Runs on every
+  // `profileConfig` change (including the very first, redundantly re-seeding
+  // with the same value `initialBoundsValues` already used) — idempotent,
+  // so that redundancy costs nothing.
+  const touchedBoundsKeysRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    setBoundsValues(prev => {
+      let changed = false;
+      const next = { ...prev };
+      for (const [key, fieldDef] of boundsFields) {
+        if (touchedBoundsKeysRef.current.has(key)) continue;
+        // A field that only became visible once profileConfig arrived (a
+        // team-capped, otherwise-hidden gatekeeper field — see
+        // isTeamCappedLocalField above) has no prior entry at all; seed it
+        // from scratch exactly like the initial computation does.
+        const raw = prev[key] !== undefined ? prev[key] : seedForBound(fieldDef, seedBounds[key]);
+        const seeded = seedBoundValue(key, fieldDef, raw, profileConfig);
+        if (next[key] !== seeded) { next[key] = seeded; changed = true; }
+      }
+      return changed ? next : prev;
+    });
+    // Deliberately only `profileConfig` — `boundsFields`/`seedBounds` are
+    // re-derived from `profile`/`initialBounds`/`initialFrame` props that
+    // never change after this editor mounts for one ceremony.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileConfig]);
 
   // Find the integration manifest (if any) whose `profile` matches the profile
   // being authorized AND which declares contextDiscovery for one or more of
@@ -719,11 +872,30 @@ export function BoundsEditor({
       .catch(() => setDiscoveryIntegration(null));
   }, [profile.id]);
 
-  // Compute cap zone reactively from current bound values
-  const zone = computeCapZone(boundsValues, profileConfig);
-  const violating = violatingKeys(boundsValues, profileConfig?.caps);
+  // TR5 — per-field cap state, reactive to the current bound values.
+  const capStates: Record<string, FieldCapState | null> = {};
+  for (const [key, fieldDef] of boundsFields) {
+    capStates[key] = fieldCapState(key, fieldDef, boundsValues[key] ?? '', profileConfig);
+  }
+  /** Any field still violating a HARD cap — should be rare (the inputs
+   *  themselves already clamp to a hard cap), but a seed/prefill path this
+   *  component doesn't control for (e.g. a caller passing initialBounds
+   *  directly into state some other way) could still land one here. */
+  const hardViolatingKeys = Object.entries(capStates)
+    .filter(([, s]) => s?.kind === 'hard' && s.violating)
+    .map(([key]) => key);
+
+  /** Approvers configured, but no caps at all on this profile — informational
+   *  only (nothing gates), shown once above the fields. */
+  const approversDormant =
+    !!profileConfig &&
+    (profileConfig.approvers?.length ?? 0) > 0 &&
+    boundsFields.every(([key]) => !isCapped(profileConfig, key));
 
   const handleBoundsChange = (key: string, value: string) => {
+    // Recorded BEFORE the state update so the late-config re-seed effect
+    // above never clobbers a value the person is actively editing.
+    touchedBoundsKeysRef.current.add(key);
     setBoundsValues(prev => ({ ...prev, [key]: value }));
   };
 
@@ -756,14 +928,12 @@ export function BoundsEditor({
     onConfirm(bounds, context, contextLabels);
   };
 
-  /** Clamp all violating bounds to their cap value, then proceed. */
+  /** Clamp every still-HARD-violating bound down to its cap value, then proceed. */
   const handleSaveBelowCap = () => {
-    const caps = profileConfig?.caps ?? {};
     const clamped = { ...boundsValues };
-    for (const key of violating) {
-      if (caps[key] !== undefined) {
-        clamped[key] = String(caps[key]);
-      }
+    for (const key of hardViolatingKeys) {
+      const cap = capStates[key]?.cap;
+      if (cap !== undefined) clamped[key] = String(cap);
     }
     setBoundsValues(clamped);
     // Build bounds from clamped values inline (state update is async)
@@ -786,147 +956,69 @@ export function BoundsEditor({
     onConfirm(bounds, context, contextLabels);
   };
 
-  // ─── Render cap indicator for a single bound key ───────────────────────
+  // ─── "Approvers set, no caps" informational box (no per-field note applies) ──
 
-  const renderCapIndicator = (key: string) => {
-    const caps = profileConfig?.caps;
-    if (!caps || caps[key] === undefined) return null;
-    const cap = caps[key];
-    const isViolating = violating.has(key);
-
-    if (zone === 'hard-ceiling' && isViolating) {
-      return (
-        <span style={{ fontSize: '0.72rem', color: 'var(--danger)', marginLeft: '0.5rem', whiteSpace: 'nowrap' }}>
-          Cap: {cap} — exceeds team ceiling
-        </span>
-      );
-    }
-    if (zone === 'above-approvers' && isViolating) {
-      return (
-        <span style={{ fontSize: '0.72rem', color: 'var(--warning)', marginLeft: '0.5rem', whiteSpace: 'nowrap' }}>
-          Cap: {cap} — above cap
-        </span>
-      );
-    }
-    // within-cap (or no violation on this specific key)
+  const renderApproversDormantNote = () => {
+    if (!approversDormant) return null;
+    const names = approverListLabel(profileConfig, approverNames);
     return (
-      <span style={{ fontSize: '0.72rem', color: 'var(--success)', marginLeft: '0.5rem', whiteSpace: 'nowrap' }}>
-        Cap: {cap} ok
-      </span>
+      <div style={{
+        marginTop: '0.75rem',
+        padding: '0.75rem 1rem',
+        border: '1px solid var(--accent)',
+        borderRadius: '0.375rem',
+        background: 'var(--bg-elevated)',
+        fontSize: '0.82rem',
+      }}>
+        <div style={{ fontWeight: 600, color: 'var(--accent)', marginBottom: '0.25rem' }}>
+          Profile approvers: {names}
+        </div>
+        <div>
+          No caps are set on this profile, so {names} won&apos;t gate any
+          action under this mandate. Your intent will still be encrypted
+          and shared with them as an accountability record &mdash; they can
+          read what you authorised, even though they aren&apos;t reviewing
+          individual actions.
+        </div>
+      </div>
     );
   };
 
-  // ─── Zone footer panel ──────────────────────────────────────────────────
-
-  const renderZoneFooter = () => {
-    if (zone === 'no-config') return null;
-
-    if (zone === 'approvers-dormant') {
-      const names = (approverNames && approverNames.length > 0) ? approverNames.join(', ') : 'the configured approvers';
-      return (
-        <div style={{
-          marginTop: '0.75rem',
-          padding: '0.75rem 1rem',
-          border: '1px solid var(--accent)',
-          borderRadius: '0.375rem',
-          background: 'var(--bg-elevated)',
-          fontSize: '0.82rem',
-        }}>
-          <div style={{ fontWeight: 600, color: 'var(--accent)', marginBottom: '0.25rem' }}>
-            Profile approvers: {names}
-          </div>
-          <div>
-            No caps are set on this profile, so {names} won&apos;t gate any
-            action under this mandate. Your intent will still be encrypted
-            and shared with them as an accountability record &mdash; they can
-            read what you authorised, even though they aren&apos;t reviewing
-            individual actions.
-          </div>
+  /** A still-HARD-violating field (see hardViolatingKeys's doc comment) —
+   *  defensive fallback; the per-field inputs already clamp to a hard cap,
+   *  so this should rarely render. */
+  const renderHardViolationFallback = () => {
+    if (hardViolatingKeys.length === 0) return null;
+    const admin = adminName ?? 'the team admin';
+    return (
+      <div style={{
+        marginTop: '0.75rem',
+        padding: '0.75rem 1rem',
+        border: '1px solid var(--danger)',
+        borderRadius: '0.375rem',
+        background: 'var(--bg-elevated)',
+        fontSize: '0.82rem',
+      }}>
+        <div style={{ fontWeight: 600, color: 'var(--danger)', marginBottom: '0.25rem' }}>Hard team ceiling.</div>
+        <div style={{ marginBottom: '0.75rem' }}>
+          Lower the bound(s) above, or ask {admin} to add an approver path above the cap.
         </div>
-      );
-    }
-
-    if (zone === 'within-cap') {
-      return (
-        <div style={{
-          marginTop: '0.75rem',
-          padding: '0.75rem 1rem',
-          border: '1px solid var(--border)',
-          borderRadius: '0.375rem',
-          background: 'var(--bg-elevated)',
-          fontSize: '0.82rem',
-        }}>
-          <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>Within all team caps — your responsibility.</div>
-        </div>
-      );
-    }
-
-    if (zone === 'above-approvers') {
-      const names = (approverNames && approverNames.length > 0) ? approverNames.join(', ') : 'the required approvers';
-      return (
-        <div style={{
-          marginTop: '0.75rem',
-          padding: '0.75rem 1rem',
-          border: '1px solid var(--warning)',
-          borderRadius: '0.375rem',
-          background: 'var(--bg-elevated)',
-          fontSize: '0.82rem',
-        }}>
-          <div style={{ fontWeight: 600, color: 'var(--warning)', marginBottom: '0.25rem' }}>Above team cap.</div>
-          <div>
-            <strong>Over-cap actions</strong> will require approval from you and {names}.
-            Within-cap actions run per the mode you choose.
-          </div>
-        </div>
-      );
-    }
-
-    if (zone === 'hard-ceiling') {
-      // Find the first violating bound and its cap for the message
-      const firstViolatingKey = Array.from(violating)[0];
-      const cap = firstViolatingKey ? profileConfig?.caps?.[firstViolatingKey] : undefined;
-      const admin = adminName ?? 'the team admin';
-      return (
-        <div style={{
-          marginTop: '0.75rem',
-          padding: '0.75rem 1rem',
-          border: '1px solid var(--danger)',
-          borderRadius: '0.375rem',
-          background: 'var(--bg-elevated)',
-          fontSize: '0.82rem',
-        }}>
-          <div style={{ fontWeight: 600, color: 'var(--danger)', marginBottom: '0.25rem' }}>Hard team ceiling.</div>
-          <div style={{ marginBottom: '0.75rem' }}>
-            Team policy caps this at {cap ?? 'the configured limit'}.
-            Lower your bound or ask {admin} to add an approver path above the cap.
-          </div>
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
-            <button
-              type="button"
-              className="btn btn-secondary btn-sm"
-              onClick={handleSaveBelowCap}
-            >
-              Save below cap
+        <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <button type="button" className="btn btn-secondary btn-sm" onClick={handleSaveBelowCap}>
+            Save below cap
+          </button>
+          {onCancel && (
+            <button type="button" className="btn btn-ghost btn-sm" onClick={onCancel}>
+              Cancel
             </button>
-            {onCancel && (
-              <button
-                type="button"
-                className="btn btn-ghost btn-sm"
-                onClick={onCancel}
-              >
-                Cancel
-              </button>
-            )}
-          </div>
+          )}
         </div>
-      );
-    }
-
-    return null;
+      </div>
+    );
   };
 
-  // Whether the primary Continue button should be disabled
-  const continueBlocked = zone === 'hard-ceiling';
+  // Whether the primary Continue button should be disabled.
+  const continueBlocked = hardViolatingKeys.length > 0;
 
   return (
     <div>
@@ -968,29 +1060,34 @@ export function BoundsEditor({
             </div>
           </div>
           <div className="bounds-fields-grid">
-            {boundsFields.map(([key, fieldDef]) => (
-              <div key={`bounds-${key}`} style={{ display: 'contents' }}>
-                <FieldRow
-                  fieldKey={key}
-                  fieldDef={fieldDef}
-                  value={boundsValues[key]}
-                  onChange={handleBoundsChange}
-                  prefix="bounds"
-                  readOnly={readOnly}
-                  twoColumn
-                />
-                {/* Cap indicator appended after the input column, inside the grid row */}
-                {zone !== 'no-config' && profileConfig?.caps?.[key] !== undefined && (
-                  <div style={{ gridColumn: '2 / 3', display: 'flex', alignItems: 'center', paddingBottom: '0.5rem' }}>
-                    {renderCapIndicator(key)}
-                  </div>
-                )}
-              </div>
-            ))}
+            {boundsFields.map(([key, fieldDef]) => {
+              const capState = capStates[key];
+              return (
+                <div key={`bounds-${key}`} style={{ display: 'contents' }}>
+                  <FieldRow
+                    fieldKey={key}
+                    fieldDef={fieldDef}
+                    value={boundsValues[key]}
+                    onChange={handleBoundsChange}
+                    prefix="bounds"
+                    readOnly={readOnly}
+                    twoColumn
+                    capMax={capState?.kind === 'hard' && typeof capState.cap === 'number' ? capState.cap : undefined}
+                    enumAllowedFrom={capState?.kind === 'hard' ? enumAllowedFromIndex(fieldDef, capState.cap) : undefined}
+                  />
+                  {/* TR5 — one note per capped field, directly under its input. */}
+                  {capState && (
+                    <div style={{ gridColumn: '2 / 3', display: 'flex', alignItems: 'center', paddingBottom: '0.5rem' }}>
+                      {renderFieldCapNote(key, fieldDef, capState, profileConfig, approverNames)}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
 
-          {/* Zone footer */}
-          {renderZoneFooter()}
+          {renderApproversDormantNote()}
+          {renderHardViolationFallback()}
 
           {/* Locally-enforced limits are not shown as controls here (this
               section is Authority-Server-enforced), but the user must still

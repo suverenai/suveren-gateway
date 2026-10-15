@@ -455,8 +455,21 @@ export function createAuthRouter(
           console.error('[Control Plane] Failed to remove integrations:', err);
         }
         vault.wipe();
-        // Re-derive key after wipe (wipe clears the salt, need a fresh one)
+        // Real-gateway e2e (2026-10-15): `wipe()` calls `clearKey()`, which
+        // also nulls `spSessionCookie` (and `sessionUser`) — the SAME cookie
+        // `vault.setSpCookie(sessionCookie)` just set above, now gone again.
+        // `sessionUser` gets explicitly re-set below (line ~470), unconditionally,
+        // so it was never actually missing by the time this request answers —
+        // but nothing re-set the cookie, so every`vault.getSpCookie()` read for
+        // the rest of this session (e.g. internal-content-crypto.ts's encrypt/
+        // decrypt routes, read by an AI tool call made right after an account
+        // switch) returned null, and every one of those calls failed with "no
+        // Authority Server session" — reproduced live: "Different user
+        // confirmed — wiping vault…" immediately followed by "Failed to submit
+        // approval proposal: no Authority Server session". Re-derive the key
+        // (wipe cleared the salt) AND restore the cookie the wipe just erased.
         await vault.deriveAndSetKey(apiKey);
+        vault.setSpCookie(sessionCookie);
       }
 
       // Session length: the AS reports when THIS session ends (30 days, given

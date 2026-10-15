@@ -814,16 +814,40 @@ function createGatedToolHandlerInner(
       // read and silently get NO enforcement because its profile happened not
       // to list one — fail-open by omission, the exact shape of the original
       // hole.
+      //
+      // TR7 (work-plan "Added 2026-10-14" — team permissions, above-cap
+      // approval, read limits; direction: content/0.7/review.md "A group can
+      // cap reads and capability switches"): the "local wins" rule above is
+      // Personal-mode only (protocol.md rule 8, unchanged). In a TEAM
+      // workspace the local setting must never reach PAST what the team
+      // signed into the mandate as its read ceiling (TR6, AS-side — a team
+      // read cap is always hard and gets signed into `read_max_age_days`) —
+      // otherwise an owner's own generous integration setting would silently
+      // override a limit their team admin deliberately capped. So in team
+      // mode the effective window is `min(local, signed)`, not "local wins".
+      // `isTeamGroup` returns `undefined` when either the authorization's own
+      // groupId or the account's Personal group id isn't known yet (still
+      // loading, or `state.cache` is a bare test double that doesn't
+      // implement it) — read as Personal/unchanged in that case: there is no
+      // Authority Server backstop for read enforcement to fail closed to
+      // (reads carry no ticket), so an uncertain status must never be read as
+      // "team" and apply a ceiling nobody actually confirmed.
       const hasAgeDimension = Boolean(readAdapter?.ageField);
       let readMaxAge: number | null = null;
       if (hasAgeDimension) {
         const localAge = integrationManager.getReadAgeDays(tool.integrationId);
-        readMaxAge = localAge ?? (ageBoundField
+        const signedAge = ageBoundField
           ? maxReadAgeDays(
               matchingAuths.map(a => (a.bounds ?? a.frame) as Record<string, string | number> | undefined),
               ageBoundField,
             )
-          : null);
+          : null;
+        const isTeam = typeof state.cache?.isTeamGroup === 'function'
+          ? state.cache.isTeamGroup(matchingAuths[0]?.groupId)
+          : undefined;
+        readMaxAge = isTeam === true && signedAge !== null
+          ? (localAge !== null ? Math.min(localAge, signedAge) : signedAge)
+          : (localAge ?? signedAge);
         // FAIL-CLOSED (F11): no window from either source. An omitted window
         // must never be read as "all history" — that was the pentest hole.
         if (readMaxAge === null) {
@@ -1570,52 +1594,91 @@ function createGatedToolHandlerInner(
 
           if (err instanceof SPReceiptError && err.statusCode === 409) {
             // P8.2: SP returned approval_required — this action exceeds the team cap
-            // for an above-cap authority. Route to per-action multi-party approval:
-            // creator + all profile approvers must approve before execution.
-            const spBody = err.body as {
+            // for an above-cap authority. Route to per-action multi-party approval.
+            //
+            // SECURITY FIX (2026-10-15, found while verifying the suveren-as
+            // review_above_cap fix end-to-end): every AS refusal uses the
+            // uniform `{ approved: false, errors: [{ code, ..., approvers }] }`
+            // envelope (error-envelope.ts) — `approvers` lives inside
+            // `errors[0]`, never at the top level of the body. Reading
+            // `err.body.approvers` directly was always `undefined`, so this
+            // branch ALWAYS fell through to the "no approvers" fallback below
+            // (which reads `approvers_frozen` — an unrelated, delegation-intent
+            // field, never the TR5 above-cap approver list) and ended up
+            // naming only the proposal's own creator as its sole pending
+            // approver. This went unnoticed because no mandate ever reached
+            // this code path live before the review_above_cap fix (every call
+            // took the domain-deferred branch instead) — now that it does,
+            // fixed at the source: read `approvers` from `errors[0]`.
+            const rawBody = err.body as { errors?: Array<Record<string, unknown>> } & Record<string, unknown>;
+            // The real AS envelope first; a bare body only as a fallback.
+            const spBody = (rawBody?.errors?.[0] ?? rawBody) as {
               approvers?: string[];
               authorizationId?: string;
               field?: string;
               cap?: number;
-            };
+            } | undefined;
             // Prefer approvers from the 409 body; fall back to frameMeta frozen list.
-            let pendingApprovers: string[] = spBody.approvers ?? [];
+            let pendingApprovers: string[] = spBody?.approvers ?? [];
+            // Fetched at most once, lazily — only the branches that actually
+            // need it (the empty-roster fallback, and the TR5 exclusion
+            // below) pay for the round trip.
+            let summary: Awaited<ReturnType<typeof state.spClient.getAuthorizationSummary>> | undefined;
+            const authSummary = async () => {
+              if (summary === undefined) {
+                try { summary = await state.spClient.getAuthorizationSummary(authzId); } catch { summary = null; }
+              }
+              return summary;
+            };
             if (pendingApprovers.length === 0) {
-              // Defensive fallback: fetch frameMeta to get approversFrozen
-              try {
-                const summary = await state.spClient.getAuthorizationSummary(authzId);
-                if (summary?.approvers_frozen) {
-                  pendingApprovers = summary.approvers_frozen;
-                }
-                if (summary?.created_by) {
-                  pendingApprovers = [summary.created_by, ...pendingApprovers];
-                }
-              } catch {
-                // best effort
-              }
-            } else {
-              // Always include creator at the front — Decision #4: above-cap = everyone reviews,
-              // creator INCLUDED regardless of authority-level mode.
-              try {
-                const summary = await state.spClient.getAuthorizationSummary(authzId);
-                if (summary?.created_by) {
-                  pendingApprovers = [summary.created_by, ...pendingApprovers];
-                }
-              } catch {
-                // best effort — proceed without creator in front
-              }
+              // Defensive fallback: fetch frameMeta to get approversFrozen.
+              const s = await authSummary();
+              if (s?.approvers_frozen) pendingApprovers = s.approvers_frozen;
+            }
+            // TR5 (content/0.7/review.md "Group roles…", rule 4; real-gateway
+            // e2e, 2026-10-15): the proposer of an above-cap action never
+            // counts as one of its own approvers in a TEAM-governed profile.
+            // Decision #4 ("above-cap = everyone reviews, creator INCLUDED
+            // regardless of authority-level mode") predates TR5 and is kept
+            // for every OTHER case — the owner-chosen `review_above_cap`
+            // mode OUTSIDE a team (the person names themself as their own
+            // sole approver — the published v0.7 conformance vector pins
+            // exactly this), and an unknown team status (never flip a
+            // long-standing behaviour on an uncertain read). Only a
+            // CONFIRMED team workspace (`isTeamGroup` returns `true`)
+            // excludes the creator — never adds them, and strips them even
+            // if the team's own roster happens to also list them as a
+            // configured approver (being configured does not make
+            // self-approval valid).
+            const isTeam = typeof state.cache?.isTeamGroup === 'function'
+              ? state.cache.isTeamGroup(auth.groupId)
+              : undefined;
+            // The mandate's owner — always fetched (not only when isTeam):
+            // recorded on the proposal as `createdBy` regardless of mode
+            // (item 2, 2026-10-15 — the card's "you can't approve your own
+            // action" / proposer-only views key off this), and used both
+            // below (exclude) and in the `else` (include, Decision #4).
+            const ownerId = (await authSummary())?.created_by;
+            if (isTeam === true) {
+              if (ownerId) pendingApprovers = pendingApprovers.filter(uid => uid !== ownerId);
+            } else if (ownerId) {
+              pendingApprovers = [ownerId, ...pendingApprovers];
             }
             const uniqueApprovers = [...new Set(pendingApprovers)];
+            // PE1 decision 3 — the mandate owner is ALWAYS a recipient of the
+            // proposal's encrypted content (so they can see what their own
+            // authority is being asked to cover), independent of the TR5
+            // exclusion above, which is about who may APPROVE, not who may
+            // READ. Deduped: in the owner-chosen (non-team) case the owner
+            // is typically already IN `uniqueApprovers` (they named
+            // themselves), so this adds nothing new there.
+            const recipientUserIds = ownerId ? [...new Set([ownerId, ...uniqueApprovers])] : uniqueApprovers;
 
             try {
               const enrichedArgs = await attachImagePreview(args);
               // Item 7 — never put scope-constrained values on the wire;
               // see wireExecutionContext's doc comment.
               const wireExecCtx = wireExecutionContext(auth.profileId, execution);
-              // PE1 decision 3 — `uniqueApprovers` already carries the
-              // creator (owner) first, so it IS the full recipient set
-              // besides the submitter (added automatically by the control
-              // plane) — see the dedup above.
               const { proposal, unreadableFor } = await state.spClient.submitProposal({
                 authorizationId: authzId,
                 profileId: auth.profileId,
@@ -1625,7 +1688,8 @@ function createGatedToolHandlerInner(
                 toolArgs: enrichedArgs,
                 executionContext: wireExecCtx,
                 pendingApprovers: uniqueApprovers,
-                recipientUserIds: uniqueApprovers,
+                recipientUserIds,
+                ...(ownerId ? { createdBy: ownerId } : {}),
               });
               // AU4 — see the deferred-commitment branch above for why.
               const previewHash = await computeSubmissionPreviewHash(

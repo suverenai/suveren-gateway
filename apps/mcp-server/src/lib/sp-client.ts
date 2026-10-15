@@ -619,6 +619,26 @@ export class SPClient {
   }
 
   /**
+   * One proposal by id, whatever its status — `GET /api/proposals/:id`
+   * (the AS admits the creator, an approver, or the authorization's owner;
+   * this gateway only ever calls it for an id it itself submitted, via
+   * proposalSubmissions, so the creator case always applies). Used by the
+   * `/internal/my-pending-proposals` stand-in (bin/http.ts) — see that
+   * route's doc comment for why it exists at all: the AS has no endpoint
+   * to list "proposals I created" scoped by creator, only `?domain=`,
+   * `?status=committed/rejected`, and `?approver=me`, none of which ever
+   * match an above-cap proposal that has no pendingDomains unless the
+   * caller also happens to be a pendingApprover.
+   */
+  async getProposal(id: string): Promise<SPProposal | null> {
+    const res = await this.fetch(`/api/proposals/${encodeURIComponent(id)}`);
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`SP proposal request failed: ${res.status}`);
+    const data = await res.json() as { proposal: SPProposal };
+    return data.proposal;
+  }
+
+  /**
    * Get proposals that have been fully committed and are ready for execution.
    */
   async getCommittedProposals(): Promise<SPProposal[]> {

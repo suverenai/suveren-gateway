@@ -117,7 +117,9 @@ function AuthCard({
   if (itemConfig?.caps && mode === 'team') {
     for (const [k, v] of boundsEntries) {
       const cap = itemConfig.caps[k];
-      if (cap !== undefined && Number(v) > cap) {
+      // TR5 — caps may now also carry a STRING (enum) value; this display
+      // only ever compared numeric bounds, so skip anything that isn't one.
+      if (typeof cap === 'number' && Number(v) > cap) {
         aboveCapByKey.set(k, { authorized: Number(v), cap });
       }
     }

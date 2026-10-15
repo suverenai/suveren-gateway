@@ -13,7 +13,7 @@ import { formatScopeValue } from '../lib/scope-labels';
 import { mandateRight } from '../lib/mandate-rights';
 import { replacedOutcomeArgs, replacedWithdrawRoute } from '../lib/reject-outcome';
 import type { AgentProfile, AgentBoundsParams, AgentScopeParams } from '@hap/core';
-import type { ProfileConfig } from '../lib/sp-client';
+import { effectiveGrantors, type ProfileConfig } from '../lib/sp-client';
 
 /** An existing active grant under the same profile, with its local scope. */
 interface ExistingGrant {
@@ -479,7 +479,8 @@ export function AgentReviewPage() {
   const right = mandateRight({
     isPersonal: authData.isPersonal,
     configLoaded: profileConfigLoaded,
-    approvers: profileConfig?.approvers,
+    // TR5 — who may GRANT, not who may approve above cap.
+    grantors: profileConfig ? effectiveGrantors(profileConfig) : undefined,
     userId: user?.id,
     profileName: profileDisplayName(authData.profileId),
     teamName: authData.groupName,

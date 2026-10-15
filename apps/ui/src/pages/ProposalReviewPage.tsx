@@ -15,6 +15,8 @@ import { isAutomatedBrowser, AUTOMATION_REFUSAL } from '../lib/automation';
 import { isTestSetupAction, profileIdentity } from '../lib/profile-identity';
 import { rejectOutcomeArgs, changeNeededOutcomeArgs } from '../lib/reject-outcome';
 import { contentHashForDecision, noteRecipients } from '../lib/use-proposal-content';
+import { useApprovalTeamInfo } from '../lib/approval-team-info';
+import { isProposer as isProposerOf, visibleApprovers } from '../lib/proposal-proposer';
 
 type QueueTab = 'awaiting-me' | 'awaiting-others' | 'all';
 type StatusFilter = 'pending' | 'all';
@@ -132,6 +134,36 @@ export function ProposalReviewPage() {
   useSSEEvent('proposal-rejected', fetchApprovedByMe);
   useVisiblePolling(fetchApprovedByMe, 30_000, `${userId}:${domain}`);
 
+  // Above-cap proposals I CREATED, still pending (2026-10-15, real-gateway
+  // e2e). Primary source: the AS's own creator-scoped query (suveren-as#89,
+  // GET /api/proposals?creator=me) — works across every device, not just
+  // this one. `getProposalsCreatedByMe` returns `null` on a 400, the one
+  // way to tell an OLDER AS that doesn't support the mode yet from
+  // "genuinely nothing pending" — only THEN fall back to the gateway's own
+  // local submission record (sp-client.ts's getMyPendingProposals doc
+  // comment: only ever sees proposals submitted through THIS gateway
+  // install). Never both at once — one list replaces the other outright,
+  // so a proposal can never appear twice.
+  const [myPendingProposals, setMyPendingProposals] = useState<Proposal[]>([]);
+
+  const fetchMyPendingProposals = useCallback(async () => {
+    try {
+      const fromAS = await spClient.getProposalsCreatedByMe();
+      if (fromAS !== null) {
+        setMyPendingProposals(fromAS);
+        return;
+      }
+      setMyPendingProposals(await spClient.getMyPendingProposals());
+    } catch {
+      // keep previous state
+    }
+  }, []);
+
+  useSSEEvent('proposal-added', fetchMyPendingProposals);
+  useSSEEvent('proposal-approved', fetchMyPendingProposals);
+  useSSEEvent('proposal-rejected', fetchMyPendingProposals);
+  useVisiblePolling(fetchMyPendingProposals, 30_000);
+
   // Initial load
   useEffect(() => {
     spClient.getIntegrationManifests()
@@ -151,6 +183,7 @@ export function ProposalReviewPage() {
     void fetchApproverProposals();
     void fetchMyProposals();
     void fetchApprovedByMe();
+    void fetchMyPendingProposals();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -256,20 +289,23 @@ export function ProposalReviewPage() {
   }, [fetchApproverProposals, fetchApprovedByMe]);
 
   // ─── Combined awaiting-others list ────────────────────────────────────
-  // Genuinely "awaiting others" = above-cap proposals I already approved that
-  // are still pending on other approvers. Review-mode domain proposals are NOT
-  // here — they're mine to approve and live under "Awaiting me".
+  // Genuinely "awaiting others" = above-cap proposals I already approved
+  // that are still pending on other approvers, PLUS above-cap proposals I
+  // CREATED that are still pending (myPendingProposals — see its own doc
+  // comment: a stand-in until the AS has a creator-scoped query). Review-mode
+  // domain proposals are NOT here — they're mine to approve and live under
+  // "Awaiting me".
   const awaitingOthersAll = useMemo(() => {
     const seen = new Set<string>();
     const result: Proposal[] = [];
-    for (const p of approvedByMeStillPending) {
+    for (const p of [...approvedByMeStillPending, ...myPendingProposals]) {
       if (!seen.has(p.id)) {
         seen.add(p.id);
         result.push(p);
       }
     }
     return result.sort((a, b) => b.createdAt - a.createdAt);
-  }, [approvedByMeStillPending]);
+  }, [approvedByMeStillPending, myPendingProposals]);
 
   // Badge counts for tab headers
   const awaitingMeCount = approverProposals.length + awaitingMeDomainItems.length;
@@ -387,6 +423,19 @@ export function ProposalReviewPage() {
                       alert(err instanceof Error ? err.message : 'Cancel failed');
                     }
                   }}
+                  onWithdraw={async () => {
+                    // No `shown_hash`: this card does not render the AU10
+                    // preview/request-context pipeline (ApprovalBody) that
+                    // produces one — nothing here is a "what was shown"
+                    // read to fingerprint, so it is omitted rather than
+                    // invented. `content_hash` still applies (PE1): the
+                    // proposal's own content fingerprint, independent of
+                    // any rendering.
+                    const contentHash = await contentHashForDecision(proposal);
+                    await spClient.withdrawProposal(proposal.id, undefined, contentHash);
+                    void fetchMyPendingProposals();
+                    void fetchApprovedByMe();
+                  }}
                 />
               ))}
             </div>
@@ -486,6 +535,10 @@ interface AwaitingOthersCardProps {
   proposal: Proposal;
   currentUserId: string;
   onCancel: () => void;
+  /** suveren-as#89 — the proposer withdraws their own still-pending
+   *  above-cap proposal (the Cancel/reject route is closed to them: TR5
+   *  excludes the proposer from pendingApprovers). */
+  onWithdraw: () => Promise<void>;
 }
 
 function formatAge(unixSeconds: number): string {
@@ -497,20 +550,55 @@ function formatAge(unixSeconds: number): string {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
-function AwaitingOthersCard({ proposal, currentUserId, onCancel }: AwaitingOthersCardProps) {
+function AwaitingOthersCard({ proposal, currentUserId, onCancel, onWithdraw }: AwaitingOthersCardProps) {
   const [cancelling, setCancelling] = useState(false);
+  const [withdrawing, setWithdrawing] = useState(false);
+  const [withdrawError, setWithdrawError] = useState('');
 
-  const approvedUserIds = Object.keys(proposal.approvedBy ?? {});
-  const pendingUserIds = (proposal.pendingApprovers ?? []).filter(uid => !(uid in (proposal.approvedBy ?? {})));
-  const isAboveCap = (proposal.pendingApprovers?.length ?? 0) > 0;
+  // TR5 (real-gateway e2e, 2026-10-15) — the SAME approver roster/name
+  // resolution as ApproverProposalCard, so the proposer's own "Awaiting
+  // others" view of this proposal reads identically to how an approver
+  // sees it: "Needs N approval(s) from: …", never a raw-id tally.
+  const team = useApprovalTeamInfo(proposal);
+  const isProposer = isProposerOf(proposal, currentUserId);
+  const approvers = visibleApprovers(proposal);
+  const approvedBy = proposal.approvedBy ?? {};
+  const approvedCount = Object.keys(approvedBy).length;
+  const isAboveCap = approvers.length > 0;
 
+  // Real-gateway e2e (2026-10-15, "Tom withdraws his own over-the-limit
+  // action"): `window.confirm()` is a BLOCKING native dialog — Playwright
+  // auto-dismisses every dialog it doesn't explicitly handle (returns
+  // `false`, as if Cancel was clicked, which is its documented default),
+  // so `if (!confirm(...)) return;` silently aborted before any network
+  // call: no error (the catch was never reached), the card never changed.
+  // Reproduced live and confirmed: the AS never saw a request at all.
+  // Root fix: no native confirm for either terminal action here, matching
+  // the "one click, no reason" decision this card family already applies
+  // to Approve/Reject/Change-needed (ApproverProposalCard; RJ2 decision
+  // 1) — Cancel/Withdraw were the only two outliers.
   const handleCancel = async () => {
-    if (!confirm('Cancel this action? All approvers will be notified.')) return;
     setCancelling(true);
     try {
       await onCancel();
     } finally {
       setCancelling(false);
+    }
+  };
+
+  // suveren-as#89 — the proposer's own way to end their still-pending
+  // above-cap proposal (the reject route is closed to them, see the
+  // `isProposer` branch below). A withdrawn proposal can never be
+  // approved/executed afterward.
+  const handleWithdraw = async () => {
+    setWithdrawing(true);
+    setWithdrawError('');
+    try {
+      await onWithdraw();
+    } catch (err) {
+      setWithdrawError(err instanceof Error ? err.message : 'Withdraw failed');
+    } finally {
+      setWithdrawing(false);
     }
   };
 
@@ -520,44 +608,94 @@ function AwaitingOthersCard({ proposal, currentUserId, onCancel }: AwaitingOther
     <div className="card id-card">
       <ProfileRail profileId={proposal.profileId} />
       <div className="id-body">
+      {/* Decided (real-gateway e2e, 2026-10-15): plain words only — same as
+          ApproverProposalCard — the "Above the team limit: …" line below
+          already says it; no "Above cap" jargon pill. */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
         <code style={{ fontSize: '0.85rem' }}>{proposal.tool.split('__').pop() ?? proposal.tool}</code>
         {testSetup && <span className="sim-mark">Test setup</span>}
-        {isAboveCap && (
-          <span style={{ fontSize: '0.65rem', padding: '0.15rem 0.4rem', borderRadius: '0.25rem', background: 'var(--accent-subtle)', color: 'var(--accent)', fontWeight: 600 }}>
-            Above cap
-          </span>
-        )}
         <span style={{ marginLeft: 'auto', fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
           {formatAge(proposal.createdAt)}
         </span>
       </div>
 
+      {/* TR5 — "Needs N approval(s) from: …", the SAME wording and name
+          resolution as ApproverProposalCard (never the old raw per-user
+          "X approved" / "Waiting on <uuid>" tally). */}
       {isAboveCap && (
-        <div style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginBottom: '0.5rem' }}>
-          {approvedUserIds.map(uid => (
-            <span key={uid} style={{ marginRight: '0.75rem', color: 'var(--success, green)' }}>
-              {uid === currentUserId ? 'You approved' : `${uid} approved`}
+        <div className="approver-progress" style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginBottom: '0.5rem' }}>
+          Needs {team.requiredApprovals} approval{team.requiredApprovals === 1 ? '' : 's'} from:{' '}
+          {approvers.map((uid, i) => (
+            <span key={uid} className={`who${uid in approvedBy ? ' done' : ''}`} style={{ marginLeft: i === 0 ? '0.25rem' : '0.5rem', color: uid in approvedBy ? 'var(--success)' : undefined }}>
+              {uid in approvedBy ? '✓ ' : ''}{team.nameOf(uid)}{uid === currentUserId ? ' (you)' : ''}
+              {i < approvers.length - 1 ? ',' : ''}
             </span>
           ))}
-          {pendingUserIds.map(uid => (
-            <span key={uid} style={{ marginRight: '0.75rem', color: 'var(--text-tertiary)' }}>
-              Waiting on {uid === currentUserId ? 'you' : uid}
-            </span>
-          ))}
+          {team.requiredApprovals > 1 && (
+            <span style={{ marginLeft: '0.5rem' }}>({approvedCount} of {team.requiredApprovals})</span>
+          )}
         </div>
       )}
 
-      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '0.5rem' }}>
-        <button
-          className="btn btn-ghost btn-sm"
-          style={{ color: 'var(--danger)' }}
-          onClick={handleCancel}
-          disabled={cancelling}
-        >
-          {cancelling ? 'Cancelling...' : 'Cancel'}
-        </button>
-      </div>
+      {/* TR5 — "Above the team limit: <field> <value> (limit <cap>). Requested
+          by <proposer>." Same construction as ApproverProposalCard
+          (team-caps.ts's findAboveCapViolation — built only from real data,
+          never a guess). */}
+      {team.aboveCapReason && (
+        <div className="over-limit-box" data-testid="above-cap-reason" style={{
+          display: 'flex', gap: '0.5rem', alignItems: 'flex-start',
+          background: 'var(--bg-main)', border: '1px solid var(--border)',
+          borderRadius: '0.5rem', padding: '0.6rem 0.8rem', marginBottom: '0.6rem', fontSize: '0.82rem',
+        }}>
+          <span style={{ color: 'var(--warning)', fontWeight: 700, whiteSpace: 'nowrap' }}>Above the team limit:</span>
+          <span>
+            {team.aboveCapReason.fieldLabel}
+            {team.aboveCapReason.value !== undefined ? ` ${team.aboveCapReason.value}` : ''} (limit {String(team.aboveCapReason.cap)}).{' '}
+            {proposal.createdBy ? `Requested by ${team.nameOf(proposal.createdBy)}.` : ''}
+          </span>
+        </div>
+      )}
+
+      {/* TR5 — the proposer can never approve their own action; said in
+          plain words here too, same as ApproverProposalCard, even though
+          this card never had an Approve button to replace. */}
+      {isAboveCap && isProposer && (
+        <p data-testid="cant-approve-own-action" style={{ fontSize: '0.82rem', color: 'var(--text-tertiary)', marginBottom: '0.5rem' }}>
+          <strong style={{ color: 'var(--danger)' }}>You can&apos;t approve your own action.</strong>
+        </p>
+      )}
+
+      {/* suveren-as#89 — the proposal's own creator withdraws it directly
+          (the reject route is closed to them: TR5 excludes the proposer
+          from pendingApprovers). Outline button — form, not colour, per
+          the UI spec — same bordered-surface treatment as the "Change
+          needed" button elsewhere, not a plain ghost+colour link. */}
+      {isAboveCap && isProposer ? (
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.35rem', marginTop: '0.5rem' }}>
+          <button
+            className="btn btn-secondary btn-sm"
+            style={{ background: 'var(--bg-elevated)', color: 'var(--danger)', borderColor: 'var(--danger)' }}
+            onClick={handleWithdraw}
+            disabled={withdrawing}
+          >
+            {withdrawing ? 'Withdrawing...' : 'Withdraw'}
+          </button>
+          {withdrawError && (
+            <p style={{ fontSize: '0.78rem', color: 'var(--danger)', margin: 0 }}>{withdrawError}</p>
+          )}
+        </div>
+      ) : (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '0.5rem' }}>
+          <button
+            className="btn btn-ghost btn-sm"
+            style={{ color: 'var(--danger)' }}
+            onClick={handleCancel}
+            disabled={cancelling}
+          >
+            {cancelling ? 'Cancelling...' : 'Cancel'}
+          </button>
+        </div>
+      )}
       </div>
     </div>
   );
