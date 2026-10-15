@@ -3495,28 +3495,60 @@ body.is-updating .simulation-banner {
 .recent-blocks .rb-empty { text-align: center; padding: 1.25rem 1rem 0.25rem; }
 .all-clear { text-align: center; padding: 1.25rem 1rem 0.25rem; }
 
-/* ── Blocked actions page (AU2, work-plan.md "Added 2026-10-09") ─────────────
-   Every refusal of a gated call, not only reads — same visual language as
-   .recent-blocks above (hairline rows, a coloured dot per refusal kind). */
+/* ── Blocked actions page (AU2, work-plan.md "Added 2026-10-09"; redesign
+   signed off in temp/blocked-mockup/index.html) ──────────────────────────
+   Every refusal of a gated call, not only reads. Each row reuses the
+   Mandates card shape (.id-card -> ProfileRail + .id-body) instead of the
+   old flat dot-row, so a refusal is traced to the same profile identity
+   (icon + name) the owner already knows from Mandates. */
 .blocked-header { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; }
 .blocked-today { font-size: 0.85rem; color: var(--text-muted); white-space: nowrap; }
 .blocked-list { display: flex; flex-direction: column; }
-.blocked-row {
-  display: grid; grid-template-columns: auto 1fr auto; gap: 0.75rem 0.85rem;
-  align-items: start; padding: 0.9rem 0; border-top: 1px solid var(--border);
+
+.blocked-row-head {
+  display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.2rem;
 }
-.blocked-row:first-child { border-top: none; }
-.blocked-dot { width: 0.5rem; height: 0.5rem; border-radius: 999px; margin-top: 0.4rem; background: var(--danger); }
+.blocked-dot {
+  width: 0.5rem; height: 0.5rem; border-radius: 999px; flex: none;
+  background: var(--danger);
+}
 .blocked-dot-cumulative, .blocked-dot-not_authorized { background: var(--warning); }
 .blocked-dot-simulation { background: var(--text-muted); }
-.blocked-row-main { min-width: 0; }
-.blocked-title { font-weight: 600; font-size: 0.92rem; margin-bottom: 0.2rem; }
-.blocked-sentence { font-size: 0.86rem; color: var(--text-primary); line-height: 1.4; }
-.blocked-source { font-size: 0.74rem; color: var(--text-muted); margin-top: 0.3rem; }
-.blocked-row details { margin-top: 0.4rem; font-size: 0.8rem; }
-.blocked-row summary { cursor: pointer; color: var(--text-muted); }
+/* Seen: same hue, hollow ring instead of a filled dot — still tells kind
+   apart by color, but visually recedes once the owner has looked. */
+.blocked-item[data-seen="true"] .blocked-dot {
+  background: transparent;
+  border: 1.5px solid var(--danger);
+}
+.blocked-item[data-seen="true"] .blocked-dot-cumulative,
+.blocked-item[data-seen="true"] .blocked-dot-not_authorized { border-color: var(--warning); }
+.blocked-item[data-seen="true"] .blocked-dot-simulation { border-color: var(--text-muted); }
+
+.blocked-title { font-weight: 600; font-size: 0.92rem; }
+
+.new-pill {
+  font-size: 0.6rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+  padding: 0.1rem 0.4rem; border-radius: 0.25rem;
+  background: var(--accent-subtle); color: var(--accent);
+  flex: none;
+}
+
+.blocked-when {
+  margin-left: auto; font-size: 0.74rem; color: var(--text-muted); white-space: nowrap;
+}
+
+.blocked-sentence { font-size: 0.86rem; color: var(--text-primary); line-height: 1.4; margin-bottom: 0.3rem; }
+
+.blocked-source { font-size: 0.74rem; color: var(--text-muted); line-height: 1.5; }
+.mandate-id { color: var(--text-muted); opacity: 0.65; font-size: 0.95em; }
+
+.blocked-item details { margin-top: 0.4rem; font-size: 0.8rem; }
+.blocked-item summary { cursor: pointer; color: var(--text-muted); }
 .blocked-advice { margin-top: 0.3rem; color: var(--text-secondary); }
-.blocked-when { font-size: 0.74rem; color: var(--text-muted); white-space: nowrap; }
+
+@media (max-width: 460px) {
+  .blocked-when { margin-left: 0; flex-basis: 100%; order: 3; }
+}
 
 /* Dashboard "Needs your attention" card: rows separated by hairlines. */
 .attention .card-header { margin-bottom: 0.5rem; }

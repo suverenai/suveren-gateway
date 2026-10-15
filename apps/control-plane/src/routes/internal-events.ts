@@ -22,11 +22,17 @@ import { timingSafeEqual } from 'node:crypto';
 import { eventBus, type EventType } from '../lib/event-bus';
 
 /**
- * Only the types that mean "a human now has something to decide". A ping is an
- * unauthenticated-by-session call from a sibling process; it does not get to
- * inject arbitrary events into the UI's stream.
+ * Only the types the MCP server is allowed to raise this way: "a human now
+ * has something to decide" (proposal-added, action-approval-needed),
+ * "something already ran and failed" (execution-failed), or "a block just
+ * happened, nothing to decide" (denial-recorded — moves the Blocked badge/
+ * page only, never the desktop doorbell; see notification-dispatcher.ts). A
+ * ping is an unauthenticated-by-session call from a sibling process; it does
+ * not get to inject arbitrary events into the UI's stream.
  */
-const ALLOWED: readonly EventType[] = ['proposal-added', 'action-approval-needed', 'execution-failed'] as const;
+const ALLOWED: readonly EventType[] = [
+  'proposal-added', 'action-approval-needed', 'execution-failed', 'denial-recorded',
+] as const;
 
 /**
  * Not a bus event — a command. The MCP server sends this the instant one of

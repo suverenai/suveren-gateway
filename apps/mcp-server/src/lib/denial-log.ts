@@ -40,6 +40,7 @@ import { mkdirSync, readFileSync, writeFileSync, existsSync, unlinkSync } from '
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
+import { notifyControlPlane } from './cp-notify';
 
 export type DenialReason =
   | 'ungoverned'    // F9 — read tool declares no governance
@@ -131,6 +132,13 @@ export class DenialLog {
     } catch (err) {
       console.error('[DenialLog] failed to record denial:', err);
     }
+    // Every denial — read or write, local or Authority-Server-refused —
+    // funnels through this one method, so this is the single place to tell
+    // the control plane a Blocked item exists, instead of chasing every
+    // call site in tool-proxy.ts. Fire-and-forget, payload-free (see
+    // cp-notify.ts) — this must never affect the denial itself, which has
+    // already happened by the time this line runs.
+    void notifyControlPlane('denial-recorded');
   }
 
   /** Recent denials, newest first. `sinceMs` and `limit` are optional filters. */

@@ -40,7 +40,33 @@ export type SSEEventType =
   | 'proposal-approved'
   | 'proposal-rejected'
   | 'session-locked'
-  | 'execution-failed';
+  | 'execution-failed'
+  | 'denial-recorded';
+
+/**
+ * Every type the EventSource registers a browser listener for — built from a
+ * `Record<SSEEventType, true>` so TypeScript itself refuses to compile if a
+ * union member is ever added here without a matching key (or vice versa).
+ * That is precisely the bug class this exists to catch: a new SSEEventType
+ * that compiles fine but is never actually subscribed to on the wire.
+ */
+const SSE_EVENT_TYPE_SET: Record<SSEEventType, true> = {
+  'integration-changed': true,
+  'attestation-changed': true,
+  'proposal-added': true,
+  'proposal-resolved': true,
+  'team-membership-changed': true,
+  'action-approval-needed': true,
+  'action-resolved': true,
+  'proposal-approved': true,
+  'proposal-rejected': true,
+  'session-locked': true,
+  'execution-failed': true,
+  'denial-recorded': true,
+};
+
+/** Exported so a test can assert against it directly (see EventSourceContext.test.ts). */
+export const SSE_EVENT_TYPES: readonly SSEEventType[] = Object.keys(SSE_EVENT_TYPE_SET) as SSEEventType[];
 
 // ─── Context value ────────────────────────────────────────────────────────────
 
@@ -106,21 +132,7 @@ export function EventSourceProvider({ children }: { children: ReactNode }) {
     es.onerror = () => setConnected(false);
 
     // Register a listener for each known event type.
-    const eventTypes: SSEEventType[] = [
-      'integration-changed',
-      'attestation-changed',
-      'proposal-added',
-      'proposal-resolved',
-      'team-membership-changed',
-      'action-approval-needed',
-      'action-resolved',
-      'proposal-approved',
-      'proposal-rejected',
-      'session-locked',
-      'execution-failed',
-    ];
-
-    for (const type of eventTypes) {
+    for (const type of SSE_EVENT_TYPES) {
       es.addEventListener(type, (e: MessageEvent) => {
         let payload: unknown;
         try {
