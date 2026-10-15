@@ -2558,6 +2558,23 @@ body.is-updating .simulation-banner {
   }
 }
 
+/* TR5 (work-plan "Added 2026-10-14 — Team: permissions, above-cap approval,
+   read limits") — one team-cap note per field, directly under its input
+   (BoundsEditor.tsx's renderFieldCapNote). Matches the signed-off mockup's
+   .cap-note (temp/team-caps-mockup/index.html, screen 2): hard red, soft
+   (approval-routed) amber — existing tokens only, defined for both themes. */
+.cap-note {
+  display: block;
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+.cap-note.hard {
+  color: var(--danger);
+}
+.cap-note.soft {
+  color: var(--warning);
+}
+
 /* ══════════════════════════════════════════════
    BOUNDS EDITOR — Bounded Number Input
    (input + smart-step buttons + unit suffix +

@@ -410,7 +410,7 @@ export function ActionCard({ item, onApprove, onReject, onChangeNeeded, resolvin
             <button
               data-testid="btn-change-needed"
               className="btn"
-              style={{ background: '#fff', color: 'var(--warning)', border: '1px solid var(--warning)' }}
+              style={{ background: 'var(--bg-elevated)', color: 'var(--warning)', border: '1px solid var(--warning)' }}
               onClick={() => setChangePanelOpen(true)}
               disabled={resolving}
             >

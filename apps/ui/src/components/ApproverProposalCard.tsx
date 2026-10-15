@@ -260,7 +260,7 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
       <div className="approver-progress" style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginBottom: '0.5rem' }}>
         Needs {team.requiredApprovals} approval{team.requiredApprovals === 1 ? '' : 's'} from:{' '}
         {pendingApprovers.map((uid, i) => (
-          <span key={uid} className={`who${uid in approvedBy ? ' done' : ''}`} style={{ marginLeft: i === 0 ? '0.25rem' : '0.5rem', color: uid in approvedBy ? 'var(--success, green)' : undefined }}>
+          <span key={uid} className={`who${uid in approvedBy ? ' done' : ''}`} style={{ marginLeft: i === 0 ? '0.25rem' : '0.5rem', color: uid in approvedBy ? 'var(--success)' : undefined }}>
             {uid in approvedBy ? '✓ ' : ''}{team.nameOf(uid)}{uid === currentUserId ? ' (you)' : ''}
             {i < pendingApprovers.length - 1 ? ',' : ''}
           </span>
@@ -276,7 +276,11 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
       {team.aboveCapReason && (
         <div className="over-limit-box" data-testid="above-cap-reason" style={{
           display: 'flex', gap: '0.5rem', alignItems: 'flex-start',
-          background: 'var(--warning-subtle, #fdf4e8)', border: '1px solid var(--warning)',
+          // No `--warning-subtle` token exists (light or dark) — same
+          // warning-tinted-box convention already used elsewhere (see
+          // ActionCard.tsx's "Irreversible action" note): the card's own
+          // surface + a themed border, never a hardcoded/undefined colour.
+          background: 'var(--bg-main)', border: '1px solid var(--border)',
           borderRadius: '0.5rem', padding: '0.6rem 0.8rem', marginBottom: '0.6rem', fontSize: '0.82rem',
         }}>
           <span style={{ color: 'var(--warning)', fontWeight: 700, whiteSpace: 'nowrap' }}>Above the team limit:</span>
@@ -339,7 +343,7 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
             <button
               data-testid="btn-change-needed"
               className="btn"
-              style={{ background: '#fff', color: 'var(--warning)', border: '1px solid var(--warning)' }}
+              style={{ background: 'var(--bg-elevated)', color: 'var(--warning)', border: '1px solid var(--warning)' }}
               onClick={() => setChangePanelOpen(true)}
               disabled={isBusy}
             >
