@@ -469,12 +469,17 @@ describe('createGatedToolHandler — SP receipt integration', () => {
   it('P8.2: submits proposal with creator+approvers when SP returns 409 approval_required', async () => {
     const approvers = ['bob', 'carol'];
     const postReceipt = vi.fn().mockRejectedValue(
+      // The REAL Authority Server envelope (error-envelope.ts):
+      // { approved: false, errors: [{ code, …, approvers }] }.
       new SPReceiptError('Approval required', 409, {
-        error: 'approval_required',
-        approvers,
-        authorizationId: 'authz_00000000-0000-4000-8000-0000000000ab',
-        field: 'amount_daily_max',
-        cap: 1000,
+        approved: false,
+        errors: [{
+          code: 'APPROVAL_REQUIRED',
+          approvers,
+          authorizationId: 'authz_00000000-0000-4000-8000-0000000000ab',
+          field: 'amount_daily_max',
+          cap: 1000,
+        }],
       }),
     );
     const submitProposal = vi.fn().mockResolvedValue({

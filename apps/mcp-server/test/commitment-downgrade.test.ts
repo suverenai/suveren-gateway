@@ -14,8 +14,15 @@ describe('isCommitmentDowngrade — signed commitment_mode enforcement', () => {
     expect(isCommitmentDowngrade({ signedCommitmentMode: 'review', deferredCommitmentDomains: [] })).toBe(true);
   });
 
-  it('flags review_above_cap with no deferred approvers', () => {
-    expect(isCommitmentDowngrade({ signedCommitmentMode: 'review_above_cap', deferredCommitmentDomains: [] })).toBe(true);
+  // SECURITY FIX (2026-10-15, companion to the suveren-as #86 regression
+  // fix): review_above_cap is NEVER expected to carry a deferred domain —
+  // it tickets synchronously per call and only becomes a proposal on an
+  // AS-returned APPROVAL_REQUIRED (a separate, later check in tool-proxy.ts).
+  // Flagging "no deferred domain" as a downgrade for it would fail-closed on
+  // every call under a review_above_cap authority, which is exactly the
+  // regression this fix corrects — see attestation-cache.ts's doc comment.
+  it('does NOT flag review_above_cap with no deferred approvers — that is its normal, correct shape', () => {
+    expect(isCommitmentDowngrade({ signedCommitmentMode: 'review_above_cap', deferredCommitmentDomains: [] })).toBe(false);
   });
 
   it('allows honest review (signed review + deferred approvers present)', () => {

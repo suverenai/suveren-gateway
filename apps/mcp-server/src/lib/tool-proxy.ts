@@ -1595,14 +1595,31 @@ function createGatedToolHandlerInner(
           if (err instanceof SPReceiptError && err.statusCode === 409) {
             // P8.2: SP returned approval_required — this action exceeds the team cap
             // for an above-cap authority. Route to per-action multi-party approval.
-            const spBody = err.body as {
+            //
+            // SECURITY FIX (2026-10-15, found while verifying the suveren-as
+            // review_above_cap fix end-to-end): every AS refusal uses the
+            // uniform `{ approved: false, errors: [{ code, ..., approvers }] }`
+            // envelope (error-envelope.ts) — `approvers` lives inside
+            // `errors[0]`, never at the top level of the body. Reading
+            // `err.body.approvers` directly was always `undefined`, so this
+            // branch ALWAYS fell through to the "no approvers" fallback below
+            // (which reads `approvers_frozen` — an unrelated, delegation-intent
+            // field, never the TR5 above-cap approver list) and ended up
+            // naming only the proposal's own creator as its sole pending
+            // approver. This went unnoticed because no mandate ever reached
+            // this code path live before the review_above_cap fix (every call
+            // took the domain-deferred branch instead) — now that it does,
+            // fixed at the source: read `approvers` from `errors[0]`.
+            const rawBody = err.body as { errors?: Array<Record<string, unknown>> } & Record<string, unknown>;
+            // The real AS envelope first; a bare body only as a fallback.
+            const spBody = (rawBody?.errors?.[0] ?? rawBody) as {
               approvers?: string[];
               authorizationId?: string;
               field?: string;
               cap?: number;
-            };
+            } | undefined;
             // Prefer approvers from the 409 body; fall back to frameMeta frozen list.
-            let pendingApprovers: string[] = spBody.approvers ?? [];
+            let pendingApprovers: string[] = spBody?.approvers ?? [];
             // Fetched at most once, lazily — only the branches that actually
             // need it (the empty-roster fallback, and the TR5 exclusion
             // below) pay for the round trip.

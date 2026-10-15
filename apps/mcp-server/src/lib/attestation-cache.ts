@@ -28,12 +28,23 @@ export class AsKeyMismatchError extends Error {
  * pending approvers — an inconsistency between the signature and the AS's
  * unsigned routing metadata (a possible commitment-mode downgrade). The
  * Gatekeeper MUST refuse to auto-execute in this case (fail-closed).
+ *
+ * SECURITY FIX (2026-10-15, companion to the suveren-as fix for the #86
+ * review_above_cap regression): `review_above_cap` is deliberately EXCLUDED
+ * from `requiresReview` here. Before the AS fix, review_above_cap ALWAYS
+ * carried a (wrong) deferred commitment domain, so this never fired for it;
+ * after the AS fix, a review_above_cap authorization NEVER carries one — by
+ * design, not as a downgrade. protocol.md's Review-Above-Cap Mode
+ * (Normative Rule 6) has the Gatekeeper request a ticket SYNCHRONOUSLY for
+ * every call; only an AS-returned `APPROVAL_REQUIRED` (a 409 on the ticket
+ * request itself, handled separately in tool-proxy.ts) turns a specific call
+ * into a proposal. Treating "no deferred domain" as a downgrade for
+ * review_above_cap would fail-closed on every single call under it.
  */
 export function isCommitmentDowngrade(
   auth: Pick<CachedAuthorization, 'signedCommitmentMode' | 'deferredCommitmentDomains'>,
 ): boolean {
-  const requiresReview =
-    auth.signedCommitmentMode === 'review' || auth.signedCommitmentMode === 'review_above_cap';
+  const requiresReview = auth.signedCommitmentMode === 'review';
   return requiresReview && (auth.deferredCommitmentDomains ?? []).length === 0;
 }
 
