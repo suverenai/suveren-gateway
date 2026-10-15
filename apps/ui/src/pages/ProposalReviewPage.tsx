@@ -566,8 +566,18 @@ function AwaitingOthersCard({ proposal, currentUserId, onCancel, onWithdraw }: A
   const approvedCount = Object.keys(approvedBy).length;
   const isAboveCap = approvers.length > 0;
 
+  // Real-gateway e2e (2026-10-15, "Tom withdraws his own over-the-limit
+  // action"): `window.confirm()` is a BLOCKING native dialog — Playwright
+  // auto-dismisses every dialog it doesn't explicitly handle (returns
+  // `false`, as if Cancel was clicked, which is its documented default),
+  // so `if (!confirm(...)) return;` silently aborted before any network
+  // call: no error (the catch was never reached), the card never changed.
+  // Reproduced live and confirmed: the AS never saw a request at all.
+  // Root fix: no native confirm for either terminal action here, matching
+  // the "one click, no reason" decision this card family already applies
+  // to Approve/Reject/Change-needed (ApproverProposalCard; RJ2 decision
+  // 1) — Cancel/Withdraw were the only two outliers.
   const handleCancel = async () => {
-    if (!confirm('Cancel this action? All approvers will be notified.')) return;
     setCancelling(true);
     try {
       await onCancel();
@@ -581,7 +591,6 @@ function AwaitingOthersCard({ proposal, currentUserId, onCancel, onWithdraw }: A
   // `isProposer` branch below). A withdrawn proposal can never be
   // approved/executed afterward.
   const handleWithdraw = async () => {
-    if (!confirm('Withdraw this action? It can never be approved afterward.')) return;
     setWithdrawing(true);
     setWithdrawError('');
     try {
