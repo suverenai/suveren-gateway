@@ -628,6 +628,47 @@ export function fieldCapState(
   return { kind, cap, violating };
 }
 
+/**
+ * The seed value for ONE bound field, with a hard team cap applied —
+ * shared by the initial `useState` seed and the late-arriving-config
+ * re-seed effect below (GateWizardPage fetches `profile` and the team
+ * `profileConfig` independently; `profile` — and so this editor's mount —
+ * routinely resolves first, with `profileConfig` still null). Pulled out
+ * as its own pure function specifically so the "config arrives after
+ * mount" ordering is unit-testable without rendering the component.
+ *
+ * `rawValue` is the value BEFORE any cap is considered (the profile's own
+ * seed/default, or whatever is already in the input). A HARD numeric cap
+ * clamps it down (or seeds AT the cap when there is nothing else to
+ * default to — the mockup's "Max email age" starts at exactly the team
+ * limit, never empty); a HARD enum cap clamps it down to the cap only
+ * when it would otherwise exceed it (never changes an already-compliant
+ * choice, e.g. "none" is left as "none" under a cap of "none"). No cap, or
+ * an 'approval' kind cap (above-cap is allowed, not clamped away): the raw
+ * value passes through unchanged.
+ */
+export function seedBoundValue(
+  key: string,
+  fieldDef: FieldDef,
+  rawValue: string,
+  profileConfig: ProfileConfig | null | undefined,
+): string {
+  if (!profileConfig || !isCapped(profileConfig, key)) return rawValue;
+  const kind = effectiveCapKind(profileConfig, fieldDef as CapFieldShape, key);
+  const cap = profileConfig.caps![key];
+  if (kind !== 'hard') return rawValue;
+  if (typeof cap === 'number') {
+    const n = rawValue === '' ? NaN : Number(rawValue);
+    return String(Number.isNaN(n) ? cap : Math.min(n, cap));
+  }
+  if (typeof cap === 'string') {
+    const bt = (fieldDef as { boundType?: { kind?: string; values?: readonly string[] } }).boundType;
+    const values = bt?.kind === 'enum' ? bt.values ?? [] : [];
+    return rawValue !== '' && enumExceedsCap(values, cap, rawValue) ? cap : rawValue;
+  }
+  return rawValue;
+}
+
 /** The index of `cap` in an enum field's (permissive-first) `values`, for
  *  FieldRow's `enumAllowedFrom` — undefined when not an enum cap. */
 export function enumAllowedFromIndex(fieldDef: FieldDef, cap: number | string): number | undefined {
@@ -761,26 +802,9 @@ export function BoundsEditor({
 
   const initialBoundsValues: Record<string, string> = {};
   for (const [key, fieldDef] of boundsFields) {
-    const seeded = seedForBound(fieldDef, seedBounds[key]);
     // TR5 — a HARD team cap: never seed (or carry forward, e.g. Copy/Edit) a
-    // value already above it. A numeric field with no seed at all but a hard
-    // cap seeds AT the cap (the mockup's "Max email age" starts at exactly
-    // the team limit, not empty) — there is nothing else sensible to default
-    // to once the field must be set but is otherwise unconstrained.
-    const kind = profileConfig && isCapped(profileConfig, key)
-      ? effectiveCapKind(profileConfig, fieldDef as CapFieldShape, key)
-      : null;
-    const cap = profileConfig?.caps?.[key];
-    if (kind === 'hard' && typeof cap === 'number') {
-      const n = seeded === '' ? NaN : Number(seeded);
-      initialBoundsValues[key] = String(Number.isNaN(n) ? cap : Math.min(n, cap));
-    } else if (kind === 'hard' && typeof cap === 'string') {
-      const bt = (fieldDef as { boundType?: { kind?: string; values?: readonly string[] } }).boundType;
-      const values = bt?.kind === 'enum' ? bt.values ?? [] : [];
-      initialBoundsValues[key] = seeded !== '' && enumExceedsCap(values, cap, seeded) ? cap : seeded;
-    } else {
-      initialBoundsValues[key] = seeded;
-    }
+    // value already above it. See seedBoundValue's doc comment.
+    initialBoundsValues[key] = seedBoundValue(key, fieldDef, seedForBound(fieldDef, seedBounds[key]), profileConfig);
   }
 
   const initialContextValues: Record<string, string> = {};
@@ -793,6 +817,43 @@ export function BoundsEditor({
   // Display names from scope discovery (e.g. calendar IDs → calendar names).
   // Values stay the enforced truth; labels are UI sugar stored locally.
   const [contextLabels, setContextLabels] = useState<Record<string, Record<string, string>>>({});
+
+  // Bug (real-gateway e2e, 2026-10-15): GateWizardPage fetches `profile` and
+  // the team `profileConfig` independently — `profile` routinely resolves
+  // first, mounting this editor (and running the `initialBoundsValues` seed
+  // above) while `profileConfig` is still null. The result: a hard-capped
+  // numeric field seeded '' instead of its cap, and a hard-capped enum field
+  // kept its UNCAPPED default selected inside a now-disabled control — both
+  // sign as a value the team cap refuses (422 cap_exceeded). Root fix: when
+  // `profileConfig` later arrives (or changes), re-apply `seedBoundValue` for
+  // every field the person has not yet touched — `touchedBoundsKeys` is the
+  // one place "touched" is recorded (handleBoundsChange below), so a value
+  // the person already typed is never clobbered. Runs on every
+  // `profileConfig` change (including the very first, redundantly re-seeding
+  // with the same value `initialBoundsValues` already used) — idempotent,
+  // so that redundancy costs nothing.
+  const touchedBoundsKeysRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    setBoundsValues(prev => {
+      let changed = false;
+      const next = { ...prev };
+      for (const [key, fieldDef] of boundsFields) {
+        if (touchedBoundsKeysRef.current.has(key)) continue;
+        // A field that only became visible once profileConfig arrived (a
+        // team-capped, otherwise-hidden gatekeeper field — see
+        // isTeamCappedLocalField above) has no prior entry at all; seed it
+        // from scratch exactly like the initial computation does.
+        const raw = prev[key] !== undefined ? prev[key] : seedForBound(fieldDef, seedBounds[key]);
+        const seeded = seedBoundValue(key, fieldDef, raw, profileConfig);
+        if (next[key] !== seeded) { next[key] = seeded; changed = true; }
+      }
+      return changed ? next : prev;
+    });
+    // Deliberately only `profileConfig` — `boundsFields`/`seedBounds` are
+    // re-derived from `profile`/`initialBounds`/`initialFrame` props that
+    // never change after this editor mounts for one ceremony.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileConfig]);
 
   // Find the integration manifest (if any) whose `profile` matches the profile
   // being authorized AND which declares contextDiscovery for one or more of
@@ -832,6 +893,9 @@ export function BoundsEditor({
     boundsFields.every(([key]) => !isCapped(profileConfig, key));
 
   const handleBoundsChange = (key: string, value: string) => {
+    // Recorded BEFORE the state update so the late-config re-seed effect
+    // above never clobbers a value the person is actively editing.
+    touchedBoundsKeysRef.current.add(key);
     setBoundsValues(prev => ({ ...prev, [key]: value }));
   };
 
