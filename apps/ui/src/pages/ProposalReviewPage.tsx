@@ -553,14 +553,12 @@ function AwaitingOthersCard({ proposal, currentUserId, onCancel }: AwaitingOther
     <div className="card id-card">
       <ProfileRail profileId={proposal.profileId} />
       <div className="id-body">
+      {/* Decided (real-gateway e2e, 2026-10-15): plain words only — same as
+          ApproverProposalCard — the "Above the team limit: …" line below
+          already says it; no "Above cap" jargon pill. */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
         <code style={{ fontSize: '0.85rem' }}>{proposal.tool.split('__').pop() ?? proposal.tool}</code>
         {testSetup && <span className="sim-mark">Test setup</span>}
-        {isAboveCap && (
-          <span style={{ fontSize: '0.65rem', padding: '0.15rem 0.4rem', borderRadius: '0.25rem', background: 'var(--accent-subtle)', color: 'var(--accent)', fontWeight: 600 }}>
-            Above cap
-          </span>
-        )}
         <span style={{ marginLeft: 'auto', fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
           {formatAge(proposal.createdAt)}
         </span>
@@ -581,6 +579,25 @@ function AwaitingOthersCard({ proposal, currentUserId, onCancel }: AwaitingOther
           {team.requiredApprovals > 1 && (
             <span style={{ marginLeft: '0.5rem' }}>({approvedCount} of {team.requiredApprovals})</span>
           )}
+        </div>
+      )}
+
+      {/* TR5 — "Above the team limit: <field> <value> (limit <cap>). Requested
+          by <proposer>." Same construction as ApproverProposalCard
+          (team-caps.ts's findAboveCapViolation — built only from real data,
+          never a guess). */}
+      {team.aboveCapReason && (
+        <div className="over-limit-box" data-testid="above-cap-reason" style={{
+          display: 'flex', gap: '0.5rem', alignItems: 'flex-start',
+          background: 'var(--bg-main)', border: '1px solid var(--border)',
+          borderRadius: '0.5rem', padding: '0.6rem 0.8rem', marginBottom: '0.6rem', fontSize: '0.82rem',
+        }}>
+          <span style={{ color: 'var(--warning)', fontWeight: 700, whiteSpace: 'nowrap' }}>Above the team limit:</span>
+          <span>
+            {team.aboveCapReason.fieldLabel}
+            {team.aboveCapReason.value !== undefined ? ` ${team.aboveCapReason.value}` : ''} (limit {String(team.aboveCapReason.cap)}).{' '}
+            {proposal.createdBy ? `Requested by ${team.nameOf(proposal.createdBy)}.` : ''}
+          </span>
         </div>
       )}
 
