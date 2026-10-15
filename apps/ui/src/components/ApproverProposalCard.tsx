@@ -28,6 +28,7 @@ import type { ToolDisplay } from '../lib/approval-view';
 import { validateChangeNote, rejectOutcomeArgs } from '../lib/reject-outcome';
 import { contentHashForDecision, noteRecipients, decisionButtonsVisible } from '../lib/use-proposal-content';
 import { useApprovalTeamInfo } from '../lib/approval-team-info';
+import { isProposer as isProposerOf, visibleApprovers } from '../lib/proposal-proposer';
 
 function formatAge(unixSeconds: number): string {
   const ageMs = Date.now() - unixSeconds * 1000;
@@ -91,7 +92,13 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
   // Test setup: the delegation profile, OR a setup__* tool.
   const testSetup = profileIdentity(proposal.profileId).testSetup || isTestSetupAction(proposal.tool);
 
-  const pendingApprovers = proposal.pendingApprovers ?? [];
+  // TR5 (real-gateway e2e, 2026-10-15): the proposer must never be shown as
+  // (or able to act as) one of their own action's approvers. The gateway
+  // now excludes them at proposal-submission time for a confirmed team
+  // workspace (tool-proxy.ts), but this filters defensively too — a stale
+  // cached proposal, an older gateway's submission, or any other path that
+  // still lists them must never render them in the roster here.
+  const pendingApprovers = visibleApprovers(proposal);
   const approvedBy = proposal.approvedBy ?? {};
   // AS truth, never optimistic: exactly what the proposal's own record says
   // right now — the same count a fresh re-fetch after onAction() would show.
@@ -105,7 +112,7 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
   // approvers are by name, and — when derivable from real data — why this
   // specific proposal is above cap.
   const team = useApprovalTeamInfo(proposal);
-  const isProposer = !!proposal.createdBy && proposal.createdBy === currentUserId;
+  const isProposer = isProposerOf(proposal, currentUserId);
 
   /** TR5 — the AS's own clear refusal text already explains both cases;
    *  this only replaces the trailing "(CODE)" suffix asErrorMessage adds
@@ -226,11 +233,10 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
     <div className="card id-card">
       <ProfileRail profileId={proposal.profileId} />
       <div className="id-body">
-      {/* Header row */}
+      {/* Header row. Decided (real-gateway e2e, 2026-10-15): plain words
+          only — the "Above the team limit: …" line below already says it;
+          the "Above cap" jargon pill is removed. */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
-        <span style={{ fontSize: '0.65rem', padding: '0.15rem 0.4rem', borderRadius: '0.25rem', background: 'var(--accent-subtle)', color: 'var(--accent)', fontWeight: 600 }}>
-          Above cap
-        </span>
         {testSetup && <span className="sim-mark">Test setup</span>}
         <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           {(() => {
@@ -301,6 +307,7 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
         proposalLinks={proposalLinks}
         toolDisplay={toolDisplay}
         manifests={manifests}
+        nameOf={team.nameOf}
         onContentState={({ loading, readable }) => {
           setContentLoading(loading);
           setContentReadable(readable);

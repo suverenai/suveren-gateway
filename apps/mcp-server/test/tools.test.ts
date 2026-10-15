@@ -520,6 +520,88 @@ describe('createGatedToolHandler — SP receipt integration', () => {
     expect(result.content[0].text).toContain('prop-123');
   });
 
+  it('TR5 (real-gateway e2e, 2026-10-15): in a CONFIRMED team workspace, the creator is excluded ' +
+    'from pendingApprovers even when the team\'s own roster includes them, but stays a content ' +
+    'recipient and is recorded as the proposal\'s createdBy', async () => {
+    const approvers = ['tom', 'lisa', 'andreas']; // the team's own roster — includes the proposer
+    const postReceipt = vi.fn().mockRejectedValue(
+      new SPReceiptError('Approval required', 409, {
+        error: 'approval_required',
+        approvers,
+        authorizationId: 'authz_00000000-0000-4000-8000-0000000000ab',
+        field: 'send_daily_max',
+        cap: 50,
+      }),
+    );
+    const submitProposal = vi.fn().mockResolvedValue({
+      proposal: { id: 'prop-team-1', status: 'pending' },
+    });
+    const getAuthorizationSummary = vi.fn().mockResolvedValue({
+      authorization_id: 'authz_00000000-0000-4000-8000-0000000000ab',
+      profile_id: 'github.com/humanagencyprotocol/hap-profiles/charge@0.3',
+      above_cap: true,
+      group_id: 'team-x',
+      created_by: 'tom',
+    });
+
+    const base = mockGatedState({ postReceipt });
+    const state = {
+      ...base,
+      // The authorization itself belongs to the team group.
+      getEnrichedAuthorizations: () => base.getEnrichedAuthorizations().map(a => ({ ...a, groupId: 'team-x' })),
+      // CONFIRMED team workspace — the only condition under which the
+      // exclusion applies (an unknown/undefined status must keep Decision
+      // #4's long-standing "creator included" behaviour unchanged).
+      cache: { ...base.cache, isTeamGroup: () => true },
+      spClient: { postReceipt, submitProposal, getAuthorizationSummary, isUnlocked: () => true },
+    } as unknown as import('../src/lib/shared-state').SharedState;
+
+    await createGatedToolHandler(mockTool('charge'), mockIntegrationManager(), state)({ amount: 50, currency: 'EUR' });
+
+    const submitCall = (submitProposal as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    // Never an approver, even though the team's own roster lists him.
+    expect(submitCall.pendingApprovers).not.toContain('tom');
+    expect(submitCall.pendingApprovers).toEqual(expect.arrayContaining(['lisa', 'andreas']));
+    // Still a content recipient (PE1 decision 3 — the mandate owner always
+    // sees what their own authority is being asked to cover).
+    expect(submitCall.recipientUserIds).toContain('tom');
+    // Recorded on the proposal so the card's "you can't approve your own
+    // action" check (proposal.createdBy === currentUserId) has real data.
+    expect(submitCall.createdBy).toBe('tom');
+  });
+
+  it('TR5: an UNKNOWN team status (no isTeamGroup on state.cache at all) keeps Decision #4\'s ' +
+    'behaviour — the creator is still included, never silently dropped on an uncertain read', async () => {
+    const postReceipt = vi.fn().mockRejectedValue(
+      new SPReceiptError('Approval required', 409, {
+        error: 'approval_required',
+        approvers: ['lisa'],
+        authorizationId: 'authz_00000000-0000-4000-8000-0000000000ab',
+        field: 'send_daily_max',
+        cap: 50,
+      }),
+    );
+    const submitProposal = vi.fn().mockResolvedValue({ proposal: { id: 'prop-unknown-1', status: 'pending' } });
+    const getAuthorizationSummary = vi.fn().mockResolvedValue({
+      authorization_id: 'authz_00000000-0000-4000-8000-0000000000ab',
+      profile_id: 'github.com/humanagencyprotocol/hap-profiles/charge@0.3',
+      above_cap: true,
+      created_by: 'alice',
+    });
+    const state = {
+      ...mockGatedState({ postReceipt }),
+      // No `isTeamGroup` at all on this bare `cache` double — matches a
+      // pre-TR7 test shape, or a cache instance that hasn't resolved the
+      // account's Personal group id yet.
+      spClient: { postReceipt, submitProposal, getAuthorizationSummary, isUnlocked: () => true },
+    } as unknown as import('../src/lib/shared-state').SharedState;
+
+    await createGatedToolHandler(mockTool('charge'), mockIntegrationManager(), state)({ amount: 50, currency: 'EUR' });
+
+    const submitCall = (submitProposal as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(submitCall.pendingApprovers).toContain('alice');
+  });
+
   it('PE1 G4: submits proposal content for the full approver set, and names who cannot read it', async () => {
     const approvers = ['bob', 'carol'];
     const postReceipt = vi.fn().mockRejectedValue(

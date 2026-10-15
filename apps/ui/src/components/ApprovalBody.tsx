@@ -84,6 +84,14 @@ interface Props {
    * differ" (doc §8.4).
    */
   onShownSnapshot?: (snapshot: ShownSnapshotPayload | null) => void;
+  /**
+   * Real-gateway e2e (2026-10-15) — the "Cannot read this proposal yet"
+   * note used to join raw userIds (`tom-fecb81a6-…@test.local`), which the
+   * gateway already has a display name for (member-names.ts) wherever its
+   * caller resolved one. Optional, default identity: a caller with no name
+   * map (ActionCard today) keeps showing the raw id, unchanged.
+   */
+  nameOf?: (userId: string) => string;
 }
 
 /** DL6: tool-specific on purpose — this builtin is the gateway's own, so
@@ -92,7 +100,7 @@ interface Props {
  *  other part of this module stays generic (brief decision 6). */
 const CREATE_MANDATE_TOOL = 'setup__create_mandate';
 
-export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDisplay, manifests, onContentState, onShownSnapshot }: Props) {
+export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDisplay, manifests, onContentState, onShownSnapshot, nameOf }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [editingBeforeSigning, setEditingBeforeSigning] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
@@ -271,7 +279,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
           missingRecipients's doc comment — never a lookup. */}
       {cannotRead.length > 0 && (
         <p data-testid="proposal-cannot-read" style={{ margin: '0 0 0.5rem', fontSize: '0.78rem', color: 'var(--text-tertiary)' }}>
-          Cannot read this proposal yet: {cannotRead.join(', ')} — shared automatically once they sign in on a device.
+          Cannot read this proposal yet: {cannotRead.map(id => nameOf?.(id) ?? id).join(', ')} — shared automatically once they sign in on a device.
         </p>
       )}
       {readable && (
