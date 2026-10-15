@@ -84,6 +84,19 @@ export class ProposalSubmissionStore {
     return this.load().entries.find(e => e.proposalId === proposalId);
   }
 
+  /**
+   * Every submission still on record (newest-pruned by `MAX_AGE_SECONDS`
+   * — see `load`). "Awaiting others" stand-in (2026-10-15, real-gateway
+   * e2e): until the Authority Server has a creator-scoped proposal query,
+   * this (every id THIS gateway has ever submitted) is the only local
+   * source for "proposals I created" — bin/http.ts's
+   * `/internal/my-pending-proposals` resolves each id's CURRENT state from
+   * the AS and filters to `status: 'pending'`.
+   */
+  list(): SubmittedProposal[] {
+    return this.load().entries;
+  }
+
   private load(): StoreFile {
     if (!existsSync(this.filePath)) return { version: 1, entries: [] };
     try {

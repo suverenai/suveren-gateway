@@ -2191,6 +2191,26 @@ class SPClient {
     return res.json();
   }
 
+  /**
+   * "Awaiting others" stand-in (2026-10-15, real-gateway e2e): above-cap
+   * proposals THIS gateway submitted that are still pending — the
+   * Authority Server has no endpoint yet to list "proposals I created"
+   * (only `?domain=`, which an above-cap proposal's empty pendingDomains
+   * can never match, `?status=committed/rejected`, and `?approver=me`).
+   * Round-trips through the gateway's own local submission record
+   * (control-plane → MCP server's `/internal/my-pending-proposals`) — see
+   * that route's doc comment for the real limitation this has until the
+   * AS gets a creator-scoped query: only ever sees proposals submitted
+   * through THIS gateway install. Fails soft (empty list) so a gateway
+   * that predates this endpoint (404) never breaks the page.
+   */
+  async getMyPendingProposals(): Promise<Proposal[]> {
+    const res = await this.fetch('/my-pending-proposals');
+    if (!res.ok) return [];
+    const data = await res.json().catch(() => ({ proposals: [] }));
+    return (data.proposals ?? []) as Proposal[];
+  }
+
   // ─── Gate Content ───────────────────────────────────────────────────────
 
   async getGateContent(path: string): Promise<GateContentEntry | null> {

@@ -42,7 +42,7 @@ import { createAIPromptsRouter } from './routes/ai-prompts';
 import { requireAuth, requireAuthQueryOrHeader } from './middleware/auth';
 import { requireAllowedHost } from './middleware/host-guard';
 import { mcpPublicPort } from './lib/mcp-public-port';
-import { getToolDisplay, pushGateContent, pushServiceCredentials, setInternalSecret, getManifests, getGateContent, getEnrichedAuthorizations, getSkippedCommitments, MCP_BASE, runCommittedProposals, resyncGates, setReadPolicy } from './lib/mcp-bridge';
+import { getToolDisplay, pushGateContent, pushServiceCredentials, setInternalSecret, getManifests, getGateContent, getEnrichedAuthorizations, getSkippedCommitments, getMyPendingProposals, MCP_BASE, runCommittedProposals, resyncGates, setReadPolicy } from './lib/mcp-bridge';
 import { backfillReadPolicyDefaults } from './lib/read-policy-defaults';
 import { createMCPRouter } from './routes/mcp';
 import { createAutostartRouter } from './routes/autostart';
@@ -805,6 +805,19 @@ app.get('/skipped-commitments', authGuard, async (_req: Request, res: Response) 
   } catch (err) {
     console.error('[Control Plane] Skipped-commitments retrieval error:', err);
     res.status(500).json({ error: 'Failed to fetch skipped commitments from MCP server' });
+  }
+});
+
+// "Awaiting others" stand-in (2026-10-15) — see mcp-bridge.ts's
+// getMyPendingProposals doc comment for why this round-trips through the
+// gateway's own local submission record instead of a single AS query.
+app.get('/my-pending-proposals', authGuard, async (_req: Request, res: Response) => {
+  try {
+    const data = await getMyPendingProposals();
+    res.json(data);
+  } catch (err) {
+    console.error('[Control Plane] My-pending-proposals retrieval error:', err);
+    res.status(500).json({ error: 'Failed to fetch pending proposals from MCP server' });
   }
 });
 

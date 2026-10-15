@@ -58,3 +58,27 @@ describe('ProposalSubmissionStore — previewHash', () => {
     expect(b.get('p1')?.previewHash).toBe('sha256:xyz');
   });
 });
+
+describe('ProposalSubmissionStore.list — "Awaiting others" stand-in (2026-10-15)', () => {
+  it('returns every submission on record, newest-last (insertion order)', () => {
+    dir = mkdtempSync(join(tmpdir(), 'hap-submission-store-'));
+    const store = new ProposalSubmissionStore(dir);
+    store.record({ proposalId: 'p1', tool: 'email__send', toolArgs: {}, executionContext: {}, authorizationId: 'authz_1', profileId: 'email' });
+    store.record({ proposalId: 'p2', tool: 'email__send', toolArgs: {}, executionContext: {}, authorizationId: 'authz_1', profileId: 'email' });
+    expect(store.list().map(e => e.proposalId)).toEqual(['p1', 'p2']);
+  });
+
+  it('empty store: empty list, not a crash', () => {
+    dir = mkdtempSync(join(tmpdir(), 'hap-submission-store-'));
+    const store = new ProposalSubmissionStore(dir);
+    expect(store.list()).toEqual([]);
+  });
+
+  it('re-recording the same proposalId replaces it, not duplicates it', () => {
+    dir = mkdtempSync(join(tmpdir(), 'hap-submission-store-'));
+    const store = new ProposalSubmissionStore(dir);
+    store.record({ proposalId: 'p1', tool: 'email__send', toolArgs: {}, executionContext: {}, authorizationId: 'authz_1', profileId: 'email' });
+    store.record({ proposalId: 'p1', tool: 'email__send', toolArgs: { edited: true }, executionContext: {}, authorizationId: 'authz_1', profileId: 'email' });
+    expect(store.list()).toHaveLength(1);
+  });
+});

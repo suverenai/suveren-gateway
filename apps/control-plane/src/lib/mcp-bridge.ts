@@ -347,6 +347,19 @@ export async function getSkippedCommitments(): Promise<unknown> {
 }
 
 /**
+ * "Awaiting others" stand-in (2026-10-15) — see bin/http.ts's
+ * `/internal/my-pending-proposals` doc comment for why this exists at all
+ * (the AS has no creator-scoped proposal query yet).
+ */
+export async function getMyPendingProposals(): Promise<unknown> {
+  const res = await fetch(`${MCP_BASE}/internal/my-pending-proposals`, {
+    headers: internalHeaders(),
+  });
+  if (!res.ok) throw new Error('Failed to fetch my pending proposals');
+  return res.json();
+}
+
+/**
  * Fetch the local evidence bundle: receipt archive (complete signed receipts,
  * attestation blobs, issuer keys) + gate entries (intent, context). This is
  * the copy that must survive the AS disappearing.
