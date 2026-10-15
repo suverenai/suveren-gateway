@@ -134,15 +134,25 @@ export function ProposalReviewPage() {
   useSSEEvent('proposal-rejected', fetchApprovedByMe);
   useVisiblePolling(fetchApprovedByMe, 30_000, `${userId}:${domain}`);
 
-  // "Awaiting others" stand-in (2026-10-15, real-gateway e2e): above-cap
-  // proposals I CREATED, still pending — see sp-client.ts's
-  // getMyPendingProposals doc comment for why this exists (the AS has no
-  // creator-scoped proposal query yet) and its real limitation (only sees
-  // proposals submitted through THIS gateway install).
+  // Above-cap proposals I CREATED, still pending (2026-10-15, real-gateway
+  // e2e). Primary source: the AS's own creator-scoped query (suveren-as#89,
+  // GET /api/proposals?creator=me) — works across every device, not just
+  // this one. `getProposalsCreatedByMe` returns `null` on a 400, the one
+  // way to tell an OLDER AS that doesn't support the mode yet from
+  // "genuinely nothing pending" — only THEN fall back to the gateway's own
+  // local submission record (sp-client.ts's getMyPendingProposals doc
+  // comment: only ever sees proposals submitted through THIS gateway
+  // install). Never both at once — one list replaces the other outright,
+  // so a proposal can never appear twice.
   const [myPendingProposals, setMyPendingProposals] = useState<Proposal[]>([]);
 
   const fetchMyPendingProposals = useCallback(async () => {
     try {
+      const fromAS = await spClient.getProposalsCreatedByMe();
+      if (fromAS !== null) {
+        setMyPendingProposals(fromAS);
+        return;
+      }
       setMyPendingProposals(await spClient.getMyPendingProposals());
     } catch {
       // keep previous state
@@ -413,6 +423,19 @@ export function ProposalReviewPage() {
                       alert(err instanceof Error ? err.message : 'Cancel failed');
                     }
                   }}
+                  onWithdraw={async () => {
+                    // No `shown_hash`: this card does not render the AU10
+                    // preview/request-context pipeline (ApprovalBody) that
+                    // produces one — nothing here is a "what was shown"
+                    // read to fingerprint, so it is omitted rather than
+                    // invented. `content_hash` still applies (PE1): the
+                    // proposal's own content fingerprint, independent of
+                    // any rendering.
+                    const contentHash = await contentHashForDecision(proposal);
+                    await spClient.withdrawProposal(proposal.id, undefined, contentHash);
+                    void fetchMyPendingProposals();
+                    void fetchApprovedByMe();
+                  }}
                 />
               ))}
             </div>
@@ -512,6 +535,10 @@ interface AwaitingOthersCardProps {
   proposal: Proposal;
   currentUserId: string;
   onCancel: () => void;
+  /** suveren-as#89 — the proposer withdraws their own still-pending
+   *  above-cap proposal (the Cancel/reject route is closed to them: TR5
+   *  excludes the proposer from pendingApprovers). */
+  onWithdraw: () => Promise<void>;
 }
 
 function formatAge(unixSeconds: number): string {
@@ -523,8 +550,10 @@ function formatAge(unixSeconds: number): string {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
-function AwaitingOthersCard({ proposal, currentUserId, onCancel }: AwaitingOthersCardProps) {
+function AwaitingOthersCard({ proposal, currentUserId, onCancel, onWithdraw }: AwaitingOthersCardProps) {
   const [cancelling, setCancelling] = useState(false);
+  const [withdrawing, setWithdrawing] = useState(false);
+  const [withdrawError, setWithdrawError] = useState('');
 
   // TR5 (real-gateway e2e, 2026-10-15) — the SAME approver roster/name
   // resolution as ApproverProposalCard, so the proposer's own "Awaiting
@@ -544,6 +573,23 @@ function AwaitingOthersCard({ proposal, currentUserId, onCancel }: AwaitingOther
       await onCancel();
     } finally {
       setCancelling(false);
+    }
+  };
+
+  // suveren-as#89 — the proposer's own way to end their still-pending
+  // above-cap proposal (the reject route is closed to them, see the
+  // `isProposer` branch below). A withdrawn proposal can never be
+  // approved/executed afterward.
+  const handleWithdraw = async () => {
+    if (!confirm('Withdraw this action? It can never be approved afterward.')) return;
+    setWithdrawing(true);
+    setWithdrawError('');
+    try {
+      await onWithdraw();
+    } catch (err) {
+      setWithdrawError(err instanceof Error ? err.message : 'Withdraw failed');
+    } finally {
+      setWithdrawing(false);
     }
   };
 
@@ -610,17 +656,25 @@ function AwaitingOthersCard({ proposal, currentUserId, onCancel }: AwaitingOther
         </p>
       )}
 
-      {/* The Authority Server's reject route only admits a required
-          approver (pendingApprovers) — the proposer, correctly excluded
-          from that list (TR5), has no way to cancel their OWN above-cap
-          proposal there today. Rather than offer a Cancel that silently
-          403s, say so and point at the real option (an approver declining
-          it). Reported to the AS team as a gap (reject should also admit
-          the proposal's own creator) — not fixed here. */}
+      {/* suveren-as#89 — the proposal's own creator withdraws it directly
+          (the reject route is closed to them: TR5 excludes the proposer
+          from pendingApprovers). Outline button — form, not colour, per
+          the UI spec — same bordered-surface treatment as the "Change
+          needed" button elsewhere, not a plain ghost+colour link. */}
       {isAboveCap && isProposer ? (
-        <p style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)', marginTop: '0.5rem', textAlign: 'right' }}>
-          To withdraw this, ask one of the approvers above to reject it.
-        </p>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.35rem', marginTop: '0.5rem' }}>
+          <button
+            className="btn btn-secondary btn-sm"
+            style={{ background: 'var(--bg-elevated)', color: 'var(--danger)', borderColor: 'var(--danger)' }}
+            onClick={handleWithdraw}
+            disabled={withdrawing}
+          >
+            {withdrawing ? 'Withdrawing...' : 'Withdraw'}
+          </button>
+          {withdrawError && (
+            <p style={{ fontSize: '0.78rem', color: 'var(--danger)', margin: 0 }}>{withdrawError}</p>
+          )}
+        </div>
       ) : (
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '0.5rem' }}>
           <button

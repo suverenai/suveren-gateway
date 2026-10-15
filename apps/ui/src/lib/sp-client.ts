@@ -556,6 +556,14 @@ export interface Proposal {
   approvedBy?: Record<string, { receiptId: string; at: number }>;
   approverRejectedBy?: { userId: string; reason?: string; at: number; outcome?: ProposalOutcome; note?: string; noteEncrypted?: NoteEncryptedWire };
   createdBy?: string;
+  /**
+   * suveren-as#89 — set only by `POST /api/proposals/:id/withdraw` (the
+   * proposal's own creator declining to pursue it — status flips to
+   * 'rejected', same as every other terminal decision here, but this field
+   * is what tells "the proposer backed out" apart from someone else's
+   * reject/change_needed/replaced). Never set by any other route.
+   */
+  withdrawnBy?: { userId: string; at: number; note?: string; noteEncrypted?: NoteEncryptedWire };
 }
 
 export interface ExecutionReceipt {
@@ -1828,12 +1836,15 @@ class SPClient {
   }
 
   /**
-   * Reject (above-cap approver path) or withdraw a proposal.
-   * SP endpoint: POST /api/proposals/:id/reject — accepts the legacy
-   * `{ reason }` body (older gateways) as well as the RJ1–RJ6 contract
-   * `{ outcome?, note? }` (temp/briefs/rj-reject-brief.md). `reason` and
-   * `outcome`/`note` are mutually exclusive callers in this codebase — no
-   * call site here needs both at once.
+   * Reject a proposal — the above-cap approver path (requires the caller to
+   * be in `pendingApprovers`; the proposer's OWN proposal uses
+   * {@link withdrawProposal} instead, a separate route, since TR5
+   * deliberately excludes the proposer from that list — see its doc
+   * comment). SP endpoint: POST /api/proposals/:id/reject — accepts the
+   * legacy `{ reason }` body (older gateways) as well as the RJ1–RJ6
+   * contract `{ outcome?, note? }` (temp/briefs/rj-reject-brief.md).
+   * `reason` and `outcome`/`note` are mutually exclusive callers in this
+   * codebase — no call site here needs both at once.
    */
   async rejectProposal(
     id: string,
@@ -1864,6 +1875,57 @@ class SPClient {
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Failed' }));
       throw new Error(asErrorMessage(err, `rejectProposal failed: ${res.status}`));
+    }
+    return res.json();
+  }
+
+  /**
+   * GET /api/proposals?creator=me (suveren-as#89) — the caller's OWN
+   * still-pending proposals (above-cap or not), active workspace only,
+   * same encrypted-content shape as every other list mode. Returns `null`
+   * on a 400 — the one way to tell an older AS that does not support this
+   * mode yet (its `GET /api/proposals` 400s with no `creator`/`domain`/
+   * `status`/`approver` match) from "genuinely nothing pending" (`[]`).
+   * Callers MUST fall back to something else on `null`, never show an
+   * empty list as if it were authoritative.
+   */
+  async getProposalsCreatedByMe(): Promise<Proposal[] | null> {
+    const res = await this.fetch('/api/proposals?creator=me');
+    if (res.status === 400) return null;
+    if (!res.ok) throw new Error(`Failed to fetch my proposals: ${res.status}`);
+    const data = await res.json();
+    return (data.proposals ?? []) as Proposal[];
+  }
+
+  /**
+   * POST /api/proposals/:id/withdraw (suveren-as#89) — the proposal's own
+   * creator declines to pursue their still-pending above-cap action. The
+   * ONLY way the proposer can end their own proposal: `rejectProposal`
+   * requires `pendingApprovers` membership, which TR5 deliberately excludes
+   * them from. Same note/encrypted-note shape as {@link rejectProposal}
+   * (mutually exclusive — a sealed note replaces the plain one) and the
+   * same `content_hash`/`shown_hash` fingerprint parameters as every other
+   * decision here.
+   */
+  async withdrawProposal(
+    id: string,
+    opts?: { note?: string; noteEncrypted?: NoteEncryptedWire },
+    contentHash?: string,
+    shownHash?: string,
+  ): Promise<{ status: string; proposalId: string; withdrawnBy: { userId: string; at: number; note?: string; noteEncrypted?: NoteEncryptedWire } }> {
+    const { noteEncrypted, note } = opts ?? {};
+    const body: Record<string, unknown> = {
+      ...(noteEncrypted ? { note_encrypted: noteEncrypted } : (note ? { note } : {})),
+    };
+    if (contentHash) body.content_hash = contentHash;
+    if (shownHash) body.shown_hash = shownHash;
+    const res = await this.fetch(`/api/proposals/${encodeURIComponent(id)}/withdraw`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Failed' }));
+      throw new Error(asErrorMessage(err, `withdrawProposal failed: ${res.status}`));
     }
     return res.json();
   }
