@@ -221,8 +221,9 @@ function AuthCard({
             style={{
               fontSize: '0.75rem',
               fontWeight: 700,
-              color: 'var(--text-on-warning, #7a4a00)',
-              background: 'var(--warning-bg, #fff3cd)',
+              color: 'var(--text-primary)',
+              background: 'transparent',
+              border: '1px dashed var(--text-primary)',
               borderRadius: '4px',
               padding: '2px 6px',
             }}
@@ -275,8 +276,9 @@ function AuthCard({
               fontSize: '0.65rem',
               padding: '0.15rem 0.4rem',
               borderRadius: '0.25rem',
-              background: hasApprovers ? 'var(--accent-subtle)' : 'var(--danger-subtle)',
-              color: hasApprovers ? 'var(--accent)' : 'var(--danger)',
+              background: 'transparent',
+              color: 'var(--text-primary)',
+              border: hasApprovers ? '1px dashed var(--text-primary)' : '2px solid var(--text-primary)',
               fontWeight: 600,
               cursor: 'help',
             }}
@@ -291,10 +293,10 @@ function AuthCard({
               fontSize: '0.65rem',
               padding: '0.15rem 0.5rem',
               borderRadius: '0.25rem',
-              background: 'var(--warning-subtle, rgba(234,179,8,0.12))',
-              color: 'var(--warning, #ca8a04)',
+              background: 'transparent',
+              color: 'var(--text-primary)',
               fontWeight: 600,
-              border: '1px solid var(--warning-border, rgba(234,179,8,0.3))',
+              border: '1px dashed var(--text-primary)',
               cursor: 'pointer',
               lineHeight: 1.4,
             }}
@@ -325,7 +327,7 @@ function AuthCard({
                   ) : (
                     <span title={`Team cap on ${k} is ${r.cap} with no approvers configured (hard cap). Authorized for ${r.authorized}; effective ${r.cap}.`}>
                       <span style={{ textDecoration: 'line-through', color: 'var(--text-tertiary)' }}>{k}={String(v)}</span>
-                      <span style={{ color: 'var(--danger)', marginLeft: '0.25rem', fontWeight: 600 }}>
+                      <span style={{ marginLeft: '0.25rem', fontWeight: 700 }}>
                         {'→'} {r.cap}
                       </span>
                     </span>

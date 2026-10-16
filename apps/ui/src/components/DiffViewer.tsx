@@ -18,19 +18,21 @@ interface SplitRow {
   right: SplitCell | null;
 }
 
+// Monochrome (UI spec §2.1): an added line is shaded and marked "+", a
+// removed line is muted and marked "-" (unified) or sits on the left (split).
 const colors = {
-  bg: '#ffffff',
-  text: '#24292f',
-  lineNum: '#8b949e',
-  addBg: '#e6ffec',
-  addText: '#1a7f37',
-  delBg: '#ffebe9',
-  delText: '#cf222e',
-  hunkBg: '#f6f8fa',
-  hunkText: '#656d76',
-  border: '#d1d9e0',
-  toolbarBg: '#f6f8fa',
-  emptyBg: '#f6f8fa',
+  bg: 'var(--bg-elevated)',
+  text: 'var(--text-primary)',
+  lineNum: 'var(--text-muted)',
+  addBg: 'var(--neutral-subtle)',
+  addText: 'var(--text-primary)',
+  delBg: 'transparent',
+  delText: 'var(--text-muted)',
+  hunkBg: 'var(--bg-main)',
+  hunkText: 'var(--text-muted)',
+  border: 'var(--border)',
+  toolbarBg: 'var(--bg-main)',
+  emptyBg: 'var(--bg-main)',
 };
 
 const lineNumStyle: CSSProperties = {
@@ -117,11 +119,11 @@ export default function DiffViewer({ patch, filename, status }: DiffViewerProps)
   const toggleStyle = (active: boolean): CSSProperties => ({
     padding: '0.25rem 0.6rem',
     fontSize: '0.75rem',
-    border: `1px solid ${active ? '#d1d9e0' : 'transparent'}`,
+    border: `1px solid ${active ? colors.border : 'transparent'}`,
     borderRadius: '3px',
     cursor: 'pointer',
-    backgroundColor: active ? '#ffffff' : 'transparent',
-    color: active ? '#24292f' : '#656d76',
+    backgroundColor: active ? colors.bg : 'transparent',
+    color: active ? colors.text : colors.hunkText,
     fontFamily: 'inherit',
     fontWeight: active ? 600 : 400,
   });

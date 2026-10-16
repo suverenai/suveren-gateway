@@ -994,12 +994,12 @@ export function BoundsEditor({
       <div style={{
         marginTop: '0.75rem',
         padding: '0.75rem 1rem',
-        border: '1px solid var(--danger)',
+        border: '2px solid var(--border-strong)',
         borderRadius: '0.375rem',
         background: 'var(--bg-elevated)',
         fontSize: '0.82rem',
       }}>
-        <div style={{ fontWeight: 600, color: 'var(--danger)', marginBottom: '0.25rem' }}>Hard team ceiling.</div>
+        <div className="msg-error" style={{ marginBottom: '0.25rem' }}>Hard team ceiling.</div>
         <div style={{ marginBottom: '0.75rem' }}>
           Lower the bound(s) above, or ask {admin} to add an approver path above the cap.
         </div>

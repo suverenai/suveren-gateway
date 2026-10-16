@@ -337,7 +337,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
           <dt>Intent</dt>
           <dd>
             {intentError ? (
-              <p style={{ color: 'var(--danger)', fontSize: '0.8rem', margin: 0 }}>{intentError}</p>
+              <p className="msg-error" style={{ fontSize: '0.8rem', margin: 0 }}>{intentError}</p>
             ) : intent !== null ? (
               <>
                 <p className={`intent-text${expanded ? '' : ' intent-clamped'}`}>{intent}</p>
@@ -415,7 +415,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
             {editingBeforeSigning ? 'Opening…' : 'Edit before signing'}
           </button>
           {editError && (
-            <p style={{ color: 'var(--danger)', fontSize: '0.8rem', margin: '0.4rem 0 0' }}>{editError}</p>
+            <p className="msg-error" style={{ fontSize: '0.8rem', margin: '0.4rem 0 0' }}>{editError}</p>
           )}
         </div>
       )}

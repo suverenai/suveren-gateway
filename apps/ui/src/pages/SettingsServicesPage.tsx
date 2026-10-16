@@ -597,7 +597,7 @@ function PromptEditor({
           </button>
         )}
         {justSaved && (
-          <span style={{ fontSize: '0.78rem', color: 'var(--success)' }}>Saved</span>
+          <span className="msg-ok" style={{ fontSize: '0.78rem' }}>Saved</span>
         )}
         {dirty && !saving && !justSaved && (
           <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Unsaved changes</span>

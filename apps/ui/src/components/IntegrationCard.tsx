@@ -391,10 +391,10 @@ export function IntegrationCard({ manifest, integration, state, onStatusChange, 
       {authFailed && !editingCreds && (
         <div style={{
           marginTop: '0.7rem',
-          border: '1px solid var(--danger)',
+          border: '2px solid var(--border-strong)',
           borderRadius: '10px',
           padding: '0.8rem 0.95rem',
-          background: 'color-mix(in srgb, var(--danger) 5%, var(--bg-elevated))',
+          background: 'var(--bg-elevated)',
         }}>
           <div style={{ fontSize: '0.86rem', fontWeight: 700 }}>
             {manifest.name} stopped accepting the stored credentials
@@ -498,8 +498,8 @@ export function IntegrationCard({ manifest, integration, state, onStatusChange, 
       {/* Starting state — subprocess is coming up after login; shown
           deliberately instead of "Not running" to stop the post-login flicker. */}
       {cardState === 'starting' && (
-        <div className="service-status" style={{ color: 'var(--warning)' }}>
-          <span className="service-status-dot" style={{ background: 'var(--warning)' }} />
+        <div className="service-status" style={{ color: 'var(--text-primary)' }}>
+          <span className="service-status-dot" style={{ background: 'transparent', border: '1px dashed var(--text-primary)' }} />
           Starting…
         </div>
       )}
@@ -618,8 +618,7 @@ export function IntegrationCard({ manifest, integration, state, onStatusChange, 
             )}
             <span style={{ flex: 1 }} />
             <button
-              className="btn btn-sm btn-ghost"
-              style={{ color: 'var(--danger)' }}
+              className="btn btn-sm btn-outline-strong"
               onClick={remove}
               title="Stops the subprocess and removes the integration from the registry. It will NOT auto-start on next gateway restart. Re-enable with Install."
             >
@@ -640,7 +639,7 @@ export function IntegrationCard({ manifest, integration, state, onStatusChange, 
                     {readAge === null ? 'window from your mandate' : readAgeLabel(readAge).toLowerCase()}
                   </span>
                   {savingReadAge && <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>saving…</span>}
-                  {readAgeError && <span style={{ fontSize: '0.78rem', color: 'var(--danger)' }}>{readAgeError}</span>}
+                  {readAgeError && <span className="msg-error" style={{ fontSize: '0.78rem' }}>{readAgeError}</span>}
                 </div>
                 <button className="btn btn-sm btn-secondary" onClick={() => setEditingReadAge(true)}>
                   Edit
@@ -686,7 +685,7 @@ export function IntegrationCard({ manifest, integration, state, onStatusChange, 
               </div>
               <div style={{ fontSize: '0.78rem', marginTop: '0.5rem' }}>
                 {readAgeError ? (
-                  <span style={{ color: 'var(--danger)' }}>{readAgeError}</span>
+                  <span className="msg-error">{readAgeError}</span>
                 ) : savingReadAge ? (
                   <span style={{ color: 'var(--text-muted)' }}>Saving…</span>
                 ) : readAge === null ? (
@@ -813,7 +812,7 @@ export function IntegrationCard({ manifest, integration, state, onStatusChange, 
       {/* Needs OAuth */}
       {cardState === 'needs-oauth' && (
         <>
-          <div style={{ fontSize: '0.8rem', color: 'var(--success)', marginBottom: '0.25rem' }}>
+          <div style={{ fontSize: '0.8rem', fontWeight: 600, marginBottom: '0.25rem' }}>
             {'\u2713'} Step 1 done — credentials saved
           </div>
           <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>
@@ -833,7 +832,7 @@ export function IntegrationCard({ manifest, integration, state, onStatusChange, 
       {/* Ready to start */}
       {cardState === 'ready' && !integration && (
         <>
-          <div style={{ fontSize: '0.8rem', color: 'var(--success)', marginBottom: '0.75rem' }}>
+          <div style={{ fontSize: '0.8rem', fontWeight: 600, marginBottom: '0.75rem' }}>
             {'\u2713'} {manifest.oauth ? `${manifest.name} account connected` : 'Credentials configured'}
           </div>
           <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
@@ -873,7 +872,7 @@ export function IntegrationCard({ manifest, integration, state, onStatusChange, 
               Real systems are off while simulation mode is on.
             </p>
             <div style={{ display: 'flex', gap: '0.5rem' }}>
-              <button className="btn btn-ghost" style={{ color: 'var(--danger)' }} onClick={remove}>
+              <button className="btn btn-outline-strong" onClick={remove}>
                 Disable
               </button>
             </div>
@@ -885,7 +884,7 @@ export function IntegrationCard({ manifest, integration, state, onStatusChange, 
               Not running
             </div>
             {integration.error && (
-              <div style={{ fontSize: '0.8rem', color: 'var(--danger)', marginBottom: '0.75rem' }}>
+              <div className="msg-error" style={{ fontSize: '0.8rem', marginBottom: '0.75rem' }}>
                 {integration.error}
               </div>
             )}
@@ -893,7 +892,7 @@ export function IntegrationCard({ manifest, integration, state, onStatusChange, 
               <button className="btn btn-primary" onClick={activate} disabled={activating}>
                 {activating ? 'Starting...' : 'Start'}
               </button>
-              <button className="btn btn-ghost" style={{ color: 'var(--danger)' }} onClick={remove}>
+              <button className="btn btn-outline-strong" onClick={remove}>
                 Disable
               </button>
             </div>

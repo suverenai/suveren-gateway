@@ -143,7 +143,7 @@ export function DashboardPage() {
       label: 'Approval needed',
       detail: `${p.tool} — above-cap action under ${shortProfile(p.profileId)}`,
       to: '/approvals',
-      color: 'var(--warning)',
+      color: 'var(--text-primary)',
     });
   }
 
@@ -152,7 +152,7 @@ export function DashboardPage() {
       label: 'Approval pending',
       detail: `${p.tool} awaiting your approval`,
       to: '/approvals',
-      color: 'var(--warning)',
+      color: 'var(--text-primary)',
     });
   }
 
@@ -162,7 +162,7 @@ export function DashboardPage() {
       label: 'Expiring soon',
       detail: `${a.title ?? shortProfile(a.profile_id)} — ${mins} min remaining`,
       to: '/mandates',
-      color: 'var(--warning)',
+      color: 'var(--text-primary)',
     });
   }
 
@@ -171,7 +171,7 @@ export function DashboardPage() {
       label: 'Expired',
       detail: a.title ?? shortProfile(a.profile_id),
       to: '/mandates',
-      color: 'var(--danger)',
+      color: 'var(--text-primary)',
     });
   }
 
@@ -181,7 +181,7 @@ export function DashboardPage() {
       label: 'Integration starting',
       detail: `${e.manifest.name} is coming up…`,
       to: '/integrations',
-      color: 'var(--warning)',
+      color: 'var(--text-primary)',
     });
   }
   // A running subprocess with a dead OAuth token (e.g. an expired LinkedIn
@@ -195,7 +195,7 @@ export function DashboardPage() {
         label: 'Reconnect needed',
         detail: `${e.manifest.name}: authorization expired — reconnect to restore access`,
         to: '/integrations',
-        color: 'var(--danger)',
+        color: 'var(--text-primary)',
       });
     }
   }
@@ -254,7 +254,7 @@ export function DashboardPage() {
         <Link to="/mandates" style={{ textDecoration: 'none' }}>
           <div className="card" style={{ padding: '1rem', textAlign: 'center' }}>
             {authsReady ? (
-              <div style={{ fontSize: '1.5rem', fontWeight: 700, color: active.length > 0 ? 'var(--success)' : 'var(--text-tertiary)' }}>
+              <div style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--text-primary)' }}>
                 {active.length}
               </div>
             ) : (
@@ -266,7 +266,7 @@ export function DashboardPage() {
         <Link to="/approvals" style={{ textDecoration: 'none' }}>
           <div className="card" style={{ padding: '1rem', textAlign: 'center' }}>
             {proposalsReady ? (
-              <div style={{ fontSize: '1.5rem', fontWeight: 700, color: pendingProposals.length > 0 ? 'var(--warning)' : 'var(--text-tertiary)' }}>
+              <div style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--text-primary)' }}>
                 {pendingProposals.length}
               </div>
             ) : (
@@ -278,7 +278,7 @@ export function DashboardPage() {
         <Link to="/mandates" style={{ textDecoration: 'none' }}>
           <div className="card" style={{ padding: '1rem', textAlign: 'center' }}>
             {authsReady ? (
-              <div style={{ fontSize: '1.5rem', fontWeight: 700, color: expired.length > 0 ? 'var(--danger)' : 'var(--text-tertiary)' }}>
+              <div style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--text-primary)' }}>
                 {expired.length}
               </div>
             ) : (
@@ -290,7 +290,7 @@ export function DashboardPage() {
         <Link to="/integrations" style={{ textDecoration: 'none' }}>
           <div className="card" style={{ padding: '1rem', textAlign: 'center' }}>
             {integrationsReady ? (
-              <div style={{ fontSize: '1.5rem', fontWeight: 700, color: runningIntegrations.length > 0 ? 'var(--success)' : 'var(--text-tertiary)' }}>
+              <div style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--text-primary)' }}>
                 {runningIntegrations.length}
               </div>
             ) : (

@@ -1,0 +1,280 @@
+/* Copied verbatim from suveren-as/docs/ui-spec/tokens.css (signed off 2026-10-15).
+   Change the spec first, then copy it here — never edit this file on its own.
+   ui-tokens.test.ts fails on any var(--…) not defined here or in design-system.css,
+   and on any literal colour outside this file. */
+
+/* ════════════════════════════════════════════════════════════════════
+   Suveren UI — design tokens (v2, 2026-10-15 — colour reduced per
+   Andreas's decision: colour exists ONLY to keep the information
+   levels on a card unmistakable — sealed / from the system / the AI's
+   own claim / customer's text. Everything else — status, buttons,
+   alerts, badges — is monochrome, told apart by form: fill vs. outline
+   vs. dashed, border weight, icon, label. See ui-spec.md §2/§3/§4.)
+
+   One token set for all three surfaces: suveren-gateway/apps/ui,
+   suveren-as/apps/as (dashboard), suveren-as/apps/web (suveren.ai).
+   HAP (humanagencyprotocol.com) is out of scope — do not use these.
+
+   Theme switching: both mechanisms are supported, matching how the two
+   apps already differ. `prefers-color-scheme` gives the OS default; a
+   `[data-theme="dark"|"light"]` attribute on <html> or <body> lets a
+   user override it (the gateway has a theme toggle; the AS/web may not
+   need one — prefers-color-scheme alone is fine there).
+
+   Every token is defined for BOTH light and dark. No component may use
+   a literal colour, radius, spacing, shadow, or font-size — only a
+   var(--…) from this file. If a component needs a value this file
+   doesn't have, add the token here first; do not invent a local one.
+   ════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── Text ──────────────────────────────────────────────────────────
+     Kept flat on purpose (design decision carried over, not a bug):
+     body text is one weight of "ink", not a 3-step grey ramp. Grey is
+     reserved for --text-muted (secondary/chrome text only, never a
+     sentence the person must read to decide). */
+  --text-primary: #111111;
+  --text-secondary: #111111;
+  --text-tertiary: #111111;
+  --text-muted: #888888;
+  --text-on-accent: #ffffff;
+
+  /* ── Surfaces ── */
+  --bg-main: #fafafa;       /* page background */
+  --bg-elevated: #ffffff;   /* cards, nav, dropdowns */
+  --bg-input: #ffffff;      /* text inputs, textareas (NOT the inverted
+                                "field" convention below — see Buttons) */
+  --border: #e5e5e5;
+  --border-strong: #c7c7c7; /* was --edit-border; renamed for its one job:
+                                an editable/focusable field's outline */
+
+  /* ── Accent — monochrome, not brand colour ──
+     "Accent" means "this is interactive/selected chrome", never
+     importance or severity. Keep it grey. */
+  --accent: #888888;
+  --accent-subtle: #f0f0f0;
+  --accent-hover: #555555;
+
+  /* ── Status — monochrome, distinguished by FORM not hue ─────────────
+     Decision 2026-10-15 (Andreas): colour is spent ONLY on the
+     provenance scale below (what kind of information a value is).
+     Every lifecycle/status state — awaiting decision, active, refused,
+     failed, revoked, expired, passed — is monochrome. The former
+     severity roles (`--waiting`/`--caution`/`--negative`/`--positive`
+     and their `-subtle` tints, v1 of this file) are REMOVED: a status
+     is told apart by fill (solid vs. outline vs. dashed), border
+     weight, an icon glyph, and the label — never by colour. See
+     ui-spec.md §3 (status system) and §4.3/§4.4 (buttons, pills).
+
+     Two monochrome tokens remain, both already in use elsewhere:
+       --neutral          same value as --text-primary; the SOLID fill
+                           for a pill that needs to stand out without
+                           implying "bad" (e.g. "Awaiting decision")
+       --neutral-subtle    a plain grey tint for a resting/inactive fill
+                           (e.g. the "Active" pill's background) —
+                           carries no severity meaning by itself */
+  --neutral: #111111;
+  --neutral-subtle: #f0f0f0;
+
+  /* ── Failed check — the single colour exception (Andreas, 2026-10-15) ──
+     Red means exactly one thing, everywhere it appears: a FAILED CHECK
+     on an approval card (e.g. "✕ Credit limit would be exceeded by
+     €2,400"). Always paired with the ✕ icon and bold weight — never
+     colour alone — so the signal still works for colour-blind readers.
+     It does NOT mean refused, blocked, or failed actions, and it is
+     never used on a button, a status pill/badge, or an alert — those
+     stay monochrome (form, not colour), told apart by fill/outline/
+     dashed, border weight, icon, and label (§3/§4.3/§4.4/§4.5 of
+     ui-spec.md). See ui-spec.md §4.2.2/§6.2.
+     Contrast on its own subtle fill: 4.88:1 light / 6.62:1 dark — both
+     clear the WCAG AA text-on-fill floor of 4.5:1. */
+  --check-failed: #cd291d;
+  --check-failed-subtle: #fef2f2;
+
+  /* ── Provenance colours — THE ONLY hues in the system ────────────────
+     The minimum needed to keep the four information levels on a card
+     unmistakable from each other. That minimum is 2 real hues, not 4:
+
+       sealed                NO hue — bold --text-primary + a frame
+                              (border). What will be executed, exactly
+                              so. Never coloured; see ui-spec.md §2.2.
+       from the system       --prov-system (blue) — read by the gateway
+                              or the Authority Server; the AI did not
+                              supply or write this value.
+       the AI's own claim     --prov-ai (amber/gold) — text or a link
+                              the AI itself wrote or chose, not yet
+                              checked against anything.
+       customer's / external  NO hue — plain --text-primary / --border
+       text                   frame, same neutral treatment as sealed,
+                              labelled in words ("Customer's email")
+                              instead of coloured amber (closes the old
+                              "amber on the customer's own words reads
+                              as mistrust" complaint — see
+                              decision-research.md Tier C8).
+
+     --prov-system and --prov-ai are chosen to read as two clearly
+     different hues (blue vs. amber) in both themes. Contrast on their
+     own subtle tint: --prov-system 6.16:1 light / 6.64:1 dark;
+     --prov-ai 4.84:1 light / 7.66:1 dark (both ≥ the 4.5:1 AA floor —
+     the old --warning hex this replaced only cleared 3.07:1). */
+  --prov-sealed: var(--text-primary);       /* bold + frame, not a hue */
+  --prov-system: #1d4ed8;                   /* "read by the gateway/AS" */
+  --prov-system-subtle: #eff6ff;
+  --prov-ai: #b45309;                       /* "the AI's own claim/text,
+                                                not checked" */
+  --prov-ai-subtle: #fffbeb;
+
+  /* ── Buttons ──
+     Primary = inverse of the page (kept; it's a real, legible rule).
+     "Change needed" and "Reject" are BOTH a plain outline now, same
+     border weight — equal visual weight, told apart only by icon +
+     label, never by colour (this removes the old hardcoded-`#fff`/
+     amber-border bug at the root: there is no longer a colour to get
+     wrong on that button). */
+  --btn-primary-bg: #111111;
+  --btn-primary-fg: #ffffff;
+  --btn-primary-bg-hover: #000000;
+  --btn-primary-bg-active: #2a2a2a;
+  --btn-secondary-border: var(--border);
+  --btn-outline-border-strong: var(--text-primary); /* Reject / Change
+                                                         needed / any
+                                                         "this matters"
+                                                         outline button */
+  --focus-ring: rgba(17, 17, 17, 0.35);
+
+  /* ── Form fields ──
+     Keeps the gateway's existing "fields invert from the page" rule
+     (it earns its place: it is the one place in the UI the eye must
+     find instantly to know "this is where I type"). Documented as ONE
+     named convention now, not an unlabelled accident shared with
+     --btn-primary-bg's unrelated inversion. */
+  --bg-field: #111111;
+  --text-field: #ffffff;
+  --border-field: #111111;
+  --placeholder-field: rgba(255, 255, 255, 0.55);
+  --field-focus-ring: rgba(0, 0, 0, 0.18);
+
+  /* ── Elevation — one shared scale, replaces 16 literal box-shadows ── */
+  --elevation-0: none;                                   /* flat card */
+  --elevation-1: 0 1px 2px rgba(0, 0, 0, 0.06);           /* resting card on main bg */
+  --elevation-2: 0 4px 12px rgba(0, 0, 0, 0.10);          /* dropdown, popover */
+  --elevation-3: 0 20px 60px rgba(0, 0, 0, 0.25);         /* modal */
+
+  /* ── Radius scale — replaces 18 literal values ── */
+  --radius-xs: 0.25rem;   /* small chips, inline tags */
+  --radius-sm: 0.375rem;  /* input fields, note boxes */
+  --radius-md: 0.5rem;    /* buttons, badges, most controls */
+  --radius-lg: 0.75rem;   /* cards (the .id-card / .card shell) */
+  --radius-xl: 1rem;      /* modals */
+  --radius-pill: 9999px;  /* status pills, workspace pill */
+  --radius-circle: 50%;   /* avatars, dots */
+
+  /* ── Spacing scale (4px base) — replaces ad-hoc rem literals ── */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+
+  /* ── Type scale — replaces 30 literal font-sizes ──
+     Named by role, not size, so the same name means the same job on
+     every surface (a card headline is a card headline whether it's in
+     the gateway or the AS). clamp() tiers reserved for marketing-scale
+     display text (website hero/page titles) — product UI stays fixed. */
+  --text-micro: 0.7rem;    /* uppercase labels, tiny meta ("2m ago"), badges */
+  --text-caption: 0.78rem; /* secondary/meta lines, muted notes */
+  --text-body-sm: 0.85rem; /* dense UI body copy (card rows, table cells) */
+  --text-body: 0.95rem;    /* default body text */
+  --text-lead: 1.1rem;     /* card headline ("Quote to Bavaria…") */
+  --text-h3: 1.25rem;      /* section/page sub-head */
+  --text-h2: 1.5rem;       /* page title (product UI) */
+  --text-h1: 2rem;         /* rare: dashboard hero number, settled page */
+  --text-display-page: clamp(2rem, 2.4vw, 2.5rem);  /* marketing page title */
+  --text-display-hero: clamp(2.5rem, 3.8vw, 4rem);  /* marketing hero */
+
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+  --font-mono: 'SF Mono', Monaco, 'Cascadia Code', ui-monospace, Menlo, monospace;
+  --line-tight: 1.3;
+  --line-normal: 1.5;
+  --line-relaxed: 1.6;
+
+  /* ── Layout ── */
+  --nav-height: 3.5rem;
+  --sidebar-width: 15rem;
+  --content-width: 75rem;
+  --content-padding: 2rem;
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   DARK THEME — every token above gets an explicit dark value.
+   ════════════════════════════════════════════════════════════════════ */
+@media (prefers-color-scheme: dark) {
+  :root { --text-primary: #ffffff; --text-secondary: #ffffff; --text-tertiary: #ffffff;
+    --text-muted: #9a9a9a; --text-on-accent: #000000;
+    --bg-main: #0a0a0a; --bg-elevated: #1a1a1a; --bg-input: #141414;
+    --border: #2a2a2a; --border-strong: #4a4a4a;
+    --accent: #9a9a9a; --accent-subtle: #1f1f1f; --accent-hover: #bbbbbb;
+    --neutral: #ffffff; --neutral-subtle: #1f1f1f;
+    --check-failed: #f87171; --check-failed-subtle: #2a0a0a;
+    --prov-system: #60a5fa; --prov-system-subtle: #0f1d33;
+    --prov-ai: #f59e0b; --prov-ai-subtle: #2a1d06;
+    --btn-primary-bg: #ffffff; --btn-primary-fg: #000000;
+    --btn-primary-bg-hover: #e5e5e5; --btn-primary-bg-active: #c4c4c4;
+    --focus-ring: rgba(255, 255, 255, 0.4);
+    --bg-field: #ffffff; --text-field: #111111; --border-field: #ffffff;
+    --placeholder-field: rgba(0, 0, 0, 0.5); --field-focus-ring: rgba(255, 255, 255, 0.25);
+    --elevation-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --elevation-2: 0 4px 16px rgba(0, 0, 0, 0.5);
+    --elevation-3: 0 20px 60px rgba(0, 0, 0, 0.6);
+  }
+}
+
+/* Explicit override, same values, for apps/pages with a manual toggle
+   (the gateway's theme switch sets this attribute on <html>). Mirrors
+   prefers-color-scheme exactly so toggling never produces a different
+   result than the OS default would. */
+[data-theme="dark"] {
+  --text-primary: #ffffff; --text-secondary: #ffffff; --text-tertiary: #ffffff;
+  --text-muted: #9a9a9a; --text-on-accent: #000000;
+  --bg-main: #0a0a0a; --bg-elevated: #1a1a1a; --bg-input: #141414;
+  --border: #2a2a2a; --border-strong: #4a4a4a;
+  --accent: #9a9a9a; --accent-subtle: #1f1f1f; --accent-hover: #bbbbbb;
+  --neutral: #ffffff; --neutral-subtle: #1f1f1f;
+  --check-failed: #f87171; --check-failed-subtle: #2a0a0a;
+  --prov-system: #60a5fa; --prov-system-subtle: #0f1d33;
+  --prov-ai: #f59e0b; --prov-ai-subtle: #2a1d06;
+  --btn-primary-bg: #ffffff; --btn-primary-fg: #000000;
+  --btn-primary-bg-hover: #e5e5e5; --btn-primary-bg-active: #c4c4c4;
+  --focus-ring: rgba(255, 255, 255, 0.4);
+  --bg-field: #ffffff; --text-field: #111111; --border-field: #ffffff;
+  --placeholder-field: rgba(0, 0, 0, 0.5); --field-focus-ring: rgba(255, 255, 255, 0.25);
+  --elevation-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --elevation-2: 0 4px 16px rgba(0, 0, 0, 0.5);
+  --elevation-3: 0 20px 60px rgba(0, 0, 0, 0.6);
+}
+
+[data-theme="light"] {
+  /* Explicit light override for a manual toggle under a dark OS default —
+     repeats the :root light values verbatim so the attribute always wins. */
+  --text-primary: #111111; --text-secondary: #111111; --text-tertiary: #111111;
+  --text-muted: #888888; --text-on-accent: #ffffff;
+  --bg-main: #fafafa; --bg-elevated: #ffffff; --bg-input: #ffffff;
+  --border: #e5e5e5; --border-strong: #c7c7c7;
+  --accent: #888888; --accent-subtle: #f0f0f0; --accent-hover: #555555;
+  --neutral: #111111; --neutral-subtle: #f0f0f0;
+  --check-failed: #cd291d; --check-failed-subtle: #fef2f2;
+  --prov-system: #1d4ed8; --prov-system-subtle: #eff6ff;
+  --prov-ai: #b45309; --prov-ai-subtle: #fffbeb;
+  --btn-primary-bg: #111111; --btn-primary-fg: #ffffff;
+  --btn-primary-bg-hover: #000000; --btn-primary-bg-active: #2a2a2a;
+  --focus-ring: rgba(17, 17, 17, 0.35);
+  --bg-field: #111111; --text-field: #ffffff; --border-field: #111111;
+  --placeholder-field: rgba(255, 255, 255, 0.55); --field-focus-ring: rgba(0, 0, 0, 0.18);
+  --elevation-1: 0 1px 2px rgba(0, 0, 0, 0.06);
+  --elevation-2: 0 4px 12px rgba(0, 0, 0, 0.10);
+  --elevation-3: 0 20px 60px rgba(0, 0, 0, 0.25);
+}

@@ -198,7 +198,7 @@ export function AgentBriefPage() {
         <div className="card intent-pane document">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
             <h3 className="card-title" style={{ marginBottom: 0 }}>context.md</h3>
-            <span style={{ fontSize: '0.75rem', color: byteLength > MAX_BYTES ? 'var(--danger)' : 'var(--text-muted)' }}>
+            <span className={byteLength > MAX_BYTES ? 'msg-error' : undefined} style={{ fontSize: '0.75rem', color: byteLength > MAX_BYTES ? undefined : 'var(--text-muted)' }}>
               {byteLength.toLocaleString()} / {MAX_BYTES.toLocaleString()} bytes
             </span>
           </div>

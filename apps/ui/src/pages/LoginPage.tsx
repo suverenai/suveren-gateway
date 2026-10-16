@@ -151,7 +151,7 @@ export function LoginPage() {
           aria-modal="true"
           aria-labelledby="wipe-warning-title"
           style={{
-            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
+            position: 'fixed', inset: 0, background: 'color-mix(in srgb, var(--bg-main) 70%, transparent)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             zIndex: 1000, padding: '1rem',
           }}
@@ -200,8 +200,7 @@ export function LoginPage() {
                 Cancel
               </button>
               <button
-                className="btn btn-secondary"
-                style={{ color: 'var(--danger, #e53e3e)' }}
+                className="btn btn-outline-strong"
                 onClick={handleConfirmWipe}
                 disabled={isLoading}
               >

@@ -24,7 +24,7 @@ export function ChangeNeededPanel({ note, onNoteChange, onSend, onCancel, sendin
     <div
       style={{
         border: '1px solid var(--border)',
-        borderRadius: 'var(--radius)',
+        borderRadius: 'var(--radius-md)',
         background: 'var(--bg-main)',
         padding: '0.75rem 0.875rem',
         marginTop: '0.5rem',
@@ -69,7 +69,6 @@ export function ChangeNeededPanel({ note, onNoteChange, onSend, onCancel, sendin
         <button
           data-testid="btn-send-back"
           className="btn btn-primary"
-          style={{ background: 'var(--warning)', borderColor: 'var(--warning)' }}
           onClick={onSend}
           disabled={sending}
         >

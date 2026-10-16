@@ -131,7 +131,7 @@ export function AutostartToggle() {
       )}
 
       {error && (
-        <p role="alert" style={{ margin: '0.75rem 0 0', fontSize: '0.85rem', color: 'var(--danger, #c00)' }}>
+        <p role="alert" className="msg-error" style={{ margin: '0.75rem 0 0', fontSize: '0.85rem' }}>
           {error}
         </p>
       )}

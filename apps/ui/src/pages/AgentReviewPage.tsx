@@ -495,7 +495,7 @@ export function AgentReviewPage() {
     flex: 1,
     padding: '0.75rem',
     border: commitMode === 'immediate' ? '2px solid var(--accent)' : '1px solid var(--border)',
-    borderRadius: 'var(--radius)',
+    borderRadius: 'var(--radius-md)',
     background: commitMode === 'immediate' ? 'var(--accent-subtle)' : 'var(--bg-elevated)',
     cursor: 'pointer' as const,
     textAlign: 'left' as const,
@@ -505,7 +505,7 @@ export function AgentReviewPage() {
     flex: 1,
     padding: '0.75rem',
     border: commitMode === 'per-action' ? '2px solid var(--accent)' : '1px solid var(--border)',
-    borderRadius: 'var(--radius)',
+    borderRadius: 'var(--radius-md)',
     background: commitMode === 'per-action' ? 'var(--accent-subtle)' : 'var(--bg-elevated)',
     cursor: 'pointer' as const,
     textAlign: 'left' as const,
@@ -616,7 +616,7 @@ export function AgentReviewPage() {
             </div>
           )}
           {noModeAllowed && (
-            <div style={{ fontSize: '0.75rem', color: 'var(--danger)', marginTop: '0.25rem' }}>
+            <div className="msg-error" style={{ fontSize: '0.75rem', marginTop: '0.25rem' }}>
               This profile allows no commitment mode, so no mandate can be signed under it. Its publisher must fix the profile.
             </div>
           )}
@@ -682,7 +682,7 @@ export function AgentReviewPage() {
             </select>
           </div>
           {ttlExceedsMax && (
-            <span style={{ fontSize: '0.75rem', color: 'var(--danger)' }}>
+            <span className="msg-error" style={{ fontSize: '0.75rem' }}>
               Maximum: {ttlMax >= 86400 ? `${Math.floor(ttlMax / 86400)} days` : `${Math.floor(ttlMax / 3600)} hours`}
             </span>
           )}
@@ -771,7 +771,7 @@ export function AgentReviewPage() {
                   <span style={{ color: 'var(--text-tertiary)' }}>Loading…</span>
                 ) : !right.can ? (
                   <>
-                    <span style={{ color: 'var(--danger)', fontWeight: 600 }}>
+                    <span className="msg-error">
                       {right.code === 'PROFILE_NOT_ENABLED_FOR_GROUP' ? `Not enabled for ${authData.groupName ?? 'this team'}` : 'You cannot give this mandate'}
                     </span>
                     {right.code === 'OWNER_NOT_APPROVER' && <div>{approverNamesStr}</div>}
@@ -800,13 +800,13 @@ export function AgentReviewPage() {
           <div style={{
             display: 'flex', gap: '0.625rem',
             padding: '0.75rem 0.875rem', marginBottom: '1.25rem',
-            border: '1px solid var(--warning)', borderLeft: '3px solid var(--warning)',
+            border: '1px dashed var(--border-strong)', borderLeft: '3px dashed var(--text-primary)',
             borderRadius: '0.5rem', background: 'var(--bg-elevated)',
             fontSize: '0.82rem', color: 'var(--text-primary)',
           }}>
-            <span aria-hidden="true" style={{ color: 'var(--warning)', fontWeight: 700 }}>⚠</span>
+            <span aria-hidden="true" style={{ fontWeight: 700 }}>!</span>
             <div>
-              <div style={{ fontWeight: 600, color: 'var(--warning)', marginBottom: '0.2rem' }}>
+              <div style={{ fontWeight: 600, marginBottom: '0.2rem' }}>
                 Identical limits to an existing grant
               </div>
               <div>
@@ -826,13 +826,13 @@ export function AgentReviewPage() {
           <div style={{
             display: 'flex', gap: '0.625rem',
             padding: '0.75rem 0.875rem', marginBottom: '1.25rem',
-            border: '1px solid var(--warning)', borderLeft: '3px solid var(--warning)',
+            border: '1px dashed var(--border-strong)', borderLeft: '3px dashed var(--text-primary)',
             borderRadius: '0.5rem', background: 'var(--bg-elevated)',
             fontSize: '0.82rem', color: 'var(--text-primary)',
           }}>
-            <span aria-hidden="true" style={{ color: 'var(--warning)', fontWeight: 700 }}>⚠</span>
+            <span aria-hidden="true" style={{ fontWeight: 700 }}>!</span>
             <div>
-              <div style={{ fontWeight: 600, color: 'var(--warning)', marginBottom: '0.2rem' }}>
+              <div style={{ fontWeight: 600, marginBottom: '0.2rem' }}>
                 Overlapping scope
               </div>
               <div>{overlapWarningText}</div>

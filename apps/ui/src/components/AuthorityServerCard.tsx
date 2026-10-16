@@ -57,7 +57,7 @@ export function AuthorityServerCard() {
       )}
 
       {error && (
-        <p role="alert" style={{ margin: '0.5rem 0 0', fontSize: '0.9rem', color: 'var(--danger, #c00)' }}>{error}</p>
+        <p role="alert" className="msg-error" style={{ margin: '0.5rem 0 0', fontSize: '0.9rem' }}>{error}</p>
       )}
 
       {state && (

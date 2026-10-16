@@ -327,7 +327,7 @@ export function ProposalReviewPage() {
           className={`nav-tab${queueTab === 'awaiting-me' ? ' active' : ''}`}
           onClick={() => setQueueTab('awaiting-me')}
         >
-          Awaiting me {awaitingMeCount > 0 && <span style={{ marginLeft: '0.4rem', background: 'var(--warning)', color: 'var(--bg-elevated)', borderRadius: '0.625rem', padding: '0 0.375rem', fontSize: '0.7rem', fontWeight: 600 }}>{awaitingMeCount}</span>}
+          Awaiting me {awaitingMeCount > 0 && <span className="pill-count" style={{ marginLeft: '0.4rem' }}>{awaitingMeCount}</span>}
         </button>
         <button
           className={`nav-tab${queueTab === 'awaiting-others' ? ' active' : ''}`}
@@ -626,7 +626,7 @@ function AwaitingOthersCard({ proposal, currentUserId, onCancel, onWithdraw }: A
         <div className="approver-progress" style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginBottom: '0.5rem' }}>
           Needs {team.requiredApprovals} approval{team.requiredApprovals === 1 ? '' : 's'} from:{' '}
           {approvers.map((uid, i) => (
-            <span key={uid} className={`who${uid in approvedBy ? ' done' : ''}`} style={{ marginLeft: i === 0 ? '0.25rem' : '0.5rem', color: uid in approvedBy ? 'var(--success)' : undefined }}>
+            <span key={uid} className={`who${uid in approvedBy ? ' done' : ''}`} style={{ marginLeft: i === 0 ? '0.25rem' : '0.5rem', fontWeight: uid in approvedBy ? 600 : undefined }}>
               {uid in approvedBy ? '✓ ' : ''}{team.nameOf(uid)}{uid === currentUserId ? ' (you)' : ''}
               {i < approvers.length - 1 ? ',' : ''}
             </span>
@@ -647,7 +647,7 @@ function AwaitingOthersCard({ proposal, currentUserId, onCancel, onWithdraw }: A
           background: 'var(--bg-main)', border: '1px solid var(--border)',
           borderRadius: '0.5rem', padding: '0.6rem 0.8rem', marginBottom: '0.6rem', fontSize: '0.82rem',
         }}>
-          <span style={{ color: 'var(--warning)', fontWeight: 700, whiteSpace: 'nowrap' }}>Above the team limit:</span>
+          <span style={{ fontWeight: 700, whiteSpace: 'nowrap' }}>Above the team limit:</span>
           <span>
             {team.aboveCapReason.fieldLabel}
             {team.aboveCapReason.value !== undefined ? ` ${team.aboveCapReason.value}` : ''} (limit {String(team.aboveCapReason.cap)}).{' '}
@@ -661,7 +661,7 @@ function AwaitingOthersCard({ proposal, currentUserId, onCancel, onWithdraw }: A
           this card never had an Approve button to replace. */}
       {isAboveCap && isProposer && (
         <p data-testid="cant-approve-own-action" style={{ fontSize: '0.82rem', color: 'var(--text-tertiary)', marginBottom: '0.5rem' }}>
-          <strong style={{ color: 'var(--danger)' }}>You can&apos;t approve your own action.</strong>
+          <strong>You can&apos;t approve your own action.</strong>
         </p>
       )}
 
@@ -673,22 +673,20 @@ function AwaitingOthersCard({ proposal, currentUserId, onCancel, onWithdraw }: A
       {isAboveCap && isProposer ? (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.35rem', marginTop: '0.5rem' }}>
           <button
-            className="btn btn-secondary btn-sm"
-            style={{ background: 'var(--bg-elevated)', color: 'var(--danger)', borderColor: 'var(--danger)' }}
+            className="btn btn-outline-strong btn-sm"
             onClick={handleWithdraw}
             disabled={withdrawing}
           >
             {withdrawing ? 'Withdrawing...' : 'Withdraw'}
           </button>
           {withdrawError && (
-            <p style={{ fontSize: '0.78rem', color: 'var(--danger)', margin: 0 }}>{withdrawError}</p>
+            <p className="msg-error" style={{ fontSize: '0.78rem', margin: 0 }}>{withdrawError}</p>
           )}
         </div>
       ) : (
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '0.5rem' }}>
           <button
-            className="btn btn-ghost btn-sm"
-            style={{ color: 'var(--danger)' }}
+            className="btn btn-outline-strong btn-sm"
             onClick={handleCancel}
             disabled={cancelling}
           >

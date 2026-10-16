@@ -39,7 +39,7 @@ describe('buildIntegrationAttentionItems', () => {
     expect(items).toHaveLength(1);
     expect(items[0].label).toBe('Integration error');
     expect(items[0].detail).toBe('Mollie: ENOENT: spawn failed');
-    expect(items[0].color).toBe('var(--danger)');
+    expect(items[0].color).toBe('var(--text-primary)');
   });
 
   it('a real connector that is simply not-running (unrelated to simulation) keeps the original generic wording', () => {
@@ -50,7 +50,7 @@ describe('buildIntegrationAttentionItems', () => {
       label: 'Integration stopped',
       detail: 'Records is not running',
       to: '/integrations',
-      color: 'var(--danger)',
+      color: 'var(--text-primary)',
     }]);
   });
 
@@ -62,7 +62,7 @@ describe('buildIntegrationAttentionItems', () => {
       label: 'Email (simulation) is not running',
       detail: 'Activate it to use it in the test.',
       to: '/integrations',
-      color: 'var(--danger)',
+      color: 'var(--text-primary)',
     }]);
   });
 

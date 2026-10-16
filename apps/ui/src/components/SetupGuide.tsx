@@ -122,7 +122,7 @@ export function SetupGuide({ aiConfigured, hasRunningIntegration, hasActiveAuth,
           const indicator = step.status === 'done' ? '\u25CF'
             : step.status === 'skipped' ? '\u25CF'
             : '\u25CB';
-          const indicatorColor = step.status === 'done' ? 'var(--success)'
+          const indicatorColor = step.status === 'done' ? 'var(--text-primary)'
             : step.status === 'skipped' ? 'var(--text-tertiary)'
             : isHighlighted ? 'var(--accent)' : 'var(--text-tertiary)';
 

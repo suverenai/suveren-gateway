@@ -342,7 +342,7 @@ export function AuditPage() {
           <input
             type="text"
             className="form-input search-input"
-            placeholder="Search by profile, action, path, or hash\u2026"
+            placeholder="Search by profile, action, path, or hash…"
             value={search}
             onChange={e => setSearch(e.target.value)}
           />
@@ -469,8 +469,8 @@ export function AuditPage() {
       )}
 
       {loadError && (
-        <div className="card" style={{ borderColor: 'var(--danger, #c0392b)', marginBottom: '0.75rem' }}>
-          <span style={{ color: 'var(--danger, #c0392b)', fontSize: '0.85rem' }}>
+        <div className="card note-stopped" style={{ marginBottom: '0.75rem' }}>
+          <span className="msg-error" style={{ fontSize: '0.85rem' }}>
             Couldn&rsquo;t load tickets &mdash; your session may have expired. Try signing out and back in.
           </span>
         </div>

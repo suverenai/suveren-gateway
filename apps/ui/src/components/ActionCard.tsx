@@ -220,7 +220,7 @@ export function ActionCard({ item, onApprove, onReject, onChangeNeeded, resolvin
             return (
               <span style={{
                 fontSize: '0.72rem',
-                color: left.urgent ? 'var(--warning)' : 'var(--text-tertiary)',
+                color: 'var(--text-tertiary)',
                 fontWeight: left.urgent ? 600 : 400,
                 whiteSpace: 'nowrap',
               }}>
@@ -273,14 +273,11 @@ export function ActionCard({ item, onApprove, onReject, onChangeNeeded, resolvin
       )}
 
       {destructive && (
-        <div style={{
+        <div className="note-attention" style={{
           display: 'flex', alignItems: 'center', gap: '0.4rem',
-          fontSize: '0.8rem', color: 'var(--warning)',
-          background: 'var(--bg-main)', border: '1px solid var(--border)',
-          borderRadius: '0.375rem', padding: '0.4rem 0.6rem', marginBottom: '0.75rem',
+          fontSize: '0.8rem', padding: '0.4rem 0.6rem', marginBottom: '0.75rem',
         }}>
-          <span>⚠</span>
-          <span>Irreversible action</span>
+          <span className="msg-attention">Irreversible action</span>
         </div>
       )}
 
@@ -409,21 +406,19 @@ export function ActionCard({ item, onApprove, onReject, onChangeNeeded, resolvin
             </button>
             <button
               data-testid="btn-change-needed"
-              className="btn"
-              style={{ background: 'var(--bg-elevated)', color: 'var(--warning)', border: '1px solid var(--warning)' }}
+              className="btn btn-outline-strong"
               onClick={() => setChangePanelOpen(true)}
               disabled={resolving}
             >
-              Change needed
+              <span aria-hidden="true">↩</span> Change needed
             </button>
             <button
               data-testid="btn-reject"
-              className="btn btn-ghost"
-              style={{ color: 'var(--danger)' }}
+              className="btn btn-outline-strong"
               onClick={async () => onReject?.(item.id, await saveShownHash())}
               disabled={resolving}
             >
-              Reject
+              <span aria-hidden="true">✕</span> Reject
             </button>
           </div>
         )

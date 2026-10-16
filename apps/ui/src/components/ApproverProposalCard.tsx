@@ -244,7 +244,7 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
             return (
               <span style={{
                 fontSize: '0.72rem',
-                color: left.urgent ? 'var(--warning)' : 'var(--text-tertiary)',
+                color: 'var(--text-tertiary)',
                 fontWeight: left.urgent ? 600 : 400,
                 whiteSpace: 'nowrap',
               }}>
@@ -266,7 +266,7 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
       <div className="approver-progress" style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginBottom: '0.5rem' }}>
         Needs {team.requiredApprovals} approval{team.requiredApprovals === 1 ? '' : 's'} from:{' '}
         {pendingApprovers.map((uid, i) => (
-          <span key={uid} className={`who${uid in approvedBy ? ' done' : ''}`} style={{ marginLeft: i === 0 ? '0.25rem' : '0.5rem', color: uid in approvedBy ? 'var(--success)' : undefined }}>
+          <span key={uid} className={`who${uid in approvedBy ? ' done' : ''}`} style={{ marginLeft: i === 0 ? '0.25rem' : '0.5rem', fontWeight: uid in approvedBy ? 600 : undefined }}>
             {uid in approvedBy ? '✓ ' : ''}{team.nameOf(uid)}{uid === currentUserId ? ' (you)' : ''}
             {i < pendingApprovers.length - 1 ? ',' : ''}
           </span>
@@ -289,7 +289,7 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
           background: 'var(--bg-main)', border: '1px solid var(--border)',
           borderRadius: '0.5rem', padding: '0.6rem 0.8rem', marginBottom: '0.6rem', fontSize: '0.82rem',
         }}>
-          <span style={{ color: 'var(--warning)', fontWeight: 700, whiteSpace: 'nowrap' }}>Above the team limit:</span>
+          <span style={{ fontWeight: 700, whiteSpace: 'nowrap' }}>Above the team limit:</span>
           <span>
             {team.aboveCapReason.fieldLabel}
             {team.aboveCapReason.value !== undefined ? ` ${team.aboveCapReason.value}` : ''} (limit {String(team.aboveCapReason.cap)}).{' '}
@@ -336,7 +336,7 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
                 greyed out (signed-off mockup, screen 3 state B). */}
             {isProposer ? (
               <p className="blocked-note" data-testid="cant-approve-own-action" style={{ fontSize: '0.82rem', color: 'var(--text-tertiary)', margin: 0 }}>
-                <strong style={{ color: 'var(--danger)' }}>You can&apos;t approve your own action.</strong>
+                <strong>You can&apos;t approve your own action.</strong>
               </p>
             ) : (
               <button
@@ -349,21 +349,19 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
             )}
             <button
               data-testid="btn-change-needed"
-              className="btn"
-              style={{ background: 'var(--bg-elevated)', color: 'var(--warning)', border: '1px solid var(--warning)' }}
+              className="btn btn-outline-strong"
               onClick={() => setChangePanelOpen(true)}
               disabled={isBusy}
             >
-              Change needed
+              <span aria-hidden="true">↩</span> Change needed
             </button>
             <button
               data-testid="btn-reject"
-              className="btn btn-ghost"
-              style={{ color: 'var(--danger)' }}
+              className="btn btn-outline-strong"
               onClick={handleReject}
               disabled={isBusy}
             >
-              {rejecting ? 'Rejecting...' : 'Reject'}
+              <span aria-hidden="true">✕</span> {rejecting ? 'Rejecting...' : 'Reject'}
             </button>
           </div>
         )

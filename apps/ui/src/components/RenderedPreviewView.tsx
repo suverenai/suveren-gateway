@@ -51,9 +51,9 @@ function FieldValue({ row }: { row: PreviewFieldRow }) {
             key={i}
             style={
               l.kind === 'remove'
-                ? { color: 'var(--danger)', textDecoration: 'line-through' }
+                ? { textDecoration: 'line-through', color: 'var(--text-muted)' }
                 : l.kind === 'add'
-                  ? { color: 'var(--success)' }
+                  ? { fontWeight: 600 }
                   : undefined
             }
           >
