@@ -203,12 +203,20 @@ export const AI_LEGEND_TEXT_CLIENT = "Grey dashed = the AI's own analysis, not v
 export const GLOSS_LEGEND_TEXT_CLIENT = '= translation by the AI, not verified';
 export const GLOSS_SWITCH_LABEL = 'Übersetzung anzeigen / show translation';
 
-/** The plain notice for a report stored in the pre-RR6 free-HTML format —
- *  null when nothing was dropped. Gateway UI, outside the frame. */
+/** What the render left out (two-tag rule, RR6) — null when nothing was.
+ *  Not "an older format": a report written today can break the rule too.
+ *  Gateway UI, outside the frame. */
 export function formatNoticeText(report: Pick<ReportModel, 'formatNotice'>): string | null {
   const n = report.formatNotice?.blocksNotShown ?? 0;
   if (n <= 0) return null;
-  return `This report was written in an older format — ${n} ${n === 1 ? 'block was' : 'blocks were'} not shown. Ask the AI to write it again.`;
+  return `${n} ${n === 1 ? 'block was' : 'blocks were'} not shown — not in the allowed form (the AI's own text belongs in an AI block). Ask the AI to write the report again.`;
+}
+
+/** True when nothing of the report would be visible: no checked element and
+ *  no text at all in the rendered frame. */
+export function reportShowsNothing(report: Pick<ReportModel, 'renderedHtml' | 'elements'>): boolean {
+  return (report.elements ?? []).length === 0
+    && report.renderedHtml.replace(/<style[\s\S]*?<\/style>/gi, '').replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').trim() === '';
 }
 
 /** Which server-rendered variant the frame shows (RR6): the glossed one only
@@ -727,12 +735,19 @@ export function ReportsPage() {
             <p className="form-hint" style={{ marginBottom: '0.5rem' }}>
               Written by the AI, rendered without scripts or network access. Scroll inside the report — the gateway does not auto-resize the frame. Click a checked value to see its details.
             </p>
-            <iframe
-              title="Report"
-              sandbox={REPORT_IFRAME_SANDBOX}
-              srcDoc={buildSrcDoc(pickRenderedHtml(report, glossOn))}
-              className="reports-iframe"
-            />
+            {reportShowsNothing(report) ? (
+              <div className="note-stopped" data-testid="report-empty" style={{ padding: 'var(--space-4)' }}>
+                <span className="msg-error">Nothing in this report can be shown.</span>{' '}
+                Ask the AI to write it again — its own text inside an AI block, the checked values as gateway elements.
+              </div>
+            ) : (
+              <iframe
+                title="Report"
+                sandbox={REPORT_IFRAME_SANDBOX}
+                srcDoc={buildSrcDoc(pickRenderedHtml(report, glossOn))}
+                className="reports-iframe"
+              />
+            )}
           </div>
           <SidePanel
             report={report}

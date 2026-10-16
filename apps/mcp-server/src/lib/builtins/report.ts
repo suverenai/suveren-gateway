@@ -55,6 +55,7 @@ import {
 import { scopeReportSources, reportingMandateRefusal, type ScopeResolution, type ReportWindow } from '../report/window';
 import { agentTicketRow, agentTicket, agentApproval, agentMandate } from '../report/agent-view';
 import { isSimulationMode } from '../simulation-mode';
+import { sanitizeReport } from '../report/sanitize';
 import type { BuiltinDeps, BuiltinFactory } from './index';
 
 /** Refused above this size, before anything is sanitized or verified — the
@@ -334,6 +335,22 @@ function writeReportRefusal(args: Record<string, unknown>): string | undefined {
       `the report is ${bytes} bytes, over the ${MAX_REPORT_HTML_BYTES}-byte limit. ` +
       `Shorten it (the gateway draws the verifiable elements for you — you do not need to inline ` +
       `their data) and write again.`
+    );
+  }
+  // Two-tag rule (RR6): a report where every block would be dropped shows
+  // NOTHING — refuse it before any ticket, instead of storing an empty
+  // report (simulation finding 2026-10-16: 5 blocks, all outside sv-ai).
+  const { html: kept, notes } = sanitizeReport(html);
+  if (!/<sv-(ai|ticket|approval|mandate|record|case|metric|row)\b/i.test(kept)) {
+    const lost: string[] = [];
+    if (notes.droppedBlocks > 0) lost.push(`${notes.droppedBlocks} block(s) outside sv-ai`);
+    if (notes.droppedSvInsideAi > 0) lost.push(`${notes.droppedSvInsideAi} sv-* element(s) inside sv-ai`);
+    if (notes.droppedStyles > 0) lost.push(`${notes.droppedStyles} <style> block(s)`);
+    return (
+      `nothing in this report would be shown${lost.length ? ` (dropped: ${lost.join(', ')})` : ''}. ` +
+      `A report is a flat sequence of top-level blocks: your own content inside <sv-ai>…</sv-ai>, ` +
+      `gateway elements (sv-ticket, sv-approval, sv-mandate, sv-record, sv-case, sv-metric, optionally in sv-row) ` +
+      `and at most one sv-glossary. Write it again in that form; nothing was stored and no ticket was used.`
     );
   }
   return undefined;
