@@ -156,7 +156,11 @@ export function createMcpServer(
           tool.namespacedName,
           {
             description,
-            ...(Object.keys(zodShape).length > 0 ? { inputSchema: zodShape } : {}),
+            // Always a schema, even an empty one: without it the SDK calls the
+            // handler as (extra) instead of (args, extra), and the request's own
+            // data (session id, headers, _meta) was forwarded to the connector as
+            // the tool's arguments (Mollie GetOrganizationDetails, 2026-10-16).
+            inputSchema: zodShape,
           },
           // Built-in tools (reports, setup) never carry the outcome line: a
           // report's output is evidence and must not mix in a notice (nor the
