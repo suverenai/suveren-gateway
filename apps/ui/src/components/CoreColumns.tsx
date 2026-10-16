@@ -134,7 +134,7 @@ export function CoreColumns({ auths, activeCount, waiting, waitingReady }: Props
             );
           })
         )}
-        <Link to="/approvals" className="col-btn">All approvals ›</Link>
+        {oldestFirst.length > 0 && <Link to="/approvals" className="col-btn">All approvals ›</Link>}
       </section>
 
       {/* 2 — Done automatically */}
@@ -175,7 +175,9 @@ export function CoreColumns({ auths, activeCount, waiting, waitingReady }: Props
             </details>
           ))
         )}
-        <Link to="/tickets?filter=automatic" className="col-btn" data-testid="btn-automatic-tickets">Automatic tickets ›</Link>
+        {groups.length > 0 && (
+          <Link to="/tickets?filter=automatic" className="col-btn" data-testid="btn-automatic-tickets">Automatic tickets ›</Link>
+        )}
         {approvedToday > 0 && (
           <div className="core-quiet-line">
             {approvedToday} approved today — <Link to="/tickets?filter=approved">see approved tickets</Link>
@@ -212,7 +214,7 @@ export function CoreColumns({ auths, activeCount, waiting, waitingReady }: Props
             {activeCount - atWork.length} more mandate{activeCount - atWork.length === 1 ? '' : 's'} in force — no actions today
           </div>
         )}
-        <Link to="/mandates" className="col-btn">All mandates ›</Link>
+        {atWork.length > 0 && <Link to="/mandates" className="col-btn">All mandates ›</Link>}
       </section>
     </div>
   );

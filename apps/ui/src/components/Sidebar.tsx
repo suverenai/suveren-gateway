@@ -28,7 +28,7 @@ export const NAV_ITEMS: NavItem[] = [
   { to: '/mandates', icon: '☰', iconClass: 'nav-ic-mandate', label: 'Mandates', statusKey: 'authorizations', group: 'core' },
   { to: '/tickets', icon: '▣', iconClass: 'nav-ic-ticket', label: 'Tickets', group: 'core' },
   { to: '/blocked', icon: '⊘', iconClass: 'nav-ic-blocked', label: 'Blocked', statusKey: 'blocked', group: 'core' },
-  { to: '/team', icon: '◉', label: 'Team', teamOnly: true, group: 'core' },
+  { to: '/team', icon: '◉', label: 'Team', teamOnly: true, group: 'setup' },
   { to: '/agent-brief', icon: '▤', label: 'Agent Brief', statusKey: 'brief', group: 'setup' },
   { to: '/integrations', icon: '⧗', label: 'Integrations', statusKey: 'integrations', group: 'setup' },
   { to: '/reports', icon: '▥', label: 'Reports', group: 'setup' },
