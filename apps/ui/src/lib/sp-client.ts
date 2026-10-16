@@ -1420,6 +1420,21 @@ class SPClient {
     return ((await res.json()) as { lastSeenBlockedAt: number }).lastSeenBlockedAt;
   }
 
+  // ─── Report: local "last seen" flag (reports mockup; deletes nothing) ───
+
+  async getLastSeenReportAt(): Promise<number> {
+    const res = await this.fetch('/api/report-seen');
+    if (!res.ok) throw new Error(`Failed to load last-seen report: ${res.status}`);
+    return ((await res.json()) as { lastSeenReportAt: number }).lastSeenReportAt;
+  }
+
+  /** Returns the PERSISTED cutoff, so callers render backend truth. */
+  async markReportSeen(ts: number = Date.now()): Promise<number> {
+    const res = await this.fetch('/api/report-seen', { method: 'POST', body: JSON.stringify({ ts }) });
+    if (!res.ok) throw new Error(`Failed to mark report seen: ${res.status}`);
+    return ((await res.json()) as { lastSeenReportAt: number }).lastSeenReportAt;
+  }
+
   // ─── Tickets: local "last seen" flag (UI spec §12.3; deletes nothing) ───
 
   async getLastSeenTicketsAt(): Promise<number> {

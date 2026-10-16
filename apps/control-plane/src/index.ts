@@ -63,6 +63,7 @@ import { createGatewaySettingsRouter } from './routes/gateway-settings';
 import { createArchivedMandatesRouter } from './routes/archived-mandates';
 import { createBlockedSeenRouter } from './routes/blocked-seen';
 import { createTicketsSeenRouter } from './routes/tickets-seen';
+import { createReportSeenRouter } from './routes/report-seen';
 import { createInternalEventsRouter } from './routes/internal-events';
 import { createInternalMandateRouter } from './routes/internal-mandate';
 import { encryptIntentForRecipients } from './lib/intent-encryption';
@@ -576,6 +577,7 @@ app.use('/api/archived-mandates', jsonParser, authGuard, createArchivedMandatesR
 // sidebar badge to tell new refusals from ones already looked at.
 app.use('/api/blocked-seen', jsonParser, authGuard, createBlockedSeenRouter());
 app.use('/api/tickets-seen', jsonParser, authGuard, createTicketsSeenRouter());
+app.use('/api/report-seen', jsonParser, authGuard, createReportSeenRouter());
 
 app.use('/api/encrypt-intent', jsonParser, authGuard, createEncryptIntentRouter());
 

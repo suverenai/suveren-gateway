@@ -15,11 +15,11 @@ export const NAV_ITEMS = [
   { to: '/approvals', icon: '\u25B7', label: 'Approvals' },
   { to: '/mandates', icon: '\u2630', label: 'Mandates' },
   { to: '/tickets', icon: '\u25A3', label: 'Tickets' },
+  { to: '/reports', icon: '\u25A5', label: 'Reports' },
   { to: '/blocked', icon: '\u2298', label: 'Blocked' },
   { to: '/team', icon: '\u25C9', label: 'Team' },
   { to: '/agent-brief', icon: '▤', label: 'Agent Brief' },
   { to: '/integrations', icon: '\u29D7', label: 'Integrations' },
-  { to: '/reports', icon: '\u25A5', label: 'Reports' },
   { to: '/settings', icon: '\u2699', label: 'Settings' },
 ];
 

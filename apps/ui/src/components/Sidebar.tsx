@@ -7,6 +7,7 @@ import { useVisiblePolling } from '../hooks/useVisiblePolling';
 import { useSSEEvent } from '../contexts/EventSourceContext';
 import { useIntegrationStatus } from '../contexts/IntegrationStatusContext';
 import { unseenCount } from '../lib/blocked-view';
+import { isNewReport } from '../lib/report-news';
 
 export interface NavItem {
   to: string;
@@ -14,13 +15,15 @@ export interface NavItem {
   /** A drawn, monochrome icon (UI spec §12.1) — used instead of `icon` when set. */
   iconClass?: string;
   label: string;
-  statusKey?: 'integrations' | 'assistant' | 'authorizations' | 'proposals' | 'brief' | 'blocked';
+  statusKey?: 'integrations' | 'assistant' | 'authorizations' | 'proposals' | 'brief' | 'blocked' | 'report';
   teamOnly?: boolean;
   /** UI spec §12.1: 'core' = the unlabelled main group; 'setup' = the quieter group below. */
   group?: 'top' | 'core' | 'setup';
   /** The count is information, not an action (UI spec §12.1, mockup C2):
    *  shown as a quiet grey number, never the solid "needs you" pill. */
   quietCount?: boolean;
+  /** One thing that is new or not (there is only one report): a "New" label, never a count. */
+  newLabel?: boolean;
 }
 
 export const NAV_ITEMS: NavItem[] = [
@@ -30,11 +33,12 @@ export const NAV_ITEMS: NavItem[] = [
   { to: '/approvals', icon: '▷', iconClass: 'nav-ic-approval', label: 'Approvals', statusKey: 'proposals', group: 'core' },
   { to: '/mandates', icon: '☰', iconClass: 'nav-ic-mandate', label: 'Mandates', statusKey: 'authorizations', group: 'core', quietCount: true },
   { to: '/tickets', icon: '▣', iconClass: 'nav-ic-ticket', label: 'Tickets', group: 'core' },
+  // A report is a result to read, not setup (reports mockup, 2026-10-16).
+  { to: '/reports', icon: '▥', label: 'Reports', statusKey: 'report', newLabel: true, group: 'core' },
   { to: '/blocked', icon: '⊘', iconClass: 'nav-ic-blocked', label: 'Blocked', statusKey: 'blocked', group: 'core' },
   { to: '/team', icon: '◉', label: 'Team', teamOnly: true, group: 'setup' },
   { to: '/agent-brief', icon: '▤', label: 'Agent Brief', statusKey: 'brief', group: 'setup' },
   { to: '/integrations', icon: '⧗', label: 'Integrations', statusKey: 'integrations', group: 'setup' },
-  { to: '/reports', icon: '▥', label: 'Reports', group: 'setup' },
   { to: '/settings', icon: '⚙', label: 'Settings', statusKey: 'assistant', group: 'setup' },
 ];
 
@@ -49,7 +53,7 @@ function useOtherNavStatus() {
 
   const poll = useCallback(async () => {
     try {
-      const [aiStatus, authData, proposalData, approverProposals, briefText, archivedIds, denials, lastSeenBlockedAt] = await Promise.all([
+      const [aiStatus, authData, proposalData, approverProposals, briefText, archivedIds, denials, lastSeenBlockedAt, reportData, lastSeenReportAt] = await Promise.all([
         spClient.getCredential('ai-config').catch(() => null),
         spClient.getMyAttestations().catch(() => null),
         spClient.getMyProposals(activeDomain).catch(() => null),
@@ -58,6 +62,8 @@ function useOtherNavStatus() {
         spClient.getArchivedMandates().catch(() => [] as string[]),
         spClient.getDenials({ limit: 200 }).catch(() => null),
         spClient.getLastSeenBlockedAt().catch(() => 0),
+        spClient.getReport().catch(() => null),
+        spClient.getLastSeenReportAt().catch(() => Number.POSITIVE_INFINITY),
       ]);
 
       const next: Record<string, number> = {};
@@ -87,6 +93,8 @@ function useOtherNavStatus() {
         const unseen = unseenCount(denials.records, lastSeenBlockedAt);
         if (unseen > 0) next.blocked = unseen;
       }
+      // The one report: new since the Reports page was last opened.
+      if (isNewReport(reportData?.report, lastSeenReportAt)) next.report = 1;
       setCounts(next);
     } catch {
       // ignore
@@ -104,6 +112,7 @@ function useOtherNavStatus() {
   // see cp-notify.ts / denial-log.ts). Moves the Blocked badge without
   // waiting on the 5-minute fallback poll below.
   useSSEEvent('denial-recorded', poll);
+  useSSEEvent('report-written', poll);
   // Archive is a local flag (no SSE event): the Mandates page announces it.
   useEffect(() => {
     window.addEventListener('suveren:archived-changed', poll);
@@ -114,7 +123,11 @@ function useOtherNavStatus() {
   // immediately instead of waiting for the 5-minute fallback poll below.
   useEffect(() => {
     window.addEventListener('suveren:blocked-seen-changed', poll);
-    return () => window.removeEventListener('suveren:blocked-seen-changed', poll);
+    window.addEventListener('suveren:report-seen-changed', poll);
+    return () => {
+      window.removeEventListener('suveren:blocked-seen-changed', poll);
+      window.removeEventListener('suveren:report-seen-changed', poll);
+    };
   }, [poll]);
   // Fallback full-sync every 5min in case of missed events.
   useVisiblePolling(poll, 300_000, activeDomain);
@@ -212,7 +225,9 @@ export function Sidebar() {
                         {item.iconClass ? <span className={`nav-ic ${item.iconClass}`} aria-hidden="true" /> : item.icon}
                       </span>
                       {item.label}
-                      {count ? <span style={BADGE_STYLE} className={item.quietCount ? 'nav-count-quiet' : undefined} title={item.quietCount ? 'Expired mandates' : undefined}>{count}</span> : null}
+                      {count ? (item.newLabel
+                        ? <span className="nav-new" data-testid={`nav-new-${item.statusKey}`}>New</span>
+                        : <span style={BADGE_STYLE} className={item.quietCount ? 'nav-count-quiet' : undefined} title={item.quietCount ? 'Expired mandates' : undefined}>{count}</span>) : null}
                     </NavLink>
                   </li>
                 );

@@ -4129,3 +4129,9 @@ body.is-updating .simulation-banner {
 .core-cols .auto-grp-txt > b, .core-cols .appr-item-sum { overflow-wrap: anywhere; }
 /* Nav counts: solid only where something needs you; plain information quiet (UI spec §12.1, mockup C2) */
 .nav-count-quiet { background: transparent !important; color: var(--text-muted) !important; font-weight: 500 !important; }
+/* "New" — one thing that is new or not (the report); same solid form as an awaiting pill */
+.nav-new { margin-left: auto; display: inline-flex; align-items: center; background: var(--neutral); color: var(--bg-elevated); border-radius: var(--radius-pill); padding: 0.08rem 0.45rem; font-size: 0.62rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; }
+/* Dashboard: one line while a report is new (reports mockup) */
+.report-line { display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap; background: var(--bg-elevated); border: 1px solid var(--border-strong); border-radius: var(--radius-md); padding: var(--space-3) var(--space-4); margin-bottom: var(--space-6); }
+.report-line-text { flex: 1; min-width: 16rem; font-size: var(--text-body-sm); }
+.report-line .col-btn { width: auto; margin: 0; white-space: nowrap; }

@@ -14,6 +14,7 @@ import { useIntegrationStatus } from '../contexts/IntegrationStatusContext';
 import { Skeleton, SkeletonAttentionRow } from '../components/Skeleton';
 import { RecentBlocks } from '../components/RecentBlocks';
 import { CoreColumns } from '../components/CoreColumns';
+import { ReportLine } from '../components/ReportLine';
 import { SkippedCommitmentsCard } from '../components/SkippedCommitmentsCard';
 import { bucketAuths } from '../lib/auth-status';
 import { buildIntegrationAttentionItems, buildPausedSummary } from '../lib/integration-attention';
@@ -234,6 +235,8 @@ export function DashboardPage() {
       {!showFirstRun && <>
       {/* UI spec §12.4 — the three core-object columns */}
       <CoreColumns auths={auths} activeCount={active.length} waiting={waiting} waitingReady={proposalsReady} />
+      {/* A new report waits to be read — one line, gone once it is opened. */}
+      <ReportLine />
 
       {/* Needs your attention — same shape as Recent blocks: the heading names
           the category, the rows or the green "All clear" give the answer. */}

@@ -574,6 +574,15 @@ export function ReportsPage() {
 
   useEffect(() => { load(); }, [load]);
 
+  // Opening the page marks the current report as seen — the "New" label and
+  // the dashboard line go away (reports mockup). Display flag only.
+  useEffect(() => {
+    if (!report) return;
+    spClient.markReportSeen(Date.now())
+      .then(() => window.dispatchEvent(new Event('suveren:report-seen-changed')))
+      .catch(() => {});
+  }, [report?.savedAt]);
+
   const handleRecheck = useCallback(() => {
     setRechecking(true);
     spClient.recheckReport()

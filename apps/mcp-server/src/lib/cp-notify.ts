@@ -57,7 +57,10 @@ export type NotifiableEvent =
   // "new since your last visit" marks and the dashboard's "Done
   // automatically" column. Presence only, never content; not a doorbell
   // event either — a ticket is "something ran", not "something needs you".
-  | 'ticket-recorded';
+  | 'ticket-recorded'
+  // A report was saved (replacing the previous one): moves the "New" label on
+  // Reports and the dashboard's report line. Presence only; not a doorbell.
+  | 'report-written';
 
 export async function notifyControlPlane(type: NotifiableEvent): Promise<void> {
   const secret = process.env.SUVEREN_INTERNAL_SECRET ?? '';
