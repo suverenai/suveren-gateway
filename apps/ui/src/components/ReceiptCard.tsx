@@ -26,7 +26,8 @@ import {
 } from '../lib/receipt-summary';
 import { profileIdentity, isTestSetupAction } from '../lib/profile-identity';
 import { useProfile } from '../lib/profile-cache';
-import { ProfileRail } from './ProfileRail';
+import { ObjectLine } from './ObjectLine';
+import { areaName, systemName, shortTicketId, ticketTime } from '../lib/core-objects';
 import { TicketWhatWasDone } from './TicketWhatWasDone';
 import { TicketWhatYouSaw } from './TicketWhatYouSaw';
 import type {
@@ -61,6 +62,10 @@ interface Props {
   spUrl: string;
   formatDate: (ts: number) => string;
   onOpenComplete: () => void;
+  /** Issued since the last visit to Tickets (UI spec §12.3). */
+  isNew?: boolean;
+  /** Start opened — e.g. the only ticket, or a direct link. Default: a compact row. */
+  defaultOpen?: boolean;
 }
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
@@ -83,6 +88,8 @@ export function ReceiptCard({
   spUrl,
   formatDate,
   onOpenComplete,
+  isNew = false,
+  defaultOpen = false,
 }: Props) {
   const profile = useProfile(receipt.profileId);
   const scope = scopeSummary(receipt, profile);
@@ -96,15 +103,28 @@ export function ReceiptCard({
   // full intent" only toggling the clamp — same pattern as the approval
   // card's mandate+intent block (components/ApprovalBody.tsx, AU5).
   const [intentExpanded, setIntentExpanded] = useState(false);
+  // UI spec §12.2/§12.3: a ticket is a stub — a compact row that opens in
+  // place to the full record below.
+  const [open, setOpen] = useState(defaultOpen);
+  const now = Date.now();
+  const area = areaName(receipt.authorizationId, receipt.profileId, grantTitle ? { [receipt.authorizationId ?? '']: grantTitle } : {});
+  const verified = signature === 'valid' || signature === 'valid-legacy';
 
   return (
-    <div className="card id-card" style={{ marginBottom: 0 }}>
-      <ProfileRail profileId={receipt.profileId} />
-      <div className="id-body">
+    <div className={`ticket-obj ticket-obj-card${isNew ? ' is-new' : ''}${open ? ' is-open' : ''}`} data-new={isNew ? 'true' : 'false'}>
+      <div className="ticket-obj-main">
+      <button type="button" className="ticket-obj-head" aria-expanded={open} onClick={() => setOpen(o => !o)}>
+        <ObjectLine
+          profileId={receipt.profileId}
+          area={area}
+          system={systemName(receipt.action, manifests)}
+          time={ticketTime(receipt.timestamp, now)}
+          leading={isNew ? <span className="seen-dot is-new" aria-label="new since your last visit" /> : undefined}
+        />
       {/* Headline: what happened, in words. */}
       <div className="receipt-head">
         <span className="receipt-what">{actionLabel(receipt, manifests)}</span>
-        <span className="receipt-tag">{wasReviewed(receipt) ? 'review' : 'automatic'}</span>
+        <span className="receipt-tag">{wasReviewed(receipt) ? 'approved' : 'automatic'}</span>
         {receipt.contentHash && (
           <span
             className="receipt-tag receipt-tag-bound"
@@ -116,11 +136,14 @@ export function ReceiptCard({
           </span>
         )}
         {testSetup && <span className="sim-mark">Test setup</span>}
-        <span className="auth-card-time">{formatDate(receipt.timestamp)}</span>
       </div>
 
       {/* What THIS call touched (from the signed receipt). */}
       {scope && <div className="receipt-scope">{scope}</div>}
+      </button>
+
+      {open && (<>
+      <div className="receipt-when">{formatDate(receipt.timestamp)}</div>
 
       {/* "What was done" FIRST — the ticket's bound content (sealed), or the
           checked values when it binds none, or an off-device notice. See
@@ -235,6 +258,14 @@ export function ReceiptCard({
           <div>signature &middot; {receipt.signature}</div>
         </div>
       </details>
+      </>)}
+      </div>
+      {/* The stub: the ticket's short id (tickets carry no separate number),
+          its time, and whether its signature checked out here. */}
+      <div className="ticket-obj-stub">
+        <span className="ticket-obj-no" title={receipt.id}>{shortTicketId(receipt.id)}</span>
+        <span className="ticket-obj-time">{ticketTime(receipt.timestamp, now)}</span>
+        {verified && <span className="ticket-obj-sig" title="Signature checked on this device">&#10003; verified</span>}
       </div>
     </div>
   );

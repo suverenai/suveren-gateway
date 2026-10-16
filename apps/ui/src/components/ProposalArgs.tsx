@@ -34,7 +34,7 @@ function ProfileFields({ row, which }: { row: ArgRow; which: 'limits' | 'scope' 
           <dt style={{ color: 'var(--text-secondary)' }} title={l.hint}>{l.label}</dt>
           <dd style={{ margin: 0, fontWeight: 600 }}>
             {l.value}
-            {l.unknown && <span style={{ color: 'var(--danger)', fontWeight: 400, marginLeft: '0.5rem' }}>not defined by this profile</span>}
+            {l.unknown && <span className="msg-error" style={{ marginLeft: '0.5rem' }}>not defined by this profile</span>}
           </dd>
         </Fragment>
       ))}

@@ -79,6 +79,7 @@
         }
       },
       "send_message": {
+        "summary": "Email to {to|list}: {subject|short}",
         "executionMapping": {
           "to": [
             {

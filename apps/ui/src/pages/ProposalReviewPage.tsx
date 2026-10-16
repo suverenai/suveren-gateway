@@ -1,4 +1,5 @@
-import { useState, useCallback, useMemo, useEffect } from 'react';
+import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { spClient, type Proposal, type ExecutionReceipt, type IntegrationManifest, type ProposalOutcome, type NoteEncryptedWire } from '../lib/sp-client';
 import { aggregateThread, type ThreadItem } from '../lib/thread-aggregator';
@@ -11,6 +12,7 @@ import type { ToolDisplay } from '../lib/approval-view';
 import { resolveDomainFor } from '../lib/my-queue';
 import { ProfileRail } from '../components/ProfileRail';
 import { HumanOnlyNote } from '../components/HumanOnlyNote';
+import { ApprovalRow } from '../components/ApprovalRow';
 import { isAutomatedBrowser, AUTOMATION_REFUSAL } from '../lib/automation';
 import { isTestSetupAction, profileIdentity } from '../lib/profile-identity';
 import { rejectOutcomeArgs, changeNeededOutcomeArgs } from '../lib/reject-outcome';
@@ -309,12 +311,53 @@ export function ProposalReviewPage() {
 
   // Badge counts for tab headers
   const awaitingMeCount = approverProposals.length + awaitingMeDomainItems.length;
+
+  // UI spec §12.2 — the queue is an overview: one row per approval, a click
+  // opens it in place, one at a time. `?open=<id>` (from the dashboard) opens
+  // that one; a lone item opens directly; after a decision the next opens.
+  const [searchParams] = useSearchParams();
+  const [openId, setOpenId] = useState<string | null>(() => searchParams.get('open'));
+  const queueIds = useMemo(() => [
+    ...awaitingMeDomainItems.map(i => (i.kind === 'proposal' ? i.proposal.id : i.id)),
+    ...approverProposals.map(p => p.id),
+  ], [awaitingMeDomainItems, approverProposals]);
+  const prevQueueRef = useRef<string[]>([]);
+  const autoOpenedRef = useRef<string | null>(null);
+  useEffect(() => {
+    const prev = prevQueueRef.current;
+    prevQueueRef.current = queueIds;
+    // A lone item opens by itself — once; closing it is respected.
+    if (queueIds.length === 1 && openId === null && autoOpenedRef.current !== queueIds[0]) {
+      autoOpenedRef.current = queueIds[0];
+      setOpenId(queueIds[0]);
+      return;
+    }
+    if (openId && !queueIds.includes(openId) && prev.includes(openId)) {
+      // The open one was decided: open the item that took its place.
+      const at = prev.indexOf(openId);
+      const next = prev.slice(at + 1).find(id => queueIds.includes(id)) ?? queueIds[0] ?? null;
+      setOpenId(next);
+    }
+  }, [queueIds, openId]);
+  const toggle = (id: string) => setOpenId(cur => (cur === id ? null : id));
+
+  // Mandate titles for the rows' "area" (the proposal carries only the id).
+  const [titles, setTitles] = useState<Record<string, string>>({});
+  useEffect(() => {
+    spClient.getMyAttestations()
+      .then(items => {
+        const t: Record<string, string> = {};
+        for (const i of items) if (i.authorization_id && i.title) t[i.authorization_id] = i.title;
+        setTitles(t);
+      })
+      .catch(() => {});
+  }, []);
   const awaitingOthersCount = awaitingOthersAll.length;
 
   return (
     <>
       <div className="page-header">
-        <h1 className="page-title">Pending Approvals</h1>
+        <h1 className="page-title">Approvals</h1>
         <p className="page-subtitle">
           Actions awaiting approval, plus recent activity from the last 7 days.
         </p>
@@ -327,7 +370,7 @@ export function ProposalReviewPage() {
           className={`nav-tab${queueTab === 'awaiting-me' ? ' active' : ''}`}
           onClick={() => setQueueTab('awaiting-me')}
         >
-          Awaiting me {awaitingMeCount > 0 && <span style={{ marginLeft: '0.4rem', background: 'var(--warning)', color: 'var(--bg-elevated)', borderRadius: '0.625rem', padding: '0 0.375rem', fontSize: '0.7rem', fontWeight: 600 }}>{awaitingMeCount}</span>}
+          Awaiting me {awaitingMeCount > 0 && <span className="pill-count" style={{ marginLeft: '0.4rem' }}>{awaitingMeCount}</span>}
         </button>
         <button
           className={`nav-tab${queueTab === 'awaiting-others' ? ' active' : ''}`}
@@ -358,12 +401,13 @@ export function ProposalReviewPage() {
               </p>
             </div>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
               {(approverMessage || message) && (
                 <div className="alert alert-success">{approverMessage || message}</div>
               )}
               {/* Review-mode ("Send with Review") proposals I must approve. */}
-              {awaitingMeDomainItems.map(item => (
+              {awaitingMeDomainItems.map(item => {
+                const card = (
                 <ActionCard
                   key={item.id}
                   proposalLinks={item.kind === 'proposal' ? linksForTool(item.proposal.tool) : undefined}
@@ -375,12 +419,26 @@ export function ProposalReviewPage() {
                   onReject={handleReject}
                   onChangeNeeded={handleChangeNeeded}
                   resolving={resolving === item.id}
+                  inRow={item.kind === 'proposal'}
                 />
-              ))}
+                );
+                if (item.kind !== 'proposal') return card;
+                const pid = item.proposal.id;
+                return (
+                  <ApprovalRow key={pid} proposal={item.proposal} manifests={manifests} titles={titles}
+                    open={openId === pid} onToggle={() => toggle(pid)}>
+                    {card}
+                  </ApprovalRow>
+                );
+              })}
               {/* Above-cap proposals where I'm a required approver. */}
               {approverProposals.map(proposal => (
+                <ApprovalRow key={proposal.id} proposal={proposal} manifests={manifests} titles={titles}
+                  open={openId === proposal.id} onToggle={() => toggle(proposal.id)}
+                  who="Team approval — other people are involved">
                 <ApproverProposalCard
                   key={proposal.id}
+                  inRow
                   proposal={proposal}
                   currentUserId={userId}
                   onAction={handleApproverAction}
@@ -389,6 +447,7 @@ export function ProposalReviewPage() {
                   toolDisplay={toolDisplay[proposal.tool]}
                   manifests={manifests}
                 />
+                </ApprovalRow>
               ))}
             </div>
           )}
@@ -626,7 +685,7 @@ function AwaitingOthersCard({ proposal, currentUserId, onCancel, onWithdraw }: A
         <div className="approver-progress" style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginBottom: '0.5rem' }}>
           Needs {team.requiredApprovals} approval{team.requiredApprovals === 1 ? '' : 's'} from:{' '}
           {approvers.map((uid, i) => (
-            <span key={uid} className={`who${uid in approvedBy ? ' done' : ''}`} style={{ marginLeft: i === 0 ? '0.25rem' : '0.5rem', color: uid in approvedBy ? 'var(--success)' : undefined }}>
+            <span key={uid} className={`who${uid in approvedBy ? ' done' : ''}`} style={{ marginLeft: i === 0 ? '0.25rem' : '0.5rem', fontWeight: uid in approvedBy ? 600 : undefined }}>
               {uid in approvedBy ? '✓ ' : ''}{team.nameOf(uid)}{uid === currentUserId ? ' (you)' : ''}
               {i < approvers.length - 1 ? ',' : ''}
             </span>
@@ -647,7 +706,7 @@ function AwaitingOthersCard({ proposal, currentUserId, onCancel, onWithdraw }: A
           background: 'var(--bg-main)', border: '1px solid var(--border)',
           borderRadius: '0.5rem', padding: '0.6rem 0.8rem', marginBottom: '0.6rem', fontSize: '0.82rem',
         }}>
-          <span style={{ color: 'var(--warning)', fontWeight: 700, whiteSpace: 'nowrap' }}>Above the team limit:</span>
+          <span style={{ fontWeight: 700, whiteSpace: 'nowrap' }}>Above the team limit:</span>
           <span>
             {team.aboveCapReason.fieldLabel}
             {team.aboveCapReason.value !== undefined ? ` ${team.aboveCapReason.value}` : ''} (limit {String(team.aboveCapReason.cap)}).{' '}
@@ -661,7 +720,7 @@ function AwaitingOthersCard({ proposal, currentUserId, onCancel, onWithdraw }: A
           this card never had an Approve button to replace. */}
       {isAboveCap && isProposer && (
         <p data-testid="cant-approve-own-action" style={{ fontSize: '0.82rem', color: 'var(--text-tertiary)', marginBottom: '0.5rem' }}>
-          <strong style={{ color: 'var(--danger)' }}>You can&apos;t approve your own action.</strong>
+          <strong>You can&apos;t approve your own action.</strong>
         </p>
       )}
 
@@ -673,22 +732,20 @@ function AwaitingOthersCard({ proposal, currentUserId, onCancel, onWithdraw }: A
       {isAboveCap && isProposer ? (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.35rem', marginTop: '0.5rem' }}>
           <button
-            className="btn btn-secondary btn-sm"
-            style={{ background: 'var(--bg-elevated)', color: 'var(--danger)', borderColor: 'var(--danger)' }}
+            className="btn btn-outline-strong btn-sm"
             onClick={handleWithdraw}
             disabled={withdrawing}
           >
             {withdrawing ? 'Withdrawing...' : 'Withdraw'}
           </button>
           {withdrawError && (
-            <p style={{ fontSize: '0.78rem', color: 'var(--danger)', margin: 0 }}>{withdrawError}</p>
+            <p className="msg-error" style={{ fontSize: '0.78rem', margin: 0 }}>{withdrawError}</p>
           )}
         </div>
       ) : (
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '0.5rem' }}>
           <button
-            className="btn btn-ghost btn-sm"
-            style={{ color: 'var(--danger)' }}
+            className="btn btn-outline-strong btn-sm"
             onClick={handleCancel}
             disabled={cancelling}
           >

@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { spClient, type PendingItem, type GateContentEntry, type ProfileConfig, type ProfileSummary } from '../lib/sp-client';
 import { profileDisplayName } from '../lib/profile-display';
 import { profileIdentity } from '../lib/profile-identity';
-import { ProfileRail } from '../components/ProfileRail';
+import { ObjectLine } from '../components/ObjectLine';
 import { AuthorizePicker } from '../components/AuthorizePicker';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
@@ -184,12 +184,17 @@ function AuthCard({
 
   return (
     <div
-      className={`card id-card${isHighlighted ? ' card-highlight' : ''}`}
+      className={`card mandate-card${isHighlighted ? ' card-highlight' : ''}`}
       key={item.authorization_id}
       style={{ marginBottom: 0 }}
     >
-      <ProfileRail profileId={item.profile_id} />
       <div className="id-body">
+      {/* UI spec §12.2 — the mandate's top line: profile · since when */}
+      <ObjectLine
+        profileId={item.profile_id}
+        area={profileDisplayName(item.profile_id)}
+        time={item.created_at ? `since ${new Date(item.created_at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}` : undefined}
+      />
       {upgradeHint}
 
       {/* Team owner line */}
@@ -221,8 +226,9 @@ function AuthCard({
             style={{
               fontSize: '0.75rem',
               fontWeight: 700,
-              color: 'var(--text-on-warning, #7a4a00)',
-              background: 'var(--warning-bg, #fff3cd)',
+              color: 'var(--text-primary)',
+              background: 'transparent',
+              border: '1px dashed var(--text-primary)',
               borderRadius: '4px',
               padding: '2px 6px',
             }}
@@ -253,7 +259,10 @@ function AuthCard({
       </div>
 
       <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.5rem', alignItems: 'center' }}>
-        {item.required_domains.map(d => (
+        {/* Only when it says something: several domains, or one still
+            missing. A single attested domain (in a team: the team's id) is
+            noise on every card. */}
+        {(item.required_domains.length > 1 || item.missing_domains.length > 0) && item.required_domains.map(d => (
           <DomainBadge key={d} domain={d} attested={item.attested_domains.includes(d)} />
         ))}
         {item.deferred_commitment_domains.length > 0 && (
@@ -275,8 +284,9 @@ function AuthCard({
               fontSize: '0.65rem',
               padding: '0.15rem 0.4rem',
               borderRadius: '0.25rem',
-              background: hasApprovers ? 'var(--accent-subtle)' : 'var(--danger-subtle)',
-              color: hasApprovers ? 'var(--accent)' : 'var(--danger)',
+              background: 'transparent',
+              color: 'var(--text-primary)',
+              border: hasApprovers ? '1px dashed var(--text-primary)' : '2px solid var(--text-primary)',
               fontWeight: 600,
               cursor: 'help',
             }}
@@ -291,10 +301,10 @@ function AuthCard({
               fontSize: '0.65rem',
               padding: '0.15rem 0.5rem',
               borderRadius: '0.25rem',
-              background: 'var(--warning-subtle, rgba(234,179,8,0.12))',
-              color: 'var(--warning, #ca8a04)',
+              background: 'transparent',
+              color: 'var(--text-primary)',
               fontWeight: 600,
-              border: '1px solid var(--warning-border, rgba(234,179,8,0.3))',
+              border: '1px dashed var(--text-primary)',
               cursor: 'pointer',
               lineHeight: 1.4,
             }}
@@ -325,7 +335,7 @@ function AuthCard({
                   ) : (
                     <span title={`Team cap on ${k} is ${r.cap} with no approvers configured (hard cap). Authorized for ${r.authorized}; effective ${r.cap}.`}>
                       <span style={{ textDecoration: 'line-through', color: 'var(--text-tertiary)' }}>{k}={String(v)}</span>
-                      <span style={{ color: 'var(--danger)', marginLeft: '0.25rem', fontWeight: 600 }}>
+                      <span style={{ marginLeft: '0.25rem', fontWeight: 700 }}>
                         {'→'} {r.cap}
                       </span>
                     </span>

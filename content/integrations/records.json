@@ -52,6 +52,7 @@
         "category": "disabled"
       },
       "create_record": {
+        "summary": "Create {type}: {title|short}",
         "executionMapping": {},
         "staticExecution": {
           "action_type": "write"
@@ -59,6 +60,7 @@
         "actionLabel": "Record created"
       },
       "archive_record": {
+        "summary": "Archive a record",
         "boundField": "archive_access",
         "requiredValue": "allowed",
         "executionMapping": {},
@@ -68,10 +70,12 @@
         "actionLabel": "Record archived"
       },
       "update_record": {
+        "summary": "Update record[: {title|short}]",
         "category": "disabled",
         "actionLabel": "Record updated"
       },
       "delete_record": {
+        "summary": "Delete a record",
         "boundField": "delete_access",
         "requiredValue": "allowed",
         "executionMapping": {},

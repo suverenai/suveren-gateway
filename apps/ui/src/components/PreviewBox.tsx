@@ -55,7 +55,7 @@ export function PreviewBoxBody({ resp, systemName, toolArgs, sealed }: PreviewBo
         {view.heading}
         {view.creation && (
           sealed
-            ? <><span className="src-tag src-tag-sealed">sealed</span> <span className="lock-tag">end-to-end encrypted</span></>
+            ? <><span className="src-tag src-tag-sealed">sealed</span></>
             : <span className="src-tag src-tag-sealed">sealed</span>
         )}
       </h4>

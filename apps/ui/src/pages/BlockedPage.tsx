@@ -3,7 +3,9 @@ import type { AgentProfile } from '@hap/core';
 import { spClient, type DenialRecord } from '../lib/sp-client';
 import { blockedView, kindOf, todaysCount, formatBlockedWhen } from '../lib/blocked-view';
 import { EmptyState } from '../components/EmptyState';
-import { ProfileRail } from '../components/ProfileRail';
+import { ObjectLine } from '../components/ObjectLine';
+import { profileDisplayName } from '../lib/profile-display';
+import { systemDisplayName } from '../lib/approval-view';
 import { useVisiblePolling } from '../hooks/useVisiblePolling';
 import { useSSEEvent } from '../contexts/EventSourceContext';
 
@@ -150,17 +152,23 @@ export function BlockedPage() {
             const unseen = seenCutoff !== null && r.ts > seenCutoff;
             return (
               <div
-                className="card id-card blocked-item"
+                className="card blocked-item blocked-card"
                 data-seen={unseen ? 'false' : 'true'}
                 key={`${r.ts}-${i}`}
               >
-                <ProfileRail profileId={r.profile ?? r.integrationId} />
                 <div className="id-body">
+                  {/* UI spec §12.2 — the same top line as approvals, mandates
+                      and tickets, instead of the profile rail. */}
+                  <ObjectLine
+                    profileId={r.profile ?? r.integrationId}
+                    area={profileDisplayName(r.profile ?? r.integrationId)}
+                    system={r.integrationId ? systemDisplayName(r.integrationId, undefined) : undefined}
+                    time={formatBlockedWhen(r.ts, Date.now())}
+                    trailing={unseen ? <span className="new-pill">New</span> : undefined}
+                  />
                   <div className="blocked-row-head">
                     <span className={`blocked-dot blocked-dot-${kindOf(r)}`} aria-hidden="true" />
                     <span className="blocked-title">{view.title}</span>
-                    {unseen && <span className="new-pill">New</span>}
-                    <span className="blocked-when">{formatBlockedWhen(r.ts, Date.now())}</span>
                   </div>
                   <div className="blocked-sentence">{view.sentence}</div>
                   <div className="blocked-source">

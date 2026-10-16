@@ -99,6 +99,7 @@
         "requiredValue": "unlimited"
       },
       "create_quote": {
+        "summary": "Quote of {value|money} net[ — {discount_pct|percent} discount]",
         "executionMapping": {
           "value": "value",
           "discount_pct": "discount_pct",
@@ -133,6 +134,7 @@
         }
       },
       "update_quote": {
+        "summary": "Update quote to {value|money} net[ — {discount_pct|percent} discount]",
         "executionMapping": {
           "value": "value",
           "discount_pct": "discount_pct",
@@ -161,6 +163,7 @@
         }
       },
       "send_quote": {
+        "summary": "Send quote of {value|money} net[ — {discount_pct|percent} discount]",
         "executionMapping": {
           "value": "value",
           "discount_pct": "discount_pct",
@@ -179,6 +182,7 @@
         }
       },
       "convert_quote_to_order": {
+        "summary": "Order of {value|money} net from a quote",
         "executionMapping": {
           "value": "value",
           "discount_pct": "discount_pct",

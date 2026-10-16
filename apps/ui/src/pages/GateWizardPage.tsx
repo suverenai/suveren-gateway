@@ -316,7 +316,7 @@ export function GateWizardPage() {
               </button>
 
               {reviewError && (
-                <div className="hint-box" role="note" style={{ marginTop: '0.5rem', borderLeftColor: 'var(--danger)' }}>
+                <div className="hint-box" role="note" style={{ marginTop: '0.5rem', borderLeft: '3px solid var(--text-primary)' }}>
                   <span className="hint-icon" aria-hidden="true">!</span>
                   <div className="hint-body">{reviewError}</div>
                 </div>

@@ -9,6 +9,7 @@ import { AttestationCache, AsKeyMismatchError, type CachedAuthorization } from '
 import { GateStore, type GateContent, type GateEntry } from './gate-store';
 import { ExecutionLog } from './execution-log';
 import { DenialLog } from './denial-log';
+import { notifyControlPlane } from './cp-notify';
 import { ReceiptArchive, ArchiveWriteError, type ArchivedAttestation } from './receipt-archive';
 import { ExecutionJournal } from './execution-journal';
 import { ExecutionResultStore } from './execution-result-store';
@@ -211,6 +212,9 @@ export class SharedState {
     } catch (err) {
       throw new ArchiveWriteError(`Receipt archive write failed: ${err instanceof Error ? err.message : String(err)}`);
     }
+    // The single place every ticket is archived — so the one place to tell
+    // the UI a ticket exists (presence only; fire-and-forget).
+    void notifyControlPlane('ticket-recorded');
   }
 
   setGateContent(

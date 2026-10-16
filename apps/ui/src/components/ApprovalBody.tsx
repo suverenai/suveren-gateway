@@ -17,6 +17,7 @@
  *  - "Details (exactly what is bound)" — folded; tool args + the
  *    execution-context fields the Gatekeeper actually checked, together.
  */
+import { approvalSummary } from '../lib/approval-summary';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { resolveProposalLinks, type ProposalLink } from '../lib/proposal-links';
@@ -230,8 +231,10 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
 
   return (
     <>
-      {/* Headline — the tool's display name. No invented label: the tool-name
-          pattern ("erp · send_quote"), as in the approved mockup. */}
+      {/* UI spec §4.2.1 — one sentence from the manifest's summary template
+          and the sealed values (never AI text); the tool name stays, small,
+          under it. In a row the row head already carries the sentence. */}
+      <div className="approval-summary" data-testid="approval-summary">{approvalSummary(proposal.tool, content.toolArgs, manifests)}</div>
       <div className="approval-headline">{headline}</div>
 
       {/* PE1 mockup §4 — a device added after the proposal was made has no
@@ -262,7 +265,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
           <h4>
             What will be sent
             {content.sealed
-              ? <><span className="src-tag src-tag-sealed">sealed</span> <span className="lock-tag">end-to-end encrypted</span></>
+              ? <><span className="src-tag src-tag-sealed">sealed</span></>
               : <span className="src-tag src-tag-sealed">sealed</span>}
           </h4>
           {boundContent}
@@ -300,11 +303,15 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
           any more (RenderedCreationView used to render its own, incl. in
           cards where Request/History never show). */}
       {readable && (
-        <p className="creation-legend" data-testid="au10-legend">
-          <span><i className="creation-legend-dot creation-legend-dot-sealed" />sealed — approved and executed exactly so</span>
-          <span><i className="creation-legend-dot creation-legend-dot-system" />from the system — read by the gateway, not by the AI</span>
-          <span><i className="creation-legend-dot au10-dot-ai" />the AI's own claim or text — not checked</span>
-        </p>
+        // UI spec §4.2.11: the legend is a "?" disclosure, not permanent text.
+        <details className="creation-legend-fold">
+          <summary aria-label="What the marks mean">?</summary>
+          <p className="creation-legend" data-testid="au10-legend">
+            <span><i className="creation-legend-dot creation-legend-dot-sealed" />sealed — approved and executed exactly so</span>
+            <span><i className="creation-legend-dot creation-legend-dot-system" />from the system — read by the gateway, not by the AI</span>
+            <span><i className="creation-legend-dot au10-dot-ai" />the AI's own claim or text — not checked</span>
+          </p>
+        </details>
       )}
 
       {/* Within your limits — per-call bound checks only (lib/receipt-summary.ts
@@ -330,14 +337,13 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
           <dt>Mandate</dt>
           <dd>
             <strong>{profile?.name ?? profileDisplayName(proposal.profileId)}</strong>
-            <span className="src-tag src-tag-local">local</span>
           </dd>
         </dl>
         <dl>
           <dt>Intent</dt>
           <dd>
             {intentError ? (
-              <p style={{ color: 'var(--danger)', fontSize: '0.8rem', margin: 0 }}>{intentError}</p>
+              <p className="msg-error" style={{ fontSize: '0.8rem', margin: 0 }}>{intentError}</p>
             ) : intent !== null ? (
               <>
                 <p className={`intent-text${expanded ? '' : ' intent-clamped'}`}>{intent}</p>
@@ -415,7 +421,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
             {editingBeforeSigning ? 'Opening…' : 'Edit before signing'}
           </button>
           {editError && (
-            <p style={{ color: 'var(--danger)', fontSize: '0.8rem', margin: '0.4rem 0 0' }}>{editError}</p>
+            <p className="msg-error" style={{ fontSize: '0.8rem', margin: '0.4rem 0 0' }}>{editError}</p>
           )}
         </div>
       )}

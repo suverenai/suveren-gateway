@@ -64,7 +64,7 @@ export function DiscoveredScopeField({ integrationId, field, value, onChange, di
   if (error || !options) {
     return (
       <>
-        <div style={{ fontSize: '0.8rem', color: 'var(--warning)', marginBottom: '0.5rem' }}>
+        <div className="msg-attention" style={{ fontSize: '0.8rem', marginBottom: '0.5rem' }}>
           Couldn't fetch options ({error ?? 'no response'}). Enter values manually, separated by commas.
         </div>
         <input

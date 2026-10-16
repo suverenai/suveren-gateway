@@ -82,7 +82,6 @@ export function RecentBlocks() {
   // The whole retained log (≤30 days, ≤200 records — small) in one call; the
   // 7-day "recent" window is cut client-side so both views agree.
   const [records, setRecords] = useState<DenialRecord[] | null>(null);
-  const [expanded, setExpanded] = useState(false);
   const [failed, setFailed] = useState(false);
 
   const load = useCallback(() => {
@@ -99,8 +98,7 @@ export function RecentBlocks() {
   if (failed || records === null) return null;
 
   const { recent, all } = splitRecent(records, Date.now());
-  const shown = expanded ? all : recent.slice(0, PREVIEW);
-  const older = all.length - recent.length;
+  const shown = recent.slice(0, PREVIEW);
 
   const row = (r: DenialRecord, i: number) => {
     const v = denialView(r.reason);
@@ -124,9 +122,7 @@ export function RecentBlocks() {
     <section className="card recent-blocks" aria-label="Recent blocks" style={{ marginTop: '1.5rem' }}>
       <div className="card-header">
         <h2 className="card-title">Recent blocks</h2>
-        {(expanded ? all.length : recent.length) > 0 && (
-          <span className="rb-count">{expanded ? all.length : recent.length}</span>
-        )}
+        {recent.length > 0 && <span className="rb-count">{recent.length}</span>}
       </div>
 
       {shown.length === 0 ? (
@@ -136,33 +132,20 @@ export function RecentBlocks() {
           </span>
           <h3>Nothing blocked in the last {RECENT_DAYS} days</h3>
           <p>Your agent has stayed within every limit you set.</p>
-          {older > 0 && (
-            <button className="rb-viewall" type="button" onClick={() => setExpanded(true)}>
-              Show the last 30 days ({older})
-            </button>
+          {/* Same full-width button as the three columns above (UI spec §12.4) —
+              only when there is something to see. */}
+          {all.length > 0 && (
+            <Link className="col-btn" to="/blocked">View all {all.length} blocks from the last 30 days ›</Link>
           )}
         </div>
       ) : (
         <>
           <p className="rb-sub">
-            {expanded ? 'Last 30 days. ' : `Last ${RECENT_DAYS} days. `}
+            {`Last ${RECENT_DAYS} days. `}
             Limits you set that stopped your agent. Seeing them here means the gateway is doing its job.
           </p>
           <div className="rb-rows">{shown.map(row)}</div>
-          {!expanded && all.length > shown.length && (
-            <div className="rb-foot">
-              <button className="rb-viewall" type="button" onClick={() => setExpanded(true)}>
-                View all {all.length} blocks from the last 30 days
-              </button>
-            </div>
-          )}
-          {expanded && all.length > Math.min(recent.length, PREVIEW) && (
-            <div className="rb-foot">
-              <button className="rb-viewall" type="button" onClick={() => setExpanded(false)}>
-                Show only the last {RECENT_DAYS} days
-              </button>
-            </div>
-          )}
+          <Link className="col-btn" to="/blocked">View all {all.length} blocks from the last 30 days ›</Link>
         </>
       )}
     </section>

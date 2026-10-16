@@ -10,14 +10,16 @@ const THEME_ICONS: Record<string, string> = {
 };
 
 export const NAV_ITEMS = [
+  // Same order as the sidebar (UI spec §12.1): the core objects, then setup.
   { to: '/', icon: '\u25A1', label: 'Dashboard' },
-  { to: '/approvals', icon: '\u25B7', label: 'Pending Approvals' },
+  { to: '/approvals', icon: '\u25B7', label: 'Approvals' },
   { to: '/mandates', icon: '\u2630', label: 'Mandates' },
-  { to: '/agent-brief', icon: '▤', label: 'Agent Brief' },
   { to: '/tickets', icon: '\u25A3', label: 'Tickets' },
-  { to: '/reports', icon: '\u25A5', label: 'Reports' },
+  { to: '/blocked', icon: '\u2298', label: 'Blocked' },
   { to: '/team', icon: '\u25C9', label: 'Team' },
+  { to: '/agent-brief', icon: '▤', label: 'Agent Brief' },
   { to: '/integrations', icon: '\u29D7', label: 'Integrations' },
+  { to: '/reports', icon: '\u25A5', label: 'Reports' },
   { to: '/settings', icon: '\u2699', label: 'Settings' },
 ];
 

@@ -37,7 +37,7 @@ export function SkippedCommitmentsCard() {
   if (skipped.length === 0) return null;
 
   return (
-    <div className="card" style={{ padding: '1.5rem', marginTop: '1.5rem', borderLeft: '3px solid var(--warn, #b58900)' }}>
+    <div className="card" style={{ padding: '1.5rem', marginTop: '1.5rem', borderLeft: '3px dashed var(--text-primary)' }}>
       <h2 style={{ fontSize: '1rem', fontWeight: 700, margin: 0 }}>
         Approved, but not run here ({skipped.length})
       </h2>

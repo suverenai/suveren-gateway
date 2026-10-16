@@ -480,11 +480,11 @@ function SidePanel({ report, open, selectedId, onOpenElement, detail }: {
         <div className="reports-row"><span>Tickets referenced</span><b>{proof.ticketsReferenced.length}</b></div>
         <div className="reports-row">
           <span>Signatures valid</span>
-          <b style={signaturesLine.kind === 'ok' ? { color: 'var(--success)' } : undefined}>{signaturesLine.text}</b>
+          <b className={signaturesLine.kind === 'ok' ? 'msg-ok' : undefined}>{signaturesLine.text}</b>
         </div>
         <div className="reports-row">
           <span>Records checked</span>
-          <b style={recordsLine.kind === 'ok' ? { color: 'var(--success)' } : undefined}>{recordsLine.text}</b>
+          <b className={recordsLine.kind === 'ok' ? 'msg-ok' : undefined}>{recordsLine.text}</b>
         </div>
         <div className="reports-row"><span>Not verifiable</span><b>{proof.unverifiableCount}</b></div>
         {notVerifiable.map(r => (

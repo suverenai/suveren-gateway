@@ -404,7 +404,7 @@ export interface IntegrationManifest {
   /** Per-tool gating. Typed only where the UI reads it — `actionLabel` names
    *  what a tool DOES, in words, for the receipts list. */
   toolGating?: {
-    overrides?: Record<string, { actionLabel?: string } | null>;
+    overrides?: Record<string, { actionLabel?: string; summary?: string; display?: { currencyField?: string } } | null>;
   } | null;
   /** Declares a simulation mode: the credential field holding it and its default. Drives the "Simulation" badge. */
   simulation?: { field: string; default: string } | null;
@@ -1418,6 +1418,24 @@ class SPClient {
     });
     if (!res.ok) throw new Error(`Failed to mark blocked seen: ${res.status}`);
     return ((await res.json()) as { lastSeenBlockedAt: number }).lastSeenBlockedAt;
+  }
+
+  // ─── Tickets: local "last seen" flag (UI spec §12.3; deletes nothing) ───
+
+  async getLastSeenTicketsAt(): Promise<number> {
+    const res = await this.fetch('/api/tickets-seen');
+    if (!res.ok) throw new Error(`Failed to load last-seen tickets: ${res.status}`);
+    return ((await res.json()) as { lastSeenTicketsAt: number }).lastSeenTicketsAt;
+  }
+
+  /** Returns the PERSISTED cutoff, so callers render backend truth. */
+  async markTicketsSeen(ts: number = Date.now()): Promise<number> {
+    const res = await this.fetch('/api/tickets-seen', {
+      method: 'POST',
+      body: JSON.stringify({ ts }),
+    });
+    if (!res.ok) throw new Error(`Failed to mark tickets seen: ${res.status}`);
+    return ((await res.json()) as { lastSeenTicketsAt: number }).lastSeenTicketsAt;
   }
 
   /**

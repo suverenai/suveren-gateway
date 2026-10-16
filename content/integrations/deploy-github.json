@@ -78,6 +78,7 @@
         }
       },
       "release": {
+        "summary": "Release {repo} to {environment}",
         "executionMapping": {
           "repo": "allowed_repos",
           "environment": "allowed_environments",

@@ -46,7 +46,7 @@ export function buildIntegrationAttentionItems(entries: IntegrationEntry[], simu
           ? `${e.manifest.name}: ${e.integration.error}`
           : `${e.manifest.name} is not running`,
         to: '/integrations',
-        color: 'var(--danger)',
+        color: 'var(--text-primary)',
       });
     } else if (e.state === 'not-running') {
       // A test system (declares `simulation`) that was simply never
@@ -58,14 +58,14 @@ export function buildIntegrationAttentionItems(entries: IntegrationEntry[], simu
           label: `${e.manifest.name} is not running`,
           detail: 'Activate it to use it in the test.',
           to: '/integrations',
-          color: 'var(--danger)',
+          color: 'var(--text-primary)',
         });
       } else {
         items.push({
           label: 'Integration stopped',
           detail: `${e.manifest.name} is not running`,
           to: '/integrations',
-          color: 'var(--danger)',
+          color: 'var(--text-primary)',
         });
       }
     }
