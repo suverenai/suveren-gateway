@@ -14,7 +14,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join, relative, sep } from 'node:path';
 
 const SRC = join(__dirname, '..');
 const TOKENS = join(__dirname, 'tokens.css');
@@ -87,7 +87,8 @@ describe('UI spec tokens (UI1)', () => {
     const found: string[] = [];
     for (const f of walk(SRC)) {
       if (f === TOKENS) continue;
-      const rel = relative(SRC, f);
+      // Always '/' — the allow-list is written that way (Windows uses '\\').
+      const rel = relative(SRC, f).split(sep).join('/');
       const allowed = ALLOWED[rel] ?? [];
       const lines = stripComments(readFileSync(f, 'utf8'), f.endsWith('.css')).split('\n');
       lines.forEach((line, i) => {
