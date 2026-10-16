@@ -42,7 +42,8 @@ export type SSEEventType =
   | 'session-locked'
   | 'execution-failed'
   | 'denial-recorded'
-  | 'ticket-recorded';
+  | 'ticket-recorded'
+  | 'report-written';
 
 /**
  * Every type the EventSource registers a browser listener for — built from a
@@ -65,6 +66,7 @@ const SSE_EVENT_TYPE_SET: Record<SSEEventType, true> = {
   'execution-failed': true,
   'denial-recorded': true,
   'ticket-recorded': true,
+  'report-written': true,
 };
 
 /** Exported so a test can assert against it directly (see EventSourceContext.test.ts). */

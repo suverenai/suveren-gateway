@@ -961,6 +961,22 @@ export class IntegrationManager {
     return this.builtins.has(id);
   }
 
+  /**
+   * Names only, for the UI's labels ("Report written", system "Reports"):
+   * id, display name and per-tool action labels. Kept apart from the
+   * connector manifests so a built-in never shows up as a connector card.
+   */
+  getBuiltinLabels(): Array<{ id: string; name: string; toolGating: { overrides: Record<string, { actionLabel?: string }> } }> {
+    return [...this.builtins.values()].map(({ def }) => {
+      const overrides: Record<string, { actionLabel?: string }> = {};
+      for (const [tool, o] of Object.entries((def.toolGating as { overrides?: Record<string, unknown> })?.overrides ?? {})) {
+        const label = (o as { actionLabel?: unknown } | null)?.actionLabel;
+        if (typeof label === 'string') overrides[tool] = { actionLabel: label };
+      }
+      return { id: def.id, name: def.name, toolGating: { overrides } };
+    });
+  }
+
   /** A built-in that declares `alwaysListed` (see builtin-integration.ts). */
   builtinAlwaysListed(id: string): boolean {
     return this.builtins.get(id)?.def.alwaysListed === true;

@@ -216,6 +216,7 @@
       },
       "log_activity": {
         "summary": "Log {type}: {summary|short}",
+        "actionLabel": "Activity logged",
         "executionMapping": {
           "contact_type": "contact_type"
         },
@@ -236,6 +237,7 @@
       },
       "create_deal": {
         "summary": "Create deal: {title|short}[ — {value|money}]",
+        "actionLabel": "Deal created",
         "executionMapping": {
           "contact_type": "contact_type"
         },
@@ -256,6 +258,7 @@
       },
       "update_deal": {
         "summary": "Update deal[: {title|short}][ — {value|money}]",
+        "actionLabel": "Deal updated",
         "executionMapping": {
           "contact_type": "contact_type"
         },
@@ -285,6 +288,7 @@
       },
       "create_task": {
         "summary": "Create task: {title|short}[ (due {due_date|date})]",
+        "actionLabel": "Task created",
         "executionMapping": {
           "contact_type": "contact_type"
         },
@@ -305,6 +309,7 @@
       },
       "complete_task": {
         "summary": "Complete a task",
+        "actionLabel": "Task completed",
         "executionMapping": {
           "contact_type": "contact_type"
         },

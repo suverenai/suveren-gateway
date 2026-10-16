@@ -61,7 +61,7 @@ export function CoreColumns({ auths, activeCount, waiting, waitingReady }: Props
   useSSEEvent('ticket-recorded', loadTickets);
 
   useEffect(() => {
-    spClient.getIntegrationManifests().then(({ manifests }) => setManifests(manifests)).catch(() => {});
+    spClient.getLabelManifests().then(setManifests).catch(() => {});
     spClient.getLocalAuthorizations().then(({ authorizations }) => setLocalAuths(authorizations)).catch(() => {});
   }, []);
 

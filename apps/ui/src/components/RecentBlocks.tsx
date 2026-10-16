@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import { Link } from 'react-router-dom';
+import { useSSEEvent } from '../contexts/EventSourceContext';
 import { spClient, type DenialRecord, type DenialReason } from '../lib/sp-client';
 import { useVisiblePolling } from '../hooks/useVisiblePolling';
 
@@ -83,22 +84,36 @@ export function RecentBlocks() {
   // 7-day "recent" window is cut client-side so both views agree.
   const [records, setRecords] = useState<DenialRecord[] | null>(null);
   const [failed, setFailed] = useState(false);
+  // Only blocks NOT yet seen on the Blocked page show here — the same
+  // condition as the Blocked nav count; once seen, the panel is gone.
+  const [lastSeen, setLastSeen] = useState<number | null>(null);
 
   const load = useCallback(() => {
     spClient.getDenials({ limit: 200 })
       .then(({ records }) => { setRecords(records); setFailed(false); })
       .catch(() => setFailed(true));
+    spClient.getLastSeenBlockedAt()
+      .then(setLastSeen)
+      .catch(() => setLastSeen(0));
   }, []);
 
   useEffect(() => { load(); }, [load]);
   useVisiblePolling(load, 120_000);
+  useSSEEvent('denial-recorded', load);
+  useEffect(() => {
+    window.addEventListener('suveren:blocked-seen-changed', load);
+    return () => window.removeEventListener('suveren:blocked-seen-changed', load);
+  }, [load]);
 
   // Secondary panel — stay quiet on load or if the endpoint is unreachable
   // (e.g. vault locked → 401). Don't clutter the dashboard with an error.
-  if (failed || records === null) return null;
+  if (failed || records === null || lastSeen === null) return null;
 
-  const { recent, all } = splitRecent(records, Date.now());
-  const shown = recent.slice(0, PREVIEW);
+  const { all } = splitRecent(records, Date.now());
+  const unseen = all.filter(r => r.ts > lastSeen);
+  // Nothing new → nothing shown (no "Nothing blocked" box).
+  if (unseen.length === 0) return null;
+  const shown = unseen.slice(0, PREVIEW);
 
   const row = (r: DenialRecord, i: number) => {
     const v = denialView(r.reason);
@@ -122,32 +137,12 @@ export function RecentBlocks() {
     <section className="card recent-blocks" aria-label="Recent blocks" style={{ marginTop: '1.5rem' }}>
       <div className="card-header">
         <h2 className="card-title">Recent blocks</h2>
-        {recent.length > 0 && <span className="rb-count">{recent.length}</span>}
+        <span className="rb-count">{unseen.length}</span>
       </div>
 
-      {shown.length === 0 ? (
-        <div className="rb-empty">
-          <span className="rb-mark" aria-hidden="true">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
-          </span>
-          <h3>Nothing blocked in the last {RECENT_DAYS} days</h3>
-          <p>Your agent has stayed within every limit you set.</p>
-          {/* Same full-width button as the three columns above (UI spec §12.4) —
-              only when there is something to see. */}
-          {all.length > 0 && (
-            <Link className="col-btn" to="/blocked">View all {all.length} blocks from the last 30 days ›</Link>
-          )}
-        </div>
-      ) : (
-        <>
-          <p className="rb-sub">
-            {`Last ${RECENT_DAYS} days. `}
-            Limits you set that stopped your agent. Seeing them here means the gateway is doing its job.
-          </p>
-          <div className="rb-rows">{shown.map(row)}</div>
-          <Link className="col-btn" to="/blocked">View all {all.length} blocks from the last 30 days ›</Link>
-        </>
-      )}
+      <p className="rb-sub">New since you last looked. Limits you set that stopped your agent — the gateway doing its job.</p>
+      <div className="rb-rows">{shown.map(row)}</div>
+      <Link className="col-btn" to="/blocked">View all {all.length} blocks from the last 30 days ›</Link>
     </section>
   );
 }

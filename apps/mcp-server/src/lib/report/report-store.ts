@@ -17,6 +17,7 @@
  * re-verification hidden inside a getter.
  */
 
+import { notifyControlPlane } from '../cp-notify';
 import { mkdirSync, readFileSync, writeFileSync, existsSync, unlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -108,6 +109,9 @@ export class ReportStore {
     const result = await verifyReport(html, sources);
     this.report = { html: result.html, savedAt: now, checkedAt: now, result };
     this.persist();
+    // A new report exists (UI spec §12 / reports mockup): moves the "New"
+    // label on Reports and the dashboard line. Presence only; not a doorbell.
+    void notifyControlPlane('report-written');
     return this.report;
   }
 

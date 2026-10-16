@@ -833,7 +833,9 @@ app.get('/internal/authorizations', internalOnly, (_req: Request, res: Response)
 });
 
 app.get('/internal/manifests', internalOnly, (_req: Request, res: Response) => {
-  res.json({ manifests: getAllManifests() });
+  // `builtins`: names and action labels of the gateway's own tool groups, for
+  // the UI's ticket/approval labels only — never rendered as connectors.
+  res.json({ manifests: getAllManifests(), builtins: integrationManager?.getBuiltinLabels?.() ?? [] });
 });
 
 /**

@@ -420,6 +420,18 @@ describe('write_report', () => {
     cleanup();
   });
 
+  it('nothing would be shown (every block outside the two tags): refused before any ticket, nothing stored', async () => {
+    const { tools, im, state, postReceipt, reportStore, cleanup } = setup([auth(REPORTING_BOUNDS)]);
+    const html = '<h1>Wochenbericht</h1><p>a</p><div>b</div><table><tr><td>c</td></tr></table><ul><li>d</li></ul>';
+    const r = await createGatedToolHandler(tools.write_report, im, state)({ html });
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toMatch(/nothing in this report would be shown \(dropped: 5 block\(s\) outside sv-ai\)/);
+    expect(r.content[0].text).toMatch(/<sv-ai>/);
+    expect(postReceipt).not.toHaveBeenCalled();
+    expect(reportStore.getReport()).toBeNull();
+    cleanup();
+  });
+
   it('a ticket id reaches the handler via ticket_id, and the stored report is the actually-verified result', async () => {
     const { tools, im, state, scenario, reportStore, cleanup } = setup([auth(REPORTING_BOUNDS)]);
     scenario.addTicket({ id: 'tk-real', action: 'erp__create_quote', authorizationId: 'authz-x', timestamp: nowS() - 1000 });
@@ -538,7 +550,9 @@ describe("write_report's validate hook (precheckBuiltin) — refused before the 
     const { tools, im, cleanup } = setup([auth(REPORTING_BOUNDS)]);
     expect(await im.precheckBuiltin(tools.write_report, { html: '   ' })).toMatch(/non-empty/);
     expect(await im.precheckBuiltin(tools.write_report, { html: 'x'.repeat(MAX_REPORT_HTML_BYTES + 1) })).toMatch(/bytes/);
-    expect(await im.precheckBuiltin(tools.write_report, { html: '<p>ok</p>' })).toBeNull();
+    expect(await im.precheckBuiltin(tools.write_report, { html: '<sv-ai><p>ok</p></sv-ai>' })).toBeNull();
+    // Only content outside the two tags → nothing would be shown → refused.
+    expect(await im.precheckBuiltin(tools.write_report, { html: '<p>ok</p>' })).toMatch(/nothing in this report would be shown/);
     cleanup();
   });
 });

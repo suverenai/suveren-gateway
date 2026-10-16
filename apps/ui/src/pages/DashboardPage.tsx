@@ -11,9 +11,10 @@ import { useSimulationPolicy } from '../hooks/useSimulationPolicy';
 import { useManaged } from '../hooks/useManaged';
 import { isPendingProposal } from '../lib/pending';
 import { useIntegrationStatus } from '../contexts/IntegrationStatusContext';
-import { Skeleton, SkeletonAttentionRow } from '../components/Skeleton';
+import { Skeleton } from '../components/Skeleton';
 import { RecentBlocks } from '../components/RecentBlocks';
 import { CoreColumns } from '../components/CoreColumns';
+import { ReportLine } from '../components/ReportLine';
 import { SkippedCommitmentsCard } from '../components/SkippedCommitmentsCard';
 import { bucketAuths } from '../lib/auth-status';
 import { buildIntegrationAttentionItems, buildPausedSummary } from '../lib/integration-attention';
@@ -234,43 +235,31 @@ export function DashboardPage() {
       {!showFirstRun && <>
       {/* UI spec §12.4 — the three core-object columns */}
       <CoreColumns auths={auths} activeCount={active.length} waiting={waiting} waitingReady={proposalsReady} />
+      {/* A new report waits to be read — one line, gone once it is opened. */}
+      <ReportLine />
 
-      {/* Needs your attention — same shape as Recent blocks: the heading names
-          the category, the rows or the green "All clear" give the answer. */}
+      {/* Setup problems — shown only when there are any (no "All clear" box:
+          nothing to show, nothing shown — same rule as the column buttons). */}
+      {attentionItems.length > 0 && (
       <section className="card attention attention-quiet" aria-label="Setup — needs attention">
         <div className="card-header">
           <h2 className="card-title">Setup — needs attention</h2>
-          {attentionItems.length > 0 && <span className="rb-count">{attentionItems.length}</span>}
+          <span className="rb-count">{attentionItems.length}</span>
         </div>
-        {attentionItems.length > 0 ? (
-          <div className="attention-rows">
-            {attentionItems.map((item, i) => (
-              <Link key={i} to={item.to} className="attention-row">
-                <span className="attention-dot" style={{ background: item.color }} aria-hidden="true" />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-primary)' }}>{item.label}</div>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.detail}</div>
-                </div>
-                <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>{'\u203A'}</span>
-              </Link>
-            ))}
-          </div>
-        ) : allReady ? (
-          <div className="all-clear">
-            <span className="rb-mark" aria-hidden="true">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
-            </span>
-            <h3>All clear</h3>
-            <p>Nothing needs your attention.</p>
-          </div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            <SkeletonAttentionRow />
-            <SkeletonAttentionRow />
-            <SkeletonAttentionRow />
-          </div>
-        )}
+        <div className="attention-rows">
+          {attentionItems.map((item, i) => (
+            <Link key={i} to={item.to} className="attention-row">
+              <span className="attention-dot" style={{ background: item.color }} aria-hidden="true" />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-primary)' }}>{item.label}</div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.detail}</div>
+              </div>
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>{'\u203A'}</span>
+            </Link>
+          ))}
+        </div>
       </section>
+      )}
       </>}
 
       {/* Real systems paused by simulation mode — one calm line, not an

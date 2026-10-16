@@ -185,8 +185,8 @@ export function AuditPage() {
   // an unlabelled action falls back to "<Profile> · <action_type>", and the
   // "View receipt" link is omitted rather than pointing somewhere wrong.
   useEffect(() => {
-    spClient.getIntegrationManifests()
-      .then(({ manifests }) => setManifests(manifests))
+    spClient.getLabelManifests()
+      .then(setManifests)
       .catch(() => {});
     fetch('/health')
       .then(r => r.json())

@@ -20,6 +20,7 @@ import {
   GLOSS_SWITCH_LABEL,
   pickRenderedHtml,
   formatNoticeText,
+  reportShowsNothing,
   detailSearchParams,
   unverifiableRows,
   caseDetailSteps,
@@ -406,11 +407,12 @@ describe('factSummaryLines — raw signed fields, as the boxes show them (RR6 fo
   });
 });
 
-describe('formatNoticeText — a report stored in the older format says what is not shown (RR6 follow-up)', () => {
-  it('names the number of blocks not shown and asks for a rewrite', () => {
+describe('formatNoticeText — says what the render left out (RR6 follow-up)', () => {
+  it('names the number of blocks not shown and asks for a rewrite — never "older format"', () => {
     expect(formatNoticeText({ formatNotice: { blocksNotShown: 3 } })).toBe(
-      'This report was written in an older format — 3 blocks were not shown. Ask the AI to write it again.',
+      "3 blocks were not shown — not in the allowed form (the AI's own text belongs in an AI block). Ask the AI to write the report again.",
     );
+    expect(formatNoticeText({ formatNotice: { blocksNotShown: 3 } })).not.toMatch(/older format/);
     expect(formatNoticeText({ formatNotice: { blocksNotShown: 1 } })).toMatch(/1 block was not shown/);
   });
 
@@ -549,5 +551,15 @@ describe('translation switch (two-tag rule, RR6)', () => {
     expect(src).toContain('useState(false);\n  const [searchParams');
     expect(src).toContain('srcDoc={buildSrcDoc(pickRenderedHtml(report, glossOn))}');
     expect(buildSrcDoc('<p>x</p>')).not.toMatch(/<script/i);
+  });
+});
+
+describe('reportShowsNothing — an empty frame becomes a clear message', () => {
+  it('true when there is no element and no text', () => {
+    expect(reportShowsNothing({ elements: [], renderedHtml: '<div class="x"><style>p{}</style></div>' })).toBe(true);
+  });
+  it('false as soon as there is text or a checked element', () => {
+    expect(reportShowsNothing({ elements: [], renderedHtml: '<div><p>AI text</p></div>' })).toBe(false);
+    expect(reportShowsNothing({ elements: [{} as never], renderedHtml: '' })).toBe(false);
   });
 });

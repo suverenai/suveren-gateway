@@ -168,8 +168,8 @@ export function ProposalReviewPage() {
 
   // Initial load
   useEffect(() => {
-    spClient.getIntegrationManifests()
-      .then(d => setManifests(d.manifests ?? []))
+    spClient.getLabelManifests()
+      .then(setManifests)
       .catch(() => { /* links are an enhancement — never block review on them */ });
     spClient.getToolDisplay()
       .then(setToolDisplay)

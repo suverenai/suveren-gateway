@@ -678,6 +678,10 @@ export interface ReportCoverage {
   coveredCases: string[];
   missingCases: string[];
   periodStart: number | null;
+  /** The reporting window the evidence was scoped to, as the gateway used it
+   *  (unix seconds; tickets up to end + 2 min are inside). Absent on reports
+   *  stored before it was recorded. */
+  window?: { start: number; end: number; days: number; label: string };
   ticketsInPeriod: string[];
   ticketsReferenced: string[];
   ticketsNotReferenced: string[];
@@ -1420,6 +1424,21 @@ class SPClient {
     return ((await res.json()) as { lastSeenBlockedAt: number }).lastSeenBlockedAt;
   }
 
+  // ─── Report: local "last seen" flag (reports mockup; deletes nothing) ───
+
+  async getLastSeenReportAt(): Promise<number> {
+    const res = await this.fetch('/api/report-seen');
+    if (!res.ok) throw new Error(`Failed to load last-seen report: ${res.status}`);
+    return ((await res.json()) as { lastSeenReportAt: number }).lastSeenReportAt;
+  }
+
+  /** Returns the PERSISTED cutoff, so callers render backend truth. */
+  async markReportSeen(ts: number = Date.now()): Promise<number> {
+    const res = await this.fetch('/api/report-seen', { method: 'POST', body: JSON.stringify({ ts }) });
+    if (!res.ok) throw new Error(`Failed to mark report seen: ${res.status}`);
+    return ((await res.json()) as { lastSeenReportAt: number }).lastSeenReportAt;
+  }
+
   // ─── Tickets: local "last seen" flag (UI spec §12.3; deletes nothing) ───
 
   async getLastSeenTicketsAt(): Promise<number> {
@@ -1574,10 +1593,21 @@ class SPClient {
     }
   }
 
-  async getIntegrationManifests(): Promise<{ manifests: IntegrationManifest[] }> {
+  async getIntegrationManifests(): Promise<{ manifests: IntegrationManifest[]; builtins?: IntegrationManifest[] }> {
     const res = await this.fetch('/mcp/integrations/manifests');
     if (!res.ok) throw new Error(`Failed to fetch manifests: ${res.status}`);
     return res.json();
+  }
+
+  /**
+   * For LABELS only (action labels, system names on tickets and approvals):
+   * the connector manifests plus the gateway's built-in tool groups' names
+   * (report, setup). Never use this list to render connectors — a built-in
+   * is not one.
+   */
+  async getLabelManifests(): Promise<IntegrationManifest[]> {
+    const { manifests, builtins } = await this.getIntegrationManifests();
+    return [...(manifests ?? []), ...(builtins ?? [])];
   }
 
   /**
