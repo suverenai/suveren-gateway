@@ -961,6 +961,11 @@ export class IntegrationManager {
     return this.builtins.has(id);
   }
 
+  /** A built-in that declares `alwaysListed` (see builtin-integration.ts). */
+  builtinAlwaysListed(id: string): boolean {
+    return this.builtins.get(id)?.def.alwaysListed === true;
+  }
+
   /**
    * Whether `id` may run while simulation mode is on: a connector whose manifest
    * carries the `simulation` marker, or a built-in that declares `simulation: true`.

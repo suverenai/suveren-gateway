@@ -275,10 +275,16 @@ export function zeroCappedBound(
  * (never registered at all — see index.ts). A paused connector (simulation
  * mode) is not running, so its tools are not discovered in the first place.
  */
-export function toolAlwaysListed(tool: DiscoveredTool, isBuiltin: (integrationId: string) => boolean): boolean {
+export function toolAlwaysListed(
+  tool: DiscoveredTool,
+  isBuiltin: (integrationId: string) => boolean,
+  builtinAlwaysListed: (integrationId: string) => boolean = () => false,
+): boolean {
   if (tool.internal || !tool.gating?.profile) return false;
   if (tool.gating.category === 'disabled') return false;
-  if (isBuiltin(tool.integrationId)) return false;
+  // A built-in is hidden unless it opts in (`alwaysListed` — e.g. `report`;
+  // never `setup`, which the working agent must not see).
+  if (isBuiltin(tool.integrationId) && !builtinAlwaysListed(tool.integrationId)) return false;
   if (!tool.gating.hideUnlessAuthorized) return true;
   // SIM1: a `hideUnlessAuthorized` tool that also declares `simulationOnly`
   // — the simulation setup tools, load_simulation/clear_simulation on

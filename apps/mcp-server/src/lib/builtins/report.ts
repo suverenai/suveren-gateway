@@ -11,12 +11,10 @@
  * `hideUnlessAuthorized`: that flag is for a tool that stays invisible even
  * WITH a matching mandate, until a specific per-action bound is above zero
  * (the `setup` built-in's own case). These five need no such extra check —
- * `refreshTools()` in src/index.ts already hides every tool here from
- * `tools/list` unless a complete authorization on THIS profile (`reporting`)
- * exists at all, independent of `hideUnlessAuthorized` — a working agent
- * holding only its own (e.g. sales/email) mandate, or none, never sees
- * `report__*` listed; see builtins-report.test.ts's "tools/list visibility"
- * suite, which exercises the real MCP server wiring, not just the predicate.
+ * the group declares `alwaysListed` (since 0.31.1): `report__*` is in
+ * `tools/list` with or without a reporting mandate, like connector tools, and
+ * the gate refuses a call without one; see builtins-report.test.ts's
+ * "tools/list visibility" suite (real MCP server wiring).
  *
  * `write_report` is a write tool gated like any other: `staticExecution: {
  * action_type: 'report' }` maps onto the profile's `report_daily_max`
@@ -395,6 +393,11 @@ export const reportBuiltin: BuiltinFactory = (deps) => ({
   // read-only export CLI; writes only the local, vault-encrypted report file)
   // — safe during a simulation-mode test.
   simulation: true,
+  // Listed without a mandate, like connector tools: an AI client that ignores
+  // tools/list_changed (ChatGPT) otherwise never sees report__* after the
+  // reporting mandate is signed mid-chat (simulation finding, 2026-10-16).
+  // Listing authorizes nothing — the gate still refuses a call without one.
+  alwaysListed: true,
   // The same predicate the reporting window uses to refuse a mandate
   // (reporting@0.1, or no window set): the gate never selects such a mandate
   // for ANY report tool — so write_report is never ticketed under (and never

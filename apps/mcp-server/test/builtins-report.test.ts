@@ -214,20 +214,30 @@ describe('tools/list visibility (real MCP server wiring: src/index.ts refreshToo
     return (server as unknown as { _registeredTools: Record<string, { enabled: boolean }> })._registeredTools;
   }
 
-  it('(a) no reporting mandate at all: report__* tools are NOT listed', () => {
+  // Since 0.31.1 (simulation finding): `report` declares `alwaysListed`, like
+  // connector tools — an AI client that ignores tools/list_changed must see
+  // report__* even when the reporting mandate is signed mid-chat. Listing
+  // authorizes nothing: see "without a reporting mandate" below.
+  it('(a) no reporting mandate at all: report__* tools ARE listed (the gate still refuses them)', () => {
     const tools = registeredTools([]);
-    for (const name of REPORT_TOOL_NAMES) expect(tools[name].enabled, name).toBe(false);
+    for (const name of REPORT_TOOL_NAMES) expect(tools[name].enabled, name).toBe(true);
   });
 
-  it("(b) only a sales mandate (the working agent's, a DIFFERENT profile): report__* tools are NOT listed", () => {
+  it("(b) only a sales mandate (the working agent's, a DIFFERENT profile): report__* tools are listed", () => {
     const salesAuth = authWithProfile('github.com/humanagencyprotocol/hap-profiles/sales@0.2', { foo: 'bar' });
     const tools = registeredTools([salesAuth]);
-    for (const name of REPORT_TOOL_NAMES) expect(tools[name].enabled, name).toBe(false);
+    for (const name of REPORT_TOOL_NAMES) expect(tools[name].enabled, name).toBe(true);
   });
 
   it('(c) a reporting mandate: report__* tools ARE listed', () => {
     const tools = registeredTools([auth(REPORTING_BOUNDS)]);
     for (const name of REPORT_TOOL_NAMES) expect(tools[name].enabled, name).toBe(true);
+  });
+
+  it('(d) the tool list does not change when the reporting mandate is granted', () => {
+    const before = registeredTools([]);
+    const after = registeredTools([auth(REPORTING_BOUNDS)]);
+    for (const name of REPORT_TOOL_NAMES) expect(before[name].enabled, name).toBe(after[name].enabled);
   });
 });
 

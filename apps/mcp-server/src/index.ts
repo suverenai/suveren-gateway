@@ -175,13 +175,14 @@ export function createMcpServer(
   function refreshTools() {
     const auths = state.getEnrichedAuthorizations();
     const isBuiltin = (id: string) => integrationManager?.isBuiltin?.(id) ?? false;
+    const builtinAlwaysListed = (id: string) => integrationManager?.builtinAlwaysListed?.(id) ?? false;
 
     // Descriptions are fixed per tool (see buildProxiedToolDescription); only
     // visibility is recomputed here.
     for (const [, { tool, registered }] of proxiedTools) {
       // Connector tools are listed whether or not a mandate exists — the gate
       // refuses an uncovered call (see toolAlwaysListed).
-      if (toolAlwaysListed(tool, isBuiltin)) {
+      if (toolAlwaysListed(tool, isBuiltin, builtinAlwaysListed)) {
         registered.enable();
       } else if (tool.gating?.profile) {
         const matchingAuths = auths.filter(

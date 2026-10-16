@@ -35,10 +35,13 @@ export interface ArgRow {
   profileRef?: string;
 }
 
-/** Never shown: the gateway's ticket reference and secret-looking values. */
+/** Never shown: the gateway's ticket reference, secret-looking values, and
+ *  `_source` — the AI's link to the request (AU10), which the gateway strips
+ *  before execution: it is never sent, so it never appears under "What will
+ *  be sent" (the Request box shows what it points to). */
 export const HIDDEN_ARG_KEYS = new Set([
   'ticket_id', 'apiKey', 'api_key', 'accessToken', 'access_token', 'password', 'secret', 'signature',
-  '_imagePreview',
+  '_imagePreview', '_source',
 ]);
 
 export function humanizeKey(key: string): string {

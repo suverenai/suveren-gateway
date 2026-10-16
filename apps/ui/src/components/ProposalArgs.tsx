@@ -90,9 +90,14 @@ interface ProposalArgsProps {
    *  <details> fold, "Details (exactly what is bound)" — see
    *  ApproverProposalCard). */
   heading?: string;
+  /** The argument the connector manifest declares as the link to the request
+   *  (`sourceFromArg.arg`, e.g. mail's `in_reply_to`): it IS sent, but its raw
+   *  id means nothing to a person — it reads "Replying to" and points to the
+   *  Request box, the id kept as a tooltip. */
+  requestRefArg?: string;
 }
 
-export function ProposalArgs({ args, display, heading = 'Details' }: ProposalArgsProps) {
+export function ProposalArgs({ args, display, heading = 'Details', requestRefArg }: ProposalArgsProps) {
   const rows = argRows(args, display);
   if (rows.length === 0) return null;
   const altText = typeof args.altText === 'string' ? args.altText : undefined;
@@ -107,9 +112,13 @@ export function ProposalArgs({ args, display, heading = 'Details' }: ProposalArg
       <dl style={{ display: 'grid', gridTemplateColumns: 'max-content 1fr', gap: '0.35rem 0.75rem', fontSize: '0.85rem', margin: 0 }}>
         {rows.map(row => (
           <Fragment key={row.key}>
-            <dt style={{ color: 'var(--text-tertiary)', whiteSpace: 'nowrap', alignSelf: 'start' }} title={row.hint}>{row.label}</dt>
+            <dt style={{ color: 'var(--text-tertiary)', whiteSpace: 'nowrap', alignSelf: 'start' }} title={row.hint}>
+              {row.key === requestRefArg ? 'Replying to' : row.label}
+            </dt>
             <dd style={{ color: 'var(--text-primary)', margin: 0, wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}>
-              <Value row={row} altText={altText} />
+              {row.key === requestRefArg
+                ? <span data-testid="request-ref" title={plain(row.value)}>the message shown under Request</span>
+                : <Value row={row} altText={altText} />}
             </dd>
           </Fragment>
         ))}

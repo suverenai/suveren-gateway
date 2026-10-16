@@ -107,6 +107,16 @@ export interface BuiltinIntegration {
   /** Safe while simulation mode is on (touches no real system). Default false = refused there. */
   simulation?: boolean;
   /**
+   * Listed in `tools/list` without a mandate, like every connector tool since
+   * 0.25 — many AI clients ignore `tools/list_changed`, so a tool that only
+   * appears once a mandate exists stays invisible for the rest of the chat.
+   * Listing does not authorize: a call without a mandate is refused by the
+   * gate. Default false = listed only under a matching mandate — keep it so
+   * for a group the working agent must not see (`setup`, which creates
+   * mandates).
+   */
+  alwaysListed?: boolean;
+  /**
    * Available ONLY while simulation mode is on, for the WHOLE group: refused
    * outside it before any proposal or ticket. Since DL1 (Delegation outside
    * simulation) `setup` no longer sets this at group level — only its
