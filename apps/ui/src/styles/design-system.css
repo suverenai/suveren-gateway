@@ -4114,3 +4114,6 @@ body.is-updating .simulation-banner {
 .creation-legend-fold[open] > summary { color: var(--text-primary); border-color: var(--text-primary); }
 /* Inside a row the technical tool name is secondary (UI spec §4.2.1) */
 .card-in-row .approval-headline { font-size: var(--text-caption); font-weight: 400; color: var(--text-muted); margin-bottom: var(--space-2); }
+/* UI spec §4.2.1 — the approval's one sentence; the tool name under it */
+.approval-summary { font-size: var(--text-lead); font-weight: 700; color: var(--text-primary); margin-bottom: 0.15rem; }
+.card-in-row .approval-summary { display: none; }

@@ -301,6 +301,42 @@ export function invalidDisplayHintsReason(toolName: string, entry: unknown): str
   return null;
 }
 
+/**
+ * UI spec §6.1 / §12.2 — an override's optional `summary`: the template the
+ * gateway fills from the proposal's sealed values to write the approval's
+ * one-sentence summary (apps/ui/src/lib/approval-summary.ts renders it, same
+ * grammar). Shape-only: {path}, {a,b}, {path|money|percent|list|short|date},
+ * optional parts in [ ]. Never AI text — the template is the manifest's.
+ */
+const SUMMARY_FORMATS = ['money', 'percent', 'list', 'short', 'date'];
+export function invalidSummaryReason(toolName: string, entry: unknown): string | null {
+  if (entry === null || typeof entry !== 'object') return null;
+  const summary = (entry as { summary?: unknown }).summary;
+  if (summary === undefined) return null;
+  const at = `override "${toolName}".summary`;
+  if (typeof summary !== 'string' || summary.trim().length === 0) return `${at} must be a non-empty string`;
+  if (summary.length > 200) return `${at} must be at most 200 characters`;
+  const balanced = (open: string, close: string): boolean => {
+    let d = 0;
+    for (const ch of summary) {
+      if (ch === open) { d += 1; if (d > 1) return false; }
+      if (ch === close) { d -= 1; if (d < 0) return false; }
+    }
+    return d === 0;
+  };
+  if (!balanced('{', '}')) return `${at} has unbalanced or nested { }`;
+  if (!balanced('[', ']')) return `${at} has unbalanced or nested [ ]`;
+  for (const m of summary.matchAll(/\{([^{}]+)\}/g)) {
+    const [paths, fmt, extra] = m[1].split('|').map((x) => x.trim());
+    if (extra !== undefined) return `${at} {${m[1]}} has more than one format`;
+    if (!paths.split(',').every((p) => /^[A-Za-z_][\w-]*(\.[A-Za-z_][\w-]*)*$/.test(p.trim()))) {
+      return `${at} {${m[1]}} has an invalid field path`;
+    }
+    if (fmt !== undefined && !SUMMARY_FORMATS.includes(fmt)) return `${at} {${m[1]}} has unknown format "${fmt}"`;
+  }
+  return null;
+}
+
 /** Shared control type, exported so callers can narrow a validated entry. */
 export type ValidatedPreviewConfig = ToolPreviewConfig;
 
@@ -313,7 +349,8 @@ export type ValidatedPreviewConfig = ToolPreviewConfig;
 export function invalidManifestPreviewReason(manifest: Pick<IntegrationManifest, 'toolGating'>): string | null {
   const overrides = manifest.toolGating?.overrides ?? {};
   for (const [toolName, entry] of Object.entries(overrides)) {
-    const reason = invalidPreviewReason(toolName, entry) ?? invalidDisplayHintsReason(toolName, entry);
+    const reason = invalidPreviewReason(toolName, entry) ?? invalidDisplayHintsReason(toolName, entry)
+      ?? invalidSummaryReason(toolName, entry);
     if (reason) return reason;
   }
   return null;

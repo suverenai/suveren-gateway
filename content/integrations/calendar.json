@@ -122,6 +122,7 @@
         }
       },
       "create_event": {
+        "summary": "Event: {summary|short}[ on {start.dateTime,start.date|date}]",
         "executionMapping": {
           "duration_minutes": "duration",
           "lookahead_days": "lookahead",
@@ -143,6 +144,7 @@
         "actionLabel": "Event created"
       },
       "update_event": {
+        "summary": "Update event[: {summary|short}]",
         "executionMapping": {
           "attendees": [
             {
@@ -164,6 +166,7 @@
         "actionLabel": "Event updated"
       },
       "delete_event": {
+        "summary": "Delete an event",
         "executionMapping": {
           "calendarId": "allowed_calendars"
         },

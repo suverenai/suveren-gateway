@@ -17,6 +17,7 @@
  *  - "Details (exactly what is bound)" — folded; tool args + the
  *    execution-context fields the Gatekeeper actually checked, together.
  */
+import { approvalSummary } from '../lib/approval-summary';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { resolveProposalLinks, type ProposalLink } from '../lib/proposal-links';
@@ -230,8 +231,10 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
 
   return (
     <>
-      {/* Headline — the tool's display name. No invented label: the tool-name
-          pattern ("erp · send_quote"), as in the approved mockup. */}
+      {/* UI spec §4.2.1 — one sentence from the manifest's summary template
+          and the sealed values (never AI text); the tool name stays, small,
+          under it. In a row the row head already carries the sentence. */}
+      <div className="approval-summary" data-testid="approval-summary">{approvalSummary(proposal.tool, content.toolArgs, manifests)}</div>
       <div className="approval-headline">{headline}</div>
 
       {/* PE1 mockup §4 — a device added after the proposal was made has no

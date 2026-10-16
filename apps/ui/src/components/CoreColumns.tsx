@@ -22,13 +22,14 @@ import {
 import { useVisiblePolling } from '../hooks/useVisiblePolling';
 import { useSSEEvent } from '../contexts/EventSourceContext';
 import { loadProfile } from '../lib/profile-cache';
-import { humanizeKey, splitTool } from '../lib/approval-view';
+
 import {
   areaName, systemName, waitingLabel, deadlineLabel, isToday, isNewTicket, ticketTime,
   groupAutomatic, mandatesAtWork, nearLimit, matchesTicketFilter, shortTicketId,
 } from '../lib/core-objects';
 import { actionLabel } from '../lib/receipt-summary';
 import { ObjectLine } from './ObjectLine';
+import { ApprovalSummary } from './ApprovalSummary';
 import { Skeleton } from './Skeleton';
 
 const MAX_ITEMS = 5;
@@ -126,7 +127,7 @@ export function CoreColumns({ auths, activeCount, waiting, waitingReady }: Props
                     system={systemName(p.tool, manifests)}
                     time={waitingLabel(p.createdAt, now)}
                   />
-                  <div className="appr-item-sum">{humanizeKey(splitTool(p.tool).toolName)}</div>
+                  <div className="appr-item-sum"><ApprovalSummary proposal={p} manifests={manifests} /></div>
                   {due && <div className="obj-due">{due}</div>}
                 </div>
                 <span className="appr-item-chev" aria-hidden="true">›</span>

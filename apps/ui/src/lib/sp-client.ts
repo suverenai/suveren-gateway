@@ -404,7 +404,7 @@ export interface IntegrationManifest {
   /** Per-tool gating. Typed only where the UI reads it — `actionLabel` names
    *  what a tool DOES, in words, for the receipts list. */
   toolGating?: {
-    overrides?: Record<string, { actionLabel?: string } | null>;
+    overrides?: Record<string, { actionLabel?: string; summary?: string; display?: { currencyField?: string } } | null>;
   } | null;
   /** Declares a simulation mode: the credential field holding it and its default. Drives the "Simulation" badge. */
   simulation?: { field: string; default: string } | null;

@@ -1,8 +1,8 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import type { IntegrationManifest, Proposal } from '../lib/sp-client';
-import { humanizeKey, splitTool } from '../lib/approval-view';
 import { areaName, systemName, waitingLabel, deadlineLabel } from '../lib/core-objects';
 import { ObjectLine } from './ObjectLine';
+import { ApprovalSummary } from './ApprovalSummary';
 
 interface Props {
   proposal: Proposal;
@@ -39,7 +39,7 @@ export function ApprovalRow({ proposal, manifests, titles, open, onToggle, who, 
             system={systemName(proposal.tool, manifests)}
             time={waitingLabel(proposal.createdAt, now)}
           />
-          <div className="appr-item-sum">{humanizeKey(splitTool(proposal.tool).toolName)}</div>
+          <div className="appr-item-sum" data-testid="approval-row-summary"><ApprovalSummary proposal={proposal} manifests={manifests} /></div>
           {due && <div className="obj-due">{due}</div>}
           {who && <div className="appr-item-who">{who}</div>}
         </div>
