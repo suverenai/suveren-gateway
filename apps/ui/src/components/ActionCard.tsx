@@ -118,9 +118,13 @@ interface Props {
   /** "Send back for change" — outcome `change_needed`, note required. */
   onChangeNeeded?: (id: string, note: string, shownHash?: string) => void;
   resolving?: boolean;
+  /** Rendered inside an approval row (UI spec §12.2): the row already shows
+   *  the profile, system, waiting time and deadline — so no rail, no header
+   *  row, no raw id here. */
+  inRow?: boolean;
 }
 
-export function ActionCard({ item, onApprove, onReject, onChangeNeeded, resolving, proposalLinks, toolDisplay, manifests, currentUserId }: Props) {
+export function ActionCard({ item, onApprove, onReject, onChangeNeeded, resolving, proposalLinks, toolDisplay, manifests, currentUserId, inRow = false }: Props) {
   const isProposal = item.kind === 'proposal';
   const status: CardStatus = isProposal ? item.proposal.status : 'executed';
   const toolFull = isProposal ? item.proposal.tool : item.receipt.action;
@@ -203,9 +207,10 @@ export function ActionCard({ item, onApprove, onReject, onChangeNeeded, resolvin
   const testSetup = profileIdentity(item.profileId).testSetup || isTestSetupAction(toolFull);
 
   return (
-    <div className="card id-card">
-      <ProfileRail profileId={item.profileId} />
+    <div className={inRow ? 'card card-in-row' : 'card id-card'}>
+      {!inRow && <ProfileRail profileId={item.profileId} />}
       <div className="id-body">
+      {inRow ? (testSetup ? <div style={{ marginBottom: '0.5rem' }}><span className="sim-mark">Test setup</span></div> : null) : (
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
         <code style={{ fontSize: '0.85rem' }}>{toolShort}</code>
         {testSetup && <span className="sim-mark">Test setup</span>}
@@ -239,6 +244,7 @@ export function ActionCard({ item, onApprove, onReject, onChangeNeeded, resolvin
           </span>
         </span>
       </div>
+      )}
 
       {/* AU4/AU5: the AS marks a proposal "executed" once the ticket is
           issued, even when the connector then refused the call or the
@@ -396,6 +402,8 @@ export function ActionCard({ item, onApprove, onReject, onChangeNeeded, resolvin
             error={changeError}
           />
         ) : (
+          <>
+          <p className="approval-resp">Approving sends exactly this. Your approval is recorded with your name.</p>
           <div style={{ display: 'flex', gap: '0.5rem' }}>
             <button
               className="btn btn-primary"
@@ -421,12 +429,15 @@ export function ActionCard({ item, onApprove, onReject, onChangeNeeded, resolvin
               <span aria-hidden="true">✕</span> Reject
             </button>
           </div>
+          </>
         )
       )}
 
+      {!inRow && (
       <div style={{ marginTop: '0.5rem', fontSize: '0.7rem', color: 'var(--text-tertiary)' }}>
         {isProposal ? 'Proposal' : 'Ticket'}: {item.id}
       </div>
+      )}
       </div>
     </div>
   );

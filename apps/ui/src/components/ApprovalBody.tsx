@@ -262,7 +262,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
           <h4>
             What will be sent
             {content.sealed
-              ? <><span className="src-tag src-tag-sealed">sealed</span> <span className="lock-tag">end-to-end encrypted</span></>
+              ? <><span className="src-tag src-tag-sealed">sealed</span></>
               : <span className="src-tag src-tag-sealed">sealed</span>}
           </h4>
           {boundContent}
@@ -300,11 +300,15 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
           any more (RenderedCreationView used to render its own, incl. in
           cards where Request/History never show). */}
       {readable && (
-        <p className="creation-legend" data-testid="au10-legend">
-          <span><i className="creation-legend-dot creation-legend-dot-sealed" />sealed — approved and executed exactly so</span>
-          <span><i className="creation-legend-dot creation-legend-dot-system" />from the system — read by the gateway, not by the AI</span>
-          <span><i className="creation-legend-dot au10-dot-ai" />the AI's own claim or text — not checked</span>
-        </p>
+        // UI spec §4.2.11: the legend is a "?" disclosure, not permanent text.
+        <details className="creation-legend-fold">
+          <summary aria-label="What the marks mean">?</summary>
+          <p className="creation-legend" data-testid="au10-legend">
+            <span><i className="creation-legend-dot creation-legend-dot-sealed" />sealed — approved and executed exactly so</span>
+            <span><i className="creation-legend-dot creation-legend-dot-system" />from the system — read by the gateway, not by the AI</span>
+            <span><i className="creation-legend-dot au10-dot-ai" />the AI's own claim or text — not checked</span>
+          </p>
+        </details>
       )}
 
       {/* Within your limits — per-call bound checks only (lib/receipt-summary.ts
@@ -330,7 +334,6 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
           <dt>Mandate</dt>
           <dd>
             <strong>{profile?.name ?? profileDisplayName(proposal.profileId)}</strong>
-            <span className="src-tag src-tag-local">local</span>
           </dd>
         </dl>
         <dl>

@@ -419,6 +419,7 @@ export function ProposalReviewPage() {
                   onReject={handleReject}
                   onChangeNeeded={handleChangeNeeded}
                   resolving={resolving === item.id}
+                  inRow={item.kind === 'proposal'}
                 />
                 );
                 if (item.kind !== 'proposal') return card;
@@ -437,6 +438,7 @@ export function ProposalReviewPage() {
                   who="Team approval — other people are involved">
                 <ApproverProposalCard
                   key={proposal.id}
+                  inRow
                   proposal={proposal}
                   currentUserId={userId}
                   onAction={handleApproverAction}

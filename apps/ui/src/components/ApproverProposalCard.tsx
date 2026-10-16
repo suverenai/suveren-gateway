@@ -50,9 +50,11 @@ interface Props {
   currentUserId: string;
   onAction: () => void;
   onMessage: (msg: string) => void;
+  /** Inside an approval row (UI spec §12.2) — no rail, header row or raw id. */
+  inRow?: boolean;
 }
 
-export function ApproverProposalCard({ proposal, currentUserId, onAction, onMessage, proposalLinks, toolDisplay, manifests }: Props) {
+export function ApproverProposalCard({ proposal, currentUserId, onAction, onMessage, proposalLinks, toolDisplay, manifests, inRow = false }: Props) {
   const [approving, setApproving] = useState(false);
   const [rejecting, setRejecting] = useState(false);
   // RJ2 — "Change needed" panel, local UI-only state (never persisted; see
@@ -230,13 +232,13 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
   const isBusy = approving || rejecting || sendingChange;
 
   return (
-    <div className="card id-card">
-      <ProfileRail profileId={proposal.profileId} />
+    <div className={inRow ? 'card card-in-row' : 'card id-card'}>
+      {!inRow && <ProfileRail profileId={proposal.profileId} />}
       <div className="id-body">
       {/* Header row. Decided (real-gateway e2e, 2026-10-15): plain words
           only — the "Above the team limit: …" line below already says it;
           the "Above cap" jargon pill is removed. */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
+      <div style={{ display: inRow ? 'none' : 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
         {testSetup && <span className="sim-mark">Test setup</span>}
         <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           {(() => {
@@ -328,6 +330,8 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
             error={changeError}
           />
         ) : (
+          <>
+          {!isProposer && <p className="approval-resp">Approving sends exactly this. Your approval is recorded with your name.</p>}
           <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.25rem', flexWrap: 'wrap', alignItems: 'center' }}>
             {/* TR5 (content/0.7/review.md "Group roles…", rule 4): the
                 proposer of an above-cap action can never approve their own
@@ -364,6 +368,7 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
               <span aria-hidden="true">✕</span> {rejecting ? 'Rejecting...' : 'Reject'}
             </button>
           </div>
+          </>
         )
       )}
 
@@ -376,9 +381,11 @@ export function ApproverProposalCard({ proposal, currentUserId, onAction, onMess
         </p>
       )}
 
+      {!inRow && (
       <div style={{ marginTop: '0.5rem', fontSize: '0.7rem', color: 'var(--text-tertiary)' }}>
         Proposal: {proposal.id}
       </div>
+      )}
       </div>
     </div>
   );

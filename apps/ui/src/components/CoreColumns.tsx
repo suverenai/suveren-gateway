@@ -198,7 +198,7 @@ export function CoreColumns({ auths, activeCount, waiting, waitingReady }: Props
                 {m.limit !== undefined ? (
                   <>
                     <span className="usage-bar"><i style={{ width: `${Math.min(100, Math.round(m.ratio * 100))}%` }} /></span>
-                    <span><b>{m.used} of {m.limit}</b> today</span>
+                    <span>{nearLimit(m) ? <b>{m.used} of {m.limit}</b> : `${m.used} of ${m.limit}`} today</span>
                   </>
                 ) : (
                   <span>{m.used} {m.used === 1 ? 'action' : 'actions'} today</span>

@@ -183,7 +183,11 @@ export function mandatesAtWork(
   for (const r of receipts) {
     if (!r.authorizationId || !isToday(r.timestamp, opts.nowMs)) continue;
     const cur = newest.get(r.authorizationId);
-    if (!cur || r.timestamp > cur.timestamp) newest.set(r.authorizationId, r);
+    // Tickets issued within the same second tie on timestamp; the AS's
+    // running count only grows, so it breaks the tie.
+    const later = !cur || r.timestamp > cur.timestamp
+      || (r.timestamp === cur.timestamp && (r.cumulativeState?.daily?.count ?? 0) > (cur.cumulativeState?.daily?.count ?? 0));
+    if (later) newest.set(r.authorizationId, r);
   }
   const out: MandateAtWork[] = [];
   for (const [authorizationId, r] of newest) {

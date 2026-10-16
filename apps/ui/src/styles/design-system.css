@@ -4104,3 +4104,13 @@ body.is-updating .simulation-banner {
 .mandate-card { border-left: 6px solid var(--text-primary); padding: 0; }
 .mandate-card .id-body { padding: var(--space-3) var(--space-4); }
 .mandate-card .obj-line { margin-bottom: 0.15rem; }
+/* Approval card inside a row (UI spec §4.2 / §12.2) */
+.card-in-row { border: none; box-shadow: none; padding: 0; background: transparent; margin: 0; }
+.card-in-row .id-body { padding: 0; }
+.approval-resp { font-size: var(--text-caption); color: var(--text-muted); margin: var(--space-3) 0 var(--space-2); }
+.creation-legend-fold { margin: 0.4rem 0 0; }
+.creation-legend-fold > summary { list-style: none; display: inline-flex; align-items: center; justify-content: center; width: 1.1rem; height: 1.1rem; border: 1px solid var(--border-strong); border-radius: var(--radius-circle); font-size: var(--text-micro); font-weight: 700; color: var(--text-muted); cursor: pointer; }
+.creation-legend-fold > summary::-webkit-details-marker { display: none; }
+.creation-legend-fold[open] > summary { color: var(--text-primary); border-color: var(--text-primary); }
+/* Inside a row the technical tool name is secondary (UI spec §4.2.1) */
+.card-in-row .approval-headline { font-size: var(--text-caption); font-weight: 400; color: var(--text-muted); margin-bottom: var(--space-2); }

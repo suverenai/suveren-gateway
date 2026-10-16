@@ -105,6 +105,18 @@ describe('groupAutomatic', () => {
 });
 
 describe('mandatesAtWork', () => {
+  it('same-second tickets: the higher running count is the newest', () => {
+    const ts = sec(NOW - 60_000);
+    const list = mandatesAtWork(
+      [
+        receipt({ id: 'x3', timestamp: ts, cumulativeState: { daily: { amount: 0, count: 3 }, monthly: { amount: 0, count: 3 } } }),
+        receipt({ id: 'x2', timestamp: ts, cumulativeState: { daily: { amount: 0, count: 2 }, monthly: { amount: 0, count: 2 } } }),
+      ].reverse(),
+      { nowMs: NOW, titles: {}, manifests, boundsOf: () => ({ write_daily_max: 20 }), profileOf: () => profile },
+    );
+    expect(list[0]).toMatchObject({ used: 3, limit: 20 });
+  });
+
   it('only mandates with a ticket today; usage from the newest; closest to the limit first', () => {
     const list = mandatesAtWork(
       [
