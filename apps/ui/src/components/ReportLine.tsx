@@ -9,8 +9,7 @@ import { Link } from 'react-router-dom';
 import { spClient, type ReportModel } from '../lib/sp-client';
 import { useVisiblePolling } from '../hooks/useVisiblePolling';
 import { useSSEEvent } from '../contexts/EventSourceContext';
-import { isNewReport, reportTitle, reportCheckCounts } from '../lib/report-news';
-import { ticketTime } from '../lib/core-objects';
+import { isNewReport, reportTitle, reportCheckCounts, reportPeriod, writtenLabel } from '../lib/report-news';
 
 export function ReportLine() {
   const [report, setReport] = useState<ReportModel | null>(null);
@@ -31,7 +30,7 @@ export function ReportLine() {
     <div className="report-line" data-testid="report-line">
       <span className="nav-new" style={{ marginLeft: 0 }}>New</span>
       <span className="report-line-text">
-        <b>{reportTitle(report.renderedHtml)}</b> — written {ticketTime(report.savedAt, Date.now())}
+        <b>{reportTitle(report.renderedHtml)}</b> — <span title={reportPeriod(report.coverage).title}>{reportPeriod(report.coverage).text}</span> · written {writtenLabel(report.savedAt, Date.now())}
         {unchecked === 0
           ? <> · all {verified} value{verified === 1 ? '' : 's'} verified</>
           : <> · {verified} value{verified === 1 ? '' : 's'} verified · <b>✕ {unchecked} could not be checked</b></>}

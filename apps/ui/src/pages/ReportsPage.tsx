@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, type ReactNode } from 'react';
+import { reportPeriod, writtenLabel } from '../lib/report-news';
 import { useSearchParams } from 'react-router-dom';
 import { spClient, type ReportModel, type ReportElement, type ReportProof, type ReportCoverage, type TicketDetail } from '../lib/sp-client';
 import { EmptyState } from '../components/EmptyState';
@@ -679,6 +680,10 @@ export function ReportsPage() {
         <div className="reports-bar">
           <div>
             <h1 className="page-title">{title}</h1>
+            {/* The exact period the report covers, date-time to date-time. */}
+            <p className="reports-period" data-testid="report-period" title={reportPeriod(report.coverage).title}>
+              <b>{reportPeriod(report.coverage).text}</b> · written {writtenLabel(report.savedAt, Date.now())}
+            </p>
             <p className="page-subtitle">
               {mandateLabel ? `written by the AI under mandate ${mandateLabel} · ` : ''}
               checked {formatCheckedTime(report.checkedAt)}

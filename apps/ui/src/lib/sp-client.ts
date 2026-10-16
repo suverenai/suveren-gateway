@@ -678,6 +678,10 @@ export interface ReportCoverage {
   coveredCases: string[];
   missingCases: string[];
   periodStart: number | null;
+  /** The reporting window the evidence was scoped to, as the gateway used it
+   *  (unix seconds; tickets up to end + 2 min are inside). Absent on reports
+   *  stored before it was recorded. */
+  window?: { start: number; end: number; days: number; label: string };
   ticketsInPeriod: string[];
   ticketsReferenced: string[];
   ticketsNotReferenced: string[];

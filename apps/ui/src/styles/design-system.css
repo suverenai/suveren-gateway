@@ -4135,3 +4135,4 @@ body.is-updating .simulation-banner {
 .report-line { display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap; background: var(--bg-elevated); border: 1px solid var(--border-strong); border-radius: var(--radius-md); padding: var(--space-3) var(--space-4); margin-bottom: var(--space-6); }
 .report-line-text { flex: 1; min-width: 16rem; font-size: var(--text-body-sm); }
 .report-line .col-btn { width: auto; margin: 0; white-space: nowrap; }
+.reports-period { font-size: var(--text-body-sm); color: var(--text-primary); margin: 0.15rem 0 0.1rem; }
