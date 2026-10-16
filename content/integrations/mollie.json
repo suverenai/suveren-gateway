@@ -39,6 +39,7 @@
     "overrides": {
       "CreatePayment": {
         "summary": "Payment of {amount|money}: {description|short}",
+        "actionLabel": "Payment created",
         "executionMapping": {
           "amount": "amount",
           "currency": "currency"
@@ -58,6 +59,7 @@
       },
       "CreatePaymentLink": {
         "summary": "Payment link[ of {amount|money}]: {description|short}",
+        "actionLabel": "Payment link created",
         "executionMapping": {
           "amount": "amount",
           "currency": "currency"
@@ -92,6 +94,7 @@
       },
       "CancelSubscription": {
         "summary": "Cancel a subscription",
+        "actionLabel": "Subscription cancelled",
         "executionMapping": {},
         "staticExecution": {
           "action_type": "subscribe"
@@ -99,6 +102,7 @@
       },
       "CreateCustomer": {
         "summary": "Create payment customer[ {name}]",
+        "actionLabel": "Payment customer created",
         "executionMapping": {},
         "staticExecution": {
           "action_type": "charge"
@@ -118,6 +122,7 @@
       },
       "RevokeMandate": {
         "summary": "Revoke a payment mandate",
+        "actionLabel": "Payment mandate revoked",
         "executionMapping": {},
         "staticExecution": {
           "action_type": "charge"

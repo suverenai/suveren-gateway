@@ -409,7 +409,7 @@ export const reportBuiltin: BuiltinFactory = (deps) => ({
       get_ticket: READ_GATE,
       list_cases: READ_GATE,
       get_records: READ_GATE,
-      write_report: { executionMapping: {}, staticExecution: { action_type: 'report' } },
+      write_report: { executionMapping: {}, staticExecution: { action_type: 'report' }, actionLabel: 'Report written' },
     },
   } as unknown as BuiltinIntegration['toolGating'],
   tools: [

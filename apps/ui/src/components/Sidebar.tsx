@@ -18,6 +18,9 @@ export interface NavItem {
   teamOnly?: boolean;
   /** UI spec §12.1: 'core' = the unlabelled main group; 'setup' = the quieter group below. */
   group?: 'top' | 'core' | 'setup';
+  /** The count is information, not an action (UI spec §12.1, mockup C2):
+   *  shown as a quiet grey number, never the solid "needs you" pill. */
+  quietCount?: boolean;
 }
 
 export const NAV_ITEMS: NavItem[] = [
@@ -25,7 +28,7 @@ export const NAV_ITEMS: NavItem[] = [
   // The core objects first, larger, no label (UI spec §12.1). v0.7 vocabulary
   // at the level a buyer reads; routes keep their names.
   { to: '/approvals', icon: '▷', iconClass: 'nav-ic-approval', label: 'Approvals', statusKey: 'proposals', group: 'core' },
-  { to: '/mandates', icon: '☰', iconClass: 'nav-ic-mandate', label: 'Mandates', statusKey: 'authorizations', group: 'core' },
+  { to: '/mandates', icon: '☰', iconClass: 'nav-ic-mandate', label: 'Mandates', statusKey: 'authorizations', group: 'core', quietCount: true },
   { to: '/tickets', icon: '▣', iconClass: 'nav-ic-ticket', label: 'Tickets', group: 'core' },
   { to: '/blocked', icon: '⊘', iconClass: 'nav-ic-blocked', label: 'Blocked', statusKey: 'blocked', group: 'core' },
   { to: '/team', icon: '◉', label: 'Team', teamOnly: true, group: 'setup' },
@@ -209,7 +212,7 @@ export function Sidebar() {
                         {item.iconClass ? <span className={`nav-ic ${item.iconClass}`} aria-hidden="true" /> : item.icon}
                       </span>
                       {item.label}
-                      {count ? <span style={BADGE_STYLE}>{count}</span> : null}
+                      {count ? <span style={BADGE_STYLE} className={item.quietCount ? 'nav-count-quiet' : undefined} title={item.quietCount ? 'Expired mandates' : undefined}>{count}</span> : null}
                     </NavLink>
                   </li>
                 );

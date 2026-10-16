@@ -1574,10 +1574,21 @@ class SPClient {
     }
   }
 
-  async getIntegrationManifests(): Promise<{ manifests: IntegrationManifest[] }> {
+  async getIntegrationManifests(): Promise<{ manifests: IntegrationManifest[]; builtins?: IntegrationManifest[] }> {
     const res = await this.fetch('/mcp/integrations/manifests');
     if (!res.ok) throw new Error(`Failed to fetch manifests: ${res.status}`);
     return res.json();
+  }
+
+  /**
+   * For LABELS only (action labels, system names on tickets and approvals):
+   * the connector manifests plus the gateway's built-in tool groups' names
+   * (report, setup). Never use this list to render connectors — a built-in
+   * is not one.
+   */
+  async getLabelManifests(): Promise<IntegrationManifest[]> {
+    const { manifests, builtins } = await this.getIntegrationManifests();
+    return [...(manifests ?? []), ...(builtins ?? [])];
   }
 
   /**

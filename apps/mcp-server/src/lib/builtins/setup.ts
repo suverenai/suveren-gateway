@@ -331,6 +331,7 @@ export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
         set_agent_brief: {
           executionMapping: {},
           staticExecution: { action_type: 'brief' },
+          actionLabel: 'Agent brief set',
           hideUnlessAuthorized: true,
           approvalView: { content: { label: 'New agent brief', kind: 'markdown' } },
           // AU3 — the approval card's preview of this pending proposal (DL1
@@ -345,6 +346,7 @@ export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
         create_mandate: {
           executionMapping: { profile: 'allowed_profiles', mode: 'allowed_modes' },
           staticExecution: { action_type: 'mandate' },
+          actionLabel: 'Mandate proposed',
           hideUnlessAuthorized: true,
           // Shown like the mandate screen: limits and scope by the profile's own names.
           approvalView: {
