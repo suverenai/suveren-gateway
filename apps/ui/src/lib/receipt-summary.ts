@@ -144,6 +144,61 @@ function cumulativeAppliesTo(fieldDef: ProfileBoundsField): readonly string[] | 
  * says). Without the profile there is no `boundType` to read, so no bound can
  * be identified — the bare call count is shown rather than a guess.
  */
+/**
+ * Which declared cumulative bound governs `receipt` in `window` — chosen by
+ * the profile's `boundType` (kind / window / appliesTo), never by name.
+ * `undefined` when no bound can be identified.
+ */
+function chooseCumulativeBound(
+  receipt: ExecutionReceipt,
+  bounds: Record<string, string | number> | undefined,
+  profile: AgentProfile | null | undefined,
+  window: 'daily' | 'monthly',
+): { key: string; isAmount: boolean } | undefined {
+  const boundsFields = profile?.boundsSchema?.fields;
+  if (!boundsFields || !bounds) return undefined;
+  const actionType =
+    receipt.actionType ??
+    (typeof receipt.executionContext?.action_type === 'string'
+      ? (receipt.executionContext.action_type as string)
+      : undefined);
+  const candidates = Object.entries(boundsFields).filter(([key, def]) => {
+    if (!(key in bounds)) return false;
+    const bt = def.boundType;
+    if (!bt || (bt.kind !== 'cumulative_sum' && bt.kind !== 'cumulative_count')) return false;
+    if (bt.window !== window) return false;
+    const governs = cumulativeAppliesTo(def);
+    return !governs || !actionType || governs.includes(actionType);
+  });
+  // Prefer one declared for THIS action type; otherwise the only one present.
+  const named = actionType
+    ? candidates.find(([, def]) => cumulativeAppliesTo(def)?.includes(actionType))
+    : undefined;
+  const pick = named ?? (candidates.length === 1 ? candidates[0] : undefined);
+  return pick ? { key: pick[0], isAmount: pick[1].boundType?.kind === 'cumulative_sum' } : undefined;
+}
+
+/**
+ * The usage in one window as of this receipt: `used` against `limit` when a
+ * declared bound governs it, otherwise just the call `count`. `null` when the
+ * receipt carries no state for that window.
+ */
+export function windowUsage(
+  receipt: ExecutionReceipt,
+  bounds: Record<string, string | number> | undefined,
+  profile: AgentProfile | null | undefined,
+  window: 'daily' | 'monthly',
+): { used: number; limit: number } | { count: number } | null {
+  const state = receipt.cumulativeState?.[window];
+  if (!state) return null;
+  const chosen = chooseCumulativeBound(receipt, bounds, profile, window);
+  const limit = chosen ? Number(bounds?.[chosen.key]) : NaN;
+  if (chosen && Number.isFinite(limit)) {
+    return { used: chosen.isAmount ? state.amount : state.count, limit };
+  }
+  return { count: state.count };
+}
+
 export function usageSummary(
   receipt: ExecutionReceipt,
   bounds: Record<string, string | number> | undefined,
@@ -153,45 +208,11 @@ export function usageSummary(
     { window: 'daily', label: 'today' },
     { window: 'monthly', label: 'this month' },
   ];
-  const actionType =
-    receipt.actionType ??
-    (typeof receipt.executionContext?.action_type === 'string'
-      ? (receipt.executionContext.action_type as string)
-      : undefined);
-
-  const boundsFields = profile?.boundsSchema?.fields;
-
   const parts: string[] = [];
   for (const { window, label } of windows) {
-    const state = receipt.cumulativeState?.[window];
-    if (!state) continue;
-
-    let chosen: { key: string; isAmount: boolean } | undefined;
-    if (boundsFields && bounds) {
-      const candidates = Object.entries(boundsFields).filter(([key, def]) => {
-        if (!(key in bounds)) return false;
-        const bt = def.boundType;
-        if (!bt || (bt.kind !== 'cumulative_sum' && bt.kind !== 'cumulative_count')) return false;
-        if (bt.window !== window) return false;
-        const governs = cumulativeAppliesTo(def);
-        return !governs || !actionType || governs.includes(actionType);
-      });
-      // Prefer one declared for THIS action type; otherwise the only one present.
-      const named = actionType
-        ? candidates.find(([, def]) => cumulativeAppliesTo(def)?.includes(actionType))
-        : undefined;
-      const pick = named ?? (candidates.length === 1 ? candidates[0] : undefined);
-      if (pick) chosen = { key: pick[0], isAmount: pick[1].boundType?.kind === 'cumulative_sum' };
-    }
-
-    const used = chosen ? (chosen.isAmount ? state.amount : state.count) : undefined;
-    const limit = chosen ? Number(bounds?.[chosen.key]) : NaN;
-
-    if (chosen && Number.isFinite(limit)) {
-      parts.push(`${used} of ${limit} ${label}`);
-    } else {
-      parts.push(`${state.count} ${state.count === 1 ? 'call' : 'calls'} ${label}`);
-    }
+    const u = windowUsage(receipt, bounds, profile, window);
+    if (!u) continue;
+    parts.push('limit' in u ? `${u.used} of ${u.limit} ${label}` : `${u.count} ${u.count === 1 ? 'call' : 'calls'} ${label}`);
   }
   return parts.join(' · ');
 }

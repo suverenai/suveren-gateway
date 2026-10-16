@@ -32,6 +32,7 @@ import { eventBus, type EventType } from '../lib/event-bus';
  */
 const ALLOWED: readonly EventType[] = [
   'proposal-added', 'action-approval-needed', 'execution-failed', 'denial-recorded',
+  'ticket-recorded',
 ] as const;
 
 /**

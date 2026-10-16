@@ -52,7 +52,12 @@ export type NotifiableEvent =
   // "nothing happened", not "something needs you" — so this exists only to
   // move the Blocked sidebar badge and an open Blocked page, never to ring
   // anything.
-  | 'denial-recorded';
+  | 'denial-recorded'
+  // A ticket was just archived locally (UI spec §12): moves the Tickets
+  // "new since your last visit" marks and the dashboard's "Done
+  // automatically" column. Presence only, never content; not a doorbell
+  // event either — a ticket is "something ran", not "something needs you".
+  | 'ticket-recorded';
 
 export async function notifyControlPlane(type: NotifiableEvent): Promise<void> {
   const secret = process.env.SUVEREN_INTERNAL_SECRET ?? '';

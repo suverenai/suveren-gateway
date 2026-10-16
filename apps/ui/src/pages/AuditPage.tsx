@@ -1,4 +1,5 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   spClient,
   type ExecutionReceipt,
@@ -14,6 +15,8 @@ import { ReceiptCompleteDialog } from '../components/ReceiptCompleteDialog';
 import { EmptyState } from '../components/EmptyState';
 import { useVisiblePolling } from '../hooks/useVisiblePolling';
 import { useAuth } from '../contexts/AuthContext';
+import { useSSEEvent } from '../contexts/EventSourceContext';
+import { parseTicketFilter, matchesTicketFilter, isNewTicket, TICKET_FILTERS, type TicketFilter } from '../lib/core-objects';
 
 type TimeRange = '1d' | '7d' | '30d' | 'all';
 
@@ -55,6 +58,19 @@ export function AuditPage() {
   const isAdmin = activeTeam?.isAdmin === true;
 
   const [viewTab, setViewTab] = useState<'mine' | 'team'>('mine');
+  // UI spec §12.3: Automatic / Approved / All, carried in the URL so the
+  // dashboard's "Automatic tickets" button lands straight on it.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const kind: TicketFilter = parseTicketFilter(searchParams.get('filter'));
+  const setKind = (k: TicketFilter) => {
+    const next = new URLSearchParams(searchParams);
+    if (k === 'all') next.delete('filter'); else next.set('filter', k);
+    setSearchParams(next, { replace: true });
+  };
+  // "New since your last visit": the previous cutoff, captured once per visit
+  // (null until read) — same rule as the Blocked page.
+  const [seenCutoff, setSeenCutoff] = useState<number | null>(null);
+  const seenCapturedRef = useRef(false);
   const [receipts, setReceipts] = useState<ExecutionReceipt[]>([]);
   // Connector manifests name their own actions ("Email sent"); /health carries
   // the Authority Server's base URL so each row can link to its receipt.
@@ -139,6 +155,31 @@ export function AuditPage() {
 
   useVisiblePolling(fetchReceipts, 120_000);
 
+  // A ticket was just issued (MCP server -> control plane -> SSE): refresh
+  // now instead of waiting for the poll. If the page is in view, move the
+  // persisted cutoff too — the local cutoff stays, so it still shows as new
+  // for the rest of this visit.
+  const handleNewTicket = useCallback(() => {
+    fetchReceipts();
+    if (seenCutoff === null) return;
+    if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+    spClient.markTicketsSeen(Date.now()).catch(() => {});
+  }, [fetchReceipts, seenCutoff]);
+  useSSEEvent('ticket-recorded', handleNewTicket);
+
+  // Mark seen once this visit has data: capture the previous cutoff first,
+  // then persist "now". A display nicety only — failure never blocks the list.
+  useEffect(() => {
+    if (loading || seenCapturedRef.current) return;
+    seenCapturedRef.current = true;
+    spClient.getLastSeenTicketsAt()
+      .then(previous => {
+        setSeenCutoff(previous);
+        return spClient.markTicketsSeen(Date.now());
+      })
+      .catch(() => setSeenCutoff(Number.POSITIVE_INFINITY));
+  }, [loading]);
+
   // Manifests (for action labels) and the AS base URL (for receipt links).
   // Both are cosmetic: if either fails the rows still render, just duller —
   // an unlabelled action falls back to "<Profile> · <action_type>", and the
@@ -215,8 +256,8 @@ export function AuditPage() {
     })).sort((a, b) => a.label.localeCompare(b.label));
   }, [viewTab, receipts, userById]);
 
-  // Apply all filters
-  const filtered = useMemo(() => {
+  // Apply all filters (the kind tabs last, so their counts reflect the rest)
+  const filteredExceptKind = useMemo(() => {
     return receipts.filter(r => {
       if (!matchesSearch(r, search)) return false;
       if (profileFilters.size > 0 && !profileFilters.has(profileDisplayName(r.profileId))) return false;
@@ -226,6 +267,25 @@ export function AuditPage() {
       return true;
     });
   }, [receipts, search, profileFilters, actionFilters, ownerFilters, timeRange]);
+
+  const kindCounts = useMemo(() => {
+    const c: Record<TicketFilter, number> = { automatic: 0, approved: 0, all: 0 };
+    for (const r of filteredExceptKind) {
+      c.all += 1;
+      c[matchesTicketFilter(r, 'approved') ? 'approved' : 'automatic'] += 1;
+    }
+    return c;
+  }, [filteredExceptKind]);
+
+  const filtered = useMemo(
+    () => filteredExceptKind.filter(r => matchesTicketFilter(r, kind)),
+    [filteredExceptKind, kind],
+  );
+
+  const newCount = useMemo(
+    () => (seenCutoff === null ? 0 : filtered.filter(r => isNewTicket(r, seenCutoff)).length),
+    [filtered, seenCutoff],
+  );
 
   const hasActiveFilters = profileFilters.size > 0 || actionFilters.size > 0 || ownerFilters.size > 0 || timeRange !== 'all';
 
@@ -301,7 +361,10 @@ export function AuditPage() {
       >
         <div>
           <h1 className="page-title">Tickets</h1>
-          <p className="page-subtitle">Execution history for agent actions.</p>
+          <p className="page-subtitle">
+            Execution history for agent actions.
+            {newCount > 0 && <> <b data-testid="tickets-new-count">{newCount} new since your last visit</b></>}
+          </p>
         </div>
         <button className="btn btn-secondary" onClick={downloadEvidence} disabled={exporting}>
           {exporting ? 'Preparing…' : 'Download evidence'}
@@ -333,6 +396,27 @@ export function AuditPage() {
             </button>
           ))}
         </div>
+      )}
+
+      {/* UI spec §12.3 — Automatic / Approved / All */}
+      <div className="ftabs" role="tablist" aria-label="Which tickets">
+        {TICKET_FILTERS.map(k => (
+          <button
+            key={k}
+            type="button"
+            role="tab"
+            className="ftab"
+            data-testid={`tickets-filter-${k}`}
+            aria-selected={kind === k}
+            onClick={() => setKind(k)}
+          >
+            {k === 'automatic' ? 'Automatic' : k === 'approved' ? 'Approved' : 'All'}
+            <span className="n">{kindCounts[k]}</span>
+          </button>
+        ))}
+      </div>
+      {kind === 'automatic' && (
+        <p className="page-subtitle" style={{ marginTop: '-0.25rem' }}>Automatic — no person approved these. Approved tickets are under "Approved".</p>
       )}
 
       {/* Search + Filter toggle row */}
@@ -513,6 +597,8 @@ export function AuditPage() {
                     spUrl={spUrl}
                     formatDate={formatDate}
                     onOpenComplete={() => setOpenReceipt(receipt)}
+                    isNew={seenCutoff !== null && isNewTicket(receipt, seenCutoff)}
+                    defaultOpen={filtered.length === 1}
                   />
                 </div>
               );

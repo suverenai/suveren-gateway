@@ -13,6 +13,7 @@ import { isPendingProposal } from '../lib/pending';
 import { useIntegrationStatus } from '../contexts/IntegrationStatusContext';
 import { Skeleton, SkeletonAttentionRow } from '../components/Skeleton';
 import { RecentBlocks } from '../components/RecentBlocks';
+import { CoreColumns } from '../components/CoreColumns';
 import { SkippedCommitmentsCard } from '../components/SkippedCommitmentsCard';
 import { bucketAuths } from '../lib/auth-status';
 import { buildIntegrationAttentionItems, buildPausedSummary } from '../lib/integration-attention';
@@ -131,30 +132,12 @@ export function DashboardPage() {
   // see buildIntegrationAttentionItems. They get one calm summary line
   // instead (pausedSummary, below), not an attention row each.
   const pausedSummary = buildPausedSummary(integrationEntries);
-  const todayReceipts = 0; // Could fetch but keep it simple
+  // UI spec §12.4: approvals waiting for me — my domain's and those routed to
+  // me as approver — once each.
+  const waiting = [...pendingProposals, ...approverProposals.filter(a => !pendingProposals.some(p => p.id === a.id))];
 
   // Attention items
   const attentionItems: { label: string; detail: string; to: string; color: string }[] = [];
-
-  // Phase 6: above-cap actions awaiting my review (any team I'm in).
-  // One row per proposal so the admin / approver sees what's blocking.
-  for (const p of approverProposals) {
-    attentionItems.push({
-      label: 'Approval needed',
-      detail: `${p.tool} — above-cap action under ${shortProfile(p.profileId)}`,
-      to: '/approvals',
-      color: 'var(--text-primary)',
-    });
-  }
-
-  for (const p of pendingProposals) {
-    attentionItems.push({
-      label: 'Approval pending',
-      detail: `${p.tool} awaiting your approval`,
-      to: '/approvals',
-      color: 'var(--text-primary)',
-    });
-  }
 
   for (const a of soonExpiring) {
     const mins = Math.ceil((a.remaining_seconds ?? 0) / 60);
@@ -249,63 +232,14 @@ export function DashboardPage() {
           shows — an all-zero grid and an empty "All clear" ahead of the
           card's one action would just be noise before anything exists yet. */}
       {!showFirstRun && <>
-      {/* Status bar */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(8rem, 1fr))', gap: '0.75rem', marginBottom: '1.5rem' }}>
-        <Link to="/mandates" style={{ textDecoration: 'none' }}>
-          <div className="card" style={{ padding: '1rem', textAlign: 'center' }}>
-            {authsReady ? (
-              <div style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--text-primary)' }}>
-                {active.length}
-              </div>
-            ) : (
-              <Skeleton variant="title" />
-            )}
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Active</div>
-          </div>
-        </Link>
-        <Link to="/approvals" style={{ textDecoration: 'none' }}>
-          <div className="card" style={{ padding: '1rem', textAlign: 'center' }}>
-            {proposalsReady ? (
-              <div style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--text-primary)' }}>
-                {pendingProposals.length}
-              </div>
-            ) : (
-              <Skeleton variant="title" />
-            )}
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Pending Approvals</div>
-          </div>
-        </Link>
-        <Link to="/mandates" style={{ textDecoration: 'none' }}>
-          <div className="card" style={{ padding: '1rem', textAlign: 'center' }}>
-            {authsReady ? (
-              <div style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--text-primary)' }}>
-                {expired.length}
-              </div>
-            ) : (
-              <Skeleton variant="title" />
-            )}
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Expired</div>
-          </div>
-        </Link>
-        <Link to="/integrations" style={{ textDecoration: 'none' }}>
-          <div className="card" style={{ padding: '1rem', textAlign: 'center' }}>
-            {integrationsReady ? (
-              <div style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--text-primary)' }}>
-                {runningIntegrations.length}
-              </div>
-            ) : (
-              <Skeleton variant="title" />
-            )}
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Integrations Running</div>
-          </div>
-        </Link>
-      </div>
+      {/* UI spec §12.4 — the three core-object columns */}
+      <CoreColumns auths={auths} activeCount={active.length} waiting={waiting} waitingReady={proposalsReady} />
 
       {/* Needs your attention — same shape as Recent blocks: the heading names
           the category, the rows or the green "All clear" give the answer. */}
-      <section className="card attention" aria-label="Needs your attention">
+      <section className="card attention attention-quiet" aria-label="Setup — needs attention">
         <div className="card-header">
-          <h2 className="card-title">Needs your attention</h2>
+          <h2 className="card-title">Setup — needs attention</h2>
           {attentionItems.length > 0 && <span className="rb-count">{attentionItems.length}</span>}
         </div>
         {attentionItems.length > 0 ? (

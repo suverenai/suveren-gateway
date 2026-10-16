@@ -1,4 +1,5 @@
-import { useState, useCallback, useMemo, useEffect } from 'react';
+import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { spClient, type Proposal, type ExecutionReceipt, type IntegrationManifest, type ProposalOutcome, type NoteEncryptedWire } from '../lib/sp-client';
 import { aggregateThread, type ThreadItem } from '../lib/thread-aggregator';
@@ -11,6 +12,7 @@ import type { ToolDisplay } from '../lib/approval-view';
 import { resolveDomainFor } from '../lib/my-queue';
 import { ProfileRail } from '../components/ProfileRail';
 import { HumanOnlyNote } from '../components/HumanOnlyNote';
+import { ApprovalRow } from '../components/ApprovalRow';
 import { isAutomatedBrowser, AUTOMATION_REFUSAL } from '../lib/automation';
 import { isTestSetupAction, profileIdentity } from '../lib/profile-identity';
 import { rejectOutcomeArgs, changeNeededOutcomeArgs } from '../lib/reject-outcome';
@@ -309,12 +311,53 @@ export function ProposalReviewPage() {
 
   // Badge counts for tab headers
   const awaitingMeCount = approverProposals.length + awaitingMeDomainItems.length;
+
+  // UI spec §12.2 — the queue is an overview: one row per approval, a click
+  // opens it in place, one at a time. `?open=<id>` (from the dashboard) opens
+  // that one; a lone item opens directly; after a decision the next opens.
+  const [searchParams] = useSearchParams();
+  const [openId, setOpenId] = useState<string | null>(() => searchParams.get('open'));
+  const queueIds = useMemo(() => [
+    ...awaitingMeDomainItems.map(i => (i.kind === 'proposal' ? i.proposal.id : i.id)),
+    ...approverProposals.map(p => p.id),
+  ], [awaitingMeDomainItems, approverProposals]);
+  const prevQueueRef = useRef<string[]>([]);
+  const autoOpenedRef = useRef<string | null>(null);
+  useEffect(() => {
+    const prev = prevQueueRef.current;
+    prevQueueRef.current = queueIds;
+    // A lone item opens by itself — once; closing it is respected.
+    if (queueIds.length === 1 && openId === null && autoOpenedRef.current !== queueIds[0]) {
+      autoOpenedRef.current = queueIds[0];
+      setOpenId(queueIds[0]);
+      return;
+    }
+    if (openId && !queueIds.includes(openId) && prev.includes(openId)) {
+      // The open one was decided: open the item that took its place.
+      const at = prev.indexOf(openId);
+      const next = prev.slice(at + 1).find(id => queueIds.includes(id)) ?? queueIds[0] ?? null;
+      setOpenId(next);
+    }
+  }, [queueIds, openId]);
+  const toggle = (id: string) => setOpenId(cur => (cur === id ? null : id));
+
+  // Mandate titles for the rows' "area" (the proposal carries only the id).
+  const [titles, setTitles] = useState<Record<string, string>>({});
+  useEffect(() => {
+    spClient.getMyAttestations()
+      .then(items => {
+        const t: Record<string, string> = {};
+        for (const i of items) if (i.authorization_id && i.title) t[i.authorization_id] = i.title;
+        setTitles(t);
+      })
+      .catch(() => {});
+  }, []);
   const awaitingOthersCount = awaitingOthersAll.length;
 
   return (
     <>
       <div className="page-header">
-        <h1 className="page-title">Pending Approvals</h1>
+        <h1 className="page-title">Approvals</h1>
         <p className="page-subtitle">
           Actions awaiting approval, plus recent activity from the last 7 days.
         </p>
@@ -358,12 +401,13 @@ export function ProposalReviewPage() {
               </p>
             </div>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
               {(approverMessage || message) && (
                 <div className="alert alert-success">{approverMessage || message}</div>
               )}
               {/* Review-mode ("Send with Review") proposals I must approve. */}
-              {awaitingMeDomainItems.map(item => (
+              {awaitingMeDomainItems.map(item => {
+                const card = (
                 <ActionCard
                   key={item.id}
                   proposalLinks={item.kind === 'proposal' ? linksForTool(item.proposal.tool) : undefined}
@@ -376,9 +420,21 @@ export function ProposalReviewPage() {
                   onChangeNeeded={handleChangeNeeded}
                   resolving={resolving === item.id}
                 />
-              ))}
+                );
+                if (item.kind !== 'proposal') return card;
+                const pid = item.proposal.id;
+                return (
+                  <ApprovalRow key={pid} proposal={item.proposal} manifests={manifests} titles={titles}
+                    open={openId === pid} onToggle={() => toggle(pid)}>
+                    {card}
+                  </ApprovalRow>
+                );
+              })}
               {/* Above-cap proposals where I'm a required approver. */}
               {approverProposals.map(proposal => (
+                <ApprovalRow key={proposal.id} proposal={proposal} manifests={manifests} titles={titles}
+                  open={openId === proposal.id} onToggle={() => toggle(proposal.id)}
+                  who="Team approval — other people are involved">
                 <ApproverProposalCard
                   key={proposal.id}
                   proposal={proposal}
@@ -389,6 +445,7 @@ export function ProposalReviewPage() {
                   toolDisplay={toolDisplay[proposal.tool]}
                   manifests={manifests}
                 />
+                </ApprovalRow>
               ))}
             </div>
           )}

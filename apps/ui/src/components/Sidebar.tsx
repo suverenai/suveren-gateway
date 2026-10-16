@@ -11,25 +11,28 @@ import { unseenCount } from '../lib/blocked-view';
 export interface NavItem {
   to: string;
   icon: string;
+  /** A drawn, monochrome icon (UI spec §12.1) — used instead of `icon` when set. */
+  iconClass?: string;
   label: string;
   statusKey?: 'integrations' | 'assistant' | 'authorizations' | 'proposals' | 'brief' | 'blocked';
   teamOnly?: boolean;
+  /** UI spec §12.1: 'core' = the unlabelled main group; 'setup' = the quieter group below. */
+  group?: 'top' | 'core' | 'setup';
 }
 
 export const NAV_ITEMS: NavItem[] = [
-  { to: '/', icon: '□', label: 'Dashboard' },
-  { to: '/approvals', icon: '▷', label: 'Pending Approvals', statusKey: 'proposals' },
-  // v0.7 vocabulary at the level a buyer reads (nav + page titles). Routes,
-  // deep strings, tool names and the wire keep their names until the full
-  // rename — see doc/v07/homepage-0.7-proposal.md §0.1.
-  { to: '/mandates', icon: '☰', label: 'Mandates', statusKey: 'authorizations' },
-  { to: '/agent-brief', icon: '▤', label: 'Agent Brief', statusKey: 'brief' },
-  { to: '/tickets', icon: '▣', label: 'Tickets' },
-  { to: '/blocked', icon: '⛔', label: 'Blocked', statusKey: 'blocked' },
-  { to: '/reports', icon: '▥', label: 'Reports' },
-  { to: '/team', icon: '◉', label: 'Team', teamOnly: true },
-  { to: '/integrations', icon: '⧗', label: 'Integrations', statusKey: 'integrations' },
-  { to: '/settings', icon: '⚙', label: 'Settings', statusKey: 'assistant' },
+  { to: '/', icon: '□', label: 'Dashboard', group: 'top' },
+  // The core objects first, larger, no label (UI spec §12.1). v0.7 vocabulary
+  // at the level a buyer reads; routes keep their names.
+  { to: '/approvals', icon: '▷', iconClass: 'nav-ic-approval', label: 'Approvals', statusKey: 'proposals', group: 'core' },
+  { to: '/mandates', icon: '☰', iconClass: 'nav-ic-mandate', label: 'Mandates', statusKey: 'authorizations', group: 'core' },
+  { to: '/tickets', icon: '▣', iconClass: 'nav-ic-ticket', label: 'Tickets', group: 'core' },
+  { to: '/blocked', icon: '⊘', iconClass: 'nav-ic-blocked', label: 'Blocked', statusKey: 'blocked', group: 'core' },
+  { to: '/team', icon: '◉', label: 'Team', teamOnly: true, group: 'core' },
+  { to: '/agent-brief', icon: '▤', label: 'Agent Brief', statusKey: 'brief', group: 'setup' },
+  { to: '/integrations', icon: '⧗', label: 'Integrations', statusKey: 'integrations', group: 'setup' },
+  { to: '/reports', icon: '▥', label: 'Reports', group: 'setup' },
+  { to: '/settings', icon: '⚙', label: 'Settings', statusKey: 'assistant', group: 'setup' },
 ];
 
 /**
@@ -186,24 +189,35 @@ export function Sidebar() {
 
   return (
     <div className="sidebar">
-      <ul className="sidebar-nav">
-        {visibleItems.map(item => {
-          const count = item.statusKey ? counts[item.statusKey] : 0;
-          return (
-            <li key={item.to}>
-              <NavLink
-                to={item.to}
-                end={item.to === '/'}
-                className={({ isActive }) => `sidebar-item${isActive ? ' active' : ''}`}
-              >
-                <span className="icon">{item.icon}</span>
-                {item.label}
-                {count ? <span style={BADGE_STYLE}>{count}</span> : null}
-              </NavLink>
-            </li>
-          );
-        })}
-      </ul>
+      {(['top', 'core', 'setup'] as const).map(group => {
+        const items = visibleItems.filter(item => (item.group ?? 'setup') === group);
+        if (items.length === 0) return null;
+        return (
+          <div key={group} className={`sidebar-${group}`}>
+            {group === 'setup' && <><div className="sidebar-divider" /><div className="sidebar-group-label">Setup</div></>}
+            <ul className="sidebar-nav">
+              {items.map(item => {
+                const count = item.statusKey ? counts[item.statusKey] : 0;
+                return (
+                  <li key={item.to}>
+                    <NavLink
+                      to={item.to}
+                      end={item.to === '/'}
+                      className={({ isActive }) => `sidebar-item${isActive ? ' active' : ''}`}
+                    >
+                      <span className="icon">
+                        {item.iconClass ? <span className={`nav-ic ${item.iconClass}`} aria-hidden="true" /> : item.icon}
+                      </span>
+                      {item.label}
+                      {count ? <span style={BADGE_STYLE}>{count}</span> : null}
+                    </NavLink>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        );
+      })}
       <div className="sidebar-context">
         <div className="ctx-label">Active context</div>
         <div className="ctx-value">

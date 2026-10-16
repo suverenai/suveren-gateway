@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { spClient, type PendingItem, type GateContentEntry, type ProfileConfig, type ProfileSummary } from '../lib/sp-client';
 import { profileDisplayName } from '../lib/profile-display';
 import { profileIdentity } from '../lib/profile-identity';
-import { ProfileRail } from '../components/ProfileRail';
+import { ObjectLine } from '../components/ObjectLine';
 import { AuthorizePicker } from '../components/AuthorizePicker';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
@@ -184,12 +184,17 @@ function AuthCard({
 
   return (
     <div
-      className={`card id-card${isHighlighted ? ' card-highlight' : ''}`}
+      className={`card mandate-card${isHighlighted ? ' card-highlight' : ''}`}
       key={item.authorization_id}
       style={{ marginBottom: 0 }}
     >
-      <ProfileRail profileId={item.profile_id} />
       <div className="id-body">
+      {/* UI spec §12.2 — the mandate's top line: profile · since when */}
+      <ObjectLine
+        profileId={item.profile_id}
+        area={profileDisplayName(item.profile_id)}
+        time={item.created_at ? `since ${new Date(item.created_at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}` : undefined}
+      />
       {upgradeHint}
 
       {/* Team owner line */}
