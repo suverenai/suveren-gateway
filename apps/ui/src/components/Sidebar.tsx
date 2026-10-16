@@ -168,7 +168,7 @@ const TOAST_STYLE: React.CSSProperties = {
 };
 
 export function Sidebar() {
-  const { mode, group, domain, activeTeam } = useAuth();
+  const { mode, activeTeam } = useAuth();
   const other = useOtherNavStatus();
   const { attentionCount } = useIntegrationStatus();
   const counts: Record<string, number> = { ...other };
@@ -236,12 +236,8 @@ export function Sidebar() {
           </div>
         );
       })}
-      <div className="sidebar-context">
-        <div className="ctx-label">Active context</div>
-        <div className="ctx-value">
-          {mode === 'personal' ? 'personal' : group ? `${group.name} / ${domain}` : domain}
-        </div>
-      </div>
+      {/* No "Active context" block here: the workspace pill top right says
+          where you are, and the second copy showed the team's raw id. */}
 
       {toastMsg && (
         <div style={TOAST_STYLE} role="status" aria-live="polite">
