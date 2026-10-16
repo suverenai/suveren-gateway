@@ -4117,3 +4117,7 @@ body.is-updating .simulation-banner {
 /* UI spec §4.2.1 — the approval's one sentence; the tool name under it */
 .approval-summary { font-size: var(--text-lead); font-weight: 700; color: var(--text-primary); margin-bottom: 0.15rem; }
 .card-in-row .approval-summary { display: none; }
+/* Blocked item: plain card with the shared top line (UI spec §12.2) */
+.blocked-card { padding: 0; }
+.blocked-card .id-body { padding: var(--space-3) var(--space-4); }
+.blocked-card .obj-line { margin-bottom: 0.2rem; }

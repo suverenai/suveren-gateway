@@ -259,7 +259,10 @@ function AuthCard({
       </div>
 
       <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.5rem', alignItems: 'center' }}>
-        {item.required_domains.map(d => (
+        {/* Only when it says something: several domains, or one still
+            missing. A single attested domain (in a team: the team's id) is
+            noise on every card. */}
+        {(item.required_domains.length > 1 || item.missing_domains.length > 0) && item.required_domains.map(d => (
           <DomainBadge key={d} domain={d} attested={item.attested_domains.includes(d)} />
         ))}
         {item.deferred_commitment_domains.length > 0 && (
