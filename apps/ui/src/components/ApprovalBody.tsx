@@ -210,9 +210,19 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [previewData, requestContextData, content.toolArgs, content.sealed, onShownSnapshot]);
+  // The manifest's declared request link (sourceFromArg) — rendered as
+  // "Replying to", not as a raw id (see ProposalArgs).
+  const { toolName } = splitTool(proposal.tool);
+  const requestRefArg = (manifests?.find(m => m.id === integrationId)?.toolGating?.overrides?.[toolName] as
+    { sourceFromArg?: { arg?: string } } | null | undefined)?.sourceFromArg?.arg;
+  // What will be sent — the sealed arguments only (UI spec §4.2.3).
+  const sentContent = content.toolArgs ? (
+    <ProposalArgs args={content.toolArgs} display={toolDisplay} heading="" requestRefArg={requestRefArg} />
+  ) : null;
+  // Details — the same, plus the values the gateway checks the limits against.
   const boundContent = content.toolArgs ? (
     <>
-          <ProposalArgs args={content.toolArgs} display={toolDisplay} heading="" />
+          <ProposalArgs args={content.toolArgs} display={toolDisplay} heading="" requestRefArg={requestRefArg} />
           {boundsEntries.length > 0 && (
             <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
               {boundsEntries.map(([k, v], i) => {
@@ -268,12 +278,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
               ? <><span className="src-tag src-tag-sealed">sealed</span></>
               : <span className="src-tag src-tag-sealed">sealed</span>}
           </h4>
-          {boundContent}
-          {content.sealed && (
-            <p style={{ margin: '0.5rem 0 0', fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
-              Decrypted on this device. suveren.ai stores only an unreadable copy and its fingerprint.
-            </p>
-          )}
+          {sentContent}
         </div>
       )}
       {/* G4 — some recipients could not be reached when this was submitted
@@ -310,6 +315,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
             <span><i className="creation-legend-dot creation-legend-dot-sealed" />sealed — approved and executed exactly so</span>
             <span><i className="creation-legend-dot creation-legend-dot-system" />from the system — read by the gateway, not by the AI</span>
             <span><i className="creation-legend-dot au10-dot-ai" />the AI's own claim or text — not checked</span>
+            {content.sealed && <span>Decrypted on this device — suveren.ai stores only an unreadable copy and its fingerprint.</span>}
           </p>
         </details>
       )}

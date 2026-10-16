@@ -65,7 +65,7 @@
  *    "Written by the AI — becomes your words when you sign" on `intent`) —
  *    independent of the three rules above, applies to any field.
  */
-import { humanizeKey } from './approval-view';
+import { humanizeKey, HIDDEN_ARG_KEYS } from './approval-view';
 import type { PreviewBody, PreviewReadOutcome, PreviewReadSection, ToolDisplayHints } from './sp-client';
 
 /** One row of a labelled sub-list (DL4) — a nested object field whose own
@@ -862,7 +862,7 @@ export function buildCreationView(
   const rows: CreationRow[] = [];
   for (const key of allKeys) {
     if (!(key in toolArgs)) continue;
-    if (isHidden(displayHints, key)) continue;
+    if (HIDDEN_ARG_KEYS.has(key) || isHidden(displayHints, key)) continue;
     const label = resolveLabel(displayHints, key, humanizeKey(key));
 
     const forEachSection = byForEachKey.get(key);

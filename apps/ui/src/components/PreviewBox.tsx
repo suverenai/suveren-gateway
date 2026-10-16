@@ -45,7 +45,7 @@ export function PreviewBoxBody({ resp, systemName, toolArgs, sealed }: PreviewBo
   // so this is only a short note, not a box competing with the content.
   if (tone === 'none') {
     return (
-      <p className="preview-note" data-testid="approval-preview" data-preview-status="none">{view.note}</p>
+      <p className="sr-only" data-testid="approval-preview" data-preview-status="none">{view.note}</p>
     );
   }
 

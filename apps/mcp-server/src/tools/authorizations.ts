@@ -122,9 +122,10 @@ function listedWithoutMandate(
   if (!integrationManager) return [];
   // Optional call: test doubles of the manager predate this hook.
   const isBuiltin = (id: string) => integrationManager.isBuiltin?.(id) ?? false;
+  const builtinAlwaysListed = (id: string) => integrationManager.builtinAlwaysListed?.(id) ?? false;
   const byProfile = new Map<string, string[]>();
   for (const tool of integrationManager.getAllTools()) {
-    if (!toolAlwaysListed(tool, isBuiltin)) continue;
+    if (!toolAlwaysListed(tool, isBuiltin, builtinAlwaysListed)) continue;
     const profile = tool.gating!.profile!;
     if (authorizations.some(a => a.complete && profileMatches(a.profileId, profile))) continue;
     const short = shortProfileName(profile);
