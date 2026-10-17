@@ -172,3 +172,20 @@ describe('resultBody — what the tool answered', () => {
     expect(resultBody({ ok: true, text: '{not json' })).toEqual({ kind: 'text', text: '{not json' });
   });
 });
+
+describe('resultBody — only what the answer adds', () => {
+  it('leaves out empty values and echoes of what was sent', () => {
+    const body = resultBody(
+      { ok: true, text: JSON.stringify({ id: 'c-1', name: 'Anna Auto', email: 'a@x.de', phone: null, company: '', tags: [], stage: 'new' }) },
+      { name: 'Anna Auto', email: 'a@x.de', type: 'customer' },
+    );
+    expect(body).toEqual({ kind: 'rows', rows: [
+      { key: 'id', label: expect.any(String), value: 'c-1' },
+      { key: 'stage', label: expect.any(String), value: 'new' },
+    ] });
+  });
+  it('a changed value is kept even under a sent field name', () => {
+    const body = resultBody({ ok: true, text: '{"name":"Anna AUTO"}' }, { name: 'Anna Auto' });
+    expect(body.kind === 'rows' && body.rows.map(r => r.value)).toEqual(['Anna AUTO']);
+  });
+});

@@ -128,15 +128,23 @@ function SentBox({ view, display, executionContext }: {
   );
 }
 
-function ResultBox({ result, systemName }: { result: NonNullable<LocalReceiptEntry['result']>; systemName: string }) {
-  const body = resultBody(result);
+/** Rows shown before "Show all" — the answer's first lines are what matter. */
+const RESULT_ROWS_SHOWN = 5;
+
+function ResultBox({ result, systemName, sent }: {
+  result: NonNullable<LocalReceiptEntry['result']>;
+  systemName: string;
+  sent: Record<string, unknown> | null;
+}) {
+  const body = resultBody(result, sent);
+  const [all, setAll] = useState(false);
   return (
     <div className="ticket-sent-box" data-testid="ticket-result" data-ok={result.ok ? 'true' : 'false'}>
       <h4>Result <span className="ticket-sent-q">what {systemName} answered</span></h4>
       {!result.ok && <p className="ticket-sent-check">The action failed.</p>}
       {body.kind === 'rows' ? (
         <dl className="ticket-sent-fields">
-          {body.rows.map((r) => (
+          {(all ? body.rows : body.rows.slice(0, RESULT_ROWS_SHOWN)).map((r) => (
             <Fragment key={r.key}>
               <dt>{r.label}</dt>
               <dd className="is-system">{r.value}</dd>
@@ -146,9 +154,21 @@ function ResultBox({ result, systemName }: { result: NonNullable<LocalReceiptEnt
       ) : (
         <p className="ticket-sent-text is-system">{body.text}</p>
       )}
+      {body.kind === 'rows' && body.rows.length > RESULT_ROWS_SHOWN && (
+        <button type="button" className="ticket-sent-more" onClick={() => setAll(a => !a)}>
+          {all ? 'Show less' : `Show all ${body.rows.length}`}
+        </button>
+      )}
       {result.truncated && <p className="ticket-sent-check is-neutral">Shortened to fit what this device keeps.</p>}
     </div>
   );
+}
+
+/** What was sent, as an object — to leave out the answer's echoes of it. */
+function sentObject(entry: LocalReceiptEntry): Record<string, unknown> | null {
+  const cands = [entry.entry.sentArgs, entry.entry.proposal?.toolArgs, entry.entry.boundContent];
+  for (const c of cands) if (c && typeof c === 'object' && !Array.isArray(c)) return c as Record<string, unknown>;
+  return null;
 }
 
 export function TicketWhatWasDone({ receipt, manifests }: Props) {
@@ -231,7 +251,7 @@ export function TicketWhatWasDone({ receipt, manifests }: Props) {
   return (
     <>
       <SentBox view={view} display={display} executionContext={receipt.executionContext} />
-      {entry?.result && <ResultBox result={entry.result} systemName={systemName} />}
+      {entry?.result && <ResultBox result={entry.result} systemName={systemName} sent={sentObject(entry)} />}
     </>
   );
 }

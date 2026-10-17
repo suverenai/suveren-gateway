@@ -190,25 +190,42 @@ function display(v: unknown): string {
   try { return JSON.stringify(v); } catch { return String(v); }
 }
 
-function asRows(obj: Record<string, unknown>): ResultRow[] {
-  return Object.entries(obj).map(([key, v]) => ({ key, label: humanizeKey(key), value: display(v) }));
+/** Nothing to say: null, "", [] or {}. */
+function isEmpty(v: unknown): boolean {
+  if (v === null || v === undefined) return true;
+  if (typeof v === 'string') return v.trim() === '';
+  if (Array.isArray(v)) return v.length === 0;
+  if (typeof v === 'object') return Object.keys(v as object).length === 0;
+  return false;
+}
+
+/**
+ * The answer's fields as rows — only what the answer ADDS: empty values are
+ * left out, and so is a field that only repeats what was sent under the same
+ * name (a CRM echoing back the name and email it was given).
+ */
+function asRows(obj: Record<string, unknown>, sent?: Record<string, unknown> | null): ResultRow[] {
+  return Object.entries(obj)
+    .filter(([key, v]) => !isEmpty(v) && !(sent && key in sent && display(sent[key]) === display(v)))
+    .map(([key, v]) => ({ key, label: humanizeKey(key), value: display(v) }));
 }
 
 /**
  * What the tool answered, as the Result box shows it: `structuredContent`
  * fields as rows; else a text that is itself one JSON object (most
  * connectors answer `{"id":"c-1042"}` as text) as rows of the same values;
- * else the text as it came. Values are never reworded, only laid out.
+ * else the text as it came. Values are never reworded, only laid out —
+ * and only what the answer adds (see `asRows`).
  */
-export function resultBody(result: TicketResult): ResultBody {
+export function resultBody(result: TicketResult, sent?: Record<string, unknown> | null): ResultBody {
   const sc = result.structuredContent;
-  if (sc && typeof sc === 'object' && !Array.isArray(sc) && Object.keys(sc).length > 0) return { kind: 'rows', rows: asRows(sc) };
+  if (sc && typeof sc === 'object' && !Array.isArray(sc) && Object.keys(sc).length > 0) return { kind: 'rows', rows: asRows(sc, sent) };
   const t = result.text.trim();
   if (t.startsWith('{')) {
     try {
       const parsed = JSON.parse(t) as unknown;
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && Object.keys(parsed).length > 0) {
-        return { kind: 'rows', rows: asRows(parsed as Record<string, unknown>) };
+        return { kind: 'rows', rows: asRows(parsed as Record<string, unknown>, sent) };
       }
     } catch { /* not JSON — shown as text */ }
   }
