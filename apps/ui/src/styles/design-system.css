@@ -4159,3 +4159,7 @@ body.is-updating .simulation-banner {
 
 /* Mandates at work (§12.4/§13.2): the mandate's own title under its top line */
 .mandate-obj-title { font-weight: 700; font-size: var(--text-body-sm); margin: 0.1rem 0 0.25rem; }
+
+/* Mandates (§13.3): area pills and the mode side by side, wrapping */
+.mandate-filters { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-5); align-items: center; margin: -0.25rem 0 var(--space-4); }
+.mandate-filters .ftabs { margin: 0; border-bottom: none; padding-bottom: 0; }

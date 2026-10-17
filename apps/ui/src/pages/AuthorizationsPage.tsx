@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { spClient, type PendingItem, type GateContentEntry, type ProfileConfig, type ProfileSummary, type IntegrationManifest } from '../lib/sp-client';
-import { profileDisplayName } from '../lib/profile-display';
 import { profileIdentity, shortProfileId } from '../lib/profile-identity';
 import { resolveAreaName, areaIcon, type AreaIconName } from '../lib/area';
 import { AreaIcon } from '../components/AreaIcon';
+import { AreaFilterPills, type AreaFilterOption } from '../components/AreaFilterPills';
 import { AuthorizePicker } from '../components/AuthorizePicker';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
@@ -890,24 +890,26 @@ export function AuthorizationsPage() {
     ? ['active', 'pending', 'expired', 'revoked', 'archived']
     : ['active', 'pending', 'expired', 'revoked'];
 
-  const profileSummary = (() => {
-    const map = new Map<string, { count: number; review: boolean }>();
+  // UI spec §13.3 — the area filter: one pill per area in this tab (profile
+  // short id, so two versions of one profile are one area), same pills as
+  // Tickets and Blocked.
+  const areaOptions: AreaFilterOption[] = (() => {
+    const map = new Map<string, AreaFilterOption>();
     for (const item of activeItems) {
       if (viewOf(item) !== activeFilter) continue;
-      const entry = map.get(item.profile_id) ?? { count: 0, review: false };
-      entry.count += 1;
-      if (item.deferred_commitment_domains.length > 0) entry.review = true;
-      map.set(item.profile_id, entry);
+      const shortId = shortProfileId(item.profile_id);
+      const o = map.get(shortId);
+      if (o) o.count += 1;
+      else map.set(shortId, { shortId, icon: areaIcon(item.profile_id), name: areaNameFor(item.profile_id), count: 1 });
     }
-    return Array.from(map.entries())
-      .map(([profileId, meta]) => ({ profileId, ...meta }))
-      .sort((a, b) => profileDisplayName(a.profileId).localeCompare(profileDisplayName(b.profileId)));
+    return [...map.values()].sort((x, y) => x.name.localeCompare(y.name));
   })();
+  const inTab = areaOptions.reduce((n, o) => n + o.count, 0);
 
   const filtered = sortItems(
     activeItems.filter(i => {
       if (viewOf(i) !== activeFilter) return false;
-      if (profileFilter !== null && i.profile_id !== profileFilter) return false;
+      if (profileFilter !== null && shortProfileId(i.profile_id) !== profileFilter) return false;
       if (modeFilter !== null) {
         const isReview = i.deferred_commitment_domains.length > 0;
         if (modeFilter === 'review' && !isReview) return false;
@@ -1067,55 +1069,33 @@ export function AuthorizationsPage() {
         ))}
       </div>
 
-      {/* Secondary filter row */}
-      {profileSummary.length > 0 && (
-        <div
-          style={{
-            display: 'flex',
-            gap: '0.5rem',
-            flexWrap: 'wrap',
-            alignItems: 'center',
-            marginTop: '-0.25rem',
-            marginBottom: '1rem',
-          }}
-        >
-          {profileSummary.map(p => {
-            const selected = profileFilter === p.profileId;
-            return (
-              <button
-                key={p.profileId}
-                className={`btn btn-sm ${selected ? 'btn-primary' : 'btn-secondary'}`}
-                onClick={() => setProfileFilter(selected ? null : p.profileId)}
-              >
-                {profileDisplayName(p.profileId)}
-              </button>
-            );
-          })}
-
-          <span
-            aria-hidden="true"
-            style={{
-              color: 'var(--border)',
-              fontSize: '1.1rem',
-              padding: '0 0.25rem',
-              userSelect: 'none',
-            }}
-          >
-            |
-          </span>
-
-          {(['auto', 'review'] as const).map(m => {
-            const selected = modeFilter === m;
-            return (
-              <button
-                key={m}
-                className={`btn btn-sm ${selected ? 'btn-primary' : 'btn-secondary'}`}
-                onClick={() => setModeFilter(selected ? null : m)}
-              >
-                {m === 'auto' ? 'Auto' : 'Review'}
-              </button>
-            );
-          })}
+      {/* Secondary filter row — area pills (§13.3), then the mode */}
+      {inTab > 0 && (
+        <div className="mandate-filters">
+          <AreaFilterPills
+            areas={areaOptions}
+            selected={profileFilter}
+            onSelect={setProfileFilter}
+            totalCount={inTab}
+          />
+          <div className="ftabs" role="tablist" aria-label="Which mode">
+            {(['auto', 'review'] as const).map(m => {
+              const selected = modeFilter === m;
+              return (
+                <button
+                  key={m}
+                  type="button"
+                  role="tab"
+                  className="ftab"
+                  data-testid={`mode-filter-${m}`}
+                  aria-selected={selected}
+                  onClick={() => setModeFilter(selected ? null : m)}
+                >
+                  {m === 'auto' ? 'Automatic' : 'Review'}
+                </button>
+              );
+            })}
+          </div>
         </div>
       )}
 
