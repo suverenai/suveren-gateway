@@ -20,7 +20,8 @@
  * marks when it ISSUES the ticket — before the action runs).
  */
 import { Router, type Request, type Response } from 'express';
-import { getToolPreview, getToolRequestContext } from '../lib/mcp-bridge';
+import { getToolPreview, getToolRequestContext, getAttachmentPreview } from '../lib/mcp-bridge';
+import { findSealedAttachment } from '../lib/attachment-preview-types';
 import { decryptProposalContent, type ProposalContentWire } from '../lib/content-crypto';
 import { loadOrGenerateKeyPair } from '../lib/e2e-key-manager';
 import type { Vault } from '../lib/vault';
@@ -146,6 +147,32 @@ export function createProposalStatusRouter(
       res.json(response);
     } catch (err) {
       res.status(502).json({ error: `MCP server unavailable: ${err instanceof Error ? err.message : String(err)}` });
+    }
+  });
+
+  /**
+   * UI spec §15.2 — the approval card's live attachment preview. `sha256`
+   * must name an attachment ALREADY sealed on this proposal's own resolved
+   * toolArgs (`_attachmentsSealed`) — the connector/kind/id to re-resolve
+   * come from THAT, never from the request. A sha256 not on the proposal at
+   * all answers 404, never a pass-through to the MCP server.
+   */
+  router.get('/:id/attachment-preview/:sha256', async (req: Request, res: Response) => {
+    const proposalId = req.params.id;
+    const sha256 = req.params.sha256;
+    const resolved = await resolveProposalToolArgsForRoute(spUrl, vault, dataDir, lockAsTlsMismatch, proposalId, res);
+    if (!resolved) return;
+
+    const ref = findSealedAttachment(resolved.toolArgs, sha256);
+    if (!ref) {
+      res.status(404).json({ status: 'error', message: 'No sealed attachment with this fingerprint on this proposal.' });
+      return;
+    }
+    try {
+      const result = await getAttachmentPreview(ref);
+      res.json(result);
+    } catch (err) {
+      res.status(502).json({ status: 'error', message: `MCP server unavailable: ${err instanceof Error ? err.message : String(err)}` });
     }
   });
 

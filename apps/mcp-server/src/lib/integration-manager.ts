@@ -966,6 +966,9 @@ export class IntegrationManager {
     inputSchema: Record<string, unknown>;
     approvalView?: import('./integration-registry').ApprovalView;
     executionMapping?: Record<string, import('./tool-gating-types').ExecutionMappingValue>;
+    /** UI spec §15.2/§15.3 — the manifest's `display.aiText`, the name of
+     *  this tool's own argument that is AI-authored text. */
+    aiTextArg?: string;
   }> {
     const out: ReturnType<IntegrationManager['getToolDisplay']> = {};
     for (const t of this.getAllTools()) {
@@ -976,6 +979,7 @@ export class IntegrationManager {
         // UI spec §14.1 — which sent values the signed ticket also carries
         // (arg → executionContext field), for the "in the ticket" tag.
         ...(mapping && Object.keys(mapping).length > 0 ? { executionMapping: mapping } : {}),
+        ...(t.gating?.aiTextArg ? { aiTextArg: t.gating.aiTextArg } : {}),
       };
     }
     return out;
@@ -1354,6 +1358,7 @@ export class IntegrationManager {
         internal?: boolean;
         attachmentsArg?: string;
         insertFields?: string[];
+        display?: { aiText?: string };
       };
       // Area per tool — an override's own `profile` wins over the manifest's.
       const resolvedProfile = ext.profile ?? profileId;
@@ -1411,6 +1416,7 @@ export class IntegrationManager {
         internal: ext.internal,
         attachmentsArg: ext.attachmentsArg,
         insertFields: ext.insertFields,
+        aiTextArg: ext.display?.aiText,
       };
     }
 

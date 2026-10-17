@@ -381,4 +381,40 @@ describe('MCP Gateway', () => {
       expect(data).toEqual({ status: 'unavailable', reason: 'no_connector' });
     });
   });
+
+  // UI spec §15.2 — POST /internal/document-preview, over the REAL route +
+  // the shipped erp.json's `documents.invoice-pdf` declaration. The erp
+  // connector is not running under this test (same as /internal/preview's
+  // own erp__send_quote case above), so a real resolution attempt degrades
+  // to "unavailable" rather than erroring — document-source.test.ts covers
+  // the "ok"/"changed"/"not_found" outcomes with a fake connector that IS
+  // running.
+  describe('/internal/document-preview', () => {
+    it('400s on a malformed body', async () => {
+      const { status } = await post('/internal/document-preview', { connector: 'erp' });
+      expect(status).toBe(400);
+    });
+
+    it('status "unavailable" for a declared document kind whose connector is not running', async () => {
+      const { status, data } = await post('/internal/document-preview', {
+        connector: 'erp',
+        kind: 'invoice-pdf',
+        id: 'inv-1',
+        sha256: 'a'.repeat(64),
+      });
+      expect(status).toBe(200);
+      expect(data).toMatchObject({ status: 'unavailable' });
+    });
+
+    it('status "error" for an undeclared document kind', async () => {
+      const { status, data } = await post('/internal/document-preview', {
+        connector: 'erp',
+        kind: 'not-a-kind',
+        id: 'x',
+        sha256: 'a'.repeat(64),
+      });
+      expect(status).toBe(200);
+      expect(data).toMatchObject({ status: 'error' });
+    });
+  });
 });

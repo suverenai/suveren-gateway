@@ -325,6 +325,10 @@ export function invalidDisplayHintsReason(toolName: string, entry: unknown): str
       }
     }
   }
+  // UI spec §15.2/§15.3 — the AI-authored-text argument marker.
+  if (d.aiText !== undefined && (typeof d.aiText !== 'string' || d.aiText.length === 0)) {
+    return `override "${toolName}".display.aiText must be a non-empty string naming an argument`;
+  }
   return null;
 }
 
@@ -714,6 +718,13 @@ function invalidDocumentSourceReason(
   if (toolEntry?.internal !== true) {
     return `${label}.tool "${tool}" must be marked "internal: true" on this manifest's ` +
       `toolGating.overrides — a document read must never be directly callable by the AI`;
+  }
+  // UI spec §15.2 — the optional display label template (a plain string;
+  // `{id}` is the only recognized placeholder, substituted by the UI, not
+  // this grammar's `$`-prefixed args substitution).
+  const docLabel = (entry as { label?: unknown }).label;
+  if (docLabel !== undefined && (typeof docLabel !== 'string' || docLabel.length === 0)) {
+    return `${label}.label must be a non-empty string`;
   }
   return null;
 }

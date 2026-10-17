@@ -17,7 +17,7 @@
  * the connector manifest. Off-device (no local entry) it says so and shows
  * nothing it does not have.
  */
-import { Fragment, useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useState } from 'react';
 import { spClient, type ExecutionReceipt, type IntegrationManifest, type LocalReceiptEntry } from '../lib/sp-client';
 import { computeContentHashBrowser } from '../lib/content-hash';
 import { sentView, sentRows, resultBody, type SentView } from '../lib/ticket-what-was-done';
@@ -227,6 +227,13 @@ export function TicketWhatWasDone({ receipt, manifests }: Props) {
     return () => { live = false; };
   }, [receipt.id, receipt.contentHash, receipt.contentBinding, hasHashToCheck]);
 
+  // UI spec §15.2 — one attachment's live preview for THIS ticket's own
+  // local receipt archive entry (never stored on the ticket itself).
+  const fetchAttachmentPreview = useCallback(
+    (sha256: string) => spClient.getReceiptAttachmentPreview(receipt.id, sha256),
+    [receipt.id],
+  );
+
   if (entry === undefined) {
     return (
       <div className="ticket-sent-box ticket-sent-loading" data-testid="ticket-what-was-done" data-bound="loading" aria-busy="true">
@@ -251,12 +258,17 @@ export function TicketWhatWasDone({ receipt, manifests }: Props) {
   const systemName = systemDisplayName(splitTool(receipt.action).integrationId, manifests);
   // UI spec §15.2 — attachments/inserted values stay sealed on the ticket
   // view too, same box as the approval card.
-  const attachmentsSealed = extractAttachmentsSealed(sentObject(entry) ?? undefined);
+  const attachmentsSealed = extractAttachmentsSealed((entry ? sentObject(entry) : null) ?? undefined);
 
   return (
     <>
       <SentBox view={view} display={display} executionContext={receipt.executionContext} />
-      <AttachmentsSealedBox attachments={attachmentsSealed.attachments} inserts={attachmentsSealed.inserts} manifests={manifests} />
+      <AttachmentsSealedBox
+        attachments={attachmentsSealed.attachments}
+        inserts={attachmentsSealed.inserts}
+        manifests={manifests}
+        fetchPreview={fetchAttachmentPreview}
+      />
       {entry?.result && <ResultBox result={entry.result} systemName={systemName} sent={sentObject(entry)} />}
     </>
   );

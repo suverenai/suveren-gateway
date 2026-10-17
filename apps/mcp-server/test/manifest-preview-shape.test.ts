@@ -211,6 +211,20 @@ describe('invalidDisplayHintsReason', () => {
     expect(invalidDisplayHintsReason('x', { display: { labels: { customer_id: 5 } } })).toMatch(/display\.labels\.customer_id/);
     expect(invalidDisplayHintsReason('x', { display: { labels: { customer_id: '' } } })).toMatch(/display\.labels\.customer_id/);
   });
+
+  // ─── UI spec §15.2/§15.3 — display.aiText ──────────────────────────────
+
+  it('a well-formed aiText is fine', () => {
+    expect(invalidDisplayHintsReason('x', { display: { aiText: 'body' } })).toBeNull();
+  });
+
+  it('rejects a non-string aiText', () => {
+    expect(invalidDisplayHintsReason('x', { display: { aiText: 5 } })).toMatch(/display\.aiText/);
+  });
+
+  it('rejects an empty-string aiText', () => {
+    expect(invalidDisplayHintsReason('x', { display: { aiText: '' } })).toMatch(/display\.aiText/);
+  });
 });
 
 describe('invalidManifestPreviewReason', () => {

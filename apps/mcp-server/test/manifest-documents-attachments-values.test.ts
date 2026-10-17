@@ -77,7 +77,33 @@ describe('invalidManifestDocumentsReason', () => {
     expect(getManifest('erp')?.documents?.['invoice-pdf']).toEqual({
       tool: 'get_document',
       args: { kind: 'invoice-pdf', id: '$id' },
+      label: 'issued invoice {id}',
     });
+  });
+
+  // UI spec §15.2 — the optional display label template.
+  it('accepts a document kind with a label template', () => {
+    const reason = invalidManifestDocumentsReason({
+      documents: { 'invoice-pdf': { tool: 'get_document', args: { kind: 'invoice-pdf', id: '$id' }, label: 'issued invoice {id}' } },
+      toolGating: { default: { executionMapping: {} }, overrides: { get_document: { category: 'read', internal: true } } },
+    });
+    expect(reason).toBeNull();
+  });
+
+  it('refuses an empty-string label', () => {
+    const reason = invalidManifestDocumentsReason({
+      documents: { 'invoice-pdf': { tool: 'get_document', args: { kind: 'invoice-pdf', id: '$id' }, label: '' } },
+      toolGating: { default: { executionMapping: {} }, overrides: { get_document: { category: 'read', internal: true } } },
+    });
+    expect(reason).toMatch(/label/);
+  });
+
+  it('refuses a non-string label', () => {
+    const reason = invalidManifestDocumentsReason({
+      documents: { 'invoice-pdf': { tool: 'get_document', args: { kind: 'invoice-pdf', id: '$id' }, label: 5 } },
+      toolGating: { default: { executionMapping: {} }, overrides: { get_document: { category: 'read', internal: true } } },
+    });
+    expect(reason).toMatch(/label/);
   });
 });
 

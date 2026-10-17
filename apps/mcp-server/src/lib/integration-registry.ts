@@ -287,6 +287,8 @@ export interface ToolGatingConfig {
   attachmentsArg?: string;
   /** See tool-gating-types.ts `ProfileToolGatingEntry.insertFields`. */
   insertFields?: string[];
+  /** See tool-gating-types.ts `ToolDisplayHints.aiText`. */
+  aiTextArg?: string;
 }
 
 /**

@@ -112,7 +112,8 @@
         },
         "actionLabel": "Email sent",
         "attachmentsArg": "attachments",
-        "insertFields": ["body"]
+        "insertFields": ["body"],
+        "display": { "aiText": "body" }
       },
       "create_draft": {
         "summary": "Draft email to {to|list}[: {subject|short}]",

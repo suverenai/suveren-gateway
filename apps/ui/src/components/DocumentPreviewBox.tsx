@@ -14,6 +14,7 @@
  * preview_credit_note) — the caller (`RenderedCreationView.tsx`) simply
  * does not render this component in that case.
  */
+import type { ReactNode } from 'react';
 import { documentDataUrl, pageCountLabel, shortFingerprint, type DocumentPreviewData } from '../lib/document-preview';
 
 export interface DocumentPreviewBoxProps {
@@ -22,16 +23,30 @@ export interface DocumentPreviewBoxProps {
    *  system-agnostic phrasing when absent (e.g. a ticket snapshot that
    *  didn't carry it). */
   systemName?: string;
+  /** UI spec §15.2 — the attachment box reuses this same component under
+   *  the heading "Attachment" instead of §15.1's own. Defaults to §15.1's
+   *  original heading so that caller is unaffected. */
+  heading?: string;
+  /** UI spec §15.2 — "from <connector> — <label>", shown right under the
+   *  filename (before the fingerprint). Absent for §15.1's own caller. */
+  sourceLine?: ReactNode;
+  /** Overrides the default "Rendered by X…" trailing note; pass `null` to
+   *  omit it entirely (§15.2's attachment box has nothing invoice-specific
+   *  to say there). `undefined` (the default) keeps §15.1's own text. */
+  trailingNote?: ReactNode | null;
 }
 
-export function DocumentPreviewBox({ doc, systemName }: DocumentPreviewBoxProps) {
+export function DocumentPreviewBox({ doc, systemName, heading, sourceLine, trailingNote }: DocumentPreviewBoxProps) {
   const dataUrl = documentDataUrl(doc);
   const pages = pageCountLabel(doc.pages);
   const renderedBy = systemName ? `Rendered by ${systemName}` : 'Rendered';
+  const defaultTrailingNote = (
+    <>{renderedBy} from the template and the values above. Not issued yet — no number is used until you approve.</>
+  );
 
   return (
     <div className="document-preview-box" data-testid="document-preview">
-      <h4>The PDF as it will be issued</h4>
+      <h4>{heading ?? 'The PDF as it will be issued'}</h4>
       <div className="document-preview-body">
         <object
           data={dataUrl}
@@ -46,13 +61,12 @@ export function DocumentPreviewBox({ doc, systemName }: DocumentPreviewBoxProps)
         <div className="document-preview-meta">
           <div className="document-preview-filename">{doc.filename}</div>
           {pages && <div className="preview-note">{pages}</div>}
+          {sourceLine && <div className="preview-note">{sourceLine}</div>}
           <div className="preview-note">
             Fingerprint <span className="id-raw" title={doc.sha256}>{shortFingerprint(doc.sha256)}</span>
           </div>
           <a href={dataUrl} target="_blank" rel="noreferrer">Open full preview</a>
-          <p className="preview-note">
-            {renderedBy} from the template and the values above. Not issued yet — no number is used until you approve.
-          </p>
+          {(trailingNote !== null) && <p className="preview-note">{trailingNote ?? defaultTrailingNote}</p>}
         </div>
       </div>
     </div>

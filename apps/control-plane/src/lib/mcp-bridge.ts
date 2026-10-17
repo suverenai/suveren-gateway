@@ -9,6 +9,7 @@
 
 import type { InternalPreviewResult } from './preview-types';
 import type { RequestContextResult } from './request-context-types';
+import type { AttachmentPreviewResult, SealedAttachmentRef } from './attachment-preview-types';
 
 export const MCP_BASE = process.env.SUVEREN_MCP_INTERNAL_URL ?? 'http://127.0.0.1:3430';
 
@@ -526,6 +527,32 @@ export async function getToolRequestContext(data: {
       throw new Error(`MCP request-context failed: ${(err as { error?: string }).error ?? res.status}`);
     }
     return res.json() as Promise<RequestContextResult>;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/**
+ * UI spec §15.2 — the approval/ticket card's attachment preview. `ref` is
+ * the connector/kind/id/sha256 ALREADY found on the proposal/ticket's own
+ * sealed meta (see attachment-preview-types.ts's `findSealedAttachment`) —
+ * never a caller-supplied connector/kind/id taken on faith.
+ */
+export async function getAttachmentPreview(ref: SealedAttachmentRef): Promise<AttachmentPreviewResult> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 12_000);
+  try {
+    const res = await fetch(`${MCP_BASE}/internal/document-preview`, {
+      method: 'POST',
+      headers: internalHeaders(),
+      body: JSON.stringify(ref),
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+      throw new Error(`MCP document-preview failed: ${(err as { error?: string }).error ?? res.status}`);
+    }
+    return res.json() as Promise<AttachmentPreviewResult>;
   } finally {
     clearTimeout(timeout);
   }

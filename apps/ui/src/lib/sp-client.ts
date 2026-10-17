@@ -7,6 +7,7 @@
  */
 
 import { queueDomains, mergeProposals } from './my-queue';
+import type { AttachmentPreviewResult } from './attachment-sealed';
 
 export interface SPUser {
   id: string;
@@ -431,6 +432,10 @@ export interface IntegrationManifest {
     labelField: string;
     extraFields?: Record<string, string>;
   }>;
+  /** UI spec §15.2 — document kinds this connector can hand the gateway
+   *  (mcp-server tool-gating-types.ts `ManifestDocuments`); only the display
+   *  label template is typed here — the read tool/args stay server-side. */
+  documents?: Record<string, { label?: string }>;
 }
 
 export interface McpIntegrationStatus {
@@ -2090,6 +2095,26 @@ class SPClient {
   async getProposalOutcome(id: string): Promise<OutcomeResponse> {
     const res = await this.fetch(`/proposal-status/${encodeURIComponent(id)}/outcome`);
     if (!res.ok) throw new Error(`Failed to fetch outcome: ${res.status}`);
+    return res.json();
+  }
+
+  /**
+   * UI spec §15.2 — one attachment's live preview for a pending proposal's
+   * approval card: gateway-internal, read-only, never stored on the
+   * proposal itself. `sha256` is the fingerprint already shown (sealed) on
+   * this proposal's own `_attachmentsSealed` meta.
+   */
+  async getProposalAttachmentPreview(id: string, sha256: string): Promise<AttachmentPreviewResult> {
+    const res = await this.fetch(`/proposal-status/${encodeURIComponent(id)}/attachment-preview/${encodeURIComponent(sha256)}`);
+    if (!res.ok) throw new Error(`Failed to fetch attachment preview: ${res.status}`);
+    return res.json();
+  }
+
+  /** Same as `getProposalAttachmentPreview`, for an opened ticket's own
+   *  local receipt archive entry (UI spec §15.2, ticket view). */
+  async getReceiptAttachmentPreview(receiptId: string, sha256: string): Promise<AttachmentPreviewResult> {
+    const res = await this.fetch(`/api/evidence/receipt/${encodeURIComponent(receiptId)}/attachment-preview/${encodeURIComponent(sha256)}`);
+    if (!res.ok) throw new Error(`Failed to fetch attachment preview: ${res.status}`);
     return res.json();
   }
 

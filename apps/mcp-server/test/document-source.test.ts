@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { loadManifests } from '../src/lib/manifest-loader';
-import { resolveDocumentReference, documentChangedSinceSealing } from '../src/lib/document-source';
+import { resolveDocumentReference, documentChangedSinceSealing, resolveAttachmentPreview } from '../src/lib/document-source';
 import type { IntegrationManager, DiscoveredTool } from '../src/lib/integration-manager';
 
 let manifestDir: string;
@@ -153,5 +153,76 @@ describe('documentChangedSinceSealing', () => {
     const { integrationManager } = buildIntegrationManager({});
     const changed = await documentChangedSinceSealing(integrationManager, { connector: 'erp', kind: 'does-not-exist', id: 'x' }, PDF_SHA256);
     expect(changed).toBe(true);
+  });
+});
+
+// UI spec §15.2 — the approval/ticket card's live attachment preview route's
+// underlying orchestration (apps/mcp-server/bin/http.ts's own
+// POST /internal/document-preview is a thin wrapper around this).
+describe('resolveAttachmentPreview', () => {
+  it('status "ok" with the bytes when the re-resolved sha256 matches the sealed one', async () => {
+    const { integrationManager } = buildIntegrationManager({
+      filename: 'invoice-2026-0003.pdf',
+      contentType: 'application/pdf',
+      contentBase64: PDF_BASE64,
+      sha256: PDF_SHA256,
+    });
+    const result = await resolveAttachmentPreview(integrationManager, { connector: 'erp', kind: 'invoice-pdf', id: 'inv-1' }, PDF_SHA256);
+    expect(result.status).toBe('ok');
+    if (result.status === 'ok') {
+      expect(result.filename).toBe('invoice-2026-0003.pdf');
+      expect(result.sha256).toBe(PDF_SHA256);
+      expect(result.contentBase64).toBe(PDF_BASE64);
+    }
+  });
+
+  it('status "changed" — never served under the old fingerprint — when the sha256 no longer matches', async () => {
+    const { integrationManager } = buildIntegrationManager({
+      filename: 'invoice-2026-0003.pdf',
+      contentType: 'application/pdf',
+      contentBase64: PDF_BASE64,
+      sha256: PDF_SHA256,
+    });
+    const result = await resolveAttachmentPreview(integrationManager, { connector: 'erp', kind: 'invoice-pdf', id: 'inv-1' }, 'some-other-sealed-sha');
+    expect(result.status).toBe('changed');
+    if (result.status === 'changed') {
+      expect(result.message).toMatch(/changed since it was sealed/);
+      expect(result).not.toHaveProperty('contentBase64');
+    }
+  });
+
+  it('status "not_found" when the read tool answers isError (no such document)', async () => {
+    const callTool = vi.fn().mockResolvedValue({ content: [{ type: 'text', text: 'no such document' }], isError: true });
+    const tools: DiscoveredTool[] = [
+      {
+        originalName: 'get_document',
+        namespacedName: 'erp__get_document',
+        integrationId: 'erp',
+        description: '',
+        inputSchema: { type: 'object' },
+        gating: { profile: 'invoicing', executionMapping: {}, staticExecution: {}, category: 'read', internal: true } as unknown as DiscoveredTool['gating'],
+        internal: true,
+      },
+    ];
+    const integrationManager = { getAllTools: () => tools, callTool, isBuiltin: () => false } as unknown as IntegrationManager;
+    const result = await resolveAttachmentPreview(integrationManager, { connector: 'erp', kind: 'invoice-pdf', id: 'missing' }, PDF_SHA256);
+    expect(result.status).toBe('not_found');
+  });
+
+  it('status "error" for an undeclared document kind', async () => {
+    const { integrationManager } = buildIntegrationManager({});
+    const result = await resolveAttachmentPreview(integrationManager, { connector: 'erp', kind: 'does-not-exist', id: 'x' }, PDF_SHA256);
+    expect(result.status).toBe('error');
+  });
+
+  it('status "unavailable" when the connector claims a sha256 that does not match its own bytes', async () => {
+    const { integrationManager } = buildIntegrationManager({
+      filename: 'invoice.pdf',
+      contentType: 'application/pdf',
+      contentBase64: PDF_BASE64,
+      sha256: 'deadbeef'.repeat(8),
+    });
+    const result = await resolveAttachmentPreview(integrationManager, { connector: 'erp', kind: 'invoice-pdf', id: 'inv-1' }, PDF_SHA256);
+    expect(result.status).toBe('unavailable');
   });
 });

@@ -29,6 +29,13 @@ export interface ToolDisplay {
   approvalView?: ApprovalView;
   /** Which args the signed ticket also carries, and as which field (UI spec §14.1 "in the ticket"). */
   executionMapping?: Record<string, ExecutionMappingValue>;
+  /** UI spec §15.2/§15.3 — the manifest's `display.aiText`: the name of
+   *  this tool's own argument that is text the AI itself wrote (e.g. mail/
+   *  gmail's `send_message` -> `"body"`). Shown in its own amber "Text —
+   *  written by the AI" box (AiTextBox.tsx), never in the generic arg
+   *  table — see `argRows`, which hides it the same way `_attachmentsSealed`
+   *  is hidden. */
+  aiTextArg?: string;
 }
 
 export type RowKind = ApprovalViewKind | 'object';
@@ -96,7 +103,9 @@ export function argRows(args: Record<string, unknown>, display?: ToolDisplay): A
   const order = [...new Set([...Object.keys(view), ...Object.keys(props), ...Object.keys(args)])];
   const rows: ArgRow[] = [];
   for (const key of order) {
-    if (!(key in args) || HIDDEN_ARG_KEYS.has(key)) continue;
+    // UI spec §15.2/§15.3 — the AI-authored-text argument gets its own
+    // amber box (AiTextBox.tsx) instead of a row here.
+    if (!(key in args) || HIDDEN_ARG_KEYS.has(key) || key === display?.aiTextArg) continue;
     const value = args[key];
     const v = view[key] ?? {};
     const kind: RowKind = v.kind ?? inferKind(value);
@@ -109,6 +118,20 @@ export function argRows(args: Record<string, unknown>, display?: ToolDisplay): A
     rows.push(row);
   }
   return rows;
+}
+
+/**
+ * UI spec §15.2/§15.3 — the AI-authored-text argument's own value, or
+ * `undefined` when this tool declares none (`display.aiTextArg` absent) or
+ * the declared argument isn't a (non-empty) string on this particular call.
+ * Pure lookup only — the value itself is still sealed (content-binding
+ * hashes it like every other bound field); this just says WHERE to show it.
+ */
+export function aiTextValue(args: Record<string, unknown>, display?: ToolDisplay): string | undefined {
+  const key = display?.aiTextArg;
+  if (!key) return undefined;
+  const value = args[key];
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
 }
 
 /**

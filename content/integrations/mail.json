@@ -107,7 +107,8 @@
         "sourceFromArg": { "kind": "message", "arg": "in_reply_to" },
         "contextKeys": { "email": "to" },
         "attachmentsArg": "attachments",
-        "insertFields": ["body"]
+        "insertFields": ["body"],
+        "display": { "aiText": "body" }
       },
       "load_simulation": {
         "executionMapping": {},

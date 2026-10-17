@@ -106,3 +106,76 @@ export function attachmentCheckEntries(toolArgs: Record<string, unknown> | null 
   if (sealed.attachments.length === 0) return [];
   return [{ key: 'attachment-source', label: 'attachment from an allowed source', ok: true, valueText: '', limitText: '' }];
 }
+
+// ─── UI spec §15.2/§15.3 — live attachment preview ─────────────────────────
+// The bytes shown on the card never travel on the proposal/ticket itself
+// (only the fingerprint does — SealedAttachmentDisplay above); they are
+// fetched live, through the gateway, from the SOURCE each time the card is
+// open (apps/mcp-server/src/lib/document-source.ts `resolveAttachmentPreview`,
+// reached via control-plane's `/proposal-status/:id/attachment-preview/:sha256`
+// or `/api/evidence/receipt/:id/attachment-preview/:sha256`). This module
+// only shapes the already-fetched result for display — never does the fetch
+// itself (same split as every other lib/*.ts here).
+
+/** Mirrors the gateway's `AttachmentPreviewStatus` (document-source.ts) —
+ *  duplicated for the same cross-package reason as `SealedAttachmentDisplay`
+ *  above. */
+export type AttachmentPreviewResult =
+  | { status: 'ok'; filename: string; contentType: string; contentBase64: string; sha256: string; bytes: number }
+  | { status: 'changed'; message: string }
+  | { status: 'unavailable'; message: string }
+  | { status: 'not_found'; message: string }
+  | { status: 'error'; message: string };
+
+/** A manifest's own `documents` declaration — only the part the UI needs
+ *  (the display label template); never the read tool/args, which stay
+ *  server-side. */
+export interface DocumentManifestLike {
+  id: string;
+  documents?: Record<string, { label?: string }>;
+}
+
+/**
+ * UI spec §15.2 — "from <connector> — <label>". Substitutes the ONLY
+ * recognized placeholder, `{id}`, into the source manifest's
+ * `documents.<kind>.label` template (e.g. `"issued invoice {id}"` ->
+ * `"issued invoice 2026-0003"`). Returns `undefined` when the connector
+ * declares no `documents.<kind>` at all, or no `label` on it — an
+ * attachment that isn't a declared document kind (or one with no label)
+ * just shows "from <connector>" with nothing after it, and gets no "same
+ * file as issued..." checks-line entry (see `attachmentSameFileCheck`).
+ */
+export function documentLabel(
+  manifests: DocumentManifestLike[] | undefined,
+  connector: string,
+  kind: string,
+  id: string,
+): string | undefined {
+  const template = manifests?.find((m) => m.id === connector)?.documents?.[kind]?.label;
+  if (!template) return undefined;
+  return template.replace(/\{id\}/g, id);
+}
+
+/**
+ * UI spec §15.2 — the checks-line entry "same file as issued <label>",
+ * derived from the LIVE preview fetch's own comparison against the sealed
+ * fingerprint (never recomputed here — `preview.status` already IS that
+ * comparison's result, from `resolveAttachmentPreview`). `null` while the
+ * fetch hasn't resolved yet, has no document label to name, or answered
+ * with something other than a clean match/mismatch (`unavailable`/
+ * `not_found`/`error`) — there is nothing positive OR negative to assert in
+ * those cases, so nothing is shown rather than a check that didn't really run.
+ */
+export function attachmentSameFileCheck(
+  label: string | undefined,
+  preview: AttachmentPreviewResult | 'loading' | undefined,
+): LimitCheckLike | null {
+  if (!label || !preview || preview === 'loading') return null;
+  if (preview.status === 'ok') {
+    return { key: 'attachment-same-file', label: `same file as issued ${label}`, ok: true, valueText: '', limitText: '' };
+  }
+  if (preview.status === 'changed') {
+    return { key: 'attachment-same-file', label: 'attachment changed since it was sealed', ok: false, valueText: '', limitText: '' };
+  }
+  return null;
+}

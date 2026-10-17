@@ -3,6 +3,8 @@ import {
   extractAttachmentsSealed,
   attachmentCheckEntries,
   humanFileSize,
+  documentLabel,
+  attachmentSameFileCheck,
   ATTACHMENTS_SEALED_META_KEY,
 } from './attachment-sealed';
 
@@ -71,5 +73,63 @@ describe('humanFileSize', () => {
   it('non-finite/negative is shown as a dash, never a crash', () => {
     expect(humanFileSize(NaN)).toBe('—');
     expect(humanFileSize(-5)).toBe('—');
+  });
+});
+
+describe('documentLabel', () => {
+  const MANIFESTS = [{ id: 'erp', documents: { 'invoice-pdf': { label: 'issued invoice {id}' }, 'credit-note-pdf': {} } }];
+
+  it('substitutes {id} into the declared label template', () => {
+    expect(documentLabel(MANIFESTS, 'erp', 'invoice-pdf', '2026-0003')).toBe('issued invoice 2026-0003');
+  });
+
+  it('substitutes every occurrence of {id}, not just the first', () => {
+    const manifests = [{ id: 'erp', documents: { x: { label: '{id} ({id})' } } }];
+    expect(documentLabel(manifests, 'erp', 'x', '7')).toBe('7 (7)');
+  });
+
+  it('undefined when the document kind declares no label', () => {
+    expect(documentLabel(MANIFESTS, 'erp', 'credit-note-pdf', 'cn-1')).toBeUndefined();
+  });
+
+  it('undefined when the document kind is not declared at all', () => {
+    expect(documentLabel(MANIFESTS, 'erp', 'not-a-kind', 'x')).toBeUndefined();
+  });
+
+  it('undefined when the connector itself is not in the manifest list', () => {
+    expect(documentLabel(MANIFESTS, 'not-a-connector', 'invoice-pdf', 'x')).toBeUndefined();
+  });
+
+  it('undefined when manifests is undefined — never throws', () => {
+    expect(documentLabel(undefined, 'erp', 'invoice-pdf', 'x')).toBeUndefined();
+  });
+});
+
+describe('attachmentSameFileCheck', () => {
+  const LABEL = 'issued invoice 2026-0003';
+
+  it('null while the label is unknown (no document kind declared)', () => {
+    expect(attachmentSameFileCheck(undefined, { status: 'ok', filename: 'x', contentType: 'application/pdf', contentBase64: '', sha256: 'a', bytes: 1 })).toBeNull();
+  });
+
+  it('null while the preview fetch is still loading or hasn\'t started', () => {
+    expect(attachmentSameFileCheck(LABEL, 'loading')).toBeNull();
+    expect(attachmentSameFileCheck(LABEL, undefined)).toBeNull();
+  });
+
+  it('a passing check — "same file as issued <label>" — when the preview matched', () => {
+    expect(attachmentSameFileCheck(LABEL, { status: 'ok', filename: 'x', contentType: 'application/pdf', contentBase64: '', sha256: 'a', bytes: 1 }))
+      .toEqual({ key: 'attachment-same-file', label: `same file as issued ${LABEL}`, ok: true, valueText: '', limitText: '' });
+  });
+
+  it('a FAILED check — the only red, bold entry — when the preview came back "changed"', () => {
+    expect(attachmentSameFileCheck(LABEL, { status: 'changed', message: 'x' }))
+      .toEqual({ key: 'attachment-same-file', label: 'attachment changed since it was sealed', ok: false, valueText: '', limitText: '' });
+  });
+
+  it('null for unavailable/not_found/error — nothing positive or negative to assert', () => {
+    expect(attachmentSameFileCheck(LABEL, { status: 'unavailable', message: 'x' })).toBeNull();
+    expect(attachmentSameFileCheck(LABEL, { status: 'not_found', message: 'x' })).toBeNull();
+    expect(attachmentSameFileCheck(LABEL, { status: 'error', message: 'x' })).toBeNull();
   });
 });

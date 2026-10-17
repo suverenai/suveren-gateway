@@ -148,3 +148,52 @@ export async function documentChangedSinceSealing(
   if (!result.ok) return true;
   return result.doc.sha256 !== sealedSha256;
 }
+
+/**
+ * UI spec §15.2 — the approval/ticket card's live attachment preview. The
+ * bytes shown on the card are never stored on the proposal/ticket (only the
+ * fingerprint reference is sealed there — see attachment-resolution.ts's
+ * `SealedAttachment`); this re-resolves THROUGH THE GATEWAY, read-only, the
+ * exact same way `resolveDocumentReference` always has, and refuses to hand
+ * back bytes that no longer match what was sealed — a mismatch is reported
+ * as `changed`, never served under the old fingerprint (showing a DIFFERENT
+ * document as if it still matched would be worse than showing nothing).
+ */
+export type AttachmentPreviewStatus =
+  | ({ status: 'ok' } & ResolvedDocument)
+  | { status: 'changed'; message: string }
+  | { status: 'unavailable'; message: string }
+  | { status: 'not_found'; message: string }
+  | { status: 'error'; message: string };
+
+export async function resolveAttachmentPreview(
+  integrationManager: IntegrationManager,
+  ref: DocumentReference,
+  sealedSha256: string,
+): Promise<AttachmentPreviewStatus> {
+  const result = await resolveDocumentReference(integrationManager, ref);
+  if (!result.ok) {
+    switch (result.error.code) {
+      case 'NOT_FOUND':
+        return { status: 'not_found', message: result.error.message };
+      case 'UNKNOWN_CONNECTOR':
+      case 'UNDECLARED_KIND':
+      case 'NOT_INTERNAL':
+        // Manifest-shape problems — never expected once a call already
+        // sealed this same reference, but fail descriptively, not silently.
+        return { status: 'error', message: result.error.message };
+      default:
+        // UNAVAILABLE / HASH_MISMATCH (the connector's OWN claim vs its
+        // bytes) / MALFORMED_RESULT — the connector could not be read from
+        // cleanly right now.
+        return { status: 'unavailable', message: result.error.message };
+    }
+  }
+  if (result.doc.sha256 !== sealedSha256) {
+    return {
+      status: 'changed',
+      message: `"${result.doc.filename}" (${ref.connector}:${ref.kind}/${ref.id}) changed since it was sealed — its fingerprint no longer matches.`,
+    };
+  }
+  return { status: 'ok', ...result.doc };
+}

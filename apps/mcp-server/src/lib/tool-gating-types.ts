@@ -197,6 +197,19 @@ export interface ToolDisplayHints {
    *                               e.g. `"lines[].item.list_price"`
    */
   labels?: Record<string, string>;
+  /**
+   * UI spec §15.2/§15.3 — names THIS tool's own argument whose value is
+   * text the AI itself wrote (e.g. mail/gmail's `send_message` ->
+   * `"body"`). The approval/ticket card shows it in its own amber
+   * "Text — written by the AI" box, separate from the sealed recipients/
+   * subject/attachment boxes (HIDDEN from the generic arg table the same
+   * way `_attachmentsSealed` is — see apps/ui/src/lib/approval-view.ts).
+   * The value is still sealed (content-binding hashes it like every other
+   * bound field) — this only changes WHERE it is shown, never whether it
+   * is bound. At most one field per tool; a tool with no AI-authored text
+   * argument simply omits this.
+   */
+  aiText?: string;
 }
 
 /**
@@ -320,6 +333,17 @@ export interface ProfileToolGatingEntry {
 export interface DocumentSourceConfig {
   tool: string;
   args: Record<string, string>;
+  /**
+   * UI spec §15.2 — what the approval/ticket card calls this document in
+   * the "from <connector> — <label>" line (e.g. `"issued invoice {id}"`,
+   * `"issued credit note {id}"`). The ONLY placeholder is `{id}` (the
+   * reference's own `id`, braces not `$`-prefixed — a display template,
+   * never fed through the `args` read-substitution grammar). Optional: a
+   * document kind with no `label` just gets no "same file as issued..."
+   * checks-line entry and no source line beyond "from <connector>" (see
+   * apps/ui/src/lib/attachment-sealed.ts `documentLabel`).
+   */
+  label?: string;
 }
 
 /** Manifest top-level `documents` — kind name -> how to read it. */

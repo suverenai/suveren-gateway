@@ -67,11 +67,13 @@
   "documents": {
     "invoice-pdf": {
       "tool": "get_document",
-      "args": { "kind": "invoice-pdf", "id": "$id" }
+      "args": { "kind": "invoice-pdf", "id": "$id" },
+      "label": "issued invoice {id}"
     },
     "credit-note-pdf": {
       "tool": "get_document",
-      "args": { "kind": "credit-note-pdf", "id": "$id" }
+      "args": { "kind": "credit-note-pdf", "id": "$id" },
+      "label": "issued credit note {id}"
     }
   },
   "context": {
