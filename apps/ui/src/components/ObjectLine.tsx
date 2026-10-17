@@ -17,11 +17,6 @@ interface Props {
   /** Right-aligned extra, e.g. a seen/new dot. */
   trailing?: ReactNode;
   leading?: ReactNode;
-  /** The mandate this object ran under, for the quiet "Mandate: <title>"
-   *  line underneath (§13.2) — approvals, tickets and blocks pass this;
-   *  omit on the mandate object itself. Hidden automatically when absent or
-   *  when it only repeats `area`. */
-  mandateTitle?: string | null;
 }
 
 /**
@@ -29,20 +24,26 @@ interface Props {
  * area icon + **area** · via system · time. It is the categorisation —
  * it replaces the profile rail on approvals, mandates and tickets.
  */
-export function ObjectLine({ profileId, area, system, time, trailing, leading, mandateTitle }: Props) {
+export function ObjectLine({ profileId, area, system, time, trailing, leading }: Props) {
   return (
-    <>
-      <div className="obj-line">
-        {leading}
-        <AreaIcon icon={areaIcon(profileId)} />
-        <b>{area}</b>
-        {system && <span>· via {system}</span>}
-        {time && <span>· {time}</span>}
-        {trailing && <><span className="obj-line-sp" />{trailing}</>}
-      </div>
-      {showMandateLine(mandateTitle, area) && (
-        <div className="obj-mandate-line">Mandate: {mandateTitle}</div>
-      )}
-    </>
+    <div className="obj-line">
+      {leading}
+      <AreaIcon icon={areaIcon(profileId)} />
+      <b>{area}</b>
+      {system && <span>· via {system}</span>}
+      {time && <span>· {time}</span>}
+      {trailing && <><span className="obj-line-sp" />{trailing}</>}
+    </div>
   );
+}
+
+/**
+ * The quiet "Mandate: <title>" line (UI spec §13.2), placed by the caller
+ * UNDER the object's headline — on approvals, tickets, blocks and dashboard
+ * items, so a person sees which mandate it ran under. Renders nothing when
+ * there is no title or the title only repeats the area's name.
+ */
+export function MandateLine({ title, area }: { title?: string | null; area: string }) {
+  if (!showMandateLine(title, area)) return null;
+  return <div className="obj-mandate-line" data-testid="mandate-line">Mandate: {title}</div>;
 }

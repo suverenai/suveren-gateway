@@ -4116,7 +4116,7 @@ body.is-updating .simulation-banner {
 /* The quiet "Mandate: <title>" line under the top line (§13.2) */
 .obj-mandate-line {
   font-size: var(--text-caption); color: var(--text-muted);
-  border-left: 2px solid var(--border); padding-left: 0.5rem; margin-top: 0.15rem;
+  border-left: 3px solid var(--text-primary); padding-left: 0.5rem; margin-top: 0.25rem;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 /* Area group heading — Mandates page (§13.3) and Integrations (§13.3) */
@@ -4156,3 +4156,6 @@ body.is-updating .simulation-banner {
 .report-line-text { flex: 1; min-width: 16rem; font-size: var(--text-body-sm); }
 .report-line .col-btn { width: auto; margin: 0; white-space: nowrap; }
 .reports-period { font-size: var(--text-body-sm); color: var(--text-primary); margin: 0.15rem 0 0.1rem; }
+
+/* Mandates at work (§12.4/§13.2): the mandate's own title under its top line */
+.mandate-obj-title { font-weight: 700; font-size: var(--text-body-sm); margin: 0.1rem 0 0.25rem; }

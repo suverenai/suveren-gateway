@@ -27,7 +27,7 @@ import {
 import { profileIdentity, isTestSetupAction } from '../lib/profile-identity';
 import { useProfile } from '../lib/profile-cache';
 import { useAreaCatalog } from '../lib/area-catalog';
-import { ObjectLine } from './ObjectLine';
+import { ObjectLine, MandateLine } from './ObjectLine';
 import { areaName, systemName, shortTicketId, ticketTime } from '../lib/core-objects';
 import { TicketWhatWasDone } from './TicketWhatWasDone';
 import { TicketWhatYouSaw } from './TicketWhatYouSaw';
@@ -122,7 +122,6 @@ export function ReceiptCard({
           system={systemName(receipt.action, manifests)}
           time={ticketTime(receipt.timestamp, now)}
           leading={isNew ? <span className="seen-dot is-new" aria-label="new since your last visit" /> : undefined}
-          mandateTitle={grantTitle}
         />
       {/* Headline: what happened, in words. */}
       <div className="receipt-head">
@@ -140,6 +139,7 @@ export function ReceiptCard({
         )}
         {testSetup && <span className="sim-mark">Test setup</span>}
       </div>
+      <MandateLine title={grantTitle} area={area} />
 
       {/* What THIS call touched (from the signed receipt). */}
       {scope && <div className="receipt-scope">{scope}</div>}

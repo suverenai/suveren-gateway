@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { profileIdentity, isTestSetupAction, shortProfileId } from './profile-identity';
+import { areaIcon } from './area';
 
 describe('shortProfileId', () => {
   it('extracts the short id from a qualified profile id', () => {
@@ -15,49 +16,38 @@ describe('shortProfileId', () => {
   });
 });
 
-describe('profileIdentity — fallback map', () => {
+describe('profileIdentity — the area icon, from the profile id only (UI spec §13.1)', () => {
   const cases: Array<[string, ReturnType<typeof profileIdentity>['icon']]> = [
-    ['email@0.5', 'mail'],
-    ['customers@0.5', 'users'],
-    ['sales@0.3', 'receipt'],
-    ['charge@0.4', 'credit-card'],
+    ['email@0.5', 'email'],
+    ['customers@0.5', 'customers'],
+    ['sales@0.3', 'sales'],
+    ['charge@0.4', 'payments'],
     ['calendar@0.1', 'calendar'],
-    ['publish@0.1', 'megaphone'],
-    ['records@0.1', 'archive'],
-    ['deploy@0.4', 'rocket'],
-    ['delegation@0.1', 'flask'],
-    ['purchase@0.1', 'shopping-cart'],
-    ['reporting@0.1', 'bar-chart'],
+    ['publish@0.1', 'publishing'],
+    ['records@0.1', 'records'],
+    ['deploy@0.4', 'deployments'],
+    ['delegation@0.1', 'setup'],
+    ['purchase@0.1', 'purchasing'],
+    ['reporting@0.1', 'reports'],
   ];
 
   for (const [profileId, icon] of cases) {
-    it(`maps ${profileId} to ${icon} when no icon is declared`, () => {
+    it(`maps ${profileId} to ${icon}`, () => {
       expect(profileIdentity(profileId).icon).toBe(icon);
     });
   }
-});
 
-describe('profileIdentity — declared icon', () => {
-  it('uses the declared icon when it names a known icon', () => {
-    const identity = profileIdentity('email@0.5', { icon: 'rocket' });
-    expect(identity.icon).toBe('rocket');
+  it('is the same icon the top line uses — one set to learn', () => {
+    expect(profileIdentity('x/charge@0.6').icon).toBe(areaIcon('x/charge@0.6'));
   });
 
-  it('falls back to the short-id map when the declared icon is not a known name', () => {
-    const identity = profileIdentity('email@0.5', { icon: 'not-a-real-icon' });
-    expect(identity.icon).toBe('mail');
+  it('an unknown profile gets the neutral icon', () => {
+    expect(profileIdentity('github.com/acme/hap-profiles/claims@0.1').icon).toBe('unknown');
   });
 });
 
-describe('profileIdentity — unknown profile', () => {
-  it('falls back to help-circle for a profile with no fallback-map entry', () => {
-    const identity = profileIdentity('github.com/acme/hap-profiles/claims@0.1');
-    expect(identity.icon).toBe('help-circle');
-  });
-});
-
-describe('profileIdentity — delegation display override', () => {
-  it('displays delegation as "Delegation" and sets testSetup', () => {
+describe('profileIdentity — delegation', () => {
+  it('without a catalog reads "Delegation" (its id) and sets testSetup', () => {
     const identity = profileIdentity('delegation@0.1');
     expect(identity.name).toBe('Delegation');
     expect(identity.testSetup).toBe(true);
@@ -68,9 +58,7 @@ describe('profileIdentity — delegation display override', () => {
     expect(identity.testSetup).toBe(false);
   });
 
-  it('keeps the profile id on the wire unaffected by the display override', () => {
-    // The override is display-only — profileIdentity never mutates the id,
-    // it only returns a different display name for it.
+  it('returns a display name, never the raw id', () => {
     const identity = profileIdentity('delegation@0.1');
     expect(identity.name).not.toBe('delegation@0.1');
   });

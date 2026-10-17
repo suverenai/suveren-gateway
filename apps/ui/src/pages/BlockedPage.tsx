@@ -4,7 +4,7 @@ import type { AgentProfile } from '@hap/core';
 import { spClient, type DenialRecord } from '../lib/sp-client';
 import { blockedView, kindOf, todaysCount, formatBlockedWhen, resolveMandateTitle } from '../lib/blocked-view';
 import { EmptyState } from '../components/EmptyState';
-import { ObjectLine } from '../components/ObjectLine';
+import { ObjectLine, MandateLine } from '../components/ObjectLine';
 import { AreaFilterPills, type AreaFilterOption } from '../components/AreaFilterPills';
 import { systemDisplayName } from '../lib/approval-view';
 import { useAreaCatalog } from '../lib/area-catalog';
@@ -202,12 +202,12 @@ export function BlockedPage() {
                     system={r.integrationId ? systemDisplayName(r.integrationId, undefined) : undefined}
                     time={formatBlockedWhen(r.ts, Date.now())}
                     trailing={unseen ? <span className="new-pill">New</span> : undefined}
-                    mandateTitle={resolveMandateTitle(r, mandateTitlesById)}
                   />
                   <div className="blocked-row-head">
                     <span className={`blocked-dot blocked-dot-${kindOf(r)}`} aria-hidden="true" />
                     <span className="blocked-title">{view.title}</span>
                   </div>
+                  <MandateLine title={resolveMandateTitle(r, mandateTitlesById)} area={resolveAreaName(pid, catalog)} />
                   <div className="blocked-sentence">{view.sentence}</div>
                   <div className="blocked-source">
                     {view.sourceLine.map((part, pi) =>

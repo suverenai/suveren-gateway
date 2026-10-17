@@ -145,3 +145,22 @@ describe('mandatesAtWork', () => {
     expect(nearLimit(list[1])).toBe(false);
   });
 });
+
+describe('dashboard items carry the mandate name (UI spec §13.2)', () => {
+  it('two mandates in the same area stay apart by their titles', () => {
+    const titles = { authz_1: 'Customer care', authz_2: 'Lead intake' };
+    const rs = [receipt({ id: 'a', authorizationId: 'authz_1' }), receipt({ id: 'b', authorizationId: 'authz_2' })];
+    const groups = groupAutomatic(rs, { catalog, manifests, titles, lastSeenMs: 0 });
+    expect(groups.map(g => [g.area, g.mandateTitle]).sort()).toEqual([['Customers', 'Customer care'], ['Customers', 'Lead intake']]);
+    const atWork = mandatesAtWork(rs, {
+      nowMs: NOW, catalog, manifests, titles, boundsOf: () => undefined, profileOf: () => undefined,
+    });
+    expect(atWork.map(m => m.mandateTitle).sort()).toEqual(['Customer care', 'Lead intake']);
+  });
+
+  it('no title known: no mandate name, the area still shows', () => {
+    const [g] = groupAutomatic([receipt({})], { catalog, manifests, lastSeenMs: 0 });
+    expect(g.area).toBe('Customers');
+    expect(g.mandateTitle).toBeUndefined();
+  });
+});

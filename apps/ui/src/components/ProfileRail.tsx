@@ -1,10 +1,11 @@
 import { ProfileIcon } from './ProfileIcon';
 import { profileIdentity } from '../lib/profile-identity';
+import { useAreaName } from '../lib/area-catalog';
 
 interface Props {
   profileId: string;
   /** Values the profile itself declares, when the caller has them on hand. */
-  declared?: { name?: string; icon?: string };
+  declared?: { name?: string };
 }
 
 /**
@@ -17,7 +18,9 @@ interface Props {
  * call `profileIdentity` themselves — this component only renders the rail.
  */
 export function ProfileRail({ profileId, declared }: Props) {
-  const { icon, name } = profileIdentity(profileId, declared);
+  const { icon } = profileIdentity(profileId, declared);
+  // The area's name: the newest version of this profile (UI spec §13.1).
+  const name = useAreaName(profileId);
   return (
     <>
       <div className="id-rail">

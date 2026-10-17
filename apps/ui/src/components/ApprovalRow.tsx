@@ -2,7 +2,7 @@ import { useEffect, useRef, type ReactNode } from 'react';
 import type { IntegrationManifest, Proposal } from '../lib/sp-client';
 import { areaName, systemName, waitingLabel, deadlineLabel } from '../lib/core-objects';
 import { useAreaCatalog } from '../lib/area-catalog';
-import { ObjectLine } from './ObjectLine';
+import { ObjectLine, MandateLine } from './ObjectLine';
 import { ApprovalSummary } from './ApprovalSummary';
 
 interface Props {
@@ -40,9 +40,9 @@ export function ApprovalRow({ proposal, manifests, titles, open, onToggle, who, 
             area={areaName(proposal.profileId, catalog)}
             system={systemName(proposal.tool, manifests)}
             time={waitingLabel(proposal.createdAt, now)}
-            mandateTitle={proposal.authorizationId ? titles[proposal.authorizationId] : undefined}
           />
           <div className="appr-item-sum" data-testid="approval-row-summary"><ApprovalSummary proposal={proposal} manifests={manifests} /></div>
+          <MandateLine title={proposal.authorizationId ? titles[proposal.authorizationId] : undefined} area={areaName(proposal.profileId, catalog)} />
           {due && <div className="obj-due">{due}</div>}
           {who && <div className="appr-item-who">{who}</div>}
         </div>

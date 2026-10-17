@@ -103,6 +103,8 @@ export interface AutomaticGroup {
   area: string;
   system: string;
   profileId: string;
+  /** The mandate's own title (UI spec §13.2 mandate line), when it has one. */
+  mandateTitle?: string;
   /** The manifest's past-tense action label, e.g. "Contact created". */
   label: string;
   count: number;
@@ -118,7 +120,13 @@ export interface AutomaticGroup {
  */
 export function groupAutomatic(
   receipts: ExecutionReceipt[],
-  opts: { catalog: readonly AreaCatalogEntry[]; manifests: IntegrationManifest[]; lastSeenMs: number },
+  opts: {
+    catalog: readonly AreaCatalogEntry[];
+    manifests: IntegrationManifest[];
+    lastSeenMs: number;
+    /** Mandate titles by authorization id. */
+    titles?: Record<string, string>;
+  },
 ): AutomaticGroup[] {
   const groups = new Map<string, AutomaticGroup>();
   for (const r of receipts) {
@@ -133,6 +141,7 @@ export function groupAutomatic(
         area: areaName(r.profileId, opts.catalog),
         system: systemName(r.action, opts.manifests),
         profileId: r.profileId,
+        mandateTitle: r.authorizationId ? opts.titles?.[r.authorizationId] : undefined,
         label,
         count: 0,
         newCount: 0,
@@ -156,6 +165,8 @@ export interface MandateAtWork {
   area: string;
   system: string;
   profileId: string;
+  /** The mandate's own title, when it has one — the item's headline. */
+  mandateTitle?: string;
   /** Today's usage as of the latest ticket: against a declared limit, or a plain count. */
   used: number;
   limit?: number;
@@ -175,6 +186,8 @@ export function mandatesAtWork(
     nowMs: number;
     catalog: readonly AreaCatalogEntry[];
     manifests: IntegrationManifest[];
+    /** Mandate titles by authorization id. */
+    titles?: Record<string, string>;
     boundsOf: (authorizationId: string) => Record<string, string | number> | undefined;
     profileOf: (profileId: string) => AgentProfile | null | undefined;
   },
@@ -197,6 +210,7 @@ export function mandatesAtWork(
       area: areaName(r.profileId, opts.catalog),
       system: systemName(r.action, opts.manifests),
       profileId: r.profileId,
+      mandateTitle: opts.titles?.[authorizationId],
     };
     if (u && 'limit' in u) {
       out.push({ ...base, used: u.used, limit: u.limit, ratio: u.limit > 0 ? u.used / u.limit : 0 });
