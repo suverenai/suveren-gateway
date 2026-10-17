@@ -15,6 +15,7 @@
  *      into a human-approved email under the guise of "the Mollie link".
  */
 
+import { structuredOrJsonText } from './preview';
 import type { IntegrationManager } from './integration-manager';
 import { getManifest } from './manifest-loader';
 import { readPreview } from './preview';
@@ -74,7 +75,7 @@ export async function resolveInsertValue(
   if (read.status !== 'ok') {
     return { ok: false, error: { code: 'UNAVAILABLE', message: read.message ?? `Connector "${ref.connector}" could not be reached.` } };
   }
-  const body = read.body.structured;
+  const body = structuredOrJsonText(read.body);
   if (!body || typeof body !== 'object') {
     return { ok: false, error: { code: 'MALFORMED_RESULT', message: `Value read for "${ref.connector}:${ref.kind}" returned no structured result.` } };
   }

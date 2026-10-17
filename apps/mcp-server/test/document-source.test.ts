@@ -92,6 +92,16 @@ describe('resolveDocumentReference', () => {
     expect(callTool).toHaveBeenCalledWith('erp', 'get_document', { kind: 'invoice-pdf', id: 'inv-1' });
   });
 
+  it('reads a document a connector returns only as JSON text (no structuredContent) — found by the e2e run against erp-mcp 0.8.0', async () => {
+    const doc = { filename: 'invoice-2026-0001.pdf', contentType: 'application/pdf', contentBase64: PDF_BASE64, sha256: PDF_SHA256 };
+    const callTool = vi.fn().mockResolvedValue({ content: [{ type: 'text', text: JSON.stringify(doc) }] });
+    const { integrationManager: base } = buildIntegrationManager({});
+    const integrationManager = { ...base, callTool } as unknown as IntegrationManager;
+    const result = await resolveDocumentReference(integrationManager, { connector: 'erp', kind: 'invoice-pdf', id: '2026-0001' });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.doc.sha256).toBe(PDF_SHA256);
+  });
+
   it('refuses an undeclared document kind', async () => {
     const { integrationManager } = buildIntegrationManager({});
     const result = await resolveDocumentReference(integrationManager, { connector: 'erp', kind: 'nonexistent-kind', id: 'x' });

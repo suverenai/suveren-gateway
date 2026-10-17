@@ -624,3 +624,21 @@ export async function buildInternalPreview(
     },
   });
 }
+
+/**
+ * A read's result as an object: its `structuredContent` when the connector
+ * declares one, else its text when that text is exactly one JSON object.
+ * Connectors differ (erp-mcp 0.8.0 returned the document only as JSON text);
+ * the shape checks that follow are the same either way.
+ */
+export function structuredOrJsonText(body: { structured?: Record<string, unknown>; text?: string }): Record<string, unknown> | undefined {
+  if (body.structured && typeof body.structured === 'object') return body.structured;
+  const t = body.text?.trim();
+  if (!t || !t.startsWith('{')) return undefined;
+  try {
+    const parsed = JSON.parse(t) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : undefined;
+  } catch {
+    return undefined;
+  }
+}

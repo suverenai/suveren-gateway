@@ -14,6 +14,7 @@
  * content-binding.ts applies to a content hash).
  */
 
+import { structuredOrJsonText } from './preview';
 import { createHash } from 'node:crypto';
 import type { IntegrationManager } from './integration-manager';
 import { getManifest } from './manifest-loader';
@@ -97,7 +98,7 @@ export async function resolveDocumentReference(
     return { ok: false, error: { code: 'UNAVAILABLE', message: read.message ?? `Connector "${ref.connector}" could not be reached.` } };
   }
 
-  const body = read.body.structured;
+  const body = structuredOrJsonText(read.body);
   if (!body || typeof body !== 'object') {
     return { ok: false, error: { code: 'MALFORMED_RESULT', message: `Document read for "${ref.connector}:${ref.kind}" returned no structured result.` } };
   }
