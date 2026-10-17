@@ -26,7 +26,9 @@ import {
 } from '../lib/receipt-summary';
 import { profileIdentity, isTestSetupAction } from '../lib/profile-identity';
 import { useProfile } from '../lib/profile-cache';
-import { ObjectLine } from './ObjectLine';
+import { useAreaCatalog } from '../lib/area-catalog';
+import { ObjectLine, MandateLine } from './ObjectLine';
+import { TicketHeadline } from './TicketHeadline';
 import { areaName, systemName, shortTicketId, ticketTime } from '../lib/core-objects';
 import { TicketWhatWasDone } from './TicketWhatWasDone';
 import { TicketWhatYouSaw } from './TicketWhatYouSaw';
@@ -107,7 +109,8 @@ export function ReceiptCard({
   // place to the full record below.
   const [open, setOpen] = useState(defaultOpen);
   const now = Date.now();
-  const area = areaName(receipt.authorizationId, receipt.profileId, grantTitle ? { [receipt.authorizationId ?? '']: grantTitle } : {});
+  const catalog = useAreaCatalog();
+  const area = areaName(receipt.profileId, catalog);
   const verified = signature === 'valid' || signature === 'valid-legacy';
 
   return (
@@ -123,20 +126,23 @@ export function ReceiptCard({
         />
       {/* Headline: what happened, in words. */}
       <div className="receipt-head">
-        <span className="receipt-what">{actionLabel(receipt, manifests)}</span>
+        <span className="receipt-what" data-testid="ticket-headline">
+          <TicketHeadline proposalId={receipt.proposalId} tool={receipt.action} manifests={manifests} label={actionLabel(receipt, manifests)} />
+        </span>
         <span className="receipt-tag">{wasReviewed(receipt) ? 'approved' : 'automatic'}</span>
         {receipt.contentHash && (
           <span
             className="receipt-tag receipt-tag-bound"
             title={receipt.contentBinding?.fields
-              ? `The ticket binds: ${receipt.contentBinding.fields.join(', ')}`
-              : 'This exact content was authorized'}
+              ? `Sealed in the ticket: ${receipt.contentBinding.fields.join(', ')} — exactly this content was sent`
+              : 'Sealed in the ticket — exactly this content was sent'}
           >
-            content bound
+            content sealed
           </span>
         )}
         {testSetup && <span className="sim-mark">Test setup</span>}
       </div>
+      <MandateLine title={grantTitle} area={area} />
 
       {/* What THIS call touched (from the signed receipt). */}
       {scope && <div className="receipt-scope">{scope}</div>}

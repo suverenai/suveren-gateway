@@ -118,6 +118,22 @@ export function approvalSummary(
   return renderSummary(o.summary, args, { currencyField: o.display?.currencyField, locale }) ?? fallback;
 }
 
+/**
+ * The manifest's summary sentence for a tool + its sealed args, or null when
+ * there is no template, no args, or a required value is missing — unlike
+ * `approvalSummary`, no fallback, so a ticket keeps its own past-tense label.
+ */
+export function sealedSummary(
+  tool: string,
+  args: Record<string, unknown> | null | undefined,
+  manifests: IntegrationManifest[] | undefined,
+  locale?: string,
+): string | null {
+  const o = overrideFor(tool, manifests);
+  if (!o?.summary || !args) return null;
+  return renderSummary(o.summary, args, { currencyField: o.display?.currencyField, locale });
+}
+
 /** Load-time grammar check, shared in spirit with the mcp-server loader. */
 export function summaryTemplateProblem(template: unknown): string | null {
   if (typeof template !== 'string' || template.trim().length === 0) return 'must be a non-empty string';

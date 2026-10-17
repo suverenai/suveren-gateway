@@ -9,7 +9,7 @@ import type { AgentProfile } from '@hap/core';
 import type { ExecutionReceipt, IntegrationManifest } from './sp-client';
 import { splitAction, actionLabel, wasReviewed, windowUsage } from './receipt-summary';
 import { systemDisplayName } from './approval-view';
-import { profileDisplayName } from './profile-display';
+import { resolveAreaName, type AreaCatalogEntry } from './area';
 
 export type TicketFilter = 'automatic' | 'approved' | 'all';
 
@@ -29,14 +29,14 @@ export function matchesTicketFilter(r: ExecutionReceipt, f: TicketFilter): boole
   return f === 'approved' ? wasReviewed(r) : !wasReviewed(r);
 }
 
-/** Area = the mandate's title when it has one, else the profile's name. */
-export function areaName(
-  authorizationId: string | undefined,
-  profileId: string,
-  titles: Record<string, string>,
-): string {
-  const t = authorizationId ? titles[authorizationId] : undefined;
-  return t && t.trim() ? t : profileDisplayName(profileId);
+/**
+ * Area = the profile's own name, from the newest version of that profile
+ * family the catalog knows (UI spec §13.1/§13.2) — never the mandate's
+ * title any more. The mandate's title, when it has one, is a separate
+ * quiet line underneath (`ObjectLine`'s `mandateTitle` prop, `showMandateLine`).
+ */
+export function areaName(profileId: string, catalog: readonly AreaCatalogEntry[]): string {
+  return resolveAreaName(profileId, catalog);
 }
 
 /** System = the connector's display name, from the `<integration>__<tool>` name. */
@@ -103,6 +103,8 @@ export interface AutomaticGroup {
   area: string;
   system: string;
   profileId: string;
+  /** The mandate's own title (UI spec §13.2 mandate line), when it has one. */
+  mandateTitle?: string;
   /** The manifest's past-tense action label, e.g. "Contact created". */
   label: string;
   count: number;
@@ -118,7 +120,13 @@ export interface AutomaticGroup {
  */
 export function groupAutomatic(
   receipts: ExecutionReceipt[],
-  opts: { titles: Record<string, string>; manifests: IntegrationManifest[]; lastSeenMs: number },
+  opts: {
+    catalog: readonly AreaCatalogEntry[];
+    manifests: IntegrationManifest[];
+    lastSeenMs: number;
+    /** Mandate titles by authorization id. */
+    titles?: Record<string, string>;
+  },
 ): AutomaticGroup[] {
   const groups = new Map<string, AutomaticGroup>();
   for (const r of receipts) {
@@ -130,9 +138,10 @@ export function groupAutomatic(
     if (!g) {
       g = {
         key,
-        area: areaName(r.authorizationId, r.profileId, opts.titles),
+        area: areaName(r.profileId, opts.catalog),
         system: systemName(r.action, opts.manifests),
         profileId: r.profileId,
+        mandateTitle: r.authorizationId ? opts.titles?.[r.authorizationId] : undefined,
         label,
         count: 0,
         newCount: 0,
@@ -156,6 +165,8 @@ export interface MandateAtWork {
   area: string;
   system: string;
   profileId: string;
+  /** The mandate's own title, when it has one — the item's headline. */
+  mandateTitle?: string;
   /** Today's usage as of the latest ticket: against a declared limit, or a plain count. */
   used: number;
   limit?: number;
@@ -173,8 +184,10 @@ export function mandatesAtWork(
   receipts: ExecutionReceipt[],
   opts: {
     nowMs: number;
-    titles: Record<string, string>;
+    catalog: readonly AreaCatalogEntry[];
     manifests: IntegrationManifest[];
+    /** Mandate titles by authorization id. */
+    titles?: Record<string, string>;
     boundsOf: (authorizationId: string) => Record<string, string | number> | undefined;
     profileOf: (profileId: string) => AgentProfile | null | undefined;
   },
@@ -194,9 +207,10 @@ export function mandatesAtWork(
     const u = windowUsage(r, opts.boundsOf(authorizationId) ?? r.limits, opts.profileOf(r.profileId), 'daily');
     const base = {
       authorizationId,
-      area: areaName(authorizationId, r.profileId, opts.titles),
+      area: areaName(r.profileId, opts.catalog),
       system: systemName(r.action, opts.manifests),
       profileId: r.profileId,
+      mandateTitle: opts.titles?.[authorizationId],
     };
     if (u && 'limit' in u) {
       out.push({ ...base, used: u.used, limit: u.limit, ratio: u.limit > 0 ? u.used / u.limit : 0 });

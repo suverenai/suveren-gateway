@@ -1,57 +1,14 @@
 /**
  * Which icon and name a profile shows on a mandate/ticket/picker card.
  *
- * No per-profile color anywhere (that was tried and dropped — see
- * temp/mandates-tickets-ui-mockup.html). Profiles are told apart by a neutral
- * line icon plus the profile name, never by hue.
- *
- * Icon resolution, in order:
- *  1. The profile declares `icon` (profile JSON, forward-looking — no shipped
- *     profile sets this field yet) AND it names one of the icons the gateway
- *     actually ships → use it.
- *  2. A fallback map keyed by the profile's SHORT id (the segment before `@`,
- *     after the last `/`) — covers every profile shipped before `icon`
- *     existed, and needs no profile-side change.
- *  3. Anything still unmatched (an unknown/company-added profile) → a neutral
- *     `help-circle`. Never guessed from the id string beyond the short-id key.
+ * No per-profile color anywhere — profiles are told apart by a neutral line
+ * icon plus the profile name, never by hue. The icon is the area icon
+ * (lib/area.ts `areaIcon`, UI spec §13.1): chosen from the profile's short id,
+ * never from a profile field; an unknown profile gets a neutral icon.
  */
 
 import { profileDisplayName } from './profile-display';
-
-/** The fixed set of icons the gateway ships SVGs for (see ProfileIcon.tsx). */
-export type IconName =
-  | 'mail'
-  | 'users'
-  | 'receipt'
-  | 'credit-card'
-  | 'calendar'
-  | 'megaphone'
-  | 'archive'
-  | 'rocket'
-  | 'flask'
-  | 'shopping-cart'
-  | 'bar-chart'
-  | 'help-circle';
-
-const KNOWN_ICONS: ReadonlySet<string> = new Set<IconName>([
-  'mail', 'users', 'receipt', 'credit-card', 'calendar', 'megaphone',
-  'archive', 'rocket', 'flask', 'shopping-cart', 'bar-chart', 'help-circle',
-]);
-
-/** Fallback icon by short profile id, for profiles that don't declare `icon`. */
-const FALLBACK_ICON_BY_SHORT_ID: Readonly<Record<string, IconName>> = {
-  email: 'mail',
-  customers: 'users',
-  sales: 'receipt',
-  charge: 'credit-card',
-  calendar: 'calendar',
-  publish: 'megaphone',
-  records: 'archive',
-  deploy: 'rocket',
-  delegation: 'flask',
-  purchase: 'shopping-cart',
-  reporting: 'bar-chart',
-};
+import { areaIcon, type AreaIconName } from './area';
 
 /** `.../hap-profiles/charge@0.4` → `charge`; `claims@0.1` → `claims`. */
 export function shortProfileId(profileId: string): string {
@@ -62,7 +19,7 @@ export function shortProfileId(profileId: string): string {
 }
 
 export interface ProfileIdentity {
-  icon: IconName;
+  icon: AreaIconName;
   /** The profile's display name, with the delegation → "Delegation" override applied. */
   name: string;
   /** True for the delegation profile — simulation-only, review-only test tooling. */
@@ -79,16 +36,14 @@ export interface ProfileIdentity {
  */
 export function profileIdentity(
   profileId: string,
-  declared?: { name?: string; icon?: string },
+  declared?: { name?: string },
 ): ProfileIdentity {
   const shortId = shortProfileId(profileId);
 
-  const icon =
-    declared?.icon && KNOWN_ICONS.has(declared.icon)
-      ? (declared.icon as IconName)
-      : FALLBACK_ICON_BY_SHORT_ID[shortId] ?? 'help-circle';
+  // The area icon, from the profile id only (UI spec §13.1) — a profile
+  // carries no icon of its own.
+  const icon = areaIcon(profileId);
 
-  // profileDisplayName applies the delegation → "Delegation" override.
   const name = profileDisplayName(profileId, declared?.name);
 
   const testSetup = shortId === 'delegation';

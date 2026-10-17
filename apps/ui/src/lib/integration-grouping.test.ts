@@ -1,11 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { groupIntegrationsForDisplay } from './integration-grouping';
+import { groupIntegrationsForDisplay, groupEntriesByArea } from './integration-grouping';
 import type { IntegrationEntry } from '../contexts/IntegrationStatusContext';
+import type { AreaCatalogEntry } from './area';
 
-function entry(o: { name: string; simulation?: unknown; state: IntegrationEntry['state'] }): IntegrationEntry {
+function entry(o: { name: string; simulation?: unknown; state: IntegrationEntry['state']; profile?: string }): IntegrationEntry {
   return {
     id: o.name,
-    manifest: { id: o.name, name: o.name, simulation: o.simulation ?? null } as unknown as IntegrationEntry['manifest'],
+    manifest: { id: o.name, name: o.name, profile: o.profile ?? 'customers', simulation: o.simulation ?? null } as unknown as IntegrationEntry['manifest'],
     integration: undefined,
     state: o.state,
   };
@@ -77,5 +78,26 @@ describe('groupIntegrationsForDisplay', () => {
     expect(g.testSystems).toHaveLength(3);
     expect(g.realErrors).toHaveLength(1);
     expect(g.pausedReal).toHaveLength(5);
+  });
+});
+
+describe('groupEntriesByArea — UI spec §13.3', () => {
+  const catalog: AreaCatalogEntry[] = [{ id: 'customers@0.10', name: 'Customers' }];
+
+  it('groups connectors under their manifest-declared area, alphabetically', () => {
+    const crm = entry({ name: 'CRM', state: 'running', profile: 'customers' });
+    const gmail = entry({ name: 'Gmail', state: 'running', profile: 'email' });
+    const g = groupEntriesByArea([crm, gmail], catalog);
+    expect(g.map(a => a.name)).toEqual(['Customers', 'Email']);
+    expect(g[0].entries).toEqual([crm]);
+    expect(g[0].icon).toBe('customers');
+  });
+
+  it('two connectors serving the same area both appear under it', () => {
+    const gmail = entry({ name: 'Gmail', state: 'running', profile: 'email' });
+    const mail = entry({ name: 'Mail (simulation)', state: 'running', profile: 'email' });
+    const g = groupEntriesByArea([gmail, mail], catalog);
+    expect(g).toHaveLength(1);
+    expect(g[0].entries).toEqual([gmail, mail]);
   });
 });

@@ -172,7 +172,7 @@ export function AuthorizePicker({ onDismiss, preselectProfileId }: Props) {
             // Neutral icon (no per-profile color — see lib/profile-identity.ts),
             // declared by the profile JSON when it sets one, else a fallback
             // map keyed by the profile's short id.
-            const { icon } = profileIdentity(p.id, { name: p.name, icon: p.icon });
+            const { icon } = profileIdentity(p.id, { name: p.name });
 
             return (
               <div className="card" key={entry.key} style={muted ? { opacity: 0.7 } : undefined}>

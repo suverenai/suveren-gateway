@@ -2,8 +2,23 @@ import { useState, useCallback } from 'react';
 import { IntegrationCard } from '../components/IntegrationCard';
 import { useIntegrationStatus, type IntegrationEntry } from '../contexts/IntegrationStatusContext';
 import { useSimulationMode } from '../hooks/useSimulationMode';
-import { groupIntegrationsForDisplay } from '../lib/integration-grouping';
+import { groupIntegrationsForDisplay, groupEntriesByArea, type AreaGroupedEntries } from '../lib/integration-grouping';
 import { integrationIcon } from '../lib/integration-icon';
+import { useAreaCatalog } from '../lib/area-catalog';
+import { AreaIcon } from '../components/AreaIcon';
+
+/** One area heading + its connectors (UI spec §13.3). */
+function AreaGroup({ group, children }: { group: AreaGroupedEntries; children: React.ReactNode }) {
+  return (
+    <div className="area-group" data-testid="integration-area" data-area={group.shortId}>
+      <div className="area-group-h">
+        <AreaIcon icon={group.icon} />
+        <b>{group.name}</b>
+      </div>
+      {children}
+    </div>
+  );
+}
 
 /** One compact row in the "Paused while simulation mode is on" disclosure —
  *  no actions, since there is nothing to do here: the connector will start
@@ -22,6 +37,7 @@ export function IntegrationsPage() {
   const { loading, mcpServerUp, manifestsError, entries, refresh } = useIntegrationStatus();
   const simulationOn = useSimulationMode();
   const [successMsg, setSuccessMsg] = useState('');
+  const catalog = useAreaCatalog();
 
   const showSuccess = useCallback((msg: string) => {
     setSuccessMsg(msg);
@@ -53,15 +69,19 @@ export function IntegrationsPage() {
           {grouped.testSystems.length > 0 && (
             <>
               <div className="int-group-label">Test systems</div>
-              {grouped.testSystems.map(entry => (
-                <IntegrationCard
-                  key={entry.id}
-                  manifest={entry.manifest}
-                  integration={entry.integration}
-                  state={entry.state}
-                  onStatusChange={refresh}
-                  onSuccess={showSuccess}
-                />
+              {groupEntriesByArea(grouped.testSystems, catalog).map(areaGroup => (
+                <AreaGroup key={areaGroup.shortId} group={areaGroup}>
+                  {areaGroup.entries.map(entry => (
+                    <IntegrationCard
+                      key={entry.id}
+                      manifest={entry.manifest}
+                      integration={entry.integration}
+                      state={entry.state}
+                      onStatusChange={refresh}
+                      onSuccess={showSuccess}
+                    />
+                  ))}
+                </AreaGroup>
               ))}
             </>
           )}
@@ -99,15 +119,21 @@ export function IntegrationsPage() {
         </>
       ) : (
         <>
-          {entries.map(entry => (
-            <IntegrationCard
-              key={entry.id}
-              manifest={entry.manifest}
-              integration={entry.integration}
-              state={entry.state}
-              onStatusChange={refresh}
-              onSuccess={showSuccess}
-            />
+          {/* UI spec §13.3 — grouped under their area heading, same as the
+              simulation-mode branch above. */}
+          {groupEntriesByArea(entries, catalog).map(areaGroup => (
+            <AreaGroup key={areaGroup.shortId} group={areaGroup}>
+              {areaGroup.entries.map(entry => (
+                <IntegrationCard
+                  key={entry.id}
+                  manifest={entry.manifest}
+                  integration={entry.integration}
+                  state={entry.state}
+                  onStatusChange={refresh}
+                  onSuccess={showSuccess}
+                />
+              ))}
+            </AreaGroup>
           ))}
 
           {entries.length === 0 && <EmptyState manifestsError={manifestsError} />}

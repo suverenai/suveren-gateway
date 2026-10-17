@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback } from 'react';
-import { spClient, type PendingItem, type GateContentEntry, type ProfileConfig, type ProfileSummary } from '../lib/sp-client';
-import { profileDisplayName } from '../lib/profile-display';
-import { profileIdentity } from '../lib/profile-identity';
-import { ObjectLine } from '../components/ObjectLine';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { spClient, type PendingItem, type GateContentEntry, type ProfileConfig, type ProfileSummary, type IntegrationManifest } from '../lib/sp-client';
+import { profileIdentity, shortProfileId } from '../lib/profile-identity';
+import { resolveAreaName, areaIcon, type AreaIconName } from '../lib/area';
+import { AreaIcon } from '../components/AreaIcon';
+import { AreaFilterPills, type AreaFilterOption } from '../components/AreaFilterPills';
 import { AuthorizePicker } from '../components/AuthorizePicker';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
@@ -52,6 +53,9 @@ interface AuthCardProps {
   profileConfigCache: Map<string, ProfileConfig | null>;
   /** Newest available version for this grant's profile, when it is newer than the pinned one. */
   newerProfile?: ProfileSummary;
+  /** The area's name (UI spec §13.1) — the profile's own name, from the
+   *  newest version the gateway knows, also for this (possibly older) grant. */
+  area: string;
   mode: string;
   activeDomain: string;
   group: { name: string } | null;
@@ -79,6 +83,7 @@ interface AuthCardProps {
 function AuthCard({
   item,
   newerProfile,
+  area,
   revokedSet,
   expandedHash,
   gateCache,
@@ -189,12 +194,14 @@ function AuthCard({
       style={{ marginBottom: 0 }}
     >
       <div className="id-body">
-      {/* UI spec §12.2 — the mandate's top line: profile · since when */}
-      <ObjectLine
-        profileId={item.profile_id}
-        area={profileDisplayName(item.profile_id)}
-        time={item.created_at ? `since ${new Date(item.created_at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}` : undefined}
-      />
+      {/* UI spec §13.3 — the card sits under its area's heading, so its top
+          line carries only "since when"; repeating the area on every card
+          is noise. The mandate's own title is the big header just below. */}
+      {item.created_at && (
+        <div className="obj-line">
+          since {new Date(item.created_at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}
+        </div>
+      )}
       {upgradeHint}
 
       {/* Team owner line */}
@@ -567,6 +574,11 @@ export function AuthorizationsPage() {
     () => new Map(),
   );
 
+  // Connector manifests — only for the area heading's "via <tools>" line
+  // (UI spec §13.3); a failed load just omits that clause.
+  const [manifests, setManifests] = useState<IntegrationManifest[]>([]);
+  useEffect(() => { spClient.getLabelManifests().then(setManifests).catch(() => {}); }, []);
+
   const fetchMineItems = useCallback(() => {
     setMineLoading(true);
     spClient.getMyAttestations()
@@ -689,6 +701,15 @@ export function AuthorizationsPage() {
     if (!held || !newest) return undefined;
     return newest.localeCompare(held, undefined, { numeric: true }) > 0 ? latest : undefined;
   }, [latestProfiles]);
+
+  // The area's name (UI spec §13.1) — reuses `latestProfiles` above (already
+  // "newest ProfileSummary per short id") instead of a second
+  // `listProfiles()` fetch; `resolveAreaName`'s own filter/sort is a no-op
+  // over a catalog that already holds one entry per family.
+  const areaNameFor = useCallback(
+    (profileId: string) => resolveAreaName(profileId, [...latestProfiles.values()]),
+    [latestProfiles],
+  );
 
   // Profile config cache — fetch for items we haven't resolved yet (team mode only)
   useEffect(() => {
@@ -869,24 +890,26 @@ export function AuthorizationsPage() {
     ? ['active', 'pending', 'expired', 'revoked', 'archived']
     : ['active', 'pending', 'expired', 'revoked'];
 
-  const profileSummary = (() => {
-    const map = new Map<string, { count: number; review: boolean }>();
+  // UI spec §13.3 — the area filter: one pill per area in this tab (profile
+  // short id, so two versions of one profile are one area), same pills as
+  // Tickets and Blocked.
+  const areaOptions: AreaFilterOption[] = (() => {
+    const map = new Map<string, AreaFilterOption>();
     for (const item of activeItems) {
       if (viewOf(item) !== activeFilter) continue;
-      const entry = map.get(item.profile_id) ?? { count: 0, review: false };
-      entry.count += 1;
-      if (item.deferred_commitment_domains.length > 0) entry.review = true;
-      map.set(item.profile_id, entry);
+      const shortId = shortProfileId(item.profile_id);
+      const o = map.get(shortId);
+      if (o) o.count += 1;
+      else map.set(shortId, { shortId, icon: areaIcon(item.profile_id), name: areaNameFor(item.profile_id), count: 1 });
     }
-    return Array.from(map.entries())
-      .map(([profileId, meta]) => ({ profileId, ...meta }))
-      .sort((a, b) => profileDisplayName(a.profileId).localeCompare(profileDisplayName(b.profileId)));
+    return [...map.values()].sort((x, y) => x.name.localeCompare(y.name));
   })();
+  const inTab = areaOptions.reduce((n, o) => n + o.count, 0);
 
   const filtered = sortItems(
     activeItems.filter(i => {
       if (viewOf(i) !== activeFilter) return false;
-      if (profileFilter !== null && i.profile_id !== profileFilter) return false;
+      if (profileFilter !== null && shortProfileId(i.profile_id) !== profileFilter) return false;
       if (modeFilter !== null) {
         const isReview = i.deferred_commitment_domains.length > 0;
         if (modeFilter === 'review' && !isReview) return false;
@@ -896,6 +919,31 @@ export function AuthorizationsPage() {
     }),
     statusOpts,
     highlightHash,
+  );
+
+  // UI spec §13.3 — group the filtered list by area (profile short id),
+  // most mandates first, then name; preserves `filtered`'s own order
+  // (status, then most recent) within each group.
+  const areaGroups = useMemo(() => {
+    const groups = new Map<string, { shortId: string; icon: AreaIconName; name: string; items: PendingItem[] }>();
+    for (const item of filtered) {
+      const shortId = shortProfileId(item.profile_id);
+      let g = groups.get(shortId);
+      if (!g) {
+        g = { shortId, icon: areaIcon(item.profile_id), name: areaNameFor(item.profile_id), items: [] };
+        groups.set(shortId, g);
+      }
+      g.items.push(item);
+    }
+    return [...groups.values()].sort((a, b) => b.items.length - a.items.length || a.name.localeCompare(b.name));
+  }, [filtered, areaNameFor]);
+
+  // "N mandates · via <tools>" — connectors whose manifest serves this area
+  // (manifest.profile is already the short id); a built-in area (reporting,
+  // delegation) with no connector manifest simply omits the clause.
+  const toolsForArea = useCallback(
+    (shortId: string) => [...new Set(manifests.filter(m => m.profile === shortId).map(m => m.name))],
+    [manifests],
   );
 
   const sharedCardProps = {
@@ -1021,55 +1069,33 @@ export function AuthorizationsPage() {
         ))}
       </div>
 
-      {/* Secondary filter row */}
-      {profileSummary.length > 0 && (
-        <div
-          style={{
-            display: 'flex',
-            gap: '0.5rem',
-            flexWrap: 'wrap',
-            alignItems: 'center',
-            marginTop: '-0.25rem',
-            marginBottom: '1rem',
-          }}
-        >
-          {profileSummary.map(p => {
-            const selected = profileFilter === p.profileId;
-            return (
-              <button
-                key={p.profileId}
-                className={`btn btn-sm ${selected ? 'btn-primary' : 'btn-secondary'}`}
-                onClick={() => setProfileFilter(selected ? null : p.profileId)}
-              >
-                {profileDisplayName(p.profileId)}
-              </button>
-            );
-          })}
-
-          <span
-            aria-hidden="true"
-            style={{
-              color: 'var(--border)',
-              fontSize: '1.1rem',
-              padding: '0 0.25rem',
-              userSelect: 'none',
-            }}
-          >
-            |
-          </span>
-
-          {(['auto', 'review'] as const).map(m => {
-            const selected = modeFilter === m;
-            return (
-              <button
-                key={m}
-                className={`btn btn-sm ${selected ? 'btn-primary' : 'btn-secondary'}`}
-                onClick={() => setModeFilter(selected ? null : m)}
-              >
-                {m === 'auto' ? 'Auto' : 'Review'}
-              </button>
-            );
-          })}
+      {/* Secondary filter row — area pills (§13.3), then the mode */}
+      {inTab > 0 && (
+        <div className="mandate-filters">
+          <AreaFilterPills
+            areas={areaOptions}
+            selected={profileFilter}
+            onSelect={setProfileFilter}
+            totalCount={inTab}
+          />
+          <div className="ftabs" role="tablist" aria-label="Which mode">
+            {(['auto', 'review'] as const).map(m => {
+              const selected = modeFilter === m;
+              return (
+                <button
+                  key={m}
+                  type="button"
+                  role="tab"
+                  className="ftab"
+                  data-testid={`mode-filter-${m}`}
+                  aria-selected={selected}
+                  onClick={() => setModeFilter(selected ? null : m)}
+                >
+                  {m === 'auto' ? 'Automatic' : 'Review'}
+                </button>
+              );
+            })}
+          </div>
         </div>
       )}
 
@@ -1084,23 +1110,39 @@ export function AuthorizationsPage() {
             : `No ${activeFilter} mandates found.`}
         />
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-          {filtered.map(item => {
-            const teamItem = viewTab === 'team' ? (item as TeamItem) : null;
-            const ownerLabel = teamItem?.owner
-              ? (teamItem.owner.name ?? teamItem.owner.email ?? teamItem.owner.userId)
-              : undefined;
-            return (
-              <AuthCard
-                key={item.authorization_id}
-                item={item}
-                newerProfile={newerProfileFor(item.profile_id)}
-                ownerLabel={ownerLabel}
-                isAdmin={isAdmin}
-                {...(viewTab === 'mine' ? mineCardProps : sharedCardProps)}
-              />
-            );
-          })}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+          {/* UI spec §13.3 — grouped by area, most mandates first, then name. */}
+          {areaGroups.map(areaGroup => (
+            <section key={areaGroup.shortId} data-testid="mandate-area" data-area={areaGroup.shortId}>
+              <div className="area-group-h">
+                <AreaIcon icon={areaGroup.icon} />
+                <b>{areaGroup.name}</b>
+                <span className="meta">
+                  {areaGroup.items.length} mandate{areaGroup.items.length === 1 ? '' : 's'}
+                  {toolsForArea(areaGroup.shortId).length > 0 && <> · via {toolsForArea(areaGroup.shortId).join(', ')}</>}
+                </span>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                {areaGroup.items.map(item => {
+                  const teamItem = viewTab === 'team' ? (item as TeamItem) : null;
+                  const ownerLabel = teamItem?.owner
+                    ? (teamItem.owner.name ?? teamItem.owner.email ?? teamItem.owner.userId)
+                    : undefined;
+                  return (
+                    <AuthCard
+                      key={item.authorization_id}
+                      item={item}
+                      newerProfile={newerProfileFor(item.profile_id)}
+                      area={areaGroup.name}
+                      ownerLabel={ownerLabel}
+                      isAdmin={isAdmin}
+                      {...(viewTab === 'mine' ? mineCardProps : sharedCardProps)}
+                    />
+                  );
+                })}
+              </div>
+            </section>
+          ))}
         </div>
       )}
 

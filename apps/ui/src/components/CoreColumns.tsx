@@ -22,13 +22,14 @@ import {
 import { useVisiblePolling } from '../hooks/useVisiblePolling';
 import { useSSEEvent } from '../contexts/EventSourceContext';
 import { loadProfile } from '../lib/profile-cache';
+import { useAreaCatalog } from '../lib/area-catalog';
 
 import {
   areaName, systemName, waitingLabel, deadlineLabel, isToday, isNewTicket, ticketTime,
   groupAutomatic, mandatesAtWork, nearLimit, matchesTicketFilter, shortTicketId,
 } from '../lib/core-objects';
 import { actionLabel } from '../lib/receipt-summary';
-import { ObjectLine } from './ObjectLine';
+import { ObjectLine, MandateLine } from './ObjectLine';
 import { ApprovalSummary } from './ApprovalSummary';
 import { Skeleton } from './Skeleton';
 
@@ -65,6 +66,10 @@ export function CoreColumns({ auths, activeCount, waiting, waitingReady }: Props
     spClient.getLocalAuthorizations().then(({ authorizations }) => setLocalAuths(authorizations)).catch(() => {});
   }, []);
 
+  // Area names (UI spec §13.1) — the newest version of each profile's own
+  // name, shared with every other surface via lib/area-catalog.ts.
+  const catalog = useAreaCatalog();
+  // Mandate titles for the quiet "Mandate:" line (§13.2).
   const titles = useMemo(() => {
     const t: Record<string, string> = {};
     for (const a of auths) if (a.authorization_id && a.title) t[a.authorization_id] = a.title;
@@ -86,19 +91,20 @@ export function CoreColumns({ auths, activeCount, waiting, waitingReady }: Props
   }, [today, profiles]);
 
   const groups = useMemo(
-    () => groupAutomatic(today, { titles, manifests, lastSeenMs: lastSeen ?? Number.POSITIVE_INFINITY }),
-    [today, titles, manifests, lastSeen],
+    () => groupAutomatic(today, { catalog, manifests, titles, lastSeenMs: lastSeen ?? Number.POSITIVE_INFINITY }),
+    [today, catalog, manifests, titles, lastSeen],
   );
   const approvedToday = today.filter(r => matchesTicketFilter(r, 'approved')).length;
   const atWork = useMemo(
     () => mandatesAtWork(today, {
       nowMs: Date.now(),
-      titles,
+      catalog,
       manifests,
+      titles,
       boundsOf: id => localAuths[id]?.bounds,
       profileOf: id => profiles[id],
     }),
-    [today, titles, manifests, localAuths, profiles],
+    [today, catalog, manifests, titles, localAuths, profiles],
   );
   const newGroups = groups.filter(g => g.newCount > 0).length;
   const oldestFirst = [...waiting].sort((a, b) => a.createdAt - b.createdAt);
@@ -123,11 +129,12 @@ export function CoreColumns({ auths, activeCount, waiting, waitingReady }: Props
                 <div className="appr-item-main">
                   <ObjectLine
                     profileId={p.profileId}
-                    area={areaName(p.authorizationId, p.profileId, titles)}
+                    area={areaName(p.profileId, catalog)}
                     system={systemName(p.tool, manifests)}
                     time={waitingLabel(p.createdAt, now)}
                   />
                   <div className="appr-item-sum"><ApprovalSummary proposal={p} manifests={manifests} /></div>
+                  <MandateLine title={p.authorizationId ? titles[p.authorizationId] : undefined} area={areaName(p.profileId, catalog)} />
                   {due && <div className="obj-due">{due}</div>}
                 </div>
                 <span className="appr-item-chev" aria-hidden="true">›</span>
@@ -156,6 +163,7 @@ export function CoreColumns({ auths, activeCount, waiting, waitingReady }: Props
                 <span className="auto-grp-txt">
                   <ObjectLine profileId={g.profileId} area={g.area} system={g.system} />
                   <b>{g.count} × {g.label}</b>
+                  <MandateLine title={g.mandateTitle} area={g.area} />
                   <span className="meta">
                     {g.newCount > 0 ? `${g.newCount} new` : 'seen'} · latest {ticketTime(g.latestSec, now)}
                   </span>
@@ -197,6 +205,9 @@ export function CoreColumns({ auths, activeCount, waiting, waitingReady }: Props
           atWork.slice(0, MAX_ITEMS).map(m => (
             <div key={m.authorizationId} className="mandate-obj" data-testid="mandate-at-work">
               <ObjectLine profileId={m.profileId} area={m.area} system={m.system} />
+              {m.mandateTitle && m.mandateTitle.trim().toLowerCase() !== m.area.trim().toLowerCase() && (
+                <div className="mandate-obj-title">{m.mandateTitle}</div>
+              )}
               <div className={`usage${nearLimit(m) ? ' is-near' : ''}`}>
                 {m.limit !== undefined ? (
                   <>
