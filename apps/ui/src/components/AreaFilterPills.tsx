@@ -27,7 +27,7 @@ interface Props {
 export function AreaFilterPills({ areas, selected, onSelect, totalCount }: Props) {
   if (areas.length < 2) return null;
   return (
-    <div className="ftabs" role="tablist" aria-label="Which area">
+    <div className="ftabs" role="tablist" aria-label="Which area" data-testid="area-filter">
       <button
         type="button"
         role="tab"
@@ -43,6 +43,7 @@ export function AreaFilterPills({ areas, selected, onSelect, totalCount }: Props
           type="button"
           role="tab"
           className="ftab"
+          data-testid={`area-filter-${a.shortId}`}
           aria-selected={selected === a.shortId}
           onClick={() => onSelect(selected === a.shortId ? null : a.shortId)}
         >

@@ -10,7 +10,7 @@ import { AreaIcon } from '../components/AreaIcon';
 /** One area heading + its connectors (UI spec §13.3). */
 function AreaGroup({ group, children }: { group: AreaGroupedEntries; children: React.ReactNode }) {
   return (
-    <div className="area-group">
+    <div className="area-group" data-testid="integration-area" data-area={group.shortId}>
       <div className="area-group-h">
         <AreaIcon icon={group.icon} />
         <b>{group.name}</b>

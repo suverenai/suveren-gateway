@@ -1134,7 +1134,7 @@ export function AuthorizationsPage() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
           {/* UI spec §13.3 — grouped by area, most mandates first, then name. */}
           {areaGroups.map(areaGroup => (
-            <section key={areaGroup.shortId}>
+            <section key={areaGroup.shortId} data-testid="mandate-area" data-area={areaGroup.shortId}>
               <div className="area-group-h">
                 <AreaIcon icon={areaGroup.icon} />
                 <b>{areaGroup.name}</b>
