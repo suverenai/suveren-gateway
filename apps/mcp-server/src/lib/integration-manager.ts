@@ -948,10 +948,21 @@ export class IntegrationManager {
    * schema (labels from the descriptions) and the optional approvalView hints.
    * Keyed by the namespaced tool name a proposal carries.
    */
-  getToolDisplay(): Record<string, { inputSchema: Record<string, unknown>; approvalView?: import('./integration-registry').ApprovalView }> {
-    const out: Record<string, { inputSchema: Record<string, unknown>; approvalView?: import('./integration-registry').ApprovalView }> = {};
+  getToolDisplay(): Record<string, {
+    inputSchema: Record<string, unknown>;
+    approvalView?: import('./integration-registry').ApprovalView;
+    executionMapping?: Record<string, import('./tool-gating-types').ExecutionMappingValue>;
+  }> {
+    const out: ReturnType<IntegrationManager['getToolDisplay']> = {};
     for (const t of this.getAllTools()) {
-      out[t.namespacedName] = { inputSchema: t.inputSchema, ...(t.gating?.approvalView ? { approvalView: t.gating.approvalView } : {}) };
+      const mapping = t.gating?.executionMapping;
+      out[t.namespacedName] = {
+        inputSchema: t.inputSchema,
+        ...(t.gating?.approvalView ? { approvalView: t.gating.approvalView } : {}),
+        // UI spec §14.1 — which sent values the signed ticket also carries
+        // (arg → executionContext field), for the "in the ticket" tag.
+        ...(mapping && Object.keys(mapping).length > 0 ? { executionMapping: mapping } : {}),
+      };
     }
     return out;
   }

@@ -1,41 +1,191 @@
 /**
- * TicketWhatWasDone — "What was done", shown FIRST on a ticket card (AU6,
- * work-plan.md "Added 2026-10-09"; approved mockup
- * temp/mockups/gateway-ux-v7.html §3).
+ * TicketWhatWasDone — an opened ticket's "What was sent" and "Result" (UI
+ * spec §14, signed off 2026-10-17; mockup
+ * temp/ticket-content-mockup/index.html §2–§4). Shown first on a ticket.
  *
- * Fetches this device's own receipt archive entry (`GET /api/evidence/receipt/:id`,
- * already serving `boundContent` — see apps/mcp-server/src/lib/receipt-archive.ts),
- * then — only when there IS bound content and a signed `contentHash` to check
- * it against — recomputes the hash locally (lib/content-hash.ts, a browser
- * mirror of hap-core's content-binding.ts) and compares. Never claims
- * "bound by hash" without that check passing, and never calls it a mismatch
- * when no check could run at all (2026-10-10 correction) — that is `unchecked`,
- * a neutral state, not an alarm.
+ * Fetches this device's own receipt archive entry (`GET
+ * /api/evidence/receipt/:id`) — bound content, the args this gateway sent
+ * (`sentArgs`, or an approved ticket's archived proposal args), the
+ * control plane's check of those args against the execution journal
+ * (`sentArgsCheck`) and what the tool answered (`result`). When the ticket
+ * carries a signed `contentHash`, recomputes it locally (lib/content-hash.ts)
+ * — "sealed in the ticket" is only ever shown on a check that ran and passed.
+ * The level choice and rows are lib/ticket-what-was-done.ts (pure, tested).
  *
- * No AI text, no lookups in another system: everything here is either the
- * ticket's own signed content, or this device's local evidence of it.
+ * No AI text, no lookups in another system: everything here is the ticket's
+ * own signed content or this device's local evidence of it, labelled from
+ * the connector manifest. Off-device (no local entry) it says so and shows
+ * nothing it does not have.
  */
-import { useEffect, useState } from 'react';
-import { spClient, type ExecutionReceipt, type LocalReceiptEntry } from '../lib/sp-client';
+import { Fragment, useEffect, useState } from 'react';
+import { spClient, type ExecutionReceipt, type IntegrationManifest, type LocalReceiptEntry } from '../lib/sp-client';
 import { computeContentHashBrowser } from '../lib/content-hash';
-import { boundContentView, checkedValueRows, ticketBoundStatus, type TicketBoundStatus } from '../lib/ticket-what-was-done';
-import { RenderedPreviewView } from './RenderedPreviewView';
-import type { AgentProfile } from '@hap/core';
+import { sentView, sentRows, resultBody, type SentView } from '../lib/ticket-what-was-done';
+import { splitTool, systemDisplayName, type ToolDisplay } from '../lib/approval-view';
+import { ArgValue } from './ProposalArgs';
 
 interface Props {
   receipt: ExecutionReceipt;
-  profile: AgentProfile | null;
+  manifests?: IntegrationManifest[];
 }
 
-export function TicketWhatWasDone({ receipt, profile }: Props) {
+/** One tool-display fetch per page load, shared by every opened ticket. */
+let toolDisplays: Promise<Record<string, ToolDisplay>> | null = null;
+function loadToolDisplays(): Promise<Record<string, ToolDisplay>> {
+  if (!toolDisplays) toolDisplays = spClient.getToolDisplay().catch(() => { toolDisplays = null; return {}; });
+  return toolDisplays;
+}
+
+function Rows({ args, display, executionContext, sealed }: {
+  args: Record<string, unknown>;
+  display: ToolDisplay | undefined;
+  executionContext: Record<string, unknown> | undefined;
+  sealed: boolean;
+}) {
+  const rows = sentRows(args, display, executionContext);
+  if (rows.length === 0) return null;
+  return (
+    <dl className="ticket-sent-fields">
+      {rows.map((row) => (
+        <Fragment key={row.key}>
+          <dt title={row.hint}>{row.label}</dt>
+          <dd className={sealed ? 'is-sealed' : undefined}>
+            <ArgValue row={row} />
+            {row.inTicket && <span className="ticket-sent-tag" title="This value is also in the signed ticket">in the ticket</span>}
+          </dd>
+        </Fragment>
+      ))}
+    </dl>
+  );
+}
+
+function Content({ content, display, executionContext, sealed }: {
+  content: Record<string, unknown> | string;
+  display: ToolDisplay | undefined;
+  executionContext: Record<string, unknown> | undefined;
+  sealed: boolean;
+}) {
+  if (typeof content === 'string') return <p className={`ticket-sent-text${sealed ? ' is-sealed' : ''}`}>{content}</p>;
+  return <Rows args={content} display={display} executionContext={executionContext} sealed={sealed} />;
+}
+
+function ArgsCheckLine({ check }: { check: 'match' | 'mismatch' | 'unchecked' }) {
+  if (check === 'match') return <p className="ticket-sent-check">&#10003; Matches what this gateway executed</p>;
+  if (check === 'mismatch') return <p className="ticket-sent-check is-failed">&#10005; Does not match what this gateway executed</p>;
+  return <p className="ticket-sent-check is-neutral">Could not be checked against this gateway's execution record.</p>;
+}
+
+function SentBox({ view, display, executionContext }: {
+  view: SentView;
+  display: ToolDisplay | undefined;
+  executionContext: Record<string, unknown> | undefined;
+}) {
+  if (view.level === 'off-device') {
+    return (
+      <div className="ticket-sent-box" data-testid="ticket-what-was-done" data-bound="off-device">
+        <h4>What was sent</h4>
+        <p className="ticket-sent-empty">Only on the gateway that ran it — this device has no local copy. The signed ticket still proves the limits it ran under.</p>
+      </div>
+    );
+  }
+  if (view.level === 'not-kept') {
+    return (
+      <div className="ticket-sent-box" data-testid="ticket-what-was-done" data-bound="not-kept" data-reason={view.reason}>
+        <h4>What was sent</h4>
+        <p className="ticket-sent-empty">
+          {view.reason === 'too_large'
+            ? 'Not kept — what was sent was too large to keep on this device.'
+            : 'Not kept — this ticket is older than the release that started keeping it.'}
+          {' '}The signed ticket still proves the limits it ran under.
+        </p>
+      </div>
+    );
+  }
+  if (view.level === 'sealed') {
+    return (
+      <div className="ticket-sent-box is-sealed" data-testid="ticket-what-was-done" data-bound="sealed" data-check={view.check}>
+        <h4>What was sent <span className="ticket-sent-q">sealed in the ticket</span></h4>
+        <Content content={view.bound} display={display} executionContext={executionContext} sealed />
+        {view.check === 'ok'
+          ? <p className="ticket-sent-check">&#10003; Matches the fingerprint in the signed ticket</p>
+          : <p className="ticket-sent-check is-failed">&#10005; Does not match the fingerprint in the signed ticket — this local copy was changed</p>}
+        {view.extras && sentRows(view.extras, display, executionContext).length > 0 && (
+          <>
+            <p className="ticket-sent-sub">Also sent — recorded by this gateway, not sealed in the ticket</p>
+            <Rows args={view.extras} display={display} executionContext={executionContext} sealed={false} />
+            {view.argsCheck === 'mismatch' && <ArgsCheckLine check="mismatch" />}
+          </>
+        )}
+      </div>
+    );
+  }
+  return (
+    <div className="ticket-sent-box" data-testid="ticket-what-was-done" data-bound="recorded" data-check={view.check}>
+      <h4>What was sent <span className="ticket-sent-q">recorded by this gateway — not sealed in the ticket</span></h4>
+      <Content content={view.content} display={display} executionContext={executionContext} sealed={false} />
+      <ArgsCheckLine check={view.check} />
+    </div>
+  );
+}
+
+/** Rows shown before "Show all" — the answer's first lines are what matter. */
+const RESULT_ROWS_SHOWN = 5;
+
+function ResultBox({ result, systemName, sent }: {
+  result: NonNullable<LocalReceiptEntry['result']>;
+  systemName: string;
+  sent: Record<string, unknown> | null;
+}) {
+  const body = resultBody(result, sent);
+  const [all, setAll] = useState(false);
+  return (
+    <div className="ticket-sent-box" data-testid="ticket-result" data-ok={result.ok ? 'true' : 'false'}>
+      <h4>Result <span className="ticket-sent-q">what {systemName} answered</span></h4>
+      {!result.ok && <p className="ticket-sent-check">The action failed.</p>}
+      {body.kind === 'rows' ? (
+        <dl className="ticket-sent-fields">
+          {(all ? body.rows : body.rows.slice(0, RESULT_ROWS_SHOWN)).map((r) => (
+            <Fragment key={r.key}>
+              <dt>{r.label}</dt>
+              <dd className="is-system">{r.value}</dd>
+            </Fragment>
+          ))}
+        </dl>
+      ) : (
+        <p className="ticket-sent-text is-system">{body.text}</p>
+      )}
+      {body.kind === 'rows' && body.rows.length > RESULT_ROWS_SHOWN && (
+        <button type="button" className="ticket-sent-more" onClick={() => setAll(a => !a)}>
+          {all ? 'Show less' : `Show all ${body.rows.length}`}
+        </button>
+      )}
+      {result.truncated && <p className="ticket-sent-check is-neutral">Shortened to fit what this device keeps.</p>}
+    </div>
+  );
+}
+
+/** What was sent, as an object — to leave out the answer's echoes of it. */
+function sentObject(entry: LocalReceiptEntry): Record<string, unknown> | null {
+  const cands = [entry.entry.sentArgs, entry.entry.proposal?.toolArgs, entry.entry.boundContent];
+  for (const c of cands) if (c && typeof c === 'object' && !Array.isArray(c)) return c as Record<string, unknown>;
+  return null;
+}
+
+export function TicketWhatWasDone({ receipt, manifests }: Props) {
   // undefined = loading; null = fetched, no local copy (off-device).
   const [entry, setEntry] = useState<LocalReceiptEntry | null | undefined>(undefined);
   const [hashVerified, setHashVerified] = useState<boolean | null>(null);
+  const [display, setDisplay] = useState<ToolDisplay | undefined>(undefined);
 
-  // Whether the ticket even carries a signed hash/binding to check against —
-  // read once per receipt, not async, so `unchecked` never needs to wait on
-  // anything (unlike `verified`/`mismatch`, which need the recomputed hash).
+  // Whether the ticket carries a signed fingerprint to check against — read
+  // once per receipt, not async.
   const hasHashToCheck = Boolean(receipt.contentHash && receipt.contentBinding);
+
+  useEffect(() => {
+    let live = true;
+    loadToolDisplays().then((all) => { if (live) setDisplay(all[receipt.action]); });
+    return () => { live = false; };
+  }, [receipt.action]);
 
   useEffect(() => {
     let live = true;
@@ -43,9 +193,8 @@ export function TicketWhatWasDone({ receipt, profile }: Props) {
     setHashVerified(null);
 
     // Resolve BOTH the archive fetch and the hash check before committing
-    // either piece of state — setting `entry` first would make the card
-    // briefly render "mismatch" (hashVerified still null) before the async
-    // hash check catches up.
+    // either piece of state — otherwise the card would briefly render a
+    // failed check (hashVerified still null) before the async check lands.
     (async () => {
       let found: LocalReceiptEntry | null;
       try {
@@ -57,17 +206,12 @@ export function TicketWhatWasDone({ receipt, profile }: Props) {
 
       let verified: boolean | null = null;
       const boundContent = found?.entry.boundContent;
-      // Only attempt the check when there IS a hash to check against — a
-      // ticket with bound content but no signed hash (hasHashToCheck false)
-      // is `unchecked`, computed without needing this async step at all.
       if (boundContent !== undefined && hasHashToCheck) {
         try {
           const recomputed = await computeContentHashBrowser(receipt.contentBinding!.kind, boundContent);
           verified = recomputed === receipt.contentHash;
         } catch {
-          // Could not even recompute (e.g. the archived shape no longer
-          // matches the declared kind) — never claim verified on a check
-          // that didn't run.
+          // Could not even recompute — never claim a match on a check that didn't run.
           verified = false;
         }
       }
@@ -82,73 +226,32 @@ export function TicketWhatWasDone({ receipt, profile }: Props) {
   }, [receipt.id, receipt.contentHash, receipt.contentBinding, hasHashToCheck]);
 
   if (entry === undefined) {
-    // Transitional — not one of the four states the owner's e2e asserts on;
-    // the harness waits for `data-bound` to leave "loading" first, same
-    // pattern as PreviewBox's data-preview-status.
     return (
-      <div className="ticket-done-box ticket-done-loading" data-testid="ticket-what-was-done" data-bound="loading" aria-busy="true">
+      <div className="ticket-sent-box ticket-sent-loading" data-testid="ticket-what-was-done" data-bound="loading" aria-busy="true">
         Loading…
       </div>
     );
   }
 
-  const offDevice = entry === null;
-  const boundContent = entry?.entry.boundContent;
-  const status: TicketBoundStatus = ticketBoundStatus({ offDevice, boundContent, hasHashToCheck, hashVerified });
-
-  if (status === 'off-device') {
-    return (
-      <div className="ticket-done-box ticket-done-off-device" data-testid="ticket-what-was-done" data-bound="off-device">
-        <p className="ticket-done-note">Content not on this device — only the signed values are shown.</p>
-      </div>
-    );
-  }
-
-  if (status === 'none') {
-    const rows = checkedValueRows(receipt.executionContext, profile);
-    return (
-      <div className="ticket-done-box" data-testid="ticket-what-was-done" data-bound="none">
-        <h4>What was done</h4>
-        {rows.length > 0 ? (
-          <dl className="ticket-done-fields">
-            {rows.map((r) => (
-              <div className="ticket-done-field-row" key={r.key}>
-                <dt>{r.label}</dt>
-                <dd>{r.value}</dd>
-              </div>
-            ))}
-          </dl>
-        ) : (
-          <p className="ticket-done-note">No checked values recorded for this action.</p>
-        )}
-      </div>
-    );
-  }
-
-  const rendered = boundContentView(boundContent, receipt.contentBinding?.fields);
-  const toneClass = status === 'verified' ? 'ticket-done-verified' : status === 'mismatch' ? 'ticket-done-mismatch' : 'ticket-done-unchecked';
+  const proposalArgs = entry?.entry.proposal?.toolArgs;
+  const view = sentView({
+    offDevice: entry === null,
+    boundContent: entry?.entry.boundContent,
+    sentArgs: entry?.entry.sentArgs,
+    sentArgsOmitted: entry?.entry.sentArgsOmitted,
+    proposalArgs: proposalArgs && typeof proposalArgs === 'object' && !Array.isArray(proposalArgs)
+      ? proposalArgs as Record<string, unknown>
+      : undefined,
+    hasHashToCheck,
+    hashVerified,
+    sentArgsCheck: entry?.sentArgsCheck,
+  });
+  const systemName = systemDisplayName(splitTool(receipt.action).integrationId, manifests);
 
   return (
-    <div className={`ticket-done-box ${toneClass}`} data-testid="ticket-what-was-done" data-bound={status}>
-      <h4>
-        What was done{status !== 'unchecked' && <> <span className="src-tag src-tag-sealed">sealed</span></>}
-      </h4>
-      <RenderedPreviewView rendered={rendered} />
-      {status === 'verified' && (
-        <p className="ticket-done-note ticket-done-note-ok">
-          &#10003; This exact content is bound by hash — any change after the fact would break the ticket.
-        </p>
-      )}
-      {status === 'mismatch' && (
-        <p className="ticket-done-note ticket-done-note-bad">
-          &#9888; This content does NOT match the ticket's signed hash — it may have been altered since archiving.
-        </p>
-      )}
-      {status === 'unchecked' && (
-        <p className="ticket-done-note ticket-done-note-neutral">
-          This content is kept on this device, but the ticket carries no content hash — it cannot be checked against the ticket.
-        </p>
-      )}
-    </div>
+    <>
+      <SentBox view={view} display={display} executionContext={receipt.executionContext} />
+      {entry?.result && <ResultBox result={entry.result} systemName={systemName} sent={sentObject(entry)} />}
+    </>
   );
 }

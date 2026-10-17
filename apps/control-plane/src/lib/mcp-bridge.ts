@@ -372,6 +372,34 @@ export async function getLocalEvidence(): Promise<Record<string, unknown>> {
   return res.json() as Promise<Record<string, unknown>>;
 }
 
+/**
+ * UI spec §14 — one ticket's args check and retained result, from the MCP
+ * server (which owns the journal hash and the result store). Null when the
+ * MCP server has no archive entry for it.
+ */
+export async function getTicketContent(ticketId: string): Promise<{
+  sentArgsCheck: 'match' | 'mismatch' | 'unchecked';
+  result: { ok: boolean; text: string; structuredContent?: Record<string, unknown>; truncated?: boolean } | null;
+} | null> {
+  const res = await fetch(`${MCP_BASE}/internal/evidence/ticket/${encodeURIComponent(ticketId)}`, {
+    headers: internalHeaders(),
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`Failed to fetch ticket content: ${res.status}`);
+  return res.json() as Promise<{
+    sentArgsCheck: 'match' | 'mismatch' | 'unchecked';
+    result: { ok: boolean; text: string; structuredContent?: Record<string, unknown>; truncated?: boolean } | null;
+  }>;
+}
+
+/** UI spec §13.4 — automatic tickets' headline values, keyed by ticket id. */
+export async function getTicketHeadlines(): Promise<Record<string, Record<string, unknown>>> {
+  const res = await fetch(`${MCP_BASE}/internal/evidence/headlines`, { headers: internalHeaders() });
+  if (!res.ok) throw new Error(`Failed to fetch ticket headlines: ${res.status}`);
+  const data = (await res.json()) as { headlines?: Record<string, Record<string, unknown>> };
+  return data.headlines ?? {};
+}
+
 // ─── Report (evidence-backed reports) ────────────────────────────────────
 
 /**

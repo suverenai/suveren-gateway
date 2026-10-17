@@ -11,7 +11,6 @@ import { TicketWhatYouSaw } from './TicketWhatYouSaw';
 import { ChangeNeededPanel } from './ChangeNeededPanel';
 import { isTestSetupAction, profileIdentity } from '../lib/profile-identity';
 import { splitTool, systemDisplayName, type ToolDisplay } from '../lib/approval-view';
-import { useProfile } from '../lib/profile-cache';
 import { spClient, type IntegrationManifest, type ShownSnapshotPayload } from '../lib/sp-client';
 import { validateChangeNote, outcomeAfterView, refusedAfterView, type OutcomeKindLabel } from '../lib/reject-outcome';
 import { useProposalContent, useDecryptedNote, decisionButtonsVisible } from '../lib/use-proposal-content';
@@ -176,9 +175,6 @@ export function ActionCard({ item, onApprove, onReject, onChangeNeeded, resolvin
   const decryptedNote = useDecryptedNote(
     isProposal ? (item.proposal.rejectedBy ?? item.proposal.approverRejectedBy ?? null) : null,
   );
-  // AU6: "What was done" needs the profile for the no-bound-content fallback
-  // (checked values labelled from the profile's scope schema).
-  const profile = useProfile(item.profileId);
 
   // PE1 — decrypt this proposal's sealed toolArgs (or pass a legacy row's
   // plain ones through) for the non-pending display branch below (pending
@@ -365,7 +361,7 @@ export function ActionCard({ item, onApprove, onReject, onChangeNeeded, resolvin
                "What you saw" follows, only for a receipt that ran via a
                committed (review-mode) proposal. */
             <>
-              <TicketWhatWasDone receipt={item.receipt} profile={profile} />
+              <TicketWhatWasDone receipt={item.receipt} manifests={manifests} />
               {item.receipt.proposalId && (
                 <TicketWhatYouSaw
                   proposalId={item.receipt.proposalId}

@@ -168,6 +168,8 @@ export class SharedState {
       proposal?: Record<string, unknown>;
       /** The preimage of the receipt's contentHash — what actually ran. */
       boundContent?: Record<string, unknown> | string;
+      /** Automatic path — the args this gateway executes (hashed into the journal). */
+      sentArgs?: Record<string, unknown>;
     },
   ): Promise<void> {
     // Store the AS pubkey alongside so the entry verifies offline even if
@@ -195,6 +197,7 @@ export class SharedState {
         asPublicKey,
         proposal: opts.proposal,
         boundContent: opts.boundContent,
+        sentArgs: opts.sentArgs,
         authorization: opts.profileId
           ? {
               profileId: opts.profileId,

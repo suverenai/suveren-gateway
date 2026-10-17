@@ -633,9 +633,30 @@ export interface LocalReceiptEntry {
     receipt: Record<string, unknown>;
     proposal?: Record<string, unknown>;
     boundContent?: Record<string, unknown> | string;
+    /** Automatic path (UI spec §14) — exactly the args this gateway executed. */
+    sentArgs?: Record<string, unknown>;
+    /** Set instead of `sentArgs` when they were too large to keep. */
+    sentArgsOmitted?: 'too_large';
   };
   authorization: LocalAuthorization | null;
   signature: SignatureStatus;
+  /**
+   * The archived args (sentArgs, or an approved ticket's proposal.toolArgs)
+   * checked by the gateway against the hash in its own execution journal —
+   * "matches what this gateway executed". Absent from an older control plane.
+   */
+  sentArgsCheck?: SentArgsCheck;
+  /** What the tool answered (§14.2), kept on this device; null when not kept. */
+  result?: TicketResult | null;
+}
+
+export type SentArgsCheck = 'match' | 'mismatch' | 'unchecked';
+
+export interface TicketResult {
+  ok: boolean;
+  text: string;
+  structuredContent?: Record<string, unknown>;
+  truncated?: boolean;
 }
 
 /** A window of receipts plus a cursor for loading the next (older) window. */
@@ -1126,6 +1147,17 @@ class SPClient {
     if (res.status === 404) return null;
     if (!res.ok) throw new Error(`Local evidence unavailable (${res.status})`);
     return (await res.json()) as LocalReceiptEntry;
+  }
+
+  /**
+   * The values automatic tickets' headlines are built from (UI spec §13.4),
+   * keyed by ticket id — this device's archive only, trimmed for headlines.
+   */
+  async getTicketHeadlines(): Promise<Record<string, Record<string, unknown>>> {
+    const res = await this.fetch('/api/evidence/headlines');
+    if (!res.ok) throw new Error(`Local evidence unavailable (${res.status})`);
+    const data = await res.json();
+    return (data?.headlines ?? {}) as Record<string, Record<string, unknown>>;
   }
 
   // ─── Report (evidence-backed reports) ──────────────────────────────────

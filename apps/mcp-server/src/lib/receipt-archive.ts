@@ -113,6 +113,25 @@ export interface ArchivedReceipt {
    * excludes what the binding deliberately omits (e.g. an email's `bcc`).
    */
   boundContent?: Record<string, unknown> | string;
+  /**
+   * Automatic path only — exactly the argument object this gateway executed
+   * under the ticket: the same object `hashToolArgs()` hashes into the
+   * execution journal's `argsHash` (before the footer, ticket id, transport
+   * encoding and `_source` strip — those are the wire form, not the call).
+   * Kept so an automatic ticket can show what was sent, as an approval would
+   * have shown it before (UI spec §14), and so the control plane can check
+   * this copy against the journal ("matches what this gateway executed").
+   *
+   * Not part of the signed ticket and never sent anywhere. The review path
+   * does not set it: its `proposal.toolArgs` is the same object already.
+   */
+  sentArgs?: Record<string, unknown>;
+  /**
+   * Set instead of `sentArgs` when the arguments were larger than
+   * SENT_ARGS_MAX_BYTES — so "not kept" can say why rather than reading as
+   * a ticket from before this field existed.
+   */
+  sentArgsOmitted?: 'too_large';
 }
 
 interface ArchiveFile {
@@ -133,6 +152,27 @@ interface EncryptedArchiveFile {
 }
 
 const DEFAULT_DIR = process.env.SUVEREN_DATA_DIR ?? join(homedir(), '.suveren');
+
+/**
+ * Cap on one entry's `sentArgs`. The archive is never pruned and is rewritten
+ * whole on every record(), so a single large call (an attachment, a long
+ * document) must not grow every later write. Above the cap the entry records
+ * `sentArgsOmitted` instead — the ticket itself is archived as always.
+ */
+export const SENT_ARGS_MAX_BYTES = 64 * 1024;
+
+/**
+ * The `sentArgs` part of a new entry: a detached JSON copy (later in-memory
+ * changes to the caller's object cannot reach the evidence), or the
+ * too-large marker. Throws only when the args are not JSON-serialisable,
+ * which fails the whole write — fail-closed, like every other part of it.
+ */
+function sentArgsFields(args: Record<string, unknown> | undefined): Pick<ArchivedReceipt, 'sentArgs' | 'sentArgsOmitted'> {
+  if (args === undefined) return {};
+  const json = JSON.stringify(args);
+  if (Buffer.byteLength(json, 'utf8') > SENT_ARGS_MAX_BYTES) return { sentArgsOmitted: 'too_large' };
+  return { sentArgs: JSON.parse(json) as Record<string, unknown> };
+}
 
 /**
  * Drop `_imagePreview` from archived tool arguments.
@@ -159,6 +199,8 @@ export interface ReceiptArchiveEntry {
   asPublicKey: string;
   proposal?: Record<string, unknown>;
   boundContent?: Record<string, unknown> | string;
+  /** Automatic path — see {@link ArchivedReceipt.sentArgs}. */
+  sentArgs?: Record<string, unknown>;
   authorization?: {
     profileId: string;
     boundsHash?: string;
@@ -230,6 +272,7 @@ export class ReceiptArchive {
         receipt: entry.receipt,
         ...(entry.proposal ? { proposal: stripPreviews(entry.proposal) } : {}),
         ...(entry.boundContent !== undefined ? { boundContent: entry.boundContent } : {}),
+        ...sentArgsFields(entry.sentArgs),
       });
       changed = true;
     }

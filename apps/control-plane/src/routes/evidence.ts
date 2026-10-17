@@ -11,11 +11,15 @@
  * Two shapes, deliberately split by cost:
  *  - `/authorizations` — small per-grant map, fetched once per page load.
  *  - `/receipt/:id`    — one verbatim archive entry, fetched only when the
- *                        reader opens the complete receipt.
+ *                        reader opens the complete receipt. Since UI spec §14
+ *                        it also carries `sentArgsCheck` and `result` (what
+ *                        the tool answered) — see the route below.
+ *  - `/headlines`      — the values automatic tickets' headlines are built
+ *                        from (§13.4), one map per Tickets page load.
  */
 
 import { Router, type Request, type Response } from 'express';
-import { getLocalEvidence } from '../lib/mcp-bridge';
+import { getLocalEvidence, getTicketContent, getTicketHeadlines } from '../lib/mcp-bridge';
 import { createPublicKey, verify as verifyEd25519 } from 'node:crypto';
 import { verifyTicketSignature, encodeDidKey, canonicalize } from '@hap/core';
 
@@ -224,7 +228,34 @@ export function createEvidenceRouter(): Router {
         ? mergeAuthorizations(evidence)[authorizationId] ?? null
         : null;
       const signature = (await verifyAll([entry]))[id] ?? 'unverifiable';
-      res.json({ entry, authorization, signature });
+      // §14: the args check (against the journal, computed by the MCP server
+      // where the hash lives) and the retained result. Additive fields — a
+      // failure here degrades to "no check ran, no result kept" rather than
+      // hiding the entry, which the signature view above still needs.
+      let content: Awaited<ReturnType<typeof getTicketContent>> = null;
+      try {
+        content = await getTicketContent(id);
+      } catch {
+        content = null;
+      }
+      res.json({
+        entry,
+        authorization,
+        signature,
+        sentArgsCheck: content?.sentArgsCheck ?? 'unchecked',
+        result: content?.result ?? null,
+      });
+    } catch (err) {
+      res.status(503).json({
+        error: 'Local evidence unavailable',
+        detail: err instanceof Error ? err.message : String(err),
+      });
+    }
+  });
+
+  router.get('/headlines', async (_req: Request, res: Response) => {
+    try {
+      res.json({ headlines: await getTicketHeadlines() });
     } catch (err) {
       res.status(503).json({
         error: 'Local evidence unavailable',
