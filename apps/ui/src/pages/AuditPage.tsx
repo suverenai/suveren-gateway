@@ -8,7 +8,6 @@ import {
   type SignatureStatus,
 } from '../lib/sp-client';
 import { actionLabel, scopeSummary, wasReviewed, profileVersionLabel } from '../lib/receipt-summary';
-import { profileDisplayName } from '../lib/profile-display';
 import { ProfileBadge } from '../components/ProfileBadge';
 import { ReceiptCard } from '../components/ReceiptCard';
 import { ReceiptCompleteDialog } from '../components/ReceiptCompleteDialog';
@@ -21,6 +20,7 @@ import { parseTicketFilter, matchesTicketFilter, isNewTicket, TICKET_FILTERS, ty
 import { useAreaCatalog } from '../lib/area-catalog';
 import { resolveAreaName, areaIcon, parseAreaFilter, matchesAreaFilter } from '../lib/area';
 import { shortProfileId } from '../lib/profile-identity';
+import { systemDisplayName, splitTool } from '../lib/approval-view';
 
 type TimeRange = '1d' | '7d' | '30d' | 'all';
 
@@ -35,18 +35,23 @@ function isWithinTimeRange(receipt: ExecutionReceipt, range: TimeRange): boolean
   return receipt.timestamp >= cutoff;
 }
 
-function matchesSearch(receipt: ExecutionReceipt, query: string): boolean {
-  if (!query) return true;
-  const q = query.toLowerCase();
-  return (
-    receipt.profileId.toLowerCase().includes(q) ||
-    profileDisplayName(receipt.profileId).toLowerCase().includes(q) ||
-    receipt.path.toLowerCase().includes(q) ||
-    receipt.action.toLowerCase().includes(q) ||
-    receipt.attestationHash.toLowerCase().includes(q) ||
-    receipt.id.toLowerCase().includes(q) ||
-    JSON.stringify(receipt.executionContext).toLowerCase().includes(q)
-  );
+/**
+ * Search over what a ticket row shows — its area, headline, tool, mandate and
+ * short id — plus the values it carries. Every field is optional on the wire
+ * (2026-10-17: tickets without `attestationHash` crashed the page as soon as a
+ * search matched nothing), so each one is read null-safe.
+ */
+function matchesSearch(receipt: ExecutionReceipt, query: string, shown: Array<string | null | undefined>): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  const texts = [
+    ...shown,
+    receipt.id,
+    receipt.action,
+    receipt.profileId,
+    JSON.stringify(receipt.executionContext ?? {}),
+  ];
+  return texts.some(t => typeof t === 'string' && t.toLowerCase().includes(q));
 }
 
 /** Merge receipts by id, newest first — so polling adds new receipts without
@@ -96,7 +101,6 @@ export function AuditPage() {
 
   // Search & filter state
   const [search, setSearch] = useState('');
-  const [profileFilters, setProfileFilters] = useState<Set<string>>(new Set());
   const [actionFilters, setActionFilters] = useState<Set<string>>(new Set());
   const [timeRange, setTimeRange] = useState<TimeRange>('all');
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -243,13 +247,6 @@ export function AuditPage() {
       .catch(() => {});
   }, [viewTab, userById]);
 
-  // Derive available profiles and actions from data
-  const availableProfiles = useMemo(() => {
-    const set = new Set<string>();
-    for (const r of receipts) set.add(profileDisplayName(r.profileId));
-    return [...set].sort();
-  }, [receipts]);
-
   const availableActions = useMemo(() => {
     const set = new Set<string>();
     for (const r of receipts) set.add(r.action);
@@ -271,14 +268,18 @@ export function AuditPage() {
   // Apply all filters (the kind tabs last, so their counts reflect the rest)
   const filteredExceptKind = useMemo(() => {
     return receipts.filter(r => {
-      if (!matchesSearch(r, search)) return false;
-      if (profileFilters.size > 0 && !profileFilters.has(profileDisplayName(r.profileId))) return false;
+      if (!matchesSearch(r, search, [
+        resolveAreaName(r.profileId, catalog),
+        actionLabel(r, manifests),
+        systemDisplayName(splitTool(r.action).integrationId, manifests),
+        r.authorizationId ? grantTitles[r.authorizationId] : null,
+      ])) return false;
       if (actionFilters.size > 0 && !actionFilters.has(r.action)) return false;
       if (ownerFilters.size > 0 && r.userId && !ownerFilters.has(r.userId)) return false;
       if (!isWithinTimeRange(r, timeRange)) return false;
       return true;
     });
-  }, [receipts, search, profileFilters, actionFilters, ownerFilters, timeRange]);
+  }, [receipts, search, catalog, manifests, grantTitles, actionFilters, ownerFilters, timeRange]);
 
   const kindCounts = useMemo(() => {
     const c: Record<TicketFilter, number> = { automatic: 0, approved: 0, all: 0 };
@@ -317,15 +318,7 @@ export function AuditPage() {
     [filtered, seenCutoff],
   );
 
-  const hasActiveFilters = profileFilters.size > 0 || actionFilters.size > 0 || ownerFilters.size > 0 || timeRange !== 'all';
-
-  function toggleProfile(p: string) {
-    setProfileFilters(prev => {
-      const next = new Set(prev);
-      next.has(p) ? next.delete(p) : next.add(p);
-      return next;
-    });
-  }
+  const hasActiveFilters = actionFilters.size > 0 || ownerFilters.size > 0 || timeRange !== 'all';
 
   function toggleAction(a: string) {
     setActionFilters(prev => {
@@ -344,7 +337,6 @@ export function AuditPage() {
   }
 
   function clearAllFilters() {
-    setProfileFilters(new Set());
     setActionFilters(new Set());
     setOwnerFilters(new Set());
     setTimeRange('all');
@@ -428,22 +420,50 @@ export function AuditPage() {
         </div>
       )}
 
-      {/* UI spec §12.3 — Automatic / Approved / All */}
-      <div className="ftabs" role="tablist" aria-label="Which tickets">
-        {TICKET_FILTERS.map(k => (
+      <div className="tickets-toolbar">
+        {/* UI spec §12.3 — Automatic / Approved / All */}
+        <div className="ftabs" role="tablist" aria-label="Which tickets">
+          {TICKET_FILTERS.map(k => (
+            <button
+              key={k}
+              type="button"
+              role="tab"
+              className="ftab"
+              data-testid={`tickets-filter-${k}`}
+              aria-selected={kind === k}
+              onClick={() => setKind(k)}
+            >
+              {k === 'automatic' ? 'Automatic' : k === 'approved' ? 'Approved' : 'All'}
+              <span className="n">{kindCounts[k]}</span>
+            </button>
+          ))}
+        </div>
+        {/* Search + Filters — quiet, on the same row (Andreas 2026-10-17) */}
+        <div className="search-filter-bar">
+          <div className="search-input-wrap">
+            <span className="search-icon">&#x2315;</span>
+            <input
+              type="text"
+              className="form-input search-input"
+              data-testid="tickets-search"
+              placeholder="Search tickets"
+              aria-label="Search tickets"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+            />
+            {search && (
+              <button className="search-clear" onClick={() => setSearch('')}>
+                &times;
+              </button>
+            )}
+          </div>
           <button
-            key={k}
-            type="button"
-            role="tab"
-            className="ftab"
-            data-testid={`tickets-filter-${k}`}
-            aria-selected={kind === k}
-            onClick={() => setKind(k)}
+            className={`btn btn-sm btn-secondary${filtersOpen ? ' active' : ''}`}
+            onClick={() => setFiltersOpen(!filtersOpen)}
           >
-            {k === 'automatic' ? 'Automatic' : k === 'approved' ? 'Approved' : 'All'}
-            <span className="n">{kindCounts[k]}</span>
+            Filters{hasActiveFilters ? ` (${actionFilters.size + (timeRange !== 'all' ? 1 : 0)})` : ''}
           </button>
-        ))}
+        </div>
       </div>
       {kind === 'automatic' && (
         <p className="page-subtitle" style={{ marginTop: '-0.25rem' }}>Automatic — no person approved these. Approved tickets are under "Approved".</p>
@@ -452,52 +472,9 @@ export function AuditPage() {
       {/* UI spec §13.3 — area filter pills, next to the kind tabs above. */}
       <AreaFilterPills areas={areaOptions} selected={areaFilter} onSelect={setAreaFilter} totalCount={filteredByKind.length} />
 
-      {/* Search + Filter toggle row */}
-      <div className="search-filter-bar">
-        <div className="search-input-wrap">
-          <span className="search-icon">&#x2315;</span>
-          <input
-            type="text"
-            className="form-input search-input"
-            placeholder="Search by profile, action, path, or hash…"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-          />
-          {search && (
-            <button className="search-clear" onClick={() => setSearch('')}>
-              &times;
-            </button>
-          )}
-        </div>
-        <button
-          className={`btn btn-sm btn-secondary${filtersOpen ? ' active' : ''}`}
-          onClick={() => setFiltersOpen(!filtersOpen)}
-        >
-          Filters{hasActiveFilters ? ` (${profileFilters.size + actionFilters.size + (timeRange !== 'all' ? 1 : 0)})` : ''}
-        </button>
-      </div>
-
       {/* Expandable filter panel */}
       {filtersOpen && (
         <div className="filter-panel">
-          {/* Profile */}
-          {availableProfiles.length > 1 && (
-            <div className="filter-section">
-              <div className="filter-label">Profile</div>
-              <div className="filter-chips">
-                {availableProfiles.map(p => (
-                  <button
-                    key={p}
-                    className={`filter-chip${profileFilters.has(p) ? ' selected' : ''}`}
-                    onClick={() => toggleProfile(p)}
-                  >
-                    {p}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
           {/* Action */}
           {availableActions.length > 1 && (
             <div className="filter-section">
@@ -555,11 +532,6 @@ export function AuditPage() {
       {/* Active filter chips */}
       {hasActiveFilters && (
         <div className="active-filters">
-          {[...profileFilters].map(p => (
-            <span key={p} className="active-chip" onClick={() => toggleProfile(p)}>
-              {p} <span className="chip-remove">&times;</span>
-            </span>
-          ))}
           {[...actionFilters].map(a => (
             <span key={a} className="active-chip" onClick={() => toggleAction(a)}>
               {a} <span className="chip-remove">&times;</span>
