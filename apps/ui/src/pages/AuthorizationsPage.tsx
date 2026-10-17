@@ -939,10 +939,13 @@ export function AuthorizationsPage() {
   }, [filtered, areaNameFor]);
 
   // "N mandates · via <tools>" — connectors whose manifest serves this area
-  // (manifest.profile is already the short id); a built-in area (reporting,
+  // (manifest.profile, OR a per-tool override's own `profile` — area per
+  // tool, a connector may span several areas); a built-in area (reporting,
   // delegation) with no connector manifest simply omits the clause.
   const toolsForArea = useCallback(
-    (shortId: string) => [...new Set(manifests.filter(m => m.profile === shortId).map(m => m.name))],
+    (shortId: string) => [...new Set(manifests.filter(m =>
+      m.profile === shortId || Object.values(m.toolGating?.overrides ?? {}).some(o => o?.profile === shortId),
+    ).map(m => m.name))],
     [manifests],
   );
 

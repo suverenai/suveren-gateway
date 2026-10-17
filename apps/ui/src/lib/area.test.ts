@@ -47,6 +47,7 @@ describe('areaIcon — UI spec §13.1 (from the profile id only, never a profile
     expect(areaIcon('x/purchase@0.8')).toBe('purchasing');
     expect(areaIcon('x/reporting@0.4')).toBe('reports');
     expect(areaIcon('x/delegation@0.5')).toBe('setup');
+    expect(areaIcon('x/invoicing@0.1')).toBe('invoicing');
   });
 
   it('an unknown short id gets the neutral icon', () => {

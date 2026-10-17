@@ -54,12 +54,20 @@ describe('classifyEnumSwitches', () => {
     expect(writeSide).toEqual(['export_access']);
   });
 
-  it('calendar/publish/deploy/charge declare no switch at all', () => {
-    for (const name of ['calendar', 'publish', 'deploy', 'charge']) {
+  it('calendar/publish/deploy declare no switch at all', () => {
+    for (const name of ['calendar', 'publish', 'deploy']) {
       const { readSide, writeSide } = classifyEnumSwitches(getProfile(name)?.boundsSchema);
       expect(readSide, name).toEqual([]);
       expect(writeSide, name).toEqual([]);
     }
+  });
+
+  it('charge declares a read switch from 0.7 ("Payments": read_access), none before', () => {
+    const { readSide, writeSide } = classifyEnumSwitches(getProfile('charge')?.boundsSchema);
+    const v = getProfile('charge')?.version ?? '';
+    const from07 = v.localeCompare('0.7', undefined, { numeric: true }) >= 0;
+    expect(readSide).toEqual(from07 ? ['read_access'] : []);
+    expect(writeSide).toEqual([]);
   });
 });
 

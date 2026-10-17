@@ -3,10 +3,27 @@ import { groupIntegrationsForDisplay, groupEntriesByArea } from './integration-g
 import type { IntegrationEntry } from '../contexts/IntegrationStatusContext';
 import type { AreaCatalogEntry } from './area';
 
-function entry(o: { name: string; simulation?: unknown; state: IntegrationEntry['state']; profile?: string }): IntegrationEntry {
+function entry(o: {
+  name: string;
+  simulation?: unknown;
+  state: IntegrationEntry['state'];
+  profile?: string;
+  /** Area per tool — a per-tool override's own profile (UI spec §13.3: "a
+   *  tool serving several areas appears under each"). */
+  overrideProfiles?: string[];
+}): IntegrationEntry {
+  const overrides = Object.fromEntries(
+    (o.overrideProfiles ?? []).map((p, i) => [`tool_${i}`, { profile: p }]),
+  );
   return {
     id: o.name,
-    manifest: { id: o.name, name: o.name, profile: o.profile ?? 'customers', simulation: o.simulation ?? null } as unknown as IntegrationEntry['manifest'],
+    manifest: {
+      id: o.name,
+      name: o.name,
+      profile: o.profile ?? 'customers',
+      simulation: o.simulation ?? null,
+      toolGating: { overrides },
+    } as unknown as IntegrationEntry['manifest'],
     integration: undefined,
     state: o.state,
   };
@@ -99,5 +116,23 @@ describe('groupEntriesByArea — UI spec §13.3', () => {
     const g = groupEntriesByArea([gmail, mail], catalog);
     expect(g).toHaveLength(1);
     expect(g[0].entries).toEqual([gmail, mail]);
+  });
+
+  it('a connector serving several areas (area per tool) appears under each, full entry both times', () => {
+    const erp = entry({ name: 'ERP', state: 'running', profile: 'sales', overrideProfiles: ['invoicing'] });
+    const gmail = entry({ name: 'Gmail', state: 'running', profile: 'email' });
+    const g = groupEntriesByArea([erp, gmail], catalog);
+    expect(g.map(a => a.shortId).sort()).toEqual(['email', 'invoicing', 'sales']);
+    const sales = g.find(a => a.shortId === 'sales');
+    const invoicing = g.find(a => a.shortId === 'invoicing');
+    expect(sales?.entries).toEqual([erp]);
+    expect(invoicing?.entries).toEqual([erp]);
+  });
+
+  it('a connector whose overrides repeat the manifest\'s own profile is not listed twice under it', () => {
+    const erp = entry({ name: 'ERP', state: 'running', profile: 'sales', overrideProfiles: ['sales', 'sales'] });
+    const g = groupEntriesByArea([erp], catalog);
+    expect(g).toHaveLength(1);
+    expect(g[0].entries).toEqual([erp]);
   });
 });

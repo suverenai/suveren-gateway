@@ -32,6 +32,17 @@ export interface PickerEntry {
 export const shortOf = (id: string): string => id.replace(/@.*$/, '').split('/').pop() ?? id;
 const versionOf = (id: string): string => id.split('@')[1] ?? '';
 
+/** Every area (profile short id) a connector's tools serve: its own profile
+ *  first, then any a tool override names (gateway: an area per tool). */
+function areasOfManifest(m: IntegrationManifest): string[] {
+  const out: string[] = m.profile ? [shortOf(m.profile)] : [];
+  for (const o of Object.values(m.toolGating?.overrides ?? {})) {
+    const p = (o as { profile?: string } | null)?.profile;
+    if (p && !out.includes(shortOf(p))) out.push(shortOf(p));
+  }
+  return out;
+}
+
 function latestByShort(profiles: ProfileSummary[], wanted: Set<string>): Map<string, ProfileSummary> {
   const latest = new Map<string, ProfileSummary>();
   for (const p of profiles) {
@@ -53,7 +64,7 @@ export function pickerEntries(
   builtins: BuiltinStatus[],
 ): PickerEntry[] {
   const wanted = new Set<string>([
-    ...manifests.filter(m => m.profile).map(m => m.profile as string),
+    ...manifests.flatMap(m => areasOfManifest(m)),
     ...builtins.map(b => shortOf(b.profile)),
   ]);
   const latest = latestByShort(profiles, wanted);
@@ -61,19 +72,25 @@ export function pickerEntries(
 
   // One entry per INSTALLED INTEGRATION, not per profile: several connectors can
   // share one profile, and a profile-keyed list loses all but one of them.
+  // A connector serving several areas (tool overrides naming their own
+  // profile, e.g. an ERP for Sales and Invoicing) gets one entry per area —
+  // otherwise no mandate could be given for its other areas.
   for (const manifest of manifests) {
-    const profile = manifest.profile ? latest.get(manifest.profile) : undefined;
+    const areas = areasOfManifest(manifest);
+    for (const [i, short] of areas.entries()) {
+    const profile = latest.get(short);
     if (!profile) continue;
     entries.push({
-      key: `connector:${manifest.id}`,
-      name: manifest.name,
+      key: i === 0 ? `connector:${manifest.id}` : `connector:${manifest.id}:${short}`,
+      name: areas.length > 1 ? `${manifest.name} — ${profile.name ?? short}` : manifest.name,
       description: manifest.description || profile.description,
       profile,
       kind: 'connector',
       ready: integrations.find(i => i.id === manifest.id)?.running === true,
       setupId: manifest.id,
-      ...(manifest.intentHint ? { intentHint: manifest.intentHint } : {}),
+      ...(manifest.intentHint && i === 0 ? { intentHint: manifest.intentHint } : {}),
     });
+    }
   }
   for (const b of builtins) {
     const profile = latest.get(shortOf(b.profile));

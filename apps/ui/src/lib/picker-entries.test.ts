@@ -78,3 +78,18 @@ describe('intentHint', () => {
     expect(pickerEntries(PROFILES, MANIFESTS, RUNNING, [SETUP]).every((x) => x.intentHint === undefined)).toBe(true);
   });
 });
+
+describe('pickerEntries — a connector serving several areas', () => {
+  it('one entry per area, so a mandate can be given for each (ERP: Sales and Invoicing)', () => {
+    const profiles = [...PROFILES, { ...prof(`${P}/invoicing@0.1`), name: 'Invoicing' }];
+    const erp = {
+      id: 'erp', name: 'ERP', profile: 'sales', description: 'Quotes, orders, invoices',
+      toolGating: { overrides: { create_invoice: { profile: 'invoicing' }, get_invoice: { profile: 'invoicing' }, create_quote: {} } },
+    } as unknown as IntegrationManifest;
+    const e = pickerEntries(profiles, [erp], RUNNING, []);
+    expect(e.map((x) => [x.key, x.name, x.profile.id, x.ready])).toEqual([
+      ['connector:erp', 'ERP — sales', `${P}/sales@0.10`, true],
+      ['connector:erp:invoicing', 'ERP — Invoicing', `${P}/invoicing@0.1`, true],
+    ]);
+  });
+});

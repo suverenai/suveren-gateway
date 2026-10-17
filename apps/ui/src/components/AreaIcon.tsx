@@ -58,6 +58,12 @@ const PATHS: Record<AreaIconName, React.ReactNode> = {
       <path d="M4 15v5h16v-5" />
     </>
   ),
+  invoicing: (
+    <>
+      <path d="M6 3h12v18l-2-1.3-2 1.3-2-1.3-2 1.3-2-1.3L6 21z" />
+      <path d="M9 8h6M9 12h6M9 16h3" />
+    </>
+  ),
   purchasing: (
     <>
       <path d="M3 4h2.5l2.2 11h10.6L20.5 7H6.4" />

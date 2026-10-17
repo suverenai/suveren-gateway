@@ -635,20 +635,87 @@ export function invalidManifestContextReason(
   return null;
 }
 
+// ─── Area per tool — an override may name its OWN profile ─────────────────
+
+/**
+ * An override's own `profile` (area per tool — see tool-gating-types.ts's
+ * `ProfileToolGatingEntry.profile`), read from a value whose static type may
+ * not yet declare the field (same widened-read pattern integration-
+ * manager.ts's `resolveToolGating` uses).
+ */
+function overrideProfile(entry: unknown): string | undefined {
+  if (entry === null || typeof entry !== 'object') return undefined;
+  const p = (entry as { profile?: unknown }).profile;
+  return typeof p === 'string' ? p : undefined;
+}
+
+/**
+ * Every distinct profile this manifest's tools are actually gated under:
+ * the manifest's own `profile`, plus any override's own `profile` (area per
+ * tool). Order: manifest's profile first, then overrides in declaration
+ * order — stable, so a refusal reason naming "the first bad profile" is
+ * deterministic.
+ */
+function distinctProfilesOf(manifest: Pick<IntegrationManifest, 'profile' | 'toolGating'>): string[] {
+  const out = [manifest.profile];
+  for (const entry of Object.values(manifest.toolGating?.overrides ?? {})) {
+    const p = overrideProfile(entry);
+    if (p && !out.includes(p)) out.push(p);
+  }
+  return out;
+}
+
+/**
+ * Returns a human-readable refusal reason if any override's own `profile`
+ * (area per tool) fails to resolve to a known profile — full id or short
+ * name, the SAME resolution `getProfile` gives `manifest.profile` itself —
+ * or null if every declared override profile resolves (or none is declared
+ * at all). Mirrors `invalidNpmPinReason`'s shape: one predicate, shared by
+ * the loader and any lint test, so the two can never disagree.
+ *
+ * Like `invalidManifestReadGateReason`, this SKIPS (returns null) when
+ * profiles haven't been loaded yet — not a pass on a real defect, see that
+ * function's doc comment for why that gap is acceptable.
+ */
+export function invalidManifestOverrideProfilesReason(
+  manifest: Pick<IntegrationManifest, 'profile' | 'toolGating'>,
+): string | null {
+  const overrides = manifest.toolGating?.overrides ?? {};
+  for (const [toolName, entry] of Object.entries(overrides)) {
+    const profile = overrideProfile(entry);
+    if (!profile) continue;
+    // Nothing registered to check against yet (isolated test) — not our call.
+    if (!getProfile(manifest.profile) && !getProfile(profile)) continue;
+    if (!getProfile(profile)) {
+      return `override "${toolName}".profile "${profile}" does not resolve to a known profile ` +
+        `(full id or short name) — area-per-tool overrides must name a real profile, same as the ` +
+        `manifest's own "profile"`;
+    }
+  }
+  return null;
+}
+
 // ─── D6 — read-gate coverage for the profile's enum switches ───────────────
 
 /**
  * Returns a human-readable refusal reason if `manifest`'s `category:"read"`
- * overrides fail to cover its profile's read-side enum switch(es) (D6 —
- * `read-gate.ts`'s `uncoveredReadSwitchReason`, the shared predicate), or
- * null if clean. Resolves the profile the SAME way the running gateway does
- * — `getProfile(manifest.profile)`, after `loadProfiles()` has registered
- * every hap-profiles version under both its full id and its short name,
+ * overrides fail to cover THEIR OWN profile's read-side enum switch(es) (D6
+ * — `read-gate.ts`'s `uncoveredReadSwitchReason`, the shared predicate), or
+ * null if clean. Resolves each profile the SAME way the running gateway does
+ * — `getProfile(...)`, after `loadProfiles()` has registered every
+ * hap-profiles version under both its full id and its short name,
  * last-registered-wins (profile-loader.ts), which hap-profiles/index.json
  * orders oldest→newest per family, so the short name always resolves to the
  * latest version.
  *
- * Skips (returns null) when the profile isn't registered — e.g. a unit test
+ * Area per tool: a manifest may gate different tools under different
+ * profiles (an override's own `profile`, see `distinctProfilesOf`). The
+ * check runs ONCE PER DISTINCT PROFILE the manifest actually uses, each time
+ * against only the overrides that resolve to THAT profile — an override
+ * belonging to profile B must never be checked against profile A's switches
+ * (and vice versa), or a connector spanning two areas could never pass.
+ *
+ * Skips (returns null) a profile that isn't registered — e.g. a unit test
  * that loads manifests without first loading profiles. That is a GAP in
  * what gets checked, not a pass on a real defect: `loadManifests()` always
  * runs after `loadProfiles()` at real startup (bin/http.ts), so production
@@ -659,10 +726,19 @@ export function invalidManifestContextReason(
 export function invalidManifestReadGateReason(
   manifest: Pick<IntegrationManifest, 'profile' | 'toolGating'>,
 ): string | null {
-  const profileDef = getProfile(manifest.profile);
-  if (!profileDef) return null;
-  const overrides = manifest.toolGating?.overrides ?? {};
-  return uncoveredReadSwitchReason(overrides, profileDef.boundsSchema as BoundsSchemaLike | undefined);
+  const allOverrides = manifest.toolGating?.overrides ?? {};
+  for (const profileId of distinctProfilesOf(manifest)) {
+    const profileDef = getProfile(profileId);
+    if (!profileDef) continue;
+    const ownOverrides: Record<string, unknown> = {};
+    for (const [toolName, entry] of Object.entries(allOverrides)) {
+      const resolved = overrideProfile(entry) ?? manifest.profile;
+      if (resolved === profileId) ownOverrides[toolName] = entry;
+    }
+    const reason = uncoveredReadSwitchReason(ownOverrides, profileDef.boundsSchema as BoundsSchemaLike | undefined);
+    if (reason) return reason;
+  }
+  return null;
 }
 
 // ─── Module state ───────────────────────────────────────────────────────────
@@ -715,6 +791,11 @@ export function loadManifests(integrationsDir?: string): number {
       const contextReason = invalidManifestContextReason(manifest);
       if (contextReason) {
         console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${contextReason}`);
+        continue;
+      }
+      const overrideProfilesReason = invalidManifestOverrideProfilesReason(manifest);
+      if (overrideProfilesReason) {
+        console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${overrideProfilesReason}`);
         continue;
       }
       const readGateReason = invalidManifestReadGateReason(manifest);

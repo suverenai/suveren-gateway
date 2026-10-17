@@ -402,9 +402,12 @@ export interface IntegrationManifest {
     extraParams?: Record<string, string>;
   } | null;
   /** Per-tool gating. Typed only where the UI reads it — `actionLabel` names
-   *  what a tool DOES, in words, for the receipts list. */
+   *  what a tool DOES, in words, for the receipts list; `profile` is area
+   *  per tool (a connector may span several areas; an override may name its
+   *  OWN profile instead of the manifest's — see integration-grouping.ts's
+   *  `groupEntriesByArea`). */
   toolGating?: {
-    overrides?: Record<string, { actionLabel?: string; summary?: string; display?: { currencyField?: string } } | null>;
+    overrides?: Record<string, { profile?: string; actionLabel?: string; summary?: string; display?: { currencyField?: string } } | null>;
   } | null;
   /** Declares a simulation mode: the credential field holding it and its default. Drives the "Simulation" badge. */
   simulation?: { field: string; default: string } | null;
