@@ -18,6 +18,10 @@
  * once per ticket (ExecutionJournal enforces that), so there is never a
  * reason to keep more than the one outcome.
  *
+ * Automatic executions (no proposal) are kept too, since UI spec §14: an
+ * automatic ticket shows what the tool answered. They carry no proposalId
+ * and are keyed by ticket id instead (one execution per ticket, same rule).
+ *
  * Persistence mirrors outcome-outbox.ts: plaintext until the vault key
  * arrives, then AES-256-GCM encrypted, with plaintext migration and deletion.
  */
@@ -28,7 +32,8 @@ import { dirname, join } from 'node:path';
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 
 export interface ExecutionResultEntry {
-  proposalId: string;
+  /** Review path only — absent for an automatic execution (keyed by ticketId). */
+  proposalId?: string;
   ticketId: string;
   /** True on success (the tool's result); false on failure (the error text). */
   ok: boolean;
@@ -107,15 +112,21 @@ export class ExecutionResultStore {
     return this.vaultKey === null && existsSync(this.encryptedFilePath);
   }
 
-  /** Record the outcome of one execution. Replaces any prior entry for the same proposal. */
+  /**
+   * Record the outcome of one execution. Replaces any prior entry for the
+   * same proposal — or, for an automatic execution (no proposalId), for the
+   * same ticket.
+   */
   record(
-    input: { proposalId: string; ticketId: string; ok: boolean; text: string; structuredContent?: Record<string, unknown> },
+    input: { proposalId?: string; ticketId: string; ok: boolean; text: string; structuredContent?: Record<string, unknown> },
     now: number = nowSec(),
   ): void {
     const capped = capResult(input.text, input.structuredContent);
-    this.entries = this.entries.filter(e => e.proposalId !== input.proposalId);
+    this.entries = input.proposalId !== undefined
+      ? this.entries.filter(e => e.proposalId !== input.proposalId)
+      : this.entries.filter(e => e.proposalId !== undefined || e.ticketId !== input.ticketId);
     this.entries.push({
-      proposalId: input.proposalId,
+      ...(input.proposalId !== undefined ? { proposalId: input.proposalId } : {}),
       ticketId: input.ticketId,
       ok: input.ok,
       text: capped.text,
@@ -130,6 +141,14 @@ export class ExecutionResultStore {
   /** The retained outcome for a proposal, or undefined if never recorded (or pruned). */
   get(proposalId: string): ExecutionResultEntry | undefined {
     return this.entries.find(e => e.proposalId === proposalId);
+  }
+
+  /** The retained outcome of the execution under a ticket (either path), newest first. */
+  getByTicket(ticketId: string): ExecutionResultEntry | undefined {
+    for (let i = this.entries.length - 1; i >= 0; i--) {
+      if (this.entries[i].ticketId === ticketId) return this.entries[i];
+    }
+    return undefined;
   }
 
   /** Diagnostic / tests. */

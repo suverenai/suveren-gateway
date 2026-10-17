@@ -19,7 +19,17 @@ import type { IntegrationManifest } from './sp-client';
 
 export type ApprovalViewKind = 'text' | 'markdown' | 'list' | 'money' | 'profile' | 'profile-limits' | 'profile-scope';
 export type ApprovalView = Record<string, { label?: string; kind?: ApprovalViewKind; currencyArg?: string; profileArg?: string }>;
-export interface ToolDisplay { inputSchema?: Record<string, unknown>; approvalView?: ApprovalView }
+/** The manifest's arg → executionContext mapping (gateway tool-gating-types.ts ExecutionMappingValue). */
+export type ExecutionMappingValue =
+  | string
+  | { field: string; divisor?: number; transform?: string }
+  | Array<{ field: string; divisor?: number; transform?: string }>;
+export interface ToolDisplay {
+  inputSchema?: Record<string, unknown>;
+  approvalView?: ApprovalView;
+  /** Which args the signed ticket also carries, and as which field (UI spec §14.1 "in the ticket"). */
+  executionMapping?: Record<string, ExecutionMappingValue>;
+}
 
 export type RowKind = ApprovalViewKind | 'object';
 export interface ArgRow {

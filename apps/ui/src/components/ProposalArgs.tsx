@@ -53,7 +53,10 @@ function ProfileName({ row }: { row: ArgRow }) {
   );
 }
 
-function Value({ row, altText }: { row: ArgRow; altText?: string }) {
+/** One argument's value, rendered by its display kind — shared with the
+ *  ticket's "What was sent" box (TicketWhatWasDone, UI spec §14) so the two
+ *  can never show the same value differently. */
+export function ArgValue({ row, altText }: { row: ArgRow; altText?: string }) {
   switch (row.kind) {
     case 'profile': return <ProfileName row={row} />;
     case 'profile-limits': return <ProfileFields row={row} which="limits" />;
@@ -118,7 +121,7 @@ export function ProposalArgs({ args, display, heading = 'Details', requestRefArg
             <dd style={{ color: 'var(--text-primary)', margin: 0, wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}>
               {row.key === requestRefArg
                 ? <span data-testid="request-ref" title={plain(row.value)}>the message shown under Request</span>
-                : <Value row={row} altText={altText} />}
+                : <ArgValue row={row} altText={altText} />}
             </dd>
           </Fragment>
         ))}

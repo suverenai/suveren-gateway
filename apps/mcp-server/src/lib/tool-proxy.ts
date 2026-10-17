@@ -1488,6 +1488,11 @@ function createGatedToolHandlerInner(
             // Automatic path has no proposal, so without this the archive
             // would hold a hash of content it cannot reproduce.
             boundContent: binding?.boundContent,
+            // UI spec §14 — what this call sends, exactly the object the
+            // journal's argsHash is computed from below (`hashToolArgs(args)`),
+            // so the ticket view can show it and check it. Same write, so it
+            // is as fail-closed and as encrypted as the rest of the entry.
+            sentArgs: args,
           });
         } catch (err) {
           // The ticket didn't verify — either its signature disagrees with
@@ -1823,15 +1828,47 @@ function createGatedToolHandlerInner(
           try {
             const result = await integrationManager.callTool(tool.integrationId, tool.originalName, outgoingArgs);
             state.executionJournal.complete(receiptId, 'done');
+            recordAutomaticOutcome(state, receiptId, result);
             return result;
           } catch (err) {
             state.executionJournal.complete(receiptId, 'failed');
+            recordAutomaticOutcome(state, receiptId, undefined, err);
             throw err;
           }
         }
         return integrationManager.callTool(tool.integrationId, tool.originalName, outgoingArgs);
     }
   });
+}
+
+/**
+ * Keep what an automatic execution's tool answered (UI spec §14.2), keyed by
+ * its ticket — the automatic-path twin of commitments.ts's
+ * recordExecutionOutcome, same store, caps, encryption and retention.
+ * Best-effort AFTER the call: the action has already run, so a store failure
+ * must never turn its result into an error for the caller. Optional chaining
+ * keeps partial SharedState test fixtures working.
+ */
+function recordAutomaticOutcome(
+  state: SharedState,
+  ticketId: string,
+  result: { content?: unknown; isError?: unknown; structuredContent?: unknown } | undefined,
+  thrown?: unknown,
+): void {
+  try {
+    if (!result) {
+      const msg = thrown instanceof Error ? thrown.message : String(thrown);
+      state.executionResults?.record({ ticketId, ok: false, text: `The tool call threw: ${msg}` });
+      return;
+    }
+    const text = (result.content as Array<{ text?: string }> | undefined)?.[0]?.text ?? JSON.stringify(result);
+    const structured = result.structuredContent && typeof result.structuredContent === 'object' && !Array.isArray(result.structuredContent)
+      ? result.structuredContent as Record<string, unknown>
+      : undefined;
+    state.executionResults?.record({ ticketId, ok: result.isError !== true, text, structuredContent: structured });
+  } catch (err) {
+    console.error(`[Suveren MCP] Could not record the execution result for ticket ${ticketId}:`, err);
+  }
 }
 
 /** The refusal an agent gets for a listed tool no mandate covers — says what to do. */

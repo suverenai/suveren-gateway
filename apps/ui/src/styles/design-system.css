@@ -3944,28 +3944,43 @@ body.is-updating .simulation-banner {
 .au10-dot-ai { background: var(--prov-ai); }
 .au10-dot-sys { background: var(--prov-system); }
 
-/* ── AU6 ticket card: "What was done" (work-plan.md "Added 2026-10-09";
-   approved mockup: temp/mockups/gateway-ux-v7.html §3)
-   components/TicketWhatWasDone.tsx, ReceiptCard.tsx, ActionCard.tsx. */
-.ticket-done-box { background: var(--bg-elevated); border: 1px solid var(--border); border-left: 3px solid var(--prov-sealed); border-radius: 0.5rem; padding: 0.75rem 0.875rem; margin-bottom: 0.75rem; font-size: 0.85rem; }
-.ticket-done-box h4 { font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-tertiary); margin-bottom: 0.3rem; }
-.ticket-done-loading { border-color: var(--border); color: var(--text-tertiary); font-size: 0.82rem; }
-.ticket-done-off-device, .ticket-done-box[data-bound="none"] { border-color: var(--border); background: var(--bg-main); }
-.ticket-done-mismatch { border: 2px solid var(--text-primary); background: var(--bg-elevated); }
-.ticket-done-unchecked { border-color: var(--border); background: var(--bg-main); }
+/* ── Ticket content: "What was sent" + "Result" (UI spec §14, signed off
+   2026-10-17; mockup temp/ticket-content-mockup/index.html)
+   components/TicketWhatWasDone.tsx, ReceiptCard.tsx, ActionCard.tsx.
+   Two levels told apart by FORM only: sealed = left frame + bold values
+   (§2.2); recorded = plain box, normal weight. The only colours: system
+   values in --prov-system (§14.2), a failed check in --check-failed with
+   ✕ + bold (§2.1). */
+.ticket-sent-box { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-3) var(--space-4); margin-bottom: var(--space-3); font-size: var(--text-body-sm); }
+.ticket-sent-box.is-sealed { border-left: 3px solid var(--prov-sealed); }
+.ticket-sent-box h4 { font-size: var(--text-micro); font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-primary); margin: 0 0 var(--space-2); }
+.ticket-sent-box h4 .ticket-sent-q { font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--text-muted); margin-left: 0.4rem; }
+.ticket-sent-fields { display: grid; grid-template-columns: minmax(6rem, max-content) 1fr; gap: 0.25rem var(--space-4); margin: 0; }
+.ticket-sent-fields dt { color: var(--text-muted); align-self: start; }
+.ticket-sent-fields dd { margin: 0; word-break: break-word; white-space: pre-wrap; }
+.ticket-sent-box.is-sealed .ticket-sent-fields dd.is-sealed { font-weight: 700; }
+.ticket-sent-fields dd.is-system { color: var(--prov-system); }
+.ticket-sent-text { margin: 0; white-space: pre-wrap; word-break: break-word; }
+.ticket-sent-box.is-sealed .ticket-sent-text.is-sealed { font-weight: 700; }
+.ticket-sent-text.is-system { color: var(--prov-system); }
+.ticket-sent-tag { display: inline-block; font-size: 0.65rem; font-weight: 700; border: 1px solid var(--text-primary); border-radius: var(--radius-sm); padding: 0 0.4rem; margin-left: 0.4rem; color: var(--text-primary); white-space: nowrap; vertical-align: 1px; }
+.ticket-sent-sub { font-size: var(--text-caption); color: var(--text-muted); margin: var(--space-3) 0 var(--space-2); padding-top: var(--space-2); border-top: 1px dashed var(--border-strong); }
+.ticket-sent-check { font-size: var(--text-caption); color: var(--text-primary); margin: var(--space-2) 0 0; }
+.ticket-sent-check.is-failed { color: var(--check-failed); font-weight: 700; }
+.ticket-sent-check.is-neutral { color: var(--text-muted); }
+.ticket-sent-empty { color: var(--text-muted); font-style: italic; margin: 0; }
+.ticket-sent-loading { color: var(--text-muted); }
+/* Shared with TicketWhatYouSaw.tsx's notes. */
 .ticket-done-note { font-size: 0.78rem; color: var(--text-tertiary); margin: 0.4rem 0 0; line-height: 1.45; }
 .ticket-done-note-ok { color: var(--text-primary); font-weight: 600; }
 .ticket-done-note-bad { color: var(--text-primary); font-weight: 700; }
 .ticket-done-note-neutral { color: var(--text-tertiary); }
-.ticket-done-fields { display: grid; grid-template-columns: max-content 1fr; gap: 0.3rem 0.75rem; margin: 0.4rem 0 0; }
-.ticket-done-field-row { display: contents; }
-.ticket-done-field-row dt { color: var(--text-tertiary); white-space: nowrap; align-self: start; }
-.ticket-done-field-row dd { margin: 0; word-break: break-word; }
+@media (max-width: 40rem) { .ticket-sent-fields { grid-template-columns: 1fr; } .ticket-sent-fields dd { margin-bottom: var(--space-1); } }
 
 /* ── AU10 §8.4 ticket card: "What you saw" (doc/au10-request-context.md;
    mockup temp/au10-mockup/index.html variant 6)
    components/TicketWhatYouSaw.tsx, ReceiptCard.tsx. Same chrome as
-   .ticket-done-box, one class per ShownStatus (lib/au10-shown-view.ts). */
+   .ticket-sent-box, one class per ShownStatus (lib/au10-shown-view.ts). */
 .ticket-box { background: var(--bg-elevated); border: 1px solid var(--border); border-left: 3px solid var(--prov-sealed); border-radius: 0.5rem; padding: 0.75rem 0.875rem; margin-bottom: 0.75rem; font-size: 0.85rem; }
 .ticket-box h4 { font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-tertiary); margin-bottom: 0.3rem; }
 .ticket-shown-off-device, .ticket-shown-unchecked { border-color: var(--border); background: var(--bg-main); }

@@ -127,7 +127,7 @@ export function ReceiptCard({
       {/* Headline: what happened, in words. */}
       <div className="receipt-head">
         <span className="receipt-what" data-testid="ticket-headline">
-          <TicketHeadline proposalId={receipt.proposalId} tool={receipt.action} manifests={manifests} label={actionLabel(receipt, manifests)} />
+          <TicketHeadline ticketId={receipt.id} timestamp={receipt.timestamp} proposalId={receipt.proposalId} tool={receipt.action} manifests={manifests} label={actionLabel(receipt, manifests)} />
         </span>
         <span className="receipt-tag">{wasReviewed(receipt) ? 'approved' : 'automatic'}</span>
         {receipt.contentHash && (
@@ -151,10 +151,10 @@ export function ReceiptCard({
       {open && (<>
       <div className="receipt-when">{formatDate(receipt.timestamp)}</div>
 
-      {/* "What was done" FIRST — the ticket's bound content (sealed), or the
-          checked values when it binds none, or an off-device notice. See
-          components/TicketWhatWasDone.tsx (AU6). */}
-      <TicketWhatWasDone receipt={receipt} profile={profile} />
+      {/* "What was sent" FIRST — sealed in the ticket, or recorded by this
+          gateway, then what the tool answered (UI spec §14). See
+          components/TicketWhatWasDone.tsx. */}
+      <TicketWhatWasDone receipt={receipt} manifests={manifests} />
 
       {/* AU10 §8.4 — "What you saw": only meaningful for a ticket that ran
           via a committed (review-mode) proposal — an automatic action's

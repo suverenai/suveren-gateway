@@ -47,6 +47,7 @@ import type { SPProposal } from '../src/lib/sp-client';
 import { resolveWhoLabel } from '../src/lib/who-label';
 import { outcomeEntryFor } from '../src/lib/outcome-outbox';
 import { decryptRejectionNote } from '../src/lib/proposal-content';
+import { checkSentArgs, resultView, headlineArgs } from '../src/lib/ticket-content';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { resolveAsUrl, resolvePinTls, validatePinTlsForUrl } from '../src/lib/as-config';
@@ -927,6 +928,46 @@ app.get('/internal/evidence', internalOnly, (_req: Request, res: Response) => {
     authorizations,
     gates: state.gateStore.getAll(),
   });
+});
+
+// UI spec §14 — one ticket's local content beyond its archive entry: the
+// check of its archived args against the execution journal (computed here,
+// where `hashToolArgs` lives — see ticket-content.ts) and what the tool
+// answered. Local only, like /internal/evidence; never reaches the AS.
+app.get('/internal/evidence/ticket/:id', internalOnly, (req: Request, res: Response) => {
+  if (state.receiptArchive.isLocked() || state.executionResults.isLocked()) {
+    res.status(503).json({ error: 'Vault locked — the evidence archive is encrypted until sign-in.' });
+    return;
+  }
+  const id = String(req.params.id);
+  const entry = state.receiptArchive.getReceipts().find(r => (r.receipt as { id?: unknown }).id === id);
+  if (!entry) {
+    res.status(404).json({ error: 'No local copy of this ticket' });
+    return;
+  }
+  let journalRow;
+  try {
+    journalRow = state.executionJournal.get(id);
+  } catch {
+    // An unreadable journal means no check can run — say `unchecked`, never
+    // `mismatch`, and never fail the whole view over it.
+    journalRow = undefined;
+  }
+  res.json({
+    sentArgsCheck: checkSentArgs(entry, journalRow),
+    result: resultView(state.executionResults.getByTicket(id)),
+  });
+});
+
+// UI spec §13.4 — the values automatic tickets' headlines are built from,
+// one map for the whole Tickets list (trimmed: a headline needs a template's
+// few short values, never a whole body). See ticket-content.ts#headlineArgs.
+app.get('/internal/evidence/headlines', internalOnly, (_req: Request, res: Response) => {
+  if (state.receiptArchive.isLocked()) {
+    res.status(503).json({ error: 'Vault locked — the evidence archive is encrypted until sign-in.' });
+    return;
+  }
+  res.json({ headlines: headlineArgs(state.receiptArchive.getReceipts()) });
 });
 
 // ─── Report (evidence-backed reports, work-plan "evidence-backed reports") ──

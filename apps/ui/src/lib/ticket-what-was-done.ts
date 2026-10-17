@@ -1,95 +1,216 @@
 /**
- * "What was done" — the ticket's bound content, shown FIRST on the ticket
- * card (AU6, work-plan.md "Added 2026-10-09"; approved mockup
- * temp/mockups/gateway-ux-v7.html §3). Pure and unit-tested — the component
- * (components/TicketWhatWasDone.tsx) only renders what these functions
- * return and runs the one async hash check (lib/content-hash.ts).
+ * What a ticket shows about its content (UI spec §13.4 + §14, signed off
+ * 2026-10-17; mockup temp/ticket-content-mockup/index.html): the headline
+ * sentence, "What was sent" at one of two levels, and "Result". Pure and
+ * unit-tested — components/TicketWhatWasDone.tsx and TicketHeadline.tsx only
+ * render what these functions return and run the one async hash check
+ * (lib/content-hash.ts).
  *
- * Five states (2026-10-10 correction: a real receipt can carry bound
- * content with no signed hash to check it against — that is NOT the same
- * claim as a check that ran and failed, and showing it as "mismatch" would
- * be a false alarm: it says a check failed when none ran):
- *  - `verified`   — the archived `boundContent` recomputes to the ticket's
- *                   own signed `contentHash`. Only state that may say "this
- *                   exact content is bound by hash".
- *  - `mismatch`   — a hash check DID run (a signed `contentHash` and
- *                   `contentBinding` both exist) and the recomputed hash
- *                   does NOT match — shown in red, the only state that may
- *                   say the content looks altered.
- *  - `unchecked`  — bound content exists but the ticket carries no signed
- *                   hash/binding to check it against at all — content is
- *                   shown, neutrally, with neither a bound claim nor an
- *                   alarm.
- *  - `none`       — the ticket carries no bound content at all (the profile
- *                   declares no content_binding, or this action type is
- *                   outside it) — show the checked values instead.
- *  - `off-device` — no local archive entry for this ticket at all (ran on
- *                   another device, or predates local archiving).
+ * Two levels, told apart by form, never by colour (§14.1):
+ *  - `sealed`   — the signed ticket carries a fingerprint (`contentHash`) of
+ *                 the content and the archived preimage is here to check it.
+ *                 Only this level may say "sealed in the ticket".
+ *  - `recorded` — this gateway's own copy of what it executed (`sentArgs`,
+ *                 or an approved ticket's archived proposal args), checked
+ *                 by the control plane against the execution journal's hash
+ *                 (`sentArgsCheck`). Never claims more than "recorded".
+ * plus `not-kept` (an entry from before this release, or args too large to
+ * keep) and `off-device` (no local archive entry at all).
+ *
+ * No AI text is presented as anything else, no lookups in other systems:
+ * every value is the ticket's own, or this device's evidence of it, labelled
+ * from the connector manifest (approval view), never from the AI.
  */
-import type { AgentProfile } from '@hap/core';
-import { contextFieldLabel } from './approval-view';
-import { renderPreviewBody, type RenderedPreview } from './preview-render';
+import { argRows, humanizeKey, type ArgRow, type ExecutionMappingValue, type ToolDisplay } from './approval-view';
+import { sealedSummary } from './approval-summary';
+import type { IntegrationManifest, SentArgsCheck, TicketResult } from './sp-client';
 
-export type TicketBoundStatus = 'verified' | 'mismatch' | 'unchecked' | 'none' | 'off-device';
+// ─── Headline (§13.4) ────────────────────────────────────────────────────────
 
 /**
- * The status to show, given what is already known.
- *
- * `hasHashToCheck` is whether the ticket even carries a signed `contentHash`
- * + `contentBinding` to check against — false means no check was possible,
- * which is `unchecked`, never `mismatch` (that would claim a check failed
- * when none ran). `hashVerified` is the async check's result, read only
- * when `hasHashToCheck` is true; callers are expected to wait for it to
- * resolve before calling this (components/TicketWhatWasDone.tsx does).
+ * The ticket's headline: the manifest's summary sentence, filled from what
+ * the approver saw (approved — the proposal's sealed args) or from what this
+ * gateway sent (automatic — `sentArgs`, or object bound content). An
+ * approved ticket never borrows the automatic source, and vice versa: the
+ * sentence must come from what that kind of ticket actually rests on. No
+ * template, a missing value, or nothing readable here → the manifest's
+ * past-tense `label` ("Contact created").
  */
-export function ticketBoundStatus(opts: {
+export function ticketHeadline(opts: {
+  tool: string;
+  manifests: IntegrationManifest[] | undefined;
+  label: string;
+  approved: boolean;
+  proposalArgs?: Record<string, unknown> | null;
+  sentArgs?: Record<string, unknown> | null;
+}): string {
+  const args = opts.approved ? opts.proposalArgs : opts.sentArgs;
+  return sealedSummary(opts.tool, args ?? null, opts.manifests) ?? opts.label;
+}
+
+// ─── Level (§14.1, §14.3) ────────────────────────────────────────────────────
+
+export type SentView =
+  | { level: 'off-device' }
+  | { level: 'not-kept'; reason: 'older' | 'too_large' }
+  | {
+      level: 'sealed';
+      /** The fingerprint check against the signed ticket's `contentHash`. */
+      check: 'ok' | 'failed';
+      bound: Record<string, unknown> | string;
+      /** Visible sent values the binding does not cover (e.g. an email's bcc) — recorded, not sealed. */
+      extras: Record<string, unknown> | null;
+      argsCheck: SentArgsCheck;
+    }
+  | { level: 'recorded'; content: Record<string, unknown> | string; check: SentArgsCheck };
+
+/**
+ * Which level to show. `hashVerified` is the async fingerprint check's
+ * result, read only when `hasHashToCheck` (the ticket carries a signed
+ * `contentHash` + `contentBinding`); callers wait for it before calling this.
+ */
+export function sentView(opts: {
   offDevice: boolean;
-  boundContent: Record<string, unknown> | string | undefined;
+  boundContent?: Record<string, unknown> | string;
+  sentArgs?: Record<string, unknown>;
+  sentArgsOmitted?: 'too_large';
+  /** An approved ticket's archived proposal args — the review path's sent args (not stored twice). */
+  proposalArgs?: Record<string, unknown>;
   hasHashToCheck: boolean;
   hashVerified: boolean | null;
-}): TicketBoundStatus {
-  if (opts.offDevice) return 'off-device';
-  if (opts.boundContent === undefined) return 'none';
-  if (!opts.hasHashToCheck) return 'unchecked';
-  return opts.hashVerified === true ? 'verified' : 'mismatch';
+  sentArgsCheck?: SentArgsCheck;
+}): SentView {
+  if (opts.offDevice) return { level: 'off-device' };
+  const args = opts.sentArgs ?? opts.proposalArgs;
+  const argsCheck: SentArgsCheck = args ? (opts.sentArgsCheck ?? 'unchecked') : 'unchecked';
+  if (opts.hasHashToCheck && opts.boundContent !== undefined) {
+    return {
+      level: 'sealed',
+      check: opts.hashVerified === true ? 'ok' : 'failed',
+      bound: opts.boundContent,
+      extras: args ? unsealedExtras(opts.boundContent, args) : null,
+      argsCheck,
+    };
+  }
+  if (args) return { level: 'recorded', content: args, check: argsCheck };
+  // Bound content kept but no signed fingerprint to check it against: still
+  // only a record — never "sealed" on a check that could not run.
+  if (opts.boundContent !== undefined) return { level: 'recorded', content: opts.boundContent, check: 'unchecked' };
+  return { level: 'not-kept', reason: opts.sentArgsOmitted === 'too_large' ? 'too_large' : 'older' };
 }
 
 /**
- * Renders the archived bound content generically — nested rows, no raw
- * JSON, numbers rounded with the exact value on hover — by reusing
- * lib/preview-render.ts's rules rather than a second rendering engine.
- * `fields` is the profile's `content_binding.fields` (v2 declarations;
- * v1/whole-payload bindings have none), respected as the display order
- * when present; every field otherwise shows, labelled by its humanized key
- * (content_binding carries no per-field display names to draw from).
+ * The sent values the binding does NOT cover: keys absent from object bound
+ * content, or — for a text binding, which binds one field's string — every
+ * value other than that string. Hidden keys (`_source`, `ticket_id` …) are
+ * dropped later by `sentRows`. Null when nothing is left.
  */
-export function boundContentView(
-  boundContent: Record<string, unknown> | string | undefined,
-  fields?: string[],
-): RenderedPreview {
-  if (boundContent === undefined) return { kind: 'empty', fields: [], moreFields: [], totalFields: 0 };
-  if (typeof boundContent === 'string') return renderPreviewBody({ text: boundContent });
-  return renderPreviewBody({ structured: boundContent }, { fields });
+export function unsealedExtras(
+  bound: Record<string, unknown> | string,
+  args: Record<string, unknown>,
+): Record<string, unknown> | null {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(args)) {
+    if (typeof bound === 'string' ? v === bound : k in bound) continue;
+    out[k] = v;
+  }
+  return Object.keys(out).length > 0 ? out : null;
 }
 
-export interface CheckedValueRow {
-  key: string;
-  label: string;
-  value: string;
+// ─── Rows (§14.1) ────────────────────────────────────────────────────────────
+
+export interface SentRow extends ArgRow {
+  /** The signed ticket's executionContext carries this value too (via the manifest's executionMapping). */
+  inTicket: boolean;
 }
 
 /**
- * The fallback for a ticket with NO bound content: the executionContext
- * values the ticket actually signs, labelled from the profile's scope
- * schema the same way AU1's scopeSummary/allowedSummary do (never a
- * field-name guess) — e.g. "Value 480", "Discount pct 0".
+ * Labels and order from the connector manifest's approval view — the same
+ * `argRows` the approval card uses, so hidden keys (`_source`, `ticket_id`,
+ * secrets) are hidden here too — plus the "in the ticket" tag.
  */
-export function checkedValueRows(
+export function sentRows(
+  args: Record<string, unknown>,
+  display: ToolDisplay | undefined,
   executionContext: Record<string, unknown> | undefined,
-  profile: AgentProfile | null | undefined,
-): CheckedValueRow[] {
-  if (!executionContext) return [];
-  return Object.entries(executionContext)
-    .filter(([, v]) => v !== undefined && v !== null && v !== '')
-    .map(([key, v]) => ({ key, label: contextFieldLabel(key, profile).label, value: String(v) }));
+): SentRow[] {
+  return argRows(args, display).map((row) => ({
+    ...row,
+    inTicket: inTicket(row.value, display?.executionMapping?.[row.key], executionContext),
+  }));
+}
+
+function sameValue(a: unknown, b: unknown): boolean {
+  if (String(a) === String(b)) return true;
+  if (typeof a === 'boolean' || typeof b === 'boolean' || a === '' || b === '' || a === null || b === null) return false;
+  const na = Number(a);
+  const nb = Number(b);
+  return Number.isFinite(na) && Number.isFinite(nb) && na === nb;
+}
+
+/**
+ * True only when the signed ticket verifiably carries THIS value: a direct
+ * mapping with an equal value ("0.10" ≡ 0.1), a divisor mapping that divides
+ * to it, or a `join` of it. A field derived from the value without being it
+ * (`length` → a count, `join_domains` → domains only) is not tagged — the
+ * ticket does not carry the value itself.
+ */
+export function inTicket(
+  value: unknown,
+  mapping: ExecutionMappingValue | undefined,
+  executionContext: Record<string, unknown> | undefined,
+): boolean {
+  if (!mapping || !executionContext || value === undefined || value === null) return false;
+  const entries = typeof mapping === 'string' ? [{ field: mapping }] : Array.isArray(mapping) ? mapping : [mapping];
+  return entries.some((m: { field: string; divisor?: number; transform?: string }) => {
+    if (!(m.field in executionContext)) return false;
+    const signed = executionContext[m.field];
+    if (m.divisor) return Number.isFinite(Number(value)) && Number(value) / m.divisor === Number(signed);
+    if (m.transform === 'join') {
+      const arr = Array.isArray(value) ? value : [value];
+      return arr.map((x) => (x && typeof x === 'object' && 'email' in x ? String((x as { email: unknown }).email) : String(x))).join(',') === String(signed);
+    }
+    if (m.transform) return false;
+    return sameValue(value, signed);
+  });
+}
+
+// ─── Result (§14.2) ──────────────────────────────────────────────────────────
+
+export interface ResultRow { key: string; label: string; value: string }
+
+export type ResultBody =
+  | { kind: 'rows'; rows: ResultRow[] }
+  | { kind: 'text'; text: string };
+
+function display(v: unknown): string {
+  if (v === null || v === undefined) return '—';
+  if (typeof v === 'string') return v;
+  if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+  try { return JSON.stringify(v); } catch { return String(v); }
+}
+
+function asRows(obj: Record<string, unknown>): ResultRow[] {
+  return Object.entries(obj).map(([key, v]) => ({ key, label: humanizeKey(key), value: display(v) }));
+}
+
+/**
+ * What the tool answered, as the Result box shows it: `structuredContent`
+ * fields as rows; else a text that is itself one JSON object (most
+ * connectors answer `{"id":"c-1042"}` as text) as rows of the same values;
+ * else the text as it came. Values are never reworded, only laid out.
+ */
+export function resultBody(result: TicketResult): ResultBody {
+  const sc = result.structuredContent;
+  if (sc && typeof sc === 'object' && !Array.isArray(sc) && Object.keys(sc).length > 0) return { kind: 'rows', rows: asRows(sc) };
+  const t = result.text.trim();
+  if (t.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(t) as unknown;
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && Object.keys(parsed).length > 0) {
+        return { kind: 'rows', rows: asRows(parsed as Record<string, unknown>) };
+      }
+    } catch { /* not JSON — shown as text */ }
+  }
+  return { kind: 'text', text: result.text };
 }
