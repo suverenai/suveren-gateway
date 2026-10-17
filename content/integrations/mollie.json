@@ -2,7 +2,7 @@
   "id": "mollie",
   "name": "Mollie",
   "version": "1.0.0",
-  "description": "Payments, subscriptions, and billing",
+  "description": "Payment links, payments and payment customers — profile: Payments (charge@0.7). Invoices come from the ERP; Mollie never emails customers.",
   "icon": "card",
   "profile": "charge",
   "npmPackage": "mcp-remote",
@@ -37,18 +37,269 @@
       }
     },
     "overrides": {
+      "ListProfiles": {
+        "category": "read",
+        "readGovernance": "none",
+        "readGovernanceReason": "Returns the organisation's own payment profile configuration (names, websites, status) — no customer or payment data."
+      },
+      "GetProfile": {
+        "category": "read",
+        "readGovernance": "none",
+        "readGovernanceReason": "Returns one of the organisation's own payment profile configurations — no customer or payment data."
+      },
+      "GetOrganizationDetails": {
+        "category": "read",
+        "readGovernance": "none",
+        "readGovernanceReason": "Returns the connected Mollie organisation's own name/registration details — no customer or payment data."
+      },
+      "GetPaymentMethod": {
+        "category": "read",
+        "readGovernance": "none",
+        "readGovernanceReason": "Returns the organisation's own payment-method configuration (name, image, min/max amount) — no customer or payment data."
+      },
+      "ListPaymentMethods": {
+        "category": "read",
+        "readGovernance": "none",
+        "readGovernanceReason": "Returns which payment methods are enabled for the organisation — no customer or payment data."
+      },
+      "ListAllPaymentMethods": {
+        "category": "read",
+        "readGovernance": "none",
+        "readGovernanceReason": "Returns every payment method Mollie offers — no customer or payment data."
+      },
+      "GetTerminal": {
+        "category": "read",
+        "readGovernance": "none",
+        "readGovernanceReason": "Returns a card-terminal's own configuration (name, status) — no customer or payment data."
+      },
+      "ListTerminals": {
+        "category": "read",
+        "readGovernance": "none",
+        "readGovernanceReason": "Returns the organisation's card terminals — no customer or payment data."
+      },
+      "GetClientDocs": {
+        "category": "read",
+        "readGovernance": "none",
+        "readGovernanceReason": "Returns Mollie's own API documentation — no customer or payment data."
+      },
+      "fetch_docs": {
+        "category": "read",
+        "readGovernance": "none",
+        "readGovernanceReason": "Returns Mollie's own API documentation — no customer or payment data."
+      },
+      "list_doc_sources": {
+        "category": "read",
+        "readGovernance": "none",
+        "readGovernanceReason": "Lists Mollie's own documentation sources — no customer or payment data."
+      },
+      "GetPayment": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "ListPaymentsForGivenCustomer": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "ListPaymentsForGivenPaymentLink": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "ListPaymentsFromGivenIDOnwards": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "ListPaymentsWithinSpecifiedTimeInterval": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "SearchPaymentsByDescription": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "AggregatePayments": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "GetPaymentLink": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "ListPaymentLinks": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "ListPaymentLinksWithinSpecifiedTimeInterval": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "AggregatePaymentLinks": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "ListCustomers": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "SearchCustomers": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "GetMandate": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "ListMandates": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "GetCapture": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "ListCaptures": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "GetBalance": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "GetPrimaryBalance": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "ListBalances": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "GetBalanceReport": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "ListBalanceTransactions": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "GetSettlement": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "GetNextSettlement": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "GetOpenSettlement": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "ListSettlements": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "ListSettlementCaptures": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "ListSettlementChargebacks": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "ListSettlementPayments": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "ListSettlementRefunds": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "GetSubscription": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "ListAllSubscriptions": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "ListCustomerSubscriptions": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "ListSubscriptionPayments": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "GetInvoice": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "ListInvoices": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "GetSalesInvoice": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "ListSalesInvoices": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "GetWebhook": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "ListWebhooks": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "GetWebhookEvent": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
       "CreatePayment": {
         "summary": "Payment of {amount|money}: {description|short}",
         "actionLabel": "Payment created",
-        "executionMapping": {
-          "amount": "amount",
-          "currency": "currency"
-        },
-        "staticExecution": {
-          "action_type": "charge"
-        }
-      },
-      "CreatePaymentForCustomer": {
         "executionMapping": {
           "amount": "amount",
           "currency": "currency"
@@ -69,35 +320,17 @@
         }
       },
       "CreateCapture": {
+        "summary": "Capture of {amount_value|money} from payment {payment_id}",
+        "actionLabel": "Capture created",
+        "display": {
+          "currencyField": "amount_currency"
+        },
         "executionMapping": {
           "amount_value": "amount",
           "amount_currency": "currency"
         },
         "staticExecution": {
           "action_type": "charge"
-        }
-      },
-      "CreateSubscription": {
-        "executionMapping": {
-          "amount_value": "amount",
-          "amount_currency": "currency"
-        },
-        "staticExecution": {
-          "action_type": "subscribe"
-        }
-      },
-      "UpdateSubscription": {
-        "executionMapping": {},
-        "staticExecution": {
-          "action_type": "subscribe"
-        }
-      },
-      "CancelSubscription": {
-        "summary": "Cancel a subscription",
-        "actionLabel": "Subscription cancelled",
-        "executionMapping": {},
-        "staticExecution": {
-          "action_type": "subscribe"
         }
       },
       "CreateCustomer": {
@@ -105,93 +338,115 @@
         "actionLabel": "Payment customer created",
         "executionMapping": {},
         "staticExecution": {
-          "action_type": "charge"
+          "action_type": "manage"
         }
       },
       "UpdateCustomer": {
+        "summary": "Update payment customer {customer_id}[ — {name}]",
+        "actionLabel": "Payment customer updated",
         "executionMapping": {},
         "staticExecution": {
-          "action_type": "charge"
-        }
-      },
-      "CreateMandate": {
-        "executionMapping": {},
-        "staticExecution": {
-          "action_type": "charge"
+          "action_type": "manage"
         }
       },
       "RevokeMandate": {
-        "summary": "Revoke a payment mandate",
-        "actionLabel": "Payment mandate revoked",
+        "summary": "Revoke payment authorisation {mandate_id} for customer {customer_id}",
+        "actionLabel": "Payment authorisation revoked",
         "executionMapping": {},
         "staticExecution": {
-          "action_type": "charge"
+          "action_type": "manage"
         }
+      },
+      "CreateSalesInvoice": {
+        "category": "disabled",
+        "_reason": "Invoices come from the ERP (Invoicing profile); Mollie no longer issues invoices."
+      },
+      "UpdateSalesInvoice": {
+        "category": "disabled",
+        "_reason": "Invoices come from the ERP; Mollie no longer issues or changes invoices (also the only way to mark one paid by hand, which is excluded by decision)."
+      },
+      "CancelSubscription": {
+        "category": "disabled",
+        "_reason": "Subscriptions are read-only in Payments 0.7 — there is no action type to charge this against."
+      },
+      "UpdateSubscription": {
+        "category": "disabled",
+        "_reason": "Subscriptions are read-only in Payments 0.7; the new amount is also inside an opaque request_body and cannot be mapped to a bound."
       },
       "CreateWebhook": {
-        "executionMapping": {},
-        "staticExecution": {
-          "action_type": "charge"
-        }
+        "category": "disabled",
+        "_reason": "Sends payment events to any URL the agent names — a data leak path. Webhooks are set up by a person in the dashboard."
       },
       "UpdateWebhook": {
-        "executionMapping": {},
-        "staticExecution": {
-          "action_type": "charge"
-        }
+        "category": "disabled",
+        "_reason": "Sends payment events to any URL the agent names — a data leak path. Webhooks are set up by a person in the dashboard."
       },
-      "ListProfiles": {
-        "category": "read",
-        "readGovernance": "none",
-        "readGovernanceReason": "Returns the organisation's own payment profile configuration (names, websites, status) — no customer or payment data."
+      "TestWebhook": {
+        "category": "disabled",
+        "_reason": "Could be pointed at any URL to exfiltrate payment data."
       },
-      "GetOrganizationDetails": {
-        "category": "read",
-        "readGovernance": "none",
-        "readGovernanceReason": "Returns the connected Mollie organisation's own name/registration details — no customer or payment data."
+      "CreateDraftTransfer": {
+        "category": "disabled",
+        "_reason": "Outgoing money to the organisation's own bank account — spend side, not covered by Payments 0.7."
+      },
+      "CancelDraftTransfer": {
+        "category": "disabled",
+        "_reason": "Outgoing money — spend side, not covered by Payments 0.7."
+      },
+      "GetDraftTransfer": {
+        "category": "disabled",
+        "_reason": "Spend side (payouts) — outside Payments; not covered by this profile."
+      },
+      "ListDraftTransfers": {
+        "category": "disabled",
+        "_reason": "Spend side (payouts) — outside Payments; not covered by this profile."
+      },
+      "ListBusinessAccounts": {
+        "category": "disabled",
+        "_reason": "Spend side (the organisation's own bank accounts) — outside Payments; not covered by this profile."
       }
     }
   },
   "templates": [
     {
-      "name": "Monitor Payments",
-      "description": "Read-only. View payments, balances, invoices, and transaction history.",
+      "name": "See Payments",
+      "description": "Read-only. Look up payments, payment links, customers, mandates, settlements and balances.",
       "risk": "low",
       "mode": "automatic",
       "bounds": {
+        "read_access": "unlimited",
         "amount_max": "0",
         "amount_daily_max": "0",
         "amount_monthly_max": "0",
-        "transaction_count_daily_max": "100"
+        "charge_daily_max": "0",
+        "manage_daily_max": "0"
       },
       "context": {
-        "currency": "EUR",
-        "action_type": "charge"
+        "currency": "EUR"
       },
-      "intent": "Allow the agent to monitor payments and view transaction history. Read-only — no payments are created or modified.",
+      "intent": "Allow the agent to look up payments, payment links, payment customers, settlements and balances. Read-only — nothing is created or changed.",
       "ttl": 2592000,
       "tags": [
-        "read-only",
-        "EUR",
-        "100 ops/day"
+        "read-only"
       ]
     },
     {
-      "name": "Small Payments",
-      "description": "Create payment links and process charges up to €50 per transaction.",
+      "name": "Payment Links up to €50",
+      "description": "Create payment links and payments up to €50 per transaction. No read access.",
       "risk": "medium",
       "mode": "automatic",
       "bounds": {
+        "read_access": "none",
         "amount_max": "50",
         "amount_daily_max": "200",
         "amount_monthly_max": "2000",
-        "transaction_count_daily_max": "20"
+        "charge_daily_max": "20",
+        "manage_daily_max": "0"
       },
       "context": {
-        "currency": "EUR",
-        "action_type": "charge"
+        "currency": "EUR"
       },
-      "intent": "Allow the agent to create payment links and process small charges for routine invoicing. Max €50 per transaction, €200 per day.",
+      "intent": "Allow the agent to create payment links and payments for routine amounts. An open-amount link, or one above €50, is refused. No lookups.",
       "ttl": 2592000,
       "tags": [
         "€50/tx",
@@ -201,20 +456,21 @@
     },
     {
       "name": "Full Payment Management",
-      "description": "Payments, refunds, and subscriptions. Every action requires your approval.",
+      "description": "Payments, payment links and payment customers. Every write requires your approval.",
       "risk": "high",
       "mode": "review",
       "bounds": {
+        "read_access": "unlimited",
         "amount_max": "1000",
         "amount_daily_max": "5000",
         "amount_monthly_max": "20000",
-        "transaction_count_daily_max": "50"
+        "charge_daily_max": "50",
+        "manage_daily_max": "20"
       },
       "context": {
-        "currency": "EUR",
-        "action_type": "charge,refund,subscribe"
+        "currency": "EUR"
       },
-      "intent": "Full payment management — create payments, issue refunds, manage subscriptions. Every write action requires human review before execution.",
+      "intent": "Full payment management — create payments and payment links, manage payment customers, and look up payments, links, customers and balances. Every write requires human review before execution.",
       "ttl": 2592000,
       "tags": [
         "€1,000/tx",
