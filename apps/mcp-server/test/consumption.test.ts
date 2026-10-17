@@ -218,6 +218,7 @@ describe('formatConsumptionCompact (v0.4 kind-driven)', () => {
         field: 'amount_daily_max',
         kind: 'sum',
         of: 'amount',
+        currency: 'EUR',
       },
       {
         label: 'Running monthly charge total',
@@ -227,6 +228,7 @@ describe('formatConsumptionCompact (v0.4 kind-driven)', () => {
         field: 'amount_monthly_max',
         kind: 'sum',
         of: 'amount',
+        currency: 'EUR',
       },
       {
         label: 'Running daily transaction count',
@@ -239,10 +241,10 @@ describe('formatConsumptionCompact (v0.4 kind-driven)', () => {
     ];
 
     const result = formatConsumptionCompact(entries);
-    expect(result).toBe('$234/$500 daily, $1280/$5000 monthly, 8/20 daily');
+    expect(result).toBe('234.00 EUR/500.00 EUR daily, 1280.00 EUR/5000.00 EUR monthly, 8/20 daily');
   });
 
-  it('formats a spend-based sum with currency prefix', () => {
+  it('a sum without a known currency shows no currency — none is guessed', () => {
     const entries: ConsumptionEntry[] = [
       {
         label: 'Running daily spend',
@@ -254,7 +256,7 @@ describe('formatConsumptionCompact (v0.4 kind-driven)', () => {
         of: 'spend',
       },
     ];
-    expect(formatConsumptionCompact(entries)).toBe('$42/$100 daily');
+    expect(formatConsumptionCompact(entries)).toBe('42/100 daily');
   });
 
   it('omits currency prefix for non-currency sums', () => {
@@ -289,6 +291,48 @@ describe('formatConsumptionCompact (v0.4 kind-driven)', () => {
       },
     ];
     expect(formatConsumptionCompact(entries)).toBe('');
+  });
+});
+
+describe('money sums: currency and float noise (2026-10-17: "$0.30000000000000004/$100" on an EUR mandate)', () => {
+  const euro = (current: number, limit: number): ConsumptionEntry => ({
+    label: 'Monthly charge limit', current, limit, window: 'monthly',
+    field: 'amount_monthly_max', kind: 'sum', of: 'amount', currency: 'EUR',
+  });
+
+  it('three 0.10 charges read 0.30 EUR, never a float tail or a dollar sign', () => {
+    const entries = [euro(0.1 + 0.1 + 0.1, 100)];
+    expect(formatConsumptionCompact(entries)).toBe('0.30 EUR/100.00 EUR monthly');
+    expect(formatConsumptionFull(entries)).toContain('0.30 EUR / 100.00 EUR');
+  });
+
+  it('a non-money sum loses the float tail too', () => {
+    const e: ConsumptionEntry = { ...euro(0.1 + 0.2, 10), currency: undefined };
+    expect(formatConsumptionCompact([e])).toBe('0.3/10 monthly');
+  });
+
+  it("the currency comes from the mandate's own currency first, else the bound's declared unit", () => {
+    const log = { sumByWindow: vi.fn().mockReturnValue(0.1 + 0.2) } as unknown as ExecutionLog;
+    const profile = mockChargeProfile();
+    (profile.boundsSchema!.fields.amount_monthly_max as { unit?: string }).unit = 'currency:EUR';
+
+    const fromUnit = getConsumptionState(mockAuth(), log, profile).find(e => e.field === 'amount_monthly_max');
+    expect(fromUnit?.currency).toBe('EUR');
+
+    const auth = mockAuth();
+    auth.frame = { ...auth.frame, currency: 'CHF' };
+    const fromMandate = getConsumptionState(auth, log, profile).find(e => e.field === 'amount_monthly_max');
+    expect(fromMandate?.currency).toBe('CHF');
+    expect(formatConsumptionCompact([fromMandate!])).toBe('0.30 CHF/5000.00 CHF monthly');
+
+    const count = getConsumptionState(auth, log, profile).find(e => e.kind === 'count');
+    expect(count?.currency).toBeUndefined();
+  });
+
+  it('no mandate currency and no unit: no currency at all', () => {
+    const log = { sumByWindow: vi.fn().mockReturnValue(5) } as unknown as ExecutionLog;
+    const e = getConsumptionState(mockAuth(), log, mockChargeProfile()).find(x => x.field === 'amount_daily_max');
+    expect(e?.currency).toBeUndefined();
   });
 });
 
