@@ -28,6 +28,7 @@ import { profileIdentity, isTestSetupAction } from '../lib/profile-identity';
 import { useProfile } from '../lib/profile-cache';
 import { useAreaCatalog } from '../lib/area-catalog';
 import { ObjectLine, MandateLine } from './ObjectLine';
+import { TicketHeadline } from './TicketHeadline';
 import { areaName, systemName, shortTicketId, ticketTime } from '../lib/core-objects';
 import { TicketWhatWasDone } from './TicketWhatWasDone';
 import { TicketWhatYouSaw } from './TicketWhatYouSaw';
@@ -125,7 +126,9 @@ export function ReceiptCard({
         />
       {/* Headline: what happened, in words. */}
       <div className="receipt-head">
-        <span className="receipt-what">{actionLabel(receipt, manifests)}</span>
+        <span className="receipt-what" data-testid="ticket-headline">
+          <TicketHeadline proposalId={receipt.proposalId} tool={receipt.action} manifests={manifests} label={actionLabel(receipt, manifests)} />
+        </span>
         <span className="receipt-tag">{wasReviewed(receipt) ? 'approved' : 'automatic'}</span>
         {receipt.contentHash && (
           <span

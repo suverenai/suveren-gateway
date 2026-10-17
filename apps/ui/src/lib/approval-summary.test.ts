@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { IntegrationManifest } from './sp-client';
-import { renderSummary, approvalSummary, summaryTemplateProblem } from './approval-summary';
+import { renderSummary, approvalSummary, sealedSummary, summaryTemplateProblem } from './approval-summary';
 
 const manifests = [
   {
@@ -49,5 +49,16 @@ describe('summaryTemplateProblem', () => {
     expect(summaryTemplateProblem('Hi {name')).toMatch(/unbalanced/);
     expect(summaryTemplateProblem('{a|bold}')).toMatch(/unknown format/);
     expect(summaryTemplateProblem('{a b}')).toMatch(/invalid field path/);
+  });
+});
+
+describe('sealedSummary — a ticket headline from the approved proposal (no fallback)', () => {
+  it('the same sentence the approver saw', () => {
+    expect(sealedSummary('crm__create_contact', { name: 'Dora Review' }, manifests)).toBe('Create contact Dora Review');
+  });
+  it('null without args, without a template, or with a required value missing — the ticket keeps its own label', () => {
+    expect(sealedSummary('crm__create_contact', null, manifests)).toBeNull();
+    expect(sealedSummary('crm__delete_contact', { name: 'x' }, manifests)).toBeNull();
+    expect(sealedSummary('mail__send_message', { to: ['a@b.de'] }, manifests)).toBeNull();
   });
 });
