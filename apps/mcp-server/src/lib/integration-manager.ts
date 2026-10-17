@@ -1298,6 +1298,13 @@ export class IntegrationManager {
   /**
    * Resolve gating config for a tool from the profile's toolGating section.
    * Returns the runtime ToolGatingConfig that tool-proxy.ts consumes.
+   *
+   * Area per tool: an override may declare its OWN `profile`, gating that
+   * one tool under a different area than the rest of the connector (e.g.
+   * an ERP's `create_invoice` under `invoicing` while `create_quote` stays
+   * under the manifest's own `sales`). `resolvedProfile` below is what every
+   * downstream consumer reads as this tool's governing profile — falling
+   * back to the manifest-level `profileId` when the override doesn't say.
    */
   private resolveToolGating(
     profileId: string | null,
@@ -1314,6 +1321,7 @@ export class IntegrationManager {
       // ProfileToolGatingEntry type doesn't declare — read them from a
       // widened view (the base `override` keeps its type for the write return).
       const ext = (override ?? {}) as {
+        profile?: string;
         category?: string;
         boundField?: string;
         requiredValue?: string;
@@ -1330,15 +1338,17 @@ export class IntegrationManager {
         contextKeys?: Record<string, string>;
         sourceFromArg?: { kind: string; arg: string };
       };
+      // Area per tool — an override's own `profile` wins over the manifest's.
+      const resolvedProfile = ext.profile ?? profileId;
       // 'disabled' = declared unavailable → block at the gating layer.
       if (ext.category === 'disabled') {
-        return { profile: profileId, executionMapping: {}, category: 'disabled' };
+        return { profile: resolvedProfile, executionMapping: {}, category: 'disabled' };
       }
       // null override or { category: "read" } = read-only tool (still requires
       // authorization, plus any declared static read gate + per-item read adapter).
       if (override === null || ext.category === 'read') {
         return {
-          profile: profileId,
+          profile: resolvedProfile,
           executionMapping: {},
           category: 'read',
           boundField: ext.boundField,
@@ -1353,7 +1363,7 @@ export class IntegrationManager {
         };
       }
       return {
-        profile: profileId,
+        profile: resolvedProfile,
         executionMapping: override.executionMapping,
         staticExecution: override.staticExecution,
         // Which argument the receipt binds to. This resolver is an explicit

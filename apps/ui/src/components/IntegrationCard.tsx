@@ -4,6 +4,7 @@ import { spClient, type IntegrationManifest, type McpIntegrationStatus } from '.
 import type { IntegrationState } from '../contexts/IntegrationStatusContext';
 import { isSimulated } from '../lib/simulation';
 import { integrationIcon } from '../lib/integration-icon';
+import { areasOf as areaProfilesOf } from '../lib/integration-grouping';
 
 /**
  * Does this integration read anything with an age dimension?
@@ -426,7 +427,7 @@ export function IntegrationCard({ manifest, integration, state, onStatusChange, 
         <summary>Details</summary>
         <div className="int-meta">
           <span className="int-k">What</span><span>{manifest.description}</span>
-          {manifest.profile && (<><span className="int-k">Profile</span><span>{manifest.profile}</span></>)}
+          {manifest.profile && (<><span className="int-k">Profile</span><span>{areaProfilesOf(manifest).join(', ')}</span></>)}
           {manifest.oauth && (<><span className="int-k">Scopes</span><span>{manifest.oauth.scopes?.join(', ') || '—'}</span></>)}
           {integration && (<><span className="int-k">Tools</span><span>{integration.toolCount} gated</span></>)}
         </div>

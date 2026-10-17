@@ -8,7 +8,8 @@ import { declaresSimulation } from './simulation';
 import { resolveAreaName, areaIcon, type AreaIconName, type AreaCatalogEntry } from './area';
 
 export interface AreaGroupedEntries {
-  /** The manifest's `profile` field — already the short id (§13.3). */
+  /** The area's short id (§13.3) — the manifest's own `profile`, or an
+   *  override's own `profile` (area per tool). */
   shortId: string;
   icon: AreaIconName;
   name: string;
@@ -16,12 +17,30 @@ export interface AreaGroupedEntries {
 }
 
 /**
- * Connectors grouped under their area heading (UI spec §13.3 — "tools
- * grouped under their area heading"). A connector serving several areas
- * would appear under each (today's `IntegrationManifest.profile` is a
- * single short id, so no shipped connector does this yet; grouping by that
- * one field already satisfies the rule and extends cleanly if it becomes a
- * list). Alphabetical — this is a lookup list, not a most-used ranking.
+ * Every area a connector's tools serve: the manifest's own `profile`, plus
+ * any per-tool override's own `profile` (area per tool — a connector may
+ * span several areas, e.g. an ERP's sales AND invoicing tools). A manifest
+ * with no per-tool override profiles returns just its own `profile`,
+ * unchanged from before this existed. Exported for any display that names
+ * a connector's area(s) outside the grouped list itself (e.g.
+ * IntegrationCard's "Profile" detail line).
+ */
+export function areasOf(manifest: IntegrationEntry['manifest']): string[] {
+  const out = [manifest.profile];
+  for (const entry of Object.values(manifest.toolGating?.overrides ?? {})) {
+    const p = entry?.profile;
+    if (p && !out.includes(p)) out.push(p);
+  }
+  return out;
+}
+
+/**
+ * Connectors grouped under their area heading (UI spec §13.3 — "a tool
+ * serving several areas appears under each"). A connector serving several
+ * areas (an override naming its own `profile`) appears under every one of
+ * them, carrying its FULL entry each time — the Integrations page lists the
+ * connector, not a filtered view of its tools. Alphabetical — this is a
+ * lookup list, not a most-used ranking.
  */
 export function groupEntriesByArea(
   entries: IntegrationEntry[],
@@ -29,13 +48,14 @@ export function groupEntriesByArea(
 ): AreaGroupedEntries[] {
   const groups = new Map<string, AreaGroupedEntries>();
   for (const e of entries) {
-    const shortId = e.manifest.profile;
-    let g = groups.get(shortId);
-    if (!g) {
-      g = { shortId, icon: areaIcon(shortId), name: resolveAreaName(shortId, catalog), entries: [] };
-      groups.set(shortId, g);
+    for (const shortId of areasOf(e.manifest)) {
+      let g = groups.get(shortId);
+      if (!g) {
+        g = { shortId, icon: areaIcon(shortId), name: resolveAreaName(shortId, catalog), entries: [] };
+        groups.set(shortId, g);
+      }
+      g.entries.push(e);
     }
-    g.entries.push(e);
   }
   return [...groups.values()].sort((a, b) => a.name.localeCompare(b.name));
 }

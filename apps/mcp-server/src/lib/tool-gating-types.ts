@@ -212,6 +212,22 @@ export interface SourceFromArgDeclaration {
 export interface ProfileToolGatingEntry {
   executionMapping: Record<string, ExecutionMappingValue>;
   staticExecution?: Record<string, string | number>;
+  /**
+   * Area per tool — a connector may span several profiles (e.g. an ERP's
+   * sales AND invoicing tools). When set, THIS tool is gated under this
+   * profile instead of the manifest's own `profile`. Must resolve (full id
+   * or short name) to a known profile — validated at manifest-load time
+   * (manifest-loader.ts's `invalidManifestOverrideProfilesReason`) and
+   * covered by the D6 read-gate check for ITS OWN profile, not the
+   * manifest's (manifest-loader.ts's `invalidManifestReadGateReason`).
+   * Every consumer that reads a tool's governing profile must read it off
+   * the tool's OWN resolved `ToolGatingConfig.profile`
+   * (integration-manager.ts's `resolveToolGating`), never off
+   * `manifest.profile` directly — see tool-proxy.ts, mandate-brief.ts,
+   * agent-visibility.ts, receipt-footer.ts, tools/authorizations.ts,
+   * tools/integrations.ts.
+   */
+  profile?: string;
   /** Read-only tools: require authorization but no execution context checks */
   category?: 'read';
   /** AU3/AU8 — see {@link ToolPreviewConfig} / {@link PreviewReadConfig}. */

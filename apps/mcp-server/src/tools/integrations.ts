@@ -33,43 +33,46 @@ export function listIntegrationsHandler(
     const auths = state.getEnrichedAuthorizations();
     const statuses = integrationManager.getStatus();
 
-    const integrations = statuses
+    // A connector may span several areas (area per tool — an override may
+    // name its own `profile`). List it once PER distinct profile its tools
+    // resolve to, not just the first tool's — otherwise a connector serving
+    // e.g. both "sales" and "invoicing" would only ever be shown under
+    // whichever area happened to be its FIRST discovered tool.
+    type Row = { id: string; profile: string | null; status: string };
+    const integrations: Row[] = statuses
       .filter(s => s.running)
-      .map(s => {
-        // Find the profile for this integration from its tools
+      .flatMap((s): Row[] => {
         const tools = integrationManager.getAllTools().filter(t => t.integrationId === s.id);
-        const profile = tools[0]?.gating?.profile ?? null;
+        const profiles = [...new Set(tools.map(t => t.gating?.profile).filter((p): p is string => !!p))];
 
-        // Count active authorizations matching this profile
-        const matchingAuths = profile
-          ? auths.filter(a => a.complete && profileMatches(a.profileId, profile))
-          : [];
-
-        // Determine status
-        let status: string;
-        if (matchingAuths.length > 0) {
-          // Find soonest expiry
-          const soonestExpiry = Math.min(
-            ...matchingAuths.flatMap(a =>
-              a.attestations.map(att => att.expiresAt)
-            ),
-          );
-          const remainingMs = soonestExpiry * 1000 - Date.now();
-          const remainingMin = Math.ceil(remainingMs / 60000);
-          status = `authorized (${matchingAuths.length} path${matchingAuths.length > 1 ? 's' : ''}, ${remainingMin} min remaining)`;
-        } else {
-          // Check if there are expired auths
-          const allProfileAuths = profile
-            ? auths.filter(a => profileMatches(a.profileId, profile))
-            : [];
-          status = allProfileAuths.length > 0 ? 'expired' : 'no authorization';
+        if (profiles.length === 0) {
+          return [{ id: s.id, profile: null, status: 'no authorization' }];
         }
 
-        return {
-          id: s.id,
-          profile: profile ? shortProfileName(profile) : null,
-          status,
-        };
+        return profiles.map(profile => {
+          // Count active authorizations matching this profile
+          const matchingAuths = auths.filter(a => a.complete && profileMatches(a.profileId, profile));
+
+          // Determine status
+          let status: string;
+          if (matchingAuths.length > 0) {
+            // Find soonest expiry
+            const soonestExpiry = Math.min(
+              ...matchingAuths.flatMap(a =>
+                a.attestations.map(att => att.expiresAt)
+              ),
+            );
+            const remainingMs = soonestExpiry * 1000 - Date.now();
+            const remainingMin = Math.ceil(remainingMs / 60000);
+            status = `authorized (${matchingAuths.length} path${matchingAuths.length > 1 ? 's' : ''}, ${remainingMin} min remaining)`;
+          } else {
+            // Check if there are expired auths
+            const allProfileAuths = auths.filter(a => profileMatches(a.profileId, profile));
+            status = allProfileAuths.length > 0 ? 'expired' : 'no authorization';
+          }
+
+          return { id: s.id, profile: shortProfileName(profile), status };
+        });
       });
 
     const text = integrations.length === 0
