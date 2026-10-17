@@ -33,6 +33,12 @@ export interface ConsumptionEntry {
   kind: 'sum' | 'count';
   /** For sum kind: the execution context field being summed (e.g., "amount", "spend"). Undefined for count. */
   of?: string;
+  /**
+   * For a money sum: the currency code it is counted in — the mandate's own
+   * single `currency`, else the bound's declared `unit` ("currency:EUR").
+   * Undefined when neither says; then no currency is shown at all.
+   */
+  currency?: string;
 }
 
 /**
@@ -83,6 +89,16 @@ export function getConsumptionState(
       boundActionTypes(fieldName, fieldDef),
     );
 
+    const unit = (fieldDef as { unit?: unknown }).unit;
+    const frameCurrency = auth.frame.currency;
+    const currency = bt.kind !== 'cumulative_sum'
+      ? undefined
+      : typeof frameCurrency === 'string' && /^[A-Z]{3}$/.test(frameCurrency)
+        ? frameCurrency
+        : typeof unit === 'string' && unit.startsWith('currency:')
+          ? unit.slice('currency:'.length)
+          : undefined;
+
     entries.push({
       // displayName FIRST: description is prose meant for a human reading the
       // profile, and rendering it here produced a paragraph where a label
@@ -94,21 +110,27 @@ export function getConsumptionState(
       field: fieldName,
       kind: bt.kind === 'cumulative_sum' ? 'sum' : 'count',
       of: bt.kind === 'cumulative_sum' ? bt.of : undefined,
+      ...(currency ? { currency } : {}),
     });
   }
 
   return entries;
 }
 
-// Which "of" field names indicate a currency amount (so we prefix with "$").
-// This is a display hint, not a semantic check — the underlying enforcement
-// doesn't care. Profiles that use different names for money-denominated
-// cumulative sums can be added here without affecting correctness.
-const CURRENCY_SUM_FIELDS = new Set(['amount', 'spend']);
+/**
+ * A summed value as text: money to two decimals with its currency code
+ * ("0.30 EUR"), anything else without float noise (0.1 + 0.2 summed in the
+ * log reads "0.3", never "0.30000000000000004"). No currency is guessed: an
+ * amount without a known currency shows as a plain number.
+ */
+function formatSum(value: number, currency: string | undefined): string {
+  if (currency) return `${value.toFixed(2)} ${currency}`;
+  return String(Number(value.toFixed(6)));
+}
 
 /**
  * Format consumption as a compact single line for the mandate brief.
- * e.g. "$234/$500 daily, 8/20 tx daily"
+ * e.g. "234.00 EUR/500.00 EUR daily, 8/20 daily"
  *
  * Dispatches on entry.kind (sum vs count) and entry.of (currency hint)
  * rather than parsing bound field names.
@@ -121,8 +143,7 @@ export function formatConsumptionCompact(entries: ConsumptionEntry[]): string {
     if (entry.limit === null) continue;
 
     if (entry.kind === 'sum') {
-      const prefix = entry.of && CURRENCY_SUM_FIELDS.has(entry.of) ? '$' : '';
-      parts.push(`${prefix}${entry.current}/${prefix}${entry.limit} ${entry.window}`);
+      parts.push(`${formatSum(entry.current, entry.currency)}/${formatSum(entry.limit, entry.currency)} ${entry.window}`);
     } else {
       // count kind — e.g. "3/5 daily"
       parts.push(`${entry.current}/${entry.limit} ${entry.window}`);
@@ -140,10 +161,13 @@ export function formatConsumptionFull(entries: ConsumptionEntry[]): string {
 
   const lines: string[] = [];
   for (const entry of entries) {
-    const limitStr = entry.limit !== null ? String(entry.limit) : 'unlimited';
+    const limitStr = entry.limit !== null
+      ? (entry.kind === 'sum' ? formatSum(entry.limit, entry.currency) : String(entry.limit))
+      : 'unlimited';
+    const currentStr = entry.kind === 'sum' ? formatSum(entry.current, entry.currency) : String(entry.current);
     // Pad label to align values
     const label = `${entry.label}:`;
-    lines.push(`    ${label.padEnd(30)} ${entry.current} / ${limitStr}`);
+    lines.push(`    ${label.padEnd(30)} ${currentStr} / ${limitStr}`);
   }
 
   return lines.join('\n');
