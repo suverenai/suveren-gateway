@@ -32,9 +32,9 @@
   "values": {
     "payment-link": {
       "tool": "GetPaymentLink",
-      "args": { "id": "$id" },
+      "args": { "paymentLinkId": "$id" },
       "path": "_links.paymentLink.href",
-      "allowedHosts": ["paymentlink.mollie.com", "mollie.com"]
+      "allowedHosts": ["payment-links.mollie.com"]
     }
   },
   "toolGating": {

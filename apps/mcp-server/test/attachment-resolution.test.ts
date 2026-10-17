@@ -12,7 +12,12 @@ import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { registerProfile } from '@hap/core';
 import { loadManifests } from '../src/lib/manifest-loader';
-import { resolveAttachmentsAndInserts, stripAttachmentsSealedMeta, ATTACHMENTS_SEALED_META_KEY } from '../src/lib/attachment-resolution';
+import {
+  resolveAttachmentsAndInserts,
+  finalizeAttachmentsForExecution,
+  stripAttachmentsSealedMeta,
+  ATTACHMENTS_SEALED_META_KEY,
+} from '../src/lib/attachment-resolution';
 import { ATTACHMENT_SOURCES_FIELD } from '../src/lib/attachment-policy';
 import type { IntegrationManager, DiscoveredTool } from '../src/lib/integration-manager';
 
@@ -172,7 +177,7 @@ describe('resolveAttachmentsAndInserts — attachments', () => {
     if (!result.ok) expect(result.message).toMatch(/resolve/);
   });
 
-  it('field transport: resolves an allowed reference and builds the exact {filename, contentType, contentBase64} payload', async () => {
+  it('resolve for display: seals the fingerprint but does NOT embed bytes into the outgoing args (item 3 — no bytes in a proposal)', async () => {
     const im = buildIntegrationManager({ get_document: { filename: 'invoice-2026-0003.pdf', contentType: 'application/pdf', contentBase64: PDF_BASE64, sha256: PDF_SHA256 } });
     const result = await resolveAttachmentsAndInserts(
       im, sendMessageMailTool, HYPOTHETICAL_PROFILE,
@@ -181,21 +186,61 @@ describe('resolveAttachmentsAndInserts — attachments', () => {
     );
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.args.attachments).toEqual([{ filename: 'invoice-2026-0003.pdf', contentType: 'application/pdf', contentBase64: PDF_BASE64 }]);
+      // No transport key, no bytes — field transport's own arg name ("attachments")
+      // is deleted, never re-populated at this stage.
+      expect(result.args.attachments).toBeUndefined();
       expect(result.args.insert).toBeUndefined();
+      expect(JSON.stringify(result)).not.toContain(PDF_BASE64);
       expect(result.sealed?.attachments).toEqual([
         { connector: 'erp', kind: 'invoice-pdf', id: 'inv-1', filename: 'invoice-2026-0003.pdf', contentType: 'application/pdf', sha256: PDF_SHA256, bytes: PDF_BYTES.byteLength },
       ]);
     }
   });
+});
 
-  it('mime-raw transport: resolves an allowed reference and builds a base64url "raw" payload, stripping attachments/insert', async () => {
-    const im = buildIntegrationManager({ get_document: { filename: 'invoice.pdf', contentType: 'application/pdf', contentBase64: PDF_BASE64, sha256: PDF_SHA256 } });
-    const result = await resolveAttachmentsAndInserts(
+describe('finalizeAttachmentsForExecution', () => {
+  it('is a no-op when args carry no sealed meta', async () => {
+    const im = buildIntegrationManager({});
+    const args = { to: ['x@y.com'] };
+    const result = await finalizeAttachmentsForExecution(im, 'mail', args);
+    expect(result).toEqual({ ok: true, args });
+  });
+
+  it('is a no-op when the sealed meta is present but empty', async () => {
+    const im = buildIntegrationManager({});
+    const args = { to: ['x@y.com'], [ATTACHMENTS_SEALED_META_KEY]: { attachments: [], inserts: [] } };
+    const result = await finalizeAttachmentsForExecution(im, 'mail', args);
+    expect(result).toEqual({ ok: true, args });
+  });
+
+  it('field transport: re-resolves and builds the exact {filename, contentType, contentBase64} payload', async () => {
+    const responses = { get_document: { filename: 'invoice-2026-0003.pdf', contentType: 'application/pdf', contentBase64: PDF_BASE64, sha256: PDF_SHA256 } };
+    const im = buildIntegrationManager(responses);
+    const resolved = await resolveAttachmentsAndInserts(
+      im, sendMessageMailTool, HYPOTHETICAL_PROFILE,
+      { to: ['buchhaltung@drautal.at'], subject: 'Rechnung', body: 'Anbei die Rechnung.', attachments: [{ connector: 'erp', kind: 'invoice-pdf', id: 'inv-1' }] },
+      'erp:invoice-pdf',
+    );
+    if (!resolved.ok) throw new Error('setup failed');
+    const sealedArgs = { ...resolved.args, [ATTACHMENTS_SEALED_META_KEY]: resolved.sealed };
+    const result = await finalizeAttachmentsForExecution(im, 'mail', sealedArgs);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.args.attachments).toEqual([{ filename: 'invoice-2026-0003.pdf', contentType: 'application/pdf', contentBase64: PDF_BASE64 }]);
+    }
+  });
+
+  it('mime-raw transport: re-resolves and builds a base64url "raw" payload', async () => {
+    const responses = { get_document: { filename: 'invoice.pdf', contentType: 'application/pdf', contentBase64: PDF_BASE64, sha256: PDF_SHA256 } };
+    const im = buildIntegrationManager(responses);
+    const resolved = await resolveAttachmentsAndInserts(
       im, sendMessageGmailTool, HYPOTHETICAL_PROFILE,
       { to: ['buchhaltung@drautal.at'], subject: 'Rechnung', body: 'Anbei die Rechnung.', attachments: [{ connector: 'erp', kind: 'invoice-pdf', id: 'inv-1' }] },
       'erp:invoice-pdf',
     );
+    if (!resolved.ok) throw new Error('setup failed');
+    const sealedArgs = { ...resolved.args, [ATTACHMENTS_SEALED_META_KEY]: resolved.sealed };
+    const result = await finalizeAttachmentsForExecution(im, 'gmail', sealedArgs);
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(typeof result.args.raw).toBe('string');
@@ -205,6 +250,40 @@ describe('resolveAttachmentsAndInserts — attachments', () => {
       expect(decoded).toContain('invoice.pdf');
       expect(decoded).toContain('application/pdf');
     }
+  });
+
+  it('refuses — nothing built — when the document changed since it was sealed (sha256 mismatch)', async () => {
+    const responses = { get_document: { filename: 'invoice.pdf', contentType: 'application/pdf', contentBase64: PDF_BASE64, sha256: PDF_SHA256 } };
+    const im = buildIntegrationManager(responses);
+    const resolved = await resolveAttachmentsAndInserts(
+      im, sendMessageMailTool, HYPOTHETICAL_PROFILE,
+      { to: ['x@y.com'], subject: 'S', body: 'B', attachments: [{ connector: 'erp', kind: 'invoice-pdf', id: 'inv-1' }] },
+      'erp:invoice-pdf',
+    );
+    if (!resolved.ok) throw new Error('setup failed');
+    const sealedArgs = { ...resolved.args, [ATTACHMENTS_SEALED_META_KEY]: resolved.sealed };
+    // The document changed between proposal and approval.
+    const CHANGED_BYTES = Buffer.from('%PDF-1.4 a DIFFERENT invoice');
+    responses.get_document = { filename: 'invoice.pdf', contentType: 'application/pdf', contentBase64: CHANGED_BYTES.toString('base64'), sha256: sha256(CHANGED_BYTES) };
+    const result = await finalizeAttachmentsForExecution(im, 'mail', sealedArgs);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.message).toMatch(/changed since this was approved/);
+  });
+
+  it('refuses — nothing built — when an inserted value changed since it was sealed', async () => {
+    const responses = { GetPaymentLink: { _links: { paymentLink: { href: 'https://paymentlink.mollie.com/payment/x' } } } };
+    const im = buildIntegrationManager(responses);
+    const resolved = await resolveAttachmentsAndInserts(im, sendMessageMailTool, HYPOTHETICAL_PROFILE, {
+      to: ['x@y.com'], subject: 'S', body: 'Pay here: {{link}}',
+      insert: [{ placeholder: '{{link}}', connector: 'mollie', kind: 'payment-link', id: 'pl_1' }],
+    });
+    if (!resolved.ok) throw new Error('setup failed');
+    const sealedArgs = { ...resolved.args, [ATTACHMENTS_SEALED_META_KEY]: resolved.sealed };
+    // The value read from Mollie changed between proposal and approval.
+    responses.GetPaymentLink = { _links: { paymentLink: { href: 'https://paymentlink.mollie.com/payment/DIFFERENT' } } };
+    const result = await finalizeAttachmentsForExecution(im, 'mail', sealedArgs);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.message).toMatch(/changed since this was approved/);
   });
 });
 
@@ -219,7 +298,7 @@ describe('resolveAttachmentsAndInserts — inserts', () => {
     if (result.ok) {
       expect(result.args.body).toBe('Pay here: https://paymentlink.mollie.com/payment/x');
       expect(result.args.insert).toBeUndefined();
-      expect(result.sealed?.inserts).toEqual([{ placeholder: '{{link}}', connector: 'mollie', kind: 'payment-link', value: 'https://paymentlink.mollie.com/payment/x' }]);
+      expect(result.sealed?.inserts).toEqual([{ placeholder: '{{link}}', connector: 'mollie', kind: 'payment-link', id: 'pl_1', value: 'https://paymentlink.mollie.com/payment/x' }]);
     }
   });
 

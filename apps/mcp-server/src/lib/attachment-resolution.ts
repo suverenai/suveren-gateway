@@ -1,39 +1,43 @@
 /**
- * Attachment/insert resolution — the single orchestration point tool-
- * proxy.ts calls for a write tool whose gating declares `attachmentsArg`
- * and/or `insertFields` (suveren-invoicing-plan.md §6/§7). Turns the AI's
- * references into the final outgoing call:
+ * Attachment/insert resolution — the orchestration tool-proxy.ts (automatic
+ * mode) and commitments.ts (review mode) call for a write tool whose gating
+ * declares `attachmentsArg` and/or `insertFields` (suveren-invoicing-plan.md
+ * §6/§7). Split into two phases so review mode can show + seal a proposal
+ * WITHOUT building the final byte payload, and only build it after approval:
  *
- *   1. shape-check the `attachments`/`insert` arguments (refuse bytes/typed
- *      values smuggled in, never silently drop them — attachment-
- *      reference.ts);
- *   2. policy-check each attachment reference against the mandate's
- *      allowed sources (attachment-policy.ts — today always refuses, no
- *      shipped profile declares the scope field yet);
- *   3. resolve every reference (document-source.ts / insert-values.ts),
- *      computing/verifying each document's sha256 and each value's host;
- *   4. substitute resolved values into the declared text fields
- *      (insert-values.ts's `applyInserts`) — THIS is what content binding
- *      later hashes, so the sealed text already carries the final, inserted
- *      copy;
- *   5. build the transport-specific outgoing payload (a `field` array, or a
- *      built MIME message base64url-encoded into `raw` — mime-message.ts)
- *      and remove the reference-only `attachments`/`insert` keys, which are
- *      never valid arguments on the downstream tool itself.
+ *   - {@link resolveAttachmentsAndInserts} ("resolve for display"): shape-
+ *     checks the `attachments`/`insert` arguments (refuse bytes/typed values
+ *     smuggled in — attachment-reference.ts), policy-checks each attachment
+ *     reference against the SELECTED mandate's own `allowed_attachment_sources`
+ *     scope value (attachment-policy.ts), resolves every reference
+ *     (document-source.ts / insert-values.ts — computing/verifying each
+ *     document's sha256 and each value's host), substitutes resolved insert
+ *     values into the declared text fields (insert-values.ts's
+ *     `applyInserts` — THIS is what content binding later hashes, so the
+ *     sealed text already carries the final, inserted copy), and strips the
+ *     reference-only `attachments`/`insert` keys. It does NOT embed any
+ *     attachment bytes into the outgoing call — only fingerprints
+ *     (filename/contentType/sha256/bytes) travel in the returned `sealed`
+ *     block, meant to be merged into the outgoing args as a `_`-prefixed meta
+ *     field (same convention as `_imagePreview`/`_source`) purely for local
+ *     display/storage — see tool-proxy.ts's call site for exactly how it's
+ *     attached.
+ *   - {@link finalizeAttachmentsForExecution}: given args already carrying
+ *     that sealed meta, RE-resolves each attachment/insert reference fresh
+ *     and refuses if a fingerprint/value no longer matches what was sealed
+ *     (the document or the read value changed since this was shown to a
+ *     human), then builds the transport-specific outgoing payload (a `field`
+ *     array, or a built MIME message base64url-encoded into `raw` —
+ *     mime-message.ts).
  *
- * A single refusal reason is returned as soon as any step fails — no
- * partial resolution, no "attach what you can." The returned `sealed` block
- * is meant to be merged into the outgoing args as a `_`-prefixed meta field
- * (same convention as `_imagePreview`/`_source`), purely for local display —
- * see tool-proxy.ts's call site for exactly how it's attached.
+ * The automatic path (no approval gap) calls both back to back, immediately.
+ * The review path calls only the first at proposal-submission time (so the
+ * proposal/ticket never carries attachment bytes) and the second — via
+ * commitments.ts's `executeCommitted` — only after a human approves, right
+ * before the downstream tool call.
  *
- * LIMITATION (tracked, see this task's report): called ONCE, before a
- * specific authorization is selected among several matching candidates, so
- * the policy check in step 2 cannot yet read a PARTICULAR mandate's own
- * allowed-sources value — it is always refused today because no profile
- * declares the field at all. Once a profile does, this must move to run
- * once a single authorization is chosen, so the correct mandate's value is
- * checked rather than a blanket refusal.
+ * A single refusal reason is returned as soon as any step fails — no partial
+ * resolution, no "attach what you can."
  */
 
 import type { IntegrationManager } from './integration-manager';
@@ -63,6 +67,10 @@ export interface SealedInsert {
   placeholder: string;
   connector: string;
   kind: string;
+  /** The record id this value was read from — kept so execution time can
+   *  re-resolve the SAME value (finalizeAttachmentsForExecution) rather
+   *  than trusting the sealed `value` string alone. */
+  id: string;
   value: string;
 }
 
@@ -80,9 +88,12 @@ export interface AttachmentResolutionRefusal {
 export type AttachmentResolutionResult = AttachmentResolutionOk | AttachmentResolutionRefusal;
 
 /**
- * Resolves `tool`'s own `attachmentsArg`/`insertFields` (if declared) against
- * `args`. A fast, allocation-free no-op (`{ ok: true, args }` unchanged) when
- * the tool declares neither — every other gated tool is unaffected.
+ * "Resolve for display" — resolves `tool`'s own `attachmentsArg`/
+ * `insertFields` (if declared) against `args`, against the SELECTED
+ * mandate's own allowed-sources scope value. A fast, allocation-free no-op
+ * (`{ ok: true, args }` unchanged) when the tool declares neither — every
+ * other gated tool is unaffected. Does not embed attachment bytes into the
+ * returned args — see {@link finalizeAttachmentsForExecution} for that.
  */
 export async function resolveAttachmentsAndInserts(
   integrationManager: IntegrationManager,
@@ -92,11 +103,9 @@ export async function resolveAttachmentsAndInserts(
   /**
    * The SELECTED authorization's own resolved value for
    * attachment-policy.ts's `ATTACHMENT_SOURCES_FIELD` scope field, when one
-   * is available. Threaded through purely so this function is provably
-   * correct end to end (tests pass a value and see an attachment resolved
-   * and sent); tool-proxy.ts's current call site never supplies one — see
-   * this module's header LIMITATION note — so production behaviour is
-   * unchanged: every attachment is refused until that wiring lands.
+   * is available (undefined for a profile that doesn't declare it, or a
+   * mandate that leaves it unset — isAttachmentSourceAllowed then refuses
+   * every attachment, fail-closed).
    */
   allowedSourcesValue?: string,
 ): Promise<AttachmentResolutionResult> {
@@ -114,12 +123,6 @@ export async function resolveAttachmentsAndInserts(
   }
 
   const sealedAttachments: SealedAttachment[] = [];
-  // Kept alongside `sealedAttachments` (same order, same length) so the
-  // transport-building step below can use the actual bytes without
-  // re-fetching — `sealed` is the display/local-archive summary and
-  // deliberately omits `contentBase64`; this array is the one place the
-  // bytes live for the rest of this call.
-  const resolvedDocs: ResolvedDocument[] = [];
   if (refsResult.refs.length > 0) {
     const profile = getProfile(profileId);
     for (const ref of refsResult.refs) {
@@ -131,7 +134,6 @@ export async function resolveAttachmentsAndInserts(
       if (!resolved.ok) {
         return { ok: false, message: `Refused: could not resolve attachment "${ref.connector}:${ref.kind}/${ref.id}" — ${resolved.error.message}` };
       }
-      resolvedDocs.push(resolved.doc);
       sealedAttachments.push({
         connector: ref.connector,
         kind: ref.kind,
@@ -153,7 +155,7 @@ export async function resolveAttachmentsAndInserts(
         return { ok: false, message: `Refused: could not resolve insert "${ref.connector}:${ref.kind}/${ref.id}" for "${ref.placeholder}" — ${resolved.error.message}` };
       }
       resolvedInserts.push(resolved.insert);
-      sealedInserts.push({ placeholder: ref.placeholder, connector: ref.connector, kind: ref.kind, value: resolved.insert.value });
+      sealedInserts.push({ placeholder: ref.placeholder, connector: ref.connector, kind: ref.kind, id: ref.id, value: resolved.insert.value });
     }
   }
 
@@ -181,13 +183,91 @@ export async function resolveAttachmentsAndInserts(
   if (attachmentsArg) delete outgoing[attachmentsArg];
   delete outgoing.insert;
 
-  if (sealedAttachments.length > 0) {
-    const manifest = getManifest(tool.integrationId);
+  // NOTE: no transport payload is built here — see finalizeAttachmentsForExecution.
+  // `sealedAttachments` carries fingerprints only, never bytes.
+
+  return {
+    ok: true,
+    args: outgoing,
+    ...(sealedAttachments.length > 0 || sealedInserts.length > 0
+      ? { sealed: { attachments: sealedAttachments, inserts: sealedInserts } }
+      : {}),
+  };
+}
+
+function toStringArray(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map(v => String(v));
+  if (typeof value === 'string' && value) return [value];
+  return [];
+}
+
+/**
+ * Finalizes a call already carrying `ATTACHMENTS_SEALED_META_KEY` (set by
+ * {@link resolveAttachmentsAndInserts}) into the actual outgoing payload:
+ * re-resolves every sealed attachment/insert reference FRESH and refuses if
+ * anything no longer matches what was sealed (the document changed, or the
+ * inserted value changed, since this was shown to a human — item 2/3 of
+ * "emails carry documents by reference"), then builds the transport-
+ * specific payload (field array or MIME `raw`).
+ *
+ * A no-op (`{ ok: true, args }` unchanged) when `args` carries no sealed
+ * meta, or an empty one — nothing to finalize. Safe to call unconditionally
+ * before executing ANY gated write.
+ */
+export async function finalizeAttachmentsForExecution(
+  integrationManager: IntegrationManager,
+  integrationId: string,
+  args: Record<string, unknown>,
+): Promise<AttachmentResolutionResult> {
+  const sealed = (args as Record<string, unknown>)[ATTACHMENTS_SEALED_META_KEY] as
+    | { attachments: SealedAttachment[]; inserts: SealedInsert[] }
+    | undefined;
+  if (!sealed || (sealed.attachments.length === 0 && sealed.inserts.length === 0)) {
+    return { ok: true, args };
+  }
+
+  const resolvedDocs: ResolvedDocument[] = [];
+  for (const a of sealed.attachments) {
+    const resolved = await resolveDocumentReference(integrationManager, { connector: a.connector, kind: a.kind, id: a.id });
+    if (!resolved.ok) {
+      return {
+        ok: false,
+        message: `Refused: could not re-resolve attachment "${a.filename}" (${a.connector}:${a.kind}/${a.id}) at execution — ${resolved.error.message}`,
+      };
+    }
+    if (resolved.doc.sha256 !== a.sha256) {
+      return {
+        ok: false,
+        message: `Refused: attachment "${a.filename}" (${a.connector}:${a.kind}/${a.id}) changed since this was approved — its fingerprint no longer matches.`,
+      };
+    }
+    resolvedDocs.push(resolved.doc);
+  }
+
+  for (const i of sealed.inserts) {
+    const resolved = await resolveInsertValue(integrationManager, { connector: i.connector, kind: i.kind, id: i.id, placeholder: i.placeholder });
+    if (!resolved.ok) {
+      return {
+        ok: false,
+        message: `Refused: could not re-resolve the inserted value for "${i.placeholder}" (${i.connector}:${i.kind}/${i.id}) at execution — ${resolved.error.message}`,
+      };
+    }
+    if (resolved.insert.value !== i.value) {
+      return {
+        ok: false,
+        message: `Refused: the value inserted for "${i.placeholder}" (${i.connector}:${i.kind}/${i.id}) changed since this was approved.`,
+      };
+    }
+  }
+
+  let outgoing: Record<string, unknown> = { ...args };
+  if (resolvedDocs.length > 0) {
+    const manifest = getManifest(integrationId);
     const transport = manifest?.attachments;
     if (!transport) {
       // Validated at manifest-load time (invalidManifestAttachmentsReason) —
       // this is defence in depth, not expected to be reachable.
-      return { ok: false, message: `Refused: "${tool.integrationId}" declares no attachments transport.` };
+      return { ok: false, message: `Refused: "${integrationId}" declares no attachments transport.` };
     }
     if (transport.transport === 'field') {
       outgoing[transport.arg] = resolvedDocs.map(d => ({
@@ -211,19 +291,7 @@ export async function resolveAttachmentsAndInserts(
     }
   }
 
-  return {
-    ok: true,
-    args: outgoing,
-    ...(sealedAttachments.length > 0 || sealedInserts.length > 0
-      ? { sealed: { attachments: sealedAttachments, inserts: sealedInserts } }
-      : {}),
-  };
-}
-
-function toStringArray(value: unknown): string[] {
-  if (Array.isArray(value)) return value.map(v => String(v));
-  if (typeof value === 'string' && value) return [value];
-  return [];
+  return { ok: true, args: outgoing };
 }
 
 /** Meta key `resolveAttachmentsAndInserts` attaches for local display only

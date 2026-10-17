@@ -21,7 +21,14 @@ import { computeContentBinding, attachTicketId } from './content-binding';
 import { hashToolArgs } from './execution-journal';
 import { computeSubmissionPreviewHash } from './preview';
 import { stripSourceLink } from './request-context';
-import { resolveAttachmentsAndInserts, ATTACHMENTS_SEALED_META_KEY, stripAttachmentsSealedMeta } from './attachment-resolution';
+import {
+  resolveAttachmentsAndInserts,
+  finalizeAttachmentsForExecution,
+  ATTACHMENTS_SEALED_META_KEY,
+  stripAttachmentsSealedMeta,
+} from './attachment-resolution';
+import { validateDocumentReferences, validateInsertReferences } from './attachment-reference';
+import { ATTACHMENT_SOURCES_FIELD } from './attachment-policy';
 import { verifyTicket, TicketBindingMismatchError } from './ticket-verify';
 import { notifyControlPlane } from './cp-notify';
 import { resolveWhoLabel } from './who-label';
@@ -1026,20 +1033,31 @@ function createGatedToolHandlerInner(
 
   // Write tools: full execution context verification
   return lockedGuard(async (args: Record<string, unknown>) => {
-    // Documents/inserts by reference (suveren-invoicing-plan.md §6/§7) — a
-    // no-op for every tool that declares neither `attachmentsArg` nor
-    // `insertFields`. Resolves BEFORE execution mapping/content binding, so
-    // the rest of this function sees only the final, substituted args
-    // (e.g. a body with its {{placeholder}} already replaced) — exactly
-    // what gets bound/sealed and sent downstream.
+    // Documents/inserts by reference (suveren-invoicing-plan.md §6/§7) —
+    // shape-validate the `attachments`/`insert` arguments EARLY, before any
+    // mandate is selected (pure, no I/O — never fetches a document; refuses
+    // a malformed reference regardless of which mandate might apply, same
+    // discipline as the declaredActionType check below). The actual
+    // resolution (policy check against a SPECIFIC mandate's own
+    // allowed-sources scope value, then fetching/sealing) happens per
+    // candidate inside attemptWithCandidates below — it cannot run here,
+    // before a mandate is chosen (item 1 of "emails carry documents by
+    // reference" — attachment-policy.ts).
+    let attachmentSourcesForExecution: string | undefined;
     if (tool.gating?.attachmentsArg || tool.gating?.insertFields?.length) {
-      const resolved = await resolveAttachmentsAndInserts(integrationManager, tool, profile!, args);
-      if (!resolved.ok) {
-        return { content: [{ type: 'text', text: resolved.message }], isError: true };
+      const refsResult = tool.gating.attachmentsArg
+        ? validateDocumentReferences(args[tool.gating.attachmentsArg])
+        : { ok: true as const, refs: [] };
+      if (!refsResult.ok) {
+        return { content: [{ type: 'text', text: `Refused: ${tool.namespacedName}'s attachments ${refsResult.error.message}` }], isError: true };
       }
-      args = resolved.sealed
-        ? { ...resolved.args, [ATTACHMENTS_SEALED_META_KEY]: resolved.sealed }
-        : resolved.args;
+      const insertResult = validateInsertReferences(args.insert);
+      if (!insertResult.ok) {
+        return { content: [{ type: 'text', text: `Refused: ${tool.namespacedName}'s insert ${insertResult.error.message}` }], isError: true };
+      }
+      if (refsResult.refs.length > 0) {
+        attachmentSourcesForExecution = [...new Set(refsResult.refs.map(r => `${r.connector}:${r.kind}`))].join(',');
+      }
     }
 
     // Start with static values (e.g., scope: "external")
@@ -1064,6 +1082,20 @@ function createGatedToolHandlerInner(
           applyMapping(mapping, value, execution);
         }
       }
+    }
+
+    // Documents by reference, continued — the call's OWN attachment
+    // sources, as an execution-context field (email/0.9's
+    // executionContextSchema.allowed_attachment_sources: "checked against
+    // scope; absent when the email has none"). This lets hap-core's generic
+    // scope `subset` check (gatekeeper.ts's checkScopeConstraints) run
+    // per-candidate below as defence in depth — attachment-policy.ts's
+    // explicit, fail-closed check (run per SELECTED mandate, inside
+    // attemptWithCandidates) is the one this profile actually relies on,
+    // since the generic check skips enforcement when a mandate's scope
+    // value is absent.
+    if (attachmentSourcesForExecution) {
+      execution[ATTACHMENT_SOURCES_FIELD] = attachmentSourcesForExecution;
     }
 
     // A connector's OWN tool schema may require the same value as a STRING
@@ -1326,10 +1358,34 @@ function createGatedToolHandlerInner(
           };
         }
 
+        // Documents/inserts by reference (item 1 of "emails carry documents
+        // by reference") — resolve for display now that a SPECIFIC mandate
+        // is selected, against ITS OWN allowed_attachment_sources scope
+        // value (never resolved before a mandate is chosen). "Resolve for
+        // display" only: fetches each document to seal its fingerprint and
+        // substitutes any inserted value into the text (so content binding
+        // and every card show the FINAL text) — it does NOT yet embed
+        // attachment bytes. `callArgs` (not the outer `args`) carries the
+        // result for the rest of THIS attempt; a retry on another candidate
+        // re-resolves from the original, untouched `args`.
+        let callArgs = args;
+        if (tool.gating?.attachmentsArg || tool.gating?.insertFields?.length) {
+          const allowedSourcesValue = typeof auth.context?.[ATTACHMENT_SOURCES_FIELD] === 'string'
+            ? (auth.context[ATTACHMENT_SOURCES_FIELD] as string)
+            : undefined;
+          const resolved = await resolveAttachmentsAndInserts(integrationManager, tool, auth.profileId, args, allowedSourcesValue);
+          if (!resolved.ok) {
+            return { content: [{ type: 'text', text: resolved.message }], isError: true };
+          }
+          callArgs = resolved.sealed
+            ? { ...resolved.args, [ATTACHMENTS_SEALED_META_KEY]: resolved.sealed }
+            : resolved.args;
+        }
+
         // Check for deferred commitment domains — submit proposal instead of executing
         if ((auth.deferredCommitmentDomains ?? []).length > 0) {
           try {
-            const enrichedArgs = await attachImagePreview(args);
+            const enrichedArgs = await attachImagePreview(callArgs);
             // Item 7 — never put scope-constrained values on the wire; see
             // wireExecutionContext's doc comment. Both the submission and
             // this gateway's own record of it use the SAME filtered value,
@@ -1409,6 +1465,24 @@ function createGatedToolHandlerInner(
           }
         }
 
+        // Documents/inserts by reference, continued — no approval gap exists
+        // on this (automatic) path, so finalize (re-resolve + build the
+        // transport payload) runs immediately, before the receipt is even
+        // requested: a stale document here is refused fail-fast, with no AS
+        // round trip wasted on a call that cannot complete. `finalArgs` (not
+        // `callArgs`) is what gets content-bound, sent to the AS, archived,
+        // and finally executed; `callArgs` (fingerprints only, no bytes)
+        // stays available below for the 409/above-cap proposal fallback,
+        // which must never carry embedded bytes into a stored proposal.
+        let finalArgs = callArgs;
+        if (tool.gating?.attachmentsArg || tool.gating?.insertFields?.length) {
+          const finalized = await finalizeAttachmentsForExecution(integrationManager, tool.integrationId, callArgs);
+          if (!finalized.ok) {
+            return { content: [{ type: 'text', text: finalized.message }], isError: true };
+          }
+          finalArgs = finalized.args;
+        }
+
         // Request receipt from SP (pre-flight — fail closed).
         //
         // `action` is the tool identifier used by the SP for the
@@ -1436,8 +1510,8 @@ function createGatedToolHandlerInner(
           // this execution, the retry returns the original receipt rather than
           // double-counting against the authority's bounds.
           // v0.5 Content Provenance: if the profile declares content_binding,
-          // hash the agent's content (pre-footer `args`) and send the hash only.
-          const binding = computeContentBinding(auth.profileId, tool, args, actionType);
+          // hash the agent's content (pre-footer `finalArgs`) and send the hash only.
+          const binding = computeContentBinding(auth.profileId, tool, finalArgs, actionType);
           // G4: generated once here, sent on every postReceipt attempt
           // (including its internal retries) AND checked below against the
           // ticket the AS signs — binding the ticket to THIS invocation, not
@@ -1506,10 +1580,12 @@ function createGatedToolHandlerInner(
             // would hold a hash of content it cannot reproduce.
             boundContent: binding?.boundContent,
             // UI spec §14 — what this call sends, exactly the object the
-            // journal's argsHash is computed from below (`hashToolArgs(args)`),
-            // so the ticket view can show it and check it. Same write, so it
-            // is as fail-closed and as encrypted as the rest of the entry.
-            sentArgs: args,
+            // journal's argsHash is computed from below
+            // (`hashToolArgs(finalArgs)`), so the ticket view can show it and
+            // check it (incl. any attachments' sealed fingerprints — UI spec
+            // §15.2). Same write, so it is as fail-closed and as encrypted
+            // as the rest of the entry.
+            sentArgs: finalArgs,
           });
         } catch (err) {
           // The ticket didn't verify — either its signature disagrees with
@@ -1703,7 +1779,11 @@ function createGatedToolHandlerInner(
             const recipientUserIds = ownerId ? [...new Set([ownerId, ...uniqueApprovers])] : uniqueApprovers;
 
             try {
-              const enrichedArgs = await attachImagePreview(args);
+              // `callArgs` (fingerprints only, resolved for display above) —
+              // never `finalArgs`, which may already carry embedded
+              // attachment bytes: a proposal stored here must never carry
+              // bytes (item 3 of "emails carry documents by reference").
+              const enrichedArgs = await attachImagePreview(callArgs);
               // Item 7 — never put scope-constrained values on the wire;
               // see wireExecutionContext's doc comment.
               const wireExecCtx = wireExecutionContext(auth.profileId, execution);
@@ -1811,8 +1891,8 @@ function createGatedToolHandlerInner(
         // structured stores that declare the field) to the outgoing call.
         let outgoingArgs =
           shouldAttachFooter() && receiptId
-            ? appendVerificationFooter(tool, args, receiptId, auth.subjects?.[0])
-            : args;
+            ? appendVerificationFooter(tool, finalArgs, receiptId, auth.subjects?.[0])
+            : finalArgs;
         if (receiptId) outgoingArgs = attachTicketId(tool, outgoingArgs, receiptId);
         // LAST: transport encoding. After the hash and the footer, so the
         // binding stays over what was approved rather than over the wire form.
@@ -1832,7 +1912,7 @@ function createGatedToolHandlerInner(
           const begun = state.executionJournal.begin({
             ticketId: receiptId,
             tool: tool.namespacedName,
-            argsHash: hashToolArgs(args),
+            argsHash: hashToolArgs(finalArgs),
           });
           if (!begun.ok) {
             return {

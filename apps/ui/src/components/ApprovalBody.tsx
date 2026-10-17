@@ -32,6 +32,8 @@ import {
 import { ProposalArgs } from './ProposalArgs';
 import { PreviewBox } from './PreviewBox';
 import { RequestContextBox } from './RequestContextBox';
+import { AttachmentsSealedBox } from './AttachmentsSealedBox';
+import { extractAttachmentsSealed, attachmentCheckEntries } from '../lib/attachment-sealed';
 import { boundValuesOpen } from '../lib/approval-preview-view';
 import { contextFieldLabel, splitTool, systemDisplayName, toolHeadline, type ToolDisplay } from '../lib/approval-view';
 import { useProfile } from '../lib/profile-cache';
@@ -111,7 +113,6 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
   const boundsEntries = Object.entries(proposal.executionContext);
   const profile = useProfile(proposal.profileId);
   const mandateBounds = useMandateBounds(proposal.authorizationId);
-  const checks = limitChecks(proposal.executionContext, mandateBounds, profile);
   const headline = toolHeadline(proposal.tool);
   const { integrationId } = splitTool(proposal.tool);
   const systemName = systemDisplayName(integrationId, manifests);
@@ -122,6 +123,11 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
   // this device has no key wrap for it — the two are told apart by `loading`.
   const content = useProposalContent(proposal);
   const readable = content.toolArgs !== null;
+  // UI spec §15.2 — "attachment from an allowed source" (computed, always
+  // true once a card exists at all — see attachmentCheckEntries' doc
+  // comment), alongside the ordinary per-call bound checks.
+  const checks = [...limitChecks(proposal.executionContext, mandateBounds, profile), ...attachmentCheckEntries(content.toolArgs)];
+  const attachmentsSealed = extractAttachmentsSealed(content.toolArgs);
   useEffect(() => {
     onContentState?.({ loading: content.loading, readable });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -281,6 +287,13 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
           {sentContent}
         </div>
       )}
+      {/* UI spec §15.2 — a sealed box per attachment/inserted value, right
+          next to the other sealed values (never inside the generic
+          ProposalArgs table, which the `_attachmentsSealed` key is hidden
+          from — HIDDEN_ARG_KEYS in lib/approval-view.ts). */}
+      {readable && (
+        <AttachmentsSealedBox attachments={attachmentsSealed.attachments} inserts={attachmentsSealed.inserts} manifests={manifests} />
+      )}
       {/* G4 — some recipients could not be reached when this was submitted
           (no registered end-to-end key); the submission itself was never
           blocked on it. Computed from fields already on the wire — see
@@ -330,7 +343,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
             {checks.map((c) => (
               <li key={c.key} className={c.ok ? 'ok' : 'bad'}>
                 <span className="limit-check-icon">{c.ok ? '✓' : '✗'}</span>
-                <span>{c.label} {c.valueText} — your limit {c.limitText}</span>
+                <span>{c.label}{c.valueText || c.limitText ? ` ${c.valueText} — your limit ${c.limitText}` : ''}</span>
               </li>
             ))}
           </ul>

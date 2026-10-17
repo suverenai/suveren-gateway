@@ -51,7 +51,7 @@ export interface ArgRow {
  *  be sent" (the Request box shows what it points to). */
 export const HIDDEN_ARG_KEYS = new Set([
   'ticket_id', 'apiKey', 'api_key', 'accessToken', 'access_token', 'password', 'secret', 'signature',
-  '_imagePreview', '_source',
+  '_imagePreview', '_source', '_attachmentsSealed',
 ]);
 
 export function humanizeKey(key: string): string {

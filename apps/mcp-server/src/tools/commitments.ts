@@ -26,6 +26,7 @@ import { encodeOutgoingArgs } from '../lib/arg-encoding';
 import { hashToolArgs } from '../lib/execution-journal';
 import { previewChangedSinceSubmission } from '../lib/preview';
 import { stripSourceLink } from '../lib/request-context';
+import { finalizeAttachmentsForExecution, stripAttachmentsSealedMeta } from '../lib/attachment-resolution';
 import type { CommittedExecutor, ExecutionResult } from '../lib/committed-executor';
 import { ContentBindingError } from '@hap/core';
 import { AsKeyMismatchError } from '../lib/attestation-cache';
@@ -572,10 +573,34 @@ export async function executeCommitted(
     }
   }
 
+  // Documents/inserts by reference, item 3 of "emails carry documents by
+  // reference" — finalize now, after approval: re-resolve every sealed
+  // attachment/insert reference FRESH and refuse (nothing sent) if a
+  // document's fingerprint or an inserted value no longer matches what was
+  // shown/sealed at proposal time, then build the transport payload. Same
+  // posture as the AU4 check above (ticket already spent; a retry needs a
+  // fresh request and approval) — a no-op when this proposal carried no
+  // attachment/insert references at all.
+  let finalToolArgs = toolArgs;
+  {
+    const finalized = await finalizeAttachmentsForExecution(integrationManager, integrationId, toolArgs);
+    if (!finalized.ok) {
+      state.executionJournal.complete(receiptId, 'failed', 'changed', finalized.message);
+      recordExecutionOutcome(state, proposal.id, receiptId, false, finalized.message);
+      logExecutionOutcome(proposal.id, false, 'attachment or inserted value changed since approval');
+      void notifyControlPlane('execution-failed');
+      return {
+        text: `Proposal ${proposal.id} was approved, but ${finalized.message} Nothing was sent.`,
+        isError: true,
+      };
+    }
+    finalToolArgs = finalized.args;
+  }
+
   // Receipt issued — now execute the tool, appending the verification footer
   // (Category-A profiles) just like the automatic-send path does.
   try {
-    let outgoingArgs = toolArgs;
+    let outgoingArgs = finalToolArgs;
     if (discovered && receiptId) {
       if (shouldAttachFooter()) {
         // Parity with the automatic path: pass the cached authorization's
@@ -590,6 +615,9 @@ export async function executeCommitted(
     // AU10 — `_source` never reaches the downstream tool (doc §1), on this
     // path too — the review/committed executor, not just the automatic one.
     outgoingArgs = stripSourceLink(outgoingArgs);
+    // Same reasoning — `_attachmentsSealed` is a local display-only summary
+    // (ticket view), never a valid downstream argument, on this path too.
+    outgoingArgs = stripAttachmentsSealedMeta(outgoingArgs);
     let result;
     try {
       result = await integrationManager.callTool(integrationId, toolName, outgoingArgs);

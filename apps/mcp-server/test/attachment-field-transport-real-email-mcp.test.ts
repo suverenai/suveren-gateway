@@ -20,7 +20,7 @@ import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { resolveAttachmentsAndInserts } from '../src/lib/attachment-resolution';
+import { resolveAttachmentsAndInserts, finalizeAttachmentsForExecution, ATTACHMENTS_SEALED_META_KEY } from '../src/lib/attachment-resolution';
 import { loadManifests } from '../src/lib/manifest-loader';
 import { registerProfile } from '@hap/core';
 import type { IntegrationManager, DiscoveredTool } from '../src/lib/integration-manager';
@@ -132,11 +132,17 @@ describe('field transport — real @humanagencyp/email-mcp 0.4.0 (stdio)', () =>
     expect(resolved.ok).toBe(true);
     if (!resolved.ok) return;
 
-    // `transport.arg` for mail.json's manifest is "attachments" — the
-    // manifest-declared field-transport shape {filename, contentType,
-    // contentBase64}, exactly the same shape resolved via the field
-    // transport above.
-    const outgoing = resolved.args;
+    // "Resolve for display" alone carries no bytes (item 3 — proposal/
+    // ticket storage never carries attachment bytes); finalize (the
+    // execution-time step, run here with no approval gap) builds the
+    // actual transport payload — `transport.arg` for mail.json's manifest
+    // is "attachments", the manifest-declared field-transport shape
+    // {filename, contentType, contentBase64}.
+    const sealedArgs = { ...resolved.args, [ATTACHMENTS_SEALED_META_KEY]: resolved.sealed };
+    const finalized = await finalizeAttachmentsForExecution(im, 'mail', sealedArgs);
+    expect(finalized.ok).toBe(true);
+    if (!finalized.ok) return;
+    const outgoing = finalized.args;
 
     const transport = new StdioClientTransport({
       command: 'node',

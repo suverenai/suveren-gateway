@@ -3,14 +3,27 @@
  * attach" (suveren-invoicing-plan.md §6, item 4: "New email-profile limit:
  * which sources/kinds may be attached").
  *
- * No shipped profile declares this scope field yet (checked against
- * `hap-profiles/email/0.8.profile.json` 2026-10-17 — only `allowed_recipients`/
- * `allowed_domains`). Per instruction, this module enforces a SAFE DEFAULT
- * — no attachments allowed at all — rather than editing hap-profiles, and
- * is written generically (field name is the only profile-specific thing,
- * declared once below) so it activates automatically the moment a profile
- * adds the field. See this module's header comment in the commit / the
- * task report for the exact draft JSON to add to hap-profiles.
+ * The `email` profile declares this scope field from version 0.9 onward
+ * (`hap-profiles/email/0.9.profile.json`'s `allowed_attachment_sources` —
+ * comma-separated `connector:kind`, empty/absent = no attachments). A
+ * mandate on an OLDER email profile (<=0.8, no such field) refuses every
+ * attachment by construction: {@link attachmentSourcesFieldDeclared} is
+ * false for it, so {@link isAttachmentSourceAllowed} always returns
+ * `allowed: false` below, regardless of what the caller passes as
+ * `allowedSourcesValue` — generic (field name is the only profile-specific
+ * thing, declared once below), so it also activates automatically for any
+ * OTHER profile that later adds the same field.
+ *
+ * Deliberately NOT relying solely on hap-core's generic scope `subset`
+ * check (gatekeeper.ts's `checkScopeConstraints`): that check SKIPS
+ * enforcement when the mandate's own scope value is absent/empty
+ * (`if (boundValue === undefined || boundValue === '') continue;`) — correct
+ * for `allowed_recipients`/`allowed_domains` (optional, "no restriction"
+ * when unset) but wrong here, where absence must mean "no attachments
+ * allowed," never "unrestricted." This module is the explicit, fail-closed
+ * backstop; tool-proxy.ts ALSO sets the `allowed_attachment_sources`
+ * execution-context field so the generic subset check runs too, as
+ * defence in depth, for every mandate that DOES set the scope value.
  */
 
 export const ATTACHMENT_SOURCES_FIELD = 'allowed_attachment_sources';

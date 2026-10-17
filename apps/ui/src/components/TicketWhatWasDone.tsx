@@ -23,6 +23,8 @@ import { computeContentHashBrowser } from '../lib/content-hash';
 import { sentView, sentRows, resultBody, type SentView } from '../lib/ticket-what-was-done';
 import { splitTool, systemDisplayName, type ToolDisplay } from '../lib/approval-view';
 import { ArgValue } from './ProposalArgs';
+import { AttachmentsSealedBox } from './AttachmentsSealedBox';
+import { extractAttachmentsSealed } from '../lib/attachment-sealed';
 
 interface Props {
   receipt: ExecutionReceipt;
@@ -247,10 +249,14 @@ export function TicketWhatWasDone({ receipt, manifests }: Props) {
     sentArgsCheck: entry?.sentArgsCheck,
   });
   const systemName = systemDisplayName(splitTool(receipt.action).integrationId, manifests);
+  // UI spec §15.2 — attachments/inserted values stay sealed on the ticket
+  // view too, same box as the approval card.
+  const attachmentsSealed = extractAttachmentsSealed(sentObject(entry) ?? undefined);
 
   return (
     <>
       <SentBox view={view} display={display} executionContext={receipt.executionContext} />
+      <AttachmentsSealedBox attachments={attachmentsSealed.attachments} inserts={attachmentsSealed.inserts} manifests={manifests} />
       {entry?.result && <ResultBox result={entry.result} systemName={systemName} sent={sentObject(entry)} />}
     </>
   );
