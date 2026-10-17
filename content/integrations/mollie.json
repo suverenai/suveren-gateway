@@ -223,7 +223,7 @@
       ]
     }
   ],
-  "setupHint": "Use a test token (test_...) for development.",
+  "setupHint": "Use an organization access token (access_org_...), not an API key (test_... or live_...): Mollie's connector needs it to list your profiles. Test payments still work with it.",
   "setupGuide": [
     {
       "title": "Create a Mollie account",
@@ -232,12 +232,12 @@
     },
     {
       "title": "Get your access token",
-      "description": "Go to Settings > Developer > Access tokens in your Mollie dashboard. Create an Organization access token.",
+      "description": "Go to Settings > Developer > Access tokens in your Mollie dashboard. Create an Organization access token with read and write access to payments, payment links, profiles, customers and organizations.",
       "link": "https://my.mollie.com/dashboard/developers/api-keys"
     },
     {
       "title": "Enter your token below",
-      "description": "Paste your Access Token in the field below. Use a test token (test_...) for development."
+      "description": "Paste the organization access token (access_org_...) in the field below. An API key (test_... or live_...) does not work here."
     }
   ]
 }
