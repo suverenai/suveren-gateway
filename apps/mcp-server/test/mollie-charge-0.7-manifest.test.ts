@@ -8,13 +8,9 @@
  * `category:"disabled"` here, not silently left to the (now dead, see
  * integration-manager.ts's `resolveToolGating`) manifest `default`.
  *
- * charge@0.7 is NOT YET on the `hap-profiles` default branch — it lives on
- * `origin/feat/charge-0.7` in the sibling `hap-profiles` checkout. This
- * file's `beforeAll` extracts that ref's full tree with `git archive` into
- * a throwaway directory and points `loadProfiles` at it, the same
- * `SUVEREN_PROFILES_DIR`-snapshot mechanism production uses — rather than
- * hand-calling `registerProfile`, so the real index.json → short-name
- * registration path (profile-loader.ts) is exercised too.
+ * Profiles load the normal way: SUVEREN_PROFILES_DIR, else the sibling
+ * hap-profiles checkout (as CI provides it) — the real index.json →
+ * short-name registration path (profile-loader.ts).
  *
  * What this file pins, mirroring erp-invoicing-manifest.test.ts's own
  * stated scope: the DATA that makes hap-core's OWN (separately unit-
@@ -29,10 +25,8 @@
  * numeric-amount-bound.test.ts already isolates and hap-core tests itself.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
-import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
-import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { getProfile, clearProfiles, type AgentProfile } from '@hap/core';
 import { loadProfiles } from '../src/lib/profile-loader';
 import {
@@ -51,33 +45,11 @@ import { testReceiptKeypair, makeSignedReceipt } from './helpers/real-receipt';
 
 const MANIFESTS_DIR = join(import.meta.dirname, '..', '..', '..', 'content', 'integrations');
 
-// test/ -> mcp-server/apps -> apps -> gw-payments(worktree root) -> temp -> HAP
-const HAP_ROOT = resolve(import.meta.dirname, '..', '..', '..', '..', '..');
-const HAP_PROFILES_REPO = join(HAP_ROOT, 'hap-profiles');
-const CHARGE_0_7_REF = 'origin/feat/charge-0.7';
-
-/**
- * Extracts `hap-profiles` at {@link CHARGE_0_7_REF} (the full tree, not just
- * the diff — `git archive` of a ref gives the whole repository as it stood
- * at that commit, including an `index.json` that already lists
- * `charge@0.7`) into a fresh temp directory, for `loadProfiles()` to read
- * exactly as it would a real checkout.
- */
-function extractChargeProfilesSnapshot(): string {
-  const dest = mkdtempSync(join(tmpdir(), 'hap-profiles-charge-0.7-'));
-  const tarball = execFileSync('git', ['archive', CHARGE_0_7_REF], {
-    cwd: HAP_PROFILES_REPO,
-    maxBuffer: 1024 * 1024 * 100,
-  });
-  execFileSync('tar', ['-x', '-C', dest], { input: tarball });
-  return dest;
-}
-
-let profilesDir: string;
+const PROFILES_DIR = process.env.SUVEREN_PROFILES_DIR
+  ?? join(import.meta.dirname, '..', '..', '..', '..', 'hap-profiles');
 
 beforeAll(() => {
-  profilesDir = extractChargeProfilesSnapshot();
-  const loadedProfiles = loadProfiles(profilesDir);
+  const loadedProfiles = loadProfiles(PROFILES_DIR);
   expect(loadedProfiles).toBeGreaterThan(0);
   const loadedManifests = loadManifests(MANIFESTS_DIR);
   expect(loadedManifests).toBeGreaterThan(0);
@@ -85,7 +57,6 @@ beforeAll(() => {
 
 afterAll(() => {
   clearProfiles();
-  rmSync(profilesDir, { recursive: true, force: true });
 });
 
 // ─── A. charge@0.7 resolves, mollie.json loads clean ───────────────────────
