@@ -134,10 +134,10 @@ export function ReceiptCard({
           <span
             className="receipt-tag receipt-tag-bound"
             title={receipt.contentBinding?.fields
-              ? `The ticket binds: ${receipt.contentBinding.fields.join(', ')}`
-              : 'This exact content was authorized'}
+              ? `Sealed in the ticket: ${receipt.contentBinding.fields.join(', ')} — exactly this content was sent`
+              : 'Sealed in the ticket — exactly this content was sent'}
           >
-            content bound
+            content sealed
           </span>
         )}
         {testSetup && <span className="sim-mark">Test setup</span>}
