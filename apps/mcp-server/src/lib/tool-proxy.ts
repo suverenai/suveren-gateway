@@ -21,6 +21,7 @@ import { computeContentBinding, attachTicketId } from './content-binding';
 import { hashToolArgs } from './execution-journal';
 import { computeSubmissionPreviewHash } from './preview';
 import { stripSourceLink } from './request-context';
+import { resolveAttachmentsAndInserts, ATTACHMENTS_SEALED_META_KEY, stripAttachmentsSealedMeta } from './attachment-resolution';
 import { verifyTicket, TicketBindingMismatchError } from './ticket-verify';
 import { notifyControlPlane } from './cp-notify';
 import { resolveWhoLabel } from './who-label';
@@ -1025,6 +1026,22 @@ function createGatedToolHandlerInner(
 
   // Write tools: full execution context verification
   return lockedGuard(async (args: Record<string, unknown>) => {
+    // Documents/inserts by reference (suveren-invoicing-plan.md §6/§7) — a
+    // no-op for every tool that declares neither `attachmentsArg` nor
+    // `insertFields`. Resolves BEFORE execution mapping/content binding, so
+    // the rest of this function sees only the final, substituted args
+    // (e.g. a body with its {{placeholder}} already replaced) — exactly
+    // what gets bound/sealed and sent downstream.
+    if (tool.gating?.attachmentsArg || tool.gating?.insertFields?.length) {
+      const resolved = await resolveAttachmentsAndInserts(integrationManager, tool, profile!, args);
+      if (!resolved.ok) {
+        return { content: [{ type: 'text', text: resolved.message }], isError: true };
+      }
+      args = resolved.sealed
+        ? { ...resolved.args, [ATTACHMENTS_SEALED_META_KEY]: resolved.sealed }
+        : resolved.args;
+    }
+
     // Start with static values (e.g., scope: "external")
     const execution: Record<string, string | number> = { ...staticExecution };
 
@@ -1803,6 +1820,9 @@ function createGatedToolHandlerInner(
         // AU10 — `_source` (the AI's request link) is a card-display-only
         // field; the downstream tool never sees it (doc §1).
         outgoingArgs = stripSourceLink(outgoingArgs);
+        // Same reasoning — `_attachmentsSealed` is a local display-only
+        // summary (ticket view), never a valid downstream argument.
+        outgoingArgs = stripAttachmentsSealedMeta(outgoingArgs);
 
         // One execution per ticket (see execution-journal.ts). On this path
         // the ticket was minted for this very invocation, so an existing row

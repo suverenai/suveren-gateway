@@ -38,6 +38,10 @@
       "REFRESH_TOKEN": "refreshToken"
     }
   },
+  "attachments": {
+    "transport": "mime-raw",
+    "arg": "raw"
+  },
   "context": {
     "sources": {
       "message": {
@@ -106,7 +110,9 @@
         "argEncoding": {
           "subject": "rfc2047"
         },
-        "actionLabel": "Email sent"
+        "actionLabel": "Email sent",
+        "attachmentsArg": "attachments",
+        "insertFields": ["body"]
       },
       "create_draft": {
         "summary": "Draft email to {to|list}[: {subject|short}]",

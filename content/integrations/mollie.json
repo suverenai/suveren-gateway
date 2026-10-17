@@ -29,6 +29,14 @@
     }
   },
   "oauth": null,
+  "values": {
+    "payment-link": {
+      "tool": "GetPaymentLink",
+      "args": { "id": "$id" },
+      "path": "_links.paymentLink.href",
+      "allowedHosts": ["paymentlink.mollie.com", "mollie.com"]
+    }
+  },
   "toolGating": {
     "default": {
       "executionMapping": {},

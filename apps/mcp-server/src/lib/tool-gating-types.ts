@@ -272,6 +272,112 @@ export interface ProfileToolGatingEntry {
    * apply, and requiring a `boundField` on it would be meaningless.
    */
   internal?: boolean;
+  /**
+   * Names THIS tool's own argument that carries attachment references
+   * (`DocumentReference[]`, never bytes) — e.g. mail/gmail's `send_message`
+   * declares `attachmentsArg: "attachments"`. Validated at manifest-load
+   * time against the SAME manifest's top-level `attachments` transport
+   * declaration (manifest-loader.ts) — a tool cannot declare this without
+   * its connector saying how it receives files. The AI-facing schema for
+   * this argument is narrowed to `{connector, kind, id}` objects only
+   * (attachment-reference.ts); the gateway resolves each reference, seals
+   * its fingerprint, and builds the transport-specific outgoing payload
+   * (tool-proxy.ts) before the downstream call.
+   */
+  attachmentsArg?: string;
+  /**
+   * Names THIS tool's own text argument(s) eligible for `{{placeholder}}`
+   * substitution via a sibling `insert` argument (insert-values.ts) — e.g.
+   * `["body"]`. A placeholder in a listed field with no matching `insert`
+   * entry, or an `insert` entry whose placeholder is absent from every
+   * listed field, is refused (insert-values.ts's `applyInserts`). The
+   * substituted text is what gets content-bound/sealed — insertion always
+   * runs BEFORE the profile's `content_binding` is computed.
+   */
+  insertFields?: string[];
+}
+
+// ─── Documents, attachments-by-reference, inserted values ─────────────────
+// (suveren-invoicing-plan.md §6/§7 — "Email with an attachment"). Generic
+// across connectors: a manifest declares WHAT it can provide (a document
+// kind, a value kind) or HOW it receives files (its attachments transport);
+// the gateway resolves AI-supplied references against these declarations.
+// Never a tool/connector name in the resolution code — only in the manifest.
+
+/**
+ * One document kind a connector can hand the gateway — e.g. the ERP's
+ * `invoice-pdf`/`credit-note-pdf`, read through its OWN internal tool (never
+ * AI-callable — the declared `tool` MUST carry `internal: true` on this same
+ * manifest's `toolGating.overrides`, checked at load time). `args` follows
+ * the SAME `$`-prefixed substitution grammar `context.recordKeys`/`sources`
+ * reads already use (request-context.ts's `substitute`): a literal string is
+ * passed as-is, a token starting with `$` is replaced with the reference's
+ * own field of that name — today only `$id` (the reference's `id`). The read
+ * must answer `{ filename, contentType, contentBase64, sha256 }` (document-
+ * source.ts shape-checks this and recomputes `sha256` itself — a connector's
+ * own claim is never trusted blind).
+ */
+export interface DocumentSourceConfig {
+  tool: string;
+  args: Record<string, string>;
+}
+
+/** Manifest top-level `documents` — kind name -> how to read it. */
+export type ManifestDocuments = Record<string, DocumentSourceConfig>;
+
+/**
+ * How THIS connector (an email sender) receives attachment bytes on an
+ * outgoing message — declared once per connector, used by every tool of
+ * that connector that accepts attachments (today exactly one, the send
+ * tool). `arg` is the connector's OWN tool argument name:
+ *   - `"field"` — the connector takes a structured `attachments` array
+ *     argument directly (simulated mail: `[{filename, contentType,
+ *     contentBase64}]`).
+ *   - `"mime-raw"` — the connector has no attachments argument at all; the
+ *     gateway builds a complete MIME message itself (mime-message.ts) and
+ *     passes it base64url-encoded in `arg` (Gmail: `raw`).
+ */
+export interface AttachmentTransportConfig {
+  transport: 'field' | 'mime-raw';
+  arg: string;
+}
+
+/**
+ * One value kind a connector can hand the gateway to insert into an action's
+ * own text (e.g. Mollie's `payment-link`) — read through `tool`/`args` (same
+ * substitution grammar as {@link DocumentSourceConfig}), then picked out of
+ * the read's structured result at the dotted `path`. `allowedHosts` is the
+ * ONLY thing the gateway trusts without re-deriving: the value must be an
+ * `https://` URL whose host is exactly one of these, or a subdomain of one —
+ * the whole point of insertable values is that the AI can never type the
+ * value itself, so a connector claiming a URL on a host it doesn't own would
+ * be the one way around that.
+ */
+export interface InsertValueSourceConfig {
+  tool: string;
+  args: Record<string, string>;
+  path: string;
+  allowedHosts: string[];
+}
+
+/** Manifest top-level `values` — kind name -> how to read + validate it. */
+export type ManifestValues = Record<string, InsertValueSourceConfig>;
+
+/**
+ * An attachment or insert reference the AI supplies — a POINTER only, never
+ * bytes or a typed value. Exactly these three string fields; anything else
+ * (e.g. `contentBase64`, `raw`) on the SAME object is refused by
+ * attachment-reference.ts's shape check, not silently dropped.
+ */
+export interface DocumentReference {
+  connector: string;
+  kind: string;
+  id: string;
+}
+
+/** An insert reference additionally names which placeholder it fills. */
+export interface InsertReference extends DocumentReference {
+  placeholder: string;
 }
 
 // ─── AU10 §8.1 — field helpers (doc/au10-request-context.md §8.1) ─────────

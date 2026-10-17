@@ -64,6 +64,16 @@
   },
   "personalDefault": true,
   "oauth": null,
+  "documents": {
+    "invoice-pdf": {
+      "tool": "get_document",
+      "args": { "kind": "invoice-pdf", "id": "$id" }
+    },
+    "credit-note-pdf": {
+      "tool": "get_document",
+      "args": { "kind": "credit-note-pdf", "id": "$id" }
+    }
+  },
   "context": {
     "recordKeys": {
       "customer": {

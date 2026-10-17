@@ -283,6 +283,10 @@ export interface ToolGatingConfig {
    *  `DiscoveredTool` by integration-manager.ts's connector-tool mapping
    *  (mirroring a built-in's own `BuiltinTool.internal`). */
   internal?: boolean;
+  /** See tool-gating-types.ts `ProfileToolGatingEntry.attachmentsArg`. */
+  attachmentsArg?: string;
+  /** See tool-gating-types.ts `ProfileToolGatingEntry.insertFields`. */
+  insertFields?: string[];
 }
 
 /**

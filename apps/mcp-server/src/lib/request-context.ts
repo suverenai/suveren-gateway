@@ -148,7 +148,16 @@ function dedupeKeys(keys: IdentityKey[]): IdentityKey[] {
  *  against resolved values. A template value that isn't a placeholder is
  *  never produced by today's manifests, so it is passed through unchanged
  *  rather than rejected — same leniency as mapPreviewArgs. */
-function substitute(template: Record<string, string>, values: Record<string, string | number>): Record<string, unknown> {
+/**
+ * Builds a read tool's args from a `{ tool, args }` declaration's template:
+ * a literal string is passed as-is, a `$`-prefixed token is replaced with
+ * `values[token.slice(1)]` (when present — absent otherwise). Shared by
+ * every manifest-declared read here AND by document-source.ts/insert-
+ * values.ts, which resolve the SAME grammar for `documents`/`values`
+ * declarations (suveren-invoicing-plan.md §6/§7) — one substitution rule,
+ * used everywhere a manifest names a read against a reference's own id.
+ */
+export function substitute(template: Record<string, string>, values: Record<string, string | number>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [arg, token] of Object.entries(template)) {
     if (token.startsWith('$')) {

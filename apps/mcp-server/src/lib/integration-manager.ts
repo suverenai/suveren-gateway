@@ -18,6 +18,7 @@ import { remotePreflightTarget, preflightRemoteAuth } from './remote-auth-prefli
 import { isSimulationMode, manifestIsSimulated, SIMULATION_BLOCK_REASON } from './simulation-mode';
 import { inheritedConnectorEnv } from './connector-env';
 import { withSourceLink } from './request-context';
+import { withAttachmentAndInsertSchema } from './attachment-reference';
 import type { BuiltinIntegration, BuiltinStatus, MandateCandidate } from './builtin-integration';
 
 const DEFAULT_DATA_DIR = process.env.SUVEREN_DATA_DIR ?? join(homedir(), '.suveren');
@@ -831,6 +832,12 @@ export class IntegrationManager {
       if (gating && gating.category !== 'read' && gating.category !== 'disabled') {
         inputSchema = withSourceLink(inputSchema);
       }
+      // Documents/inserts by reference — narrows (or adds) the attachments/
+      // insert argument schema to {connector, kind, id} pointers only, so
+      // the AI is never OFFERED a bytes/typed-value field in the first
+      // place (attachment-reference.ts; the runtime shape check in
+      // tool-proxy.ts is the second, independent refusal).
+      inputSchema = withAttachmentAndInsertSchema(inputSchema, gating ?? undefined);
 
       return {
         originalName: tool.name,
@@ -1345,6 +1352,8 @@ export class IntegrationManager {
         contextKeys?: Record<string, string>;
         sourceFromArg?: { kind: string; arg: string };
         internal?: boolean;
+        attachmentsArg?: string;
+        insertFields?: string[];
       };
       // Area per tool — an override's own `profile` wins over the manifest's.
       const resolvedProfile = ext.profile ?? profileId;
@@ -1400,6 +1409,8 @@ export class IntegrationManager {
         boundField: ext.boundField,
         requiredValue: ext.requiredValue,
         internal: ext.internal,
+        attachmentsArg: ext.attachmentsArg,
+        insertFields: ext.insertFields,
       };
     }
 
