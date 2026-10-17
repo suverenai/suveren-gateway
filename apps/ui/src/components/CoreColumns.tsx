@@ -134,6 +134,7 @@ export function CoreColumns({ auths, activeCount, waiting, waitingReady }: Props
                     time={waitingLabel(p.createdAt, now)}
                   />
                   <div className="appr-item-sum"><ApprovalSummary proposal={p} manifests={manifests} /></div>
+                  <MandateLine title={p.authorizationId ? titles[p.authorizationId] : undefined} area={areaName(p.profileId, catalog)} />
                   {due && <div className="obj-due">{due}</div>}
                 </div>
                 <span className="appr-item-chev" aria-hidden="true">›</span>

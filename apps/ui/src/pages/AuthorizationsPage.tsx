@@ -3,7 +3,6 @@ import { spClient, type PendingItem, type GateContentEntry, type ProfileConfig, 
 import { profileDisplayName } from '../lib/profile-display';
 import { profileIdentity, shortProfileId } from '../lib/profile-identity';
 import { resolveAreaName, areaIcon, type AreaIconName } from '../lib/area';
-import { ObjectLine } from '../components/ObjectLine';
 import { AreaIcon } from '../components/AreaIcon';
 import { AuthorizePicker } from '../components/AuthorizePicker';
 import { useSearchParams, useNavigate } from 'react-router-dom';
@@ -195,14 +194,14 @@ function AuthCard({
       style={{ marginBottom: 0 }}
     >
       <div className="id-body">
-      {/* UI spec §12.2/§13.2 — the mandate's top line: area · since when.
-          No `mandateTitle` here — "not on the mandate card itself" (§13.2):
-          its own title is the big header just below, not a repeat line. */}
-      <ObjectLine
-        profileId={item.profile_id}
-        area={area}
-        time={item.created_at ? `since ${new Date(item.created_at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}` : undefined}
-      />
+      {/* UI spec §13.3 — the card sits under its area's heading, so its top
+          line carries only "since when"; repeating the area on every card
+          is noise. The mandate's own title is the big header just below. */}
+      {item.created_at && (
+        <div className="obj-line">
+          since {new Date(item.created_at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}
+        </div>
+      )}
       {upgradeHint}
 
       {/* Team owner line */}
