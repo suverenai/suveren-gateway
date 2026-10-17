@@ -241,6 +241,10 @@ export interface PreviewReadSection {
   elements?: PreviewReadOutcome[];
   overflow?: { shown: number; total: number };
   version?: PreviewVersionInfo;
+  /** See mcp-server's tool-gating-types.ts `PreviewReadConfig.kind` — marks
+   *  this read's result as a document to render (UI spec §15.1), not data
+   *  to merge into field rows. */
+  kind?: 'document';
 }
 
 /** `GET /proposal-status/:id/preview` — always 200 unless auth/proposal fetch fails. */

@@ -59,7 +59,7 @@ export function PreviewBoxBody({ resp, systemName, toolArgs, sealed }: PreviewBo
             : <span className="src-tag src-tag-sealed">sealed</span>
         )}
       </h4>
-      {view.creation && <RenderedCreationView view={view.creation} />}
+      {view.creation && <RenderedCreationView view={view.creation} systemName={systemName} />}
       {view.rendered && <RenderedBody rendered={view.rendered} />}
       <p className="preview-note">{view.note}</p>
       {view.versionNote && !view.stale && <p className="preview-note">{view.versionNote}</p>}

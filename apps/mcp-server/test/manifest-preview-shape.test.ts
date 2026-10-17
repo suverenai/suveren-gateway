@@ -8,7 +8,15 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { invalidPreviewReason, invalidManifestPreviewReason, invalidDisplayHintsReason, loadManifests, getManifest } from '../src/lib/manifest-loader';
+import {
+  invalidPreviewReason,
+  invalidManifestPreviewReason,
+  invalidDisplayHintsReason,
+  invalidInternalReason,
+  invalidManifestInternalReason,
+  loadManifests,
+  getManifest,
+} from '../src/lib/manifest-loader';
 import { MAX_PREVIEW_READS } from '../src/lib/tool-gating-types';
 
 const MANIFESTS_DIR = join(import.meta.dirname, '..', '..', '..', 'content', 'integrations');
@@ -70,6 +78,17 @@ describe('invalidPreviewReason — the shared predicate', () => {
 
   it('an empty `fields` array is fine (falls back to the no-declaration behaviour)', () => {
     expect(invalidPreviewReason('x', { preview: { tool: 'get_x', args: {}, fields: [] } })).toBeNull();
+  });
+
+  it('`kind: "document"` is fine (UI spec §15.1 — the PDF-as-it-will-be-issued box), in both forms', () => {
+    expect(invalidPreviewReason('x', { preview: { tool: 'preview_invoice', args: {}, kind: 'document' } })).toBeNull();
+    expect(invalidPreviewReason('x', { preview: [{ tool: 'preview_invoice', args: {}, kind: 'document' }] })).toBeNull();
+  });
+
+  it('rejects any `kind` other than "document"', () => {
+    expect(
+      invalidPreviewReason('x', { preview: [{ tool: 'preview_invoice', args: {}, kind: 'pdf' }] }),
+    ).toMatch(/preview\[0\]\.kind/);
   });
 
   it('rejects a non-array `fields`', () => {
@@ -212,6 +231,100 @@ describe('invalidManifestPreviewReason', () => {
   });
 });
 
+// ─── `internal` — tool-gating-types.ts ProfileToolGatingEntry.internal ────
+
+describe('invalidInternalReason — the shared predicate', () => {
+  it('null/non-object entries are fine (nothing to check)', () => {
+    expect(invalidInternalReason('x', null)).toBeNull();
+    expect(invalidInternalReason('x', 'oops')).toBeNull();
+  });
+
+  it('an entry with no `internal` key is fine', () => {
+    expect(invalidInternalReason('x', { category: 'read' })).toBeNull();
+  });
+
+  it('`internal: true` and `internal: false` are both fine', () => {
+    expect(invalidInternalReason('x', { category: 'read', internal: true })).toBeNull();
+    expect(invalidInternalReason('x', { category: 'read', internal: false })).toBeNull();
+  });
+
+  it('rejects a non-boolean `internal`', () => {
+    expect(invalidInternalReason('x', { internal: 'yes' })).toMatch(/"x"\.internal must be a boolean/);
+    expect(invalidInternalReason('x', { internal: 1 })).toMatch(/"x"\.internal must be a boolean/);
+  });
+});
+
+describe('invalidManifestInternalReason', () => {
+  it('null for a manifest whose overrides are all clean', () => {
+    expect(
+      invalidManifestInternalReason({
+        toolGating: { default: { executionMapping: {} }, overrides: { preview_invoice: { category: 'read', internal: true } } },
+      }),
+    ).toBeNull();
+  });
+
+  it('surfaces the first bad override found', () => {
+    expect(
+      invalidManifestInternalReason({
+        toolGating: { default: { executionMapping: {} }, overrides: { preview_invoice: { internal: 'oops' } } },
+      }),
+    ).toMatch(/"preview_invoice"\.internal must be a boolean/);
+  });
+});
+
+describe('loadManifests refuses a manifest with a malformed `internal` flag', () => {
+  let dir: string;
+  afterEach(() => { if (dir) rmSync(dir, { recursive: true, force: true }); });
+
+  it('a non-boolean `internal` is refused at load time, same predicate as the test above', () => {
+    dir = mkdtempSync(join(tmpdir(), 'hap-manifests-internal-'));
+    mkdirSync(join(dir, 'bad'));
+    writeFileSync(join(dir, 'index.json'), JSON.stringify({ integrations: { bad: 'bad/manifest.json' } }));
+    writeFileSync(
+      join(dir, 'bad/manifest.json'),
+      JSON.stringify({
+        id: 'bad',
+        name: 'Bad',
+        version: '1',
+        profile: 'sales',
+        mcp: { command: 'node', args: [] },
+        credentials: { fields: [], envMapping: {} },
+        oauth: null,
+        toolGating: { default: { executionMapping: {} }, overrides: { preview_x: { internal: 'oops' } } },
+      }),
+    );
+
+    const loaded = loadManifests(dir);
+
+    expect(loaded).toBe(0);
+    expect(getManifest('bad')).toBeUndefined();
+  });
+
+  it('`internal: true` loads fine', () => {
+    dir = mkdtempSync(join(tmpdir(), 'hap-manifests-internal-ok-'));
+    mkdirSync(join(dir, 'good'));
+    writeFileSync(join(dir, 'index.json'), JSON.stringify({ integrations: { good: 'good/manifest.json' } }));
+    writeFileSync(
+      join(dir, 'good/manifest.json'),
+      JSON.stringify({
+        id: 'good',
+        name: 'Good',
+        version: '1',
+        profile: 'sales',
+        mcp: { command: 'node', args: [] },
+        credentials: { fields: [], envMapping: {} },
+        oauth: null,
+        toolGating: { default: { executionMapping: {} }, overrides: { preview_x: { category: 'read', internal: true } } },
+      }),
+    );
+
+    const loaded = loadManifests(dir);
+
+    expect(loaded).toBe(1);
+    expect(getManifest('good')).toBeDefined();
+  });
+});
+
 describe('loadManifests refuses a manifest whose preview shape is invalid', () => {
   let dir: string;
   afterEach(() => { if (dir) rmSync(dir, { recursive: true, force: true }); });
@@ -290,6 +403,10 @@ describe('real manifests — preview declarations are well-formed', () => {
       const manifest = JSON.parse(readFileSync(join(MANIFESTS_DIR, file), 'utf8'));
       expect(invalidManifestPreviewReason(manifest)).toBeNull();
     });
+    it(`${file}: every declared \`internal\` flag is well-formed`, () => {
+      const manifest = JSON.parse(readFileSync(join(MANIFESTS_DIR, file), 'utf8'));
+      expect(invalidManifestInternalReason(manifest)).toBeNull();
+    });
   }
 
   it('erp.json declares the ERP3 preview for send_quote and convert_quote_to_order, with the fields that matter shown first', () => {
@@ -302,6 +419,30 @@ describe('real manifests — preview declarations are well-formed', () => {
         version: { arg: 'revision', field: 'revision' },
         fields: ['number', 'revision', 'status', 'customer_id', 'lines', 'net_total', 'discount_pct', 'valid_until'],
       });
+    }
+  });
+
+  it('erp.json\'s create_invoice declares a document-preview read (preview_invoice) alongside its existing get_customer read', () => {
+    const manifest = JSON.parse(readFileSync(join(MANIFESTS_DIR, 'erp.json'), 'utf8'));
+    const preview = manifest.toolGating.overrides.create_invoice.preview;
+    expect(Array.isArray(preview)).toBe(true);
+    const docRead = preview.find((r: { tool: string }) => r.tool === 'preview_invoice');
+    expect(docRead).toBeTruthy();
+    expect(docRead.kind).toBe('document');
+    expect(docRead.attach).toBeUndefined(); // an own-section read, not an identity for a bound field
+    // Every create_invoice arg preview_invoice also needs must be mapped identically (same tool, same args).
+    for (const [target, source] of Object.entries(docRead.args as Record<string, string>)) {
+      expect(target).toBe(source);
+    }
+  });
+
+  it('erp.json\'s preview_invoice and get_document are `internal: true` — and nothing else of erp\'s invoicing area is', () => {
+    const manifest = JSON.parse(readFileSync(join(MANIFESTS_DIR, 'erp.json'), 'utf8'));
+    const overrides = manifest.toolGating.overrides as Record<string, { internal?: boolean; profile?: string }>;
+    expect(overrides.preview_invoice).toMatchObject({ internal: true, profile: 'invoicing' });
+    expect(overrides.get_document).toMatchObject({ internal: true, profile: 'invoicing' });
+    for (const tool of ['create_invoice', 'create_credit_note', 'list_invoices', 'get_invoice', 'list_credit_notes', 'get_credit_note']) {
+      expect(overrides[tool]?.internal, tool).toBeFalsy();
     }
   });
 });

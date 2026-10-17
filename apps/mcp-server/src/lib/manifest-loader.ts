@@ -229,6 +229,9 @@ function invalidReadConfigReason(toolName: string, idx: number | null, entry: un
       }
     }
   }
+  if (p.kind !== undefined && p.kind !== 'document') {
+    return `${label}.kind must be "document" (the only recognized value)`;
+  }
   return null;
 }
 
@@ -333,6 +336,35 @@ export function invalidSummaryReason(toolName: string, entry: unknown): string |
       return `${at} {${m[1]}} has an invalid field path`;
     }
     if (fmt !== undefined && !SUMMARY_FORMATS.includes(fmt)) return `${at} {${m[1]}} has unknown format "${fmt}"`;
+  }
+  return null;
+}
+
+/**
+ * Shape check for an override's optional `internal` flag (tool-gating-
+ * types.ts `ProfileToolGatingEntry.internal`) — boolean only. WHICH tools
+ * should declare it (a connector's own document-preview/archive reads
+ * meant only for the gateway itself, never the AI) is a per-connector
+ * design choice, not something shape validation can check.
+ */
+export function invalidInternalReason(toolName: string, entry: unknown): string | null {
+  if (entry === null || typeof entry !== 'object') return null;
+  const internal = (entry as { internal?: unknown }).internal;
+  if (internal === undefined) return null;
+  if (typeof internal !== 'boolean') return `override "${toolName}".internal must be a boolean`;
+  return null;
+}
+
+/**
+ * Checks every override's `internal` (if any) in one manifest. Same
+ * one-predicate-shared-by-loader-and-lint-test shape as
+ * `invalidManifestPreviewReason`.
+ */
+export function invalidManifestInternalReason(manifest: Pick<IntegrationManifest, 'toolGating'>): string | null {
+  const overrides = manifest.toolGating?.overrides ?? {};
+  for (const [toolName, entry] of Object.entries(overrides)) {
+    const reason = invalidInternalReason(toolName, entry);
+    if (reason) return reason;
   }
   return null;
 }
@@ -786,6 +818,11 @@ export function loadManifests(integrationsDir?: string): number {
       const previewReason = invalidManifestPreviewReason(manifest);
       if (previewReason) {
         console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${previewReason}`);
+        continue;
+      }
+      const internalReason = invalidManifestInternalReason(manifest);
+      if (internalReason) {
+        console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${internalReason}`);
         continue;
       }
       const contextReason = invalidManifestContextReason(manifest);

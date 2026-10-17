@@ -66,11 +66,23 @@ export interface ReadGovernanceView {
   boundField?: string;
   read?: unknown;
   readGovernance?: string;
+  internal?: boolean;
 }
 
-/** True iff a read tool declares governance (gate, adapter, or explicit exemption). */
+/**
+ * True iff a read tool declares governance (gate, adapter, or explicit
+ * exemption) — OR is `internal: true` (tool-gating-types.ts
+ * `ProfileToolGatingEntry.internal`). An internal tool's own gated handler
+ * already refuses before this check ever runs (tool-proxy.ts's
+ * `createGatedToolHandler` checks `tool.internal` first, unconditionally —
+ * this predicate is dead code for it at runtime); the exemption here keeps
+ * the LINT (manifest-read-governance.test.ts, same predicate) from flagging
+ * what is already unreachable by the AI, same reasoning as the D6 exemption
+ * in `uncoveredReadSwitchReason` above.
+ */
 export function readToolIsGoverned(g: ReadGovernanceView | undefined): boolean {
   if (!g) return false;
+  if (g.internal === true) return true;
   return Boolean(g.boundField) || g.read != null || g.readGovernance === 'none';
 }
 
@@ -429,8 +441,17 @@ export function uncoveredReadSwitchReason(
     // it declares NO governance at all, so under a profile with a switch it
     // is uncovered by definition.
     if (entry !== null && typeof entry !== 'object') continue;
-    const e = (entry ?? {}) as { category?: string; boundField?: string; requiredValue?: string; readGovernance?: string; readGovernanceReason?: string };
+    const e = (entry ?? {}) as { category?: string; boundField?: string; requiredValue?: string; readGovernance?: string; readGovernanceReason?: string; internal?: boolean };
     if (entry !== null && e.category !== 'read') continue;
+
+    // `internal: true` (tool-gating-types.ts) — this read is never
+    // reachable by the AI at all (not listed, refused on direct call), so
+    // the enum-switch concern this function exists for — an agent calling
+    // a read tool and bypassing the owner's per-item bound — never arises.
+    // The gateway's own internal callers (e.g. a document preview read,
+    // preview.ts) go through `IntegrationManager.callTool` directly,
+    // bypassing this gate entirely, same as the AU3 preview mechanism.
+    if (e.internal === true) continue;
 
     if (e.readGovernance === 'none') {
       if (!e.readGovernanceReason) {

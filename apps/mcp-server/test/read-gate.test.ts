@@ -72,6 +72,12 @@ describe('readToolIsGoverned (F9 — declare governance or be denied)', () => {
   it('a non-"none" readGovernance value does not count as an exemption', () => {
     expect(readToolIsGoverned({ readGovernance: 'maybe' as unknown as string })).toBe(false);
   });
+  it('`internal: true` governs on its own — the AI can never reach this tool to begin with', () => {
+    expect(readToolIsGoverned({ internal: true })).toBe(true);
+  });
+  it('`internal: false` governs nothing by itself — still ungoverned without a gate/adapter/exemption', () => {
+    expect(readToolIsGoverned({ internal: false })).toBe(false);
+  });
 });
 
 // Fixed clock for deterministic age math.
@@ -370,6 +376,20 @@ describe('uncoveredReadSwitchReason', () => {
   });
   it('a non-read override is never checked', () => {
     expect(uncoveredReadSwitchReason({ send_message: { executionMapping: {} } }, EMAIL_SCHEMA)).toBeNull();
+  });
+  it('an `internal: true` category:"read" override is exempt — the AI can never reach it to begin with ' +
+    '(e.g. the ERP connector\'s preview_invoice/get_document — see suveren-invoicing-plan.md §7)', () => {
+    expect(
+      uncoveredReadSwitchReason({ preview_invoice: { category: 'read', internal: true } }, EMAIL_SCHEMA),
+    ).toBeNull();
+  });
+  it('the `internal` exemption does not also excuse a DIFFERENT, non-internal uncovered read', () => {
+    expect(
+      uncoveredReadSwitchReason(
+        { preview_invoice: { category: 'read', internal: true }, list_messages: null },
+        EMAIL_SCHEMA,
+      ),
+    ).toMatch(/does not reference/);
   });
 });
 

@@ -839,6 +839,13 @@ export class IntegrationManager {
         description: tool.description ?? '',
         inputSchema,
         outputSchema: tool.outputSchema as Record<string, unknown> | undefined,
+        // A connector's own `internal: true` override (tool-gating-types.ts
+        // `ProfileToolGatingEntry.internal`) — same meaning and enforcement
+        // as a built-in's `BuiltinTool.internal` above: never registered
+        // with the MCP server (index.ts), never callable directly
+        // (tool-proxy.ts); only the gateway's own code (e.g. a document
+        // preview read — preview.ts) calls it, via `callTool` directly.
+        ...(gating?.internal ? { internal: true } : {}),
         gating,
       };
     });
@@ -1337,6 +1344,7 @@ export class IntegrationManager {
         approvalView?: import('./integration-registry').ApprovalView;
         contextKeys?: Record<string, string>;
         sourceFromArg?: { kind: string; arg: string };
+        internal?: boolean;
       };
       // Area per tool — an override's own `profile` wins over the manifest's.
       const resolvedProfile = ext.profile ?? profileId;
@@ -1360,6 +1368,7 @@ export class IntegrationManager {
           hideUnlessAuthorized: ext.hideUnlessAuthorized,
           simulationOnly: ext.simulationOnly,
           approvalView: ext.approvalView,
+          internal: ext.internal,
         };
       }
       return {
@@ -1390,6 +1399,7 @@ export class IntegrationManager {
         // discarded here — the config in the manifest existed but did nothing.
         boundField: ext.boundField,
         requiredValue: ext.requiredValue,
+        internal: ext.internal,
       };
     }
 

@@ -113,6 +113,22 @@ export interface PreviewReadConfig {
   version?: { arg: string; field: string };
   /** Same meaning as {@link ToolPreviewConfig.fields} — for THIS read only. */
   fields?: string[];
+  /**
+   * Declares that this read's structured result IS a document to render,
+   * not data to merge into field rows — the shape
+   * `{ filename, contentType, contentBase64, sha256, pages? }` a
+   * connector's own internal read answers with (e.g. the ERP connector's
+   * `preview_invoice`/`get_document` — see suveren-invoicing-plan.md §7).
+   * The UI (apps/ui/src/lib/preview-render.ts) renders a read declaring
+   * this as the sealed "document as it will be issued" box (UI spec
+   * §15.1) instead of a generic field table — shape-checked at render
+   * time, so a read that doesn't actually answer with that shape degrades
+   * to a plain note, never a crash. Meaningful only on a read with no
+   * `attach`/`forEach` (an own-section read); the loader does not cross-
+   * check that, same as `attach` and `forEach` are mutually exclusive by
+   * construction rather than by a validated rule.
+   */
+  kind?: 'document';
 }
 
 /** Manifest cap (temp/briefs/au8-brief.md) — a preview may declare at most
@@ -238,6 +254,24 @@ export interface ProfileToolGatingEntry {
   contextKeys?: ContextKeysDeclaration;
   /** AU10 — see {@link SourceFromArgDeclaration}. */
   sourceFromArg?: SourceFromArgDeclaration;
+  /**
+   * Marks this tool INTERNAL — never listed in `tools/list`, never
+   * callable directly by the AI. Enforced the same way a built-in's own
+   * internal preview tools are (builtin-integration.ts's
+   * `BuiltinTool.internal`): the gateway never registers it with the MCP
+   * server (index.ts) and `tool-proxy.ts` refuses a direct call as a
+   * second, independent check. The gateway itself may still call it
+   * directly through `IntegrationManager.callTool` — e.g. a document-
+   * preview read another tool's `preview` declares (see
+   * {@link PreviewReadConfig.kind}) — this flag only blocks the AI-facing
+   * path, same as `category:'disabled'` blocks every path.
+   *
+   * Exempted from the D6 read-gate coverage check (read-gate.ts's
+   * `uncoveredReadSwitchReason`): an AI can never reach this tool to begin
+   * with, so the enum-switch concern that check exists for does not
+   * apply, and requiring a `boundField` on it would be meaningless.
+   */
+  internal?: boolean;
 }
 
 // ─── AU10 §8.1 — field helpers (doc/au10-request-context.md §8.1) ─────────

@@ -67,6 +67,7 @@
  */
 import { humanizeKey, HIDDEN_ARG_KEYS } from './approval-view';
 import type { PreviewBody, PreviewReadOutcome, PreviewReadSection, ToolDisplayHints } from './sp-client';
+import { isDocumentPreviewBody, type DocumentPreviewData } from './document-preview';
 
 /** One row of a labelled sub-list (DL4) — a nested object field whose own
  *  values are every one scalar. `label` is the nested key's own label
@@ -795,15 +796,42 @@ export interface PreviewOwnSection {
    *  resolve) — the same generic field-row rendering every preview uses. */
   body?: RenderedPreview;
   note?: string;
+  /**
+   * UI spec §15.1 — present when this read declared `kind: "document"`
+   * AND its result's shape matches {@link isDocumentPreviewBody}. Renders
+   * as the sealed "document as it will be issued" box
+   * (`DocumentPreviewBox.tsx`) instead of `body`/`table`/`note` — mutually
+   * exclusive with them.
+   */
+  document?: DocumentPreviewData;
 }
 
 function ownSectionHeading(tool: string): string {
   return `${humanizeKey(tool)} — from the system`;
 }
 
-export function buildOwnSection(section: PreviewReadSection): PreviewOwnSection {
+/**
+ * `null` is a valid return — see the `kind: 'document'` / `no_connector`
+ * case below: the box is simply absent, per UI spec §15.1 ("when the
+ * connector has no preview — e.g. simulation mode — the box is simply
+ * absent"), never a note explaining its absence.
+ */
+export function buildOwnSection(section: PreviewReadSection): PreviewOwnSection | null {
   const heading = ownSectionHeading(section.tool);
   const outcome = section.result;
+  if (section.kind === 'document') {
+    if (outcome && outcome.status === 'ok') {
+      const structured = resolveBodyObject(outcome.body)?.obj;
+      if (structured && isDocumentPreviewBody(structured)) {
+        return { heading, document: structured };
+      }
+      // Declared a document but the connector's answer doesn't match the
+      // shape — degrade to a note rather than a broken box or a crash.
+      return { heading, note: 'Could not show a preview — the connector’s answer was not in the expected shape.' };
+    }
+    if (outcome?.status === 'unavailable' && outcome.reason === 'no_connector') return null;
+    return { heading, note: unresolvedNote(outcome) };
+  }
   if (!outcome || outcome.status !== 'ok') {
     return { heading, note: unresolvedNote(outcome) };
   }
@@ -883,5 +911,6 @@ export function buildCreationView(
     rows.push({ kind: 'scalar', key, label, value, valueTitle });
   }
 
-  return { rows, sections: ownSections.map(buildOwnSection) };
+  const builtSections = ownSections.map(buildOwnSection).filter((s): s is PreviewOwnSection => s !== null);
+  return { rows, sections: builtSections };
 }
