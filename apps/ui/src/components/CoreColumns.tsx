@@ -22,6 +22,7 @@ import {
 import { useVisiblePolling } from '../hooks/useVisiblePolling';
 import { useSSEEvent } from '../contexts/EventSourceContext';
 import { loadProfile } from '../lib/profile-cache';
+import { useAreaCatalog } from '../lib/area-catalog';
 
 import {
   areaName, systemName, waitingLabel, deadlineLabel, isToday, isNewTicket, ticketTime,
@@ -65,11 +66,9 @@ export function CoreColumns({ auths, activeCount, waiting, waitingReady }: Props
     spClient.getLocalAuthorizations().then(({ authorizations }) => setLocalAuths(authorizations)).catch(() => {});
   }, []);
 
-  const titles = useMemo(() => {
-    const t: Record<string, string> = {};
-    for (const a of auths) if (a.authorization_id && a.title) t[a.authorization_id] = a.title;
-    return t;
-  }, [auths]);
+  // Area names (UI spec §13.1) — the newest version of each profile's own
+  // name, shared with every other surface via lib/area-catalog.ts.
+  const catalog = useAreaCatalog();
 
   const now = Date.now();
   const today = useMemo(() => {
@@ -86,19 +85,19 @@ export function CoreColumns({ auths, activeCount, waiting, waitingReady }: Props
   }, [today, profiles]);
 
   const groups = useMemo(
-    () => groupAutomatic(today, { titles, manifests, lastSeenMs: lastSeen ?? Number.POSITIVE_INFINITY }),
-    [today, titles, manifests, lastSeen],
+    () => groupAutomatic(today, { catalog, manifests, lastSeenMs: lastSeen ?? Number.POSITIVE_INFINITY }),
+    [today, catalog, manifests, lastSeen],
   );
   const approvedToday = today.filter(r => matchesTicketFilter(r, 'approved')).length;
   const atWork = useMemo(
     () => mandatesAtWork(today, {
       nowMs: Date.now(),
-      titles,
+      catalog,
       manifests,
       boundsOf: id => localAuths[id]?.bounds,
       profileOf: id => profiles[id],
     }),
-    [today, titles, manifests, localAuths, profiles],
+    [today, catalog, manifests, localAuths, profiles],
   );
   const newGroups = groups.filter(g => g.newCount > 0).length;
   const oldestFirst = [...waiting].sort((a, b) => a.createdAt - b.createdAt);
@@ -123,7 +122,7 @@ export function CoreColumns({ auths, activeCount, waiting, waitingReady }: Props
                 <div className="appr-item-main">
                   <ObjectLine
                     profileId={p.profileId}
-                    area={areaName(p.authorizationId, p.profileId, titles)}
+                    area={areaName(p.profileId, catalog)}
                     system={systemName(p.tool, manifests)}
                     time={waitingLabel(p.createdAt, now)}
                   />

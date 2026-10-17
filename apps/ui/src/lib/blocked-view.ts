@@ -128,7 +128,7 @@ function sentenceFor(r: DenialRecord, label: string): string {
  * or a future record-time stamp), then to nothing — never the lookup table
  * absent an entry AND the record's own field both ignored.
  */
-function resolveMandateTitle(r: DenialRecord, mandateTitlesById?: Readonly<Record<string, string>>): string | undefined {
+export function resolveMandateTitle(r: DenialRecord, mandateTitlesById?: Readonly<Record<string, string>>): string | undefined {
   if (r.mandateId) {
     const fromLookup = mandateTitlesById?.[r.mandateId];
     if (fromLookup) return fromLookup;

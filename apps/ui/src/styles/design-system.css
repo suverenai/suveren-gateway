@@ -4107,6 +4107,26 @@ body.is-updating .simulation-banner {
 .mandate-card .obj-line { margin-bottom: 0.15rem; }
 /* Approval card inside a row (UI spec §4.2 / §12.2) */
 .card-in-row { border: none; box-shadow: none; padding: 0; background: transparent; margin: 0; }
+
+/* ══════════════════════════════════════════════
+   AREAS — areas first, tools second (UI spec §13, mockup
+   suveren-as/docs/ui-spec/areas.html option A). Monochrome throughout —
+   areas are told apart by icon + name, never colour.
+   ══════════════════════════════════════════════ */
+/* The quiet "Mandate: <title>" line under the top line (§13.2) */
+.obj-mandate-line {
+  font-size: var(--text-caption); color: var(--text-muted);
+  border-left: 2px solid var(--border); padding-left: 0.5rem; margin-top: 0.15rem;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* Area group heading — Mandates page (§13.3) and Integrations (§13.3) */
+.area-group-h { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-2); }
+.area-group-h svg { width: 1.1rem; height: 1.1rem; flex: none; color: var(--text-primary); }
+.area-group-h b { font-size: var(--text-body); color: var(--text-primary); }
+.area-group-h .meta { font-size: var(--text-caption); color: var(--text-muted); }
+.area-group { margin-bottom: var(--space-5); }
+/* Area filter pills (§13.3) — same `.ftab` pill as the Tickets kind tabs */
+.ftab svg { width: 0.9rem; height: 0.9rem; flex: none; }
 .card-in-row .id-body { padding: 0; }
 .approval-resp { font-size: var(--text-caption); color: var(--text-muted); margin: var(--space-3) 0 var(--space-2); }
 .creation-legend-fold { margin: 0.4rem 0 0; }

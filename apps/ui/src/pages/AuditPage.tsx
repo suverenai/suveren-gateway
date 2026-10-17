@@ -13,10 +13,14 @@ import { ProfileBadge } from '../components/ProfileBadge';
 import { ReceiptCard } from '../components/ReceiptCard';
 import { ReceiptCompleteDialog } from '../components/ReceiptCompleteDialog';
 import { EmptyState } from '../components/EmptyState';
+import { AreaFilterPills, type AreaFilterOption } from '../components/AreaFilterPills';
 import { useVisiblePolling } from '../hooks/useVisiblePolling';
 import { useAuth } from '../contexts/AuthContext';
 import { useSSEEvent } from '../contexts/EventSourceContext';
 import { parseTicketFilter, matchesTicketFilter, isNewTicket, TICKET_FILTERS, type TicketFilter } from '../lib/core-objects';
+import { useAreaCatalog } from '../lib/area-catalog';
+import { resolveAreaName, areaIcon, parseAreaFilter, matchesAreaFilter } from '../lib/area';
+import { shortProfileId } from '../lib/profile-identity';
 
 type TimeRange = '1d' | '7d' | '30d' | 'all';
 
@@ -67,6 +71,14 @@ export function AuditPage() {
     if (k === 'all') next.delete('filter'); else next.set('filter', k);
     setSearchParams(next, { replace: true });
   };
+  // UI spec §13.3 — area filter pills, combined with `?filter=` above.
+  const areaFilter = parseAreaFilter(searchParams.get('area'));
+  const setAreaFilter = (shortId: string | null) => {
+    const next = new URLSearchParams(searchParams);
+    if (shortId === null) next.delete('area'); else next.set('area', shortId);
+    setSearchParams(next, { replace: true });
+  };
+  const catalog = useAreaCatalog();
   // "New since your last visit": the previous cutoff, captured once per visit
   // (null until read) — same rule as the Blocked page.
   const [seenCutoff, setSeenCutoff] = useState<number | null>(null);
@@ -277,9 +289,27 @@ export function AuditPage() {
     return c;
   }, [filteredExceptKind]);
 
-  const filtered = useMemo(
+  const filteredByKind = useMemo(
     () => filteredExceptKind.filter(r => matchesTicketFilter(r, kind)),
     [filteredExceptKind, kind],
+  );
+
+  // UI spec §13.3 — one pill per area present (after every OTHER filter,
+  // including the kind tabs, so its counts match what "All" would show).
+  const areaOptions: AreaFilterOption[] = useMemo(() => {
+    const m = new Map<string, AreaFilterOption>();
+    for (const r of filteredByKind) {
+      const shortId = shortProfileId(r.profileId);
+      const found = m.get(shortId);
+      if (found) found.count += 1;
+      else m.set(shortId, { shortId, icon: areaIcon(r.profileId), name: resolveAreaName(r.profileId, catalog), count: 1 });
+    }
+    return [...m.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }, [filteredByKind, catalog]);
+
+  const filtered = useMemo(
+    () => filteredByKind.filter(r => matchesAreaFilter(r.profileId, areaFilter)),
+    [filteredByKind, areaFilter],
   );
 
   const newCount = useMemo(
@@ -418,6 +448,9 @@ export function AuditPage() {
       {kind === 'automatic' && (
         <p className="page-subtitle" style={{ marginTop: '-0.25rem' }}>Automatic — no person approved these. Approved tickets are under "Approved".</p>
       )}
+
+      {/* UI spec §13.3 — area filter pills, next to the kind tabs above. */}
+      <AreaFilterPills areas={areaOptions} selected={areaFilter} onSelect={setAreaFilter} totalCount={filteredByKind.length} />
 
       {/* Search + Filter toggle row */}
       <div className="search-filter-bar">

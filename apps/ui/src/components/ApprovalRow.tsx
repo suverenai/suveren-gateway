@@ -1,6 +1,7 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import type { IntegrationManifest, Proposal } from '../lib/sp-client';
 import { areaName, systemName, waitingLabel, deadlineLabel } from '../lib/core-objects';
+import { useAreaCatalog } from '../lib/area-catalog';
 import { ObjectLine } from './ObjectLine';
 import { ApprovalSummary } from './ApprovalSummary';
 
@@ -25,6 +26,7 @@ interface Props {
 export function ApprovalRow({ proposal, manifests, titles, open, onToggle, who, children }: Props) {
   const now = Date.now();
   const due = deadlineLabel(proposal.expiresAt, now);
+  const catalog = useAreaCatalog();
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (open) ref.current?.scrollIntoView({ block: 'nearest' });
@@ -35,9 +37,10 @@ export function ApprovalRow({ proposal, manifests, titles, open, onToggle, who, 
         <div className="appr-item-main">
           <ObjectLine
             profileId={proposal.profileId}
-            area={areaName(proposal.authorizationId, proposal.profileId, titles)}
+            area={areaName(proposal.profileId, catalog)}
             system={systemName(proposal.tool, manifests)}
             time={waitingLabel(proposal.createdAt, now)}
+            mandateTitle={proposal.authorizationId ? titles[proposal.authorizationId] : undefined}
           />
           <div className="appr-item-sum" data-testid="approval-row-summary"><ApprovalSummary proposal={proposal} manifests={manifests} /></div>
           {due && <div className="obj-due">{due}</div>}

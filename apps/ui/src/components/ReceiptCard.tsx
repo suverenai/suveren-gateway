@@ -26,6 +26,7 @@ import {
 } from '../lib/receipt-summary';
 import { profileIdentity, isTestSetupAction } from '../lib/profile-identity';
 import { useProfile } from '../lib/profile-cache';
+import { useAreaCatalog } from '../lib/area-catalog';
 import { ObjectLine } from './ObjectLine';
 import { areaName, systemName, shortTicketId, ticketTime } from '../lib/core-objects';
 import { TicketWhatWasDone } from './TicketWhatWasDone';
@@ -107,7 +108,8 @@ export function ReceiptCard({
   // place to the full record below.
   const [open, setOpen] = useState(defaultOpen);
   const now = Date.now();
-  const area = areaName(receipt.authorizationId, receipt.profileId, grantTitle ? { [receipt.authorizationId ?? '']: grantTitle } : {});
+  const catalog = useAreaCatalog();
+  const area = areaName(receipt.profileId, catalog);
   const verified = signature === 'valid' || signature === 'valid-legacy';
 
   return (
@@ -120,6 +122,7 @@ export function ReceiptCard({
           system={systemName(receipt.action, manifests)}
           time={ticketTime(receipt.timestamp, now)}
           leading={isNew ? <span className="seen-dot is-new" aria-label="new since your last visit" /> : undefined}
+          mandateTitle={grantTitle}
         />
       {/* Headline: what happened, in words. */}
       <div className="receipt-head">

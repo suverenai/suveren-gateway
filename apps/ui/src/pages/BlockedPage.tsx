@@ -1,11 +1,15 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import type { AgentProfile } from '@hap/core';
 import { spClient, type DenialRecord } from '../lib/sp-client';
-import { blockedView, kindOf, todaysCount, formatBlockedWhen } from '../lib/blocked-view';
+import { blockedView, kindOf, todaysCount, formatBlockedWhen, resolveMandateTitle } from '../lib/blocked-view';
 import { EmptyState } from '../components/EmptyState';
 import { ObjectLine } from '../components/ObjectLine';
-import { profileDisplayName } from '../lib/profile-display';
+import { AreaFilterPills, type AreaFilterOption } from '../components/AreaFilterPills';
 import { systemDisplayName } from '../lib/approval-view';
+import { useAreaCatalog } from '../lib/area-catalog';
+import { resolveAreaName, areaIcon, parseAreaFilter, matchesAreaFilter } from '../lib/area';
+import { shortProfileId } from '../lib/profile-identity';
 import { useVisiblePolling } from '../hooks/useVisiblePolling';
 import { useSSEEvent } from '../contexts/EventSourceContext';
 
@@ -24,6 +28,17 @@ export function BlockedPage() {
   const [records, setRecords] = useState<DenialRecord[] | null>(null);
   const [profiles, setProfiles] = useState<Record<string, AgentProfile>>({});
   const [failed, setFailed] = useState(false);
+  const catalog = useAreaCatalog();
+
+  // UI spec §13.3 — area filter pills, next to the kind dot/legend; the URL
+  // carries it so a link can land on one area directly.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const areaFilter = parseAreaFilter(searchParams.get('area'));
+  const setAreaFilter = useCallback((shortId: string | null) => {
+    const next = new URLSearchParams(searchParams);
+    if (shortId === null) next.delete('area'); else next.set('area', shortId);
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   // Mandate title, by authorization_id — the SAME list the Mandates page
   // already loads (getMyAttestations), not a new external lookup. Resolved
@@ -125,12 +140,29 @@ export function BlockedPage() {
   }, [load, loadMandateTitles, seenCutoff]);
   useSSEEvent('denial-recorded', handleNewDenial);
 
+  // One area pill per area present, newest-version name (UI spec §13.1),
+  // ordered alphabetically — a stable, content-independent order, since
+  // unlike Mandates (§13.3's "most active first") there's no "size" here
+  // that wouldn't jump around as new blocks arrive.
+  const areaOptions: AreaFilterOption[] = useMemo(() => {
+    const m = new Map<string, AreaFilterOption>();
+    for (const r of records ?? []) {
+      const pid = r.profile ?? r.integrationId;
+      const shortId = shortProfileId(pid);
+      const entry = m.get(shortId);
+      if (entry) entry.count += 1;
+      else m.set(shortId, { shortId, icon: areaIcon(pid), name: resolveAreaName(pid, catalog), count: 1 });
+    }
+    return [...m.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }, [records, catalog]);
+
   if (failed) {
     return <EmptyState icon="⛔" title="Could not load blocked actions" text="Try again shortly." />;
   }
   if (records === null) return null;
 
   const today = todaysCount(records, Date.now());
+  const filteredRecords = records.filter(r => matchesAreaFilter(r.profile ?? r.integrationId, areaFilter));
 
   return (
     <div className="blocked-page">
@@ -146,10 +178,15 @@ export function BlockedPage() {
           text="Every call your agent made stayed within its mandate."
         />
       ) : (
+        <>
+        {/* UI spec §13.3 — an area pill per area present, next to the
+            existing per-record "what was tried" detail below. */}
+        <AreaFilterPills areas={areaOptions} selected={areaFilter} onSelect={setAreaFilter} totalCount={records.length} />
         <div className="blocked-list">
-          {records.map((r, i) => {
+          {filteredRecords.map((r, i) => {
             const view = blockedView(r, r.profile ? profiles[r.profile] : undefined, mandateTitlesById);
             const unseen = seenCutoff !== null && r.ts > seenCutoff;
+            const pid = r.profile ?? r.integrationId;
             return (
               <div
                 className="card blocked-item blocked-card"
@@ -157,14 +194,15 @@ export function BlockedPage() {
                 key={`${r.ts}-${i}`}
               >
                 <div className="id-body">
-                  {/* UI spec §12.2 — the same top line as approvals, mandates
-                      and tickets, instead of the profile rail. */}
+                  {/* UI spec §12.2/§13.2 — the same top line as approvals,
+                      mandates and tickets, instead of the profile rail. */}
                   <ObjectLine
-                    profileId={r.profile ?? r.integrationId}
-                    area={profileDisplayName(r.profile ?? r.integrationId)}
+                    profileId={pid}
+                    area={resolveAreaName(pid, catalog)}
                     system={r.integrationId ? systemDisplayName(r.integrationId, undefined) : undefined}
                     time={formatBlockedWhen(r.ts, Date.now())}
                     trailing={unseen ? <span className="new-pill">New</span> : undefined}
+                    mandateTitle={resolveMandateTitle(r, mandateTitlesById)}
                   />
                   <div className="blocked-row-head">
                     <span className={`blocked-dot blocked-dot-${kindOf(r)}`} aria-hidden="true" />
@@ -187,6 +225,7 @@ export function BlockedPage() {
             );
           })}
         </div>
+        </>
       )}
     </div>
   );

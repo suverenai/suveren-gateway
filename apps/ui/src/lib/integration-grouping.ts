@@ -5,6 +5,40 @@
  */
 import type { IntegrationEntry } from '../contexts/IntegrationStatusContext';
 import { declaresSimulation } from './simulation';
+import { resolveAreaName, areaIcon, type AreaIconName, type AreaCatalogEntry } from './area';
+
+export interface AreaGroupedEntries {
+  /** The manifest's `profile` field — already the short id (§13.3). */
+  shortId: string;
+  icon: AreaIconName;
+  name: string;
+  entries: IntegrationEntry[];
+}
+
+/**
+ * Connectors grouped under their area heading (UI spec §13.3 — "tools
+ * grouped under their area heading"). A connector serving several areas
+ * would appear under each (today's `IntegrationManifest.profile` is a
+ * single short id, so no shipped connector does this yet; grouping by that
+ * one field already satisfies the rule and extends cleanly if it becomes a
+ * list). Alphabetical — this is a lookup list, not a most-used ranking.
+ */
+export function groupEntriesByArea(
+  entries: IntegrationEntry[],
+  catalog: readonly AreaCatalogEntry[],
+): AreaGroupedEntries[] {
+  const groups = new Map<string, AreaGroupedEntries>();
+  for (const e of entries) {
+    const shortId = e.manifest.profile;
+    let g = groups.get(shortId);
+    if (!g) {
+      g = { shortId, icon: areaIcon(shortId), name: resolveAreaName(shortId, catalog), entries: [] };
+      groups.set(shortId, g);
+    }
+    g.entries.push(e);
+  }
+  return [...groups.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
 
 export interface GroupedIntegrations {
   /** False when simulation mode is off — render `ungrouped` exactly as before. */
