@@ -7,7 +7,7 @@
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import type { ExecutionMappingValue, ProfileToolGating } from './tool-gating-types';
+import type { ExecutionMappingValue, ProfileToolGating, MessageGatingDeclaration } from './tool-gating-types';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -172,6 +172,16 @@ export interface ToolGatingConfig {
    * the same call, and conflating them breaks non-prose connectors.
    */
   contentField?: string;
+
+  /**
+   * Declares this tool's own argument mapping for a human-readable message —
+   * see tool-gating-types.ts's `MessageGatingDeclaration`. Drives the
+   * verification footer (receipt-footer.ts: a tool with no `message` gets no
+   * footer, replacing the old per-profile allowlist) and the mime-raw
+   * attachment transport builder (attachment-resolution.ts): both read this
+   * instead of a hardcoded field-name vocabulary.
+   */
+  message?: MessageGatingDeclaration;
 
   /**
    * Arguments this tool must not accept, removed from the schema the agent

@@ -86,6 +86,7 @@
         }
       },
       "send_message": {
+        "message": { "text": "body", "to": "to", "cc": "cc", "subject": "subject", "verb": "Sent" },
         "summary": "Email to {to|list}: {subject|short}",
         "executionMapping": {
           "to": [

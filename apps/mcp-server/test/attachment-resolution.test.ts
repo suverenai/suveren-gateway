@@ -123,7 +123,9 @@ function buildIntegrationManager(responses: Record<string, Record<string, unknow
 }
 
 const sendMessageMailTool = { integrationId: 'mail', namespacedName: 'mail__send_message', gating: { attachmentsArg: 'attachments', insertFields: ['body'] } };
-const sendMessageGmailTool = { integrationId: 'gmail', namespacedName: 'gmail__send_message', gating: { attachmentsArg: 'attachments', insertFields: ['body'] } };
+// As gmail.json declares it: which arguments are the text, recipients and subject.
+const GMAIL_MESSAGE = { text: 'body', to: 'to', cc: 'cc', subject: 'subject', verb: 'Sent' as const };
+const sendMessageGmailTool = { integrationId: 'gmail', namespacedName: 'gmail__send_message', gating: { attachmentsArg: 'attachments', insertFields: ['body'], message: GMAIL_MESSAGE } };
 const plainTool = { integrationId: 'erp', namespacedName: 'erp__create_quote', gating: {} };
 
 describe('resolveAttachmentsAndInserts — fast no-op', () => {
@@ -240,7 +242,7 @@ describe('finalizeAttachmentsForExecution', () => {
     );
     if (!resolved.ok) throw new Error('setup failed');
     const sealedArgs = { ...resolved.args, [ATTACHMENTS_SEALED_META_KEY]: resolved.sealed };
-    const result = await finalizeAttachmentsForExecution(im, 'gmail', sealedArgs);
+    const result = await finalizeAttachmentsForExecution(im, 'gmail', sealedArgs, GMAIL_MESSAGE);
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(typeof result.args.raw).toBe('string');
@@ -265,7 +267,7 @@ describe('finalizeAttachmentsForExecution', () => {
     );
     if (!resolved.ok) throw new Error('setup failed');
     const sealedArgs = { ...resolved.args, [ATTACHMENTS_SEALED_META_KEY]: resolved.sealed };
-    const result = await finalizeAttachmentsForExecution(im, 'gmail', sealedArgs);
+    const result = await finalizeAttachmentsForExecution(im, 'gmail', sealedArgs, GMAIL_MESSAGE);
     if (!result.ok || !result.rebuildTransport) throw new Error('expected a mime-raw rebuild');
 
     const rebuilt = result.rebuildTransport({ ...result.args, body: 'Anbei die Rechnung.\n\n-- ticket link --' });
@@ -273,6 +275,38 @@ describe('finalizeAttachmentsForExecution', () => {
     const textPart = mime.split('\r\n\r\n')[2].split('\r\n--')[0].replace(/\r\n/g, '');
     expect(Buffer.from(textPart, 'base64').toString('utf8')).toBe('Anbei die Rechnung.\n\n-- ticket link --');
     expect(mime).toContain('invoice.pdf'); // attachment still there
+  });
+
+  it('mime-raw transport: the message is built from the DECLARED fields, whatever they are called', async () => {
+    const responses = { get_document: { filename: 'invoice.pdf', contentType: 'application/pdf', contentBase64: PDF_BASE64, sha256: PDF_SHA256 } };
+    const im = buildIntegrationManager(responses);
+    const resolved = await resolveAttachmentsAndInserts(
+      im, sendMessageGmailTool, HYPOTHETICAL_PROFILE,
+      { to: ['ignored@x.com'], body: 'ignored', attachments: [{ connector: 'erp', kind: 'invoice-pdf', id: 'inv-1' }] },
+      'erp:invoice-pdf',
+    );
+    if (!resolved.ok) throw new Error('setup failed');
+    const args = { ...resolved.args, recipients: ['buchhaltung@drautal.at'], betreff: 'Rechnung', inhalt: 'Anbei.' };
+    const result = await finalizeAttachmentsForExecution(im, 'gmail', { ...args, [ATTACHMENTS_SEALED_META_KEY]: resolved.sealed },
+      { text: 'inhalt', to: 'recipients', subject: 'betreff', verb: 'Sent' });
+    if (!result.ok) throw new Error(result.message);
+    const mime = Buffer.from((result.args.raw as string).replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
+    expect(mime).toContain('To: buchhaltung@drautal.at');
+    expect(mime).not.toContain('ignored@x.com');
+  });
+
+  it('mime-raw transport: refuses — nothing built — when the tool declares no message fields', async () => {
+    const responses = { get_document: { filename: 'invoice.pdf', contentType: 'application/pdf', contentBase64: PDF_BASE64, sha256: PDF_SHA256 } };
+    const im = buildIntegrationManager(responses);
+    const resolved = await resolveAttachmentsAndInserts(
+      im, sendMessageGmailTool, HYPOTHETICAL_PROFILE,
+      { to: ['x@y.com'], body: 'B', attachments: [{ connector: 'erp', kind: 'invoice-pdf', id: 'inv-1' }] },
+      'erp:invoice-pdf',
+    );
+    if (!resolved.ok) throw new Error('setup failed');
+    const result = await finalizeAttachmentsForExecution(im, 'gmail', { ...resolved.args, [ATTACHMENTS_SEALED_META_KEY]: resolved.sealed });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.message).toMatch(/declares no message fields/);
   });
 
   it('field transport: no rebuild needed — the text stays its own argument', async () => {

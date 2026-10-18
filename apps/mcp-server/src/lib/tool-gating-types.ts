@@ -308,6 +308,54 @@ export interface ProfileToolGatingEntry {
    * runs BEFORE the profile's `content_binding` is computed.
    */
   insertFields?: string[];
+  /**
+   * Declares THIS tool as a human-readable "message" — see
+   * {@link MessageGatingDeclaration}. Generic across connectors: nothing
+   * profile- or connector-specific reads for this in code, only the manifest.
+   */
+  message?: MessageGatingDeclaration;
+}
+
+/**
+ * Presentation verb for a message's footer leading word — a post is
+ * "Published", everything else (email, a calendar invite) is "Sent".
+ */
+export type MessageVerb = 'Sent' | 'Published';
+
+/**
+ * A tool's own declaration of which arguments carry a human-readable
+ * message — the generic replacement for what used to be hardcoded per
+ * profile/connector in receipt-footer.ts and attachment-resolution.ts:
+ *
+ *  - `text` is the argument the verification footer appends its line to
+ *    (receipt-footer.ts), and is ALSO the field content-binding's
+ *    `kind:"text"` hashes when the profile declares no `contentField`
+ *    override (content-binding.ts's `detectContentField`) — one resolver,
+ *    so the footer and the receipt can never disagree about which text was
+ *    authorized.
+ *  - `to`/`cc`/`subject`, when this connector's `attachments` transport is
+ *    `"mime-raw"`, are the arguments `finalizeAttachmentsForExecution`
+ *    (attachment-resolution.ts) reads to build the outgoing MIME message —
+ *    a mime-raw tool with attachments and no `to`+`text` declared here is
+ *    refused rather than guessing field names.
+ *  - `verb` is the footer's presentation verb for this tool ("Sent"/
+ *    "Published").
+ *
+ * A tool with no human-readable text at all (a delete, a read) simply omits
+ * `message` — no footer, no content-binding auto-detection, same as before
+ * this existed.
+ */
+export interface MessageGatingDeclaration {
+  /** This tool's own argument holding the human-readable text, e.g. "body", "text", "description". */
+  text: string;
+  /** This tool's own argument holding the recipient list, if any. */
+  to?: string;
+  /** This tool's own argument holding the cc list, if any. */
+  cc?: string;
+  /** This tool's own argument holding the subject line, if any. */
+  subject?: string;
+  /** Presentation verb for the footer's leading word. */
+  verb: MessageVerb;
 }
 
 // ─── Documents, attachments-by-reference, inserted values ─────────────────

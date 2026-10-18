@@ -84,6 +84,7 @@
     },
     "overrides": {
       "send_message": {
+        "message": { "text": "body", "to": "to", "cc": "cc", "subject": "subject", "verb": "Sent" },
         "summary": "Email to {to|list}: {subject|short}",
         "executionMapping": {
           "to": [
@@ -116,6 +117,7 @@
         "display": { "aiText": "body" }
       },
       "create_draft": {
+        "message": { "text": "body", "to": "to", "cc": "cc", "subject": "subject", "verb": "Sent" },
         "summary": "Draft email to {to|list}[: {subject|short}]",
         "executionMapping": {
           "to": [

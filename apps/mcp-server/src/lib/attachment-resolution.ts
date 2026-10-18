@@ -52,6 +52,7 @@ import { resolveDocumentReference, type ResolvedDocument } from './document-sour
 import { resolveInsertValue, applyInserts, type ResolvedInsert } from './insert-values';
 import { buildMimeMessage, toBase64Url } from './mime-message';
 import type { DiscoveredTool } from './integration-manager';
+import type { MessageGatingDeclaration } from './tool-gating-types';
 
 export interface SealedAttachment {
   connector: string;
@@ -225,6 +226,10 @@ export async function finalizeAttachmentsForExecution(
   integrationManager: IntegrationManager,
   integrationId: string,
   args: Record<string, unknown>,
+  /** The calling tool's manifest `message` declaration — which of its
+   *  arguments are the text, recipients and subject. Required to build a
+   *  "mime-raw" message; never guessed from argument names. */
+  message?: MessageGatingDeclaration,
 ): Promise<AttachmentResolutionResult> {
   const sealed = (args as Record<string, unknown>)[ATTACHMENTS_SEALED_META_KEY] as
     | { attachments: SealedAttachment[]; inserts: SealedInsert[] }
@@ -283,15 +288,24 @@ export async function finalizeAttachmentsForExecution(
         contentBase64: d.contentBase64,
       }));
     } else {
+      if (!message?.to) {
+        return {
+          ok: false,
+          message: `Refused: "${integrationId}" sends attachments as one built message, but this tool declares no message fields (manifest \`message.text\` and \`message.to\`) — nothing was sent.`,
+        };
+      }
+      const decl = message;
       const arg = transport.arg;
       const attachments = resolvedDocs.map(d => ({ filename: d.filename, contentType: d.contentType, contentBase64: d.contentBase64 }));
+      const str = (a: Record<string, unknown>, name: string | undefined): string =>
+        name && typeof a[name] === 'string' ? (a[name] as string) : '';
       const withRaw = (a: Record<string, unknown>): Record<string, unknown> => ({
         ...a,
         [arg]: toBase64Url(buildMimeMessage({
-          to: toStringArray(a.to),
-          cc: toStringArray(a.cc),
-          subject: typeof a.subject === 'string' ? a.subject : '',
-          bodyText: typeof a.body === 'string' ? a.body : '',
+          to: toStringArray(a[decl.to!]),
+          cc: decl.cc ? toStringArray(a[decl.cc]) : [],
+          subject: str(a, decl.subject),
+          bodyText: str(a, decl.text),
           attachments,
         })),
       });

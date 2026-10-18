@@ -583,7 +583,7 @@ export async function executeCommitted(
   // attachment/insert references at all.
   let finalToolArgs = toolArgs;
   {
-    const finalized = await finalizeAttachmentsForExecution(integrationManager, integrationId, toolArgs);
+    const finalized = await finalizeAttachmentsForExecution(integrationManager, integrationId, toolArgs, discovered?.gating?.message);
     if (!finalized.ok) {
       state.executionJournal.complete(receiptId, 'failed', 'changed', finalized.message);
       recordExecutionOutcome(state, proposal.id, receiptId, false, finalized.message);

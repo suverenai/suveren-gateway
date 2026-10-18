@@ -28,7 +28,9 @@ const EMAIL_09 = 'email-v09-test';
 const PROFILES_DIR = process.env.SUVEREN_PROFILES_DIR
   ?? join(import.meta.dirname, '..', '..', '..', '..', 'hap-profiles');
 
-const tool = { namespacedName: 'mail__send_message', inputSchema: { properties: {} } } as unknown as DiscoveredTool;
+// As mail.json/gmail.json declare it: the attachments argument is the
+// manifest's `attachmentsArg`, not a field name assumed in code.
+const tool = { namespacedName: 'mail__send_message', inputSchema: { properties: {} }, gating: { attachmentsArg: 'attachments' } } as unknown as DiscoveredTool;
 const send09 = (args: Record<string, unknown>) => computeContentBinding(EMAIL_09, tool, args, 'send');
 
 let contentBinding09: Record<string, unknown> | undefined;
