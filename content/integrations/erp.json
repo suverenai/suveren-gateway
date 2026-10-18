@@ -62,6 +62,11 @@
     "field": "mode",
     "default": "simulation"
   },
+  "modeLabels": {
+    "simulation": "Test data",
+    "live": { "local": "Built-in" }
+  },
+  "adapterField": "liveAdapter",
   "personalDefault": true,
   "oauth": null,
   "documents": {

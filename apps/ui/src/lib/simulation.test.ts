@@ -4,7 +4,7 @@
  * never on a connector that declares nothing or is set to live.
  */
 import { describe, it, expect } from 'vitest';
-import { isSimulated, declaresSimulation } from './simulation';
+import { isSimulated, declaresSimulation, modeLabel } from './simulation';
 
 const erp = { simulation: { field: 'mode', default: 'simulation' } };
 
@@ -45,5 +45,43 @@ describe('declaresSimulation', () => {
     expect(declaresSimulation({})).toBe(false);
     expect(declaresSimulation(undefined)).toBe(false);
     expect(declaresSimulation(null)).toBe(false);
+  });
+});
+
+describe('modeLabel', () => {
+  const erpWithLabels = {
+    simulation: { field: 'mode', default: 'simulation' },
+    modeLabels: { simulation: 'Test data', live: { local: 'Built-in' } },
+    adapterField: 'liveAdapter',
+  };
+
+  it('unset mode falls back to the declared default — "Test data"', () => {
+    expect(modeLabel(erpWithLabels, {})).toBe('Test data');
+    expect(modeLabel(erpWithLabels, undefined)).toBe('Test data');
+  });
+
+  it('live mode with a labelled adapter — "Built-in"', () => {
+    expect(modeLabel(erpWithLabels, { mode: 'live', liveAdapter: 'local' })).toBe('Built-in');
+  });
+
+  it('live mode with an UNlabelled adapter has no label', () => {
+    expect(modeLabel(erpWithLabels, { mode: 'live', liveAdapter: 'sap' })).toBeUndefined();
+  });
+
+  it('live mode with no adapter set has no label', () => {
+    expect(modeLabel(erpWithLabels, { mode: 'live' })).toBeUndefined();
+  });
+
+  it('a plain string label applies regardless of adapter (mail\'s "Test mailbox")', () => {
+    const mail = { simulation: { field: 'mode', default: 'simulation' }, modeLabels: { simulation: 'Test mailbox' } };
+    expect(modeLabel(mail, {})).toBe('Test mailbox');
+  });
+
+  it('no modeLabels declared at all — undefined', () => {
+    expect(modeLabel({ simulation: { field: 'mode', default: 'simulation' } }, {})).toBeUndefined();
+  });
+
+  it('no simulation marker at all — undefined, even if modeLabels were somehow present', () => {
+    expect(modeLabel({ simulation: null, modeLabels: { simulation: 'Test data' } }, {})).toBeUndefined();
   });
 });

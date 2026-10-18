@@ -5,6 +5,7 @@
  */
 import type { IntegrationEntry } from '../contexts/IntegrationStatusContext';
 import { declaresSimulation } from './simulation';
+import { blockedBySimulation } from './integration-attention';
 import { resolveAreaName, areaIcon, type AreaIconName, type AreaCatalogEntry } from './area';
 
 export interface AreaGroupedEntries {
@@ -63,17 +64,25 @@ export function groupEntriesByArea(
 export interface GroupedIntegrations {
   /** False when simulation mode is off — render `ungrouped` exactly as before. */
   grouped: boolean;
-  /** Connectors that declare a `simulation` marker — full cards, "Test systems". */
+  /**
+   * Connectors that are CURRENTLY simulated — declare a `simulation` marker
+   * AND are not blocked by it (unconfigured/default, or explicitly set to
+   * the simulated mode). Full cards, "Test systems". A connector that
+   * declares the marker but is currently SET to a real mode (ERP's
+   * mode=live) does NOT belong here — see `realErrors`/`pausedReal` below.
+   */
   testSystems: IntegrationEntry[];
   /**
-   * Real connectors with a GENUINE error (unrelated to the simulation block)
-   * — full cards, never folded into the paused group. Simulation pausing a
+   * Real connectors (no simulation capability at all, OR currently set to a
+   * real mode) with a GENUINE error (unrelated to the simulation block) —
+   * full cards, never folded into the paused group. Simulation pausing a
    * system is not the same as that system being broken, and hiding a real
    * crash inside a collapsed "Paused" disclosure would bury it.
    */
   realErrors: IntegrationEntry[];
   /**
-   * Every other real connector — paused by the simulation block, or simply
+   * Every other real connector — paused by the simulation block (no
+   * simulation capability, or currently set to a real mode), or simply
    * never configured (which, while simulation mode is on, amounts to the
    * same thing: it cannot run either way). Rendered as compact rows under
    * "Paused while simulation mode is on".
@@ -87,10 +96,11 @@ export interface GroupedIntegrations {
  * How the Integrations page lays out its entries.
  *
  * OFF: today's flat list — nothing changes.
- * ON: split by what the manifest DECLARES (test vs. real), not by current
- * running state — a real connector that happens to be running fine before
- * simulation mode was turned on still belongs in "paused" conceptually once
- * the gateway restarts with the mode on and refuses to start it again.
+ * ON: split by whether the connector is CURRENTLY simulated, not merely by
+ * what the manifest declares — a connector that declares a simulated mode
+ * but is currently SET to a real one (ERP's mode=live) is a real system, not
+ * a test system, and belongs with the real ones (`blockedBySimulation`, the
+ * same current-mode check the gateway's own start/call-time gates use).
  */
 export function groupIntegrationsForDisplay(
   entries: IntegrationEntry[],
@@ -100,8 +110,8 @@ export function groupIntegrationsForDisplay(
     return { grouped: false, testSystems: [], realErrors: [], pausedReal: [], ungrouped: entries };
   }
 
-  const testSystems = entries.filter(e => declaresSimulation(e.manifest));
-  const real = entries.filter(e => !declaresSimulation(e.manifest));
+  const testSystems = entries.filter(e => declaresSimulation(e.manifest) && !blockedBySimulation(e, simulationOn));
+  const real = entries.filter(e => !declaresSimulation(e.manifest) || blockedBySimulation(e, simulationOn));
   const realErrors = real.filter(e => e.state === 'error');
   const pausedReal = real.filter(e => e.state !== 'error');
 

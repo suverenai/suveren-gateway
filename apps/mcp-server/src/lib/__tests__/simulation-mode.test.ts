@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { isSimulationMode, manifestIsSimulated } from '../simulation-mode';
+import { isSimulationMode, manifestIsSimulated, connectorCurrentlySimulated } from '../simulation-mode';
 import { _resetPolicyCacheForTests } from '../policy';
 
 const dirs: string[] = [];
@@ -58,7 +58,34 @@ describe('manifestIsSimulated', () => {
     expect(manifestIsSimulated(undefined)).toBe(false);
   });
 
-  it('true for a manifest that declares one (e.g. erp/crm/mail)', () => {
+  it('true for a manifest that declares one (e.g. erp/crm/mail) — regardless of current mode', () => {
     expect(manifestIsSimulated({ simulation: { field: 'mode', default: 'simulation' } })).toBe(true);
+  });
+});
+
+describe('connectorCurrentlySimulated', () => {
+  const erp = { simulation: { field: 'mode', default: 'simulation' } };
+
+  it('unset mode falls back to the declared default — simulation', () => {
+    expect(connectorCurrentlySimulated(erp, {})).toBe(true);
+    expect(connectorCurrentlySimulated(erp, undefined)).toBe(true);
+    expect(connectorCurrentlySimulated(erp, { mode: '   ' })).toBe(true);
+  });
+
+  it('explicit simulation, any case', () => {
+    expect(connectorCurrentlySimulated(erp, { mode: 'Simulation' })).toBe(true);
+  });
+
+  it('a connector currently SET to live is not simulated — ERP mode=live, the exact case that must be refused', () => {
+    expect(connectorCurrentlySimulated(erp, { mode: 'live' })).toBe(false);
+  });
+
+  it('a manifest with no simulation marker at all is never simulated (e.g. gmail)', () => {
+    expect(connectorCurrentlySimulated({ simulation: null }, { mode: 'simulation' })).toBe(false);
+    expect(connectorCurrentlySimulated(undefined, { mode: 'simulation' })).toBe(false);
+  });
+
+  it('a default of live means unset is live', () => {
+    expect(connectorCurrentlySimulated({ simulation: { field: 'mode', default: 'live' } }, {})).toBe(false);
   });
 });

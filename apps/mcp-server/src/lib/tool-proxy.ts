@@ -516,13 +516,14 @@ export function createGatedToolHandler(
   }
 
   // Simulation mode, defence in depth: integration-manager already refuses to
-  // START a connector whose manifest carries no `simulation` marker while
-  // simulation mode is on, so in the normal case this tool never exists to be
-  // called. This is a second, independent check at CALL time — so a bug in
-  // that start-time gate, or some future path that registers tools without
-  // going through IntegrationManager.startIntegration, can never let a real
-  // system execute. No ticket is requested; this runs before any gating,
-  // bounds, or receipt logic.
+  // START a connector that isn't currently simulation-safe (no `simulation`
+  // marker at all, OR one declared but currently SET to a real mode — e.g.
+  // ERP's mode=live) while simulation mode is on, so in the normal case this
+  // tool never exists to be called. This is a second, independent check at
+  // CALL time — so a bug in that start-time gate, or some future path that
+  // registers tools without going through IntegrationManager.startIntegration,
+  // can never let a real system execute. No ticket is requested; this runs
+  // before any gating, bounds, or receipt logic.
   //
   // The text is deliberately neutral: the working agent must not be able to
   // tell simulation from live (Andreas, 2026-10-02). The explicit reason stays

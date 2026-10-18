@@ -40,6 +40,9 @@
     "field": "mode",
     "default": "simulation"
   },
+  "modeLabels": {
+    "simulation": "Test mailbox"
+  },
   "personalDefault": false,
   "oauth": null,
   "attachments": {

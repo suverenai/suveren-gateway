@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { spClient, type IntegrationManifest, type McpIntegrationStatus } from '../lib/sp-client';
 import type { IntegrationState } from '../contexts/IntegrationStatusContext';
-import { isSimulated } from '../lib/simulation';
+import { isSimulated, modeLabel } from '../lib/simulation';
 import { integrationIcon } from '../lib/integration-icon';
 import { areasOf as areaProfilesOf } from '../lib/integration-grouping';
 
@@ -356,7 +356,12 @@ export function IntegrationCard({ manifest, integration, state, onStatusChange, 
     <div className="card" style={{ marginBottom: '1rem' }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
         <span style={{ fontSize: '1.4rem', lineHeight: 1.2 }}>{icon}</span>
-        <h3 className="card-title" style={{ margin: 0, flex: 1, alignSelf: 'center' }}>{manifest.name}</h3>
+        <h3 className="card-title" style={{ margin: 0, flex: 1, alignSelf: 'center' }}>
+          {manifest.name}
+          {modeLabel(manifest, existingCreds) && (
+            <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}> · {modeLabel(manifest, existingCreds)}</span>
+          )}
+        </h3>
         <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           {/* Process chip only once setup is complete — a running-but-unconfigured
               subprocess isn't meaningfully "running", so we show only what's

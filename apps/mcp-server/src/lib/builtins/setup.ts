@@ -31,7 +31,7 @@
  */
 import { builtinText, builtinStructured, type BuiltinIntegration, type MandateCandidate } from '../builtin-integration';
 import { CONTEXT_MAX_BYTES, writeContextFile, readContextFile } from '../context-loader';
-import { isSimulationMode, manifestIsSimulated } from '../simulation-mode';
+import { isSimulationMode } from '../simulation-mode';
 import type { BuiltinDeps } from './index';
 import { controlPlaneMandate } from '../cp-mandate';
 import { loadGuides, guideHeader, limitsSection, packageSection, fillGenerated, type SystemLine, type ProfileLike } from '../guides';
@@ -392,8 +392,13 @@ export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
           const systems = connectedSystems(deps.integrationManager);
           const running = new Set(systems.map(s => s.id));
           // Simulated systems this gateway knows but has not started — the person
-          // activates them in the gateway; the AI cannot.
-          const inactive = getAllManifests().filter(m => manifestIsSimulated(m) && !running.has(m.id)).map(m => m.name);
+          // activates them in the gateway; the AI cannot. `isSimulationSafe`
+          // (not mere capability) so a connector currently SET to a real mode
+          // (e.g. ERP's mode=live) is never listed as something to "activate
+          // for the test" — it would just be refused.
+          const inactive = getAllManifests()
+            .filter(m => deps.integrationManager.isSimulationSafe(m.id) && !running.has(m.id))
+            .map(m => m.name);
           const header = guideHeader(systems, inactive);
           const topic = typeof args.topic === 'string' ? args.topic.trim().toLowerCase() : '';
           if (!topic) {

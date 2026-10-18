@@ -26,12 +26,19 @@ export interface AttentionItem {
  * caller, same as before.
  */
 /**
- * A real connector (no manifest `simulation` marker) can never run while
- * simulation mode is on — it is paused by design, so it is never something
- * to fix: not in "Needs your attention", not in the Integrations badge.
+ * A real connector can never run while simulation mode is on — it is paused
+ * by design, so it is never something to fix: not in "Needs your attention",
+ * not in the Integrations badge. "Real" here means either no manifest
+ * `simulation` marker at all, OR a connector that declares one but is
+ * CURRENTLY SET to a real mode (ERP's mode=live) — the backend's `paused`
+ * field already encodes this (see simulation-mode.ts's
+ * `connectorCurrentlySimulated`, the SAME current-mode check the gateway's
+ * own start/call-time gates use), so reading it here keeps this rule from
+ * drifting out of step with enforcement the way `declaresSimulation` alone
+ * once did.
  */
 export function blockedBySimulation(e: IntegrationEntry, simulationOn: boolean): boolean {
-  return simulationOn && !declaresSimulation(e.manifest);
+  return simulationOn && (!declaresSimulation(e.manifest) || e.integration?.paused === 'simulation');
 }
 
 export function buildIntegrationAttentionItems(entries: IntegrationEntry[], simulationOn = false): AttentionItem[] {
