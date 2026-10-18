@@ -125,6 +125,8 @@ export interface IntegrationManifest {
    * mode value it's keyed by comes from that same field.
    */
   modeLabels?: Record<string, string | Record<string, string>> | null;
+  /** A short note per mode, same shape as `modeLabels` — shown under the card title. */
+  modeNotes?: IntegrationManifest['modeLabels'];
   /**
    * Credential field holding which adapter backs a non-simulated mode (e.g.
    * erp.json's `liveAdapter`, env `ERP_LIVE_ADAPTER`). Required whenever
@@ -1085,7 +1087,10 @@ export function loadManifests(integrationsDir?: string): number {
         console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${valuesReason}`);
         continue;
       }
-      const modeLabelsReason = invalidModeLabelsReason(manifest);
+      const modeLabelsReason = invalidModeLabelsReason(manifest)
+        // modeNotes (a short line under the card title per mode, e.g. "On this
+        // computer — no shared access") has exactly modeLabels' shape.
+        ?? (manifest.modeNotes ? invalidModeLabelsReason({ ...manifest, modeLabels: manifest.modeNotes })?.replace(/modeLabels/g, 'modeNotes') ?? null : null);
       if (modeLabelsReason) {
         console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${modeLabelsReason}`);
         continue;

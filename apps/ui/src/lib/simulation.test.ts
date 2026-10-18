@@ -4,7 +4,7 @@
  * never on a connector that declares nothing or is set to live.
  */
 import { describe, it, expect } from 'vitest';
-import { isSimulated, declaresSimulation, modeLabel } from './simulation';
+import { isSimulated, declaresSimulation, modeLabel, modeNote } from './simulation';
 
 const erp = { simulation: { field: 'mode', default: 'simulation' } };
 
@@ -85,3 +85,17 @@ describe('modeLabel', () => {
     expect(modeLabel({ simulation: null, modeLabels: { simulation: 'Test data' } }, {})).toBeUndefined();
   });
 });
+
+describe('modeNote — a short line for the current mode', () => {
+  const erp = {
+    simulation: { field: 'mode', default: 'simulation' },
+    modeNotes: { live: { local: 'On this computer — no shared access' } },
+    adapterField: 'liveAdapter',
+  } as never;
+  it('live + local → the note; simulation → none', () => {
+    expect(modeNote(erp, { mode: 'live', liveAdapter: 'local' })).toBe('On this computer — no shared access');
+    expect(modeNote(erp, { mode: 'simulation' })).toBeUndefined();
+    expect(modeNote(erp, {})).toBeUndefined();
+  });
+});
+

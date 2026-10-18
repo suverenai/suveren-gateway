@@ -421,6 +421,7 @@ export interface IntegrationManifest {
    *  by the `simulation.field` value; an object entry is keyed by the
    *  `adapterField` setting's value. See manifest-loader.ts's doc comment. */
   modeLabels?: Record<string, string | Record<string, string>> | null;
+  modeNotes?: IntegrationManifest['modeLabels'];
   /** Credential field holding which adapter backs a non-simulated mode (e.g. erp.json's `liveAdapter`). */
   adapterField?: string;
   /** Links the approval card offers so a reviewer can inspect the action. */

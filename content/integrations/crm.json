@@ -47,7 +47,10 @@
   },
   "modeLabels": {
     "simulation": "Test data",
-    "live": { "local": "Built-in" }
+    "live": { "local": "Local" }
+  },
+  "modeNotes": {
+    "live": { "local": "On this computer — no shared access" }
   },
   "adapterField": "liveAdapter",
   "personalDefault": true,

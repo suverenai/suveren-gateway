@@ -160,13 +160,13 @@ describe('bundled manifests — content/integrations', () => {
 
   it('erp.json: live/local answers "Built-in", unset/simulation answers "Test data"', () => {
     const erp = JSON.parse(readFileSync(join(MANIFESTS_DIR, 'erp.json'), 'utf8'));
-    expect(erp.modeLabels).toEqual({ simulation: 'Test data', live: { local: 'Built-in' } });
+    expect(erp.modeLabels).toEqual({ simulation: 'Test data', live: { local: 'Local' } });
     expect(erp.adapterField).toBe('liveAdapter');
   });
 
   it('crm.json: same shape as erp.json, and its own npmVersion is untouched by this change', () => {
     const crm = JSON.parse(readFileSync(join(MANIFESTS_DIR, 'crm.json'), 'utf8'));
-    expect(crm.modeLabels).toEqual({ simulation: 'Test data', live: { local: 'Built-in' } });
+    expect(crm.modeLabels).toEqual({ simulation: 'Test data', live: { local: 'Local' } });
     expect(crm.adapterField).toBe('liveAdapter');
     expect(crm.credentials.envMapping.CRM_LIVE_ADAPTER).toBe('liveAdapter');
     expect(crm.npmVersion).toBe('1.5.0');
@@ -177,3 +177,14 @@ describe('bundled manifests — content/integrations', () => {
     expect(mail.modeLabels).toEqual({ simulation: 'Test mailbox' });
   });
 });
+
+describe('modeNotes — shipped manifests', () => {
+  it('ERP and CRM say "On this computer — no shared access" for live/local, and the note passes validation', () => {
+    for (const f of ['erp.json', 'crm.json']) {
+      const m = JSON.parse(readFileSync(join(MANIFESTS_DIR, f), 'utf8'));
+      expect(m.modeNotes, f).toEqual({ live: { local: 'On this computer — no shared access' } });
+      expect(invalidModeLabelsReason({ ...m, modeLabels: m.modeNotes }), f).toBeNull();
+    }
+  });
+});
+

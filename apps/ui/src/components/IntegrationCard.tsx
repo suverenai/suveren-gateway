@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { spClient, type IntegrationManifest, type McpIntegrationStatus } from '../lib/sp-client';
 import type { IntegrationState } from '../contexts/IntegrationStatusContext';
-import { isSimulated, modeLabel } from '../lib/simulation';
+import { isSimulated, modeLabel, modeNote } from '../lib/simulation';
 import { integrationIcon } from '../lib/integration-icon';
 import { areasOf as areaProfilesOf } from '../lib/integration-grouping';
 
@@ -360,6 +360,9 @@ export function IntegrationCard({ manifest, integration, state, onStatusChange, 
           {manifest.name}
           {modeLabel(manifest, existingCreds) && (
             <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}> · {modeLabel(manifest, existingCreds)}</span>
+          )}
+          {modeNote(manifest, existingCreds) && (
+            <span className="card-mode-note" data-testid="integration-mode-note">{modeNote(manifest, existingCreds)}</span>
           )}
         </h3>
         <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>

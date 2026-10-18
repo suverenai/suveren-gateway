@@ -58,7 +58,23 @@ export function modeLabel(
   manifest: Pick<IntegrationManifest, 'simulation' | 'modeLabels' | 'adapterField'>,
   fields?: Record<string, string | undefined>,
 ): string | undefined {
-  const labels = manifest.modeLabels;
+  return modeEntry(manifest, manifest.modeLabels, fields);
+}
+
+/** The note for the connector's current mode (`modeNotes`, same shape as
+ *  `modeLabels`), e.g. "On this computer — no shared access". */
+export function modeNote(
+  manifest: Pick<IntegrationManifest, 'simulation' | 'modeNotes' | 'adapterField'>,
+  fields?: Record<string, string | undefined>,
+): string | undefined {
+  return modeEntry(manifest, manifest.modeNotes, fields);
+}
+
+function modeEntry(
+  manifest: Pick<IntegrationManifest, 'simulation' | 'adapterField'>,
+  labels: IntegrationManifest['modeLabels'],
+  fields?: Record<string, string | undefined>,
+): string | undefined {
   const decl = manifest.simulation;
   if (!labels || !decl) return undefined;
   const mode = (fields?.[decl.field] ?? '').trim().toLowerCase() || decl.default.trim().toLowerCase();
