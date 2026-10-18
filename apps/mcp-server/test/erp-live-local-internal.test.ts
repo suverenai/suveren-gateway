@@ -171,16 +171,15 @@ describe.skipIf(!hasFixture)('ERP live/local mode — real erp-mcp build over st
       const result = await im.callTool('erp', 'preview_invoice', {
         customer_id: customerId,
         number: '2026-TEST-0001',
+        document_date: '2026-10-15',
         service_period: { from: '2026-10-01', to: '2026-10-31' },
         lines: [{ description: 'Consulting', qty: 1, unit_price: 100, vat_rate: 20 }],
         net_total: 100,
         currency: 'EUR',
       });
       expect(result.isError).toBeFalsy();
-      // preview_invoice declares no outputSchema -> no structuredContent (see
-      // erp-mcp's own request handler); the JSON lands in content[0].text,
-      // same "JSON-in-text" fallback preview-render.ts's resolveBodyObject
-      // already handles for every connector without one.
+      // The JSON is in content[0].text (and, from erp-mcp 0.9.0, also in
+      // structuredContent) — the text form is what every connector has.
       const body = JSON.parse(result.content[0].text) as Record<string, unknown>;
       const { isDocumentPreviewBody } = await import('../../ui/src/lib/document-preview');
       expect(isDocumentPreviewBody(body)).toBe(true);
@@ -189,11 +188,22 @@ describe.skipIf(!hasFixture)('ERP live/local mode — real erp-mcp build over st
       expect((body.contentBase64 as string).length).toBeGreaterThan(100);
       expect(body.sha256).toMatch(/^[0-9a-f]{64}$/);
       expect(body.pages).toBeGreaterThanOrEqual(1);
+      // erp-mcp >= 0.9.0: the same args render byte-identical PDFs (the
+      // document date, not "now", drives the PDF metadata) — this is what lets
+      // the approved preview equal the issued document.
+      const sameArgs = await im.callTool('erp', 'preview_invoice', {
+        customer_id: customerId, number: '2026-TEST-0001', document_date: '2026-10-15',
+        service_period: { from: '2026-10-01', to: '2026-10-31' },
+        lines: [{ description: 'Consulting', qty: 1, unit_price: 100, vat_rate: 20 }],
+        net_total: 100, currency: 'EUR',
+      });
+      expect(JSON.parse(sameArgs.content[0].text).sha256).toBe(body.sha256);
       // preview_invoice must not have issued anything — a second identical
       // call must succeed again with the SAME number still unused.
       const again = await im.callTool('erp', 'preview_invoice', {
         customer_id: customerId,
         number: '2026-TEST-0001',
+        document_date: '2026-10-15',
         service_period: { from: '2026-10-01', to: '2026-10-31' },
         lines: [{ description: 'Consulting', qty: 1, unit_price: 100, vat_rate: 20 }],
         net_total: 100,
