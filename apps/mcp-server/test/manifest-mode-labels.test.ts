@@ -169,7 +169,8 @@ describe('bundled manifests — content/integrations', () => {
     expect(crm.modeLabels).toEqual({ simulation: 'Test data', live: { local: 'Local' } });
     expect(crm.adapterField).toBe('liveAdapter');
     expect(crm.credentials.envMapping.CRM_LIVE_ADAPTER).toBe('liveAdapter');
-    expect(crm.npmVersion).toBe('1.5.0');
+    // crm-mcp 1.6.0 brings live mode 'local' (CRM_LIVE_ADAPTER=local).
+    expect(crm.npmVersion.localeCompare('1.6.0', undefined, { numeric: true })).toBeGreaterThanOrEqual(0);
   });
 
   it('mail.json: simulation only — "Test mailbox"', () => {

@@ -6,7 +6,7 @@
   "icon": "briefcase",
   "profile": "sales",
   "npmPackage": "@humanagencyp/erp-mcp",
-  "npmVersion": "0.9.0",
+  "npmVersion": "0.9.1",
   "mcp": {
     "command": "erp-mcp",
     "args": [],
