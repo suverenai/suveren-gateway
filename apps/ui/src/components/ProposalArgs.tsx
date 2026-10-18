@@ -3,6 +3,8 @@
  * tool (see lib/approval-view.ts). Never truncates: the person approves exactly
  * what they can read here.
  */
+import { nestedValueView } from '../lib/preview-render';
+import { PreviewTableView } from './PreviewTableView';
 import { Fragment } from 'react';
 import { argRows, profileFieldLines, type ArgRow, type ToolDisplay } from '../lib/approval-view';
 import { profileDisplayName } from '../lib/profile-display';
@@ -57,6 +59,13 @@ function ProfileName({ row }: { row: ArgRow }) {
  *  ticket's "What was sent" box (TicketWhatWasDone, UI spec §14) so the two
  *  can never show the same value differently. */
 export function ArgValue({ row, altText }: { row: ArgRow; altText?: string }) {
+  // Records and lists of records read the same here as on the approval card
+  // (preview-render.ts): a table / one compact line — never raw JSON.
+  if (row.kind === 'list' || row.kind === 'object') {
+    const nested = nestedValueView(row.value);
+    if (nested && 'table' in nested) return <PreviewTableView table={nested.table} />;
+    if (nested) return <>{nested.text}</>;
+  }
   switch (row.kind) {
     case 'profile': return <ProfileName row={row} />;
     case 'profile-limits': return <ProfileFields row={row} which="limits" />;

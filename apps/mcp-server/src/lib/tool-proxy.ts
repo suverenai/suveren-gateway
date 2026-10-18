@@ -1496,12 +1496,14 @@ function createGatedToolHandlerInner(
         // stays available below for the 409/above-cap proposal fallback,
         // which must never carry embedded bytes into a stored proposal.
         let finalArgs = callArgs;
+        let rebuildTransport: ((a: Record<string, unknown>) => Record<string, unknown>) | undefined;
         if (tool.gating?.attachmentsArg || tool.gating?.insertFields?.length) {
           const finalized = await finalizeAttachmentsForExecution(integrationManager, tool.integrationId, callArgs);
           if (!finalized.ok) {
             return { content: [{ type: 'text', text: finalized.message }], isError: true };
           }
           finalArgs = finalized.args;
+          rebuildTransport = finalized.rebuildTransport;
         }
 
         // Request receipt from SP (pre-flight — fail closed).
@@ -1915,6 +1917,9 @@ function createGatedToolHandlerInner(
             ? appendVerificationFooter(tool, finalArgs, receiptId, auth.subjects?.[0])
             : finalArgs;
         if (receiptId) outgoingArgs = attachTicketId(tool, outgoingArgs, receiptId);
+        // A MIME message (Gmail `raw`) carries the text inside it — rebuild it
+        // so the footer just added to `body` is in what is actually sent.
+        if (rebuildTransport) outgoingArgs = rebuildTransport(outgoingArgs);
         // LAST: transport encoding. After the hash and the footer, so the
         // binding stays over what was approved rather than over the wire form.
         outgoingArgs = encodeOutgoingArgs(tool, outgoingArgs);

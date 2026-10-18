@@ -224,6 +224,13 @@ interface RunningIntegration {
   transport: StdioClientTransport;
   tools: DiscoveredTool[];
   respawnAttempts: number;
+  /** The vault-resolved env this process was started with (see `credentialsChangedSinceStart`). */
+  credentialEnv: string;
+}
+
+/** Order-independent fingerprint of a resolved env, for change detection only. */
+function stableEnvKey(env: Record<string, string>): string {
+  return JSON.stringify(Object.keys(env).sort().map(k => [k, env[k]]));
 }
 
 // ─── Manager ────────────────────────────────────────────────────────────────
@@ -732,6 +739,7 @@ export class IntegrationManager {
 
     // Resolve environment variables from vault references
     const env = this.resolveEnvKeys(config);
+    const credentialEnv = stableEnvKey(env);
 
     // Normalize the mode env var to the literal "simulation" string. The
     // guard above already refused this start unless the connector's CURRENT
@@ -871,6 +879,7 @@ export class IntegrationManager {
       transport,
       tools,
       respawnAttempts: 0,
+      credentialEnv,
     };
     this.running.set(config.id, entry);
 
@@ -1258,6 +1267,22 @@ export class IntegrationManager {
   }
 
   /**
+   * True when the integration is running but the vault credentials would now
+   * resolve to a different env than the one its process was started with.
+   *
+   * Why: at boot the gateway starts connectors whose settings are all optional
+   * (ERP, CRM — mode/adapter/company file) BEFORE the vault is unlocked, so they
+   * come up on their defaults (simulation). The settings arrive on unlock, and
+   * without a restart the process keeps running on the wrong mode — the user's
+   * live data silently disappears from view.
+   */
+  credentialsChangedSinceStart(config: IntegrationConfig): boolean {
+    const entry = this.running.get(config.id);
+    if (!entry) return false;
+    return stableEnvKey(this.resolveEnvKeys(config)) !== entry.credentialEnv;
+  }
+
+  /**
    * Check if all required env keys for an integration can be resolved.
    */
   canResolveEnvKeys(config: IntegrationConfig): boolean {
@@ -1500,6 +1525,7 @@ export class IntegrationManager {
           transport: null as unknown as StdioClientTransport,
           tools: [],
           respawnAttempts: attempts + 1,
+          credentialEnv: '',
         };
         this.running.set(id, fakeEntry);
         this.handleCrash(id);

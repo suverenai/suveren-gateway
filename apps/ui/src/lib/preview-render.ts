@@ -234,6 +234,20 @@ function tableForObjectArray(
 }
 
 /**
+ * One argument value that is not a plain string/number, the way every view
+ * shows it: a list of records → a table, one record → one compact line.
+ * Null for anything else (the caller shows it as itself). Shape-driven only —
+ * never by field or tool name.
+ */
+export function nestedValueView(value: unknown): { table: PreviewTable } | { text: string } | null {
+  if (Array.isArray(value) && value.length > 0 && value.every(isPlainObject)) {
+    return { table: tableForObjectArray(value as Record<string, unknown>[], undefined) };
+  }
+  if (isPlainObject(value)) return { text: compactObjectLine(value, undefined, false) };
+  return null;
+}
+
+/**
  * DL4: one line per entry of a unified diff, classified by its own leading
  * character — the file-header lines a real unified diff may carry (`+++`/
  * `---`) are context, never mistaken for a single changed line.
@@ -909,7 +923,26 @@ export function buildCreationView(
       continue;
     }
 
-    const { value, valueTitle } = formatHinted(toolArgs[key], displayHints, key, currencyStr);
+    const raw = toolArgs[key];
+    // A list of records (invoice lines) reads as a table; one record (a
+    // service period) as one compact line — never "—" for a value that is
+    // there, just not a plain string or number.
+    const nested = nestedValueView(raw);
+    if (nested && 'table' in nested) {
+      rows.push({ kind: 'table', key, label, table: nested.table });
+      continue;
+    }
+    if (nested && isPlainObject(raw)) {
+      const exact = compactObjectLine(raw, undefined, true);
+      rows.push({ kind: 'scalar', key, label, value: nested.text, ...(exact !== nested.text ? { valueTitle: exact } : {}) });
+      continue;
+    }
+    if (Array.isArray(raw)) {
+      rows.push({ kind: 'scalar', key, label, value: raw.length === 0 ? '—' : raw.map((x) => formatScalar(x)).join(', ') });
+      continue;
+    }
+
+    const { value, valueTitle } = formatHinted(raw, displayHints, key, currencyStr);
     rows.push({ kind: 'scalar', key, label, value, valueTitle });
   }
 

@@ -1270,12 +1270,23 @@ async function startIntegrationForService(serviceId: string) {
     Object.values(c.envKeys ?? {}).some(ref => typeof ref === 'string' && ref.startsWith(`${serviceId}.`)),
   );
   for (const config of candidates) {
+    // Already running, but on settings that predate these credentials (it was
+    // started before unlock, on its defaults): restart it so the process sees
+    // what the user saved — e.g. ERP mode=live/local instead of simulation.
+    if (integrationManager.isRunning(config.id) && integrationManager.credentialsChangedSinceStart(config)) {
+      console.error(`[Suveren MCP] ${config.id}: credentials changed since start — restarting`);
+      await startOneIntegration(config, { restart: true });
+      continue;
+    }
     await startOneIntegration(config);
   }
 }
 
-async function startOneIntegration(config: ReturnType<typeof integrationRegistry.getEnabled>[number]) {
-  if (integrationManager.isRunning(config.id)) return;
+async function startOneIntegration(
+  config: ReturnType<typeof integrationRegistry.getEnabled>[number],
+  opts: { restart?: boolean } = {},
+) {
+  if (!opts.restart && integrationManager.isRunning(config.id)) return;
 
   const needsCreds = Object.keys(config.envKeys ?? {}).length > 0;
   if (needsCreds && !integrationManager.canResolveEnvKeys(config)) {
@@ -1308,7 +1319,7 @@ async function startOneIntegration(config: ReturnType<typeof integrationRegistry
     // won, this call must not restart the integration with the manifest
     // config — doing so replaced a stricter explicit gating with the
     // manifest's and made the read gate nondeterministically fail open.
-    await integrationManager.startIntegration(effectiveConfig, { skipIfRunning: true });
+    await integrationManager.startIntegration(effectiveConfig, { skipIfRunning: !opts.restart });
   } catch (err) {
     console.error(`[Suveren MCP] Failed to start integration ${config.id}:`, err);
   }
