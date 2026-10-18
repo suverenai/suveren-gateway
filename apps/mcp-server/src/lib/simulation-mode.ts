@@ -8,10 +8,22 @@
  * the simulated one also authorizes the real one — nothing in the mandate
  * names which connector it's for. Rather than inventing a per-mandate or
  * per-profile carve-out, simulation mode is one process-wide switch: ON means
- * every connector WITHOUT a manifest `simulation` marker is refused — at
- * start (integration-manager.ts) and again at call time (tool-proxy.ts,
- * defence in depth) — and every connector WITH one has its mode env var
- * FORCED to "simulation", overriding whatever credential value is on file.
+ * every connector whose CURRENT mode is not simulated is refused — at start
+ * (integration-manager.ts) and again at call time (tool-proxy.ts, defence in
+ * depth).
+ *
+ * "Current mode" (`connectorCurrentlySimulated` below) is NOT the same
+ * question as "does this manifest merely support a simulated mode"
+ * (`manifestIsSimulated`). ERP (and CRM, from its next release) has a real
+ * "live" mode — `mode=live` + `liveAdapter=local` answers from the company's
+ * OWN invoicing/CRM data — so a connector that declares the capability can
+ * still be set to live right now. Gating on the declared capability alone
+ * let a live-mode connector keep running with real data while simulation
+ * mode was on; gating on the CURRENT mode (read fresh from the same
+ * credential/setting field the UI's `isSimulated` reads — see
+ * apps/ui/src/lib/simulation.ts, same semantics on purpose) treats it exactly
+ * like any other real system: refused while simulation mode is on, same as
+ * gmail.
  *
  * Mandates and profiles are completely unaffected, and the Authority Server
  * never learns this exists — it is purely local to this gateway.
@@ -43,11 +55,37 @@ export function isSimulationMode(): boolean {
 
 /** Does this manifest declare a simulated mode at all? (Not: which mode it is
  *  currently in — a real connector can still be SET to "simulation" by its own
- *  credential value; this only asks whether the connector CAN run simulated.) */
+ *  credential value; this only asks whether the connector CAN run simulated.)
+ *  A capability check ONLY — never use this to decide whether a connector may
+ *  run while gateway-wide simulation mode is on; see `connectorCurrentlySimulated`. */
 export function manifestIsSimulated(
   manifest: Pick<IntegrationManifest, 'simulation'> | null | undefined,
 ): boolean {
   return Boolean(manifest?.simulation);
+}
+
+/**
+ * Is this connector's CURRENT setting the simulated one — right now, not
+ * merely "can it be"? Mirrors the UI's `isSimulated` (apps/ui/src/lib/
+ * simulation.ts) field-for-field: `fields` are the connector's current
+ * credential/setting values keyed by FIELD NAME (e.g. `{ mode: 'live' }`),
+ * the same shape the vault returns to the UI and the same shape
+ * IntegrationManager reconstructs from `serviceCredentials`. Unset falls back
+ * to `simulation.default` (every shipped manifest defaults to "simulation"),
+ * so a never-configured connector reads as safely simulated.
+ *
+ * This — NOT `manifestIsSimulated` — is the one decision gateway-wide
+ * simulation mode enforcement must use: whether a connector MAY run while
+ * simulation mode is on.
+ */
+export function connectorCurrentlySimulated(
+  manifest: Pick<IntegrationManifest, 'simulation'> | null | undefined,
+  fields: Record<string, string | undefined> | undefined,
+): boolean {
+  const decl = manifest?.simulation;
+  if (!decl) return false;
+  const value = (fields?.[decl.field] ?? '').trim().toLowerCase() || decl.default.trim().toLowerCase();
+  return value === 'simulation';
 }
 
 /** Shown wherever a real connector is refused because of simulation mode —

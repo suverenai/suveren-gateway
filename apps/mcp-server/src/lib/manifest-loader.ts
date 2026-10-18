@@ -104,13 +104,35 @@ export interface IntegrationManifest {
    *   1. Display — the UI badges a simulated connector (per its current
    *      credential value) so a forgotten switch after go-live is never silent.
    *   2. Enforcement — gateway-wide simulation mode (SUVEREN_SIMULATION=1, see
-   *      simulation-mode.ts) refuses to START any connector with NO entry here
-   *      at all, and FORCES this field's env var to "simulation" for every
-   *      connector that does, overriding its stored credential value.
+   *      simulation-mode.ts) refuses to START (or keep running) any connector
+   *      whose CURRENT setting is not the simulated one — no entry here at
+   *      all, OR one that has an entry but is currently SET to a real mode
+   *      (e.g. ERP's mode=live) — exactly like any other real system.
    * Absent simulation mode, the gateway's checks and tickets are identical in
    * both modes — this field alone changes nothing.
    */
   simulation?: { field: string; default: string } | null;
+  /**
+   * Display labels for THIS connector's current mode, shown on the
+   * Integrations card as "<name> · <label>" (e.g. "ERP · Built-in", "ERP ·
+   * Test data") — never derived from the connector's name or id in code.
+   * Keyed by the `simulation.field` value: a plain string applies to that
+   * mode regardless of adapter (e.g. `{ "simulation": "Test mailbox" }`); an
+   * object is keyed by the ADAPTER setting's value (see `adapterField`) for
+   * a mode that has more than one real backend (e.g.
+   * `{ "live": { "local": "Built-in" } }` — ERP/CRM's own invoicing/CRM data
+   * via the "local" adapter). Only meaningful alongside `simulation` — the
+   * mode value it's keyed by comes from that same field.
+   */
+  modeLabels?: Record<string, string | Record<string, string>> | null;
+  /** A short note per mode, same shape as `modeLabels` — shown under the card title. */
+  modeNotes?: IntegrationManifest['modeLabels'];
+  /**
+   * Credential field holding which adapter backs a non-simulated mode (e.g.
+   * erp.json's `liveAdapter`, env `ERP_LIVE_ADAPTER`). Required whenever
+   * `modeLabels` has an adapter-keyed (object) entry — see `modeLabels`.
+   */
+  adapterField?: string;
   /** npm package to install on-demand for this connector (e.g. "@humanagencyp/crm-mcp"). */
   npmPackage?: string;
   /**
@@ -935,6 +957,54 @@ export function invalidManifestReadGateReason(
   return null;
 }
 
+// ─── Mode display labels ───────────────────────────────────────────────────
+
+/**
+ * Returns a human-readable refusal reason if `manifest.modeLabels` (if any)
+ * is malformed, or null if absent/well-formed. Shares the single-predicate
+ * shape every other manifest-shape check here uses (see `invalidNpmPinReason`).
+ *
+ * `modeLabels` only makes sense alongside `simulation` (the mode value it's
+ * keyed by comes from that same field), and an adapter-keyed (object) entry
+ * needs `adapterField` to name a REAL declared credential field — otherwise
+ * the gateway would have no way to resolve which label applies.
+ */
+export function invalidModeLabelsReason(
+  manifest: Pick<IntegrationManifest, 'modeLabels' | 'adapterField' | 'simulation' | 'credentials'>,
+): string | null {
+  if (!manifest.modeLabels) return null;
+  if (manifest.modeLabels === null || typeof manifest.modeLabels !== 'object' || Array.isArray(manifest.modeLabels)) {
+    return 'modeLabels must be an object mapping mode values to labels';
+  }
+  if (!manifest.simulation) {
+    return 'modeLabels is set but this manifest declares no "simulation" marker — mode labels need a mode field to key off';
+  }
+  const fieldKeys = new Set(manifest.credentials?.fields?.map(f => f.key) ?? []);
+  let needsAdapterField = false;
+  for (const [mode, label] of Object.entries(manifest.modeLabels)) {
+    if (typeof label === 'string') {
+      if (label.length === 0) return `modeLabels.${mode} must be a non-empty string`;
+      continue;
+    }
+    if (label === null || typeof label !== 'object' || Array.isArray(label)) {
+      return `modeLabels.${mode} must be a non-empty string or an object keyed by adapter value`;
+    }
+    needsAdapterField = true;
+    for (const [adapter, adapterLabel] of Object.entries(label)) {
+      if (typeof adapterLabel !== 'string' || adapterLabel.length === 0) {
+        return `modeLabels.${mode}.${adapter} must be a non-empty string`;
+      }
+    }
+  }
+  if (needsAdapterField && !manifest.adapterField) {
+    return 'modeLabels has an adapter-keyed entry but "adapterField" is missing — name the credential field holding the adapter';
+  }
+  if (manifest.adapterField && !fieldKeys.has(manifest.adapterField)) {
+    return `adapterField "${manifest.adapterField}" does not name a declared credential field`;
+  }
+  return null;
+}
+
 // ─── Module state ───────────────────────────────────────────────────────────
 
 const manifests = new Map<string, IntegrationManifest>();
@@ -1015,6 +1085,14 @@ export function loadManifests(integrationsDir?: string): number {
       const valuesReason = invalidManifestValuesReason(manifest);
       if (valuesReason) {
         console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${valuesReason}`);
+        continue;
+      }
+      const modeLabelsReason = invalidModeLabelsReason(manifest)
+        // modeNotes (a short line under the card title per mode, e.g. "On this
+        // computer — no shared access") has exactly modeLabels' shape.
+        ?? (manifest.modeNotes ? invalidModeLabelsReason({ ...manifest, modeLabels: manifest.modeNotes })?.replace(/modeLabels/g, 'modeNotes') ?? null : null);
+      if (modeLabelsReason) {
+        console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${modeLabelsReason}`);
         continue;
       }
       manifests.set(id, manifest);

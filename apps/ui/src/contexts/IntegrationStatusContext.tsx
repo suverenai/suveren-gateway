@@ -3,7 +3,7 @@ import { spClient, type IntegrationManifest, type McpIntegrationStatus } from '.
 import { useVisiblePolling } from '../hooks/useVisiblePolling';
 import { useSSEEvent } from './EventSourceContext';
 import { useSimulationMode } from '../hooks/useSimulationMode';
-import { declaresSimulation } from '../lib/simulation';
+import { blockedBySimulation } from '../lib/integration-attention';
 
 export type IntegrationState =
   | 'loading'      // haven't fetched yet
@@ -185,12 +185,15 @@ export function IntegrationStatusProvider({ children }: { children: ReactNode })
     });
   }, [raw, anyNotRunning]);
 
-  // A real connector cannot run in simulation mode — never counted as an issue
-  // (same rule as integration-attention.ts's blockedBySimulation).
+  // A real connector cannot run in simulation mode — never counted as an
+  // issue. Shares `blockedBySimulation` with integration-attention.ts rather
+  // than re-deriving the rule, so the two can never disagree about which
+  // connectors count as "real" (declares no simulation marker, OR currently
+  // set to a real mode).
   const simulationOn = useSimulationMode();
   const attentionCount = useMemo(
     () => entries.filter(
-      e => !(simulationOn && !declaresSimulation(e.manifest))
+      e => !blockedBySimulation(e, simulationOn)
         && (e.state === 'not-running' || e.state === 'error' || e.authStatus === 'failed'),
     ).length,
     [entries, simulationOn],

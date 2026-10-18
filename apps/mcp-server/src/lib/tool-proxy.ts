@@ -21,6 +21,7 @@ import { computeContentBinding, attachTicketId } from './content-binding';
 import { hashToolArgs } from './execution-journal';
 import { computeSubmissionPreviewHash } from './preview';
 import { stripSourceLink } from './request-context';
+import { candidatesAllowingAttachments } from './attachment-policy';
 import {
   resolveAttachmentsAndInserts,
   finalizeAttachmentsForExecution,
@@ -516,13 +517,14 @@ export function createGatedToolHandler(
   }
 
   // Simulation mode, defence in depth: integration-manager already refuses to
-  // START a connector whose manifest carries no `simulation` marker while
-  // simulation mode is on, so in the normal case this tool never exists to be
-  // called. This is a second, independent check at CALL time — so a bug in
-  // that start-time gate, or some future path that registers tools without
-  // going through IntegrationManager.startIntegration, can never let a real
-  // system execute. No ticket is requested; this runs before any gating,
-  // bounds, or receipt logic.
+  // START a connector that isn't currently simulation-safe (no `simulation`
+  // marker at all, OR one declared but currently SET to a real mode — e.g.
+  // ERP's mode=live) while simulation mode is on, so in the normal case this
+  // tool never exists to be called. This is a second, independent check at
+  // CALL time — so a bug in that start-time gate, or some future path that
+  // registers tools without going through IntegrationManager.startIntegration,
+  // can never let a real system execute. No ticket is requested; this runs
+  // before any gating, bounds, or receipt logic.
   //
   // The text is deliberately neutral: the working agent must not be able to
   // tell simulation from live (Andreas, 2026-10-02). The explicit reason stays
@@ -1312,7 +1314,26 @@ function createGatedToolHandlerInner(
     // retry, so it is bounded by `passers.length`: at most one attempt per
     // distinct mandate, never the same id twice, and no path that loops
     // forever against an AS that keeps refusing.
-    return attemptWithCandidates(passers);
+    // An attachment narrows the pool to the mandates that allow its source
+    // BEFORE selection — otherwise a newer, allowing mandate can lose to an
+    // older one that cannot carry attachments at all.
+    let pool = passers;
+    if (tool.gating?.attachmentsArg) {
+      const raw = args[tool.gating.attachmentsArg];
+      const refs = Array.isArray(raw)
+        ? raw.filter((r): r is { connector: string; kind: string } =>
+            !!r && typeof r === 'object' && typeof (r as { connector?: unknown }).connector === 'string' && typeof (r as { kind?: unknown }).kind === 'string')
+        : [];
+      const narrowed = candidatesAllowingAttachments(passers, refs, (id) => getProfile(id) as never);
+      if (narrowed.allowed.length === 0) {
+        return {
+          content: [{ type: 'text', text: `Refused: attachment not allowed by any ${tool.gating.profile ?? ''} mandate. ${narrowed.refusal ?? ''}`.trim() }],
+          isError: true,
+        };
+      }
+      pool = narrowed.allowed;
+    }
+    return attemptWithCandidates(pool);
 
     // `candidates` is never empty: the initial call passes `passers`, already
     // checked non-empty above, and the only recursive call site below only

@@ -216,6 +216,26 @@ describe('setup__get_guide', () => {
   });
 });
 
+describe('a connector serving several areas', () => {
+  it('is listed once per area, each with its own actions and tools; internal tools never appear (2026-10-18)', () => {
+    const tool = (originalName: string, gating: Record<string, unknown>, internal = false) =>
+      ({ integrationId: 'erp', originalName, namespacedName: `erp__${originalName}`, gating, internal }) as unknown as DiscoveredTool;
+    const im = {
+      isBuiltin: () => false,
+      getAllTools: () => [
+        tool('create_quote', { profile: 'sales', staticExecution: { action_type: 'quote' } }),
+        tool('create_invoice', { profile: 'invoicing', staticExecution: { action_type: 'invoice' } }),
+        tool('list_invoices', { profile: 'invoicing', category: 'read' }),
+        tool('preview_invoice', { profile: 'invoicing', category: 'read' }, true),
+      ],
+    } as unknown as IntegrationManager;
+    expect(connectedSystems(im)).toEqual([
+      { id: 'erp', profile: 'invoicing', actionTypes: ['invoice'], writeTools: ['create_invoice'], readTools: ['list_invoices'] },
+      { id: 'erp', profile: 'sales', actionTypes: ['quote'], writeTools: ['create_quote'], readTools: [] },
+    ]);
+  });
+});
+
 describe('generated sections', () => {
   const profile = {
     id: 'p/sales@0.3',

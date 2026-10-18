@@ -69,3 +69,11 @@ export function pageCountLabel(pages: number | undefined): string | undefined {
   if (pages === undefined) return undefined;
   return pages === 1 ? '1 page' : `${pages} pages`;
 }
+
+/** The document's bytes, decoded from its base64 content. */
+export function documentBytes(doc: Pick<DocumentPreviewData, 'contentBase64'>): Uint8Array<ArrayBuffer> {
+  const bin = atob(doc.contentBase64);
+  const out = new Uint8Array(new ArrayBuffer(bin.length));
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}

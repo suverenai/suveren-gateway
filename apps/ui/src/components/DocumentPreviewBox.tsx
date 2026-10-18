@@ -5,7 +5,7 @@
  * connector's own `preview_invoice` — suveren-invoicing-plan.md §7).
  *
  * Renders the real PDF via the browser's own viewer (`<object>` on a
- * `data:` URL) rather than a generated thumbnail image — no heavy new
+ * `blob:` URL) rather than a generated thumbnail image — no heavy new
  * dependency, per the plan's decision; see `lib/document-preview.ts` for
  * the pure data shaping this component only maps to JSX.
  *
@@ -14,8 +14,27 @@
  * preview_credit_note) — the caller (`RenderedCreationView.tsx`) simply
  * does not render this component in that case.
  */
-import type { ReactNode } from 'react';
-import { documentDataUrl, pageCountLabel, shortFingerprint, type DocumentPreviewData } from '../lib/document-preview';
+import { useEffect, useMemo, type ReactNode } from 'react';
+import { documentBytes, documentDataUrl, pageCountLabel, shortFingerprint, type DocumentPreviewData } from '../lib/document-preview';
+
+/**
+ * A `blob:` URL for the document. Browsers refuse to open a `data:` URL as a
+ * top-level page (Chrome, Safari: a new tab stays blank — found 2026-10-18 on
+ * the first real invoice), so "Open full preview" must point at a blob. Falls
+ * back to the data URL where blobs are unavailable (tests without a DOM).
+ */
+function useDocumentUrl(doc: DocumentPreviewData): string {
+  const url = useMemo(() => {
+    if (typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function' || typeof Blob === 'undefined') {
+      return documentDataUrl(doc);
+    }
+    return URL.createObjectURL(new Blob([documentBytes(doc)], { type: doc.contentType }));
+  }, [doc.contentBase64, doc.contentType]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => {
+    if (url.startsWith('blob:')) URL.revokeObjectURL(url);
+  }, [url]);
+  return url;
+}
 
 export interface DocumentPreviewBoxProps {
   doc: DocumentPreviewData;
@@ -37,7 +56,7 @@ export interface DocumentPreviewBoxProps {
 }
 
 export function DocumentPreviewBox({ doc, systemName, heading, sourceLine, trailingNote }: DocumentPreviewBoxProps) {
-  const dataUrl = documentDataUrl(doc);
+  const dataUrl = useDocumentUrl(doc);
   const pages = pageCountLabel(doc.pages);
   const renderedBy = systemName ? `Rendered by ${systemName}` : 'Rendered';
   const defaultTrailingNote = (

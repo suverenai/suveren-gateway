@@ -553,12 +553,14 @@ function attachedFields(outcome: PreviewReadOutcome | undefined): PreviewFieldRo
 }
 
 /** One line of plain prose for an unresolved attach — never a raw error
- *  object, never the connector's own message (that's `message`'s job
- *  elsewhere; this is purely "could we show a name here or not"). */
+ *  object; the connector's own sentence only when it answered with one. */
 function unresolvedNote(outcome: PreviewReadOutcome | undefined): string {
   if (!outcome) return 'Not read.';
   switch (outcome.status) {
-    case 'not_found': return 'Not found in the system.';
+    // A connector answers every failed read as an error — "not found" or
+    // not. Its own sentence says which (2026-10-18: "company file cannot be
+    // read" was shown as "Not found in the system"), so show it when given.
+    case 'not_found': return outcome.message ? `The system answered: ${outcome.message}` : 'Not found in the system.';
     case 'none': return 'Nothing to read.';
     default: return 'Not available right now.';
   }

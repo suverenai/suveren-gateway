@@ -40,3 +40,48 @@ export function declaresSimulation(
 ): boolean {
   return Boolean(manifest?.simulation);
 }
+
+/**
+ * The display label for a connector's CURRENT mode (and, for a mode with
+ * more than one real backend, its current adapter) — "<name> · <label>" on
+ * the Integrations card, e.g. "ERP · Built-in" (mode=live, liveAdapter=local)
+ * or "ERP · Test data" (mode=simulation). Returns undefined when the
+ * manifest declares no `modeLabels`, or when the current mode/adapter
+ * combination has no entry (an unlabelled mode shows no label — the
+ * "Simulation" chip still covers the simulated case either way).
+ *
+ * Resolves the CURRENT mode the same way `isSimulated` does (same field,
+ * same fallback to `simulation.default` when unset) — one rule for "what
+ * mode is this connector in right now", shared by the badge and the label.
+ */
+export function modeLabel(
+  manifest: Pick<IntegrationManifest, 'simulation' | 'modeLabels' | 'adapterField'>,
+  fields?: Record<string, string | undefined>,
+): string | undefined {
+  return modeEntry(manifest, manifest.modeLabels, fields);
+}
+
+/** The note for the connector's current mode (`modeNotes`, same shape as
+ *  `modeLabels`), e.g. "On this computer — no shared access". */
+export function modeNote(
+  manifest: Pick<IntegrationManifest, 'simulation' | 'modeNotes' | 'adapterField'>,
+  fields?: Record<string, string | undefined>,
+): string | undefined {
+  return modeEntry(manifest, manifest.modeNotes, fields);
+}
+
+function modeEntry(
+  manifest: Pick<IntegrationManifest, 'simulation' | 'adapterField'>,
+  labels: IntegrationManifest['modeLabels'],
+  fields?: Record<string, string | undefined>,
+): string | undefined {
+  const decl = manifest.simulation;
+  if (!labels || !decl) return undefined;
+  const mode = (fields?.[decl.field] ?? '').trim().toLowerCase() || decl.default.trim().toLowerCase();
+  const entry = labels[mode];
+  if (entry === undefined) return undefined;
+  if (typeof entry === 'string') return entry;
+  const adapterField = manifest.adapterField;
+  const adapter = adapterField ? (fields?.[adapterField] ?? '').trim().toLowerCase() : '';
+  return adapter ? entry[adapter] : undefined;
+}

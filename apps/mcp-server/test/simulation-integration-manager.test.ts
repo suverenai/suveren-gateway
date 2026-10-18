@@ -5,12 +5,12 @@
  * connector (tool-proxy.ts's `profileMatches`). Put a real connector (e.g.
  * gmail) and a simulated one (e.g. "mail") on the same profile, and a mandate
  * meant only for testing also authorizes the real one. Simulation mode closes
- * that generically, gateway-wide: a connector whose manifest carries no
- * `simulation` marker is refused to even START while it's on, and a connector
- * that DOES declare one has its mode env var FORCED to "simulation" —
- * overriding whatever credential value is on file — so a forgotten
- * mode=live setting can't quietly take effect while the operator believes
- * real systems are off.
+ * that generically, gateway-wide: a connector whose CURRENT mode is not
+ * simulated is refused to even START while it's on — this covers BOTH a
+ * connector with no `simulation` marker at all AND one that declares a
+ * simulated mode but is currently SET to a real one (ERP's mode=live). A
+ * connector currently set to the simulated mode starts normally, with its
+ * mode env var normalized to the literal "simulation" string.
  *
  * Uses REAL manifests (loaded via loadManifests, same as production) and REAL
  * spawned stdio fixtures — not mocks — per doc/engineering.md rule 3 ("tests
@@ -97,8 +97,8 @@ function simConfig(): IntegrationConfig {
     name: 'Sim Connector',
     command: process.execPath,
     args: [SIM_FIXTURE],
-    // Vault says "live" — simulation mode must override this, not merely
-    // supplement it, or a forgotten mode=live setting takes effect silently.
+    // Maps the spawned process's MODE_ENV to whatever `serviceCredentials`
+    // the test's IntegrationManager was constructed with for 'sim-conn.mode'.
     envKeys: { MODE_ENV: 'sim-conn.mode' },
     profile: 'sim-test-profile',
     enabled: true,
@@ -150,15 +150,31 @@ describe('simulation mode — IntegrationManager', () => {
     expect(im.isRunning('no-manifest-at-all')).toBe(false);
   });
 
-  it('ON: a simulated connector starts, with its mode env var FORCED to "simulation" even though the vault says "live"', async () => {
+  it('ON: a connector currently SET TO LIVE is refused to start, named — treated exactly like a real connector with no simulation marker at all', async () => {
     process.env.SUVEREN_SIMULATION = '1';
     im = new IntegrationManager(new Map([['sim-conn', { mode: 'live' }]]));
+
+    await expect(im.startIntegration(simConfig())).rejects.toThrow(/simulation mode/i);
+    expect(im.isRunning('sim-conn')).toBe(false);
+  });
+
+  it('ON: a connector currently simulated (credential unset, falling back to the declared default) starts, with its mode env var normalized to "simulation"', async () => {
+    process.env.SUVEREN_SIMULATION = '1';
+    im = new IntegrationManager(new Map());
 
     await im.startIntegration(simConfig());
     expect(im.isRunning('sim-conn')).toBe(true);
 
     const result = await im.callTool('sim-conn', 'get_env', { name: 'MODE_ENV' });
     expect(result.content[0].text).toBe('simulation');
+  });
+
+  it('ON: a connector explicitly SET to simulation starts normally', async () => {
+    process.env.SUVEREN_SIMULATION = '1';
+    im = new IntegrationManager(new Map([['sim-conn', { mode: 'simulation' }]]));
+
+    await im.startIntegration(simConfig());
+    expect(im.isRunning('sim-conn')).toBe(true);
   });
 
   it('OFF: a simulated connector keeps whatever mode the credential says (no forcing)', async () => {
@@ -199,13 +215,24 @@ describe('simulation mode — getStatus() reports paused, not error', () => {
     expect(status?.error).toBeUndefined();
   });
 
-  it('ON: a connector whose manifest declares `simulation` is never marked paused — it CAN run simulated', () => {
+  it('ON: a connector whose manifest declares `simulation` and whose credential is unset (defaults to simulated) is never marked paused — it CAN run simulated', () => {
     process.env.SUVEREN_SIMULATION = '1';
     im = new IntegrationManager(new Map());
 
     const status = im.getStatus([simConfig()]).find(s => s.id === 'sim-conn');
 
     expect(status?.paused).toBeUndefined();
+    expect(status?.error).toBeUndefined();
+  });
+
+  it('ON: a connector whose manifest declares `simulation` but is currently SET TO LIVE is paused, not errored — a real system, not a test system', () => {
+    process.env.SUVEREN_SIMULATION = '1';
+    im = new IntegrationManager(new Map([['sim-conn', { mode: 'live' }]]));
+
+    const status = im.getStatus([simConfig()]).find(s => s.id === 'sim-conn');
+
+    expect(status?.running).toBe(false);
+    expect(status?.paused).toBe('simulation');
     expect(status?.error).toBeUndefined();
   });
 

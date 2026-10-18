@@ -6,7 +6,7 @@
   "icon": "users",
   "profile": "customers",
   "npmPackage": "@humanagencyp/crm-mcp",
-  "npmVersion": "1.5.0",
+  "npmVersion": "1.6.0",
   "mcp": {
     "command": "crm-mcp",
     "args": []
@@ -26,17 +26,33 @@
         "type": "text",
         "placeholder": "simulation (default) — live needs an adapter for your CRM",
         "optional": true
+      },
+      {
+        "key": "liveAdapter",
+        "label": "Live adapter (optional)",
+        "type": "text",
+        "placeholder": "local — your own company's CRM data. Leave empty unless Mode is \"live\"",
+        "optional": true
       }
     ],
     "envMapping": {
       "DATABASE_URL": "databaseUrl",
-      "CRM_MODE": "mode"
+      "CRM_MODE": "mode",
+      "CRM_LIVE_ADAPTER": "liveAdapter"
     }
   },
   "simulation": {
     "field": "mode",
     "default": "simulation"
   },
+  "modeLabels": {
+    "simulation": "Test data",
+    "live": { "local": "Local" }
+  },
+  "modeNotes": {
+    "live": { "local": "On this computer — no shared access" }
+  },
+  "adapterField": "liveAdapter",
   "personalDefault": true,
   "oauth": null,
   "context": {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildIntegrationAttentionItems, buildPausedSummary } from './integration-attention';
+import { buildIntegrationAttentionItems, buildPausedSummary, blockedBySimulation } from './integration-attention';
 import type { IntegrationEntry } from '../contexts/IntegrationStatusContext';
 
 /**
@@ -14,14 +14,42 @@ function entry(o: {
   simulation?: unknown;
   state: IntegrationEntry['state'];
   error?: string;
+  /** The gateway's own (now current-mode-aware) block signal. */
+  paused?: 'simulation';
 }): IntegrationEntry {
   return {
     id: o.id ?? o.name ?? 'conn',
     manifest: { id: o.id ?? 'conn', name: o.name ?? 'Connector', simulation: o.simulation ?? null } as unknown as IntegrationEntry['manifest'],
-    integration: o.error ? ({ id: o.id ?? 'conn', name: o.name ?? 'Connector', running: false, toolCount: 0, error: o.error } as unknown as IntegrationEntry['integration']) : undefined,
+    integration: (o.error || o.paused)
+      ? ({ id: o.id ?? 'conn', name: o.name ?? 'Connector', running: false, toolCount: 0, error: o.error, paused: o.paused } as unknown as IntegrationEntry['integration'])
+      : undefined,
     state: o.state,
   };
 }
+
+describe('blockedBySimulation', () => {
+  const sim = { field: 'mode', default: 'simulation' };
+
+  it('a real connector with no simulation marker is blocked while simulation mode is on', () => {
+    const gmail = entry({ name: 'Gmail', state: 'paused', paused: 'simulation' });
+    expect(blockedBySimulation(gmail, true)).toBe(true);
+  });
+
+  it('a connector that declares simulation but is CURRENTLY set to live is blocked too — a real system, not a test system', () => {
+    const erpLive = entry({ name: 'ERP', simulation: sim, state: 'paused', paused: 'simulation' });
+    expect(blockedBySimulation(erpLive, true)).toBe(true);
+  });
+
+  it('a connector that declares simulation and is currently simulated is NOT blocked', () => {
+    const erpSim = entry({ name: 'ERP', simulation: sim, state: 'not-running' });
+    expect(blockedBySimulation(erpSim, true)).toBe(false);
+  });
+
+  it('nothing is blocked while simulation mode is off', () => {
+    const gmail = entry({ name: 'Gmail', state: 'not-running' });
+    expect(blockedBySimulation(gmail, false)).toBe(false);
+  });
+});
 
 describe('buildIntegrationAttentionItems', () => {
   it('excludes paused entries entirely — paused-by-design is not an attention item', () => {
@@ -81,6 +109,17 @@ describe('buildIntegrationAttentionItems', () => {
       entry({ name: 'Records', state: 'not-running' }),
     ]);
     expect(items.map(i => i.label)).toEqual(['Integration error', 'Integration stopped']);
+  });
+
+  it('simulationOn=true: a connector declaring simulation but currently SET TO LIVE is skipped, same as a connector with no simulation marker at all', () => {
+    const erpLive = entry({
+      name: 'ERP',
+      simulation: { field: 'mode', default: 'simulation' },
+      state: 'paused',
+      paused: 'simulation',
+    });
+    const items = buildIntegrationAttentionItems([erpLive], true);
+    expect(items).toEqual([]);
   });
 });
 

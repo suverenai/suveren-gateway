@@ -31,7 +31,7 @@
  */
 import { builtinText, builtinStructured, type BuiltinIntegration, type MandateCandidate } from '../builtin-integration';
 import { CONTEXT_MAX_BYTES, writeContextFile, readContextFile } from '../context-loader';
-import { isSimulationMode, manifestIsSimulated } from '../simulation-mode';
+import { isSimulationMode } from '../simulation-mode';
 import type { BuiltinDeps } from './index';
 import { controlPlaneMandate } from '../cp-mandate';
 import { loadGuides, guideHeader, limitsSection, packageSection, fillGenerated, type SystemLine, type ProfileLike } from '../guides';
@@ -69,12 +69,17 @@ function briefRefusal(args: Record<string, unknown>): string | undefined {
   return undefined;
 }
 
-/** The connectors as the guides see them — built-ins (this group included) are not systems. */
+/** The connectors as the guides see them — built-ins (this group included) are not systems.
+ *  One line per connector AND area: a connector serving several areas (the ERP:
+ *  sales and invoicing) is listed once per area with that area's own actions and
+ *  tools, so a setup AI proposes the mandate of the right area. Internal tools
+ *  (gateway-only) are never listed. */
 export function connectedSystems(im: IntegrationManager): SystemLine[] {
   const byId = new Map<string, SystemLine>();
   for (const t of im.getAllTools()) {
-    if (im.isBuiltin(t.integrationId) || !t.gating?.profile || t.gating.category === 'disabled') continue;
-    const s = byId.get(t.integrationId) ?? { id: t.integrationId, profile: t.gating.profile, actionTypes: [], writeTools: [], readTools: [] };
+    if (im.isBuiltin(t.integrationId) || t.internal || !t.gating?.profile || t.gating.category === 'disabled') continue;
+    const key = `${t.integrationId}|${t.gating.profile}`;
+    const s = byId.get(key) ?? { id: t.integrationId, profile: t.gating.profile, actionTypes: [], writeTools: [], readTools: [] };
     if (t.gating.category === 'read') {
       s.readTools.push(t.originalName);
     } else {
@@ -82,9 +87,9 @@ export function connectedSystems(im: IntegrationManager): SystemLine[] {
       const at = t.gating.staticExecution?.action_type;
       if (typeof at === 'string' && !s.actionTypes.includes(at)) s.actionTypes.push(at);
     }
-    byId.set(t.integrationId, s);
+    byId.set(key, s);
   }
-  return [...byId.values()].sort((a, b) => a.id.localeCompare(b.id));
+  return [...byId.values()].sort((a, b) => a.id.localeCompare(b.id) || a.profile.localeCompare(b.profile));
 }
 
 /** Short profile name from a full id or a short name alike — always lowercase. */
@@ -392,8 +397,13 @@ export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
           const systems = connectedSystems(deps.integrationManager);
           const running = new Set(systems.map(s => s.id));
           // Simulated systems this gateway knows but has not started — the person
-          // activates them in the gateway; the AI cannot.
-          const inactive = getAllManifests().filter(m => manifestIsSimulated(m) && !running.has(m.id)).map(m => m.name);
+          // activates them in the gateway; the AI cannot. `isSimulationSafe`
+          // (not mere capability) so a connector currently SET to a real mode
+          // (e.g. ERP's mode=live) is never listed as something to "activate
+          // for the test" — it would just be refused.
+          const inactive = getAllManifests()
+            .filter(m => deps.integrationManager.isSimulationSafe(m.id) && !running.has(m.id))
+            .map(m => m.name);
           const header = guideHeader(systems, inactive);
           const topic = typeof args.topic === 'string' ? args.topic.trim().toLowerCase() : '';
           if (!topic) {

@@ -15,7 +15,7 @@ import type { ProfileToolGating } from './tool-gating-types';
 import type { IntegrationConfig, ToolGatingConfig } from './integration-registry';
 import { getManifest, isExactSemver } from './manifest-loader';
 import { remotePreflightTarget, preflightRemoteAuth } from './remote-auth-preflight';
-import { isSimulationMode, manifestIsSimulated, SIMULATION_BLOCK_REASON } from './simulation-mode';
+import { isSimulationMode, connectorCurrentlySimulated, SIMULATION_BLOCK_REASON } from './simulation-mode';
 import { inheritedConnectorEnv } from './connector-env';
 import { withSourceLink } from './request-context';
 import { withAttachmentAndInsertSchema } from './attachment-reference';
@@ -652,14 +652,19 @@ export class IntegrationManager {
       await this.stopIntegrationLocked(config.id);
     }
 
-    // Simulation mode: an integration whose manifest carries no `simulation`
-    // marker is not started at all — including one registered directly via
-    // /internal/add-integration with no manifest (getManifest returns
-    // undefined, which manifestIsSimulated treats as "not simulated"). This
-    // is the primary enforcement point; tool-proxy.ts refuses calls too
-    // (defence in depth), in case some future path ever starts an
-    // integration without going through here.
-    if (isSimulationMode() && !manifestIsSimulated(getManifest(config.id))) {
+    // Simulation mode: an integration whose CURRENT mode is not simulated is
+    // not started at all — including one with no manifest at all (getManifest
+    // returns undefined, which connectorCurrentlySimulated treats as "not
+    // simulated"), and including one whose manifest DOES declare a simulated
+    // mode but is currently SET to a real one (ERP's mode=live, CRM's
+    // upcoming equivalent) — that must be refused exactly like a connector
+    // with no simulation capability at all; real systems are off in
+    // simulation mode, by current setting, not by capability. This is the
+    // primary enforcement point; tool-proxy.ts refuses calls too (defence in
+    // depth), in case some future path ever starts an integration without
+    // going through here. Uses `isSimulationSafe` (below) so this decision
+    // and the status/call-time ones can never disagree.
+    if (isSimulationMode() && !this.isSimulationSafe(config.id)) {
       throw new Error(`${config.id}: ${SIMULATION_BLOCK_REASON}`);
     }
 
@@ -728,13 +733,14 @@ export class IntegrationManager {
     // Resolve environment variables from vault references
     const env = this.resolveEnvKeys(config);
 
-    // Simulation mode, for a connector that DOES declare a simulated mode
-    // (guaranteed by the guard above — only simulated connectors reach this
-    // line while simulation mode is on): force its mode env var to
-    // "simulation", overriding whatever the stored credential says. A user
-    // who set mode=live before simulation mode was turned on must not have
-    // that live setting silently take effect while the gateway believes real
-    // systems are off.
+    // Normalize the mode env var to the literal "simulation" string. The
+    // guard above already refused this start unless the connector's CURRENT
+    // setting resolves to simulated, so this is no longer overriding a
+    // disagreeing "live" setting — it only canonicalizes whatever got it
+    // here (mixed case, surrounding whitespace, or the field simply being
+    // unset and relying on `simulation.default`), so the spawned process
+    // always sees the gateway's own canonical value rather than whatever is
+    // literally on file.
     if (isSimulationMode()) {
       const manifest = getManifest(config.id);
       const simDecl = manifest?.simulation;
@@ -1012,13 +1018,24 @@ export class IntegrationManager {
   }
 
   /**
-   * Whether `id` may run while simulation mode is on: a connector whose manifest
-   * carries the `simulation` marker, or a built-in that declares `simulation: true`.
+   * Whether `id` may run while simulation mode is on: a built-in that
+   * declares `simulation: true`, or a connector whose CURRENT setting (the
+   * credential/setting field its manifest's `simulation.field` names,
+   * defaulting per `simulation.default` when unset) resolves to simulated —
+   * NOT merely a connector whose manifest supports a simulated mode at all.
+   * A connector set to a real mode (e.g. ERP's `mode=live`) is refused here
+   * exactly like one with no simulation capability at all.
+   *
+   * Reads `serviceCredentials` directly, keyed by `id` — the same convention
+   * `resolveEnvKeys`'s manifest-mapping fallback and `getServiceCredentials`
+   * already rely on: a connector's OWN credential fields (mode, liveAdapter,
+   * …) are pushed to this gateway under its own id (control-plane's
+   * `pushServiceCredentials(id, fields)`), never a shared/other service id.
    */
   isSimulationSafe(id: string): boolean {
     const builtin = this.builtins.get(id);
     if (builtin) return builtin.def.simulation === true;
-    return manifestIsSimulated(getManifest(id));
+    return connectorCurrentlySimulated(getManifest(id), this.serviceCredentials.get(id));
   }
 
   /**
@@ -1212,15 +1229,17 @@ export class IntegrationManager {
             toolCount: 0,
             readAgeDays: readAgeOf(config),
             // Computed fresh, not cached: true whenever simulation mode is on
-            // AND this connector has no manifest `simulation` marker, which is
-            // exactly the condition startIntegrationLocked refuses under — so
-            // the UI always reflects why a real connector never started,
-            // without needing a separate tracking path for this one reason.
-            // This is `paused`, NOT `error`: it is not a problem, it's the
-            // mode working as designed (see IntegrationStatus.paused). Genuine
+            // AND this connector is not currently simulation-safe (see
+            // `isSimulationSafe` — no capability at all, OR capability
+            // declared but currently SET to a real mode), which is exactly
+            // the condition startIntegrationLocked refuses under — so the UI
+            // always reflects why a real connector never started, without
+            // needing a separate tracking path for this one reason. This is
+            // `paused`, NOT `error`: it is not a problem, it's the mode
+            // working as designed (see IntegrationStatus.paused). Genuine
             // start failures still surface via the one-shot `warning` string
             // returned by /internal/add-integration — they never land here.
-            paused: isSimulationMode() && !manifestIsSimulated(getManifest(config.id))
+            paused: isSimulationMode() && !this.isSimulationSafe(config.id)
               ? 'simulation'
               : undefined,
           });

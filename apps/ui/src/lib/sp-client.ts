@@ -416,6 +416,14 @@ export interface IntegrationManifest {
   } | null;
   /** Declares a simulation mode: the credential field holding it and its default. Drives the "Simulation" badge. */
   simulation?: { field: string; default: string } | null;
+  /** Display labels for this connector's CURRENT mode — "<name> · <label>" on
+   *  the Integrations card (e.g. "ERP · Built-in", "ERP · Test data"). Keyed
+   *  by the `simulation.field` value; an object entry is keyed by the
+   *  `adapterField` setting's value. See manifest-loader.ts's doc comment. */
+  modeLabels?: Record<string, string | Record<string, string>> | null;
+  modeNotes?: IntegrationManifest['modeLabels'];
+  /** Credential field holding which adapter backs a non-simulated mode (e.g. erp.json's `liveAdapter`). */
+  adapterField?: string;
   /** Links the approval card offers so a reviewer can inspect the action. */
   proposalLinks?: Array<{ label: string; template: string; description?: string }>;
   templates?: AuthTemplate[];

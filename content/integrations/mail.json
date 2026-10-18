@@ -1,6 +1,6 @@
 {
   "id": "mail",
-  "name": "Email (simulation)",
+  "name": "Email",
   "version": "1.0.0",
   "description": "Simulated inbox for testing an agent's email replies — nothing leaves the laptop",
   "icon": "mail",
@@ -39,6 +39,9 @@
   "simulation": {
     "field": "mode",
     "default": "simulation"
+  },
+  "modeLabels": {
+    "simulation": "Test mailbox"
   },
   "personalDefault": false,
   "oauth": null,

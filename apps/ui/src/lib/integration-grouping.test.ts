@@ -11,6 +11,10 @@ function entry(o: {
   /** Area per tool — a per-tool override's own profile (UI spec §13.3: "a
    *  tool serving several areas appears under each"). */
   overrideProfiles?: string[];
+  /** The gateway's own (current-mode-aware) block signal — set on a
+   *  connector that declares `simulation` but is currently SET to a real
+   *  mode (ERP's mode=live), same as a connector with no capability at all. */
+  paused?: 'simulation';
 }): IntegrationEntry {
   const overrides = Object.fromEntries(
     (o.overrideProfiles ?? []).map((p, i) => [`tool_${i}`, { profile: p }]),
@@ -24,7 +28,9 @@ function entry(o: {
       simulation: o.simulation ?? null,
       toolGating: { overrides },
     } as unknown as IntegrationEntry['manifest'],
-    integration: undefined,
+    integration: o.paused
+      ? ({ id: o.name, name: o.name, running: false, toolCount: 0, paused: o.paused } as unknown as IntegrationEntry['integration'])
+      : undefined,
     state: o.state,
   };
 }
@@ -77,6 +83,21 @@ describe('groupIntegrationsForDisplay', () => {
     const g = groupIntegrationsForDisplay([emailSim], true);
     expect(g.testSystems).toEqual([emailSim]);
     expect(g.pausedReal).toEqual([]);
+  });
+
+  it('a connector that declares `simulation` but is currently SET TO LIVE is a real system, not a test system — the core fix', () => {
+    const erpLive = entry({ name: 'ERP', simulation: sim, state: 'paused', paused: 'simulation' });
+    const g = groupIntegrationsForDisplay([erpLive], true);
+    expect(g.testSystems).toEqual([]);
+    expect(g.pausedReal).toEqual([erpLive]);
+    expect(g.realErrors).toEqual([]);
+  });
+
+  it('a connector that declares `simulation`, is currently SET TO LIVE, and ALSO genuinely errors lands in realErrors, not testSystems', () => {
+    const erpLiveErrored = entry({ name: 'ERP', simulation: sim, state: 'error', paused: 'simulation' });
+    const g = groupIntegrationsForDisplay([erpLiveErrored], true);
+    expect(g.testSystems).toEqual([]);
+    expect(g.realErrors).toEqual([erpLiveErrored]);
   });
 
   it('counts match the mockup fixture: 3 test systems, 6 real (one erroring, five paused)', () => {

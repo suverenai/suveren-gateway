@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { isDocumentPreviewBody, shortFingerprint, documentDataUrl, pageCountLabel } from './document-preview';
+import { documentBytes } from './document-preview';
 
 const VALID = {
   filename: 'invoice-2026-0003.pdf',
@@ -82,5 +83,14 @@ describe('pageCountLabel', () => {
 
   it('undefined when no page count (get_document never reports one)', () => {
     expect(pageCountLabel(undefined)).toBeUndefined();
+  });
+});
+
+describe('documentBytes — the PDF for a blob: URL ("Open full preview" in a new tab)', () => {
+  it('decodes base64 to the exact bytes', () => {
+    const text = '%PDF-1.7 test';
+    const b64 = btoa(text);
+    const bytes = documentBytes({ contentBase64: b64 });
+    expect(Array.from(bytes)).toEqual(Array.from(text).map(c => c.charCodeAt(0)));
   });
 });
