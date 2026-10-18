@@ -46,3 +46,16 @@ describe('buildCreationView — nested argument values', () => {
     expect(r.kind === 'scalar' && r.value).toBe('TEST-2026-0002');
   });
 });
+
+describe('nestedValueView — the ticket\'s "What was sent" uses the same rule', () => {
+  it('sealed attachment fingerprints → a table, not JSON', async () => {
+    const { nestedValueView } = await import('./preview-render');
+    const v = nestedValueView([{ filename: 'TEST-2026-0002.pdf', sha256: '0202ae29' }]);
+    expect(v && 'table' in v && v.table.columns.map((c) => c.label)).toEqual(['Filename', 'Sha256']);
+  });
+  it('plain values → null (shown as themselves)', async () => {
+    const { nestedValueView } = await import('./preview-render');
+    expect(nestedValueView('x')).toBeNull();
+    expect(nestedValueView(['a', 'b'])).toBeNull();
+  });
+});
