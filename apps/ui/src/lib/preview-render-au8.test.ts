@@ -119,25 +119,25 @@ describe('buildOwnSection — a read with no attach', () => {
       tool: 'find_contacts',
       result: textOk([{ name: 'Hofer Agrar KG', company: 'Hofer Agrar KG', type: 'customer' }]),
     };
-    const view = buildOwnSection(section);
+    const view = buildOwnSection(section)!;
     expect(view.table?.columns.map((c) => c.label)).toEqual(['Name', 'Company', 'Type']);
     expect(view.table?.rows[0].cells.map((c) => c.value)).toEqual(['Hofer Agrar KG', 'Hofer Agrar KG', 'customer']);
   });
 
   it('an empty list reads as "nothing found", not an empty table', () => {
     const section: PreviewReadSection = { tool: 'find_contacts', result: textOk([]) };
-    expect(buildOwnSection(section).note).toMatch(/nothing found/i);
+    expect(buildOwnSection(section)!.note).toMatch(/nothing found/i);
   });
 
   it('a single-object result renders as plain field rows', () => {
     const section: PreviewReadSection = { tool: 'get_customer', result: textOk({ name: 'x' }) };
-    const view = buildOwnSection(section);
+    const view = buildOwnSection(section)!;
     expect(view.body?.fields.map((f) => f.key)).toEqual(['name']);
   });
 
   it('an unresolved read shows a plain note, not an error dump', () => {
     const section: PreviewReadSection = { tool: 'find_contacts', result: { status: 'unavailable', reason: 'connector_error' } };
-    expect(buildOwnSection(section).note).toMatch(/not available/i);
+    expect(buildOwnSection(section)!.note).toMatch(/not available/i);
   });
 });
 
@@ -300,5 +300,77 @@ describe('display.labels — the manifest is the one place for display (2026-10-
     const row = view.rows.find((r) => r.key === 'customer_id');
     if (row?.kind !== 'identity') throw new Error('not identity');
     expect(row.identity.context.find((c) => c.key === 'credit_limit')?.value).toBe('500.00');
+  });
+});
+
+// UI spec §15.1 — "The PDF as it will be issued": a `kind: 'document'` read
+// (tool-gating-types.ts `PreviewReadConfig.kind`) renders as a document box
+// instead of a generic field table/section — generic by SHAPE, no tool name.
+describe('buildOwnSection — kind: "document" (UI spec §15.1)', () => {
+  const DOC_BODY = {
+    filename: 'invoice-2026-0003.pdf',
+    contentType: 'application/pdf',
+    contentBase64: 'JVBERi0xLjQK',
+    sha256: 'a41f00000000000000000000000000000000000000000000000000009c2e',
+    pages: 1,
+  };
+
+  it('a well-shaped document result resolves to `document`, not `body`/`table`', () => {
+    const section: PreviewReadSection = { tool: 'preview_invoice', kind: 'document', result: textOk(DOC_BODY) };
+    const view = buildOwnSection(section);
+    expect(view?.document).toEqual(DOC_BODY);
+    expect(view?.body).toBeUndefined();
+    expect(view?.table).toBeUndefined();
+    expect(view?.note).toBeUndefined();
+  });
+
+  it('no connector for this read (e.g. simulation mode) — the section is absent entirely, not a note', () => {
+    const section: PreviewReadSection = {
+      tool: 'preview_invoice',
+      kind: 'document',
+      result: { status: 'unavailable', reason: 'no_connector' },
+    };
+    expect(buildOwnSection(section)).toBeNull();
+    // buildCreationView drops it from `sections` the same way.
+    const view = buildCreationView({}, [section], undefined);
+    expect(view.sections).toEqual([]);
+  });
+
+  it('a different unavailable reason (a real problem) still gets a note, not silence', () => {
+    const section: PreviewReadSection = {
+      tool: 'preview_invoice',
+      kind: 'document',
+      result: { status: 'unavailable', reason: 'connector_error' },
+    };
+    const view = buildOwnSection(section);
+    expect(view).not.toBeNull();
+    expect(view?.note).toMatch(/not available/i);
+    expect(view?.document).toBeUndefined();
+  });
+
+  it('a malformed answer (missing a required document field) degrades to a note, never a crash', () => {
+    const section: PreviewReadSection = {
+      tool: 'preview_invoice',
+      kind: 'document',
+      result: textOk({ filename: 'x.pdf' }), // no contentBase64/sha256/contentType
+    };
+    const view = buildOwnSection(section);
+    expect(view?.document).toBeUndefined();
+    expect(view?.note).toMatch(/could not show a preview/i);
+  });
+
+  it('not found / no target still render as an ordinary note (unchanged from a non-document read)', () => {
+    const notFound: PreviewReadSection = { tool: 'preview_invoice', kind: 'document', result: { status: 'not_found' } };
+    expect(buildOwnSection(notFound)?.note).toMatch(/not found/i);
+    const noTarget: PreviewReadSection = { tool: 'preview_invoice', kind: 'document', result: { status: 'none', reason: 'no_target' } };
+    expect(buildOwnSection(noTarget)?.note).toMatch(/nothing to read/i);
+  });
+
+  it('buildCreationView keeps a resolved document section alongside ordinary rows', () => {
+    const sections: PreviewReadSection[] = [{ tool: 'preview_invoice', kind: 'document', result: textOk(DOC_BODY) }];
+    const view = buildCreationView({ number: '2026-0003' }, sections, undefined);
+    expect(view.rows.find((r) => r.key === 'number')).toBeTruthy();
+    expect(view.sections).toHaveLength(1);
+    expect(view.sections[0].document).toEqual(DOC_BODY);
   });
 });

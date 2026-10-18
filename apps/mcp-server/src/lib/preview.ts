@@ -218,6 +218,8 @@ export interface ReadPlanItem {
   /** Non-`forEach` only — true when `args` named a source the action didn't
    *  carry (see `previewHasNoTarget`): nothing to read, never attempted. */
   noTarget?: boolean;
+  /** See {@link PreviewReadConfig.kind} — passed through untouched. */
+  kind?: 'document';
   /** `forEach` only — the source action-arg name. */
   forEach?: string;
   /** `forEach` only — one planned read per (capped) source element, in order. */
@@ -258,6 +260,7 @@ export function planPreviewReads(
       attach: config.attach,
       fields: config.fields,
       version: config.version,
+      kind: config.kind,
       argsMapping: config.args,
     };
     if (config.forEach) {
@@ -303,6 +306,7 @@ async function runPreviewReadPlan(
       ...(item.attach ? { attach: item.attach } : {}),
       ...(sourceArgNames.length === 1 ? { sourceArg: sourceArgNames[0] } : {}),
       ...(item.fields ? { fields: item.fields } : {}),
+      ...(item.kind ? { kind: item.kind } : {}),
     };
     if (item.elements !== undefined) {
       const elements: PreviewReadOutcome[] = [];
@@ -507,6 +511,8 @@ export interface PreviewReadSection {
   sourceArg?: string;
   /** The manifest's declared `fields` for THIS read, passed through untouched. */
   fields?: string[];
+  /** See {@link PreviewReadConfig.kind} — passed through untouched. */
+  kind?: 'document';
   /** Non-`forEach` reads only. */
   result?: PreviewReadOutcome;
   /** `forEach` reads only — one outcome per (capped) source element, same order. */
@@ -617,4 +623,22 @@ export async function buildInternalPreview(
       ...(stale ? { currentBody: read2.body } : {}),
     },
   });
+}
+
+/**
+ * A read's result as an object: its `structuredContent` when the connector
+ * declares one, else its text when that text is exactly one JSON object.
+ * Connectors differ (erp-mcp 0.8.0 returned the document only as JSON text);
+ * the shape checks that follow are the same either way.
+ */
+export function structuredOrJsonText(body: { structured?: Record<string, unknown>; text?: string }): Record<string, unknown> | undefined {
+  if (body.structured && typeof body.structured === 'object') return body.structured;
+  const t = body.text?.trim();
+  if (!t || !t.startsWith('{')) return undefined;
+  try {
+    const parsed = JSON.parse(t) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : undefined;
+  } catch {
+    return undefined;
+  }
 }

@@ -6,7 +6,7 @@
   "icon": "mail",
   "profile": "email",
   "npmPackage": "@humanagencyp/email-mcp",
-  "npmVersion": "0.3.0",
+  "npmVersion": "0.4.0",
   "readPolicy": {
     "defaultAgeDays": 30
   },
@@ -42,6 +42,10 @@
   },
   "personalDefault": false,
   "oauth": null,
+  "attachments": {
+    "transport": "field",
+    "arg": "attachments"
+  },
   "context": {
     "sources": {
       "message": {
@@ -101,7 +105,10 @@
         },
         "actionLabel": "Email sent",
         "sourceFromArg": { "kind": "message", "arg": "in_reply_to" },
-        "contextKeys": { "email": "to" }
+        "contextKeys": { "email": "to" },
+        "attachmentsArg": "attachments",
+        "insertFields": ["body"],
+        "display": { "aiText": "body" }
       },
       "load_simulation": {
         "executionMapping": {},

@@ -18,6 +18,7 @@ import { remotePreflightTarget, preflightRemoteAuth } from './remote-auth-prefli
 import { isSimulationMode, manifestIsSimulated, SIMULATION_BLOCK_REASON } from './simulation-mode';
 import { inheritedConnectorEnv } from './connector-env';
 import { withSourceLink } from './request-context';
+import { withAttachmentAndInsertSchema } from './attachment-reference';
 import type { BuiltinIntegration, BuiltinStatus, MandateCandidate } from './builtin-integration';
 
 const DEFAULT_DATA_DIR = process.env.SUVEREN_DATA_DIR ?? join(homedir(), '.suveren');
@@ -831,6 +832,12 @@ export class IntegrationManager {
       if (gating && gating.category !== 'read' && gating.category !== 'disabled') {
         inputSchema = withSourceLink(inputSchema);
       }
+      // Documents/inserts by reference — narrows (or adds) the attachments/
+      // insert argument schema to {connector, kind, id} pointers only, so
+      // the AI is never OFFERED a bytes/typed-value field in the first
+      // place (attachment-reference.ts; the runtime shape check in
+      // tool-proxy.ts is the second, independent refusal).
+      inputSchema = withAttachmentAndInsertSchema(inputSchema, gating ?? undefined);
 
       return {
         originalName: tool.name,
@@ -839,6 +846,13 @@ export class IntegrationManager {
         description: tool.description ?? '',
         inputSchema,
         outputSchema: tool.outputSchema as Record<string, unknown> | undefined,
+        // A connector's own `internal: true` override (tool-gating-types.ts
+        // `ProfileToolGatingEntry.internal`) — same meaning and enforcement
+        // as a built-in's `BuiltinTool.internal` above: never registered
+        // with the MCP server (index.ts), never callable directly
+        // (tool-proxy.ts); only the gateway's own code (e.g. a document
+        // preview read — preview.ts) calls it, via `callTool` directly.
+        ...(gating?.internal ? { internal: true } : {}),
         gating,
       };
     });
@@ -952,6 +966,9 @@ export class IntegrationManager {
     inputSchema: Record<string, unknown>;
     approvalView?: import('./integration-registry').ApprovalView;
     executionMapping?: Record<string, import('./tool-gating-types').ExecutionMappingValue>;
+    /** UI spec §15.2/§15.3 — the manifest's `display.aiText`, the name of
+     *  this tool's own argument that is AI-authored text. */
+    aiTextArg?: string;
   }> {
     const out: ReturnType<IntegrationManager['getToolDisplay']> = {};
     for (const t of this.getAllTools()) {
@@ -962,6 +979,7 @@ export class IntegrationManager {
         // UI spec §14.1 — which sent values the signed ticket also carries
         // (arg → executionContext field), for the "in the ticket" tag.
         ...(mapping && Object.keys(mapping).length > 0 ? { executionMapping: mapping } : {}),
+        ...(t.gating?.aiTextArg ? { aiTextArg: t.gating.aiTextArg } : {}),
       };
     }
     return out;
@@ -1337,6 +1355,10 @@ export class IntegrationManager {
         approvalView?: import('./integration-registry').ApprovalView;
         contextKeys?: Record<string, string>;
         sourceFromArg?: { kind: string; arg: string };
+        internal?: boolean;
+        attachmentsArg?: string;
+        insertFields?: string[];
+        display?: { aiText?: string };
       };
       // Area per tool — an override's own `profile` wins over the manifest's.
       const resolvedProfile = ext.profile ?? profileId;
@@ -1360,6 +1382,7 @@ export class IntegrationManager {
           hideUnlessAuthorized: ext.hideUnlessAuthorized,
           simulationOnly: ext.simulationOnly,
           approvalView: ext.approvalView,
+          internal: ext.internal,
         };
       }
       return {
@@ -1390,6 +1413,10 @@ export class IntegrationManager {
         // discarded here — the config in the manifest existed but did nothing.
         boundField: ext.boundField,
         requiredValue: ext.requiredValue,
+        internal: ext.internal,
+        attachmentsArg: ext.attachmentsArg,
+        insertFields: ext.insertFields,
+        aiTextArg: ext.display?.aiText,
       };
     }
 

@@ -18,7 +18,7 @@
  *    execution-context fields the Gatekeeper actually checked, together.
  */
 import { approvalSummary } from '../lib/approval-summary';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { resolveProposalLinks, type ProposalLink } from '../lib/proposal-links';
 import {
@@ -32,8 +32,11 @@ import {
 import { ProposalArgs } from './ProposalArgs';
 import { PreviewBox } from './PreviewBox';
 import { RequestContextBox } from './RequestContextBox';
+import { AttachmentsSealedBox } from './AttachmentsSealedBox';
+import { AiTextBox } from './AiTextBox';
+import { extractAttachmentsSealed, attachmentCheckEntries, type LimitCheckLike } from '../lib/attachment-sealed';
 import { boundValuesOpen } from '../lib/approval-preview-view';
-import { contextFieldLabel, splitTool, systemDisplayName, toolHeadline, type ToolDisplay } from '../lib/approval-view';
+import { aiTextValue, contextFieldLabel, splitTool, systemDisplayName, toolHeadline, type ToolDisplay } from '../lib/approval-view';
 import { useProfile } from '../lib/profile-cache';
 import { useMandateBounds } from '../lib/mandate-bounds-cache';
 import { useProposalIntent } from '../lib/use-proposal-intent';
@@ -111,7 +114,6 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
   const boundsEntries = Object.entries(proposal.executionContext);
   const profile = useProfile(proposal.profileId);
   const mandateBounds = useMandateBounds(proposal.authorizationId);
-  const checks = limitChecks(proposal.executionContext, mandateBounds, profile);
   const headline = toolHeadline(proposal.tool);
   const { integrationId } = splitTool(proposal.tool);
   const systemName = systemDisplayName(integrationId, manifests);
@@ -122,6 +124,29 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
   // this device has no key wrap for it — the two are told apart by `loading`.
   const content = useProposalContent(proposal);
   const readable = content.toolArgs !== null;
+  // UI spec §15.2 — "attachment from an allowed source" (computed, always
+  // true once a card exists at all — see attachmentCheckEntries' doc
+  // comment) plus "same file as issued <label>" (dynamic — comes back only
+  // once AttachmentsSealedBox's own live preview fetch resolves, via
+  // onChecks below), alongside the ordinary per-call bound checks.
+  const [attachmentChecks, setAttachmentChecks] = useState<LimitCheckLike[]>([]);
+  const checks = [
+    ...limitChecks(proposal.executionContext, mandateBounds, profile),
+    ...attachmentCheckEntries(content.toolArgs),
+    ...attachmentChecks,
+  ];
+  // Memoized on `content.toolArgs`'s own identity (stable across re-renders
+  // until it actually changes) — AttachmentsSealedBox's `onChecks` effect
+  // below depends on `attachments`' identity; an unmemoized array here
+  // would be a NEW reference every render, including the very re-render
+  // `onChecks` itself triggers via `setAttachmentChecks`, which would loop.
+  const attachmentsSealed = useMemo(() => extractAttachmentsSealed(content.toolArgs), [content.toolArgs]);
+  // UI spec §15.2 — fetches ONE attachment's live preview by its sealed
+  // sha256, for THIS proposal (never stored on the proposal itself).
+  const fetchAttachmentPreview = useCallback(
+    (sha256: string) => spClient.getProposalAttachmentPreview(proposal.id, sha256),
+    [proposal.id],
+  );
   useEffect(() => {
     onContentState?.({ loading: content.loading, readable });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -281,6 +306,27 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
           {sentContent}
         </div>
       )}
+      {/* UI spec §2.1/§15.2/§15.3 — the AI-authored-text argument (manifest
+          `display.aiText`, e.g. mail/gmail's `body`), in its own amber box,
+          separate from the sealed recipients/subject box above — never
+          inside the generic ProposalArgs table (argRows hides it the same
+          way `_attachmentsSealed` is hidden). Still sealed; see AiTextBox. */}
+      {readable && content.toolArgs && aiTextValue(content.toolArgs, toolDisplay) !== undefined && (
+        <AiTextBox text={aiTextValue(content.toolArgs, toolDisplay)!} />
+      )}
+      {/* UI spec §15.2 — a sealed box per attachment/inserted value, right
+          next to the other sealed values (never inside the generic
+          ProposalArgs table, which the `_attachmentsSealed` key is hidden
+          from — HIDDEN_ARG_KEYS in lib/approval-view.ts). */}
+      {readable && (
+        <AttachmentsSealedBox
+          attachments={attachmentsSealed.attachments}
+          inserts={attachmentsSealed.inserts}
+          manifests={manifests}
+          fetchPreview={fetchAttachmentPreview}
+          onChecks={setAttachmentChecks}
+        />
+      )}
       {/* G4 — some recipients could not be reached when this was submitted
           (no registered end-to-end key); the submission itself was never
           blocked on it. Computed from fields already on the wire — see
@@ -330,7 +376,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
             {checks.map((c) => (
               <li key={c.key} className={c.ok ? 'ok' : 'bad'}>
                 <span className="limit-check-icon">{c.ok ? '✓' : '✗'}</span>
-                <span>{c.label} {c.valueText} — your limit {c.limitText}</span>
+                <span>{c.label}{c.valueText || c.limitText ? ` ${c.valueText} — your limit ${c.limitText}` : ''}</span>
               </li>
             ))}
           </ul>

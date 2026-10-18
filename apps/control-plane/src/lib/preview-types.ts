@@ -53,6 +53,8 @@ export interface PreviewReadSection {
   elements?: PreviewReadOutcome[];
   overflow?: { shown: number; total: number };
   version?: PreviewVersionInfo;
+  /** See apps/mcp-server/src/lib/tool-gating-types.ts `PreviewReadConfig.kind`. */
+  kind?: 'document';
 }
 
 /**

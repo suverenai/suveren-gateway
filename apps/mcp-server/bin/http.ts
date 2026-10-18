@@ -38,6 +38,7 @@ import { loadProfiles } from '../src/lib/profile-loader';
 import { loadManifests, getAllManifests, getManifest } from '../src/lib/manifest-loader';
 import { buildInternalPreview } from '../src/lib/preview';
 import { buildRequestContext } from '../src/lib/request-context';
+import { resolveAttachmentPreview } from '../src/lib/document-source';
 import { registerBuiltins } from '../src/lib/builtins';
 import { buildMandateBrief } from '../src/lib/mandate-brief';
 import { decodeMandateBlob } from '@hap/core';
@@ -490,6 +491,31 @@ app.post('/internal/preview', internalOnly, async (req: Request, res: Response) 
     tool: toolName,
     status: result.status,
   });
+  res.json(result);
+});
+
+/**
+ * UI spec §15.2 — the approval/ticket card's attachment preview.
+ * Gateway-internal only, same posture as `/internal/preview`: never exposed
+ * to an MCP client, no ticket, no read gate. `sha256` is the fingerprint
+ * ALREADY sealed on the proposal/ticket (the control plane looks it up from
+ * the proposal/ticket's own `_attachmentsSealed` meta before ever calling
+ * this — this route itself only re-resolves `{connector, kind, id}` and
+ * checks the result against whatever `sha256` it was given); a mismatch is
+ * reported as `changed`, never served as if it still matched.
+ */
+app.post('/internal/document-preview', internalOnly, async (req: Request, res: Response) => {
+  const { connector, kind, id, sha256 } = req.body as {
+    connector?: string;
+    kind?: string;
+    id?: string;
+    sha256?: string;
+  };
+  if (!connector || !kind || !id || !sha256) {
+    res.status(400).json({ error: 'Missing connector, kind, id, or sha256' });
+    return;
+  }
+  const result = await resolveAttachmentPreview(integrationManager, { connector, kind, id }, sha256);
   res.json(result);
 });
 

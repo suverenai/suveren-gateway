@@ -6,7 +6,7 @@
   "icon": "briefcase",
   "profile": "sales",
   "npmPackage": "@humanagencyp/erp-mcp",
-  "npmVersion": "0.7.0",
+  "npmVersion": "0.9.0",
   "mcp": {
     "command": "erp-mcp",
     "args": [],
@@ -27,11 +27,35 @@
         "type": "text",
         "placeholder": "simulation (default) — live needs an adapter for your ERP",
         "optional": true
+      },
+      {
+        "key": "liveAdapter",
+        "label": "Live adapter (optional)",
+        "type": "text",
+        "placeholder": "local — your own company's invoicing. Leave empty unless Mode is \"live\"",
+        "optional": true
+      },
+      {
+        "key": "companyFile",
+        "label": "Company data file (optional)",
+        "type": "text",
+        "placeholder": "Path to your company file (name, address, UID, bank, VAT mode) — required when the live adapter is \"local\"",
+        "optional": true
+      },
+      {
+        "key": "invoiceTemplate",
+        "label": "Invoice template (optional)",
+        "type": "text",
+        "placeholder": "Path to an invoice template file — leave empty for the bundled German template",
+        "optional": true
       }
     ],
     "envMapping": {
       "DATABASE_URL": "databaseUrl",
-      "ERP_MODE": "mode"
+      "ERP_MODE": "mode",
+      "ERP_LIVE_ADAPTER": "liveAdapter",
+      "ERP_LIVE_COMPANY_FILE": "companyFile",
+      "ERP_INVOICE_TEMPLATE": "invoiceTemplate"
     }
   },
   "simulation": {
@@ -40,6 +64,18 @@
   },
   "personalDefault": true,
   "oauth": null,
+  "documents": {
+    "invoice-pdf": {
+      "tool": "get_document",
+      "args": { "kind": "invoice-pdf", "id": "$id" },
+      "label": "issued invoice {id}"
+    },
+    "credit-note-pdf": {
+      "tool": "get_document",
+      "args": { "kind": "credit-note-pdf", "id": "$id" },
+      "label": "issued credit note {id}"
+    }
+  },
   "context": {
     "recordKeys": {
       "customer": {
@@ -202,7 +238,7 @@
       },
       "create_invoice": {
         "profile": "invoicing",
-        "summary": "Invoice of {net_total|money} net to {customer_id}[ for order {order_id}]",
+        "summary": "Invoice[ {number}] of {net_total|money} net to {customer_id}[ for order {order_id}]",
         "executionMapping": {
           "net_total": "net_total",
           "currency": "currency"
@@ -213,15 +249,33 @@
         "actionLabel": "Invoice issued",
         "contextKeys": { "customer": "customer_id" },
         "preview": [
-          { "tool": "get_customer", "args": { "id": "customer_id" }, "attach": "customer_id" }
+          { "tool": "get_customer", "args": { "id": "customer_id" }, "attach": "customer_id" },
+          {
+            "tool": "preview_invoice",
+            "args": {
+              "customer_id": "customer_id",
+              "number": "number",
+              "document_date": "document_date",
+              "service_period": "service_period",
+              "lines": "lines",
+              "net_total": "net_total",
+              "currency": "currency",
+              "payment_term_days": "payment_term_days",
+              "memo": "memo"
+            },
+            "kind": "document"
+          }
         ],
         "display": {
-          "order": ["customer_id", "order_id", "lines", "net_total", "currency", "payment_term_days", "memo"],
+          "order": ["customer_id", "order_id", "number", "document_date", "service_period", "lines", "net_total", "currency", "payment_term_days", "memo"],
           "money": ["net_total", "customer_id.credit_limit", "customer_id.open_balance", "customer_id.available_credit"],
           "currencyField": "currency",
           "labels": {
             "customer_id": "Customer",
             "order_id": "Order",
+            "number": "Invoice number",
+            "document_date": "Invoice date",
+            "service_period": "Service period",
             "net_total": "Total (net)",
             "payment_term_days": "Payment terms (days)",
             "memo": "Memo",
@@ -233,7 +287,7 @@
       },
       "create_credit_note": {
         "profile": "invoicing",
-        "summary": "Credit note of {credit_total|money} net for invoice {invoice_id}: {reason|short}",
+        "summary": "Credit note[ {number}] of {credit_total|money} net for invoice {invoice_id}: {reason|short}",
         "executionMapping": {
           "credit_total": "credit_total",
           "currency": "currency"
@@ -248,15 +302,28 @@
           "fields": ["number", "customer_id", "net_total", "currency", "status"]
         },
         "display": {
-          "order": ["invoice_id", "credit_total", "currency", "reason", "lines"],
+          "order": ["invoice_id", "number", "document_date", "credit_total", "currency", "reason", "service_period", "lines"],
           "money": ["credit_total"],
           "currencyField": "currency",
           "labels": {
             "invoice_id": "Invoice",
+            "number": "Credit note number",
+            "document_date": "Credit note date",
             "credit_total": "Total (net)",
-            "reason": "Reason"
+            "reason": "Reason",
+            "service_period": "Service period"
           }
         }
+      },
+      "preview_invoice": {
+        "profile": "invoicing",
+        "category": "read",
+        "internal": true
+      },
+      "get_document": {
+        "profile": "invoicing",
+        "category": "read",
+        "internal": true
       },
       "list_invoices": {
         "profile": "invoicing",

@@ -461,3 +461,89 @@ describe('POST + GET /proposal-status/:id/shown-snapshot (AU10 §8.4)', () => {
     }
   });
 });
+
+// UI spec §15.2 — GET /proposal-status/:id/attachment-preview/:sha256. The
+// connector/kind/id to re-resolve come from THIS proposal's own
+// `_attachmentsSealed` meta, never the request — a sha256 not sealed on the
+// proposal at all must never reach the MCP server.
+describe('GET /proposal-status/:id/attachment-preview/:sha256', () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  const SEALED_SHA = 'a'.repeat(64);
+  const toolArgsWithAttachment = {
+    to: ['buchhaltung@drautal.at'],
+    subject: 'Rechnung 2026-0003',
+    _attachmentsSealed: {
+      attachments: [{ connector: 'erp', kind: 'invoice-pdf', id: 'inv-1', filename: 'Rechnung-2026-0003.pdf', contentType: 'application/pdf', sha256: SEALED_SHA, bytes: 100 }],
+      inserts: [],
+    },
+  };
+
+  it('404s on a sha256 not sealed on this proposal at all — never calls the MCP server', async () => {
+    const mcpFetch = vi.fn();
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.includes('/api/proposals/')) {
+        return new Response(JSON.stringify({ proposal: { tool: 'gmail__send_message', toolArgs: toolArgsWithAttachment } }), { status: 200 });
+      }
+      if (url.includes('/internal/document-preview')) { mcpFetch(url, init); return new Response('{}', { status: 200 }); }
+      throw new Error(`unexpected fetch: ${url}`);
+    }));
+    const dir = mkdtempSync(join(tmpdir(), 'attachment-preview-route-'));
+    try {
+      await withServer(dir, 'cookie', async (base) => {
+        const res = await realFetch(`${base}/prop-1/attachment-preview/${'b'.repeat(64)}`);
+        expect(res.status).toBe(404);
+        expect(mcpFetch).not.toHaveBeenCalled();
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('resolves the connector/kind/id from the sealed meta and relays the MCP server\'s "ok" result', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.includes('/api/proposals/')) {
+        return new Response(JSON.stringify({ proposal: { tool: 'gmail__send_message', toolArgs: toolArgsWithAttachment } }), { status: 200 });
+      }
+      if (url.includes('/internal/document-preview')) {
+        const body = JSON.parse(String(init?.body)) as { connector: string; kind: string; id: string; sha256: string };
+        expect(body).toEqual({ connector: 'erp', kind: 'invoice-pdf', id: 'inv-1', sha256: SEALED_SHA });
+        return new Response(JSON.stringify({ status: 'ok', filename: 'Rechnung-2026-0003.pdf', contentType: 'application/pdf', contentBase64: 'AA==', sha256: SEALED_SHA, bytes: 100 }), { status: 200 });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }));
+    const dir = mkdtempSync(join(tmpdir(), 'attachment-preview-route-'));
+    try {
+      await withServer(dir, 'cookie', async (base) => {
+        const res = await realFetch(`${base}/prop-1/attachment-preview/${SEALED_SHA}`);
+        expect(res.status).toBe(200);
+        expect(await res.json()).toMatchObject({ status: 'ok', sha256: SEALED_SHA });
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('relays a "changed" result from the MCP server verbatim — never serves bytes under a stale fingerprint', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('/api/proposals/')) {
+        return new Response(JSON.stringify({ proposal: { tool: 'gmail__send_message', toolArgs: toolArgsWithAttachment } }), { status: 200 });
+      }
+      if (url.includes('/internal/document-preview')) {
+        return new Response(JSON.stringify({ status: 'changed', message: 'changed since it was sealed' }), { status: 200 });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }));
+    const dir = mkdtempSync(join(tmpdir(), 'attachment-preview-route-'));
+    try {
+      await withServer(dir, 'cookie', async (base) => {
+        const res = await realFetch(`${base}/prop-1/attachment-preview/${SEALED_SHA}`);
+        expect(res.status).toBe(200);
+        const data = await res.json() as { status: string };
+        expect(data.status).toBe('changed');
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

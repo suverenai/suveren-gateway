@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { AgentProfile } from '@hap/core';
-import { argRows, profileFieldLines, humanizeKey, toolHeadline, systemDisplayName } from './approval-view';
+import { argRows, profileFieldLines, humanizeKey, toolHeadline, systemDisplayName, aiTextValue } from './approval-view';
 import type { IntegrationManifest } from './sp-client';
 
 /**
@@ -116,5 +116,37 @@ describe('systemDisplayName — "From <System>, before it runs" (AU5)', () => {
 
   it('falls back to "the system" when there is no integration id at all', () => {
     expect(systemDisplayName('', undefined)).toBe('the system');
+  });
+});
+
+describe('aiTextValue — UI spec §15.2/§15.3 "Text — written by the AI"', () => {
+  it('the declared argument\'s own string value', () => {
+    expect(aiTextValue({ to: ['a@x.com'], body: 'hello' }, { aiTextArg: 'body' })).toBe('hello');
+  });
+
+  it('undefined when the tool declares no aiTextArg at all', () => {
+    expect(aiTextValue({ body: 'hello' }, {})).toBeUndefined();
+    expect(aiTextValue({ body: 'hello' }, undefined)).toBeUndefined();
+  });
+
+  it('undefined when the declared argument is missing or empty on this call', () => {
+    expect(aiTextValue({ to: ['a@x.com'] }, { aiTextArg: 'body' })).toBeUndefined();
+    expect(aiTextValue({ body: '' }, { aiTextArg: 'body' })).toBeUndefined();
+  });
+
+  it('undefined when the declared argument is not a string', () => {
+    expect(aiTextValue({ body: 5 }, { aiTextArg: 'body' })).toBeUndefined();
+  });
+});
+
+describe('argRows — hides the AI-authored-text argument (UI spec §15.2/§15.3)', () => {
+  it('omits the declared aiTextArg from the generic rows', () => {
+    const rows = argRows({ to: ['a@x.com'], subject: 'Hi', body: 'hello' }, { aiTextArg: 'body' });
+    expect(rows.map((r) => r.key)).toEqual(['to', 'subject']);
+  });
+
+  it('shows every field, incl. body, when no aiTextArg is declared', () => {
+    const rows = argRows({ to: ['a@x.com'], body: 'hello' }, {});
+    expect(rows.map((r) => r.key)).toEqual(['to', 'body']);
   });
 });

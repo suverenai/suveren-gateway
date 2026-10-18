@@ -17,6 +17,7 @@ import { Fragment } from 'react';
 import type { AttachedIdentity, CreationView } from '../lib/preview-render';
 import { PreviewFieldRows } from './RenderedPreviewView';
 import { PreviewTableView } from './PreviewTableView';
+import { DocumentPreviewBox } from './DocumentPreviewBox';
 
 function Identity({ identity }: { identity: AttachedIdentity }) {
   if (identity.unresolved) {
@@ -45,7 +46,7 @@ function Identity({ identity }: { identity: AttachedIdentity }) {
   );
 }
 
-export function RenderedCreationView({ view }: { view: CreationView }) {
+export function RenderedCreationView({ view, systemName }: { view: CreationView; systemName?: string }) {
   return (
     <>
       <dl style={{ display: 'grid', gridTemplateColumns: 'max-content 1fr', gap: '0.3rem 0.75rem', fontSize: '0.85rem', margin: '0.4rem 0' }}>
@@ -71,10 +72,18 @@ export function RenderedCreationView({ view }: { view: CreationView }) {
       ))}
       {view.sections.map((section, i) => (
         <div key={i} className="creation-own-section">
-          <h5>{section.heading} <span className="src-tag src-tag-system">from the system</span></h5>
-          {section.table && <PreviewTableView table={section.table} />}
-          {section.body && <PreviewFieldRows rows={section.body.fields} />}
-          {section.note && <p className="preview-note">{section.note}</p>}
+          {section.document ? (
+            // UI spec §15.1 — the document box carries its own label/frame;
+            // no generic "<tool> — from the system" heading on top of it.
+            <DocumentPreviewBox doc={section.document} systemName={systemName} />
+          ) : (
+            <>
+              <h5>{section.heading} <span className="src-tag src-tag-system">from the system</span></h5>
+              {section.table && <PreviewTableView table={section.table} />}
+              {section.body && <PreviewFieldRows rows={section.body.fields} />}
+              {section.note && <p className="preview-note">{section.note}</p>}
+            </>
+          )}
         </div>
       ))}
     </>

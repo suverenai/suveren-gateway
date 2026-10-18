@@ -19,7 +19,8 @@
  */
 
 import { Router, type Request, type Response } from 'express';
-import { getLocalEvidence, getTicketContent, getTicketHeadlines } from '../lib/mcp-bridge';
+import { getLocalEvidence, getTicketContent, getTicketHeadlines, getAttachmentPreview } from '../lib/mcp-bridge';
+import { findSealedAttachment } from '../lib/attachment-preview-types';
 import { createPublicKey, verify as verifyEd25519 } from 'node:crypto';
 import { verifyTicketSignature, encodeDidKey, canonicalize } from '@hap/core';
 
@@ -250,6 +251,44 @@ export function createEvidenceRouter(): Router {
         error: 'Local evidence unavailable',
         detail: err instanceof Error ? err.message : String(err),
       });
+    }
+  });
+
+  /**
+   * UI spec §15.2 — the ticket view's attachment preview, same route shape
+   * and same trust discipline as the proposal one (proposal-preview.ts):
+   * `sha256` must name an attachment already sealed on THIS receipt's own
+   * local copy (sentArgs, or an approved ticket's archived proposal args) —
+   * never a pass-through of a caller-named connector/kind/id.
+   */
+  router.get('/receipt/:id/attachment-preview/:sha256', async (req: Request, res: Response) => {
+    const id = String(req.params.id);
+    const sha256 = String(req.params.sha256);
+    try {
+      const evidence = (await getLocalEvidence()) as ArchiveShape;
+      const entry = (evidence.receipts ?? []).find(
+        r => ((r as { receipt?: { id?: unknown } }).receipt?.id) === id,
+      );
+      if (!entry) {
+        res.status(404).json({ status: 'error', message: 'No local copy of this receipt' });
+        return;
+      }
+      const e = entry as {
+        sentArgs?: Record<string, unknown>;
+        proposal?: { toolArgs?: Record<string, unknown> };
+        boundContent?: Record<string, unknown> | string;
+      };
+      const candidate = e.sentArgs ?? e.proposal?.toolArgs
+        ?? (e.boundContent && typeof e.boundContent === 'object' && !Array.isArray(e.boundContent) ? e.boundContent : undefined);
+      const ref = findSealedAttachment(candidate, sha256);
+      if (!ref) {
+        res.status(404).json({ status: 'error', message: 'No sealed attachment with this fingerprint on this ticket.' });
+        return;
+      }
+      const result = await getAttachmentPreview(ref);
+      res.json(result);
+    } catch (err) {
+      res.status(502).json({ status: 'error', message: `MCP server unavailable: ${err instanceof Error ? err.message : String(err)}` });
     }
   });
 

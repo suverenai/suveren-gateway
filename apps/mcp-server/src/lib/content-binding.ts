@@ -22,6 +22,7 @@ import {
 } from '@hap/core';
 import type { DiscoveredTool } from './integration-manager';
 import { detectContentField } from './receipt-footer';
+import { ATTACHMENTS_SEALED_META_KEY, type SealedAttachment } from './attachment-resolution';
 
 /** Read the profile's content_binding declaration, if any. */
 function getContentBinding(profileId: string): ContentBinding | undefined {
@@ -95,9 +96,26 @@ export function computeContentBinding(
       }
       return undefined;
     }
+    // Documents/attachments-by-reference (suveren-invoicing-plan.md §6) —
+    // when the profile binds an "attachments" field, the hash (and the
+    // locally archived preimage) must commit to the SEALED fingerprint list
+    // ({filename, sha256} per attachment), never bytes. `toolArgs.attachments`
+    // itself may hold embedded bytes (a "field"-transport connector, once
+    // finalized) or not exist at all (a "mime-raw" connector folds it into
+    // `raw`) — this override is driven entirely by the sealed meta
+    // attachment-resolution.ts attaches, never by the raw wire argument, so
+    // it is correct either way and regardless of finalize timing.
+    let effectiveArgs = toolArgs;
+    if (binding.fields?.includes('attachments')) {
+      const sealed = (toolArgs as Record<string, unknown>)[ATTACHMENTS_SEALED_META_KEY] as
+        | { attachments: SealedAttachment[] }
+        | undefined;
+      const fingerprints = (sealed?.attachments ?? []).map(a => ({ filename: a.filename, sha256: a.sha256 }));
+      effectiveArgs = { ...toolArgs, attachments: fingerprints };
+    }
     // Select once and hash the selection, so the stored content and the hash
     // are provably the same object rather than two independent derivations.
-    const bound = selectBoundFields(binding, toolArgs);
+    const bound = selectBoundFields(binding, effectiveArgs);
     return {
       contentHash: computeContentHash(binding, bound),
       contentBinding: { version: binding.version, kind: binding.kind, fields: binding.fields },

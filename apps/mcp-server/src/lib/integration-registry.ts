@@ -278,6 +278,17 @@ export interface ToolGatingConfig {
   contextKeys?: Record<string, string>;
   /** AU10 — see tool-gating-types.ts `SourceFromArgDeclaration`. */
   sourceFromArg?: { kind: string; arg: string };
+  /** See tool-gating-types.ts `ProfileToolGatingEntry.internal` — never
+   *  listed, never callable directly by the AI; set on the resulting
+   *  `DiscoveredTool` by integration-manager.ts's connector-tool mapping
+   *  (mirroring a built-in's own `BuiltinTool.internal`). */
+  internal?: boolean;
+  /** See tool-gating-types.ts `ProfileToolGatingEntry.attachmentsArg`. */
+  attachmentsArg?: string;
+  /** See tool-gating-types.ts `ProfileToolGatingEntry.insertFields`. */
+  insertFields?: string[];
+  /** See tool-gating-types.ts `ToolDisplayHints.aiText`. */
+  aiTextArg?: string;
 }
 
 /**

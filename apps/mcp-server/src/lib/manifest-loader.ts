@@ -22,6 +22,9 @@ import {
   type ToolPreviewConfig,
   type ManifestContext,
   type FieldPathParse,
+  type ManifestDocuments,
+  type AttachmentTransportConfig,
+  type ManifestValues,
 } from './tool-gating-types';
 import { uncoveredReadSwitchReason, type BoundsSchemaLike } from './read-gate';
 
@@ -135,6 +138,27 @@ export interface IntegrationManifest {
   contextDiscovery?: Record<string, ManifestContextDiscovery>;
   /** AU10 — request/history card reads (doc/au10-request-context.md §2). */
   context?: ManifestContext;
+  /**
+   * Document kinds THIS connector can hand the gateway by reference — e.g.
+   * the ERP's `invoice-pdf`/`credit-note-pdf` (suveren-invoicing-plan.md
+   * §6/§7). See tool-gating-types.ts `DocumentSourceConfig`. Every declared
+   * `tool` must be `internal: true` on this SAME manifest's `toolGating`
+   * (checked at load time — `invalidManifestDocumentsReason`).
+   */
+  documents?: ManifestDocuments;
+  /**
+   * How THIS connector receives attachment bytes on an outgoing message —
+   * see tool-gating-types.ts `AttachmentTransportConfig`. Declared once per
+   * connector; a tool opts in by setting its own override's
+   * `attachmentsArg` (checked at load time that the two agree).
+   */
+  attachments?: AttachmentTransportConfig;
+  /**
+   * Value kinds THIS connector can hand the gateway to insert into another
+   * action's own text — e.g. Mollie's `payment-link` (suveren-invoicing-
+   * plan.md §5/§7). See tool-gating-types.ts `InsertValueSourceConfig`.
+   */
+  values?: ManifestValues;
 }
 
 interface ManifestIndex {
@@ -229,6 +253,9 @@ function invalidReadConfigReason(toolName: string, idx: number | null, entry: un
       }
     }
   }
+  if (p.kind !== undefined && p.kind !== 'document') {
+    return `${label}.kind must be "document" (the only recognized value)`;
+  }
   return null;
 }
 
@@ -298,6 +325,10 @@ export function invalidDisplayHintsReason(toolName: string, entry: unknown): str
       }
     }
   }
+  // UI spec §15.2/§15.3 — the AI-authored-text argument marker.
+  if (d.aiText !== undefined && (typeof d.aiText !== 'string' || d.aiText.length === 0)) {
+    return `override "${toolName}".display.aiText must be a non-empty string naming an argument`;
+  }
   return null;
 }
 
@@ -333,6 +364,35 @@ export function invalidSummaryReason(toolName: string, entry: unknown): string |
       return `${at} {${m[1]}} has an invalid field path`;
     }
     if (fmt !== undefined && !SUMMARY_FORMATS.includes(fmt)) return `${at} {${m[1]}} has unknown format "${fmt}"`;
+  }
+  return null;
+}
+
+/**
+ * Shape check for an override's optional `internal` flag (tool-gating-
+ * types.ts `ProfileToolGatingEntry.internal`) — boolean only. WHICH tools
+ * should declare it (a connector's own document-preview/archive reads
+ * meant only for the gateway itself, never the AI) is a per-connector
+ * design choice, not something shape validation can check.
+ */
+export function invalidInternalReason(toolName: string, entry: unknown): string | null {
+  if (entry === null || typeof entry !== 'object') return null;
+  const internal = (entry as { internal?: unknown }).internal;
+  if (internal === undefined) return null;
+  if (typeof internal !== 'boolean') return `override "${toolName}".internal must be a boolean`;
+  return null;
+}
+
+/**
+ * Checks every override's `internal` (if any) in one manifest. Same
+ * one-predicate-shared-by-loader-and-lint-test shape as
+ * `invalidManifestPreviewReason`.
+ */
+export function invalidManifestInternalReason(manifest: Pick<IntegrationManifest, 'toolGating'>): string | null {
+  const overrides = manifest.toolGating?.overrides ?? {};
+  for (const [toolName, entry] of Object.entries(overrides)) {
+    const reason = invalidInternalReason(toolName, entry);
+    if (reason) return reason;
   }
   return null;
 }
@@ -635,6 +695,140 @@ export function invalidManifestContextReason(
   return null;
 }
 
+// ─── Documents / attachments / inserted values (suveren-invoicing-plan.md §6/§7) ──
+
+/**
+ * Checks one `documents.<kind>` entry: the shared `{tool, args}` read shape,
+ * plus the one extra rule specific to a document source — the named `tool`
+ * must be `internal: true` on this SAME manifest's `toolGating.overrides`.
+ * A document read answers with file bytes; it must never be something the
+ * AI could call directly (the same posture `invalidInternalReason` already
+ * enforces for a connector's own preview/archive reads).
+ */
+function invalidDocumentSourceReason(
+  kind: string,
+  entry: unknown,
+  overrides: Record<string, unknown>,
+): string | null {
+  const label = `documents.${kind}`;
+  const readReason = invalidContextReadReason(label, entry);
+  if (readReason) return readReason;
+  const tool = (entry as { tool: string }).tool;
+  const toolEntry = overrides[tool] as { internal?: unknown } | null | undefined;
+  if (toolEntry?.internal !== true) {
+    return `${label}.tool "${tool}" must be marked "internal: true" on this manifest's ` +
+      `toolGating.overrides — a document read must never be directly callable by the AI`;
+  }
+  // UI spec §15.2 — the optional display label template (a plain string;
+  // `{id}` is the only recognized placeholder, substituted by the UI, not
+  // this grammar's `$`-prefixed args substitution).
+  const docLabel = (entry as { label?: unknown }).label;
+  if (docLabel !== undefined && (typeof docLabel !== 'string' || docLabel.length === 0)) {
+    return `${label}.label must be a non-empty string`;
+  }
+  return null;
+}
+
+/** Checks the manifest's top-level `attachments` transport declaration's own shape. */
+function invalidAttachmentTransportReason(entry: unknown): string | null {
+  const label = 'attachments';
+  if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) return `${label} must be an object`;
+  const a = entry as Record<string, unknown>;
+  if (a.transport !== 'field' && a.transport !== 'mime-raw') {
+    return `${label}.transport must be "field" or "mime-raw"`;
+  }
+  if (!isNonEmptyString(a.arg)) return `${label}.arg must be a non-empty string`;
+  return null;
+}
+
+/** Checks one `values.<kind>` entry: the shared read shape, plus `path`/`allowedHosts`. */
+function invalidInsertValueSourceReason(kind: string, entry: unknown): string | null {
+  const label = `values.${kind}`;
+  const readReason = invalidContextReadReason(label, entry);
+  if (readReason) return readReason;
+  const v = entry as Record<string, unknown>;
+  if (!isNonEmptyString(v.path)) return `${label}.path must be a non-empty string`;
+  if (!Array.isArray(v.allowedHosts) || v.allowedHosts.length === 0) {
+    return `${label}.allowedHosts must be a non-empty array of hostnames`;
+  }
+  for (const [i, h] of v.allowedHosts.entries()) {
+    if (typeof h !== 'string' || h.length === 0) return `${label}.allowedHosts[${i}] must be a non-empty string`;
+  }
+  return null;
+}
+
+/**
+ * Returns a refusal reason if `manifest.documents` (if any) is malformed, or
+ * null if absent/well-formed.
+ */
+export function invalidManifestDocumentsReason(
+  manifest: Pick<IntegrationManifest, 'documents' | 'toolGating'>,
+): string | null {
+  if (!manifest.documents) return null;
+  const overrides = manifest.toolGating?.overrides ?? {};
+  for (const [kind, entry] of Object.entries(manifest.documents)) {
+    const reason = invalidDocumentSourceReason(kind, entry, overrides);
+    if (reason) return reason;
+  }
+  return null;
+}
+
+/**
+ * Returns a refusal reason if `manifest.attachments` (if any) is malformed,
+ * OR any override's `attachmentsArg`/`insertFields` is malformed, OR an
+ * override declares `attachmentsArg` while this manifest declares no
+ * top-level `attachments` transport (a tool cannot opt in to attachments
+ * without its connector saying how it receives them).
+ */
+export function invalidManifestAttachmentsReason(
+  manifest: Pick<IntegrationManifest, 'attachments' | 'toolGating'>,
+): string | null {
+  if (manifest.attachments !== undefined) {
+    const reason = invalidAttachmentTransportReason(manifest.attachments);
+    if (reason) return reason;
+  }
+  const overrides = manifest.toolGating?.overrides ?? {};
+  for (const [toolName, entry] of Object.entries(overrides)) {
+    if (entry === null || typeof entry !== 'object') continue;
+    const e = entry as { attachmentsArg?: unknown; insertFields?: unknown };
+    if (e.attachmentsArg !== undefined) {
+      if (typeof e.attachmentsArg !== 'string' || e.attachmentsArg.length === 0) {
+        return `override "${toolName}".attachmentsArg must be a non-empty string`;
+      }
+      if (!manifest.attachments) {
+        return `override "${toolName}" declares "attachmentsArg" but this manifest declares no ` +
+          `top-level "attachments" transport`;
+      }
+    }
+    if (e.insertFields !== undefined) {
+      if (!Array.isArray(e.insertFields) || e.insertFields.length === 0) {
+        return `override "${toolName}".insertFields must be a non-empty array of argument names`;
+      }
+      for (const [i, f] of e.insertFields.entries()) {
+        if (typeof f !== 'string' || f.length === 0) {
+          return `override "${toolName}".insertFields[${i}] must be a non-empty string`;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Returns a refusal reason if `manifest.values` (if any) is malformed, or
+ * null if absent/well-formed.
+ */
+export function invalidManifestValuesReason(
+  manifest: Pick<IntegrationManifest, 'values'>,
+): string | null {
+  if (!manifest.values) return null;
+  for (const [kind, entry] of Object.entries(manifest.values)) {
+    const reason = invalidInsertValueSourceReason(kind, entry);
+    if (reason) return reason;
+  }
+  return null;
+}
+
 // ─── Area per tool — an override may name its OWN profile ─────────────────
 
 /**
@@ -788,6 +982,11 @@ export function loadManifests(integrationsDir?: string): number {
         console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${previewReason}`);
         continue;
       }
+      const internalReason = invalidManifestInternalReason(manifest);
+      if (internalReason) {
+        console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${internalReason}`);
+        continue;
+      }
       const contextReason = invalidManifestContextReason(manifest);
       if (contextReason) {
         console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${contextReason}`);
@@ -801,6 +1000,21 @@ export function loadManifests(integrationsDir?: string): number {
       const readGateReason = invalidManifestReadGateReason(manifest);
       if (readGateReason) {
         console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${readGateReason}`);
+        continue;
+      }
+      const documentsReason = invalidManifestDocumentsReason(manifest);
+      if (documentsReason) {
+        console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${documentsReason}`);
+        continue;
+      }
+      const attachmentsReason = invalidManifestAttachmentsReason(manifest);
+      if (attachmentsReason) {
+        console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${attachmentsReason}`);
+        continue;
+      }
+      const valuesReason = invalidManifestValuesReason(manifest);
+      if (valuesReason) {
+        console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${valuesReason}`);
         continue;
       }
       manifests.set(id, manifest);
