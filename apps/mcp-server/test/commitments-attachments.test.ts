@@ -75,6 +75,20 @@ beforeAll(() => {
       },
     }),
   );
+  mkdirSync(join(manifestDir, 'gmail'));
+  writeFileSync(
+    join(manifestDir, 'gmail/manifest.json'),
+    JSON.stringify({
+      id: 'gmail', name: 'Gmail', version: '1', profile: PROFILE,
+      mcp: { command: 'node', args: [] }, credentials: { fields: [], envMapping: {} }, oauth: null,
+      attachments: { transport: 'mime-raw', arg: 'raw' },
+      toolGating: {
+        default: { executionMapping: {} },
+        overrides: { send_message: { executionMapping: {}, staticExecution: { action_type: 'send' }, attachmentsArg: 'attachments', message: GMAIL_MESSAGE } },
+      },
+    }),
+  );
+  writeFileSync(join(manifestDir, 'index.json'), JSON.stringify({ integrations: { erp: 'erp/manifest.json', mail: 'mail/manifest.json', gmail: 'gmail/manifest.json' } }));
   loadManifests(manifestDir);
 });
 
@@ -84,6 +98,17 @@ afterAll(() => {
 });
 
 const kp = testReceiptKeypair();
+
+const GMAIL_MESSAGE = { text: 'body', to: 'to', cc: 'cc', subject: 'subject', verb: 'Sent' as const };
+
+const GMAIL_TOOL: DiscoveredTool = {
+  originalName: 'send_message',
+  namespacedName: 'gmail__send_message',
+  integrationId: 'gmail',
+  description: '',
+  inputSchema: { type: 'object', properties: {} },
+  gating: { profile: PROFILE, executionMapping: {}, staticExecution: { action_type: 'send' }, attachmentsArg: 'attachments', message: GMAIL_MESSAGE } as unknown as DiscoveredTool['gating'],
+};
 
 const MAIL_TOOL: DiscoveredTool = {
   originalName: 'send_message',
@@ -106,7 +131,7 @@ const ERP_TOOL: DiscoveredTool = {
 
 /** A sealed proposal — exactly what tool-proxy.ts's "resolve for display"
  *  step would have stored: fingerprint only, no bytes, body already final. */
-function buildProposal(sealedSha256: string): SPProposal {
+function buildProposal(sealedSha256: string, tool: DiscoveredTool = MAIL_TOOL): SPProposal {
   const toolArgs = {
     to: ['buchhaltung@drautal.at'],
     subject: 'Rechnung 2026-0003',
@@ -124,7 +149,7 @@ function buildProposal(sealedSha256: string): SPProposal {
     pendingDomains: [],
     committedBy: { owner: { userId: 'andreas', at: 0 } },
     rejectedBy: null,
-    tool: MAIL_TOOL.namespacedName,
+    tool: tool.namespacedName,
     toolArgs,
     executionContext: { action_type: 'send' },
     status: 'committed',
@@ -177,12 +202,12 @@ function buildIntegrationManager(erpDoc: { filename: string; contentType: string
     if (integrationId === 'erp' && toolName === 'get_document') {
       return { content: [{ type: 'text', text: 'ok' }], structuredContent: erpDoc };
     }
-    if (integrationId === 'mail' && toolName === 'send_message') {
+    if ((integrationId === 'mail' || integrationId === 'gmail') && toolName === 'send_message') {
       return { content: [{ type: 'text', text: 'sent' }], structuredContent: { id: 'msg-1', sentArgs: args } };
     }
     throw new Error(`unexpected callTool(${integrationId}, ${toolName})`);
   });
-  const im = { getAllTools: () => [MAIL_TOOL, ERP_TOOL], callTool } as unknown as IntegrationManager;
+  const im = { getAllTools: () => [MAIL_TOOL, GMAIL_TOOL, ERP_TOOL], callTool } as unknown as IntegrationManager;
   return { im, callTool };
 }
 
@@ -206,6 +231,26 @@ describe('executeCommitted — attachment finalize at execution time', () => {
     // The sealed meta never reaches the downstream connector.
     const sentArgs = callTool.mock.calls[0][2] as Record<string, unknown>;
     expect(sentArgs[ATTACHMENTS_SEALED_META_KEY]).toBeUndefined();
+  });
+
+  it('mime-raw (Gmail) approved send: the ticket link is INSIDE the sent message, with the PDF', async () => {
+    // 2026-10-18: approved emails with an attachment arrived without the
+    // ticket link — the message was built before the link was added to the text.
+    const proposal = buildProposal(PDF_SHA256, GMAIL_TOOL);
+    const postReceipt = vi.fn().mockResolvedValue({ receipt: receiptFor(proposal, 'rcpt-att-gmail'), idempotent: false });
+    const state = buildState(dir, proposal, postReceipt);
+    const { im, callTool } = buildIntegrationManager({ filename: 'Rechnung-2026-0003.pdf', contentType: 'application/pdf', contentBase64: PDF_BASE64, sha256: PDF_SHA256 });
+
+    const result = await executeCommitted(proposal, state, im);
+
+    expect(result.isError).toBeUndefined();
+    const sent = callTool.mock.calls.find(c => c[0] === 'gmail' && c[1] === 'send_message')![2] as Record<string, unknown>;
+    const mime = Buffer.from((sent.raw as string).replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
+    const textPart = mime.split('\r\n\r\n')[2].split('\r\n--')[0].replace(/\r\n/g, '');
+    const text = Buffer.from(textPart, 'base64').toString('utf8');
+    expect(text).toContain('Anbei die Rechnung.');
+    expect(text).toContain('/t/rcpt-att-gmail');
+    expect(mime).toContain('Rechnung-2026-0003.pdf');
   });
 
   it('the document changed since it was sealed: refuses, nothing sent, journal outcome is "changed"', async () => {
