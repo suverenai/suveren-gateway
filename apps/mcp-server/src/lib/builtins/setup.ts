@@ -69,12 +69,17 @@ function briefRefusal(args: Record<string, unknown>): string | undefined {
   return undefined;
 }
 
-/** The connectors as the guides see them — built-ins (this group included) are not systems. */
+/** The connectors as the guides see them — built-ins (this group included) are not systems.
+ *  One line per connector AND area: a connector serving several areas (the ERP:
+ *  sales and invoicing) is listed once per area with that area's own actions and
+ *  tools, so a setup AI proposes the mandate of the right area. Internal tools
+ *  (gateway-only) are never listed. */
 export function connectedSystems(im: IntegrationManager): SystemLine[] {
   const byId = new Map<string, SystemLine>();
   for (const t of im.getAllTools()) {
-    if (im.isBuiltin(t.integrationId) || !t.gating?.profile || t.gating.category === 'disabled') continue;
-    const s = byId.get(t.integrationId) ?? { id: t.integrationId, profile: t.gating.profile, actionTypes: [], writeTools: [], readTools: [] };
+    if (im.isBuiltin(t.integrationId) || t.internal || !t.gating?.profile || t.gating.category === 'disabled') continue;
+    const key = `${t.integrationId}|${t.gating.profile}`;
+    const s = byId.get(key) ?? { id: t.integrationId, profile: t.gating.profile, actionTypes: [], writeTools: [], readTools: [] };
     if (t.gating.category === 'read') {
       s.readTools.push(t.originalName);
     } else {
@@ -82,9 +87,9 @@ export function connectedSystems(im: IntegrationManager): SystemLine[] {
       const at = t.gating.staticExecution?.action_type;
       if (typeof at === 'string' && !s.actionTypes.includes(at)) s.actionTypes.push(at);
     }
-    byId.set(t.integrationId, s);
+    byId.set(key, s);
   }
-  return [...byId.values()].sort((a, b) => a.id.localeCompare(b.id));
+  return [...byId.values()].sort((a, b) => a.id.localeCompare(b.id) || a.profile.localeCompare(b.profile));
 }
 
 /** Short profile name from a full id or a short name alike — always lowercase. */
