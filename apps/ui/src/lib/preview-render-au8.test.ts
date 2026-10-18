@@ -135,6 +135,14 @@ describe('buildOwnSection — a read with no attach', () => {
     expect(view.body?.fields.map((f) => f.key)).toEqual(['name']);
   });
 
+  it('a failed read shows what the system answered, not "not found" (2026-10-18: company file unreadable)', () => {
+    const answer = 'Company file ~/x.json: cannot be read as JSON';
+    const failed: PreviewReadSection = { tool: 'preview_invoice', kind: 'document', result: { status: 'not_found', message: answer } } as PreviewReadSection;
+    expect(buildOwnSection(failed)!.note).toBe(`The system answered: ${answer}`);
+    const bare: PreviewReadSection = { tool: 'get_customer', result: { status: 'not_found' } };
+    expect(buildOwnSection(bare)!.note).toBe('Not found in the system.');
+  });
+
   it('an unresolved read shows a plain note, not an error dump', () => {
     const section: PreviewReadSection = { tool: 'find_contacts', result: { status: 'unavailable', reason: 'connector_error' } };
     expect(buildOwnSection(section)!.note).toMatch(/not available/i);
