@@ -78,6 +78,13 @@ export interface AttachmentResolutionOk {
   ok: true;
   args: Record<string, unknown>;
   sealed?: { attachments: SealedAttachment[]; inserts: SealedInsert[] };
+  /**
+   * "mime-raw" transport only: rebuilds the MIME message from the CURRENT
+   * args. The message folds the text into `raw`, so anything the gateway adds
+   * to the text after finalize — the ticket link (receipt-footer.ts) — must be
+   * followed by this, or the sent message silently drops it.
+   */
+  rebuildTransport?: (args: Record<string, unknown>) => Record<string, unknown>;
 }
 
 export interface AttachmentResolutionRefusal {
@@ -276,18 +283,19 @@ export async function finalizeAttachmentsForExecution(
         contentBase64: d.contentBase64,
       }));
     } else {
-      const to = toStringArray(outgoing.to);
-      const cc = toStringArray(outgoing.cc);
-      const subject = typeof outgoing.subject === 'string' ? outgoing.subject : '';
-      const bodyText = typeof outgoing.body === 'string' ? outgoing.body : '';
-      const mime = buildMimeMessage({
-        to,
-        cc,
-        subject,
-        bodyText,
-        attachments: resolvedDocs.map(d => ({ filename: d.filename, contentType: d.contentType, contentBase64: d.contentBase64 })),
+      const arg = transport.arg;
+      const attachments = resolvedDocs.map(d => ({ filename: d.filename, contentType: d.contentType, contentBase64: d.contentBase64 }));
+      const withRaw = (a: Record<string, unknown>): Record<string, unknown> => ({
+        ...a,
+        [arg]: toBase64Url(buildMimeMessage({
+          to: toStringArray(a.to),
+          cc: toStringArray(a.cc),
+          subject: typeof a.subject === 'string' ? a.subject : '',
+          bodyText: typeof a.body === 'string' ? a.body : '',
+          attachments,
+        })),
       });
-      outgoing[transport.arg] = toBase64Url(mime);
+      return { ok: true, args: withRaw(outgoing), rebuildTransport: withRaw };
     }
   }
 

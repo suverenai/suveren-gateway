@@ -252,6 +252,42 @@ describe('finalizeAttachmentsForExecution', () => {
     }
   });
 
+  it('mime-raw transport: rebuildTransport puts text added after finalize (the ticket link) into "raw"', async () => {
+    // The ticket link is appended to `body` after finalize (tool-proxy.ts). A
+    // MIME message carries the text inside `raw`, so without a rebuild the
+    // sent email silently lost the link (Andreas, 2026-10-18, TEST-2026-0002).
+    const responses = { get_document: { filename: 'invoice.pdf', contentType: 'application/pdf', contentBase64: PDF_BASE64, sha256: PDF_SHA256 } };
+    const im = buildIntegrationManager(responses);
+    const resolved = await resolveAttachmentsAndInserts(
+      im, sendMessageGmailTool, HYPOTHETICAL_PROFILE,
+      { to: ['buchhaltung@drautal.at'], subject: 'Rechnung', body: 'Anbei die Rechnung.', attachments: [{ connector: 'erp', kind: 'invoice-pdf', id: 'inv-1' }] },
+      'erp:invoice-pdf',
+    );
+    if (!resolved.ok) throw new Error('setup failed');
+    const sealedArgs = { ...resolved.args, [ATTACHMENTS_SEALED_META_KEY]: resolved.sealed };
+    const result = await finalizeAttachmentsForExecution(im, 'gmail', sealedArgs);
+    if (!result.ok || !result.rebuildTransport) throw new Error('expected a mime-raw rebuild');
+
+    const rebuilt = result.rebuildTransport({ ...result.args, body: 'Anbei die Rechnung.\n\n-- ticket link --' });
+    const mime = Buffer.from((rebuilt.raw as string).replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
+    const textPart = mime.split('\r\n\r\n')[2].split('\r\n--')[0].replace(/\r\n/g, '');
+    expect(Buffer.from(textPart, 'base64').toString('utf8')).toBe('Anbei die Rechnung.\n\n-- ticket link --');
+    expect(mime).toContain('invoice.pdf'); // attachment still there
+  });
+
+  it('field transport: no rebuild needed — the text stays its own argument', async () => {
+    const responses = { get_document: { filename: 'invoice.pdf', contentType: 'application/pdf', contentBase64: PDF_BASE64, sha256: PDF_SHA256 } };
+    const im = buildIntegrationManager(responses);
+    const resolved = await resolveAttachmentsAndInserts(
+      im, sendMessageMailTool, HYPOTHETICAL_PROFILE,
+      { to: ['x@y.com'], subject: 'S', body: 'B', attachments: [{ connector: 'erp', kind: 'invoice-pdf', id: 'inv-1' }] },
+      'erp:invoice-pdf',
+    );
+    if (!resolved.ok) throw new Error('setup failed');
+    const result = await finalizeAttachmentsForExecution(im, 'mail', { ...resolved.args, [ATTACHMENTS_SEALED_META_KEY]: resolved.sealed });
+    expect(result.ok && result.rebuildTransport).toBeFalsy();
+  });
+
   it('refuses — nothing built — when the document changed since it was sealed (sha256 mismatch)', async () => {
     const responses = { get_document: { filename: 'invoice.pdf', contentType: 'application/pdf', contentBase64: PDF_BASE64, sha256: PDF_SHA256 } };
     const im = buildIntegrationManager(responses);

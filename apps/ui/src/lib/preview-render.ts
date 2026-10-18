@@ -909,7 +909,26 @@ export function buildCreationView(
       continue;
     }
 
-    const { value, valueTitle } = formatHinted(toolArgs[key], displayHints, key, currencyStr);
+    const raw = toolArgs[key];
+    // A list of records (invoice lines) reads as a table; one record (a
+    // service period) as one compact line — never "—" for a value that is
+    // there, just not a plain string or number.
+    if (Array.isArray(raw) && raw.length > 0 && raw.every(isPlainObject)) {
+      rows.push({ kind: 'table', key, label, table: tableForObjectArray(raw as Record<string, unknown>[], undefined) });
+      continue;
+    }
+    if (isPlainObject(raw)) {
+      const value = compactObjectLine(raw, undefined, false);
+      const exact = compactObjectLine(raw, undefined, true);
+      rows.push({ kind: 'scalar', key, label, value, ...(exact !== value ? { valueTitle: exact } : {}) });
+      continue;
+    }
+    if (Array.isArray(raw)) {
+      rows.push({ kind: 'scalar', key, label, value: raw.length === 0 ? '—' : raw.map((x) => formatScalar(x)).join(', ') });
+      continue;
+    }
+
+    const { value, valueTitle } = formatHinted(raw, displayHints, key, currencyStr);
     rows.push({ kind: 'scalar', key, label, value, valueTitle });
   }
 
