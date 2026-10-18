@@ -15,7 +15,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { join } from 'node:path';
 import { getProfile, clearProfiles } from '@hap/core';
 import { loadProfiles } from '../src/lib/profile-loader';
-import { isAttachmentSourceAllowed, ATTACHMENT_SOURCES_FIELD } from '../src/lib/attachment-policy';
+import { isAttachmentSourceAllowed, candidatesAllowingAttachments, ATTACHMENT_SOURCES_FIELD } from '../src/lib/attachment-policy';
 
 const PROFILES_DIR = process.env.SUVEREN_PROFILES_DIR
   ?? join(import.meta.dirname, '..', '..', '..', '..', 'hap-profiles');
@@ -74,3 +74,28 @@ describe('email@0.9 — allowed_attachment_sources (real profile)', () => {
     expect(result.reason).toContain(ATTACHMENT_SOURCES_FIELD);
   });
 });
+
+describe('several email mandates: the one that allows the attachment is chosen (2026-10-18, first real invoice email)', () => {
+  const P = 'github.com/humanagencyprotocol/hap-profiles';
+  const old1 = { id: 'a', profileId: `${P}/email@0.8`, context: { allowed_domains: 'sublin.app' } };
+  const old2 = { id: 'b', profileId: `${P}/email@0.8`, context: {} };
+  const new9 = { id: 'c', profileId: `${P}/email@0.9`, context: { allowed_domains: 'sublin.app', [ATTACHMENT_SOURCES_FIELD]: 'erp:invoice-pdf' } };
+  const ref = { connector: 'erp', kind: 'invoice-pdf' };
+
+  it('two email@0.8 mandates and one email@0.9 that lists the source → only the 0.9 one remains', () => {
+    const r = candidatesAllowingAttachments([old1, old2, new9], [ref], (id) => getProfile(id) as never);
+    expect(r.allowed.map((c) => c.id)).toEqual(['c']);
+    expect(r.refusal).toBeUndefined();
+  });
+
+  it('none allows it → empty, with a reason', () => {
+    const r = candidatesAllowingAttachments([old1, old2], [ref], (id) => getProfile(id) as never);
+    expect(r.allowed).toEqual([]);
+    expect(r.refusal).toMatch(/allowed_attachment_sources/);
+  });
+
+  it('no attachments → every candidate stays', () => {
+    expect(candidatesAllowingAttachments([old1, new9], [], (id) => getProfile(id) as never).allowed).toHaveLength(2);
+  });
+});
+

@@ -63,7 +63,7 @@ export function isAttachmentSourceAllowed(
       allowed: false,
       reason:
         `Profile "${profileId}" does not yet declare "${ATTACHMENT_SOURCES_FIELD}" — no mandate can ` +
-        `authorize an attachment until it does. Refusing by default (suveren-invoicing-plan.md §6).`,
+        `authorize an attachment — a mandate on a newer email profile that lists the source is needed.`,
     };
   }
   const allowedSet = new Set(
@@ -77,4 +77,31 @@ export function isAttachmentSourceAllowed(
     };
   }
   return { allowed: true, reason: '' };
+}
+
+/**
+ * The candidate mandates that allow EVERY attachment reference of a call.
+ * Used before a mandate is selected: with several mandates for the same
+ * profile family (e.g. an old email@0.8 and a new email@0.9 that lists the
+ * source), selection must only consider the ones that can carry the
+ * attachments — found 2026-10-18 on the first real invoice email, where an
+ * email@0.8 mandate was picked and the call refused although an email@0.9
+ * mandate allowed it. `refusal` is the first candidate's reason when none do.
+ */
+export function candidatesAllowingAttachments<A extends { profileId: string; context?: Record<string, unknown> }>(
+  candidates: A[],
+  refs: Array<{ connector: string; kind: string }>,
+  profileOf: (profileId: string) => AttachmentPolicyProfileLike | undefined,
+): { allowed: A[]; refusal?: string } {
+  if (refs.length === 0) return { allowed: candidates };
+  let refusal: string | undefined;
+  const allowed = candidates.filter((c) => {
+    const value = typeof c.context?.[ATTACHMENT_SOURCES_FIELD] === 'string' ? (c.context[ATTACHMENT_SOURCES_FIELD] as string) : undefined;
+    for (const ref of refs) {
+      const check = isAttachmentSourceAllowed(c.profileId, profileOf(c.profileId), value, ref);
+      if (!check.allowed) { refusal ??= check.reason; return false; }
+    }
+    return true;
+  });
+  return { allowed, refusal: allowed.length ? undefined : refusal };
 }
