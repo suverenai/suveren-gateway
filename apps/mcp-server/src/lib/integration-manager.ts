@@ -1429,6 +1429,8 @@ export class IntegrationManager {
           simulationOnly: ext.simulationOnly,
           approvalView: ext.approvalView,
           internal: ext.internal,
+          // Further areas whose mandates may authorize this read (manifest).
+          readAlsoUnder: ext.readAlsoUnder,
         };
       }
       return {
@@ -1464,7 +1466,6 @@ export class IntegrationManager {
         insertFields: ext.insertFields,
         aiTextArg: ext.display?.aiText,
         message: ext.message,
-        readAlsoUnder: ext.readAlsoUnder,
       };
     }
 

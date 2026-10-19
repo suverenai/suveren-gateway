@@ -83,3 +83,24 @@ describe('readAlsoUnder — manifest validation', () => {
     expect(erp.toolGating.overrides.get_customer.readAlsoUnder).toEqual(['invoicing']);
   });
 });
+
+describe('readAlsoUnder — through the real manifest → running-tool path (Rehearsal 2026-10-19)', () => {
+  it('a started connector\'s read tool carries readAlsoUnder from its manifest override', async () => {
+    const { IntegrationManager } = await import('../src/lib/integration-manager');
+    const im = new IntegrationManager(new Map());
+    try {
+      await im.startIntegration({
+        id: 'reads', name: 'Reads fixture', command: process.execPath,
+        args: [join(import.meta.dirname, 'fixtures', 'delayable-mcp-server.mjs')], env: {}, envKeys: {},
+        profile: 'sales',
+        toolGating: { default: { executionMapping: {} }, overrides: { echo: { category: 'read', boundField: 'read_access', requiredValue: 'unlimited', readAlsoUnder: ['invoicing'] } } } as never,
+        enabled: true,
+      });
+      const tool = im.getAllTools().find(t => t.originalName === 'echo')!;
+      expect(tool.gating?.readAlsoUnder).toEqual(['invoicing']);
+      expect(buildProxiedToolDescription(tool)).toMatch(/sales or invoicing mandate/);
+    } finally {
+      await im.shutdown();
+    }
+  }, 30_000);
+});
