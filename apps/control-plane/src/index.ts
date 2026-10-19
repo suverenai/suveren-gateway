@@ -9,6 +9,7 @@
  * 7. Proxies GitHub API requests (PAT never sent to browser)
  */
 
+import { noForeignFraming } from './lib/no-foreign-framing';
 import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, renameSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -149,6 +150,8 @@ const internalSecret = process.env.SUVEREN_INTERNAL_SECRET ?? randomBytes(32).to
 setInternalSecret(internalSecret);
 
 const app = express();
+// Before every route and the /api proxy: no other site may frame this page.
+app.use(noForeignFraming);
 
 // Only parse JSON on routes we handle directly — NOT on /api/* which is proxied.
 // express.json() consumes the request body stream, which prevents
