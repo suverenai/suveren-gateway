@@ -759,11 +759,39 @@ function localOutcomeOfExecuted(proposal: SPProposal, state: SharedState): { tex
   };
 }
 
+/** Upper bound for `wait_seconds` — below the tool-call time limit of common AI apps. */
+export const MAX_WAIT_SECONDS = 50;
+const WAIT_POLL_MS = 2000;
+
+/**
+ * Look a proposal up and, when asked to, WAIT (at most MAX_WAIT_SECONDS) while
+ * it is still pending — so an AI can stay "on the line" until the person
+ * decides instead of ending its turn and needing a "carry on" (Andreas,
+ * 2026-10-19). Returns as soon as the status is anything but pending; never
+ * decides anything itself.
+ */
+export async function getProposalWaiting(
+  get: (id: string) => Promise<SPProposal | null>,
+  id: string,
+  waitSeconds: number | undefined,
+  sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
+  now: () => number = Date.now,
+): Promise<SPProposal | null> {
+  const waitMs = Math.min(Math.max(Number(waitSeconds) || 0, 0), MAX_WAIT_SECONDS) * 1000;
+  const deadline = now() + waitMs;
+  let match = await get(id);
+  while (match && match.status === 'pending' && now() < deadline) {
+    await sleep(Math.min(WAIT_POLL_MS, deadline - now()));
+    match = await get(id);
+  }
+  return match;
+}
+
 export function checkPendingCommitmentsHandler(
   state: SharedState,
   integrationManager?: IntegrationManager,
 ) {
-  return async (args: { proposal_id?: string }) => {
+  return async (args: { proposal_id?: string; wait_seconds?: number }) => {
     if (!state.spClient.isUnlocked()) {
       return { content: [{ type: 'text' as const, text: lockedNotice('check commitments', state.spClient.getLockReason() ?? 'restart') }] };
     }
@@ -775,7 +803,11 @@ export function checkPendingCommitmentsHandler(
         // pending or not found" — four states, one answer, useful for at most
         // one of them. An agent reads this and decides whether to wait, retry,
         // or stop; the ambiguity invited retrying work that had already run.
-        const match = await state.spClient.getProposalById(args.proposal_id);
+        const match = await getProposalWaiting(
+          (id) => state.spClient.getProposalById(id),
+          args.proposal_id,
+          args.wait_seconds,
+        );
 
         if (!match) {
           return {

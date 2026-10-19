@@ -1469,7 +1469,10 @@ function createGatedToolHandlerInner(
                 text: `Awaiting commitment from domain${auth.deferredCommitmentDomains.length > 1 ? 's' : ''} ` +
                   `"${auth.deferredCommitmentDomains.join('", "')}" for tool ${tool.originalName}.\n` +
                   `Proposal ID: ${proposal.id}. Check status with check-pending-commitments(proposal_id: "${proposal.id}").` +
-                  (await unreadableForNote(unreadableFor ?? [], state)),
+                  (await unreadableForNote(unreadableFor ?? [], state)) +
+                  // Optional wait (2026-10-19): the AI can stay on the line instead of ending its turn.
+                  `\nTell the person what you proposed and that it waits for their approval in the gateway; ` +
+                  `then you may wait for the decision: check-pending-commitments(proposal_id: "${proposal.id}", wait_seconds: 50).`,
               }],
             };
           } catch (err) {
