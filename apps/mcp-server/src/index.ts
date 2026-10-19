@@ -98,9 +98,13 @@ export function createMcpServer(
   server.registerTool(
     'check-pending-commitments',
     {
-      description: 'Check status of pending proposals awaiting domain owner commitment. Call with a proposal_id to check a specific proposal, or without to see all.',
+      description: 'Check status of pending proposals awaiting domain owner commitment. Call with a proposal_id to check a specific proposal, or without to see all. ' +
+        'With a proposal_id you may also pass wait_seconds (max 50): the gateway then waits until the person decides and answers at once — ' +
+        'first tell the person what you proposed and that it waits for their approval in the gateway.',
       inputSchema: {
         proposal_id: z.string().optional().describe('Specific proposal ID to check. Omit to see all.'),
+        wait_seconds: z.number().int().min(0).max(50).optional()
+          .describe('Only with proposal_id: wait up to this many seconds (max 50) while the proposal is still pending; answers as soon as the person decides. Omit or 0 to answer at once.'),
       },
     },
     withOutcomeOutbox(checkPendingCommitmentsHandler(state, integrationManager))
