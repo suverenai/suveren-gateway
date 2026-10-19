@@ -184,6 +184,16 @@ export interface ToolGatingConfig {
   message?: MessageGatingDeclaration;
 
   /**
+   * READ tools only: further areas (profiles, short names) whose mandates may
+   * also authorize this read — e.g. an ERP's customer lookup is needed for
+   * invoicing as much as for sales. Any complete mandate of the tool's own
+   * area OR of one of these, satisfying the read gate, covers the call.
+   * Refused at manifest load on a non-read tool and on a read with a `read`
+   * adapter (an age window resolved from mixed profiles could weaken it).
+   */
+  readAlsoUnder?: string[];
+
+  /**
    * Arguments this tool must not accept, removed from the schema the agent
    * sees and refused if sent anyway.
    *
