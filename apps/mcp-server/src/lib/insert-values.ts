@@ -18,7 +18,7 @@
 import { structuredOrJsonText } from './preview';
 import type { IntegrationManager } from './integration-manager';
 import { getManifest } from './manifest-loader';
-import { readPreview } from './preview';
+import { readPreview, unavailableReadMessage } from './preview';
 import { substitute } from './request-context';
 import { getByDottedPath } from './read-gate';
 import type { InsertReference } from './tool-gating-types';
@@ -73,7 +73,8 @@ export async function resolveInsertValue(
     return { ok: false, error: { code: 'NOT_FOUND', message: read.message ?? `No value "${ref.kind}"/"${ref.id}" on "${ref.connector}".` } };
   }
   if (read.status !== 'ok') {
-    return { ok: false, error: { code: 'UNAVAILABLE', message: read.message ?? `Connector "${ref.connector}" could not be reached.` } };
+    const message = unavailableReadMessage(integrationManager, read, ref.connector, valueConfig.tool, `values.${ref.kind}`);
+    return { ok: false, error: { code: 'UNAVAILABLE', message } };
   }
   const body = structuredOrJsonText(read.body);
   if (!body || typeof body !== 'object') {
