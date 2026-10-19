@@ -17,6 +17,8 @@ import { useVisiblePolling } from '../hooks/useVisiblePolling';
 import { useSSEEvent } from '../contexts/EventSourceContext';
 import { getAuthStatus, getAuthView, isArchivable, isArchived, statusTimestamp, type AuthStatusOptions, type AuthView } from '../lib/auth-status';
 import { newestProfileOf, carryBoundsForward, carryContextForward } from '../lib/profile-upgrade';
+import { profileFieldLines } from '../lib/approval-view';
+import { useProfile } from '../lib/profile-cache';
 
 type StatusFilter = AuthView;
 type ViewTab = 'mine' | 'team';
@@ -41,6 +43,26 @@ function sortItems(items: PendingItem[], statusOpts: AuthStatusOptions, highligh
 
 // Shared card rendering for a single authorization item.
 // Used by both Mine and Team views.
+
+/**
+ * Has the approver list changed since this mandate was signed? A mandate is
+ * frozen with the approvers who can receive its intent — those with a
+ * registered key — so it is compared with exactly that set when known
+ * (`keyedApprovers`), never with every configured approver: an approver
+ * without a gateway yet is not a change, and flagging it marked every team
+ * mandate as outdated (Rehearsal, 2026-10-19).
+ */
+export function approverListDrifted(
+  frozen: string[],
+  config: (ProfileConfig & { keyedApprovers?: string[] }) | null,
+): boolean {
+  const current = config?.keyedApprovers ?? config?.approvers ?? [];
+  if (frozen.length === 0 || current.length === 0) return false;
+  return frozen.length !== current.length
+    || frozen.some(uid => !current.includes(uid))
+    || current.some(uid => !frozen.includes(uid));
+}
+
 interface AuthCardProps {
   item: PendingItem;
   revokedSet: Set<string>;
@@ -115,6 +137,12 @@ function AuthCard({
   const showExtend = status === 'active' || status === 'pending' || status === 'expired';
   const boundsEntries = Object.entries(item.frame)
     .filter(([k]) => k !== 'profile' && k !== 'path');
+  // Limits read through the area definition — its own labels and units,
+  // never the machine key (`write_daily_max=20` → "Writes per day: 20").
+  const profile = useProfile(item.profile_id);
+  const limitLines = new Map(profileFieldLines(item.frame, profile, 'limits').map(l => [l.key, l]));
+  const limitLabel = (k: string) => limitLines.get(k)?.label ?? k;
+  const limitValue = (k: string, v: unknown) => limitLines.get(k)?.value ?? String(v);
 
   const itemConfig = profileConfigCache.get(item.profile_id) ?? null;
   const hasApprovers = (itemConfig?.approvers?.length ?? 0) > 0;
@@ -131,15 +159,8 @@ function AuthCard({
   }
   const isAboveCap = aboveCapByKey.size > 0;
 
-  const frozenApprovers = item.approvers_frozen ?? [];
-  const currentApprovers = itemConfig?.approvers ?? [];
   const approversDrifted =
-    mode === 'team' &&
-    frozenApprovers.length > 0 &&
-    currentApprovers.length > 0 &&
-    (frozenApprovers.length !== currentApprovers.length ||
-      frozenApprovers.some(uid => !currentApprovers.includes(uid)) ||
-      currentApprovers.some(uid => !frozenApprovers.includes(uid)));
+    mode === 'team' && approverListDrifted(item.approvers_frozen ?? [], itemConfig);
 
   const escalationSummary = Array.from(aboveCapByKey.entries())
     .map(([k, r]) => `${k}: ${r.authorized} (cap ${r.cap})`)
@@ -334,21 +355,21 @@ function AuthCard({
                 {r ? (
                   hasApprovers ? (
                     <span title={`Team cap on ${k} is ${r.cap}. Actions exceeding the cap require per-action approval. Bound remains authorized at ${r.authorized}.`}>
-                      <span style={{ color: 'var(--text-tertiary)' }}>{k}={String(v)}</span>
+                      <span style={{ color: 'var(--text-tertiary)' }}>{limitLabel(k)}: {limitValue(k, v)}</span>
                       <span style={{ color: 'var(--accent)', marginLeft: '0.25rem', fontWeight: 600 }}>
                         ↑ approval at {r.cap}
                       </span>
                     </span>
                   ) : (
                     <span title={`Team cap on ${k} is ${r.cap} with no approvers configured (hard cap). Authorized for ${r.authorized}; effective ${r.cap}.`}>
-                      <span style={{ textDecoration: 'line-through', color: 'var(--text-tertiary)' }}>{k}={String(v)}</span>
+                      <span style={{ textDecoration: 'line-through', color: 'var(--text-tertiary)' }}>{limitLabel(k)}: {limitValue(k, v)}</span>
                       <span style={{ marginLeft: '0.25rem', fontWeight: 700 }}>
                         {'→'} {r.cap}
                       </span>
                     </span>
                   )
                 ) : (
-                  <span>{k}={String(v)}</span>
+                  <span>{limitLabel(k)}: {limitValue(k, v)}</span>
                 )}
               </span>
             );
@@ -393,8 +414,8 @@ function AuthCard({
               <dl className="review-grid">
                 {boundsEntries.map(([k, v]) => (
                   <span key={k} style={{ display: 'contents' }}>
-                    <dt>{k}</dt>
-                    <dd>{String(v)}</dd>
+                    <dt title={limitLines.get(k)?.hint}>{limitLabel(k)}</dt>
+                    <dd>{limitValue(k, v)}</dd>
                   </span>
                 ))}
               </dl>
@@ -726,9 +747,16 @@ export function AuthorizationsPage() {
       return next;
     });
     for (const profileId of unseen) {
-      spClient.getTeamProfileConfig(groupId, profileId)
-        .then(config => {
-          setProfileConfigCache(prev => new Map(prev).set(profileId, config));
+      // The approvers who can actually receive a mandate's intent are those
+      // with a registered key — the same list a new mandate is frozen with
+      // (AgentReviewPage → getApproversPubkeys). Drift is judged against it.
+      Promise.all([
+        spClient.getTeamProfileConfig(groupId, profileId),
+        spClient.getApproversPubkeys(groupId, profileId).catch(() => null),
+      ])
+        .then(([config, keyed]) => {
+          const withKeys = config && keyed ? { ...config, keyedApprovers: keyed.map(k => k.userId) } : config;
+          setProfileConfigCache(prev => new Map(prev).set(profileId, withKeys));
         })
         .catch(() => {});
     }

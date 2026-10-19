@@ -59,3 +59,11 @@ describe('nestedValueView — the ticket\'s "What was sent" uses the same rule',
     expect(nestedValueView(['a', 'b'])).toBeNull();
   });
 });
+
+describe('lists inside a record (load_simulation package — Rehearsal 2026-10-19)', () => {
+  it('a list of records inside a record shows its count, never "—"', async () => {
+    const { nestedValueView } = await import('./preview-render');
+    const v = nestedValueView({ name: 'Muster', cases: [{ id: 'c1' }, { id: 'c2' }], customers: [{ id: 'x' }], tags: ['a', 'b'], empty: [] });
+    expect(v && 'text' in v && v.text).toBe('Name: Muster · Cases: 2 entries · Customers: 1 entry · Tags: a, b · Empty: —');
+  });
+});

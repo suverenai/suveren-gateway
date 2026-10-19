@@ -183,6 +183,17 @@ function hasValue(v: unknown): boolean {
 }
 
 /**
+ * A list inside a compact line: plain values joined; a list of records by
+ * its count ("5 entries") — one line has no room for a table, and "—" would
+ * claim the value is missing when it is not.
+ */
+function compactListValue(list: unknown[], exact: boolean): string {
+  if (list.length === 0) return '—';
+  if (list.every((x) => !isPlainObject(x) && !Array.isArray(x))) return list.map((x) => formatScalar(x, exact)).join(', ');
+  return list.length === 1 ? '1 entry' : `${list.length} entries`;
+}
+
+/**
  * One compact line for an object: "Label: value · Label2: value2" — never
  * raw JSON. With a declared `properties` map, ONLY those keys show, in
  * their declared order, labelled by `title` — an id the schema never named
@@ -201,7 +212,9 @@ function compactObjectLine(
     .map((k) => {
       const v = obj[k];
       const label = declaredProps?.[k]?.title ?? humanizeKey(k);
-      const shown = isPlainObject(v) ? compactObjectLine(v, declaredProps?.[k]?.properties, exact) : formatScalar(v, exact);
+      const shown = isPlainObject(v)
+        ? compactObjectLine(v, declaredProps?.[k]?.properties, exact)
+        : Array.isArray(v) ? compactListValue(v, exact) : formatScalar(v, exact);
       return `${label}: ${shown}`;
     })
     .join(' · ');
