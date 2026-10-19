@@ -46,7 +46,7 @@ export interface AttachmentsSealedBoxProps {
    *  the sealed fields alone are shown. */
   fetchPreview?: (sha256: string) => Promise<AttachmentPreviewResult>;
   /** Told the FULL set of checks-line entries every one of this card's
-   *  attachments currently contributes ("same file as issued …"), every
+   *  attachments currently contributes ("same file as …"), every
    *  time any of their own preview fetches resolve — same pattern as
    *  PreviewBox's `onTone`/`onData`. Never called when there is nothing to
    *  add (an empty array still counts as "told"). */
