@@ -21,6 +21,7 @@
  * every value is the ticket's own, or this device's evidence of it, labelled
  * from the connector manifest (approval view), never from the AI.
  */
+import { compactValue } from './preview-render';
 import { argRows, humanizeKey, type ArgRow, type ExecutionMappingValue, type ToolDisplay } from './approval-view';
 import { sealedSummary } from './approval-summary';
 import type { IntegrationManifest, SentArgsCheck, TicketResult } from './sp-client';
@@ -187,7 +188,9 @@ function display(v: unknown): string {
   if (v === null || v === undefined) return '—';
   if (typeof v === 'string') return v;
   if (typeof v === 'number' || typeof v === 'boolean') return String(v);
-  try { return JSON.stringify(v); } catch { return String(v); }
+  // A record (an email's From: {name, email}) or a list reads as one line —
+  // never raw JSON (Rehearsal A3, 2026-10-19).
+  return compactValue(v);
 }
 
 /** Nothing to say: null, "", [] or {}. */

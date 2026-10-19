@@ -247,6 +247,17 @@ function tableForObjectArray(
 }
 
 /**
+ * Any value as ONE line of plain text — a record as "Label: value · …", a
+ * list as joined values or a count of entries; never raw JSON. For views
+ * with no room for a table (a ticket's Result rows).
+ */
+export function compactValue(v: unknown): string {
+  if (isPlainObject(v)) return compactObjectLine(v, undefined, false);
+  if (Array.isArray(v)) return compactListValue(v, false);
+  return formatScalar(v);
+}
+
+/**
  * One argument value that is not a plain string/number, the way every view
  * shows it: a list of records → a table, one record → one compact line.
  * Null for anything else (the caller shows it as itself). Shape-driven only —
