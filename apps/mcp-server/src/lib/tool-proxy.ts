@@ -670,10 +670,13 @@ function createGatedToolHandlerInner(
   // tie-break can pick it and a write is ticketed (and charged) under a
   // mandate every other tool of the integration refuses (RR7). Generic: no
   // profile or field names here; the integration declares the predicate.
+  // A read may also be authorized under the further areas its manifest names
+  // (`readAlsoUnder` — validated at load: reads without an age adapter only).
+  const toolAreas = category === 'read' ? [profile!, ...(tool.gating.readAlsoUnder ?? [])] : [profile!];
   const eligibleMandates = (): { matching: EnrichedAuthorization[]; refusals: string[] } => {
     const refusals: string[] = [];
     const matching = state.getEnrichedAuthorizations()
-      .filter(a => a.complete && profileMatches(a.profileId, profile!))
+      .filter(a => a.complete && toolAreas.some(p => profileMatches(a.profileId, p)))
       .filter(a => {
         // Optional call: test doubles of the manager predate this hook.
         const refusal = integrationManager.mandateRefusal?.(tool, a) ?? null;
@@ -2024,7 +2027,10 @@ export function buildProxiedToolDescription(tool: DiscoveredTool): string {
   }
 
   const profile = tool.gating.profile;
-  const condition = `works only under a ${shortProfile(profile)} mandate, check list-authorizations`;
+  const areas = tool.gating.category === 'read'
+    ? [shortProfile(profile), ...(tool.gating.readAlsoUnder ?? []).map(shortProfile)]
+    : [shortProfile(profile)];
+  const condition = `works only under a ${areas.join(' or ')} mandate, check list-authorizations`;
 
   if (tool.gating.category === 'read') {
     return `[Suveren: ${profile} — read; ${condition}] ${tool.description}`;

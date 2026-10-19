@@ -127,7 +127,9 @@ function listedWithoutMandate(
   for (const tool of integrationManager.getAllTools()) {
     if (!toolAlwaysListed(tool, isBuiltin, builtinAlwaysListed)) continue;
     const profile = tool.gating!.profile!;
-    if (authorizations.some(a => a.complete && profileMatches(a.profileId, profile))) continue;
+    // A read is usable under any area its manifest names (readAlsoUnder).
+    const areas = tool.gating!.category === 'read' ? [profile, ...(tool.gating!.readAlsoUnder ?? [])] : [profile];
+    if (authorizations.some(a => a.complete && areas.some(p => profileMatches(a.profileId, p)))) continue;
     const short = shortProfileName(profile);
     byProfile.set(short, [...(byProfile.get(short) ?? []), tool.namespacedName]);
   }

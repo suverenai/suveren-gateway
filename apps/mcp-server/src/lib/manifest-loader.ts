@@ -459,6 +459,27 @@ export function invalidMessageReason(toolName: string, entry: unknown): string |
 }
 
 /**
+ * `readAlsoUnder` (tool-gating-types.ts): further areas whose mandates may also
+ * authorize a READ. Only on an override that is itself `category: "read"`, and
+ * never with a `read` adapter (its age window is resolved from one profile's
+ * schema — mixing areas could weaken it). Refuses the whole manifest otherwise.
+ */
+export function invalidManifestReadAlsoUnderReason(manifest: Pick<IntegrationManifest, 'toolGating'>): string | null {
+  const overrides = (manifest.toolGating?.overrides ?? {}) as unknown as Record<string, Record<string, unknown> | null>;
+  for (const [toolName, entry] of Object.entries(overrides)) {
+    const extra = entry?.readAlsoUnder;
+    if (extra === undefined) continue;
+    const at = `override "${toolName}".readAlsoUnder`;
+    if (!Array.isArray(extra) || extra.length === 0 || !extra.every(p => typeof p === 'string' && p.length > 0)) {
+      return `${at} must be a non-empty list of area names`;
+    }
+    if (entry?.category !== 'read') return `${at} is allowed on read tools only (category "read")`;
+    if (entry?.read !== undefined) return `${at} cannot be combined with a read adapter (age window)`;
+  }
+  return null;
+}
+
+/**
  * Checks every override's `message` (if any) in one manifest. Same
  * one-predicate-shared-by-loader-and-lint-test shape as
  * `invalidManifestInternalReason`.
@@ -1108,6 +1129,11 @@ export function loadManifests(integrationsDir?: string): number {
       const internalReason = invalidManifestInternalReason(manifest);
       if (internalReason) {
         console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${internalReason}`);
+        continue;
+      }
+      const readAlsoReason = invalidManifestReadAlsoUnderReason(manifest);
+      if (readAlsoReason) {
+        console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${readAlsoReason}`);
         continue;
       }
       const messageReason = invalidManifestMessageReason(manifest);

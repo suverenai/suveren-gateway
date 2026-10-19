@@ -113,11 +113,13 @@
         "requiredValue": "unlimited"
       },
       "find_customers": {
+        "readAlsoUnder": ["invoicing"],
         "category": "read",
         "boundField": "read_access",
         "requiredValue": "unlimited"
       },
       "get_customer": {
+        "readAlsoUnder": ["invoicing"],
         "category": "read",
         "boundField": "read_access",
         "requiredValue": "unlimited"

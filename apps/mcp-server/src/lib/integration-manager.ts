@@ -1404,6 +1404,7 @@ export class IntegrationManager {
         insertFields?: string[];
         display?: { aiText?: string };
         message?: import('./tool-gating-types').MessageGatingDeclaration;
+        readAlsoUnder?: string[];
       };
       // Area per tool — an override's own `profile` wins over the manifest's.
       const resolvedProfile = ext.profile ?? profileId;
@@ -1463,6 +1464,7 @@ export class IntegrationManager {
         insertFields: ext.insertFields,
         aiTextArg: ext.display?.aiText,
         message: ext.message,
+        readAlsoUnder: ext.readAlsoUnder,
       };
     }
 
