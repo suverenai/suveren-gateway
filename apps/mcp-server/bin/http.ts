@@ -1270,15 +1270,19 @@ async function startIntegrationForService(serviceId: string) {
     Object.values(c.envKeys ?? {}).some(ref => typeof ref === 'string' && ref.startsWith(`${serviceId}.`)),
   );
   for (const config of candidates) {
-    // Already running, but on settings that predate these credentials (it was
-    // started before unlock, on its defaults): restart it so the process sees
-    // what the user saved — e.g. ERP mode=live/local instead of simulation.
+    // Start it if it is not running. If a start is already in flight (boot
+    // restore, before unlock), this waits behind it in the per-id queue.
+    await startOneIntegration(config);
+    // Now running — but possibly on settings that predate these credentials
+    // (started on its defaults before unlock, or the in-flight start resolved
+    // its env just before they arrived): restart so the process sees what the
+    // user saved — e.g. ERP mode=live/local instead of simulation. Checking only
+    // AFTER the start settles closes the window in which credentials arriving
+    // mid-start were silently ignored (Rehearsal, 2026-10-19).
     if (integrationManager.isRunning(config.id) && integrationManager.credentialsChangedSinceStart(config)) {
       console.error(`[Suveren MCP] ${config.id}: credentials changed since start — restarting`);
       await startOneIntegration(config, { restart: true });
-      continue;
     }
-    await startOneIntegration(config);
   }
 }
 
