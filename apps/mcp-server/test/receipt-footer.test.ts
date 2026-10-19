@@ -46,16 +46,16 @@ const STRING = { type: 'string' };
 const footerCount = (s: string) => (s.match(/(?:by an AI agent|'s AI agent)/g) ?? []).length;
 
 describe('appendVerificationFooter', () => {
-  it('appends the two-line footer to `body` for email (Sent + Receipt + HAP line)', () => {
+  it('appends the two-line footer to `body` for email (Sent + Ticket + HAP line)', () => {
     const out = appendVerificationFooter(tool(BODY, { body: STRING, subject: STRING }), { body: 'Hi' }, 'rcpt-1');
     expect(out.body).toBe(
-      `Hi\n\n-- Sent by an AI agent via Suveren. Receipt: https://www.suveren.ai/t/rcpt-1\n\n${HAP_LINE}`,
+      `Hi\n\n-- Sent by an AI agent via Suveren. Ticket: https://www.suveren.ai/t/rcpt-1\n\n${HAP_LINE}`,
     );
   });
 
   it('uses the declared verb — "Published" for a post', () => {
     const out = appendVerificationFooter(tool(POST, { text: STRING }, 'create_post', 'publish'), { text: 'Hello world' }, 'r2');
-    expect(out.text).toContain('-- Published by an AI agent via Suveren. Receipt: https://www.suveren.ai/t/r2');
+    expect(out.text).toContain('-- Published by an AI agent via Suveren. Ticket: https://www.suveren.ai/t/r2');
     expect(out.text).toContain(HAP_LINE);
   });
 
@@ -80,7 +80,7 @@ describe('appendVerificationFooter', () => {
 
   it('links use full plain https URLs (no HTML anchors) — works across email/calendar/publish', () => {
     const out = appendVerificationFooter(tool(BODY, { body: STRING }), { body: 'Hi' }, 'r-links');
-    expect(out.body).toContain('Receipt: https://www.suveren.ai/t/r-links');
+    expect(out.body).toContain('Ticket: https://www.suveren.ai/t/r-links');
     expect(out.body).toContain('https://www.humanagencyprotocol.org/');
     expect(out.body).not.toContain('<a '); // no HTML
   });
@@ -110,7 +110,7 @@ describe('appendVerificationFooter', () => {
     expect(footerCount(out.body as string)).toBe(1);
     expect(out.body).toContain('Draft');
     expect(out.body).not.toContain('old');
-    expect(out.body).toContain('Receipt: https://www.suveren.ai/t/new-id');
+    expect(out.body).toContain('Ticket: https://www.suveren.ai/t/new-id');
   });
 
   it('no `message` declared → no footer, whatever the area (never decided by profile name)', () => {
