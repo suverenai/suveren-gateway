@@ -43,3 +43,10 @@ export declare function buildWindowsTaskXml(opts: {
   command?: string;
   args?: string;
 }): string;
+export declare function declaredDataDir(definitionText: string): string | null;
+export declare function serviceOwnsInstall(opts: {
+  definitionText: string | null;
+  dataDir: string;
+  envDataDir: string | undefined;
+  same: (a: string, b: string) => boolean;
+}): boolean;

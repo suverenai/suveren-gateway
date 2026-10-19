@@ -18,6 +18,8 @@ import {
   buildMacLauncher,
   buildSystemdUnit,
   buildWindowsTaskXml,
+  declaredDataDir,
+  serviceOwnsInstall,
 } from '../../../../bundle/lib/autostart-templates.mjs';
 
 const NASTY = '/Users/a&b/<test>/"quoted"/O\'Brien';
@@ -360,5 +362,35 @@ describe('macOS launcher — what Login Items actually displays', () => {
     });
     expect(p).toContain('<string>/Users/a/.suveren/Suveren</string>');
     expect(p).not.toContain('node');
+  });
+});
+
+describe('serviceOwnsInstall — a second gateway never touches the other one\'s login service', () => {
+  const same = (a: string, b: string) => a === b;
+  const plistWith = (dir?: string) => buildLaunchAgentPlist({ launcherPath: '/x/Suveren', label: 'ai.suveren.gateway', logFile: '/x/gateway.log', dataDir: dir ?? '', path: '/usr/bin' });
+  const unitWith = (dir?: string) => buildSystemdUnit({ nodePath: '/usr/bin/node', serverEntry: '/x/server.js', logFile: '/x/gateway.log', dataDir: dir ?? '', path: '/usr/bin' });
+
+  it('reads the pinned data folder from a plist and a systemd unit', () => {
+    expect(declaredDataDir(plistWith('/Users/a/.suveren'))).toBe('/Users/a/.suveren');
+    expect(declaredDataDir(unitWith('/home/a/.suveren'))).toBe('/home/a/.suveren');
+    expect(declaredDataDir(plistWith())).toBeNull();
+  });
+
+  it('2026-10-19: a test gateway (own SUVEREN_DATA_DIR) vs the real service (default folder) → NOT ours', () => {
+    expect(serviceOwnsInstall({ definitionText: plistWith(), dataDir: '/Users/a/suveren-rehearsal/data', envDataDir: '/Users/a/suveren-rehearsal/data', same })).toBe(false);
+  });
+
+  it('the normal case — same user, no override, default service → ours', () => {
+    expect(serviceOwnsInstall({ definitionText: plistWith(), dataDir: '/Users/a/.suveren', envDataDir: undefined, same })).toBe(true);
+  });
+
+  it('a service pinned to a folder is ours only from a CLI that resolved the same folder', () => {
+    expect(serviceOwnsInstall({ definitionText: unitWith('/data/gw'), dataDir: '/data/gw', envDataDir: '/data/gw', same })).toBe(true);
+    expect(serviceOwnsInstall({ definitionText: unitWith('/data/gw'), dataDir: '/data/other', envDataDir: '/data/other', same })).toBe(false);
+  });
+
+  it('no service definition → ours only without a folder override (conservative, e.g. Windows)', () => {
+    expect(serviceOwnsInstall({ definitionText: null, dataDir: '/x', envDataDir: undefined, same })).toBe(true);
+    expect(serviceOwnsInstall({ definitionText: null, dataDir: '/x', envDataDir: '/x', same })).toBe(false);
   });
 });

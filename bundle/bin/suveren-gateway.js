@@ -16,7 +16,7 @@ import { existsSync, mkdirSync, openSync, readFileSync, readdirSync, writeFileSy
 import { homedir, platform, userInfo } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { buildLaunchAgentPlist, buildMacLauncher, buildSystemdUnit, buildWindowsTaskXml } from '../lib/autostart-templates.mjs';
+import { buildLaunchAgentPlist, buildMacLauncher, buildSystemdUnit, buildWindowsTaskXml, serviceOwnsInstall } from '../lib/autostart-templates.mjs';
 import { DEFAULT_AS_URL, readConfig, writeConfig, validateAsUrl, validateCaFile, validateProxyUrl, validatePinTls, resolveAsUrl, resolvePinTls, resolvePinTlsExpectedFingerprint, resolveSimulation } from '../lib/config.mjs';
 import { createInterface } from 'node:readline/promises';
 import { readPairing as readAsPairing, recordTlsPin, formatFingerprint, normalizeFingerprint } from '../lib/as-pairing.mjs';
@@ -1038,7 +1038,27 @@ const LAUNCH_AGENT_LABEL = 'ai.suveren.gateway';
  * it could not see. Every command has to know about the service the same CLI
  * installs.
  */
+function serviceDefinitionText() {
+  const os = platform();
+  const file = os === 'darwin' ? launchAgentPath() : os === 'linux' ? systemdUnitPath() : null;
+  if (!file) return null;
+  try { return existsSync(file) ? readFileSync(file, 'utf8') : null; } catch { return null; }
+}
+
+/** The login service runs this CLI's installation — see serviceOwnsInstall. */
+function serviceIsOurs() {
+  return serviceOwnsInstall({
+    definitionText: serviceDefinitionText(),
+    dataDir: DATA_DIR,
+    envDataDir: process.env.SUVEREN_DATA_DIR,
+    same: (a, b) => resolve(a) === resolve(b),
+  });
+}
+
 function serviceRunning() {
+  // Another installation's service (a second gateway under this OS user) is
+  // not "running" for this CLI — never stop, restart or report it as ours.
+  if (!serviceIsOurs()) return false;
   const os = platform();
   if (os === 'darwin') {
     const p = runQuiet('launchctl', ['print', `gui/${process.getuid()}/${LAUNCH_AGENT_LABEL}`]);
@@ -1101,6 +1121,13 @@ async function service(args) {
     console.error(`Supported: macOS, Windows, Linux. Run in the background with:`);
     console.error(`  suveren-gateway start --detach`);
     console.error(`(Note: --detach does NOT survive a reboot — the service command will.)`);
+    process.exit(2);
+  }
+
+  if ((sub === 'install' || sub === 'uninstall') && !serviceIsOurs()) {
+    console.error('The login service on this account belongs to another Suveren gateway installation');
+    console.error(`(a different data folder than ${DATA_DIR}). Refusing to change it.`);
+    console.error('Run this installation in the background with:  suveren-gateway start --detach');
     process.exit(2);
   }
 

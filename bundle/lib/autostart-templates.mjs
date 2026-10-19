@@ -244,3 +244,33 @@ ${principalUser}      <LogonType>InteractiveToken</LogonType>
 </Task>
 `;
 }
+
+/**
+ * The data folder a login-service definition (launchd plist or systemd unit,
+ * as built above) pins with SUVEREN_DATA_DIR — or null when it pins none (the
+ * service then resolves the folder the default way, without that variable).
+ */
+export function declaredDataDir(definitionText) {
+  const plist = /<key>SUVEREN_DATA_DIR<\/key>\s*<string>([^<]*)<\/string>/.exec(definitionText);
+  if (plist) return plist[1];
+  const unit = /Environment="SUVEREN_DATA_DIR=([^"]*)"/.exec(definitionText);
+  return unit ? unit[1] : null;
+}
+
+/**
+ * Does the login service run THIS installation (the one the CLI resolved)?
+ * A second gateway under the same OS user — its own SUVEREN_DATA_DIR and
+ * ports — must never stop, restart or replace the other one's service
+ * (2026-10-19: a test gateway's `restart` restarted the real one and locked it).
+ *
+ * @param definitionText the service definition, or null if there is none / it is unreadable
+ * @param dataDir the data folder this CLI resolved
+ * @param envDataDir process.env.SUVEREN_DATA_DIR of this CLI
+ * @param same path comparison (normalising)
+ */
+export function serviceOwnsInstall({ definitionText, dataDir, envDataDir, same }) {
+  if (definitionText == null) return !envDataDir;
+  const declared = declaredDataDir(definitionText);
+  if (declared) return same(declared, dataDir);
+  return !envDataDir;
+}
