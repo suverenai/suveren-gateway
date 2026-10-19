@@ -157,7 +157,7 @@ export function documentLabel(
 }
 
 /**
- * UI spec §15.2 — the checks-line entry "same file as issued <label>",
+ * UI spec §15.2 — the checks-line entry "same file as <label>",
  * derived from the LIVE preview fetch's own comparison against the sealed
  * fingerprint (never recomputed here — `preview.status` already IS that
  * comparison's result, from `resolveAttachmentPreview`). `null` while the
@@ -172,7 +172,7 @@ export function attachmentSameFileCheck(
 ): LimitCheckLike | null {
   if (!label || !preview || preview === 'loading') return null;
   if (preview.status === 'ok') {
-    return { key: 'attachment-same-file', label: `same file as issued ${label}`, ok: true, valueText: '', limitText: '' };
+    return { key: 'attachment-same-file', label: `same file as ${label}`, ok: true, valueText: '', limitText: '' };
   }
   if (preview.status === 'changed') {
     return { key: 'attachment-same-file', label: 'attachment changed since it was sealed', ok: false, valueText: '', limitText: '' };

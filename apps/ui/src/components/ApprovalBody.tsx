@@ -126,7 +126,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
   const readable = content.toolArgs !== null;
   // UI spec §15.2 — "attachment from an allowed source" (computed, always
   // true once a card exists at all — see attachmentCheckEntries' doc
-  // comment) plus "same file as issued <label>" (dynamic — comes back only
+  // comment) plus "same file as <label>" (dynamic — comes back only
   // once AttachmentsSealedBox's own live preview fetch resolves, via
   // onChecks below), alongside the ordinary per-call bound checks.
   const [attachmentChecks, setAttachmentChecks] = useState<LimitCheckLike[]>([]);

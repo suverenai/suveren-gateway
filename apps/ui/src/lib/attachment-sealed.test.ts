@@ -117,9 +117,9 @@ describe('attachmentSameFileCheck', () => {
     expect(attachmentSameFileCheck(LABEL, undefined)).toBeNull();
   });
 
-  it('a passing check — "same file as issued <label>" — when the preview matched', () => {
+  it('a passing check — "same file as <label>" — when the preview matched', () => {
     expect(attachmentSameFileCheck(LABEL, { status: 'ok', filename: 'x', contentType: 'application/pdf', contentBase64: '', sha256: 'a', bytes: 1 }))
-      .toEqual({ key: 'attachment-same-file', label: `same file as issued ${LABEL}`, ok: true, valueText: '', limitText: '' });
+      .toEqual({ key: 'attachment-same-file', label: `same file as ${LABEL}`, ok: true, valueText: '', limitText: '' });
   });
 
   it('a FAILED check — the only red, bold entry — when the preview came back "changed"', () => {

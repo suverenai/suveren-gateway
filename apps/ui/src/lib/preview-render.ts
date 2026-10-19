@@ -183,6 +183,17 @@ function hasValue(v: unknown): boolean {
 }
 
 /**
+ * A list inside a compact line: plain values joined; a list of records by
+ * its count ("5 entries") — one line has no room for a table, and "—" would
+ * claim the value is missing when it is not.
+ */
+function compactListValue(list: unknown[], exact: boolean): string {
+  if (list.length === 0) return '—';
+  if (list.every((x) => !isPlainObject(x) && !Array.isArray(x))) return list.map((x) => formatScalar(x, exact)).join(', ');
+  return list.length === 1 ? '1 entry' : `${list.length} entries`;
+}
+
+/**
  * One compact line for an object: "Label: value · Label2: value2" — never
  * raw JSON. With a declared `properties` map, ONLY those keys show, in
  * their declared order, labelled by `title` — an id the schema never named
@@ -201,7 +212,9 @@ function compactObjectLine(
     .map((k) => {
       const v = obj[k];
       const label = declaredProps?.[k]?.title ?? humanizeKey(k);
-      const shown = isPlainObject(v) ? compactObjectLine(v, declaredProps?.[k]?.properties, exact) : formatScalar(v, exact);
+      const shown = isPlainObject(v)
+        ? compactObjectLine(v, declaredProps?.[k]?.properties, exact)
+        : Array.isArray(v) ? compactListValue(v, exact) : formatScalar(v, exact);
       return `${label}: ${shown}`;
     })
     .join(' · ');
@@ -217,20 +230,42 @@ function compactObjectLine(
 function tableForObjectArray(
   rows: Record<string, unknown>[],
   itemProps: Record<string, JsonSchemaProperty> | undefined,
+  /** For a table of the call's OWN values (sealed, not read from a system):
+   *  marks every cell sealed, and formats money by the manifest's display
+   *  hints at `${pathPrefix}.<column>` (e.g. `lines[].unit_price`). */
+  own?: { hints?: ToolDisplayHints; pathPrefix: string; currency?: string },
 ): PreviewTable {
   const keys = itemProps
     ? Object.keys(itemProps).filter((k) => rows.some((r) => k in r))
     : [...new Set(rows.flatMap((r) => Object.keys(r)))];
-  const columns = keys.map((k) => ({ key: k, label: itemProps?.[k]?.title ?? humanizeKey(k) }));
+  const columns = keys.map((k) => ({
+    key: k,
+    label: (own && own.hints?.labels?.[`${own.pathPrefix}.${k}`]) ?? itemProps?.[k]?.title ?? humanizeKey(k),
+  }));
+  const sealed = !!own;
   const tableRows = rows.map((r) => ({
     cells: keys.map((k) => {
       const v = r[k];
+      if (own && !isPlainObject(v) && pathMatches(own.hints?.money, `${own.pathPrefix}.${k}`)) {
+        return { ...formatMoney(v, own.currency), sealed };
+      }
       const display = isPlainObject(v) ? compactObjectLine(v, itemProps?.[k]?.properties, false) : formatScalar(v);
       const exact = isPlainObject(v) ? compactObjectLine(v, itemProps?.[k]?.properties, true) : formatScalar(v, true);
-      return exact === display ? { value: display, sealed: false } : { value: display, valueTitle: exact, sealed: false };
+      return exact === display ? { value: display, sealed } : { value: display, valueTitle: exact, sealed };
     }),
   }));
   return { columns, rows: tableRows };
+}
+
+/**
+ * Any value as ONE line of plain text — a record as "Label: value · …", a
+ * list as joined values or a count of entries; never raw JSON. For views
+ * with no room for a table (a ticket's Result rows).
+ */
+export function compactValue(v: unknown): string {
+  if (isPlainObject(v)) return compactObjectLine(v, undefined, false);
+  if (Array.isArray(v)) return compactListValue(v, false);
+  return formatScalar(v);
 }
 
 /**
@@ -239,9 +274,18 @@ function tableForObjectArray(
  * Null for anything else (the caller shows it as itself). Shape-driven only —
  * never by field or tool name.
  */
-export function nestedValueView(value: unknown): { table: PreviewTable } | { text: string } | null {
+export function nestedValueView(
+  value: unknown,
+  /** The argument's key + the tool's display hints: a table of the call's own
+   *  values is sealed and formats money as the manifest declares it. */
+  own?: { key: string; hints?: ToolDisplayHints; currency?: string },
+): { table: PreviewTable } | { text: string } | null {
   if (Array.isArray(value) && value.length > 0 && value.every(isPlainObject)) {
-    return { table: tableForObjectArray(value as Record<string, unknown>[], undefined) };
+    return {
+      table: tableForObjectArray(value as Record<string, unknown>[], undefined, {
+        hints: own?.hints, pathPrefix: `${own?.key ?? ''}[]`, currency: own?.currency,
+      }),
+    };
   }
   if (isPlainObject(value)) return { text: compactObjectLine(value, undefined, false) };
   return null;
@@ -927,7 +971,7 @@ export function buildCreationView(
     // A list of records (invoice lines) reads as a table; one record (a
     // service period) as one compact line — never "—" for a value that is
     // there, just not a plain string or number.
-    const nested = nestedValueView(raw);
+    const nested = nestedValueView(raw, { key, hints: displayHints, currency: currencyStr });
     if (nested && 'table' in nested) {
       rows.push({ kind: 'table', key, label, table: nested.table });
       continue;

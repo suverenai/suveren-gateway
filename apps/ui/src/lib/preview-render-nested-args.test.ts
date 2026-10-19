@@ -59,3 +59,27 @@ describe('nestedValueView — the ticket\'s "What was sent" uses the same rule',
     expect(nestedValueView(['a', 'b'])).toBeNull();
   });
 });
+
+describe('lists inside a record (load_simulation package — Rehearsal 2026-10-19)', () => {
+  it('a list of records inside a record shows its count, never "—"', async () => {
+    const { nestedValueView } = await import('./preview-render');
+    const v = nestedValueView({ name: 'Muster', cases: [{ id: 'c1' }, { id: 'c2' }], customers: [{ id: 'x' }], tags: ['a', 'b'], empty: [] });
+    expect(v && 'text' in v && v.text).toBe('Name: Muster · Cases: 2 entries · Customers: 1 entry · Tags: a, b · Empty: —');
+  });
+});
+
+describe('a table of the call\'s own values (Rehearsal A3, 2026-10-19)', () => {
+  it('is sealed (not "from the system") and formats money as the manifest declares', async () => {
+    const { buildCreationView } = await import('./preview-render');
+    const view = buildCreationView(
+      { lines: [{ description: 'Keilriemen', qty: 10, unit_price: 38.5 }], currency: 'EUR' },
+      [],
+      { money: ['lines[].unit_price'], currencyField: 'currency' } as never,
+    );
+    const row = view.rows.find((r) => r.key === 'lines')!;
+    if (row.kind !== 'table') throw new Error('expected a table');
+    expect(row.table.rows[0].cells.every((c) => c.sealed)).toBe(true);
+    expect(row.table.rows[0].cells[2].value).toBe('38.50 EUR');
+    expect(row.table.rows[0].cells[1].value).toBe('10'); // not money-hinted
+  });
+});

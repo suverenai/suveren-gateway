@@ -85,6 +85,14 @@
           "resultDatePath": "received_at"
         }
       },
+      "get_attachment": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited",
+        "read": {
+          "ageField": "read_age_days"
+        }
+      },
       "send_message": {
         "message": { "text": "body", "to": "to", "cc": "cc", "subject": "subject", "verb": "Sent" },
         "summary": "Email to {to|list}: {subject|short}",

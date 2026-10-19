@@ -164,7 +164,7 @@ describe('resultBody — what the tool answered', () => {
   it('a JSON-object text as rows of the same values', () => {
     expect(resultBody({ ok: true, text: '{"id":"c-1042","tags":["a"]}' })).toEqual({
       kind: 'rows',
-      rows: [{ key: 'id', label: 'Id', value: 'c-1042' }, { key: 'tags', label: 'Tags', value: '["a"]' }],
+      rows: [{ key: 'id', label: 'Id', value: 'c-1042' }, { key: 'tags', label: 'Tags', value: 'a' }], // a list reads as its values, not JSON
     });
   });
   it('otherwise the text as it came', () => {
@@ -187,5 +187,15 @@ describe('resultBody — only what the answer adds', () => {
   it('a changed value is kept even under a sent field name', () => {
     const body = resultBody({ ok: true, text: '{"name":"Anna AUTO"}' }, { name: 'Anna Auto' });
     expect(body.kind === 'rows' && body.rows.map(r => r.value)).toEqual(['Anna AUTO']);
+  });
+});
+
+describe('Result rows never show raw JSON (Rehearsal A3, 2026-10-19)', () => {
+  it('a record value (an email\'s From) reads as one line', () => {
+    const body = resultBody({ ok: true, text: JSON.stringify({ id: 'm-9', from: { name: 'Muster Maschinenteile GmbH', email: 'verkauf@muster.example' } }) });
+    if (body.kind !== 'rows') throw new Error('expected rows');
+    const from = body.rows.find((r) => r.key === 'from')!;
+    expect(from.value).toBe('Name: Muster Maschinenteile GmbH · Email: verkauf@muster.example');
+    expect(from.value).not.toContain('{');
   });
 });

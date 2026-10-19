@@ -37,7 +37,7 @@ function Identity({ identity }: { identity: AttachedIdentity }) {
         <span className="creation-context">
           {identity.context.map((c) => (
             <span key={c.key}>
-              {' · '}{c.label} {c.value}
+              {' · '}{c.label} {c.value ?? c.lines?.join(', ') ?? c.sublist?.map((x) => x.value).join(', ')}
             </span>
           ))}
         </span>
