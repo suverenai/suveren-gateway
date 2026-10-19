@@ -62,6 +62,7 @@
     },
     "overrides": {
       "create_post": {
+        "message": { "text": "text", "verb": "Published" },
         "summary": "LinkedIn post: {text|short}",
         "executionMapping": {
           "visibility": "audience"
@@ -74,6 +75,7 @@
         "actionLabel": "Post published"
       },
       "create_image_post": {
+        "message": { "text": "text", "verb": "Published" },
         "summary": "LinkedIn image post: {text|short}",
         "executionMapping": {
           "visibility": "audience"
@@ -86,6 +88,7 @@
         "actionLabel": "Image post published"
       },
       "create_article_post": {
+        "message": { "text": "text", "verb": "Published" },
         "summary": "LinkedIn article: {title,articleUrl|short}",
         "executionMapping": {
           "visibility": "audience"

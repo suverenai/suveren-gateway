@@ -25,6 +25,7 @@ import {
   type ManifestDocuments,
   type AttachmentTransportConfig,
   type ManifestValues,
+  type MessageVerb,
 } from './tool-gating-types';
 import { uncoveredReadSwitchReason, type BoundsSchemaLike } from './read-gate';
 
@@ -414,6 +415,58 @@ export function invalidManifestInternalReason(manifest: Pick<IntegrationManifest
   const overrides = manifest.toolGating?.overrides ?? {};
   for (const [toolName, entry] of Object.entries(overrides)) {
     const reason = invalidInternalReason(toolName, entry);
+    if (reason) return reason;
+  }
+  return null;
+}
+
+// ─── `message` shape validation — the generic replacement for the old   ───
+// per-profile footer allowlist + content-field guesswork (tool-gating-
+// types.ts's `MessageGatingDeclaration`).
+
+const VALID_MESSAGE_VERBS: readonly MessageVerb[] = ['Sent', 'Published'];
+
+/**
+ * Shape check for one override's optional `message` (tool-gating-types.ts
+ * `ProfileToolGatingEntry.message`): `text` and `verb` required (non-empty
+ * string; `verb` one of {@link VALID_MESSAGE_VERBS}), `to`/`cc`/`subject`
+ * optional non-empty strings when present. Refuses the whole manifest on a
+ * bad shape — same posture as every other load-time check here — because a
+ * malformed declaration would otherwise silently drop the footer/mime-raw
+ * build for that tool with no signal.
+ */
+export function invalidMessageReason(toolName: string, entry: unknown): string | null {
+  if (entry === null || typeof entry !== 'object') return null;
+  const message = (entry as { message?: unknown }).message;
+  if (message === undefined) return null;
+  if (message === null || typeof message !== 'object') {
+    return `override "${toolName}".message must be an object`;
+  }
+  const m = message as Record<string, unknown>;
+  const at = `override "${toolName}".message`;
+  if (typeof m.text !== 'string' || m.text.length === 0) {
+    return `${at}.text must be a non-empty string`;
+  }
+  if (typeof m.verb !== 'string' || !VALID_MESSAGE_VERBS.includes(m.verb as MessageVerb)) {
+    return `${at}.verb must be one of ${VALID_MESSAGE_VERBS.join(', ')}`;
+  }
+  for (const key of ['to', 'cc', 'subject'] as const) {
+    if (m[key] !== undefined && (typeof m[key] !== 'string' || (m[key] as string).length === 0)) {
+      return `${at}.${key} must be a non-empty string`;
+    }
+  }
+  return null;
+}
+
+/**
+ * Checks every override's `message` (if any) in one manifest. Same
+ * one-predicate-shared-by-loader-and-lint-test shape as
+ * `invalidManifestInternalReason`.
+ */
+export function invalidManifestMessageReason(manifest: Pick<IntegrationManifest, 'toolGating'>): string | null {
+  const overrides = manifest.toolGating?.overrides ?? {};
+  for (const [toolName, entry] of Object.entries(overrides)) {
+    const reason = invalidMessageReason(toolName, entry);
     if (reason) return reason;
   }
   return null;
@@ -1055,6 +1108,11 @@ export function loadManifests(integrationsDir?: string): number {
       const internalReason = invalidManifestInternalReason(manifest);
       if (internalReason) {
         console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${internalReason}`);
+        continue;
+      }
+      const messageReason = invalidManifestMessageReason(manifest);
+      if (messageReason) {
+        console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${messageReason}`);
         continue;
       }
       const contextReason = invalidManifestContextReason(manifest);

@@ -122,6 +122,7 @@
         }
       },
       "create_event": {
+        "message": { "text": "description", "verb": "Sent" },
         "summary": "Event: {summary|short}[ on {start.dateTime,start.date|date}]",
         "executionMapping": {
           "duration_minutes": "duration",
@@ -144,6 +145,7 @@
         "actionLabel": "Event created"
       },
       "update_event": {
+        "message": { "text": "description", "verb": "Sent" },
         "summary": "Update event[: {summary|short}]",
         "executionMapping": {
           "attendees": [

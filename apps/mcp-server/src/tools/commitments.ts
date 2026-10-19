@@ -582,8 +582,9 @@ export async function executeCommitted(
   // fresh request and approval) — a no-op when this proposal carried no
   // attachment/insert references at all.
   let finalToolArgs = toolArgs;
+  let rebuildTransport: ((a: Record<string, unknown>) => Record<string, unknown>) | undefined;
   {
-    const finalized = await finalizeAttachmentsForExecution(integrationManager, integrationId, toolArgs);
+    const finalized = await finalizeAttachmentsForExecution(integrationManager, integrationId, toolArgs, discovered?.gating?.message);
     if (!finalized.ok) {
       state.executionJournal.complete(receiptId, 'failed', 'changed', finalized.message);
       recordExecutionOutcome(state, proposal.id, receiptId, false, finalized.message);
@@ -595,6 +596,7 @@ export async function executeCommitted(
       };
     }
     finalToolArgs = finalized.args;
+    rebuildTransport = finalized.rebuildTransport;
   }
 
   // Receipt issued — now execute the tool, appending the verification footer
@@ -609,6 +611,10 @@ export async function executeCommitted(
         outgoingArgs = appendVerificationFooter(discovered, outgoingArgs, receiptId, cachedAuth?.subjects?.[0]);
       }
       outgoingArgs = attachTicketId(discovered, outgoingArgs, receiptId);
+      // A MIME message (Gmail `raw`) carries the text inside it — rebuild it
+      // so the footer just added to `body` is in what is actually sent. Same
+      // step as tool-proxy.ts (the automatic path).
+      if (rebuildTransport) outgoingArgs = rebuildTransport(outgoingArgs);
       // LAST: transport encoding — see arg-encoding.ts for why order matters.
       outgoingArgs = encodeOutgoingArgs(discovered, outgoingArgs);
     }

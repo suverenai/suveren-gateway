@@ -34,6 +34,8 @@ const sendMessage = {
       raw: { type: 'string' },
     },
   },
+  // As gmail.json declares it — the text field is the manifest's, not guessed.
+  gating: { message: { text: 'body', to: 'to', cc: 'cc', subject: 'subject', verb: 'Sent' } },
 } as unknown as DiscoveredTool;
 
 beforeAll(() => {

@@ -4,11 +4,14 @@
  * suveren.ai that the action was authorized (link-only / Level 1).
  *
  * Design (see doc/receipt-verification-implementation-plan.md):
- *  - Applies ONLY to Category-A "communicative" profiles: email, calendar, publish.
- *    CRM/records/charge get no footer.
- *  - The content field is AUTO-DETECTED from the tool's live input schema
- *    (body → text → description) — nothing hardcoded per integration, nothing in
- *    manifests. (Grounded: gmail=body, calendar=description, linkedin=text.)
+ *  - Applies to a tool IFF it declares `gating.message` (tool-gating-
+ *    types.ts's `MessageGatingDeclaration`) — a manifest declaration, not a
+ *    hardcoded profile allowlist. A tool with no human-readable text (a
+ *    delete, a read) simply omits `message` and gets no footer.
+ *  - The content field and the presentation verb ("Sent"/"Published") come
+ *    straight from that declaration (`message.text`/`message.verb`) —
+ *    nothing guessed from a fixed prose vocabulary, nothing hardcoded per
+ *    connector/profile in this file.
  *  - Strip-and-replace: any existing Suveren footer is removed before appending,
  *    so it's idempotent AND an authorized edit regenerates the footer with its
  *    new receipt (live content ↔ current receipt).
@@ -49,17 +52,6 @@ const OPERATOR_NAME = process.env.SUVEREN_OPERATOR_NAME ?? 'Suveren';
 /** Canonical HAP site — the promotion link on every footer's second line. */
 const HAP_URL = 'https://www.humanagencyprotocol.org/';
 
-/** Communicative profiles — the only ones that get a footer. */
-const FOOTER_PROFILES = new Set(['email', 'calendar', 'publish']);
-
-/**
- * Content field auto-detection: first string property among these, in order.
- * `body`/`text`/`description` cover the live Category-A integrations
- * (gmail=body, linkedin=text, calendar=description); `content` is a common
- * fallback name and is last so the more specific names always win.
- */
-const CONTENT_FIELD_CANDIDATES = ['body', 'text', 'description', 'content'];
-
 /**
  * Strip anchor — matches an already-appended Suveren footer through the end of
  * the content, regardless of identity variant, verb (Sent/Published), or
@@ -82,16 +74,6 @@ function receiptUrl(receiptId: string): string {
 }
 
 /**
- * Presentation verb by profile: "Published" for the publish profile (a post is
- * published, not sent), "Sent" for email/calendar. deriveIdentityLine always
- * yields a "Sent …" line (the assurance wording is the protocol's); the verb is
- * a channel presentation concern, so we swap the leading word here.
- */
-export function verbForProfile(profile: string): string {
-  return profile === 'publish' ? 'Published' : 'Sent';
-}
-
-/**
  * The HAP promotion line — constant across every footer (operator-branded so a
  * white-labelled operator reads correctly). Plain full URL, no HTML anchor, so
  * it renders clickable in email (HTML or plain), calendar, and publishing alike.
@@ -108,23 +90,15 @@ function footerText(receiptId: string, verb: string, subject?: Subject): string 
   return `\n\n-- ${identity}. Receipt: ${receiptUrl(receiptId)}\n\n${hapLine()}`;
 }
 
-function isStringType(t: unknown): boolean {
-  return t === 'string' || (Array.isArray(t) && t.includes('string'));
-}
-
 /**
- * The arg that holds user-facing content, from the tool's input schema.
- * Exported so content binding (`kind:"text"`) resolves the SAME field the
- * footer appends to — one resolver, no drift between the two.
+ * The arg that holds user-facing content — the tool's own declared
+ * `gating.message.text` (tool-gating-types.ts's `MessageGatingDeclaration`),
+ * or `null` when the tool declares no `message` at all (nothing to footer or
+ * auto-bind). Exported so content binding (`kind:"text"`) resolves the SAME
+ * field the footer appends to — one resolver, no drift between the two.
  */
 export function detectContentField(tool: DiscoveredTool): string | null {
-  const schema = tool.inputSchema as { properties?: Record<string, { type?: unknown }> } | undefined;
-  const props = schema?.properties ?? {};
-  for (const candidate of CONTENT_FIELD_CANDIDATES) {
-    const prop = props[candidate];
-    if (prop && isStringType(prop.type)) return candidate;
-  }
-  return null;
+  return tool.gating?.message?.text ?? null;
 }
 
 /** Remove a previously-appended Suveren footer (back through preceding blank lines). */
@@ -133,9 +107,10 @@ function stripFooter(value: string): string {
 }
 
 /**
- * Return a copy of `args` with the verification footer appended to the detected
- * content field. Returns `args` unchanged when no footer applies: the tool's
- * profile isn't Category A, or no content field is detected (e.g. `send_draft`).
+ * Return a copy of `args` with the verification footer appended to the
+ * declared content field. Returns `args` unchanged when no footer applies:
+ * the tool declares no `gating.message` at all (e.g. `send_draft`, a delete,
+ * any non-communicative tool).
  */
 export function appendVerificationFooter(
   tool: DiscoveredTool,
@@ -143,12 +118,10 @@ export function appendVerificationFooter(
   receiptId: string,
   subject?: Subject,
 ): Record<string, unknown> {
-  const profile = tool.gating?.profile;
-  if (!profile || !FOOTER_PROFILES.has(profile)) return args;
+  const message = tool.gating?.message;
+  if (!message) return args;
 
-  const field = detectContentField(tool);
-  if (!field) return args;
-
+  const field = message.text;
   const current = typeof args[field] === 'string' ? (args[field] as string) : '';
-  return { ...args, [field]: stripFooter(current) + footerText(receiptId, verbForProfile(profile), subject) };
+  return { ...args, [field]: stripFooter(current) + footerText(receiptId, message.verb, subject) };
 }

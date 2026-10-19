@@ -45,7 +45,7 @@ const TOOL: DiscoveredTool = {
   integrationId: 'gmail',
   description: '',
   inputSchema: { type: 'object', properties: { body: { type: 'string' }, to: { type: 'string' } } },
-  gating: { profile: 'email', executionMapping: {}, staticExecution: {} } as unknown as DiscoveredTool['gating'],
+  gating: { profile: 'email', executionMapping: {}, staticExecution: {}, message: { text: 'body', to: 'to', verb: 'Sent' } } as unknown as DiscoveredTool['gating'],
 };
 
 function buildState(opts: { boundsHash?: string; subjects?: Subject[] }) {

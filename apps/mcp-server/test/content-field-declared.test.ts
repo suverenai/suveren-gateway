@@ -7,8 +7,9 @@ import type { DiscoveredTool } from '../src/lib/integration-manager';
 /**
  * A manifest may declare WHICH argument the receipt binds to.
  *
- * Auto-detection only knows a prose vocabulary (body/text/description/content).
- * Everything that is not a message — a commit SHA, an infrastructure plan hash,
+ * Without a declaration nothing is bound (the old name-based guessing over
+ * body/text/description/content is gone — the manifest's `message.text` or
+ * `contentField` says it). Everything that is not a message — a commit SHA, an infrastructure plan hash,
  * a record id — produces no hash, no binding, and no error. The receipt is
  * still issued and simply proves less than it looks like it does, which is the
  * worst available failure mode: it is invisible at the moment it matters and
@@ -26,14 +27,20 @@ beforeAll(() => {
 });
 afterAll(() => clearProfiles());
 
-function tool(props: Record<string, { type: string }>, contentField?: string): DiscoveredTool {
+/** `messageText` = the manifest's `message.text` (the text the footer and a
+ *  `kind:"text"` binding use when no `contentField` is declared). */
+function tool(props: Record<string, { type: string }>, contentField?: string, messageText?: string): DiscoveredTool {
   return {
     originalName: 'deploy',
     namespacedName: 'deploy-github__deploy',
     integrationId: 'deploy-github',
     description: 'Deploy',
     inputSchema: { properties: props },
-    gating: { profile: PROFILE, executionMapping: {}, ...(contentField ? { contentField } : {}) },
+    gating: {
+      profile: PROFILE, executionMapping: {},
+      ...(contentField ? { contentField } : {}),
+      ...(messageText ? { message: { text: messageText, verb: 'Sent' } } : {}),
+    },
   } as unknown as DiscoveredTool;
 }
 
@@ -75,12 +82,12 @@ describe('manifest-declared content field', () => {
     expect(computeContentBinding(PROFILE, tool(deployProps, 'sha'), { sha: '' })).toBeUndefined();
   });
 
-  it('a declared field overrides auto-detection', () => {
-    // A tool with BOTH a prose field and a declared one must bind what the
-    // manifest chose, not what detection happens to find first.
+  it('a declared contentField wins over the message text', () => {
+    // A tool with BOTH a message text and a declared bound field must bind
+    // the declared field.
     const both = { text: { type: 'string' }, sha: { type: 'string' } };
-    const declared = computeContentBinding(PROFILE, tool(both, 'sha'), { text: 'a note', sha: 'abc123' })!;
-    const detected = computeContentBinding(PROFILE, tool(both), { text: 'a note', sha: 'abc123' })!;
+    const declared = computeContentBinding(PROFILE, tool(both, 'sha', 'text'), { text: 'a note', sha: 'abc123' })!;
+    const detected = computeContentBinding(PROFILE, tool(both, undefined, 'text'), { text: 'a note', sha: 'abc123' })!;
     expect(declared.contentHash).not.toBe(detected.contentHash);
     // and the declared one must equal binding the sha alone
     const shaOnly = computeContentBinding(PROFILE, tool({ sha: { type: 'string' } }, 'sha'), { sha: 'abc123' })!;
@@ -106,21 +113,26 @@ describe('manifest-declared content field', () => {
  * exactly as it did before, because that is every existing connector.
  */
 describe('existing connectors are unaffected', () => {
-  const proseTool = (props: Record<string, { type: string }>) => tool(props);
+  // Every shipped messaging tool declares `message.text` (manifests); that is
+  // the field a `kind:"text"` binding hashes when no contentField is declared.
+  const proseTool = (props: Record<string, { type: string }>, text = 'text') => tool(props, undefined, text);
 
-  it('auto-detection still binds a prose field when nothing is declared', () => {
+  it('binds the declared message text when no contentField is declared', () => {
     const result = computeContentBinding(PROFILE, proseTool({ text: { type: 'string' } }), { text: 'a post' });
     expect(result?.contentHash).toBeTruthy();
   });
 
-  it('binds the same value it did before — detection order is unchanged', () => {
-    // body wins over text, text over description, description over content.
-    // A reordering would silently change every published post's fingerprint and
-    // invalidate receipts issued before the change.
+  it('binds exactly the declared field, never another prose-looking one', () => {
+    // Nothing is guessed from argument names any more: with body/text/
+    // description/content all present, only the declared one is hashed.
     const all = { body: { type: 'string' }, text: { type: 'string' }, description: { type: 'string' }, content: { type: 'string' } };
-    const detected = computeContentBinding(PROFILE, proseTool(all), { body: 'B', text: 'T', description: 'D', content: 'C' })!;
-    const bodyOnly = computeContentBinding(PROFILE, proseTool({ body: { type: 'string' } }), { body: 'B' })!;
-    expect(detected.contentHash).toBe(bodyOnly.contentHash);
+    const declared = computeContentBinding(PROFILE, proseTool(all, 'body'), { body: 'B', text: 'T', description: 'D', content: 'C' })!;
+    const bodyOnly = computeContentBinding(PROFILE, proseTool({ body: { type: 'string' } }, 'body'), { body: 'B' })!;
+    expect(declared.contentHash).toBe(bodyOnly.contentHash);
+  });
+
+  it('no message declared and no contentField → nothing bound (no guessing)', () => {
+    expect(computeContentBinding(PROFILE, tool({ text: { type: 'string' } }), { text: 'a post' })).toBeUndefined();
   });
 
   it('an unrelated extra argument does not change the hash', () => {

@@ -17,6 +17,8 @@ import { getProfile, clearProfiles } from '@hap/core';
 import { loadProfiles } from '../src/lib/profile-loader';
 import { isAttachmentSourceAllowed, candidatesAllowingAttachments, ATTACHMENT_SOURCES_FIELD } from '../src/lib/attachment-policy';
 
+const EMAIL_09 = 'github.com/humanagencyprotocol/hap-profiles/email@0.9';
+
 const PROFILES_DIR = process.env.SUVEREN_PROFILES_DIR
   ?? join(import.meta.dirname, '..', '..', '..', '..', 'hap-profiles');
 
@@ -32,36 +34,37 @@ describe('email@0.9 — allowed_attachment_sources (real profile)', () => {
     expect(true).toBe(true);
   });
 
-  it('the short name "email" resolves to 0.9 in this test\'s own profile registry', () => {
-    const profile = getProfile('email');
-    expect(profile?.version).toBe('0.9');
+  it('the short name "email" resolves to the newest email version, 0.9 or later', () => {
+    // email@0.10 (field_kinds) keeps 0.9's scope; this file pins 0.9 by full id below.
+    const [major, minor] = (getProfile('email')?.version ?? '0.0').split('.').map(Number);
+    expect(major * 1000 + minor).toBeGreaterThanOrEqual(9);
   });
 
   it('declares allowed_attachment_sources in its scope schema', () => {
-    const profile = getProfile('email');
+    const profile = getProfile(EMAIL_09);
     expect(profile?.scopeSchema?.fields?.[ATTACHMENT_SOURCES_FIELD]).toBeDefined();
   });
 
   it('allows a source the mandate explicitly lists', () => {
-    const profile = getProfile('email');
+    const profile = getProfile(EMAIL_09);
     const result = isAttachmentSourceAllowed('email', profile, 'erp:invoice-pdf,erp:credit-note-pdf', { connector: 'erp', kind: 'invoice-pdf' });
     expect(result.allowed).toBe(true);
   });
 
   it('refuses a source the mandate does not list', () => {
-    const profile = getProfile('email');
+    const profile = getProfile(EMAIL_09);
     const result = isAttachmentSourceAllowed('email', profile, 'erp:credit-note-pdf', { connector: 'erp', kind: 'invoice-pdf' });
     expect(result.allowed).toBe(false);
   });
 
   it('refuses when the mandate sets an EMPTY allowed_attachment_sources value', () => {
-    const profile = getProfile('email');
+    const profile = getProfile(EMAIL_09);
     const result = isAttachmentSourceAllowed('email', profile, '', { connector: 'erp', kind: 'invoice-pdf' });
     expect(result.allowed).toBe(false);
   });
 
   it('refuses when the mandate sets no value at all (undefined)', () => {
-    const profile = getProfile('email');
+    const profile = getProfile(EMAIL_09);
     const result = isAttachmentSourceAllowed('email', profile, undefined, { connector: 'erp', kind: 'invoice-pdf' });
     expect(result.allowed).toBe(false);
   });

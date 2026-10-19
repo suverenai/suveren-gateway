@@ -1,10 +1,11 @@
 /**
  * Verification footer (link-only / Level 1) — pure-logic unit tests.
  *
- * Pins the behavior that's easy to get subtly wrong: Category-A gating,
- * content-field auto-detection (body → text → description), strip-and-replace
- * idempotency (so edits regenerate cleanly), the Gmail `raw` skip, the verb by
- * profile (Sent/Published), and the two-line footer (Receipt + HAP promo).
+ * Pins the behavior that's easy to get subtly wrong: the footer applies only
+ * to a tool whose manifest declares `message` (never by profile name), goes
+ * into the DECLARED text field with the DECLARED verb (Sent/Published),
+ * strip-and-replace idempotency (so edits regenerate cleanly), the Gmail
+ * `raw` skip, and the two-line footer (Receipt + HAP promo).
  *
  * NOTE: the assurance wording ("of «name», verified by …") comes from hap-core
  * (deriveIdentityLine). These tests assert the gateway's own contribution
@@ -12,77 +13,80 @@
  * decoupled from hap-core's exact separator punctuation.
  */
 import { describe, it, expect } from 'vitest';
-import { appendVerificationFooter, shouldAttachFooter, verbForProfile } from '../src/lib/receipt-footer';
+import { appendVerificationFooter, shouldAttachFooter } from '../src/lib/receipt-footer';
+import type { MessageGatingDeclaration } from '../src/lib/tool-gating-types';
 import type { DiscoveredTool } from '../src/lib/integration-manager';
 
 const HAP_LINE =
   '-- Suveren implements HAP, the open Human Agency Protocol: https://www.humanagencyprotocol.org/';
 
-function tool(profile: string | null, props: Record<string, { type?: unknown }>, name = 'send_message'): DiscoveredTool {
+/** A tool as the manifest declares it: `message` drives the footer; `null` = no gating at all. */
+function tool(
+  message: MessageGatingDeclaration | undefined | null,
+  props: Record<string, { type?: unknown }>,
+  name = 'send_message',
+  profile = 'email',
+): DiscoveredTool {
   return {
     originalName: name,
     namespacedName: `int__${name}`,
     integrationId: 'int',
     description: '',
     inputSchema: { type: 'object', properties: props },
-    gating: profile ? { profile, executionMapping: {}, staticExecution: {} } : null,
+    gating: message === null ? null : { profile, executionMapping: {}, staticExecution: {}, ...(message ? { message } : {}) },
   } as unknown as DiscoveredTool;
 }
+
+const BODY: MessageGatingDeclaration = { text: 'body', to: 'to', cc: 'cc', subject: 'subject', verb: 'Sent' };
+const POST: MessageGatingDeclaration = { text: 'text', verb: 'Published' };
+const EVENT: MessageGatingDeclaration = { text: 'description', verb: 'Sent' };
 
 const STRING = { type: 'string' };
 /** Count footers (verb- and wording-agnostic: v1 "by an AI agent", v1.1 "'s AI agent") to detect stacking. */
 const footerCount = (s: string) => (s.match(/(?:by an AI agent|'s AI agent)/g) ?? []).length;
 
-describe('verbForProfile', () => {
-  it('is "Published" for publish, "Sent" for email/calendar', () => {
-    expect(verbForProfile('publish')).toBe('Published');
-    expect(verbForProfile('email')).toBe('Sent');
-    expect(verbForProfile('calendar')).toBe('Sent');
-  });
-});
-
 describe('appendVerificationFooter', () => {
   it('appends the two-line footer to `body` for email (Sent + Receipt + HAP line)', () => {
-    const out = appendVerificationFooter(tool('email', { body: STRING, subject: STRING }), { body: 'Hi' }, 'rcpt-1');
+    const out = appendVerificationFooter(tool(BODY, { body: STRING, subject: STRING }), { body: 'Hi' }, 'rcpt-1');
     expect(out.body).toBe(
       `Hi\n\n-- Sent by an AI agent via Suveren. Receipt: https://www.suveren.ai/t/rcpt-1\n\n${HAP_LINE}`,
     );
   });
 
-  it('uses "Published" for the publish profile', () => {
-    const out = appendVerificationFooter(tool('publish', { text: STRING }, 'create_post'), { text: 'Hello world' }, 'r2');
+  it('uses the declared verb — "Published" for a post', () => {
+    const out = appendVerificationFooter(tool(POST, { text: STRING }, 'create_post', 'publish'), { text: 'Hello world' }, 'r2');
     expect(out.text).toContain('-- Published by an AI agent via Suveren. Receipt: https://www.suveren.ai/t/r2');
     expect(out.text).toContain(HAP_LINE);
   });
 
-  it('appends to `description` for the calendar profile', () => {
-    const out = appendVerificationFooter(tool('calendar', { summary: STRING, description: STRING }, 'create_event'), { description: 'Sync' }, 'r3');
+  it('appends to the declared field — `description` for a calendar event', () => {
+    const out = appendVerificationFooter(tool(EVENT, { summary: STRING, description: STRING }, 'create_event', 'calendar'), { description: 'Sync' }, 'r3');
     expect(out.description).toContain('-- Sent by an AI agent');
     expect(out.description).toContain('/t/r3');
   });
 
-  it('prefers `text` over `description` (detection order)', () => {
-    const out = appendVerificationFooter(tool('publish', { text: STRING, description: STRING }, 'create_article_post'), { text: 'Post', description: 'Article blurb' }, 'r4');
+  it('touches only the declared field, never another prose-looking one', () => {
+    const out = appendVerificationFooter(tool(POST, { text: STRING, description: STRING }, 'create_article_post', 'publish'), { text: 'Post', description: 'Article blurb' }, 'r4');
     expect(out.text).toContain('by an AI agent');
     expect(out.description).toBe('Article blurb'); // untouched
   });
 
-  it('falls back to `content` when no body/text/description', () => {
-    const out = appendVerificationFooter(tool('publish', { content: STRING, title: STRING }, 'create_record'), { content: 'Body', title: 'T' }, 'r4b');
+  it('any declared field name works — nothing is guessed from a fixed vocabulary', () => {
+    const out = appendVerificationFooter(tool({ text: 'content', verb: 'Published' }, { content: STRING, title: STRING }, 'create_record', 'publish'), { content: 'Body', title: 'T' }, 'r4b');
     expect(out.content).toContain('by an AI agent');
     expect(out.content).toContain('/t/r4b');
     expect(out.title).toBe('T'); // untouched
   });
 
   it('links use full plain https URLs (no HTML anchors) — works across email/calendar/publish', () => {
-    const out = appendVerificationFooter(tool('email', { body: STRING }), { body: 'Hi' }, 'r-links');
+    const out = appendVerificationFooter(tool(BODY, { body: STRING }), { body: 'Hi' }, 'r-links');
     expect(out.body).toContain('Receipt: https://www.suveren.ai/t/r-links');
     expect(out.body).toContain('https://www.humanagencyprotocol.org/');
     expect(out.body).not.toContain('<a '); // no HTML
   });
 
   it('is idempotent — re-applying does not stack footers', () => {
-    const t = tool('email', { body: STRING }, 'send_message');
+    const t = tool(BODY, { body: STRING }, 'send_message');
     const once = appendVerificationFooter(t, { body: 'Hi' }, 'r5');
     const twice = appendVerificationFooter(t, once, 'r5');
     expect(footerCount(twice.body as string)).toBe(1);
@@ -90,7 +94,7 @@ describe('appendVerificationFooter', () => {
   });
 
   it('strip-and-replace — an edit swaps the old receipt for the new one', () => {
-    const t = tool('email', { body: STRING });
+    const t = tool(BODY, { body: STRING });
     const first = appendVerificationFooter(t, { body: 'Draft' }, 'old-id');
     const edited = appendVerificationFooter(t, { ...first }, 'new-id');
     expect(footerCount(edited.body as string)).toBe(1);
@@ -100,7 +104,7 @@ describe('appendVerificationFooter', () => {
   });
 
   it('strips a legacy em-dash footer too (back-compat)', () => {
-    const t = tool('email', { body: STRING });
+    const t = tool(BODY, { body: STRING });
     const legacy = 'Draft\n\n— Sent by an AI agent via Suveren. Verify: https://www.suveren.ai/r/old';
     const out = appendVerificationFooter(t, { body: legacy }, 'new-id');
     expect(footerCount(out.body as string)).toBe(1);
@@ -109,23 +113,28 @@ describe('appendVerificationFooter', () => {
     expect(out.body).toContain('Receipt: https://www.suveren.ai/t/new-id');
   });
 
-  it('does NOT footer non-Category-A profiles (records/customers/charge)', () => {
-    for (const p of ['records', 'customers', 'charge']) {
-      const args = { description: 'a record', text: 'x' };
-      const out = appendVerificationFooter(tool(p, { description: STRING, text: STRING }, 'create'), args, 'r6');
+  it('no `message` declared → no footer, whatever the area (never decided by profile name)', () => {
+    for (const p of ['email', 'calendar', 'publish', 'records']) {
+      const args = { body: 'Hi', description: 'a record', text: 'x' };
+      const out = appendVerificationFooter(tool(undefined, { body: STRING, description: STRING, text: STRING }, 'create', p), args, 'r6');
       expect(out).toBe(args); // unchanged reference
     }
   });
 
+  it('a declared `message` gets the footer in any area — the declaration is what counts', () => {
+    const out = appendVerificationFooter(tool({ text: 'note', verb: 'Sent' }, { note: STRING }, 'create', 'records'), { note: 'n' }, 'r6b');
+    expect(out.note).toContain('/t/r6b');
+  });
+
   it('does not special-case Gmail `raw` — footer still appends to body', () => {
-    const out = appendVerificationFooter(tool('email', { raw: STRING, body: STRING }), { raw: 'BASE64RFC822', body: 'hi' }, 'r7');
+    const out = appendVerificationFooter(tool(BODY, { raw: STRING, body: STRING }), { raw: 'BASE64RFC822', body: 'hi' }, 'r7');
     expect(out.body).toContain('by an AI agent');
     expect(out.raw).toBe('BASE64RFC822'); // raw untouched
   });
 
-  it('no footer when there is no detectable content field (e.g. send_draft)', () => {
+  it('no footer for a tool that declares no message (e.g. send_draft)', () => {
     const args = { draftId: 'abc' };
-    const out = appendVerificationFooter(tool('email', { draftId: STRING }, 'send_draft'), args, 'r8');
+    const out = appendVerificationFooter(tool(undefined, { draftId: STRING }, 'send_draft'), args, 'r8');
     expect(out).toBe(args);
   });
 
@@ -152,19 +161,19 @@ describe('appendVerificationFooter — identity (v0.6)', () => {
   };
 
   it('high/as_vouched footer discloses the name + operator (separator owned by hap-core)', () => {
-    const out = appendVerificationFooter(tool('email', { body: STRING }), { body: 'Hi' }, 'rid', asVouched);
+    const out = appendVerificationFooter(tool(BODY, { body: STRING }), { body: 'Hi' }, 'rid', asVouched);
     expect(out.body).toContain("Andreas Schadauer's AI agent"); // v1.1 wording
     expect(out.body).toContain('verified by Suveren');
   });
 
   it('no subject → "Sent by an AI agent via Suveren", no name', () => {
-    const out = appendVerificationFooter(tool('email', { body: STRING }), { body: 'Hi' }, 'rid');
+    const out = appendVerificationFooter(tool(BODY, { body: STRING }), { body: 'Hi' }, 'rid');
     expect(out.body).toContain('Sent by an AI agent via Suveren');
     expect(out.body).not.toContain('agent of'); // no name disclosed
   });
 
   it('strip-and-replace works on a high footer too (no stacking)', () => {
-    const t = tool('email', { body: STRING });
+    const t = tool(BODY, { body: STRING });
     const once = appendVerificationFooter(t, { body: 'Hi' }, 'r1', asVouched);
     const twice = appendVerificationFooter(t, once, 'r2', asVouched);
     expect(footerCount(twice.body as string)).toBe(1);

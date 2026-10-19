@@ -97,7 +97,7 @@ export function computeContentBinding(
       return undefined;
     }
     // Documents/attachments-by-reference (suveren-invoicing-plan.md §6) —
-    // when the profile binds an "attachments" field, the hash (and the
+    // when the profile binds the tool's attachments field, the hash (and the
     // locally archived preimage) must commit to the SEALED fingerprint list
     // ({filename, sha256} per attachment), never bytes. `toolArgs.attachments`
     // itself may hold embedded bytes (a "field"-transport connector, once
@@ -105,13 +105,16 @@ export function computeContentBinding(
     // `raw`) — this override is driven entirely by the sealed meta
     // attachment-resolution.ts attaches, never by the raw wire argument, so
     // it is correct either way and regardless of finalize timing.
+    // Which argument carries the attachments is the tool's own manifest
+    // declaration (`attachmentsArg`), never a field name assumed here.
     let effectiveArgs = toolArgs;
-    if (binding.fields?.includes('attachments')) {
+    const attachmentsArg = tool?.gating?.attachmentsArg;
+    if (attachmentsArg && binding.fields?.includes(attachmentsArg)) {
       const sealed = (toolArgs as Record<string, unknown>)[ATTACHMENTS_SEALED_META_KEY] as
         | { attachments: SealedAttachment[] }
         | undefined;
       const fingerprints = (sealed?.attachments ?? []).map(a => ({ filename: a.filename, sha256: a.sha256 }));
-      effectiveArgs = { ...toolArgs, attachments: fingerprints };
+      effectiveArgs = { ...toolArgs, [attachmentsArg]: fingerprints };
     }
     // Select once and hash the selection, so the stored content and the hash
     // are provably the same object rather than two independent derivations.
