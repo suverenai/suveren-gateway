@@ -230,17 +230,28 @@ function compactObjectLine(
 function tableForObjectArray(
   rows: Record<string, unknown>[],
   itemProps: Record<string, JsonSchemaProperty> | undefined,
+  /** For a table of the call's OWN values (sealed, not read from a system):
+   *  marks every cell sealed, and formats money by the manifest's display
+   *  hints at `${pathPrefix}.<column>` (e.g. `lines[].unit_price`). */
+  own?: { hints?: ToolDisplayHints; pathPrefix: string; currency?: string },
 ): PreviewTable {
   const keys = itemProps
     ? Object.keys(itemProps).filter((k) => rows.some((r) => k in r))
     : [...new Set(rows.flatMap((r) => Object.keys(r)))];
-  const columns = keys.map((k) => ({ key: k, label: itemProps?.[k]?.title ?? humanizeKey(k) }));
+  const columns = keys.map((k) => ({
+    key: k,
+    label: (own && own.hints?.labels?.[`${own.pathPrefix}.${k}`]) ?? itemProps?.[k]?.title ?? humanizeKey(k),
+  }));
+  const sealed = !!own;
   const tableRows = rows.map((r) => ({
     cells: keys.map((k) => {
       const v = r[k];
+      if (own && !isPlainObject(v) && pathMatches(own.hints?.money, `${own.pathPrefix}.${k}`)) {
+        return { ...formatMoney(v, own.currency), sealed };
+      }
       const display = isPlainObject(v) ? compactObjectLine(v, itemProps?.[k]?.properties, false) : formatScalar(v);
       const exact = isPlainObject(v) ? compactObjectLine(v, itemProps?.[k]?.properties, true) : formatScalar(v, true);
-      return exact === display ? { value: display, sealed: false } : { value: display, valueTitle: exact, sealed: false };
+      return exact === display ? { value: display, sealed } : { value: display, valueTitle: exact, sealed };
     }),
   }));
   return { columns, rows: tableRows };
@@ -263,9 +274,18 @@ export function compactValue(v: unknown): string {
  * Null for anything else (the caller shows it as itself). Shape-driven only —
  * never by field or tool name.
  */
-export function nestedValueView(value: unknown): { table: PreviewTable } | { text: string } | null {
+export function nestedValueView(
+  value: unknown,
+  /** The argument's key + the tool's display hints: a table of the call's own
+   *  values is sealed and formats money as the manifest declares it. */
+  own?: { key: string; hints?: ToolDisplayHints; currency?: string },
+): { table: PreviewTable } | { text: string } | null {
   if (Array.isArray(value) && value.length > 0 && value.every(isPlainObject)) {
-    return { table: tableForObjectArray(value as Record<string, unknown>[], undefined) };
+    return {
+      table: tableForObjectArray(value as Record<string, unknown>[], undefined, {
+        hints: own?.hints, pathPrefix: `${own?.key ?? ''}[]`, currency: own?.currency,
+      }),
+    };
   }
   if (isPlainObject(value)) return { text: compactObjectLine(value, undefined, false) };
   return null;
@@ -951,7 +971,7 @@ export function buildCreationView(
     // A list of records (invoice lines) reads as a table; one record (a
     // service period) as one compact line — never "—" for a value that is
     // there, just not a plain string or number.
-    const nested = nestedValueView(raw);
+    const nested = nestedValueView(raw, { key, hints: displayHints, currency: currencyStr });
     if (nested && 'table' in nested) {
       rows.push({ kind: 'table', key, label, table: nested.table });
       continue;

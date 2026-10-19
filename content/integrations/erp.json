@@ -276,7 +276,7 @@
         ],
         "display": {
           "order": ["customer_id", "order_id", "number", "document_date", "service_period", "lines", "net_total", "currency", "payment_term_days", "memo"],
-          "money": ["net_total", "customer_id.credit_limit", "customer_id.open_balance", "customer_id.available_credit"],
+          "money": ["net_total", "lines[].unit_price", "customer_id.credit_limit", "customer_id.open_balance", "customer_id.available_credit"],
           "currencyField": "currency",
           "labels": {
             "customer_id": "Customer",
@@ -311,7 +311,7 @@
         },
         "display": {
           "order": ["invoice_id", "number", "document_date", "credit_total", "currency", "reason", "service_period", "lines"],
-          "money": ["credit_total"],
+          "money": ["credit_total", "lines[].unit_price"],
           "currencyField": "currency",
           "labels": {
             "invoice_id": "Invoice",
