@@ -6,6 +6,7 @@ import { spClient, type IntegrationManifest, type ProfileConfig, type CapKind } 
 import { minForBound, maxForBound, seedForBound, numericBoundValue } from '../lib/bound-defaults';
 import { formatUnit } from '../lib/bound-format';
 import { effectiveCapKind, enumExceedsCap, isCapped, type CapFieldShape } from '../lib/team-caps';
+import { useProfileValuedOptions, type Workspace } from '../lib/profile-valued-options';
 
 interface Props {
   profile: AgentProfile;
@@ -30,6 +31,9 @@ interface Props {
   approverNames?: string[];
   /** Display name of the team admin (for hard-ceiling message). */
   adminName?: string;
+  /** The workspace the mandate is for — narrows a `valuesFrom: "profiles"`
+   *  scope field's choices to the areas available there. */
+  workspace?: Workspace;
 }
 
 /**
@@ -73,6 +77,14 @@ function isSubsetEnumField(field: FieldDef): boolean {
   // bounds fields use `boundType` instead and never reach this check true.
   const f = field as ProfileScopeField & { enum?: string[] };
   return !!(f.enum && f.constraint?.enforceable.includes('subset'));
+}
+
+/** Runtime choices plus any value already selected but not among them (e.g. a
+ *  prefilled area no longer available) — so nothing is signed out of sight. */
+function withSelected(options: string[] | undefined, value: string | undefined): string[] | undefined {
+  if (!options) return undefined;
+  const selected = (value ?? '').split(',').map(s => s.trim()).filter(Boolean);
+  return [...options, ...selected.filter(v => !options.includes(v))];
 }
 
 function validateTag(value: string, format: string): boolean {
@@ -461,6 +473,7 @@ function FieldRow({
   onLabels,
   capMax,
   enumAllowedFrom,
+  options,
 }: {
   fieldKey: string;
   fieldDef: FieldDef;
@@ -488,16 +501,19 @@ function FieldRow({
    * convention this assumes.
    */
   enumAllowedFrom?: number;
+  /** Choices read at runtime for a subset field without an `enum`
+   *  (`valuesFrom: "profiles"`) — rendered like an enum subset field. */
+  options?: string[];
 }) {
   const label = humanizeFieldName(fieldKey, fieldDef);
   const fieldId = `${prefix}-field-${fieldKey}`;
 
   const input = (
     <>
-      {isSubsetEnumField(fieldDef) ? (
+      {isSubsetEnumField(fieldDef) || options ? (
         <CheckboxGroup
           id={fieldId}
-          options={(fieldDef as FieldDefWithEnum).enum!}
+          options={options ?? (fieldDef as FieldDefWithEnum).enum!}
           value={value}
           onChange={v => onChange(fieldKey, v)}
           disabled={readOnly}
@@ -747,8 +763,10 @@ export function BoundsEditor({
   profileConfig,
   approverNames,
   adminName,
+  workspace,
 }: Props) {
   const boundsSchema = profile.boundsSchema;
+  const profileValuedOptions = useProfileValuedOptions(profile, workspace);
   const contextSchema = profile.scopeSchema;
 
   // TR7/TR6 (work-plan "Added 2026-10-14"): a gatekeeper-enforced (read
@@ -1044,6 +1062,7 @@ export function BoundsEditor({
                 readOnly={readOnly}
                 discoveryIntegrationId={hasDiscovery ? discoveryIntegration!.id : undefined}
                 onLabels={(fieldKey, labels) => setContextLabels(prev => ({ ...prev, [fieldKey]: labels }))}
+                options={withSelected(profileValuedOptions[key], contextValues[key])}
               />
             );
           })}
