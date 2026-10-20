@@ -38,7 +38,7 @@ import { loadGuides, guideHeader, limitsSection, packageSection, fillGenerated, 
 import { getAllManifests } from '../manifest-loader';
 import { getConsumptionState } from '../consumption';
 import { unifiedLineDiff } from '../unified-diff';
-import { getProfile, type AgentProfile } from '@hap/core';
+import { getProfile, listProfiles, type AgentProfile } from '@hap/core';
 import type { IntegrationManager } from '../integration-manager';
 
 /** The delegation profile by its short name, as a manifest names it: a mandate under
@@ -103,17 +103,46 @@ function versionOf(id: string): string {
   return id.split('@')[1] ?? '';
 }
 
+/** The action type `create_mandate` carries: the authority to create mandates. */
+const MANDATE_ACTION = 'mandate';
+
+/** Every version of a profile this gateway knows under `short` (its local
+ *  profile catalog — the one the Gatekeeper verifies mandates against). */
+function knownVersions(short: string): AgentProfile[] {
+  const byId = new Map<string, AgentProfile>();
+  for (const key of listProfiles()) {
+    if (shortName(key) !== short) continue;
+    const p = getProfile(key);
+    if (p) byId.set(p.id, p);
+  }
+  return [...byId.values()];
+}
+
 /**
- * Decision 4 (DL1 brief): Delegation can never be proposed — a fixed rule in
- * the tool, independent of any held mandate's scope (a scope that somehow DID
- * list it would still not be honoured). Checked before the control-plane dry
- * run (validate) and again before executing (handler) — the same "approval
- * can come long after" discipline the brief's other checks use.
+ * Decision 4 (DL1 brief): a profile that grants mandate creation can never be
+ * proposed through `create_mandate` — the AI cannot widen its own delegation.
+ * Derived from the profile definitions, not from a name: refused when ANY
+ * version of the target this gateway knows declares the action type this
+ * tool carries (`mandate`). Fail-closed: a target the gateway's catalog does
+ * not know at all is refused too — nothing the Gatekeeper could later verify
+ * a mandate against, and nothing to prove it does not delegate.
+ * Independent of any held mandate's scope (a scope that somehow DID list such
+ * a profile would still not be honoured). Checked before the control-plane dry
+ * run (validate) and again before executing (handler) — approval can come
+ * long after the proposal.
  */
-function delegationItselfRefusal(args: Record<string, unknown>): string | undefined {
-  const requested = typeof args.profile === 'string' ? args.profile : '';
-  if (shortName(requested) === DELEGATION_PROFILE) {
-    return 'Delegation can never be proposed — the AI cannot widen its own delegation.';
+function proposalTargetRefusal(args: Record<string, unknown>): { code: string; message: string } | undefined {
+  const requested = typeof args.profile === 'string' ? shortName(args.profile.trim()) : '';
+  const versions = requested ? knownVersions(requested) : [];
+  if (versions.length === 0) {
+    return { code: 'UNKNOWN_PROFILE', message: `Unknown profile "${requested}" — not in this gateway's profile catalog.` };
+  }
+  if (versions.some(p => p.boundsSchema?.actionTypes?.includes(MANDATE_ACTION))) {
+    const name = versions.map(p => p.name).find(Boolean) ?? requested;
+    return {
+      code: 'DELEGATION_NOT_PROPOSABLE',
+      message: `${name} can never be proposed — it lets an AI propose mandates, and the AI cannot widen its own delegation.`,
+    };
   }
   return undefined;
 }
@@ -350,7 +379,7 @@ export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
         },
         create_mandate: {
           executionMapping: { profile: 'allowed_profiles', mode: 'allowed_modes' },
-          staticExecution: { action_type: 'mandate' },
+          staticExecution: { action_type: MANDATE_ACTION },
           actionLabel: 'Mandate proposed',
           hideUnlessAuthorized: true,
           // Shown like the mandate screen: limits and scope by the profile's own names.
@@ -455,24 +484,24 @@ export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
           '— Delegation itself can never be proposed. Create only.',
         inputSchema: CREATE_MANDATE_INPUT_SCHEMA,
         validate: async (args) => {
-          const fixed = delegationItselfRefusal(args);
+          const fixed = proposalTargetRefusal(args);
           // Decision 7: never silent — recorded under Blocked even though
           // this refuses before any proposal exists (`precheckBuiltin`'s
           // short-circuit has no `state` of its own to record through).
           if (fixed) {
             deps.state.denialLog?.record({
               ts: Date.now(), tool: 'create_mandate', integrationId: 'setup', profile: DELEGATION_PROFILE,
-              kind: 'bound', detail: fixed, who: 'gateway', code: 'DELEGATION_NOT_PROPOSABLE',
+              kind: 'bound', detail: fixed.message, who: 'gateway', code: fixed.code,
             });
-            return fixed;
+            return fixed.message;
           }
           const check = await controlPlaneMandate(true, mandateRequest(args));
           return check.ok ? undefined : check.message;
         },
         handler: async (args) => {
           // Approval can come long after the proposal: check the fixed rule again before creating.
-          const fixed = delegationItselfRefusal(args);
-          if (fixed) return { ...builtinText(`Refused: ${fixed}`), isError: true };
+          const fixed = proposalTargetRefusal(args);
+          if (fixed) return { ...builtinText(`Refused: ${fixed.message}`), isError: true };
           const r = await controlPlaneMandate(false, mandateRequest(args));
           if (!r.ok) return { ...builtinText(`Refused: ${r.message}`), isError: true };
           return builtinText(

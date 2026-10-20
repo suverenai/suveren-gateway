@@ -54,6 +54,16 @@ const profilesDir =
 const DELEGATION = JSON.parse(readFileSync(join(profilesDir, 'delegation', '0.1.profile.json'), 'utf8'));
 const DELEGATION_04 = JSON.parse(readFileSync(join(profilesDir, 'delegation', '0.4.profile.json'), 'utf8'));
 const SALES_04 = JSON.parse(readFileSync(join(profilesDir, 'sales', '0.4.profile.json'), 'utf8'));
+const DELEGATION_05 = JSON.parse(readFileSync(join(profilesDir, 'delegation', '0.5.profile.json'), 'utf8'));
+const CUSTOMERS_04 = JSON.parse(readFileSync(join(profilesDir, 'customers', '0.4.profile.json'), 'utf8'));
+// Not in delegation 0.5's fixed enum — the area an AI could not be allowed to propose before.
+const INVOICING = JSON.parse(readFileSync(join(profilesDir, 'invoicing', '0.1.profile.json'), 'utf8'));
+/** A profile under ANOTHER name that, like Delegation, grants mandate creation
+ *  (its actionTypes include `mandate`) — the derived rule must refuse it too. */
+const HELPER = {
+  ...DELEGATION_05,
+  id: 'example.com/profiles/helper@0.1', name: 'Helper', version: '0.1',
+} as typeof DELEGATION_05;
 const BRIEF = join(dataDir, 'context.md');
 
 beforeAll(() => {
@@ -61,6 +71,10 @@ beforeAll(() => {
   registerProfile(DELEGATION_04.id, DELEGATION_04);
   registerProfile(SALES_04.id, SALES_04);
   registerProfile('sales', SALES_04); // short-name lookup, as profile-loader.ts registers it
+  registerProfile(DELEGATION_05.id, DELEGATION_05);
+  registerProfile(CUSTOMERS_04.id, CUSTOMERS_04);
+  registerProfile(INVOICING.id, INVOICING);
+  registerProfile(HELPER.id, HELPER);
 });
 afterAll(() => rmSync(dataDir, { recursive: true, force: true }));
 afterEach(() => { delete process.env.SUVEREN_SIMULATION; rmSync(BRIEF, { force: true }); });
@@ -341,12 +355,79 @@ describe('setup__create_mandate', () => {
     const { call, state, submitProposal } = mandateTool([AUTH_04]);
     const r = await call({ ...ARGS, profile: 'delegation' });
     expect(r.isError).toBe(true);
-    expect(r.content[0].text).toMatch(/Delegation can never be proposed/);
+    expect(r.content[0].text).toMatch(/can never be proposed/);
     expect(submitProposal).not.toHaveBeenCalled();
     expect(seen).toEqual([]); // the fixed rule refuses before any control-plane dry run
     expect(state.denialLog.record).toHaveBeenCalledWith(expect.objectContaining({
       code: 'DELEGATION_NOT_PROPOSABLE', tool: 'create_mandate',
     }));
+  });
+
+  // Any area: no fixed list of profile names — what counts is the gateway's
+  // catalog, the held mandate's own signed list and (dry run) the team.
+  const AUTH_05 = {
+    ...AUTH_04, authorizationId: 'authz_d0000000-0000-4000-8000-000000000005', profileId: DELEGATION_05.id,
+    context: { allowed_profiles: 'sales,invoicing', allowed_modes: 'review' },
+  } as unknown as EnrichedAuthorization;
+  const INVOICING_ARGS = { ...ARGS, profile: 'invoicing', limits: {}, scope: {}, mode: 'review' };
+
+  it('any area: an area the held mandate lists (invoicing — never in the 0.5 enum) becomes a proposal', async () => {
+    process.env.SUVEREN_INTERNAL_SECRET = 'sec';
+    stubControlPlane(() => ({ status: 200, body: { ok: true } }));
+    const { call, state, submitProposal } = mandateTool([AUTH_05]);
+    const r = await call(INVOICING_ARGS);
+    expect(r.isError, r.content[0].text).toBeFalsy();
+    expect(submitProposal).toHaveBeenCalledOnce();
+    // The Gatekeeper compared "invoicing" against the mandate's own list.
+    expect(state.gatekeeper.verifyExecution).toHaveBeenCalledWith(
+      expect.anything(), expect.objectContaining({ action_type: 'mandate', allowed_profiles: 'invoicing' }), expect.anything(),
+    );
+  });
+
+  it('any area: an area the gateway\'s catalog does not know is refused before any dry run', async () => {
+    process.env.SUVEREN_INTERNAL_SECRET = 'sec';
+    const seen = stubControlPlane(() => ({ status: 200, body: { ok: true } }));
+    const ANY = { ...AUTH_05, context: { allowed_profiles: 'nosuch', allowed_modes: 'review' } } as EnrichedAuthorization;
+    const { call, state, submitProposal } = mandateTool([ANY]);
+    const r = await call({ ...INVOICING_ARGS, profile: 'nosuch' });
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toMatch(/Unknown profile "nosuch"/);
+    expect(submitProposal).not.toHaveBeenCalled();
+    expect(seen).toEqual([]);
+    expect(state.denialLog.record).toHaveBeenCalledWith(expect.objectContaining({ code: 'UNKNOWN_PROFILE', tool: 'create_mandate' }));
+  });
+
+  it('any area: an area not enabled in the team is refused by the control-plane check — no proposal', async () => {
+    process.env.SUVEREN_INTERNAL_SECRET = 'sec';
+    stubControlPlane(() => ({ status: 422, body: { error: 'mandate_refused', message: 'Invoicing 0.1 is not enabled in "Sales Vienna".' } }));
+    const { call, submitProposal } = mandateTool([AUTH_05]);
+    const r = await call(INVOICING_ARGS);
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toMatch(/not enabled in "Sales Vienna"/);
+    expect(submitProposal).not.toHaveBeenCalled();
+  });
+
+  it('any area: a 0.5 mandate still enforces its own list — an area it does not list is refused', async () => {
+    process.env.SUVEREN_INTERNAL_SECRET = 'sec';
+    stubControlPlane(() => ({ status: 200, body: { ok: true } }));
+    const { call, state, submitProposal } = mandateTool([AUTH_05]); // sales,invoicing
+    const r = await call({ ...INVOICING_ARGS, profile: 'customers' });
+    expect(r.isError).toBe(true);
+    expect(submitProposal).not.toHaveBeenCalled();
+    expect(state.denialLog.record).toHaveBeenCalledWith(expect.objectContaining({ kind: 'scope', tool: 'create_mandate' }));
+  });
+
+  it('derived rule: a profile under ANY name that grants mandate creation is refused, even if the mandate lists it', async () => {
+    process.env.SUVEREN_INTERNAL_SECRET = 'sec';
+    const seen = stubControlPlane(() => ({ status: 200, body: { ok: true } }));
+    const LISTS_HELPER = { ...AUTH_05, context: { allowed_profiles: 'helper', allowed_modes: 'review' } } as EnrichedAuthorization;
+    const { call, state, submitProposal } = mandateTool([LISTS_HELPER]);
+    const r = await call({ ...INVOICING_ARGS, profile: 'helper' });
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toMatch(/Helper can never be proposed/);
+    expect(submitProposal).not.toHaveBeenCalled();
+    expect(seen).toEqual([]);
+    expect(state.denialLog.record).toHaveBeenCalledWith(expect.objectContaining({ code: 'DELEGATION_NOT_PROPOSABLE' }));
   });
 
   // DL1 Interface contract: "create_mandate.profile must be a short profile name

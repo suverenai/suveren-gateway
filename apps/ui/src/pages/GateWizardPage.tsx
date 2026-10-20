@@ -24,6 +24,8 @@ interface AuthData {
   groupId?: string;
   groupName?: string;
   domain: string;
+  /** Set by AuthorizePicker — the personal workspace has a groupId too. */
+  isPersonal?: boolean;
   /** The integration's starter text for the intent (manifest / built-in `intentHint`). */
   intentHint?: string;
 }
@@ -261,6 +263,7 @@ export function GateWizardPage() {
             profileConfig={profileConfig}
             approverNames={approverNames}
             adminName={adminName}
+            workspace={{ groupId: authData.groupId, isPersonal: authData.isPersonal }}
           />
         </div>
       )}
