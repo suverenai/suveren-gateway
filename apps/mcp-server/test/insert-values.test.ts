@@ -110,6 +110,19 @@ describe('resolveInsertValue', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.code).toBe('UNDECLARED_KIND');
   });
+
+  it('names the missing tool when the connector runs but lacks the declared value tool', async () => {
+    const { integrationManager } = buildIntegrationManager({});
+    const running = integrationManager.getAllTools().map(t => ({ ...t, originalName: 'ListPaymentLinks' }));
+    const im = { ...integrationManager, getAllTools: () => running } as unknown as IntegrationManager;
+    const result = await resolveInsertValue(im, { placeholder: '{{link}}', connector: 'mollie', kind: 'payment-link', id: 'pl_1' });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe('UNAVAILABLE');
+      expect(result.error.message).toContain('has no tool "GetPaymentLink"');
+      expect(result.error.message).toContain('values.payment-link');
+    }
+  });
 });
 
 describe('applyInserts', () => {

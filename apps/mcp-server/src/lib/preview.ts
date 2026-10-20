@@ -185,6 +185,30 @@ export async function readPreview(
 }
 
 /**
+ * The message for a manifest-declared read that did not answer. `no_connector`
+ * covers two different cases: the connector is not running at all, or it
+ * runs but does not offer the declared tool (an older connector version than
+ * the manifest expects). Telling them apart matters — "could not be reached"
+ * for a running connector sends the person looking in the wrong place.
+ * `declaredAt` names where the manifest declares the tool (e.g. "documents.invoice").
+ */
+export function unavailableReadMessage(
+  integrationManager: IntegrationManager,
+  read: Extract<PreviewReadResult, { status: 'unavailable' }>,
+  connector: string,
+  tool: string,
+  declaredAt: string,
+): string {
+  if (read.reason === 'no_connector') {
+    const running = integrationManager.getAllTools().some(t => t.integrationId === connector);
+    if (running) {
+      return `Connector "${connector}" is running but has no tool "${tool}" (declared in ${declaredAt}) — the installed connector version does not offer it.`;
+    }
+  }
+  return read.message ?? `Connector "${connector}" could not be reached.`;
+}
+
+/**
  * jcs/sha256 of the structured result, else text — the AU4 fallback snapshot
  * for a preview WITHOUT a declared `version`. This never leaves the machine;
  * it exists only to detect "did the record change since we read it", not as

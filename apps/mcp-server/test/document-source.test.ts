@@ -128,6 +128,31 @@ describe('resolveDocumentReference', () => {
     if (!result.ok) expect(result.error.code).toBe('HASH_MISMATCH');
   });
 
+  it('names the missing tool when the connector runs but lacks the declared document tool', async () => {
+    // The connector is up (it offers other tools) but is an older version
+    // without get_document — "could not be reached" would be wrong.
+    const { integrationManager, callTool } = buildIntegrationManager({}, 'get_invoice');
+    const result = await resolveDocumentReference(integrationManager, { connector: 'erp', kind: 'invoice-pdf', id: 'inv-1' });
+    expect(callTool).not.toHaveBeenCalled();
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe('UNAVAILABLE');
+      expect(result.error.message).toContain('has no tool "get_document"');
+      expect(result.error.message).toContain('documents.invoice-pdf');
+      expect(result.error.message).not.toContain('could not be reached');
+    }
+  });
+
+  it('says "could not be reached" only when the connector is not running at all', async () => {
+    const integrationManager = { getAllTools: () => [], callTool: vi.fn(), isBuiltin: () => false } as unknown as IntegrationManager;
+    const result = await resolveDocumentReference(integrationManager, { connector: 'erp', kind: 'invoice-pdf', id: 'inv-1' });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe('UNAVAILABLE');
+      expect(result.error.message).toBe('Connector "erp" could not be reached.');
+    }
+  });
+
   it('refuses a malformed result missing required fields', async () => {
     const { integrationManager } = buildIntegrationManager({ filename: 'x.pdf' });
     const result = await resolveDocumentReference(integrationManager, { connector: 'erp', kind: 'invoice-pdf', id: 'inv-1' });
