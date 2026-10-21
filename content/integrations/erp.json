@@ -358,7 +358,7 @@
           { "tool": "get_customer", "args": { "id": "customer_id", "revision": "customer_revision" }, "attach": "customer_id",
             "version": { "arg": "customer_revision", "field": "revision" } },
           { "tool": "get_quote", "args": { "id": "quote_id", "revision": "quote_revision" }, "attach": "quote_id", "when": "quote_id",
-            "version": { "arg": "quote_revision", "field": "revision" } },
+            "version": { "arg": "quote_revision", "field": "revision" }, "fields": ["customer.name", "lines"] },
           { "tool": "get_item", "forEach": "lines", "args": { "id": "item_id" }, "attach": "item", "when": "item_id" },
           {
             "tool": "preview_invoice",
@@ -412,6 +412,7 @@
             "detail": "line {#}: {lines[].vat_rate|percent}, item {lines[].item.vat_rate|percent}" }
         ],
         "display": {
+          "names": { "quote_id": "number" },
           "order": ["customer_id", "quote_id", "quote_revision", "customer_revision", "order_id", "number", "document_date", "service_period", "lines", "net_total", "currency", "payment_term_days", "memo"],
           "money": ["net_total", "lines[].unit_price", "customer_id.credit_limit", "customer_id.open_balance", "customer_id.available_credit", "lines[].item.list_price", "quote_id.net_total"],
           "percent": ["lines[].vat_rate", "lines[].item.vat_rate"],
@@ -420,6 +421,8 @@
           "labels": {
             "customer_id": "Customer",
             "quote_id": "Quote",
+            "quote_id.customer.name": "Customer on the quote",
+            "quote_id.lines": "Quote lines",
             "quote_revision": "Quote revision",
             "customer_revision": "Customer revision",
             "lines[].item": "Item",
@@ -539,7 +542,8 @@
             "pass": ["ok", "not_applicable"], "fail": ["wrong_prefix", "wrong_pattern"], "missing": "not_checked" },
           { "key": "vies", "label": "VAT ID confirmed by VIES", "when": "uid", "path": "uid.vies.status", "blocking": true,
             "pass": ["valid"], "fail": ["invalid"], "notChecked": ["not_checked"], "notice": ["not_applicable"], "missing": "not_checked",
-            "detail": "[checked {uid.vies.checked_at|date}][ — {uid.vies.reason} — saving is not blocked while VIES is unreachable]" },
+            "detail": "[checked {uid.vies.checked_at|date}][ — {uid.vies.reason}]",
+            "details": { "not_checked": "[{uid.vies.reason} — ]saving is not blocked while VIES is unreachable" } },
           { "key": "vat-duplicate", "label": "No other customer with this VAT ID", "when": "uid", "blocking": true,
             "path": "duplicates.vat_duplicate_of", "present": "fail", "absent": "pass",
             "detail": "[already customer {duplicates.vat_duplicate_of}]" },
@@ -604,7 +608,8 @@
             "detail": "request for version {id.$version.approved}, record at version {id.$version.current}" },
           { "key": "vies", "label": "New VAT ID confirmed by VIES", "when": "uid", "path": "id.vat_check.vies.status", "blocking": true,
             "pass": ["valid"], "fail": ["invalid"], "notChecked": ["not_checked"], "notice": ["not_applicable"], "missing": "not_checked",
-            "detail": "[checked {id.vat_check.vies.checked_at|date}][ — {id.vat_check.vies.reason} — saving is not blocked while VIES is unreachable]" },
+            "detail": "[checked {id.vat_check.vies.checked_at|date}][ — {id.vat_check.vies.reason}]",
+            "details": { "not_checked": "[{id.vat_check.vies.reason} — ]saving is not blocked while VIES is unreachable" } },
           { "key": "vat-duplicate", "label": "No other customer with this VAT ID", "when": "uid", "blocking": true,
             "path": "duplicates.vat_duplicate_of", "present": "fail", "absent": "pass",
             "detail": "[already customer {duplicates.vat_duplicate_of}]" },

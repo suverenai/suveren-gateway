@@ -35,7 +35,7 @@ function Identity({ identity }: { identity: AttachedIdentity }) {
       <span className="id-raw">{identity.rawId}</span>
       {identity.context.length > 0 && (
         <span className="creation-context">
-          {identity.context.map((c) => (
+          {identity.context.filter((c) => !c.table).map((c) => (
             <span key={c.key}>
               {' · '}{c.label} {c.value ?? c.lines?.join(', ') ?? c.sublist?.map((x) => x.value).join(', ')}
             </span>
@@ -78,6 +78,13 @@ export function RenderedCreationView({ view, systemName }: { view: CreationView;
           </tbody>
         </table>
       ))}
+      {/* A linked record's own list (e.g. a quote's lines) as a table, not a run-on line. */}
+      {view.rows.flatMap((row) => (row.kind === 'identity' ? row.identity.context.filter((c) => c.table).map((c) => (
+        <div key={`${row.key}.${c.key}`} style={{ margin: '0.5rem 0' }}>
+          <div style={{ color: 'var(--text-tertiary)', fontSize: '0.78rem', marginBottom: '0.2rem' }}>{c.label}</div>
+          <PreviewTableView table={c.table!} />
+        </div>
+      )) : []))}
       {view.rows.filter((r) => r.kind === 'table').map((row) => (
         <div key={row.key} style={{ margin: '0.5rem 0' }}>
           <div style={{ color: 'var(--text-tertiary)', fontSize: '0.78rem', marginBottom: '0.2rem' }}>{row.label}</div>

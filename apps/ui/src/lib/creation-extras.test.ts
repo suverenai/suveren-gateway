@@ -63,7 +63,7 @@ describe('a forEach line whose read did not run (no item linked)', () => {
       elements: [{ status: 'ok', body: { structured: { id: 'i1', name: 'Beratung' } } }, { status: 'none', reason: 'no_target' }] };
     const v = buildCreationView({ lines: [{ item_id: 'i1', qty: 1 }, { description: 'Fahrt', qty: 1 }] }, [items], undefined);
     const table = (v.rows[0] as Extract<typeof v.rows[number], { kind: 'table' }>).table;
-    expect(table.rows[1].cells[0].value).toBe('—');
+    expect(table.rows[1].cells[0].value).toBe('');
     expect(table.rows[0].cells[0].value).toBe('Beratung (i1)');
   });
 });
@@ -78,5 +78,37 @@ describe('display.names — a record whose name is nested in the read', () => {
     expect(id.identity.name).toBe('Steiner Landtechnik GmbH');
     expect(id.identity.context).toEqual([]);
     expect(v.rows.some((r) => r.key === 'revision')).toBe(false);
+  });
+});
+
+describe('free-text lines only (no line links an item)', () => {
+  it('has no Item column at all', () => {
+    const items: PreviewReadSection = { tool: 'get_item', forEach: 'lines', attach: 'item', sourceArg: 'item_id',
+      elements: [{ status: 'none', reason: 'no_target' }, { status: 'none', reason: 'no_target' }] };
+    const v = buildCreationView({ lines: [{ description: 'Beratung', qty: 1 }, { description: 'Fahrt', qty: 1, unit: 'km' }] }, [items], undefined);
+    const table = (v.rows[0] as Extract<typeof v.rows[number], { kind: 'table' }>).table;
+    expect(table.columns.map((c) => c.label)).toEqual(['Description', 'Qty', 'Unit']);
+    expect(table.rows[0].cells.map((c) => c.value)).toEqual(['Beratung', '1', '']);
+  });
+});
+
+describe('linked record context: declared fields, no empty values, readable timestamps', () => {
+  it('shows only the declared fields (dotted allowed) of a quote, named by display.names', () => {
+    const quote: PreviewReadSection = { tool: 'get_quote', attach: 'quote_id', fields: ['revision', 'customer.name'],
+      result: ok({ id: 'q-uuid', number: 'A-2026-031', revision: 2, customer_id: 'c-uuid', ticket_id: 't-1', customer: { name: 'Steiner GmbH', revision: 3 } }) };
+    const v = buildCreationView({ quote_id: 'q-uuid' }, [quote], { names: { quote_id: 'number' }, labels: { 'quote_id.customer.name': 'Customer on the quote' } });
+    const id = v.rows[0] as Extract<typeof v.rows[number], { kind: 'identity' }>;
+    expect(id.identity.name).toBe('A-2026-031');
+    expect(id.identity.context.map((c) => [c.label, c.value])).toEqual([['Revision', '2'], ['Customer on the quote', 'Steiner GmbH']]);
+  });
+
+  it('leaves out empty fields and formats ISO timestamps', () => {
+    const customer: PreviewReadSection = { tool: 'get_customer', attach: 'customer_id',
+      result: ok({ id: 'c1', name: 'Steiner GmbH', crm_contact_id: null, email: '', created_at: '2026-10-20T08:00:00Z' }) };
+    const v = buildCreationView({ customer_id: 'c1' }, [customer], undefined);
+    const ctx = (v.rows[0] as Extract<typeof v.rows[number], { kind: 'identity' }>).identity.context;
+    expect(ctx.map((c) => c.key)).toEqual(['created_at']);
+    expect(ctx[0].value).not.toMatch(/T08:00/);
+    expect(ctx[0].value).toMatch(/2026/);
   });
 });

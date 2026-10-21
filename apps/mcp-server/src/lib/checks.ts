@@ -179,7 +179,8 @@ function evaluateOne(decl: CheckDeclaration, scope: Scope): CheckResult | null {
   // `showOnly` — only a failure (or, with "notice", a notice) becomes a line.
   if (decl.showOnly === 'fail' && outcome.status !== 'fail') return null;
   if (decl.showOnly === 'notice' && outcome.status !== 'fail' && outcome.status !== 'notice') return null;
-  const detail = decl.detail !== undefined ? renderCheckDetail(decl.detail, scope) : null;
+  const template = decl.details?.[outcome.status] ?? decl.detail;
+  const detail = template !== undefined ? renderCheckDetail(template, scope) : null;
   const tested = v.value;
   const plain = tested === null || ['string', 'number', 'boolean'].includes(typeof tested);
   return {

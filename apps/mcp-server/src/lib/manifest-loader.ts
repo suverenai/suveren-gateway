@@ -453,7 +453,7 @@ export function invalidSummaryReason(toolName: string, entry: unknown): string |
 // ─── D1 — `checks` shape validation (tool-gating-types.ts `CheckDeclaration`) ─
 
 const CHECK_KEYS = new Set(['key', 'label', 'path', 'when', 'forEach', 'pass', 'fail', 'notice', 'notChecked',
-  'compare', 'onTrue', 'onFalse', 'missing', 'detail', 'blocking', 'present', 'absent', 'showOnly']);
+  'compare', 'onTrue', 'onFalse', 'missing', 'detail', 'details', 'blocking', 'present', 'absent', 'showOnly']);
 const CHECK_LISTS = ['pass', 'fail', 'notice', 'notChecked'] as const;
 const DETAIL_FORMATS = ['money', 'percent', 'list', 'short', 'date'];
 
@@ -565,6 +565,14 @@ function invalidCheckReason(at: string, raw: unknown, seen: Set<string>): string
   if (c.showOnly !== undefined && c.showOnly !== 'fail' && c.showOnly !== 'notice') return `${at}.showOnly must be "fail" or "notice"`;
   if (c.missing !== undefined && c.missing !== 'skip' && c.missing !== 'not_checked') {
     return `${at}.missing must be "skip" or "not_checked"`;
+  }
+  if (c.details !== undefined) {
+    if (c.details === null || typeof c.details !== 'object' || Array.isArray(c.details)) return `${at}.details must map a status to a detail`;
+    for (const [status, d] of Object.entries(c.details as Record<string, unknown>)) {
+      if (!CHECK_STATUSES.includes(status as CheckStatus)) return `${at}.details.${status} is not a status (${CHECK_STATUSES.join(', ')})`;
+      const r = checkDetailReason(`${at}.details.${status}`, d, c.forEach);
+      if (r) return r;
+    }
   }
   if (c.detail !== undefined) return checkDetailReason(at, c.detail, c.forEach);
   return null;
