@@ -406,6 +406,14 @@ export interface CheckDeclaration {
   missing?: 'skip' | 'not_checked';
   /** Summary grammar (`{path|money}`, `[optional]`, `{#}`), rendered after the label. */
   detail?: string;
+  /**
+   * A `fail` of this check refuses the call before any card or proposal is
+   * made (tool-proxy.ts, the same refusal path as a bounds refusal), with
+   * the label + detail as the reason. `not_checked`, `notice` and `pass`
+   * never block. For checks whose failure no approver could rightly
+   * override (e.g. a register says an identifier is invalid).
+   */
+  blocking?: boolean;
 }
 
 /** A check's evaluated line (checks.ts → the approval card). */
@@ -419,6 +427,10 @@ export interface CheckResult {
   detail?: string;
   /** Why it is `not_checked` when the gateway itself decided so (missing / unexpected value). */
   reason?: string;
+  /** Declared `blocking` — a `fail` refuses the call (never reaches a card). */
+  blocking?: true;
+  /** The value tested, when it is a plain value (string/number/boolean/null). */
+  value?: CheckValue;
 }
 
 // ─── D3 — outside calls a connector makes (R5) ────────────────────────────

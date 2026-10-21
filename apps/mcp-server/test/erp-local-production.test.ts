@@ -333,3 +333,63 @@ describe('create_quote / update_quote — the quote PDF as it will be issued (D3
     expect(o.update_quote.staticExecution?.action_type).toBe('quote');
   });
 });
+
+// ─── Blocking checks in erp.json (decision 2026-10-21) ─────────────────────
+
+import { createGatedToolHandler } from '../src/lib/tool-proxy';
+import { reviewHarness } from './helpers/review-harness';
+
+const erpTool = (name: string, profile: string, actionType: string): DiscoveredTool => ({
+  ...tool(name),
+  gating: { profile, executionMapping: {}, staticExecution: { action_type: actionType } } as unknown as DiscoveredTool['gating'],
+});
+const MD = 'github.com/humanagencyprotocol/hap-profiles/master-data@0.1';
+const refusalText = (r: unknown) => (r as { content: Array<{ text: string }> }).content[0].text;
+
+describe('erp.json blocking checks — refused before any card', () => {
+  const CREATE = erpTool('create_customer', 'master-data', 'customer_create');
+  const args = { name: 'Alpen Agrar GmbH', address_lines: ['Dorfplatz 1'], country: 'AT', uid: 'ATU99999999' };
+
+  it('create_customer: VIES "invalid" → refused, no proposal, on the Blocked page', async () => {
+    const h = reviewHarness(MD, [CREATE, tool('check_vat_id')], (t, a) => (t === 'check_vat_id' ? vatCheck('invalid')(a) : undefined));
+    const r = await createGatedToolHandler(CREATE, h.im, h.state)({ ...args });
+    expect(refusalText(r)).toMatch(/^Refused: VAT ID confirmed by VIES: failed \(invalid\) — checked 2026-10-21\. Nothing was proposed/);
+    expect(h.submitProposal).not.toHaveBeenCalled();
+    expect(h.denials).toHaveBeenCalledWith(expect.objectContaining({ kind: 'check', code: 'CHECK_FAILED', field: 'vies' }));
+  });
+
+  it('create_customer: VIES unreachable ("not_checked") → never blocks; a card is made', async () => {
+    const h = reviewHarness(MD, [CREATE, tool('check_vat_id')], (t, a) => (t === 'check_vat_id' ? vatCheck('not_checked', { reason: 'VIES unreachable' })(a) : undefined));
+    await createGatedToolHandler(CREATE, h.im, h.state)({ ...args });
+    expect(h.submitProposal).toHaveBeenCalledOnce();
+    expect(h.denials).not.toHaveBeenCalled();
+  });
+
+  it('update_customer_tax_data: new VAT ID "invalid" → refused', async () => {
+    const T = erpTool('update_customer_tax_data', 'master-data', 'customer_tax');
+    const h = reviewHarness(MD, [T, tool('preview_customer_change')], (t) => (t === 'preview_customer_change'
+      ? { revision: 3, uid_or_country_changed: true, tax_mode: { now: 'normal', after: 'normal', now_label: 'n', after_label: 'n' },
+          issued_documents: { invoices: 0, credit_notes: 0 },
+          vat_check: { format: 'ok', duplicate: false, vies: { status: 'invalid', checked_at: '2026-10-21T09:00:00Z', reason: null } } }
+      : undefined));
+    const r = await createGatedToolHandler(T, h.im, h.state)({ id: 'c1', revision: 3, name: 'X', address_lines: ['a'], country: 'AT', uid: 'ATU99999999' });
+    expect(refusalText(r)).toMatch(/^Refused: New VAT ID confirmed by VIES: failed \(invalid\)/);
+    expect(h.submitProposal).not.toHaveBeenCalled();
+  });
+
+  it('create_invoice (also a quote conversion): reverse charge without VIES "valid" → refused (D1)', async () => {
+    const INV = erpTool('create_invoice', 'invoicing', 'invoice');
+    const inv = 'github.com/humanagencyprotocol/hap-profiles/invoicing@0.1';
+    const h = reviewHarness(inv, [INV, tool('get_customer'), tool('get_quote'), tool('preview_invoice')], (t) => {
+      if (t === 'get_customer') return { id: 'c9', uid: 'DE123456789', tax_mode: 'reverse_charge', vies_status: 'not_checked',
+        vies: { status: 'not_checked', reason: 'VIES unreachable', checked_at: null } };
+      if (t === 'get_quote') return { id: 'q1', revision: 2 };
+      if (t === 'preview_invoice') return { filename: 'x.pdf' };
+      return undefined;
+    });
+    const r = await createGatedToolHandler(INV, h.im, h.state)({ customer_id: 'c9', quote_id: 'q1', quote_revision: 2,
+      number: '2026-016', document_date: '2026-10-21', net_total: 100, currency: 'EUR' });
+    expect(refusalText(r)).toMatch(/^Refused: Reverse charge: VAT ID confirmed by VIES: failed \(not_checked\) — VIES unreachable\./);
+    expect(h.submitProposal).not.toHaveBeenCalled();
+  });
+});

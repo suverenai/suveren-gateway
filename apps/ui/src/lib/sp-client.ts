@@ -145,7 +145,7 @@ export type DenialReason =
  * other refusal of a gated call. Absent `kind` ⇒ 'read' (every record
  * predating AU2). Never carries message content — identifiers, field names
  * and numbers only. */
-export type DenialKind = 'read' | 'bound' | 'scope' | 'cumulative' | 'simulation' | 'not_authorized';
+export type DenialKind = 'read' | 'bound' | 'scope' | 'cumulative' | 'simulation' | 'not_authorized' | 'check';
 export interface DenialRecord {
   ts: number;
   tool: string;

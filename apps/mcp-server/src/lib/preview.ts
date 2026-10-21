@@ -22,7 +22,7 @@
 import { computeContentHash } from '@hap/core';
 import type { IntegrationManager } from './integration-manager';
 import { getManifest } from './manifest-loader';
-import { evaluateChecks } from './checks';
+import { evaluateChecks, blockingFailures } from './checks';
 import {
   MAX_FOREACH_ELEMENTS,
   type CheckDeclaration,
@@ -102,7 +102,8 @@ export function getToolChecks(
   integrationId: string,
   toolName: string,
 ): CheckDeclaration[] | undefined {
-  if (integrationManager.isBuiltin(integrationId)) return undefined;
+  // Optional call: test doubles of the manager predate builtins.
+  if (integrationManager.isBuiltin?.(integrationId)) return undefined;
   const entry = getManifest(integrationId)?.toolGating?.overrides?.[toolName] as { checks?: CheckDeclaration[] } | null | undefined;
   return entry?.checks;
 }
@@ -666,6 +667,33 @@ export async function buildInternalPreview(
       currencyField: display?.currencyField,
     }),
   };
+}
+
+/**
+ * Decision 2026-10-21 (Andreas) — the failed `blocking` checks for a call,
+ * evaluated exactly as the card would (same reads, same checks), BEFORE any
+ * proposal is made. Empty when the tool declares no blocking check (no read
+ * is run then) or none fails. A read that cannot answer gives `not_checked`
+ * or no line — never a `fail` — so an outage never blocks.
+ */
+export async function failedBlockingChecks(
+  integrationManager: IntegrationManager,
+  integrationId: string,
+  toolName: string,
+  actionArgs: Record<string, unknown>,
+): Promise<CheckResult[]> {
+  const declared = getToolChecks(integrationManager, integrationId, toolName);
+  if (!declared?.some((c) => c.blocking === true)) return [];
+  try {
+    const result = await buildInternalPreview(integrationManager, integrationId, toolName, actionArgs);
+    return blockingFailures(result.checks ?? []);
+  } catch (err) {
+    // Same rule as an unanswered read: no verdict, so no block — the card
+    // shows what could not be checked, and the connector still refuses at
+    // execution.
+    console.error(`[Suveren MCP] blocking checks for ${integrationId}__${toolName} could not run:`, err);
+    return [];
+  }
 }
 
 async function buildPreviewReads(

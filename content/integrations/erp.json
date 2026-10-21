@@ -361,7 +361,7 @@
             "path": "customer_id.vies_status", "pass": ["valid"], "fail": ["invalid"], "notChecked": ["not_checked", null],
             "notice": ["not_applicable"], "missing": "not_checked",
             "detail": "[checked {customer_id.vies.checked_at|date}][ — {customer_id.vies.reason}]" },
-          { "key": "reverse-charge", "label": "Reverse charge: VAT ID confirmed by VIES", "when": { "path": "customer_id.tax_mode", "in": ["reverse_charge"] },
+          { "key": "reverse-charge", "label": "Reverse charge: VAT ID confirmed by VIES", "blocking": true, "when": { "path": "customer_id.tax_mode", "in": ["reverse_charge"] },
             "path": "customer_id.vies_status", "pass": ["valid"], "fail": ["invalid", "not_checked", "not_applicable", null], "missing": "not_checked",
             "detail": "[{customer_id.vies.reason}]" },
           { "key": "list-price", "label": "Price vs. list", "forEach": "lines", "when": "lines[].item_id",
@@ -492,7 +492,7 @@
         "checks": [
           { "key": "vat-format", "label": "VAT ID format", "when": "uid", "path": "uid.format",
             "pass": ["ok", "not_applicable"], "fail": ["wrong_prefix", "wrong_pattern"], "missing": "not_checked" },
-          { "key": "vies", "label": "VAT ID confirmed by VIES", "when": "uid", "path": "uid.vies.status",
+          { "key": "vies", "label": "VAT ID confirmed by VIES", "when": "uid", "path": "uid.vies.status", "blocking": true,
             "pass": ["valid"], "fail": ["invalid"], "notChecked": ["not_checked"], "notice": ["not_applicable"], "missing": "not_checked",
             "detail": "[checked {uid.vies.checked_at|date}][ — {uid.vies.reason} — saving is not blocked while VIES is unreachable]" },
           { "key": "duplicate", "label": "No other customer with this VAT ID", "when": "uid",
@@ -539,7 +539,7 @@
             "attach": "id", "version": { "arg": "revision", "field": "revision" } }
         ],
         "checks": [
-          { "key": "vies", "label": "New VAT ID confirmed by VIES", "when": "uid", "path": "id.vat_check.vies.status",
+          { "key": "vies", "label": "New VAT ID confirmed by VIES", "when": "uid", "path": "id.vat_check.vies.status", "blocking": true,
             "pass": ["valid"], "fail": ["invalid"], "notChecked": ["not_checked"], "notice": ["not_applicable"], "missing": "not_checked",
             "detail": "[checked {id.vat_check.vies.checked_at|date}][ — {id.vat_check.vies.reason} — saving is not blocked while VIES is unreachable]" },
           { "key": "duplicate", "label": "No other customer with this VAT ID", "when": "uid",

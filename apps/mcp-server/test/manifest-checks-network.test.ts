@@ -13,6 +13,7 @@ const checks = (...list: unknown[]) => ({ checks: list });
 describe('checks validation', () => {
   it('accepts both forms, forEach paths, {#} and [] inside placeholders', () => {
     expect(invalidChecksReason('t', checks(good))).toBeNull();
+    expect(invalidChecksReason('t', checks({ ...good, blocking: true }))).toBeNull();
     expect(invalidChecksReason('t', checks({
       key: 'lp', label: 'Line price', forEach: 'lines', when: 'lines[].item_id', path: 'lines[].unit_price',
       compare: { op: 'eq', to: 'lines[].item.list_price' }, onTrue: 'pass', onFalse: 'notice',
@@ -33,6 +34,7 @@ describe('checks validation', () => {
     [{ ...good, onTrue: 'pass' }, /compare only/],
     [{ key: 'k', label: 'l', path: 'p', compare: { op: 'eq', to: 1 }, onFalse: 'red' }, /onFalse must be one of/],
     [{ ...good, missing: 'ignore' }, /missing must be/],
+    [{ ...good, blocking: 'yes' }, /blocking must be a boolean/],
     [{ ...good, label: 'x'.repeat(81) }, /at most 80/],
     [{ ...good, detail: '{a|money|percent}' }, /more than one format/],
     [{ ...good, detail: '{a|euro}' }, /unknown format/],

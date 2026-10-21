@@ -19,7 +19,8 @@ import { ArchiveWriteError } from './receipt-archive';
 import { appendVerificationFooter, shouldAttachFooter } from './receipt-footer';
 import { computeContentBinding, attachTicketId } from './content-binding';
 import { hashToolArgs } from './execution-journal';
-import { computeSubmissionPreviewHash } from './preview';
+import { computeSubmissionPreviewHash, failedBlockingChecks } from './preview';
+import { blockingRefusalReason } from './checks';
 import { stripSourceLink } from './request-context';
 import { candidatesAllowingAttachments } from './attachment-policy';
 import {
@@ -1205,6 +1206,34 @@ function createGatedToolHandlerInner(
     }
 
     if (matchingAuths.length === 0) return noEligibleMandate(refusals);
+
+    // Blocking checks (decision 2026-10-21): a manifest check declared
+    // `blocking` that FAILS refuses the call here — before any mandate is
+    // selected, any card or proposal made, or the connector called. The
+    // reads and the evaluation are the card's own (preview.ts/checks.ts);
+    // nothing here names a connector. `not_checked` never blocks, so an
+    // unreachable source cannot stop work; the connector's own refusal at
+    // execution stays the second line of defence.
+    const blockingFails = await failedBlockingChecks(integrationManager, tool.integrationId, tool.originalName, args);
+    if (blockingFails.length > 0) {
+      recordBlocked(state, tool, {
+        kind: 'check',
+        // A sentence without content: the check's own label only.
+        detail: `Check failed: ${blockingFails.map((f) => f.label).join('; ')}.`,
+        field: blockingFails[0].key,
+        who: 'gateway',
+        code: 'CHECK_FAILED',
+      });
+      return {
+        content: [{
+          type: 'text',
+          text: `Refused: ${blockingRefusalReason(blockingFails)}. Nothing was proposed and nothing ran. ` +
+            `This check reads the system's own data, so an approval cannot override it — correct the request ` +
+            `(or the data in the system) and try again.`,
+        }],
+        isError: true,
+      };
+    }
 
     // Verify EVERY matching authorization and collect the ones that pass
     // ("passers"). Selection among them is most-specific-wins + fail-safe

@@ -155,6 +155,7 @@ function evaluateOne(decl: CheckDeclaration, scope: Scope): CheckResult | null {
     key: decl.key,
     label: decl.label,
     status: 'not_checked',
+    ...(decl.blocking ? { blocking: true as const } : {}),
     ...(scope.element ? { index: scope.element.position } : {}),
   };
   const missing = (why: 'absent' | 'no_answer'): CheckResult | null => {
@@ -166,8 +167,11 @@ function evaluateOne(decl: CheckDeclaration, scope: Scope): CheckResult | null {
   const outcome = statusFor(decl, v.value, scope);
   if ('ok' in outcome) return outcome.ok ? null : missing(outcome.why);
   const detail = decl.detail !== undefined ? renderCheckDetail(decl.detail, scope) : null;
+  const tested = v.value;
+  const plain = tested === null || ['string', 'number', 'boolean'].includes(typeof tested);
   return {
     ...base,
+    ...(plain ? { value: tested as CheckValue } : {}),
     status: outcome.status,
     ...(outcome.reason ? { reason: outcome.reason } : {}),
     ...(detail ? { detail } : {}),
@@ -266,4 +270,17 @@ export function renderCheckDetail(template: string, scope: Scope): string | null
   // A dropped optional part can leave a dangling separator ("— reason").
   const clean = out.replace(/\s+/g, ' ').trim().replace(/^[—–,;:\s]+/, '').replace(/[—–,;:\s]+$/, '');
   return clean.length > 0 ? clean : null;
+}
+
+/** The results that refuse the call: a `fail` of a check declared `blocking`. */
+export function blockingFailures(results: CheckResult[]): CheckResult[] {
+  return results.filter((r) => r.blocking === true && r.status === 'fail');
+}
+
+/** One line per failed blocking check — label, then detail when there is one. */
+export function blockingRefusalReason(failures: CheckResult[]): string {
+  return failures
+    .map((f) => `${f.label}${f.index !== undefined ? ` (line ${f.index})` : ''}: failed` +
+      `${f.value !== undefined ? ` (${f.value === null ? 'none' : String(f.value)})` : ''}${f.detail ? ` — ${f.detail}` : ''}`)
+    .join('; ');
 }

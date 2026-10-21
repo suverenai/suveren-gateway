@@ -22,7 +22,7 @@ describe('value-list checks', () => {
   it('pass / fail / not_checked from the read, with detail', () => {
     const args = { uid: 'ATU1' };
     expect(evaluateChecks([VIES], { args, declaration: VAT_READ, sections: vatSections({ status: 'valid', checked_at: '2026-10-21T09:00:00Z', reason: null }) }))
-      .toEqual([{ key: 'vies', label: 'VAT ID confirmed', status: 'pass', detail: 'checked 2026-10-21' }]);
+      .toEqual([{ key: 'vies', label: 'VAT ID confirmed', status: 'pass', value: 'valid', detail: 'checked 2026-10-21' }]);
     expect(evaluateChecks([VIES], { args, declaration: VAT_READ, sections: vatSections({ status: 'invalid' }) })[0].status).toBe('fail');
     const nc = evaluateChecks([VIES], { args, declaration: VAT_READ, sections: vatSections({ status: 'not_checked', reason: 'VIES unreachable (timeout after 8 s)' }) });
     expect(nc[0]).toMatchObject({ status: 'not_checked', detail: 'VIES unreachable (timeout after 8 s)' });
@@ -120,8 +120,8 @@ describe('forEach checks', () => {
       elements: [ok({ list_price: 120 }), { status: 'none', reason: 'no_target' }, ok({ list_price: 110 })],
     }];
     expect(evaluateChecks([LIST_PRICE], { args, declaration: PREVIEW, sections })).toEqual([
-      { key: 'list-price', label: 'Line price = list price', status: 'pass', index: 1, detail: 'line 1: 120.00 EUR — list price 120.00 EUR' },
-      { key: 'list-price', label: 'Line price = list price', status: 'notice', index: 3, detail: 'line 3: 95.00 EUR — list price 110.00 EUR' },
+      { key: 'list-price', label: 'Line price = list price', status: 'pass', index: 1, value: 120, detail: 'line 1: 120.00 EUR — list price 120.00 EUR' },
+      { key: 'list-price', label: 'Line price = list price', status: 'notice', index: 3, value: 95, detail: 'line 3: 95.00 EUR — list price 110.00 EUR' },
     ]);
   });
 

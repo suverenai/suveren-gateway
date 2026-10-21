@@ -54,7 +54,9 @@ export type DenialReason =
 
 /** Discriminates every refusal recorded here. See the module doc above.
  * Absent on an on-disk record ⇒ 'read' (every record predating AU2 was one). */
-export type DenialKind = 'read' | 'bound' | 'scope' | 'cumulative' | 'simulation' | 'not_authorized';
+export type DenialKind = 'read' | 'bound' | 'scope' | 'cumulative' | 'simulation' | 'not_authorized'
+  /** A manifest check declared `blocking` failed (checks.ts) — refused before any card. */
+  | 'check';
 
 /** Who made the refusal. Local Gatekeeper checks (bounds, scope, action type,
  * simulation mode, no matching mandate) are 'gateway'; cumulative bounds and
