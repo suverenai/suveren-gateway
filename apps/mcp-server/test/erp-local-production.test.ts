@@ -114,7 +114,7 @@ describe('update_customer_tax_data card — own line for already-issued document
   const change = (over: Record<string, unknown>): Answer => () => ({
     current: { name: 'Steiner GmbH', address_lines: ['a'], country: 'AT', uid: 'ATU12345678', revision: 3 },
     revision: 3, changed: ['uid', 'country'], uid_or_country_changed: true,
-    tax_mode: { now: 'normal', after: 'reverse_charge' },
+    tax_mode: { now: 'normal', after: 'reverse_charge', now_label: 'normal VAT', after_label: 'reverse charge' },
     issued_documents: { invoices: 4, credit_notes: 1, last_number: '2026-014' }, open_quotes: 1,
     vat_check: { uid: 'DE123456789', format: 'ok', duplicate: false, duplicate_of: null,
       vies: { status: 'valid', reason: null, checked_at: '2026-10-21T09:15:00Z', request_id: 'R1', name: null, address: null } },
@@ -128,13 +128,13 @@ describe('update_customer_tax_data card — own line for already-issued document
     expect(checksOf(r)).toEqual([
       ['vies', 'pass', 'checked 2026-10-21'],
       ['duplicate', 'pass', null],
-      ['tax-mode', 'notice', 'normal → reverse_charge'],
+      ['tax-mode', 'notice', 'normal VAT → reverse charge'],
       ['already-invoiced', 'notice', '4 invoices, 1 credit notes — they keep the old data'],
     ]);
   });
 
   it('only the address changed → no already-issued line', async () => {
-    const { im } = erpDouble({ preview_customer_change: change({ uid_or_country_changed: false, tax_mode: { now: 'normal', after: 'normal' } }) });
+    const { im } = erpDouble({ preview_customer_change: change({ uid_or_country_changed: false, tax_mode: { now: 'normal', after: 'normal', now_label: 'normal VAT', after_label: 'normal VAT' } }) });
     const r = await buildInternalPreview(im, 'erp', 'update_customer_tax_data', args);
     expect(checksOf(r).map((c) => c[0])).not.toContain('already-invoiced');
   });
@@ -142,6 +142,7 @@ describe('update_customer_tax_data card — own line for already-issued document
 
 describe('create_invoice card — catalogue deviation (§5.3) and D2', () => {
   const customer: Answer = () => ({ id: 'c1', name: 'Steiner GmbH', uid: 'ATU12345678', revision: 2,
+    tax_mode: 'normal', tax_mode_label: 'normal VAT', vies_status: 'not_checked',
     vies: { status: 'not_checked', reason: 'VIES unreachable', checked_at: null } });
   const item: Answer = (a) => (a.id === 'i1' ? { id: 'i1', list_price: 120, vat_rate: 20, revision: 1 } : undefined);
   const args = {
@@ -274,8 +275,11 @@ describe('AM1 — create_customer approval survives a second VIES call', () => {
 });
 
 describe('create_invoice card — decision D1: reverse charge only with a VIES-confirmed VAT ID', () => {
+  // Shape of erp-mcp feat/local-production get_customer: tax_mode, tax_mode_label, vies_status (null = never checked), vies.
   const customer = (tax_mode: string, vies: Record<string, unknown> | null): Answer => () => ({
-    id: 'c9', name: 'Agrar Bayern GmbH', country: 'DE', uid: 'DE123456789', revision: 1, tax_mode, vies });
+    id: 'c9', name: 'Agrar Bayern GmbH', country: 'DE', uid: 'DE123456789', revision: 1,
+    tax_mode, tax_mode_label: tax_mode === 'reverse_charge' ? 'reverse charge' : 'normal VAT',
+    vies_status: vies ? vies.status : null, vies });
   const args = { customer_id: 'c9', number: '2026-016', document_date: '2026-10-21', currency: 'EUR', net_total: 100,
     lines: [{ description: 'Beratung', qty: 1, unit_price: 100, vat_rate: 0 }] };
   const rc = async (c: Answer) => {
@@ -285,7 +289,7 @@ describe('create_invoice card — decision D1: reverse charge only with a VIES-c
 
   it('reverse charge + VIES not checked → a FAILED check on the card (preview passes, issuing would refuse)', async () => {
     expect(await rc(customer('reverse_charge', { status: 'not_checked', reason: 'VIES unreachable', checked_at: null })))
-      .toEqual([['reverse-charge', 'fail', 'VIES unreachable — issuing is refused until VIES confirms the VAT ID']]);
+      .toEqual([['reverse-charge', 'fail', 'VIES unreachable']]);
   });
 
   it('reverse charge + never checked (vies null) → failed too, never "missing"', async () => {
@@ -295,5 +299,37 @@ describe('create_invoice card — decision D1: reverse charge only with a VIES-c
   it('reverse charge + valid → pass; a normal-VAT customer gets no reverse-charge line', async () => {
     expect(await rc(customer('reverse_charge', { status: 'valid', reason: null, checked_at: '2026-10-20T08:00:00Z' }))).toEqual([['reverse-charge', 'pass', null]]);
     expect(await rc(customer('normal', { status: 'not_checked', reason: 'x', checked_at: null }))).toEqual([]);
+  });
+});
+
+describe('create_quote / update_quote — the quote PDF as it will be issued (D3: no send_quote step in Local)', () => {
+  const pdf: Answer = () => ({ filename: 'A-2026-001-r1.pdf', contentType: 'application/pdf', contentBase64: 'JVBERi0=', sha256: 'x', pages: 1 });
+  it('create_quote: preview_quote gets exactly the create args, absent ones omitted', async () => {
+    const { im, callTool } = erpDouble({ get_customer: () => ({ id: 'c1' }), preview_quote: pdf });
+    const args = { customer_id: 'c1', number: 'S-A-2026-001', document_date: '2026-10-21', value: 120, discount_pct: 0, currency: 'EUR',
+      lines: [{ description: 'Beratung', qty: 1, unit_price: 120, vat_rate: 20 }] };
+    const r = await buildInternalPreview(im, 'erp', 'create_quote', args) as { reads?: Array<{ tool: string; kind?: string; result?: { status: string } }> };
+    expect(callTool).toHaveBeenCalledWith('erp', 'preview_quote', args);
+    expect(r.reads?.find((x) => x.tool === 'preview_quote')).toMatchObject({ kind: 'document', result: { status: 'ok' } });
+  });
+
+  it('simulation create_quote (no document_date) never calls preview_quote', async () => {
+    const { im, callTool } = erpDouble({ get_customer: () => ({ id: 'c1' }), preview_quote: pdf });
+    await buildInternalPreview(im, 'erp', 'create_quote', { customer_id: 'c1', lines: [], value: 0, discount_pct: 0, currency: 'EUR' });
+    expect(callTool.mock.calls.some((c) => c[1] === 'preview_quote')).toBe(false);
+  });
+
+  it('update_quote: preview_quote gets id + revision + the new content', async () => {
+    const { im, callTool } = erpDouble({ get_quote: () => ({ id: 'q1', revision: 2 }), preview_quote: pdf });
+    await buildInternalPreview(im, 'erp', 'update_quote', { id: 'q1', revision: 2, document_date: '2026-10-21', value: 90, discount_pct: 0, currency: 'EUR' });
+    expect(callTool).toHaveBeenCalledWith('erp', 'preview_quote', { id: 'q1', revision: 2, document_date: '2026-10-21', value: 90, discount_pct: 0, currency: 'EUR' });
+  });
+
+  it('quote-pdf document and preview_quote are internal; Local quote tools stay under sales', () => {
+    const o = getManifest('erp')!.toolGating.overrides as Record<string, { profile?: string; internal?: boolean; staticExecution?: Record<string, unknown> }>;
+    expect(o.preview_quote.internal).toBe(true);
+    expect(o.create_quote.profile).toBeUndefined(); // manifest profile = sales
+    expect(o.create_quote.staticExecution?.action_type).toBe('quote');
+    expect(o.update_quote.staticExecution?.action_type).toBe('quote');
   });
 });

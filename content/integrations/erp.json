@@ -191,7 +191,11 @@
         "contextKeys": { "customer": "customer_id" },
         "preview": [
           { "tool": "get_customer", "args": { "id": "customer_id" }, "attach": "customer_id" },
-          { "tool": "get_item", "forEach": "lines", "args": { "id": "item_id" }, "attach": "item", "when": "item_id" }
+          { "tool": "get_item", "forEach": "lines", "args": { "id": "item_id" }, "attach": "item", "when": "item_id" },
+          { "tool": "preview_quote", "when": "document_date", "kind": "document",
+            "args": { "customer_id": "customer_id", "number": "number", "document_date": "document_date", "lines": "lines",
+                      "value": "value", "discount_pct": "discount_pct", "currency": "currency",
+                      "valid_until": "valid_until", "notes": "notes" } }
         ],
         "checks": [
           { "key": "list-price", "label": "Price vs. list", "forEach": "lines", "when": "lines[].item_id",
@@ -244,7 +248,11 @@
         "preview": [
           { "tool": "get_quote", "args": { "id": "id", "revision": "revision" }, "attach": "id", "when": "revision",
             "version": { "arg": "revision", "field": "revision" } },
-          { "tool": "get_item", "forEach": "lines", "args": { "id": "item_id" }, "attach": "item", "when": "item_id" }
+          { "tool": "get_item", "forEach": "lines", "args": { "id": "item_id" }, "attach": "item", "when": "item_id" },
+          { "tool": "preview_quote", "when": "document_date", "kind": "document",
+            "args": { "id": "id", "revision": "revision", "document_date": "document_date", "lines": "lines",
+                      "value": "value", "discount_pct": "discount_pct", "currency": "currency",
+                      "valid_until": "valid_until", "notes": "notes" } }
         ],
         "checks": [
           { "key": "list-price", "label": "Price vs. list", "forEach": "lines", "when": "lines[].item_id",
@@ -257,13 +265,14 @@
             "detail": "line {#}: {lines[].vat_rate|percent}, item {lines[].item.vat_rate|percent}" }
         ],
         "display": {
-          "order": ["id", "lines", "discount_pct", "value", "valid_until", "notes"],
+          "order": ["id", "document_date", "lines", "discount_pct", "value", "valid_until", "notes"],
           "money": ["value", "lines[].item.list_price", "lines[].unit_price", "id.net_total"],
           "percent": ["discount_pct", "lines[].vat_rate", "lines[].item.vat_rate"],
           "currencyField": "currency",
           "labels": {
             "id": "Quote",
             "id.net_total": "Total (net, now)",
+            "document_date": "Quote date",
             "discount_pct": "Discount",
             "value": "Total (net)",
             "lines[].item": "Item",
@@ -349,12 +358,12 @@
         ],
         "checks": [
           { "key": "vies", "label": "Customer VAT ID confirmed by VIES", "when": "customer_id.uid",
-            "path": "customer_id.vies.status", "pass": ["valid"], "fail": ["invalid"], "notChecked": ["not_checked", null],
+            "path": "customer_id.vies_status", "pass": ["valid"], "fail": ["invalid"], "notChecked": ["not_checked", null],
             "notice": ["not_applicable"], "missing": "not_checked",
             "detail": "[checked {customer_id.vies.checked_at|date}][ — {customer_id.vies.reason}]" },
           { "key": "reverse-charge", "label": "Reverse charge: VAT ID confirmed by VIES", "when": { "path": "customer_id.tax_mode", "in": ["reverse_charge"] },
-            "path": "customer_id.vies.status", "pass": ["valid"], "fail": ["invalid", "not_checked", "not_applicable", null], "missing": "not_checked",
-            "detail": "[{customer_id.vies.reason} — issuing is refused until VIES confirms the VAT ID]" },
+            "path": "customer_id.vies_status", "pass": ["valid"], "fail": ["invalid", "not_checked", "not_applicable", null], "missing": "not_checked",
+            "detail": "[{customer_id.vies.reason}]" },
           { "key": "list-price", "label": "Price vs. list", "forEach": "lines", "when": "lines[].item_id",
             "path": "lines[].unit_price", "compare": { "op": "eq", "to": "lines[].item.list_price" },
             "onTrue": "pass", "onFalse": "notice",
@@ -369,7 +378,7 @@
           "money": ["net_total", "lines[].unit_price", "customer_id.credit_limit", "customer_id.open_balance", "customer_id.available_credit", "lines[].item.list_price", "quote_id.net_total"],
           "percent": ["lines[].vat_rate", "lines[].item.vat_rate"],
           "currencyField": "currency",
-          "hidden": ["customer_id.vies.status", "customer_id.vies.reason", "customer_id.vies.request_id"],
+          "hidden": ["customer_id.vies", "customer_id.vies_status", "customer_id.tax_mode"],
           "labels": {
             "customer_id": "Customer",
             "quote_id": "Quote",
@@ -379,7 +388,7 @@
             "lines[].item.list_price": "List price",
             "lines[].item.vat_rate": "Item VAT rate",
             "customer_id.uid": "VAT ID",
-            "customer_id.vies.checked_at": "VIES checked",
+            "customer_id.tax_mode_label": "Tax treatment",
             "order_id": "Order",
             "number": "Invoice number",
             "document_date": "Invoice date",
@@ -538,7 +547,7 @@
             "detail": "[already customer {id.vat_check.duplicate_of}]" },
           { "key": "tax-mode", "label": "Tax treatment of future invoices", "path": "id.tax_mode.after",
             "compare": { "op": "eq", "to": "id.tax_mode.now" }, "onTrue": "pass", "onFalse": "notice",
-            "detail": "{id.tax_mode.now} → {id.tax_mode.after}" },
+            "detail": "{id.tax_mode.now_label} → {id.tax_mode.after_label}" },
           { "key": "already-invoiced", "label": "Already issued to this customer", "when": "id.uid_or_country_changed",
             "path": "id.issued_documents.invoices", "compare": { "op": "gt", "to": 0 }, "onTrue": "notice", "onFalse": "pass",
             "detail": "{id.issued_documents.invoices} invoices, {id.issued_documents.credit_notes} credit notes — they keep the old data" }

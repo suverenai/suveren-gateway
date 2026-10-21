@@ -356,6 +356,8 @@ describe('MCP Gateway', () => {
         reads: [
           { tool: 'get_customer', attach: 'customer_id', sourceArg: 'customer_id', result: { status: 'none', reason: 'no_target' } },
           { tool: 'get_item', forEach: 'lines', attach: 'item', sourceArg: 'item_id', elements: [] },
+          // D2: the quote PDF read runs only with a document_date (Local) — none here.
+          { tool: 'preview_quote', kind: 'document', result: { status: 'none', reason: 'no_target' } },
         ],
         display: { currencyField: 'currency' },
       });
