@@ -400,7 +400,8 @@ export function ActionCard({ item, onApprove, onReject, onChangeNeeded, resolvin
         ) : (
           <>
           <p className="approval-resp">Approving sends exactly this. Your approval is recorded with your name.</p>
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
+          {/* Wraps on a phone instead of pushing Reject off the screen. */}
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
             <button
               className="btn btn-primary"
               onClick={async () => onApprove?.(item.id, await saveShownHash())}

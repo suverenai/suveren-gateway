@@ -4220,3 +4220,35 @@ body.is-updating .simulation-banner {
 
 /* Integrations card: a short note for the connector's current mode (e.g. "On this computer — no shared access") */
 .card-mode-note { display: block; font-weight: 400; font-size: var(--text-caption); color: var(--text-muted); margin-top: 0.15rem; }
+
+/* ── Card checks — UI spec §4.2.2 (revised 2026-10-21): one line per check ── */
+.card-checks { display: flex; flex-direction: column; gap: 0.15rem; margin: 0 0 var(--space-3); font-size: var(--text-body-sm); }
+.card-checks-top { margin: 0 0 var(--space-2); }
+.check-line { display: flex; gap: 0.4rem; align-items: baseline; }
+.check-mark { width: 1.1rem; flex-shrink: 0; text-align: center; font-weight: 700; }
+.check-pass { color: var(--text-primary); }
+/* Not checked: bold, dashed frame, monochrome — attention, never a failure. */
+.check-not-checked { font-weight: 700; border: 1px dashed var(--text-primary); border-radius: var(--radius-md); padding: var(--space-2) var(--space-3); margin: 0.2rem 0; }
+/* Notice: a plain line with a thin grey edge, no mark. */
+.check-notice { border-left: 2px solid var(--border-strong); padding: 0.1rem 0 0.1rem 0.6rem; margin: 0.15rem 0; }
+.check-notice strong { font-weight: 600; }
+/* Failed: the one red line on the card, bold, framed, above the sentence. */
+.check-fail { color: var(--check-failed); background: var(--check-failed-subtle); border: 2px solid var(--check-failed); border-radius: var(--radius-md); padding: var(--space-2) var(--space-3); font-weight: 700; }
+
+/* Now / New table (manifest display.compare) — now = from the system, new = sealed. */
+.compare-table { width: 100%; border-collapse: collapse; font-size: var(--text-body-sm); margin: 0.4rem 0 0.6rem; }
+.compare-table th { text-align: left; font-size: var(--text-caption); font-weight: 600; color: var(--text-tertiary); padding: 0.15rem var(--space-3) 0.15rem 0; }
+.compare-table td { padding: 0.15rem var(--space-3) 0.15rem 0; vertical-align: top; word-break: break-word; }
+.compare-table .compare-label { color: var(--text-tertiary); white-space: nowrap; }
+.compare-table .compare-now { color: var(--prov-system); font-weight: 600; }
+.compare-table .compare-new { color: var(--text-primary); font-weight: 700; }
+
+/* A display-only read — "From <source> — checked <time>", from the system, not sealed. */
+.system-box { border: 1px solid var(--border); border-left: 3px solid var(--prov-system); background: var(--prov-system-subtle); border-radius: var(--radius-md); padding: var(--space-3) var(--space-3); margin: 0.5rem 0; font-size: var(--text-body-sm); }
+.system-box-heading { font-size: 0.62rem; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; color: var(--prov-system); margin-bottom: var(--space-2); }
+.system-box dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.2rem var(--space-3); margin: 0; }
+.system-box dt { color: var(--text-tertiary); }
+.system-box dd { margin: 0; color: var(--prov-system); font-weight: 600; word-break: break-word; }
+.system-box-note { margin: var(--space-2) 0 0; font-size: var(--text-caption); color: var(--text-tertiary); }
+@media (max-width: 36rem) { .system-box dl { grid-template-columns: 1fr; } }
+.preview-table-wrap { max-width: 100%; overflow-x: auto; }

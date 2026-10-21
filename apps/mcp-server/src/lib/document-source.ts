@@ -91,7 +91,7 @@ export async function resolveDocumentReference(
 
   const args = substitute(docConfig.args, { id: ref.id });
   const read = await readPreview(integrationManager, ref.connector, docConfig.tool, args);
-  if (read.status === 'not_found') {
+  if (read.status === 'not_found' || read.status === 'refused') {
     return { ok: false, error: { code: 'NOT_FOUND', message: read.message ?? `No document "${ref.kind}"/"${ref.id}" on "${ref.connector}".` } };
   }
   if (read.status !== 'ok') {

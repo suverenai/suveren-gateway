@@ -208,9 +208,25 @@ describe('previewBoxView — AU8 several reads ("reads" in the response)', () =>
   });
 
   it('the note says when the context was read, not which single tool (there may be several)', () => {
-    const v = previewBoxView(readsResp, 'ERP', {});
+    const v = previewBoxView(readsResp, 'ERP', { customer_id: 'cust-1' });
     expect(v.note).toMatch(/read at \d{1,2}:\d{2}/i);
     expect(v.note).toContain('not by the AI');
+  });
+
+  it('no "read by the gateway" note when the box shows only the sealed proposal (nothing was read into it)', () => {
+    const onlyDisplayOnly: PreviewResponse = { status: 'ok', integration: 'erp', readAt: 0,
+      reads: [{ tool: 'check_vat_id', attach: 'uid', displayOnly: true, result: { status: 'ok', body: { structured: { format: 'ok' } } } },
+              { tool: 'dups', as: 'duplicates', result: { status: 'ok', body: { structured: { vat_duplicate_of: null } } } }] };
+    const v = previewBoxView(onlyDisplayOnly, 'ERP', { name: 'Steiner GmbH', uid: 'ATU1' });
+    expect(v.note).toBe('');
+    // …and an attach that did not resolve is no gateway value either.
+    const unresolved: PreviewResponse = { ...readsResp, reads: [{ tool: 'get_customer', attach: 'customer_id', result: { status: 'not_found' } }] };
+    expect(previewBoxView(unresolved, 'ERP', { customer_id: 'x' }).note).toBe('');
+  });
+
+  it('heading verb from the manifest: "changed" for an update', () => {
+    const v = previewBoxView({ ...readsResp, display: { verb: 'changed' } } as PreviewResponse, 'ERP', { customer_id: 'cust-1' });
+    expect(v.heading).toBe('What will be changed in ERP');
   });
 
   it('works with no toolArgs at all (defensive — the creation view just has nothing to merge)', () => {
@@ -226,5 +242,17 @@ describe('boundValuesOpen — the bound values are the content when nothing else
   it('folded while a working preview shows the record (ok, stale) or while still loading', async () => {
     const { boundValuesOpen } = await import('./approval-preview-view');
     for (const tone of ['ok', 'stale', 'loading', null]) expect(boundValuesOpen(tone)).toBe(false);
+  });
+});
+
+describe('a refused read', () => {
+  it('single read: "Refused by <system>" with the connector\'s words', () => {
+    const v = previewBoxView({ status: 'refused', message: 'Refused: outside the EU.' }, 'ERP');
+    expect(v.heading).toBe('Refused by ERP');
+    expect(v.note).toBe('Refused: outside the EU.');
+  });
+  it('one of several reads: its section says the refusal, not "Not found"', async () => {
+    const { buildOwnSection } = await import('./preview-render');
+    expect(buildOwnSection({ tool: 'preview_invoice', result: { status: 'refused', message: 'Refused: outside the EU.' } })?.note).toBe('Refused: outside the EU.');
   });
 });

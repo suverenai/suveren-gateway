@@ -22,8 +22,11 @@
 import { computeContentHash } from '@hap/core';
 import type { IntegrationManager } from './integration-manager';
 import { getManifest } from './manifest-loader';
+import { evaluateChecks, blockingFailures } from './checks';
 import {
   MAX_FOREACH_ELEMENTS,
+  type CheckDeclaration,
+  type CheckResult,
   type PreviewDeclaration,
   type PreviewReadConfig,
   type ToolDisplayHints,
@@ -42,7 +45,9 @@ export interface PreviewBody {
 export type PreviewReadResult =
   | { status: 'ok'; body: PreviewBody }
   | { status: 'unavailable'; reason: 'no_connector' | 'connector_error' | 'timeout'; message?: string }
-  | { status: 'not_found'; message?: string };
+  | { status: 'not_found'; message?: string }
+  /** The connector answered the read with a refusal ("Refused: …") — its own words, shown as such. */
+  | { status: 'refused'; message?: string };
 
 /** Per-read timeout (contract: "Timeout per read: 5s"). */
 export const PREVIEW_READ_TIMEOUT_MS = 5_000;
@@ -93,11 +98,24 @@ export function getToolDisplayHints(
   return entry?.display;
 }
 
+/** D1 — a tool's manifest-declared `checks` (builtins have none). */
+export function getToolChecks(
+  integrationManager: IntegrationManager,
+  integrationId: string,
+  toolName: string,
+): CheckDeclaration[] | undefined {
+  // Optional call: test doubles of the manager predate builtins.
+  if (integrationManager.isBuiltin?.(integrationId)) return undefined;
+  const entry = getManifest(integrationId)?.toolGating?.overrides?.[toolName] as { checks?: CheckDeclaration[] } | null | undefined;
+  return entry?.checks;
+}
+
 /**
  * Map the action's bound arguments onto the preview (read) tool's own
  * argument names, per the manifest's `args` dict (key = preview arg name,
  * value = action arg name — same direction as `executionMapping`). An action
- * arg that is absent is simply omitted, never invented.
+ * arg that is absent — or null (D2: never sent as `null`) — is simply
+ * omitted, never invented.
  */
 export function mapPreviewArgs(
   preview: Pick<ToolPreviewConfig, 'args'>,
@@ -105,9 +123,31 @@ export function mapPreviewArgs(
 ): Record<string, unknown> {
   const mapped: Record<string, unknown> = {};
   for (const [targetArg, sourceArg] of Object.entries(preview.args)) {
-    if (sourceArg in actionArgs) mapped[targetArg] = actionArgs[sourceArg];
+    const value = actionArgs[sourceArg];
+    if (value !== undefined && value !== null) mapped[targetArg] = value;
   }
   return mapped;
+}
+
+/**
+ * D2 — "present" for a read's (or a check's) `when` path: not undefined,
+ * null, an empty/blank string, an empty array, or `false`.
+ */
+export function isPresentForWhen(v: unknown): boolean {
+  if (v === undefined || v === null || v === false) return false;
+  if (typeof v === 'string') return v.trim().length > 0;
+  if (Array.isArray(v)) return v.length > 0;
+  return true;
+}
+
+/** The value at a dotted path (`a.b.c`) inside `source`, or undefined. */
+export function valueAtPath(source: unknown, path: string): unknown {
+  let cur: unknown = source;
+  for (const part of path.split('.')) {
+    if (cur === null || typeof cur !== 'object' || Array.isArray(cur)) return undefined;
+    cur = (cur as Record<string, unknown>)[part];
+  }
+  return cur;
 }
 
 /**
@@ -121,6 +161,11 @@ export function previewHasNoTarget(
   mapped: Record<string, unknown>,
 ): boolean {
   return Object.keys(preview.args).length > 0 && Object.keys(mapped).length === 0;
+}
+
+/** D2 — a declared `when` whose path is not present in `source`. */
+function whenAbsent(config: { when?: string }, source: Record<string, unknown>): boolean {
+  return config.when !== undefined && !isPresentForWhen(valueAtPath(source, config.when));
 }
 
 export class PreviewTimeoutError extends Error {}
@@ -162,7 +207,12 @@ export async function readPreview(
     );
     const text = (result.content as Array<{ text?: string }> | undefined)?.[0]?.text;
     if (result.isError) {
-      return { status: 'not_found', message: capText(text) };
+      // Connectors answer every failed call as an error. One that starts
+      // "Refused" is the connector refusing (contract wording shared by
+      // Suveren's connectors), not a missing record — shown as a refusal.
+      return /^\s*Refused\b/i.test(text ?? '')
+        ? { status: 'refused', message: capText(text) }
+        : { status: 'not_found', message: capText(text) };
     }
     return {
       status: 'ok',
@@ -246,8 +296,14 @@ export interface ReadPlanItem {
   kind?: 'document';
   /** `forEach` only — the source action-arg name. */
   forEach?: string;
-  /** `forEach` only — one planned read per (capped) source element, in order. */
-  elements?: Array<{ args: Record<string, unknown> }>;
+  /** `forEach` only — one planned read per (capped) source element, in order.
+   *  `skip`: the element's `when` field is absent — not read, outcome `none`. */
+  elements?: Array<{ args: Record<string, unknown>; skip?: boolean }>;
+  /** See {@link PreviewReadConfig.displayOnly} — excluded from the AU4 hash. */
+  displayOnly?: boolean;
+  /** See {@link PreviewReadConfig.as} / {@link PreviewReadConfig.label}. */
+  as?: string;
+  label?: string;
   /** `forEach` only — present when the source array exceeded the cap. */
   overflow?: { shown: number; total: number };
   /**
@@ -286,20 +342,31 @@ export function planPreviewReads(
       version: config.version,
       kind: config.kind,
       argsMapping: config.args,
+      ...(config.displayOnly ? { displayOnly: true } : {}),
+      ...(config.as ? { as: config.as } : {}),
+      ...(config.label ? { label: config.label } : {}),
     };
     if (config.forEach) {
       const source = actionArgs[config.forEach];
       const list = Array.isArray(source) ? source : [];
       const capped = list.slice(0, MAX_FOREACH_ELEMENTS);
+      // D2: an element whose `when` field is absent is not read — it keeps
+      // its place (outcome `none`) so outcomes stay aligned with elements.
       const elements = capped
         .filter(isPlainRecord)
-        .map((el) => ({ args: mapPreviewArgs(config, el) }));
+        .map((el) => (config.when !== undefined && !isPresentForWhen(valueAtPath(el, config.when))
+          ? { args: {}, skip: true }
+          : { args: mapPreviewArgs(config, el) }));
       return {
         ...base,
         forEach: config.forEach,
         elements,
         ...(list.length > MAX_FOREACH_ELEMENTS ? { overflow: { shown: MAX_FOREACH_ELEMENTS, total: list.length } } : {}),
       };
+    }
+    // D2: `when` absent → nothing to read, same outcome as no target.
+    if (config.when !== undefined && !isPresentForWhen(valueAtPath(actionArgs, config.when))) {
+      return { ...base, args: {}, rawSource: actionArgs, noTarget: true };
     }
     const mapped = mapPreviewArgs(config, actionArgs);
     return { ...base, args: mapped, rawSource: actionArgs, noTarget: previewHasNoTarget(config, mapped) };
@@ -331,11 +398,16 @@ async function runPreviewReadPlan(
       ...(sourceArgNames.length === 1 ? { sourceArg: sourceArgNames[0] } : {}),
       ...(item.fields ? { fields: item.fields } : {}),
       ...(item.kind ? { kind: item.kind } : {}),
+      ...(item.displayOnly ? { displayOnly: true } : {}),
+      ...(item.as ? { as: item.as } : {}),
+      ...(item.label ? { label: item.label } : {}),
     };
     if (item.elements !== undefined) {
       const elements: PreviewReadOutcome[] = [];
       for (const el of item.elements) {
-        elements.push(await readPreview(integrationManager, integrationId, item.tool, el.args));
+        elements.push(el.skip
+          ? { status: 'none', reason: 'no_target' }
+          : await readPreview(integrationManager, integrationId, item.tool, el.args));
       }
       sections.push({
         ...base,
@@ -367,11 +439,14 @@ async function runPreviewReadPlan(
     const { [item.version.arg]: _omit, ...withoutVersion } = item.rawSource!;
     const mappedCurrentArgs = mapPreviewArgs({ args: item.argsMapping }, withoutVersion);
     const read2 = await readPreview(integrationManager, integrationId, item.tool, mappedCurrentArgs);
-    if (read2.status !== 'ok' || read2.body.structured === undefined) {
+    // A connector may answer as JSON text only (no structuredContent) —
+    // read the version from that object the same way the card does.
+    const current2 = read2.status === 'ok' ? structuredOrJsonText(read2.body) : undefined;
+    if (current2 === undefined) {
       sections.push({ ...base, result: read1 });
       continue;
     }
-    const current = read2.body.structured[item.version.field];
+    const current = current2[item.version.field];
     if (typeof current !== 'string' && typeof current !== 'number') {
       sections.push({ ...base, result: read1 });
       continue;
@@ -385,7 +460,7 @@ async function runPreviewReadPlan(
         approved,
         current,
         stale,
-        ...(stale ? { currentBody: read2.body } : {}),
+        ...(stale && read2.status === 'ok' ? { currentBody: read2.body } : {}),
       },
     });
   }
@@ -422,9 +497,9 @@ export async function computeSubmissionPreviewHash(
   // combinedPreviewReadsHash's doc comment); the single-object path below is
   // untouched, so every pre-AU8 caller/test keeps its exact behaviour.
   if (Array.isArray(preview)) return combinedPreviewReadsHash(integrationManager, integrationId, preview, actionArgs);
-  if (preview.version) return undefined;
+  if (preview.version || preview.displayOnly) return undefined;
   const mapped = mapPreviewArgs(preview, actionArgs);
-  if (previewHasNoTarget(preview, mapped)) return undefined;
+  if (previewHasNoTarget(preview, mapped) || whenAbsent(preview, actionArgs)) return undefined;
   const read = await readPreview(integrationManager, integrationId, preview.tool, mapped);
   if (read.status !== 'ok') return undefined;
   return hashPreviewBody(read.body);
@@ -477,11 +552,14 @@ async function combinedPreviewReadsHash(
   reads: PreviewReadConfig[],
   actionArgs: Record<string, unknown>,
 ): Promise<string | undefined> {
-  const plan = planPreviewReads(reads, actionArgs).filter((item) => !item.version);
+  // A display-only read (volatile by nature — the connector re-checks at
+  // execution) is excluded like a versioned one.
+  const plan = planPreviewReads(reads, actionArgs).filter((item) => !item.version && !item.displayOnly);
   const hashes: string[] = [];
   for (const item of plan) {
     if (item.elements !== undefined) {
       for (const el of item.elements) {
+        if (el.skip) continue; // D2 `when` absent — nothing read, nothing hashed
         const read = await readPreview(integrationManager, integrationId, item.tool, el.args);
         if (read.status !== 'ok') return undefined;
         hashes.push(hashPreviewBody(read.body));
@@ -537,6 +615,12 @@ export interface PreviewReadSection {
   fields?: string[];
   /** See {@link PreviewReadConfig.kind} — passed through untouched. */
   kind?: 'document';
+  /** See {@link PreviewReadConfig.displayOnly} — the card labels it with its time. */
+  displayOnly?: boolean;
+  /** See {@link PreviewReadConfig.as} — input for checks only, no card section. */
+  as?: string;
+  /** See {@link PreviewReadConfig.label} — "From <label>". */
+  label?: string;
   /** Non-`forEach` reads only. */
   result?: PreviewReadOutcome;
   /** `forEach` reads only — one outcome per (capped) source element, same order. */
@@ -547,11 +631,12 @@ export interface PreviewReadSection {
   version?: PreviewVersionInfo;
 }
 
-export type InternalPreviewResult =
+export type InternalPreviewResult = (
   /** `no_target`: a preview is declared, but the action names no record to read. */
   | { status: 'none'; reason?: 'no_target' }
   | { status: 'unavailable'; reason: 'no_connector' | 'connector_error' | 'timeout'; message?: string }
   | { status: 'not_found'; message?: string }
+  | { status: 'refused'; message?: string }
   | {
       status: 'ok';
       integration: string;
@@ -567,7 +652,11 @@ export type InternalPreviewResult =
    *  declared read, degraded independently (a failing read never blocks the
    *  others, or the decision — temp/briefs/au8-brief.md). Distinguished from
    *  the single-read "ok" above by `reads` (never both on the same object). */
-  | { status: 'ok'; integration: string; reads: PreviewReadSection[]; display?: ToolDisplayHints };
+  | { status: 'ok'; integration: string; reads: PreviewReadSection[]; display?: ToolDisplayHints }
+) & {
+  /** D1 — the manifest's declared checks for this tool, evaluated (checks.ts). */
+  checks?: CheckResult[];
+};
 
 /**
  * Full orchestration for one `/internal/preview` call: resolves the
@@ -585,6 +674,56 @@ export async function buildInternalPreview(
   toolName: string,
   actionArgs: Record<string, unknown>,
 ): Promise<InternalPreviewResult> {
+  const result = await buildPreviewReads(integrationManager, integrationId, toolName, actionArgs);
+  // D1 — the manifest's declared checks, evaluated over the bound args and
+  // the reads that just ran. Never supplied by the AI or the caller.
+  const checks = getToolChecks(integrationManager, integrationId, toolName);
+  if (!checks || checks.length === 0) return result;
+  const display = getToolDisplayHints(integrationManager, integrationId, toolName);
+  return {
+    ...result,
+    checks: evaluateChecks(checks, {
+      args: actionArgs,
+      declaration: getToolPreviewConfig(integrationManager, integrationId, toolName),
+      sections: 'reads' in result ? result.reads : undefined,
+      currencyField: display?.currencyField,
+    }),
+  };
+}
+
+/**
+ * Decision 2026-10-21 (Andreas) — the failed `blocking` checks for a call,
+ * evaluated exactly as the card would (same reads, same checks), BEFORE any
+ * proposal is made. Empty when the tool declares no blocking check (no read
+ * is run then) or none fails. A read that cannot answer gives `not_checked`
+ * or no line — never a `fail` — so an outage never blocks.
+ */
+export async function failedBlockingChecks(
+  integrationManager: IntegrationManager,
+  integrationId: string,
+  toolName: string,
+  actionArgs: Record<string, unknown>,
+): Promise<CheckResult[]> {
+  const declared = getToolChecks(integrationManager, integrationId, toolName);
+  if (!declared?.some((c) => c.blocking === true)) return [];
+  try {
+    const result = await buildInternalPreview(integrationManager, integrationId, toolName, actionArgs);
+    return blockingFailures(result.checks ?? []);
+  } catch (err) {
+    // Same rule as an unanswered read: no verdict, so no block — the card
+    // shows what could not be checked, and the connector still refuses at
+    // execution.
+    console.error(`[Suveren MCP] blocking checks for ${integrationId}__${toolName} could not run:`, err);
+    return [];
+  }
+}
+
+async function buildPreviewReads(
+  integrationManager: IntegrationManager,
+  integrationId: string,
+  toolName: string,
+  actionArgs: Record<string, unknown>,
+): Promise<InternalPreviewResult> {
   const preview = getToolPreviewConfig(integrationManager, integrationId, toolName);
   if (!preview) return { status: 'none' };
 
@@ -595,7 +734,7 @@ export async function buildInternalPreview(
   }
 
   const mappedArgs = mapPreviewArgs(preview, actionArgs);
-  if (previewHasNoTarget(preview, mappedArgs)) return { status: 'none', reason: 'no_target' };
+  if (previewHasNoTarget(preview, mappedArgs) || whenAbsent(preview, actionArgs)) return { status: 'none', reason: 'no_target' };
   const read1 = await readPreview(integrationManager, integrationId, preview.tool, mappedArgs);
   if (read1.status !== 'ok') return read1;
 
@@ -626,13 +765,14 @@ export async function buildInternalPreview(
   const { [preview.version.arg]: _omit, ...withoutVersion } = actionArgs;
   const mappedCurrentArgs = mapPreviewArgs(preview, withoutVersion);
   const read2 = await readPreview(integrationManager, integrationId, preview.tool, mappedCurrentArgs);
-  if (read2.status !== 'ok' || read2.body.structured === undefined) {
+  const current2 = read2.status === 'ok' ? structuredOrJsonText(read2.body) : undefined;
+  if (current2 === undefined) {
     // Can't determine staleness — show the approved read without a version
     // comparison rather than failing the whole preview.
     return ok();
   }
 
-  const current = read2.body.structured[preview.version.field];
+  const current = current2[preview.version.field];
   if (typeof current !== 'string' && typeof current !== 'number') {
     return ok();
   }
@@ -644,7 +784,7 @@ export async function buildInternalPreview(
       approved,
       current,
       stale,
-      ...(stale ? { currentBody: read2.body } : {}),
+      ...(stale && read2.status === 'ok' ? { currentBody: read2.body } : {}),
     },
   });
 }

@@ -79,8 +79,8 @@ describe('readAlsoUnder — manifest validation', () => {
   it('the shipped erp.json passes, and its customer lookups also serve invoicing', () => {
     const erp = JSON.parse(readFileSync(join(import.meta.dirname, '..', '..', '..', 'content', 'integrations', 'erp.json'), 'utf8'));
     expect(invalidManifestReadAlsoUnderReason(erp)).toBeNull();
-    expect(erp.toolGating.overrides.find_customers.readAlsoUnder).toEqual(['invoicing']);
-    expect(erp.toolGating.overrides.get_customer.readAlsoUnder).toEqual(['invoicing']);
+    expect(erp.toolGating.overrides.find_customers.readAlsoUnder).toEqual(['invoicing', 'master-data']);
+    expect(erp.toolGating.overrides.get_customer.readAlsoUnder).toEqual(['invoicing', 'master-data']);
   });
 });
 

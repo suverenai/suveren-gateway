@@ -41,6 +41,7 @@ describe('areaIcon — UI spec §13.1 (from the profile id only, never a profile
     expect(areaIcon('x/charge@0.6')).toBe('payments');
     expect(areaIcon('x/sales@0.2')).toBe('sales');
     expect(areaIcon('x/calendar@0.4')).toBe('calendar');
+    expect(areaIcon('github.com/humanagencyprotocol/hap-profiles/master-data@0.1')).toBe('masterData');
     expect(areaIcon('x/records@0.5')).toBe('records');
     expect(areaIcon('x/publish@0.7')).toBe('publishing');
     expect(areaIcon('x/deploy@0.12')).toBe('deployments');

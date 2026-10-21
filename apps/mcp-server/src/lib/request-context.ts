@@ -198,7 +198,7 @@ async function readContextRecord(
     if (record === undefined) return { status: 'unavailable', reason: 'connector_error' };
     return { status: 'ok', record };
   }
-  if (read.status === 'not_found') return { status: 'not_found' };
+  if (read.status === 'not_found' || read.status === 'refused') return { status: 'not_found' };
   return { status: 'unavailable', reason: read.reason };
 }
 

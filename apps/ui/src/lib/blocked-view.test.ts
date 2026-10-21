@@ -250,3 +250,15 @@ describe('formatBlockedWhen', () => {
     expect(formatBlockedWhen(now, now)).toContain(' · ');
   });
 });
+
+describe('blockedView — a failed blocking check (kind "check")', () => {
+  it('has its own title, says what failed and that no approval was asked for', () => {
+    const v = blockedView({
+      ts: 0, tool: 'create_customer', integrationId: 'erp', profile: 'master-data', kind: 'check',
+      detail: 'Check failed: VAT ID confirmed by VIES.', field: 'vies', who: 'gateway', code: 'CHECK_FAILED',
+    });
+    expect(v.title).toBe('Blocked — a check failed');
+    expect(v.sentence).toBe('Check failed: VAT ID confirmed by VIES.');
+    expect(v.whatYouCanDo).toMatch(/no approval was asked for/);
+  });
+});

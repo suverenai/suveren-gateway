@@ -5,11 +5,11 @@
  * to a tool whose manifest declares `message` (never by profile name), goes
  * into the DECLARED text field with the DECLARED verb (Sent/Published),
  * strip-and-replace idempotency (so edits regenerate cleanly), the Gmail
- * `raw` skip, and the two-line footer (Receipt + HAP promo).
+ * `raw` skip, and the one-line footer (ticket link only).
  *
  * NOTE: the assurance wording ("of «name», verified by …") comes from hap-core
  * (deriveIdentityLine). These tests assert the gateway's own contribution
- * (verb, "Receipt:", the "--" lines, the HAP line, the /t/<id> link) and stay
+ * (verb, "Ticket:", the "--" line, the /t/<id> link) and stay
  * decoupled from hap-core's exact separator punctuation.
  */
 import { describe, it, expect } from 'vitest';
@@ -17,8 +17,7 @@ import { appendVerificationFooter, shouldAttachFooter } from '../src/lib/receipt
 import type { MessageGatingDeclaration } from '../src/lib/tool-gating-types';
 import type { DiscoveredTool } from '../src/lib/integration-manager';
 
-const HAP_LINE =
-  '-- Suveren implements HAP, the open Human Agency Protocol: https://www.humanagencyprotocol.org/';
+const HAP_PROMO = 'humanagencyprotocol.org';
 
 /** A tool as the manifest declares it: `message` drives the footer; `null` = no gating at all. */
 function tool(
@@ -49,14 +48,14 @@ describe('appendVerificationFooter', () => {
   it('appends the two-line footer to `body` for email (Sent + Ticket + HAP line)', () => {
     const out = appendVerificationFooter(tool(BODY, { body: STRING, subject: STRING }), { body: 'Hi' }, 'rcpt-1');
     expect(out.body).toBe(
-      `Hi\n\n-- Sent by an AI agent via Suveren. Ticket: https://www.suveren.ai/t/rcpt-1\n\n${HAP_LINE}`,
+      `Hi\n\n-- Sent by an AI agent via Suveren. Ticket: https://www.suveren.ai/t/rcpt-1`,
     );
   });
 
   it('uses the declared verb — "Published" for a post', () => {
     const out = appendVerificationFooter(tool(POST, { text: STRING }, 'create_post', 'publish'), { text: 'Hello world' }, 'r2');
     expect(out.text).toContain('-- Published by an AI agent via Suveren. Ticket: https://www.suveren.ai/t/r2');
-    expect(out.text).toContain(HAP_LINE);
+    expect(out.text).not.toContain(HAP_PROMO); // one-line footer: no HAP promotion line
   });
 
   it('appends to the declared field — `description` for a calendar event', () => {
@@ -81,7 +80,7 @@ describe('appendVerificationFooter', () => {
   it('links use full plain https URLs (no HTML anchors) — works across email/calendar/publish', () => {
     const out = appendVerificationFooter(tool(BODY, { body: STRING }), { body: 'Hi' }, 'r-links');
     expect(out.body).toContain('Ticket: https://www.suveren.ai/t/r-links');
-    expect(out.body).toContain('https://www.humanagencyprotocol.org/');
+    expect(out.body).not.toContain(HAP_PROMO);
     expect(out.body).not.toContain('<a '); // no HTML
   });
 

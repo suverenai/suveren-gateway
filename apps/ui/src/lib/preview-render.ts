@@ -68,6 +68,7 @@
 import { humanizeKey, HIDDEN_ARG_KEYS } from './approval-view';
 import type { PreviewBody, PreviewReadOutcome, PreviewReadSection, ToolDisplayHints } from './sp-client';
 import { isDocumentPreviewBody, type DocumentPreviewData } from './document-preview';
+import { compareLines, displayOnlyBox, type CompareLine, type SystemBox } from './creation-extras';
 
 /** One row of a labelled sub-list (DL4) — a nested object field whose own
  *  values are every one scalar. `label` is the nested key's own label
@@ -620,6 +621,8 @@ function unresolvedNote(outcome: PreviewReadOutcome | undefined): string {
     // read" was shown as "Not found in the system"), so show it when given.
     case 'not_found': return outcome.message ? `The system answered: ${outcome.message}` : 'Not found in the system.';
     case 'none': return 'Nothing to read.';
+    // The connector's own refusal sentence, as it said it.
+    case 'refused': return outcome.message ? capRefusal(outcome.message) : 'The system refused to answer.';
     default: return 'Not available right now.';
   }
 }
@@ -659,12 +662,24 @@ export function resolveAttachedIdentity(
   // (unformatted) value is actually a string — a number merely rendered as
   // a string (e.g. list_price) never qualifies as "the name".
   const rawObj = outcome && outcome.status === 'ok' ? resolveBodyObject(outcome.body)?.obj : undefined;
+  const prefix = opts?.pathPrefix;
+  // The manifest may name the field that holds the record's name
+  // (`display.names["<attach>"]`, a dotted path into the read) — for a read
+  // whose name is nested (e.g. `current.name`).
+  const declaredNamePath = prefix ? opts?.displayHints?.names?.[prefix] : undefined;
+  const declaredName = declaredNamePath ? valueAt(rawObj, declaredNamePath) : undefined;
+  if (typeof declaredName === 'string' && declaredName.length > 0) {
+    const ctx = rows.filter((r) => r.key !== 'id' && !isHidden(opts?.displayHints, `${prefix}.${r.key}`))
+      .map((r) => ({ ...r, label: resolveLabel(opts?.displayHints, `${prefix}.${r.key}`, r.label) }));
+    return { name: declaredName, rawId: formatScalar(rawId), context: ctx };
+  }
   const nameRow = rows.find((r) => ['name', 'title', 'label'].includes(r.key))
     ?? rows.find((r) => typeof rawObj?.[r.key] === 'string' && !r.lines && !r.sublist && !r.diffLines);
-  const prefix = opts?.pathPrefix;
   const context = rows
     // `id` is already shown as the (bound) raw id — never repeated as context.
     .filter((r) => r.key !== nameRow?.key && r.key !== 'id')
+    // The manifest's `hidden` applies to an attach's own fields too.
+    .filter((r) => !prefix || !isHidden(opts?.displayHints, `${prefix}.${r.key}`))
     .map((r) => {
       if (!prefix) return r;
       const path = `${prefix}.${r.key}`;
@@ -821,7 +836,11 @@ export function buildForEachTable(
     const cells: PreviewTableCell[] = [];
     if (attach) {
       const identity = resolveAttachedIdentity(outcome, section.sourceArg ? el[section.sourceArg] : undefined);
-      const text = identity.name ? `${identity.name} (${identity.rawId})` : identity.unresolved ? `${identity.rawId} — ${identity.unresolved}` : identity.rawId;
+      // A line with nothing to read (e.g. no item linked — the read's `when`)
+      // is simply empty, never "Nothing to read." in the middle of a table.
+      const text = outcome?.status === 'none'
+        ? '—'
+        : identity.name ? `${identity.name} (${identity.rawId})` : identity.unresolved ? `${identity.rawId} — ${identity.unresolved}` : identity.rawId;
       cells.push({ value: text, sealed: false });
     }
     for (const k of boundKeys) {
@@ -909,6 +928,7 @@ export function buildOwnSection(section: PreviewReadSection): PreviewOwnSection 
 // ─── the combined "creation" view ──────────────────────────────────────────
 
 export type CreationRow =
+  | { kind: 'compare'; key: string; label: string; lines: CompareLine[] }
   | { kind: 'identity'; key: string; label: string; identity: AttachedIdentity }
   | { kind: 'table'; key: string; label: string; table: PreviewTable }
   | { kind: 'scalar'; key: string; label: string; value: string; valueTitle?: string };
@@ -917,6 +937,8 @@ export interface CreationView {
   rows: CreationRow[];
   /** Reads with no attach — own sections, shown after the ordered rows. */
   sections: PreviewOwnSection[];
+  /** Display-only reads — each its own "From <label> — checked <time>" box (creation-extras.ts). */
+  systemBoxes: SystemBox[];
 }
 
 /**
@@ -930,10 +952,16 @@ export function buildCreationView(
   toolArgs: Record<string, unknown>,
   sections: PreviewReadSection[],
   displayHints: ToolDisplayHints | undefined,
+  opts: { readAt?: number } = {},
 ): CreationView {
-  const byAttachKey = new Map(sections.filter((s) => s.attach && !s.forEach).map((s) => [s.attach!, s]));
+  // A display-only read is never merged into the sealed values (it is not
+  // what will be saved); a read named `as` only feeds checks.
+  const byAttachKey = new Map(sections.filter((s) => s.attach && !s.forEach && !s.displayOnly).map((s) => [s.attach!, s]));
   const byForEachKey = new Map(sections.filter((s) => s.forEach).map((s) => [s.forEach!, s]));
-  const ownSections = sections.filter((s) => !s.attach && !s.forEach);
+  const ownSections = sections.filter((s) => !s.attach && !s.forEach && !s.as && !s.displayOnly);
+  const systemBoxes = sections
+    .map((s) => displayOnlyBox(s, displayHints, opts.readAt))
+    .filter((b): b is SystemBox => b !== null);
 
   // `resolveCurrency`'s dotted-path form reads a NON-forEach attach's own
   // raw body — resolved lazily (only when `currencyField` actually points
@@ -948,9 +976,17 @@ export function buildCreationView(
   const allKeys = [...new Set([...order, ...Object.keys(toolArgs)])];
 
   const rows: CreationRow[] = [];
+  const compared = new Set(Object.keys(displayHints?.compare ?? {}));
   for (const key of allKeys) {
     if (!(key in toolArgs)) continue;
     if (HIDDEN_ARG_KEYS.has(key) || isHidden(displayHints, key)) continue;
+    if (compared.has(key)) {
+      // All compared args as ONE Now / New table, at the first one's place.
+      if (!rows.some((r) => r.kind === 'compare')) {
+        rows.push({ kind: 'compare', key: 'compare', label: '', lines: compareLines(toolArgs, displayHints, attachedBody) });
+      }
+      continue;
+    }
     const label = resolveLabel(displayHints, key, humanizeKey(key));
 
     const forEachSection = byForEachKey.get(key);
@@ -991,5 +1027,18 @@ export function buildCreationView(
   }
 
   const builtSections = ownSections.map(buildOwnSection).filter((s): s is PreviewOwnSection => s !== null);
-  return { rows, sections: builtSections };
+  return { rows, sections: builtSections, systemBoxes };
+}
+
+function capRefusal(message: string): string {
+  return message.length > 300 ? `${message.slice(0, 299)}…` : message;
+}
+
+function valueAt(obj: unknown, path: string): unknown {
+  let cur: unknown = obj;
+  for (const p of path.split('.')) {
+    if (cur === null || typeof cur !== 'object' || Array.isArray(cur)) return undefined;
+    cur = (cur as Record<string, unknown>)[p];
+  }
+  return cur;
 }
