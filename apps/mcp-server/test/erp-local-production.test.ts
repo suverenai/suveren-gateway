@@ -14,14 +14,12 @@ import { loadManifests, getManifest } from '../src/lib/manifest-loader';
 import { buildInternalPreview, computeSubmissionPreviewHash, mapPreviewArgs } from '../src/lib/preview';
 import type { IntegrationManager, DiscoveredTool } from '../src/lib/integration-manager';
 import type { CheckResult } from '../src/lib/tool-gating-types';
-import { ensureMasterDataProfile } from './helpers/master-data-standin';
 
 const MANIFESTS_DIR = join(import.meta.dirname, '..', '..', '..', 'content', 'integrations');
 const PROFILES_DIR = process.env.SUVEREN_PROFILES_DIR ?? join(import.meta.dirname, '..', '..', '..', '..', 'hap-profiles');
 
 beforeAll(() => {
   loadProfiles(PROFILES_DIR);
-  ensureMasterDataProfile(); // TEMPORARY — see the helper
   loadManifests(MANIFESTS_DIR);
 });
 afterAll(() => clearProfiles());
