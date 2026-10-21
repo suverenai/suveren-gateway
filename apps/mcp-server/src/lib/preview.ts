@@ -425,11 +425,14 @@ async function runPreviewReadPlan(
     const { [item.version.arg]: _omit, ...withoutVersion } = item.rawSource!;
     const mappedCurrentArgs = mapPreviewArgs({ args: item.argsMapping }, withoutVersion);
     const read2 = await readPreview(integrationManager, integrationId, item.tool, mappedCurrentArgs);
-    if (read2.status !== 'ok' || read2.body.structured === undefined) {
+    // A connector may answer as JSON text only (no structuredContent) —
+    // read the version from that object the same way the card does.
+    const current2 = read2.status === 'ok' ? structuredOrJsonText(read2.body) : undefined;
+    if (current2 === undefined) {
       sections.push({ ...base, result: read1 });
       continue;
     }
-    const current = read2.body.structured[item.version.field];
+    const current = current2[item.version.field];
     if (typeof current !== 'string' && typeof current !== 'number') {
       sections.push({ ...base, result: read1 });
       continue;
@@ -443,7 +446,7 @@ async function runPreviewReadPlan(
         approved,
         current,
         stale,
-        ...(stale ? { currentBody: read2.body } : {}),
+        ...(stale && read2.status === 'ok' ? { currentBody: read2.body } : {}),
       },
     });
   }
@@ -743,13 +746,14 @@ async function buildPreviewReads(
   const { [preview.version.arg]: _omit, ...withoutVersion } = actionArgs;
   const mappedCurrentArgs = mapPreviewArgs(preview, withoutVersion);
   const read2 = await readPreview(integrationManager, integrationId, preview.tool, mappedCurrentArgs);
-  if (read2.status !== 'ok' || read2.body.structured === undefined) {
+  const current2 = read2.status === 'ok' ? structuredOrJsonText(read2.body) : undefined;
+  if (current2 === undefined) {
     // Can't determine staleness — show the approved read without a version
     // comparison rather than failing the whole preview.
     return ok();
   }
 
-  const current = read2.body.structured[preview.version.field];
+  const current = current2[preview.version.field];
   if (typeof current !== 'string' && typeof current !== 'number') {
     return ok();
   }
@@ -761,7 +765,7 @@ async function buildPreviewReads(
       approved,
       current,
       stale,
-      ...(stale ? { currentBody: read2.body } : {}),
+      ...(stale && read2.status === 'ok' ? { currentBody: read2.body } : {}),
     },
   });
 }

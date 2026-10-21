@@ -495,7 +495,7 @@
           { "key": "vies", "label": "VAT ID confirmed by VIES", "when": "uid", "path": "uid.vies.status", "blocking": true,
             "pass": ["valid"], "fail": ["invalid"], "notChecked": ["not_checked"], "notice": ["not_applicable"], "missing": "not_checked",
             "detail": "[checked {uid.vies.checked_at|date}][ — {uid.vies.reason} — saving is not blocked while VIES is unreachable]" },
-          { "key": "duplicate", "label": "No other customer with this VAT ID", "when": "uid",
+          { "key": "duplicate", "label": "No other customer with this VAT ID", "when": "uid", "blocking": true,
             "path": "uid.duplicate", "pass": [false], "fail": [true],
             "detail": "[already customer {uid.duplicate_of}]" }
         ],
@@ -542,7 +542,7 @@
           { "key": "vies", "label": "New VAT ID confirmed by VIES", "when": "uid", "path": "id.vat_check.vies.status", "blocking": true,
             "pass": ["valid"], "fail": ["invalid"], "notChecked": ["not_checked"], "notice": ["not_applicable"], "missing": "not_checked",
             "detail": "[checked {id.vat_check.vies.checked_at|date}][ — {id.vat_check.vies.reason} — saving is not blocked while VIES is unreachable]" },
-          { "key": "duplicate", "label": "No other customer with this VAT ID", "when": "uid",
+          { "key": "duplicate", "label": "No other customer with this VAT ID", "when": "uid", "blocking": true,
             "path": "id.vat_check.duplicate", "pass": [false], "fail": [true],
             "detail": "[already customer {id.vat_check.duplicate_of}]" },
           { "key": "tax-mode", "label": "Tax treatment of future invoices", "path": "id.tax_mode.after",

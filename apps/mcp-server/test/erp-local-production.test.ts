@@ -393,3 +393,37 @@ describe('erp.json blocking checks — refused before any card', () => {
     expect(h.submitProposal).not.toHaveBeenCalled();
   });
 });
+
+describe('erp.json — a duplicate VAT ID is refused before a card (R10: the connector would refuse it for sure)', () => {
+  const dup: Answer = (a) => ({ ...vatCheck('valid')(a)!, duplicate: true, duplicate_of: 'cust-17' });
+
+  it('create_customer: another customer has this VAT ID → refused, naming the existing customer', async () => {
+    const C = erpTool('create_customer', 'master-data', 'customer_create');
+    const h = reviewHarness(MD, [C, tool('check_vat_id')], (t, a) => (t === 'check_vat_id' ? dup(a) : undefined));
+    const r = await createGatedToolHandler(C, h.im, h.state)({ name: 'X', address_lines: ['a'], country: 'AT', uid: 'ATU12345678' });
+    expect(refusalText(r)).toMatch(/^Refused: No other customer with this VAT ID: failed \(true\) — already customer cust-17\./);
+    expect(h.submitProposal).not.toHaveBeenCalled();
+  });
+
+  it('update_customer_tax_data: the new VAT ID belongs to another customer → refused', async () => {
+    const T = erpTool('update_customer_tax_data', 'master-data', 'customer_tax');
+    const h = reviewHarness(MD, [T, tool('preview_customer_change')], (t) => (t === 'preview_customer_change'
+      ? { revision: 3, uid_or_country_changed: true, tax_mode: { now: 'normal', after: 'normal', now_label: 'n', after_label: 'n' },
+          issued_documents: { invoices: 0, credit_notes: 0 },
+          vat_check: { format: 'ok', duplicate: true, duplicate_of: 'cust-17', vies: { status: 'valid', checked_at: null, reason: null } } }
+      : undefined));
+    const r = await createGatedToolHandler(T, h.im, h.state)({ id: 'c1', revision: 3, name: 'X', address_lines: ['a'], country: 'AT', uid: 'ATU12345678' });
+    expect(refusalText(r)).toMatch(/^Refused: No other customer with this VAT ID: failed \(true\) — already customer cust-17\./);
+    expect(h.submitProposal).not.toHaveBeenCalled();
+  });
+});
+
+describe('version staleness works for a connector that answers as JSON text only', () => {
+  it('update_customer: a get_customer answered without structuredContent still reports stale', async () => {
+    const callTool = vi.fn().mockResolvedValue({ content: [{ type: 'text', text: JSON.stringify({ id: 'c1', revision: 5, email: 'a@b.at' }) }] });
+    const im = { getAllTools: () => [tool('get_customer')], callTool, isBuiltin: () => false } as unknown as IntegrationManager;
+    const r = await buildInternalPreview(im, 'erp', 'update_customer', { id: 'c1', revision: 4, email: 'new@b.at' }) as
+      { reads?: Array<{ version?: { stale: boolean; approved: unknown; current: unknown } }> };
+    expect(r.reads?.[0].version).toMatchObject({ stale: true, approved: 4, current: 5 });
+  });
+});
