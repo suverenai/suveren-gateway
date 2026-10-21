@@ -382,6 +382,17 @@ export function invalidDisplayHintsReason(toolName: string, entry: unknown): str
       }
     }
   }
+  // Now / New table: arg -> dotted path of its current value in an attached read.
+  if (d.compare !== undefined) {
+    if (d.compare === null || typeof d.compare !== 'object' || Array.isArray(d.compare)) {
+      return `override "${toolName}".display.compare must be an object mapping arguments to paths`;
+    }
+    for (const [arg, path] of Object.entries(d.compare as Record<string, unknown>)) {
+      if (typeof path !== 'string' || !PLAIN_PATH_RE.test(path) || !path.includes('.')) {
+        return `override "${toolName}".display.compare.${arg} must be "<attach>.<field>"`;
+      }
+    }
+  }
   // UI spec §15.2/§15.3 — the AI-authored-text argument marker.
   if (d.aiText !== undefined && (typeof d.aiText !== 'string' || d.aiText.length === 0)) {
     return `override "${toolName}".display.aiText must be a non-empty string naming an argument`;

@@ -162,6 +162,7 @@ describe('create_invoice card — catalogue deviation (§5.3) and D2', () => {
     const { im } = erpDouble({ get_customer: customer, get_item: item, preview_invoice: () => ({ filename: 'x.pdf' }) });
     const r = await buildInternalPreview(im, 'erp', 'create_invoice', args);
     expect(checksOf(r)).toEqual([
+      ['tax-supported', 'pass', 'normal VAT'],
       ['vies', 'not_checked', 'VIES unreachable'],
       ['list-price', 'notice', 'line 1: 95.00 EUR, list price 120.00 EUR'],
       ['item-vat', 'pass', 'line 1: 20%, item 20%'],
@@ -452,5 +453,45 @@ describe('version staleness works for a connector that answers as JSON text only
     const r = await buildInternalPreview(im, 'erp', 'update_customer', { id: 'c1', revision: 4, email: 'new@b.at' }) as
       { reads?: Array<{ version?: { stale: boolean; approved: unknown; current: unknown } }> };
     expect(r.reads?.[0].version).toMatchObject({ stale: true, approved: 4, current: 5 });
+  });
+});
+
+describe('erp.json — customers outside the EU VAT area (hap-erp-mcp #34: tax_mode "unsupported")', () => {
+  const outside = { id: 'c-ch', name: 'Zürich AG', country: 'CH', uid: 'CHE-123', revision: 1,
+    tax_mode: 'unsupported', tax_mode_label: 'Not supported (outside the EU)', vies_status: null, vies: null };
+
+  it('create_invoice → refused before a card, with the label', async () => {
+    const INV = erpTool('create_invoice', 'invoicing', 'invoice');
+    const h = reviewHarness('github.com/humanagencyprotocol/hap-profiles/invoicing@0.1', [INV, tool('get_customer'), tool('preview_invoice')],
+      (t) => (t === 'get_customer' ? outside : t === 'preview_invoice' ? { filename: 'x.pdf' } : undefined));
+    const r = await createGatedToolHandler(INV, h.im, h.state)({ customer_id: 'c-ch', number: '2026-020', document_date: '2026-10-21', net_total: 10, currency: 'EUR' });
+    expect(refusalText(r)).toMatch(/^Refused: Tax treatment supported for this customer: failed \(unsupported\) — Not supported \(outside the EU\)\./);
+    expect(h.submitProposal).not.toHaveBeenCalled();
+  });
+
+  it('create_quote → refused before a card', async () => {
+    const Q = erpTool('create_quote', 'sales', 'quote');
+    const h = reviewHarness('github.com/humanagencyprotocol/hap-profiles/sales@0.4', [Q, tool('get_customer'), tool('preview_quote')],
+      (t) => (t === 'get_customer' ? outside : t === 'preview_quote' ? { filename: 'q.pdf' } : undefined));
+    const r = await createGatedToolHandler(Q, h.im, h.state)({ customer_id: 'c-ch', number: 'A-1', document_date: '2026-10-21', lines: [], value: 0, discount_pct: 0, currency: 'EUR' });
+    expect(refusalText(r)).toMatch(/^Refused: Tax treatment supported for this customer: failed \(unsupported\)/);
+    expect(h.submitProposal).not.toHaveBeenCalled();
+  });
+
+  it('a tax_mode value the manifest does not name is "not checked" on the card — never a pass, never a block', async () => {
+    const { im } = erpDouble({ get_customer: () => ({ ...outside, tax_mode: 'something_new', tax_mode_label: 'New' }), preview_invoice: () => ({ filename: 'x.pdf' }) });
+    const r = await buildInternalPreview(im, 'erp', 'create_invoice', { customer_id: 'c-ch', net_total: 1, currency: 'EUR' });
+    expect(checksOf(r).find((c) => c[0] === 'tax-supported')).toEqual(['tax-supported', 'not_checked', 'New']);
+  });
+});
+
+describe('erp.json — a VAT ID in the wrong format is refused before a card (the connector refuses it for sure, §3.3)', () => {
+  it('create_customer: wrong prefix → refused', async () => {
+    const C = erpTool('create_customer', 'master-data', 'customer_create');
+    const h = reviewHarness(MD, [C, tool('check_vat_id'), tool('check_customer_duplicates')], (t, a) =>
+      t === 'check_vat_id' ? { ...vatCheck('not_checked')(a)!, format: 'wrong_prefix' } : t === 'check_customer_duplicates' ? dups()(a) : undefined);
+    const r = await createGatedToolHandler(C, h.im, h.state)({ name: 'X', address_lines: ['a'], country: 'AT', uid: 'DE99999999' });
+    expect(refusalText(r)).toMatch(/^Refused: VAT ID format: failed \(wrong_prefix\)/);
+    expect(h.submitProposal).not.toHaveBeenCalled();
   });
 });

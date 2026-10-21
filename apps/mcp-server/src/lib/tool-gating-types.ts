@@ -243,6 +243,11 @@ export interface ToolDisplayHints {
    * argument simply omits this.
    */
   aiText?: string;
+  /**
+   * Arg -> `<attach>.<path>` of its CURRENT value in an attached read: those
+   * args show as one Now / New table on the card (e.g. a tax-data change).
+   */
+  compare?: Record<string, string>;
 }
 
 /**

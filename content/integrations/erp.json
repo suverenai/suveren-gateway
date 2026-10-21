@@ -198,6 +198,9 @@
                       "valid_until": "valid_until", "notes": "notes" } }
         ],
         "checks": [
+          { "key": "tax-supported", "label": "Tax treatment supported for this customer", "path": "customer_id.tax_mode", "blocking": true,
+            "pass": ["normal", "reverse_charge", "kleinunternehmer"], "fail": ["unsupported"],
+            "detail": "[{customer_id.tax_mode_label}]" },
           { "key": "list-price", "label": "Price vs. list", "forEach": "lines", "when": "lines[].item_id",
             "path": "lines[].unit_price", "compare": { "op": "eq", "to": "lines[].item.list_price" },
             "onTrue": "pass", "onFalse": "notice",
@@ -208,6 +211,7 @@
             "detail": "line {#}: {lines[].vat_rate|percent}, item {lines[].item.vat_rate|percent}" }
         ],
         "display": {
+          "hidden": ["customer_id.vies", "customer_id.vies_status", "customer_id.tax_mode", "customer_id.revision"],
           "order": ["customer_id", "number", "document_date", "lines", "discount_pct", "value", "valid_until", "notes"],
           "money": ["value", "customer_id.credit_limit", "customer_id.open_balance", "customer_id.available_credit", "lines[].item.list_price", "lines[].unit_price"],
           "percent": ["discount_pct", "lines[].vat_rate", "lines[].item.vat_rate"],
@@ -215,6 +219,7 @@
           "labels": {
             "customer_id": "Customer",
             "customer_id.uid": "VAT ID",
+            "customer_id.tax_mode_label": "Tax treatment",
             "number": "Quote number",
             "document_date": "Quote date",
             "lines[].description": "Description",
@@ -357,6 +362,9 @@
           }
         ],
         "checks": [
+          { "key": "tax-supported", "label": "Tax treatment supported for this customer", "path": "customer_id.tax_mode", "blocking": true,
+            "pass": ["normal", "reverse_charge", "kleinunternehmer"], "fail": ["unsupported"],
+            "detail": "[{customer_id.tax_mode_label}]" },
           { "key": "vies", "label": "Customer VAT ID confirmed by VIES", "when": "customer_id.uid",
             "path": "customer_id.vies_status", "pass": ["valid"], "fail": ["invalid"], "notChecked": ["not_checked", null],
             "notice": ["not_applicable"], "missing": "not_checked",
@@ -378,7 +386,7 @@
           "money": ["net_total", "lines[].unit_price", "customer_id.credit_limit", "customer_id.open_balance", "customer_id.available_credit", "lines[].item.list_price", "quote_id.net_total"],
           "percent": ["lines[].vat_rate", "lines[].item.vat_rate"],
           "currencyField": "currency",
-          "hidden": ["customer_id.vies", "customer_id.vies_status", "customer_id.tax_mode"],
+          "hidden": ["customer_id.vies", "customer_id.vies_status", "customer_id.tax_mode", "customer_id.revision"],
           "labels": {
             "customer_id": "Customer",
             "quote_id": "Quote",
@@ -497,7 +505,7 @@
           { "tool": "check_customer_duplicates", "args": { "uid": "uid", "crm_contact_id": "crm_contact_id" }, "as": "duplicates" }
         ],
         "checks": [
-          { "key": "vat-format", "label": "VAT ID format", "when": "uid", "path": "uid.format",
+          { "key": "vat-format", "label": "VAT ID format", "when": "uid", "path": "uid.format", "blocking": true,
             "pass": ["ok", "not_applicable"], "fail": ["wrong_prefix", "wrong_pattern"], "missing": "not_checked" },
           { "key": "vies", "label": "VAT ID confirmed by VIES", "when": "uid", "path": "uid.vies.status", "blocking": true,
             "pass": ["valid"], "fail": ["invalid"], "notChecked": ["not_checked"], "notice": ["not_applicable"], "missing": "not_checked",
@@ -573,12 +581,11 @@
         "display": {
           "order": ["id", "name", "address_lines", "country", "uid"],
           "labels": {
-            "id": "Customer", "name": "Name (new)", "address_lines": "Address (new)", "country": "Country (new)", "uid": "VAT ID (new)",
-            "id.current.name": "Name (now)", "id.current.address_lines": "Address (now)",
-            "id.current.country": "Country (now)", "id.current.uid": "VAT ID (now)",
+            "id": "Customer", "name": "Name", "address_lines": "Address", "country": "Country", "uid": "VAT ID",
             "id.open_quotes": "Open quotes (made with the old data)"
           },
-          "hidden": ["id.vat_check", "id.tax_mode", "id.issued_documents", "id.changed", "id.revision", "id.uid_or_country_changed", "id.current.revision"]
+          "compare": { "name": "id.current.name", "address_lines": "id.current.address_lines", "country": "id.current.country", "uid": "id.current.uid" },
+          "hidden": ["id.current", "id.vat_check", "id.tax_mode", "id.issued_documents", "id.changed", "id.revision", "id.uid_or_country_changed"]
         }
       },
       "create_item": {
