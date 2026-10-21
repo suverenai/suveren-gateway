@@ -180,10 +180,15 @@ describe('bundled manifests — content/integrations', () => {
 });
 
 describe('modeNotes — shipped manifests', () => {
-  it('ERP and CRM say "On this computer — no shared access" for live/local, and the note passes validation', () => {
+  it('CRM says "On this computer — no shared access"; ERP names its outside VAT-ID check (R5); both pass validation', () => {
+    const expected: Record<string, string> = {
+      'crm.json': 'On this computer — no shared access',
+      // ERP Local calls EU VIES (declared in its `network`) — no unqualified "no shared access".
+      'erp.json': 'On this computer. VAT-ID checks ask the EU VIES service.',
+    };
     for (const f of ['erp.json', 'crm.json']) {
       const m = JSON.parse(readFileSync(join(MANIFESTS_DIR, f), 'utf8'));
-      expect(m.modeNotes, f).toEqual({ live: { local: 'On this computer — no shared access' } });
+      expect(m.modeNotes, f).toEqual({ live: { local: expected[f] } });
       expect(invalidModeLabelsReason({ ...m, modeLabels: m.modeNotes }), f).toBeNull();
     }
   });

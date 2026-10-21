@@ -21,6 +21,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { getProfile, clearProfiles } from '@hap/core';
 import { loadProfiles } from '../src/lib/profile-loader';
+import { ensureMasterDataProfile } from './helpers/master-data-standin';
 import { loadManifests, getManifest, invalidManifestReadGateReason, invalidManifestOverrideProfilesReason } from '../src/lib/manifest-loader';
 
 const MANIFESTS_DIR = join(import.meta.dirname, '..', '..', '..', 'content', 'integrations');
@@ -29,6 +30,7 @@ const PROFILES_DIR = process.env.SUVEREN_PROFILES_DIR
 
 beforeAll(() => {
   loadProfiles(PROFILES_DIR);
+  ensureMasterDataProfile(); // TEMPORARY — see the helper
   loadManifests(MANIFESTS_DIR);
 });
 afterAll(() => clearProfiles());

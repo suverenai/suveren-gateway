@@ -69,6 +69,10 @@ export interface ToolPreviewConfig {
    * needs to see first should declare one.
    */
   fields?: string[];
+  /** D2 — see {@link PreviewReadConfig.when}. */
+  when?: string;
+  /** See {@link PreviewReadConfig.displayOnly}. */
+  displayOnly?: boolean;
 }
 
 /**
@@ -129,6 +133,24 @@ export interface PreviewReadConfig {
    * construction rather than by a validated rule.
    */
   kind?: 'document';
+  /**
+   * D2 — run this read only when this path is present (not undefined, null,
+   * "", [] or false). Outside `forEach` it names an ACTION argument (dotted
+   * into it, e.g. `"uid"`); inside `forEach` it names a FIELD of each element
+   * (e.g. `"item_id"`). Absent → the read is not called and attaches nothing
+   * (outcome `none` / `no_target`) — never a read with missing args.
+   */
+  when?: string;
+  /**
+   * Display-only read: its result is shown on the card (and checks may read
+   * it) but it is EXCLUDED from the AU4 "changed since approval" hash. For a
+   * read whose answer is volatile by nature (a live register lookup that
+   * carries its own time and consultation id) — the connector re-runs that
+   * check itself at execution and stores its own result, so comparing two
+   * answers would refuse every approval. Never set this on a read that shows
+   * the record the action changes; that is what `version` / the hash protect.
+   */
+  displayOnly?: boolean;
 }
 
 /** Manifest cap (temp/briefs/au8-brief.md) — a preview may declare at most
@@ -323,6 +345,86 @@ export interface ProfileToolGatingEntry {
    * adapter (an age window resolved from mixed profiles could weaken it).
    */
   readAlsoUnder?: string[];
+  /** D1 — see {@link CheckDeclaration}. Evaluated by checks.ts for the card. */
+  checks?: CheckDeclaration[];
+}
+
+// ─── D1 — manifest-declared checks (ERP local-production contract §7.2) ────
+
+/** A check's outcome. `fail` is the only one the card shows in red. */
+export type CheckStatus = 'pass' | 'fail' | 'notice' | 'not_checked';
+export const CHECK_STATUSES: readonly CheckStatus[] = ['pass', 'fail', 'notice', 'not_checked'];
+/** Manifest cap — at most this many checks per tool (validated at load). */
+export const MAX_CHECKS_PER_TOOL = 12;
+
+export type CheckValue = string | number | boolean | null;
+
+/**
+ * One check a tool's approval card shows on its checks line, after the
+ * limit checks. Evaluated by the GATEWAY over the call's bound arguments plus
+ * the preview reads it ran itself — never supplied by the AI. A path that
+ * goes through a read's `attach` name (`uid.vies.status`,
+ * `lines[].item.list_price`) is read ONLY from that read's answer, never from
+ * an argument of the same name. Generic: no connector or profile name in code.
+ *
+ * Path grammar: `a`, `a.b.c` (an argument, or `<attach>.<field>` of a
+ * non-forEach read), `a[].b.c` (inside `forEach: "a"`: the element's own
+ * field, or `<attach>.<field>` of a forEach read over `a`).
+ */
+export interface CheckDeclaration {
+  /** Unique per tool. */
+  key: string;
+  /** ≤ 80 chars — what is checked, in the UI spec's wording. */
+  label: string;
+  /** The value under test. */
+  path: string;
+  /** Applies only if this path is present (not undefined/null/""/[]/false). */
+  when?: string;
+  /** One result per element of this array argument (`{#}` = its 1-based position). */
+  forEach?: string;
+  /** Value-matching form — a value in no list → `not_checked` ("unexpected value"). */
+  pass?: CheckValue[];
+  fail?: CheckValue[];
+  notice?: CheckValue[];
+  notChecked?: CheckValue[];
+  /** Comparison form — `to` is a path, or a number literal. */
+  compare?: { op: 'eq' | 'ne' | 'gt' | 'lt'; to: string | number };
+  /** For `compare` — defaults `pass` / `fail`. */
+  onTrue?: CheckStatus;
+  onFalse?: CheckStatus;
+  /** Path absent or its read unavailable: no line (`skip`, default) or a `not_checked` line. */
+  missing?: 'skip' | 'not_checked';
+  /** Summary grammar (`{path|money}`, `[optional]`, `{#}`), rendered after the label. */
+  detail?: string;
+}
+
+/** A check's evaluated line (checks.ts → the approval card). */
+export interface CheckResult {
+  key: string;
+  label: string;
+  status: CheckStatus;
+  /** 1-based element position, for a `forEach` check. */
+  index?: number;
+  /** The rendered `detail`, when declared and complete. */
+  detail?: string;
+  /** Why it is `not_checked` when the gateway itself decided so (missing / unexpected value). */
+  reason?: string;
+}
+
+// ─── D3 — outside calls a connector makes (R5) ────────────────────────────
+
+/**
+ * Manifest top-level `network` entry: an outside host a connector calls in
+ * the given modes (`modes` keyed like `modeLabels`: mode → adapter values, or
+ * `true` for every adapter; absent = every mode). Shown on the connector's
+ * settings as "Asks <host> — <purpose>. Sends: <sends>." The gateway does not
+ * proxy or police the call; it makes the promise visible.
+ */
+export interface NetworkDeclaration {
+  modes?: Record<string, string[] | true>;
+  host: string;
+  purpose: string;
+  sends: string;
 }
 
 /**

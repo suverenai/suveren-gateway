@@ -21,6 +21,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getProfile, clearProfiles } from '@hap/core';
 import { loadProfiles } from '../src/lib/profile-loader';
+import { ensureMasterDataProfile } from './helpers/master-data-standin';
 import { loadManifests, getAllManifests, getManifest, invalidManifestReadGateReason } from '../src/lib/manifest-loader';
 import { classifyEnumSwitches, uncoveredReadSwitchReason } from '../src/lib/read-gate';
 
@@ -32,6 +33,7 @@ const PROFILES_DIR = process.env.SUVEREN_PROFILES_DIR
 
 beforeAll(() => {
   loadProfiles(PROFILES_DIR);
+  ensureMasterDataProfile(); // TEMPORARY — see the helper
 });
 afterAll(() => clearProfiles());
 
