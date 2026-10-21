@@ -250,6 +250,8 @@ export interface ToolDisplayHints {
   compare?: Record<string, string>;
   /** The card heading's verb — "What will be created" (default) or "changed" (an update of an existing record). */
   verb?: 'created' | 'changed';
+  /** Attach key -> dotted path of the record's NAME in that read (when it isn't a top-level `name`). */
+  names?: Record<string, string>;
 }
 
 /**
@@ -437,11 +439,11 @@ export interface CheckDeclaration {
   blocking?: boolean;
   /**
    * `"fail"`: the card shows this check only when it fails (a pass or a
-   * "not checked" adds no line). Evaluation and `blocking` are unchanged —
+   * "not checked" adds no line). `"notice"`: only a notice or a fail. Evaluation and `blocking` are unchanged —
    * for a check whose pass is noise (e.g. "the request is for the current
    * version").
    */
-  showOnly?: 'fail';
+  showOnly?: 'fail' | 'notice';
 }
 
 /** A check's evaluated line (checks.ts → the approval card). */

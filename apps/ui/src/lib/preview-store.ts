@@ -35,6 +35,6 @@ export function refNameFrom(resp: PreviewResponse | undefined, toolArgs: Record<
     if (!resp || resp.status !== 'ok' || !('reads' in resp) || !toolArgs) return undefined;
     const section = resp.reads.find((s) => s.attach === argPath && !s.forEach && !s.displayOnly);
     if (!section) return undefined;
-    return resolveAttachedIdentity(section.result, toolArgs[argPath]).name;
+    return resolveAttachedIdentity(section.result, toolArgs[argPath], { pathPrefix: argPath, displayHints: resp.display }).name;
   };
 }

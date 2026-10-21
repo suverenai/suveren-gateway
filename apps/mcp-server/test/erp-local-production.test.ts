@@ -133,6 +133,7 @@ describe('update_customer_tax_data card — own line for already-issued document
       ['vies', 'pass', 'checked 2026-10-21'],
       ['vat-duplicate', 'pass', null],
       ['tax-mode', 'notice', 'normal VAT → reverse charge'],
+      ['open-quotes', 'notice', '1 quote made with the old data — update before invoicing'],
       ['already-invoiced', 'notice', '4 invoices, 1 credit note — they keep the old data'],
     ]);
   });
@@ -549,5 +550,53 @@ describe('a read the connector REFUSES is shown as a refusal, not "not found"', 
       lines: [{ description: 'Beratung', qty: 1, unit_price: 100, vat_rate: 0 }] });
     expect(refusalText(r)).toMatch(/^Refused: Tax treatment supported for this customer: failed \(unsupported\)/);
     expect(h.submitProposal).not.toHaveBeenCalled();
+  });
+});
+
+describe('erp.json — more requests the connector will certainly refuse, refused before a card', () => {
+  const INVP = 'github.com/humanagencyprotocol/hap-profiles/invoicing@0.1';
+  const INV = erpTool('create_invoice', 'invoicing', 'invoice');
+  const cust = { id: 'c1', name: 'Steiner', uid: 'ATU1', revision: 3, tax_mode: 'normal', tax_mode_label: 'normal VAT', vies_status: 'valid', vies: { status: 'valid' } };
+  const base = { customer_id: 'c1', number: '2026-040', document_date: '2026-10-21', net_total: 100, currency: 'EUR' };
+
+  it('quote → invoice when the customer changed since the quote (AM2) → refused; unchanged → a card', async () => {
+    const run = async (quoteCustomerRevision: number) => {
+      const h = reviewHarness(INVP, [INV, tool('get_customer'), tool('get_quote'), tool('preview_invoice')], (t) =>
+        t === 'get_customer' ? cust : t === 'get_quote' ? { id: 'q1', revision: 2, customer: { revision: quoteCustomerRevision } } : t === 'preview_invoice' ? { filename: 'x.pdf' } : undefined);
+      const r = await createGatedToolHandler(INV, h.im, h.state)({ ...base, quote_id: 'q1', quote_revision: 2 });
+      return { r, h };
+    };
+    const changed = await run(2);
+    expect(refusalText(changed.r)).toMatch(/^Refused: Customer unchanged since the quote: failed \(2\) — the quote was made with customer version 2, the customer is now at version 3/);
+    expect(changed.h.submitProposal).not.toHaveBeenCalled();
+    expect((await run(3)).h.submitProposal).toHaveBeenCalledOnce();
+  });
+
+  it('a line pinning an item version that is no longer current → refused (invoice and quote)', async () => {
+    const lines = (rev: number) => [{ item_id: 'i1', item_revision: rev, description: 'Beratung', qty: 1, unit_price: 120, vat_rate: 20 }];
+    const answer = (t: string) => t === 'get_customer' ? cust : t === 'get_item' ? { id: 'i1', revision: 4, list_price: 120, vat_rate: 20 } : t === 'preview_invoice' || t === 'preview_quote' ? { filename: 'x.pdf' } : undefined;
+    const h = reviewHarness(INVP, [INV, tool('get_customer'), tool('get_item'), tool('preview_invoice')], answer);
+    const r = await createGatedToolHandler(INV, h.im, h.state)({ ...base, net_total: 120, lines: lines(3) });
+    expect(refusalText(r)).toMatch(/^Refused: Line item is at the version it names \(line 1\): failed \(3\) — line 1: item version 3, the item is now at version 4\./);
+    const ok = reviewHarness(INVP, [INV, tool('get_customer'), tool('get_item'), tool('preview_invoice')], answer);
+    await createGatedToolHandler(INV, ok.im, ok.state)({ ...base, net_total: 120, lines: lines(4) });
+    expect(ok.submitProposal).toHaveBeenCalledOnce();
+    const Q = erpTool('create_quote', 'sales', 'quote');
+    const q = reviewHarness('github.com/humanagencyprotocol/hap-profiles/sales@0.4', [Q, tool('get_customer'), tool('get_item'), tool('preview_quote')], answer);
+    const rq = await createGatedToolHandler(Q, q.im, q.state)({ customer_id: 'c1', number: 'A-1', document_date: '2026-10-21', lines: lines(3), value: 120, discount_pct: 0, currency: 'EUR' });
+    expect(refusalText(rq)).toMatch(/^Refused: Line item is at the version it names/);
+  });
+});
+
+describe('tax-data card: open quotes are their own notice line, only when there are any', () => {
+  const answer = (open: number) => () => ({ current: { name: 'Steiner', revision: 3 }, revision: 3, uid_or_country_changed: false,
+    tax_mode: { now: 'normal', after: 'normal', now_label: 'normal VAT', after_label: 'normal VAT' }, issued_documents: { invoices: 0, credit_notes: 0 }, open_quotes: open,
+    vat_check: { format: 'ok', vies: { status: 'valid', checked_at: null } } });
+  const args = { id: 'c1', revision: 3, name: 'Steiner', address_lines: ['a'], country: 'AT', uid: 'ATU1' };
+  it('1 open quote → a notice; 0 → no line', async () => {
+    const one = await buildInternalPreview(erpDouble({ preview_customer_change: answer(1), check_customer_duplicates: dups() }).im, 'erp', 'update_customer_tax_data', args);
+    expect(checksOf(one)).toContainEqual(['open-quotes', 'notice', '1 quote made with the old data — update before invoicing']);
+    const none = await buildInternalPreview(erpDouble({ preview_customer_change: answer(0), check_customer_duplicates: dups() }).im, 'erp', 'update_customer_tax_data', args);
+    expect(checksOf(none).map((c) => c[0])).not.toContain('open-quotes');
   });
 });

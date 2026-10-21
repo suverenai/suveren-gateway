@@ -72,3 +72,10 @@ describe('{path|ref} — names an id the card resolved', () => {
     expect(renderSummary(t, { net: 10, customer_id: 'c-1007', currency: 'EUR' })).toBe('Invoice of €10.00 to c-1007');
   });
 });
+
+describe('{path|ref} with a long id', () => {
+  it('shortens a UUID inside the name', async () => {
+    const { renderSummary } = await import('./approval-summary');
+    expect(renderSummary('Change {id|ref}', { id: '7f3c9e2a-41d8-4b6e-9a1f-0c5d2e8b7a64' }, { refName: () => 'Steiner GmbH' })).toBe('Change Steiner GmbH (7f3c9e2a…)');
+  });
+});

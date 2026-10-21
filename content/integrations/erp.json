@@ -206,6 +206,9 @@
                       "valid_until": "valid_until", "notes": "notes" } }
         ],
         "checks": [
+          { "key": "item-revision", "label": "Line item is at the version it names", "forEach": "lines", "when": "lines[].item_revision",
+            "path": "lines[].item_revision", "compare": { "op": "eq", "to": "lines[].item.revision" }, "blocking": true, "showOnly": "fail",
+            "detail": "line {#}: item version {lines[].item_revision}, the item is now at version {lines[].item.revision}" },
           { "key": "tax-supported", "label": "Tax treatment supported for this customer", "path": "customer_id.tax_mode", "blocking": true,
             "pass": ["normal", "reverse_charge", "kleinunternehmer"], "fail": ["unsupported"],
             "detail": "[{customer_id.tax_mode_label}]" },
@@ -268,6 +271,9 @@
                       "valid_until": "valid_until", "notes": "notes" } }
         ],
         "checks": [
+          { "key": "item-revision", "label": "Line item is at the version it names", "forEach": "lines", "when": "lines[].item_revision",
+            "path": "lines[].item_revision", "compare": { "op": "eq", "to": "lines[].item.revision" }, "blocking": true, "showOnly": "fail",
+            "detail": "line {#}: item version {lines[].item_revision}, the item is now at version {lines[].item.revision}" },
           { "key": "revision", "label": "Request is for the record's current version", "blocking": true, "showOnly": "fail",
             "path": "id.$version.approved", "compare": { "op": "eq", "to": "id.$version.current" },
             "detail": "request for version {id.$version.approved}, record at version {id.$version.current}" },
@@ -374,6 +380,18 @@
           }
         ],
         "checks": [
+          { "key": "customer-revision", "label": "Request is for the customer's current version", "blocking": true, "showOnly": "fail",
+            "path": "customer_id.$version.approved", "compare": { "op": "eq", "to": "customer_id.$version.current" },
+            "detail": "request for version {customer_id.$version.approved}, customer at version {customer_id.$version.current}" },
+          { "key": "quote-revision", "label": "Request is for the quote's current version", "blocking": true, "showOnly": "fail",
+            "path": "quote_id.$version.approved", "compare": { "op": "eq", "to": "quote_id.$version.current" },
+            "detail": "request for version {quote_id.$version.approved}, quote at version {quote_id.$version.current}" },
+          { "key": "quote-customer", "label": "Customer unchanged since the quote", "when": "quote_id", "blocking": true, "showOnly": "fail",
+            "path": "quote_id.customer.revision", "compare": { "op": "eq", "to": "customer_id.revision" },
+            "detail": "the quote was made with customer version {quote_id.customer.revision}, the customer is now at version {customer_id.revision} — update the quote first" },
+          { "key": "item-revision", "label": "Line item is at the version it names", "forEach": "lines", "when": "lines[].item_revision",
+            "path": "lines[].item_revision", "compare": { "op": "eq", "to": "lines[].item.revision" }, "blocking": true, "showOnly": "fail",
+            "detail": "line {#}: item version {lines[].item_revision}, the item is now at version {lines[].item.revision}" },
           { "key": "tax-supported", "label": "Tax treatment supported for this customer", "path": "customer_id.tax_mode", "blocking": true,
             "pass": ["normal", "reverse_charge", "kleinunternehmer"], "fail": ["unsupported"],
             "detail": "[{customer_id.tax_mode_label}]" },
@@ -593,6 +611,9 @@
           { "key": "tax-mode", "label": "Tax treatment of future invoices", "path": "id.tax_mode.after",
             "compare": { "op": "eq", "to": "id.tax_mode.now" }, "onTrue": "pass", "onFalse": "notice",
             "detail": "{id.tax_mode.now_label} → {id.tax_mode.after_label}" },
+          { "key": "open-quotes", "label": "Open quotes", "path": "id.open_quotes",
+            "compare": { "op": "gt", "to": 0 }, "onTrue": "notice", "onFalse": "pass", "showOnly": "notice",
+            "detail": "{id.open_quotes|count:quote/quotes} made with the old data — update before invoicing" },
           { "key": "already-invoiced", "label": "Already issued to this customer", "when": "id.uid_or_country_changed",
             "path": "id.issued_documents.invoices", "compare": { "op": "gt", "to": 0 }, "onTrue": "notice", "onFalse": "pass",
             "detail": "{id.issued_documents.invoices|count:invoice/invoices}, {id.issued_documents.credit_notes|count:credit note/credit notes} — they keep the old data" }
@@ -601,11 +622,11 @@
           "verb": "changed",
           "order": ["id", "name", "address_lines", "country", "uid"],
           "labels": {
-            "id": "Customer", "name": "Name", "address_lines": "Address", "country": "Country", "uid": "VAT ID",
-            "id.open_quotes": "Open quotes (made with the old data)"
+            "id": "Customer", "name": "Name", "address_lines": "Address", "country": "Country", "uid": "VAT ID"
           },
+          "names": { "id": "current.name" },
           "compare": { "name": "id.current.name", "address_lines": "id.current.address_lines", "country": "id.current.country", "uid": "id.current.uid" },
-          "hidden": ["id.current", "id.vat_check", "id.tax_mode", "id.issued_documents", "id.changed", "id.revision", "id.uid_or_country_changed"]
+          "hidden": ["revision", "id.name", "id.open_quotes", "id.current", "id.vat_check", "id.tax_mode", "id.issued_documents", "id.changed", "id.revision", "id.uid_or_country_changed"]
         }
       },
       "create_item": {

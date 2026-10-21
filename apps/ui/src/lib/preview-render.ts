@@ -662,9 +662,19 @@ export function resolveAttachedIdentity(
   // (unformatted) value is actually a string — a number merely rendered as
   // a string (e.g. list_price) never qualifies as "the name".
   const rawObj = outcome && outcome.status === 'ok' ? resolveBodyObject(outcome.body)?.obj : undefined;
+  const prefix = opts?.pathPrefix;
+  // The manifest may name the field that holds the record's name
+  // (`display.names["<attach>"]`, a dotted path into the read) — for a read
+  // whose name is nested (e.g. `current.name`).
+  const declaredNamePath = prefix ? opts?.displayHints?.names?.[prefix] : undefined;
+  const declaredName = declaredNamePath ? valueAt(rawObj, declaredNamePath) : undefined;
+  if (typeof declaredName === 'string' && declaredName.length > 0) {
+    const ctx = rows.filter((r) => r.key !== 'id' && !isHidden(opts?.displayHints, `${prefix}.${r.key}`))
+      .map((r) => ({ ...r, label: resolveLabel(opts?.displayHints, `${prefix}.${r.key}`, r.label) }));
+    return { name: declaredName, rawId: formatScalar(rawId), context: ctx };
+  }
   const nameRow = rows.find((r) => ['name', 'title', 'label'].includes(r.key))
     ?? rows.find((r) => typeof rawObj?.[r.key] === 'string' && !r.lines && !r.sublist && !r.diffLines);
-  const prefix = opts?.pathPrefix;
   const context = rows
     // `id` is already shown as the (bound) raw id — never repeated as context.
     .filter((r) => r.key !== nameRow?.key && r.key !== 'id')
@@ -1022,4 +1032,13 @@ export function buildCreationView(
 
 function capRefusal(message: string): string {
   return message.length > 300 ? `${message.slice(0, 299)}…` : message;
+}
+
+function valueAt(obj: unknown, path: string): unknown {
+  let cur: unknown = obj;
+  for (const p of path.split('.')) {
+    if (cur === null || typeof cur !== 'object' || Array.isArray(cur)) return undefined;
+    cur = (cur as Record<string, unknown>)[p];
+  }
+  return cur;
 }

@@ -85,7 +85,10 @@ function fill(text: string, args: Record<string, unknown>, currency: string | un
     if (!present(value)) { missing = true; return ''; }
     if (fmt === 'ref') {
       const name = refName?.(paths.split(',')[0].trim());
-      return name ? `${name} (${String(value)})` : String(value);
+      // A long id (a UUID) is shortened in the sentence; the card shows it in full.
+      const id = String(value);
+      const shortId = id.length > 12 ? `${id.slice(0, 8)}…` : id;
+      return name ? `${name} (${shortId})` : id;
     }
     return format(value, fmt as SummaryFormat | undefined, currency, locale);
   });

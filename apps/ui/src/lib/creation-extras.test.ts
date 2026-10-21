@@ -67,3 +67,16 @@ describe('a forEach line whose read did not run (no item linked)', () => {
     expect(table.rows[0].cells[0].value).toBe('Beratung (i1)');
   });
 });
+
+describe('display.names — a record whose name is nested in the read', () => {
+  it('names the identity from the declared path; hidden fields and args stay out', () => {
+    const section: PreviewReadSection = { tool: 'preview_customer_change', attach: 'id',
+      result: ok({ current: { name: 'Steiner Landtechnik GmbH', revision: 3 }, open_quotes: 1, revision: 3 }) };
+    const v = buildCreationView({ id: 'c-uuid-1', revision: 3, name: 'Steiner' }, [section],
+      { names: { id: 'current.name' }, hidden: ['revision', 'id.current', 'id.open_quotes', 'id.revision'] });
+    const id = v.rows.find((r) => r.key === 'id') as Extract<typeof v.rows[number], { kind: 'identity' }>;
+    expect(id.identity.name).toBe('Steiner Landtechnik GmbH');
+    expect(id.identity.context).toEqual([]);
+    expect(v.rows.some((r) => r.key === 'revision')).toBe(false);
+  });
+});

@@ -169,15 +169,16 @@ function evaluateOne(decl: CheckDeclaration, scope: Scope): CheckResult | null {
     ...(scope.element ? { index: scope.element.position } : {}),
   };
   const missing = (why: 'absent' | 'no_answer'): CheckResult | null => {
-    if ((decl.missing ?? 'skip') === 'skip' || decl.showOnly === 'fail') return null;
+    if ((decl.missing ?? 'skip') === 'skip' || decl.showOnly) return null;
     return { ...base, status: 'not_checked', reason: why === 'no_answer' ? 'no answer from the connector' : 'no value to check' };
   };
   const v = resolveCheckPath(decl.path, scope);
   if (!v.ok) return missing(v.why);
   const outcome = statusFor(decl, v.value, scope);
-  if ('ok' in outcome) return outcome.ok || decl.showOnly === 'fail' ? null : missing(outcome.why);
-  // `showOnly: "fail"` — only a failure becomes a line (and can block).
+  if ('ok' in outcome) return outcome.ok || decl.showOnly ? null : missing(outcome.why);
+  // `showOnly` — only a failure (or, with "notice", a notice) becomes a line.
   if (decl.showOnly === 'fail' && outcome.status !== 'fail') return null;
+  if (decl.showOnly === 'notice' && outcome.status !== 'fail' && outcome.status !== 'notice') return null;
   const detail = decl.detail !== undefined ? renderCheckDetail(decl.detail, scope) : null;
   const tested = v.value;
   const plain = tested === null || ['string', 'number', 'boolean'].includes(typeof tested);

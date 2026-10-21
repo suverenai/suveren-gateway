@@ -225,6 +225,8 @@ export interface ToolDisplayHints {
   compare?: Record<string, string>;
   /** The card heading's verb: "What will be created" (default) or "changed". */
   verb?: 'created' | 'changed';
+  /** Attach key -> dotted path of the record's NAME in that read (when it isn't a top-level `name`). */
+  names?: Record<string, string>;
 }
 
 /** A manifest-declared check, evaluated by the gateway (mcp-server checks.ts). */

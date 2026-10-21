@@ -395,6 +395,13 @@ export function invalidDisplayHintsReason(toolName: string, entry: unknown): str
       }
     }
   }
+  // attach key -> dotted path of the record's name in that read.
+  if (d.names !== undefined) {
+    if (d.names === null || typeof d.names !== 'object' || Array.isArray(d.names)
+      || !Object.values(d.names as Record<string, unknown>).every((v) => typeof v === 'string' && PLAIN_PATH_RE.test(v))) {
+      return `override "${toolName}".display.names must map attach keys to dotted paths`;
+    }
+  }
   // The card heading's verb: "What will be created/changed in <system>".
   if (d.verb !== undefined && d.verb !== 'created' && d.verb !== 'changed') {
     return `override "${toolName}".display.verb must be "created" or "changed"`;
@@ -555,7 +562,7 @@ function invalidCheckReason(at: string, raw: unknown, seen: Set<string>): string
     if (!CHECK_STATUSES.includes(c[k] as CheckStatus)) return `${at}.${k} must be one of ${CHECK_STATUSES.join(', ')}`;
   }
   if (c.blocking !== undefined && typeof c.blocking !== 'boolean') return `${at}.blocking must be a boolean`;
-  if (c.showOnly !== undefined && c.showOnly !== 'fail') return `${at}.showOnly must be "fail"`;
+  if (c.showOnly !== undefined && c.showOnly !== 'fail' && c.showOnly !== 'notice') return `${at}.showOnly must be "fail" or "notice"`;
   if (c.missing !== undefined && c.missing !== 'skip' && c.missing !== 'not_checked') {
     return `${at}.missing must be "skip" or "not_checked"`;
   }
