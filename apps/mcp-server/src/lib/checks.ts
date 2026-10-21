@@ -92,6 +92,13 @@ export function resolveCheckPath(path: string, scope: Scope): Resolved {
   const segs = path.split('.');
   if (segs.length > 1) {
     const readIdx = reads.findIndex((r) => !r.forEach && (r.attach === segs[0] || r.as === segs[0]));
+    if (readIdx >= 0 && segs[1] === '$version') {
+      // The versioned read's own staleness: {approved, current, stale}.
+      const version = sections[readIdx]?.version;
+      if (!version) return ABSENT;
+      const v = valueAtPath({ approved: version.approved, current: version.current, stale: version.stale }, segs.slice(2).join('.'));
+      return v === undefined ? ABSENT : { ok: true, value: v };
+    }
     if (readIdx >= 0) return fromOutcome(sections[readIdx]?.result, segs.slice(1));
   }
   const v = valueAtPath(ctx.args, path);

@@ -244,3 +244,15 @@ describe('boundValuesOpen — the bound values are the content when nothing else
     for (const tone of ['ok', 'stale', 'loading', null]) expect(boundValuesOpen(tone)).toBe(false);
   });
 });
+
+describe('a refused read', () => {
+  it('single read: "Refused by <system>" with the connector\'s words', () => {
+    const v = previewBoxView({ status: 'refused', message: 'Refused: outside the EU.' }, 'ERP');
+    expect(v.heading).toBe('Refused by ERP');
+    expect(v.note).toBe('Refused: outside the EU.');
+  });
+  it('one of several reads: its section says the refusal, not "Not found"', async () => {
+    const { buildOwnSection } = await import('./preview-render');
+    expect(buildOwnSection({ tool: 'preview_invoice', result: { status: 'refused', message: 'Refused: outside the EU.' } })?.note).toBe('Refused: outside the EU.');
+  });
+});

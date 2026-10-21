@@ -62,6 +62,13 @@
         "type": "text",
         "placeholder": "on (default) — \"off\" saves every VAT ID as not checked",
         "optional": true
+      },
+      {
+        "key": "viesUrl",
+        "label": "VAT-ID check address (advanced, optional)",
+        "type": "text",
+        "placeholder": "Leave empty — the EU VIES service. Only for testing against a stand-in",
+        "optional": true
       }
     ],
     "envMapping": {
@@ -71,7 +78,8 @@
       "ERP_LIVE_COMPANY_FILE": "companyFile",
       "ERP_INVOICE_TEMPLATE": "invoiceTemplate",
       "ERP_QUOTE_TEMPLATE": "quoteTemplate",
-      "ERP_VIES": "viesCheck"
+      "ERP_VIES": "viesCheck",
+      "ERP_VIES_URL": "viesUrl"
     }
   },
   "simulation": {
@@ -260,6 +268,9 @@
                       "valid_until": "valid_until", "notes": "notes" } }
         ],
         "checks": [
+          { "key": "revision", "label": "Request is for the record's current version", "blocking": true,
+            "path": "id.$version.approved", "compare": { "op": "eq", "to": "id.$version.current" },
+            "detail": "request for version {id.$version.approved}, record at version {id.$version.current}" },
           { "key": "list-price", "label": "Price vs. list", "forEach": "lines", "when": "lines[].item_id",
             "path": "lines[].unit_price", "compare": { "op": "eq", "to": "lines[].item.list_price" },
             "onTrue": "pass", "onFalse": "notice",
@@ -541,6 +552,9 @@
             "when": "crm_contact_id" }
         ],
         "checks": [
+          { "key": "revision", "label": "Request is for the record's current version", "blocking": true,
+            "path": "id.$version.approved", "compare": { "op": "eq", "to": "id.$version.current" },
+            "detail": "request for version {id.$version.approved}, record at version {id.$version.current}" },
           { "key": "crm-duplicate", "label": "No other customer for this CRM contact", "when": "crm_contact_id", "blocking": true,
             "path": "duplicates.crm_contact_duplicate_of", "present": "fail", "absent": "pass",
             "detail": "[already customer {duplicates.crm_contact_duplicate_of}]" }
@@ -567,6 +581,9 @@
           { "tool": "check_customer_duplicates", "args": { "uid": "uid", "id": "id" }, "as": "duplicates", "when": "uid" }
         ],
         "checks": [
+          { "key": "revision", "label": "Request is for the record's current version", "blocking": true,
+            "path": "id.$version.approved", "compare": { "op": "eq", "to": "id.$version.current" },
+            "detail": "request for version {id.$version.approved}, record at version {id.$version.current}" },
           { "key": "vies", "label": "New VAT ID confirmed by VIES", "when": "uid", "path": "id.vat_check.vies.status", "blocking": true,
             "pass": ["valid"], "fail": ["invalid"], "notChecked": ["not_checked"], "notice": ["not_applicable"], "missing": "not_checked",
             "detail": "[checked {id.vat_check.vies.checked_at|date}][ — {id.vat_check.vies.reason} — saving is not blocked while VIES is unreachable]" },
@@ -617,6 +634,11 @@
           { "tool": "get_item", "args": { "id": "id", "revision": "revision" }, "attach": "id",
             "version": { "arg": "revision", "field": "revision" } }
         ],
+        "checks": [
+          { "key": "revision", "label": "Request is for the record's current version", "blocking": true,
+            "path": "id.$version.approved", "compare": { "op": "eq", "to": "id.$version.current" },
+            "detail": "request for version {id.$version.approved}, record at version {id.$version.current}" }
+        ],
         "display": {
           "verb": "changed", "labels": { "id": "Item", "active": "Active" } }
       },
@@ -631,6 +653,9 @@
             "version": { "arg": "revision", "field": "revision" } }
         ],
         "checks": [
+          { "key": "revision", "label": "Request is for the record's current version", "blocking": true,
+            "path": "id.$version.approved", "compare": { "op": "eq", "to": "id.$version.current" },
+            "detail": "request for version {id.$version.approved}, record at version {id.$version.current}" },
           { "key": "price-change", "label": "List price", "path": "list_price",
             "compare": { "op": "eq", "to": "id.list_price" }, "onTrue": "pass", "onFalse": "notice",
             "detail": "{id.list_price|money} → {list_price|money}" },

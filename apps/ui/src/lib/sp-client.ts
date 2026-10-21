@@ -198,6 +198,8 @@ export type PreviewReadOutcome =
   | { status: 'ok'; body: PreviewBody }
   | { status: 'unavailable'; reason: 'no_connector' | 'connector_error' | 'timeout'; message?: string }
   | { status: 'not_found'; message?: string }
+  /** The connector refused the read ("Refused: …") — its own words. */
+  | { status: 'refused'; message?: string }
   | { status: 'none'; reason: 'no_target' };
 
 /** Manifest `display` hints, a sibling of `preview` on the same tool
@@ -276,6 +278,7 @@ export type PreviewResponse = (
   | { status: 'none'; reason?: 'no_target' }
   | { status: 'unavailable'; reason: 'no_connector' | 'connector_error' | 'timeout'; message?: string }
   | { status: 'not_found'; message?: string }
+  | { status: 'refused'; message?: string }
   | {
       status: 'ok';
       integration: string;

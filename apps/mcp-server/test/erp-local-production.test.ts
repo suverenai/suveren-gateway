@@ -130,6 +130,7 @@ describe('update_customer_tax_data card — own line for already-issued document
     const { im } = erpDouble({ preview_customer_change: change({}), check_customer_duplicates: dups() });
     const r = await buildInternalPreview(im, 'erp', 'update_customer_tax_data', args);
     expect(checksOf(r)).toEqual([
+      ['revision', 'pass', 'request for version 3, record at version 3'],
       ['vies', 'pass', 'checked 2026-10-21'],
       ['vat-duplicate', 'pass', null],
       ['tax-mode', 'notice', 'normal VAT → reverse charge'],
@@ -492,6 +493,62 @@ describe('erp.json — a VAT ID in the wrong format is refused before a card (th
       t === 'check_vat_id' ? { ...vatCheck('not_checked')(a)!, format: 'wrong_prefix' } : t === 'check_customer_duplicates' ? dups()(a) : undefined);
     const r = await createGatedToolHandler(C, h.im, h.state)({ name: 'X', address_lines: ['a'], country: 'AT', uid: 'DE99999999' });
     expect(refusalText(r)).toMatch(/^Refused: VAT ID format: failed \(wrong_prefix\)/);
+    expect(h.submitProposal).not.toHaveBeenCalled();
+  });
+});
+
+describe('erp.json — a stale revision is refused before a card (the connector refuses it for sure)', () => {
+  const cases: Array<[string, string, string, Record<string, unknown>]> = [
+    ['update_customer', 'get_customer', 'customer_update', { id: 'c1', revision: 2, email: 'n@b.at' }],
+    ['update_customer_tax_data', 'preview_customer_change', 'customer_tax', { id: 'c1', revision: 2, name: 'X', address_lines: ['a'], country: 'AT', uid: 'ATU1' }],
+    ['update_item', 'get_item', 'item_update', { id: 'i1', revision: 2, name: 'Neu' }],
+    ['update_item_price', 'get_item', 'item_price', { id: 'i1', revision: 2, list_price: 10, vat_rate: 20 }],
+  ];
+  for (const [toolName, read, actionType, args] of cases) {
+    it(`${toolName}: the record is at revision 3, the request for 2 → refused; for 3 → a card`, async () => {
+      const T = erpTool(toolName, 'master-data', actionType);
+      const answer = (t: string, a: Record<string, unknown>) => {
+        if (t === read) return { id: args.id, revision: 3, current: { revision: 3 }, tax_mode: { now: 'normal', after: 'normal', now_label: 'n', after_label: 'n' },
+          issued_documents: { invoices: 0, credit_notes: 0 }, vat_check: { format: 'ok', vies: { status: 'valid' } }, list_price: 10, vat_rate: 20 };
+        if (t === 'check_customer_duplicates') return dups()(a);
+        if (t === 'check_vat_id') return vatCheck('valid')(a);
+        return undefined;
+      };
+      const stale = reviewHarness(MD, [T, tool(read), tool('check_customer_duplicates')], answer);
+      const r = await createGatedToolHandler(T, stale.im, stale.state)({ ...args });
+      expect(refusalText(r)).toMatch(/^Refused: Request is for the record's current version: failed \(2\) — request for version 2, record at version 3\./);
+      expect(stale.submitProposal).not.toHaveBeenCalled();
+      const fresh = reviewHarness(MD, [T, tool(read), tool('check_customer_duplicates')], answer);
+      await createGatedToolHandler(T, fresh.im, fresh.state)({ ...args, revision: 3 });
+      expect(fresh.submitProposal).toHaveBeenCalledOnce();
+    });
+  }
+
+  it('update_quote (sales): same rule', async () => {
+    const Q = erpTool('update_quote', 'sales', 'quote');
+    const h = reviewHarness('github.com/humanagencyprotocol/hap-profiles/sales@0.4', [Q, tool('get_quote')], (t) => (t === 'get_quote' ? { id: 'q1', revision: 5 } : undefined));
+    const r = await createGatedToolHandler(Q, h.im, h.state)({ id: 'q1', revision: 4, document_date: '2026-10-21', value: 1, discount_pct: 0, currency: 'EUR' });
+    expect(refusalText(r)).toMatch(/^Refused: Request is for the record's current version: failed \(4\)/);
+  });
+});
+
+describe('a read the connector REFUSES is shown as a refusal, not "not found"', () => {
+  it('"Refused: …" → status refused with the connector\'s words; any other error stays not_found', async () => {
+    const { readPreview } = await import('../src/lib/preview');
+    const refusing = { getAllTools: () => [tool('preview_invoice')], isBuiltin: () => false,
+      callTool: async () => ({ isError: true, content: [{ type: 'text', text: 'Refused: customer c-ch is outside the EU VAT area — not supported. Nothing was rendered.' }] }) } as unknown as IntegrationManager;
+    expect(await readPreview(refusing, 'erp', 'preview_invoice', {})).toEqual({ status: 'refused', message: 'Refused: customer c-ch is outside the EU VAT area — not supported. Nothing was rendered.' });
+    const missing = { ...refusing, callTool: async () => ({ isError: true, content: [{ type: 'text', text: 'Unknown customer x' }] }) } as unknown as IntegrationManager;
+    expect(await readPreview(missing, 'erp', 'preview_invoice', {})).toMatchObject({ status: 'not_found' });
+  });
+
+  it('e2e repro: a CH customer (tax_mode unsupported) whose invoice preview is refused → still refused before a card', async () => {
+    const INV = erpTool('create_invoice', 'invoicing', 'invoice');
+    const h = reviewHarness('github.com/humanagencyprotocol/hap-profiles/invoicing@0.1', [INV, tool('get_customer'), tool('preview_invoice')], (t) =>
+      t === 'get_customer' ? { id: 'c-ch', country: 'CH', uid: 'CHE123456789', revision: 1, tax_mode: 'unsupported', tax_mode_label: 'Not supported (outside the EU)', vies_status: null, vies: null } : undefined);
+    const r = await createGatedToolHandler(INV, h.im, h.state)({ customer_id: 'c-ch', number: '2026-030', document_date: '2026-10-21', net_total: 100, currency: 'EUR',
+      lines: [{ description: 'Beratung', qty: 1, unit_price: 100, vat_rate: 0 }] });
+    expect(refusalText(r)).toMatch(/^Refused: Tax treatment supported for this customer: failed \(unsupported\)/);
     expect(h.submitProposal).not.toHaveBeenCalled();
   });
 });

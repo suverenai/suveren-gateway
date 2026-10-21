@@ -314,7 +314,9 @@ function invalidReadConfigReason(toolName: string, idx: number | null, entry: un
 /** A plain dotted path: `a`, `a.b.c`. */
 const PLAIN_PATH_RE = /^[A-Za-z_][\w-]*(\.[A-Za-z_][\w-]*)*$/;
 /** A check path: a plain path, or `a[].b(.c)*` (element of forEach `a`). */
-const CHECK_PATH_RE = /^(?:[A-Za-z_][\w-]*(?:\.[A-Za-z_][\w-]*)*|[A-Za-z_][\w-]*\[\](?:\.[A-Za-z_][\w-]*)+)$/;
+// `<attach>.$version.<approved|current|stale>` reads a versioned read's
+// staleness (preview.ts) — e.g. a blocking "request is for the current revision".
+const CHECK_PATH_RE = /^(?:[A-Za-z_][\w-]*(?:\.(?:[A-Za-z_][\w-]*|\$version))*|[A-Za-z_][\w-]*\[\](?:\.[A-Za-z_][\w-]*)+)$/;
 
 /**
  * Returns a human-readable refusal reason if `entry.preview` (an override's

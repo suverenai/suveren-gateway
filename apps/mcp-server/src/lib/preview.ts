@@ -45,7 +45,9 @@ export interface PreviewBody {
 export type PreviewReadResult =
   | { status: 'ok'; body: PreviewBody }
   | { status: 'unavailable'; reason: 'no_connector' | 'connector_error' | 'timeout'; message?: string }
-  | { status: 'not_found'; message?: string };
+  | { status: 'not_found'; message?: string }
+  /** The connector answered the read with a refusal ("Refused: …") — its own words, shown as such. */
+  | { status: 'refused'; message?: string };
 
 /** Per-read timeout (contract: "Timeout per read: 5s"). */
 export const PREVIEW_READ_TIMEOUT_MS = 5_000;
@@ -205,7 +207,12 @@ export async function readPreview(
     );
     const text = (result.content as Array<{ text?: string }> | undefined)?.[0]?.text;
     if (result.isError) {
-      return { status: 'not_found', message: capText(text) };
+      // Connectors answer every failed call as an error. One that starts
+      // "Refused" is the connector refusing (contract wording shared by
+      // Suveren's connectors), not a missing record — shown as a refusal.
+      return /^\s*Refused\b/i.test(text ?? '')
+        ? { status: 'refused', message: capText(text) }
+        : { status: 'not_found', message: capText(text) };
     }
     return {
       status: 'ok',
@@ -629,6 +636,7 @@ export type InternalPreviewResult = (
   | { status: 'none'; reason?: 'no_target' }
   | { status: 'unavailable'; reason: 'no_connector' | 'connector_error' | 'timeout'; message?: string }
   | { status: 'not_found'; message?: string }
+  | { status: 'refused'; message?: string }
   | {
       status: 'ok';
       integration: string;

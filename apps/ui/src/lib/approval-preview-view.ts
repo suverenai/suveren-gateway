@@ -90,6 +90,12 @@ export function previewBoxView(resp: PreviewResponse, systemName: string, toolAr
           : 'Preview not available.',
       };
 
+    case 'refused':
+      return {
+        heading: `Refused by ${systemName}`,
+        note: resp.message ? capMessage(resp.message) : `${systemName} refused to answer.`,
+      };
+
     case 'not_found':
       return {
         heading: 'Not found in your system',

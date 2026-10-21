@@ -621,6 +621,8 @@ function unresolvedNote(outcome: PreviewReadOutcome | undefined): string {
     // read" was shown as "Not found in the system"), so show it when given.
     case 'not_found': return outcome.message ? `The system answered: ${outcome.message}` : 'Not found in the system.';
     case 'none': return 'Nothing to read.';
+    // The connector's own refusal sentence, as it said it.
+    case 'refused': return outcome.message ? capRefusal(outcome.message) : 'The system refused to answer.';
     default: return 'Not available right now.';
   }
 }
@@ -1016,4 +1018,8 @@ export function buildCreationView(
 
   const builtSections = ownSections.map(buildOwnSection).filter((s): s is PreviewOwnSection => s !== null);
   return { rows, sections: builtSections, systemBoxes };
+}
+
+function capRefusal(message: string): string {
+  return message.length > 300 ? `${message.slice(0, 299)}…` : message;
 }
