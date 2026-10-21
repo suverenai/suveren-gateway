@@ -2,8 +2,8 @@
   "id": "github.com/humanagencyprotocol/hap-profiles/master-data@0.1",
   "name": "Master data",
   "version": "0.1",
-  "description": "Master data authority — governs the customer records and the catalogue that quotes and invoices are built from: creating and changing customers, and creating and changing catalogue items. A change to a customer's tax data (name, address, country, VAT ID) and a change to an item's price or VAT rate are each a decision of their own. Kept apart from invoicing and sales so that the people who issue documents are not the ones who change the data behind them. Every action in this area is reviewed by a person. No invoices, quotes or payments.",
-  "whatsNew": "New area. Customers and catalogue items are created and changed here, each kind of change with its own daily limit. Every action is reviewed by a person (no automatic mode).",
+  "description": "Master data authority — governs the customer records and the catalogue that quotes and invoices are built from: creating and changing customers, and creating and changing catalogue items. A change to a customer's tax data (name, address, country, VAT ID) and a change to an item's price or VAT rate are each a decision of their own. Kept apart from invoicing and sales so that the people who issue documents are not the ones who change the data behind them. A change to a customer's payment data (bank account / IBAN, payment terms, credit limit, dunning or payment method) is its own decision too — the classic entry point for payment fraud; it is governed here wherever a connector offers such a change (ERP Local offers none). Every action in this area is reviewed by a person. No invoices, quotes or payments.",
+  "whatsNew": "New area. Customers and catalogue items are created and changed here, each kind of change with its own daily limit; changes to a customer's bank and payment data (for connectors that offer them) have their own daily limit and a cap on the credit limit. Every action is reviewed by a person (no automatic mode).",
   "commitment_modes": [
     "review"
   ],
@@ -12,6 +12,7 @@
       "customer_create",
       "customer_update",
       "customer_tax",
+      "customer_payment",
       "item_create",
       "item_update",
       "item_price"
@@ -22,10 +23,12 @@
       "customer_create_daily_max",
       "customer_update_daily_max",
       "customer_tax_daily_max",
+      "customer_payment_daily_max",
       "item_create_daily_max",
       "item_update_daily_max",
       "item_price_daily_max",
-      "list_price_max"
+      "list_price_max",
+      "credit_limit_max"
     ],
     "fields": {
       "profile": {
@@ -89,6 +92,20 @@
           "customer_tax"
         ]
       },
+      "customer_payment_daily_max": {
+        "type": "number",
+        "required": true,
+        "displayName": "Customer payment-data changes per day",
+        "description": "Maximum changes per day to a customer's payment data: bank account / IBAN, payment terms, credit limit, dunning or payment method. A changed bank account is the classic way payments are diverted.",
+        "unit": "count",
+        "boundType": {
+          "kind": "cumulative_count",
+          "window": "daily"
+        },
+        "appliesTo": [
+          "customer_payment"
+        ]
+      },
       "item_create_daily_max": {
         "type": "number",
         "required": true,
@@ -145,6 +162,17 @@
             "item_price"
           ]
         }
+      },
+      "credit_limit_max": {
+        "type": "number",
+        "required": true,
+        "displayName": "Max credit limit per customer",
+        "description": "Highest credit limit a customer may be given in one payment-data change, in currency units. Applies whenever the change sets a credit limit; a bank or payment-terms change that sets none is limited by the daily count only.",
+        "unit": "currency:EUR",
+        "boundType": {
+          "kind": "per_transaction",
+          "of": "credit_limit"
+        }
       }
     }
   },
@@ -153,6 +181,17 @@
       "list_price": {
         "source": "declared",
         "description": "Net list price of the item in currency units (create_item, update_item_price)",
+        "required": false,
+        "constraint": {
+          "type": "number",
+          "enforceable": [
+            "max"
+          ]
+        }
+      },
+      "credit_limit": {
+        "source": "declared",
+        "description": "Credit limit a payment-data change sets for the customer, in currency units (only when the change sets one)",
         "required": false,
         "constraint": {
           "type": "number",
@@ -190,6 +229,19 @@
       "customer_tax_count_daily": {
         "source": "cumulative",
         "description": "Running daily count of customer tax-data changes",
+        "required": true,
+        "constraint": {
+          "type": "number",
+          "enforceable": [
+            "max"
+          ]
+        },
+        "cumulativeField": "_count",
+        "window": "daily"
+      },
+      "customer_payment_count_daily": {
+        "source": "cumulative",
+        "description": "Running daily count of customer payment-data changes",
         "required": true,
         "constraint": {
           "type": "number",

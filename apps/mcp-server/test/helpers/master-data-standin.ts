@@ -8,7 +8,7 @@
  * profiles call this right after `loadProfiles`: it registers the fixture
  * copy ONLY when the real profile is absent, so the moment the real one is on
  * main it is the one under test. The fixture is a byte copy of
- * master-data/0.1.profile.json from hap-profiles PR #20 (commit 006cd25).
+ * master-data/0.1.profile.json from hap-profiles PR #20 (commit 07a660d).
  *
  * Delete this helper and test/fixtures/master-data-standin/ once
  * master-data@0.1 is merged in hap-profiles.
