@@ -14,6 +14,7 @@ describe('checks validation', () => {
   it('accepts both forms, forEach paths, {#} and [] inside placeholders', () => {
     expect(invalidChecksReason('t', checks(good))).toBeNull();
     expect(invalidChecksReason('t', checks({ ...good, blocking: true }))).toBeNull();
+    expect(invalidChecksReason('t', checks({ key: 'd', label: 'No duplicate', path: 'duplicates.of', present: 'fail', absent: 'pass' }))).toBeNull();
     expect(invalidChecksReason('t', checks({
       key: 'lp', label: 'Line price', forEach: 'lines', when: 'lines[].item_id', path: 'lines[].unit_price',
       compare: { op: 'eq', to: 'lines[].item.list_price' }, onTrue: 'pass', onFalse: 'notice',
@@ -35,6 +36,8 @@ describe('checks validation', () => {
     [{ key: 'k', label: 'l', path: 'p', compare: { op: 'eq', to: 1 }, onFalse: 'red' }, /onFalse must be one of/],
     [{ ...good, missing: 'ignore' }, /missing must be/],
     [{ ...good, blocking: 'yes' }, /blocking must be a boolean/],
+    [{ key: 'k', label: 'l', path: 'p', present: 'fail' }, /absent must be one of/],
+    [{ ...good, present: 'fail', absent: 'pass' }, /exactly one form/],
     [{ ...good, label: 'x'.repeat(81) }, /at most 80/],
     [{ ...good, detail: '{a|money|percent}' }, /more than one format/],
     [{ ...good, detail: '{a|euro}' }, /unknown format/],
@@ -57,6 +60,10 @@ describe('preview `when` / `displayOnly` validation', () => {
   const read = { tool: 'check_vat_id', args: { uid: 'uid' }, attach: 'uid' };
   it('accepts a plain path and a boolean', () => {
     expect(invalidPreviewReason('t', { preview: [{ ...read, when: 'uid', displayOnly: true }] })).toBeNull();
+    expect(invalidPreviewReason('t', { preview: [{ ...read, displayOnly: true, label: 'EU VIES' }] })).toBeNull();
+    expect(invalidPreviewReason('t', { preview: [{ tool: 'dups', args: { uid: 'uid' }, as: 'duplicates' }] })).toBeNull();
+    expect(invalidPreviewReason('t', { preview: [{ ...read, as: 'duplicates' }] })).toMatch(/as cannot be combined/);
+    expect(invalidPreviewReason('t', { preview: [{ ...read, label: '' }] })).toMatch(/label must be/);
   });
   it('refuses a bad when, a non-boolean displayOnly, and displayOnly with version', () => {
     expect(invalidPreviewReason('t', { preview: [{ ...read, when: 'lines[].x' }] })).toMatch(/when must be/);

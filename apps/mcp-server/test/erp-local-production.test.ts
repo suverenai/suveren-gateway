@@ -50,6 +50,10 @@ export const vatCheck = (status: string, extra: Record<string, unknown> = {}): A
   vies: { status, reason: null, checked_at: '2026-10-21T09:15:00Z', request_id: 'WAPIAAAA1', name: null, address: null, ...extra },
 });
 
+/** check_customer_duplicates (hap-erp-mcp #33): the customer id holding each, or null. */
+export const dups = (vat: string | null = null, crm: string | null = null): Answer => (a) => ({
+  uid: a.uid ?? null, crm_contact_id: a.crm_contact_id ?? null, vat_duplicate_of: vat, crm_contact_duplicate_of: crm });
+
 const checksOf = (r: { checks?: CheckResult[] }) => (r.checks ?? []).map((c) => [c.key, c.status, c.detail ?? c.reason ?? null]);
 
 describe('erp.json loads with the new declarations', () => {
@@ -78,12 +82,12 @@ describe('create_customer card — VIES checks (D1, R3, R5)', () => {
   const args = { name: 'Steiner GmbH', address_lines: ['Hauptstr. 1', '1010 Wien'], country: 'AT', uid: 'ATU12345678' };
 
   it('valid → three passing checks, VIES line labelled with its time', async () => {
-    const { im } = erpDouble({ check_vat_id: vatCheck('valid') });
+    const { im } = erpDouble({ check_vat_id: vatCheck('valid'), check_customer_duplicates: dups() });
     const r = await buildInternalPreview(im, 'erp', 'create_customer', args);
     expect(checksOf(r)).toEqual([
       ['vat-format', 'pass', null],
       ['vies', 'pass', 'checked 2026-10-21'],
-      ['duplicate', 'pass', null],
+      ['vat-duplicate', 'pass', null],
     ]);
   });
 
@@ -123,11 +127,11 @@ describe('update_customer_tax_data card — own line for already-issued document
   const args = { id: 'c1', revision: 3, name: 'Steiner GmbH', address_lines: ['a'], country: 'DE', uid: 'DE123456789' };
 
   it('shows VIES, tax-mode change and "already issued — they keep the old data"', async () => {
-    const { im } = erpDouble({ preview_customer_change: change({}) });
+    const { im } = erpDouble({ preview_customer_change: change({}), check_customer_duplicates: dups() });
     const r = await buildInternalPreview(im, 'erp', 'update_customer_tax_data', args);
     expect(checksOf(r)).toEqual([
       ['vies', 'pass', 'checked 2026-10-21'],
-      ['duplicate', 'pass', null],
+      ['vat-duplicate', 'pass', null],
       ['tax-mode', 'notice', 'normal VAT → reverse charge'],
       ['already-invoiced', 'notice', '4 invoices, 1 credit notes — they keep the old data'],
     ]);
@@ -231,6 +235,7 @@ function flippingVies() {
   let n = 0;
   return erpDouble({
     check_vat_id: (a) => { n += 1; return vatCheck(n === 1 ? 'valid' : 'not_checked', { request_id: `WAPI-${n}` })(a); },
+    check_customer_duplicates: dups(),
     create_customer: () => ({ id: 'cust-new', revision: 1 }),
   });
 }
@@ -245,9 +250,8 @@ async function approveThenExecute() {
 }
 
 describe('AM1 — create_customer approval survives a second VIES call', () => {
-  it('shipped erp.json: no AU4 hash over the VIES read; the customer is created', async () => {
-    const { result, complete, callTool, previewHash } = await approveThenExecute();
-    expect(previewHash).toBeUndefined();
+  it('shipped erp.json: the VIES read is not in the AU4 hash (only the stable duplicates read is); the customer is created', async () => {
+    const { result, complete, callTool } = await approveThenExecute();
     expect(result.isError).toBeFalsy();
     expect(callTool).toHaveBeenCalledWith('erp', 'create_customer', expect.objectContaining({ uid: 'ATU12345678' }));
     expect(complete).toHaveBeenCalledWith('rcpt-am1', 'done');
@@ -394,26 +398,49 @@ describe('erp.json blocking checks — refused before any card', () => {
   });
 });
 
-describe('erp.json — a duplicate VAT ID is refused before a card (R10: the connector would refuse it for sure)', () => {
-  const dup: Answer = (a) => ({ ...vatCheck('valid')(a)!, duplicate: true, duplicate_of: 'cust-17' });
+describe('erp.json — duplicates are refused before a card (R10: the connector would refuse them for sure)', () => {
+  const C = erpTool('create_customer', 'master-data', 'customer_create');
+  const answer = (vat: string | null, crm: string | null) => (t: string, a: Record<string, unknown>) =>
+    t === 'check_vat_id' ? vatCheck('valid')(a) : t === 'check_customer_duplicates' ? dups(vat, crm)(a) : undefined;
 
   it('create_customer: another customer has this VAT ID → refused, naming the existing customer', async () => {
-    const C = erpTool('create_customer', 'master-data', 'customer_create');
-    const h = reviewHarness(MD, [C, tool('check_vat_id')], (t, a) => (t === 'check_vat_id' ? dup(a) : undefined));
+    const h = reviewHarness(MD, [C, tool('check_vat_id'), tool('check_customer_duplicates')], answer('cust-17', null));
     const r = await createGatedToolHandler(C, h.im, h.state)({ name: 'X', address_lines: ['a'], country: 'AT', uid: 'ATU12345678' });
-    expect(refusalText(r)).toMatch(/^Refused: No other customer with this VAT ID: failed \(true\) — already customer cust-17\./);
+    expect(refusalText(r)).toMatch(/^Refused: No other customer with this VAT ID: failed \(cust-17\) — already customer cust-17\./);
     expect(h.submitProposal).not.toHaveBeenCalled();
+  });
+
+  it('create_customer: the CRM contact already has a customer → refused', async () => {
+    const h = reviewHarness(MD, [C, tool('check_vat_id'), tool('check_customer_duplicates')], answer(null, 'cust-9'));
+    const r = await createGatedToolHandler(C, h.im, h.state)({ name: 'X', address_lines: ['a'], country: 'AT', crm_contact_id: 'crm-4' });
+    expect(refusalText(r)).toMatch(/^Refused: No other customer for this CRM contact: failed \(cust-9\) — already customer cust-9\./);
+    expect(h.submitProposal).not.toHaveBeenCalled();
+  });
+
+  it('create_customer: no duplicates → a card', async () => {
+    const h = reviewHarness(MD, [C, tool('check_vat_id'), tool('check_customer_duplicates')], answer(null, null));
+    await createGatedToolHandler(C, h.im, h.state)({ name: 'X', address_lines: ['a'], country: 'AT', uid: 'ATU12345678', crm_contact_id: 'crm-4' });
+    expect(h.submitProposal).toHaveBeenCalledOnce();
+  });
+
+  it('update_customer: linking a CRM contact another customer has → refused; the read excludes this customer', async () => {
+    const U = erpTool('update_customer', 'master-data', 'customer_update');
+    const h = reviewHarness(MD, [U, tool('get_customer'), tool('check_customer_duplicates')], (t, a) =>
+      t === 'get_customer' ? { id: 'c1', revision: 2 } : t === 'check_customer_duplicates' ? dups(null, 'cust-9')(a) : undefined);
+    const r = await createGatedToolHandler(U, h.im, h.state)({ id: 'c1', revision: 2, crm_contact_id: 'crm-4' });
+    expect(refusalText(r)).toMatch(/^Refused: No other customer for this CRM contact/);
+    expect(h.callTool).toHaveBeenCalledWith('erp', 'check_customer_duplicates', { crm_contact_id: 'crm-4', id: 'c1' });
   });
 
   it('update_customer_tax_data: the new VAT ID belongs to another customer → refused', async () => {
     const T = erpTool('update_customer_tax_data', 'master-data', 'customer_tax');
-    const h = reviewHarness(MD, [T, tool('preview_customer_change')], (t) => (t === 'preview_customer_change'
+    const h = reviewHarness(MD, [T, tool('preview_customer_change'), tool('check_customer_duplicates')], (t, a) => (t === 'preview_customer_change'
       ? { revision: 3, uid_or_country_changed: true, tax_mode: { now: 'normal', after: 'normal', now_label: 'n', after_label: 'n' },
           issued_documents: { invoices: 0, credit_notes: 0 },
-          vat_check: { format: 'ok', duplicate: true, duplicate_of: 'cust-17', vies: { status: 'valid', checked_at: null, reason: null } } }
-      : undefined));
+          vat_check: { format: 'ok', vies: { status: 'valid', checked_at: null, reason: null } } }
+      : t === 'check_customer_duplicates' ? dups('cust-17')(a) : undefined));
     const r = await createGatedToolHandler(T, h.im, h.state)({ id: 'c1', revision: 3, name: 'X', address_lines: ['a'], country: 'AT', uid: 'ATU12345678' });
-    expect(refusalText(r)).toMatch(/^Refused: No other customer with this VAT ID: failed \(true\) — already customer cust-17\./);
+    expect(refusalText(r)).toMatch(/^Refused: No other customer with this VAT ID: failed \(cust-17\)/);
     expect(h.submitProposal).not.toHaveBeenCalled();
   });
 });

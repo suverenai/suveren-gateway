@@ -151,6 +151,17 @@ export interface PreviewReadConfig {
    * the record the action changes; that is what `version` / the hash protect.
    */
   displayOnly?: boolean;
+  /**
+   * A name for this read's result that only `checks` use (`<as>.<field>`) —
+   * a read that feeds checks and is not shown as a card section of its own
+   * (e.g. a duplicate lookup). Exclusive with `attach`, `forEach` and `kind`.
+   */
+  as?: string;
+  /**
+   * The source named on the card for a `displayOnly` read: "From <label> —
+   * checked <time>" (e.g. "EU VIES"). Display text from the manifest only.
+   */
+  label?: string;
 }
 
 /** Manifest cap (temp/briefs/au8-brief.md) — a preview may declare at most
@@ -397,6 +408,9 @@ export interface CheckDeclaration {
   fail?: CheckValue[];
   notice?: CheckValue[];
   notChecked?: CheckValue[];
+  /** Presence form — the status when the value is there (not null/""/[]) vs. when it is null/empty. */
+  present?: CheckStatus;
+  absent?: CheckStatus;
   /** Comparison form — `to` is a path, or a number literal. */
   compare?: { op: 'eq' | 'ne' | 'gt' | 'lt'; to: string | number };
   /** For `compare` — defaults `pass` / `fail`. */

@@ -91,7 +91,7 @@ export function resolveCheckPath(path: string, scope: Scope): Resolved {
   }
   const segs = path.split('.');
   if (segs.length > 1) {
-    const readIdx = reads.findIndex((r) => !r.forEach && r.attach === segs[0]);
+    const readIdx = reads.findIndex((r) => !r.forEach && (r.attach === segs[0] || r.as === segs[0]));
     if (readIdx >= 0) return fromOutcome(sections[readIdx]?.result, segs.slice(1));
   }
   const v = valueAtPath(ctx.args, path);
@@ -134,6 +134,9 @@ function statusFor(decl: CheckDeclaration, value: unknown, scope: Scope): { stat
         break;
     }
     return { status: result ? (decl.onTrue ?? 'pass') : (decl.onFalse ?? 'fail') };
+  }
+  if (decl.present !== undefined || decl.absent !== undefined) {
+    return { status: isPresentForWhen(value) || value === false ? decl.present! : decl.absent! };
   }
   if (inList(decl.fail, value)) return { status: 'fail' };
   if (inList(decl.pass, value)) return { status: 'pass' };

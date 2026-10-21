@@ -294,6 +294,9 @@ export interface ReadPlanItem {
   elements?: Array<{ args: Record<string, unknown>; skip?: boolean }>;
   /** See {@link PreviewReadConfig.displayOnly} — excluded from the AU4 hash. */
   displayOnly?: boolean;
+  /** See {@link PreviewReadConfig.as} / {@link PreviewReadConfig.label}. */
+  as?: string;
+  label?: string;
   /** `forEach` only — present when the source array exceeded the cap. */
   overflow?: { shown: number; total: number };
   /**
@@ -333,6 +336,8 @@ export function planPreviewReads(
       kind: config.kind,
       argsMapping: config.args,
       ...(config.displayOnly ? { displayOnly: true } : {}),
+      ...(config.as ? { as: config.as } : {}),
+      ...(config.label ? { label: config.label } : {}),
     };
     if (config.forEach) {
       const source = actionArgs[config.forEach];
@@ -387,6 +392,8 @@ async function runPreviewReadPlan(
       ...(item.fields ? { fields: item.fields } : {}),
       ...(item.kind ? { kind: item.kind } : {}),
       ...(item.displayOnly ? { displayOnly: true } : {}),
+      ...(item.as ? { as: item.as } : {}),
+      ...(item.label ? { label: item.label } : {}),
     };
     if (item.elements !== undefined) {
       const elements: PreviewReadOutcome[] = [];
@@ -603,6 +610,10 @@ export interface PreviewReadSection {
   kind?: 'document';
   /** See {@link PreviewReadConfig.displayOnly} — the card labels it with its time. */
   displayOnly?: boolean;
+  /** See {@link PreviewReadConfig.as} — input for checks only, no card section. */
+  as?: string;
+  /** See {@link PreviewReadConfig.label} — "From <label>". */
+  label?: string;
   /** Non-`forEach` reads only. */
   result?: PreviewReadOutcome;
   /** `forEach` reads only — one outcome per (capped) source element, same order. */

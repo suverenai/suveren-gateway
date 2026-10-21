@@ -246,7 +246,7 @@
         "actionLabel": "Quote updated",
         "contextKeys": { "quote": "id" },
         "preview": [
-          { "tool": "get_quote", "args": { "id": "id", "revision": "revision" }, "attach": "id", "when": "revision",
+          { "tool": "get_quote", "args": { "id": "id", "revision": "revision" }, "attach": "id",
             "version": { "arg": "revision", "field": "revision" } },
           { "tool": "get_item", "forEach": "lines", "args": { "id": "item_id" }, "attach": "item", "when": "item_id" },
           { "tool": "preview_quote", "when": "document_date", "kind": "document",
@@ -452,6 +452,11 @@
         "category": "read",
         "internal": true
       },
+      "check_customer_duplicates": {
+        "profile": "master-data",
+        "category": "read",
+        "internal": true
+      },
       "preview_quote": {
         "category": "read",
         "internal": true
@@ -487,7 +492,9 @@
         "staticExecution": { "action_type": "customer_create" },
         "actionLabel": "Customer created",
         "preview": [
-          { "tool": "check_vat_id", "args": { "country": "country", "uid": "uid" }, "attach": "uid", "when": "uid", "displayOnly": true }
+          { "tool": "check_vat_id", "args": { "country": "country", "uid": "uid" }, "attach": "uid", "when": "uid",
+            "displayOnly": true, "label": "EU VIES" },
+          { "tool": "check_customer_duplicates", "args": { "uid": "uid", "crm_contact_id": "crm_contact_id" }, "as": "duplicates" }
         ],
         "checks": [
           { "key": "vat-format", "label": "VAT ID format", "when": "uid", "path": "uid.format",
@@ -495,18 +502,21 @@
           { "key": "vies", "label": "VAT ID confirmed by VIES", "when": "uid", "path": "uid.vies.status", "blocking": true,
             "pass": ["valid"], "fail": ["invalid"], "notChecked": ["not_checked"], "notice": ["not_applicable"], "missing": "not_checked",
             "detail": "[checked {uid.vies.checked_at|date}][ — {uid.vies.reason} — saving is not blocked while VIES is unreachable]" },
-          { "key": "duplicate", "label": "No other customer with this VAT ID", "when": "uid", "blocking": true,
-            "path": "uid.duplicate", "pass": [false], "fail": [true],
-            "detail": "[already customer {uid.duplicate_of}]" }
+          { "key": "vat-duplicate", "label": "No other customer with this VAT ID", "when": "uid", "blocking": true,
+            "path": "duplicates.vat_duplicate_of", "present": "fail", "absent": "pass",
+            "detail": "[already customer {duplicates.vat_duplicate_of}]" },
+          { "key": "crm-duplicate", "label": "No other customer for this CRM contact", "when": "crm_contact_id", "blocking": true,
+            "path": "duplicates.crm_contact_duplicate_of", "present": "fail", "absent": "pass",
+            "detail": "[already customer {duplicates.crm_contact_duplicate_of}]" }
         ],
         "display": {
           "order": ["name", "address_lines", "country", "uid", "email", "crm_contact_id"],
           "labels": {
             "name": "Name", "address_lines": "Address", "country": "Country", "uid": "VAT ID",
             "email": "Email", "crm_contact_id": "CRM contact",
-            "uid.vies.name": "Name at VIES", "uid.vies.address": "Address at VIES", "uid.vies.checked_at": "VIES checked"
+            "uid.vies.name": "Name at VIES", "uid.vies.address": "Address at VIES", "uid.vies.request_id": "Consultation no."
           },
-          "hidden": ["uid.uid", "uid.format", "uid.vies.status", "uid.vies.reason", "uid.duplicate", "uid.duplicate_of", "uid.vies.request_id"]
+          "hidden": ["uid.uid", "uid.format", "uid.vies.status", "uid.vies.reason", "uid.vies.checked_at", "uid.duplicate", "uid.duplicate_of"]
         }
       },
       "update_customer": {
@@ -517,7 +527,14 @@
         "actionLabel": "Customer updated",
         "preview": [
           { "tool": "get_customer", "args": { "id": "id", "revision": "revision" }, "attach": "id",
-            "version": { "arg": "revision", "field": "revision" } }
+            "version": { "arg": "revision", "field": "revision" } },
+          { "tool": "check_customer_duplicates", "args": { "crm_contact_id": "crm_contact_id", "id": "id" }, "as": "duplicates",
+            "when": "crm_contact_id" }
+        ],
+        "checks": [
+          { "key": "crm-duplicate", "label": "No other customer for this CRM contact", "when": "crm_contact_id", "blocking": true,
+            "path": "duplicates.crm_contact_duplicate_of", "present": "fail", "absent": "pass",
+            "detail": "[already customer {duplicates.crm_contact_duplicate_of}]" }
         ],
         "display": {
           "order": ["id", "email", "crm_contact_id"],
@@ -536,15 +553,16 @@
         "preview": [
           { "tool": "preview_customer_change",
             "args": { "id": "id", "name": "name", "address_lines": "address_lines", "country": "country", "uid": "uid" },
-            "attach": "id", "version": { "arg": "revision", "field": "revision" } }
+            "attach": "id", "version": { "arg": "revision", "field": "revision" } },
+          { "tool": "check_customer_duplicates", "args": { "uid": "uid", "id": "id" }, "as": "duplicates", "when": "uid" }
         ],
         "checks": [
           { "key": "vies", "label": "New VAT ID confirmed by VIES", "when": "uid", "path": "id.vat_check.vies.status", "blocking": true,
             "pass": ["valid"], "fail": ["invalid"], "notChecked": ["not_checked"], "notice": ["not_applicable"], "missing": "not_checked",
             "detail": "[checked {id.vat_check.vies.checked_at|date}][ — {id.vat_check.vies.reason} — saving is not blocked while VIES is unreachable]" },
-          { "key": "duplicate", "label": "No other customer with this VAT ID", "when": "uid", "blocking": true,
-            "path": "id.vat_check.duplicate", "pass": [false], "fail": [true],
-            "detail": "[already customer {id.vat_check.duplicate_of}]" },
+          { "key": "vat-duplicate", "label": "No other customer with this VAT ID", "when": "uid", "blocking": true,
+            "path": "duplicates.vat_duplicate_of", "present": "fail", "absent": "pass",
+            "detail": "[already customer {duplicates.vat_duplicate_of}]" },
           { "key": "tax-mode", "label": "Tax treatment of future invoices", "path": "id.tax_mode.after",
             "compare": { "op": "eq", "to": "id.tax_mode.now" }, "onTrue": "pass", "onFalse": "notice",
             "detail": "{id.tax_mode.now_label} → {id.tax_mode.after_label}" },

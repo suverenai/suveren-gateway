@@ -296,6 +296,15 @@ function invalidReadConfigReason(toolName: string, idx: number | null, entry: un
   if (p.displayOnly !== undefined && typeof p.displayOnly !== 'boolean') {
     return `${label}.displayOnly must be a boolean`;
   }
+  if (p.as !== undefined) {
+    if (typeof p.as !== 'string' || !/^[A-Za-z_][\w-]*$/.test(p.as)) return `${label}.as must be a plain name`;
+    if (p.attach !== undefined || p.forEach !== undefined || p.kind !== undefined) {
+      return `${label}.as cannot be combined with attach, forEach or kind`;
+    }
+  }
+  if (p.label !== undefined && (typeof p.label !== 'string' || p.label.trim().length === 0 || p.label.length > 60)) {
+    return `${label}.label must be a non-empty string of at most 60 characters`;
+  }
   if (p.displayOnly === true && p.version !== undefined) {
     return `${label} cannot be both displayOnly and version-checked — a versioned read is the record the action changes`;
   }
@@ -419,7 +428,7 @@ export function invalidSummaryReason(toolName: string, entry: unknown): string |
 // ─── D1 — `checks` shape validation (tool-gating-types.ts `CheckDeclaration`) ─
 
 const CHECK_KEYS = new Set(['key', 'label', 'path', 'when', 'forEach', 'pass', 'fail', 'notice', 'notChecked',
-  'compare', 'onTrue', 'onFalse', 'missing', 'detail', 'blocking']);
+  'compare', 'onTrue', 'onFalse', 'missing', 'detail', 'blocking', 'present', 'absent']);
 const CHECK_LISTS = ['pass', 'fail', 'notice', 'notChecked'] as const;
 const DETAIL_FORMATS = ['money', 'percent', 'list', 'short', 'date'];
 
@@ -493,7 +502,15 @@ function invalidCheckReason(at: string, raw: unknown, seen: Set<string>): string
   if (pathReason) return pathReason;
   const hasList = CHECK_LISTS.some((k) => c[k] !== undefined);
   const hasCompare = c.compare !== undefined;
-  if (hasList === hasCompare) return `${at} must declare either value lists (pass/fail/notice/notChecked) or compare — exactly one form`;
+  const hasPresence = c.present !== undefined || c.absent !== undefined;
+  if ([hasList, hasCompare, hasPresence].filter(Boolean).length !== 1) {
+    return `${at} must declare exactly one form: value lists (pass/fail/notice/notChecked), compare, or present/absent`;
+  }
+  if (hasPresence) {
+    for (const k of ['present', 'absent'] as const) {
+      if (!CHECK_STATUSES.includes(c[k] as CheckStatus)) return `${at}.${k} must be one of ${CHECK_STATUSES.join(', ')} (both required)`;
+    }
+  }
   for (const k of CHECK_LISTS) {
     if (c[k] === undefined) continue;
     const r = checkValueListReason(`${at}.${k}`, c[k]);
