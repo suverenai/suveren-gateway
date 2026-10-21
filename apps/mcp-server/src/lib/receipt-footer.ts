@@ -49,9 +49,6 @@ export function setAsBaseUrl(url: string): void {
 /** Operator display name for the footer ("verified by «operator»"). */
 const OPERATOR_NAME = process.env.SUVEREN_OPERATOR_NAME ?? 'Suveren';
 
-/** Canonical HAP site — the promotion link on every footer's second line. */
-const HAP_URL = 'https://www.humanagencyprotocol.org/';
-
 /**
  * Strip anchor — matches an already-appended Suveren footer through the end of
  * the content, regardless of identity variant, verb (Sent/Published), or
@@ -73,21 +70,13 @@ function receiptUrl(receiptId: string): string {
   return `${AS_BASE}/t/${receiptId}`;
 }
 
-/**
- * The HAP promotion line — constant across every footer (operator-branded so a
- * white-labelled operator reads correctly). Plain full URL, no HTML anchor, so
- * it renders clickable in email (HTML or plain), calendar, and publishing alike.
- */
-function hapLine(): string {
-  return `-- ${OPERATOR_NAME} implements HAP, the open Human Agency Protocol: ${HAP_URL}`;
-}
-
 function footerText(receiptId: string, verb: string, subject?: Subject): string {
   // deriveIdentityLine (hap-core) is the source of truth for the assurance
   // wording. It leads with "Sent …"; swap the verb for the channel. Full plain
   // URLs (no <a>) so links work across email / calendar / publishing.
   const identity = deriveIdentityLine(subject, { operatorName: OPERATOR_NAME }).replace(/^Sent\b/, verb);
-  return `\n\n-- ${identity}. Ticket: ${receiptUrl(receiptId)}\n\n${hapLine()}`;
+  // One line only (Andreas 2026-10-21: the HAP promotion line was too much).
+  return `\n\n-- ${identity}. Ticket: ${receiptUrl(receiptId)}`;
 }
 
 /**
