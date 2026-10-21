@@ -33,6 +33,7 @@ export type AreaIconName =
   | 'deployments'
   | 'purchasing'
   | 'invoicing'
+  | 'masterData'
   | 'reports'
   | 'setup'
   | 'unknown';
@@ -52,6 +53,7 @@ const AREA_ICON_BY_SHORT_ID: Readonly<Record<string, AreaIconName>> = {
   reporting: 'reports',
   delegation: 'setup',
   invoicing: 'invoicing',
+  'master-data': 'masterData',
 };
 
 /** The area icon for a profile id. Unknown short id → `'unknown'`. */
