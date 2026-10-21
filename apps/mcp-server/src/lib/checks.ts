@@ -54,8 +54,23 @@ function fromOutcome(outcome: PreviewReadOutcome | undefined, rest: string[]): R
   if (!outcome || outcome.status !== 'ok') return outcome?.status === 'none' ? ABSENT : NO_ANSWER;
   const body = structuredOrJsonText(outcome.body);
   if (!body) return NO_ANSWER;
-  const v = rest.length === 0 ? body : valueAtPath(body, rest.join('.'));
+  const v = digNullAware(body, rest);
   return v === undefined ? ABSENT : { ok: true, value: v };
+}
+
+/**
+ * Like valueAtPath, but an explicit `null` on the way is the answer `null`
+ * (the connector said "none", e.g. `vies: null` = never checked) — distinct
+ * from a field the answer does not have at all (undefined).
+ */
+function digNullAware(source: unknown, segs: string[]): unknown {
+  let cur: unknown = source;
+  for (const part of segs) {
+    if (cur === null) return null;
+    if (typeof cur !== 'object' || Array.isArray(cur)) return undefined;
+    cur = (cur as Record<string, unknown>)[part];
+  }
+  return cur;
 }
 
 /** Resolve a check path (grammar in tool-gating-types.ts `CheckDeclaration`). */
@@ -129,9 +144,12 @@ function statusFor(decl: CheckDeclaration, value: unknown, scope: Scope): { stat
 }
 
 function evaluateOne(decl: CheckDeclaration, scope: Scope): CheckResult | null {
-  if (decl.when !== undefined) {
+  if (typeof decl.when === 'string') {
     const w = resolveCheckPath(decl.when, scope);
     if (!w.ok || !isPresentForWhen(w.value)) return null;
+  } else if (decl.when !== undefined) {
+    const w = resolveCheckPath(decl.when.path, scope);
+    if (!w.ok || !inList(decl.when.in, w.value)) return null;
   }
   const base: CheckResult = {
     key: decl.key,

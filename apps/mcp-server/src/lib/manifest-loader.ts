@@ -458,6 +458,16 @@ function checkDetailReason(at: string, detail: unknown, forEach: unknown): strin
   return null;
 }
 
+function checkWhenReason(at: string, when: unknown, forEach: unknown): string | null {
+  if (when === undefined) return null;
+  if (typeof when === 'string') return checkPathReason(`${at}.when`, when, forEach);
+  if (when === null || typeof when !== 'object' || Array.isArray(when)) return `${at}.when must be a path or {path, in}`;
+  const w = when as Record<string, unknown>;
+  const extra = Object.keys(w).find((k) => k !== 'path' && k !== 'in');
+  if (extra) return `${at}.when has unknown key "${extra}"`;
+  return checkPathReason(`${at}.when.path`, w.path, forEach) ?? checkValueListReason(`${at}.when.in`, w.in);
+}
+
 function checkValueListReason(at: string, list: unknown): string | null {
   if (!Array.isArray(list) || list.length === 0) return `${at} must be a non-empty list of values`;
   const ok = list.every((v) => v === null || ['string', 'boolean'].includes(typeof v) || (typeof v === 'number' && Number.isFinite(v)));
@@ -479,7 +489,7 @@ function invalidCheckReason(at: string, raw: unknown, seen: Set<string>): string
     return `${at}.forEach must name an array argument`;
   }
   const pathReason = checkPathReason(`${at}.path`, c.path, c.forEach)
-    ?? (c.when !== undefined ? checkPathReason(`${at}.when`, c.when, c.forEach) : null);
+    ?? checkWhenReason(at, c.when, c.forEach);
   if (pathReason) return pathReason;
   const hasList = CHECK_LISTS.some((k) => c[k] !== undefined);
   const hasCompare = c.compare !== undefined;

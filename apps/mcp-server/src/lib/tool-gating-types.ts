@@ -359,6 +359,12 @@ export const MAX_CHECKS_PER_TOOL = 12;
 
 export type CheckValue = string | number | boolean | null;
 
+/** A check's conditional form: applies only when the value at `path` is one of `in`. */
+export interface CheckWhen {
+  path: string;
+  in: CheckValue[];
+}
+
 /**
  * One check a tool's approval card shows on its checks line, after the
  * limit checks. Evaluated by the GATEWAY over the call's bound arguments plus
@@ -378,8 +384,12 @@ export interface CheckDeclaration {
   label: string;
   /** The value under test. */
   path: string;
-  /** Applies only if this path is present (not undefined/null/""/[]/false). */
-  when?: string;
+  /**
+   * Applies only if this path is present (not undefined/null/""/[]/false) —
+   * or, in the object form, only if the value at `path` is one of `in`
+   * (e.g. a VIES check that matters only for a reverse-charge customer).
+   */
+  when?: string | CheckWhen;
   /** One result per element of this array argument (`{#}` = its 1-based position). */
   forEach?: string;
   /** Value-matching form — a value in no list → `not_checked` ("unexpected value"). */

@@ -19,6 +19,7 @@ describe('checks validation', () => {
       detail: 'line {#}: {lines[].unit_price|money}[ — {lines[].item.list_price|money}]',
     }))).toBeNull();
     expect(invalidChecksReason('t', checks({ key: 'n', label: 'n', path: 'x', compare: { op: 'gt', to: 0 } }))).toBeNull();
+    expect(invalidChecksReason('t', checks({ ...good, when: { path: 'customer_id.tax_mode', in: ['reverse_charge'] } }))).toBeNull();
   });
 
   it.each([
@@ -37,6 +38,8 @@ describe('checks validation', () => {
     [{ ...good, detail: '{a|euro}' }, /unknown format/],
     [{ ...good, detail: 'line {#}' }, /\{#\} without forEach/],
     [{ ...good, detail: '[[x]]' }, /nested \[ \]/],
+    [{ ...good, when: { path: 'x' } }, /when.in must be a non-empty list/],
+    [{ ...good, when: { path: 'x', in: ['a'], not: 1 } }, /when has unknown key "not"/],
   ])('refuses %j', (decl, reason) => {
     expect(invalidChecksReason('t', checks(decl))).toMatch(reason);
   });

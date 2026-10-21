@@ -158,8 +158,8 @@ describe('create_invoice card — catalogue deviation (§5.3) and D2', () => {
     const r = await buildInternalPreview(im, 'erp', 'create_invoice', args);
     expect(checksOf(r)).toEqual([
       ['vies', 'not_checked', 'VIES unreachable'],
-      ['list-price', 'notice', 'line 1: 95.00 EUR — list price 120.00 EUR'],
-      ['item-vat', 'pass', 'line 1: 20% — item 20%'],
+      ['list-price', 'notice', 'line 1: 95.00 EUR, list price 120.00 EUR'],
+      ['item-vat', 'pass', 'line 1: 20%, item 20%'],
     ]);
   });
 
@@ -270,5 +270,30 @@ describe('AM1 — create_customer approval survives a second VIES call', () => {
       loadManifests(MANIFESTS_DIR);
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('create_invoice card — decision D1: reverse charge only with a VIES-confirmed VAT ID', () => {
+  const customer = (tax_mode: string, vies: Record<string, unknown> | null): Answer => () => ({
+    id: 'c9', name: 'Agrar Bayern GmbH', country: 'DE', uid: 'DE123456789', revision: 1, tax_mode, vies });
+  const args = { customer_id: 'c9', number: '2026-016', document_date: '2026-10-21', currency: 'EUR', net_total: 100,
+    lines: [{ description: 'Beratung', qty: 1, unit_price: 100, vat_rate: 0 }] };
+  const rc = async (c: Answer) => {
+    const { im } = erpDouble({ get_customer: c, preview_invoice: () => ({ filename: 'x.pdf' }) });
+    return checksOf(await buildInternalPreview(im, 'erp', 'create_invoice', args)).filter((x) => x[0] === 'reverse-charge');
+  };
+
+  it('reverse charge + VIES not checked → a FAILED check on the card (preview passes, issuing would refuse)', async () => {
+    expect(await rc(customer('reverse_charge', { status: 'not_checked', reason: 'VIES unreachable', checked_at: null })))
+      .toEqual([['reverse-charge', 'fail', 'VIES unreachable — issuing is refused until VIES confirms the VAT ID']]);
+  });
+
+  it('reverse charge + never checked (vies null) → failed too, never "missing"', async () => {
+    expect((await rc(customer('reverse_charge', null)))[0][1]).toBe('fail');
+  });
+
+  it('reverse charge + valid → pass; a normal-VAT customer gets no reverse-charge line', async () => {
+    expect(await rc(customer('reverse_charge', { status: 'valid', reason: null, checked_at: '2026-10-20T08:00:00Z' }))).toEqual([['reverse-charge', 'pass', null]]);
+    expect(await rc(customer('normal', { status: 'not_checked', reason: 'x', checked_at: null }))).toEqual([]);
   });
 });

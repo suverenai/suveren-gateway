@@ -194,14 +194,14 @@
           { "tool": "get_item", "forEach": "lines", "args": { "id": "item_id" }, "attach": "item", "when": "item_id" }
         ],
         "checks": [
-          { "key": "list-price", "label": "Line price = list price", "forEach": "lines", "when": "lines[].item_id",
+          { "key": "list-price", "label": "Price vs. list", "forEach": "lines", "when": "lines[].item_id",
             "path": "lines[].unit_price", "compare": { "op": "eq", "to": "lines[].item.list_price" },
             "onTrue": "pass", "onFalse": "notice",
-            "detail": "line {#}: {lines[].unit_price|money} — list price {lines[].item.list_price|money}" },
-          { "key": "item-vat", "label": "Line VAT = item VAT rate", "forEach": "lines", "when": "lines[].item_id",
+            "detail": "line {#}: {lines[].unit_price|money}, list price {lines[].item.list_price|money}" },
+          { "key": "item-vat", "label": "VAT vs. item", "forEach": "lines", "when": "lines[].item_id",
             "path": "lines[].vat_rate", "compare": { "op": "eq", "to": "lines[].item.vat_rate" },
             "onTrue": "pass", "onFalse": "notice",
-            "detail": "line {#}: {lines[].vat_rate|percent} — item {lines[].item.vat_rate|percent}" }
+            "detail": "line {#}: {lines[].vat_rate|percent}, item {lines[].item.vat_rate|percent}" }
         ],
         "display": {
           "order": ["customer_id", "number", "document_date", "lines", "discount_pct", "value", "valid_until", "notes"],
@@ -247,14 +247,14 @@
           { "tool": "get_item", "forEach": "lines", "args": { "id": "item_id" }, "attach": "item", "when": "item_id" }
         ],
         "checks": [
-          { "key": "list-price", "label": "Line price = list price", "forEach": "lines", "when": "lines[].item_id",
+          { "key": "list-price", "label": "Price vs. list", "forEach": "lines", "when": "lines[].item_id",
             "path": "lines[].unit_price", "compare": { "op": "eq", "to": "lines[].item.list_price" },
             "onTrue": "pass", "onFalse": "notice",
-            "detail": "line {#}: {lines[].unit_price|money} — list price {lines[].item.list_price|money}" },
-          { "key": "item-vat", "label": "Line VAT = item VAT rate", "forEach": "lines", "when": "lines[].item_id",
+            "detail": "line {#}: {lines[].unit_price|money}, list price {lines[].item.list_price|money}" },
+          { "key": "item-vat", "label": "VAT vs. item", "forEach": "lines", "when": "lines[].item_id",
             "path": "lines[].vat_rate", "compare": { "op": "eq", "to": "lines[].item.vat_rate" },
             "onTrue": "pass", "onFalse": "notice",
-            "detail": "line {#}: {lines[].vat_rate|percent} — item {lines[].item.vat_rate|percent}" }
+            "detail": "line {#}: {lines[].vat_rate|percent}, item {lines[].item.vat_rate|percent}" }
         ],
         "display": {
           "order": ["id", "lines", "discount_pct", "value", "valid_until", "notes"],
@@ -352,14 +352,17 @@
             "path": "customer_id.vies.status", "pass": ["valid"], "fail": ["invalid"], "notChecked": ["not_checked", null],
             "notice": ["not_applicable"], "missing": "not_checked",
             "detail": "[checked {customer_id.vies.checked_at|date}][ — {customer_id.vies.reason}]" },
-          { "key": "list-price", "label": "Line price = list price", "forEach": "lines", "when": "lines[].item_id",
+          { "key": "reverse-charge", "label": "Reverse charge: VAT ID confirmed by VIES", "when": { "path": "customer_id.tax_mode", "in": ["reverse_charge"] },
+            "path": "customer_id.vies.status", "pass": ["valid"], "fail": ["invalid", "not_checked", "not_applicable", null], "missing": "not_checked",
+            "detail": "[{customer_id.vies.reason} — issuing is refused until VIES confirms the VAT ID]" },
+          { "key": "list-price", "label": "Price vs. list", "forEach": "lines", "when": "lines[].item_id",
             "path": "lines[].unit_price", "compare": { "op": "eq", "to": "lines[].item.list_price" },
             "onTrue": "pass", "onFalse": "notice",
-            "detail": "line {#}: {lines[].unit_price|money} — list price {lines[].item.list_price|money}" },
-          { "key": "item-vat", "label": "Line VAT = item VAT rate", "forEach": "lines", "when": "lines[].item_id",
+            "detail": "line {#}: {lines[].unit_price|money}, list price {lines[].item.list_price|money}" },
+          { "key": "item-vat", "label": "VAT vs. item", "forEach": "lines", "when": "lines[].item_id",
             "path": "lines[].vat_rate", "compare": { "op": "eq", "to": "lines[].item.vat_rate" },
             "onTrue": "pass", "onFalse": "notice",
-            "detail": "line {#}: {lines[].vat_rate|percent} — item {lines[].item.vat_rate|percent}" }
+            "detail": "line {#}: {lines[].vat_rate|percent}, item {lines[].item.vat_rate|percent}" }
         ],
         "display": {
           "order": ["customer_id", "quote_id", "quote_revision", "customer_revision", "order_id", "number", "document_date", "service_period", "lines", "net_total", "currency", "payment_term_days", "memo"],
