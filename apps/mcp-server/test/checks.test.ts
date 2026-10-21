@@ -134,3 +134,15 @@ describe('forEach checks', () => {
     expect(evaluateChecks([LIST_PRICE], { args, declaration: PREVIEW, sections: failed })).toEqual([]);
   });
 });
+
+describe('detail format count:<one>/<many>', () => {
+  it('says "1 invoice" and "4 invoices"', () => {
+    const decl: CheckDeclaration = { key: 'n', label: 'Issued', path: 'id.n', compare: { op: 'gt', to: 0 }, onTrue: 'notice', onFalse: 'pass',
+      detail: '{id.n|count:invoice/invoices}, {id.c|count:credit note/credit notes}' };
+    const PREVIEW: PreviewReadConfig[] = [{ tool: 'p', args: { id: 'id' }, attach: 'id' }];
+    const r = (n: number, c: number) => evaluateChecks([decl], { args: { id: 'x' }, declaration: PREVIEW,
+      sections: [{ tool: 'p', attach: 'id', result: { status: 'ok', body: { structured: { n, c } } } }] })[0].detail;
+    expect(r(1, 1)).toBe('1 invoice, 1 credit note');
+    expect(r(4, 0)).toBe('4 invoices, 0 credit notes');
+  });
+});

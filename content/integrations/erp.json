@@ -178,7 +178,7 @@
         "requiredValue": "unlimited"
       },
       "create_quote": {
-        "summary": "Quote[ {number}] of {value|money} net[ — {discount_pct|percent} discount]",
+        "summary": "Quote[ {number}] of {value|money} net to {customer_id|ref}[ — {discount_pct|percent} discount]",
         "executionMapping": {
           "value": "value",
           "discount_pct": "discount_pct",
@@ -270,6 +270,7 @@
             "detail": "line {#}: {lines[].vat_rate|percent}, item {lines[].item.vat_rate|percent}" }
         ],
         "display": {
+          "verb": "changed",
           "order": ["id", "document_date", "lines", "discount_pct", "value", "valid_until", "notes"],
           "money": ["value", "lines[].item.list_price", "lines[].unit_price", "id.net_total"],
           "percent": ["discount_pct", "lines[].vat_rate", "lines[].item.vat_rate"],
@@ -326,7 +327,7 @@
       },
       "create_invoice": {
         "profile": "invoicing",
-        "summary": "Invoice[ {number}] of {net_total|money} net to {customer_id}[ for order {order_id}]",
+        "summary": "Invoice[ {number}] of {net_total|money} net to {customer_id|ref}[ for order {order_id}]",
         "executionMapping": {
           "net_total": "net_total",
           "currency": "currency"
@@ -529,7 +530,7 @@
       },
       "update_customer": {
         "profile": "master-data",
-        "summary": "Change contact data of customer {id}",
+        "summary": "Change contact data of customer {id|ref}",
         "executionMapping": {},
         "staticExecution": { "action_type": "customer_update" },
         "actionLabel": "Customer updated",
@@ -545,6 +546,7 @@
             "detail": "[already customer {duplicates.crm_contact_duplicate_of}]" }
         ],
         "display": {
+          "verb": "changed",
           "order": ["id", "email", "crm_contact_id"],
           "labels": {
             "id": "Customer", "email": "Email (new)", "crm_contact_id": "CRM contact (new)",
@@ -554,7 +556,7 @@
       },
       "update_customer_tax_data": {
         "profile": "master-data",
-        "summary": "Change tax data of customer {id}: {name}, {country}[ — VAT ID {uid}]",
+        "summary": "Change tax data of customer {id|ref}: {name}, {country}[ — VAT ID {uid}]",
         "executionMapping": {},
         "staticExecution": { "action_type": "customer_tax" },
         "actionLabel": "Customer tax data changed",
@@ -576,9 +578,10 @@
             "detail": "{id.tax_mode.now_label} → {id.tax_mode.after_label}" },
           { "key": "already-invoiced", "label": "Already issued to this customer", "when": "id.uid_or_country_changed",
             "path": "id.issued_documents.invoices", "compare": { "op": "gt", "to": 0 }, "onTrue": "notice", "onFalse": "pass",
-            "detail": "{id.issued_documents.invoices} invoices, {id.issued_documents.credit_notes} credit notes — they keep the old data" }
+            "detail": "{id.issued_documents.invoices|count:invoice/invoices}, {id.issued_documents.credit_notes|count:credit note/credit notes} — they keep the old data" }
         ],
         "display": {
+          "verb": "changed",
           "order": ["id", "name", "address_lines", "country", "uid"],
           "labels": {
             "id": "Customer", "name": "Name", "address_lines": "Address", "country": "Country", "uid": "VAT ID",
@@ -606,7 +609,7 @@
       },
       "update_item": {
         "profile": "master-data",
-        "summary": "Change item {id}",
+        "summary": "Change item {id|ref}",
         "executionMapping": {},
         "staticExecution": { "action_type": "item_update" },
         "actionLabel": "Item updated",
@@ -614,11 +617,12 @@
           { "tool": "get_item", "args": { "id": "id", "revision": "revision" }, "attach": "id",
             "version": { "arg": "revision", "field": "revision" } }
         ],
-        "display": { "labels": { "id": "Item", "active": "Active" } }
+        "display": {
+          "verb": "changed", "labels": { "id": "Item", "active": "Active" } }
       },
       "update_item_price": {
         "profile": "master-data",
-        "summary": "Price of item {id}: {list_price|money}, VAT {vat_rate|percent}",
+        "summary": "Price of item {id|ref}: {list_price|money}, VAT {vat_rate|percent}",
         "executionMapping": { "list_price": "list_price" },
         "staticExecution": { "action_type": "item_price" },
         "actionLabel": "Item price changed",
@@ -635,6 +639,7 @@
             "detail": "{id.vat_rate|percent} → {vat_rate|percent}" }
         ],
         "display": {
+          "verb": "changed",
           "money": ["list_price", "id.list_price"],
           "percent": ["vat_rate", "id.vat_rate"],
           "currencyField": "id.currency",

@@ -90,3 +90,16 @@ describe('network validation', () => {
     expect(invalidNetworkReason(m as never)).toMatch(reason);
   });
 });
+
+describe('formats added for the ERP cards', () => {
+  it('summary {x|ref}, detail {x|count:one/many} and display.verb validate; bad ones are refused', async () => {
+    const { invalidSummaryReason, invalidDisplayHintsReason } = await import('../src/lib/manifest-loader');
+    expect(invalidSummaryReason('t', { summary: 'Invoice to {customer_id|ref}' })).toBeNull();
+    expect(invalidChecksReason('t', checks({ ...good, detail: '{a.n|count:invoice/invoices}' }))).toBeNull();
+    expect(invalidChecksReason('t', checks({ ...good, detail: '{a.n|count:invoice}' }))).toMatch(/unknown format/);
+    expect(invalidDisplayHintsReason('t', { display: { verb: 'changed' } })).toBeNull();
+    expect(invalidDisplayHintsReason('t', { display: { verb: 'deleted' } })).toMatch(/verb must be/);
+    expect(invalidDisplayHintsReason('t', { display: { compare: { name: 'id.current.name' } } })).toBeNull();
+    expect(invalidDisplayHintsReason('t', { display: { compare: { name: 'name' } } })).toMatch(/compare.name must be/);
+  });
+});

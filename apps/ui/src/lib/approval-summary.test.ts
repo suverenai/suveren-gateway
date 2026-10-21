@@ -62,3 +62,13 @@ describe('sealedSummary — a ticket headline from the approved proposal (no fal
     expect(sealedSummary('mail__send_message', { to: ['a@b.de'] }, manifests)).toBeNull();
   });
 });
+
+describe('{path|ref} — names an id the card resolved', () => {
+  it('"Name (id)" with a resolver, the plain id without one', async () => {
+    const { renderSummary } = await import('./approval-summary');
+    const t = 'Invoice of {net|money} to {customer_id|ref}';
+    expect(renderSummary(t, { net: 10, customer_id: 'c-1007', currency: 'EUR' }, { refName: (p) => (p === 'customer_id' ? 'Steiner GmbH' : undefined) }))
+      .toBe('Invoice of €10.00 to Steiner GmbH (c-1007)');
+    expect(renderSummary(t, { net: 10, customer_id: 'c-1007', currency: 'EUR' })).toBe('Invoice of €10.00 to c-1007');
+  });
+});

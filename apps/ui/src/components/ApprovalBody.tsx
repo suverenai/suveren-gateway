@@ -44,6 +44,7 @@ import { useProposalContent, missingRecipients } from '../lib/use-proposal-conte
 import { limitChecks } from '../lib/receipt-summary';
 import { checkLines } from '../lib/checks-view';
 import { ChecksLines } from './ChecksLines';
+import { refNameFrom, setProposalPreview } from '../lib/preview-store';
 import { profileDisplayName } from '../lib/profile-display';
 import { useAuth } from '../contexts/AuthContext';
 import { newestProfileOf, carryBoundsForward, carryContextForward } from '../lib/profile-upgrade';
@@ -223,6 +224,8 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
   // UI spec §4.2.2 — one line per check: limits + attachments, then the
   // manifest checks the gateway evaluated with this card's own reads.
   const lines = checkLines(checks, previewData?.checks);
+  // Share this card's read with the row's summary sentence (`{x|ref}`).
+  useEffect(() => { setProposalPreview(proposal.id, previewData); }, [proposal.id, previewData]);
   const [requestContextData, setRequestContextData] = useState<RequestContextResponse | null>(null);
   useEffect(() => {
     if (!previewData || !requestContextData) { onShownSnapshot?.(null); return; }
@@ -276,7 +279,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
           under it. In a row the row head already carries the sentence. */}
       {/* §4.2.2 — a failed check is the one red line, above the sentence. */}
       <ChecksLines lines={lines} placement="top" />
-      <div className="approval-summary" data-testid="approval-summary">{approvalSummary(proposal.tool, content.toolArgs, manifests)}</div>
+      <div className="approval-summary" data-testid="approval-summary">{approvalSummary(proposal.tool, content.toolArgs, manifests, undefined, refNameFrom(previewData ?? undefined, content.toolArgs))}</div>
       <div className="approval-headline">{headline}</div>
       {/* §4.2.2 — the other checks, one line each, before the sealed values. */}
       <ChecksLines lines={lines} placement="body" />

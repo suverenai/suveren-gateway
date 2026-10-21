@@ -133,7 +133,7 @@ describe('update_customer_tax_data card — own line for already-issued document
       ['vies', 'pass', 'checked 2026-10-21'],
       ['vat-duplicate', 'pass', null],
       ['tax-mode', 'notice', 'normal VAT → reverse charge'],
-      ['already-invoiced', 'notice', '4 invoices, 1 credit notes — they keep the old data'],
+      ['already-invoiced', 'notice', '4 invoices, 1 credit note — they keep the old data'],
     ]);
   });
 

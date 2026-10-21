@@ -221,6 +221,8 @@ export interface ToolDisplayHints {
   labels?: Record<string, string>;
   /** Arg -> path of its CURRENT value in an attached read: those args show as one Now / New table (creation-extras.ts). */
   compare?: Record<string, string>;
+  /** The card heading's verb: "What will be created" (default) or "changed". */
+  verb?: 'created' | 'changed';
 }
 
 /** A manifest-declared check, evaluated by the gateway (mcp-server checks.ts). */

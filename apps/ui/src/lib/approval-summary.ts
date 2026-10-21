@@ -14,6 +14,7 @@
  *   {path|list}          an array as "a, b +2"
  *   {path|short}         shortened to 60 characters
  *   {path|date}          an ISO date/time as a short local date
+ *   {path|ref}           an id, named when the card's attached read resolved it: "Name (id)"
  *   [ … ]                an optional part: dropped when any value inside is empty
  */
 import { humanizeKey, splitTool } from './approval-view';
@@ -23,8 +24,10 @@ const MAX_LEN = 140;
 const SHORT_LEN = 60;
 const PLACEHOLDER = /\{([^{}]+)\}/g;
 
-export type SummaryFormat = 'money' | 'percent' | 'list' | 'short' | 'date';
-const FORMATS: readonly SummaryFormat[] = ['money', 'percent', 'list', 'short', 'date'];
+export type SummaryFormat = 'money' | 'percent' | 'list' | 'short' | 'date' | 'ref';
+const FORMATS: readonly SummaryFormat[] = ['money', 'percent', 'list', 'short', 'date', 'ref'];
+/** Resolves a bound arg to the name the card's own read gave it (preview-store.ts). */
+export type RefName = (argPath: string) => string | undefined;
 
 interface Override { summary?: string; display?: { currencyField?: string } }
 
@@ -74,12 +77,16 @@ function format(v: unknown, fmt: SummaryFormat | undefined, currency: string | u
 }
 
 /** Fill every {…} in `text`; null when one has no value. */
-function fill(text: string, args: Record<string, unknown>, currency: string | undefined, locale?: string): string | null {
+function fill(text: string, args: Record<string, unknown>, currency: string | undefined, locale?: string, refName?: RefName): string | null {
   let missing = false;
   const out = text.replace(PLACEHOLDER, (_m, inner: string) => {
     const [paths, fmt] = inner.split('|').map((x) => x.trim());
     const value = paths.split(',').map((p) => at(args, p.trim())).find(present);
     if (!present(value)) { missing = true; return ''; }
+    if (fmt === 'ref') {
+      const name = refName?.(paths.split(',')[0].trim());
+      return name ? `${name} (${String(value)})` : String(value);
+    }
     return format(value, fmt as SummaryFormat | undefined, currency, locale);
   });
   return missing ? null : out;
@@ -89,13 +96,13 @@ function fill(text: string, args: Record<string, unknown>, currency: string | un
 export function renderSummary(
   template: string,
   args: Record<string, unknown>,
-  opts: { currencyField?: string; locale?: string } = {},
+  opts: { currencyField?: string; locale?: string; refName?: RefName } = {},
 ): string | null {
   const cur = at(args, opts.currencyField ?? 'currency');
   const currency = typeof cur === 'string' ? cur : undefined;
   // Optional parts first: [ … ] vanishes when anything inside is empty.
-  const withOptional = template.replace(/\[([^[\]]*)\]/g, (_m, inner: string) => fill(inner, args, currency, opts.locale) ?? '');
-  const out = fill(withOptional, args, currency, opts.locale);
+  const withOptional = template.replace(/\[([^[\]]*)\]/g, (_m, inner: string) => fill(inner, args, currency, opts.locale, opts.refName) ?? '');
+  const out = fill(withOptional, args, currency, opts.locale, opts.refName);
   if (out === null) return null;
   const clean = out.replace(/\s+/g, ' ').trim();
   return clean.length > MAX_LEN ? `${clean.slice(0, MAX_LEN - 1).trimEnd()}…` : clean;
@@ -111,11 +118,12 @@ export function approvalSummary(
   args: Record<string, unknown> | null | undefined,
   manifests: IntegrationManifest[] | undefined,
   locale?: string,
+  refName?: RefName,
 ): string {
   const fallback = humanizeKey(splitTool(tool).toolName);
   const o = overrideFor(tool, manifests);
   if (!o?.summary || !args) return fallback;
-  return renderSummary(o.summary, args, { currencyField: o.display?.currencyField, locale }) ?? fallback;
+  return renderSummary(o.summary, args, { currencyField: o.display?.currencyField, locale, refName }) ?? fallback;
 }
 
 /**

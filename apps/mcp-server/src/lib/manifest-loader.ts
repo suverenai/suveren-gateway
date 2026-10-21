@@ -393,6 +393,10 @@ export function invalidDisplayHintsReason(toolName: string, entry: unknown): str
       }
     }
   }
+  // The card heading's verb: "What will be created/changed in <system>".
+  if (d.verb !== undefined && d.verb !== 'created' && d.verb !== 'changed') {
+    return `override "${toolName}".display.verb must be "created" or "changed"`;
+  }
   // UI spec §15.2/§15.3 — the AI-authored-text argument marker.
   if (d.aiText !== undefined && (typeof d.aiText !== 'string' || d.aiText.length === 0)) {
     return `override "${toolName}".display.aiText must be a non-empty string naming an argument`;
@@ -407,7 +411,8 @@ export function invalidDisplayHintsReason(toolName: string, entry: unknown): str
  * grammar). Shape-only: {path}, {a,b}, {path|money|percent|list|short|date},
  * optional parts in [ ]. Never AI text — the template is the manifest's.
  */
-const SUMMARY_FORMATS = ['money', 'percent', 'list', 'short', 'date'];
+// `ref`: an id the card can name from its attached read — "Name (id)".
+const SUMMARY_FORMATS = ['money', 'percent', 'list', 'short', 'date', 'ref'];
 export function invalidSummaryReason(toolName: string, entry: unknown): string | null {
   if (entry === null || typeof entry !== 'object') return null;
   const summary = (entry as { summary?: unknown }).summary;
@@ -473,7 +478,9 @@ function checkDetailReason(at: string, detail: unknown, forEach: unknown): strin
       const r = checkPathReason(`${at}.detail`, path, forEach);
       if (r) return r;
     }
-    if (fmt !== undefined && !DETAIL_FORMATS.includes(fmt)) return `${at}.detail {${m[1]}} has unknown format "${fmt}"`;
+    // `count:<one>/<many>` — "1 invoice" / "4 invoices".
+    const isCount = fmt !== undefined && /^count:[^/{}|]+\/[^/{}|]+$/.test(fmt);
+    if (fmt !== undefined && !DETAIL_FORMATS.includes(fmt) && !isCount) return `${at}.detail {${m[1]}} has unknown format "${fmt}"`;
   }
   return null;
 }

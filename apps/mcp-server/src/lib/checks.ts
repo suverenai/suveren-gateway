@@ -226,6 +226,10 @@ function formatValue(v: unknown, fmt: string | undefined, currency: string | und
     return Number.isNaN(d.getTime()) ? show(v) : d.toISOString().slice(0, 10);
   }
   if (fmt === 'list' && Array.isArray(v)) return v.map(show).join(', ');
+  if (fmt?.startsWith('count:')) {
+    const [one, many] = fmt.slice('count:'.length).split('/');
+    return `${show(v)} ${Number(v) === 1 ? one : many}`;
+  }
   const s = show(v);
   if (fmt === 'short' && s.length > 60) return `${s.slice(0, 59).trimEnd()}…`;
   return s;

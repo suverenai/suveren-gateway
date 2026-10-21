@@ -248,6 +248,8 @@ export interface ToolDisplayHints {
    * args show as one Now / New table on the card (e.g. a tax-data change).
    */
   compare?: Record<string, string>;
+  /** The card heading's verb — "What will be created" (default) or "changed" (an update of an existing record). */
+  verb?: 'created' | 'changed';
 }
 
 /**
