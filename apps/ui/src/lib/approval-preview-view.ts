@@ -90,6 +90,12 @@ export function previewBoxView(resp: PreviewResponse, systemName: string, toolAr
           : 'Preview not available.',
       };
 
+    case 'refused':
+      return {
+        heading: `Refused by ${systemName}`,
+        note: resp.message ? capMessage(resp.message) : `${systemName} refused to answer.`,
+      };
+
     case 'not_found':
       return {
         heading: 'Not found in your system',
@@ -104,10 +110,17 @@ export function previewBoxView(resp: PreviewResponse, systemName: string, toolAr
       // replaces the separate "What will be sent" box entirely, so the bound
       // values never need to be shown twice.
       if ('reads' in resp) {
+        const creation = buildCreationView(toolArgs ?? {}, resp.reads, resp.display, { readAt: resp.readAt });
+        // The box holds the AI's proposal (sealed) and, where a read
+        // resolved, values from the system. The "read by the gateway" note
+        // speaks ONLY about the latter — and is absent when there are none,
+        // so sealed values never look as if the gateway had read them.
         return {
-          heading: `What will be created in ${systemName}`,
-          note: `Read by the gateway, not by the AI — read at ${formatReadAt(resp.readAt)}.`,
-          creation: buildCreationView(toolArgs ?? {}, resp.reads, resp.display),
+          heading: `What will be ${resp.display?.verb ?? 'created'} in ${systemName}`,
+          note: hasSystemValues(creation)
+            ? `Values marked from the system were read by the gateway, not by the AI — read at ${formatReadAt(resp.readAt)}.`
+            : '',
+          creation,
         };
       }
 
@@ -180,4 +193,17 @@ export function outcomeBoxView(outcome: OutcomeResponse, systemName: string): Ou
  */
 export function boundValuesOpen(tone: string | null): boolean {
   return tone !== null && tone !== 'loading' && tone !== 'ok' && tone !== 'stale';
+}
+
+/** True when the creation view shows at least one value the gateway READ
+ *  (a resolved identity, a Now column, a system cell in a table, or an own
+ *  read section) — not merely the proposal's own sealed values. */
+export function hasSystemValues(view: CreationView): boolean {
+  if (view.sections.length > 0) return true;
+  return view.rows.some((r) => {
+    if (r.kind === 'identity') return !!r.identity.name;
+    if (r.kind === 'compare') return r.lines.some((l) => l.now !== '—');
+    if (r.kind === 'table') return r.table.rows.some((row) => row.cells.some((c) => !c.sealed && c.value !== '—' && c.value !== ''));
+    return false;
+  });
 }

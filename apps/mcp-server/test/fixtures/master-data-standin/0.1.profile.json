@@ -1,0 +1,259 @@
+{
+  "id": "github.com/humanagencyprotocol/hap-profiles/master-data@0.1",
+  "name": "Master data",
+  "version": "0.1",
+  "description": "Master data authority — governs the customer records and the catalogue that quotes and invoices are built from: creating and changing customers, and creating and changing catalogue items. A change to a customer's tax data (name, address, country, VAT ID) and a change to an item's price or VAT rate are each a decision of their own. Kept apart from invoicing and sales so that the people who issue documents are not the ones who change the data behind them. Every action in this area is reviewed by a person. No invoices, quotes or payments.",
+  "whatsNew": "New area. Customers and catalogue items are created and changed here, each kind of change with its own daily limit. Every action is reviewed by a person (no automatic mode).",
+  "commitment_modes": [
+    "review"
+  ],
+  "boundsSchema": {
+    "actionTypes": [
+      "customer_create",
+      "customer_update",
+      "customer_tax",
+      "item_create",
+      "item_update",
+      "item_price"
+    ],
+    "keyOrder": [
+      "profile",
+      "read_access",
+      "customer_create_daily_max",
+      "customer_update_daily_max",
+      "customer_tax_daily_max",
+      "item_create_daily_max",
+      "item_update_daily_max",
+      "item_price_daily_max",
+      "list_price_max"
+    ],
+    "fields": {
+      "profile": {
+        "type": "string",
+        "required": true
+      },
+      "read_access": {
+        "type": "string",
+        "required": true,
+        "displayName": "Read access",
+        "description": "Allow the agent to look up customers and catalogue items.",
+        "boundType": {
+          "kind": "enum",
+          "values": [
+            "unlimited",
+            "none"
+          ]
+        },
+        "toolsDescription": "find_customers, get_customer, list_items, get_item",
+        "default": "unlimited"
+      },
+      "customer_create_daily_max": {
+        "type": "number",
+        "required": true,
+        "displayName": "New customers per day",
+        "description": "Maximum customers created per day. A new customer's name, address, country and VAT ID decide how invoices to them are taxed.",
+        "unit": "count",
+        "boundType": {
+          "kind": "cumulative_count",
+          "window": "daily"
+        },
+        "appliesTo": [
+          "customer_create"
+        ]
+      },
+      "customer_update_daily_max": {
+        "type": "number",
+        "required": true,
+        "displayName": "Customer contact changes per day",
+        "description": "Maximum changes per day to a customer's contact data (email, CRM link). Tax data is its own limit.",
+        "unit": "count",
+        "boundType": {
+          "kind": "cumulative_count",
+          "window": "daily"
+        },
+        "appliesTo": [
+          "customer_update"
+        ]
+      },
+      "customer_tax_daily_max": {
+        "type": "number",
+        "required": true,
+        "displayName": "Customer tax-data changes per day",
+        "description": "Maximum changes per day to a customer's tax data: name, address, country or VAT ID. These decide how future invoices to that customer are taxed.",
+        "unit": "count",
+        "boundType": {
+          "kind": "cumulative_count",
+          "window": "daily"
+        },
+        "appliesTo": [
+          "customer_tax"
+        ]
+      },
+      "item_create_daily_max": {
+        "type": "number",
+        "required": true,
+        "displayName": "New items per day",
+        "description": "Maximum catalogue items created per day.",
+        "unit": "count",
+        "boundType": {
+          "kind": "cumulative_count",
+          "window": "daily"
+        },
+        "appliesTo": [
+          "item_create"
+        ]
+      },
+      "item_update_daily_max": {
+        "type": "number",
+        "required": true,
+        "displayName": "Item changes per day",
+        "description": "Maximum changes per day to catalogue items other than price and VAT rate (name, SKU, unit, kind, description, active).",
+        "unit": "count",
+        "boundType": {
+          "kind": "cumulative_count",
+          "window": "daily"
+        },
+        "appliesTo": [
+          "item_update"
+        ]
+      },
+      "item_price_daily_max": {
+        "type": "number",
+        "required": true,
+        "displayName": "Price changes per day",
+        "description": "Maximum price or VAT-rate changes to existing catalogue items per day.",
+        "unit": "count",
+        "boundType": {
+          "kind": "cumulative_count",
+          "window": "daily"
+        },
+        "appliesTo": [
+          "item_price"
+        ]
+      },
+      "list_price_max": {
+        "type": "number",
+        "required": true,
+        "displayName": "Max list price per item",
+        "description": "Highest net list price a catalogue item may be given, when it is created or its price is changed, in currency units.",
+        "unit": "currency:EUR",
+        "boundType": {
+          "kind": "per_transaction",
+          "of": "list_price",
+          "requiredFor": [
+            "item_create",
+            "item_price"
+          ]
+        }
+      }
+    }
+  },
+  "executionContextSchema": {
+    "fields": {
+      "list_price": {
+        "source": "declared",
+        "description": "Net list price of the item in currency units (create_item, update_item_price)",
+        "required": false,
+        "constraint": {
+          "type": "number",
+          "enforceable": [
+            "max"
+          ]
+        }
+      },
+      "customer_create_count_daily": {
+        "source": "cumulative",
+        "description": "Running daily count of customers created",
+        "required": true,
+        "constraint": {
+          "type": "number",
+          "enforceable": [
+            "max"
+          ]
+        },
+        "cumulativeField": "_count",
+        "window": "daily"
+      },
+      "customer_update_count_daily": {
+        "source": "cumulative",
+        "description": "Running daily count of customer contact-data changes",
+        "required": true,
+        "constraint": {
+          "type": "number",
+          "enforceable": [
+            "max"
+          ]
+        },
+        "cumulativeField": "_count",
+        "window": "daily"
+      },
+      "customer_tax_count_daily": {
+        "source": "cumulative",
+        "description": "Running daily count of customer tax-data changes",
+        "required": true,
+        "constraint": {
+          "type": "number",
+          "enforceable": [
+            "max"
+          ]
+        },
+        "cumulativeField": "_count",
+        "window": "daily"
+      },
+      "item_create_count_daily": {
+        "source": "cumulative",
+        "description": "Running daily count of catalogue items created",
+        "required": true,
+        "constraint": {
+          "type": "number",
+          "enforceable": [
+            "max"
+          ]
+        },
+        "cumulativeField": "_count",
+        "window": "daily"
+      },
+      "item_update_count_daily": {
+        "source": "cumulative",
+        "description": "Running daily count of catalogue item changes (not price)",
+        "required": true,
+        "constraint": {
+          "type": "number",
+          "enforceable": [
+            "max"
+          ]
+        },
+        "cumulativeField": "_count",
+        "window": "daily"
+      },
+      "item_price_count_daily": {
+        "source": "cumulative",
+        "description": "Running daily count of item price or VAT-rate changes",
+        "required": true,
+        "constraint": {
+          "type": "number",
+          "enforceable": [
+            "max"
+          ]
+        },
+        "cumulativeField": "_count",
+        "window": "daily"
+      }
+    }
+  },
+  "requiredGates": [
+    "bounds",
+    "intent",
+    "commitment",
+    "mandate_owner"
+  ],
+  "ttl": {
+    "default": 86400,
+    "max": 2592000
+  },
+  "retention_minimum": 7776000,
+  "content_binding": {
+    "version": "1",
+    "kind": "jcs"
+  }
+}

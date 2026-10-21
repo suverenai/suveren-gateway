@@ -48,6 +48,27 @@
         "type": "text",
         "placeholder": "Path to an invoice template file — leave empty for the bundled German template",
         "optional": true
+      },
+      {
+        "key": "quoteTemplate",
+        "label": "Quote template (optional)",
+        "type": "text",
+        "placeholder": "Path to a quote template file — leave empty for the bundled German template",
+        "optional": true
+      },
+      {
+        "key": "viesCheck",
+        "label": "VAT-ID check (optional)",
+        "type": "text",
+        "placeholder": "on (default) — \"off\" saves every VAT ID as not checked",
+        "optional": true
+      },
+      {
+        "key": "viesUrl",
+        "label": "VAT-ID check address (advanced, optional)",
+        "type": "text",
+        "placeholder": "Leave empty — the EU VIES service. Only for testing against a stand-in",
+        "optional": true
       }
     ],
     "envMapping": {
@@ -55,7 +76,10 @@
       "ERP_MODE": "mode",
       "ERP_LIVE_ADAPTER": "liveAdapter",
       "ERP_LIVE_COMPANY_FILE": "companyFile",
-      "ERP_INVOICE_TEMPLATE": "invoiceTemplate"
+      "ERP_INVOICE_TEMPLATE": "invoiceTemplate",
+      "ERP_QUOTE_TEMPLATE": "quoteTemplate",
+      "ERP_VIES": "viesCheck",
+      "ERP_VIES_URL": "viesUrl"
     }
   },
   "simulation": {
@@ -67,8 +91,16 @@
     "live": { "local": "Local" }
   },
   "modeNotes": {
-    "live": { "local": "On this computer — no shared access" }
+    "live": { "local": "On this computer. VAT-ID checks ask the EU VIES service." }
   },
+  "network": [
+    {
+      "modes": { "live": ["local"] },
+      "host": "ec.europa.eu",
+      "purpose": "EU VAT-ID check (VIES) when a customer's VAT ID is saved or shown for approval",
+      "sends": "the customer's country and VAT ID, and your own VAT ID"
+    }
+  ],
   "adapterField": "liveAdapter",
   "personalDefault": true,
   "oauth": null,
@@ -82,6 +114,11 @@
       "tool": "get_document",
       "args": { "kind": "credit-note-pdf", "id": "$id" },
       "label": "issued credit note {id}"
+    },
+    "quote-pdf": {
+      "tool": "get_document",
+      "args": { "kind": "quote-pdf", "id": "$id" },
+      "label": "quote {id}"
     }
   },
   "context": {
@@ -103,33 +140,37 @@
     },
     "overrides": {
       "list_items": {
+        "readAlsoUnder": ["invoicing", "master-data"],
         "category": "read",
         "boundField": "read_access",
         "requiredValue": "unlimited"
       },
       "get_item": {
+        "readAlsoUnder": ["invoicing", "master-data"],
         "category": "read",
         "boundField": "read_access",
         "requiredValue": "unlimited"
       },
       "find_customers": {
-        "readAlsoUnder": ["invoicing"],
+        "readAlsoUnder": ["invoicing", "master-data"],
         "category": "read",
         "boundField": "read_access",
         "requiredValue": "unlimited"
       },
       "get_customer": {
-        "readAlsoUnder": ["invoicing"],
+        "readAlsoUnder": ["invoicing", "master-data"],
         "category": "read",
         "boundField": "read_access",
         "requiredValue": "unlimited"
       },
       "list_quotes": {
+        "readAlsoUnder": ["invoicing"],
         "category": "read",
         "boundField": "read_access",
         "requiredValue": "unlimited"
       },
       "get_quote": {
+        "readAlsoUnder": ["invoicing"],
         "category": "read",
         "boundField": "read_access",
         "requiredValue": "unlimited"
@@ -145,7 +186,7 @@
         "requiredValue": "unlimited"
       },
       "create_quote": {
-        "summary": "Quote of {value|money} net[ — {discount_pct|percent} discount]",
+        "summary": "Quote[ {number}] of {value|money} net to {customer_id|ref}[ — {discount_pct|percent} discount]",
         "executionMapping": {
           "value": "value",
           "discount_pct": "discount_pct",
@@ -158,15 +199,44 @@
         "contextKeys": { "customer": "customer_id" },
         "preview": [
           { "tool": "get_customer", "args": { "id": "customer_id" }, "attach": "customer_id" },
-          { "tool": "get_item", "forEach": "lines", "args": { "id": "item_id" }, "attach": "item" }
+          { "tool": "get_item", "forEach": "lines", "args": { "id": "item_id" }, "attach": "item", "when": "item_id" },
+          { "tool": "preview_quote", "when": "document_date", "kind": "document",
+            "args": { "customer_id": "customer_id", "number": "number", "document_date": "document_date", "lines": "lines",
+                      "value": "value", "discount_pct": "discount_pct", "currency": "currency",
+                      "valid_until": "valid_until", "notes": "notes" } }
+        ],
+        "checks": [
+          { "key": "item-revision", "label": "Line item is at the version it names", "forEach": "lines", "when": "lines[].item_revision",
+            "path": "lines[].item_revision", "compare": { "op": "eq", "to": "lines[].item.revision" }, "blocking": true, "showOnly": "fail",
+            "detail": "line {#}: item version {lines[].item_revision}, the item is now at version {lines[].item.revision}" },
+          { "key": "tax-supported", "label": "Tax treatment supported for this customer", "path": "customer_id.tax_mode", "blocking": true,
+            "pass": ["normal", "reverse_charge", "kleinunternehmer"], "fail": ["unsupported"],
+            "detail": "[{customer_id.tax_mode_label}]" },
+          { "key": "list-price", "label": "Price vs. list", "forEach": "lines", "when": "lines[].item_id",
+            "path": "lines[].unit_price", "compare": { "op": "eq", "to": "lines[].item.list_price" },
+            "onTrue": "pass", "onFalse": "notice",
+            "detail": "line {#}: {lines[].unit_price|money}, list price {lines[].item.list_price|money}" },
+          { "key": "item-vat", "label": "VAT vs. item", "forEach": "lines", "when": "lines[].item_id",
+            "path": "lines[].vat_rate", "compare": { "op": "eq", "to": "lines[].item.vat_rate" },
+            "onTrue": "pass", "onFalse": "notice",
+            "detail": "line {#}: {lines[].vat_rate|percent}, item {lines[].item.vat_rate|percent}" }
         ],
         "display": {
-          "order": ["customer_id", "lines", "discount_pct", "value", "valid_until", "notes"],
-          "money": ["value", "customer_id.credit_limit", "customer_id.open_balance", "customer_id.available_credit", "lines[].item.list_price"],
-          "percent": ["discount_pct"],
+          "hidden": ["customer_id.vies", "customer_id.vies_status", "customer_id.tax_mode", "customer_id.revision"],
+          "order": ["customer_id", "number", "document_date", "lines", "discount_pct", "value", "valid_until", "notes"],
+          "money": ["value", "customer_id.credit_limit", "customer_id.open_balance", "customer_id.available_credit", "lines[].item.list_price", "lines[].unit_price"],
+          "percent": ["discount_pct", "lines[].vat_rate", "lines[].item.vat_rate"],
           "currencyField": "currency",
           "labels": {
             "customer_id": "Customer",
+            "customer_id.uid": "VAT ID",
+            "customer_id.tax_mode_label": "Tax treatment",
+            "number": "Quote number",
+            "document_date": "Quote date",
+            "lines[].description": "Description",
+            "lines[].unit_price": "Price",
+            "lines[].vat_rate": "VAT rate",
+            "lines[].item.vat_rate": "Item VAT rate",
             "discount_pct": "Discount",
             "value": "Total (net)",
             "customer_id.credit_limit": "Credit limit",
@@ -192,14 +262,40 @@
         "actionLabel": "Quote updated",
         "contextKeys": { "quote": "id" },
         "preview": [
-          { "tool": "get_item", "forEach": "lines", "args": { "id": "item_id" }, "attach": "item" }
+          { "tool": "get_quote", "args": { "id": "id", "revision": "revision" }, "attach": "id",
+            "version": { "arg": "revision", "field": "revision" } },
+          { "tool": "get_item", "forEach": "lines", "args": { "id": "item_id" }, "attach": "item", "when": "item_id" },
+          { "tool": "preview_quote", "when": "document_date", "kind": "document",
+            "args": { "id": "id", "revision": "revision", "document_date": "document_date", "lines": "lines",
+                      "value": "value", "discount_pct": "discount_pct", "currency": "currency",
+                      "valid_until": "valid_until", "notes": "notes" } }
+        ],
+        "checks": [
+          { "key": "item-revision", "label": "Line item is at the version it names", "forEach": "lines", "when": "lines[].item_revision",
+            "path": "lines[].item_revision", "compare": { "op": "eq", "to": "lines[].item.revision" }, "blocking": true, "showOnly": "fail",
+            "detail": "line {#}: item version {lines[].item_revision}, the item is now at version {lines[].item.revision}" },
+          { "key": "revision", "label": "Request is for the record's current version", "blocking": true, "showOnly": "fail",
+            "path": "id.$version.approved", "compare": { "op": "eq", "to": "id.$version.current" },
+            "detail": "request for version {id.$version.approved}, record at version {id.$version.current}" },
+          { "key": "list-price", "label": "Price vs. list", "forEach": "lines", "when": "lines[].item_id",
+            "path": "lines[].unit_price", "compare": { "op": "eq", "to": "lines[].item.list_price" },
+            "onTrue": "pass", "onFalse": "notice",
+            "detail": "line {#}: {lines[].unit_price|money}, list price {lines[].item.list_price|money}" },
+          { "key": "item-vat", "label": "VAT vs. item", "forEach": "lines", "when": "lines[].item_id",
+            "path": "lines[].vat_rate", "compare": { "op": "eq", "to": "lines[].item.vat_rate" },
+            "onTrue": "pass", "onFalse": "notice",
+            "detail": "line {#}: {lines[].vat_rate|percent}, item {lines[].item.vat_rate|percent}" }
         ],
         "display": {
-          "order": ["lines", "discount_pct", "value", "valid_until", "notes"],
-          "money": ["value", "lines[].item.list_price"],
-          "percent": ["discount_pct"],
+          "verb": "changed",
+          "order": ["id", "document_date", "lines", "discount_pct", "value", "valid_until", "notes"],
+          "money": ["value", "lines[].item.list_price", "lines[].unit_price", "id.net_total"],
+          "percent": ["discount_pct", "lines[].vat_rate", "lines[].item.vat_rate"],
           "currencyField": "currency",
           "labels": {
+            "id": "Quote",
+            "id.net_total": "Total (net, now)",
+            "document_date": "Quote date",
             "discount_pct": "Discount",
             "value": "Total (net)",
             "lines[].item": "Item",
@@ -248,7 +344,7 @@
       },
       "create_invoice": {
         "profile": "invoicing",
-        "summary": "Invoice[ {number}] of {net_total|money} net to {customer_id}[ for order {order_id}]",
+        "summary": "Invoice[ {number}] of {net_total|money} net to {customer_id|ref}[ for order {order_id}]",
         "executionMapping": {
           "net_total": "net_total",
           "currency": "currency"
@@ -259,7 +355,11 @@
         "actionLabel": "Invoice issued",
         "contextKeys": { "customer": "customer_id" },
         "preview": [
-          { "tool": "get_customer", "args": { "id": "customer_id" }, "attach": "customer_id" },
+          { "tool": "get_customer", "args": { "id": "customer_id", "revision": "customer_revision" }, "attach": "customer_id",
+            "version": { "arg": "customer_revision", "field": "revision" } },
+          { "tool": "get_quote", "args": { "id": "quote_id", "revision": "quote_revision" }, "attach": "quote_id", "when": "quote_id",
+            "version": { "arg": "quote_revision", "field": "revision" } },
+          { "tool": "get_item", "forEach": "lines", "args": { "id": "item_id" }, "attach": "item", "when": "item_id" },
           {
             "tool": "preview_invoice",
             "args": {
@@ -271,17 +371,62 @@
               "net_total": "net_total",
               "currency": "currency",
               "payment_term_days": "payment_term_days",
-              "memo": "memo"
+              "memo": "memo",
+              "quote_id": "quote_id",
+              "quote_revision": "quote_revision",
+              "customer_revision": "customer_revision"
             },
             "kind": "document"
           }
         ],
+        "checks": [
+          { "key": "customer-revision", "label": "Request is for the customer's current version", "blocking": true, "showOnly": "fail",
+            "path": "customer_id.$version.approved", "compare": { "op": "eq", "to": "customer_id.$version.current" },
+            "detail": "request for version {customer_id.$version.approved}, customer at version {customer_id.$version.current}" },
+          { "key": "quote-revision", "label": "Request is for the quote's current version", "blocking": true, "showOnly": "fail",
+            "path": "quote_id.$version.approved", "compare": { "op": "eq", "to": "quote_id.$version.current" },
+            "detail": "request for version {quote_id.$version.approved}, quote at version {quote_id.$version.current}" },
+          { "key": "quote-customer", "label": "Customer unchanged since the quote", "when": "quote_id", "blocking": true, "showOnly": "fail",
+            "path": "quote_id.customer.revision", "compare": { "op": "eq", "to": "customer_id.revision" },
+            "detail": "the quote was made with customer version {quote_id.customer.revision}, the customer is now at version {customer_id.revision} — update the quote first" },
+          { "key": "item-revision", "label": "Line item is at the version it names", "forEach": "lines", "when": "lines[].item_revision",
+            "path": "lines[].item_revision", "compare": { "op": "eq", "to": "lines[].item.revision" }, "blocking": true, "showOnly": "fail",
+            "detail": "line {#}: item version {lines[].item_revision}, the item is now at version {lines[].item.revision}" },
+          { "key": "tax-supported", "label": "Tax treatment supported for this customer", "path": "customer_id.tax_mode", "blocking": true,
+            "pass": ["normal", "reverse_charge", "kleinunternehmer"], "fail": ["unsupported"],
+            "detail": "[{customer_id.tax_mode_label}]" },
+          { "key": "vies", "label": "Customer VAT ID confirmed by VIES", "when": "customer_id.uid",
+            "path": "customer_id.vies_status", "pass": ["valid"], "fail": ["invalid"], "notChecked": ["not_checked", null],
+            "notice": ["not_applicable"], "missing": "not_checked",
+            "detail": "[checked {customer_id.vies.checked_at|date}][ — {customer_id.vies.reason}]" },
+          { "key": "reverse-charge", "label": "Reverse charge: VAT ID confirmed by VIES", "blocking": true, "when": { "path": "customer_id.tax_mode", "in": ["reverse_charge"] },
+            "path": "customer_id.vies_status", "pass": ["valid"], "fail": ["invalid", "not_checked", "not_applicable", null], "missing": "not_checked",
+            "detail": "[{customer_id.vies.reason}]" },
+          { "key": "list-price", "label": "Price vs. list", "forEach": "lines", "when": "lines[].item_id",
+            "path": "lines[].unit_price", "compare": { "op": "eq", "to": "lines[].item.list_price" },
+            "onTrue": "pass", "onFalse": "notice",
+            "detail": "line {#}: {lines[].unit_price|money}, list price {lines[].item.list_price|money}" },
+          { "key": "item-vat", "label": "VAT vs. item", "forEach": "lines", "when": "lines[].item_id",
+            "path": "lines[].vat_rate", "compare": { "op": "eq", "to": "lines[].item.vat_rate" },
+            "onTrue": "pass", "onFalse": "notice",
+            "detail": "line {#}: {lines[].vat_rate|percent}, item {lines[].item.vat_rate|percent}" }
+        ],
         "display": {
-          "order": ["customer_id", "order_id", "number", "document_date", "service_period", "lines", "net_total", "currency", "payment_term_days", "memo"],
-          "money": ["net_total", "lines[].unit_price", "customer_id.credit_limit", "customer_id.open_balance", "customer_id.available_credit"],
+          "order": ["customer_id", "quote_id", "quote_revision", "customer_revision", "order_id", "number", "document_date", "service_period", "lines", "net_total", "currency", "payment_term_days", "memo"],
+          "money": ["net_total", "lines[].unit_price", "customer_id.credit_limit", "customer_id.open_balance", "customer_id.available_credit", "lines[].item.list_price", "quote_id.net_total"],
+          "percent": ["lines[].vat_rate", "lines[].item.vat_rate"],
           "currencyField": "currency",
+          "hidden": ["customer_id.vies", "customer_id.vies_status", "customer_id.tax_mode", "customer_id.revision"],
           "labels": {
             "customer_id": "Customer",
+            "quote_id": "Quote",
+            "quote_revision": "Quote revision",
+            "customer_revision": "Customer revision",
+            "lines[].item": "Item",
+            "lines[].item.list_price": "List price",
+            "lines[].item.vat_rate": "Item VAT rate",
+            "customer_id.uid": "VAT ID",
+            "customer_id.tax_mode_label": "Tax treatment",
             "order_id": "Order",
             "number": "Invoice number",
             "document_date": "Invoice date",
@@ -335,6 +480,25 @@
         "category": "read",
         "internal": true
       },
+      "check_vat_id": {
+        "profile": "master-data",
+        "category": "read",
+        "internal": true
+      },
+      "preview_customer_change": {
+        "profile": "master-data",
+        "category": "read",
+        "internal": true
+      },
+      "check_customer_duplicates": {
+        "profile": "master-data",
+        "category": "read",
+        "internal": true
+      },
+      "preview_quote": {
+        "category": "read",
+        "internal": true
+      },
       "list_invoices": {
         "profile": "invoicing",
         "category": "read",
@@ -358,6 +522,178 @@
         "category": "read",
         "boundField": "read_access",
         "requiredValue": "unlimited"
+      },
+      "create_customer": {
+        "profile": "master-data",
+        "summary": "New customer {name}, {country}[ — VAT ID {uid}]",
+        "executionMapping": {},
+        "staticExecution": { "action_type": "customer_create" },
+        "actionLabel": "Customer created",
+        "preview": [
+          { "tool": "check_vat_id", "args": { "country": "country", "uid": "uid" }, "attach": "uid", "when": "uid",
+            "displayOnly": true, "label": "EU VIES" },
+          { "tool": "check_customer_duplicates", "args": { "uid": "uid", "crm_contact_id": "crm_contact_id" }, "as": "duplicates" }
+        ],
+        "checks": [
+          { "key": "vat-format", "label": "VAT ID format", "when": "uid", "path": "uid.format", "blocking": true,
+            "pass": ["ok", "not_applicable"], "fail": ["wrong_prefix", "wrong_pattern"], "missing": "not_checked" },
+          { "key": "vies", "label": "VAT ID confirmed by VIES", "when": "uid", "path": "uid.vies.status", "blocking": true,
+            "pass": ["valid"], "fail": ["invalid"], "notChecked": ["not_checked"], "notice": ["not_applicable"], "missing": "not_checked",
+            "detail": "[checked {uid.vies.checked_at|date}][ — {uid.vies.reason} — saving is not blocked while VIES is unreachable]" },
+          { "key": "vat-duplicate", "label": "No other customer with this VAT ID", "when": "uid", "blocking": true,
+            "path": "duplicates.vat_duplicate_of", "present": "fail", "absent": "pass",
+            "detail": "[already customer {duplicates.vat_duplicate_of}]" },
+          { "key": "crm-duplicate", "label": "No other customer for this CRM contact", "when": "crm_contact_id", "blocking": true,
+            "path": "duplicates.crm_contact_duplicate_of", "present": "fail", "absent": "pass",
+            "detail": "[already customer {duplicates.crm_contact_duplicate_of}]" }
+        ],
+        "display": {
+          "order": ["name", "address_lines", "country", "uid", "email", "crm_contact_id"],
+          "labels": {
+            "name": "Name", "address_lines": "Address", "country": "Country", "uid": "VAT ID",
+            "email": "Email", "crm_contact_id": "CRM contact",
+            "uid.vies.name": "Name at VIES", "uid.vies.address": "Address at VIES", "uid.vies.request_id": "Consultation no."
+          },
+          "hidden": ["uid.uid", "uid.format", "uid.vies.status", "uid.vies.reason", "uid.vies.checked_at", "uid.duplicate", "uid.duplicate_of"]
+        }
+      },
+      "update_customer": {
+        "profile": "master-data",
+        "summary": "Change contact data of customer {id|ref}",
+        "executionMapping": {},
+        "staticExecution": { "action_type": "customer_update" },
+        "actionLabel": "Customer updated",
+        "preview": [
+          { "tool": "get_customer", "args": { "id": "id", "revision": "revision" }, "attach": "id",
+            "version": { "arg": "revision", "field": "revision" } },
+          { "tool": "check_customer_duplicates", "args": { "crm_contact_id": "crm_contact_id", "id": "id" }, "as": "duplicates",
+            "when": "crm_contact_id" }
+        ],
+        "checks": [
+          { "key": "revision", "label": "Request is for the record's current version", "blocking": true, "showOnly": "fail",
+            "path": "id.$version.approved", "compare": { "op": "eq", "to": "id.$version.current" },
+            "detail": "request for version {id.$version.approved}, record at version {id.$version.current}" },
+          { "key": "crm-duplicate", "label": "No other customer for this CRM contact", "when": "crm_contact_id", "blocking": true,
+            "path": "duplicates.crm_contact_duplicate_of", "present": "fail", "absent": "pass",
+            "detail": "[already customer {duplicates.crm_contact_duplicate_of}]" }
+        ],
+        "display": {
+          "verb": "changed",
+          "order": ["id", "email", "crm_contact_id"],
+          "labels": {
+            "id": "Customer", "email": "Email (new)", "crm_contact_id": "CRM contact (new)",
+            "id.email": "Email (now)", "id.crm_contact_id": "CRM contact (now)"
+          }
+        }
+      },
+      "update_customer_tax_data": {
+        "profile": "master-data",
+        "summary": "Change tax data of customer {id|ref}: {name}, {country}[ — VAT ID {uid}]",
+        "executionMapping": {},
+        "staticExecution": { "action_type": "customer_tax" },
+        "actionLabel": "Customer tax data changed",
+        "preview": [
+          { "tool": "preview_customer_change",
+            "args": { "id": "id", "name": "name", "address_lines": "address_lines", "country": "country", "uid": "uid" },
+            "attach": "id", "version": { "arg": "revision", "field": "revision" } },
+          { "tool": "check_customer_duplicates", "args": { "uid": "uid", "id": "id" }, "as": "duplicates", "when": "uid" }
+        ],
+        "checks": [
+          { "key": "revision", "label": "Request is for the record's current version", "blocking": true, "showOnly": "fail",
+            "path": "id.$version.approved", "compare": { "op": "eq", "to": "id.$version.current" },
+            "detail": "request for version {id.$version.approved}, record at version {id.$version.current}" },
+          { "key": "vies", "label": "New VAT ID confirmed by VIES", "when": "uid", "path": "id.vat_check.vies.status", "blocking": true,
+            "pass": ["valid"], "fail": ["invalid"], "notChecked": ["not_checked"], "notice": ["not_applicable"], "missing": "not_checked",
+            "detail": "[checked {id.vat_check.vies.checked_at|date}][ — {id.vat_check.vies.reason} — saving is not blocked while VIES is unreachable]" },
+          { "key": "vat-duplicate", "label": "No other customer with this VAT ID", "when": "uid", "blocking": true,
+            "path": "duplicates.vat_duplicate_of", "present": "fail", "absent": "pass",
+            "detail": "[already customer {duplicates.vat_duplicate_of}]" },
+          { "key": "tax-mode", "label": "Tax treatment of future invoices", "path": "id.tax_mode.after",
+            "compare": { "op": "eq", "to": "id.tax_mode.now" }, "onTrue": "pass", "onFalse": "notice",
+            "detail": "{id.tax_mode.now_label} → {id.tax_mode.after_label}" },
+          { "key": "open-quotes", "label": "Open quotes", "path": "id.open_quotes",
+            "compare": { "op": "gt", "to": 0 }, "onTrue": "notice", "onFalse": "pass", "showOnly": "notice",
+            "detail": "{id.open_quotes|count:quote/quotes} made with the old data — update before invoicing" },
+          { "key": "already-invoiced", "label": "Already issued to this customer", "when": "id.uid_or_country_changed",
+            "path": "id.issued_documents.invoices", "compare": { "op": "gt", "to": 0 }, "onTrue": "notice", "onFalse": "pass",
+            "detail": "{id.issued_documents.invoices|count:invoice/invoices}, {id.issued_documents.credit_notes|count:credit note/credit notes} — they keep the old data" }
+        ],
+        "display": {
+          "verb": "changed",
+          "order": ["id", "name", "address_lines", "country", "uid"],
+          "labels": {
+            "id": "Customer", "name": "Name", "address_lines": "Address", "country": "Country", "uid": "VAT ID"
+          },
+          "names": { "id": "current.name" },
+          "compare": { "name": "id.current.name", "address_lines": "id.current.address_lines", "country": "id.current.country", "uid": "id.current.uid" },
+          "hidden": ["revision", "id.name", "id.open_quotes", "id.current", "id.vat_check", "id.tax_mode", "id.issued_documents", "id.changed", "id.revision", "id.uid_or_country_changed"]
+        }
+      },
+      "create_item": {
+        "profile": "master-data",
+        "summary": "New item {name} at {list_price|money} per {unit}, VAT {vat_rate|percent}",
+        "executionMapping": { "list_price": "list_price" },
+        "staticExecution": { "action_type": "item_create" },
+        "actionLabel": "Item created",
+        "display": {
+          "order": ["name", "kind", "unit", "list_price", "vat_rate", "sku", "description"],
+          "money": ["list_price"],
+          "percent": ["vat_rate"],
+          "labels": {
+            "name": "Name", "kind": "Kind", "unit": "Unit", "list_price": "List price (net)",
+            "vat_rate": "VAT rate", "sku": "Item number", "description": "Description"
+          }
+        }
+      },
+      "update_item": {
+        "profile": "master-data",
+        "summary": "Change item {id|ref}",
+        "executionMapping": {},
+        "staticExecution": { "action_type": "item_update" },
+        "actionLabel": "Item updated",
+        "preview": [
+          { "tool": "get_item", "args": { "id": "id", "revision": "revision" }, "attach": "id",
+            "version": { "arg": "revision", "field": "revision" } }
+        ],
+        "checks": [
+          { "key": "revision", "label": "Request is for the record's current version", "blocking": true, "showOnly": "fail",
+            "path": "id.$version.approved", "compare": { "op": "eq", "to": "id.$version.current" },
+            "detail": "request for version {id.$version.approved}, record at version {id.$version.current}" }
+        ],
+        "display": {
+          "verb": "changed", "labels": { "id": "Item", "active": "Active" } }
+      },
+      "update_item_price": {
+        "profile": "master-data",
+        "summary": "Price of item {id|ref}: {list_price|money}, VAT {vat_rate|percent}",
+        "executionMapping": { "list_price": "list_price" },
+        "staticExecution": { "action_type": "item_price" },
+        "actionLabel": "Item price changed",
+        "preview": [
+          { "tool": "get_item", "args": { "id": "id", "revision": "revision" }, "attach": "id",
+            "version": { "arg": "revision", "field": "revision" } }
+        ],
+        "checks": [
+          { "key": "revision", "label": "Request is for the record's current version", "blocking": true, "showOnly": "fail",
+            "path": "id.$version.approved", "compare": { "op": "eq", "to": "id.$version.current" },
+            "detail": "request for version {id.$version.approved}, record at version {id.$version.current}" },
+          { "key": "price-change", "label": "List price", "path": "list_price",
+            "compare": { "op": "eq", "to": "id.list_price" }, "onTrue": "pass", "onFalse": "notice",
+            "detail": "{id.list_price|money} → {list_price|money}" },
+          { "key": "vat-change", "label": "VAT rate", "path": "vat_rate",
+            "compare": { "op": "eq", "to": "id.vat_rate" }, "onTrue": "pass", "onFalse": "notice",
+            "detail": "{id.vat_rate|percent} → {vat_rate|percent}" }
+        ],
+        "display": {
+          "verb": "changed",
+          "money": ["list_price", "id.list_price"],
+          "percent": ["vat_rate", "id.vat_rate"],
+          "currencyField": "id.currency",
+          "labels": {
+            "id": "Item", "list_price": "List price (new)", "id.list_price": "List price (now)",
+            "vat_rate": "VAT rate (new)", "id.vat_rate": "VAT rate (now)"
+          }
+        }
       },
       "load_simulation": {
         "executionMapping": {},

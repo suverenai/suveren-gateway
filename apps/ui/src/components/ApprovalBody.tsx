@@ -42,6 +42,9 @@ import { useMandateBounds } from '../lib/mandate-bounds-cache';
 import { useProposalIntent } from '../lib/use-proposal-intent';
 import { useProposalContent, missingRecipients } from '../lib/use-proposal-content';
 import { limitChecks } from '../lib/receipt-summary';
+import { checkLines } from '../lib/checks-view';
+import { ChecksLines } from './ChecksLines';
+import { refNameFrom, setProposalPreview } from '../lib/preview-store';
 import { profileDisplayName } from '../lib/profile-display';
 import { useAuth } from '../contexts/AuthContext';
 import { newestProfileOf, carryBoundsForward, carryContextForward } from '../lib/profile-upgrade';
@@ -218,6 +221,11 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
   // when it has one, else the moment this box last combined the two (a
   // preview-less tool still has a request-context read worth timestamping).
   const [previewData, setPreviewData] = useState<PreviewResponse | null>(null);
+  // UI spec §4.2.2 — one line per check: limits + attachments, then the
+  // manifest checks the gateway evaluated with this card's own reads.
+  const lines = checkLines(checks, previewData?.checks);
+  // Share this card's read with the row's summary sentence (`{x|ref}`).
+  useEffect(() => { setProposalPreview(proposal.id, previewData); }, [proposal.id, previewData]);
   const [requestContextData, setRequestContextData] = useState<RequestContextResponse | null>(null);
   useEffect(() => {
     if (!previewData || !requestContextData) { onShownSnapshot?.(null); return; }
@@ -269,8 +277,12 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
       {/* UI spec §4.2.1 — one sentence from the manifest's summary template
           and the sealed values (never AI text); the tool name stays, small,
           under it. In a row the row head already carries the sentence. */}
-      <div className="approval-summary" data-testid="approval-summary">{approvalSummary(proposal.tool, content.toolArgs, manifests)}</div>
+      {/* §4.2.2 — a failed check is the one red line, above the sentence. */}
+      <ChecksLines lines={lines} placement="top" />
+      <div className="approval-summary" data-testid="approval-summary">{approvalSummary(proposal.tool, content.toolArgs, manifests, undefined, refNameFrom(previewData ?? undefined, content.toolArgs))}</div>
       <div className="approval-headline">{headline}</div>
+      {/* §4.2.2 — the other checks, one line each, before the sealed values. */}
+      <ChecksLines lines={lines} placement="body" />
 
       {/* PE1 mockup §4 — a device added after the proposal was made has no
           key wrap for it: no "What will be sent" box (nothing TO show), and
@@ -364,23 +376,6 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
             {content.sealed && <span>Decrypted on this device — suveren.ai stores only an unreadable copy and its fingerprint.</span>}
           </p>
         </details>
-      )}
-
-      {/* Within your limits — per-call bound checks only (lib/receipt-summary.ts
-          limitChecks); cumulative bounds are deliberately not shown here (no
-          usage figure exists for a pending proposal). */}
-      {checks.length > 0 && (
-        <div className="limit-checks">
-          <h4>Within your limits</h4>
-          <ul className="limit-check-list">
-            {checks.map((c) => (
-              <li key={c.key} className={c.ok ? 'ok' : 'bad'}>
-                <span className="limit-check-icon">{c.ok ? '✓' : '✗'}</span>
-                <span>{c.label}{c.valueText || c.limitText ? ` ${c.valueText} — your limit ${c.limitText}` : ''}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
       )}
 
       {/* Mandate + intent */}

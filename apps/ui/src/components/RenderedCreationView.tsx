@@ -51,7 +51,7 @@ export function RenderedCreationView({ view, systemName }: { view: CreationView;
     <>
       <dl style={{ display: 'grid', gridTemplateColumns: 'max-content 1fr', gap: '0.3rem 0.75rem', fontSize: '0.85rem', margin: '0.4rem 0' }}>
         {view.rows.map((row) => {
-          if (row.kind === 'table') return null; // tables render full-width, below the dl — see second pass
+          if (row.kind === 'table' || row.kind === 'compare') return null; // full-width, below the dl — see second pass
           return (
             <Fragment key={row.key}>
               <dt style={{ color: 'var(--text-tertiary)', whiteSpace: 'nowrap', alignSelf: 'start' }}>{row.label}</dt>
@@ -64,6 +64,20 @@ export function RenderedCreationView({ view, systemName }: { view: CreationView;
           );
         })}
       </dl>
+      {view.rows.map((row) => row.kind === 'compare' && (
+        <table key={row.key} className="compare-table" data-testid="compare-table">
+          <thead><tr><th /><th>Now (from {systemName ?? 'the system'})</th><th>New</th></tr></thead>
+          <tbody>
+            {row.lines.map((l) => (
+              <tr key={l.key}>
+                <td className="compare-label">{l.label}</td>
+                <td className="compare-now">{l.now}</td>
+                <td className="compare-new">{l.next}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ))}
       {view.rows.filter((r) => r.kind === 'table').map((row) => (
         <div key={row.key} style={{ margin: '0.5rem 0' }}>
           <div style={{ color: 'var(--text-tertiary)', fontSize: '0.78rem', marginBottom: '0.2rem' }}>{row.label}</div>
@@ -84,6 +98,29 @@ export function RenderedCreationView({ view, systemName }: { view: CreationView;
               {section.note && <p className="preview-note">{section.note}</p>}
             </>
           )}
+        </div>
+      ))}
+    </>
+  );
+}
+
+/** Display-only reads — each its own blue "From <label> — checked <time>"
+ *  box, OUTSIDE the sealed box (they are not what will be saved). */
+export function SystemBoxes({ view }: { view: CreationView }) {
+  if (view.systemBoxes.length === 0) return null;
+  return (
+    <>
+      {view.systemBoxes.map((box) => (
+        // A display-only read: from the system, NOT sealed — shown for this
+        // decision only; the connector asks again when it saves.
+        <div key={box.key} className="system-box" data-testid="system-box">
+          <div className="system-box-heading">{box.heading}</div>
+          <dl>
+            {box.rows.map((r) => (
+              <Fragment key={r.key}><dt>{r.label}</dt><dd>{r.value}</dd></Fragment>
+            ))}
+          </dl>
+          <p className="system-box-note">Shown for this decision only. It is asked again when this is saved; that answer is stored.</p>
         </div>
       ))}
     </>

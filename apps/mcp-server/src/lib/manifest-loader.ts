@@ -18,6 +18,10 @@ import { getProfile } from '@hap/core';
 import {
   MAX_PREVIEW_READS,
   MAX_RECORD_KEY_STEPS,
+  MAX_CHECKS_PER_TOOL,
+  CHECK_STATUSES,
+  type CheckStatus,
+  type NetworkDeclaration,
   type ProfileToolGating,
   type ToolPreviewConfig,
   type ManifestContext,
@@ -182,6 +186,12 @@ export interface IntegrationManifest {
    * plan.md §5/§7). See tool-gating-types.ts `InsertValueSourceConfig`.
    */
   values?: ManifestValues;
+  /**
+   * D3 (R5) — outside hosts this connector calls, per mode. See tool-gating-
+   * types.ts `NetworkDeclaration`. Display only: shown on the connector's
+   * settings; the gateway does not proxy or police the call.
+   */
+  network?: NetworkDeclaration[];
 }
 
 interface ManifestIndex {
@@ -279,8 +289,34 @@ function invalidReadConfigReason(toolName: string, idx: number | null, entry: un
   if (p.kind !== undefined && p.kind !== 'document') {
     return `${label}.kind must be "document" (the only recognized value)`;
   }
+  // D2 — `when`: a plain dotted argument path (inside forEach: an element field).
+  if (p.when !== undefined && (typeof p.when !== 'string' || !PLAIN_PATH_RE.test(p.when))) {
+    return `${label}.when must be a dotted argument path (e.g. "uid" or "item_id")`;
+  }
+  if (p.displayOnly !== undefined && typeof p.displayOnly !== 'boolean') {
+    return `${label}.displayOnly must be a boolean`;
+  }
+  if (p.as !== undefined) {
+    if (typeof p.as !== 'string' || !/^[A-Za-z_][\w-]*$/.test(p.as)) return `${label}.as must be a plain name`;
+    if (p.attach !== undefined || p.forEach !== undefined || p.kind !== undefined) {
+      return `${label}.as cannot be combined with attach, forEach or kind`;
+    }
+  }
+  if (p.label !== undefined && (typeof p.label !== 'string' || p.label.trim().length === 0 || p.label.length > 60)) {
+    return `${label}.label must be a non-empty string of at most 60 characters`;
+  }
+  if (p.displayOnly === true && p.version !== undefined) {
+    return `${label} cannot be both displayOnly and version-checked — a versioned read is the record the action changes`;
+  }
   return null;
 }
+
+/** A plain dotted path: `a`, `a.b.c`. */
+const PLAIN_PATH_RE = /^[A-Za-z_][\w-]*(\.[A-Za-z_][\w-]*)*$/;
+/** A check path: a plain path, or `a[].b(.c)*` (element of forEach `a`). */
+// `<attach>.$version.<approved|current|stale>` reads a versioned read's
+// staleness (preview.ts) — e.g. a blocking "request is for the current revision".
+const CHECK_PATH_RE = /^(?:[A-Za-z_][\w-]*(?:\.(?:[A-Za-z_][\w-]*|\$version))*|[A-Za-z_][\w-]*\[\](?:\.[A-Za-z_][\w-]*)+)$/;
 
 /**
  * Returns a human-readable refusal reason if `entry.preview` (an override's
@@ -348,6 +384,28 @@ export function invalidDisplayHintsReason(toolName: string, entry: unknown): str
       }
     }
   }
+  // Now / New table: arg -> dotted path of its current value in an attached read.
+  if (d.compare !== undefined) {
+    if (d.compare === null || typeof d.compare !== 'object' || Array.isArray(d.compare)) {
+      return `override "${toolName}".display.compare must be an object mapping arguments to paths`;
+    }
+    for (const [arg, path] of Object.entries(d.compare as Record<string, unknown>)) {
+      if (typeof path !== 'string' || !PLAIN_PATH_RE.test(path) || !path.includes('.')) {
+        return `override "${toolName}".display.compare.${arg} must be "<attach>.<field>"`;
+      }
+    }
+  }
+  // attach key -> dotted path of the record's name in that read.
+  if (d.names !== undefined) {
+    if (d.names === null || typeof d.names !== 'object' || Array.isArray(d.names)
+      || !Object.values(d.names as Record<string, unknown>).every((v) => typeof v === 'string' && PLAIN_PATH_RE.test(v))) {
+      return `override "${toolName}".display.names must map attach keys to dotted paths`;
+    }
+  }
+  // The card heading's verb: "What will be created/changed in <system>".
+  if (d.verb !== undefined && d.verb !== 'created' && d.verb !== 'changed') {
+    return `override "${toolName}".display.verb must be "created" or "changed"`;
+  }
   // UI spec §15.2/§15.3 — the AI-authored-text argument marker.
   if (d.aiText !== undefined && (typeof d.aiText !== 'string' || d.aiText.length === 0)) {
     return `override "${toolName}".display.aiText must be a non-empty string naming an argument`;
@@ -362,7 +420,8 @@ export function invalidDisplayHintsReason(toolName: string, entry: unknown): str
  * grammar). Shape-only: {path}, {a,b}, {path|money|percent|list|short|date},
  * optional parts in [ ]. Never AI text — the template is the manifest's.
  */
-const SUMMARY_FORMATS = ['money', 'percent', 'list', 'short', 'date'];
+// `ref`: an id the card can name from its attached read — "Name (id)".
+const SUMMARY_FORMATS = ['money', 'percent', 'list', 'short', 'date', 'ref'];
 export function invalidSummaryReason(toolName: string, entry: unknown): string | null {
   if (entry === null || typeof entry !== 'object') return null;
   const summary = (entry as { summary?: unknown }).summary;
@@ -387,6 +446,146 @@ export function invalidSummaryReason(toolName: string, entry: unknown): string |
       return `${at} {${m[1]}} has an invalid field path`;
     }
     if (fmt !== undefined && !SUMMARY_FORMATS.includes(fmt)) return `${at} {${m[1]}} has unknown format "${fmt}"`;
+  }
+  return null;
+}
+
+// ─── D1 — `checks` shape validation (tool-gating-types.ts `CheckDeclaration`) ─
+
+const CHECK_KEYS = new Set(['key', 'label', 'path', 'when', 'forEach', 'pass', 'fail', 'notice', 'notChecked',
+  'compare', 'onTrue', 'onFalse', 'missing', 'detail', 'blocking', 'present', 'absent', 'showOnly']);
+const CHECK_LISTS = ['pass', 'fail', 'notice', 'notChecked'] as const;
+const DETAIL_FORMATS = ['money', 'percent', 'list', 'short', 'date'];
+
+/** A `[]` path must sit inside a check whose `forEach` names that same array. */
+function checkPathReason(at: string, path: unknown, forEach: unknown): string | null {
+  if (typeof path !== 'string' || !CHECK_PATH_RE.test(path)) return `${at} has an invalid path ${JSON.stringify(path)}`;
+  const b = path.indexOf('[]');
+  if (b >= 0 && path.slice(0, b) !== forEach) return `${at} path "${path}" reads an element but forEach is not "${path.slice(0, b)}"`;
+  return null;
+}
+
+function checkDetailReason(at: string, detail: unknown, forEach: unknown): string | null {
+  if (typeof detail !== 'string' || detail.trim().length === 0) return `${at}.detail must be a non-empty string`;
+  if (detail.length > 200) return `${at}.detail must be at most 200 characters`;
+  // Optional parts `[ … ]` count only outside `{ … }` (a path may contain `[]`).
+  let brace = 0; let bracket = 0;
+  for (const ch of detail) {
+    if (ch === '{') { brace += 1; if (brace > 1) return `${at}.detail has nested { }`; continue; }
+    if (ch === '}') { brace -= 1; if (brace < 0) return `${at}.detail has unbalanced { }`; continue; }
+    if (brace > 0) continue;
+    if (ch === '[') { bracket += 1; if (bracket > 1) return `${at}.detail has nested [ ]`; }
+    if (ch === ']') { bracket -= 1; if (bracket < 0) return `${at}.detail has unbalanced [ ]`; }
+  }
+  if (brace !== 0 || bracket !== 0) return `${at}.detail has unbalanced brackets`;
+  for (const m of detail.matchAll(/\{([^{}]+)\}/g)) {
+    const [path, fmt, extra] = m[1].split('|').map((x) => x.trim());
+    if (extra !== undefined) return `${at}.detail {${m[1]}} has more than one format`;
+    if (path === '#') {
+      if (typeof forEach !== 'string') return `${at}.detail uses {#} without forEach`;
+    } else {
+      const r = checkPathReason(`${at}.detail`, path, forEach);
+      if (r) return r;
+    }
+    // `count:<one>/<many>` — "1 invoice" / "4 invoices".
+    const isCount = fmt !== undefined && /^count:[^/{}|]+\/[^/{}|]+$/.test(fmt);
+    if (fmt !== undefined && !DETAIL_FORMATS.includes(fmt) && !isCount) return `${at}.detail {${m[1]}} has unknown format "${fmt}"`;
+  }
+  return null;
+}
+
+function checkWhenReason(at: string, when: unknown, forEach: unknown): string | null {
+  if (when === undefined) return null;
+  if (typeof when === 'string') return checkPathReason(`${at}.when`, when, forEach);
+  if (when === null || typeof when !== 'object' || Array.isArray(when)) return `${at}.when must be a path or {path, in}`;
+  const w = when as Record<string, unknown>;
+  const extra = Object.keys(w).find((k) => k !== 'path' && k !== 'in');
+  if (extra) return `${at}.when has unknown key "${extra}"`;
+  return checkPathReason(`${at}.when.path`, w.path, forEach) ?? checkValueListReason(`${at}.when.in`, w.in);
+}
+
+function checkValueListReason(at: string, list: unknown): string | null {
+  if (!Array.isArray(list) || list.length === 0) return `${at} must be a non-empty list of values`;
+  const ok = list.every((v) => v === null || ['string', 'boolean'].includes(typeof v) || (typeof v === 'number' && Number.isFinite(v)));
+  return ok ? null : `${at} may hold only strings, numbers, booleans or null`;
+}
+
+function invalidCheckReason(at: string, raw: unknown, seen: Set<string>): string | null {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return `${at} must be an object`;
+  const c = raw as Record<string, unknown>;
+  const unknownKey = Object.keys(c).find((k) => !CHECK_KEYS.has(k));
+  if (unknownKey) return `${at} has unknown key "${unknownKey}"`;
+  if (typeof c.key !== 'string' || c.key.length === 0) return `${at}.key must be a non-empty string`;
+  if (seen.has(c.key)) return `${at}.key "${c.key}" is declared twice`;
+  seen.add(c.key);
+  if (typeof c.label !== 'string' || c.label.trim().length === 0 || c.label.length > 80) {
+    return `${at}.label must be a non-empty string of at most 80 characters`;
+  }
+  if (c.forEach !== undefined && (typeof c.forEach !== 'string' || !/^[A-Za-z_][\w-]*$/.test(c.forEach))) {
+    return `${at}.forEach must name an array argument`;
+  }
+  const pathReason = checkPathReason(`${at}.path`, c.path, c.forEach)
+    ?? checkWhenReason(at, c.when, c.forEach);
+  if (pathReason) return pathReason;
+  const hasList = CHECK_LISTS.some((k) => c[k] !== undefined);
+  const hasCompare = c.compare !== undefined;
+  const hasPresence = c.present !== undefined || c.absent !== undefined;
+  if ([hasList, hasCompare, hasPresence].filter(Boolean).length !== 1) {
+    return `${at} must declare exactly one form: value lists (pass/fail/notice/notChecked), compare, or present/absent`;
+  }
+  if (hasPresence) {
+    for (const k of ['present', 'absent'] as const) {
+      if (!CHECK_STATUSES.includes(c[k] as CheckStatus)) return `${at}.${k} must be one of ${CHECK_STATUSES.join(', ')} (both required)`;
+    }
+  }
+  for (const k of CHECK_LISTS) {
+    if (c[k] === undefined) continue;
+    const r = checkValueListReason(`${at}.${k}`, c[k]);
+    if (r) return r;
+  }
+  if (hasCompare) {
+    const cmp = c.compare as Record<string, unknown> | null;
+    if (cmp === null || typeof cmp !== 'object' || Array.isArray(cmp)) return `${at}.compare must be an object`;
+    if (!['eq', 'ne', 'gt', 'lt'].includes(cmp.op as string)) return `${at}.compare.op must be one of eq, ne, gt, lt`;
+    if (typeof cmp.to === 'number') {
+      if (!Number.isFinite(cmp.to)) return `${at}.compare.to must be a finite number or a path`;
+    } else {
+      const r = checkPathReason(`${at}.compare.to`, cmp.to, c.forEach);
+      if (r) return r;
+    }
+    const extra = Object.keys(cmp).find((k) => k !== 'op' && k !== 'to');
+    if (extra) return `${at}.compare has unknown key "${extra}"`;
+  }
+  for (const k of ['onTrue', 'onFalse'] as const) {
+    if (c[k] === undefined) continue;
+    if (!hasCompare) return `${at}.${k} applies to compare only`;
+    if (!CHECK_STATUSES.includes(c[k] as CheckStatus)) return `${at}.${k} must be one of ${CHECK_STATUSES.join(', ')}`;
+  }
+  if (c.blocking !== undefined && typeof c.blocking !== 'boolean') return `${at}.blocking must be a boolean`;
+  if (c.showOnly !== undefined && c.showOnly !== 'fail' && c.showOnly !== 'notice') return `${at}.showOnly must be "fail" or "notice"`;
+  if (c.missing !== undefined && c.missing !== 'skip' && c.missing !== 'not_checked') {
+    return `${at}.missing must be "skip" or "not_checked"`;
+  }
+  if (c.detail !== undefined) return checkDetailReason(at, c.detail, c.forEach);
+  return null;
+}
+
+/**
+ * Shape check for an override's optional `checks` — refuses the manifest on
+ * an unknown key, a bad path, neither/both forms, a duplicate key, or more
+ * than {@link MAX_CHECKS_PER_TOOL} checks.
+ */
+export function invalidChecksReason(toolName: string, entry: unknown): string | null {
+  if (entry === null || typeof entry !== 'object') return null;
+  const checks = (entry as { checks?: unknown }).checks;
+  if (checks === undefined) return null;
+  const base = `override "${toolName}".checks`;
+  if (!Array.isArray(checks) || checks.length === 0) return `${base} must be a non-empty list`;
+  if (checks.length > MAX_CHECKS_PER_TOOL) return `${base} declares ${checks.length} checks — max ${MAX_CHECKS_PER_TOOL}`;
+  const seen = new Set<string>();
+  for (const [i, raw] of checks.entries()) {
+    const reason = invalidCheckReason(`${base}[${i}]`, raw, seen);
+    if (reason) return reason;
   }
   return null;
 }
@@ -506,7 +705,7 @@ export function invalidManifestPreviewReason(manifest: Pick<IntegrationManifest,
   const overrides = manifest.toolGating?.overrides ?? {};
   for (const [toolName, entry] of Object.entries(overrides)) {
     const reason = invalidPreviewReason(toolName, entry) ?? invalidDisplayHintsReason(toolName, entry)
-      ?? invalidSummaryReason(toolName, entry);
+      ?? invalidSummaryReason(toolName, entry) ?? invalidChecksReason(toolName, entry);
     if (reason) return reason;
   }
   return null;
@@ -1043,6 +1242,43 @@ export function invalidManifestReadGateReason(
  * needs `adapterField` to name a REAL declared credential field — otherwise
  * the gateway would have no way to resolve which label applies.
  */
+/**
+ * D3 — top-level `network` (tool-gating-types.ts `NetworkDeclaration`): a
+ * list of `{host, purpose, sends, modes?}`. `host` is a bare host name (no
+ * scheme, path or port); `modes` keys are modes, each `true` or a non-empty
+ * list of adapter values. Refuses the manifest otherwise.
+ */
+export function invalidNetworkReason(manifest: Pick<IntegrationManifest, 'network'>): string | null {
+  const network = (manifest as { network?: unknown }).network;
+  if (network === undefined) return null;
+  if (!Array.isArray(network) || network.length === 0) return 'network must be a non-empty list of outside calls';
+  for (const [i, raw] of network.entries()) {
+    const at = `network[${i}]`;
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return `${at} must be an object`;
+    const n = raw as Record<string, unknown>;
+    const extra = Object.keys(n).find((k) => !['modes', 'host', 'purpose', 'sends'].includes(k));
+    if (extra) return `${at} has unknown key "${extra}"`;
+    if (typeof n.host !== 'string' || !/^(?=.{1,253}$)[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/.test(n.host)) {
+      return `${at}.host must be a bare host name, e.g. "api.example.com"`;
+    }
+    for (const k of ['purpose', 'sends'] as const) {
+      if (typeof n[k] !== 'string' || (n[k] as string).trim().length === 0 || (n[k] as string).length > 200) {
+        return `${at}.${k} must be a non-empty string of at most 200 characters`;
+      }
+    }
+    if (n.modes !== undefined) {
+      if (n.modes === null || typeof n.modes !== 'object' || Array.isArray(n.modes) || Object.keys(n.modes).length === 0) {
+        return `${at}.modes must be an object mapping a mode to true or a list of adapters`;
+      }
+      for (const [mode, v] of Object.entries(n.modes as Record<string, unknown>)) {
+        const ok = v === true || (Array.isArray(v) && v.length > 0 && v.every((a) => typeof a === 'string' && a.length > 0));
+        if (!ok) return `${at}.modes.${mode} must be true or a non-empty list of adapter names`;
+      }
+    }
+  }
+  return null;
+}
+
 export function invalidModeLabelsReason(
   manifest: Pick<IntegrationManifest, 'modeLabels' | 'adapterField' | 'simulation' | 'credentials'>,
 ): string | null {
@@ -1169,6 +1405,11 @@ export function loadManifests(integrationsDir?: string): number {
       const valuesReason = invalidManifestValuesReason(manifest);
       if (valuesReason) {
         console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${valuesReason}`);
+        continue;
+      }
+      const networkReason = invalidNetworkReason(manifest);
+      if (networkReason) {
+        console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${networkReason}`);
         continue;
       }
       const modeLabelsReason = invalidModeLabelsReason(manifest)

@@ -145,7 +145,7 @@ export type DenialReason =
  * other refusal of a gated call. Absent `kind` ⇒ 'read' (every record
  * predating AU2). Never carries message content — identifiers, field names
  * and numbers only. */
-export type DenialKind = 'read' | 'bound' | 'scope' | 'cumulative' | 'simulation' | 'not_authorized';
+export type DenialKind = 'read' | 'bound' | 'scope' | 'cumulative' | 'simulation' | 'not_authorized' | 'check';
 export interface DenialRecord {
   ts: number;
   tool: string;
@@ -198,6 +198,8 @@ export type PreviewReadOutcome =
   | { status: 'ok'; body: PreviewBody }
   | { status: 'unavailable'; reason: 'no_connector' | 'connector_error' | 'timeout'; message?: string }
   | { status: 'not_found'; message?: string }
+  /** The connector refused the read ("Refused: …") — its own words. */
+  | { status: 'refused'; message?: string }
   | { status: 'none'; reason: 'no_target' };
 
 /** Manifest `display` hints, a sibling of `preview` on the same tool
@@ -219,6 +221,25 @@ export interface ToolDisplayHints {
    * `"<key>[].<attach>.<sub>"` (a forEach attach's own field).
    */
   labels?: Record<string, string>;
+  /** Arg -> path of its CURRENT value in an attached read: those args show as one Now / New table (creation-extras.ts). */
+  compare?: Record<string, string>;
+  /** The card heading's verb: "What will be created" (default) or "changed". */
+  verb?: 'created' | 'changed';
+  /** Attach key -> dotted path of the record's NAME in that read (when it isn't a top-level `name`). */
+  names?: Record<string, string>;
+}
+
+/** A manifest-declared check, evaluated by the gateway (mcp-server checks.ts). */
+export type CheckStatus = 'pass' | 'fail' | 'notice' | 'not_checked';
+export interface CheckResult {
+  key: string;
+  label: string;
+  status: CheckStatus;
+  index?: number;
+  detail?: string;
+  reason?: string;
+  blocking?: true;
+  value?: string | number | boolean | null;
 }
 
 /** One declared read's outcome within a multi-read preview. */
@@ -246,13 +267,20 @@ export interface PreviewReadSection {
    *  this read's result as a document to render (UI spec §15.1), not data
    *  to merge into field rows. */
   kind?: 'document';
+  /** Display-only read (excluded from the changed-since-approval check): its own "From <label> — checked <time>" box. */
+  displayOnly?: boolean;
+  /** Input for checks only — never a card section. */
+  as?: string;
+  /** The source a display-only read names ("EU VIES"). */
+  label?: string;
 }
 
 /** `GET /proposal-status/:id/preview` — always 200 unless auth/proposal fetch fails. */
-export type PreviewResponse =
+export type PreviewResponse = (
   | { status: 'none'; reason?: 'no_target' }
   | { status: 'unavailable'; reason: 'no_connector' | 'connector_error' | 'timeout'; message?: string }
   | { status: 'not_found'; message?: string }
+  | { status: 'refused'; message?: string }
   | {
       status: 'ok';
       integration: string;
@@ -266,7 +294,11 @@ export type PreviewResponse =
     }
   /** AU8 — several reads (manifest `preview` is a list). Distinguished from
    *  the single-read "ok" above by `reads` (never both on the same object). */
-  | { status: 'ok'; integration: string; readAt: number; reads: PreviewReadSection[]; display?: ToolDisplayHints };
+  | { status: 'ok'; integration: string; readAt: number; reads: PreviewReadSection[]; display?: ToolDisplayHints }
+) & {
+  /** The tool's manifest checks, evaluated by the gateway over its own reads. */
+  checks?: CheckResult[];
+};
 
 /** `GET /proposal-status/:id/outcome` — the local execution journal's latest entry. */
 export interface OutcomeResponse {

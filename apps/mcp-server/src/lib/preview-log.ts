@@ -16,7 +16,7 @@ export interface PreviewLogEntry {
   proposalId: string;
   integrationId: string;
   tool: string;
-  status: 'none' | 'ok' | 'unavailable' | 'not_found';
+  status: 'none' | 'ok' | 'unavailable' | 'not_found' | 'refused';
 }
 
 interface LogFile {

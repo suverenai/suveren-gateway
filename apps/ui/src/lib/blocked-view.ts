@@ -74,6 +74,9 @@ const TITLE: Record<DenialKind, string> = {
   cumulative: 'Blocked — limit reached',
   simulation: 'Blocked — simulation mode',
   not_authorized: 'Blocked — not authorized',
+  // Wording pending Andreas's sign-off (temp/erp-checks-mockup) — kept minimal
+  // so the Blocked page never shows an empty title for the new record kind.
+  check: 'Blocked — a check failed',
   read: 'Read blocked',
 };
 
@@ -84,6 +87,7 @@ const WHAT_YOU_CAN_DO: Record<DenialKind, string> = {
   cumulative: 'Nothing ran. Possible again once the window resets — or raise the limit in the mandate.',
   simulation: 'Nothing ran. Turn off simulation mode in Settings to use real systems.',
   not_authorized: 'Nothing ran. Grant a mandate for this, or ask the decision owner.',
+  check: 'Nothing ran and no approval was asked for. The check reads the system\'s own data — correct the request or that data.',
   read: 'Nothing was read.',
 };
 

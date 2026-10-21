@@ -69,7 +69,7 @@ export async function resolveInsertValue(
 
   const args = substitute(valueConfig.args, { id: ref.id });
   const read = await readPreview(integrationManager, ref.connector, valueConfig.tool, args);
-  if (read.status === 'not_found') {
+  if (read.status === 'not_found' || read.status === 'refused') {
     return { ok: false, error: { code: 'NOT_FOUND', message: read.message ?? `No value "${ref.kind}"/"${ref.id}" on "${ref.connector}".` } };
   }
   if (read.status !== 'ok') {

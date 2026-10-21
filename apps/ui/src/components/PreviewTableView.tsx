@@ -13,6 +13,8 @@ export function PreviewTableView({ table }: { table: PreviewTable }) {
   }
   return (
     <>
+      {/* Wide line tables scroll inside the card on a phone, never the page. */}
+      <div className="preview-table-wrap">
       <table className="preview-table">
         <thead>
           <tr>
@@ -35,6 +37,7 @@ export function PreviewTableView({ table }: { table: PreviewTable }) {
           ))}
         </tbody>
       </table>
+      </div>
       {table.overflowNote && <p className="preview-note">{table.overflowNote}</p>}
     </>
   );
