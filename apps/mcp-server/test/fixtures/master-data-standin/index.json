@@ -1,6 +1,0 @@
-{
-  "repository": "github.com/humanagencyprotocol/hap-profiles",
-  "profiles": {
-    "github.com/humanagencyprotocol/hap-profiles/master-data@0.1": "0.1.profile.json"
-  }
-}

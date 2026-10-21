@@ -236,9 +236,12 @@ function tableForObjectArray(
    *  hints at `${pathPrefix}.<column>` (e.g. `lines[].unit_price`). */
   own?: { hints?: ToolDisplayHints; pathPrefix: string; currency?: string },
 ): PreviewTable {
-  const keys = itemProps
+  const empty = (v: unknown) => v === undefined || v === null || v === '';
+  // A column no row has a value for is left out (UI spec: no column of "—").
+  const keys = (itemProps
     ? Object.keys(itemProps).filter((k) => rows.some((r) => k in r))
-    : [...new Set(rows.flatMap((r) => Object.keys(r)))];
+    : [...new Set(rows.flatMap((r) => Object.keys(r)))]
+  ).filter((k) => rows.some((r) => !empty(r[k])));
   const columns = keys.map((k) => ({
     key: k,
     label: (own && own.hints?.labels?.[`${own.pathPrefix}.${k}`]) ?? itemProps?.[k]?.title ?? humanizeKey(k),
@@ -247,6 +250,7 @@ function tableForObjectArray(
   const tableRows = rows.map((r) => ({
     cells: keys.map((k) => {
       const v = r[k];
+      if (empty(v)) return { value: '', sealed };
       if (own && !isPlainObject(v) && pathMatches(own.hints?.money, `${own.pathPrefix}.${k}`)) {
         return { ...formatMoney(v, own.currency), sealed };
       }
@@ -652,7 +656,7 @@ export interface AttachedIdentity {
 export function resolveAttachedIdentity(
   outcome: PreviewReadOutcome | undefined,
   rawId: unknown,
-  opts?: { pathPrefix?: string; displayHints?: ToolDisplayHints; currency?: string },
+  opts?: { pathPrefix?: string; displayHints?: ToolDisplayHints; currency?: string; fields?: string[] },
 ): AttachedIdentity {
   const rows = attachedFields(outcome);
   if (rows.length === 0) {
@@ -671,7 +675,7 @@ export function resolveAttachedIdentity(
   if (typeof declaredName === 'string' && declaredName.length > 0) {
     const ctx = rows.filter((r) => r.key !== 'id' && !isHidden(opts?.displayHints, `${prefix}.${r.key}`))
       .map((r) => ({ ...r, label: resolveLabel(opts?.displayHints, `${prefix}.${r.key}`, r.label) }));
-    return { name: declaredName, rawId: formatScalar(rawId), context: ctx };
+    return { name: declaredName, rawId: formatScalar(rawId), context: tidyContext(ctx, rawObj, prefix, opts) };
   }
   const nameRow = rows.find((r) => ['name', 'title', 'label'].includes(r.key))
     ?? rows.find((r) => typeof rawObj?.[r.key] === 'string' && !r.lines && !r.sublist && !r.diffLines);
@@ -693,7 +697,7 @@ export function resolveAttachedIdentity(
       const { value, valueTitle } = formatHinted(rawObj?.[r.key], opts?.displayHints, path, opts?.currency);
       return { ...r, label, value, valueTitle };
     });
-  return { name: nameRow?.value, rawId: formatScalar(rawId), context };
+  return { name: nameRow?.value, rawId: formatScalar(rawId), context: tidyContext(context, rawObj, prefix, opts) };
 }
 
 /** Fields an {@link AttachedIdentity} always folds into name/rawId, never
@@ -815,9 +819,12 @@ export function buildForEachTable(
   const attachedKeys = attach
     ? [...attachedLabelFallback.keys()].filter((k) => !IDENTITY_KEYS.has(k))
     : [];
+  // No line links a record (every read skipped — free-text lines only): no
+  // linked-record column at all, rather than a column of blanks.
+  const showAttach = !!attach && reads.some((o) => o && o.status !== 'none');
 
   const columns: PreviewTableColumn[] = [];
-  if (attach) {
+  if (showAttach) {
     columns.push({
       key: `__attach:${attach}`,
       label: resolveLabel(displayHints, `${forEachKey}[].${attach}`, humanizeKey(section.sourceArg ?? attach)),
@@ -834,23 +841,26 @@ export function buildForEachTable(
   const rows: PreviewTableRow[] = bound.map((el, i) => {
     const outcome = reads[i];
     const cells: PreviewTableCell[] = [];
-    if (attach) {
+    if (showAttach) {
       const identity = resolveAttachedIdentity(outcome, section.sourceArg ? el[section.sourceArg] : undefined);
       // A line with nothing to read (e.g. no item linked — the read's `when`)
-      // is simply empty, never "Nothing to read." in the middle of a table.
+      // is simply empty — never "—" or "Nothing to read." in a table.
       const text = outcome?.status === 'none'
-        ? '—'
+        ? ''
         : identity.name ? `${identity.name} (${identity.rawId})` : identity.unresolved ? `${identity.rawId} — ${identity.unresolved}` : identity.rawId;
       cells.push({ value: text, sealed: false });
     }
     for (const k of boundKeys) {
-      const { value, valueTitle } = formatHinted(el[k], displayHints, `${forEachKey}[].${k}`, currency);
+      // A field this line does not carry is an empty cell (UI spec: no "—").
+      const { value, valueTitle } = el[k] === undefined || el[k] === null
+        ? { value: '', valueTitle: undefined }
+        : formatHinted(el[k], displayHints, `${forEachKey}[].${k}`, currency);
       cells.push({ value, valueTitle, sealed: true });
     }
     const rawObj = outcome && outcome.status === 'ok' ? resolveBodyObject(outcome.body)?.obj : undefined;
     for (const k of attachedKeys) {
       const raw = rawObj?.[k];
-      const { value, valueTitle } = raw !== undefined ? formatHinted(raw, displayHints, `${forEachKey}[].${attach}.${k}`, currency) : { value: '—', valueTitle: undefined };
+      const { value, valueTitle } = raw !== undefined && raw !== null ? formatHinted(raw, displayHints, `${forEachKey}[].${attach}.${k}`, currency) : { value: '', valueTitle: undefined };
       cells.push({ value, valueTitle, sealed: false });
     }
     return { cells };
@@ -998,7 +1008,7 @@ export function buildCreationView(
 
     const attachSection = byAttachKey.get(key);
     if (attachSection) {
-      const identity = resolveAttachedIdentity(attachSection.result, toolArgs[key], { pathPrefix: key, displayHints, currency: currencyStr });
+      const identity = resolveAttachedIdentity(attachSection.result, toolArgs[key], { pathPrefix: key, displayHints, currency: currencyStr, fields: attachSection.fields });
       rows.push({ kind: 'identity', key, label, identity });
       continue;
     }
@@ -1041,4 +1051,46 @@ function valueAt(obj: unknown, path: string): unknown {
     cur = (cur as Record<string, unknown>)[p];
   }
   return cur;
+}
+
+const ISO_DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
+
+/** A timestamp as the card shows dates elsewhere ("21 Oct 2026, 09:15"), never raw ISO. */
+export function formatTimestamp(iso: string, locale?: string): string {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime())
+    ? iso
+    : d.toLocaleString(locale, { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+/**
+ * The context shown beside a linked record: the read's declared `fields`
+ * (dotted paths allowed — e.g. `customer.name`) in that order when the
+ * manifest lists them, else every field; empty values left out; ISO
+ * timestamps formatted. Generic — the manifest decides what matters.
+ */
+function tidyContext(
+  rows: PreviewFieldRow[],
+  rawObj: Record<string, unknown> | undefined,
+  prefix: string | undefined,
+  opts: { displayHints?: ToolDisplayHints; fields?: string[] } | undefined,
+): PreviewFieldRow[] {
+  let out = rows;
+  if (opts?.fields?.length) {
+    out = opts.fields.flatMap((path): PreviewFieldRow[] => {
+      const existing = rows.find((r) => r.key === path);
+      if (existing) return [existing];
+      if (!path.includes('.')) return [];
+      const v = valueAt(rawObj, path);
+      if (v === undefined || v === null || typeof v === 'object') return [];
+      const label = resolveLabel(opts.displayHints, prefix ? `${prefix}.${path}` : path, humanizeKey(path.split('.').pop()!));
+      return [{ key: path, label, value: String(v) }];
+    });
+  }
+  return out
+    .filter((r) => r.lines?.length || r.sublist?.length || r.table || r.diffLines?.length || (r.value !== undefined && r.value !== '' && r.value !== '—'))
+    .map((r) => {
+      const raw = r.key.includes('.') ? valueAt(rawObj, r.key) : rawObj?.[r.key];
+      return typeof raw === 'string' && ISO_DATETIME.test(raw) ? { ...r, value: formatTimestamp(raw), valueTitle: raw } : r;
+    });
 }

@@ -429,6 +429,8 @@ export interface CheckDeclaration {
   missing?: 'skip' | 'not_checked';
   /** Summary grammar (`{path|money}`, `[optional]`, `{#}`), rendered after the label. */
   detail?: string;
+  /** A detail for one status only, in place of `detail` (e.g. an outage sentence only when "not checked"). */
+  details?: Partial<Record<CheckStatus, string>>;
   /**
    * A `fail` of this check refuses the call before any card or proposal is
    * made (tool-proxy.ts, the same refusal path as a bounds refusal), with

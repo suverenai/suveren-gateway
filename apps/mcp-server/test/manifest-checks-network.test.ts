@@ -37,6 +37,8 @@ describe('checks validation', () => {
     [{ ...good, missing: 'ignore' }, /missing must be/],
     [{ ...good, blocking: 'yes' }, /blocking must be a boolean/],
     [{ ...good, showOnly: 'pass' }, /showOnly must be "fail"/],
+    [{ ...good, details: { maybe: 'x' } }, /details.maybe is not a status/],
+    [{ ...good, details: { fail: '{a|euro}' } }, /unknown format/],
     [{ key: 'k', label: 'l', path: 'p', present: 'fail' }, /absent must be one of/],
     [{ ...good, present: 'fail', absent: 'pass' }, /exactly one form/],
     [{ ...good, label: 'x'.repeat(81) }, /at most 80/],

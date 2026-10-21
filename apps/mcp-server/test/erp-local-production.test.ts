@@ -14,14 +14,12 @@ import { loadManifests, getManifest } from '../src/lib/manifest-loader';
 import { buildInternalPreview, computeSubmissionPreviewHash, mapPreviewArgs } from '../src/lib/preview';
 import type { IntegrationManager, DiscoveredTool } from '../src/lib/integration-manager';
 import type { CheckResult } from '../src/lib/tool-gating-types';
-import { ensureMasterDataProfile } from './helpers/master-data-standin';
 
 const MANIFESTS_DIR = join(import.meta.dirname, '..', '..', '..', 'content', 'integrations');
 const PROFILES_DIR = process.env.SUVEREN_PROFILES_DIR ?? join(import.meta.dirname, '..', '..', '..', '..', 'hap-profiles');
 
 beforeAll(() => {
   loadProfiles(PROFILES_DIR);
-  ensureMasterDataProfile(); // TEMPORARY — see the helper
   loadManifests(MANIFESTS_DIR);
 });
 afterAll(() => clearProfiles());
@@ -598,5 +596,15 @@ describe('tax-data card: open quotes are their own notice line, only when there 
     expect(checksOf(one)).toContainEqual(['open-quotes', 'notice', '1 quote made with the old data — update before invoicing']);
     const none = await buildInternalPreview(erpDouble({ preview_customer_change: answer(0), check_customer_duplicates: dups() }).im, 'erp', 'update_customer_tax_data', args);
     expect(checksOf(none).map((c) => c[0])).not.toContain('open-quotes');
+  });
+});
+
+describe('VIES outage sentence only when "not checked"', () => {
+  const args = { name: 'X', address_lines: ['a'], country: 'AT', uid: 'ATU12345678' };
+  it('a valid answer with a reason has no outage sentence; not_checked has it', async () => {
+    const valid = await buildInternalPreview(erpDouble({ check_vat_id: vatCheck('valid', { reason: 'requester refused — checked without it' }), check_customer_duplicates: dups() }).im, 'erp', 'create_customer', args);
+    expect(checksOf(valid).find((c) => c[0] === 'vies')).toEqual(['vies', 'pass', 'checked 2026-10-21 — requester refused — checked without it']);
+    const down = await buildInternalPreview(erpDouble({ check_vat_id: vatCheck('not_checked', { reason: 'VIES unreachable', checked_at: null }), check_customer_duplicates: dups() }).im, 'erp', 'create_customer', args);
+    expect(checksOf(down).find((c) => c[0] === 'vies')).toEqual(['vies', 'not_checked', 'VIES unreachable — saving is not blocked while VIES is unreachable']);
   });
 });

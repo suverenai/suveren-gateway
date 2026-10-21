@@ -91,13 +91,13 @@ describe('buildForEachTable', () => {
     expect(table.rows[0].cells[1]).toMatchObject({ value: '1', sealed: true });
   });
 
-  it('one element failing among several still shows "—" for the attached columns a DIFFERENT element resolved', () => {
+  it('one element failing among several shows EMPTY cells for the attached columns a DIFFERENT element resolved (UI spec: no "—")', () => {
     const mixed: PreviewReadSection = {
       ...section,
       elements: [textOk({ id: 'item-1', name: 'Keilriemen SPB 2000', list_price: 38.5, stock: 40 }), { status: 'not_found' }],
     };
     const table = buildForEachTable(mixed, [{ item_id: 'item-1', qty: 10 }, { item_id: 'item-404', qty: 1 }], undefined, undefined);
-    expect(table.rows[1].cells.slice(2)).toEqual([{ value: '—', sealed: false }, { value: '—', sealed: false }]);
+    expect(table.rows[1].cells.slice(2)).toEqual([{ value: '', sealed: false }, { value: '', sealed: false }]);
   });
 
   it('no attach -> no identity column, only the element\'s own fields', () => {
