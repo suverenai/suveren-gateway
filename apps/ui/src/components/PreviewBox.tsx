@@ -19,7 +19,7 @@ import { useEffect, useState } from 'react';
 import { spClient, type PreviewResponse } from '../lib/sp-client';
 import { previewBoxView } from '../lib/approval-preview-view';
 import { RenderedPreviewView as RenderedBody } from './RenderedPreviewView';
-import { RenderedCreationView } from './RenderedCreationView';
+import { RenderedCreationView, SystemBoxes } from './RenderedCreationView';
 
 export interface PreviewBoxBodyProps {
   resp: PreviewResponse;
@@ -50,6 +50,7 @@ export function PreviewBoxBody({ resp, systemName, toolArgs, sealed }: PreviewBo
   }
 
   return (
+    <>
     <div className={`preview-box preview-box-${tone}`} data-testid="approval-preview" data-preview-status={tone}>
       <h4>
         {view.heading}
@@ -79,6 +80,8 @@ export function PreviewBoxBody({ resp, systemName, toolArgs, sealed }: PreviewBo
         </div>
       )}
     </div>
+    {view.creation && <SystemBoxes view={view.creation} />}
+    </>
   );
 }
 

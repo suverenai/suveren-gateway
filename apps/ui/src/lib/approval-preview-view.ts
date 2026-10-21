@@ -107,7 +107,7 @@ export function previewBoxView(resp: PreviewResponse, systemName: string, toolAr
         return {
           heading: `What will be created in ${systemName}`,
           note: `Read by the gateway, not by the AI — read at ${formatReadAt(resp.readAt)}.`,
-          creation: buildCreationView(toolArgs ?? {}, resp.reads, resp.display),
+          creation: buildCreationView(toolArgs ?? {}, resp.reads, resp.display, { readAt: resp.readAt }),
         };
       }
 

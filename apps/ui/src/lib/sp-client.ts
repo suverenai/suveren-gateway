@@ -219,6 +219,21 @@ export interface ToolDisplayHints {
    * `"<key>[].<attach>.<sub>"` (a forEach attach's own field).
    */
   labels?: Record<string, string>;
+  /** Arg -> path of its CURRENT value in an attached read: those args show as one Now / New table (creation-extras.ts). */
+  compare?: Record<string, string>;
+}
+
+/** A manifest-declared check, evaluated by the gateway (mcp-server checks.ts). */
+export type CheckStatus = 'pass' | 'fail' | 'notice' | 'not_checked';
+export interface CheckResult {
+  key: string;
+  label: string;
+  status: CheckStatus;
+  index?: number;
+  detail?: string;
+  reason?: string;
+  blocking?: true;
+  value?: string | number | boolean | null;
 }
 
 /** One declared read's outcome within a multi-read preview. */
@@ -246,10 +261,16 @@ export interface PreviewReadSection {
    *  this read's result as a document to render (UI spec §15.1), not data
    *  to merge into field rows. */
   kind?: 'document';
+  /** Display-only read (excluded from the changed-since-approval check): its own "From <label> — checked <time>" box. */
+  displayOnly?: boolean;
+  /** Input for checks only — never a card section. */
+  as?: string;
+  /** The source a display-only read names ("EU VIES"). */
+  label?: string;
 }
 
 /** `GET /proposal-status/:id/preview` — always 200 unless auth/proposal fetch fails. */
-export type PreviewResponse =
+export type PreviewResponse = (
   | { status: 'none'; reason?: 'no_target' }
   | { status: 'unavailable'; reason: 'no_connector' | 'connector_error' | 'timeout'; message?: string }
   | { status: 'not_found'; message?: string }
@@ -266,7 +287,11 @@ export type PreviewResponse =
     }
   /** AU8 — several reads (manifest `preview` is a list). Distinguished from
    *  the single-read "ok" above by `reads` (never both on the same object). */
-  | { status: 'ok'; integration: string; readAt: number; reads: PreviewReadSection[]; display?: ToolDisplayHints };
+  | { status: 'ok'; integration: string; readAt: number; reads: PreviewReadSection[]; display?: ToolDisplayHints }
+) & {
+  /** The tool's manifest checks, evaluated by the gateway over its own reads. */
+  checks?: CheckResult[];
+};
 
 /** `GET /proposal-status/:id/outcome` — the local execution journal's latest entry. */
 export interface OutcomeResponse {
