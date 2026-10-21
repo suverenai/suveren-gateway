@@ -130,7 +130,6 @@ describe('update_customer_tax_data card — own line for already-issued document
     const { im } = erpDouble({ preview_customer_change: change({}), check_customer_duplicates: dups() });
     const r = await buildInternalPreview(im, 'erp', 'update_customer_tax_data', args);
     expect(checksOf(r)).toEqual([
-      ['revision', 'pass', 'request for version 3, record at version 3'],
       ['vies', 'pass', 'checked 2026-10-21'],
       ['vat-duplicate', 'pass', null],
       ['tax-mode', 'notice', 'normal VAT → reverse charge'],

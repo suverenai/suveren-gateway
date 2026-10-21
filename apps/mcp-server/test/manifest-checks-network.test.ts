@@ -36,6 +36,7 @@ describe('checks validation', () => {
     [{ key: 'k', label: 'l', path: 'p', compare: { op: 'eq', to: 1 }, onFalse: 'red' }, /onFalse must be one of/],
     [{ ...good, missing: 'ignore' }, /missing must be/],
     [{ ...good, blocking: 'yes' }, /blocking must be a boolean/],
+    [{ ...good, showOnly: 'pass' }, /showOnly must be "fail"/],
     [{ key: 'k', label: 'l', path: 'p', present: 'fail' }, /absent must be one of/],
     [{ ...good, present: 'fail', absent: 'pass' }, /exactly one form/],
     [{ ...good, label: 'x'.repeat(81) }, /at most 80/],

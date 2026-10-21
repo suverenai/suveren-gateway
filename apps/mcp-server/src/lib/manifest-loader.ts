@@ -446,7 +446,7 @@ export function invalidSummaryReason(toolName: string, entry: unknown): string |
 // ─── D1 — `checks` shape validation (tool-gating-types.ts `CheckDeclaration`) ─
 
 const CHECK_KEYS = new Set(['key', 'label', 'path', 'when', 'forEach', 'pass', 'fail', 'notice', 'notChecked',
-  'compare', 'onTrue', 'onFalse', 'missing', 'detail', 'blocking', 'present', 'absent']);
+  'compare', 'onTrue', 'onFalse', 'missing', 'detail', 'blocking', 'present', 'absent', 'showOnly']);
 const CHECK_LISTS = ['pass', 'fail', 'notice', 'notChecked'] as const;
 const DETAIL_FORMATS = ['money', 'percent', 'list', 'short', 'date'];
 
@@ -555,6 +555,7 @@ function invalidCheckReason(at: string, raw: unknown, seen: Set<string>): string
     if (!CHECK_STATUSES.includes(c[k] as CheckStatus)) return `${at}.${k} must be one of ${CHECK_STATUSES.join(', ')}`;
   }
   if (c.blocking !== undefined && typeof c.blocking !== 'boolean') return `${at}.blocking must be a boolean`;
+  if (c.showOnly !== undefined && c.showOnly !== 'fail') return `${at}.showOnly must be "fail"`;
   if (c.missing !== undefined && c.missing !== 'skip' && c.missing !== 'not_checked') {
     return `${at}.missing must be "skip" or "not_checked"`;
   }

@@ -146,3 +146,18 @@ describe('detail format count:<one>/<many>', () => {
     expect(r(4, 0)).toBe('4 invoices, 0 credit notes');
   });
 });
+
+describe('showOnly: "fail"', () => {
+  const decl: CheckDeclaration = { key: 'v', label: 'Current version', path: 'id.$version.approved',
+    compare: { op: 'eq', to: 'id.$version.current' }, showOnly: 'fail', blocking: true };
+  const PREVIEW: PreviewReadConfig[] = [{ tool: 'get', args: { id: 'id' }, attach: 'id', version: { arg: 'revision', field: 'revision' } }];
+  const run = (approved: number, current: number) => evaluateChecks([decl], { args: { id: 'x', revision: approved }, declaration: PREVIEW,
+    sections: [{ tool: 'get', attach: 'id', result: { status: 'ok', body: { structured: {} } }, version: { field: 'revision', approved, current, stale: approved !== current } }] });
+  it('a pass adds no line; a fail is a line (and still carries `blocking`)', () => {
+    expect(run(3, 3)).toEqual([]);
+    expect(run(2, 3)).toEqual([expect.objectContaining({ key: 'v', status: 'fail', blocking: true, value: 2 })]);
+  });
+  it('no version info (the second read failed) adds no line either', () => {
+    expect(evaluateChecks([decl], { args: { id: 'x' }, declaration: PREVIEW, sections: [{ tool: 'get', attach: 'id', result: { status: 'ok', body: { structured: {} } } }] })).toEqual([]);
+  });
+});

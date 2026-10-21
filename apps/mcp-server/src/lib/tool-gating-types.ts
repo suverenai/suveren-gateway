@@ -435,6 +435,13 @@ export interface CheckDeclaration {
    * override (e.g. a register says an identifier is invalid).
    */
   blocking?: boolean;
+  /**
+   * `"fail"`: the card shows this check only when it fails (a pass or a
+   * "not checked" adds no line). Evaluation and `blocking` are unchanged —
+   * for a check whose pass is noise (e.g. "the request is for the current
+   * version").
+   */
+  showOnly?: 'fail';
 }
 
 /** A check's evaluated line (checks.ts → the approval card). */

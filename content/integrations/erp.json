@@ -268,7 +268,7 @@
                       "valid_until": "valid_until", "notes": "notes" } }
         ],
         "checks": [
-          { "key": "revision", "label": "Request is for the record's current version", "blocking": true,
+          { "key": "revision", "label": "Request is for the record's current version", "blocking": true, "showOnly": "fail",
             "path": "id.$version.approved", "compare": { "op": "eq", "to": "id.$version.current" },
             "detail": "request for version {id.$version.approved}, record at version {id.$version.current}" },
           { "key": "list-price", "label": "Price vs. list", "forEach": "lines", "when": "lines[].item_id",
@@ -552,7 +552,7 @@
             "when": "crm_contact_id" }
         ],
         "checks": [
-          { "key": "revision", "label": "Request is for the record's current version", "blocking": true,
+          { "key": "revision", "label": "Request is for the record's current version", "blocking": true, "showOnly": "fail",
             "path": "id.$version.approved", "compare": { "op": "eq", "to": "id.$version.current" },
             "detail": "request for version {id.$version.approved}, record at version {id.$version.current}" },
           { "key": "crm-duplicate", "label": "No other customer for this CRM contact", "when": "crm_contact_id", "blocking": true,
@@ -581,7 +581,7 @@
           { "tool": "check_customer_duplicates", "args": { "uid": "uid", "id": "id" }, "as": "duplicates", "when": "uid" }
         ],
         "checks": [
-          { "key": "revision", "label": "Request is for the record's current version", "blocking": true,
+          { "key": "revision", "label": "Request is for the record's current version", "blocking": true, "showOnly": "fail",
             "path": "id.$version.approved", "compare": { "op": "eq", "to": "id.$version.current" },
             "detail": "request for version {id.$version.approved}, record at version {id.$version.current}" },
           { "key": "vies", "label": "New VAT ID confirmed by VIES", "when": "uid", "path": "id.vat_check.vies.status", "blocking": true,
@@ -635,7 +635,7 @@
             "version": { "arg": "revision", "field": "revision" } }
         ],
         "checks": [
-          { "key": "revision", "label": "Request is for the record's current version", "blocking": true,
+          { "key": "revision", "label": "Request is for the record's current version", "blocking": true, "showOnly": "fail",
             "path": "id.$version.approved", "compare": { "op": "eq", "to": "id.$version.current" },
             "detail": "request for version {id.$version.approved}, record at version {id.$version.current}" }
         ],
@@ -653,7 +653,7 @@
             "version": { "arg": "revision", "field": "revision" } }
         ],
         "checks": [
-          { "key": "revision", "label": "Request is for the record's current version", "blocking": true,
+          { "key": "revision", "label": "Request is for the record's current version", "blocking": true, "showOnly": "fail",
             "path": "id.$version.approved", "compare": { "op": "eq", "to": "id.$version.current" },
             "detail": "request for version {id.$version.approved}, record at version {id.$version.current}" },
           { "key": "price-change", "label": "List price", "path": "list_price",
