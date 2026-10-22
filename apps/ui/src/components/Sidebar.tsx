@@ -8,6 +8,7 @@ import { useSSEEvent } from '../contexts/EventSourceContext';
 import { useIntegrationStatus } from '../contexts/IntegrationStatusContext';
 import { unseenCount } from '../lib/blocked-view';
 import { isNewReport } from '../lib/report-news';
+import { APPROVALS_CHANGED_EVENT } from '../lib/approval-flow';
 
 export interface NavItem {
   to: string;
@@ -124,7 +125,10 @@ function useOtherNavStatus() {
   useEffect(() => {
     window.addEventListener('suveren:blocked-seen-changed', poll);
     window.addEventListener('suveren:report-seen-changed', poll);
+    // The approvals page announces a decision the gateway has confirmed.
+    window.addEventListener(APPROVALS_CHANGED_EVENT, poll);
     return () => {
+      window.removeEventListener(APPROVALS_CHANGED_EVENT, poll);
       window.removeEventListener('suveren:blocked-seen-changed', poll);
       window.removeEventListener('suveren:report-seen-changed', poll);
     };

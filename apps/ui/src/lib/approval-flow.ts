@@ -84,3 +84,9 @@ export function navKeyFor(key: string): NavKey | null {
   if (key === 'Escape') return 'list';
   return null;
 }
+
+/** Fired once the gateway has ANSWERED a decision: the nav badge re-reads the same queue the page does. */
+export const APPROVALS_CHANGED_EVENT = 'suveren:approvals-changed';
+export function announceApprovalDecided(target: EventTarget | undefined = typeof window !== 'undefined' ? window : undefined): void {
+  target?.dispatchEvent(new Event(APPROVALS_CHANGED_EVENT));
+}

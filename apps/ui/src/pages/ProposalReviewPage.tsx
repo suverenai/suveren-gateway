@@ -4,7 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { spClient, type Proposal, type ExecutionReceipt, type IntegrationManifest } from '../lib/sp-client';
 import { aggregateThread, type ThreadItem } from '../lib/thread-aggregator';
 import { useMediaQuery } from '../hooks/useMediaQuery';
-import { nextAfter, nextLabel, navKeyFor, QUEUE_VIEWS, type QueueView, type DecisionKind, type DecisionResult } from '../lib/approval-flow';
+import { nextAfter, nextLabel, announceApprovalDecided, navKeyFor, QUEUE_VIEWS, type QueueView, type DecisionKind, type DecisionResult } from '../lib/approval-flow';
 import { ActionCard, ReviewApprovalCard } from '../components/ActionCard';
 import { ApproverProposalCard } from '../components/ApproverProposalCard';
 import { profileDisplayName } from '../lib/profile-display';
@@ -332,6 +332,7 @@ export function ProposalReviewPage() {
     void fetchApprovedByMe();
     void fetchMyPendingProposals();
     void fetchThread();
+    announceApprovalDecided();
     const advance = () => {
       const rest = before.filter(id => id !== proposalId);
       const next = nextAfter(before, proposalId);
@@ -355,6 +356,7 @@ export function ProposalReviewPage() {
     void fetchMyProposals();
     void fetchApprovedByMe();
     void fetchThread();
+    announceApprovalDecided();
   }, [fetchApproverProposals, fetchMyProposals, fetchApprovedByMe, fetchThread]);
 
   // Keys (§17.1): ← / → between cards, Esc to the list. Nothing decides on a key.

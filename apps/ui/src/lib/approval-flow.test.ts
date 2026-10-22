@@ -53,3 +53,15 @@ describe('keys', () => {
     for (const k of ['a', 'A', 'c', 'C', 'r', 'R', 'Enter', ' ']) expect(navKeyFor(k)).toBeNull();
   });
 });
+
+describe('nav badge refresh', () => {
+  it('announces a confirmed decision so the sidebar re-reads the queue', async () => {
+    const { announceApprovalDecided, APPROVALS_CHANGED_EVENT } = await import('./approval-flow');
+    const t = new EventTarget();
+    let n = 0;
+    t.addEventListener(APPROVALS_CHANGED_EVENT, () => { n++; });
+    announceApprovalDecided(t);
+    expect(n).toBe(1);
+    expect(() => announceApprovalDecided(undefined)).not.toThrow();
+  });
+});
