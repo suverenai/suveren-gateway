@@ -4312,6 +4312,7 @@ body.is-updating .simulation-banner {
 .av3-row-title { display: block; margin-top: 0.2rem; font-weight: 600; font-size: var(--text-body); line-height: 1.35; letter-spacing: -0.005em; overflow-wrap: anywhere; }
 .av3-row-meta { display: flex; flex-wrap: wrap; gap: 0 var(--space-2); margin-top: 0.2rem; font-size: var(--text-body-sm); color: var(--text-muted); }
 .av3-row-meta b { color: var(--text-primary); font-weight: 600; }
+.av3-row-meta b.av3-flag-fail { color: var(--check-failed); font-weight: 700; }
 
 /* The card and its stage */
 .av3-cbox { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 0 var(--space-3) var(--space-3); }
@@ -4372,6 +4373,10 @@ body.is-updating .simulation-banner {
 .av3-sealed .preview-box-ai p { color: var(--prov-ai); font-weight: 500; }
 .av3-sealed .preview-box-stale { border: 2px solid var(--check-failed); border-radius: var(--radius-md); background: var(--check-failed-subtle); padding: var(--space-3); }
 .av3-sealed dl { margin: 0; }
+/* One kv grid for every renderer inside the tile (labels never take the width of a long description). */
+.av3-sealed dl { grid-template-columns: minmax(5.5rem, 8rem) minmax(0, 1fr) !important; }
+.av3-sealed dt { white-space: normal !important; overflow-wrap: anywhere; }
+.av3-sealed dd { min-width: 0; overflow-wrap: anywhere; }
 .av3-sealed dd { font-weight: 600; }
 .av3-sealed dt { color: var(--text-muted) !important; }
 .av3-sealed dd .src-tag-sealed, .av3-sealed .preview-box > h4 .src-tag { display: none; }

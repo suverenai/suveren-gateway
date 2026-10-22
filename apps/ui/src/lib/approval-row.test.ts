@@ -12,7 +12,7 @@ describe('standOut — the one thing a list row shows (UI spec §17.1)', () => {
     expect(standOut(ok(undefined))).toBeUndefined();
   });
   it('names a notice, e.g. "Price above list"', () => {
-    expect(standOut(ok([{ key: 'p', label: 'Price above list', status: 'notice' }, { key: 'a', label: 'ok', status: 'pass' }]))).toBe('Price above list');
+    expect(standOut(ok([{ key: 'p', label: 'Price above list', status: 'notice' }, { key: 'a', label: 'ok', status: 'pass' }]))).toEqual({ text: 'Price above list', status: 'notice' });
   });
   it('a failed check outranks a not-checked line, which outranks a notice', () => {
     const checks = [
@@ -20,7 +20,14 @@ describe('standOut — the one thing a list row shows (UI spec §17.1)', () => {
       { key: 'c', label: 'Not checked one', status: 'not_checked' },
       { key: 'f', label: 'Failed one', status: 'fail' },
     ];
-    expect(standOut(ok(checks))).toBe('Failed one');
-    expect(standOut(ok(checks.slice(0, 2)))).toBe('Not checked one');
+    expect(standOut(ok(checks))).toEqual({ text: '✕ Failed one: failed', status: 'fail' });
+    expect(standOut(ok(checks.slice(0, 2)))?.status).toBe('not_checked');
+  });
+  it('a not-checked line keeps its status word, never the bare label', () => {
+    const r = standOut(ok([{ key: 'v', label: 'Customer VAT ID confirmed by VIES', status: 'not_checked' }, { key: 'a', label: 'Totals', status: 'pass' }]));
+    expect(r).toEqual({ text: 'Customer VAT ID confirmed by VIES: not checked', status: 'not_checked' });
+  });
+  it('passed checks never stand out', () => {
+    expect(standOut(ok([{ key: 'a', label: 'Totals', status: 'pass' }, { key: 'b', label: 'VAT', status: 'pass' }]))).toBeUndefined();
   });
 });

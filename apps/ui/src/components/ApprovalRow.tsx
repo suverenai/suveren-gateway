@@ -34,7 +34,7 @@ export function ApprovalRow({ proposal, manifests, titles, selected = false, onO
   const mandateTitle = proposal.authorizationId ? titles[proposal.authorizationId] : undefined;
   const mandate = showMandateLine(mandateTitle, area) ? mandateTitle : undefined;
   const isMandate = proposal.tool === CREATE_MANDATE_TOOL;
-  const meta = [mandate, flag].filter(Boolean);
+  const meta = [mandate, flag?.text].filter(Boolean);
   return (
     <div
       className={`av3-row${selected ? ' is-selected' : ''}`}
@@ -51,7 +51,7 @@ export function ApprovalRow({ proposal, manifests, titles, selected = false, onO
         {(meta.length > 0 || who || due) && (
           <span className="av3-row-meta">
             {mandate && <span>{mandate}</span>}
-            {flag && <b>{flag}</b>}
+            {flag && <b className={flag.status === 'fail' ? 'av3-flag-fail' : undefined}>{flag.text}</b>}
             {due && <span>{due}</span>}
             {who && <span>{who}</span>}
           </span>
