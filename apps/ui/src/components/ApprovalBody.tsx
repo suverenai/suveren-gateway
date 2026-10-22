@@ -17,6 +17,7 @@
 import { approvalSummary } from '../lib/approval-summary';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
+import { CREATE_MANDATE_TOOL, MANDATE_TILE_OMIT, mandatePreviewParts, mandateTechnicalLine, mandateTitle as mandateCardTitle, modeView } from '../lib/mandate-proposal';
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { resolveProposalLinks, type ProposalLink } from '../lib/proposal-links';
@@ -114,7 +115,6 @@ interface Props {
  *  pre-filling the mandate screen from ITS particular argument shape (profile/
  *  limits/scope/intent/mode/duration_hours) is acceptable even though every
  *  other part of this module stays generic (brief decision 6). */
-const CREATE_MANDATE_TOOL = 'setup__create_mandate';
 
 export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDisplay, manifests, onContentState, onShownSnapshot, nameOf, mandateTitle, topExtras }: Props) {
   const [expanded, setExpanded] = useState(false);
@@ -287,10 +287,12 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
   // A mandate proposal is about the area it names, not the Delegation it rides on.
   const typeArea = areaName(isMandate && typeof mandateArgs?.profile === 'string' && mandateArgs.profile ? mandateArgs.profile : proposal.profileId, catalog);
   const testSetup = !isMandate && (profileIdentity(proposal.profileId).testSetup || isTestSetupAction(proposal.tool));
-  const aiIntent = typeof mandateArgs?.intent === 'string' && mandateArgs.intent.trim() ? mandateArgs.intent : null;
+  const parts = mandatePreviewParts(previewData && previewData.status === 'ok' && 'body' in previewData ? previewData.body.structured : undefined);
+  const aiIntent = typeof mandateArgs?.intent === 'string' && mandateArgs.intent.trim() ? mandateArgs.intent : (isMandate ? parts.intent ?? null : null);
+  const mode = isMandate ? modeView(mandateArgs?.mode ?? parts.mode) : null;
   // The mandate card shows the AI's intent open above the rows, so it leaves the tile.
-  const sentArgs = isMandate && aiIntent && content.toolArgs
-    ? Object.fromEntries(Object.entries(content.toolArgs).filter(([k]) => k !== 'intent'))
+  const sentArgs = isMandate && content.toolArgs
+    ? Object.fromEntries(Object.entries(content.toolArgs).filter(([k]) => k !== 'intent' && k !== 'mode'))
     : content.toolArgs;
   const sentFor = sentArgs ? (
     <ProposalArgs args={sentArgs} display={toolDisplay} heading="" requestRefArg={requestRefArg} />
@@ -301,7 +303,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
   // The display-only reads (VIES and the like) sit outside the sealed tile.
   const systemView = previewData ? previewBoxView(previewData, systemName, content.toolArgs ?? undefined).creation : undefined;
   const sealedHeading = isMandate ? 'You sign these limits' : 'Runs exactly as shown';
-  const technicalOne = `${headline} · ${shortProfileId(proposal.profileId)}${proposal.profileId.includes('@') ? `@${proposal.profileId.split('@')[1]}` : ''}`;
+  const technicalOne = isMandate ? mandateTechnicalLine(parts) : `${headline} · ${shortProfileId(proposal.profileId)}${proposal.profileId.includes('@') ? `@${proposal.profileId.split('@')[1]}` : ''}`;
 
   return (
     <>
@@ -314,7 +316,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
       </div>
       {/* §4.2.1 — one sentence from the manifest's summary template and the
           sealed values (never AI text). */}
-      <h2 className="av3-title" style={{ order: 1 }} data-testid="approval-summary">{approvalSummary(proposal.tool, content.toolArgs, manifests, undefined, refNameFrom(previewData ?? undefined, content.toolArgs))}</h2>
+      <h2 className="av3-title" style={{ order: 1 }} data-testid="approval-summary">{isMandate ? mandateCardTitle(typeArea) : approvalSummary(proposal.tool, content.toolArgs, manifests, undefined, refNameFrom(previewData ?? undefined, content.toolArgs))}</h2>
       {/* §4.2.2 — a failed check is the one red line, right under the title. */}
       <ChecksLines lines={lines} placement="top" />
       {topExtras && <div className="av3-extras" style={{ order: 3 }}>{topExtras}</div>}
@@ -374,6 +376,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
             toolArgs={content.toolArgs}
             sealed={content.sealed}
             systemBoxes={false}
+            omitKeys={isMandate ? MANDATE_TILE_OMIT : undefined}
             onTone={setPreviewTone}
             onData={setPreviewData}
           />
@@ -389,12 +392,19 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
         </p>
       )}
 
-      {/* Mandate proposal: the AI's intent stays open above the rows (amber —
-          the AI's own text, which becomes the person's words on signing). */}
+      {/* Mandate proposal: the AI's intent, once, very prominent right under the
+          title (amber — the AI's own text, which becomes the person's words on
+          signing), then the mode as its own block. Both sit above the tile. */}
       {isMandate && aiIntent && (
-        <section className="av3-intent" style={{ order: 8 }} data-testid="mandate-intent-ai">
-          <div className="av3-intent-l">Intent · written by the AI, becomes your words when you sign</div>
+        <section className="av3-intent" style={{ order: 2 }} data-testid="mandate-intent-ai">
+          <div className="av3-intent-l">Intent — written by the AI, becomes your words when you sign</div>
           <p>{aiIntent}</p>
+        </section>
+      )}
+      {mode && (
+        <section className="av3-mode" style={{ order: 2 }} data-testid="mandate-mode">
+          <span className="av3-mode-g" aria-hidden="true">{mode.mark}</span>
+          <div><div className="av3-mode-t">{mode.title}</div><div className="av3-mode-d">{mode.text}</div></div>
         </section>
       )}
       {readable && isMandate && (
@@ -417,11 +427,14 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
         <details className="av3-fold" style={{ order: 10 }} data-testid="proposed-through">
           <summary>
             <span className="h">Proposed through</span>
-            <span className="one">{coveredName}</span>
+            <span className="one">Delegation{parts.checks[0] ? ` · ${parts.checks[0]}` : ''}</span>
             <Chev />
           </summary>
           <div className="av3-fold-body">
-            <p>Proposed by the AI through your <strong>{coveredName}</strong> mandate.</p>
+            <p>Proposed by the AI through your <strong>Delegation</strong> mandate.</p>
+            {parts.checks.length > 0 && (
+              <ul className="av3-plain" data-testid="mandate-checks">{parts.checks.map((c) => <li key={c}>{c}</li>)}</ul>
+            )}
             <MandateIntent intent={intent} loading={intentLoading} error={intentError} expanded={expanded} onToggle={() => setExpanded(!expanded)} />
           </div>
         </details>
@@ -478,7 +491,14 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
             {/* Everything that is bound: the call's arguments (unless they are
                 already open in the tile) and the execution-context fields the
                 Gatekeeper checked — one fold, nothing hidden behind another. */}
-            {boundOpen
+            {isMandate && (parts.proposal || parts.profileVersion || parts.workspace) && (
+              <dl className="av3-usage">
+                {parts.proposal && <><dt>Proposal</dt><dd>{parts.proposal}</dd></>}
+                {parts.profileVersion && <><dt>Version</dt><dd>{parts.profileVersion}</dd></>}
+                {parts.workspace && <><dt>Workspace</dt><dd>{parts.workspace}</dd></>}
+              </dl>
+            )}
+            {isMandate ? null : boundOpen
               ? boundsEntries.length > 0 && (
                 <div className="av3-bound">
                   {boundsEntries.map(([k, v], i) => {

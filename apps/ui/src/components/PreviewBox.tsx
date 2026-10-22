@@ -36,11 +36,21 @@ export interface PreviewBoxBodyProps {
   /** Render the display-only system boxes after the preview (default). The
    *  approval card (UI spec §17) places them itself, outside the sealed tile. */
   systemBoxes?: boolean;
+  /** Fields of a single-read preview body to leave out (the card shows them elsewhere). */
+  omitKeys?: readonly string[];
+}
+
+/** `resp` without the named fields of its structured body (a copy; never mutates). */
+function withoutKeys(resp: PreviewResponse, keys: readonly string[] | undefined): PreviewResponse {
+  if (!keys?.length || resp.status !== 'ok' || !('body' in resp) || !resp.body.structured) return resp;
+  const structured = Object.fromEntries(Object.entries(resp.body.structured).filter(([k]) => !keys.includes(k)));
+  return { ...resp, body: { ...resp.body, structured }, ...(resp.fields ? { fields: resp.fields.filter((f) => !keys.includes(f)) } : {}) } as PreviewResponse;
 }
 
 /** The pure, resolved-data render — same output for the live card and the
  *  ticket's "What you saw" snapshot. See the module doc comment. */
-export function PreviewBoxBody({ resp, systemName, toolArgs, sealed, systemBoxes = true }: PreviewBoxBodyProps) {
+export function PreviewBoxBody({ resp: rawResp, systemName, toolArgs, sealed, systemBoxes = true, omitKeys }: PreviewBoxBodyProps) {
+  const resp = withoutKeys(rawResp, omitKeys);
   const view = previewBoxView(resp, systemName, toolArgs ?? undefined);
   const tone = resp.status === 'ok' ? (view.stale ? 'stale' : 'ok') : resp.status;
 
@@ -95,6 +105,7 @@ interface Props {
   sealed?: boolean;
   /** See {@link PreviewBoxBodyProps.systemBoxes}. */
   systemBoxes?: boolean;
+  omitKeys?: readonly string[];
   /** Told the box's state once known (ok | stale | none | unavailable | not_found)
    *  so the card can decide whether the bound values are shown open. */
   onTone?: (tone: string) => void;
@@ -105,7 +116,7 @@ interface Props {
   onData?: (resp: PreviewResponse | null) => void;
 }
 
-export function PreviewBox({ proposalId, systemName, toolArgs, sealed, systemBoxes, onTone, onData }: Props) {
+export function PreviewBox({ proposalId, systemName, toolArgs, sealed, systemBoxes, omitKeys, onTone, onData }: Props) {
   const [resp, setResp] = useState<PreviewResponse | null>(null);
   const [failed, setFailed] = useState(false);
 
@@ -151,5 +162,5 @@ export function PreviewBox({ proposalId, systemName, toolArgs, sealed, systemBox
     );
   }
 
-  return <PreviewBoxBody resp={resp} systemName={systemName} toolArgs={toolArgs} sealed={sealed} systemBoxes={systemBoxes} />;
+  return <PreviewBoxBody resp={resp} systemName={systemName} toolArgs={toolArgs} sealed={sealed} systemBoxes={systemBoxes} omitKeys={omitKeys} />;
 }

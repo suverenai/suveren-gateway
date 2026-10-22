@@ -4390,8 +4390,13 @@ body.is-updating .simulation-banner {
 
 /* Mandate: the AI's intent stays open (amber), the rest is folded */
 .av3-intent { margin-bottom: var(--space-4); }
-.av3-intent-l { font-size: var(--text-caption); color: var(--prov-ai); margin-bottom: 0.15rem; }
-.av3-intent p { margin: 0; color: var(--prov-ai); font-size: var(--text-body); font-weight: 500; }
+.av3-intent-l { font-size: var(--text-caption); color: var(--prov-ai); margin-bottom: 0.2rem; }
+.av3-intent p { margin: 0; color: var(--prov-ai); font-size: var(--text-lead); font-weight: 500; line-height: 1.4; overflow-wrap: anywhere; }
+.av3-mode { display: flex; gap: var(--space-3); align-items: flex-start; margin-bottom: var(--space-4); }
+.av3-mode-g { flex: none; width: 28px; height: 28px; border-radius: var(--radius-sm); background: var(--neutral); color: var(--bg-elevated); display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: var(--text-body-sm); }
+.av3-mode-t { font-weight: 600; font-size: var(--text-body); }
+.av3-mode-d { font-size: var(--text-body-sm); color: var(--text-muted); }
+.av3-plain { list-style: none; margin: 0 0 var(--space-2); padding: 0; display: grid; gap: 0.3rem; }
 .av3-edit { margin: calc(-1 * var(--space-2)) 0 var(--space-4); }
 .av3-edit p { margin: var(--space-1) 0 0; font-size: var(--text-caption); }
 .av3-link { background: none; border: 0; padding: 0 var(--space-1); margin: 0 calc(-1 * var(--space-1)); min-height: 44px; font: inherit; font-size: var(--text-body-sm); font-weight: 500; color: var(--text-primary); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; border-radius: var(--radius-xs); }
@@ -4403,10 +4408,12 @@ body.is-updating .simulation-banner {
 .av3-link-strong:hover { text-decoration: underline; }
 
 /* Folded rows: one line each, chevron, no lines between them */
-.av3-fold { font-size: var(--text-body-sm); }
+.av3-fold { font-size: var(--text-body-sm); margin: 0 calc(-1 * var(--space-3)); border-radius: var(--radius-md); }
+/* An open row is one grey section, summary and body, so it is clear where it starts and ends. */
+.av3-fold[open] { background: var(--bg-sunken); }
 .av3-fold > summary {
   list-style: none; display: flex; align-items: center; gap: var(--space-2); min-height: 44px;
-  padding: var(--space-2) var(--space-3); margin: 0 calc(-1 * var(--space-3)); border-radius: var(--radius-md); cursor: pointer;
+  padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); cursor: pointer;
 }
 .av3-fold > summary::-webkit-details-marker { display: none; }
 .av3-fold > summary:hover { background: var(--accent-subtle); }
@@ -4415,7 +4422,7 @@ body.is-updating .simulation-banner {
 .av3-fold > summary .chev { flex: none; margin-left: auto; color: var(--text-muted); transition: transform 0.15s; }
 .av3-fold[open] > summary .chev { transform: rotate(90deg); }
 .av3-fold[open] > summary .one { visibility: hidden; }
-.av3-fold-body { padding: 0 0 var(--space-4); }
+.av3-fold-body { padding: 0 var(--space-3) var(--space-4); }
 .av3-fold-body > p, .av3-fold-body .check-line { margin: 0 0 var(--space-2); }
 .av3-fold-body .card-checks { margin: 0; }
 .av3-fold .preview-note { margin-top: 0; }
