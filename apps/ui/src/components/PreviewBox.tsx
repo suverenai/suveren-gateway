@@ -38,6 +38,8 @@ export interface PreviewBoxBodyProps {
   systemBoxes?: boolean;
   /** Fields of a single-read preview body to leave out (the card shows them elsewhere). */
   omitKeys?: readonly string[];
+  /** Leave the "read by the gateway" source line out (the card shows it under Technical details). */
+  hideNote?: boolean;
 }
 
 /** `resp` without the named fields of its structured body (a copy; never mutates). */
@@ -49,7 +51,7 @@ function withoutKeys(resp: PreviewResponse, keys: readonly string[] | undefined)
 
 /** The pure, resolved-data render — same output for the live card and the
  *  ticket's "What you saw" snapshot. See the module doc comment. */
-export function PreviewBoxBody({ resp: rawResp, systemName, toolArgs, sealed, systemBoxes = true, omitKeys }: PreviewBoxBodyProps) {
+export function PreviewBoxBody({ resp: rawResp, systemName, toolArgs, sealed, systemBoxes = true, omitKeys, hideNote = false }: PreviewBoxBodyProps) {
   const resp = withoutKeys(rawResp, omitKeys);
   const view = previewBoxView(resp, systemName, toolArgs ?? undefined);
   const tone = resp.status === 'ok' ? (view.stale ? 'stale' : 'ok') : resp.status;
@@ -75,7 +77,7 @@ export function PreviewBoxBody({ resp: rawResp, systemName, toolArgs, sealed, sy
       </h4>
       {view.creation && <RenderedCreationView view={view.creation} systemName={systemName} />}
       {view.rendered && <RenderedBody rendered={view.rendered} />}
-      {view.note && <p className="preview-note">{view.note}</p>}
+      {view.note && !hideNote && <p className="preview-note">{view.note}</p>}
       {view.versionNote && !view.stale && <p className="preview-note">{view.versionNote}</p>}
       {view.stale && (
         <div className="preview-stale">
@@ -106,6 +108,7 @@ interface Props {
   /** See {@link PreviewBoxBodyProps.systemBoxes}. */
   systemBoxes?: boolean;
   omitKeys?: readonly string[];
+  hideNote?: boolean;
   /** Told the box's state once known (ok | stale | none | unavailable | not_found)
    *  so the card can decide whether the bound values are shown open. */
   onTone?: (tone: string) => void;
@@ -116,7 +119,7 @@ interface Props {
   onData?: (resp: PreviewResponse | null) => void;
 }
 
-export function PreviewBox({ proposalId, systemName, toolArgs, sealed, systemBoxes, omitKeys, onTone, onData }: Props) {
+export function PreviewBox({ proposalId, systemName, toolArgs, sealed, systemBoxes, omitKeys, hideNote, onTone, onData }: Props) {
   const [resp, setResp] = useState<PreviewResponse | null>(null);
   const [failed, setFailed] = useState(false);
 
@@ -162,5 +165,5 @@ export function PreviewBox({ proposalId, systemName, toolArgs, sealed, systemBox
     );
   }
 
-  return <PreviewBoxBody resp={resp} systemName={systemName} toolArgs={toolArgs} sealed={sealed} systemBoxes={systemBoxes} omitKeys={omitKeys} />;
+  return <PreviewBoxBody resp={resp} systemName={systemName} toolArgs={toolArgs} sealed={sealed} systemBoxes={systemBoxes} omitKeys={omitKeys} hideNote={hideNote} />;
 }

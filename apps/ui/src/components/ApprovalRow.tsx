@@ -5,6 +5,8 @@ import { useProposalPreview } from '../lib/preview-store';
 import { standOut } from '../lib/approval-row';
 import { showMandateLine } from '../lib/area';
 import { ApprovalSummary } from './ApprovalSummary';
+import { useProposalContent } from '../lib/use-proposal-content';
+import { mandateTargetProfile } from '../lib/mandate-proposal';
 
 interface Props {
   proposal: Proposal;
@@ -30,10 +32,12 @@ export function ApprovalRow({ proposal, manifests, titles, selected = false, onO
   const catalog = useAreaCatalog();
   const preview = useProposalPreview(proposal.id);
   const flag = standOut(preview);
-  const area = areaName(proposal.profileId, catalog);
+  const content = useProposalContent(proposal);
+  const isMandate = proposal.tool === CREATE_MANDATE_TOOL;
+  // A mandate proposal is about the area it names, not the Delegation ("Setup") it rides on.
+  const area = areaName(isMandate ? mandateTargetProfile(content.toolArgs, proposal.profileId) : proposal.profileId, catalog);
   const mandateTitle = proposal.authorizationId ? titles[proposal.authorizationId] : undefined;
   const mandate = showMandateLine(mandateTitle, area) ? mandateTitle : undefined;
-  const isMandate = proposal.tool === CREATE_MANDATE_TOOL;
   const meta = [mandate, flag?.text].filter(Boolean);
   return (
     <div

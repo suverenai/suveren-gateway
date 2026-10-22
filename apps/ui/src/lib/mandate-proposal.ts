@@ -53,7 +53,20 @@ export function mandateTechnicalLine(p: MandatePreviewParts): string {
   return [p.profileVersion, p.workspace, 'new mandate'].filter(Boolean).join(' · ');
 }
 
-/** "New mandate · Sales" — built from the proposal's own area, never AI text. */
-export function mandateTitle(areaName: string): string {
-  return `New mandate · ${areaName}`;
+/** The mandate proposal's title parts: the area, and the AI-proposed name (amber on the card). */
+export function mandateTitleParts(areaName: string, args: object | null | undefined): { area: string; name: string | null } {
+  const t = (args as Record<string, unknown> | null | undefined)?.title;
+  return { area: areaName, name: typeof t === 'string' && t.trim() ? t.trim() : null };
+}
+
+/** Plain-text form: "Sales · Quotes to customers", or "Sales · new mandate" without a name. */
+export function mandateTitleText(areaName: string, args: object | null | undefined): string {
+  const p = mandateTitleParts(areaName, args);
+  return `${p.area} · ${p.name ?? 'new mandate'}`;
+}
+
+/** The area a mandate proposal is about: the profile it targets, else the profile it rides on. */
+export function mandateTargetProfile(args: object | null | undefined, fallbackProfileId: string): string {
+  const t = (args as Record<string, unknown> | null | undefined)?.profile;
+  return typeof t === 'string' && t ? t : fallbackProfileId;
 }

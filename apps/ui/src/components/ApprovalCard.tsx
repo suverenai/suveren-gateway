@@ -118,6 +118,20 @@ export function ApprovalCard({
     void run('change', v.trimmed);
   };
 
+  // Folded rows are an accordion: opening one closes any other open one on this card.
+  const bodyRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+    const onToggle = (e: Event) => {
+      const d = e.target as HTMLDetailsElement;
+      if (!d.open || !d.classList?.contains('av3-fold')) return;
+      el.querySelectorAll<HTMLDetailsElement>('details.av3-fold[open]').forEach((o) => { if (o !== d) o.open = false; });
+    };
+    el.addEventListener('toggle', onToggle, true);
+    return () => el.removeEventListener('toggle', onToggle, true);
+  }, []);
+
   const busy = phase.t === 'working' || phase.t === 'done';
   useEffect(() => {
     onBusyChange?.(busy);
@@ -136,7 +150,7 @@ export function ApprovalCard({
       data-phase={phase.t}
     >
       <div className="av3-scroll">
-        <article className="av3-body" aria-hidden={busy || undefined}>
+        <article ref={bodyRef} className="av3-body" aria-hidden={busy || undefined}>
           {nextLabelText && <div className="av3-next" role="status" style={{ order: -1 }}>{nextLabelText}</div>}
           <ApprovalBody
             proposal={proposal}

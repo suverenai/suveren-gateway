@@ -4,7 +4,7 @@ import { approvalSummary } from '../lib/approval-summary';
 import { refNameFrom, useProposalPreview } from '../lib/preview-store';
 import { useAreaCatalog } from '../lib/area-catalog';
 import { areaName } from '../lib/core-objects';
-import { CREATE_MANDATE_TOOL, mandateTitle } from '../lib/mandate-proposal';
+import { CREATE_MANDATE_TOOL, mandateTitleParts, mandateTargetProfile } from '../lib/mandate-proposal';
 
 /**
  * The approval's one sentence for list rows (UI spec §12.2): decrypts the
@@ -17,9 +17,9 @@ export function ApprovalSummary({ proposal, manifests }: { proposal: Proposal; m
   // `{x|ref}` names a record once the card has read it (preview-store.ts).
   const preview = useProposalPreview(proposal.id);
   const catalog = useAreaCatalog();
-  const target = content.toolArgs?.profile;
-  if (proposal.tool === CREATE_MANDATE_TOOL && typeof target === 'string' && target) {
-    return <>{mandateTitle(areaName(target, catalog))}</>;
+  if (proposal.tool === CREATE_MANDATE_TOOL && content.toolArgs) {
+    const t = mandateTitleParts(areaName(mandateTargetProfile(content.toolArgs, proposal.profileId), catalog), content.toolArgs);
+    return <>{t.area} · {t.name ? <span className="av3-ai">{t.name}</span> : 'new mandate'}</>;
   }
   return <>{approvalSummary(proposal.tool, content.toolArgs, manifests, undefined, refNameFrom(preview, content.toolArgs))}</>;
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { modeView, mandatePreviewParts, mandateTechnicalLine, mandateTitle, MANDATE_TILE_OMIT } from './mandate-proposal';
+import { modeView, mandatePreviewParts, mandateTechnicalLine, mandateTitleText, mandateTitleParts, mandateTargetProfile, MANDATE_TILE_OMIT } from './mandate-proposal';
 
 describe('mandate proposal card parts', () => {
   it('words the mode', () => {
@@ -17,7 +17,11 @@ describe('mandate proposal card parts', () => {
     expect(mandateTechnicalLine(mandatePreviewParts(undefined))).toBe('new mandate');
   });
   it('title from the area; the tile keeps limits, scope, valid, title', () => {
-    expect(mandateTitle('Sales')).toBe('New mandate · Sales');
+    expect(mandateTitleText('Sales', { title: ' Quotes to customers ' })).toBe('Sales · Quotes to customers');
+    expect(mandateTitleText('Sales', {})).toBe('Sales · new mandate');
+    expect(mandateTitleParts('Sales', { title: 5 }).name).toBeNull();
+    expect(mandateTargetProfile({ profile: 'sales@0.4' }, 'delegation@0.1')).toBe('sales@0.4');
+    expect(mandateTargetProfile(null, 'delegation@0.1')).toBe('delegation@0.1');
     for (const keep of ['limits', 'scope', 'valid', 'title']) expect(MANDATE_TILE_OMIT as readonly string[]).not.toContain(keep);
   });
 });

@@ -17,7 +17,7 @@
 import { approvalSummary } from '../lib/approval-summary';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { CREATE_MANDATE_TOOL, MANDATE_TILE_OMIT, mandatePreviewParts, mandateTechnicalLine, mandateTitle as mandateCardTitle, modeView } from '../lib/mandate-proposal';
+import { CREATE_MANDATE_TOOL, MANDATE_TILE_OMIT, mandatePreviewParts, mandateTechnicalLine, mandateTitleParts, mandateTargetProfile, modeView } from '../lib/mandate-proposal';
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { resolveProposalLinks, type ProposalLink } from '../lib/proposal-links';
@@ -285,7 +285,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
   const isMandate = proposal.tool === CREATE_MANDATE_TOOL;
   const mandateArgs = isMandate ? (content.toolArgs as CreateMandateProposalArgs | null) : null;
   // A mandate proposal is about the area it names, not the Delegation it rides on.
-  const typeArea = areaName(isMandate && typeof mandateArgs?.profile === 'string' && mandateArgs.profile ? mandateArgs.profile : proposal.profileId, catalog);
+  const typeArea = areaName(isMandate ? mandateTargetProfile(mandateArgs, proposal.profileId) : proposal.profileId, catalog);
   const testSetup = !isMandate && (profileIdentity(proposal.profileId).testSetup || isTestSetupAction(proposal.tool));
   const parts = mandatePreviewParts(previewData && previewData.status === 'ok' && 'body' in previewData ? previewData.body.structured : undefined);
   const aiIntent = typeof mandateArgs?.intent === 'string' && mandateArgs.intent.trim() ? mandateArgs.intent : (isMandate ? parts.intent ?? null : null);
@@ -302,6 +302,11 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
   const usageOne = usage.state === 'ok' ? usage.lines.map((l) => `${l.text} ${l.label}`).join(' · ') : usage.state === 'none' ? 'none yet today' : '';
   // The display-only reads (VIES and the like) sit outside the sealed tile.
   const systemView = previewData ? previewBoxView(previewData, systemName, content.toolArgs ?? undefined).creation : undefined;
+  const sourceNote = previewData ? previewBoxView(previewData, systemName, content.toolArgs ?? undefined).note : undefined;
+  // Restored from the pre-v3 card: an irreversible tool is said so, and a local image preview is shown.
+  const lowerTool = proposal.tool.toLowerCase();
+  const destructive = ['delete', 'refund', 'cancel', 'revoke'].some((w) => lowerTool.includes(w));
+  const imagePreview = typeof content.toolArgs?._imagePreview === 'string' ? (content.toolArgs._imagePreview as string) : null;
   const sealedHeading = isMandate ? 'You sign these limits' : 'Runs exactly as shown';
   const technicalOne = isMandate ? mandateTechnicalLine(parts) : `${headline} · ${shortProfileId(proposal.profileId)}${proposal.profileId.includes('@') ? `@${proposal.profileId.split('@')[1]}` : ''}`;
 
@@ -316,12 +321,21 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
       </div>
       {/* §4.2.1 — one sentence from the manifest's summary template and the
           sealed values (never AI text). */}
-      <h2 className="av3-title" style={{ order: 1 }} data-testid="approval-summary">{isMandate ? mandateCardTitle(typeArea) : approvalSummary(proposal.tool, content.toolArgs, manifests, undefined, refNameFrom(previewData ?? undefined, content.toolArgs))}</h2>
+      <h2 className="av3-title" style={{ order: 1 }} data-testid="approval-summary">{isMandate ? <>{typeArea} · {mandateTitleParts(typeArea, mandateArgs).name ? <span className="av3-ai">{mandateTitleParts(typeArea, mandateArgs).name}</span> : 'new mandate'}</> : approvalSummary(proposal.tool, content.toolArgs, manifests, undefined, refNameFrom(previewData ?? undefined, content.toolArgs))}</h2>
       {/* §4.2.2 — a failed check is the one red line, right under the title. */}
       <ChecksLines lines={lines} placement="top" />
       {topExtras && <div className="av3-extras" style={{ order: 3 }}>{topExtras}</div>}
       {/* Notice / not-checked lines stay open; passed checks are one folded row. */}
       <ChecksLines lines={lines} placement="body" />
+
+      {destructive && (
+        <div className="av3-attention" style={{ order: 4 }} data-testid="irreversible-note">
+          <div className="check-line check-notice">
+            <svg className="i" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5" /><path d="M8 7.5v3.5M8 5h0" /></svg>
+            <span><strong>Irreversible action</strong></span>
+          </div>
+        </div>
+      )}
 
       {/* PE1 mockup §4 — a device added after the proposal was made has no
           key wrap for it: no sealed values (nothing TO show), and no decision
@@ -347,6 +361,13 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
           <svg className="i" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5" /><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" /></svg>
           {sealedHeading}
         </h3>
+        {imagePreview && (
+          <img
+            src={imagePreview}
+            alt={typeof content.toolArgs?.altText === 'string' ? (content.toolArgs.altText as string) : 'local image preview'}
+            className="av3-image"
+          />
+        )}
         {boundOpen && readable && (
           <div className="preview-box preview-box-ok" data-testid="bound-values-open">
             <h4>What will be sent <span className="src-tag src-tag-sealed">sealed</span></h4>
@@ -377,6 +398,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
             sealed={content.sealed}
             systemBoxes={false}
             omitKeys={isMandate ? MANDATE_TILE_OMIT : undefined}
+            hideNote
             onTone={setPreviewTone}
             onData={setPreviewData}
           />
@@ -508,6 +530,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
                 </div>
               )
               : boundContent}
+            {sourceNote && <p className="av3-quiet" data-testid="preview-source-note">{sourceNote}</p>}
             {/* UI spec §4.2.11: the legend lives here, not on the card. */}
             <p className="creation-legend" data-testid="au10-legend">
               <span><i className="creation-legend-dot creation-legend-dot-sealed" />sealed — approved and executed exactly so</span>
