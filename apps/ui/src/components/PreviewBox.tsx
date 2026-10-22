@@ -33,11 +33,14 @@ export interface PreviewBoxBodyProps {
    *  the "What will be sent" box shows (ApprovalBody.tsx), instead of
    *  inventing a second convention for it. */
   sealed?: boolean;
+  /** Render the display-only system boxes after the preview (default). The
+   *  approval card (UI spec §17) places them itself, outside the sealed tile. */
+  systemBoxes?: boolean;
 }
 
 /** The pure, resolved-data render — same output for the live card and the
  *  ticket's "What you saw" snapshot. See the module doc comment. */
-export function PreviewBoxBody({ resp, systemName, toolArgs, sealed }: PreviewBoxBodyProps) {
+export function PreviewBoxBody({ resp, systemName, toolArgs, sealed, systemBoxes = true }: PreviewBoxBodyProps) {
   const view = previewBoxView(resp, systemName, toolArgs ?? undefined);
   const tone = resp.status === 'ok' ? (view.stale ? 'stale' : 'ok') : resp.status;
 
@@ -80,7 +83,7 @@ export function PreviewBoxBody({ resp, systemName, toolArgs, sealed }: PreviewBo
         </div>
       )}
     </div>
-    {view.creation && <SystemBoxes view={view.creation} />}
+    {systemBoxes && view.creation && <SystemBoxes view={view.creation} />}
     </>
   );
 }
@@ -90,6 +93,8 @@ interface Props {
   systemName: string;
   toolArgs?: Record<string, unknown> | null;
   sealed?: boolean;
+  /** See {@link PreviewBoxBodyProps.systemBoxes}. */
+  systemBoxes?: boolean;
   /** Told the box's state once known (ok | stale | none | unavailable | not_found)
    *  so the card can decide whether the bound values are shown open. */
   onTone?: (tone: string) => void;
@@ -100,7 +105,7 @@ interface Props {
   onData?: (resp: PreviewResponse | null) => void;
 }
 
-export function PreviewBox({ proposalId, systemName, toolArgs, sealed, onTone, onData }: Props) {
+export function PreviewBox({ proposalId, systemName, toolArgs, sealed, systemBoxes, onTone, onData }: Props) {
   const [resp, setResp] = useState<PreviewResponse | null>(null);
   const [failed, setFailed] = useState(false);
 
@@ -146,5 +151,5 @@ export function PreviewBox({ proposalId, systemName, toolArgs, sealed, onTone, o
     );
   }
 
-  return <PreviewBoxBody resp={resp} systemName={systemName} toolArgs={toolArgs} sealed={sealed} />;
+  return <PreviewBoxBody resp={resp} systemName={systemName} toolArgs={toolArgs} sealed={sealed} systemBoxes={systemBoxes} />;
 }

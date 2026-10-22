@@ -224,7 +224,7 @@ export function Sidebar() {
                       <span className="icon">
                         {item.iconClass ? <span className={`nav-ic ${item.iconClass}`} aria-hidden="true" /> : item.icon}
                       </span>
-                      {item.label}
+                      <span className="sidebar-label">{item.label}</span>
                       {count ? (item.newLabel
                         ? <span className="nav-new" data-testid={`nav-new-${item.statusKey}`}>New</span>
                         : <span style={BADGE_STYLE} className={item.quietCount ? 'nav-count-quiet' : undefined} title={item.quietCount ? 'Expired mandates' : undefined}>{count}</span>) : null}

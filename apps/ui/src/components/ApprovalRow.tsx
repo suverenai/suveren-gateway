@@ -1,54 +1,62 @@
-import { useEffect, useRef, type ReactNode } from 'react';
 import type { IntegrationManifest, Proposal } from '../lib/sp-client';
-import { areaName, systemName, waitingLabel, deadlineLabel } from '../lib/core-objects';
+import { areaName, ageLabel, deadlineLabel } from '../lib/core-objects';
 import { useAreaCatalog } from '../lib/area-catalog';
-import { ObjectLine, MandateLine } from './ObjectLine';
+import { useProposalPreview } from '../lib/preview-store';
+import { standOut } from '../lib/approval-row';
+import { showMandateLine } from '../lib/area';
 import { ApprovalSummary } from './ApprovalSummary';
 
 interface Props {
   proposal: Proposal;
   manifests: IntegrationManifest[];
   titles: Record<string, string>;
-  open: boolean;
-  onToggle: () => void;
-  /** Shown under the summary only when other people are involved (team). */
+  /** The card for this row is on screen beside the list (wide windows). */
+  selected?: boolean;
+  onOpen: () => void;
+  /** Shown only when other people are involved (team). */
   who?: string;
-  /** The full approval card, rendered in place when open. */
-  children: ReactNode;
 }
 
+const CREATE_MANDATE_TOOL = 'setup__create_mandate';
+
 /**
- * One approval as a row of the Approvals overview (UI spec §12.2): a solid
- * tab on the left, the "area · system · waiting …" line and the summary.
- * A click opens the full card in place; the deadline shows only inside the
- * last 24 hours.
+ * One approval in the list (UI spec §17.1): type line, title, one line (the
+ * mandate and the one thing that stands out). No lines between rows — each
+ * row is a surface on the sunken page. A click opens the card.
  */
-export function ApprovalRow({ proposal, manifests, titles, open, onToggle, who, children }: Props) {
+export function ApprovalRow({ proposal, manifests, titles, selected = false, onOpen, who }: Props) {
   const now = Date.now();
   const due = deadlineLabel(proposal.expiresAt, now);
   const catalog = useAreaCatalog();
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (open) ref.current?.scrollIntoView({ block: 'nearest' });
-  }, [open]);
+  const preview = useProposalPreview(proposal.id);
+  const flag = standOut(preview);
+  const area = areaName(proposal.profileId, catalog);
+  const mandateTitle = proposal.authorizationId ? titles[proposal.authorizationId] : undefined;
+  const mandate = showMandateLine(mandateTitle, area) ? mandateTitle : undefined;
+  const isMandate = proposal.tool === CREATE_MANDATE_TOOL;
+  const meta = [mandate, flag].filter(Boolean);
   return (
-    <div ref={ref} className={`appr-item${open ? ' is-open' : ''}`} data-testid="approval-row" data-proposal-id={proposal.id}>
-      <button type="button" className="appr-item-head" aria-expanded={open} onClick={onToggle}>
-        <div className="appr-item-main">
-          <ObjectLine
-            profileId={proposal.profileId}
-            area={areaName(proposal.profileId, catalog)}
-            system={systemName(proposal.tool, manifests)}
-            time={waitingLabel(proposal.createdAt, now)}
-          />
-          <div className="appr-item-sum" data-testid="approval-row-summary"><ApprovalSummary proposal={proposal} manifests={manifests} /></div>
-          <MandateLine title={proposal.authorizationId ? titles[proposal.authorizationId] : undefined} area={areaName(proposal.profileId, catalog)} />
-          {due && <div className="obj-due">{due}</div>}
-          {who && <div className="appr-item-who">{who}</div>}
-        </div>
-        <span className="appr-item-chev" aria-hidden="true">›</span>
+    <div
+      className={`av3-row${selected ? ' is-selected' : ''}`}
+      data-testid="approval-row"
+      data-proposal-id={proposal.id}
+    >
+      <button type="button" className="appr-item-head av3-row-head" aria-current={selected || undefined} onClick={onOpen}>
+        <span className="av3-type">
+          {isMandate ? <span className="av3-mtag">Mandate</span> : <b>Action</b>}
+          <span>{area}</span>
+          <span>{ageLabel(proposal.createdAt * 1000, now)}</span>
+        </span>
+        <span className="av3-row-title" data-testid="approval-row-summary"><ApprovalSummary proposal={proposal} manifests={manifests} /></span>
+        {(meta.length > 0 || who || due) && (
+          <span className="av3-row-meta">
+            {mandate && <span>{mandate}</span>}
+            {flag && <b>{flag}</b>}
+            {due && <span>{due}</span>}
+            {who && <span>{who}</span>}
+          </span>
+        )}
       </button>
-      {open && <div className="appr-item-body">{children}</div>}
     </div>
   );
 }

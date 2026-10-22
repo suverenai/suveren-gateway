@@ -1900,7 +1900,7 @@ class SPClient {
        *  Nullable on the wire: an older AS ignores an unknown field. */
       shownHash?: string;
     },
-  ): Promise<{ status: string }> {
+  ): Promise<{ status: string; receipt?: unknown }> {
     const { noteEncrypted, contentHash, shownHash, note, ...rest } = opts ?? {};
     const res = await this.fetch(`/api/proposals/${encodeURIComponent(id)}/resolve`, {
       method: 'POST',
