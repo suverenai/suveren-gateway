@@ -33,7 +33,7 @@ import { ProposalArgs } from './ProposalArgs';
 import { PreviewBox } from './PreviewBox';
 import { RequestContextBox } from './RequestContextBox';
 import { useAreaCatalog } from '../lib/area-catalog';
-import { areaName, ageLabel } from '../lib/core-objects';
+import { areaName, ageLabel, deadlineLabel } from '../lib/core-objects';
 import { useMandateUsage } from '../lib/mandate-usage';
 import { previewBoxView } from '../lib/approval-preview-view';
 import { SystemBoxes } from './RenderedCreationView';
@@ -286,7 +286,12 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
   const mandateArgs = isMandate ? (content.toolArgs as CreateMandateProposalArgs | null) : null;
   // A mandate proposal is about the area it names, not the Delegation it rides on.
   const typeArea = areaName(isMandate ? mandateTargetProfile(mandateArgs, proposal.profileId) : proposal.profileId, catalog);
-  const testSetup = !isMandate && (profileIdentity(proposal.profileId).testSetup || isTestSetupAction(proposal.tool));
+  // A mandate proposal is test setup when the profile it creates a mandate for is (§17.3).
+  const testSetup = isMandate
+    ? profileIdentity(mandateTargetProfile(mandateArgs, proposal.profileId)).testSetup
+    : (profileIdentity(proposal.profileId).testSetup || isTestSetupAction(proposal.tool));
+  // §12.2 — "Decide by …" only inside the last 24 hours.
+  const due = deadlineLabel(proposal.expiresAt, Date.now());
   const parts = mandatePreviewParts(previewData && previewData.status === 'ok' && 'body' in previewData ? previewData.body.structured : undefined);
   const aiIntent = typeof mandateArgs?.intent === 'string' && mandateArgs.intent.trim() ? mandateArgs.intent : (isMandate ? parts.intent ?? null : null);
   const mode = isMandate ? modeView(mandateArgs?.mode ?? parts.mode) : null;
@@ -307,7 +312,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
   const lowerTool = proposal.tool.toLowerCase();
   const destructive = ['delete', 'refund', 'cancel', 'revoke'].some((w) => lowerTool.includes(w));
   const imagePreview = typeof content.toolArgs?._imagePreview === 'string' ? (content.toolArgs._imagePreview as string) : null;
-  const sealedHeading = isMandate ? 'You sign these limits' : 'Runs exactly as shown';
+  const sealedHeading = isMandate ? 'You sign this' : 'Runs exactly as shown';
   const technicalOne = isMandate ? mandateTechnicalLine(parts) : `${headline} · ${shortProfileId(proposal.profileId)}${proposal.profileId.includes('@') ? `@${proposal.profileId.split('@')[1]}` : ''}`;
 
   return (
@@ -322,6 +327,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
       {/* §4.2.1 — one sentence from the manifest's summary template and the
           sealed values (never AI text). */}
       <h2 className="av3-title" style={{ order: 1 }} data-testid="approval-summary">{isMandate ? <>{typeArea} · {mandateTitleParts(typeArea, mandateArgs).name ?? 'new mandate'}</> : approvalSummary(proposal.tool, content.toolArgs, manifests, undefined, refNameFrom(previewData ?? undefined, content.toolArgs))}</h2>
+      {due && <p className="av3-quiet av3-due" style={{ order: 1 }} data-testid="approval-deadline">{due}</p>}
       {/* §4.2.2 — a failed check is the one red line, right under the title. */}
       <ChecksLines lines={lines} placement="top" />
       {topExtras && <div className="av3-extras" style={{ order: 3 }}>{topExtras}</div>}
@@ -361,6 +367,34 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
           <svg className="i" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5" /><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" /></svg>
           {sealedHeading}
         </h3>
+        {/* §17.3 (6) — a mandate proposal: everything signed in this one tile.
+            The AI's intent first (amber — it becomes the person's words on
+            signing), then Commitment as a row like Valid. */}
+        {isMandate && aiIntent && (
+          <div className="av3-intent" data-testid="mandate-intent-ai">
+            <div className="av3-intent-l">Intent — written by the AI, becomes your words when you sign</div>
+            <p>{aiIntent}</p>
+          </div>
+        )}
+        {readable && isMandate && (
+          <div className="av3-edit">
+            <button
+              type="button"
+              className="av3-link"
+              data-testid="edit-before-signing"
+              onClick={handleEditBeforeSigning}
+              disabled={editingBeforeSigning}
+            >
+              {editingBeforeSigning ? 'Opening…' : 'Edit before signing'}
+            </button>
+            {editError && <p className="msg-error">{editError}</p>}
+          </div>
+        )}
+        {mode && (
+          <dl className="av3-mandate-rows" data-testid="mandate-mode">
+            <dt>{mode.label}</dt><dd>{mode.title}</dd>
+          </dl>
+        )}
         {imagePreview && (
           <img
             src={imagePreview}
@@ -403,6 +437,11 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
             onData={setPreviewData}
           />
         )}
+        {isMandate && parts.workspace && (
+          <dl className="av3-mandate-rows" data-testid="mandate-applies-to">
+            <dt>Applies to</dt><dd>{parts.workspace}</dd>
+          </dl>
+        )}
       </section>
       {systemView && systemView.systemBoxes.length > 0 && (
         <div style={{ order: 7 }}><SystemBoxes view={systemView} /></div>
@@ -412,37 +451,6 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
         <p className="av3-quiet" style={{ order: 7 }} data-testid="proposal-cannot-read">
           Cannot read this proposal yet: {cannotRead.map(id => nameOf?.(id) ?? id).join(', ')} — shared automatically once they sign in on a device.
         </p>
-      )}
-
-      {/* Mandate proposal: the AI's intent, once, very prominent right under the
-          title (amber — the AI's own text, which becomes the person's words on
-          signing), then the mode as its own block. Both sit above the tile. */}
-      {isMandate && aiIntent && (
-        <section className="av3-intent" style={{ order: 2 }} data-testid="mandate-intent-ai">
-          <div className="av3-intent-l">Intent — written by the AI, becomes your words when you sign</div>
-          <p>{aiIntent}</p>
-        </section>
-      )}
-      {mode && (
-        <section className="av3-mode" style={{ order: 2 }} data-testid="mandate-mode">
-          <div className="av3-mode-l">{mode.label}</div>
-          <div className="av3-mode-t">{mode.title}</div>
-          {mode.text && <div className="av3-mode-d">{mode.text}</div>}
-        </section>
-      )}
-      {readable && isMandate && (
-        <div className="av3-edit" style={{ order: 8 }}>
-          <button
-            type="button"
-            className="av3-link"
-            data-testid="edit-before-signing"
-            onClick={handleEditBeforeSigning}
-            disabled={editingBeforeSigning}
-          >
-            {editingBeforeSigning ? 'Opening…' : 'Edit before signing'}
-          </button>
-          {editError && <p className="msg-error">{editError}</p>}
-        </div>
       )}
 
       {/* ── Folded rows (§17.3): one line each, chevron, no lines between ── */}
@@ -514,11 +522,10 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
             {/* Everything that is bound: the call's arguments (unless they are
                 already open in the tile) and the execution-context fields the
                 Gatekeeper checked — one fold, nothing hidden behind another. */}
-            {isMandate && (parts.proposal || parts.profileVersion || parts.workspace) && (
+            {isMandate && (parts.proposal || parts.profileVersion) && (
               <dl className="av3-usage">
                 {parts.proposal && <><dt>Proposal</dt><dd>{parts.proposal}</dd></>}
                 {parts.profileVersion && <><dt>Version</dt><dd>{parts.profileVersion}</dd></>}
-                {parts.workspace && <><dt>Workspace</dt><dd>{parts.workspace}</dd></>}
               </dl>
             )}
             {isMandate ? null : boundOpen

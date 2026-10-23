@@ -4393,10 +4393,10 @@ body.is-updating .simulation-banner {
 .av3-intent { margin-bottom: var(--space-4); }
 .av3-intent-l { font-size: var(--text-caption); color: var(--prov-ai); margin-bottom: 0.2rem; }
 .av3-intent p { margin: 0; color: var(--prov-ai); font-size: var(--text-lead); font-weight: 500; line-height: 1.4; overflow-wrap: anywhere; }
-.av3-mode { margin-bottom: var(--space-4); }
-.av3-mode-l { font-size: var(--text-caption); color: var(--text-muted); margin-bottom: 0.15rem; }
-.av3-mode-t { font-weight: 600; font-size: var(--text-body); }
-.av3-mode-d { font-size: var(--text-body-sm); color: var(--text-muted); }
+/* Mandate proposal rows the card adds to the tile (Commitment, Applies to) — same grid as the preview's rows. */
+.av3-sealed dl.av3-mandate-rows { display: grid; column-gap: var(--space-3); row-gap: 0.35rem; margin: 0 0 0.35rem; }
+.av3-sealed dl.av3-mandate-rows:last-child { margin: 0.35rem 0 0; }
+.av3-due { margin: calc(-1 * var(--space-2)) 0 var(--space-3); }
 .av3-plain { list-style: none; margin: 0 0 var(--space-2); padding: 0; display: grid; gap: 0.3rem; }
 .av3-edit { margin: calc(-1 * var(--space-2)) 0 var(--space-4); }
 .av3-edit p { margin: var(--space-1) 0 0; font-size: var(--text-caption); }

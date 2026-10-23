@@ -10,10 +10,11 @@ describe('mandate proposal card parts', () => {
     expect(modeView('review_above_cap')?.title).toBe('review_above_cap');
   });
   it('pulls the parts out of the preview and builds the technical line', () => {
-    const p = mandatePreviewParts({ intent: ' Quotes. ', mode: 'review', profile_version: 'sales 0.4', workspace: 'Weninger Translations', checks: ['Sales is allowed by your Delegation mandate', 3] });
+    const p = mandatePreviewParts({ intent: ' Quotes. ', mode: 'review', proposal: 'New mandate · Sales', profile_version: 'sales 0.4', workspace: 'Weninger Translations', checks: ['Sales is allowed by your Delegation mandate', 3] });
     expect(p.intent).toBe('Quotes.');
     expect(p.checks).toEqual(['Sales is allowed by your Delegation mandate']);
-    expect(mandateTechnicalLine(p)).toBe('sales 0.4 · Weninger Translations · new mandate');
+    expect(mandateTechnicalLine(p)).toBe('New mandate · Sales · sales 0.4');
+    expect(p.workspace).toBe('Weninger Translations');
     expect(mandateTechnicalLine(mandatePreviewParts(undefined))).toBe('new mandate');
   });
   it('title from the area; the tile keeps limits, scope, valid, title', () => {

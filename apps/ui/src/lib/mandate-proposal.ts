@@ -50,9 +50,9 @@ export function mandatePreviewParts(structured: Record<string, unknown> | undefi
   };
 }
 
-/** The one-line "Technical details" summary: "sales 0.4 · Weninger Translations · new mandate". */
+/** The one-line "Technical details" summary: "New mandate · Sales · sales 0.4" (the workspace is in the tile as "Applies to"). */
 export function mandateTechnicalLine(p: MandatePreviewParts): string {
-  return [p.profileVersion, p.workspace, 'new mandate'].filter(Boolean).join(' · ');
+  return [p.proposal, p.profileVersion].filter(Boolean).join(' · ') || 'new mandate';
 }
 
 /** The mandate proposal's title parts: the area, and the AI-proposed name (amber on the card). */
