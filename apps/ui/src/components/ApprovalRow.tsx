@@ -3,7 +3,8 @@ import { areaName, ageLabel, deadlineLabel } from '../lib/core-objects';
 import { useAreaCatalog } from '../lib/area-catalog';
 import { useProposalPreview } from '../lib/preview-store';
 import { standOut } from '../lib/approval-row';
-import { showMandateLine } from '../lib/area';
+import { showMandateLine, areaIcon } from '../lib/area';
+import { AreaIcon } from './AreaIcon';
 import { ApprovalSummary } from './ApprovalSummary';
 import { useProposalContent } from '../lib/use-proposal-content';
 import { mandateTargetProfile } from '../lib/mandate-proposal';
@@ -35,7 +36,8 @@ export function ApprovalRow({ proposal, manifests, titles, selected = false, onO
   const content = useProposalContent(proposal);
   const isMandate = proposal.tool === CREATE_MANDATE_TOOL;
   // A mandate proposal is about the area it names, not the Delegation ("Setup") it rides on.
-  const area = areaName(isMandate ? mandateTargetProfile(content.toolArgs, proposal.profileId) : proposal.profileId, catalog);
+  const areaProfile = isMandate ? mandateTargetProfile(content.toolArgs, proposal.profileId) : proposal.profileId;
+  const area = areaName(areaProfile, catalog);
   const mandateTitle = proposal.authorizationId ? titles[proposal.authorizationId] : undefined;
   const mandate = showMandateLine(mandateTitle, area) ? mandateTitle : undefined;
   const meta = [mandate, flag?.text].filter(Boolean);
@@ -48,7 +50,7 @@ export function ApprovalRow({ proposal, manifests, titles, selected = false, onO
       <button type="button" className="appr-item-head av3-row-head" aria-current={selected || undefined} onClick={onOpen}>
         <span className="av3-type">
           {isMandate ? <span className="av3-mtag">Mandate</span> : <b>Action</b>}
-          <span>{area}</span>
+          <span className="av3-area"><AreaIcon icon={areaIcon(areaProfile)} />{area}</span>
           <span>{ageLabel(proposal.createdAt * 1000, now)}</span>
         </span>
         <span className="av3-row-title" data-testid="approval-row-summary"><ApprovalSummary proposal={proposal} manifests={manifests} /></span>

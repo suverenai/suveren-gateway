@@ -34,6 +34,8 @@ import { PreviewBox } from './PreviewBox';
 import { RequestContextBox } from './RequestContextBox';
 import { useAreaCatalog } from '../lib/area-catalog';
 import { areaName, ageLabel, deadlineLabel } from '../lib/core-objects';
+import { areaIcon } from '../lib/area';
+import { AreaIcon } from './AreaIcon';
 import { useMandateUsage } from '../lib/mandate-usage';
 import { previewBoxView } from '../lib/approval-preview-view';
 import { SystemBoxes } from './RenderedCreationView';
@@ -285,7 +287,8 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
   const isMandate = proposal.tool === CREATE_MANDATE_TOOL;
   const mandateArgs = isMandate ? (content.toolArgs as CreateMandateProposalArgs | null) : null;
   // A mandate proposal is about the area it names, not the Delegation it rides on.
-  const typeArea = areaName(isMandate ? mandateTargetProfile(mandateArgs, proposal.profileId) : proposal.profileId, catalog);
+  const typeProfile = isMandate ? mandateTargetProfile(mandateArgs, proposal.profileId) : proposal.profileId;
+  const typeArea = areaName(typeProfile, catalog);
   // A mandate proposal is test setup when the profile it creates a mandate for is (§17.3).
   const testSetup = isMandate
     ? profileIdentity(mandateTargetProfile(mandateArgs, proposal.profileId)).testSetup
@@ -320,7 +323,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
       {/* UI spec §17.2 — the type line: a small, quiet line above the title. */}
       <div className="av3-type" style={{ order: 0 }} data-testid="approval-type">
         {isMandate ? <span className="av3-mtag">Mandate</span> : <b>Action</b>}
-        <span>{typeArea}</span>
+        <span className="av3-area"><AreaIcon icon={areaIcon(typeProfile)} />{typeArea}</span>
         <span>{ageLabel(proposal.createdAt * 1000, Date.now())}</span>
         {testSetup && <span className="sim-mark">Test setup</span>}
       </div>

@@ -230,6 +230,7 @@ function AuthCard({
       <button type="button" className="ob-head" aria-expanded={isExpanded} onClick={() => onExpand(item)}>
         <ObTypeLine
           tag="Mandate"
+          profileId={item.profile_id}
           parts={[
             area,
             since,

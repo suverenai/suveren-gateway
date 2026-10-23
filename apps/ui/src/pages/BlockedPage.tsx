@@ -229,6 +229,7 @@ function BlockedCard({ record: r, view, area, unseen, mandateTitle }: {
       <div ref={ref}>
         <ObTypeLine
           tag="Blocked"
+          profileId={r.profile ?? undefined}
           className="obj-line"
           parts={[
             area,

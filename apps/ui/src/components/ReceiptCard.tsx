@@ -117,6 +117,7 @@ export function ReceiptCard({
       <button type="button" className="ob-head ticket-obj-head" aria-expanded={open} onClick={() => setOpen(o => !o)}>
         <ObTypeLine
           tag="Ticket"
+          profileId={receipt.profileId}
           className="obj-line"
           parts={[
             area,
