@@ -4684,7 +4684,7 @@ a.dash-row:hover, .dash-row:not([open]):hover { box-shadow: var(--elevation-2); 
 .dash-row.auto-grp .auto-grp-list { margin-top: var(--space-3); padding-top: 0; border-top: 0; }
 .dash-row .ob-check-x { color: var(--text-primary); display: block; }
 .dash-row .ob-check-x b { font-weight: 700; }
-.dash-btn { display: block; width: 100%; text-align: center; margin-top: var(--space-3); }
+.dash-btn { display: flex; width: 100%; margin-top: var(--space-3); }
 .dash-cols .core-quiet-line { font-size: var(--text-body-sm); color: var(--text-muted); margin: var(--space-3) 0 0; }
 .dash-cols .core-col-empty { font-size: var(--text-body-sm); color: var(--text-muted); }
 .dash-sec { margin-top: var(--space-8); }

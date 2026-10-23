@@ -37,6 +37,11 @@ import { Skeleton } from './Skeleton';
 
 const MAX_ITEMS = 5;
 
+/** Everything in "Done today" is from today — "today 02:14 PM" → "02:14 PM". */
+function todayTime(label: string): string {
+  return label.replace(/^today\s+/i, '');
+}
+
 /** "via <system>" — left out when it only repeats the area ("Email · via Email"), so the narrow columns stay one line. */
 function viaPart(system: string | undefined, area: string): string | null {
   return system && system.trim().toLowerCase() !== area.trim().toLowerCase() ? `via ${system}` : null;
@@ -170,7 +175,7 @@ export function CoreColumns({ auths, activeCount, waiting, waitingReady }: Props
                     tag="Ticket"
                     className="obj-line"
                     profileId={g.profileId}
-                    parts={[g.area, viaPart(g.system, g.area), ticketTime(g.latestSec, now), <span className="ob-st" key="st">Automatic</span>]}
+                    parts={[g.area, viaPart(g.system, g.area), todayTime(ticketTime(g.latestSec, now)), <span className="ob-st" key="st">Automatic</span>]}
                   />
                   <span className="ob-title">{g.area} · {g.count} × {g.label}</span>
                   <span className="ob-one">
@@ -201,7 +206,7 @@ export function CoreColumns({ auths, activeCount, waiting, waitingReady }: Props
                     tag="Ticket"
                     className="obj-line"
                     profileId={t.profileId}
-                    parts={[area, viaPart(system, area), ticketTime(t.timestamp, now), <span className="ob-st" key="st">Approved</span>]}
+                    parts={[area, viaPart(system, area), todayTime(ticketTime(t.timestamp, now)), <span className="ob-st" key="st">Approved</span>]}
                   />
                   <span className="ob-title">{area} · {actionLabel(t, manifests)}</span>
                   {showMandateLine(title, area) && <span className="ob-one" data-testid="mandate-line">Mandate: {title}</span>}
