@@ -6,23 +6,25 @@
  * "Technical details", the delegation checks to "Proposed through". Driven by
  * the preview's field names only; no per-profile code.
  */
+import { COMMITMENT_LABEL, COMMITMENT_REVIEW, COMMITMENT_AUTOMATIC } from './commitment-words';
+
 export const CREATE_MANDATE_TOOL = 'setup__create_mandate';
 
 /** Preview fields that leave the tile (each has another place on the card). */
 export const MANDATE_TILE_OMIT = ['proposal', 'profile_version', 'workspace', 'mode', 'intent', 'checks'] as const;
 
-export interface ModeView { title: string; text: string; mark: string }
+export interface ModeView { label: string; title: string; text: string }
 
-/** "Asks you each time" (review) / "Runs automatically within these limits" (automatic). */
+/** The commitment block, in the words of the manual mandate screen (lib/commitment-words.ts). */
 export function modeView(mode: unknown): ModeView | null {
   if (typeof mode !== 'string' || !mode.trim()) return null;
   switch (mode.trim()) {
     case 'review':
-      return { title: 'Asks you each time', text: 'Every action under this mandate waits here for your approval before it runs.', mark: '?' };
+      return { label: COMMITMENT_LABEL, ...COMMITMENT_REVIEW };
     case 'automatic':
-      return { title: 'Runs automatically within these limits', text: 'Actions inside the limits run without asking you; anything beyond them is refused.', mark: '→' };
+      return { label: COMMITMENT_LABEL, ...COMMITMENT_AUTOMATIC };
     default:
-      return { title: mode.trim(), text: 'How actions under this mandate are decided.', mark: '?' };
+      return { label: COMMITMENT_LABEL, title: mode.trim(), text: '' };
   }
 }
 

@@ -19,7 +19,7 @@ export function ApprovalSummary({ proposal, manifests }: { proposal: Proposal; m
   const catalog = useAreaCatalog();
   if (proposal.tool === CREATE_MANDATE_TOOL && content.toolArgs) {
     const t = mandateTitleParts(areaName(mandateTargetProfile(content.toolArgs, proposal.profileId), catalog), content.toolArgs);
-    return <>{t.area} · {t.name ? <span className="av3-ai">{t.name}</span> : 'new mandate'}</>;
+    return <>{t.area} · {t.name ?? 'new mandate'}</>;
   }
   return <>{approvalSummary(proposal.tool, content.toolArgs, manifests, undefined, refNameFrom(preview, content.toolArgs))}</>;
 }

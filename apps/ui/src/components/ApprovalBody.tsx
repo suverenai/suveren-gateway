@@ -321,7 +321,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
       </div>
       {/* §4.2.1 — one sentence from the manifest's summary template and the
           sealed values (never AI text). */}
-      <h2 className="av3-title" style={{ order: 1 }} data-testid="approval-summary">{isMandate ? <>{typeArea} · {mandateTitleParts(typeArea, mandateArgs).name ? <span className="av3-ai">{mandateTitleParts(typeArea, mandateArgs).name}</span> : 'new mandate'}</> : approvalSummary(proposal.tool, content.toolArgs, manifests, undefined, refNameFrom(previewData ?? undefined, content.toolArgs))}</h2>
+      <h2 className="av3-title" style={{ order: 1 }} data-testid="approval-summary">{isMandate ? <>{typeArea} · {mandateTitleParts(typeArea, mandateArgs).name ?? 'new mandate'}</> : approvalSummary(proposal.tool, content.toolArgs, manifests, undefined, refNameFrom(previewData ?? undefined, content.toolArgs))}</h2>
       {/* §4.2.2 — a failed check is the one red line, right under the title. */}
       <ChecksLines lines={lines} placement="top" />
       {topExtras && <div className="av3-extras" style={{ order: 3 }}>{topExtras}</div>}
@@ -425,8 +425,9 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
       )}
       {mode && (
         <section className="av3-mode" style={{ order: 2 }} data-testid="mandate-mode">
-          <span className="av3-mode-g" aria-hidden="true">{mode.mark}</span>
-          <div><div className="av3-mode-t">{mode.title}</div><div className="av3-mode-d">{mode.text}</div></div>
+          <div className="av3-mode-l">{mode.label}</div>
+          <div className="av3-mode-t">{mode.title}</div>
+          {mode.text && <div className="av3-mode-d">{mode.text}</div>}
         </section>
       )}
       {readable && isMandate && (

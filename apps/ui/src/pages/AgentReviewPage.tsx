@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { COMMITMENT_LABEL, COMMITMENT_REVIEW, COMMITMENT_AUTOMATIC } from '../lib/commitment-words';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { spClient } from '../lib/sp-client';
@@ -589,21 +590,21 @@ export function AgentReviewPage() {
         {/* Commitment mode — Review first and default: the agent proposes,
             the human approves. Automatic is the deliberate opt-in. */}
         <div className="field-editable">
-          <div className="field-label"><span className="pen">✎</span> Commitment</div>
+          <div className="field-label"><span className="pen">✎</span> {COMMITMENT_LABEL}</div>
           <div style={{ display: 'flex', gap: '0.75rem' }}>
             {offeredModes.includes('per-action') && (
             <button onClick={() => setCommitMode('per-action')} style={commitStylePerAction}>
-              <div style={{ fontWeight: 600, fontSize: '0.85rem', marginBottom: '0.25rem', color: 'var(--text-primary)' }}>Review Each Action</div>
+              <div style={{ fontWeight: 600, fontSize: '0.85rem', marginBottom: '0.25rem', color: 'var(--text-primary)' }}>{COMMITMENT_REVIEW.title}</div>
               <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                You review and approve each action before it executes.
+                {COMMITMENT_REVIEW.text}
               </div>
             </button>
             )}
             {offeredModes.includes('immediate') && (
             <button onClick={() => setCommitMode('immediate')} style={commitStyleImmediate}>
-              <div style={{ fontWeight: 600, fontSize: '0.85rem', marginBottom: '0.25rem', color: 'var(--text-primary)' }}>Automatic</div>
+              <div style={{ fontWeight: 600, fontSize: '0.85rem', marginBottom: '0.25rem', color: 'var(--text-primary)' }}>{COMMITMENT_AUTOMATIC.title}</div>
               <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                Agent acts freely within your limits.
+                {COMMITMENT_AUTOMATIC.text}
               </div>
             </button>
             )}
