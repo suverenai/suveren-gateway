@@ -1,15 +1,16 @@
 /**
  * The dashboard's three columns (UI spec §12.4, mockup core-objects.html C2):
  *
- *   1. Waiting for you        — the action items, most prominent
- *   2. Done automatically     — tickets no person approved, grouped per mandate
- *                               and action, "new since your last visit"
+ *   1. Waiting for you        — the Approvals page's rows (§18.5)
+ *   2. Done today             — automatic tickets grouped per mandate and
+ *                               action ("new since your last visit"), then
+ *                               today's approved tickets as single rows
  *   3. Mandates at work today — only mandates that acted today, with usage
  *
- * Approved tickets were seen at approval time, so they are one quiet line.
+ * Every item is the closed row of its own page (UI spec §18.5).
  */
 import { useState, useCallback, useEffect, useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import type { AgentProfile } from '@hap/core';
 import {
   spClient,
@@ -25,12 +26,13 @@ import { loadProfile } from '../lib/profile-cache';
 import { useAreaCatalog } from '../lib/area-catalog';
 
 import {
-  areaName, systemName, waitingLabel, deadlineLabel, isToday, isNewTicket, ticketTime,
+  areaName, systemName, isToday, isNewTicket, ticketTime,
   groupAutomatic, mandatesAtWork, nearLimit, matchesTicketFilter, shortTicketId,
 } from '../lib/core-objects';
 import { actionLabel } from '../lib/receipt-summary';
-import { ObjectLine, MandateLine } from './ObjectLine';
-import { ApprovalSummary } from './ApprovalSummary';
+import { ObTypeLine } from './ObjectCard';
+import { ApprovalRow } from './ApprovalRow';
+import { showMandateLine } from '../lib/area';
 import { Skeleton } from './Skeleton';
 
 const MAX_ITEMS = 5;
@@ -108,10 +110,16 @@ export function CoreColumns({ auths, activeCount, waiting, waitingReady }: Props
   );
   const newGroups = groups.filter(g => g.newCount > 0).length;
   const oldestFirst = [...waiting].sort((a, b) => a.createdAt - b.createdAt);
+  // Approved tickets were decided by the person; they fill what the automatic groups leave of the 5 rows.
+  const approvedRows = today
+    .filter(r => matchesTicketFilter(r, 'approved'))
+    .sort((a, b) => b.timestamp - a.timestamp)
+    .slice(0, Math.max(0, MAX_ITEMS - Math.min(groups.length, MAX_ITEMS)));
+  const navigate = useNavigate();
 
   return (
-    <div className="core-cols" data-testid="core-cols">
-      {/* 1 — Waiting for you */}
+    <div className="core-cols dash-cols" data-testid="core-cols">
+      {/* 1 — Waiting for you: the Approvals page's own rows (§18.5) */}
       <section aria-label="Waiting for you" data-testid="col-waiting">
         <div className="core-col-h is-main">
           <h2>Waiting for you</h2>
@@ -122,72 +130,85 @@ export function CoreColumns({ auths, activeCount, waiting, waitingReady }: Props
         ) : oldestFirst.length === 0 ? (
           <p className="core-col-empty">Nothing waits for your decision.</p>
         ) : (
-          oldestFirst.slice(0, MAX_ITEMS).map(p => {
-            const due = deadlineLabel(p.expiresAt, now);
-            return (
-              <Link key={p.id} to={`/approvals?open=${encodeURIComponent(p.id)}`} className="appr-item appr-item-link" data-testid="dash-approval">
-                <div className="appr-item-main">
-                  <ObjectLine
-                    profileId={p.profileId}
-                    area={areaName(p.profileId, catalog)}
-                    system={systemName(p.tool, manifests)}
-                    time={waitingLabel(p.createdAt, now)}
-                  />
-                  <div className="appr-item-sum"><ApprovalSummary proposal={p} manifests={manifests} /></div>
-                  <MandateLine title={p.authorizationId ? titles[p.authorizationId] : undefined} area={areaName(p.profileId, catalog)} />
-                  {due && <div className="obj-due">{due}</div>}
-                </div>
-                <span className="appr-item-chev" aria-hidden="true">›</span>
-              </Link>
-            );
-          })
+          <div className="dash-rows">
+            {oldestFirst.slice(0, MAX_ITEMS).map(p => (
+              <div key={p.id} data-testid="dash-approval">
+                <ApprovalRow
+                  proposal={p}
+                  manifests={manifests}
+                  titles={titles}
+                  onOpen={() => navigate(`/approvals?open=${encodeURIComponent(p.id)}`)}
+                />
+              </div>
+            ))}
+          </div>
         )}
-        {oldestFirst.length > 0 && <Link to="/approvals" className="col-btn">All approvals ›</Link>}
+        {oldestFirst.length > 0 && <Link to="/approvals" className="ob-btn dash-btn">All approvals</Link>}
       </section>
 
-      {/* 2 — Done automatically */}
-      <section aria-label="Done automatically" data-testid="col-automatic">
+      {/* 2 — Done today: automatic tickets grouped per mandate and action, then approved ones */}
+      <section aria-label="Done today" data-testid="col-automatic">
         <div className="core-col-h">
-          <h2>Done automatically</h2>
+          <h2>Done today</h2>
           {newGroups > 0 && <span className="meta">{groups.reduce((n, g) => n + g.newCount, 0)} new</span>}
         </div>
         {receipts === null ? (
           <Skeleton variant="line" />
-        ) : groups.length === 0 ? (
-          <p className="core-col-empty">Nothing was done automatically today.</p>
+        ) : groups.length === 0 && approvedRows.length === 0 ? (
+          <p className="core-col-empty">Nothing was done today.</p>
         ) : (
-          groups.slice(0, MAX_ITEMS).map(g => (
-            <details key={g.key} className={`auto-grp${g.newCount > 0 ? '' : ' is-seen'}`} data-testid="auto-group">
-              <summary>
-                <span className={`seen-dot${g.newCount > 0 ? ' is-new' : ''}`} aria-label={g.newCount > 0 ? 'new since your last visit' : 'seen'} />
-                <span className="auto-grp-txt">
-                  <ObjectLine profileId={g.profileId} area={g.area} system={g.system} />
-                  <b>{g.count} × {g.label}</b>
-                  <MandateLine title={g.mandateTitle} area={g.area} />
-                  <span className="meta">
-                    {g.newCount > 0 ? `${g.newCount} new` : 'seen'} · latest {ticketTime(g.latestSec, now)}
+          <div className="dash-rows">
+            {groups.slice(0, MAX_ITEMS).map(g => (
+              <details key={g.key} className={`ob-card dash-row auto-grp${g.newCount > 0 ? '' : ' is-seen'}`} data-testid="auto-group">
+                <summary>
+                  <ObTypeLine
+                    tag="Ticket"
+                    className="obj-line"
+                    profileId={g.profileId}
+                    parts={[g.area, g.system ? `via ${g.system}` : null, ticketTime(g.latestSec, now), <span className="ob-st" key="st">Automatic</span>]}
+                  />
+                  <span className="ob-title">{g.area} · {g.count} × {g.label}</span>
+                  <span className="ob-one">
+                    {showMandateLine(g.mandateTitle, g.area) && <span data-testid="mandate-line">Mandate: {g.mandateTitle}</span>}
+                    <span>{g.newCount > 0 ? <b className="ob-bold">{g.newCount} new</b> : 'seen'}</span>
                   </span>
-                </span>
-              </summary>
-              <div className="auto-grp-list">
-                {g.tickets.slice(0, MAX_ITEMS).map(t => (
-                  <div key={t.id} className="auto-grp-row">
-                    <span className={`seen-dot${isNewTicket(t, lastSeen ?? Number.POSITIVE_INFINITY) ? ' is-new' : ''}`} />
-                    {actionLabel(t, manifests)}
-                    <span className="t">{ticketTime(t.timestamp, now)} · {shortTicketId(t.id)}</span>
-                  </div>
-                ))}
-                {g.tickets.length > MAX_ITEMS && (
-                  <div className="auto-grp-row meta">+ {g.tickets.length - MAX_ITEMS} more in Tickets</div>
-                )}
-              </div>
-            </details>
-          ))
+                </summary>
+                <div className="auto-grp-list">
+                  {g.tickets.slice(0, MAX_ITEMS).map(t => (
+                    <div key={t.id} className="auto-grp-row">
+                      {actionLabel(t, manifests)}
+                      <span className="t">{ticketTime(t.timestamp, now)} · {shortTicketId(t.id)}{isNewTicket(t, lastSeen ?? Number.POSITIVE_INFINITY) ? ' · new' : ''}</span>
+                    </div>
+                  ))}
+                  {g.tickets.length > MAX_ITEMS && (
+                    <div className="auto-grp-row meta">+ {g.tickets.length - MAX_ITEMS} more in Tickets</div>
+                  )}
+                </div>
+              </details>
+            ))}
+            {approvedRows.map(t => {
+              const area = areaName(t.profileId, catalog);
+              const system = systemName(t.action, manifests);
+              const title = t.authorizationId ? titles[t.authorizationId] : undefined;
+              return (
+                <Link key={t.id} to="/tickets?filter=approved" className="ob-card dash-row" data-testid="dash-approved-ticket">
+                  <ObTypeLine
+                    tag="Ticket"
+                    className="obj-line"
+                    profileId={t.profileId}
+                    parts={[area, system ? `via ${system}` : null, ticketTime(t.timestamp, now), <span className="ob-st" key="st">Approved</span>]}
+                  />
+                  <span className="ob-title">{area} · {actionLabel(t, manifests)}</span>
+                  {showMandateLine(title, area) && <span className="ob-one" data-testid="mandate-line">Mandate: {title}</span>}
+                </Link>
+              );
+            })}
+          </div>
         )}
-        {groups.length > 0 && (
-          <Link to="/tickets?filter=automatic" className="col-btn" data-testid="btn-automatic-tickets">Automatic tickets ›</Link>
+        {(groups.length > 0 || approvedRows.length > 0) && (
+          <Link to={groups.length > 0 ? '/tickets?filter=automatic' : '/tickets'} className="ob-btn dash-btn" data-testid="btn-automatic-tickets">All tickets</Link>
         )}
-        {approvedToday > 0 && (
+        {approvedToday > approvedRows.length && (
           <div className="core-quiet-line">
             {approvedToday} approved today — <Link to="/tickets?filter=approved">see approved tickets</Link>
           </div>
@@ -202,31 +223,31 @@ export function CoreColumns({ auths, activeCount, waiting, waitingReady }: Props
         ) : atWork.length === 0 ? (
           <p className="core-col-empty">No mandate has acted today.</p>
         ) : (
-          atWork.slice(0, MAX_ITEMS).map(m => (
-            <div key={m.authorizationId} className="mandate-obj" data-testid="mandate-at-work">
-              <ObjectLine profileId={m.profileId} area={m.area} system={m.system} />
-              {m.mandateTitle && m.mandateTitle.trim().toLowerCase() !== m.area.trim().toLowerCase() && (
-                <div className="mandate-obj-title">{m.mandateTitle}</div>
-              )}
-              <div className={`usage${nearLimit(m) ? ' is-near' : ''}`}>
-                {m.limit !== undefined ? (
-                  <>
-                    <span className="usage-bar"><i style={{ width: `${Math.min(100, Math.round(m.ratio * 100))}%` }} /></span>
-                    <span>{nearLimit(m) ? <b>{m.used} of {m.limit}</b> : `${m.used} of ${m.limit}`} today</span>
-                  </>
-                ) : (
-                  <span>{m.used} {m.used === 1 ? 'action' : 'actions'} today</span>
-                )}
-              </div>
-            </div>
-          ))
-        )}
-        {receipts !== null && activeCount > atWork.length && (
-          <div className="meta" style={{ marginTop: 'var(--space-2)', fontSize: 'var(--text-caption)' }}>
-            {activeCount - atWork.length} more mandate{activeCount - atWork.length === 1 ? '' : 's'} in force — no actions today
+          <div className="dash-rows">
+            {atWork.slice(0, MAX_ITEMS).map(m => (
+              <Link key={m.authorizationId} to="/mandates" className="ob-card dash-row mandate-obj" data-testid="mandate-at-work">
+                <ObTypeLine
+                  tag="Mandate"
+                  className="obj-line"
+                  profileId={m.profileId}
+                  parts={[m.area, m.system ? `via ${m.system}` : null, <span className="ob-st" key="st">Active</span>]}
+                />
+                <span className="ob-title">{m.mandateTitle?.trim() ? m.mandateTitle : m.area}</span>
+                <span className="ob-one">
+                  {m.limit !== undefined
+                    ? (nearLimit(m) ? <b className="ob-bold">{m.used} of {m.limit} used today</b> : `${m.used} of ${m.limit} used today`)
+                    : `${m.used} ${m.used === 1 ? 'action' : 'actions'} today`}
+                </span>
+              </Link>
+            ))}
           </div>
         )}
-        {atWork.length > 0 && <Link to="/mandates" className="col-btn">All mandates ›</Link>}
+        {receipts !== null && activeCount > atWork.length && (
+          <p className="core-quiet-line">
+            {activeCount - atWork.length} more mandate{activeCount - atWork.length === 1 ? '' : 's'} in force — no actions today.
+          </p>
+        )}
+        {activeCount > 0 && <Link to="/mandates" className="ob-btn dash-btn">All mandates</Link>}
       </section>
     </div>
   );

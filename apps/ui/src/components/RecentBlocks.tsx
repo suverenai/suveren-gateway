@@ -3,6 +3,10 @@ import { Link } from 'react-router-dom';
 import { useSSEEvent } from '../contexts/EventSourceContext';
 import { spClient, type DenialRecord, type DenialReason } from '../lib/sp-client';
 import { useVisiblePolling } from '../hooks/useVisiblePolling';
+import { useAreaCatalog } from '../lib/area-catalog';
+import { resolveAreaName } from '../lib/area';
+import { blockedView, formatBlockedWhen, plainTitle, reasonLead } from '../lib/blocked-view';
+import { ObTypeLine } from './ObjectCard';
 
 /**
  * Recent blocks — read denials the Gatekeeper made, so the owner can tell a
@@ -87,6 +91,7 @@ export function RecentBlocks() {
   // Only blocks NOT yet seen on the Blocked page show here — the same
   // condition as the Blocked nav count; once seen, the panel is gone.
   const [lastSeen, setLastSeen] = useState<number | null>(null);
+  const catalog = useAreaCatalog();
 
   const load = useCallback(() => {
     spClient.getDenials({ limit: 200 })
@@ -115,34 +120,35 @@ export function RecentBlocks() {
   if (unseen.length === 0) return null;
   const shown = unseen.slice(0, PREVIEW);
 
+  // UI spec §18.5 — each new block is the closed BLOCKED row of the Blocked page (§18.4).
   const row = (r: DenialRecord, i: number) => {
+    const area = r.profile ? resolveAreaName(r.profile, catalog) : sourceName(r.integrationId);
     const v = denialView(r.reason);
     return (
-      <div className="rb-row" key={`${r.ts}-${i}`}>
-        <span className={`rb-dot ${v.sev === 'act' ? 'act' : v.sev === 'info' ? 'info' : ''}`} aria-hidden="true" />
-        <div className="rb-body">
-          <div className="rb-line">{lineFor(r)}</div>
-          <div className="rb-meta">
-            <span className={`rb-chip ${v.sev === 'act' ? 'act' : v.sev === 'warn' ? 'warn' : ''}`}>{v.chip}</span>
-            <span className="rb-via">{sourceName(r.integrationId)}</span>
-          </div>
-          {v.fixTo && <Link className="rb-fix" to={v.fixTo}>Set a read window &rarr;</Link>}
-        </div>
-        <div className="rb-when">{relativeTime(r.ts, Date.now())}</div>
-      </div>
+      <Link className="ob-card dash-row" to="/blocked" key={`${r.ts}-${i}`} data-testid="dash-blocked">
+        <ObTypeLine
+          tag="Blocked"
+          className="obj-line"
+          profileId={r.profile ?? undefined}
+          parts={[area, `via ${sourceName(r.integrationId)}`, formatBlockedWhen(r.ts, Date.now())]}
+        />
+        <span className="ob-title">{r.reason ? lineFor(r) : plainTitle(r)}</span>
+        <span className="ob-one ob-check-x">
+          <span aria-hidden="true">✕</span> <b>{reasonLead(r)}</b>{' '}
+          <span className="ob-quiet-inline">{r.reason ? v.chip : blockedView(r).sentence}</span>
+        </span>
+      </Link>
     );
   };
 
   return (
-    <section className="card recent-blocks" aria-label="Recent blocks" style={{ marginTop: '1.5rem' }}>
-      <div className="card-header">
-        <h2 className="card-title">Recent blocks</h2>
-        <span className="rb-count">{unseen.length}</span>
+    <section className="dash-sec" aria-label="Blocked — new since you looked" data-testid="dash-blocked-sec">
+      <div className="core-col-h">
+        <h2>Blocked — new since you looked</h2>
+        <span className="pill-count">{unseen.length}</span>
       </div>
-
-      <p className="rb-sub">New since you last looked. Limits you set that stopped your agent — the gateway doing its job.</p>
-      <div className="rb-rows">{shown.map(row)}</div>
-      <Link className="col-btn" to="/blocked">View all {all.length} blocks from the last 30 days ›</Link>
+      <div className="dash-rows">{shown.map(row)}</div>
+      {unseen.length > shown.length && <Link className="ob-btn dash-btn" to="/blocked">All blocked</Link>}
     </section>
   );
 }
