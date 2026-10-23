@@ -74,6 +74,10 @@ describe('blockedView — one generic sentence per kind, never per-action advice
     const v = blockedView(base({ kind: 'scope', field: 'allowed_domains', value: 'other.example' }), EMAIL_PROFILE);
     expect(v.title).toContain('scope');
     expect(v.sentence).toContain('"other.example"');
+    // The field is named once, by the profile's own label — never "allowed Allowed domains".
+    expect(v.sentence).toMatch(/^"other\.example" is not within your mandate's [a-z]/);
+    expect(blockedView(base({ kind: 'scope', field: 'allowed_domains', value: 'x.example' })).sentence)
+      .toBe('"x.example" is not within your mandate\'s allowed domains.');
     expect(v.whatYouCanDo).toMatch(/widen the mandate/);
   });
 

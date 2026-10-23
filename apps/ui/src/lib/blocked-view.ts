@@ -92,6 +92,12 @@ const WHAT_YOU_CAN_DO: Record<DenialKind, string> = {
   read: 'Nothing was read.',
 };
 
+/** "Allowed domains" → "allowed domains"; a raw key "allowed_domains" → "allowed domains". */
+function lowerFirst(label: string): string {
+  const words = label.includes('_') ? label.replace(/_/g, ' ') : label;
+  return words.charAt(0).toLowerCase() + words.slice(1);
+}
+
 function formatNum(v: number | string | undefined): string {
   if (v === undefined) return '';
   return typeof v === 'number' ? v.toLocaleString() : v;
@@ -109,8 +115,9 @@ function sentenceFor(r: DenialRecord, label: string): string {
         ? `${label || 'Value'} ${value} is above the limit ${limit}.`
         : r.detail;
     case 'scope':
+      // "drautal.example" is not within your mandate's allowed domains.
       return value
-        ? `${label || 'Value'} "${value}" is not within your mandate's allowed ${label || 'scope'}.`
+        ? `"${value}" is not within your mandate's ${label ? lowerFirst(label) : 'scope'}.`
         : r.detail;
     case 'cumulative':
       return value && limit ? `${value} of ${limit} used — the limit is reached.` : r.detail;

@@ -8,6 +8,7 @@ import { Link } from 'react-router-dom';
 import { ObTypeLine, ObFold, useFoldAccordion } from '../components/ObjectCard';
 import { AreaFilterPills, type AreaFilterOption } from '../components/AreaFilterPills';
 import { useAreaCatalog } from '../lib/area-catalog';
+import { loadProfile } from '../lib/profile-cache';
 import { resolveAreaName, areaIcon, parseAreaFilter, matchesAreaFilter } from '../lib/area';
 import { shortProfileId } from '../lib/profile-identity';
 import { sourceName } from '../components/RecentBlocks';
@@ -27,7 +28,7 @@ import { useSSEEvent } from '../contexts/EventSourceContext';
  */
 export function BlockedPage() {
   const [records, setRecords] = useState<DenialRecord[] | null>(null);
-  const [profiles, setProfiles] = useState<Record<string, AgentProfile>>({});
+  const [profiles, setProfiles] = useState<Record<string, AgentProfile | null>>({});
   const [failed, setFailed] = useState(false);
   const catalog = useAreaCatalog();
 
@@ -91,11 +92,13 @@ export function BlockedPage() {
     const need = [...new Set(records.map(r => r.profile).filter((p): p is string => !!p))]
       .filter(p => !(p in profiles));
     if (need.length === 0) return;
-    Promise.all(need.map(p => spClient.getProfile(p).catch(() => null)))
+    // loadProfile resolves a short name ("email" → its newest version) and
+    // caches failures too; a miss is stored as null so it is never re-fetched.
+    Promise.all(need.map(p => loadProfile(p)))
       .then(results => {
         setProfiles(prev => {
           const next = { ...prev };
-          need.forEach((p, i) => { if (results[i]) next[p] = results[i]; });
+          need.forEach((p, i) => { next[p] = results[i]; });
           return next;
         });
       });
@@ -185,7 +188,7 @@ export function BlockedPage() {
         <AreaFilterPills areas={areaOptions} selected={areaFilter} onSelect={setAreaFilter} totalCount={records.length} />
         <div className="blocked-list">
           {filteredRecords.map((r, i) => {
-            const view = blockedView(r, r.profile ? profiles[r.profile] : undefined, mandateTitlesById);
+            const view = blockedView(r, r.profile ? profiles[r.profile] ?? undefined : undefined, mandateTitlesById);
             const unseen = seenCutoff !== null && r.ts > seenCutoff;
             const pid = r.profile ?? r.integrationId;
             return (
