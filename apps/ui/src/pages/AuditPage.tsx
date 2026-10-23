@@ -376,7 +376,7 @@ export function AuditPage() {
   }
 
   return (
-    <>
+    <div className="ob-page">
       <div
         className="page-header"
         style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem', flexWrap: 'wrap' }}
@@ -582,11 +582,11 @@ export function AuditPage() {
               ? `${receipts.length} ticket${receipts.length !== 1 ? 's' : ''}`
               : `${filtered.length} of ${receipts.length} tickets`}
           </div>
-          <div className="timeline">
+          <div className="ob-list">
             {filtered.map(receipt => {
               const owner = receipt.userId ? userById[receipt.userId] : undefined;
               return (
-                <div className="timeline-event" key={receipt.id}>
+                <div className="ob-list-item" key={receipt.id}>
                   <ReceiptCard
                     receipt={receipt}
                     manifests={manifests}
@@ -623,6 +623,6 @@ export function AuditPage() {
           </button>
         </div>
       )}
-    </>
+    </div>
   );
 }
