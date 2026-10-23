@@ -4427,7 +4427,7 @@ body.is-updating .simulation-banner {
 /* Open: header row, a thin line, then the body — all in the grey block. */
 .av3-fold[open] > summary { font-weight: 600; }
 .av3-fold[open] > summary .h { font-weight: 600; }
-.av3-fold[open] > .av3-fold-body { border-top: 1px solid var(--border); margin: 0 var(--space-3); padding-left: 0; padding-right: 0; }
+.av3-fold[open] > .av3-fold-body { border-top: 1px solid var(--border-strong); margin: 0 var(--space-3); padding-left: 0; padding-right: 0; }
 .av3-fold-body > p, .av3-fold-body .check-line { margin: 0 0 var(--space-2); }
 .av3-fold-body .card-checks { margin: 0; }
 .av3-fold .preview-note { margin-top: 0; }
