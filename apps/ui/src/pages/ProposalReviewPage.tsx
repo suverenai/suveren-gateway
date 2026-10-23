@@ -63,6 +63,7 @@ export function ProposalReviewPage() {
   // ─── Awaiting others (proposals I authored or already approved, still pending) ──
   // We derive these from the same approverProposals scan + domain proposals.
   const [myProposals, setMyProposals] = useState<Proposal[]>([]);
+  const [myLoading, setMyLoading] = useState(true);
 
   const fetchMyProposals = useCallback(async () => {
     try {
@@ -71,6 +72,8 @@ export function ProposalReviewPage() {
       setMyProposals(ps);
     } catch {
       // keep previous state
+    } finally {
+      setMyLoading(false);
     }
   }, [domain]);
 
@@ -298,9 +301,13 @@ export function ProposalReviewPage() {
   useEffect(() => () => { timers.current.forEach(t => window.clearTimeout(t)); }, []);
   const later = (fn: () => void, ms: number) => { timers.current.push(window.setTimeout(fn, ms)); };
 
+  // Both queues ("For me" = my domain's review queue + approver proposals) must
+  // have answered before the page decides anything: otherwise `?open=<id>` from
+  // the dashboard is dropped when one list arrives before the other.
+  const queueLoading = approverLoading || myLoading;
   const autoOpenedRef = useRef<string | null>(null);
   useEffect(() => {
-    if (settling) return;
+    if (settling || queueLoading) return;
     // A lone item opens by itself — once; going back to the list is respected.
     if (ids.length === 1 && openId === null && autoOpenedRef.current !== ids[0]) {
       autoOpenedRef.current = ids[0];
@@ -309,11 +316,13 @@ export function ProposalReviewPage() {
     }
     // The open one is gone without us deciding it (decided elsewhere, expired):
     // the one that took its place, or the list. Only once the queue has loaded.
-    if (openId && !approverLoading && !ids.includes(openId)) {
+    if (openId && !ids.includes(openId)) {
       setOpenId(null);
     }
-  }, [ids, openId, settling, approverLoading]);
+  }, [ids, openId, settling, queueLoading]);
 
+  // A lone item is about to open by itself (effect above): don't flash the list first.
+  const autoOpening = !queueLoading && !settling && ids.length === 1 && openId === null && autoOpenedRef.current !== ids[0];
   const openEntry: Entry | null = settling?.entry ?? (openId ? entries.find(e => e.id === openId) ?? null : null);
   const position = openEntry && !settling ? ids.indexOf(openEntry.id) : -1;
   const goTo = useCallback((id: string | null) => { setArrived(null); setOpenId(id); }, []);
@@ -508,7 +517,7 @@ export function ProposalReviewPage() {
   return (
     <div className={`av3-page${wide ? ' av3-wide' : ''}`} data-view={view}>
       {view === 'me' && (
-        approverLoading && awaitingMeCount === 0 && !settling ? (
+        (queueLoading || autoOpening) && !settling ? (
           <>{listHeader}<p className="av3-empty">Loading…</p></>
         ) : wide ? (
           <div className="av3-split">
