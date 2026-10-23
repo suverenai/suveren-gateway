@@ -11,7 +11,8 @@ import { COMMITMENT_LABEL, COMMITMENT_REVIEW, COMMITMENT_AUTOMATIC } from './com
 export const CREATE_MANDATE_TOOL = 'setup__create_mandate';
 
 /** Preview fields that leave the tile (each has another place on the card). */
-export const MANDATE_TILE_OMIT = ['proposal', 'profile_version', 'workspace', 'mode', 'intent', 'checks'] as const;
+// `title` is left out of the preview rows and shown after "Applies to" (§17.3 pt 6 order).
+export const MANDATE_TILE_OMIT = ['proposal', 'profile_version', 'workspace', 'mode', 'intent', 'checks', 'title'] as const;
 
 export interface ModeView { label: string; title: string; text: string }
 
@@ -34,6 +35,7 @@ export interface MandatePreviewParts {
   proposal?: string;
   profileVersion?: string;
   workspace?: string;
+  title?: string;
   checks: string[];
 }
 
@@ -46,6 +48,7 @@ export function mandatePreviewParts(structured: Record<string, unknown> | undefi
     proposal: str(structured?.proposal),
     profileVersion: str(structured?.profile_version),
     workspace: str(structured?.workspace),
+    title: str(structured?.title),
     checks: Array.isArray(structured?.checks) ? (structured!.checks as unknown[]).filter((c): c is string => typeof c === 'string' && c.trim() !== '') : [],
   };
 }

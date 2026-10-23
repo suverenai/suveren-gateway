@@ -17,12 +17,15 @@ describe('mandate proposal card parts', () => {
     expect(p.workspace).toBe('Weninger Translations');
     expect(mandateTechnicalLine(mandatePreviewParts(undefined))).toBe('new mandate');
   });
-  it('title from the area; the tile keeps limits, scope, valid, title', () => {
+  it('title from the area; the tile keeps limits, scope, valid; title after Applies to', () => {
     expect(mandateTitleText('Sales', { title: ' Quotes to customers ' })).toBe('Sales · Quotes to customers');
     expect(mandateTitleText('Sales', {})).toBe('Sales · new mandate');
     expect(mandateTitleParts('Sales', { title: 5 }).name).toBeNull();
     expect(mandateTargetProfile({ profile: 'sales@0.4' }, 'delegation@0.1')).toBe('sales@0.4');
     expect(mandateTargetProfile(null, 'delegation@0.1')).toBe('delegation@0.1');
-    for (const keep of ['limits', 'scope', 'valid', 'title']) expect(MANDATE_TILE_OMIT as readonly string[]).not.toContain(keep);
+    for (const keep of ['limits', 'scope', 'valid']) expect(MANDATE_TILE_OMIT as readonly string[]).not.toContain(keep);
+    // Title is shown after "Applies to", from the preview parts.
+    expect(MANDATE_TILE_OMIT as readonly string[]).toContain('title');
+    expect(mandatePreviewParts({ title: ' Quotes ' }).title).toBe('Quotes');
   });
 });

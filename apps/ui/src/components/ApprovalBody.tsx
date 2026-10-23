@@ -440,9 +440,10 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
             onData={setPreviewData}
           />
         )}
-        {isMandate && parts.workspace && (
+        {isMandate && (parts.workspace || parts.title) && (
           <dl className="av3-mandate-rows" data-testid="mandate-applies-to">
-            <dt>Applies to</dt><dd>{parts.workspace}</dd>
+            {parts.workspace && <><dt>Applies to</dt><dd>{parts.workspace}</dd></>}
+            {parts.title && <><dt>Title</dt><dd>{parts.title}</dd></>}
           </dl>
         )}
       </section>
