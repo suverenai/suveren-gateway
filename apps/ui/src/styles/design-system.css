@@ -4703,3 +4703,8 @@ a.dash-row:hover, .dash-row:not([open]):hover { box-shadow: var(--elevation-2); 
 
 /* An opened mandate scrolls to the top — clear of the fixed top bar and banners. */
 .ob-card.mandate-card { scroll-margin-top: calc(var(--nav-height) + var(--update-banner-h, 0px) + var(--sim-banner-h, 0px) + var(--space-4)); }
+
+/* Dashboard columns are narrow: the type line stays one line (no "· Approved" starting a new line); the area gives way. */
+.dash-row .ob-type { flex-wrap: nowrap; white-space: nowrap; overflow: hidden; }
+.dash-row .ob-type > span { flex: none; }
+.dash-row .ob-type > .ob-area { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
