@@ -88,9 +88,9 @@ export function SetupGuide({ aiConfigured, hasRunningIntegration, hasActiveAuth,
   const firstPendingIdx = steps.findIndex(s => s.status === 'pending');
 
   return (
-    <div style={{
-      border: '2px solid var(--accent)',
-      borderRadius: '0.75rem',
+    <div className="setup-guide" style={{
+      borderRadius: 'var(--radius-xl)',
+      boxShadow: 'var(--elevation-2)',
       padding: '1.5rem',
       marginBottom: '1.5rem',
       background: 'var(--bg-elevated)',
