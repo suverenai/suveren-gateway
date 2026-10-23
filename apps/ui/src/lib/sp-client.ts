@@ -100,6 +100,19 @@ export interface ProfileSummary {
   icon?: string;
 }
 
+/**
+ * Earliest expiry of a mandate row. The AS sends the per-domain entries as
+ * `mandates` since v0.7 (`/api/mandates/mine`); older AS builds sent
+ * `attestations`. Reading only the old name left every mandate without an
+ * expiry: no "Valid" row, no "expiring soon", expired ones counted active.
+ */
+export function expiryOf(entries: unknown): { earliest_expiry: string | null; remaining_seconds: number | null } {
+  const list = Array.isArray(entries) ? (entries as Array<{ expiresAt?: unknown }>).map(e => e?.expiresAt).filter((x): x is number => typeof x === 'number') : [];
+  if (list.length === 0) return { earliest_expiry: null, remaining_seconds: null };
+  const min = Math.min(...list);
+  return { earliest_expiry: new Date(min * 1000).toISOString(), remaining_seconds: Math.max(0, min - Math.floor(Date.now() / 1000)) };
+}
+
 export interface PendingItem {
   authorization_id: string;
   profile_id: string;
@@ -1121,12 +1134,7 @@ class SPClient {
       approvers_frozen: (a.approversFrozen as string[]) ?? [],
       above_cap: (a.aboveCap as boolean) ?? false,
       created_at: a.createdAt ? new Date((a.createdAt as number) * 1000).toISOString() : '',
-      earliest_expiry: (a.attestations as Array<{expiresAt: number}> | undefined)?.length
-        ? new Date(Math.min(...(a.attestations as Array<{expiresAt: number}>).map(att => att.expiresAt)) * 1000).toISOString()
-        : null,
-      remaining_seconds: (a.attestations as Array<{expiresAt: number}> | undefined)?.length
-        ? Math.max(0, Math.min(...(a.attestations as Array<{expiresAt: number}>).map(att => att.expiresAt)) - Math.floor(Date.now() / 1000))
-        : null,
+      ...expiryOf(a.mandates ?? a.attestations),
     }));
   }
 
