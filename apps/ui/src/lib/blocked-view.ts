@@ -29,6 +29,7 @@
 import type { AgentProfile } from '@hap/core';
 import type { DenialRecord, DenialKind } from './sp-client';
 import { sourceName } from '../components/RecentBlocks';
+import { humanizeKey, splitTool } from './approval-view';
 
 /** A denial with `kind` resolved — absent on disk ⇒ 'read' (every record
  * written before AU2 was a read block). */
@@ -91,6 +92,12 @@ const WHAT_YOU_CAN_DO: Record<DenialKind, string> = {
   read: 'Nothing was read.',
 };
 
+/** "Allowed domains" → "allowed domains"; a raw key "allowed_domains" → "allowed domains". */
+function lowerFirst(label: string): string {
+  const words = label.includes('_') ? label.replace(/_/g, ' ') : label;
+  return words.charAt(0).toLowerCase() + words.slice(1);
+}
+
 function formatNum(v: number | string | undefined): string {
   if (v === undefined) return '';
   return typeof v === 'number' ? v.toLocaleString() : v;
@@ -108,8 +115,9 @@ function sentenceFor(r: DenialRecord, label: string): string {
         ? `${label || 'Value'} ${value} is above the limit ${limit}.`
         : r.detail;
     case 'scope':
+      // "drautal.example" is not within your mandate's allowed domains.
       return value
-        ? `${label || 'Value'} "${value}" is not within your mandate's allowed ${label || 'scope'}.`
+        ? `"${value}" is not within your mandate's ${label ? lowerFirst(label) : 'scope'}.`
         : r.detail;
     case 'cumulative':
       return value && limit ? `${value} of ${limit} used — the limit is reached.` : r.detail;
@@ -243,4 +251,37 @@ export function formatBlockedWhen(ts: number, now: number): string {
   if (ts >= todayStart - DAY_MS) return `Yesterday · ${time}`;
   const date = new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   return `${date} · ${time}`;
+}
+
+/**
+ * UI spec §18.4 — what was tried, in plain words, for the card title. Built
+ * only from the record: the action's own name ("send_message" -> "Send
+ * message") and the target the record carries ("... to <target>"). No
+ * per-connector or per-tool wording.
+ */
+export function plainTitle(r: Pick<DenialRecord, 'tool' | 'target'>): string {
+  const action = humanizeKey(splitTool(r.tool).toolName);
+  const target = r.target?.trim();
+  return target ? `${action} · ${target}` : action;
+}
+
+const REASON_LEAD: Record<DenialKind, string> = {
+  bound: 'Above your limit:',
+  scope: 'Outside your mandate:',
+  cumulative: 'Limit reached:',
+  simulation: 'Simulation mode:',
+  not_authorized: 'Not authorized:',
+  check: 'A check failed:',
+  read: 'Read blocked:',
+};
+
+/** The bold lead of the one ✕ line (§18.4) — one phrase per refusal kind. */
+export function reasonLead(r: DenialRecord): string {
+  return REASON_LEAD[kindOf(r)];
+}
+
+/** Who refused, for the line under the reason (§18.4). */
+export function refusedByLine(r: Pick<DenialRecord, 'who' | 'kind'>): string {
+  if (r.who === 'authority-server') return 'Refused by the Authority Server before anything ran.';
+  return 'Refused by this gateway before anything ran.';
 }

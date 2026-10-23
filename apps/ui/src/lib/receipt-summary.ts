@@ -149,7 +149,7 @@ function cumulativeAppliesTo(fieldDef: ProfileBoundsField): readonly string[] | 
  * the profile's `boundType` (kind / window / appliesTo), never by name.
  * `undefined` when no bound can be identified.
  */
-function chooseCumulativeBound(
+export function chooseCumulativeBound(
   receipt: ExecutionReceipt,
   bounds: Record<string, string | number> | undefined,
   profile: AgentProfile | null | undefined,

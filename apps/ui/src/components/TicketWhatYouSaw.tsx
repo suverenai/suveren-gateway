@@ -29,6 +29,7 @@ import { RequestContextBoxBody } from './RequestContextBox';
 import { systemDisplayName, splitTool } from '../lib/approval-view';
 import { matchShownHashEntry, shownStatus, otherApproversNote, formatReadAt } from '../lib/au10-shown-view';
 import { useAuth } from '../contexts/AuthContext';
+import { ObFold } from './ObjectCard';
 
 interface Props {
   proposalId: string;
@@ -66,24 +67,23 @@ export function TicketWhatYouSaw({ proposalId, tool, manifests }: Props) {
 
   if (offDevice) {
     return (
-      <div className="ticket-box ticket-shown-off-device" data-testid="au10-shown" data-shown-status="off-device">
-        <h4>What you saw</h4>
-        <p className="ticket-done-note">Only on the approving gateway — this device has no local copy.</p>
-      </div>
+      <ObFold title="What you saw" summary="only on the approving gateway" testId="au10-shown" attrs={{ 'data-shown-status': 'off-device' }}>
+        <p className="ob-quiet">Only on the approving gateway — this device has no local copy.</p>
+      </ObFold>
     );
   }
 
   const { snapshot } = resp;
   const { integrationId } = splitTool(tool);
   const systemName = systemDisplayName(integrationId, manifests);
+  const readAt = formatReadAt(snapshot.readAt);
+  const summary = status === 'verified' ? `read ${readAt} · verified`
+    : status === 'mismatch' ? `read ${readAt} · does not match what was approved`
+    : `read ${readAt}`;
 
   return (
-    <div className={`ticket-box ticket-shown-${status}`} data-testid="au10-shown" data-shown-status={status}>
-      <h4>
-        What you saw (read {formatReadAt(snapshot.readAt)})
-        {status === 'verified' && <span className="src-tag src-tag-sealed">verified</span>}
-        {status === 'mismatch' && <span className="src-tag src-tag-danger">does not match what was approved</span>}
-      </h4>
+    <ObFold title="What you saw" summary={summary} testId="au10-shown" attrs={{ 'data-shown-status': status }}>
+      <p className="ob-lbl">Read by the gateway at {readAt}, kept on this device — not read again now.</p>
 
       {/* Exactly the live card's own boxes, fed from the stored snapshot —
           same components, so rendering can never drift from the card. */}
@@ -91,17 +91,13 @@ export function TicketWhatYouSaw({ proposalId, tool, manifests }: Props) {
       <RequestContextBoxBody resp={snapshot.requestContext} />
 
       {status === 'verified' && (
-        <p className="ticket-done-note ticket-done-note-ok">
-          &#10003; Matches the fingerprint recorded with your approval.
-        </p>
+        <p className="ob-check">&#10003; Matches the fingerprint recorded with your approval.</p>
       )}
       {status === 'mismatch' && (
-        <p className="ticket-done-note ticket-done-note-bad">
-          &#9888; This copy differs from the fingerprint recorded with your approval.
-        </p>
+        <p className="ob-check ob-check-x">&#10005; <b>This copy differs from the fingerprint recorded with your approval.</b></p>
       )}
       {status === 'unchecked' && (
-        <p className="ticket-done-note ticket-done-note-neutral">
+        <p className="ob-quiet">
           This device's copy of what was shown, kept locally — the Authority Server does not record a
           fingerprint for you to check it against.
         </p>
@@ -109,7 +105,7 @@ export function TicketWhatYouSaw({ proposalId, tool, manifests }: Props) {
       {/* AU10 §8.4 coordinator decision — several required approvers each
           record their OWN entry; only "your" entry is ever shown as
           verified/mismatch, never someone else's. */}
-      {othersNote && <p className="ticket-done-note ticket-done-note-neutral" data-testid="au10-shown-others">{othersNote}</p>}
-    </div>
+      {othersNote && <p className="ob-quiet" data-testid="au10-shown-others">{othersNote}</p>}
+    </ObFold>
   );
 }

@@ -1,15 +1,18 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { Fragment, useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react';
 import { spClient, type PendingItem, type GateContentEntry, type ProfileConfig, type ProfileSummary, type IntegrationManifest } from '../lib/sp-client';
 import { profileIdentity, shortProfileId } from '../lib/profile-identity';
 import { resolveAreaName, areaIcon, type AreaIconName } from '../lib/area';
 import { AreaIcon } from '../components/AreaIcon';
 import { AreaFilterPills, type AreaFilterOption } from '../components/AreaFilterPills';
 import { AuthorizePicker } from '../components/AuthorizePicker';
-import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useSearchParams, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { StatusBadge } from '../components/StatusBadge';
 import { DomainBadge } from '../components/DomainBadge';
-import { TTLBadge } from '../components/TTLBadge';
+import { ObTypeLine, ObFold, ObLock, useFoldAccordion } from '../components/ObjectCard';
+import { COMMITMENT_REVIEW, COMMITMENT_AUTOMATIC } from '../lib/commitment-words';
+import { useMandateReceipts, usedToday, ticketsUnder } from '../lib/mandate-card-usage';
+import { actionLabel } from '../lib/receipt-summary';
+import { isToday, ticketTime } from '../lib/core-objects';
 import { EmptyState } from '../components/EmptyState';
 import { ExtendAuthModal } from '../components/ExtendAuthModal';
 import { formatScopeValue } from '../lib/scope-labels';
@@ -100,6 +103,8 @@ interface AuthCardProps {
    *  mandate's protocol version. Learned lazily (only once an execution
    *  was actually attempted), so absence does not mean "confirmed fine". */
   needsReapprovalSet?: Set<string>;
+  /** Connector manifests — only to name the tickets under a mandate. */
+  manifests?: IntegrationManifest[];
 }
 
 function AuthCard({
@@ -115,6 +120,7 @@ function AuthCard({
   copyingHash,
   profileConfigCache,
   mode,
+  group,
   ownerLabel,
   isAdmin,
   onExpand,
@@ -127,6 +133,7 @@ function AuthCard({
   onArchive,
   highlightHash,
   needsReapprovalSet,
+  manifests = [],
 }: AuthCardProps) {
   const status = getAuthStatus(item, { revokedSet });
   const needsReapproval = status === 'active' && (needsReapprovalSet?.has(item.authorization_id) ?? false);
@@ -191,304 +198,173 @@ function AuthCard({
   // only a new authorization can move it (the profile id is inside the signed
   // attestation, so this can never be an in-place edit).
   const upgradeHint = newerProfile ? (
-    <div
-      style={{
-        fontSize: '0.75rem', color: 'var(--text-tertiary)', marginBottom: '0.5rem',
-        padding: '0.4rem 0.6rem', border: '1px solid var(--border)', borderRadius: 6,
-      }}
-    >
-      <strong style={{ color: 'var(--text-secondary)' }}>
-        {profileShortName}@{newerProfile.version} available
-      </strong>
+    <p className="ob-quiet" data-testid="mandate-upgrade-hint">
+      <b>{profileShortName}@{newerProfile.version} available</b>
       {newerProfile.whatsNew ? <> — {newerProfile.whatsNew}</> : null}
-      <br />
-      <span>This mandate stays on {item.profile_id.split('@')[1] ?? 'its pinned version'}; authorize again to move it.</span>
-    </div>
+      {' '}This mandate stays on {item.profile_id.split('@')[1] ?? 'its pinned version'}; authorize again to move it.
+    </p>
   ) : null;
 
   const isHighlighted = highlightHash != null && item.authorization_id === highlightHash;
 
+  // UI spec §18.2 — the closed card's one quiet line: the commitment, then the
+  // main limits in the area's own words.
+  const commitmentTitle = item.deferred_commitment_domains.length > 0 ? COMMITMENT_REVIEW.title : COMMITMENT_AUTOMATIC.title;
+  const MAIN_LIMITS = 3;
+  const mainLimits = boundsEntries.slice(0, MAIN_LIMITS).map(([k, v]) => `${limitLabel(k)} ${limitValue(k, v)}`);
+  const moreLimits = boundsEntries.length - mainLimits.length;
+  const quietLine = [commitmentTitle, ...mainLimits, ...(moreLimits > 0 ? [`+${moreLimits} more`] : [])].join(' · ');
+
+  const since = item.created_at
+    ? `since ${new Date(item.created_at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}`
+    : null;
+  const expiredOn = status === 'expired' ? statusTimestamp(item, status) : null;
+  const foldsRef = useFoldAccordion<HTMLDivElement>();
+  // Opening a card closes the one above it, so the list moves up and the new
+  // card's top can land above the view. Once open, its top goes to the top.
+  const cardRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (!isExpanded) return;
+    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    cardRef.current?.scrollIntoView({ block: 'start', behavior: reduce ? 'auto' : 'smooth' });
+  }, [isExpanded]);
+
   return (
     <div
-      className={`card mandate-card${isHighlighted ? ' card-highlight' : ''}`}
+      ref={cardRef}
+      className={`ob-card mandate-card${isExpanded ? ' is-open' : ''}${isHighlighted ? ' card-highlight' : ''}`}
+      data-testid="mandate-card"
       key={item.authorization_id}
-      style={{ marginBottom: 0 }}
     >
-      <div className="id-body">
-      {/* UI spec §13.3 — the card sits under its area's heading, so its top
-          line carries only "since when"; repeating the area on every card
-          is noise. The mandate's own title is the big header just below. */}
-      {item.created_at && (
-        <div className="obj-line">
-          since {new Date(item.created_at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}
-        </div>
-      )}
+      <button type="button" className="ob-head" aria-expanded={isExpanded} onClick={() => onExpand(item)}>
+        <ObTypeLine
+          tag="Mandate"
+          profileId={item.profile_id}
+          parts={[
+            area,
+            since,
+            <span className="ob-st" key="st">{status.charAt(0).toUpperCase() + status.slice(1)}{expiredOn ? ` ${new Date(expiredOn.iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}` : ''}</span>,
+            needsReapproval ? <span className="ob-st" key="re" title="The Authority Server no longer verifies this mandate's protocol version. Re-approve it to keep using this authority.">Needs re-approval</span> : null,
+            identity.testSetup ? 'Test setup' : null,
+          ]}
+        />
+        <span className="ob-title">{item.title || profileShortName}</span>
+        {!isExpanded && <span className="ob-one">{quietLine}</span>}
+      </button>
+
       {upgradeHint}
-
-      {/* Team owner line */}
-      {ownerLabel && (
-        <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginBottom: '0.375rem' }}>
-          Owner: <span style={{ color: 'var(--text-secondary)', fontWeight: 500 }}>{ownerLabel}</span>
+      {ownerLabel && <p className="ob-quiet">Owner: <b>{ownerLabel}</b></p>}
+      {/* Only when it says something: several domains, or one still missing. */}
+      {(item.required_domains.length > 1 || item.missing_domains.length > 0) && (
+        <div className="ob-badges">
+          {item.required_domains.map(d => (
+            <DomainBadge key={d} domain={d} attested={item.attested_domains.includes(d)} />
+          ))}
         </div>
       )}
-
-      {/* Collapsed view */}
-      <div className="auth-card-header">
-        {/* The profile name now lives in the rail — this is the mandate's own
-            title; it falls back to the profile name so the header never
-            renders blank for a mandate with no custom title. */}
-        <span
-          style={{
-            fontWeight: 700,
-            fontSize: '1rem',
-            color: 'var(--text-primary)',
-            letterSpacing: '0.01em',
-          }}
-        >
-          {item.title || profileShortName}
-        </span>
-        <StatusBadge status={status} />
-        {needsReapproval && (
-          <span
-            title="The Authority Server no longer verifies this mandate's protocol version. Re-approve it to keep using this authority."
-            style={{
-              fontSize: '0.75rem',
-              fontWeight: 700,
-              color: 'var(--text-primary)',
-              background: 'transparent',
-              border: '1px dashed var(--text-primary)',
-              borderRadius: '4px',
-              padding: '2px 6px',
-            }}
-          >
-            Needs re-approval
-          </span>
-        )}
-        {identity.testSetup && <span className="sim-mark">Test setup</span>}
-        {status === 'active' && item.earliest_expiry && (
-          <TTLBadge expiresAt={new Date(item.earliest_expiry).getTime() / 1000} />
-        )}
-        {/* The date beside "Expired" must be the EXPIRY, not the creation date.
-            It rendered created_at, so an authority created Jul 3 and expired
-            Aug 9 read as "Expired · Jul 3" — over a month wrong, and only
-            noticeable if you happened to know when you created it. */}
-        {status === 'expired' && (() => {
-          const ts = statusTimestamp(item, status);
-          if (!ts) return null;
-          return (
-            <span
-              style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}
-              title={`Expired ${new Date(ts.iso).toLocaleString()}`}
-            >
-              {new Date(ts.iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
-            </span>
-          );
-        })()}
-      </div>
-
-      <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.5rem', alignItems: 'center' }}>
-        {/* Only when it says something: several domains, or one still
-            missing. A single attested domain (in a team: the team's id) is
-            noise on every card. */}
-        {(item.required_domains.length > 1 || item.missing_domains.length > 0) && item.required_domains.map(d => (
-          <DomainBadge key={d} domain={d} attested={item.attested_domains.includes(d)} />
-        ))}
-        {item.deferred_commitment_domains.length > 0 && (
-          <span style={{
-            fontSize: '0.65rem',
-            padding: '0.15rem 0.4rem',
-            borderRadius: '0.25rem',
-            background: 'var(--accent-subtle)',
-            color: 'var(--accent)',
-            fontWeight: 600,
-          }}>
-            Review Mode
-          </span>
-        )}
-        {isAboveCap && (
-          <span
-            title={capPillTooltip}
-            style={{
-              fontSize: '0.65rem',
-              padding: '0.15rem 0.4rem',
-              borderRadius: '0.25rem',
-              background: 'transparent',
-              color: 'var(--text-primary)',
-              border: hasApprovers ? '1px dashed var(--text-primary)' : '2px solid var(--text-primary)',
-              fontWeight: 600,
-              cursor: 'help',
-            }}
-          >
-            {capPillText}
-          </span>
-        )}
-        {approversDrifted && (
+      {isAboveCap && (
+        <p className="ob-quiet ob-bold" title={capPillTooltip} data-testid="mandate-cap-note">{capPillText}</p>
+      )}
+      {approversDrifted && (
+        <p className="ob-quiet">
           <button
-            className="btn btn-ghost btn-sm"
-            style={{
-              fontSize: '0.65rem',
-              padding: '0.15rem 0.5rem',
-              borderRadius: '0.25rem',
-              background: 'transparent',
-              color: 'var(--text-primary)',
-              fontWeight: 600,
-              border: '1px dashed var(--text-primary)',
-              cursor: 'pointer',
-              lineHeight: 1.4,
-            }}
+            type="button"
+            className="ob-link"
             onClick={() => onCopy(item)}
             disabled={copyingHash === item.authorization_id}
             title="The approver list for this profile has changed since this mandate was created. Copy to reissue with the current approvers."
           >
             {copyingHash === item.authorization_id ? 'Copying...' : 'Approver list updated · Copy with new approvers'}
           </button>
-        )}
-      </div>
-
-      {boundsEntries.length > 0 && (
-        <div style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>
-          {boundsEntries.map(([k, v], i) => {
-            const r = aboveCapByKey.get(k);
-            return (
-              <span key={k}>
-                {i > 0 && ' · '}
-                {r ? (
-                  hasApprovers ? (
-                    <span title={`Team cap on ${k} is ${r.cap}. Actions exceeding the cap require per-action approval. Bound remains authorized at ${r.authorized}.`}>
-                      <span style={{ color: 'var(--text-tertiary)' }}>{limitLabel(k)}: {limitValue(k, v)}</span>
-                      <span style={{ color: 'var(--accent)', marginLeft: '0.25rem', fontWeight: 600 }}>
-                        ↑ approval at {r.cap}
-                      </span>
-                    </span>
-                  ) : (
-                    <span title={`Team cap on ${k} is ${r.cap} with no approvers configured (hard cap). Authorized for ${r.authorized}; effective ${r.cap}.`}>
-                      <span style={{ textDecoration: 'line-through', color: 'var(--text-tertiary)' }}>{limitLabel(k)}: {limitValue(k, v)}</span>
-                      <span style={{ marginLeft: '0.25rem', fontWeight: 700 }}>
-                        {'→'} {r.cap}
-                      </span>
-                    </span>
-                  )
-                ) : (
-                  <span>{limitLabel(k)}: {limitValue(k, v)}</span>
-                )}
-              </span>
-            );
-          })}
-        </div>
+        </p>
       )}
 
-      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '0.5rem' }}>
-        {/* Archive: a local display flag for finished mandates. Deletes
-            nothing — the mandate and every ticket issued under it stay
-            stored and verifiable. Never offered for live authority. */}
-        {canArchive && (
-          <button
-            className="btn btn-secondary btn-sm"
-            onClick={() => onArchive!(item.authorization_id, !archived)}
-            disabled={archivingHash === item.authorization_id}
-            title={archived
-              ? 'Move back to the Expired or Revoked list'
-              : 'Hide from the list and the nav badge. Nothing is deleted: the mandate and its tickets stay stored and verifiable.'}
-          >
-            {archivingHash === item.authorization_id
-              ? (archived ? 'Unarchiving…' : 'Archiving…')
-              : (archived ? '↩ Unarchive' : '⊟ Archive')}
-          </button>
-        )}
-        <button
-          className="btn btn-ghost btn-sm"
-          onClick={() => onExpand(item)}
-        >
-          {isExpanded ? '▲ Hide Details' : '▼ Details'}
-        </button>
-      </div>
-
-      {/* Expanded view */}
       {isExpanded && (
-        <div style={{ borderTop: '1px solid var(--border)', marginTop: '0.75rem', paddingTop: '0.75rem' }}>
-          {boundsEntries.length > 0 && (
-            <>
-              <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.25rem' }}>
-                Bounds
+        <div ref={foldsRef} className="ob-open" data-testid="mandate-open">
+          <section className="ob-tile" data-testid="mandate-signed">
+            <div className="ob-tile-h"><ObLock />You signed this</div>
+            <div className="ob-part">
+              <div className="ob-lbl">
+                Intent — your words{item.created_at ? `, signed ${new Date(item.created_at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}` : ''}
               </div>
-              <dl className="review-grid">
-                {boundsEntries.map(([k, v]) => (
-                  <span key={k} style={{ display: 'contents' }}>
-                    <dt title={limitLines.get(k)?.hint}>{limitLabel(k)}</dt>
-                    <dd>{limitValue(k, v)}</dd>
-                  </span>
-                ))}
-              </dl>
-            </>
-          )}
-
-          {gateEntry?.context && Object.keys(gateEntry.context).length > 0 && (
-            <>
-              <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginTop: '1rem', marginBottom: '0.25rem' }}>
-                Scope
-              </div>
-              <dl className="review-grid">
-                {Object.entries(gateEntry.context).map(([k, v]) => (
-                  <span key={k} style={{ display: 'contents' }}>
-                    <dt>{k}</dt>
-                    <dd title={String(v)}>{formatScopeValue(k, v, gateEntry.contextLabels)}</dd>
-                  </span>
-                ))}
-              </dl>
-            </>
-          )}
-
-          <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginTop: '1rem', marginBottom: '0.25rem' }}>
-            Intent
-          </div>
-          {gateLoading === item.authorization_id ? (
-            <p style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>Loading gate content...</p>
-          ) : gateEntry ? (
-            <div className="gate-content-block">
-              <div className="gate-content-item">
-                <div className="gate-content-text">{gateEntry.gateContent.intent}</div>
-              </div>
+              {gateLoading === item.authorization_id ? (
+                <p className="ob-quiet">Loading gate content...</p>
+              ) : gateEntry ? (
+                <p className="ob-intent" data-testid="mandate-intent">{gateEntry.gateContent.intent}</p>
+              ) : (
+                <p className="ob-quiet">Gate content not available.</p>
+              )}
             </div>
-          ) : (
-            <p style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>Gate content not available.</p>
-          )}
+            <dl className="ob-kv ob-part">
+              <dt>Commitment</dt><dd>{commitmentTitle}</dd>
+              {(item.earliest_expiry || status === 'revoked') && (
+                <>
+                  <dt>Valid</dt>
+                  <dd>
+                    {status === 'revoked'
+                      ? 'revoked'
+                      : status === 'expired'
+                        ? `until ${new Date(item.earliest_expiry!).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })} — expired`
+                        : `until ${new Date(item.earliest_expiry!).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}, or until you revoke it`}
+                  </dd>
+                </>
+              )}
+              {boundsEntries.length > 0 && (
+                <>
+                  <dt>Limits</dt>
+                  <dd>
+                    <MandateLimits
+                      item={item}
+                      boundsEntries={boundsEntries}
+                      limitLines={limitLines}
+                      limitLabel={limitLabel}
+                      limitValue={limitValue}
+                      aboveCapByKey={aboveCapByKey}
+                      hasApprovers={hasApprovers}
+                      profile={profile}
+                    />
+                  </dd>
+                </>
+              )}
+              {gateEntry?.context && Object.keys(gateEntry.context).length > 0 && (
+                <>
+                  <dt>Scope</dt>
+                  <dd>
+                    {Object.entries(gateEntry.context).map(([k, v]) => (
+                      <div key={k} title={String(v)}>{formatScopeValue(k, v, gateEntry.contextLabels)}</div>
+                    ))}
+                  </dd>
+                </>
+              )}
+              <dt>Applies to</dt>
+              <dd>{mode === 'team' && group ? `${group.name} (team)` : 'Personal'}</dd>
+            </dl>
+          </section>
 
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: '1rem' }}>
-            Created: {new Date(item.created_at).toLocaleString()}
-            {item.earliest_expiry && ` · Expires: ${new Date(item.earliest_expiry).toLocaleString()}`}
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.25rem' }}>
-            <span style={{ fontSize: '0.7rem', color: 'var(--text-tertiary)', fontFamily: "'SF Mono', Monaco, monospace", wordBreak: 'break-all' }}>
-              {item.authorization_id}
-            </span>
-            <button
-              className="btn btn-ghost btn-sm"
-              style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem' }}
-              onClick={() => onCopyHash(item.authorization_id)}
-            >
-              {copiedHash === item.authorization_id ? 'copied' : 'copy'}
-            </button>
-          </div>
+          {!ownerLabel && <MandateTickets item={item} manifests={manifests} />}
 
-          {/* Expanded action row */}
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '0.75rem' }}>
-            {/* Copy action only shown in Mine tab (team items belong to other users) */}
-            {!ownerLabel && (
-              <button
-                className="btn btn-secondary btn-sm"
-                onClick={() => onCopy(item)}
-                disabled={copyingHash === item.authorization_id}
-                title="Start a new mandate pre-filled with these bounds, scope, and intent"
-              >
-                {copyingHash === item.authorization_id ? 'Copying…' : '⧉ Copy'}
-              </button>
-            )}
+          <ObFold title="Technical details" summary={item.created_at ? `created ${new Date(item.created_at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}` : undefined} testId="mandate-technical">
+            <dl className="ob-kv">
+              {item.created_at && <><dt>Created</dt><dd>{new Date(item.created_at).toLocaleString()}</dd></>}
+              <dt>Mandate id</dt>
+              <dd className="ob-mono">
+                {item.authorization_id}{' '}
+                <button type="button" className="ob-link" onClick={() => onCopyHash(item.authorization_id)}>
+                  {copiedHash === item.authorization_id ? 'copied' : 'copy'}
+                </button>
+              </dd>
+              <dt>Profile</dt><dd className="ob-mono">{item.profile_id}</dd>
+            </dl>
+          </ObFold>
+
+          <div className="ob-btns">
             {/* Edit = replace: grants are content-immutable, so the wizard opens
                 pre-filled and signing the new grant auto-revokes this one. Only
                 for live grants — an expired one has nothing to revoke (use Copy). */}
             {!ownerLabel && (status === 'active' || status === 'pending') && (
               <button
-                className={needsReapproval ? 'btn btn-primary btn-sm' : 'btn btn-secondary btn-sm'}
+                type="button"
+                className="ob-btn"
                 onClick={() => onCopy(item, { asEdit: true })}
                 disabled={copyingHash === item.authorization_id}
                 title={
@@ -497,22 +373,30 @@ function AuthCard({
                     : 'Adjust intent, bounds, or scope: opens the ceremony pre-filled; signing the new mandate revokes this one'
                 }
               >
-                {needsReapproval ? '⚠ Re-approve' : '✎ Edit'}
+                {needsReapproval ? 'Re-approve' : 'Edit'}
               </button>
             )}
             {/* Extend only in Mine tab */}
             {!ownerLabel && showExtend && (
+              <button type="button" className="ob-btn" onClick={() => onExtend(item)}>Extend</button>
+            )}
+            {/* Copy action only shown in Mine tab (team items belong to other users) */}
+            {!ownerLabel && (
               <button
-                className="btn btn-secondary btn-sm"
-                onClick={() => onExtend(item)}
+                type="button"
+                className="ob-btn"
+                onClick={() => onCopy(item)}
+                disabled={copyingHash === item.authorization_id}
+                title="Start a new mandate pre-filled with these bounds, scope, and intent"
               >
-                {'↻ Extend'}
+                {copyingHash === item.authorization_id ? 'Copying…' : 'Copy'}
               </button>
             )}
             {/* Revoke: in Mine tab for active/pending; in Team tab for admin on any non-revoked item */}
             {ownerLabel && isAdmin && status !== 'revoked' ? (
               <button
-                className="btn btn-danger btn-sm"
+                type="button"
+                className="ob-btn"
                 onClick={() => onRevoke(item.authorization_id, ownerLabel, profileShortName)}
                 disabled={revokingHash === item.authorization_id}
               >
@@ -520,18 +404,111 @@ function AuthCard({
               </button>
             ) : !ownerLabel && (status === 'active' || status === 'pending') ? (
               <button
-                className="btn btn-danger btn-sm"
+                type="button"
+                className="ob-btn"
                 onClick={() => onRevoke(item.authorization_id)}
                 disabled={revokingHash === item.authorization_id}
               >
                 {revokingHash === item.authorization_id ? 'Revoking…' : 'Revoke'}
               </button>
             ) : null}
+            {/* Archive: a local display flag for finished mandates. Deletes
+                nothing — the mandate and every ticket issued under it stay
+                stored and verifiable. Never offered for live authority. */}
+            {canArchive && (
+              <button
+                type="button"
+                className="ob-btn"
+                onClick={() => onArchive!(item.authorization_id, !archived)}
+                disabled={archivingHash === item.authorization_id}
+                title={archived
+                  ? 'Move back to the Expired or Revoked list'
+                  : 'Hide from the list and the nav badge. Nothing is deleted: the mandate and its tickets stay stored and verifiable.'}
+              >
+                {archivingHash === item.authorization_id
+                  ? (archived ? 'Unarchiving…' : 'Archiving…')
+                  : (archived ? 'Unarchive' : 'Archive')}
+              </button>
+            )}
           </div>
         </div>
       )}
-      </div>
     </div>
+  );
+}
+
+/** The signed limits, one row each, with "N used today" where the tickets prove it (§18.2). */
+function MandateLimits({ item, boundsEntries, limitLines, limitLabel, limitValue, aboveCapByKey, hasApprovers, profile }: {
+  item: PendingItem;
+  boundsEntries: Array<[string, unknown]>;
+  limitLines: Map<string, { hint?: string }>;
+  limitLabel: (k: string) => string;
+  limitValue: (k: string, v: unknown) => string;
+  aboveCapByKey: Map<string, { authorized: number; cap: number }>;
+  hasApprovers: boolean;
+  profile: ReturnType<typeof useProfile>;
+}) {
+  const res = useMandateReceipts();
+  const used = res.state === 'ok'
+    ? usedToday({
+        receipts: res.receipts,
+        coversToday: res.coversToday,
+        authorizationId: item.authorization_id,
+        bounds: item.frame as Record<string, string | number>,
+        profile,
+        nowMs: Date.now(),
+      })
+    : {};
+  return (
+    <dl className="ob-kv ob-sub" data-testid="mandate-limits">
+      {boundsEntries.map(([k, v]) => {
+        const r = aboveCapByKey.get(k);
+        return (
+          <Fragment key={k}>
+            <dt title={limitLines.get(k)?.hint}>{limitLabel(k)}</dt>
+            <dd>
+              {r ? (
+                hasApprovers ? (
+                  <span title={`Team cap on ${k} is ${r.cap}. Actions exceeding the cap require per-action approval. Bound remains authorized at ${r.authorized}.`}>
+                    {limitValue(k, v)} <span className="ob-quiet-inline">↑ approval at {r.cap}</span>
+                  </span>
+                ) : (
+                  <span title={`Team cap on ${k} is ${r.cap} with no approvers configured (hard cap). Authorized for ${r.authorized}; effective ${r.cap}.`}>
+                    <s>{limitValue(k, v)}</s> → {r.cap}
+                  </span>
+                )
+              ) : limitValue(k, v)}
+            </dd>
+            <dd className="ob-use">{used[k] ?? ''}</dd>
+          </Fragment>
+        );
+      })}
+    </dl>
+  );
+}
+
+/** "Tickets under this mandate" (§18.2): the newest ones among the account's latest tickets. */
+function MandateTickets({ item, manifests }: { item: PendingItem; manifests: IntegrationManifest[] }) {
+  const res = useMandateReceipts();
+  const mine = res.state === 'ok' ? ticketsUnder(res.receipts, item.authorization_id) : [];
+  const today = mine.filter(r => isToday(r.timestamp, Date.now())).length;
+  const summary = res.state === 'loading' ? 'loading…'
+    : res.state === 'failed' ? 'could not load'
+    : mine.length === 0 ? 'none in the latest tickets'
+    : `${mine.length} recent${today > 0 ? ` · ${today} today` : ''}`;
+  return (
+    <ObFold title="Tickets under this mandate" summary={summary} testId="mandate-tickets">
+      <p className="ob-lbl">From the latest tickets signed on this account.</p>
+      {res.state === 'failed' && <p>Tickets could not be loaded. Try again shortly.</p>}
+      {res.state === 'ok' && mine.length === 0 && <p>No action has run under this mandate in the latest tickets.</p>}
+      {mine.slice(0, 5).map(r => (
+        <p key={r.id} className="ob-ticket-row">
+          <Link to="/tickets" className="ob-link-strong">{actionLabel(r, manifests)}</Link>
+          <span className="ob-quiet-inline"> · {ticketTime(r.timestamp, Date.now())}</span>
+        </p>
+      ))}
+      {mine.length > 0 && <p><Link to="/tickets" className="ob-link-strong">All tickets ›</Link></p>}
+    </ObFold>
   );
 }
 
@@ -996,11 +973,12 @@ export function AuthorizationsPage() {
     onRevoke: handleRevoke,
     onExtend: setExtendItem,
     highlightHash,
+    manifests,
   };
   const mineCardProps = { ...sharedCardProps, archivedSet, archivingHash, onArchive: handleArchive, needsReapprovalSet };
 
   return (
-    <>
+    <div className="ob-page">
       <div
         className="page-header"
         style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem', flexWrap: 'wrap' }}
@@ -1188,6 +1166,6 @@ export function AuthorizationsPage() {
           }}
         />
       )}
-    </>
+    </div>
   );
 }

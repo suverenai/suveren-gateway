@@ -1,24 +1,24 @@
 /**
- * ApprovalBody — the shared middle section of a PENDING proposal's approval
- * card (AU5, work-plan.md "Added 2026-10-09"; approved mockup
- * temp/mockups/gateway-ux-v7.html §6). Used by BOTH ApproverProposalCard
- * (above-cap) and ActionCard (review-mode) so the two cannot drift again —
- * every pending proposal gets the same headline/preview/limits/mandate
- * treatment regardless of which queue surfaces it. Each caller keeps its own
- * header, approver-progress/buttons and approve/reject logic.
+ * ApprovalBody — the scrolling middle of a PENDING proposal's approval card
+ * (UI spec §17, "Approval card v3"; earlier: AU5). Used by every pending
+ * proposal — review-mode and above-cap — so the two cannot drift.
  *
- * Renders, in order:
- *  - Headline ("erp · send_quote")
- *  - Preview box — the system's own read, before it runs (PreviewBox.tsx)
- *  - "Within your limits" — per-call bound checks (lib/receipt-summary.ts)
- *  - Mandate + intent (two lines, "Show full intent")
- *  - Inspection links (above the fold — judging the action needs something
- *    to look at, not just an identifier)
- *  - "Details (exactly what is bound)" — folded; tool args + the
- *    execution-context fields the Gatekeeper actually checked, together.
+ * It lays out through CSS `order` (the card body is a flex column), in the
+ * order of §17.3:
+ *   1. type line ("Action · Invoicing · 12 min"), title (manifest sentence)
+ *   2. failed check, over-limit block (only when present)
+ *   3. notice / "not checked" lines
+ *   4. the sealed tile — "Runs exactly as shown" / "You sign these limits"
+ *   5. folded rows: Covered by · ✓ N checks passed · Request · History ·
+ *      Technical details (mandate: Intent stays open above the rows,
+ *      "Proposed through" is a row)
+ * The decision buttons belong to the caller (ApprovalCard).
  */
 import { approvalSummary } from '../lib/approval-summary';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { ReactNode } from 'react';
+import { Link } from 'react-router-dom';
+import { CREATE_MANDATE_TOOL, MANDATE_TILE_OMIT, mandatePreviewParts, mandateTechnicalLine, mandateTitleParts, mandateTargetProfile, modeView } from '../lib/mandate-proposal';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { resolveProposalLinks, type ProposalLink } from '../lib/proposal-links';
 import {
@@ -32,6 +32,14 @@ import {
 import { ProposalArgs } from './ProposalArgs';
 import { PreviewBox } from './PreviewBox';
 import { RequestContextBox } from './RequestContextBox';
+import { useAreaCatalog } from '../lib/area-catalog';
+import { areaName, ageLabel, deadlineLabel } from '../lib/core-objects';
+import { areaIcon } from '../lib/area';
+import { AreaIcon } from './AreaIcon';
+import { useMandateUsage } from '../lib/mandate-usage';
+import { previewBoxView } from '../lib/approval-preview-view';
+import { SystemBoxes } from './RenderedCreationView';
+import { isTestSetupAction, profileIdentity, shortProfileId } from '../lib/profile-identity';
 import { AttachmentsSealedBox } from './AttachmentsSealedBox';
 import { AiTextBox } from './AiTextBox';
 import { extractAttachmentsSealed, attachmentCheckEntries, type LimitCheckLike } from '../lib/attachment-sealed';
@@ -99,15 +107,18 @@ interface Props {
    * map (ActionCard today) keeps showing the raw id, unchanged.
    */
   nameOf?: (userId: string) => string;
+  /** The covering mandate's own title, when it has one (shown under "Covered by"). */
+  mandateTitle?: string;
+  /** Over-limit block and approver progress (UI spec §4.2.4) — placed right under a failed check. */
+  topExtras?: ReactNode;
 }
 
 /** DL6: tool-specific on purpose — this builtin is the gateway's own, so
  *  pre-filling the mandate screen from ITS particular argument shape (profile/
  *  limits/scope/intent/mode/duration_hours) is acceptable even though every
  *  other part of this module stays generic (brief decision 6). */
-const CREATE_MANDATE_TOOL = 'setup__create_mandate';
 
-export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDisplay, manifests, onContentState, onShownSnapshot, nameOf }: Props) {
+export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDisplay, manifests, onContentState, onShownSnapshot, nameOf, mandateTitle, topExtras }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [editingBeforeSigning, setEditingBeforeSigning] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
@@ -272,157 +283,230 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
         </>
   ) : null;
 
+  const catalog = useAreaCatalog();
+  const isMandate = proposal.tool === CREATE_MANDATE_TOOL;
+  const mandateArgs = isMandate ? (content.toolArgs as CreateMandateProposalArgs | null) : null;
+  // A mandate proposal is about the area it names, not the Delegation it rides on.
+  const typeProfile = isMandate ? mandateTargetProfile(mandateArgs, proposal.profileId) : proposal.profileId;
+  const typeArea = areaName(typeProfile, catalog);
+  // A mandate proposal is test setup when the profile it creates a mandate for is (§17.3).
+  const testSetup = isMandate
+    ? profileIdentity(mandateTargetProfile(mandateArgs, proposal.profileId)).testSetup
+    : (profileIdentity(proposal.profileId).testSetup || isTestSetupAction(proposal.tool));
+  // §12.2 — "Decide by …" only inside the last 24 hours.
+  const due = deadlineLabel(proposal.expiresAt, Date.now());
+  const parts = mandatePreviewParts(previewData && previewData.status === 'ok' && 'body' in previewData ? previewData.body.structured : undefined);
+  const aiIntent = typeof mandateArgs?.intent === 'string' && mandateArgs.intent.trim() ? mandateArgs.intent : (isMandate ? parts.intent ?? null : null);
+  const mode = isMandate ? modeView(mandateArgs?.mode ?? parts.mode) : null;
+  // The mandate card shows the AI's intent open above the rows, so it leaves the tile.
+  const sentArgs = isMandate && content.toolArgs
+    ? Object.fromEntries(Object.entries(content.toolArgs).filter(([k]) => k !== 'intent' && k !== 'mode'))
+    : content.toolArgs;
+  const sentFor = sentArgs ? (
+    <ProposalArgs args={sentArgs} display={toolDisplay} heading="" requestRefArg={requestRefArg} />
+  ) : null;
+  const coveredName = mandateTitle || profile?.name || profileDisplayName(proposal.profileId);
+  const usage = useMandateUsage(proposal.authorizationId, mandateBounds, profile);
+  const usageOne = usage.state === 'ok' ? usage.lines.map((l) => `${l.text} ${l.label}`).join(' · ') : usage.state === 'none' ? 'none yet today' : '';
+  // The display-only reads (VIES and the like) sit outside the sealed tile.
+  const systemView = previewData ? previewBoxView(previewData, systemName, content.toolArgs ?? undefined).creation : undefined;
+  const sourceNote = previewData ? previewBoxView(previewData, systemName, content.toolArgs ?? undefined).note : undefined;
+  // Restored from the pre-v3 card: an irreversible tool is said so, and a local image preview is shown.
+  const lowerTool = proposal.tool.toLowerCase();
+  const destructive = ['delete', 'refund', 'cancel', 'revoke'].some((w) => lowerTool.includes(w));
+  const imagePreview = typeof content.toolArgs?._imagePreview === 'string' ? (content.toolArgs._imagePreview as string) : null;
+  const sealedHeading = isMandate ? 'You sign this' : 'Runs exactly as shown';
+  const technicalOne = isMandate ? mandateTechnicalLine(parts) : `${headline} · ${shortProfileId(proposal.profileId)}${proposal.profileId.includes('@') ? `@${proposal.profileId.split('@')[1]}` : ''}`;
+
   return (
     <>
-      {/* UI spec §4.2.1 — one sentence from the manifest's summary template
-          and the sealed values (never AI text); the tool name stays, small,
-          under it. In a row the row head already carries the sentence. */}
-      {/* §4.2.2 — a failed check is the one red line, above the sentence. */}
+      {/* UI spec §17.2 — the type line: a small, quiet line above the title. */}
+      <div className="av3-type" style={{ order: 0 }} data-testid="approval-type">
+        {isMandate ? <span className="av3-mtag">Mandate</span> : <b>Action</b>}
+        <span className="av3-area"><AreaIcon icon={areaIcon(typeProfile)} />{typeArea}</span>
+        <span>{ageLabel(proposal.createdAt * 1000, Date.now())}</span>
+        {testSetup && <span className="sim-mark">Test setup</span>}
+      </div>
+      {/* §4.2.1 — one sentence from the manifest's summary template and the
+          sealed values (never AI text). */}
+      <h2 className="av3-title" style={{ order: 1 }} data-testid="approval-summary">{isMandate ? <>{typeArea} · {mandateTitleParts(typeArea, mandateArgs).name ?? 'new mandate'}</> : approvalSummary(proposal.tool, content.toolArgs, manifests, undefined, refNameFrom(previewData ?? undefined, content.toolArgs))}</h2>
+      {due && <p className="av3-quiet av3-due" style={{ order: 1 }} data-testid="approval-deadline">{due}</p>}
+      {/* §4.2.2 — a failed check is the one red line, right under the title. */}
       <ChecksLines lines={lines} placement="top" />
-      <div className="approval-summary" data-testid="approval-summary">{approvalSummary(proposal.tool, content.toolArgs, manifests, undefined, refNameFrom(previewData ?? undefined, content.toolArgs))}</div>
-      <div className="approval-headline">{headline}</div>
-      {/* §4.2.2 — the other checks, one line each, before the sealed values. */}
+      {topExtras && <div className="av3-extras" style={{ order: 3 }}>{topExtras}</div>}
+      {/* Notice / not-checked lines stay open; passed checks are one folded row. */}
       <ChecksLines lines={lines} placement="body" />
 
+      {destructive && (
+        <div className="av3-attention" style={{ order: 4 }} data-testid="irreversible-note">
+          <div className="check-line check-notice">
+            <svg className="i" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5" /><path d="M8 7.5v3.5M8 5h0" /></svg>
+            <span><strong>Irreversible action</strong></span>
+          </div>
+        </div>
+      )}
+
       {/* PE1 mockup §4 — a device added after the proposal was made has no
-          key wrap for it: no "What will be sent" box (nothing TO show), and
-          — see ActionCard/ApproverProposalCard — no decision buttons either,
-          via onContentState above. Takes priority over the preview box and
-          every other content-shaped section below. */}
+          key wrap for it: no sealed values (nothing TO show), and no decision
+          buttons either, via onContentState above. */}
       {content.sealed && content.undecryptable && (
-        <div className="preview-box" data-testid="proposal-undecryptable" style={{ marginBottom: '0.5rem' }}>
+        <div className="av3-note" style={{ order: 5 }} data-testid="proposal-undecryptable">
           <strong>Encrypted for another device.</strong>
-          <p style={{ margin: '0.35rem 0 0', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+          <p>
             This device was added after the proposal was made, and no device of yours has shared it yet.
             It is shared automatically once a device that can read it comes online — or open it there.
           </p>
         </div>
       )}
       {content.sealed && content.loading && (
-        <div className="preview-box" data-testid="proposal-decrypting" style={{ marginBottom: '0.5rem' }}>
-          Decrypting…
-        </div>
+        <div className="av3-note" style={{ order: 5 }} data-testid="proposal-decrypting">Decrypting…</div>
       )}
 
-      {/* Preview box — the system's own read, before it runs. Gateway-internal
-          (decision 1); every fallback keeps the bound values below visible
-          and Approve/Reject enabled (decisions 2-3). */}
-      {boundOpen && readable && (
-        <div className="preview-box preview-box-ok" data-testid="bound-values-open" style={{ marginBottom: '0.5rem' }}>
-          <h4>
-            What will be sent
-            {content.sealed
-              ? <><span className="src-tag src-tag-sealed">sealed</span></>
-              : <span className="src-tag src-tag-sealed">sealed</span>}
-          </h4>
-          {sentContent}
-        </div>
+      {/* The sealed tile (§17.2): what the person approves, complete, never
+          truncated (Tier A2). The preview's heading and "sealed" tag stay in
+          the markup for readers and tests; the tile's own heading says it. */}
+      <section className="av3-sealed" style={{ order: 6 }} data-testid="sealed-values" aria-labelledby={`sealed-h-${proposal.id}`}>
+        <h3 id={`sealed-h-${proposal.id}`} className="av3-sealed-h">
+          <svg className="i" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5" /><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" /></svg>
+          {sealedHeading}
+        </h3>
+        {/* §17.3 (6) — a mandate proposal: everything signed in this one tile.
+            The AI's intent first (amber — it becomes the person's words on
+            signing), then Commitment as a row like Valid. */}
+        {isMandate && aiIntent && (
+          <div className="av3-intent" data-testid="mandate-intent-ai">
+            <div className="av3-intent-l">Intent — written by the AI, becomes your words when you sign</div>
+            <p>{aiIntent}</p>
+          </div>
+        )}
+        {readable && isMandate && (
+          <div className="av3-edit">
+            <button
+              type="button"
+              className="av3-link"
+              data-testid="edit-before-signing"
+              onClick={handleEditBeforeSigning}
+              disabled={editingBeforeSigning}
+            >
+              {editingBeforeSigning ? 'Opening…' : 'Edit before signing'}
+            </button>
+            {editError && <p className="msg-error">{editError}</p>}
+          </div>
+        )}
+        {mode && (
+          <dl className="av3-mandate-rows" data-testid="mandate-mode">
+            <dt>{mode.label}</dt><dd>{mode.title}</dd>
+          </dl>
+        )}
+        {imagePreview && (
+          <img
+            src={imagePreview}
+            alt={typeof content.toolArgs?.altText === 'string' ? (content.toolArgs.altText as string) : 'local image preview'}
+            className="av3-image"
+          />
+        )}
+        {boundOpen && readable && (
+          <div className="preview-box preview-box-ok" data-testid="bound-values-open">
+            <h4>What will be sent <span className="src-tag src-tag-sealed">sealed</span></h4>
+            {sentFor}
+          </div>
+        )}
+        {/* UI spec §2.1/§15.2/§15.3 — the AI-authored-text argument (manifest
+            `display.aiText`) in amber, apart from the sealed recipients/subject.
+            Still sealed (content binding hashes it like every bound field). */}
+        {readable && content.toolArgs && aiTextValue(content.toolArgs, toolDisplay) !== undefined && (
+          <AiTextBox text={aiTextValue(content.toolArgs, toolDisplay)!} />
+        )}
+        {/* UI spec §15.2 — a sealed block per attachment/inserted value. */}
+        {readable && (
+          <AttachmentsSealedBox
+            attachments={attachmentsSealed.attachments}
+            inserts={attachmentsSealed.inserts}
+            manifests={manifests}
+            fetchPreview={fetchAttachmentPreview}
+            onChecks={setAttachmentChecks}
+          />
+        )}
+        {readable && (
+          <PreviewBox
+            proposalId={proposal.id}
+            systemName={systemName}
+            toolArgs={content.toolArgs}
+            sealed={content.sealed}
+            systemBoxes={false}
+            omitKeys={isMandate ? MANDATE_TILE_OMIT : undefined}
+            hideNote
+            onTone={setPreviewTone}
+            onData={setPreviewData}
+          />
+        )}
+        {isMandate && (parts.workspace || parts.title) && (
+          <dl className="av3-mandate-rows" data-testid="mandate-applies-to">
+            {parts.workspace && <><dt>Applies to</dt><dd>{parts.workspace}</dd></>}
+            {parts.title && <><dt>Title</dt><dd>{parts.title}</dd></>}
+          </dl>
+        )}
+      </section>
+      {systemView && systemView.systemBoxes.length > 0 && (
+        <div style={{ order: 7 }}><SystemBoxes view={systemView} /></div>
       )}
-      {/* UI spec §2.1/§15.2/§15.3 — the AI-authored-text argument (manifest
-          `display.aiText`, e.g. mail/gmail's `body`), in its own amber box,
-          separate from the sealed recipients/subject box above — never
-          inside the generic ProposalArgs table (argRows hides it the same
-          way `_attachmentsSealed` is hidden). Still sealed; see AiTextBox. */}
-      {readable && content.toolArgs && aiTextValue(content.toolArgs, toolDisplay) !== undefined && (
-        <AiTextBox text={aiTextValue(content.toolArgs, toolDisplay)!} />
-      )}
-      {/* UI spec §15.2 — a sealed box per attachment/inserted value, right
-          next to the other sealed values (never inside the generic
-          ProposalArgs table, which the `_attachmentsSealed` key is hidden
-          from — HIDDEN_ARG_KEYS in lib/approval-view.ts). */}
-      {readable && (
-        <AttachmentsSealedBox
-          attachments={attachmentsSealed.attachments}
-          inserts={attachmentsSealed.inserts}
-          manifests={manifests}
-          fetchPreview={fetchAttachmentPreview}
-          onChecks={setAttachmentChecks}
-        />
-      )}
-      {/* G4 — some recipients could not be reached when this was submitted
-          (no registered end-to-end key); the submission itself was never
-          blocked on it. Computed from fields already on the wire — see
-          missingRecipients's doc comment — never a lookup. */}
+      {/* G4 — some recipients could not be reached when this was submitted. */}
       {cannotRead.length > 0 && (
-        <p data-testid="proposal-cannot-read" style={{ margin: '0 0 0.5rem', fontSize: '0.78rem', color: 'var(--text-tertiary)' }}>
+        <p className="av3-quiet" style={{ order: 7 }} data-testid="proposal-cannot-read">
           Cannot read this proposal yet: {cannotRead.map(id => nameOf?.(id) ?? id).join(', ')} — shared automatically once they sign in on a device.
         </p>
       )}
-      {readable && (
-        <PreviewBox
-          proposalId={proposal.id}
-          systemName={systemName}
-          toolArgs={content.toolArgs}
-          sealed={content.sealed}
-          onTone={setPreviewTone}
-          onData={setPreviewData}
-        />
-      )}
-      {/* AU10 — Request + History, right after the AU8 "What will be
-          created" box (doc/au10-request-context.md §3). */}
-      {readable && <RequestContextBox proposalId={proposal.id} onData={setRequestContextData} />}
-      {/* AU10 F1 — ONE legend for the whole card, after History (mockup:
-          temp/au10-mockup/index.html) — not duplicated inside the AU8 box
-          any more (RenderedCreationView used to render its own, incl. in
-          cards where Request/History never show). */}
-      {readable && (
-        // UI spec §4.2.11: the legend is a "?" disclosure, not permanent text.
-        <details className="creation-legend-fold">
-          <summary aria-label="What the marks mean">?</summary>
-          <p className="creation-legend" data-testid="au10-legend">
-            <span><i className="creation-legend-dot creation-legend-dot-sealed" />sealed — approved and executed exactly so</span>
-            <span><i className="creation-legend-dot creation-legend-dot-system" />from the system — read by the gateway, not by the AI</span>
-            <span><i className="creation-legend-dot au10-dot-ai" />the AI's own claim or text — not checked</span>
-            {content.sealed && <span>Decrypted on this device — suveren.ai stores only an unreadable copy and its fingerprint.</span>}
-          </p>
+
+      {/* ── Folded rows (§17.3): one line each, chevron, no lines between ── */}
+      {isMandate ? (
+        <details className="av3-fold" style={{ order: 10 }} data-testid="proposed-through">
+          <summary>
+            <span className="h">Proposed through</span>
+            <span className="one">Delegation{parts.checks[0] ? ` · ${parts.checks[0]}` : ''}</span>
+            <Chev />
+          </summary>
+          <div className="av3-fold-body">
+            <p>Proposed by the AI through your <strong>Delegation</strong> mandate.</p>
+            {parts.checks.length > 0 && (
+              <ul className="av3-plain" data-testid="mandate-checks">{parts.checks.map((c) => <li key={c}>{c}</li>)}</ul>
+            )}
+            <MandateIntent intent={intent} loading={intentLoading} error={intentError} expanded={expanded} onToggle={() => setExpanded(!expanded)} />
+          </div>
+        </details>
+      ) : (
+        <details className="av3-fold" style={{ order: 10 }} data-testid="covered-by">
+          <summary>
+            <span className="h">Covered by</span>
+            <span className="one">{coveredName}{usageOne ? ` · ${usageOne}` : ''}</span>
+            <Chev />
+          </summary>
+          <div className="av3-fold-body">
+            <p><Link to="/mandates" className="av3-link-strong">{coveredName} ›</Link></p>
+            {usage.state === 'ok' && (
+              <dl className="av3-usage">
+                {usage.lines.map((l) => (<Fragment key={l.label}><dt>{l.label}</dt><dd>{l.text}</dd></Fragment>))}
+              </dl>
+            )}
+            {usage.state === 'none' && <p className="av3-quiet">No ticket under this mandate yet today.</p>}
+            <MandateIntent intent={intent} loading={intentLoading} error={intentError} expanded={expanded} onToggle={() => setExpanded(!expanded)} />
+          </div>
         </details>
       )}
 
-      {/* Mandate + intent */}
-      <div className="mandate-intent">
-        <dl>
-          <dt>Mandate</dt>
-          <dd>
-            <strong>{profile?.name ?? profileDisplayName(proposal.profileId)}</strong>
-          </dd>
-        </dl>
-        <dl>
-          <dt>Intent</dt>
-          <dd>
-            {intentError ? (
-              <p className="msg-error" style={{ fontSize: '0.8rem', margin: 0 }}>{intentError}</p>
-            ) : intent !== null ? (
-              <>
-                <p className={`intent-text${expanded ? '' : ' intent-clamped'}`}>{intent}</p>
-                <button
-                  className="btn btn-ghost btn-sm intent-toggle"
-                  onClick={() => setExpanded(!expanded)}
-                >
-                  {expanded ? 'Show less' : 'Show full intent'}
-                </button>
-              </>
-            ) : intentLoading ? (
-              <p style={{ color: 'var(--text-tertiary)', fontSize: '0.8rem', margin: 0 }}>Loading intent…</p>
-            ) : (
-              <p style={{ color: 'var(--text-tertiary)', fontSize: '0.8rem', margin: 0 }}>No intent available for this mandate.</p>
-            )}
-          </dd>
-        </dl>
-      </div>
+      {/* Request + History (AU10) as two folded rows. */}
+      {readable && <RequestContextBox proposalId={proposal.id} layout="folds" onData={setRequestContextData} />}
 
-      {/* Inspection links — ABOVE the folded Details on purpose. The point of
-          review mode is judging the action, and an identifier cannot be judged.
-          Whatever can actually be looked at has to come before the raw values. */}
+      {/* Inspection links — judging the action needs something to look at,
+          not just an identifier. Open, above the folded rows. */}
       {readable && inspectLinks.length > 0 && (
-        <div style={{ marginBottom: '0.75rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+        <div className="av3-links" style={{ order: 9 }}>
           {inspectLinks.map(l => (
             <a
               key={l.label}
               href={l.href}
               target="_blank"
               rel="noopener noreferrer"
-              className="btn btn-secondary btn-sm"
-              style={{ textDecoration: 'none' }}
+              className="av3-link-btn"
               title={l.description ?? l.href}
             >
               {l.label} &#8599;
@@ -431,47 +515,71 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
         </div>
       )}
 
-      {/* Details (exactly what is bound) — folded; the preview box above
-          already shows the system's own read, so the raw arguments are not
-          the first thing to read, but every one of them is still here —
-          the call's arguments AND the execution-context fields the
-          Gatekeeper actually checked (never both hidden behind separate
-          toggles: one fold, everything that is bound). */}
-      {!boundOpen && readable && (
-      <details className="proposal-args-fold" style={{ marginBottom: '0.75rem' }}>
-        <summary style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', cursor: 'pointer' }}>
-          Details (exactly what is bound)
-        </summary>
-        <div style={{ marginTop: '0.5rem' }}>{boundContent}</div>
-      </details>
-      )}
-
-      {/* DL6 — "Edit before signing": this proposal's own tool is the
-          gateway's builtin mandate-creation proposal (CREATE_MANDATE_TOOL) —
-          the only case where editing the intent before approving makes
-          sense, since the intent becomes the person's own signed words.
-          Approve/Reject (owned by the caller) stay exactly as they are;
-          this is an additional way out, never a replacement for either. */}
-      {readable && proposal.tool === CREATE_MANDATE_TOOL && (
-        <div style={{ marginBottom: '0.75rem' }}>
-          <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0 0 0.4rem' }}>
-            The intent above is written by the AI, but it becomes <strong>your words</strong> once you approve.
-            Edit it first — nothing is created until you sign on the mandate screen.
-          </p>
-          <button
-            type="button"
-            className="btn btn-secondary btn-sm"
-            data-testid="edit-before-signing"
-            onClick={handleEditBeforeSigning}
-            disabled={editingBeforeSigning}
-          >
-            {editingBeforeSigning ? 'Opening…' : 'Edit before signing'}
-          </button>
-          {editError && (
-            <p className="msg-error" style={{ fontSize: '0.8rem', margin: '0.4rem 0 0' }}>{editError}</p>
-          )}
-        </div>
+      {readable && (
+        <details className="av3-fold" style={{ order: 15 }} data-testid="technical-details">
+          <summary>
+            <span className="h">Technical details</span>
+            <span className="one">{technicalOne}</span>
+            <Chev />
+          </summary>
+          <div className="av3-fold-body proposal-args-fold">
+            {/* Everything that is bound: the call's arguments (unless they are
+                already open in the tile) and the execution-context fields the
+                Gatekeeper checked — one fold, nothing hidden behind another. */}
+            {isMandate && (parts.proposal || parts.profileVersion) && (
+              <dl className="av3-usage">
+                {parts.proposal && <><dt>Proposal</dt><dd>{parts.proposal}</dd></>}
+                {parts.profileVersion && <><dt>Version</dt><dd>{parts.profileVersion}</dd></>}
+              </dl>
+            )}
+            {isMandate ? null : boundOpen
+              ? boundsEntries.length > 0 && (
+                <div className="av3-bound">
+                  {boundsEntries.map(([k, v], i) => {
+                    const { label, hint } = contextFieldLabel(k, profile);
+                    return (<span key={k}>{i > 0 && ' · '}<span title={hint}>{label}={formatArgValue(v)}</span></span>);
+                  })}
+                </div>
+              )
+              : boundContent}
+            {sourceNote && <p className="av3-quiet" data-testid="preview-source-note">{sourceNote}</p>}
+            {/* UI spec §4.2.11: the legend lives here, not on the card. */}
+            <p className="creation-legend" data-testid="au10-legend">
+              <span><i className="creation-legend-dot creation-legend-dot-sealed" />sealed — approved and executed exactly so</span>
+              <span><i className="creation-legend-dot creation-legend-dot-system" />from the system — read by the gateway, not by the AI</span>
+              <span><i className="creation-legend-dot au10-dot-ai" />the AI's own claim or text — not checked</span>
+              {content.sealed && <span>Decrypted on this device — suveren.ai stores only an unreadable copy and its fingerprint.</span>}
+            </p>
+          </div>
+        </details>
       )}
     </>
+  );
+}
+
+function Chev() {
+  return <svg className="i chev" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3 5 5-5 5" /></svg>;
+}
+
+/** The covering mandate's own intent (the person's signed words), two lines, expandable. */
+function MandateIntent({ intent, loading, error, expanded, onToggle }: {
+  intent: string | null; loading: boolean; error: string | null; expanded: boolean; onToggle: () => void;
+}) {
+  return (
+    <div className="av3-mintent">
+      <div className="av3-quiet">Intent</div>
+      {error ? (
+        <p className="msg-error">{error}</p>
+      ) : intent !== null ? (
+        <>
+          <p className={`intent-text${expanded ? '' : ' intent-clamped'}`}>{intent}</p>
+          <button type="button" className="av3-link" onClick={onToggle}>{expanded ? 'Show less' : 'Show full intent'}</button>
+        </>
+      ) : loading ? (
+        <p className="av3-quiet">Loading intent…</p>
+      ) : (
+        <p className="av3-quiet">No intent available for this mandate.</p>
+      )}
+    </div>
   );
 }

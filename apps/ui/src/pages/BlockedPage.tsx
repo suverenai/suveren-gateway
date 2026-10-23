@@ -2,14 +2,16 @@ import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type { AgentProfile } from '@hap/core';
 import { spClient, type DenialRecord } from '../lib/sp-client';
-import { blockedView, kindOf, todaysCount, formatBlockedWhen, resolveMandateTitle } from '../lib/blocked-view';
+import { blockedView, kindOf, todaysCount, formatBlockedWhen, resolveMandateTitle, plainTitle, reasonLead, refusedByLine, type BlockedView } from '../lib/blocked-view';
 import { EmptyState } from '../components/EmptyState';
-import { ObjectLine, MandateLine } from '../components/ObjectLine';
+import { Link } from 'react-router-dom';
+import { ObTypeLine, ObFold, useFoldAccordion } from '../components/ObjectCard';
 import { AreaFilterPills, type AreaFilterOption } from '../components/AreaFilterPills';
-import { systemDisplayName } from '../lib/approval-view';
 import { useAreaCatalog } from '../lib/area-catalog';
+import { loadProfile } from '../lib/profile-cache';
 import { resolveAreaName, areaIcon, parseAreaFilter, matchesAreaFilter } from '../lib/area';
 import { shortProfileId } from '../lib/profile-identity';
+import { sourceName } from '../components/RecentBlocks';
 import { useVisiblePolling } from '../hooks/useVisiblePolling';
 import { useSSEEvent } from '../contexts/EventSourceContext';
 
@@ -26,7 +28,7 @@ import { useSSEEvent } from '../contexts/EventSourceContext';
  */
 export function BlockedPage() {
   const [records, setRecords] = useState<DenialRecord[] | null>(null);
-  const [profiles, setProfiles] = useState<Record<string, AgentProfile>>({});
+  const [profiles, setProfiles] = useState<Record<string, AgentProfile | null>>({});
   const [failed, setFailed] = useState(false);
   const catalog = useAreaCatalog();
 
@@ -90,11 +92,13 @@ export function BlockedPage() {
     const need = [...new Set(records.map(r => r.profile).filter((p): p is string => !!p))]
       .filter(p => !(p in profiles));
     if (need.length === 0) return;
-    Promise.all(need.map(p => spClient.getProfile(p).catch(() => null)))
+    // loadProfile resolves a short name ("email" → its newest version) and
+    // caches failures too; a miss is stored as null so it is never re-fetched.
+    Promise.all(need.map(p => loadProfile(p)))
       .then(results => {
         setProfiles(prev => {
           const next = { ...prev };
-          need.forEach((p, i) => { if (results[i]) next[p] = results[i]; });
+          need.forEach((p, i) => { next[p] = results[i]; });
           return next;
         });
       });
@@ -165,7 +169,7 @@ export function BlockedPage() {
   const filteredRecords = records.filter(r => matchesAreaFilter(r.profile ?? r.integrationId, areaFilter));
 
   return (
-    <div className="blocked-page">
+    <div className="blocked-page ob-page">
       <div className="page-header blocked-header">
         <h1 className="page-title">Blocked actions</h1>
         <span className="blocked-today">{today} today · nothing ran</span>
@@ -184,49 +188,83 @@ export function BlockedPage() {
         <AreaFilterPills areas={areaOptions} selected={areaFilter} onSelect={setAreaFilter} totalCount={records.length} />
         <div className="blocked-list">
           {filteredRecords.map((r, i) => {
-            const view = blockedView(r, r.profile ? profiles[r.profile] : undefined, mandateTitlesById);
+            const view = blockedView(r, r.profile ? profiles[r.profile] ?? undefined : undefined, mandateTitlesById);
             const unseen = seenCutoff !== null && r.ts > seenCutoff;
             const pid = r.profile ?? r.integrationId;
             return (
-              <div
-                className="card blocked-item blocked-card"
-                data-seen={unseen ? 'false' : 'true'}
+              <BlockedCard
                 key={`${r.ts}-${i}`}
-              >
-                <div className="id-body">
-                  {/* UI spec §12.2/§13.2 — the same top line as approvals,
-                      mandates and tickets, instead of the profile rail. */}
-                  <ObjectLine
-                    profileId={pid}
-                    area={resolveAreaName(pid, catalog)}
-                    system={r.integrationId ? systemDisplayName(r.integrationId, undefined) : undefined}
-                    time={formatBlockedWhen(r.ts, Date.now())}
-                    trailing={unseen ? <span className="new-pill">New</span> : undefined}
-                  />
-                  <div className="blocked-row-head">
-                    <span className={`blocked-dot blocked-dot-${kindOf(r)}`} aria-hidden="true" />
-                    <span className="blocked-title">{view.title}</span>
-                  </div>
-                  <MandateLine title={resolveMandateTitle(r, mandateTitlesById)} area={resolveAreaName(pid, catalog)} />
-                  <div className="blocked-sentence">{view.sentence}</div>
-                  <div className="blocked-source">
-                    {view.sourceLine.map((part, pi) =>
-                      part.dim
-                        ? <span className="mandate-id" key={pi}>{part.text}</span>
-                        : <span key={pi}>{part.text}</span>
-                    )}
-                  </div>
-                  <details>
-                    <summary>What you can do</summary>
-                    <div className="blocked-advice">{view.whatYouCanDo}</div>
-                  </details>
-                </div>
-              </div>
+                record={r}
+                view={view}
+                area={resolveAreaName(pid, catalog)}
+                unseen={unseen}
+                mandateTitle={resolveMandateTitle(r, mandateTitlesById)}
+              />
             );
           })}
         </div>
         </>
       )}
+    </div>
+  );
+}
+
+/**
+ * UI spec §18.4 — a refusal looks like the approval card: type line, a plain
+ * title of what was tried, ONE bold ✕ line with the reason (not red — red is
+ * for failed checks on approval cards), who refused. No grey tile: nothing was
+ * signed and nothing ran.
+ */
+function BlockedCard({ record: r, view, area, unseen, mandateTitle }: {
+  record: DenialRecord;
+  view: BlockedView;
+  area: string;
+  unseen: boolean;
+  mandateTitle: string | undefined;
+}) {
+  const ref = useFoldAccordion<HTMLDivElement>();
+  return (
+    <div
+      className="ob-card blocked-item blocked-card"
+      data-seen={unseen ? 'false' : 'true'}
+      data-testid="blocked-card"
+    >
+      <div ref={ref}>
+        <ObTypeLine
+          tag="Blocked"
+          profileId={r.profile ?? undefined}
+          className="obj-line"
+          parts={[
+            area,
+            r.integrationId ? `via ${sourceName(r.integrationId)}` : null,
+            formatBlockedWhen(r.ts, Date.now()),
+            unseen ? <span className="ob-st new-pill" data-testid="blocked-new">New</span> : null,
+          ]}
+        />
+        <h3 className="ob-title">{plainTitle(r)}</h3>
+        <p className="ob-check ob-check-x" data-kind={kindOf(r)}>
+          <span aria-hidden="true">✕</span>
+          <span><b>{reasonLead(r)}</b> {view.sentence}</span>
+        </p>
+        <p className="ob-quiet">{refusedByLine(r)}</p>
+        <ObFold title="What you can do" summary="change the mandate or ignore it" testId="blocked-advice">
+          <p>{view.whatYouCanDo}</p>
+        </ObFold>
+        <ObFold title="Technical details" summary={r.code ?? undefined} testId="blocked-technical">
+          <dl className="ob-kv">
+            <dt>Action</dt><dd className="ob-mono">{sourceName(r.integrationId)} · {r.tool}</dd>
+            <dt>Mandate</dt>
+            <dd>
+              {mandateTitle ?? (r.mandateId ? '' : 'none covers it')}
+              {r.mandateId && <span className="ob-mono"> {r.mandateId.slice(0, 14)}…</span>}
+            </dd>
+            {r.code && <><dt>Code</dt><dd className="ob-mono">{r.code}</dd></>}
+          </dl>
+        </ObFold>
+        <div className="ob-btns">
+          <Link className="ob-btn" to={r.mandateId ? `/mandates?highlight=${encodeURIComponent(r.mandateId)}` : '/mandates'}>Open mandate</Link>
+        </div>
+      </div>
     </div>
   );
 }

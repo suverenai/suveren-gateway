@@ -27,7 +27,7 @@ import {
 import { profileIdentity, isTestSetupAction } from '../lib/profile-identity';
 import { useProfile } from '../lib/profile-cache';
 import { useAreaCatalog } from '../lib/area-catalog';
-import { ObjectLine, MandateLine } from './ObjectLine';
+import { ObTypeLine, ObFold, useFoldAccordion } from './ObjectCard';
 import { TicketHeadline } from './TicketHeadline';
 import { areaName, systemName, shortTicketId, ticketTime } from '../lib/core-objects';
 import { TicketWhatWasDone } from './TicketWhatWasDone';
@@ -70,15 +70,6 @@ interface Props {
   defaultOpen?: boolean;
 }
 
-function Row({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <>
-      <dt className="receipt-row-label">{label}</dt>
-      <dd className="receipt-row-value">{children}</dd>
-    </>
-  );
-}
-
 export function ReceiptCard({
   receipt,
   manifests,
@@ -111,168 +102,151 @@ export function ReceiptCard({
   const now = Date.now();
   const catalog = useAreaCatalog();
   const area = areaName(receipt.profileId, catalog);
-  const verified = signature === 'valid' || signature === 'valid-legacy';
+  const system = systemName(receipt.action, manifests);
+  const foldsRef = useFoldAccordion<HTMLDivElement>();
+  const mandateName = grantTitle || profileVersionLabel(receipt.profileId);
+  const when = ticketTime(receipt.timestamp, now);
+  const shortId = shortTicketId(receipt.id);
 
   return (
-    <div className={`ticket-obj ticket-obj-card${isNew ? ' is-new' : ''}${open ? ' is-open' : ''}`} data-new={isNew ? 'true' : 'false'}>
-      <div className="ticket-obj-main">
-      <button type="button" className="ticket-obj-head" aria-expanded={open} onClick={() => setOpen(o => !o)}>
-        <ObjectLine
+    <div
+      className={`ob-card ticket-obj-card${isNew ? ' is-new' : ''}${open ? ' is-open' : ''}`}
+      data-new={isNew ? 'true' : 'false'}
+      data-testid="ticket-card"
+    >
+      <button type="button" className="ob-head ticket-obj-head" aria-expanded={open} onClick={() => setOpen(o => !o)}>
+        <ObTypeLine
+          tag="Ticket"
           profileId={receipt.profileId}
-          area={area}
-          system={systemName(receipt.action, manifests)}
-          time={ticketTime(receipt.timestamp, now)}
-          leading={isNew ? <span className="seen-dot is-new" aria-label="new since your last visit" /> : undefined}
+          className="obj-line"
+          parts={[
+            area,
+            `via ${system}`,
+            when,
+            <span className="ob-st" key="st">{wasReviewed(receipt) ? 'Approved' : 'Automatic'}</span>,
+            testSetup ? 'Test setup' : null,
+            isNew ? <span className="ob-st" key="new" aria-label="new since your last visit">New</span> : null,
+          ]}
         />
-      {/* Headline: what happened, in words. */}
-      <div className="receipt-head">
-        <span className="receipt-what" data-testid="ticket-headline">
-          <TicketHeadline ticketId={receipt.id} timestamp={receipt.timestamp} proposalId={receipt.proposalId} tool={receipt.action} manifests={manifests} label={actionLabel(receipt, manifests)} />
+        {/* Headline: what happened, in words — "<Area> · <summary>" (§18.1). */}
+        <span className="ob-title receipt-what">
+          {area} · <span data-testid="ticket-headline"><TicketHeadline ticketId={receipt.id} timestamp={receipt.timestamp} proposalId={receipt.proposalId} tool={receipt.action} manifests={manifests} label={actionLabel(receipt, manifests)} /></span>
         </span>
-        <span className="receipt-tag">{wasReviewed(receipt) ? 'approved' : 'automatic'}</span>
-        {receipt.contentHash && (
-          <span
-            className="receipt-tag receipt-tag-bound"
-            title={receipt.contentBinding?.fields
-              ? `Sealed in the ticket: ${receipt.contentBinding.fields.join(', ')} — exactly this content was sent`
-              : 'Sealed in the ticket — exactly this content was sent'}
-          >
-            content sealed
-          </span>
-        )}
-        {testSetup && <span className="sim-mark">Test setup</span>}
-      </div>
-      <MandateLine title={grantTitle} area={area} />
-
-      {/* What THIS call touched (from the signed receipt). */}
-      {scope && <div className="receipt-scope">{scope}</div>}
-      </button>
-
-      {open && (<>
-      <div className="receipt-when">{formatDate(receipt.timestamp)}</div>
-
-      {/* "What was sent" FIRST — sealed in the ticket, or recorded by this
-          gateway, then what the tool answered (UI spec §14). See
-          components/TicketWhatWasDone.tsx. */}
-      <TicketWhatWasDone receipt={receipt} manifests={manifests} />
-
-      {/* AU10 §8.4 — "What you saw": only meaningful for a ticket that ran
-          via a committed (review-mode) proposal — an automatic action's
-          card never showed a Request/History box to begin with. */}
-      {receipt.proposalId && (
-        <TicketWhatYouSaw proposalId={receipt.proposalId} tool={receipt.action} manifests={manifests} />
-      )}
-
-      {/* The record, as stored. */}
-      <dl className="receipt-rows">
-        <Row label="mandate">
-          <strong>{grantTitle || profileVersionLabel(receipt.profileId)}</strong>{' '}
-          <span className="src-tag src-tag-local">local</span>
-        </Row>
-
-        {ownerLabel && <Row label="owner">{ownerLabel}</Row>}
-
-        {allowed && (
-          <Row label="allowed">
-            {allowed} <span className="src-tag src-tag-local">local</span>
-          </Row>
-        )}
-
-        {usage && (
-          <Row label="used">
-            <span className="receipt-num">{usage}</span> <span className="src-tag src-tag-sealed">sealed</span>
-          </Row>
-        )}
-
-        <Row label="intent">
-          {intent
-            ? (
-              <>
-                <span className={`intent-text${intentExpanded ? '' : ' intent-clamped'}`}>{intent}</span>
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-sm intent-toggle"
-                  onClick={() => setIntentExpanded(!intentExpanded)}
-                >
-                  {intentExpanded ? 'Show less' : 'Show full intent'}
-                </button>{' '}
-                <span className="src-tag src-tag-local">local</span>
-              </>
-            )
-            : <span className="receipt-absent">
-                {localUnavailable
-                  ? 'local store unreachable — sign in to the gateway to read it'
-                  : 'not on this device — the Authority Server stores only its hash'}
-              </span>}
-        </Row>
-      </dl>
-
-      {/* Evidence: the complete record vs the shareable redacted view. */}
-      <div className="receipt-foot">
+        {/* The signature line sits under the title (§18.3) — only what was actually checked here. */}
         {signature === 'valid' && (
-          <span className="receipt-verified" title="Ed25519 signature checked on this device against the issuer key archived when the ticket was issued — no Authority Server involved.">
-            &#10003; Verified on this device
+          <span className="ob-check" title="Ed25519 signature checked on this device against the issuer key archived when the ticket was issued — no Authority Server involved.">
+            <span aria-hidden="true">&#10003;</span><span>Signature verified on this device · ticket <span className="ob-mono">{shortId}</span></span>
           </span>
         )}
         {signature === 'valid-legacy' && (
-          <span className="receipt-verified" title="Ed25519 signature checked on this device against the issuer key archived when the ticket was issued. This ticket was issued before protocol 0.7 and is checked with that version's format.">
-            &#10003; Verified on this device · issued before protocol 0.7
+          <span className="ob-check" title="Ed25519 signature checked on this device against the issuer key archived when the ticket was issued. This ticket was issued before protocol 0.7 and is checked with that version's format.">
+            <span aria-hidden="true">&#10003;</span><span>Signature verified on this device · issued before protocol 0.7 · ticket <span className="ob-mono">{shortId}</span></span>
           </span>
         )}
         {signature === 'invalid' && (
-          <span className="receipt-tamper" title="The stored ticket does not match what was signed.">
-            &#9888; Signature check FAILED
+          <span className="ob-check ob-check-x" title="The stored ticket does not match what was signed.">
+            <span aria-hidden="true">&#10005;</span><b>Signature check failed · ticket <span className="ob-mono">{shortId}</span></b>
           </span>
         )}
-        <button type="button" className="receipt-evidence-link" onClick={onOpenComplete}>
-          Complete ticket
-        </button>
-        {spUrl && (
-          <span className="receipt-public">
-            redacted, shareable:{' '}
-            <a
-              className="receipt-link"
-              href={`${spUrl}/r/${receipt.id}`}
-              target="_blank"
-              rel="noreferrer"
-            >
-              public link &#8599;
-            </a>
-          </span>
+        {signature !== 'valid' && signature !== 'valid-legacy' && signature !== 'invalid' && (
+          <span className="ob-one">Ticket <span className="ob-mono">{shortId}</span></span>
         )}
-      </div>
+        {/* What THIS call touched (from the signed receipt). */}
+        {scope && <span className="ob-one receipt-scope">{scope}</span>}
+      </button>
 
-      <details className="receipt-more">
-        <summary>Raw</summary>
-        <div className="receipt-kv">
-          <div>ticket &middot; {receipt.id}</div>
-          <div>action &middot; {receipt.action}</div>
-          <div>profile &middot; {receipt.profileId}</div>
-          {receipt.authorizationId && <div>mandate &middot; {receipt.authorizationId}</div>}
-          {Object.keys(receipt.executionContext ?? {}).length > 0 && (
-            <div>
-              scope &middot;{' '}
-              {Object.entries(receipt.executionContext)
-                .map(([k, v]) => `${k}=${v}`)
-                .join(' · ')}
-            </div>
+      {open && (
+        <div ref={foldsRef} className="ob-open">
+          {/* "What was sent" FIRST — sealed in the ticket (grey lock tile), or recorded by
+              this gateway (open, no tile), then Result as a fold (UI spec §14, §18.3). */}
+          <TicketWhatWasDone receipt={receipt} manifests={manifests} />
+
+          {/* AU10 §8.4 — "What you saw": only meaningful for a ticket that ran
+              via a committed (review-mode) proposal. */}
+          {receipt.proposalId && (
+            <TicketWhatYouSaw proposalId={receipt.proposalId} tool={receipt.action} manifests={manifests} />
           )}
-          {localAuth?.boundsHash && <div>bounds hash &middot; {localAuth.boundsHash}</div>}
-          {localAuth?.contextHash && <div>scope hash &middot; {localAuth.contextHash}</div>}
-          {receipt.contentHash && <div>content &middot; {receipt.contentHash}</div>}
-          {receipt.proposalId && <div>proposal &middot; {receipt.proposalId}</div>}
-          <div>signature &middot; {receipt.signature}</div>
+
+          <ObFold title="Mandate" summary={[mandateName, usage].filter(Boolean).join(' · ')} testId="ticket-mandate">
+            <p className="ob-lbl">
+              {intent || allowed ? 'Name, allowed values and intent: from this device.' : 'Name: from this device.'}
+              {usage ? ' Use: sealed in the ticket.' : ''}
+            </p>
+            <dl className="ob-kv receipt-rows">
+              <dt>Mandate</dt><dd>{mandateName}</dd>
+              {ownerLabel && <><dt>Owner</dt><dd>{ownerLabel}</dd></>}
+              {allowed && <><dt>Allowed</dt><dd>{allowed}</dd></>}
+              {usage && <><dt>Used</dt><dd className="receipt-num">{usage}</dd></>}
+              <dt>Intent</dt>
+              <dd className="ob-plain">
+                {intent
+                  ? (
+                    <>
+                      <span className={`intent-text${intentExpanded ? '' : ' intent-clamped'}`}>{intent}</span>{' '}
+                      <button type="button" className="ob-link" onClick={() => setIntentExpanded(!intentExpanded)}>
+                        {intentExpanded ? 'Show less' : 'Show full intent'}
+                      </button>
+                    </>
+                  )
+                  : <span className="receipt-absent">
+                      {localUnavailable
+                        ? 'local store unreachable — sign in to the gateway to read it'
+                        : 'not on this device — the Authority Server stores only its hash'}
+                    </span>}
+              </dd>
+            </dl>
+          </ObFold>
+
+          <ObFold title="Technical details" summary={`ticket ${shortId} · ${formatDate(receipt.timestamp)}`} testId="ticket-technical">
+            <p className="ob-lbl">Read from the signed ticket.</p>
+            <dl className="ob-kv">
+              <dt>Ticket</dt><dd className="ob-mono">{receipt.id}</dd>
+              <dt>Issued</dt><dd className="receipt-when">{formatDate(receipt.timestamp)}</dd>
+              <dt>Action</dt><dd className="ob-mono">{receipt.action}</dd>
+            </dl>
+            <details className="ob-raw receipt-more">
+              <summary>Raw</summary>
+              <div className="ob-mono receipt-kv">
+                <div>ticket &middot; {receipt.id}</div>
+                <div>action &middot; {receipt.action}</div>
+                <div>profile &middot; {receipt.profileId}</div>
+                {receipt.authorizationId && <div>mandate &middot; {receipt.authorizationId}</div>}
+                {Object.keys(receipt.executionContext ?? {}).length > 0 && (
+                  <div>
+                    scope &middot;{' '}
+                    {Object.entries(receipt.executionContext)
+                      .map(([k, v]) => `${k}=${v}`)
+                      .join(' · ')}
+                  </div>
+                )}
+                {localAuth?.boundsHash && <div>bounds hash &middot; {localAuth.boundsHash}</div>}
+                {localAuth?.contextHash && <div>scope hash &middot; {localAuth.contextHash}</div>}
+                {receipt.contentHash && <div>content &middot; {receipt.contentHash}</div>}
+                {receipt.proposalId && <div>proposal &middot; {receipt.proposalId}</div>}
+                <div>signature &middot; {receipt.signature}</div>
+              </div>
+            </details>
+          </ObFold>
+
+          {/* Evidence: the complete record vs the shareable redacted view. */}
+          <div className="ob-btns receipt-foot">
+            <button type="button" className="ob-btn receipt-evidence-link" onClick={onOpenComplete}>
+              Complete ticket
+            </button>
+            {spUrl && (
+              <a
+                className="ob-btn receipt-link"
+                href={`${spUrl}/r/${receipt.id}`}
+                target="_blank"
+                rel="noreferrer"
+                title="Redacted, shareable"
+              >
+                Public link &#8599;<span className="ob-btn-q"> · redacted</span>
+              </a>
+            )}
+          </div>
         </div>
-      </details>
-      </>)}
-      </div>
-      {/* The stub: the ticket's short id (tickets carry no separate number),
-          its time, and whether its signature checked out here. */}
-      <div className="ticket-obj-stub">
-        <span className="ticket-obj-no" title={receipt.id}>{shortTicketId(receipt.id)}</span>
-        <span className="ticket-obj-time">{ticketTime(receipt.timestamp, now)}</span>
-        {verified && <span className="ticket-obj-sig" title="Signature checked on this device">&#10003; verified</span>}
-      </div>
+      )}
     </div>
   );
 }

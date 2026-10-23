@@ -194,7 +194,7 @@ export function DashboardPage() {
   }
 
   return (
-    <>
+    <div className="dash-page">
       <div className="page-header">
         <h1 className="page-title">Dashboard</h1>
       </div>
@@ -238,28 +238,6 @@ export function DashboardPage() {
       {/* A new report waits to be read — one line, gone once it is opened. */}
       <ReportLine />
 
-      {/* Setup problems — shown only when there are any (no "All clear" box:
-          nothing to show, nothing shown — same rule as the column buttons). */}
-      {attentionItems.length > 0 && (
-      <section className="card attention attention-quiet" aria-label="Setup — needs attention">
-        <div className="card-header">
-          <h2 className="card-title">Setup — needs attention</h2>
-          <span className="rb-count">{attentionItems.length}</span>
-        </div>
-        <div className="attention-rows">
-          {attentionItems.map((item, i) => (
-            <Link key={i} to={item.to} className="attention-row">
-              <span className="attention-dot" style={{ background: item.color }} aria-hidden="true" />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-primary)' }}>{item.label}</div>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.detail}</div>
-              </div>
-              <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>{'\u203A'}</span>
-            </Link>
-          ))}
-        </div>
-      </section>
-      )}
       </>}
 
       {/* Real systems paused by simulation mode — one calm line, not an
@@ -282,8 +260,28 @@ export function DashboardPage() {
       {/* Approved commitments this gateway won't execute (submitted elsewhere) */}
       <SkippedCommitmentsCard />
 
-      {/* Recent read-blocks — the trust signal: a limit you set vs a malfunction */}
+      {/* New blocks — the closed BLOCKED rows of the Blocked page (§18.5) */}
       <RecentBlocks />
-    </>
+
+      {/* Setup problems — shown only when there are any; at the bottom, one
+          plain card, no dots or lines (UI spec §18.5). */}
+      {!showFirstRun && attentionItems.length > 0 && (
+      <section className="dash-sec" aria-label="Setup — needs attention">
+        <div className="core-col-h">
+          <h2>Setup — needs attention</h2>
+          <span className="pill-count">{attentionItems.length}</span>
+        </div>
+        <div className="ob-card dash-att">
+          {attentionItems.map((item, i) => (
+            <Link key={i} to={item.to} className="dash-att-row">
+              <b>{item.label}</b>
+              <span>{item.detail}</span>
+              <i aria-hidden="true">{'\u203A'}</i>
+            </Link>
+          ))}
+        </div>
+      </section>
+      )}
+    </div>
   );
 }

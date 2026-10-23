@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { AgentProfile } from '@hap/core';
 import {
   blockedView, fieldLabel, kindOf, todaysCount, unseenCount, isUnseen,
-  formatBlockedWhen, sourceLineText,
+  formatBlockedWhen, sourceLineText, plainTitle, reasonLead, refusedByLine,
 } from './blocked-view';
 import type { DenialRecord } from './sp-client';
 
@@ -74,6 +74,10 @@ describe('blockedView — one generic sentence per kind, never per-action advice
     const v = blockedView(base({ kind: 'scope', field: 'allowed_domains', value: 'other.example' }), EMAIL_PROFILE);
     expect(v.title).toContain('scope');
     expect(v.sentence).toContain('"other.example"');
+    // The field is named once, by the profile's own label — never "allowed Allowed domains".
+    expect(v.sentence).toMatch(/^"other\.example" is not within your mandate's [a-z]/);
+    expect(blockedView(base({ kind: 'scope', field: 'allowed_domains', value: 'x.example' })).sentence)
+      .toBe('"x.example" is not within your mandate\'s allowed domains.');
     expect(v.whatYouCanDo).toMatch(/widen the mandate/);
   });
 
@@ -260,5 +264,20 @@ describe('blockedView — a failed blocking check (kind "check")', () => {
     expect(v.title).toBe('Blocked — a check failed');
     expect(v.sentence).toBe('Check failed: VAT ID confirmed by VIES.');
     expect(v.whatYouCanDo).toMatch(/no approval was asked for/);
+  });
+});
+
+describe('card wording (UI spec §18.4)', () => {
+  it('plainTitle names the action in words and the target, without any connector wording', () => {
+    expect(plainTitle({ tool: 'send_message', target: 'drautal-maschinenbau.example' })).toBe('Send message · drautal-maschinenbau.example');
+    expect(plainTitle({ tool: 'erp__create_quote' })).toBe('Create quote');
+  });
+  it('reasonLead is one phrase per kind', () => {
+    expect(reasonLead(base({ kind: 'scope' }))).toBe('Outside your mandate:');
+    expect(reasonLead(base({ kind: 'bound' }))).toBe('Above your limit:');
+  });
+  it('refusedByLine says who refused, always "before anything ran"', () => {
+    expect(refusedByLine({})).toBe('Refused by this gateway before anything ran.');
+    expect(refusedByLine({ who: 'authority-server' })).toBe('Refused by the Authority Server before anything ran.');
   });
 });

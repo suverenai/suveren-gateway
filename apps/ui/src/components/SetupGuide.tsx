@@ -88,16 +88,16 @@ export function SetupGuide({ aiConfigured, hasRunningIntegration, hasActiveAuth,
   const firstPendingIdx = steps.findIndex(s => s.status === 'pending');
 
   return (
-    <div style={{
-      border: '2px solid var(--accent)',
-      borderRadius: '0.75rem',
+    <div className="setup-guide" style={{
+      borderRadius: 'var(--radius-xl)',
+      boxShadow: 'var(--elevation-2)',
       padding: '1.5rem',
       marginBottom: '1.5rem',
       background: 'var(--bg-elevated)',
     }}>
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.25rem' }}>
-        <h2 style={{ fontSize: '1.1rem', fontWeight: 700, margin: 0 }}>Get Started</h2>
+        <h2 style={{ fontSize: '1.1rem', fontWeight: 700, margin: 0 }}>Get started</h2>
         <button
           onClick={handleDismiss}
           style={{
@@ -116,15 +116,14 @@ export function SetupGuide({ aiConfigured, hasRunningIntegration, hasActiveAuth,
       </div>
 
       {/* Steps */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
         {steps.map((step, i) => {
           const isHighlighted = i === firstPendingIdx;
-          const indicator = step.status === 'done' ? '\u25CF'
-            : step.status === 'skipped' ? '\u25CF'
+          // §18.5: done = ✓ (quiet), open = ○; the next step is the one grey row.
+          const indicator = step.status === 'done' ? '\u2713'
+            : step.status === 'skipped' ? '\u2013'
             : '\u25CB';
-          const indicatorColor = step.status === 'done' ? 'var(--text-primary)'
-            : step.status === 'skipped' ? 'var(--text-tertiary)'
-            : isHighlighted ? 'var(--accent)' : 'var(--text-tertiary)';
+          const indicatorColor = step.status === 'pending' ? 'var(--text-primary)' : 'var(--text-muted)';
 
           return (
             <div key={i}>
@@ -132,11 +131,11 @@ export function SetupGuide({ aiConfigured, hasRunningIntegration, hasActiveAuth,
                 display: 'flex',
                 alignItems: 'flex-start',
                 gap: '0.75rem',
-                padding: isHighlighted ? '0.75rem' : '0.25rem 0',
-                borderRadius: isHighlighted ? '0.5rem' : undefined,
-                background: isHighlighted ? 'var(--accent-subtle)' : undefined,
+                padding: '0.45rem 0.75rem',
+                borderRadius: 'var(--radius-md)',
+                background: isHighlighted ? 'var(--bg-sunken)' : undefined,
               }}>
-                <span style={{ color: indicatorColor, fontSize: '0.75rem', marginTop: '0.2rem', flexShrink: 0 }}>
+                <span style={{ color: indicatorColor, fontSize: '0.85rem', width: '1rem', textAlign: 'center', flexShrink: 0 }}>
                   {indicator}
                 </span>
                 <div style={{ flex: 1, minWidth: 0 }}>
@@ -145,7 +144,7 @@ export function SetupGuide({ aiConfigured, hasRunningIntegration, hasActiveAuth,
                       <Link to={step.to} style={{
                         fontSize: '0.9rem',
                         fontWeight: isHighlighted ? 600 : 500,
-                        color: isHighlighted ? 'var(--accent)' : 'var(--text-primary)',
+                        color: 'var(--text-primary)',
                         textDecoration: 'none',
                       }}>
                         {step.label}
@@ -160,7 +159,7 @@ export function SetupGuide({ aiConfigured, hasRunningIntegration, hasActiveAuth,
                           cursor: 'pointer',
                           fontSize: '0.9rem',
                           fontWeight: isHighlighted ? 600 : 500,
-                          color: isHighlighted ? 'var(--accent)' : 'var(--text-primary)',
+                          color: 'var(--text-primary)',
                         }}
                       >
                         {step.label}
@@ -238,25 +237,9 @@ export function SetupGuide({ aiConfigured, hasRunningIntegration, hasActiveAuth,
         })}
       </div>
 
-      {/* Progress bar */}
-      <div style={{ marginTop: '1.25rem' }}>
-        <div style={{
-          height: '4px',
-          background: 'var(--border)',
-          borderRadius: '2px',
-          overflow: 'hidden',
-        }}>
-          <div style={{
-            height: '100%',
-            width: `${(completedCount / steps.length) * 100}%`,
-            background: 'var(--accent)',
-            borderRadius: '2px',
-            transition: 'width 0.3s ease',
-          }} />
-        </div>
-        <div style={{ fontSize: '0.7rem', color: 'var(--text-tertiary)', marginTop: '0.375rem' }}>
-          {completedCount} of {steps.length} complete
-        </div>
+      {/* §18.5: progress in words, no bar. */}
+      <div style={{ fontSize: 'var(--text-caption)', color: 'var(--text-muted)', marginTop: 'var(--space-3)' }}>
+        {completedCount} of {steps.length} done
       </div>
     </div>
   );

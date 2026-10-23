@@ -1,26 +1,22 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { spClient, type Proposal, type ExecutionReceipt, type IntegrationManifest, type ProposalOutcome, type NoteEncryptedWire } from '../lib/sp-client';
+import { spClient, type Proposal, type ExecutionReceipt, type IntegrationManifest } from '../lib/sp-client';
 import { aggregateThread, type ThreadItem } from '../lib/thread-aggregator';
-import { ActionCard } from '../components/ActionCard';
+import { useMediaQuery } from '../hooks/useMediaQuery';
+import { nextAfter, nextLabel, announceApprovalDecided, navKeyFor, QUEUE_VIEWS, type QueueView, type DecisionKind, type DecisionResult } from '../lib/approval-flow';
+import { ActionCard, ReviewApprovalCard } from '../components/ActionCard';
 import { ApproverProposalCard } from '../components/ApproverProposalCard';
 import { profileDisplayName } from '../lib/profile-display';
 import { useVisiblePolling } from '../hooks/useVisiblePolling';
 import { useSSEEvent } from '../contexts/EventSourceContext';
 import type { ToolDisplay } from '../lib/approval-view';
-import { resolveDomainFor } from '../lib/my-queue';
-import { ProfileRail } from '../components/ProfileRail';
-import { HumanOnlyNote } from '../components/HumanOnlyNote';
 import { ApprovalRow } from '../components/ApprovalRow';
-import { isAutomatedBrowser, AUTOMATION_REFUSAL } from '../lib/automation';
 import { isTestSetupAction, profileIdentity } from '../lib/profile-identity';
-import { rejectOutcomeArgs, changeNeededOutcomeArgs } from '../lib/reject-outcome';
-import { contentHashForDecision, noteRecipients } from '../lib/use-proposal-content';
+import { contentHashForDecision } from '../lib/use-proposal-content';
 import { useApprovalTeamInfo } from '../lib/approval-team-info';
 import { isProposer as isProposerOf, visibleApprovers } from '../lib/proposal-proposer';
 
-type QueueTab = 'awaiting-me' | 'awaiting-others' | 'all';
 type StatusFilter = 'pending' | 'all';
 
 /**
@@ -35,7 +31,8 @@ export function ProposalReviewPage() {
   const { domain, user } = useAuth();
   const userId = user?.id ?? '';
 
-  const [queueTab, setQueueTab] = useState<QueueTab>('awaiting-me');
+  // UI spec §17.1 — one menu ("Show: For me / Others / All") in place of the three tabs.
+  const [view, setView] = useState<QueueView>('me');
 
   // ─── Awaiting me (Phase 6 per-action approver proposals) ──────────────
   const [approverProposals, setApproverProposals] = useState<Proposal[]>([]);
@@ -45,7 +42,6 @@ export function ProposalReviewPage() {
   const [manifests, setManifests] = useState<IntegrationManifest[]>([]);
   const [toolDisplay, setToolDisplay] = useState<Record<string, ToolDisplay>>({});
   const [approverLoading, setApproverLoading] = useState(true);
-  const [approverMessage, setApproverMessage] = useState('');
 
   const fetchApproverProposals = useCallback(async () => {
     try {
@@ -67,6 +63,7 @@ export function ProposalReviewPage() {
   // ─── Awaiting others (proposals I authored or already approved, still pending) ──
   // We derive these from the same approverProposals scan + domain proposals.
   const [myProposals, setMyProposals] = useState<Proposal[]>([]);
+  const [myLoading, setMyLoading] = useState(true);
 
   const fetchMyProposals = useCallback(async () => {
     try {
@@ -75,6 +72,8 @@ export function ProposalReviewPage() {
       setMyProposals(ps);
     } catch {
       // keep previous state
+    } finally {
+      setMyLoading(false);
     }
   }, [domain]);
 
@@ -193,8 +192,6 @@ export function ProposalReviewPage() {
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [receipts, setReceipts] = useState<ExecutionReceipt[]>([]);
   const [loading, setLoading] = useState(true);
-  const [resolving, setResolving] = useState<string | null>(null);
-  const [message, setMessage] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('pending');
   const [profileFilter, setProfileFilter] = useState<string | null>(null);
   const [includeAutonomous, setIncludeAutonomous] = useState(false);
@@ -217,57 +214,6 @@ export function ProposalReviewPage() {
 
   useVisiblePolling(fetchThread, 30_000, `${domain}:${statusFilter}`);
 
-  const handleResolve = async (
-    id: string,
-    action: 'commit' | 'reject',
-    opts?: { outcome?: ProposalOutcome; note?: string },
-    /** AU10 §8.4 — already computed by ActionCard (it owns the ApprovalBody
-     *  snapshot and POSTs it to the control plane before calling this). */
-    shownHash?: string,
-  ) => {
-    // Automation that announces itself may not approve (defense in depth — lib/automation.ts).
-    if (action === 'commit' && isAutomatedBrowser()) { setMessage(AUTOMATION_REFUSAL); return; }
-    setResolving(id);
-    setMessage('');
-    try {
-      // Resolve under the proposal's own queue — a personal one stays 'owner' in team context.
-      const proposal = proposals.find(p => p.id === id) ?? myProposals.find(p => p.id === id);
-      const resolveDomain = resolveDomainFor(proposal, domain);
-      // PE1 — the fingerprint of what THIS device decrypted and showed.
-      const contentHash = proposal ? await contentHashForDecision(proposal) : undefined;
-      // G5 — a change-needed note is sealed on THIS (the deciding) gateway
-      // for exactly who can already read the proposal's own content
-      // (content.keys' own userIds — the submitter, the owner, every
-      // approver) plus this device's own signed-in user.
-      let resolveOpts: { outcome?: ProposalOutcome; note?: string; noteEncrypted?: NoteEncryptedWire } = opts ?? {};
-      if (opts?.outcome === 'change_needed' && opts.note) {
-        const recipientUserIds = proposal ? noteRecipients(proposal, userId) : [userId];
-        const { noteEncrypted } = await spClient.encryptProposalNote(opts.note, recipientUserIds);
-        resolveOpts = { outcome: 'change_needed', noteEncrypted };
-      }
-      const result = await spClient.resolveProposal(id, action, resolveDomain, { ...resolveOpts, contentHash, shownHash });
-      setMessage(
-        action === 'commit'
-          ? `Action approved. Status: ${result.status}`
-          : opts?.outcome === 'change_needed' ? 'Sent back for a change.' : 'Action rejected.',
-      );
-      // Refresh the All thread AND the awaiting-me domain queue so a just-approved
-      // review-mode proposal leaves the "Awaiting me" tab immediately.
-      await Promise.all([fetchThread(), fetchMyProposals()]);
-    } catch (err) {
-      setMessage(err instanceof Error ? err.message : 'Failed');
-    } finally {
-      setResolving(null);
-    }
-  };
-
-  const handleApprove = (id: string, shownHash?: string) => handleResolve(id, 'commit', undefined, shownHash);
-  const handleReject = (id: string, shownHash?: string) => handleResolve(id, 'reject', rejectOutcomeArgs(), shownHash);
-
-  /** "Send back for change" (RJ2) — note already validated by ActionCard. */
-  const handleChangeNeeded = (id: string, note: string, shownHash?: string) =>
-    handleResolve(id, 'reject', changeNeededOutcomeArgs(note), shownHash);
-
   const profileIds = useMemo(() => {
     const set = new Set<string>();
     for (const p of proposals) set.add(p.profileId);
@@ -284,11 +230,6 @@ export function ProposalReviewPage() {
     [proposals, receipts, statusFilter, profileFilter, includeAutonomous],
   );
 
-  // ─── Awaiting me callback (from ApproverProposalCard) ─────────────────
-  const handleApproverAction = useCallback(() => {
-    void fetchApproverProposals();
-    void fetchApprovedByMe();
-  }, [fetchApproverProposals, fetchApprovedByMe]);
 
   // ─── Combined awaiting-others list ────────────────────────────────────
   // Genuinely "awaiting others" = above-cap proposals I already approved
@@ -296,7 +237,7 @@ export function ProposalReviewPage() {
   // CREATED that are still pending (myPendingProposals — see its own doc
   // comment: a stand-in until the AS has a creator-scoped query). Review-mode
   // domain proposals are NOT here — they're mine to approve and live under
-  // "Awaiting me".
+  // "For me".
   const awaitingOthersAll = useMemo(() => {
     const seen = new Set<string>();
     const result: Proposal[] = [];
@@ -309,38 +250,6 @@ export function ProposalReviewPage() {
     return result.sort((a, b) => b.createdAt - a.createdAt);
   }, [approvedByMeStillPending, myPendingProposals]);
 
-  // Badge counts for tab headers
-  const awaitingMeCount = approverProposals.length + awaitingMeDomainItems.length;
-
-  // UI spec §12.2 — the queue is an overview: one row per approval, a click
-  // opens it in place, one at a time. `?open=<id>` (from the dashboard) opens
-  // that one; a lone item opens directly; after a decision the next opens.
-  const [searchParams] = useSearchParams();
-  const [openId, setOpenId] = useState<string | null>(() => searchParams.get('open'));
-  const queueIds = useMemo(() => [
-    ...awaitingMeDomainItems.map(i => (i.kind === 'proposal' ? i.proposal.id : i.id)),
-    ...approverProposals.map(p => p.id),
-  ], [awaitingMeDomainItems, approverProposals]);
-  const prevQueueRef = useRef<string[]>([]);
-  const autoOpenedRef = useRef<string | null>(null);
-  useEffect(() => {
-    const prev = prevQueueRef.current;
-    prevQueueRef.current = queueIds;
-    // A lone item opens by itself — once; closing it is respected.
-    if (queueIds.length === 1 && openId === null && autoOpenedRef.current !== queueIds[0]) {
-      autoOpenedRef.current = queueIds[0];
-      setOpenId(queueIds[0]);
-      return;
-    }
-    if (openId && !queueIds.includes(openId) && prev.includes(openId)) {
-      // The open one was decided: open the item that took its place.
-      const at = prev.indexOf(openId);
-      const next = prev.slice(at + 1).find(id => queueIds.includes(id)) ?? queueIds[0] ?? null;
-      setOpenId(next);
-    }
-  }, [queueIds, openId]);
-  const toggle = (id: string) => setOpenId(cur => (cur === id ? null : id));
-
   // Mandate titles for the rows' "area" (the proposal carries only the id).
   const [titles, setTitles] = useState<Record<string, string>>({});
   useEffect(() => {
@@ -352,239 +261,406 @@ export function ProposalReviewPage() {
       })
       .catch(() => {});
   }, []);
-  const awaitingOthersCount = awaitingOthersAll.length;
+
+  // ─── The queue "For me": one list, oldest first ───────────────────────
+  // Review-mode proposals (decided through the workspace queue) and above-cap
+  // proposals where I am a required approver (decided as an approver).
+  type Entry = { id: string; proposal: Proposal; route: 'queue' | 'approver' };
+  // Ids the gateway has answered a decision for: they leave the counts at once
+  // (the lists re-read right after and would drop them anyway).
+  const [decided, setDecided] = useState<ReadonlySet<string>>(new Set());
+  const entries: Entry[] = useMemo(() => {
+    const out: Entry[] = [];
+    for (const item of awaitingMeDomainItems) {
+      if (item.kind === 'proposal') out.push({ id: item.proposal.id, proposal: item.proposal, route: 'queue' });
+    }
+    for (const p of approverProposals) {
+      if (!out.some(e => e.id === p.id)) out.push({ id: p.id, proposal: p, route: 'approver' });
+    }
+    return out.filter(e => !decided.has(e.id)).sort((a, b) => a.proposal.createdAt - b.proposal.createdAt);
+  }, [awaitingMeDomainItems, approverProposals, decided]);
+  const ids = useMemo(() => entries.map(e => e.id), [entries]);
+  const idsRef = useRef<string[]>(ids);
+  idsRef.current = ids;
+  const awaitingMeCount = entries.length;
+
+  // UI spec §17.1 — more than one waiting: the list opens first; exactly one:
+  // its card opens directly. `?open=<id>` (from the dashboard) opens that one.
+  const wide = useMediaQuery('(min-width: 1400px)');
+  const reducedMotion = useMediaQuery('(prefers-reduced-motion: reduce)');
+  const [searchParams] = useSearchParams();
+  const [openId, setOpenId] = useState<string | null>(() => searchParams.get('open'));
+  const [leaving, setLeaving] = useState(false);
+  // A decision on the open card is out or answered: no moving between cards meanwhile.
+  const [cardBusy, setCardBusy] = useState(false);
+  // A decision the gateway answered: its card stays on screen (stamp) until it slides out.
+  const [settling, setSettling] = useState<{ entry: Entry; before: string[] } | null>(null);
+  // The card that just slid in: "Next · 2 of 3" for about two seconds.
+  const [arrived, setArrived] = useState<{ id: string; label: string | null } | null>(null);
+  const timers = useRef<number[]>([]);
+  useEffect(() => () => { timers.current.forEach(t => window.clearTimeout(t)); }, []);
+  const later = (fn: () => void, ms: number) => { timers.current.push(window.setTimeout(fn, ms)); };
+
+  // Both queues ("For me" = my domain's review queue + approver proposals) must
+  // have answered before the page decides anything: otherwise `?open=<id>` from
+  // the dashboard is dropped when one list arrives before the other.
+  const queueLoading = approverLoading || myLoading;
+  const autoOpenedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (settling || queueLoading) return;
+    // A lone item opens by itself — once; going back to the list is respected.
+    if (ids.length === 1 && openId === null && autoOpenedRef.current !== ids[0]) {
+      autoOpenedRef.current = ids[0];
+      setOpenId(ids[0]);
+      return;
+    }
+    // The open one is gone without us deciding it (decided elsewhere, expired):
+    // the one that took its place, or the list. Only once the queue has loaded.
+    if (openId && !ids.includes(openId)) {
+      setOpenId(null);
+    }
+  }, [ids, openId, settling, queueLoading]);
+
+  // A lone item is about to open by itself (effect above): don't flash the list first.
+  const autoOpening = !queueLoading && !settling && ids.length === 1 && openId === null && autoOpenedRef.current !== ids[0];
+  const openEntry: Entry | null = settling?.entry ?? (openId ? entries.find(e => e.id === openId) ?? null : null);
+  const position = openEntry && !settling ? ids.indexOf(openEntry.id) : -1;
+  const goTo = useCallback((id: string | null) => { setArrived(null); setOpenId(id); }, []);
+
+  /** The gateway answered (the card shows its stamp). Counts drop now; about a
+   *  second later the card slides out and the next one slides in. */
+  const handleDecided = useCallback((proposalId: string, _kind: DecisionKind, _result: DecisionResult) => {
+    const before = idsRef.current;
+    const entry = entries.find(e => e.id === proposalId);
+    if (!entry) return;
+    setDecided(prev => new Set(prev).add(proposalId));
+    setSettling({ entry, before });
+    // Re-read what the backend holds; the decision itself is already confirmed.
+    void fetchApproverProposals();
+    void fetchMyProposals();
+    void fetchApprovedByMe();
+    void fetchMyPendingProposals();
+    void fetchThread();
+    announceApprovalDecided();
+    const advance = () => {
+      const rest = before.filter(id => id !== proposalId);
+      const next = nextAfter(before, proposalId);
+      setSettling(null);
+      setLeaving(false);
+      setOpenId(next);
+      setArrived(next ? { id: next, label: nextLabel(rest, next) } : null);
+      if (next) later(() => setArrived(a => (a && a.id === next ? null : a)), 2200);
+    };
+    later(() => {
+      if (reducedMotion) { advance(); return; }
+      setLeaving(true);
+      later(advance, 320);
+    }, 1100);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entries, reducedMotion, fetchApproverProposals, fetchMyProposals, fetchApprovedByMe, fetchMyPendingProposals, fetchThread]);
+
+  // A review-mode card in the "All" view was decided: re-read everything.
+  const handleDecidedInThread = useCallback(() => {
+    void fetchApproverProposals();
+    void fetchMyProposals();
+    void fetchApprovedByMe();
+    void fetchThread();
+    announceApprovalDecided();
+  }, [fetchApproverProposals, fetchMyProposals, fetchApprovedByMe, fetchThread]);
+
+  // Keys (§17.1): ← / → between cards, Esc to the list. Nothing decides on a key.
+  useEffect(() => {
+    if (view !== 'me' || !openId || settling || cardBusy) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === 'TEXTAREA' || t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+      const nav = navKeyFor(e.key);
+      if (!nav) return;
+      const at = idsRef.current.indexOf(openId);
+      if (nav === 'prev' && at > 0) { e.preventDefault(); goTo(idsRef.current[at - 1]); }
+      else if (nav === 'next' && at >= 0 && at < idsRef.current.length - 1) { e.preventDefault(); goTo(idsRef.current[at + 1]); }
+      else if (nav === 'list') { e.preventDefault(); goTo(null); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [view, openId, settling, cardBusy, goTo]);
+
+  const linkFor = (e: Entry) => linksForTool(e.proposal.tool);
+  const mandateTitleOf = (p: Proposal) => (p.authorizationId ? titles[p.authorizationId] : undefined);
+
+  const card = (e: Entry) => {
+    const label = arrived && arrived.id === e.id ? arrived.label : null;
+    return e.route === 'queue' ? (
+      <ReviewApprovalCard
+        key={e.id}
+        proposal={e.proposal}
+        manifests={manifests}
+        toolDisplay={toolDisplay[e.proposal.tool]}
+        proposalLinks={linkFor(e)}
+        currentUserId={userId}
+        mandateTitle={mandateTitleOf(e.proposal)}
+        onDecided={handleDecided}
+        nextLabelText={label}
+        onBusyChange={setCardBusy}
+      />
+    ) : (
+      <ApproverProposalCard
+        key={e.id}
+        proposal={e.proposal}
+        currentUserId={userId}
+        manifests={manifests}
+        toolDisplay={toolDisplay[e.proposal.tool]}
+        proposalLinks={linkFor(e)}
+        mandateTitle={mandateTitleOf(e.proposal)}
+        onDecided={handleDecided}
+        nextLabelText={label}
+        onBusyChange={setCardBusy}
+      />
+    );
+  };
+
+  // ─── Pieces of the page ────────────────────────────────────────────────
+  const showMenu = (
+    <label className="av3-show">
+      <span>Show</span>
+      <span className="av3-select">
+        <select
+          data-testid="queue-view"
+          value={view}
+          onChange={(ev) => {
+            const v = ev.target.value as QueueView;
+            setView(v);
+            if (v === 'all') void fetchThread();
+          }}
+          aria-label="Show"
+        >
+          {QUEUE_VIEWS.map(v => (
+            <option key={v.id} value={v.id}>
+              {v.label}
+            </option>
+          ))}
+        </select>
+        <svg className="i" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" /></svg>
+      </span>
+    </label>
+  );
+
+  const listHeader = (
+    <header className="av3-ph">
+      <h1 className="av3-ph-title">Approvals</h1>
+      <span className="av3-sp" />
+      {showMenu}
+    </header>
+  );
+
+  const cardHeader = (
+    <header className="av3-ph">
+      {!wide && (
+        <button type="button" className="av3-back" data-testid="back-to-list" disabled={cardBusy} onClick={() => goTo(null)}>
+          <svg className="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3 5 8l5 5" /></svg>
+          Approvals <span className="n">{awaitingMeCount}</span>
+        </button>
+      )}
+      <span className="av3-sp" />
+      {settling || cardBusy ? (
+        <span className="av3-pos">{awaitingMeCount > 0 ? `${awaitingMeCount} left` : 'none left'}</span>
+      ) : position >= 0 && ids.length > 1 ? (
+        <>
+          <span className="av3-pos" data-testid="card-position">{position + 1} of {ids.length}</span>
+          <button type="button" className="av3-ib" aria-label="Previous approval" disabled={position <= 0} onClick={() => goTo(ids[position - 1])}>
+            <svg className="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3 5 8l5 5" /></svg>
+          </button>
+          <button type="button" className="av3-ib" aria-label="Next approval" disabled={position >= ids.length - 1} onClick={() => goTo(ids[position + 1])}>
+            <svg className="i" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3 5 5-5 5" /></svg>
+          </button>
+        </>
+      ) : null}
+    </header>
+  );
+
+  const rows = (
+    <div className="av3-rows">
+      {entries.length > 0 && (
+        <div className="av3-lh"><span>{entries.length} waiting for you</span><span>oldest first</span></div>
+      )}
+      {entries.map(e => (
+        <ApprovalRow
+          key={e.id}
+          proposal={e.proposal}
+          manifests={manifests}
+          titles={titles}
+          selected={openId === e.id}
+          onOpen={() => goTo(e.id)}
+          who={e.route === 'approver' ? 'Team approval — other people are involved' : undefined}
+        />
+      ))}
+    </div>
+  );
+
+  const empty = <p className="av3-empty" data-testid="queue-empty">Nothing waiting for you.</p>;
+
+  // The card in its stage: slides out to the left, the next one in from the right.
+  const stage = openEntry && (
+    <div
+      key={openEntry.id}
+      className={`av3-stage is-open${settling && leaving ? ' av3-out' : ''}${arrived && arrived.id === openEntry.id ? ' av3-in' : ''}`}
+      // Narrow single-card layout keeps the old row hooks: the open approval is
+      // the one `approval-row` on screen (hap-e2e's openApprovalById).
+      data-testid={wide ? 'approval-open' : 'approval-row'}
+      data-proposal-id={openEntry.id}
+    >
+      {card(openEntry)}
+    </div>
+  );
 
   return (
-    <>
-      <div className="page-header">
-        <h1 className="page-title">Approvals</h1>
-        <p className="page-subtitle">
-          Actions awaiting approval, plus recent activity from the last 7 days.
-        </p>
-        <HumanOnlyNote what="approve" />
-      </div>
-
-      {/* Queue tab strip */}
-      <div className="nav-tabs" style={{ marginBottom: '1rem' }}>
-        <button
-          className={`nav-tab${queueTab === 'awaiting-me' ? ' active' : ''}`}
-          onClick={() => setQueueTab('awaiting-me')}
-        >
-          Awaiting me {awaitingMeCount > 0 && <span className="pill-count" style={{ marginLeft: '0.4rem' }}>{awaitingMeCount}</span>}
-        </button>
-        <button
-          className={`nav-tab${queueTab === 'awaiting-others' ? ' active' : ''}`}
-          onClick={() => setQueueTab('awaiting-others')}
-        >
-          Awaiting others {awaitingOthersCount > 0 && <span style={{ marginLeft: '0.4rem', background: 'var(--border)', color: 'var(--text-secondary)', borderRadius: '0.625rem', padding: '0 0.375rem', fontSize: '0.7rem', fontWeight: 600 }}>{awaitingOthersCount}</span>}
-        </button>
-        <button
-          className={`nav-tab${queueTab === 'all' ? ' active' : ''}`}
-          onClick={() => { setQueueTab('all'); void fetchThread(); }}
-        >
-          All
-        </button>
-      </div>
-
-      {/* ─── Awaiting me ────────────────────────────────────────────── */}
-      {queueTab === 'awaiting-me' && (
-        <>
-          {approverLoading && awaitingMeCount === 0 ? (
-            <p style={{ color: 'var(--text-tertiary)' }}>Loading...</p>
-          ) : awaitingMeCount === 0 ? (
-            <div className="card" style={{ textAlign: 'center', padding: '2rem' }}>
-              <p style={{ color: 'var(--text-tertiary)', marginBottom: '0.5rem' }}>
-                No actions awaiting your approval.
-              </p>
-              <p style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>
-                Review-mode actions and above-cap actions you must approve will appear here.
-              </p>
-            </div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column' }}>
-              {(approverMessage || message) && (
-                <div className="alert alert-success">{approverMessage || message}</div>
+    <div className={`av3-page${wide ? ' av3-wide' : ''}`} data-view={view}>
+      {view === 'me' && (
+        (queueLoading || autoOpening) && !settling ? (
+          <>{listHeader}<p className="av3-empty">Loading…</p></>
+        ) : wide ? (
+          <div className="av3-split">
+            <section className="av3-pane av3-pane-list" aria-label="Approvals">
+              {listHeader}
+              <div className="av3-pane-scroll">{awaitingMeCount === 0 ? empty : rows}</div>
+            </section>
+            <section className="av3-pane av3-pane-card">
+              {openEntry ? <>{cardHeader}<div className="av3-cbox">{stage}</div></> : (
+                awaitingMeCount > 0 && <p className="av3-empty">Pick an approval from the list.</p>
               )}
-              {/* Review-mode ("Send with Review") proposals I must approve. */}
-              {awaitingMeDomainItems.map(item => {
-                const card = (
-                <ActionCard
-                  key={item.id}
-                  proposalLinks={item.kind === 'proposal' ? linksForTool(item.proposal.tool) : undefined}
-                  toolDisplay={item.kind === 'proposal' ? toolDisplay[item.proposal.tool] : undefined}
-                  manifests={manifests}
-                  currentUserId={userId}
-                  item={item}
-                  onApprove={handleApprove}
-                  onReject={handleReject}
-                  onChangeNeeded={handleChangeNeeded}
-                  resolving={resolving === item.id}
-                  inRow={item.kind === 'proposal'}
-                />
-                );
-                if (item.kind !== 'proposal') return card;
-                const pid = item.proposal.id;
-                return (
-                  <ApprovalRow key={pid} proposal={item.proposal} manifests={manifests} titles={titles}
-                    open={openId === pid} onToggle={() => toggle(pid)}>
-                    {card}
-                  </ApprovalRow>
-                );
-              })}
-              {/* Above-cap proposals where I'm a required approver. */}
-              {approverProposals.map(proposal => (
-                <ApprovalRow key={proposal.id} proposal={proposal} manifests={manifests} titles={titles}
-                  open={openId === proposal.id} onToggle={() => toggle(proposal.id)}
-                  who="Team approval — other people are involved">
-                <ApproverProposalCard
-                  key={proposal.id}
-                  inRow
-                  proposal={proposal}
-                  currentUserId={userId}
-                  onAction={handleApproverAction}
-                  onMessage={setApproverMessage}
-                  proposalLinks={linksForTool(proposal.tool)}
-                  toolDisplay={toolDisplay[proposal.tool]}
-                  manifests={manifests}
-                />
-                </ApprovalRow>
-              ))}
-            </div>
-          )}
-        </>
+            </section>
+          </div>
+        ) : openEntry ? (
+          <section className="av3-pane" aria-label="Approval">
+            {cardHeader}
+            <div className="av3-cbox">{stage}</div>
+          </section>
+        ) : (
+          <section className="av3-pane" aria-label="Approvals">
+            {listHeader}
+            <div className="av3-pane-scroll">{awaitingMeCount === 0 ? empty : rows}</div>
+          </section>
+        )
       )}
 
-      {/* ─── Awaiting others ─────────────────────────────────────────── */}
-      {queueTab === 'awaiting-others' && (
-        <>
-          {awaitingOthersAll.length === 0 ? (
-            <div className="card" style={{ textAlign: 'center', padding: '2rem' }}>
-              <p style={{ color: 'var(--text-tertiary)', marginBottom: '0.5rem' }}>
-                No actions waiting on others.
-              </p>
-              <p style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>
-                Actions you proposed or approved that are pending other approvers will appear here.
-              </p>
-            </div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              {awaitingOthersAll.map(proposal => (
-                <AwaitingOthersCard
-                  key={proposal.id}
-                  proposal={proposal}
-                  currentUserId={userId}
-                  onCancel={async () => {
-                    try {
-                      await spClient.rejectProposal(proposal.id, { reason: 'cancelled by creator' });
+      {/* ─── Others: waiting on other people ───────────────────────── */}
+      {view === 'others' && (
+        <section className="av3-pane" aria-label="Waiting on others">
+          {listHeader}
+          <div className="av3-pane-scroll">
+            {awaitingOthersAll.length === 0 ? (
+              <p className="av3-empty">Nothing is waiting on others.</p>
+            ) : (
+              <div className="av3-stack">
+                {awaitingOthersAll.map(proposal => (
+                  <AwaitingOthersCard
+                    key={proposal.id}
+                    proposal={proposal}
+                    currentUserId={userId}
+                    onCancel={async () => {
+                      try {
+                        await spClient.rejectProposal(proposal.id, { reason: 'cancelled by creator' });
+                        void fetchApprovedByMe();
+                        void fetchMyProposals();
+                      } catch (err) {
+                        alert(err instanceof Error ? err.message : 'Cancel failed');
+                      }
+                    }}
+                    onWithdraw={async () => {
+                      // No `shown_hash`: this card does not render the AU10
+                      // preview/request-context pipeline (ApprovalBody) that
+                      // produces one — nothing here is a "what was shown"
+                      // read to fingerprint, so it is omitted rather than
+                      // invented. `content_hash` still applies (PE1): the
+                      // proposal's own content fingerprint, independent of
+                      // any rendering.
+                      const contentHash = await contentHashForDecision(proposal);
+                      await spClient.withdrawProposal(proposal.id, undefined, contentHash);
+                      void fetchMyPendingProposals();
                       void fetchApprovedByMe();
-                      void fetchMyProposals();
-                    } catch (err) {
-                      alert(err instanceof Error ? err.message : 'Cancel failed');
-                    }
-                  }}
-                  onWithdraw={async () => {
-                    // No `shown_hash`: this card does not render the AU10
-                    // preview/request-context pipeline (ApprovalBody) that
-                    // produces one — nothing here is a "what was shown"
-                    // read to fingerprint, so it is omitted rather than
-                    // invented. `content_hash` still applies (PE1): the
-                    // proposal's own content fingerprint, independent of
-                    // any rendering.
-                    const contentHash = await contentHashForDecision(proposal);
-                    await spClient.withdrawProposal(proposal.id, undefined, contentHash);
-                    void fetchMyPendingProposals();
-                    void fetchApprovedByMe();
-                  }}
-                />
-              ))}
-            </div>
-          )}
-        </>
-      )}
-
-      {/* ─── All (legacy domain thread) ──────────────────────────────── */}
-      {queueTab === 'all' && (
-        <>
-          {message && (
-            <div className="alert alert-success" style={{ marginBottom: '1rem' }}>{message}</div>
-          )}
-
-          <div className="filter-chips" style={{ marginBottom: '1rem' }}>
-            <button
-              className={`filter-chip ${statusFilter === 'pending' ? 'selected' : ''}`}
-              onClick={() => setStatusFilter('pending')}
-            >
-              Pending
-            </button>
-            <button
-              className={`filter-chip ${statusFilter === 'all' ? 'selected' : ''}`}
-              onClick={() => setStatusFilter('all')}
-            >
-              All
-            </button>
-
-            {profileIds.length > 0 && (
-              <span style={{ width: 1, background: 'var(--border)', alignSelf: 'stretch', margin: '0 0.25rem' }} />
-            )}
-
-            {profileIds.map((pid) => (
-              <button
-                key={pid}
-                className={`filter-chip ${profileFilter === pid ? 'selected' : ''}`}
-                onClick={() => setProfileFilter(profileFilter === pid ? null : pid)}
-              >
-                {profileDisplayName(pid)}
-              </button>
-            ))}
-
-            {statusFilter === 'all' && (
-              <>
-                <span style={{ width: 1, background: 'var(--border)', alignSelf: 'stretch', margin: '0 0.25rem' }} />
-                <button
-                  className={`filter-chip ${includeAutonomous ? 'selected' : ''}`}
-                  onClick={() => setIncludeAutonomous(!includeAutonomous)}
-                  title="Include actions executed without human review (automatic commitment mode)"
-                >
-                  {includeAutonomous ? '✓ ' : ''}Autonomous actions
-                </button>
-              </>
+                    }}
+                  />
+                ))}
+              </div>
             )}
           </div>
-
-          {loading && items.length === 0 ? (
-            <p style={{ color: 'var(--text-tertiary)' }}>Loading...</p>
-          ) : items.length === 0 ? (
-            <div className="card" style={{ textAlign: 'center', padding: '2rem' }}>
-              <p style={{ color: 'var(--text-tertiary)', marginBottom: '0.5rem' }}>
-                {statusFilter === 'pending' ? 'No actions awaiting your approval.' : 'Nothing here yet.'}
-              </p>
-              <p style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>
-                {statusFilter === 'pending'
-                  ? 'Your agents are operating within their mandates. Switch to All to see recent activity.'
-                  : 'When an agent calls a gated tool, activity will appear here.'}
-              </p>
-            </div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              {items.map((item) => (
-                <ActionCard
-                  key={item.id}
-                  proposalLinks={item.kind === 'proposal' ? linksForTool(item.proposal.tool) : undefined}
-                  toolDisplay={item.kind === 'proposal' ? toolDisplay[item.proposal.tool] : undefined}
-                  manifests={manifests}
-                  currentUserId={userId}
-                  item={item}
-                  onApprove={handleApprove}
-                  onReject={handleReject}
-                  onChangeNeeded={handleChangeNeeded}
-                  resolving={resolving === item.id}
-                />
-              ))}
-            </div>
-          )}
-        </>
+        </section>
       )}
-    </>
+
+      {/* ─── All: recent activity (the legacy domain thread) ───────── */}
+      {view === 'all' && (
+        <section className="av3-pane" aria-label="All approvals">
+          {listHeader}
+          <div className="av3-pane-scroll">
+            <div className="filter-chips" style={{ marginBottom: '1rem' }}>
+              <button
+                className={`filter-chip ${statusFilter === 'pending' ? 'selected' : ''}`}
+                onClick={() => setStatusFilter('pending')}
+              >
+                Pending
+              </button>
+              <button
+                className={`filter-chip ${statusFilter === 'all' ? 'selected' : ''}`}
+                onClick={() => setStatusFilter('all')}
+              >
+                All
+              </button>
+
+              {profileIds.length > 0 && (
+                <span style={{ width: 1, background: 'var(--border)', alignSelf: 'stretch', margin: '0 0.25rem' }} />
+              )}
+
+              {profileIds.map((pid) => (
+                <button
+                  key={pid}
+                  className={`filter-chip ${profileFilter === pid ? 'selected' : ''}`}
+                  onClick={() => setProfileFilter(profileFilter === pid ? null : pid)}
+                >
+                  {profileDisplayName(pid)}
+                </button>
+              ))}
+
+              {statusFilter === 'all' && (
+                <>
+                  <span style={{ width: 1, background: 'var(--border)', alignSelf: 'stretch', margin: '0 0.25rem' }} />
+                  <button
+                    className={`filter-chip ${includeAutonomous ? 'selected' : ''}`}
+                    onClick={() => setIncludeAutonomous(!includeAutonomous)}
+                    title="Include actions that ran without a human review (automatic mode)"
+                  >
+                    {includeAutonomous ? '✓ ' : ''}Automatic actions
+                  </button>
+                </>
+              )}
+            </div>
+
+            {loading && items.length === 0 ? (
+              <p className="av3-empty">Loading…</p>
+            ) : items.length === 0 ? (
+              <p className="av3-empty">
+                {statusFilter === 'pending' ? 'Nothing waiting for you.' : 'Nothing here yet.'}
+              </p>
+            ) : (
+              <div className="av3-stack av3-inline">
+                {items.map((item) => (
+                  <ActionCard
+                    key={item.id}
+                    proposalLinks={item.kind === 'proposal' ? linksForTool(item.proposal.tool) : undefined}
+                    toolDisplay={item.kind === 'proposal' ? toolDisplay[item.proposal.tool] : undefined}
+                    manifests={manifests}
+                    currentUserId={userId}
+                    item={item}
+                    mandateTitle={item.kind === 'proposal' ? mandateTitleOf(item.proposal) : undefined}
+                    onDecided={handleDecidedInThread}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
+      )}
+    </div>
   );
 }
 
@@ -664,8 +740,7 @@ function AwaitingOthersCard({ proposal, currentUserId, onCancel, onWithdraw }: A
   const testSetup = profileIdentity(proposal.profileId).testSetup || isTestSetupAction(proposal.tool);
 
   return (
-    <div className="card id-card">
-      <ProfileRail profileId={proposal.profileId} />
+    <div className="card av3-other">
       <div className="id-body">
       {/* Decided (real-gateway e2e, 2026-10-15): plain words only — same as
           ApproverProposalCard — the "Above the team limit: …" line below
@@ -701,11 +776,7 @@ function AwaitingOthersCard({ proposal, currentUserId, onCancel, onWithdraw }: A
           (team-caps.ts's findAboveCapViolation — built only from real data,
           never a guess). */}
       {team.aboveCapReason && (
-        <div className="over-limit-box" data-testid="above-cap-reason" style={{
-          display: 'flex', gap: '0.5rem', alignItems: 'flex-start',
-          background: 'var(--bg-main)', border: '1px solid var(--border)',
-          borderRadius: '0.5rem', padding: '0.6rem 0.8rem', marginBottom: '0.6rem', fontSize: '0.82rem',
-        }}>
+        <div className="over-limit-box" data-testid="above-cap-reason" style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-start', marginBottom: '0.6rem', fontSize: '0.82rem' }}>
           <span style={{ fontWeight: 700, whiteSpace: 'nowrap' }}>Above the team limit:</span>
           <span>
             {team.aboveCapReason.fieldLabel}

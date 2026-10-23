@@ -1,19 +1,20 @@
-import { useRef, useState } from 'react';
 import { resolveProposalLinks, type ProposalLink } from '../lib/proposal-links';
 import type { ThreadItem } from '../lib/thread-aggregator';
 import { formatTimeLeft } from '../lib/time-left';
 import { ProposalArgs } from './ProposalArgs';
 import { ProfileRail } from './ProfileRail';
 import { OutcomeBox } from './OutcomeBox';
-import { ApprovalBody } from './ApprovalBody';
+import { ApprovalCard } from './ApprovalCard';
+import { useAuth } from '../contexts/AuthContext';
+import { decideInQueue } from '../lib/approval-decision';
+import type { DecisionKind, DecisionResult } from '../lib/approval-flow';
 import { TicketWhatWasDone } from './TicketWhatWasDone';
 import { TicketWhatYouSaw } from './TicketWhatYouSaw';
-import { ChangeNeededPanel } from './ChangeNeededPanel';
 import { isTestSetupAction, profileIdentity } from '../lib/profile-identity';
 import { splitTool, systemDisplayName, type ToolDisplay } from '../lib/approval-view';
-import { spClient, type IntegrationManifest, type ShownSnapshotPayload } from '../lib/sp-client';
-import { validateChangeNote, outcomeAfterView, refusedAfterView, type OutcomeKindLabel } from '../lib/reject-outcome';
-import { useProposalContent, useDecryptedNote, decisionButtonsVisible } from '../lib/use-proposal-content';
+import type { IntegrationManifest, Proposal } from '../lib/sp-client';
+import { outcomeAfterView, refusedAfterView, type OutcomeKindLabel } from '../lib/reject-outcome';
+import { useProposalContent, useDecryptedNote } from '../lib/use-proposal-content';
 
 type CardStatus = 'pending' | 'committed' | 'executed' | 'rejected' | 'expired' | 'refused';
 
@@ -105,25 +106,66 @@ interface Props {
   toolDisplay?: ToolDisplay;
   /** For the outcome box's "Refused by <System>" (lib/approval-view.ts systemDisplayName). */
   manifests?: IntegrationManifest[];
-  /** Needed only for a PENDING proposal's ApprovalBody (intent decrypt), and
-   *  to resolve a resolved proposal's "who" to "You" (lib/reject-outcome.ts). */
+  /** To resolve a resolved proposal's "who" to "You" (lib/reject-outcome.ts). */
   currentUserId?: string;
-  /** AU10 §8.4's `shownHash` — this card computes it (POSTing its own
-   *  current ApprovalBody snapshot) right before calling this, and passes
-   *  it on so the caller's actual approve/resolve call can carry it. */
-  onApprove?: (id: string, shownHash?: string) => void;
-  /** One click, no note — outcome `rejected` (decision 1). */
-  onReject?: (id: string, shownHash?: string) => void;
-  /** "Send back for change" — outcome `change_needed`, note required. */
-  onChangeNeeded?: (id: string, note: string, shownHash?: string) => void;
-  resolving?: boolean;
-  /** Rendered inside an approval row (UI spec §12.2): the row already shows
-   *  the profile, system, waiting time and deadline — so no rail, no header
-   *  row, no raw id here. */
-  inRow?: boolean;
+  /** The covering mandate's own title, for a pending proposal's "Covered by" row. */
+  mandateTitle?: string;
+  /** A pending proposal was decided and the gateway has answered. */
+  onDecided?: (proposalId: string, kind: DecisionKind, result: DecisionResult) => void;
 }
 
-export function ActionCard({ item, onApprove, onReject, onChangeNeeded, resolving, proposalLinks, toolDisplay, manifests, currentUserId, inRow = false }: Props) {
+/**
+ * A pending review-mode proposal: the approval card (UI spec §17). Decided
+ * through the proposal's own workspace queue.
+ */
+export function ReviewApprovalCard({ proposal, manifests, toolDisplay, proposalLinks, currentUserId, mandateTitle, onDecided, nextLabelText, onBusyChange }: {
+  proposal: Proposal;
+  manifests?: IntegrationManifest[];
+  toolDisplay?: ToolDisplay;
+  proposalLinks?: ProposalLink[];
+  currentUserId: string;
+  mandateTitle?: string;
+  onDecided?: (proposalId: string, kind: DecisionKind, result: DecisionResult) => void;
+  nextLabelText?: string | null;
+  onBusyChange?: (busy: boolean) => void;
+}) {
+  const { domain } = useAuth();
+  return (
+    <ApprovalCard
+      proposal={proposal}
+      currentUserId={currentUserId}
+      manifests={manifests}
+      toolDisplay={toolDisplay}
+      proposalLinks={proposalLinks}
+      mandateTitle={mandateTitle}
+      nextLabelText={nextLabelText}
+      onBusyChange={onBusyChange}
+      decide={(args) => decideInQueue(proposal, args, { activeDomain: domain, userId: currentUserId })}
+      onDecided={(kind, result) => onDecided?.(proposal.id, kind, result)}
+    />
+  );
+}
+
+/** Anything in the thread: a waiting proposal is the approval card, the rest are records. */
+export function ActionCard(props: Props) {
+  const { item } = props;
+  if (item.kind === 'proposal' && item.proposal.status === 'pending') {
+    return (
+      <ReviewApprovalCard
+        proposal={item.proposal}
+        manifests={props.manifests}
+        toolDisplay={props.toolDisplay}
+        proposalLinks={props.proposalLinks}
+        currentUserId={props.currentUserId ?? ''}
+        mandateTitle={props.mandateTitle}
+        onDecided={props.onDecided}
+      />
+    );
+  }
+  return <RecordCard {...props} />;
+}
+
+function RecordCard({ item, proposalLinks, toolDisplay, manifests, currentUserId }: Props) {
   const isProposal = item.kind === 'proposal';
   const status: CardStatus = isProposal ? item.proposal.status : 'executed';
   const toolFull = isProposal ? item.proposal.tool : item.receipt.action;
@@ -131,33 +173,6 @@ export function ActionCard({ item, onApprove, onReject, onChangeNeeded, resolvin
   const destructive = isDestructive(toolFull);
   const { integrationId } = splitTool(toolFull);
   const systemName = systemDisplayName(integrationId, manifests);
-
-  // RJ2 — "Change needed" panel, local UI-only state (never persisted; the
-  // card's actual state always comes from the server, per project rule).
-  const [changePanelOpen, setChangePanelOpen] = useState(false);
-  const [changeNote, setChangeNote] = useState('');
-  const [changeError, setChangeError] = useState('');
-
-  // AU10 §8.4 — see ApproverProposalCard's identical ref/helper.
-  const shownSnapshotRef = useRef<ShownSnapshotPayload | null>(null);
-  const saveShownHash = async (): Promise<string | undefined> => {
-    const snapshot = shownSnapshotRef.current;
-    if (!snapshot || !isProposal) return undefined;
-    try {
-      const { shownHash } = await spClient.saveShownSnapshot(item.proposal.id, snapshot);
-      return shownHash;
-    } catch {
-      return undefined;
-    }
-  };
-
-  const handleSendChange = async () => {
-    const result = validateChangeNote(changeNote);
-    if (!result.valid) { setChangeError(result.error); return; }
-    setChangeError('');
-    const shownHash = await saveShownHash();
-    onChangeNeeded?.(item.id, result.trimmed, shownHash);
-  };
 
   // The after-state (mockup §3): what the server stored once this proposal
   // was resolved. Only ever set for a rejected/change-needed/replaced
@@ -186,14 +201,6 @@ export function ActionCard({ item, onApprove, onReject, onChangeNeeded, resolvin
   const executionContext = isProposal ? item.proposal.executionContext : item.receipt.executionContext;
   const cumulative = !isProposal ? item.receipt.cumulativeState : null;
 
-  // Whether THIS device can decrypt a pending proposal's content — decision
-  // buttons (further down) show only once this is settled and readable
-  // (mockup §4: "no Approve button: nothing can be approved that this
-  // device cannot show you"). Not loading pending at all is readable (true)
-  // by definition — only set once ApprovalBody's own decrypt resolves.
-  const [pendingReadable, setPendingReadable] = useState(true);
-  const [pendingContentLoading, setPendingContentLoading] = useState(false);
-
   // Links the reviewer can open. This is the card review mode actually uses —
   // ApproverProposalCard is only for above-cap approvals — so a link wired only
   // there never reaches the person deciding.
@@ -203,16 +210,16 @@ export function ActionCard({ item, onApprove, onReject, onChangeNeeded, resolvin
   const testSetup = profileIdentity(item.profileId).testSetup || isTestSetupAction(toolFull);
 
   return (
-    <div className={inRow ? 'card card-in-row' : 'card id-card'}>
-      {!inRow && <ProfileRail profileId={item.profileId} />}
+    <div className="card id-card">
+      <ProfileRail profileId={item.profileId} />
       <div className="id-body">
-      {inRow ? (testSetup ? <div style={{ marginBottom: '0.5rem' }}><span className="sim-mark">Test setup</span></div> : null) : (
+      {(
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
         <code style={{ fontSize: '0.85rem' }}>{toolShort}</code>
         {testSetup && <span className="sim-mark">Test setup</span>}
         {item.commitmentMode === 'automatic' && (
           <span style={{ fontSize: '0.7rem', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-            autonomous
+            automatic
           </span>
         )}
         <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -304,26 +311,8 @@ export function ActionCard({ item, onApprove, onReject, onChangeNeeded, resolvin
         </div>
       )}
 
-      {/* A PENDING proposal (review mode — the main approval case, not just
-          above-cap) gets the same headline/preview/limits/mandate+intent/
-          folded-details body as ApproverProposalCard — see
-          components/ApprovalBody.tsx. Anything else (committed/rejected/
-          expired proposals, tickets/receipts) keeps the existing raw-args
-          rendering below; this is a review surface, not a history view. */}
-      {isProposal && status === 'pending' ? (
-        <ApprovalBody
-          proposal={item.proposal}
-          currentUserId={currentUserId ?? ''}
-          proposalLinks={proposalLinks}
-          toolDisplay={toolDisplay}
-          manifests={manifests}
-          onContentState={({ loading, readable }) => {
-            setPendingContentLoading(loading);
-            setPendingReadable(readable);
-          }}
-          onShownSnapshot={(snapshot) => { shownSnapshotRef.current = snapshot; }}
-        />
-      ) : (
+      {/* A record of a decided/expired proposal, or a ticket — not a review surface. */}
+      {(
         <>
           {/* Above the arguments on purpose: what can be looked at should come
               before what can only be read. */}
@@ -383,58 +372,9 @@ export function ActionCard({ item, onApprove, onReject, onChangeNeeded, resolvin
         </div>
       )}
 
-      {/* PE1 mockup §4 — "no Approve button: nothing can be approved that
-          this device cannot show you." A still-decrypting card shows
-          neither the buttons nor a false negative; only a settled,
-          undecryptable one hides them for good (until shared). */}
-      {isProposal && status === 'pending' && decisionButtonsVisible({ loading: pendingContentLoading, readable: pendingReadable }) && (
-        changePanelOpen ? (
-          <ChangeNeededPanel
-            note={changeNote}
-            onNoteChange={setChangeNote}
-            onSend={handleSendChange}
-            onCancel={() => { setChangePanelOpen(false); setChangeNote(''); setChangeError(''); }}
-            sending={!!resolving}
-            error={changeError}
-          />
-        ) : (
-          <>
-          <p className="approval-resp">Approving sends exactly this. Your approval is recorded with your name.</p>
-          {/* Wraps on a phone instead of pushing Reject off the screen. */}
-          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-            <button
-              className="btn btn-primary"
-              onClick={async () => onApprove?.(item.id, await saveShownHash())}
-              disabled={resolving}
-            >
-              {resolving ? 'Approving…' : 'Approve'}
-            </button>
-            <button
-              data-testid="btn-change-needed"
-              className="btn btn-outline-strong"
-              onClick={() => setChangePanelOpen(true)}
-              disabled={resolving}
-            >
-              <span aria-hidden="true">↩</span> Change needed
-            </button>
-            <button
-              data-testid="btn-reject"
-              className="btn btn-outline-strong"
-              onClick={async () => onReject?.(item.id, await saveShownHash())}
-              disabled={resolving}
-            >
-              <span aria-hidden="true">✕</span> Reject
-            </button>
-          </div>
-          </>
-        )
-      )}
-
-      {!inRow && (
       <div style={{ marginTop: '0.5rem', fontSize: '0.7rem', color: 'var(--text-tertiary)' }}>
         {isProposal ? 'Proposal' : 'Ticket'}: {item.id}
       </div>
-      )}
       </div>
     </div>
   );
