@@ -4700,3 +4700,6 @@ a.dash-row:hover, .dash-row:not([open]):hover { box-shadow: var(--elevation-2); 
 .dash-page .dash-btn { background: var(--border); }
 .dash-page .dash-btn:hover { background: var(--border-strong); }
 .dash-cols .core-quiet-line { border-top: 0; padding-top: 0; }
+
+/* An opened mandate scrolls to the top — clear of the fixed top bar and banners. */
+.ob-card.mandate-card { scroll-margin-top: calc(var(--nav-height) + var(--update-banner-h, 0px) + var(--sim-banner-h, 0px) + var(--space-4)); }

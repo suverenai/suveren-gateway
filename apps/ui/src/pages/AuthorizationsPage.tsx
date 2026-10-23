@@ -1,4 +1,4 @@
-import { Fragment, useState, useEffect, useCallback, useMemo } from 'react';
+import { Fragment, useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react';
 import { spClient, type PendingItem, type GateContentEntry, type ProfileConfig, type ProfileSummary, type IntegrationManifest } from '../lib/sp-client';
 import { profileIdentity, shortProfileId } from '../lib/profile-identity';
 import { resolveAreaName, areaIcon, type AreaIconName } from '../lib/area';
@@ -220,9 +220,18 @@ function AuthCard({
     : null;
   const expiredOn = status === 'expired' ? statusTimestamp(item, status) : null;
   const foldsRef = useFoldAccordion<HTMLDivElement>();
+  // Opening a card closes the one above it, so the list moves up and the new
+  // card's top can land above the view. Once open, its top goes to the top.
+  const cardRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (!isExpanded) return;
+    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    cardRef.current?.scrollIntoView({ block: 'start', behavior: reduce ? 'auto' : 'smooth' });
+  }, [isExpanded]);
 
   return (
     <div
+      ref={cardRef}
       className={`ob-card mandate-card${isExpanded ? ' is-open' : ''}${isHighlighted ? ' card-highlight' : ''}`}
       data-testid="mandate-card"
       key={item.authorization_id}
