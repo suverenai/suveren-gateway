@@ -156,7 +156,7 @@ export function CoreColumns({ auths, activeCount, waiting, waitingReady }: Props
         {oldestFirst.length > 0 && <Link to="/approvals" className="ob-btn dash-btn">All approvals</Link>}
       </section>
 
-      {/* 2 — Done today: automatic tickets grouped per mandate and action, then approved ones */}
+      {/* 2 — Done today. Ticket titles start with the area, so the narrow type line shows only its icon (name for screen readers). */}
       <section aria-label="Done today" data-testid="col-automatic">
         <div className="core-col-h">
           <h2>Done today</h2>
@@ -175,7 +175,7 @@ export function CoreColumns({ auths, activeCount, waiting, waitingReady }: Props
                     tag="Ticket"
                     className="obj-line"
                     profileId={g.profileId}
-                    parts={[g.area, viaPart(g.system, g.area), todayTime(ticketTime(g.latestSec, now)), <span className="ob-st" key="st">Automatic</span>]}
+                    parts={[<span className="sr-only" key="a">{g.area}</span>, viaPart(g.system, g.area), todayTime(ticketTime(g.latestSec, now)), <span className="ob-st" key="st">Automatic</span>]}
                   />
                   <span className="ob-title">{g.area} · {g.count} × {g.label}</span>
                   <span className="ob-one">
@@ -206,7 +206,7 @@ export function CoreColumns({ auths, activeCount, waiting, waitingReady }: Props
                     tag="Ticket"
                     className="obj-line"
                     profileId={t.profileId}
-                    parts={[area, viaPart(system, area), todayTime(ticketTime(t.timestamp, now)), <span className="ob-st" key="st">Approved</span>]}
+                    parts={[<span className="sr-only" key="a">{area}</span>, viaPart(system, area), todayTime(ticketTime(t.timestamp, now)), <span className="ob-st" key="st">Approved</span>]}
                   />
                   <span className="ob-title">{area} · {actionLabel(t, manifests)}</span>
                   {showMandateLine(title, area) && <span className="ob-one" data-testid="mandate-line">Mandate: {title}</span>}
