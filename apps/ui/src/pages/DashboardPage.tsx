@@ -19,6 +19,7 @@ import { SkippedCommitmentsCard } from '../components/SkippedCommitmentsCard';
 import { bucketAuths } from '../lib/auth-status';
 import { buildIntegrationAttentionItems, buildPausedSummary } from '../lib/integration-attention';
 import { deriveFirstRunCard } from '../lib/first-run-card';
+import { AI_ASSISTANT_VISIBLE } from '../lib/ai-assistant';
 
 const EXPIRY_WARN_SECONDS = 30 * 60; // 30 minutes
 
@@ -184,7 +185,8 @@ export function DashboardPage() {
     }
   }
 
-  if (!aiConfigured) {
+  // TO BE INVESTIGATED: the AI assistant is hidden for now (lib/ai-assistant.ts).
+  if (AI_ASSISTANT_VISIBLE && !aiConfigured) {
     attentionItems.push({
       label: 'AI Assistant',
       detail: 'Not configured — needed for gate advisory',

@@ -10,6 +10,7 @@ import { unseenCount } from '../lib/blocked-view';
 import { isNewReport } from '../lib/report-news';
 import { APPROVALS_CHANGED_EVENT } from '../lib/approval-flow';
 import { NavIcon, type NavIconName } from './NavIcon';
+import { AI_ASSISTANT_VISIBLE } from '../lib/ai-assistant';
 
 export interface NavItem {
   to: string;
@@ -68,7 +69,8 @@ function useOtherNavStatus() {
       ]);
 
       const next: Record<string, number> = {};
-      if (aiStatus && !aiStatus.configured) next.assistant = 1;
+      // TO BE INVESTIGATED: no nudge to a hidden AI assistant section (lib/ai-assistant.ts).
+      if (AI_ASSISTANT_VISIBLE && aiStatus && !aiStatus.configured) next.assistant = 1;
       if (authData) {
         // Bucket through the shared helper so this badge, the Dashboard
         // counts, and the Authorizations page never disagree.

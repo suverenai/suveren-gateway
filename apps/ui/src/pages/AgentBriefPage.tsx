@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { spClient } from '../lib/sp-client';
 import { AssistantChatPanel } from '../components/AssistantChatPanel';
+import { AI_ASSISTANT_VISIBLE } from '../lib/ai-assistant';
 import { BottomSheet } from '../components/BottomSheet';
 
 // Plain-spoken default brief for first-time users. Covers what Suveren is,
@@ -179,9 +180,10 @@ export function AgentBriefPage() {
         </div>
       )}
 
-      <div className="intent-layout" style={{ marginBottom: '1rem' }}>
-        {/* LEFT — AI chat (hidden on ≤768px; reachable via floating button) */}
-        <div className="card intent-pane chat">
+      <div className={`intent-layout${AI_ASSISTANT_VISIBLE ? '' : ' no-chat'}`} style={{ marginBottom: '1rem' }}>
+        {/* LEFT — AI chat (hidden on ≤768px; reachable via floating button).
+            TO BE INVESTIGATED: hidden while the AI assistant is rethought (lib/ai-assistant.ts). */}
+        {AI_ASSISTANT_VISIBLE && <div className="card intent-pane chat">
           <AssistantChatPanel
             target={{ kind: 'context' }}
             currentText={context}
@@ -192,7 +194,7 @@ export function AgentBriefPage() {
             greeting="Tell me what your agent should know — I'll help shape your standing orders. Or ask me to draft a full brief and we'll iterate."
             placeholder="Ask for help with your brief…"
           />
-        </div>
+        </div>}
 
         {/* RIGHT — context.md document, the centerpiece */}
         <div className="card intent-pane document">
@@ -232,7 +234,8 @@ export function AgentBriefPage() {
           </div>
         </div>
 
-        {/* Mobile floating help + bottom-sheet drawer */}
+        {/* Mobile floating help + bottom-sheet drawer (hidden with the assistant) */}
+        {AI_ASSISTANT_VISIBLE && <>
         <button
           type="button"
           className="floating-help"
@@ -259,6 +262,7 @@ export function AgentBriefPage() {
             placeholder="Ask for help with your brief…"
           />
         </BottomSheet>
+        </>}
       </div>
 
     </>

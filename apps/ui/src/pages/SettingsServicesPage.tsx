@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { AI_ASSISTANT_VISIBLE } from '../lib/ai-assistant';
 import { spClient } from '../lib/sp-client';
 import { AutostartToggle } from '../components/AutostartToggle';
 import { NotificationsToggle } from '../components/NotificationsToggle';
@@ -178,13 +179,13 @@ export function SettingsServicesPage() {
     <>
       <div className="page-header">
         <h1 className="page-title">Settings</h1>
-        <p className="page-subtitle">Your AI assistant, the connection to your Authority Server, security and version.</p>
+        <p className="page-subtitle">{AI_ASSISTANT_VISIBLE ? 'Your AI assistant, the connection to your Authority Server, security and version.' : 'The connection to your Authority Server, this computer, security and version.'}</p>
       </div>
 
       {successMsg && <div className="alert alert-success">{successMsg}</div>}
 
-      {/* 1. AI Assistant */}
-      <section style={{ marginBottom: '2rem' }}>
+      {/* 1. AI Assistant — TO BE INVESTIGATED: hidden while it is rethought (lib/ai-assistant.ts). */}
+      {AI_ASSISTANT_VISIBLE && <section style={{ marginBottom: '2rem' }}>
         <h2 style={SECTION_HEADING_STYLE}>{SETTINGS_SECTIONS[0]}</h2>
         <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
           Advisory AI to help you think through intent when giving mandates.
@@ -331,7 +332,7 @@ export function SettingsServicesPage() {
 
         {/* Advanced — AI assistant prompts (collapsed by default) */}
         <AdvancedAIPrompts />
-      </section>
+      </section>}
 
       {/* 2. Authority Server */}
       <section style={{ marginBottom: '2rem' }}>
