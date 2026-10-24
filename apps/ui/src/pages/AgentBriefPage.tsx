@@ -52,6 +52,12 @@ export function AgentBriefPage() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
   const [chatOpenMobile, setChatOpenMobile] = useState(false);
+  // The brief helper only exists once an AI assistant is set up (Settings → AI Assistant);
+  // until then it is a missing setup step (Get started, dashboard), not an empty panel.
+  const [aiConfigured, setAiConfigured] = useState(false);
+  useEffect(() => {
+    spClient.getCredential('ai-config').then(c => setAiConfigured(c.configured)).catch(() => setAiConfigured(false));
+  }, []);
 
   const dirty = context !== originalContext;
   const byteLength = new Blob([context]).size;
@@ -179,9 +185,9 @@ export function AgentBriefPage() {
         </div>
       )}
 
-      <div className="intent-layout" style={{ marginBottom: '1rem' }}>
-        {/* LEFT — AI chat (hidden on ≤768px; reachable via floating button) */}
-        <div className="card intent-pane chat">
+      <div className={`intent-layout${aiConfigured ? '' : ' no-chat'}`} style={{ marginBottom: '1rem' }}>
+        {/* LEFT — AI chat (hidden on ≤768px; reachable via floating button) — only with an AI assistant set up */}
+        {aiConfigured && <div className="card intent-pane chat">
           <AssistantChatPanel
             target={{ kind: 'context' }}
             currentText={context}
@@ -192,7 +198,7 @@ export function AgentBriefPage() {
             greeting="Tell me what your agent should know — I'll help shape your standing orders. Or ask me to draft a full brief and we'll iterate."
             placeholder="Ask for help with your brief…"
           />
-        </div>
+        </div>}
 
         {/* RIGHT — context.md document, the centerpiece */}
         <div className="card intent-pane document">
@@ -232,7 +238,8 @@ export function AgentBriefPage() {
           </div>
         </div>
 
-        {/* Mobile floating help + bottom-sheet drawer */}
+        {/* Mobile floating help + bottom-sheet drawer (only with an AI assistant) */}
+        {aiConfigured && <>
         <button
           type="button"
           className="floating-help"
@@ -259,6 +266,7 @@ export function AgentBriefPage() {
             placeholder="Ask for help with your brief…"
           />
         </BottomSheet>
+        </>}
       </div>
 
     </>

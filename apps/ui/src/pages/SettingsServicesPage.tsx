@@ -38,12 +38,18 @@ const PROVIDER_CONFIG: Record<string, { provider: string; endpoint: string; mode
 // Single ordered list of this page's section headings. The JSX below renders
 // these by index rather than hardcoding the strings a second time, so a test
 // asserting the order can't drift from what's actually on screen.
-export const SETTINGS_SECTIONS = ['AI Assistant', 'Authority Server', 'This computer', 'Security', 'Version'] as const;
+export const SETTINGS_SECTIONS = ['Authority Server', 'This computer', 'Security', 'Version', 'AI Assistant'] as const;
 
 const SECTION_HEADING_STYLE: React.CSSProperties = { fontSize: '1rem', fontWeight: 700, marginBottom: '1rem' };
 
 export function SettingsServicesPage() {
   const [successMsg, setSuccessMsg] = useState('');
+  // Links to the AI Assistant (last section) arrive as /settings#ai-assistant.
+  useEffect(() => {
+    if (window.location.hash !== '#ai-assistant') return;
+    const t = window.setTimeout(() => document.getElementById('ai-assistant')?.scrollIntoView({ block: 'start' }), 50);
+    return () => window.clearTimeout(t);
+  }, []);
 
   // AI config state
   const [aiPreset, setAiPreset] = useState('openrouter');
@@ -178,14 +184,67 @@ export function SettingsServicesPage() {
     <>
       <div className="page-header">
         <h1 className="page-title">Settings</h1>
-        <p className="page-subtitle">Your AI assistant, the connection to your Authority Server, security and version.</p>
+        <p className="page-subtitle">The connection to your Authority Server, this computer, security, version and your AI assistant.</p>
       </div>
 
       {successMsg && <div className="alert alert-success">{successMsg}</div>}
 
-      {/* 1. AI Assistant */}
+
+      {/* 1. Authority Server */}
       <section style={{ marginBottom: '2rem' }}>
         <h2 style={SECTION_HEADING_STYLE}>{SETTINGS_SECTIONS[0]}</h2>
+        <AuthorityServerCard />
+        <IdentityDisclosureToggle />
+      </section>
+
+      {/* 2. This computer */}
+      <section style={{ marginBottom: '2rem' }}>
+        <h2 style={SECTION_HEADING_STYLE}>{SETTINGS_SECTIONS[1]}</h2>
+
+        {/* Autostart — the CLI's `service` command as a switch */}
+        <AutostartToggle />
+        <NotificationsToggle />
+        {/* Only renders when IT policy has locked simulation mode */}
+        <SimulationLockCard />
+      </section>
+
+      {/* 3. Security */}
+      <section style={{ marginBottom: '2rem' }}>
+        <h2 style={SECTION_HEADING_STYLE}>{SETTINGS_SECTIONS[2]}</h2>
+
+        <div className="card" style={{ padding: '1.5rem' }}>
+          <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.7 }}>
+            <div style={{ marginBottom: '1rem' }}>
+              <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.375rem' }}>What the gateway protects</div>
+              <ul style={{ margin: 0, paddingLeft: '1.25rem' }}>
+                <li>Every tool call verified against your mandate bounds</li>
+                <li>Credentials never exposed to agents through MCP</li>
+                <li>Every action produces a signed ticket</li>
+              </ul>
+            </div>
+
+            <div>
+              <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.375rem' }}>Your responsibility</div>
+              <ul style={{ margin: 0, paddingLeft: '1.25rem' }}>
+                <li>If your AI agent has full access to your computer, it could bypass the gateway</li>
+                <li>For best security, run agents in sandboxed environments</li>
+                <li>The gateway secures what agents do through tools — not what they do on your machine</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* 4. Version */}
+      <section>
+        <h2 style={SECTION_HEADING_STYLE}>{SETTINGS_SECTIONS[3]}</h2>
+        <VersionCard />
+      </section>
+
+      {/* 5. AI Assistant — last (Andreas, 2026-10-24): optional; until it is set up it shows as a
+          missing setup step (Get started, dashboard, Settings nav count). */}
+      <section id="ai-assistant" style={{ marginTop: '2rem', scrollMarginTop: 'calc(var(--nav-height) + 1rem)' }}>
+        <h2 style={SECTION_HEADING_STYLE}>{SETTINGS_SECTIONS[4]}</h2>
         <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
           Advisory AI to help you think through intent when giving mandates.
         </p>
@@ -331,57 +390,6 @@ export function SettingsServicesPage() {
 
         {/* Advanced — AI assistant prompts (collapsed by default) */}
         <AdvancedAIPrompts />
-      </section>
-
-      {/* 2. Authority Server */}
-      <section style={{ marginBottom: '2rem' }}>
-        <h2 style={SECTION_HEADING_STYLE}>{SETTINGS_SECTIONS[1]}</h2>
-        <AuthorityServerCard />
-        <IdentityDisclosureToggle />
-      </section>
-
-      {/* 3. This computer */}
-      <section style={{ marginBottom: '2rem' }}>
-        <h2 style={SECTION_HEADING_STYLE}>{SETTINGS_SECTIONS[2]}</h2>
-
-        {/* Autostart — the CLI's `service` command as a switch */}
-        <AutostartToggle />
-        <NotificationsToggle />
-        {/* Only renders when IT policy has locked simulation mode */}
-        <SimulationLockCard />
-      </section>
-
-      {/* 4. Security */}
-      <section style={{ marginBottom: '2rem' }}>
-        <h2 style={SECTION_HEADING_STYLE}>{SETTINGS_SECTIONS[3]}</h2>
-
-        <div className="card" style={{ padding: '1.5rem' }}>
-          <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.7 }}>
-            <div style={{ marginBottom: '1rem' }}>
-              <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.375rem' }}>What the gateway protects</div>
-              <ul style={{ margin: 0, paddingLeft: '1.25rem' }}>
-                <li>Every tool call verified against your mandate bounds</li>
-                <li>Credentials never exposed to agents through MCP</li>
-                <li>Every action produces a signed ticket</li>
-              </ul>
-            </div>
-
-            <div>
-              <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.375rem' }}>Your responsibility</div>
-              <ul style={{ margin: 0, paddingLeft: '1.25rem' }}>
-                <li>If your AI agent has full access to your computer, it could bypass the gateway</li>
-                <li>For best security, run agents in sandboxed environments</li>
-                <li>The gateway secures what agents do through tools — not what they do on your machine</li>
-              </ul>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* 5. Version */}
-      <section>
-        <h2 style={SECTION_HEADING_STYLE}>{SETTINGS_SECTIONS[4]}</h2>
-        <VersionCard />
       </section>
     </>
   );

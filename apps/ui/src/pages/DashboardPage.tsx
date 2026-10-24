@@ -187,8 +187,8 @@ export function DashboardPage() {
   if (!aiConfigured) {
     attentionItems.push({
       label: 'AI Assistant',
-      detail: 'Not configured — needed for gate advisory',
-      to: '/settings',
+      detail: 'Optional — not set up yet. Helps you write mandates and the brief.',
+      to: '/settings#ai-assistant',
       color: 'var(--text-tertiary)',
     });
   }
