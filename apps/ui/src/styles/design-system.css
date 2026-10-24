@@ -4807,3 +4807,30 @@ a.dash-row:hover, .dash-row:not([open]):hover { box-shadow: var(--elevation-2); 
   .su-row { flex-direction: column; align-items: stretch; }
   .su-card .ob-kv { grid-template-columns: 1fr; gap: 0; }
 }
+
+/* Agent Brief: the editor is a light mono surface; one quiet line under it */
+.su-editor {
+  display: block; width: 100%; min-height: 22rem; resize: vertical; background: var(--neutral-subtle); color: var(--text-primary);
+  border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--space-4);
+  font-family: var(--font-mono); font-size: var(--text-body-sm); line-height: var(--line-relaxed);
+}
+.su-editor::placeholder { color: var(--text-muted); opacity: 1; }
+.su-editor:focus { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.su-editor:disabled { opacity: 0.55; cursor: not-allowed; }
+.su-editor-line { display: flex; justify-content: space-between; gap: var(--space-3); margin: var(--space-2) 0 0; font-size: var(--text-caption); color: var(--text-muted); }
+.intent-pane.document.su-brief { gap: 0; }
+.su-brief .ob-btns.is-inline { margin-top: var(--space-4); }
+@media (min-width: 1025px) {
+  .intent-layout.su-duo { grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr); }
+  .intent-layout.su-duo.no-chat { grid-template-columns: minmax(0, 1fr); max-width: none; }
+}
+/* The AI helper beside the editor (only once an AI assistant is set up): light, in the same card language */
+.su-helper .intent-chat .card-title { font-size: var(--text-lead); margin: 0 0 var(--space-2); }
+.su-helper .intent-chat .chat-messages { min-height: 8rem; }
+.su-helper .intent-chat .chat-msg.assistant .chat-msg-body { background: var(--bg-sunken); border-radius: var(--radius-lg); padding: var(--space-4); font-size: var(--text-body-sm); line-height: var(--line-normal); }
+.su-helper .intent-chat .chat-msg.user .chat-msg-body { background: var(--neutral-subtle); border: 0; font-size: var(--text-body-sm); }
+.su-helper .intent-chat .chat-composer-pill { background: var(--bg-input); color: var(--text-primary); border-color: var(--border-strong); }
+.su-helper .intent-chat .chat-composer-pill:focus-within { box-shadow: none; outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.su-helper .intent-chat .chat-input { color: var(--text-primary); }
+.su-helper .intent-chat .chat-input::placeholder { color: var(--text-muted); }
+.su-helper .intent-chat .chat-send-btn { background: var(--btn-primary-bg); color: var(--btn-primary-fg); }

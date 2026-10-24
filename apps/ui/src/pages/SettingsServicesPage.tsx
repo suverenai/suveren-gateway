@@ -483,7 +483,7 @@ function AdvancedAIPrompts() {
 
       <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: '0.75rem 0 1rem 0', lineHeight: 1.55 }}>
         These are the system prompts the AI assistant sees when helping you write
-        Intent (per-mandate) or Context (your standing-orders brief).
+        Intent (per-mandate) or Context (your Agent Brief).
         Edit with care — changes apply on the next chat turn.
       </p>
 
@@ -512,8 +512,8 @@ function AdvancedAIPrompts() {
 
           <PromptEditor
             kind="context"
-            label="Context — standing-orders brief"
-            description="Used on the Brief page when refining your context.md."
+            label="Agent Brief"
+            description="Used on the Agent Brief page when refining your brief."
             state={data.context}
             draft={drafts.context}
             onChange={(v) => setDrafts((d) => ({ ...d, context: v }))}

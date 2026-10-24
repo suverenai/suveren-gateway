@@ -2,8 +2,8 @@ import { useState, useRef, useEffect } from 'react';
 import { spClient } from '../lib/sp-client';
 
 /** What the assistant is helping refine. `intent` carries authorization
- *  context (profile/path/bounds); `context` is the standing-orders
- *  brief flow. */
+ *  context (profile/path/bounds); `context` is the Agent
+ *  Brief flow. */
 export type ChatTarget =
   | { kind: 'context' }
   | { kind: 'intent'; profileId?: string; path?: string; bounds?: string };

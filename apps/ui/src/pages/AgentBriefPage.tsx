@@ -5,7 +5,7 @@ import { BottomSheet } from '../components/BottomSheet';
 
 // Plain-spoken default brief for first-time users. Covers what Suveren is,
 // how to behave under bounded authority, when to pull intent details on
-// demand, and a few example standing-orders. Intentionally generic — the
+// demand, and a few example rules. Intentionally generic — the
 // user tailors it for their actual workflow.
 const STARTER_TEMPLATE = `# Agent Brief
 
@@ -34,7 +34,7 @@ executes. When you propose an action:
   dates, attendees) in the tool arguments.
 - Don't batch unrelated proposals — one proposal per decision.
 
-## Standing orders
+## Your own rules
 
 (Add your own here. Examples:)
 
@@ -62,6 +62,7 @@ export function AgentBriefPage() {
   const dirty = context !== originalContext;
   const byteLength = new Blob([context]).size;
   const MAX_BYTES = 16 * 1024;
+  const overLimit = byteLength > MAX_BYTES;
 
   // Guard against navigating away with unsaved edits.
   //
@@ -137,7 +138,7 @@ export function AgentBriefPage() {
     try {
       await spClient.saveAgentContext(context);
       setOriginalContext(context);
-      setMessage({ kind: 'ok', text: 'Saved. New MCP sessions will pick this up on next connect.' });
+      // The quiet line under the editor turns to "Saved" — backend truth, no extra banner.
     } catch (err) {
       setMessage({ kind: 'error', text: err instanceof Error ? err.message : 'Save failed' });
     } finally {
@@ -156,38 +157,21 @@ export function AgentBriefPage() {
   };
 
   return (
-    <>
+    <div className="su-page is-wide">
       <div className="page-header">
         <h1 className="page-title">Agent Brief</h1>
-        <p className="page-subtitle">
-          Standing orders for agents that connect via MCP. This text
-          prepends every new session — keep it tight.
-        </p>
-        {!context.trim() && !loadingContext && (
-          <button
-            className="btn btn-primary btn-sm"
-            onClick={handleStarter}
-            disabled={saving}
-            title="Insert a starter brief covering Suveren basics and example standing orders"
-            style={{ marginTop: '0.5rem' }}
-          >
-            Insert starter template
-          </button>
-        )}
+        <p className="page-subtitle">What every connected AI reads first, at the start of each session.</p>
       </div>
 
-      {message && (
-        <div
-          className={message.kind === 'ok' ? 'alert alert-success' : 'error-message'}
-          style={{ marginBottom: '1rem' }}
-        >
+      {message && message.kind === 'error' && (
+        <div className="error-message" style={{ marginBottom: '1rem' }}>
           {message.text}
         </div>
       )}
 
-      <div className={`intent-layout${aiConfigured ? '' : ' no-chat'}`} style={{ marginBottom: '1rem' }}>
-        {/* LEFT — AI chat (hidden on ≤768px; reachable via floating button) — only with an AI assistant set up */}
-        {aiConfigured && <div className="card intent-pane chat">
+      <div className={`intent-layout su-duo${aiConfigured ? '' : ' no-chat'}`} style={{ marginBottom: '1rem' }}>
+        {/* LEFT — AI helper (hidden on ≤768px; reachable via floating button) — only with an AI assistant set up */}
+        {aiConfigured && <article className="ob-card su-card su-helper intent-pane chat">
           <AssistantChatPanel
             target={{ kind: 'context' }}
             currentText={context}
@@ -195,48 +179,57 @@ export function AgentBriefPage() {
               if (context.trim() && !confirm('Replace the current context with the applied draft?')) return;
               setContext(text);
             }}
-            greeting="Tell me what your agent should know — I'll help shape your standing orders. Or ask me to draft a full brief and we'll iterate."
+            greeting="Tell me what your agent should know — I'll help you write the brief."
             placeholder="Ask for help with your brief…"
           />
-        </div>}
+        </article>}
 
-        {/* RIGHT — context.md document, the centerpiece */}
-        <div className="card intent-pane document">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
-            <h3 className="card-title" style={{ marginBottom: 0 }}>context.md</h3>
-            <span className={byteLength > MAX_BYTES ? 'msg-error' : undefined} style={{ fontSize: '0.75rem', color: byteLength > MAX_BYTES ? undefined : 'var(--text-muted)' }}>
-              {byteLength.toLocaleString()} / {MAX_BYTES.toLocaleString()} bytes
+        {/* RIGHT — the brief itself: the editor, one quiet line, Revert and Save */}
+        <article className="ob-card su-card su-brief intent-pane document">
+          <textarea
+            className="su-editor"
+            aria-label="Agent brief"
+            value={context}
+            onChange={e => setContext(e.target.value)}
+            placeholder={loadingContext ? 'Loading…' : 'Write what every AI should know — or start from a template.'}
+            disabled={loadingContext}
+            rows={18}
+          />
+
+          <div className="su-editor-line">
+            <span>{dirty ? 'Unsaved changes' : 'Saved'}</span>
+            <span className={overLimit ? 'ob-bold' : undefined}>
+              {byteLength.toLocaleString()} / {MAX_BYTES.toLocaleString()} bytes{overLimit ? ' — too long to save' : ''}
             </span>
           </div>
 
-          <textarea
-            className="form-textarea"
-            value={context}
-            onChange={e => setContext(e.target.value)}
-            placeholder={loadingContext ? 'Loading…' : 'Type your standing orders here, or click "Insert starter template" below.'}
-            disabled={loadingContext}
-            rows={18}
-            style={{ fontFamily: "'SF Mono', Monaco, monospace", fontSize: '0.85rem', lineHeight: 1.5, minHeight: '22rem' }}
-          />
+          {!context.trim() && !loadingContext && (
+            <div className="ob-btns is-inline">
+              <button
+                className="ob-btn"
+                onClick={handleStarter}
+                disabled={saving}
+                title="Insert a starter brief covering Suveren basics and example rules"
+              >
+                Insert starter template
+              </button>
+            </div>
+          )}
 
-          <div className="intent-footer" style={{ marginTop: '0.75rem' }}>
-            <button
-              className="btn btn-ghost"
-              onClick={handleRevert}
-              disabled={saving || !dirty}
-            >
+          <div className="ob-btns">
+            <button className="ob-btn" onClick={handleRevert} disabled={saving || !dirty}>
               Revert
             </button>
             <button
-              className="btn btn-primary"
-              style={{ flex: 1 }}
+              className="ob-btn is-solid"
+              style={{ flex: '3 1 10rem' }}
               onClick={handleSave}
-              disabled={saving || !dirty || byteLength > MAX_BYTES || loadingContext}
+              disabled={saving || !dirty || overLimit || loadingContext}
             >
               {saving ? 'Saving…' : 'Save'}
             </button>
           </div>
-        </div>
+        </article>
 
         {/* Mobile floating help + bottom-sheet drawer (only with an AI assistant) */}
         {aiConfigured && <>
@@ -262,13 +255,12 @@ export function AgentBriefPage() {
               setContext(text);
               setChatOpenMobile(false);
             }}
-            greeting="Tell me what your agent should know — I'll help shape your standing orders."
+            greeting="Tell me what your agent should know — I'll help you write the brief."
             placeholder="Ask for help with your brief…"
           />
         </BottomSheet>
         </>}
       </div>
-
-    </>
+    </div>
   );
 }
