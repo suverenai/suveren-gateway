@@ -4134,12 +4134,6 @@ body.is-updating .simulation-banner {
 .sidebar-group-label { font-size: 0.62rem; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; color: var(--text-muted); padding: var(--space-3) var(--space-3) var(--space-1); }
 .sidebar-divider { height: 1px; background: var(--border); margin: var(--space-3) var(--space-3); }
 .sidebar-setup .sidebar-item { color: var(--text-muted); font-size: var(--text-caption); }
-.nav-ic { display: inline-flex; align-items: center; justify-content: center; width: 1.1rem; height: 1.1rem; flex: none; }
-.nav-ic-approval { width: 0.35rem; height: 0.9rem; background: var(--text-primary); border-radius: 2px; }
-.nav-ic-mandate { width: 0.7rem; height: 0.9rem; border: 1.5px solid var(--text-primary); border-left-width: 4px; border-radius: 2px; }
-.nav-ic-ticket { width: 0.95rem; height: 0.6rem; border: 1.5px solid var(--text-primary); border-right-style: dashed; border-radius: 2px; }
-.nav-ic-blocked { position: relative; width: 0.85rem; height: 0.85rem; border: 1.5px solid var(--text-primary); border-radius: var(--radius-circle); }
-.nav-ic-blocked::after { content: ''; position: absolute; left: 50%; top: -1px; bottom: -1px; width: 1.5px; background: var(--text-primary); transform: translateX(-50%) rotate(45deg); }
 .ticket-obj-head { display: block; width: 100%; background: none; border: none; padding: 0; text-align: left; font: inherit; color: inherit; cursor: pointer; }
 .ticket-obj-head:focus-visible { outline: 2px solid var(--text-primary); outline-offset: 2px; }
 .ticket-obj-head .receipt-head { margin-top: 0.15rem; }
@@ -4198,7 +4192,6 @@ body.is-updating .simulation-banner {
 .core-cols .obj-line > span, .core-cols .obj-line b { overflow: hidden; text-overflow: ellipsis; }
 .core-cols .auto-grp-txt > b, .core-cols .appr-item-sum { overflow-wrap: anywhere; }
 /* Nav counts: solid only where something needs you; plain information quiet (UI spec §12.1, mockup C2) */
-.nav-count-quiet { background: transparent !important; color: var(--text-muted) !important; font-weight: 500 !important; }
 /* "New" — one thing that is new or not (the report); same solid form as an awaiting pill */
 .nav-new { margin-left: auto; display: inline-flex; align-items: center; background: var(--neutral); color: var(--bg-elevated); border-radius: var(--radius-pill); padding: 0.08rem 0.45rem; font-size: 0.62rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; }
 /* Dashboard: one line while a report is new (reports mockup) */
@@ -4708,3 +4701,36 @@ a.dash-row:hover, .dash-row:not([open]):hover { box-shadow: var(--elevation-2); 
 .dash-row .ob-type { flex-wrap: nowrap; white-space: nowrap; overflow: hidden; }
 .dash-row .ob-type > span { flex: none; }
 .dash-row .ob-type > .ob-area { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+
+/* ══════════════════════════════════════════════════════════════════════
+   NAVIGATION — UI spec §19 (signed off 2026-10-24). One drawn icon set
+   (NavIcon.tsx), two badge forms (solid = needs you, outlined = setup),
+   active = left bar + bold + surface, hover = wash only. Closed icon rail:
+   Setup is one icon with a dot. Reference: suveren-as/docs/ui-spec/nav.html.
+   ══════════════════════════════════════════════════════════════════════ */
+.sidebar-item { position: relative; color: var(--text-primary); }
+.sidebar-item .icon { width: 1.125rem; height: 1.125rem; display: inline-flex; align-items: center; justify-content: center; }
+.nav-svg { width: 18px; height: 18px; flex: none; }
+.sidebar-item:hover { background: var(--neutral-subtle); color: var(--text-primary); }
+.sidebar-item.active { background: var(--bg-main); box-shadow: inset 0 0 0 1px var(--border); color: var(--text-primary); font-weight: 700; }
+.sidebar-item.active::before { content: ''; position: absolute; left: -0.3rem; top: 0.4rem; bottom: 0.4rem; width: 2px; border-radius: 2px; background: var(--text-primary); }
+.sidebar-item.active .nav-svg { stroke-width: 2; }
+.sidebar-setup .sidebar-item { color: var(--text-muted); }
+.sidebar-setup .sidebar-item:hover, .sidebar-setup .sidebar-item.active { color: var(--text-primary); }
+.nav-count {
+  margin-left: auto; min-width: 1.15rem; height: 1.15rem; padding: 0 0.35rem; flex: none;
+  display: inline-flex; align-items: center; justify-content: center; border-radius: var(--radius-pill);
+  background: var(--btn-primary-bg); color: var(--btn-primary-fg); font-size: 0.68rem; font-weight: 700;
+}
+.nav-count-setup { background: transparent; color: var(--text-muted); box-shadow: inset 0 0 0 1px var(--border); font-weight: 500; }
+.sidebar-setup-rail { display: none; }
+.nav-dot { position: absolute; top: 0.3rem; right: 0.55rem; width: 0.4rem; height: 0.4rem; border-radius: var(--radius-pill); background: var(--text-muted); }
+@media (min-width: 480px) and (max-width: 1099px) {
+  .sidebar:not(:hover):not(:has(:focus-visible)) .sidebar-setup .sidebar-nav,
+  .sidebar:not(:hover):not(:has(:focus-visible)) .sidebar-setup .sidebar-group-label { display: none; }
+  .sidebar:not(:hover):not(:has(:focus-visible)) .sidebar-setup-rail {
+    display: flex; position: relative; align-items: center; margin: 0 0.5rem; padding: 0.5rem 0.75rem; color: var(--text-muted);
+  }
+  .sidebar-setup-rail.is-active { color: var(--text-primary); }
+  .sidebar-item.active::before { left: 0; }
+}

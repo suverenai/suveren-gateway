@@ -9,38 +9,38 @@ import { useIntegrationStatus } from '../contexts/IntegrationStatusContext';
 import { unseenCount } from '../lib/blocked-view';
 import { isNewReport } from '../lib/report-news';
 import { APPROVALS_CHANGED_EVENT } from '../lib/approval-flow';
+import { NavIcon, type NavIconName } from './NavIcon';
 
 export interface NavItem {
   to: string;
-  icon: string;
-  /** A drawn, monochrome icon (UI spec §12.1) — used instead of `icon` when set. */
-  iconClass?: string;
+  /** The drawn, monochrome icon (UI spec §19.1). */
+  icon: NavIconName;
   label: string;
   statusKey?: 'integrations' | 'assistant' | 'authorizations' | 'proposals' | 'brief' | 'blocked' | 'report';
   teamOnly?: boolean;
   /** UI spec §12.1: 'core' = the unlabelled main group; 'setup' = the quieter group below. */
   group?: 'top' | 'core' | 'setup';
-  /** The count is information, not an action (UI spec §12.1, mockup C2):
-   *  shown as a quiet grey number, never the solid "needs you" pill. */
+  /** The count is information, not an action: the outlined "setup" pill
+   *  (UI spec §19.2), never the solid "needs you" pill. Setup items always are. */
   quietCount?: boolean;
   /** One thing that is new or not (there is only one report): a "New" label, never a count. */
   newLabel?: boolean;
 }
 
 export const NAV_ITEMS: NavItem[] = [
-  { to: '/', icon: '□', label: 'Dashboard', group: 'top' },
+  { to: '/', icon: 'dashboard', label: 'Dashboard', group: 'top' },
   // The core objects first, larger, no label (UI spec §12.1). v0.7 vocabulary
   // at the level a buyer reads; routes keep their names.
-  { to: '/approvals', icon: '▷', iconClass: 'nav-ic-approval', label: 'Approvals', statusKey: 'proposals', group: 'core' },
-  { to: '/mandates', icon: '☰', iconClass: 'nav-ic-mandate', label: 'Mandates', statusKey: 'authorizations', group: 'core', quietCount: true },
-  { to: '/tickets', icon: '▣', iconClass: 'nav-ic-ticket', label: 'Tickets', group: 'core' },
+  { to: '/approvals', icon: 'approvals', label: 'Approvals', statusKey: 'proposals', group: 'core' },
+  { to: '/mandates', icon: 'mandates', label: 'Mandates', statusKey: 'authorizations', group: 'core', quietCount: true },
+  { to: '/tickets', icon: 'tickets', label: 'Tickets', group: 'core' },
   // A report is a result to read, not setup (reports mockup, 2026-10-16).
-  { to: '/reports', icon: '▥', label: 'Reports', statusKey: 'report', newLabel: true, group: 'core' },
-  { to: '/blocked', icon: '⊘', iconClass: 'nav-ic-blocked', label: 'Blocked', statusKey: 'blocked', group: 'core' },
-  { to: '/team', icon: '◉', label: 'Team', teamOnly: true, group: 'setup' },
-  { to: '/agent-brief', icon: '▤', label: 'Agent Brief', statusKey: 'brief', group: 'setup' },
-  { to: '/integrations', icon: '⧗', label: 'Integrations', statusKey: 'integrations', group: 'setup' },
-  { to: '/settings', icon: '⚙', label: 'Settings', statusKey: 'assistant', group: 'setup' },
+  { to: '/reports', icon: 'reports', label: 'Reports', statusKey: 'report', newLabel: true, group: 'core' },
+  { to: '/blocked', icon: 'blocked', label: 'Blocked', statusKey: 'blocked', group: 'core' },
+  { to: '/team', icon: 'team', label: 'Team', teamOnly: true, group: 'setup' },
+  { to: '/agent-brief', icon: 'brief', label: 'Agent Brief', statusKey: 'brief', group: 'setup' },
+  { to: '/integrations', icon: 'integrations', label: 'Integrations', statusKey: 'integrations', group: 'setup' },
+  { to: '/settings', icon: 'settings', label: 'Settings', statusKey: 'assistant', group: 'setup' },
 ];
 
 /**
@@ -138,22 +138,6 @@ function useOtherNavStatus() {
   return counts;
 }
 
-const BADGE_STYLE: React.CSSProperties = {
-  marginLeft: 'auto',
-  minWidth: '1.25rem',
-  height: '1.25rem',
-  padding: '0 0.375rem',
-  borderRadius: '0.625rem',
-  background: 'var(--neutral)',
-  color: 'var(--bg-elevated)',
-  fontSize: '0.7rem',
-  fontWeight: 600,
-  display: 'inline-flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  flexShrink: 0,
-};
-
 const TOAST_STYLE: React.CSSProperties = {
   position: 'fixed',
   bottom: '1.5rem',
@@ -215,6 +199,14 @@ export function Sidebar() {
         return (
           <div key={group} className={`sidebar-${group}`}>
             {group === 'setup' && <><div className="sidebar-divider" /><div className="sidebar-group-label">Setup</div></>}
+            {/* §19.4 — the closed icon rail shows Setup as ONE icon (dot = something needs attention);
+                opening the rail (hover / focus) shows the group in full, as the wide nav always does. */}
+            {group === 'setup' && (
+              <span className={`sidebar-setup-rail${items.some(i => location.pathname.startsWith(i.to)) ? ' is-active' : ''}`} aria-hidden="true">
+                <NavIcon name="settings" />
+                {items.some(i => i.statusKey && counts[i.statusKey]) && <span className="nav-dot" />}
+              </span>
+            )}
             <ul className="sidebar-nav">
               {items.map(item => {
                 const count = item.statusKey ? counts[item.statusKey] : 0;
@@ -225,13 +217,15 @@ export function Sidebar() {
                       end={item.to === '/'}
                       className={({ isActive }) => `sidebar-item${isActive ? ' active' : ''}`}
                     >
-                      <span className="icon">
-                        {item.iconClass ? <span className={`nav-ic ${item.iconClass}`} aria-hidden="true" /> : item.icon}
-                      </span>
+                      <span className="icon"><NavIcon name={item.icon} /></span>
                       <span className="sidebar-label">{item.label}</span>
                       {count ? (item.newLabel
                         ? <span className="nav-new" data-testid={`nav-new-${item.statusKey}`}>New</span>
-                        : <span style={BADGE_STYLE} className={item.quietCount ? 'nav-count-quiet' : undefined} title={item.quietCount ? 'Expired mandates' : undefined}>{count}</span>) : null}
+                        : <span
+                            className={`nav-count${item.quietCount || group === 'setup' ? ' nav-count-setup' : ''}`}
+                            data-testid={`nav-count-${item.statusKey}`}
+                            title={item.statusKey === 'authorizations' ? 'Expired mandates' : undefined}
+                          >{count}</span>) : null}
                     </NavLink>
                   </li>
                 );
