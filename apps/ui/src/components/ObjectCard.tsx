@@ -13,7 +13,7 @@ export function ObLock() {
   return <svg className="ob-i" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5" /><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" /></svg>;
 }
 
-function Chev() {
+export function ObChev() {
   return <svg className="ob-i ob-chev" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3 5 5-5 5" /></svg>;
 }
 
@@ -50,7 +50,7 @@ export function ObFold({ title, summary, children, open, testId, attrs, onToggle
       <summary>
         <span className="h">{title}</span>
         {summary != null && <span className="one">{summary}</span>}
-        <Chev />
+        <ObChev />
       </summary>
       <div className="ob-fold-body">{children}</div>
     </details>

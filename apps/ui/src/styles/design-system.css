@@ -731,32 +731,6 @@ code {
 .status-replaced, .status-passed { background: transparent; color: var(--text-primary); border-color: var(--border); }
 .status-replaced::before, .status-passed::before { content: '✓ '; }
 
-/* Integration status chips — binary (ok/bad) + neutral (idle), with a dot.
-   Two are shown per integration: Process (running) and Auth (can authenticate). */
-.int-chip {
-  display: inline-flex; align-items: center; gap: 0.4rem;
-  padding: 0.2rem 0.6rem; border-radius: 9999px;
-  font-size: 0.7rem; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase;
-}
-.int-chip .int-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
-/* Monochrome (UI spec §3): ok = filled dot; bad = strong outline + ✕;
-   idle = muted; sim = dashed ("needs attention", never silent). */
-.int-chip-ok   { background: var(--neutral-subtle); color: var(--text-primary); }
-.int-chip-ok   .int-dot { background: var(--text-primary); }
-.int-chip-bad  { background: transparent; color: var(--text-primary); border: 2px solid var(--text-primary); }
-.int-chip-bad  .int-dot { display: none; }
-.int-chip-bad::before { content: '✕'; }
-.int-chip-idle { background: var(--accent-subtle); color: var(--text-muted); }
-.int-chip-idle .int-dot { background: var(--text-muted); }
-/* Connector answers from a simulated system (test data) — not an error, but never silent. */
-.int-chip-sim  { background: transparent; color: var(--text-primary); border: 1px dashed var(--text-primary); }
-.int-chip-sim  .int-dot { background: transparent; border: 1px dashed var(--text-primary); }
-/* Real system intentionally off while simulation mode is on — paused by
-   design, never red: distinct from both int-chip-idle (unconfigured/stopped)
-   and int-chip-bad (a genuine crash). */
-.int-chip-paused { background: var(--bg-main); color: var(--text-muted); border: 1px solid var(--border); }
-.int-chip-paused .int-dot { background: var(--text-muted); }
-
 /* Collapsed detail disclosure on the integration card */
 .int-details { border-top: 1px solid var(--border); padding-top: 0.7rem; margin-top: 0.25rem; }
 .int-details > summary {
@@ -766,11 +740,6 @@ code {
 .int-details > summary::-webkit-details-marker { display: none; }
 .int-details > summary::before { content: "\25B8"; font-size: 0.7rem; transition: transform 0.15s; }
 .int-details[open] > summary::before { transform: rotate(90deg); }
-.int-meta { display: grid; grid-template-columns: auto 1fr; gap: 0.4rem 1rem; font-size: 0.8rem; margin-top: 0.7rem; }
-.int-meta .int-k { color: var(--text-muted); }
-.int-account { font-size: 0.85rem; display: flex; align-items: center; gap: 0.5rem; }
-.int-account .int-none { color: var(--text-muted); font-style: italic; }
-
 .domain-badge {
   display: inline-block;
   padding: 0.2rem 0.5rem;
@@ -836,7 +805,7 @@ code {
 .profile-chip-icon { width: 1.15rem; height: 1.15rem; flex: none; color: var(--text-secondary); }
 
 /* Test-setup marker — the "needs attention" form (dashed), matching
-   .int-chip-sim. No colour (UI spec §3). */
+   the italic Simulation word on a connector card. No colour (UI spec §3). */
 .sim-mark {
   display: inline-flex; align-items: center; gap: 0.3rem;
   font-size: 0.65rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
@@ -1529,29 +1498,6 @@ code {
   margin-bottom: 0.375rem;
 }
 
-.service-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.375rem;
-  font-size: 0.75rem;
-  font-weight: 600;
-}
-
-.service-status-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-}
-
-.service-status-connected .service-status-dot { background: var(--text-primary); }
-.service-status-connected { color: var(--text-primary); }
-
-.service-status-missing .service-status-dot { background: var(--text-tertiary); }
-.service-status-missing { color: var(--text-tertiary); }
-
-.service-status-error .service-status-dot { background: transparent; border: 2px solid var(--text-primary); }
-.service-status-error { color: var(--text-primary); }
-
 .service-tools {
   display: flex;
   gap: 0.25rem;
@@ -2065,7 +2011,7 @@ code {
 /* Same fixed-strip mechanics as .update-banner (stacks BELOW it when both are
    showing — see the --update-banner-h / --sim-banner-h sum on .sidebar /
    .main-content above). The "needs attention" form (dashed), matching
-   .int-chip-sim — the gateway-wide version of that per-connector chip: persistent
+   the Simulation word on a connector card — the gateway-wide version of it: persistent
    (no dismiss) for as long as the mode is on, since there's nothing to
    acknowledge — only to turn off, which is a CLI command, not a click here. */
 .simulation-banner {
@@ -3530,35 +3476,29 @@ body.is-updating .simulation-banner {
 .sim-paused-summary-icon { flex-shrink: 0; }
 .sim-paused-summary b { color: var(--text-primary); }
 
-.int-group-label {
-  font-size: 0.7rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
-  color: var(--text-muted); margin: 1.5rem 0 0.6rem;
-}
-.int-group-label:first-child { margin-top: 0; }
-
+/* "Paused while simulation mode is on" (UI spec 20.3): the same floating card, no frame, no divider lines */
 .int-paused-group {
-  background: var(--bg-elevated); border: 1px solid var(--border);
-  border-radius: 0.75rem; padding: 0.85rem 1rem 1rem; margin-bottom: 1rem;
+  background: var(--bg-elevated); border: 0; border-radius: var(--radius-xl); box-shadow: var(--elevation-1);
+  padding: var(--space-4) var(--space-5); margin-bottom: var(--space-3);
 }
 .int-paused-group > summary {
-  cursor: pointer; font-weight: 600; font-size: 0.85rem; color: var(--text-primary);
+  cursor: pointer; font-weight: 600; font-size: var(--text-body-sm); color: var(--text-primary);
   list-style: none; display: flex; align-items: center; gap: 0.35rem; user-select: none;
 }
 .int-paused-group > summary::-webkit-details-marker { display: none; }
 .int-paused-group > summary::before { content: '\25B8'; color: var(--text-muted); }
 .int-paused-group[open] > summary::before { content: '\25BE'; }
 .int-paused-group-note {
-  color: var(--text-muted); font-size: 0.78rem; margin: 0.55rem 0 0.2rem; line-height: 1.55;
+  color: var(--text-muted); font-size: var(--text-caption); margin: var(--space-2) 0 var(--space-1); line-height: 1.55;
 }
 .int-paused-group-note code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.76rem;
+  font-family: var(--font-mono); font-size: var(--text-caption);
 }
 .int-paused-row {
-  display: flex; align-items: center; gap: 0.7rem; padding: 0.55rem 0;
-  border-top: 1px solid var(--border);
+  display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) 0;
 }
-.int-paused-row:first-of-type { border-top: 0; margin-top: 0.3rem; }
-.int-paused-row .int-paused-name { font-weight: 500; flex: 1; font-size: 0.85rem; min-width: 0; }
+.int-paused-row .int-paused-name { font-weight: 500; flex: 1; font-size: var(--text-body-sm); min-width: 0; }
+.int-paused-row .int-paused-state { font-size: var(--text-caption); color: var(--text-muted); }
 
 /* ── Receipt rows (audit) ──────────────────────────────────────────────────
    Leads with what happened in words; identifiers live in the collapsed
@@ -4210,9 +4150,6 @@ body.is-updating .simulation-banner {
 /* §14.2 — the Result box shows its first rows; the rest behind a quiet toggle */
 .ticket-sent-more { margin-top: var(--space-2); background: none; border: none; padding: 0; font: inherit; font-size: var(--text-caption); color: var(--text-primary); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
 
-/* Integrations card: a short note for the connector's current mode (e.g. "On this computer — no shared access") */
-.card-mode-note { display: block; font-weight: 400; font-size: var(--text-caption); color: var(--text-muted); margin-top: 0.15rem; }
-
 /* ── Card checks — UI spec §4.2.2 (revised 2026-10-21): one line per check ── */
 .card-checks { display: flex; flex-direction: column; gap: 0.15rem; margin: 0 0 var(--space-3); font-size: var(--text-body-sm); }
 .card-checks-top { margin: 0 0 var(--space-2); }
@@ -4834,3 +4771,33 @@ a.dash-row:hover, .dash-row:not([open]):hover { box-shadow: var(--elevation-2); 
 .su-helper .intent-chat .chat-input { color: var(--text-primary); }
 .su-helper .intent-chat .chat-input::placeholder { color: var(--text-muted); }
 .su-helper .intent-chat .chat-send-btn { background: var(--btn-primary-bg); color: var(--btn-primary-fg); }
+
+/* Integrations: every connector is a closed card (a <details>); the type line says what it is, one quiet line says what it does */
+.su-area { margin-bottom: 0; }
+.card.ob-card + .card.ob-card { margin-top: 0; }
+.ob-card.su-cn { padding: 0; box-shadow: var(--elevation-1); margin: 0 0 var(--space-3); }
+.su-cn[open] { box-shadow: var(--elevation-2); }
+.su-cn > summary {
+  list-style: none; cursor: pointer; display: flex; justify-content: space-between; align-items: center; gap: var(--space-3);
+  padding: var(--space-4) var(--space-5); border-radius: var(--radius-xl);
+}
+.su-cn > summary::-webkit-details-marker { display: none; }
+.su-cn > summary:hover { background: var(--bg-sunken); }
+.su-cn > summary:focus-visible { outline: 2px solid var(--text-primary); outline-offset: 2px; }
+.su-cn[open] > summary { background: none; padding-bottom: var(--space-2); }
+.su-cn-head { min-width: 0; flex: 1; }
+.su-cn > summary .ob-chev { margin-left: 0; }
+.su-cn[open] > summary .ob-chev { transform: rotate(90deg); }
+.su-cn-body { padding: 0 var(--space-5) var(--space-5); }
+.su-cn-body .ob-tile { margin-top: var(--space-2); }
+.su-cn-body .ob-tile + .ob-tile { margin-top: var(--space-3); }
+.su-cn-body .ob-fold { margin-top: var(--space-3); }
+.su-cn-body .su-fields { margin-top: var(--space-4); }
+.su-cn-body .su-edit { margin-top: var(--space-4); }
+.su-cn-body .ob-gap { margin-top: var(--space-3); }
+.ob-kv dd.ob-mono.is-strong { font-weight: 600; }
+.su-list a { color: var(--text-primary); text-decoration: underline; text-underline-offset: 3px; }
+@media (max-width: 640px) {
+  .su-cn > summary { padding: var(--space-4); }
+  .su-cn-body { padding: 0 var(--space-4) var(--space-4); }
+}

@@ -1,9 +1,13 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Fragment } from 'react';
 import { Link } from 'react-router-dom';
 import { spClient, type IntegrationManifest, type McpIntegrationStatus } from '../lib/sp-client';
 import type { IntegrationState } from '../contexts/IntegrationStatusContext';
 import { isSimulated, modeLabel, modeNote } from '../lib/simulation';
-import { integrationIcon } from '../lib/integration-icon';
+import { ObTypeLine, ObFold, ObChev, useFoldAccordion } from './ObjectCard';
+import {
+  statusWord, authWord, startsOpen, readsPhrase, connectorOneLine,
+  type CardState,
+} from '../lib/integration-card-view';
 import { areasOf as areaProfilesOf } from '../lib/integration-grouping';
 
 /**
@@ -48,7 +52,7 @@ export function readAgeLabel(days: number | null): string {
 }
 
 export interface StoppedIntegrationDisplay {
-  chip: { c: string; t: string };
+  chip: { t: string };
   /** False only when paused by simulation mode — a Start click there cannot
    *  succeed, so the button is not offered at all rather than shown disabled. */
   showStart: boolean;
@@ -69,16 +73,18 @@ export function stoppedIntegrationDisplay(
   integration: Pick<McpIntegrationStatus, 'running' | 'error' | 'paused'> | undefined,
 ): StoppedIntegrationDisplay {
   if (integration?.paused === 'simulation') {
-    return { chip: { c: 'int-chip-paused', t: 'Paused' }, showStart: false };
+    return { chip: { t: 'Paused' }, showStart: false };
   }
   if (integration && !integration.running && integration.error) {
-    return { chip: { c: 'int-chip-bad', t: 'Crashed' }, showStart: true };
+    return { chip: { t: 'Crashed' }, showStart: true };
   }
-  return { chip: { c: 'int-chip-idle', t: 'Stopped' }, showStart: true };
+  return { chip: { t: 'Stopped' }, showStart: true };
 }
 
 interface Props {
   manifest: IntegrationManifest;
+  /** The area this card is listed under (UI spec §20.3): shown, with its icon, in the type line. */
+  area?: { shortId: string; name: string };
   integration: McpIntegrationStatus | undefined;
   /**
    * Canonical state derived by IntegrationStatusContext. Drives the status
@@ -89,9 +95,7 @@ interface Props {
   onSuccess: (msg: string) => void;
 }
 
-type CardState = 'unconfigured' | 'needs-oauth' | 'ready' | 'running' | 'starting';
-
-export function IntegrationCard({ manifest, integration, state, onStatusChange, onSuccess }: Props) {
+export function IntegrationCard({ manifest, area, integration, state, onStatusChange, onSuccess }: Props) {
   const [credValues, setCredValues] = useState<Record<string, string>>({});
   const [credConfigured, setCredConfigured] = useState(false);
   const [credsOnFile, setCredsOnFile] = useState(false); // vault has credentials stored
@@ -103,7 +107,11 @@ export function IntegrationCard({ manifest, integration, state, onStatusChange, 
   const [oauthConnected, setOauthConnected] = useState(false);
   const [authHealth, setAuthHealth] = useState<{ status: string; error?: string; account?: string } | null>(null);
   const [saving, setSaving] = useState(false);
-  const [showGuide, setShowGuide] = useState(false);
+  // Whether the vault lookup has answered — a card opens or stays closed only once we know what it needs.
+  const [credsLoaded, setCredsLoaded] = useState(false);
+  // The person's own open/close choice; until they make one the card follows what it needs (see startsOpen).
+  const [userOpen, setUserOpen] = useState<boolean | null>(null);
+  const accordion = useFoldAccordion<HTMLDivElement>();
   const [activating, setActivating] = useState(false);
   // Explicit "change credentials" mode — independent of cardState, which is
   // dominated by integration.running (so the cred form would never show while
@@ -127,7 +135,9 @@ export function IntegrationCard({ manifest, integration, state, onStatusChange, 
     let cancelled = false;
     // Check if credentials exist
     spClient.getCredential(manifest.id).then(status => {
-      if (cancelled || !status.configured) return;
+      if (cancelled) return;
+      setCredsLoaded(true);
+      if (!status.configured) return;
       setCredConfigured(true);
       setCredsOnFile(true);
       // Capture current values for the manifest's own fields (clientId/secret)
@@ -149,7 +159,7 @@ export function IntegrationCard({ manifest, integration, state, onStatusChange, 
           spClient.getOAuthHealth(manifest.id).then(h => { if (!cancelled) setAuthHealth(h); });
         }
       }
-    }).catch(() => {/* ignore */});
+    }).catch(() => { if (!cancelled) setCredsLoaded(true); });
     return () => { cancelled = true; };
   }, [manifest.id, manifest.oauth]);
 
@@ -322,27 +332,9 @@ export function IntegrationCard({ manifest, integration, state, onStatusChange, 
     }
   };
 
-  const icon = integrationIcon(manifest.icon);
-
-  // Two truthful, binary status chips. Process = is the subprocess running;
-  // Auth = can it authenticate (token/credentials present). Grey = neutral
-  // (not set up / stopped), green = ok, red = error. (Auth "failed" detection
-  // on a revoked/expired token is a follow-up — see auth-health work.)
   const stoppedDisplay = stoppedIntegrationDisplay(integration);
-  const procChip =
-    cardState === 'running' ? { c: 'int-chip-ok', t: 'Running' }
-    : cardState === 'starting' ? { c: 'int-chip-idle', t: 'Starting' }
-    : stoppedDisplay.chip;
-  // needsAuth / authConnected computed above (needed by cardState). For no-auth
-  // integrations (local CRM/records) "Not set up" is wrong → show "No auth".
+  // needsAuth / authConnected computed above (needed by cardState).
   const authFailed = manifest.oauth && oauthConnected && authHealth?.status === 'failed';
-  const authChip = !needsAuth
-    ? { c: 'int-chip-idle', t: 'No auth' }
-    : authFailed
-      ? { c: 'int-chip-bad', t: 'Auth failed' }
-      : authConnected
-        ? { c: 'int-chip-ok', t: 'Auth OK' }
-        : { c: 'int-chip-idle', t: 'Not set up' };
 
   // Setup guides hardcode a redirect URI (e.g. the Docker :7400). Rewrite it to
   // THIS gateway's actual origin so npm/dev users register the correct URI.
@@ -352,562 +344,426 @@ export function IntegrationCard({ manifest, integration, state, onStatusChange, 
       `${window.location.origin}/auth/oauth/${manifest.id}/callback`,
     );
 
-  return (
-    <div className="card" style={{ marginBottom: '1rem' }}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
-        <span style={{ fontSize: '1.4rem', lineHeight: 1.2 }}>{icon}</span>
-        <h3 className="card-title" style={{ margin: 0, flex: 1, alignSelf: 'center' }}>
-          {manifest.name}
-          {modeLabel(manifest, existingCreds) && (
-            <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}> · {modeLabel(manifest, existingCreds)}</span>
-          )}
-          {modeNote(manifest, existingCreds) && (
-            <span className="card-mode-note" data-testid="integration-mode-note">{modeNote(manifest, existingCreds)}</span>
-          )}
-        </h3>
-        <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-          {/* Process chip only once setup is complete — a running-but-unconfigured
-              subprocess isn't meaningfully "running", so we show only what's
-              missing (the auth chip) until then. */}
-          {cardState !== 'unconfigured' && cardState !== 'needs-oauth' && (
-            <span className={`int-chip ${procChip.c}`}><span className="int-dot" />{procChip.t}</span>
-          )}
-          <span className={`int-chip ${authChip.c}`}><span className="int-dot" />{authChip.t}</span>
-          {isSimulated(manifest, existingCreds) && (
-            <span
-              className="int-chip int-chip-sim"
-              title="This connector answers from a simulated system with test data. Nothing reaches your real systems."
-            >
-              <span className="int-dot" />Simulation
-            </span>
-          )}
-        </div>
-      </div>
+  const stoppedKind: 'paused' | 'crashed' | 'stopped' =
+    stoppedDisplay.chip.t === 'Paused' ? 'paused' : stoppedDisplay.chip.t === 'Crashed' ? 'crashed' : 'stopped';
+  const status = statusWord(cardState, stoppedDisplay.chip);
+  const auth = authWord({ needsAuth, authFailed: !!authFailed, authConnected });
+  const mode = modeLabel(manifest, existingCreds);
+  const note = modeNote(manifest, existingCreds);
+  const simulated = isSimulated(manifest, existingCreds);
+  const oneLine = connectorOneLine({
+    cardState,
+    authFailed: !!authFailed,
+    modeNote: note,
+    requiredLabels: manifest.credentials.fields.filter(f => !f.optional).map(f => f.label),
+    oauth: !!manifest.oauth,
+    noFields: manifest.credentials.fields.length === 0 && !manifest.oauth,
+    setupHint: manifest.setupHint,
+    reads: hasReadAge ? readsPhrase(readAge, readAgeLabel) : null,
+    stopped: stoppedKind,
+  });
+  // Closed by default only when it is healthy; a card that needs something opens (until the person chooses).
+  const open = userOpen ?? (credsLoaded && startsOpen(cardState, !!authFailed));
 
-      {/* Connected account. Captured at OAuth connect; unknown for connections
-          made before account capture (and unrecoverable from a dead token). */}
-      {manifest.oauth && oauthConnected && (
-        <div className="int-account" style={{ marginTop: '0.7rem' }}>
-          {authHealth?.account
-            ? <>Connected as <b>{authHealth.account}</b></>
-            : <span className="int-none">Account not recorded — reconnect to capture which account is used</span>}
-        </div>
-      )}
+  const isPath = (v: string) => v.includes('/') || v.includes('\\');
+  const canEditCreds = manifest.credentials.fields.length > 0 || !!manifest.oauth;
+  const guide = manifest.setupGuide && manifest.setupGuide.length > 0 && (cardState !== 'running' || authFailed)
+    ? manifest.setupGuide : null;
+  const needsSetup = cardState === 'unconfigured' || cardState === 'needs-oauth';
 
-      {/* Auth actually broken (e.g. Google invalid_grant). The refusal is the
-          product, so this box works harder than the success path: what failed,
-          why, what it blocks, and the one action that fixes it. */}
-      {authFailed && !editingCreds && (
-        <div style={{
-          marginTop: '0.7rem',
-          border: '2px solid var(--border-strong)',
-          borderRadius: '10px',
-          padding: '0.8rem 0.95rem',
-          background: 'var(--bg-elevated)',
-        }}>
-          <div style={{ fontSize: '0.86rem', fontWeight: 700 }}>
-            {manifest.name} stopped accepting the stored credentials
-          </div>
-          <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: '0.3rem 0 0', lineHeight: 1.55 }}>
-            {authHealth?.error === 'invalid_grant'
-              ? <>The refresh token was revoked (<code>invalid_grant</code>) — this usually follows a password change or a security checkup on the provider's side.</>
-              : authHealth?.error
-                ? <>The provider reported <code>{authHealth.error}</code>.</>
-                : <>The provider rejected the stored authentication.</>}{' '}
-            Your agent's {manifest.name} actions are <b>blocked</b>, not failing silently.
-          </p>
-          <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.6rem' }}>
-            <button className="btn btn-primary btn-sm" onClick={startOAuth}>
-              Reconnect {manifest.name}
-            </button>
-            <button
-              className="btn btn-ghost btn-sm"
-              onClick={() => { setCredValues({ ...existingCreds }); setEditingCreds(true); }}
-            >
-              Edit credentials
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Lean by default — what/profile/scopes/tools tucked behind Details */}
-      <details className="int-details" style={{ marginTop: '0.85rem', marginBottom: '1.25rem' }}>
-        <summary>Details</summary>
-        <div className="int-meta">
-          <span className="int-k">What</span><span>{manifest.description}</span>
-          {manifest.profile && (<><span className="int-k">Profile</span><span>{areaProfilesOf(manifest).join(', ')}</span></>)}
-          {manifest.oauth && (<><span className="int-k">Scopes</span><span>{manifest.oauth.scopes?.join(', ') || '—'}</span></>)}
-          {integration && (<><span className="int-k">Tools</span><span>{integration.toolCount} gated</span></>)}
-        </div>
-      </details>
-
-      {/* Setup Guide (collapsible) */}
-      {manifest.setupGuide && manifest.setupGuide.length > 0 && (cardState !== 'running' || authFailed) && (
-        <div style={{ marginBottom: '0.75rem' }}>
-          <button
-            onClick={() => setShowGuide(!showGuide)}
-            style={{
-              background: 'none',
-              border: 'none',
-              padding: 0,
-              fontSize: '0.8rem',
-              color: 'var(--accent)',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.375rem',
-            }}
-          >
-            <span style={{ transition: 'transform 0.2s', transform: showGuide ? 'rotate(90deg)' : 'rotate(0deg)', display: 'inline-block' }}>{'\u25B6'}</span>
-            How to set up {manifest.name}
+  // One credential field (light input; secrets get a show/hide). `edit` = the "Change credentials" panel,
+  // where a stored secret is shown as a recognition hint and left blank keeps it.
+  const renderField = (field: IntegrationManifest['credentials']['fields'][number], edit: boolean) => (
+    <div className="form-group" key={field.key}>
+      <label className="form-label">{field.label}</label>
+      {field.type === 'password' ? (
+        <div className="cred-field">
+          <input
+            className="form-input"
+            type={showSecrets[field.key] ? 'text' : 'password'}
+            // Service credential, not a login: block the browser's password manager from autofilling
+            // the Suveren API key saved for this origin. "new-password" is the only value Chrome
+            // honors on password inputs; the neutral name avoids heuristic matching.
+            name={`${manifest.id}-${field.key}-credential`}
+            autoComplete="new-password"
+            placeholder={edit
+              ? (secretHints[field.key]?.preview
+                ? `Unchanged — ends in ${secretHints[field.key].preview}`
+                : credsOnFile ? 'Unchanged — paste a new value to replace' : field.placeholder)
+              : field.placeholder}
+            value={credValues[field.key] || ''}
+            onChange={e => setCredValues(v => ({ ...v, [field.key]: e.target.value }))}
+          />
+          <button type="button" className="cred-toggle" onClick={() => setShowSecrets(s => ({ ...s, [field.key]: !s[field.key] }))}>
+            {showSecrets[field.key] ? 'hide' : 'show'}
           </button>
-          {showGuide && (
-            <div style={{ marginTop: '0.75rem', paddingLeft: '0.25rem' }}>
-              {manifest.setupGuide.map((step: { title: string; description: string; link?: string }, i: number) => (
-                <div key={i} style={{ display: 'flex', gap: '0.75rem', marginBottom: '0.75rem' }}>
-                  <div style={{
-                    width: '1.5rem',
-                    height: '1.5rem',
-                    borderRadius: '50%',
-                    background: 'var(--border)',
-                    color: 'var(--text-secondary)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontSize: '0.7rem',
-                    fontWeight: 700,
-                    flexShrink: 0,
-                    marginTop: '0.1rem',
-                  }}>
-                    {i + 1}
-                  </div>
-                  <div>
-                    <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.125rem' }}>
-                      {step.title}
-                    </div>
-                    <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-                      {withRedirectUri(step.description)}
-                      {step.link && (
-                        <>
-                          {' '}
-                          <a href={step.link} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.8rem' }}>
-                            Open {'\u2197'}
-                          </a>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
         </div>
+      ) : (
+        <input
+          className="form-input"
+          type="text"
+          name={`${manifest.id}-${field.key}-credential`}
+          autoComplete="off"
+          placeholder={field.placeholder}
+          value={credValues[field.key] || ''}
+          onChange={e => setCredValues(v => ({ ...v, [field.key]: e.target.value }))}
+        />
       )}
+    </div>
+  );
 
-      {/* Starting state — subprocess is coming up after login; shown
-          deliberately instead of "Not running" to stop the post-login flicker. */}
-      {cardState === 'starting' && (
-        <div className="service-status" style={{ color: 'var(--text-primary)' }}>
-          <span className="service-status-dot" style={{ background: 'transparent', border: '1px dashed var(--text-primary)' }} />
-          Starting…
+  return (
+    <details
+      className="card ob-card su-cn"
+      open={open}
+      onToggle={e => setUserOpen((e.currentTarget as HTMLDetailsElement).open)}
+    >
+      <summary>
+        <div className="su-cn-head">
+          <ObTypeLine
+            tag="CONNECTOR"
+            profileId={area?.shortId}
+            parts={[
+              area?.name,
+              <span className={`ob-st${status.tone === 'muted' ? ' is-off' : ''}`}>{status.text}</span>,
+              simulated && (
+                <span className="ob-st is-sim" title="This connector answers from a simulated system with test data. Nothing reaches your real systems.">Simulation</span>
+              ),
+              auth && (auth.tone === 'bold' ? <span className="ob-st">{auth.text}</span> : auth.text),
+            ]}
+          />
+          <h3 className="card-title ob-title">
+            {manifest.name}
+            {mode && <span className="ob-quiet-inline"> · {mode}</span>}
+          </h3>
+          <p className="ob-one" data-testid={note ? 'integration-mode-note' : undefined}>{oneLine}</p>
         </div>
-      )}
+        <ObChev />
+      </summary>
 
-      {/* Change-credentials edit panel — renders regardless of cardState so it
-          works while the integration is running/auth-failed. */}
-      {editingCreds && (
-        <div style={{ marginTop: '0.7rem', paddingTop: '0.85rem', borderTop: '1px solid var(--border)' }}>
-          <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.5rem' }}>Change credentials</div>
-          {credsOnFile && (
-            <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.6rem' }}>
-              Leaving a secret blank keeps the stored one — editing other fields can never
-              silently wipe it.{manifest.oauth ? ' Save, then Connect to re-link the account.' : ''}
+      <div className="su-cn-body" ref={accordion}>
+        {/* What is true about it, as rows in a grey tile. Secrets only ever as recognition hints. */}
+        <section className="ob-tile">
+          <dl className="ob-kv">
+            {cardState === 'running' && integration ? (
+              <>
+                {note && (<><dt>Runs on</dt><dd className="ob-plain">{note}</dd></>)}
+                <dt>Access</dt>
+                <dd>
+                  {!needsAuth ? 'No auth'
+                    : authFailed ? 'Auth failed'
+                    : manifest.oauth && oauthConnected && authHealth?.account ? <>Connected as <b>{authHealth.account}</b></>
+                    : 'Auth OK'}
+                </dd>
+                {manifest.credentials.fields.map(f => {
+                  const isSecret = f.type === 'password';
+                  const hint = secretHints[f.key];
+                  if (!isSecret && existingCreds[f.key] == null) return null;
+                  if (isSecret && hint == null) return null;
+                  const value = isSecret ? (hint.preview ?? 'set') : existingCreds[f.key];
+                  return (
+                    <Fragment key={f.key}>
+                      <dt>{f.label}</dt>
+                      <dd className={isSecret || isPath(value) ? 'ob-mono is-strong' : undefined}>
+                        {value}
+                        {isSecret && credUpdatedAt && (
+                          <span className="ob-quiet-inline">
+                            {' '}· added {new Date(credUpdatedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                          </span>
+                        )}
+                      </dd>
+                    </Fragment>
+                  );
+                })}
+                {hasReadAge && readAge !== undefined && (
+                  <>
+                    <dt>Reads</dt>
+                    <dd>
+                      {readAge === null ? 'window from your mandate' : readAgeLabel(readAge).toLowerCase()}
+                      {savingReadAge && <span className="ob-quiet-inline"> saving…</span>}
+                      {readAgeError && <span className="ob-bold"> {readAgeError}</span>}
+                    </dd>
+                  </>
+                )}
+              </>
+            ) : (
+              <>
+                <dt>Status</dt>
+                <dd>{cardState === 'starting' ? 'Starting…' : status.text}</dd>
+                {manifest.oauth && cardState === 'unconfigured' && !credsOnFile && (
+                  <><dt>Step</dt><dd className="ob-plain">1 of 2 — enter credentials, then connect your account</dd></>
+                )}
+                {cardState === 'needs-oauth' && (
+                  <><dt>Step</dt><dd className="ob-plain">{'✓'} Step 1 done — credentials saved. Step 2: connect your {manifest.name} account to authorize access.</dd></>
+                )}
+                {cardState === 'ready' && !integration && (
+                  <><dt>Credentials</dt><dd className="ob-plain">{'✓'} {manifest.oauth ? `${manifest.name} account connected` : 'Credentials configured'}</dd></>
+                )}
+                {cardState === 'ready' && integration && !integration.running && integration.error && (
+                  <><dt>Error</dt><dd className="ob-plain">{integration.error}</dd></>
+                )}
+              </>
+            )}
+          </dl>
+        </section>
+
+        {/* Connected account. Captured at OAuth connect; unknown for connections made before account capture. */}
+        {manifest.oauth && oauthConnected && !authHealth?.account && (
+          <p className="ob-lbl ob-gap">Account not recorded — reconnect to capture which account is used</p>
+        )}
+
+        {/* Auth actually broken (e.g. Google invalid_grant). The refusal is the product, so this works harder
+            than the success path: what failed, why, what it blocks, and the one action that fixes it. */}
+        {authFailed && !editingCreds && (
+          <section className="ob-tile">
+            <div className="ob-sent-h">{manifest.name} stopped accepting the stored credentials</div>
+            <p className="ob-lbl">
+              {authHealth?.error === 'invalid_grant'
+                ? <>The refresh token was revoked (<code>invalid_grant</code>) — this usually follows a password change or a security checkup on the provider's side.</>
+                : authHealth?.error
+                  ? <>The provider reported <code>{authHealth.error}</code>.</>
+                  : <>The provider rejected the stored authentication.</>}{' '}
+              Your agent's {manifest.name} actions are <b>blocked</b>, not failing silently.
             </p>
-          )}
-          {manifest.credentials.fields.map(field => (
-            <div className="form-group" key={field.key} style={{ marginBottom: '0.6rem' }}>
-              <label className="form-label">{field.label}</label>
-              {field.type === 'password' ? (
-                <div className="cred-field">
-                  <input
-                    className="form-input"
-                    type={showSecrets[field.key] ? 'text' : 'password'}
-                    // Service credential, not a login: block the browser's
-                    // password manager from autofilling the Suveren API key
-                    // saved for this origin. "new-password" is the only value
-                    // Chrome honors on password inputs; the neutral name
-                    // avoids heuristic matching.
-                    name={`${manifest.id}-${field.key}-credential`}
-                    autoComplete="new-password"
-                    placeholder={secretHints[field.key]?.preview
-                      ? `Unchanged — ends in ${secretHints[field.key].preview}`
-                      : credsOnFile ? 'Unchanged — paste a new value to replace' : field.placeholder}
-                    value={credValues[field.key] || ''}
-                    onChange={e => setCredValues(v => ({ ...v, [field.key]: e.target.value }))}
-                  />
-                  <button className="cred-toggle" onClick={() => setShowSecrets(s => ({ ...s, [field.key]: !s[field.key] }))}>
-                    {showSecrets[field.key] ? 'hide' : 'show'}
-                  </button>
-                </div>
-              ) : (
-                <input
-                  className="form-input"
-                  type="text"
-                  name={`${manifest.id}-${field.key}-credential`}
-                  autoComplete="off"
-                  placeholder={field.placeholder}
-                  value={credValues[field.key] || ''}
-                  onChange={e => setCredValues(v => ({ ...v, [field.key]: e.target.value }))}
-                />
-              )}
-            </div>
-          ))}
-          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.25rem' }}>
-            <button className="btn btn-primary btn-sm" onClick={saveCredsEdit} disabled={saving || !credsDirty}>
-              {saving ? 'Saving…' : 'Save'}
-            </button>
-            {!credsDirty && !saving && (
-              <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)', alignSelf: 'center' }}>
-                No changes yet
-              </span>
-            )}
-            {manifest.oauth && (
-              <button className="btn btn-secondary btn-sm" onClick={startOAuth}>
-                Connect {manifest.name}
-              </button>
-            )}
-            <button className="btn btn-ghost btn-sm" onClick={() => { setEditingCreds(false); setCredValues({}); }}>
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
+          </section>
+        )}
 
-      {/* Running state — status shown by the chips above; just the actions here */}
-      {!editingCreds && cardState === 'running' && integration && (
-        <>
-          {/* What is stored, without storing it in the browser: text fields as
-              values, secrets as recognition hints. Enough to tell WHICH key is
-              in the vault; whether it works is what the health probe answers. */}
-          {(Object.keys(existingCreds).length > 0 || Object.keys(secretHints).length > 0) && (
-            <div style={{ display: 'grid', gap: '0.3rem', margin: '0.15rem 0 0.7rem', fontSize: '0.82rem' }}>
-              {manifest.credentials.fields.map(f => {
-                const isSecret = f.type === 'password';
-                const hint = secretHints[f.key];
-                if (!isSecret && existingCreds[f.key] == null) return null;
-                if (isSecret && hint == null) return null;
-                return (
-                  <div key={f.key} style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem' }}>
-                    <span style={{ color: 'var(--text-muted)' }}>{f.label}</span>
-                    <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: '0.78rem', textAlign: 'right', wordBreak: 'break-all' }}>
-                      {isSecret ? (hint.preview ?? 'set') : existingCreds[f.key]}
-                      {isSecret && credUpdatedAt && (
-                        <span style={{ color: 'var(--text-muted)', fontFamily: 'inherit' }}>
-                          {' '}· added {new Date(credUpdatedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
-                        </span>
-                      )}
-                    </span>
+        {/* How to set up — opens by default while the connector is not set up */}
+        {guide && (
+          <ObFold title={`How to set up ${manifest.name}`} summary={guide[0].title} open={needsSetup}>
+            {manifest.setupHint && !credsOnFile && <p>{manifest.setupHint}</p>}
+            <ol className="su-list">
+              {guide.map((step: { title: string; description: string; link?: string }, i: number) => (
+                <li key={i}>
+                  <b>{step.title}</b>
+                  <div className="ob-lbl">
+                    {withRedirectUri(step.description)}
+                    {step.link && (
+                      <>
+                        {' '}
+                        <a href={step.link} target="_blank" rel="noopener noreferrer">Open {'↗'}</a>
+                      </>
+                    )}
                   </div>
+                </li>
+              ))}
+            </ol>
+          </ObFold>
+        )}
+        {!guide && manifest.setupHint && !credsOnFile && needsSetup && (
+          <p className="ob-lbl ob-gap">{manifest.setupHint}</p>
+        )}
+
+        {/* Starting state — the subprocess is coming up after login; shown deliberately instead of "Not running". */}
+        {cardState === 'starting' && <p className="ob-lbl ob-gap">Starting…</p>}
+
+        {/* Change-credentials edit panel — renders regardless of cardState so it works while the connector
+            is running or auth-failed. */}
+        {editingCreds && (
+          <div className="su-edit">
+            <div className="ob-sent-h">Change credentials</div>
+            {credsOnFile && (
+              <p className="ob-lbl">
+                Leaving a secret blank keeps the stored one — editing other fields can never
+                silently wipe it.{manifest.oauth ? ' Save, then Connect to re-link the account.' : ''}
+              </p>
+            )}
+            {manifest.credentials.fields.map(field => renderField(field, true))}
+            <div className="ob-btns is-inline is-tight">
+              <button className="ob-btn is-solid" onClick={saveCredsEdit} disabled={saving || !credsDirty}>
+                {saving ? 'Saving…' : 'Save'}
+              </button>
+              {manifest.oauth && (
+                <button className="ob-btn" onClick={startOAuth}>
+                  Connect {manifest.name}
+                </button>
+              )}
+              <button className="ob-btn" onClick={() => { setEditingCreds(false); setCredValues({}); }}>
+                Cancel
+              </button>
+            </div>
+            {!credsDirty && !saving && <p className="ob-lbl ob-gap">No changes yet</p>}
+          </div>
+        )}
+
+        {/* Read window — local, live, one place. Read enforcement never reaches the Authority Server, so this
+            needs no re-authorization and applies to the next read. Only for connectors whose manifest declares
+            an age-bounded read. */}
+        {cardState === 'running' && hasReadAge && readAge !== undefined && editingReadAge && (
+          <div className="su-edit">
+            <div className="ob-sent-h">How far back may your agent read?</div>
+            <p className="ob-lbl">Applies immediately — no Save, no new mandate.</p>
+            <div className="ob-btns is-tight">
+              {READ_AGE_PRESETS.map(days => {
+                const active = readAge === days;
+                return (
+                  <button
+                    key={days}
+                    className={`ob-btn${active ? ' is-solid' : ''}`}
+                    aria-pressed={active}
+                    disabled={savingReadAge}
+                    onClick={() => saveReadAge(days)}
+                  >
+                    {readAgeLabel(days)}
+                  </button>
                 );
               })}
-            </div>
-          )}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <Link to="/mandates?new=1" className="btn btn-primary btn-sm" style={{ textDecoration: 'none' }}>
-              Give a mandate
-            </Link>
-            {(manifest.credentials.fields.length > 0 || manifest.oauth) && (
               <button
-                className="btn btn-sm btn-secondary"
+                className={`ob-btn${readAge === null ? ' is-solid' : ''}`}
+                aria-pressed={readAge === null}
+                disabled={savingReadAge}
+                onClick={() => saveReadAge(null)}
+                title="Clear the local setting and use the read window from your signed mandate instead."
+              >
+                {readAgeLabel(null)}
+              </button>
+            </div>
+            <p className="ob-lbl ob-gap">
+              {readAgeError ? <span className="ob-bold">{readAgeError}</span>
+                : savingReadAge ? 'Saving…'
+                : readAge === null ? 'Using the window from your mandate. If none is set there, reads are blocked.'
+                : readAge === 0 ? 'Your agent cannot read any mail.'
+                : `Anything older than ${readAge} days is blocked, whoever it is from.`}
+            </p>
+            <div className="ob-btns is-inline is-tight">
+              <button className="ob-btn" onClick={() => setEditingReadAge(false)}>Done</button>
+            </div>
+          </div>
+        )}
+
+        {/* Running — the actions */}
+        {!editingCreds && cardState === 'running' && integration && (
+          <div className="ob-btns">
+            {authFailed && (
+              <button className="ob-btn is-solid" onClick={startOAuth}>Reconnect {manifest.name}</button>
+            )}
+            <Link to="/mandates?new=1" className="ob-btn">Give a mandate</Link>
+            {canEditCreds && (
+              <button
+                className="ob-btn"
                 onClick={() => { setCredValues({ ...existingCreds }); setEditingCreds(true); }}
                 title="Re-enter client ID / secret (e.g. a new OAuth client)."
               >
                 Edit credentials
               </button>
             )}
-            <span style={{ flex: 1 }} />
+            {hasReadAge && readAge !== undefined && !editingReadAge && (
+              <button className="ob-btn" onClick={() => setEditingReadAge(true)}>Edit reads window</button>
+            )}
             <button
-              className="btn btn-sm btn-outline-strong"
+              className="ob-btn"
               onClick={remove}
               title="Stops the subprocess and removes the integration from the registry. It will NOT auto-start on next gateway restart. Re-enable with Install."
             >
               Disable
             </button>
           </div>
+        )}
 
-          {/* Read policy — local, live, one place. Read enforcement never
-              reaches the Authority Server, so this needs no re-authorization
-              and applies to the next read. Only shown for integrations whose
-              manifest actually declares an age-bounded read. */}
-          {hasReadAge && readAge !== undefined && !editingReadAge && (
-            <div style={{ marginTop: '0.9rem', paddingTop: '0.85rem', borderTop: '1px solid var(--border)' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.6rem' }}>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem', minWidth: 0 }}>
-                  <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>Reads</span>
-                  <span style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
-                    {readAge === null ? 'window from your mandate' : readAgeLabel(readAge).toLowerCase()}
-                  </span>
-                  {savingReadAge && <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>saving…</span>}
-                  {readAgeError && <span className="msg-error" style={{ fontSize: '0.78rem' }}>{readAgeError}</span>}
-                </div>
-                <button className="btn btn-sm btn-secondary" onClick={() => setEditingReadAge(true)}>
-                  Edit
-                </button>
+        {/* Not set up — credential form */}
+        {cardState === 'unconfigured' && (() => {
+          const allOptional = manifest.credentials.fields.every(f => f.optional);
+          const hasRequiredFields = manifest.credentials.fields.some(f => !f.optional);
+          const hasValues = manifest.credentials.fields.some(f => credValues[f.key]?.trim());
+          return (
+            <>
+              {credsOnFile && (
+                <p className="ob-lbl ob-gap">
+                  <b className="ob-bold">Credentials on file.</b>{' '}
+                  Existing values are encrypted in the vault and not shown. Enter new values below to replace them, or{' '}
+                  <button
+                    className="ob-link"
+                    onClick={() => { setCredConfigured(true); if (manifest.oauth) setOauthConnected(true); }}
+                  >
+                    keep existing
+                  </button>.
+                </p>
+              )}
+              <div className="su-fields">
+                {manifest.credentials.fields.map(field => renderField(field, false))}
               </div>
-            </div>
-          )}
-          {hasReadAge && readAge !== undefined && editingReadAge && (
-            <div style={{ marginTop: '0.9rem', paddingTop: '0.85rem', borderTop: '1px solid var(--border)' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.6rem', marginBottom: '0.35rem' }}>
-                <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>How far back may your agent read?</span>
-                <button className="btn btn-sm btn-ghost" onClick={() => setEditingReadAge(false)}>
-                  Done
-                </button>
-              </div>
-              <p style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)', margin: '0 0 0.55rem' }}>
-                Applies immediately — no Save, no new mandate.
-              </p>
-              <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
-                {READ_AGE_PRESETS.map(days => {
-                  const active = readAge === days;
-                  return (
-                    <button
-                      key={days}
-                      className={`btn btn-sm ${active ? 'btn-primary' : 'btn-secondary'}`}
-                      aria-pressed={active}
-                      disabled={savingReadAge}
-                      onClick={() => saveReadAge(days)}
-                    >
-                      {readAgeLabel(days)}
-                    </button>
-                  );
-                })}
-                <button
-                  className={`btn btn-sm ${readAge === null ? 'btn-primary' : 'btn-ghost'}`}
-                  aria-pressed={readAge === null}
-                  disabled={savingReadAge}
-                  onClick={() => saveReadAge(null)}
-                  title="Clear the local setting and use the read window from your signed mandate instead."
-                >
-                  {readAgeLabel(null)}
-                </button>
-              </div>
-              <div style={{ fontSize: '0.78rem', marginTop: '0.5rem' }}>
-                {readAgeError ? (
-                  <span className="msg-error">{readAgeError}</span>
-                ) : savingReadAge ? (
-                  <span style={{ color: 'var(--text-muted)' }}>Saving…</span>
-                ) : readAge === null ? (
-                  <span style={{ color: 'var(--text-muted)' }}>
-                    Using the window from your mandate. If none is set there, reads are blocked.
-                  </span>
-                ) : readAge === 0 ? (
-                  <span style={{ color: 'var(--text-muted)' }}>Your agent cannot read any mail.</span>
-                ) : (
-                  <span style={{ color: 'var(--text-muted)' }}>
-                    Anything older than {readAge} days is blocked, whoever it is from.
-                  </span>
+              <div className="ob-btns is-inline">
+                {(hasValues || hasRequiredFields) && (
+                  <button
+                    className="ob-btn is-solid"
+                    onClick={saveCredentials}
+                    disabled={saving || !hasValues || (hasRequiredFields && !manifest.credentials.fields.filter(f => !f.optional).every(f => credValues[f.key]?.trim()))}
+                  >
+                    {saving ? 'Saving...' : 'Save & Encrypt'}
+                  </button>
+                )}
+                {allOptional && !hasValues && (
+                  <button className="ob-btn is-solid" onClick={activate} disabled={activating}>
+                    {activating ? 'Starting...' : `Activate ${manifest.name}`}
+                  </button>
                 )}
               </div>
-            </div>
-          )}
+            </>
+          );
+        })()}
 
-          {/* (legacy authorize link kept hidden — replaced by the button above) */}
-          <div style={{ display: 'none' }}>
-            <Link to="/mandates?new=1" className="btn btn-ghost btn-sm" style={{ textDecoration: 'none', display: 'block', textAlign: 'center' }}>
-              Give your agent a mandate
-            </Link>
-          </div>
-        </>
-      )}
-
-      {/* Unconfigured state — show credential form */}
-      {cardState === 'unconfigured' && (() => {
-        const allOptional = manifest.credentials.fields.every(f => f.optional);
-        const hasRequiredFields = manifest.credentials.fields.some(f => !f.optional);
-        const hasValues = manifest.credentials.fields.some(f => credValues[f.key]?.trim());
-        return (
-          <>
-            {credsOnFile && (
-              <div className="alert" style={{
-                fontSize: '0.8rem',
-                background: 'var(--bg-main)',
-                border: '1px solid var(--border)',
-                borderRadius: '0.375rem',
-                padding: '0.5rem 0.75rem',
-                marginBottom: '0.75rem',
-                color: 'var(--text-secondary)',
-              }}>
-                <strong style={{ color: 'var(--text-primary)' }}>Credentials on file.</strong>{' '}
-                Existing values are encrypted in the vault and not shown. Enter new values below to replace them, or{' '}
-                <button
-                  onClick={() => { setCredConfigured(true); if (manifest.oauth) setOauthConnected(true); }}
-                  style={{ background: 'none', border: 'none', padding: 0, color: 'var(--accent)', cursor: 'pointer', textDecoration: 'underline' }}
-                >
-                  keep existing
-                </button>.
-              </div>
-            )}
-            {manifest.oauth && !credsOnFile && (
-              <p style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginBottom: '0.5rem' }}>
-                Step 1 of 2 — enter credentials, then connect your account.
-              </p>
-            )}
-            {manifest.setupHint && !credsOnFile && (
-              <p style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginBottom: '0.75rem' }}>
-                {manifest.setupHint}
-              </p>
-            )}
-            {manifest.credentials.fields.map(field => (
-              <div className="form-group" key={field.key} style={{ marginBottom: '0.75rem' }}>
-                <label className="form-label">{field.label}</label>
-                {field.type === 'password' ? (
-                  <div className="cred-field">
-                    <input
-                      className="form-input"
-                      type={showSecrets[field.key] ? 'text' : 'password'}
-                      // Block password-manager autofill (Suveren API key) —
-                      // see the identical guard on the edit form above.
-                      name={`${manifest.id}-${field.key}-credential`}
-                      autoComplete="new-password"
-                      placeholder={field.placeholder}
-                      value={credValues[field.key] || ''}
-                      onChange={e => setCredValues(v => ({ ...v, [field.key]: e.target.value }))}
-                    />
-                    <button
-                      className="cred-toggle"
-                      onClick={() => setShowSecrets(s => ({ ...s, [field.key]: !s[field.key] }))}
-                    >
-                      {showSecrets[field.key] ? 'hide' : 'show'}
-                    </button>
-                  </div>
-                ) : (
-                  <input
-                    className="form-input"
-                    type="text"
-                    name={`${manifest.id}-${field.key}-credential`}
-                    autoComplete="off"
-                    placeholder={field.placeholder}
-                    value={credValues[field.key] || ''}
-                    onChange={e => setCredValues(v => ({ ...v, [field.key]: e.target.value }))}
-                  />
-                )}
-              </div>
-            ))}
-            <div style={{ display: 'flex', gap: '0.5rem' }}>
-              {hasValues && (
-                <button
-                  className="btn btn-primary"
-                  onClick={saveCredentials}
-                  disabled={saving || (hasRequiredFields && !manifest.credentials.fields.filter(f => !f.optional).every(f => credValues[f.key]?.trim()))}
-                >
-                  {saving ? 'Saving...' : 'Save & Encrypt'}
-                </button>
-              )}
-              {allOptional && !hasValues && (
-                <button
-                  className="btn btn-primary"
-                  onClick={activate}
-                  disabled={activating}
-                >
-                  {activating ? 'Starting...' : `Activate ${manifest.name}`}
-                </button>
-              )}
-            </div>
-          </>
-        );
-      })()}
-
-      {/* Needs OAuth */}
-      {cardState === 'needs-oauth' && (
-        <>
-          <div style={{ fontSize: '0.8rem', fontWeight: 600, marginBottom: '0.25rem' }}>
-            {'\u2713'} Step 1 done — credentials saved
-          </div>
-          <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>
-            Step 2: connect your {manifest.name} account to authorize access.
-          </div>
-          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-            <button className="btn btn-primary" onClick={startOAuth}>
+        {/* Needs OAuth — step 2 */}
+        {cardState === 'needs-oauth' && (
+          <div className="ob-btns is-inline">
+            <button className="ob-btn is-solid" onClick={startOAuth}>
               Connect {manifest.name} Account
             </button>
-            <button className="btn btn-ghost" onClick={() => setCredConfigured(false)}>
+            <button className="ob-btn" onClick={() => setCredConfigured(false)}>
               Change Credentials
             </button>
           </div>
-        </>
-      )}
+        )}
 
-      {/* Ready to start */}
-      {cardState === 'ready' && !integration && (
-        <>
-          <div style={{ fontSize: '0.8rem', fontWeight: 600, marginBottom: '0.75rem' }}>
-            {'\u2713'} {manifest.oauth ? `${manifest.name} account connected` : 'Credentials configured'}
-          </div>
-          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-            <button
-              className="btn btn-primary"
-              onClick={activate}
-              disabled={activating}
-            >
+        {/* Ready to start */}
+        {cardState === 'ready' && !integration && (
+          <div className="ob-btns is-inline">
+            <button className="ob-btn is-solid" onClick={activate} disabled={activating}>
               {activating ? 'Starting...' : `Start ${manifest.name} Integration`}
             </button>
             {!manifest.oauth && (
-              <button className="btn btn-ghost" onClick={() => setCredConfigured(false)}>
+              <button className="ob-btn" onClick={() => setCredConfigured(false)}>
                 Update Credentials
               </button>
             )}
             {manifest.oauth && (
-              <button className="btn btn-ghost" onClick={() => { setCredConfigured(false); setOauthConnected(false); }}>
+              <button className="ob-btn" onClick={() => { setCredConfigured(false); setOauthConnected(false); }}>
                 Change Credentials
               </button>
             )}
           </div>
-        </>
-      )}
+        )}
 
-      {/* Stopped but registered — paused by simulation mode gets a neutral,
-          honest state (no Start button — it cannot succeed while the mode is
-          on); any other stop offers retry as before. Both branches driven by
-          the same `stoppedIntegrationDisplay` decision as the chip above. */}
-      {cardState === 'ready' && integration && !integration.running && (
-        !stoppedDisplay.showStart ? (
-          <>
-            <div className="service-status" style={{ marginBottom: '0.5rem', color: 'var(--text-muted)' }}>
-              <span className="service-status-dot" style={{ background: 'var(--text-muted)' }} />
-              Paused
-            </div>
-            <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.75rem' }}>
-              Real systems are off while simulation mode is on.
-            </p>
-            <div style={{ display: 'flex', gap: '0.5rem' }}>
-              <button className="btn btn-outline-strong" onClick={remove}>
-                Disable
-              </button>
-            </div>
-          </>
-        ) : (
-          <>
-            <div className="service-status service-status-error" style={{ marginBottom: '0.75rem' }}>
-              <span className="service-status-dot" />
-              Not running
-            </div>
-            {integration.error && (
-              <div className="msg-error" style={{ fontSize: '0.8rem', marginBottom: '0.75rem' }}>
-                {integration.error}
+        {/* Stopped but registered — paused by simulation mode gets a neutral, honest state (no Start button — it
+            cannot succeed while the mode is on); any other stop offers retry. Both driven by the same
+            `stoppedIntegrationDisplay` decision as the status word above. */}
+        {cardState === 'ready' && integration && !integration.running && (
+          !stoppedDisplay.showStart ? (
+            <>
+              <p className="ob-lbl ob-gap">Real systems are off while simulation mode is on.</p>
+              <div className="ob-btns is-inline">
+                <button className="ob-btn" onClick={remove}>Disable</button>
               </div>
-            )}
-            <div style={{ display: 'flex', gap: '0.5rem' }}>
-              <button className="btn btn-primary" onClick={activate} disabled={activating}>
+            </>
+          ) : (
+            <div className="ob-btns is-inline">
+              <button className="ob-btn is-solid" onClick={activate} disabled={activating}>
                 {activating ? 'Starting...' : 'Start'}
               </button>
-              <button className="btn btn-outline-strong" onClick={remove}>
-                Disable
-              </button>
+              <button className="ob-btn" onClick={remove}>Disable</button>
             </div>
-          </>
-        )
-      )}
-    </div>
+          )
+        )}
+
+        {/* Lean by default — what / profile / scopes / tools tucked behind Details */}
+        <ObFold title="Details" summary="what it does">
+          <dl className="ob-kv">
+            <dt>What</dt><dd className="ob-plain">{manifest.description}</dd>
+            {manifest.profile && (<><dt>Profile</dt><dd className="ob-plain">{areaProfilesOf(manifest).join(', ')}</dd></>)}
+            {manifest.oauth && (<><dt>Scopes</dt><dd className="ob-plain">{manifest.oauth.scopes?.join(', ') || '—'}</dd></>)}
+            {integration && (<><dt>Tools</dt><dd className="ob-plain">{integration.toolCount} gated</dd></>)}
+          </dl>
+        </ObFold>
+      </div>
+    </details>
   );
 }

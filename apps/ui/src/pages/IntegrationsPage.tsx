@@ -2,20 +2,53 @@ import { useState, useCallback } from 'react';
 import { IntegrationCard } from '../components/IntegrationCard';
 import { useIntegrationStatus, type IntegrationEntry } from '../contexts/IntegrationStatusContext';
 import { useSimulationMode } from '../hooks/useSimulationMode';
-import { groupIntegrationsForDisplay, groupEntriesByArea, type AreaGroupedEntries } from '../lib/integration-grouping';
+import { groupIntegrationsForDisplay, groupEntriesByArea, splitByUse } from '../lib/integration-grouping';
 import { integrationIcon } from '../lib/integration-icon';
 import { useAreaCatalog } from '../lib/area-catalog';
 import { AreaIcon } from '../components/AreaIcon';
 
-/** One area heading + its connectors (UI spec §13.3). */
-function AreaGroup({ group, children }: { group: AreaGroupedEntries; children: React.ReactNode }) {
+/**
+ * Connectors listed per area (UI spec §13.3: a tool serving several areas appears under each). The area
+ * is shown in each card's type line with its icon (§20.3); the heading itself is kept for screen readers and
+ * tests (`data-testid="integration-area"`), not drawn.
+ */
+function AreaCards({ entries, catalog, refresh, onSuccess }: {
+  entries: IntegrationEntry[];
+  catalog: ReturnType<typeof useAreaCatalog>;
+  refresh: () => void;
+  onSuccess: (msg: string) => void;
+}) {
   return (
-    <div className="area-group" data-testid="integration-area" data-area={group.shortId}>
-      <div className="area-group-h">
-        <AreaIcon icon={group.icon} />
-        <b>{group.name}</b>
-      </div>
-      {children}
+    <>
+      {groupEntriesByArea(entries, catalog).map(areaGroup => (
+        <div className="area-group su-area" key={areaGroup.shortId} data-testid="integration-area" data-area={areaGroup.shortId}>
+          <div className="area-group-h sr-only">
+            <AreaIcon icon={areaGroup.icon} />
+            <b>{areaGroup.name}</b>
+          </div>
+          {areaGroup.entries.map(entry => (
+            <IntegrationCard
+              key={entry.id}
+              manifest={entry.manifest}
+              area={{ shortId: areaGroup.shortId, name: areaGroup.name }}
+              integration={entry.integration}
+              state={entry.state}
+              onStatusChange={refresh}
+              onSuccess={onSuccess}
+            />
+          ))}
+        </div>
+      ))}
+    </>
+  );
+}
+
+/** A group heading with its count: "In use  4 connectors". */
+function GroupHeading({ title, count, note }: { title: string; count: number; note?: string }) {
+  return (
+    <div className="su-sec">
+      {title}
+      <small>{count} {count === 1 ? 'connector' : 'connectors'}{note ? ` · ${note}` : ''}</small>
     </div>
   );
 }
@@ -28,7 +61,7 @@ function PausedRow({ entry }: { entry: IntegrationEntry }) {
     <div className="int-paused-row">
       <span aria-hidden="true">{integrationIcon(entry.manifest.icon)}</span>
       <span className="int-paused-name">{entry.manifest.name}</span>
-      <span className="int-chip int-chip-paused"><span className="int-dot" />Paused</span>
+      <span className="int-paused-state">Paused</span>
     </div>
   );
 }
@@ -45,12 +78,17 @@ export function IntegrationsPage() {
   }, []);
 
   const grouped = groupIntegrationsForDisplay(entries, simulationOn);
+  // Simulation mode off: "In use" / "Not set up". The counts are connectors, not cards (one connector can sit under several areas).
+  const { inUse, notSetUp } = splitByUse(entries);
+  const subtitle = !loading && mcpServerUp !== false && entries.length > 0 && !grouped.grouped
+    ? ` ${inUse.length} in use · ${notSetUp.length} not set up.`
+    : '';
 
   return (
-    <>
+    <div className="su-page">
       <div className="page-header">
         <h1 className="page-title">Integrations</h1>
-        <p className="page-subtitle">Connect external services and manage MCP integrations.</p>
+        <p className="page-subtitle">Connect external services and manage MCP integrations.{subtitle}</p>
       </div>
 
       {successMsg && <div className="alert alert-success">{successMsg}</div>}
@@ -66,42 +104,21 @@ export function IntegrationsPage() {
         </div>
       ) : grouped.grouped ? (
         <>
+          {/* Simulation mode on: Test systems (answer from simulated data) and Real systems (paused). */}
           {grouped.testSystems.length > 0 && (
             <>
-              <div className="int-group-label">Test systems</div>
-              {groupEntriesByArea(grouped.testSystems, catalog).map(areaGroup => (
-                <AreaGroup key={areaGroup.shortId} group={areaGroup}>
-                  {areaGroup.entries.map(entry => (
-                    <IntegrationCard
-                      key={entry.id}
-                      manifest={entry.manifest}
-                      integration={entry.integration}
-                      state={entry.state}
-                      onStatusChange={refresh}
-                      onSuccess={showSuccess}
-                    />
-                  ))}
-                </AreaGroup>
-              ))}
+              <GroupHeading title="Test systems" count={grouped.testSystems.length} />
+              <AreaCards entries={grouped.testSystems} catalog={catalog} refresh={refresh} onSuccess={showSuccess} />
             </>
           )}
 
           {(grouped.realErrors.length > 0 || grouped.pausedReal.length > 0) && (
             <>
-              <div className="int-group-label">Real systems</div>
+              <GroupHeading title="Real systems" count={grouped.realErrors.length + grouped.pausedReal.length} />
               {/* A genuine error (unrelated to the simulation block) stays a
                   full card — folding it into the paused disclosure would
                   bury an actual problem behind a collapsed, neutral summary. */}
-              {grouped.realErrors.map(entry => (
-                <IntegrationCard
-                  key={entry.id}
-                  manifest={entry.manifest}
-                  integration={entry.integration}
-                  state={entry.state}
-                  onStatusChange={refresh}
-                  onSuccess={showSuccess}
-                />
-              ))}
+              <AreaCards entries={grouped.realErrors} catalog={catalog} refresh={refresh} onSuccess={showSuccess} />
               {grouped.pausedReal.length > 0 && (
                 <details className="int-paused-group" open>
                   <summary>Paused while simulation mode is on ({grouped.pausedReal.length})</summary>
@@ -119,27 +136,23 @@ export function IntegrationsPage() {
         </>
       ) : (
         <>
-          {/* UI spec §13.3 — grouped under their area heading, same as the
-              simulation-mode branch above. */}
-          {groupEntriesByArea(entries, catalog).map(areaGroup => (
-            <AreaGroup key={areaGroup.shortId} group={areaGroup}>
-              {areaGroup.entries.map(entry => (
-                <IntegrationCard
-                  key={entry.id}
-                  manifest={entry.manifest}
-                  integration={entry.integration}
-                  state={entry.state}
-                  onStatusChange={refresh}
-                  onSuccess={showSuccess}
-                />
-              ))}
-            </AreaGroup>
-          ))}
+          {inUse.length > 0 && (
+            <>
+              <GroupHeading title="In use" count={inUse.length} />
+              <AreaCards entries={inUse} catalog={catalog} refresh={refresh} onSuccess={showSuccess} />
+            </>
+          )}
+          {notSetUp.length > 0 && (
+            <>
+              <GroupHeading title="Not set up" count={notSetUp.length} note="open one to set it up" />
+              <AreaCards entries={notSetUp} catalog={catalog} refresh={refresh} onSuccess={showSuccess} />
+            </>
+          )}
 
           {entries.length === 0 && <EmptyState manifestsError={manifestsError} />}
         </>
       )}
-    </>
+    </div>
   );
 }
 

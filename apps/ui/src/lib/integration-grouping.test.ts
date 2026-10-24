@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { groupIntegrationsForDisplay, groupEntriesByArea } from './integration-grouping';
+import { groupIntegrationsForDisplay, groupEntriesByArea, splitByUse } from './integration-grouping';
 import type { IntegrationEntry } from '../contexts/IntegrationStatusContext';
 import type { AreaCatalogEntry } from './area';
 
@@ -155,5 +155,34 @@ describe('groupEntriesByArea — UI spec §13.3', () => {
     const g = groupEntriesByArea([erp], catalog);
     expect(g).toHaveLength(1);
     expect(g[0].entries).toEqual([erp]);
+  });
+});
+
+describe('splitByUse — "In use" / "Not set up" (UI spec §20.3)', () => {
+  const running = entry({ name: 'CRM', state: 'running' });
+  const stopped = entry({ name: 'Records', state: 'not-running' });
+  const crashed = entry({ name: 'Mollie', state: 'error' });
+  const starting = entry({ name: 'Deploy', state: 'starting' });
+  const noAccount = { ...entry({ name: 'Gmail', state: 'running' }), authStatus: 'not_connected' as const };
+  const revoked = { ...entry({ name: 'Calendar', state: 'running' }), authStatus: 'failed' as const };
+
+  it('in use = running with the authentication it needs; everything else is not set up', () => {
+    const { inUse, notSetUp } = splitByUse([running, stopped, crashed, starting]);
+    expect(inUse).toEqual([running]);
+    expect(notSetUp).toEqual([stopped, crashed, starting]);
+  });
+
+  it('a running OAuth connector whose account is not connected cannot do anything yet: not in use', () => {
+    expect(splitByUse([noAccount]).notSetUp).toEqual([noAccount]);
+  });
+
+  it('a running connector whose token was revoked stays in use — its card opens to the problem', () => {
+    expect(splitByUse([revoked]).inUse).toEqual([revoked]);
+  });
+
+  it('keeps every entry exactly once', () => {
+    const all = [running, stopped, crashed, starting, noAccount, revoked];
+    const { inUse, notSetUp } = splitByUse(all);
+    expect(inUse.length + notSetUp.length).toBe(all.length);
   });
 });
