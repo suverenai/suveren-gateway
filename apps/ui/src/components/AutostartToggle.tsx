@@ -19,6 +19,7 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import { spClient } from '../lib/sp-client';
+import { ObTypeLine, ObFold } from './ObjectCard';
 
 interface AutostartState {
   supported: boolean;
@@ -76,23 +77,27 @@ export function AutostartToggle() {
   // failing endpoint looked identical to a feature that does not exist.
   if (!state) {
     return (
-      <div className="card" style={{ padding: '1.5rem', marginTop: '2rem' }}>
-        <h2 style={{ fontSize: '1rem', fontWeight: 700, margin: 0 }}>Keep Suveren running</h2>
-        <p role={error ? 'alert' : undefined} style={{ margin: '0.5rem 0 0', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+      <article className="ob-card su-card">
+        <ObTypeLine parts={['Autostart']} />
+        <h3 className="ob-title">Keep Suveren running</h3>
+        <p role={error ? 'alert' : undefined} className="ob-one">
           {error ? `Could not read autostart state: ${error}` : 'Checking…'}
         </p>
-      </div>
+      </article>
     );
   }
 
   const mechanism = PLATFORM_MECHANISM[state.platform] ?? 'a login service';
 
   return (
-    <div className="card" style={{ padding: '1.5rem', marginTop: '2rem' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem' }}>
+    <article className="ob-card su-card">
+      <div className="su-row">
         <div>
-          <h2 style={{ fontSize: '1rem', fontWeight: 700, margin: 0 }}>Keep Suveren running</h2>
-          <p style={{ color: 'var(--text-secondary)', margin: '0.5rem 0 0', fontSize: '0.9rem' }}>
+          <ObTypeLine
+            parts={['Autostart', state.supported ? <span className={`ob-st${state.installed ? '' : ' is-off'}`}>{state.installed ? 'On' : 'Off'}</span> : 'Not available']}
+          />
+          <h3 className="ob-title">Keep Suveren running</h3>
+          <p className="ob-one">
             {state.supported
               ? <>Starts automatically when you log in, and restarts if it crashes. Uses {mechanism} — no admin rights needed.</>
               : state.reason}
@@ -100,41 +105,38 @@ export function AutostartToggle() {
         </div>
 
         {state.supported && (
-          <button
-            type="button"
-            onClick={() => void toggle()}
-            disabled={busy}
-            aria-pressed={state.installed}
-            className={state.installed ? 'btn btn-secondary' : 'btn btn-primary'}
-            style={{ whiteSpace: 'nowrap' }}
-          >
-            {busy ? 'Working…' : state.installed ? 'Turn off' : 'Turn on'}
-          </button>
+          <div className="ob-btns">
+            <button
+              type="button"
+              onClick={() => void toggle()}
+              disabled={busy}
+              aria-pressed={state.installed}
+              className={`ob-btn${state.installed ? '' : ' is-solid'}`}
+            >
+              {busy ? 'Working…' : state.installed ? 'Turn off' : 'Turn on'}
+            </button>
+          </div>
         )}
       </div>
-
-      {state.supported && (
-        <p style={{ margin: '1rem 0 0', fontSize: '0.85rem', color: 'var(--text-tertiary)' }}>
-          Status: <strong>{state.installed ? 'On — starts from your next login' : 'Off'}</strong>
-        </p>
-      )}
 
       {state.supported && (
         // The honesty line. Autostart restores the process, never the
         // credentials — saying so here is what stops "keep running" from
         // reading as "keep working".
-        <p style={{ margin: '0.5rem 0 0', fontSize: '0.85rem', color: 'var(--text-tertiary)' }}>
-          Turning this on doesn't interrupt the gateway you're using — it takes effect at your
-          next login. After any restart Suveren comes back <strong>locked</strong>: you enter your
-          API key once to unlock it, because nothing stored on this machine can unlock it for you.
-        </p>
+        <ObFold title="What happens after a restart" summary="takes effect at your next login">
+          <p>
+            Turning this on doesn't interrupt the gateway you're using — it takes effect at your
+            next login. After any restart Suveren comes back <strong>locked</strong>: you enter your
+            API key once to unlock it, because nothing stored on this machine can unlock it for you.
+          </p>
+        </ObFold>
       )}
 
       {error && (
-        <p role="alert" className="msg-error" style={{ margin: '0.75rem 0 0', fontSize: '0.85rem' }}>
+        <p role="alert" className="ob-one ob-bold msg-error">
           {error}
         </p>
       )}
-    </div>
+    </article>
   );
 }

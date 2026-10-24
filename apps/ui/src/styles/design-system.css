@@ -2036,29 +2036,17 @@ code {
    MANAGED SETTINGS (IT policy)
    ══════════════════════════════════════════════ */
 
-/* "Set by your IT" badge — same visual language as the "Custom" label on an
-   overridden AI prompt (uppercase, small, accent-colored), paired with a
-   lock glyph so it reads as "you can't change this" rather than "this has
-   been customized". Used wherever Settings shows a value locked by
+/* "Set by your IT" — a lock glyph and a bold word (UI spec 20: states are words,
+   not pills), so it reads as "you can't change this". Used wherever Settings shows a value locked by
    `docs/managed-settings.md` IT policy (Authority Server URL, TLS pinning,
    simulation mode). */
 .it-locked-badge {
   display: inline-flex;
   align-items: center;
   gap: 0.3rem;
-  font-size: 0.68rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-secondary);
-  background: var(--accent-subtle);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 0.2rem 0.55rem;
+  font-weight: 600;
+  color: var(--text-primary);
   white-space: nowrap;
-}
-.it-locked-badge .lock-icon {
-  font-size: 0.75rem;
 }
 
 /* ── Updating overlay (blur the chrome, wait for the restart) ── */
@@ -4801,3 +4789,21 @@ a.dash-row:hover, .dash-row:not([open]):hover { box-shadow: var(--elevation-2); 
   .su-cn > summary { padding: var(--space-4); }
   .su-cn-body { padding: 0 var(--space-4) var(--space-4); }
 }
+
+/* Settings: forms inside a card, the AI prompts fold */
+.su-card .su-fields { margin-top: var(--space-4); }
+.su-label-row { display: flex; justify-content: space-between; align-items: baseline; gap: var(--space-3); margin-bottom: var(--space-1); }
+.su-label-row .form-label { margin-bottom: 0; }
+.su-label-row .ob-link { font-size: var(--text-caption); color: var(--text-muted); text-decoration: none; }
+.su-label-row .ob-link:hover:not(:disabled) { color: var(--text-primary); }
+.su-placeholder-field { display: flex; align-items: center; min-height: 2.5rem; color: var(--text-muted); }
+.su-prompt + .su-prompt { margin-top: var(--space-6); }
+.su-prompt-h { font-weight: 600; font-size: var(--text-body-sm); }
+.su-prompt-text { margin-top: var(--space-2); min-height: 14rem; font-family: var(--font-mono); font-size: var(--text-caption); line-height: var(--line-relaxed); resize: vertical; }
+.su-prompt-default { margin: var(--space-2) 0 0; padding: var(--space-3) var(--space-4); background: var(--bg-sunken); border-radius: var(--radius-md); white-space: pre-wrap; max-height: 20rem; overflow-y: auto; }
+.ob-fold-body .ob-btns.is-tight { margin-top: var(--space-3); }
+/* An open fold is the same grey as a grey button: buttons inside it take the next step darker. */
+.ob-fold .ob-btn { background: var(--border); }
+.ob-fold .ob-btn:hover:not(:disabled) { background: var(--border-strong); }
+.ob-fold .ob-btn.is-solid { background: var(--btn-primary-bg); }
+.ob-fold .ob-btn.is-solid:hover:not(:disabled) { background: var(--btn-primary-bg-hover); }

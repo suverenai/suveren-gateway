@@ -9,6 +9,7 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import { spClient, type IdentityDisclosure } from '../lib/sp-client';
+import { ObTypeLine } from './ObjectCard';
 
 const METHOD_LABEL: Record<string, string> = {
   as_vouched: 'verified by',
@@ -45,16 +46,17 @@ export function IdentityDisclosureToggle() {
     }
   }, [state, busy, load]);
 
-  const title = <h3 className="card-title" style={{ margin: 0 }}>Your name on mandates and tickets</h3>;
+  const title = <h3 className="ob-title">Your name on mandates and tickets</h3>;
 
   if (!state) {
     return (
-      <div className="card" style={{ padding: '1.5rem', marginTop: '1rem' }}>
+      <article className="ob-card su-card">
+        <ObTypeLine parts={['Mandates and tickets']} />
         {title}
-        <p role={error ? 'alert' : undefined} style={{ margin: '0.5rem 0 0', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+        <p role={error ? 'alert' : undefined} className="ob-one">
           {error ? `Could not read the setting: ${error}` : 'Checking…'}
         </p>
-      </div>
+      </article>
     );
   }
 
@@ -63,34 +65,36 @@ export function IdentityDisclosureToggle() {
     : null;
 
   return (
-    <div className="card" style={{ padding: '1.5rem', marginTop: '1rem' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem' }}>
+    <article className="ob-card su-card">
+      <div className="su-row">
         <div>
+          <ObTypeLine parts={['Mandates and tickets', <span className={`ob-st${state.always ? '' : ' is-off'}`}>{state.always ? 'On' : 'Off'}</span>]} />
           {title}
-          <p style={{ color: 'var(--text-secondary)', margin: '0.5rem 0 0', fontSize: '0.9rem' }}>
+          <p className="ob-one">
             {state.always
               ? 'On: your verified name is attached to every mandate you give — including ones the setup AI proposes and you approve — and to the tickets under them.'
               : 'Off: each mandate asks whether to show your name. Mandates the setup AI proposes carry no name.'}
             {' '}Mandates already given stay as they are.
           </p>
-          <p style={{ margin: '0.5rem 0 0', fontSize: '0.85rem', color: 'var(--text-tertiary)' }}>
+          <p className="ob-one">
             {who ? `Your identity: ${who}.` : 'Your identity is not verified yet — no name can be shown until it is.'}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => void toggle()}
-          disabled={busy}
-          aria-pressed={state.always}
-          className={state.always ? 'btn btn-secondary' : 'btn btn-primary'}
-          style={{ whiteSpace: 'nowrap' }}
-        >
-          {busy ? 'Saving…' : state.always ? 'Turn off' : 'Always show my name'}
-        </button>
+        <div className="ob-btns">
+          <button
+            type="button"
+            onClick={() => void toggle()}
+            disabled={busy}
+            aria-pressed={state.always}
+            className="ob-btn"
+          >
+            {busy ? 'Saving…' : state.always ? 'Turn off' : 'Always show my name'}
+          </button>
+        </div>
       </div>
       {error && (
-        <p role="alert" className="msg-error" style={{ margin: '0.75rem 0 0', fontSize: '0.85rem' }}>{error}</p>
+        <p role="alert" className="ob-one ob-bold msg-error">{error}</p>
       )}
-    </div>
+    </article>
   );
 }

@@ -13,6 +13,7 @@
  */
 import { useSimulationPolicy } from '../hooks/useSimulationPolicy';
 import { LockedByItBadge } from './LockedByItBadge';
+import { ObTypeLine } from './ObjectCard';
 
 export function SimulationLockCard() {
   const { simulation, locked } = useSimulationPolicy();
@@ -20,28 +21,29 @@ export function SimulationLockCard() {
   if (!locked) return null;
 
   return (
-    <div className="card" style={{ padding: '1.5rem', marginTop: '2rem' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem' }}>
-        <div>
-          <h2 style={{ fontSize: '1rem', fontWeight: 700, margin: 0 }}>Simulation mode</h2>
-          <p style={{ color: 'var(--text-secondary)', margin: '0.5rem 0 0', fontSize: '0.9rem' }}>
-            Blocks every real connector without a manifest "simulation" marker.
-            {simulation !== null && (
-              <>
-                {' '}Currently <strong>{simulation ? 'ON' : 'OFF'}</strong>
-                {simulation ? ' — real systems are not reachable from this gateway.' : '.'}
-              </>
-            )}
-          </p>
-        </div>
-        <LockedByItBadge />
-      </div>
-
-      <p style={{ margin: '1rem 0 0', fontSize: '0.78rem', color: 'var(--text-tertiary)' }}>
+    <article className="ob-card su-card">
+      <ObTypeLine
+        parts={[
+          'Simulation mode',
+          simulation !== null ? <span className={`ob-st${simulation ? '' : ' is-off'}`}>{simulation ? 'On' : 'Off'}</span> : null,
+          <LockedByItBadge />,
+        ]}
+      />
+      <h3 className="ob-title">Simulation mode</h3>
+      <p className="ob-one">
+        Blocks every real connector without a manifest "simulation" marker.
+        {simulation !== null && (
+          <>
+            {' '}Currently <strong>{simulation ? 'ON' : 'OFF'}</strong>
+            {simulation ? ' — real systems are not reachable from this gateway.' : '.'}
+          </>
+        )}
+      </p>
+      <p className="ob-one">
         Simulation mode is set by your organization's IT policy
         {simulation !== null ? ` (currently ${simulation ? 'on' : 'off'})` : ''} and cannot be
         changed from this computer — not even from the command line.
       </p>
-    </div>
+    </article>
   );
 }

@@ -18,11 +18,11 @@ export function ObChev() {
 }
 
 /** "MANDATE · Sales · since 23 Oct · Active" — a small solid label, then quiet parts. */
-export function ObTypeLine({ tag, parts, className, profileId }: { tag: string; parts: Array<ReactNode | null | undefined | false>; className?: string; profileId?: string }) {
+export function ObTypeLine({ tag, parts, className, profileId }: { tag?: string; parts: Array<ReactNode | null | undefined | false>; className?: string; profileId?: string }) {
   // The area icon sits with the first part (the area) — §12.2, kept by §18.1.
   return (
     <div className={`ob-type${className ? ` ${className}` : ''}`}>
-      <span className="ob-tag">{tag}</span>
+      {tag && <span className="ob-tag">{tag}</span>}
       {parts.filter(Boolean).map((p, i) => <span key={i} className={i === 0 && profileId ? 'ob-area' : undefined}>{i === 0 && profileId && <AreaIcon icon={areaIcon(profileId)} />}{p}</span>)}
     </div>
   );
