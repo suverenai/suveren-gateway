@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { spClient } from '../lib/sp-client';
+import { ObTypeLine, ObFold, useFoldAccordion } from '../components/ObjectCard';
 
 interface GroupDetail {
   id: string;
@@ -26,11 +27,11 @@ interface GroupDetail {
 export function GroupsPage() {
   const { activeTeam, activeMembership, refreshGroups, user } = useAuth();
   const navigate = useNavigate();
+  const accordion = useFoldAccordion<HTMLElement>();
   const [groupDetail, setGroupDetail] = useState<GroupDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
-  const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
   const [confirmText, setConfirmText] = useState('');
   const [spUrl, setSpUrl] = useState('');
 
@@ -79,16 +80,6 @@ export function GroupsPage() {
   const teamName = activeTeam?.name ?? '';
   const confirmReady = confirmText.trim() === teamName && !loading;
 
-  const openLeaveModal = () => {
-    setConfirmText('');
-    setShowLeaveConfirm(true);
-  };
-
-  const closeLeaveModal = () => {
-    setShowLeaveConfirm(false);
-    setConfirmText('');
-  };
-
   const handleLeave = async () => {
     if (!activeTeam || !confirmReady) return;
     setLoading(true);
@@ -98,7 +89,7 @@ export function GroupsPage() {
       await refreshGroups();
       setSuccessMsg('You have left the team.');
       setGroupDetail(null);
-      closeLeaveModal();
+      setConfirmText('');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to leave team');
     } finally {
@@ -111,159 +102,118 @@ export function GroupsPage() {
   const manageHref = activeTeam && spUrl ? `${spUrl}/dashboard/groups/${activeTeam.id}` : undefined;
   const browseTeamsHref = spUrl ? `${spUrl}/dashboard/groups` : undefined;
 
+  const memberCount = groupDetail?.members?.length ?? 0;
+
   return (
-    <>
+    <div className="su-page">
       <div className="page-header">
-        <div>
-          <h1 className="page-title">Team</h1>
-          <p className="page-subtitle">
-            Your current team context. Team management lives in your Authority Server dashboard.
-          </p>
-        </div>
+        <h1 className="page-title">Team</h1>
+        <p className="page-subtitle">
+          Your current team context. Team management lives in your Authority Server dashboard.
+        </p>
       </div>
 
       {error && <div className="error-message">{error}</div>}
       {successMsg && <div className="alert alert-success">{successMsg}</div>}
 
       {activeTeam ? (
-        <div className="card" style={{ marginBottom: '1.5rem' }}>
-          <div className="card-header">
-            <div>
-              <h3 className="card-title">{activeTeam.name}</h3>
-              <p style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginTop: '0.125rem' }}>
-                {groupDetail?.members?.length ?? 0} {(groupDetail?.members?.length ?? 0) === 1 ? 'member' : 'members'}
-                {activeTeam.isAdmin && ' · You are admin'}
-              </p>
-            </div>
-            <span className="status-badge status-active">Active</span>
-          </div>
+        <article className="ob-card su-card" ref={accordion}>
+          <ObTypeLine
+            tag="TEAM"
+            parts={[
+              <span className="ob-st">Active</span>,
+              `${memberCount} ${memberCount === 1 ? 'member' : 'members'}`,
+            ]}
+          />
+          <h2 className="ob-title is-h3">{activeTeam.name}</h2>
 
-          {groupDetail?.members?.map(member => (
-            <div className="member-row" key={member.id}>
-              <div className="member-avatar">
-                {member.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
-              </div>
-              <div className="member-info">
-                <div className="member-name">{member.name}</div>
-                <div className="member-email">{member.email}</div>
-              </div>
-              <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>{member.role}</span>
-            </div>
-          ))}
+          {memberCount > 0 && (
+            <section className="ob-tile su-members">
+              <div className="su-tile-h">Members</div>
+              {groupDetail?.members.map(member => (
+                <div className="su-m" key={member.id}>
+                  <span className="su-av">
+                    {member.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
+                  </span>
+                  <div className="su-who">
+                    <b>{member.name}</b>
+                    <span>{member.email}</span>
+                  </div>
+                  <span className={`su-role${member.isAdmin ? ' is-admin' : ''}`}>{member.role}</span>
+                </div>
+              ))}
+            </section>
+          )}
 
-          <div style={{ marginTop: '1.25rem', paddingTop: '1rem', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-            {manageHref && (
-              <a
-                className="btn btn-secondary btn-sm"
-                href={manageHref}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                Manage this team in your Authority Server &rarr;
-              </a>
-            )}
-            <span title={isSoleAdmin ? 'You are the only admin. Transfer admin to another member in your Authority Server dashboard before leaving.' : undefined} style={{ marginLeft: 'auto' }}>
-              <button
-                className="btn btn-ghost btn-sm"
-                style={{ color: 'var(--text-tertiary)' }}
-                onClick={openLeaveModal}
-                disabled={loading || isSoleAdmin}
-              >
-                Leave team
-              </button>
-            </span>
-          </div>
-        </div>
-      ) : (
-        <div className="card" style={{ textAlign: 'center', padding: '2rem 1.5rem' }}>
-          <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '1rem' }}>You are working solo.</h3>
-          <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '1rem', maxWidth: 480, marginLeft: 'auto', marginRight: 'auto' }}>
-            Every mandate you create here is in your personal context. An account is Personal or in
-            one team — joining or creating a team moves it.
-          </p>
-          <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', flexWrap: 'wrap' }}>
-            <button className="btn btn-primary btn-sm" onClick={() => navigate('/onboarding')}>
-              Join or create a team
-            </button>
-            {browseTeamsHref && (
-              <a
-                className="btn btn-ghost btn-sm"
-                href={browseTeamsHref}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                Manage teams in your Authority Server &rarr;
-              </a>
-            )}
-          </div>
-        </div>
-      )}
-
-      {showLeaveConfirm && activeTeam && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="leave-team-title"
-          style={{
-            position: 'fixed', inset: 0, background: 'color-mix(in srgb, var(--bg-main) 70%, transparent)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            zIndex: 1000, padding: '1rem',
-          }}
-          onClick={closeLeaveModal}
-        >
-          <div
-            className="card"
-            onClick={e => e.stopPropagation()}
-            style={{ maxWidth: 480, width: '100%', margin: 0 }}
+          <ObFold
+            title="Leave team"
+            summary={isSoleAdmin ? 'you are the only admin' : 'revokes your mandates in this team'}
           >
-            <h3 id="leave-team-title" className="card-title" style={{ marginBottom: '0.5rem' }}>
-              Leave {teamName}?
-            </h3>
-            <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>
-              Leaving will:
-            </p>
-            <ul style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '1rem', paddingLeft: '1.25rem', lineHeight: 1.6 }}>
+            <p>Leaving will:</p>
+            <ul className="su-list">
               <li>Revoke all mandates you created in this team's context</li>
               <li>Reject any pending action proposals you authored</li>
               <li>Disable your membership — rejoining requires admin reactivation</li>
             </ul>
-            <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-              Your <strong>personal</strong> mandates are not affected.
-            </p>
-            <div className="form-group">
-              <label htmlFor="leave-confirm-input" style={{ fontSize: '0.825rem', display: 'block', marginBottom: '0.375rem' }}>
-                Type <code>{teamName}</code> to confirm:
-              </label>
-              <input
-                id="leave-confirm-input"
-                className="form-input"
-                type="text"
-                value={confirmText}
-                onChange={e => setConfirmText(e.target.value)}
-                placeholder={teamName}
-                disabled={loading}
-                autoFocus
-              />
+            <p className="ob-lbl ob-gap">Your personal mandates are not affected.</p>
+            {isSoleAdmin ? (
+              <p className="ob-lbl">
+                You are the only admin. Transfer admin to another member in your Authority Server
+                dashboard before leaving.
+              </p>
+            ) : (
+              <>
+                <div className="form-group">
+                  <label htmlFor="leave-confirm-input" className="form-label">
+                    Type <code>{teamName}</code> to confirm
+                  </label>
+                  <input
+                    id="leave-confirm-input"
+                    className="form-input"
+                    type="text"
+                    value={confirmText}
+                    onChange={e => setConfirmText(e.target.value)}
+                    placeholder={teamName}
+                    disabled={loading}
+                  />
+                </div>
+                <div className="ob-btns is-inline is-tight">
+                  <button className="ob-btn" onClick={handleLeave} disabled={!confirmReady}>
+                    {loading ? 'Leaving...' : 'Leave team'}
+                  </button>
+                </div>
+              </>
+            )}
+          </ObFold>
+
+          {manageHref && (
+            <div className="ob-btns">
+              <a className="ob-btn" href={manageHref} target="_blank" rel="noopener noreferrer">
+                Manage this team in your Authority Server &#8599;
+              </a>
             </div>
-            <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '1rem' }}>
-              <button
-                className="btn btn-ghost"
-                onClick={closeLeaveModal}
-                disabled={loading}
-              >
-                Cancel
-              </button>
-              <button
-                className="btn btn-outline-strong"
-                onClick={handleLeave}
-                disabled={!confirmReady}
-              >
-                {loading ? 'Leaving...' : 'Leave team'}
-              </button>
-            </div>
+          )}
+        </article>
+      ) : (
+        <article className="ob-card su-card">
+          <ObTypeLine tag="TEAM" parts={[<span className="ob-st">Personal</span>]} />
+          <h2 className="ob-title is-h3">You are working solo.</h2>
+          <p className="ob-one">
+            Every mandate you create here is in your personal context. An account is Personal or in
+            one team — joining or creating a team moves it.
+          </p>
+          <div className="ob-btns">
+            <button className="ob-btn is-solid" onClick={() => navigate('/onboarding')}>
+              Join or create a team
+            </button>
+            {browseTeamsHref && (
+              <a className="ob-btn" href={browseTeamsHref} target="_blank" rel="noopener noreferrer">
+                Manage teams in your Authority Server &#8599;
+              </a>
+            )}
           </div>
-        </div>
+        </article>
       )}
-    </>
+    </div>
   );
 }

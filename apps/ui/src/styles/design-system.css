@@ -4736,3 +4736,74 @@ a.dash-row:hover, .dash-row:not([open]):hover { box-shadow: var(--elevation-2); 
   .sidebar-setup-rail.is-active .nav-svg { stroke-width: 2; }
   .sidebar-item.active::before { left: 0; }
 }
+
+/* ══════════════════════════════════════════════════════════════════════
+   SETUP PAGES — UI spec §20 (signed off 2026-10-24). Team, Agent Brief,
+   Integrations, Settings. Same language as §17/§18: grey page, floating
+   cards (the `.ob-card` look), no frames or divider lines, grey tiles for
+   grouped values, folds, equal grey buttons with at most one solid action per
+   card, LIGHT input fields (never solid black), states as words (bold /
+   muted), not pills. Mockup: temp/setup-pages-mockup/index.html.
+   Components: ObjectCard (shared), GroupsPage, AgentBriefPage, IntegrationsPage
+   + IntegrationCard, SettingsServicesPage + its cards.
+   ══════════════════════════════════════════════════════════════════════ */
+.main-content:has(.su-page) { background: var(--bg-sunken); }
+.su-page { max-width: 50rem; margin: 0 auto; }
+.su-page.is-wide { max-width: 56rem; }
+.su-page .page-header { margin-bottom: var(--space-5); }
+.su-page .page-title { margin-bottom: 0.2rem; }
+.su-page .page-subtitle { color: var(--text-muted); font-size: var(--text-body-sm); }
+
+/* Group heading: "In use  6 connectors" */
+.su-sec { display: flex; align-items: baseline; gap: var(--space-2); margin: var(--space-8) 0 var(--space-3); font-size: var(--text-body); font-weight: 600; color: var(--text-primary); }
+.page-header + .su-sec, .page-header + * > .su-sec:first-child { margin-top: var(--space-4); }
+.su-sec small { font-weight: 400; color: var(--text-muted); font-size: var(--text-caption); }
+
+/* The card: the open-card look of §18 */
+.ob-card.su-card { box-shadow: var(--elevation-2); padding: var(--space-5); margin-bottom: var(--space-3); }
+.su-card .ob-title.is-h3 { font-size: var(--text-h3); }
+.su-card .ob-one + .ob-one { margin-top: var(--space-2); }
+.ob-one b { color: var(--text-primary); font-weight: 700; }
+.ob-st.is-off { color: var(--text-muted); font-weight: 400; }
+.ob-st.is-sim { font-style: italic; }
+.su-tile-h { display: flex; gap: 0.45rem; align-items: center; font-weight: 600; font-size: var(--text-body-sm); margin: 0 0 var(--space-3); }
+.su-card .ob-kv { grid-template-columns: 9rem minmax(0, 1fr); }
+.su-list { margin: 0 0 0 1.1rem; padding: 0; font-size: var(--text-body-sm); }
+.su-list li + li { margin-top: 0.2rem; }
+.su-row { display: flex; justify-content: space-between; align-items: center; gap: var(--space-4); }
+.su-row > div:first-child { min-width: 0; }
+.su-row .ob-btns { margin: 0; flex: 0 0 auto; }
+
+/* Buttons: equal grey; at most one solid per card */
+.ob-btn.is-solid { background: var(--btn-primary-bg); color: var(--btn-primary-fg); }
+.ob-btn.is-solid:hover:not(:disabled) { background: var(--btn-primary-bg-hover); }
+.ob-btn.is-solid:disabled { opacity: 0.45; color: var(--btn-primary-fg); }
+.ob-btns.is-inline .ob-btn { flex: 0 0 auto; padding: 0 var(--space-4); }
+.ob-btns.is-tight { margin-top: var(--space-3); }
+
+/* Fields: light, never solid black */
+.su-page .form-group + .form-group, .su-page .su-fld + .su-fld { margin-top: var(--space-3); }
+.su-page .form-label { font-size: var(--text-body-sm); font-weight: 600; margin-bottom: var(--space-1); }
+.su-page .form-label small { font-weight: 400; color: var(--text-muted); }
+.su-page .form-input, .su-page .form-select, .su-page .form-textarea {
+  background: var(--bg-input); color: var(--text-primary); border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm); padding: 0.6rem 0.75rem; font-size: var(--text-body-sm);
+}
+.su-page .cred-field .form-input { padding-right: 3rem; }
+.su-page .form-input::placeholder, .su-page .form-textarea::placeholder { color: var(--text-muted); opacity: 1; }
+.su-page .form-input:focus, .su-page .form-select:focus, .su-page .form-textarea:focus { box-shadow: none; outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.su-page .su-hint { font-size: var(--text-caption); color: var(--text-muted); margin: var(--space-1) 0 0; }
+
+/* Team: members in a grey tile, admin bold */
+.su-members .su-m { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) 0; }
+.su-av { width: 2rem; height: 2rem; border-radius: var(--radius-circle); background: var(--bg-elevated); display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: var(--text-caption); flex: none; }
+.su-m .su-who { flex: 1; min-width: 0; }
+.su-m .su-who b { display: block; font-weight: 600; font-size: var(--text-body-sm); }
+.su-m .su-who span { font-size: var(--text-caption); color: var(--text-muted); overflow-wrap: anywhere; }
+.su-m .su-role { font-size: var(--text-caption); color: var(--text-muted); }
+.su-m .su-role.is-admin { color: var(--text-primary); font-weight: 600; }
+
+@media (max-width: 640px) {
+  .su-row { flex-direction: column; align-items: stretch; }
+  .su-card .ob-kv { grid-template-columns: 1fr; gap: 0; }
+}
