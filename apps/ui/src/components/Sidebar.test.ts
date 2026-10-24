@@ -12,9 +12,9 @@ describe('Sidebar NAV_ITEMS — settings entry', () => {
     expect(settings?.label).toBe('Settings');
   });
 
-  it('keeps the gear icon and the assistant status badge on that entry', () => {
+  it('keeps the settings icon and the assistant status badge on that entry', () => {
     const settings = NAV_ITEMS.find(i => i.to === '/settings');
-    expect(settings?.icon).toBe('⚙');
+    expect(settings?.icon).toBe('settings');
     expect(settings?.statusKey).toBe('assistant');
   });
 });

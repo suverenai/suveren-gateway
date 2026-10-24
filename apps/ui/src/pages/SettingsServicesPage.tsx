@@ -6,6 +6,7 @@ import { IdentityDisclosureToggle } from '../components/IdentityDisclosureToggle
 import { VersionCard } from '../components/VersionCard';
 import { AuthorityServerCard } from '../components/AuthorityServerCard';
 import { SimulationLockCard } from '../components/SimulationLockCard';
+import { ObTypeLine, ObFold, ObLock } from '../components/ObjectCard';
 
 const PROVIDER_CONFIG: Record<string, { provider: string; endpoint: string; models: string[] }> = {
   ollama: {
@@ -38,12 +39,16 @@ const PROVIDER_CONFIG: Record<string, { provider: string; endpoint: string; mode
 // Single ordered list of this page's section headings. The JSX below renders
 // these by index rather than hardcoding the strings a second time, so a test
 // asserting the order can't drift from what's actually on screen.
-export const SETTINGS_SECTIONS = ['AI Assistant', 'Authority Server', 'This computer', 'Security', 'Version'] as const;
-
-const SECTION_HEADING_STYLE: React.CSSProperties = { fontSize: '1rem', fontWeight: 700, marginBottom: '1rem' };
+export const SETTINGS_SECTIONS = ['Authority Server', 'This computer', 'Security', 'Version', 'AI Assistant'] as const;
 
 export function SettingsServicesPage() {
   const [successMsg, setSuccessMsg] = useState('');
+  // Links to the AI Assistant (last section) arrive as /settings#ai-assistant.
+  useEffect(() => {
+    if (window.location.hash !== '#ai-assistant') return;
+    const t = window.setTimeout(() => document.getElementById('ai-assistant')?.scrollIntoView({ block: 'start' }), 50);
+    return () => window.clearTimeout(t);
+  }, []);
 
   // AI config state
   const [aiPreset, setAiPreset] = useState('openrouter');
@@ -175,36 +180,75 @@ export function SettingsServicesPage() {
   };
 
   return (
-    <>
+    <div className="su-page">
       <div className="page-header">
         <h1 className="page-title">Settings</h1>
-        <p className="page-subtitle">Your AI assistant, the connection to your Authority Server, security and version.</p>
+        <p className="page-subtitle">The connection to your Authority Server, this computer, security, version and your AI assistant.</p>
       </div>
 
       {successMsg && <div className="alert alert-success">{successMsg}</div>}
 
-      {/* 1. AI Assistant */}
-      <section style={{ marginBottom: '2rem' }}>
-        <h2 style={SECTION_HEADING_STYLE}>{SETTINGS_SECTIONS[0]}</h2>
-        <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-          Advisory AI to help you think through intent when giving mandates.
+      {/* 1. Authority Server */}
+      <h2 className="su-sec">{SETTINGS_SECTIONS[0]}</h2>
+      <AuthorityServerCard />
+      <IdentityDisclosureToggle />
+
+      {/* 2. This computer */}
+      <h2 className="su-sec">{SETTINGS_SECTIONS[1]}</h2>
+      {/* Autostart — the CLI's `service` command as a switch */}
+      <AutostartToggle />
+      <NotificationsToggle />
+      {/* Only renders when IT policy has locked simulation mode */}
+      <SimulationLockCard />
+
+      {/* 3. Security */}
+      <h2 className="su-sec">{SETTINGS_SECTIONS[2]}</h2>
+      <article className="ob-card su-card">
+        <ObTypeLine parts={['Security']} />
+        <h3 className="ob-title">What the gateway does and does not cover</h3>
+        <section className="ob-tile">
+          <div className="ob-part">
+            <div className="su-tile-h"><ObLock />What the gateway protects</div>
+            <ul className="su-list">
+              <li>Every tool call verified against your mandate bounds</li>
+              <li>Credentials never exposed to agents through MCP</li>
+              <li>Every action produces a signed ticket</li>
+            </ul>
+          </div>
+          <div className="ob-part">
+            <div className="su-tile-h">Your responsibility</div>
+            <ul className="su-list">
+              <li>If your AI agent has full access to your computer, it could bypass the gateway</li>
+              <li>For best security, run agents in sandboxed environments</li>
+              <li>The gateway secures what agents do through tools — not what they do on your machine</li>
+            </ul>
+          </div>
+        </section>
+      </article>
+
+      {/* 4. Version */}
+      <h2 className="su-sec">{SETTINGS_SECTIONS[3]}</h2>
+      <VersionCard />
+
+      {/* 5. AI Assistant — last (Andreas, 2026-10-24): optional; until it is set up it shows as a
+          missing setup step (Get started, dashboard, Settings nav count). */}
+      <h2 className="su-sec" id="ai-assistant" style={{ scrollMarginTop: 'calc(var(--nav-height) + 1rem)' }}>{SETTINGS_SECTIONS[4]}</h2>
+      <article className="ob-card su-card">
+        <ObTypeLine
+          parts={[
+            'AI assistant',
+            'Optional',
+            <span className={`ob-st${aiConfigured ? '' : ' is-off'}`}>{aiConfigured ? 'Set up' : 'Not set up'}</span>,
+          ]}
+        />
+        <h3 className="ob-title">AI Assistant</h3>
+        <p className="ob-one">
+          Helps you write mandates and the brief. Keys are encrypted in your vault.
         </p>
 
-        <div className="card">
-          <h3 className="card-title">Configuration</h3>
-          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-            Connect a trusted AI model that has access to your intent — problem, objective, and tradeoffs — to help you think through mandates. Keys are encrypted in your vault.
-          </p>
-
-          {aiConfigured && (
-            <div className="status-banner status-banner-success" style={{ marginBottom: '1rem', fontSize: '0.8rem' }}>
-              <span className="status-banner-icon">{'\u2713'}</span>
-              <span className="status-banner-text">AI configured</span>
-            </div>
-          )}
-
-          <div className="form-group" style={{ marginBottom: '0.75rem' }}>
-            <label className="form-label">Provider Preset</label>
+        <div className="su-fields">
+          <div className="form-group">
+            <label className="form-label">Provider</label>
             <select
               className="form-input"
               value={aiPreset}
@@ -218,8 +262,8 @@ export function SettingsServicesPage() {
             </select>
           </div>
 
-          <div className="form-group" style={{ marginBottom: '0.75rem' }}>
-            <label className="form-label">API Key {aiProvider === 'ollama' ? '(not needed for Ollama)' : '(required to load models)'}</label>
+          <div className="form-group">
+            <label className="form-label">API key {aiProvider === 'ollama' ? '(not needed for Ollama)' : '(required to load models)'}</label>
             <input
               className="form-input"
               type="password"
@@ -232,18 +276,17 @@ export function SettingsServicesPage() {
               onBlur={() => { if (aiApiKey.trim()) void fetchModels(aiProvider, aiEndpoint, aiApiKey.trim()); }}
               placeholder={aiConfigured ? '••••••••••••••••' : 'sk-... (not needed for Ollama)'}
             />
-            <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', margin: '0.375rem 0 0' }}>
+            <p className="su-hint">
               Each provider uses its own key — paste it and the model list loads automatically.
             </p>
           </div>
 
-          <div className="form-group" style={{ marginBottom: '0.75rem' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div className="form-group">
+            <div className="su-label-row">
               <label className="form-label">Model</label>
               <button
                 type="button"
-                className="btn btn-ghost"
-                style={{ fontSize: '0.75rem', padding: '0.125rem 0.5rem' }}
+                className="ob-link"
                 onClick={loadModels}
                 disabled={aiLoadingModels}
                 title="Re-fetch the model list from the provider"
@@ -254,10 +297,7 @@ export function SettingsServicesPage() {
             {aiFetchedModels.length === 0 ? (
               // No hardcoded fallback: if the provider's /models endpoint hasn't
               // returned a real list, we show a prompt — never fake options.
-              <div
-                className="form-input"
-                style={{ display: 'flex', alignItems: 'center', minHeight: '2.5rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}
-              >
+              <div className="form-input su-placeholder-field">
                 {aiLoadingModels
                   ? 'Loading models…'
                   : aiProvider === 'ollama'
@@ -299,91 +339,36 @@ export function SettingsServicesPage() {
                 </>
               );
             })()}
-            {aiModelsMsg && (
-              <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', margin: '0.375rem 0 0' }}>
-                {aiModelsMsg}
-              </p>
-            )}
+            {aiModelsMsg && <p className="su-hint">{aiModelsMsg}</p>}
           </div>
+        </div>
 
-          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-            <button
-              className="btn btn-primary"
-              onClick={saveAiConfig}
-              disabled={aiSaving || !aiModel.trim()}
-              title={!aiModel.trim() ? 'Select a model first' : undefined}
-            >
-              {aiSaving ? 'Saving...' : 'Save & Encrypt'}
+        <div className="ob-btns">
+          <button
+            className="ob-btn is-solid"
+            onClick={saveAiConfig}
+            disabled={aiSaving || !aiModel.trim()}
+            title={!aiModel.trim() ? 'Select a model first' : undefined}
+          >
+            {aiSaving ? 'Saving...' : 'Save & Encrypt'}
+          </button>
+          {aiConfigured && (
+            <button className="ob-btn" onClick={testAi} disabled={aiTesting}>
+              {aiTesting ? 'Testing...' : 'Test Connection'}
             </button>
-            {aiConfigured && (
-              <button className="btn btn-ghost" onClick={testAi} disabled={aiTesting}>
-                {aiTesting ? 'Testing...' : 'Test Connection'}
-              </button>
-            )}
-          </div>
-
-          {aiTestResult && (
-            <div className={`alert ${aiTestResult.startsWith('OK') ? 'alert-success' : 'alert-error'}`} style={{ marginTop: '0.75rem' }}>
-              {aiTestResult}
-            </div>
           )}
         </div>
 
-        {/* Advanced — AI assistant prompts (collapsed by default) */}
-        <AdvancedAIPrompts />
-      </section>
-
-      {/* 2. Authority Server */}
-      <section style={{ marginBottom: '2rem' }}>
-        <h2 style={SECTION_HEADING_STYLE}>{SETTINGS_SECTIONS[1]}</h2>
-        <AuthorityServerCard />
-        <IdentityDisclosureToggle />
-      </section>
-
-      {/* 3. This computer */}
-      <section style={{ marginBottom: '2rem' }}>
-        <h2 style={SECTION_HEADING_STYLE}>{SETTINGS_SECTIONS[2]}</h2>
-
-        {/* Autostart — the CLI's `service` command as a switch */}
-        <AutostartToggle />
-        <NotificationsToggle />
-        {/* Only renders when IT policy has locked simulation mode */}
-        <SimulationLockCard />
-      </section>
-
-      {/* 4. Security */}
-      <section style={{ marginBottom: '2rem' }}>
-        <h2 style={SECTION_HEADING_STYLE}>{SETTINGS_SECTIONS[3]}</h2>
-
-        <div className="card" style={{ padding: '1.5rem' }}>
-          <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.7 }}>
-            <div style={{ marginBottom: '1rem' }}>
-              <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.375rem' }}>What the gateway protects</div>
-              <ul style={{ margin: 0, paddingLeft: '1.25rem' }}>
-                <li>Every tool call verified against your mandate bounds</li>
-                <li>Credentials never exposed to agents through MCP</li>
-                <li>Every action produces a signed ticket</li>
-              </ul>
-            </div>
-
-            <div>
-              <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.375rem' }}>Your responsibility</div>
-              <ul style={{ margin: 0, paddingLeft: '1.25rem' }}>
-                <li>If your AI agent has full access to your computer, it could bypass the gateway</li>
-                <li>For best security, run agents in sandboxed environments</li>
-                <li>The gateway secures what agents do through tools — not what they do on your machine</li>
-              </ul>
-            </div>
+        {aiTestResult && (
+          <div className={`alert ${aiTestResult.startsWith('OK') ? 'alert-success' : 'alert-error'}`} style={{ marginTop: '0.75rem' }}>
+            {aiTestResult}
           </div>
-        </div>
-      </section>
+        )}
 
-      {/* 5. Version */}
-      <section>
-        <h2 style={SECTION_HEADING_STYLE}>{SETTINGS_SECTIONS[4]}</h2>
-        <VersionCard />
-      </section>
-    </>
+        {/* Advanced — AI assistant prompts (a fold, closed by default) */}
+        <AdvancedAIPrompts />
+      </article>
+    </div>
   );
 }
 
@@ -456,26 +441,14 @@ function AdvancedAIPrompts() {
   };
 
   return (
-    <details
-      className="card"
-      style={{ padding: '1.5rem', marginTop: '1rem' }}
-      onToggle={(e) => { if ((e.currentTarget as HTMLDetailsElement).open) loadIfNeeded(); }}
+    <ObFold
+      title="Advanced — AI assistant prompts"
+      summary="the prompts it sees"
+      onToggle={(open) => { if (open) void loadIfNeeded(); }}
     >
-      <summary
-        style={{
-          fontSize: '1rem',
-          fontWeight: 700,
-          cursor: 'pointer',
-          listStyle: 'revert',
-          userSelect: 'none',
-        }}
-      >
-        Advanced — AI assistant prompts
-      </summary>
-
-      <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: '0.75rem 0 1rem 0', lineHeight: 1.55 }}>
+      <p>
         These are the system prompts the AI assistant sees when helping you write
-        Intent (per-mandate) or Context (your standing-orders brief).
+        Intent (per-mandate) or Context (your Agent Brief).
         Edit with care — changes apply on the next chat turn.
       </p>
 
@@ -484,7 +457,7 @@ function AdvancedAIPrompts() {
       )}
 
       {!loaded && !error && (
-        <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Loading prompts…</p>
+        <p className="ob-lbl">Loading prompts…</p>
       )}
 
       {data && (
@@ -504,8 +477,8 @@ function AdvancedAIPrompts() {
 
           <PromptEditor
             kind="context"
-            label="Context — standing-orders brief"
-            description="Used on the Brief page when refining your context.md."
+            label="Agent Brief"
+            description="Used on the Agent Brief page when refining your brief."
             state={data.context}
             draft={drafts.context}
             onChange={(v) => setDrafts((d) => ({ ...d, context: v }))}
@@ -516,7 +489,7 @@ function AdvancedAIPrompts() {
           />
         </>
       )}
-    </details>
+    </ObFold>
   );
 }
 
@@ -545,41 +518,28 @@ function PromptEditor({
 }) {
   const dirty = draft !== state.current;
   return (
-    <section style={{ marginBottom: '1.5rem' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '0.25rem', gap: '1rem', flexWrap: 'wrap' }}>
+    <section className="su-prompt">
+      <div className="su-label-row">
         <div>
-          <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{label}</div>
-          <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>{description}</div>
+          <div className="su-prompt-h">{label}</div>
+          <div className="ob-lbl">{description}</div>
         </div>
-        {state.overridden && (
-          <span style={{ fontSize: '0.7rem', color: 'var(--accent)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            Custom
-          </span>
-        )}
+        {state.overridden && <span className="ob-st">Custom</span>}
       </div>
 
       <textarea
-        className="form-textarea"
+        className="form-textarea su-prompt-text"
         value={draft}
         onChange={(e) => onChange(e.target.value)}
         rows={12}
         spellCheck={false}
-        style={{
-          width: '100%',
-          fontFamily: "'SF Mono', Monaco, 'Cascadia Code', monospace",
-          fontSize: '0.82rem',
-          lineHeight: 1.55,
-          resize: 'vertical',
-          minHeight: '14rem',
-          marginTop: '0.5rem',
-        }}
         aria-label={`${label} system prompt`}
       />
 
-      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginTop: '0.5rem', flexWrap: 'wrap' }}>
+      <div className="ob-btns is-inline is-tight">
         <button
           type="button"
-          className="btn btn-primary btn-sm"
+          className="ob-btn is-solid"
           onClick={onSave}
           disabled={saving || !dirty}
         >
@@ -588,7 +548,7 @@ function PromptEditor({
         {state.overridden && (
           <button
             type="button"
-            className="btn btn-ghost btn-sm"
+            className="ob-btn"
             onClick={onRevert}
             disabled={saving}
             title="Discard the override and use the built-in default"
@@ -596,30 +556,14 @@ function PromptEditor({
             Revert to default
           </button>
         )}
-        {justSaved && (
-          <span className="msg-ok" style={{ fontSize: '0.78rem' }}>Saved</span>
-        )}
-        {dirty && !saving && !justSaved && (
-          <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Unsaved changes</span>
-        )}
       </div>
+      {(justSaved || (dirty && !saving)) && (
+        <p className="ob-lbl ob-gap">{justSaved ? 'Saved' : 'Unsaved changes'}</p>
+      )}
 
-      <details style={{ marginTop: '0.5rem' }}>
-        <summary style={{ fontSize: '0.78rem', color: 'var(--text-muted)', cursor: 'pointer' }}>
-          Show built-in default
-        </summary>
-        <pre style={{
-          marginTop: '0.5rem',
-          padding: '0.75rem 1rem',
-          background: 'var(--bg-main)',
-          border: '1px solid var(--border)',
-          borderRadius: '0.5rem',
-          fontSize: '0.78rem',
-          lineHeight: 1.55,
-          whiteSpace: 'pre-wrap',
-          maxHeight: '20rem',
-          overflowY: 'auto',
-        }}>{state.default}</pre>
+      <details className="ob-raw">
+        <summary>Show built-in default</summary>
+        <pre className="ob-mono su-prompt-default">{state.default}</pre>
       </details>
       <span style={{ display: 'none' }}>{kind}</span>
     </section>

@@ -4,10 +4,12 @@
  * callers decide WHETHER to render it (see lib/policy-lock.ts's
  * `isPolicyLocked`) — this component never reads policy state itself.
  */
+import { ObLock } from './ObjectCard';
+
 export function LockedByItBadge({ title }: { title?: string }) {
   return (
     <span className="it-locked-badge" title={title}>
-      <span className="lock-icon" aria-hidden="true">&#128274;</span> Set by your IT
+      <ObLock /> Set by your IT
     </span>
   );
 }

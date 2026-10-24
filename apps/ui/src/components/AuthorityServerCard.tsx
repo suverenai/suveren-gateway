@@ -15,6 +15,7 @@ import { useEffect, useState } from 'react';
 import { spClient } from '../lib/sp-client';
 import { LockedByItBadge } from './LockedByItBadge';
 import { isPolicyLocked } from '../lib/policy-lock';
+import { ObTypeLine, ObFold } from './ObjectCard';
 
 interface AsPairing {
   asUrl: string;
@@ -46,98 +47,105 @@ export function AuthorityServerCard() {
   const pinTlsLocked = isPolicyLocked(state?.pinTlsLockedByPolicy);
 
   return (
-    <div className="card" style={{ padding: '1.5rem', marginTop: '2rem' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem' }}>
-        <h2 style={{ fontSize: '1rem', fontWeight: 700, margin: 0 }}>Authority Server</h2>
-        {asUrlLocked && <LockedByItBadge />}
-      </div>
+    <article className="ob-card su-card">
+      <ObTypeLine tag="SERVER" parts={['Connection', asUrlLocked && <LockedByItBadge />]} />
+      <h3 className="ob-title">Your Authority Server</h3>
 
       {!state && !error && (
-        <p style={{ margin: '0.5rem 0 0', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>Checking…</p>
+        <p className="ob-one">Checking…</p>
       )}
 
       {error && (
-        <p role="alert" className="msg-error" style={{ margin: '0.5rem 0 0', fontSize: '0.9rem' }}>{error}</p>
+        <p role="alert" className="ob-one ob-bold msg-error">{error}</p>
       )}
 
       {state && (
         <>
-          <p style={{ margin: '0.5rem 0 0', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
-            <strong>URL:</strong> <code>{state.asUrl}</code>
-          </p>
+          <section className="ob-tile">
+            <dl className="ob-kv">
+              <dt>URL</dt>
+              <dd className="ob-mono is-strong">{state.asUrl}</dd>
+              {state.paired && state.fingerprint && (
+                <>
+                  <dt>Key fingerprint</dt>
+                  <dd className="ob-mono is-strong">{state.fingerprint}</dd>
+                </>
+              )}
+              {/* Shown ALWAYS once captured, not just when pin-tls is on: the
+                  fingerprint is captured at every sign-in regardless (see
+                  as-tls-pin.ts), so turning pin-tls on later enforces a pin
+                  already on file rather than a fresh trust-on-first-use
+                  moment — this is the out-of-band check for that pin, same as
+                  the key fingerprint above, and worth comparing before relying
+                  on it either way. */}
+              {(state.tlsPinFingerprint || state.pinTlsEnabled) && (
+                <>
+                  <dt>TLS certificate pin {pinTlsLocked && <LockedByItBadge title="TLS pinning is set by your IT policy" />}</dt>
+                  <dd className={state.tlsPinFingerprint ? 'ob-mono is-strong' : 'ob-plain'}>
+                    {state.tlsPinFingerprint ?? (
+                      <>
+                        not yet captured — this URL has no recorded pairing over TLS
+                        {state.pinTlsEnabled ? '; sign in to establish one (re-pairing required)' : ''}
+                      </>
+                    )}
+                  </dd>
+                </>
+              )}
+            </dl>
+          </section>
+
           {state.paired && state.fingerprint ? (
-            <p style={{ margin: '0.5rem 0 0', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
-              <strong>Key fingerprint:</strong> <code>{state.fingerprint}</code>
-              <br />
-              <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>
-                Compare this with the fingerprint on the Authority Server's own admin page over a
-                second channel (phone, video call) to confirm this gateway is talking to the right
-                server.
-              </span>
+            <p className="ob-one">
+              Compare this with the fingerprint on the Authority Server's own admin page over a
+              second channel (phone, video call) to confirm this gateway is talking to the right
+              server.
             </p>
           ) : (
-            <p style={{ margin: '0.5rem 0 0', fontSize: '0.85rem', color: 'var(--text-tertiary)' }}>
+            <p className="ob-one">
               Not yet paired — sign in once to pin this server's key.
             </p>
           )}
-          {/* Shown ALWAYS once captured, not just when pin-tls is on: the
-              fingerprint is captured at every sign-in regardless (see
-              as-tls-pin.ts), so turning pin-tls on later enforces a pin
-              already on file rather than a fresh trust-on-first-use
-              moment — this is the out-of-band check for that pin, same as
-              the key fingerprint above, and worth comparing before relying
-              on it either way. */}
           {(state.tlsPinFingerprint || state.pinTlsEnabled) && (
-            <p style={{ margin: '0.5rem 0 0', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
-              <strong>TLS certificate pin:</strong>{' '}
-              {pinTlsLocked && <LockedByItBadge title="TLS pinning is set by your IT policy" />}{' '}
-              {state.tlsPinFingerprint ? (
-                <code>{state.tlsPinFingerprint}</code>
+            <p className="ob-one">
+              {state.pinTlsEnabled ? (
+                <>
+                  TLS pinning is ON{pinTlsLocked ? (
+                    <>, set by your organization's IT policy</>
+                  ) : (
+                    <> (<code>config set pin-tls on</code>)</>
+                  )}. Every connection to the Authority Server must present this certificate's
+                  public key, or the gateway refuses it and locks.
+                </>
               ) : (
-                <span style={{ color: 'var(--text-tertiary)' }}>
-                  not yet captured — this URL has no recorded pairing over TLS
-                  {state.pinTlsEnabled ? '; sign in to establish one (re-pairing required)' : ''}
-                </span>
-              )}
-              <br />
-              <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>
-                {state.pinTlsEnabled ? (
-                  <>
-                    TLS pinning is ON{pinTlsLocked ? (
-                      <>, set by your organization's IT policy</>
-                    ) : (
-                      <> (<code>config set pin-tls on</code>)</>
-                    )}. Every connection to the Authority Server must present this certificate's
-                    public key, or the gateway refuses it and locks.
-                  </>
-                ) : (
-                  <>
-                    Captured at sign-in; not currently enforced{pinTlsLocked ? (
-                      <> — controlled by your organization's IT policy on this computer</>
-                    ) : (
-                      <> (<code>config set pin-tls on</code> to require it on every connection)</>
-                    )}.
-                  </>
-                )}{' '}
-                A certificate renewal with the SAME key keeps this pin; a NEW key needs re-pairing.
-              </span>
+                <>
+                  Captured at sign-in; not currently enforced{pinTlsLocked ? (
+                    <> — controlled by your organization's IT policy on this computer</>
+                  ) : (
+                    <> (<code>config set pin-tls on</code> to require it on every connection)</>
+                  )}.
+                </>
+              )}{' '}
+              A certificate renewal with the SAME key keeps this pin; a NEW key needs re-pairing.
             </p>
           )}
           {asUrlLocked ? (
-            <p style={{ margin: '0.75rem 0 0', fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>
+            <p className="ob-one">
               This Authority Server URL is set by your organization's IT policy and cannot be
               changed from this computer. Contact your IT administrator if it needs to change.
             </p>
           ) : (
-            <p style={{ margin: '0.75rem 0 0', fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>
-              To point this gateway at a different Authority Server:{' '}
-              <code>suveren-gateway config set as-url &lt;url&gt;</code>, then restart. Changing it
-              ends the current sign-in and clears cached mandates — you sign in again against the
-              new server.
-            </p>
+            <ObFold title="Point this gateway at a different server" summary="command, then restart">
+              <p>
+                <code>suveren-gateway config set as-url &lt;url&gt;</code>, then restart.
+              </p>
+              <p>
+                Changing it ends the current sign-in and clears cached mandates — you sign in again
+                against the new server.
+              </p>
+            </ObFold>
           )}
         </>
       )}
-    </div>
+    </article>
   );
 }

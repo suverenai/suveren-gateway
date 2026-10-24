@@ -301,7 +301,7 @@ export function GateWizardPage() {
             </div>
             {aiConfigured === false && (
               <p className="intent-ai-hint">
-                <Link to="/settings">Set up an AI assistant in Settings</Link> to get help writing this.
+                <Link to="/settings#ai-assistant">Set up an AI assistant in Settings</Link> to get help writing this.
               </p>
             )}
 
