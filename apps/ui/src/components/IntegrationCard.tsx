@@ -414,12 +414,11 @@ export function IntegrationCard({ manifest, area, integration, state, onStatusCh
   );
 
   return (
-    <details
-      className="card ob-card su-cn"
-      open={open}
-      onToggle={e => setUserOpen((e.currentTarget as HTMLDetailsElement).open)}
-    >
-      <summary>
+    <details className="card ob-card su-cn" open={open}>
+      {/* Controlled: only a click on the header is the person's choice. A native `toggle`
+          event also fires when the card opens by itself, and recording that as a choice
+          could pin a card shut (and hide its Activate button). */}
+      <summary onClick={e => { e.preventDefault(); setUserOpen(!open); }}>
         <div className="su-cn-head">
           <ObTypeLine
             tag="CONNECTOR"
