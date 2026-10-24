@@ -4681,7 +4681,7 @@ a.dash-row:hover, .dash-row:not([open]):hover { box-shadow: var(--elevation-2); 
 
 /* Group heading: "In use  6 connectors" */
 .su-sec { display: flex; align-items: baseline; gap: var(--space-2); margin: var(--space-8) 0 var(--space-3); font-size: var(--text-body); font-weight: 600; color: var(--text-primary); }
-.page-header + .su-sec, .page-header + * > .su-sec:first-child { margin-top: var(--space-4); }
+.page-header + .su-sec { margin-top: var(--space-4); }
 .su-sec small { font-weight: 400; color: var(--text-muted); font-size: var(--text-caption); }
 
 /* The card: the open-card look of §18 */
