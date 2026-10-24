@@ -31,11 +31,13 @@ export function authWord(a: { needsAuth: boolean; authFailed: boolean; authConne
   return null;
 }
 
-/** A card starts open only when it needs a look: auth failed, half set up (connect your
- *  account), or ready but not running (Activate). Running, starting and simply not set up
- *  (optional — nothing started yet) start closed, so the page stays short. */
-export function startsOpen(cardState: CardState, authFailed: boolean): boolean {
+/** A card starts open only when it needs a look or is one click from running: auth failed,
+ *  half set up (connect your account), ready but not running, or not set up but startable
+ *  right away (every field optional → Activate). Running, starting and not-set-up connectors
+ *  that need credentials start closed, so the page stays short. */
+export function startsOpen(cardState: CardState, authFailed: boolean, activatableNow = false): boolean {
   if (authFailed) return true;
+  if (cardState === 'unconfigured') return activatableNow;
   return cardState === 'needs-oauth' || cardState === 'ready';
 }
 

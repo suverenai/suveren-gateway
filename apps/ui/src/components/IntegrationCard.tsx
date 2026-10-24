@@ -363,7 +363,8 @@ export function IntegrationCard({ manifest, area, integration, state, onStatusCh
     stopped: stoppedKind,
   });
   // Closed by default only when it is healthy; a card that needs something opens (until the person chooses).
-  const open = userOpen ?? (credsLoaded && startsOpen(cardState, !!authFailed));
+  const activatableNow = authSatisfied && !manifest.oauth && manifest.credentials.fields.every(f => f.optional);
+  const open = userOpen ?? (credsLoaded && startsOpen(cardState, !!authFailed, activatableNow));
 
   const isPath = (v: string) => v.includes('/') || v.includes('\\');
   const canEditCreds = manifest.credentials.fields.length > 0 || !!manifest.oauth;

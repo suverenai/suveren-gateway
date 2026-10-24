@@ -42,6 +42,8 @@ describe('startsOpen', () => {
     for (const s of ['needs-oauth', 'ready'] as const) expect(startsOpen(s, false)).toBe(true);
     // Not set up = optional, nothing started: closed, so the page stays short.
     expect(startsOpen('unconfigured', false)).toBe(false);
+    // …unless it can be started right away (every field optional → Activate).
+    expect(startsOpen('unconfigured', false, true)).toBe(true);
     expect(startsOpen('running', true)).toBe(true);
   });
 });
