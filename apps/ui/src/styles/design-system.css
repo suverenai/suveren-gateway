@@ -4731,6 +4731,8 @@ a.dash-row:hover, .dash-row:not([open]):hover { box-shadow: var(--elevation-2); 
   .sidebar:not(:hover):not(:has(:focus-visible)) .sidebar-setup-rail {
     display: flex; position: relative; align-items: center; margin: 0 0.5rem; padding: 0.5rem 0.75rem; color: var(--text-muted);
   }
-  .sidebar-setup-rail.is-active { color: var(--text-primary); }
+  .sidebar-setup-rail.is-active { color: var(--text-primary); background: var(--bg-main); box-shadow: inset 0 0 0 1px var(--border); border-radius: 0.5rem; }
+  .sidebar-setup-rail.is-active::before { content: ''; position: absolute; left: 0; top: 0.4rem; bottom: 0.4rem; width: 2px; border-radius: 2px; background: var(--text-primary); }
+  .sidebar-setup-rail.is-active .nav-svg { stroke-width: 2; }
   .sidebar-item.active::before { left: 0; }
 }
