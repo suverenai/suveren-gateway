@@ -5,7 +5,6 @@ import { StepIndicator } from '../components/StepIndicator';
 import { ContextStrip } from '../components/ContextStrip';
 import { BoundsEditor } from '../components/BoundsEditor';
 import { AssistantChatPanel } from '../components/AssistantChatPanel';
-import { AI_ASSISTANT_VISIBLE } from '../lib/ai-assistant';
 import { BottomSheet } from '../components/BottomSheet';
 import { profileDisplayName } from '../lib/profile-display';
 import { resolveAdvisoryLinks, type AdvisoryGrant } from '../lib/advisory-links';
@@ -103,8 +102,7 @@ export function GateWizardPage() {
     // restored below (the person navigated back) wins over it.
     if (data.intentHint) setIntent(data.intentHint);
     spClient.getCredential('ai-config')
-      // TO BE INVESTIGATED: the AI assistant is hidden for now (lib/ai-assistant.ts) — treat as not set up.
-      .then(c => setAiConfigured(AI_ASSISTANT_VISIBLE && c.configured))
+      .then(c => setAiConfigured(c.configured))
       .catch(() => setAiConfigured(false));
 
     // Restore previous selections if user navigated back
@@ -301,7 +299,7 @@ export function GateWizardPage() {
               />
               <div className="char-counter">{intent.length} / 2000</div>
             </div>
-            {AI_ASSISTANT_VISIBLE && aiConfigured === false && (
+            {aiConfigured === false && (
               <p className="intent-ai-hint">
                 <Link to="/settings">Set up an AI assistant in Settings</Link> to get help writing this.
               </p>

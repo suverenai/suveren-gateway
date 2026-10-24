@@ -1,5 +1,4 @@
 import { useState, useCallback } from 'react';
-import { AI_ASSISTANT_VISIBLE } from '../lib/ai-assistant';
 import { Link } from 'react-router-dom';
 import { McpConnectDetails } from './McpConnectDetails';
 
@@ -41,9 +40,8 @@ export function SetupGuide({ aiConfigured, hasRunningIntegration, hasActiveAuth,
   const [dismissed, setDismissed] = useState(() => localStorage.getItem(LS_DISMISSED) === 'true');
   const [expandedStep, setExpandedStep] = useState<number | null>(null);
 
-  const allSteps: { id: 'ai' | 'service' | 'mandate' | 'agent'; label: string; detail?: string; to?: string; status: StepStatus; optional?: boolean }[] = [
+  const steps: { label: string; detail?: string; to?: string; status: StepStatus; optional?: boolean }[] = [
     {
-      id: 'ai',
       label: 'AI Assistant',
       detail: 'A trusted AI helps you think through mandates — surfacing risks and asking the right questions.',
       to: '/settings',
@@ -51,25 +49,20 @@ export function SetupGuide({ aiConfigured, hasRunningIntegration, hasActiveAuth,
       optional: true,
     },
     {
-      id: 'service',
       label: 'Connect a service',
       to: '/integrations',
       status: hasRunningIntegration ? 'done' : 'pending',
     },
     {
-      id: 'mandate',
       label: 'Give your agent a mandate',
       to: '/mandates?new=1',
       status: hasActiveAuth ? 'done' : 'pending',
     },
     {
-      id: 'agent',
       label: 'Connect your agent',
       status: (hasAgentConnected || agentMarkedDone) ? 'done' : 'pending',
     },
   ];
-  // TO BE INVESTIGATED: the AI assistant step is hidden while it is rethought (lib/ai-assistant.ts).
-  const steps = allSteps.filter(s => s.id !== 'ai' || AI_ASSISTANT_VISIBLE);
 
   const completedCount = steps.filter(s => s.status === 'done' || s.status === 'skipped').length;
   const allComplete = completedCount === steps.length;
@@ -156,7 +149,7 @@ export function SetupGuide({ aiConfigured, hasRunningIntegration, hasActiveAuth,
                       }}>
                         {step.label}
                       </Link>
-                    ) : step.status === 'pending' && step.id === 'agent' ? (
+                    ) : step.status === 'pending' && i === 3 ? (
                       <button
                         onClick={() => setExpandedStep(expandedStep === 3 ? null : 3)}
                         style={{
@@ -220,7 +213,7 @@ export function SetupGuide({ aiConfigured, hasRunningIntegration, hasActiveAuth,
               </div>
 
               {/* Step 4 inline expand: agent connection */}
-              {step.id === 'agent' && expandedStep === 3 && (
+              {i === 3 && expandedStep === 3 && (
                 <div style={{
                   marginTop: '0.75rem',
                   marginLeft: '1.5rem',
