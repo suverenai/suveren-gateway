@@ -78,10 +78,14 @@ export function IntegrationsPage() {
   }, []);
 
   const grouped = groupIntegrationsForDisplay(entries, simulationOn);
-  // Simulation mode off: "In use" / "Not set up". The counts are connectors, not cards (one connector can sit under several areas).
+  // Simulation mode off: "In use" / "Not set up". Counts are the cards shown (one connector can sit
+  // under several areas, e.g. ERP under Sales, Invoicing and Master data) so the number matches the page.
   const { inUse, notSetUp } = splitByUse(entries);
+  const cardCount = (list: typeof entries) => groupEntriesByArea(list, catalog).reduce((n, g) => n + g.entries.length, 0);
+  const inUseCards = cardCount(inUse);
+  const notSetUpCards = cardCount(notSetUp);
   const subtitle = !loading && mcpServerUp !== false && entries.length > 0 && !grouped.grouped
-    ? ` ${inUse.length} in use · ${notSetUp.length} not set up.`
+    ? ` ${inUseCards} in use · ${notSetUpCards} not set up.`
     : '';
 
   return (
@@ -138,13 +142,13 @@ export function IntegrationsPage() {
         <>
           {inUse.length > 0 && (
             <>
-              <GroupHeading title="In use" count={inUse.length} />
+              <GroupHeading title="In use" count={inUseCards} />
               <AreaCards entries={inUse} catalog={catalog} refresh={refresh} onSuccess={showSuccess} />
             </>
           )}
           {notSetUp.length > 0 && (
             <>
-              <GroupHeading title="Not set up" count={notSetUp.length} note="open one to set it up" />
+              <GroupHeading title="Not set up" count={notSetUpCards} note="open one to set it up" />
               <AreaCards entries={notSetUp} catalog={catalog} refresh={refresh} onSuccess={showSuccess} />
             </>
           )}

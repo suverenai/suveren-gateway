@@ -31,10 +31,12 @@ export function authWord(a: { needsAuth: boolean; authFailed: boolean; authConne
   return null;
 }
 
-/** A card for a connector that is not doing its job starts open; a healthy running one starts closed. */
+/** A card starts open only when it needs a look: auth failed, half set up (connect your
+ *  account), or ready but not running (Activate). Running, starting and simply not set up
+ *  (optional — nothing started yet) start closed, so the page stays short. */
 export function startsOpen(cardState: CardState, authFailed: boolean): boolean {
   if (authFailed) return true;
-  return cardState !== 'running' && cardState !== 'starting';
+  return cardState === 'needs-oauth' || cardState === 'ready';
 }
 
 export function readsPhrase(readAge: number | null | undefined, label: (days: number | null) => string): string | null {

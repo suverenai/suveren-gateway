@@ -39,7 +39,9 @@ describe('startsOpen', () => {
     expect(startsOpen('starting', false)).toBe(false);
   });
   it('anything that needs something starts open — nothing the tests click is hidden', () => {
-    for (const s of ['unconfigured', 'needs-oauth', 'ready'] as const) expect(startsOpen(s, false)).toBe(true);
+    for (const s of ['needs-oauth', 'ready'] as const) expect(startsOpen(s, false)).toBe(true);
+    // Not set up = optional, nothing started: closed, so the page stays short.
+    expect(startsOpen('unconfigured', false)).toBe(false);
     expect(startsOpen('running', true)).toBe(true);
   });
 });
