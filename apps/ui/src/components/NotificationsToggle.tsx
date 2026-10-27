@@ -11,6 +11,7 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import { spClient } from '../lib/sp-client';
+import { ObTypeLine } from './ObjectCard';
 
 export function NotificationsToggle() {
   const [enabled, setEnabled] = useState<boolean | null>(null);
@@ -48,44 +49,47 @@ export function NotificationsToggle() {
   // Never render nothing: a failing endpoint must not look like a missing feature.
   if (enabled === null) {
     return (
-      <div className="card" style={{ padding: '1.5rem', marginTop: '2rem' }}>
-        <h2 style={{ fontSize: '1rem', fontWeight: 700, margin: 0 }}>Desktop notifications</h2>
-        <p role={error ? 'alert' : undefined} style={{ margin: '0.5rem 0 0', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+      <article className="ob-card su-card">
+        <ObTypeLine parts={['Notifications']} />
+        <h3 className="ob-title">Desktop notifications</h3>
+        <p role={error ? 'alert' : undefined} className="ob-one">
           {error ? `Could not read the setting: ${error}` : 'Checking…'}
         </p>
-      </div>
+      </article>
     );
   }
 
   return (
-    <div className="card" style={{ padding: '1.5rem', marginTop: '2rem' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem' }}>
+    <article className="ob-card su-card">
+      <div className="su-row">
         <div>
-          <h2 style={{ fontSize: '1rem', fontWeight: 700, margin: 0 }}>Desktop notifications</h2>
-          <p style={{ color: 'var(--text-secondary)', margin: '0.5rem 0 0', fontSize: '0.9rem' }}>
+          <ObTypeLine parts={['Notifications', <span className={`ob-st${enabled ? '' : ' is-off'}`}>{enabled ? 'On' : 'Off'}</span>]} />
+          <h3 className="ob-title">Desktop notifications</h3>
+          <p className="ob-one">
             Tells you something is waiting for review — never what it is, and never
             with an approve button. Open Suveren to see and decide. At most one
             notification a minute; the browser tab always shows the count.
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={() => void toggle()}
-          disabled={busy}
-          aria-pressed={enabled}
-          className={enabled ? 'btn btn-secondary' : 'btn btn-primary'}
-          style={{ whiteSpace: 'nowrap' }}
-        >
-          {busy ? 'Saving…' : enabled ? 'Turn off' : 'Turn on'}
-        </button>
+        <div className="ob-btns">
+          <button
+            type="button"
+            onClick={() => void toggle()}
+            disabled={busy}
+            aria-pressed={enabled}
+            className={`ob-btn${enabled ? '' : ' is-solid'}`}
+          >
+            {busy ? 'Saving…' : enabled ? 'Turn off' : 'Turn on'}
+          </button>
+        </div>
       </div>
 
       {error && (
-        <p role="alert" className="msg-error" style={{ margin: '0.75rem 0 0', fontSize: '0.85rem' }}>
+        <p role="alert" className="ob-one ob-bold msg-error">
           {error}
         </p>
       )}
-    </div>
+    </article>
   );
 }

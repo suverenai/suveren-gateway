@@ -8,6 +8,7 @@
  * look; /health carried the answer and nothing showed it.
  */
 import { useUpdateCheck } from '../hooks/useUpdateCheck';
+import { ObTypeLine } from './ObjectCard';
 
 const HOW_WE_CHECK: Record<string, string> = {
   npm: 'Checking npm for new releases',
@@ -25,20 +26,18 @@ export function VersionCard() {
   if (!version) return null;
 
   return (
-    <div className="card" style={{ padding: '1.5rem', marginTop: '2rem' }}>
-      <h2 style={{ fontSize: '1rem', fontWeight: 700, margin: 0 }}>Version</h2>
-
-      <p style={{ margin: '0.5rem 0 0', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
-        Running <strong>{version}</strong>
-        {updateAvailable && latestVersion ? <> — <strong>{latestVersion}</strong> is available</> : null}
-      </p>
-
-      <p style={{ margin: '0.5rem 0 0', fontSize: '0.85rem', color: 'var(--text-tertiary)' }}>
+    <article className="ob-card su-card">
+      <ObTypeLine parts={['Version']} />
+      <h3 className="ob-title">
+        Running <b>{version}</b>
+        {updateAvailable && latestVersion ? <> — <b>{latestVersion}</b> is available</> : null}
+      </h3>
+      <p className="ob-one">
         {HOW_WE_CHECK[installMethod] ?? 'Update checking is unavailable'}
         {installMethod === 'dev' && (
           <> — a development checkout is not told about published releases.</>
         )}
       </p>
-    </div>
+    </article>
   );
 }

@@ -117,3 +117,26 @@ export function groupIntegrationsForDisplay(
 
   return { grouped: true, testSystems, realErrors, pausedReal, ungrouped: [] };
 }
+
+export interface UseSplit {
+  inUse: IntegrationEntry[];
+  notSetUp: IntegrationEntry[];
+}
+
+/**
+ * The two groups of the Integrations page (UI spec §20.3): "In use" = a
+ * connector that is running with the authentication it needs; everything else
+ * (never set up, waiting for its account, stopped, crashed, starting) is
+ * "Not set up". A running OAuth connector whose account is not connected is
+ * not in use — it cannot do anything yet. (A running connector whose token was
+ * revoked stays "In use": its card opens to the problem.)
+ */
+export function splitByUse(entries: IntegrationEntry[]): UseSplit {
+  const inUse: IntegrationEntry[] = [];
+  const notSetUp: IntegrationEntry[] = [];
+  for (const e of entries) {
+    const waitingForAuth = e.authStatus === 'not_configured' || e.authStatus === 'not_connected';
+    (e.state === 'running' && !waitingForAuth ? inUse : notSetUp).push(e);
+  }
+  return { inUse, notSetUp };
+}

@@ -44,7 +44,7 @@ export function SetupGuide({ aiConfigured, hasRunningIntegration, hasActiveAuth,
     {
       label: 'AI Assistant',
       detail: 'A trusted AI helps you think through mandates — surfacing risks and asking the right questions.',
-      to: '/settings',
+      to: '/settings#ai-assistant',
       status: aiConfigured ? 'done' : aiSkipped ? 'skipped' : 'pending',
       optional: true,
     },

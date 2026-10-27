@@ -5,7 +5,7 @@ import { SETTINGS_SECTIONS } from './SettingsServicesPage';
 // SettingsServicesPage.tsx), so asserting the array's order is asserting
 // what actually ships, not a parallel copy that can drift.
 describe('SettingsServicesPage section order', () => {
-  it('orders sections AI Assistant → Authority Server → This computer → Security → Version', () => {
-    expect(SETTINGS_SECTIONS).toEqual(['AI Assistant', 'Authority Server', 'This computer', 'Security', 'Version']);
+  it('orders sections Authority Server → This computer → Security → Version → AI Assistant (last, optional)', () => {
+    expect(SETTINGS_SECTIONS).toEqual(['Authority Server', 'This computer', 'Security', 'Version', 'AI Assistant']);
   });
 });

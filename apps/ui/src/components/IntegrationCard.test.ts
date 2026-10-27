@@ -90,13 +90,13 @@ describe('READ_AGE_PRESETS', () => {
 describe('stoppedIntegrationDisplay — what a registered-but-not-running card shows', () => {
   it('paused by simulation mode: neutral chip, no Start (it cannot succeed while the mode is on)', () => {
     const d = stoppedIntegrationDisplay({ running: false, paused: 'simulation' });
-    expect(d.chip).toEqual({ c: 'int-chip-paused', t: 'Paused' });
+    expect(d.chip).toEqual({ t: 'Paused' });
     expect(d.showStart).toBe(false);
   });
 
   it('a genuine crash still shows red "Crashed" with a Start retry — unchanged behaviour', () => {
     const d = stoppedIntegrationDisplay({ running: false, error: 'ENOENT: spawn failed' });
-    expect(d.chip).toEqual({ c: 'int-chip-bad', t: 'Crashed' });
+    expect(d.chip).toEqual({ t: 'Crashed' });
     expect(d.showStart).toBe(true);
   });
 
@@ -108,13 +108,13 @@ describe('stoppedIntegrationDisplay — what a registered-but-not-running card s
 
   it('plain stop (never started, no error, no pause) shows neutral "Stopped" with Start', () => {
     const d = stoppedIntegrationDisplay({ running: false });
-    expect(d.chip).toEqual({ c: 'int-chip-idle', t: 'Stopped' });
+    expect(d.chip).toEqual({ t: 'Stopped' });
     expect(d.showStart).toBe(true);
   });
 
   it('no status entry at all behaves like a plain stop', () => {
     const d = stoppedIntegrationDisplay(undefined);
-    expect(d.chip).toEqual({ c: 'int-chip-idle', t: 'Stopped' });
+    expect(d.chip).toEqual({ t: 'Stopped' });
     expect(d.showStart).toBe(true);
   });
 });

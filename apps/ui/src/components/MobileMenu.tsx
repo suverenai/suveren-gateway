@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useTheme } from '../hooks/useTheme';
+import { NavIcon, type NavIconName } from './NavIcon';
 
 const THEME_ICONS: Record<string, string> = {
   system: '\u25D1',
@@ -11,16 +12,16 @@ const THEME_ICONS: Record<string, string> = {
 
 export const NAV_ITEMS = [
   // Same order as the sidebar (UI spec §12.1): the core objects, then setup.
-  { to: '/', icon: '\u25A1', label: 'Dashboard' },
-  { to: '/approvals', icon: '\u25B7', label: 'Approvals' },
-  { to: '/mandates', icon: '\u2630', label: 'Mandates' },
-  { to: '/tickets', icon: '\u25A3', label: 'Tickets' },
-  { to: '/reports', icon: '\u25A5', label: 'Reports' },
-  { to: '/blocked', icon: '\u2298', label: 'Blocked' },
-  { to: '/team', icon: '\u25C9', label: 'Team' },
-  { to: '/agent-brief', icon: '▤', label: 'Agent Brief' },
-  { to: '/integrations', icon: '\u29D7', label: 'Integrations' },
-  { to: '/settings', icon: '\u2699', label: 'Settings' },
+  { to: '/', icon: 'dashboard' as NavIconName, label: 'Dashboard' },
+  { to: '/approvals', icon: 'approvals' as NavIconName, label: 'Approvals' },
+  { to: '/mandates', icon: 'mandates' as NavIconName, label: 'Mandates' },
+  { to: '/tickets', icon: 'tickets' as NavIconName, label: 'Tickets' },
+  { to: '/reports', icon: 'reports' as NavIconName, label: 'Reports' },
+  { to: '/blocked', icon: 'blocked' as NavIconName, label: 'Blocked' },
+  { to: '/team', icon: 'team' as NavIconName, label: 'Team' },
+  { to: '/agent-brief', icon: 'brief' as NavIconName, label: 'Agent Brief' },
+  { to: '/integrations', icon: 'integrations' as NavIconName, label: 'Integrations' },
+  { to: '/settings', icon: 'settings' as NavIconName, label: 'Settings' },
 ];
 
 interface Props {
@@ -67,7 +68,7 @@ export function MobileMenu({ open, onClose }: Props) {
               className={({ isActive }) => `mobile-menu-item${isActive ? ' active' : ''}`}
               onClick={onClose}
             >
-              <span className="icon">{item.icon}</span>
+              <span className="icon"><NavIcon name={item.icon} /></span>
               {item.label}
             </NavLink>
           ))}

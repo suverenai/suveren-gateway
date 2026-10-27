@@ -66,7 +66,7 @@ function convert(schema: unknown, depth: number): z.ZodTypeAny {
       if (s.properties && typeof s.properties === 'object') {
         t = z.object(shapeOf(s, depth + 1)).passthrough();
       } else {
-        t = z.record(z.unknown());
+        t = z.record(z.string(), z.unknown());
       }
       break;
     }
