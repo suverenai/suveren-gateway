@@ -78,10 +78,10 @@ By default, the gateway connects to `https://www.suveren.ai`. Just run `pnpm dev
 | `SUVEREN_MCP_INTERNAL_URL` | `http://127.0.0.1:3431` (dev) / `:3430` (npm CLI) | MCP internal endpoint (Control Plane → MCP) |
 | `SUVEREN_INTERNAL_SECRET` | (empty = skip check) | Shared secret for internal endpoints |
 | `HAP_UI_DIST` | `../../ui/dist` | Path to built UI assets |
-| `SUVEREN_DATA_DIR` | `~/.suveren` | Persistent storage directory |
+| `SUVEREN_DATA_DIR` | `~/.suveren-dev` (dev) / `~/.suveren` (npm CLI) | Persistent storage directory. Dev has its own folder so `pnpm dev` never writes into an installed gateway's data on the same machine |
 | `SUVEREN_PROFILES_DIR` | `../../hap-profiles` (relative to cwd) | HAP profiles directory |
 | `SUVEREN_MANIFESTS_DIR` | `content/integrations` (resolved from repo) | Integration manifest JSON directory (read-only source) |
-| `SUVEREN_INTEGRATIONS_DIR` | `~/.suveren/integrations` | Runtime install target for on-demand MCP npm packages. Must NOT be the manifest dir — the installer writes `package.json` and `node_modules/` here. |
+| `SUVEREN_INTEGRATIONS_DIR` | `<data dir>/integrations` | Runtime install target for on-demand MCP npm packages. Must NOT be the manifest dir — the installer writes `package.json` and `node_modules/` here. |
 | `SUVEREN_SIMULATION` | `0` | `1` blocks every connector without a manifest `simulation` marker and forces simulated ones into that mode. Normally set by `bundle/server.js` from the CLI's saved config (`suveren-gateway simulation on\|off`), not by hand — see README's "Simulation mode" section. |
 | `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` | (unset) | Corporate proxy, upper or lower case (lower wins if both set). Honoured for every outbound call to the Authority Server, the update checker, and a remote AI assistant endpoint — see `proxy-env.ts` in both apps and README's "Behind a company proxy" section. A loopback target (incl. control-plane ↔ MCP-server, and a local AI assistant) is never proxied, independent of these. |
 
