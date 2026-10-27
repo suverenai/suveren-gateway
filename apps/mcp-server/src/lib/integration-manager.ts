@@ -35,7 +35,7 @@ const DEFAULT_DATA_DIR = process.env.SUVEREN_DATA_DIR ?? join(homedir(), '.suver
 // Integration node_modules (native binaries like better-sqlite3) are arch-
 // specific. In docker, SUVEREN_INTEGRATIONS_DIR should point outside the mounted
 // host volume so a macOS ↔ Linux host never sees the other's .node files.
-// Defaults to DEFAULT_DATA_DIR/integrations (~/.suveren/integrations) for local
+// Defaults to DEFAULT_DATA_DIR/integrations (~/.suveren-dev/integrations under `pnpm dev`) for local
 // dev, which is fine because the host arch never changes.
 const INTEGRATIONS_DIR = process.env.SUVEREN_INTEGRATIONS_DIR ?? join(DEFAULT_DATA_DIR, 'integrations');
 
