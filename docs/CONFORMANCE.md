@@ -15,7 +15,7 @@ This is *one implementation's* statement of where it stands against the specific
 - **v0.7.** Mandates are issued with `version: "0.7"` and the v0.7 vocabulary (`mandate_id`, `scope_hash`, `mandate_owners`, `HAP-mandate`), with `issuer` and `profile_hash`; the request carries `supported_versions` and is refused with `VERSION_UNSUPPORTED` when there is no common version. Only v0.7 is supported: mandates issued under earlier versions are refused (`VERSION_UNSUPPORTED`) and re-approved — a deliberate pre-1.0 choice, made possible because no v0.6 mandate was ever issued (earlier mandates were v0.5).
 - **Tickets:** carry `version`, `issuer`, `mandateId`, `limits`; signatures are base64url; no `path`. Tickets additionally carry two signed fields the v0.7 specification does not define: `authorizationId` (the grant the Gateway requested the ticket by) and `idempotencyKey` (the request the ticket answers). Both are implementation extensions under v0.7; the v0.8 draft defines the second and allows the first as `mandateId` on the request.
 - **Features implemented under v0.7:** content binding (v1 and v2), read authorization, identity assurance (`self_declared`, `as_vouched`), Gatekeeper custody archive, permanent revocation, exactly-once ticket issuance, `appliesTo`, the `intent-disclosure@0.1` companion (with the limitations stated in the specification). `disclose_fields` is validated and signed but never applied: no published profile declares it, so the specified silence is the only behaviour exercised.
-- **Built ahead of the specification** (not in v0.7; written into the v0.8 draft from the implementation, see the section *Against the v0.8 draft* below): `review_above_cap` as a signed mode with its caps and approvers; profile-declared `commitment_modes`, `maximum`, and `requiredFor` inside a per-transaction bound; the owner's standing disclosure choice; one execution per ticket; encrypted proposal content; the hash of what the approver was shown; group roles with hard caps.
+- **Built ahead of the specification** (not in v0.7; written into v0.8 from the implementation, see the section *Against v0.8* below): `review_above_cap` as a signed mode with its caps and approvers; profile-declared `commitment_modes`, `maximum`, and `requiredFor` inside a per-transaction bound; the owner's standing disclosure choice; one execution per ticket; encrypted proposal content; the hash of what the approver was shown; group roles with hard caps.
 
 ## Conformance vectors (`content/0.7/vectors/`)
 
@@ -79,9 +79,9 @@ Against v0.7, the published specification:
 - *Multi-Owner Coverage Rule* — coverage is checked per record, not as the union of live mandates.
 - The enforcement-class annotations — not implemented.
 
-## Against the v0.8 draft
+## Against v0.8
 
-The next specification version is in draft (`content/0.8/`, 2026-10-28, not published). Most of it was written from this implementation, so the status against it is recorded here before the work starts rather than discovered afterwards. The thirteen behavioural requirements of its *Migration from v0.7* section:
+v0.8 was published on 2026-11-02 (`content/0.8/`); this implementation still speaks v0.7 on the wire. Most of v0.8 was written from this implementation, so the status against it is recorded here before the work starts rather than discovered afterwards. The thirteen behavioural requirements of its *Migration from v0.7* section:
 
 | # | v0.8 requirement | Status |
 |---|---|---|
@@ -90,7 +90,7 @@ The next specification version is in draft (`content/0.8/`, 2026-10-28, not publ
 | 3 | A ticket names its request (`idempotencyKey` signed; Gateway refuses a mismatch) | Met. |
 | 4 | Proposal content never at the Authority Server: encrypted, fingerprinted, bound into the ticket; clear content refused | **Partly.** Encryption and the fingerprint exist; clear content is refused only behind an operator flag; the fingerprint is checked at ticket time but **not signed into the ticket**; approver reader keys are served to any authenticated user and bound into nothing. |
 | 5 | Group roles: grantors vs above-cap approvers, signed approval count, proposer never counts, hard caps at signing, deciders from the signed mandate | **Partly.** Roles and hard caps exist; the count is unsigned, approvers are user ids, the pending-approver list is caller-supplied. |
-| 6 | Group ceilings on reads and capability switches; enum values ordered most-permissive-first | Met for the ceiling; the profiles' enum order is as the draft describes. |
+| 6 | Group ceilings on reads and capability switches; enum values ordered most-permissive-first | Met for the ceiling; the profiles' enum order is as v0.8 describes. |
 | 7 | Profile-declared `commitment_modes`, `maximum`, `requiredFor` with their refusals | Met where a profile declares them (`delegation@0.5`, `reporting@0.4`, four `requiredFor` profiles). `maximum` and `requiredFor` already refuse with the draft's codes; a disallowed commitment mode refuses with `PROFILE_INVALID` where the draft names `COMMITMENT_MODE_NOT_ALLOWED`. |
 | 8 | Standing disclosure choice | Met. |
 | 9 | System context beside the bound values; `shown_hash` | Met. |
@@ -122,7 +122,7 @@ Added after the outside-model reviews (2026-10-29): `HAP-approval` signs `action
 
 Added after the second external round (2026-10-29), all *untested*: `action_type` no longer travels in `executionContext`; the AS checks `profileId` and the content-binding declaration at ticket time, and on the review path compares `contentHash`/`contentBinding` with the proposal's; the Gatekeeper verifies every ticket's signature and echoed fields; the execution record has a *requested* state and is keyed on the request; above-cap approvers have key-bearing DIDs; numeric manifest mappings refuse non-numbers instead of coercing them.
 
-The draft's vectors were re-derived by independent implementations three times on 2026-10-29, and by both external reviewers (all values agreed); the set changed in the review round, and a re-derivation over the final text runs before publication.
+The v0.8 vectors were re-derived by independent implementations three times on 2026-10-29 and by both external reviewers, and once more over the final text on 2026-10-30 (all 868 values agreed); they were published unchanged with v0.8.
 
 ## What the test suite proves
 
