@@ -273,11 +273,17 @@ describe('AU10 request/history engine', () => {
   let journal: ExecutionJournal;
 
   beforeEach(() => {
+    // The fixtures are dated 2026-10-13/14 and the history window is
+    // maxAgeDays: 14 — pin "now" to the day after, or the tests expire.
+    // Only Date is faked; timers and promises run normally.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-15T12:00:00Z'));
     loadFixtureManifests();
     journalDir = mkdtempSync(join(tmpdir(), 'hap-au10-journal-'));
     journal = new ExecutionJournal(journalDir);
   });
   afterEach(() => {
+    vi.useRealTimers();
     cleanupFixtureManifests();
     rmSync(journalDir, { recursive: true, force: true });
   });
