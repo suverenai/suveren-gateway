@@ -11,7 +11,7 @@ Development/
 ├── suveren-gateway/ ← you are here
 ├── hap-profiles/    ← must exist
 ├── suveren-as/     ← optional, for local AS
-└── hap-e2e/         ← optional, for E2E tests
+└── suveren-e2e/     ← optional, for E2E tests
 ```
 
 ## First-Time Setup
@@ -112,10 +112,10 @@ pnpm --filter @suveren/mcp-server test:watch
 
 ### Cross-service E2E tests
 
-Run from the [hap-e2e](https://github.com/humanagencyprotocol/hap-e2e) repo:
+Run from the [suveren-e2e](https://github.com/suverenai/suveren-e2e) repo:
 
 ```bash
-cd ../hap-e2e
+cd ../suveren-e2e
 MOLLIE_TEST_KEY=test_xxx pnpm test
 ```
 
@@ -169,5 +169,5 @@ After restarting services, a single login in the UI restores the full state:
 | [hap-core](https://github.com/humanagencyprotocol/hap-core) | Shared protocol types, hashing, verification |
 | [hap-sp](https://github.com/humanagencyprotocol/hap-sp) | Suveren Authority Server (attestation signing, receipts, groups) — local dir: `suveren-as/`, GitHub repo not yet renamed |
 | [hap-profiles](https://github.com/humanagencyprotocol/hap-profiles) | Profile definitions (spend, ship, data, publish, provision) |
-| [hap-e2e](https://github.com/humanagencyprotocol/hap-e2e) | Cross-service E2E test suite |
+| [suveren-e2e](https://github.com/suverenai/suveren-e2e) | Cross-service E2E test suite |
 | [hap-protocol](https://github.com/humanagencyprotocol/hap-protocol) | Protocol specification + website |
