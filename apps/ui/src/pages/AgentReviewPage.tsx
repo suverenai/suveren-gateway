@@ -3,7 +3,7 @@ import { COMMITMENT_LABEL, COMMITMENT_REVIEW, COMMITMENT_AUTOMATIC } from '../li
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { spClient, SUPPORTED_PROTOCOL_VERSIONS } from '../lib/sp-client';
-import { computeBoundsHashBrowser, computeScopeHashBrowser, computeProfileHashBrowser, hashGateContent } from '../lib/frame';
+import { computeBoundsHashBrowser, computeScopeHashBrowser, computeProfileHashBrowser, computeExecutionContextHashBrowser, hashGateContent } from '../lib/frame';
 import { buildGateForwardArgs } from '../lib/gate-forward';
 import { StepIndicator } from '../components/StepIndicator';
 import { DomainBadge } from '../components/DomainBadge';
@@ -288,11 +288,8 @@ export function AgentReviewPage() {
 
       const [intentHashValue, ecHash] = await Promise.all([
         hashGateContent(gateData.gateContent.intent),
-        hashGateContent(JSON.stringify({
-          profile: authData.profileId,
-          domain,
-          group: authData.groupId,
-        })),
+        // v0.8: the hash of the profile's executionContextSchema, not of per-call values.
+        computeExecutionContextHashBrowser(profile),
       ]);
 
       // Phase 5 — Eager intent encryption.

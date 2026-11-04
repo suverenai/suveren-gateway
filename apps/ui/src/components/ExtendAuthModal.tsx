@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { spClient, type PendingItem, type GateContentEntry, SUPPORTED_PROTOCOL_VERSIONS } from '../lib/sp-client';
-import { computeBoundsHashBrowser, computeScopeHashBrowser, computeProfileHashBrowser, hashGateContent } from '../lib/frame';
+import { computeBoundsHashBrowser, computeScopeHashBrowser, computeProfileHashBrowser, computeExecutionContextHashBrowser, hashGateContent } from '../lib/frame';
 import { buildGateForwardArgs } from '../lib/gate-forward';
 import { profileDisplayName } from '../lib/profile-display';
 import type { AgentProfile } from '@hap/core';
@@ -104,11 +104,8 @@ export function ExtendAuthModal({ item, onClose, onSuccess }: Props) {
 
       const [intentHash, ecHash] = await Promise.all([
         hashGateContent(gateEntry.gateContent.intent),
-        hashGateContent(JSON.stringify({
-          profile: item.profile_id,
-          path: item.path,
-          domain,
-        })),
+        // v0.8: the hash of the profile's executionContextSchema, not of per-call values.
+        computeExecutionContextHashBrowser(profile),
       ]);
 
       // 4. Re-attest with new TTL.

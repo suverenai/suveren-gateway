@@ -151,6 +151,19 @@ export async function computeBoundsHashBrowser(
 }
 
 /**
+ * `execution_context_hash` — sha256 over the RFC 8785 (JCS) serialization of
+ * the profile's `executionContextSchema`, or of `{}` when the profile has none
+ * (protocol.md → *Execution Context Schema*, v0.8). It commits to the SCHEMA,
+ * never to per-call values; a v0.8 Authority Server refuses anything else
+ * (MALFORMED_MANDATE). Mirrors hap-core's computeExecutionContextHash, which
+ * is Node-only (node:crypto).
+ */
+export async function computeExecutionContextHashBrowser(profile: AgentProfile): Promise<string> {
+  const hash = await sha256(canonicalizeJcs(profile.executionContextSchema ?? {}));
+  return `sha256:${hash}`;
+}
+
+/**
  * Compute scope hash client-side (renamed from `computeContextHashBrowser`
  * in v0.7 — hap-core's `AgentProfile.contextSchema` -> `scopeSchema`).
  * If the profile has no scopeSchema or it has no keys, hashes the empty

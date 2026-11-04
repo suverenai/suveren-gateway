@@ -14,7 +14,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { computeBoundsHash, computeScopeHash, computeIntentHash, computeProfileHash } from '@hap/core';
+import { computeBoundsHash, computeScopeHash, computeIntentHash, computeProfileHash, computeExecutionContextHash } from '@hap/core';
 import { planMandate, createMandate, approverPubkeys, MandateRefused, type CeremonyDeps, type MandateRequest } from '../lib/mandate-ceremony';
 
 const profilesDir = process.env.SUVEREN_PROFILES_DIR ?? join(import.meta.dirname, '..', '..', '..', '..', '..', 'hap-profiles');
@@ -92,7 +92,8 @@ describe('createMandate — the sign page\'s request, from the gateway', () => {
       bounds, bounds_hash: computeBoundsHash(bounds as never, SALES),
       scope_hash: computeScopeHash({ currency: 'EUR' } as never, SALES),
       gate_content_hashes: { intent: computeIntentHash(REQ.intent) },
-      execution_context_hash: computeIntentHash(JSON.stringify({ profile: SALES.id, domain: 'owner', group: 'g_personal' })),
+      // v0.8: the hash of the profile's executionContextSchema (protocol.md → Execution Context Schema).
+      execution_context_hash: computeExecutionContextHash(SALES),
       commitment_mode: 'automatic', ttl: 24 * 3600, title: 'Same-day quotes',
     });
     expect(attest.intent_ciphertext).toBeUndefined();
