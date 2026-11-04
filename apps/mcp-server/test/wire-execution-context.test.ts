@@ -45,11 +45,15 @@ const PROFILE: AgentProfile = {
 afterEach(() => clearProfiles());
 
 describe('wireExecutionContext', () => {
-  it('keeps the field(s) a boundType.of names and action_type, drops a scope-only field', () => {
+  // v0.8 (protocol.md → Ticket Request Schema, rules 7–8): only what a bound
+  // reads travels. `action_type` travels once, as the request's own
+  // `actionType`, and is no longer repeated inside executionContext.
+  it('keeps the field(s) a boundType.of names; drops a scope-only field and action_type', () => {
     registerProfile(PROFILE_ID, PROFILE);
     const result = wireExecutionContext(PROFILE_ID, { amount: 50, currency: 'EUR', action_type: 'charge' });
-    expect(result).toEqual({ amount: 50, action_type: 'charge' });
+    expect(result).toEqual({ amount: 50 });
     expect(result).not.toHaveProperty('currency');
+    expect(result).not.toHaveProperty('action_type');
   });
 
   it('drops a scope-only field even with no boundType match at all (fails safe, not open)', () => {
@@ -58,14 +62,20 @@ describe('wireExecutionContext', () => {
     expect(result).toEqual({});
   });
 
-  it('an unknown profile id yields only action_type (never fails open to "send everything")', () => {
-    const result = wireExecutionContext('no-such-profile@1', { amount: 50, currency: 'EUR', action_type: 'charge' });
-    expect(result).toEqual({ action_type: 'charge' });
+  it('a reserved `_`-prefixed key never travels (Ticket Request Schema, rule 8)', () => {
+    registerProfile(PROFILE_ID, PROFILE);
+    const result = wireExecutionContext(PROFILE_ID, { amount: 50, _source: 'crm:contact:1' });
+    expect(result).toEqual({ amount: 50 });
   });
 
-  it('a profile with no boundsSchema at all still keeps only action_type', () => {
+  it('an unknown profile id yields nothing (never fails open to "send everything")', () => {
+    const result = wireExecutionContext('no-such-profile@1', { amount: 50, currency: 'EUR', action_type: 'charge' });
+    expect(result).toEqual({});
+  });
+
+  it('a profile with no boundsSchema at all sends nothing', () => {
     registerProfile(PROFILE_ID, { ...PROFILE, boundsSchema: undefined } as never);
     const result = wireExecutionContext(PROFILE_ID, { amount: 50, action_type: 'write' });
-    expect(result).toEqual({ action_type: 'write' });
+    expect(result).toEqual({});
   });
 });

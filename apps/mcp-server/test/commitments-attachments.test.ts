@@ -163,6 +163,7 @@ function receiptFor(proposal: SPProposal, id: string): Record<string, unknown> {
   return makeSignedReceipt(kp, {
     id,
     action: proposal.tool,
+    actionType: proposal.executionContext.action_type,
     executionContext: proposal.executionContext,
     authorizationId: proposal.authorizationId,
     profileId: proposal.profileId,

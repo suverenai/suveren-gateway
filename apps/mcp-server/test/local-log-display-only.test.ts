@@ -261,9 +261,18 @@ describe('the gated write path — the AS gets asked', () => {
       authorizationId?: string;
       profileId?: string;
       idempotencyKey?: string;
+      actionType?: string;
+      boundsHash?: string;
+      mandateId?: string;
     }) => {
       const payload = {
         id: 'rcpt-1',
+        // v0.8: a ticket names its mandate and version, and echoes the
+        // request's actionType and boundsHash (Ticket Payload Schema, rule 4).
+        mandateId: req.mandateId ?? 'mandate-test',
+        version: '0.7',
+        actionType: req.actionType,
+        ...(req.boundsHash ? { boundsHash: req.boundsHash } : {}),
         action: req.action,
         executionContext: req.executionContext ?? {},
         authorizationId: req.authorizationId,

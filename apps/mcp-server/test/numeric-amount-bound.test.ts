@@ -32,7 +32,7 @@ import { createGatedToolHandler } from '../src/lib/tool-proxy';
 import type { SharedState, EnrichedAuthorization } from '../src/lib/shared-state';
 import type { CachedAuthorization } from '../src/lib/attestation-cache';
 import type { IntegrationManager, DiscoveredTool } from '../src/lib/integration-manager';
-import { testReceiptKeypair, makeSignedReceipt } from './helpers/real-receipt';
+import { testReceiptKeypair, makeSignedReceipt, echoTicketRequest } from './helpers/real-receipt';
 
 const PROFILE_ID = 'github.com/humanagencyprotocol/hap-profiles/charge-amount-test@1';
 const SHORT = 'charge-amount-test';
@@ -105,6 +105,7 @@ function buildState(verifyExecution: ReturnType<typeof vi.fn>) {
     receipt: makeSignedReceipt(kp, {
       id: 'rcpt-1',
       action: req.action,
+      ...echoTicketRequest(req),
       executionContext: req.executionContext ?? {},
       authorizationId: req.authorizationId,
       profileId: req.profileId,
@@ -231,22 +232,26 @@ describe('Mollie amount: a numeric STRING argument', () => {
     expect(outgoingArgs.amount_value).toBe('1.00');
   });
 
-  it('a malformed numeric string is left as-is — the Gatekeeper still sees it and can refuse it', async () => {
+  it('a malformed numeric string is refused locally — before the Gatekeeper and before any ticket request', async () => {
     // "1e3" is exactly the kind of value Number() would silently accept —
-    // parseNumericString refuses it, so it reaches the Gatekeeper unchanged
-    // and hap-core's own type-mismatch bound check (unit-tested there) still
-    // has something to refuse.
+    // parseNumericString refuses to coerce it, so it stays a string. v0.8
+    // (protocol.md → Ticket Issuance, stage 7): every value a bound reads
+    // MUST be a finite, non-negative number, so the gateway refuses it
+    // itself instead of sending it to be refused.
     const verifyExecution = approvingGatekeeper();
-    const { state } = buildState(verifyExecution);
-    const { integrationManager } = buildIntegrationManager();
+    const { state, postReceipt } = buildState(verifyExecution);
+    const { integrationManager, callTool } = buildIntegrationManager();
 
-    await createGatedToolHandler(TOOL, integrationManager, state)({
+    const result = await createGatedToolHandler(TOOL, integrationManager, state)({
       amount: '1e3',
       currency: 'EUR',
     });
 
-    const execution = verifyExecution.mock.calls[0][1] as Record<string, unknown>;
-    expect(execution.amount).toBe('1e3');
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/finite, non-negative number/);
+    expect(verifyExecution).not.toHaveBeenCalled();
+    expect(postReceipt).not.toHaveBeenCalled();
+    expect(callTool).not.toHaveBeenCalled();
   });
 });
 

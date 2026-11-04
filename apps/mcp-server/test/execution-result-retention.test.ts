@@ -63,6 +63,7 @@ function receiptFor(id: string): Record<string, unknown> {
   return makeSignedReceipt(kp, {
     id,
     action: PROPOSAL.tool,
+    actionType: PROPOSAL.executionContext.action_type,
     executionContext: PROPOSAL.executionContext,
     authorizationId: PROPOSAL.authorizationId,
     profileId: PROPOSAL.profileId,

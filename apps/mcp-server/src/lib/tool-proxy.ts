@@ -31,7 +31,8 @@ import {
 } from './attachment-resolution';
 import { validateDocumentReferences, validateInsertReferences } from './attachment-reference';
 import { ATTACHMENT_SOURCES_FIELD } from './attachment-policy';
-import { verifyTicket, TicketBindingMismatchError } from './ticket-verify';
+import { verifyTicket, TicketBindingMismatchError, mandateForTicket } from './ticket-verify';
+import { wireExecutionContext as hapWireExecutionContext, checkExecutionValues, missingSumFields } from '@hap/core';
 import { notifyControlPlane } from './cp-notify';
 import { resolveWhoLabel } from './who-label';
 import { encodeOutgoingArgs } from './arg-encoding';
@@ -196,22 +197,14 @@ export function wireExecutionContext(
   profileId: string,
   execution: Record<string, string | number>,
 ): Record<string, string | number> {
+  // v0.8 (protocol.md → Ticket Request Schema, rules 7–8): only what a bound
+  // reads travels. `action_type` travels once, as the request's own
+  // `actionType`, and is not repeated here; `_`-prefixed keys are advisory
+  // metadata for the Owner Interface and never travel. hap-core's helper is
+  // the one definition both this gateway and the Authority Server read.
   const profile = getProfile(profileId);
-  const allowed = new Set<string>(['action_type']);
-  const fields = profile?.boundsSchema?.fields;
-  if (fields) {
-    for (const fieldDef of Object.values(fields)) {
-      const bt = (fieldDef as { boundType?: { kind?: string; of?: string } }).boundType;
-      if (bt && (bt.kind === 'per_transaction' || bt.kind === 'cumulative_sum') && bt.of) {
-        allowed.add(bt.of);
-      }
-    }
-  }
-  const out: Record<string, string | number> = {};
-  for (const [key, value] of Object.entries(execution)) {
-    if (allowed.has(key)) out[key] = value;
-  }
-  return out;
+  if (!profile) return {}; // an unknown profile never fails open to "send everything"
+  return hapWireExecutionContext(execution, profile) as Record<string, string | number>;
 }
 
 /**
@@ -640,7 +633,9 @@ function isStaleMandateRefusal(err: SPReceiptError): boolean {
  */
 function isVersionUnsupportedRefusal(err: SPReceiptError): boolean {
   const errors = err.body?.errors as Array<{ code?: unknown }> | undefined;
-  return err.statusCode === 409 && errors?.[0]?.code === 'VERSION_UNSUPPORTED';
+  // The canonical code decides, not the status: today's AS answers 409 for a
+  // pre-0.7 mandate, a v0.8 AS may answer another 4xx for a v0.7 one.
+  return errors?.[0]?.code === 'VERSION_UNSUPPORTED';
 }
 
 function createGatedToolHandlerInner(
@@ -865,7 +860,14 @@ function createGatedToolHandlerInner(
         const isTeam = typeof state.cache?.isTeamGroup === 'function'
           ? state.cache.isTeamGroup(matchingAuths[0]?.groupId)
           : undefined;
-        readMaxAge = isTeam === true && signedAge !== null
+        // v0.8 (protocol.md → Read Authorization → Group ceilings, rules 2–3):
+        // a bound the profile marks `enforcedBy: "gatekeeper"` is a ceiling in
+        // EVERY mode — a local read policy may be lower, never higher. For a
+        // profile without the marker the pre-0.8 behaviour stands: the signed
+        // value caps a team, and personal mode follows the local policy.
+        const ceilingMarked = ageBoundField !== null
+          && (boundsSchema?.fields?.[ageBoundField] as { enforcedBy?: string } | undefined)?.enforcedBy === 'gatekeeper';
+        readMaxAge = (ceilingMarked || isTeam === true) && signedAge !== null
           ? (localAge !== null ? Math.min(localAge, signedAge) : signedAge)
           : (localAge ?? signedAge);
         // FAIL-CLOSED (F11): no window from either source. An omitted window
@@ -1207,6 +1209,40 @@ function createGatedToolHandlerInner(
 
     if (matchingAuths.length === 0) return noEligibleMandate(refusals);
 
+    // v0.8 (protocol.md → Ticket Issuance, stage 7; Validation Steps, step 8):
+    // every value a bound reads MUST be a finite, non-negative number. Refused
+    // here, before any mandate is chosen or anything leaves the machine —
+    // the Authority Server would refuse the same request, and a proposal
+    // carrying such a value could never become a ticket.
+    {
+      // Every profile (version) a matching mandate is under — the fields a
+      // bound reads can differ between versions.
+      const profileDefs = [...new Set(matchingAuths.map((a) => a.profileId))]
+        .map((id) => getProfile(id))
+        .filter((d): d is NonNullable<typeof d> => d !== undefined);
+      for (const profileDef of profileDefs) {
+        try {
+          checkExecutionValues(hapWireExecutionContext(execution, profileDef), profileDef);
+        } catch (err) {
+          const detail = err instanceof Error ? err.message : String(err);
+          recordBlocked(state, tool, {
+            kind: 'bound',
+            detail,
+            who: 'gateway',
+            code: 'MALFORMED_TICKET_REQUEST',
+          });
+          return {
+            content: [{
+              type: 'text',
+              text: `Blocked by Gatekeeper: ${detail}. A value a bound reads must be a number of zero or more — ` +
+                `correct the request and try again.`,
+            }],
+            isError: true,
+          };
+        }
+      }
+    }
+
     // Blocking checks (decision 2026-10-21): a manifest check declared
     // `blocking` that FAILS refuses the call here — before any mandate is
     // selected, any card or proposal made, or the connector called. The
@@ -1469,6 +1505,10 @@ function createGatedToolHandlerInner(
               toolArgs: enrichedArgs,
               executionContext: wireExecCtx,
               recipientUserIds,
+              // v0.8 — the normative proposal object (protocol.md → Proposals).
+              mandateId: auth.mandateId,
+              boundsHash: auth.boundsHash,
+              actionType: declaredActionType,
             });
             // AU4 — snapshot a preview read NOW, for a tool whose declared
             // preview carries no `version` (the connector has no revision
@@ -1491,6 +1531,7 @@ function createGatedToolHandlerInner(
               authorizationId: authzId,
               profileId: auth.profileId,
               previewHash,
+              actionType: declaredActionType,
             });
             return {
               content: [{
@@ -1541,6 +1582,35 @@ function createGatedToolHandlerInner(
           rebuildTransport = finalized.rebuildTransport;
         }
 
+        // v0.8 (protocol.md → Ticket Issuance, stage 7): an absent value for
+        // the field a governing `cumulative_sum` bound reads is refused — the
+        // spend cannot be counted. Only under an automatic mandate: under
+        // review_above_cap the Authority Server routes it to an approval, and
+        // a committed above-cap approval adds zero.
+        if (auth.signedCommitmentMode === 'automatic') {
+          const profileDef = getProfile(auth.profileId);
+          const missing = profileDef
+            ? missingSumFields(wireExecutionContext(auth.profileId, execution), profileDef, declaredActionType!) // checked non-empty above
+            : [];
+          if (missing.length > 0) {
+            const detail = `"${missing[0].field}" is required by the bound ${missing[0].bound} for "${declaredActionType}" calls, but this call carries none.`;
+            recordBlocked(state, tool, {
+              kind: 'bound',
+              detail,
+              field: missing[0].field,
+              who: 'gateway',
+              code: 'BOUND_EXCEEDED',
+            });
+            return {
+              content: [{
+                type: 'text',
+                text: `Blocked by Gatekeeper: ${detail} Without it the spend cannot be counted against the mandate, so nothing ran.`,
+              }],
+              isError: true,
+            };
+          }
+        }
+
         // Request receipt from SP (pre-flight — fail closed).
         //
         // `action` is the tool identifier used by the SP for the
@@ -1559,6 +1629,9 @@ function createGatedToolHandlerInner(
         // the outgoing content (Category-A profiles). Hoisted so it's in scope
         // after the try/catch where the downstream call happens.
         let receiptId: string | undefined;
+        // v0.8 — the request this call's ticket answers (its idempotencyKey),
+        // once the `requested` journal row for it has been written.
+        let autoRequestKey: string | undefined;
         try {
           const actionType = declaredActionType;
 
@@ -1581,10 +1654,22 @@ function createGatedToolHandlerInner(
           // AS echoes back (which only ever contains what it was sent) is
           // compared against the same filtered shape, not the full one.
           const wireExecCtx = wireExecutionContext(auth.profileId, execution);
-          const { receipt } = await state.spClient.postReceipt({
+          // v0.8 — One execution per ticket, rule 1: the `requested` row is
+          // written BEFORE the ticket request leaves the machine, keyed on the
+          // request (the idempotencyKey). A lost response leaves this row,
+          // and that is the one case a replayed ticket may run.
+          // (`?.` only for SharedState test doubles that predate the requested
+          // state; the real journal always has it.)
+          state.executionJournal?.requested?.({ requestKey: idempotencyKey, tool: tool.namespacedName, argsHash: hashToolArgs(finalArgs) });
+          autoRequestKey = idempotencyKey;
+          const { receipt, idempotent } = await state.spClient.postReceipt({
             authorizationId: authzId,
             // Optional cross-check — the AS fails closed on a mismatch.
             boundsHash: auth.boundsHash,
+            // v0.8 — the mandate this call runs under, by its signed id, so a
+            // revoked mandate and its replacement (same bounds_hash) cannot be
+            // confused (Ticket Request Schema, rule 1).
+            mandateId: auth.mandateId,
             profileId: auth.profileId,
             action: tool.namespacedName,
             actionType,
@@ -1614,9 +1699,15 @@ function createGatedToolHandlerInner(
             executionContext: wireExecCtx,
             authorizationId: authzId,
             profileId: auth.profileId,
+            actionType,
+            boundsHash: auth.boundsHash,
+            mandateId: auth.mandateId,
+            mandateIds: auth.mandateIds,
+            mandate: mandateForTicket(auth.attestations, receipt?.mandateId),
             idempotencyKey,
             contentHash: binding?.contentHash,
             contentBinding: binding?.contentBinding,
+            replay: idempotent,
           });
 
           // Subject custody: keep the complete signed receipt (+ attestation
@@ -1646,6 +1737,15 @@ function createGatedToolHandlerInner(
             sentArgs: finalArgs,
           });
         } catch (err) {
+          // v0.8 — a ticket that was requested but never issued (the AS refused,
+          // or the transport failed before any ticket arrived) closes its
+          // `requested` journal row: nothing ran, and the row says so.
+          if (autoRequestKey && !receiptId) {
+            const refusalCode = err instanceof SPReceiptError
+              ? ((err.body?.errors as Array<{ code?: string }> | undefined)?.[0]?.code ?? 'TICKET_REFUSED')
+              : 'REQUEST_FAILED';
+            state.executionJournal?.refusedBeforeTicket?.(autoRequestKey, 'as_refused', refusalCode);
+          }
           // The ticket didn't verify — either its signature disagrees with
           // the pinned Authority Server key, or its own bound fields
           // disagree with what was just requested. Refuse AND lock: this is
@@ -1702,9 +1802,9 @@ function createGatedToolHandlerInner(
               return {
                 content: [{
                   type: 'text',
-                  text: `Blocked: mandate ${auth.authorizationId} needs re-approval — the Authority Server ` +
-                    `no longer verifies its protocol version. Ask the decision owner to re-approve it ` +
-                    `(see list-authorizations). ${err.message}`,
+                  text: `Blocked: mandate ${auth.authorizationId} must be signed again — the Authority Server ` +
+                    `no longer accepts its protocol version. Ask the mandate owner to sign it again ` +
+                    `(Mandates page → Sign again; see list-authorizations). ${err.message}`,
                 }],
                 isError: true,
               };
@@ -1856,6 +1956,10 @@ function createGatedToolHandlerInner(
                 pendingApprovers: uniqueApprovers,
                 recipientUserIds,
                 ...(ownerId ? { createdBy: ownerId } : {}),
+                // v0.8 — the normative proposal object (protocol.md → Proposals).
+                mandateId: auth.mandateId,
+                boundsHash: auth.boundsHash,
+                actionType: declaredActionType,
               });
               // AU4 — see the deferred-commitment branch above for why.
               const previewHash = await computeSubmissionPreviewHash(
@@ -1872,6 +1976,7 @@ function createGatedToolHandlerInner(
                 authorizationId: authzId,
                 profileId: auth.profileId,
                 previewHash,
+                actionType: declaredActionType,
               });
               return {
                 content: [{
@@ -1972,6 +2077,7 @@ function createGatedToolHandlerInner(
         if (receiptId) {
           const begun = state.executionJournal.begin({
             ticketId: receiptId,
+            requestKey: autoRequestKey,
             tool: tool.namespacedName,
             argsHash: hashToolArgs(finalArgs),
           });

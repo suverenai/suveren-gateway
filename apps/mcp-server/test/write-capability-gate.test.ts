@@ -34,7 +34,7 @@ import { createGatedToolHandler } from '../src/lib/tool-proxy';
 import type { SharedState, EnrichedAuthorization } from '../src/lib/shared-state';
 import type { CachedAuthorization } from '../src/lib/attestation-cache';
 import type { IntegrationManager, DiscoveredTool } from '../src/lib/integration-manager';
-import { testReceiptKeypair, makeSignedReceipt } from './helpers/real-receipt';
+import { testReceiptKeypair, makeSignedReceipt, echoTicketRequest } from './helpers/real-receipt';
 
 const MANIFEST = JSON.parse(
   readFileSync(join(import.meta.dirname, '..', '..', '..', 'content', 'integrations', 'records.json'), 'utf8'),
@@ -101,6 +101,7 @@ function buildState(auth: CachedAuthorization, verifyExecution: ReturnType<typeo
     receipt: makeSignedReceipt(kp, {
       id: 'rcpt-del-1',
       action: req.action,
+      ...echoTicketRequest(req),
       executionContext: req.executionContext ?? {},
       authorizationId: req.authorizationId,
       profileId: req.profileId,

@@ -40,7 +40,7 @@ import { FORBIDDEN_AGENT_KEYS } from '../src/lib/report/agent-view';
 import { buildEmailExport, buildErpExport, buildCrmExport } from './report/fixtures/exports';
 import type { SharedState, EnrichedAuthorization } from '../src/lib/shared-state';
 import type { ReportSources, ExportSystem } from '../src/lib/report/types';
-import { testReceiptKeypair, makeSignedReceipt } from './helpers/real-receipt';
+import { testReceiptKeypair, makeSignedReceipt, echoTicketRequest } from './helpers/real-receipt';
 
 const profilesDir =
   process.env.SUVEREN_PROFILES_DIR ?? join(import.meta.dirname, '..', '..', '..', '..', 'hap-profiles');
@@ -99,6 +99,7 @@ function buildState(enriched: EnrichedAuthorization[], reportStore: ReportStore)
     receipt: makeSignedReceipt(kp, {
       id: 'ticket-1',
       action: req.action,
+      ...echoTicketRequest(req),
       executionContext: req.executionContext ?? {},
       authorizationId: req.authorizationId,
       profileId: req.profileId ?? enriched[0]?.profileId,

@@ -29,6 +29,12 @@ export interface SubmittedProposal {
    * changed since approval and the action must not execute.
    */
   previewHash?: string;
+  /**
+   * v0.8 — the manifest's action type the proposal was submitted under. It no
+   * longer travels inside executionContext (only what a bound reads does), so
+   * the review path reads it from here to name it on the ticket request.
+   */
+  actionType?: string;
 }
 
 interface StoreFile {
@@ -62,6 +68,7 @@ export class ProposalSubmissionStore {
     authorizationId: string;
     profileId: string;
     previewHash?: string;
+    actionType?: string;
   }): void {
     const file = this.load();
     file.entries = file.entries.filter(e => e.proposalId !== entry.proposalId);
@@ -74,6 +81,7 @@ export class ProposalSubmissionStore {
       profileId: entry.profileId,
       submittedAt: nowSec(),
       ...(entry.previewHash ? { previewHash: entry.previewHash } : {}),
+      ...(entry.actionType ? { actionType: entry.actionType } : {}),
     });
     this.persist(file);
   }

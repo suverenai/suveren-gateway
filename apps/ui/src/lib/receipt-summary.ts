@@ -55,7 +55,9 @@ export function actionLabel(
   if (override?.actionLabel) return override.actionLabel;
 
   const profile = profileDisplayName(receipt.profileId);
-  const actionType = receipt.executionContext?.action_type;
+  // v0.8: the ticket names its action type once, as `actionType`; a ticket
+  // issued before 0.41 also carried it inside executionContext.
+  const actionType = receipt.actionType ?? receipt.executionContext?.action_type;
   return typeof actionType === 'string' && actionType
     ? `${profile} · ${actionType}`
     : `${profile} · ${toolName}`;
