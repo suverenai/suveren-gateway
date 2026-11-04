@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from 'react';
-import { spClient, type SPUser, type SPGroup, type GroupMember, type PendingJoinRequest } from '../lib/sp-client';
+import { spClient, SESSION_GONE_EVENT, sessionEvents, type SPUser, type SPGroup, type GroupMember, type PendingJoinRequest } from '../lib/sp-client';
 
 export type GatewayMode = 'personal' | 'team';
 
@@ -209,6 +209,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setMode('personal');
     setError(message ?? 'Your sign-in ended after 30 days or was revoked. Sign in again.');
   }, []);
+
+  // The gateway stopped accepting this tab's session (restart → vault locked,
+  // or the session ended without an SSE event reaching us): go to sign-in with
+  // the reason, exactly like 'session-locked'.
+  useEffect(() => {
+    const onGone = () => {
+      if (!hasApiKey.current) return;
+      handleSessionLocked('The gateway restarted or your sign-in ended. Sign in to unlock it.');
+    };
+    sessionEvents.addEventListener(SESSION_GONE_EVENT, onGone);
+    return () => sessionEvents.removeEventListener(SESSION_GONE_EVENT, onGone);
+  }, [handleSessionLocked]);
 
   const clearError = useCallback(() => setError(''), []);
 
