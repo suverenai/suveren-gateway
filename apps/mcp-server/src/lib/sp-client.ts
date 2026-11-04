@@ -584,8 +584,12 @@ export class SPClient {
     mandateId?: string;
     boundsHash?: string;
     actionType?: string;
+    /** v0.8 — present only under a 0.8 mandate: name `readers`,
+     *  `unreadable` and `encrypted_keys` by DID (the owner plus the signed
+     *  deciders); `keys` stays keyed by account id for 0.40 gateways. */
+    readers?: { ownerDid: string; deciders: string[] };
   }): Promise<{ proposal: SPProposal; unreadableFor: string[] }> {
-    const { content, unreadableFor } = await cpEncryptContent(data.toolArgs, data.recipientUserIds);
+    const { content, unreadableFor } = await cpEncryptContent(data.toolArgs, data.recipientUserIds, data.readers);
 
     const res = await this.fetch('/api/proposals', {
       method: 'POST',

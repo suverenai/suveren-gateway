@@ -27,9 +27,9 @@ export interface ProposalContentWire {
   keys: Record<string, { ct: string; enc: string }>;
   /** Suveren-internal name (pre-0.8) of the fingerprint. */
   hash: string;
-  /** v0.8 normative (protocol.md → Proposals, rule 2): the same wraps as
-   *  `keys`, keyed by reader. Readers are named by user id until the
-   *  Authority Server names accounts by key-bearing DID (Track B). */
+  /** v0.8 normative (protocol.md → Proposals, rule 2): the content key
+   *  wrapped per reader. Under a 0.8 mandate keyed by DID (owner + signed
+   *  deciders), beside `keys` by account id; under 0.7 the same as `keys`. */
   encrypted_keys?: Record<string, { ct: string; enc: string }>;
   readers?: string[];
   unreadable?: string[];
@@ -68,8 +68,10 @@ async function postInternal(path: string, body: unknown): Promise<Record<string,
 export async function cpEncryptContent(
   toolArgs: Record<string, unknown>,
   recipientUserIds: string[],
+  /** v0.8 only — the mandate's owner DID and signed deciders (readers by DID). */
+  readers?: { ownerDid: string; deciders: string[] },
 ): Promise<{ content: ProposalContentWire; unreadableFor: string[] }> {
-  const data = await postInternal('/internal/encrypt-content', { toolArgs, recipientUserIds });
+  const data = await postInternal('/internal/encrypt-content', { toolArgs, recipientUserIds, ...(readers ? { readers } : {}) });
   return data as unknown as { content: ProposalContentWire; unreadableFor: string[] };
 }
 
@@ -89,8 +91,9 @@ export async function cpDecryptContent(
 ): Promise<string> {
   const data = await postInternal('/internal/decrypt-content', {
     ciphertext: wire.ciphertext,
-    // v0.8 name first; the pre-0.8 `keys` carries the same wraps.
-    keys: wire.encrypted_keys ?? wire.keys,
+    // Both names: under a 0.8 mandate `encrypted_keys` is keyed by DID and
+    // `keys` by account id; the control plane finds this user's wrap by either.
+    keys: { ...(wire.keys ?? {}), ...(wire.encrypted_keys ?? {}) },
     // v0.8 rule 8: the control plane checks the decrypted content against the fingerprint.
     ...(wire.proposalContentHash ? { proposalContentHash: wire.proposalContentHash } : wire.hash ? { hash: wire.hash } : {}),
   });

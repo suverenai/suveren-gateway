@@ -1519,6 +1519,7 @@ function createGatedToolHandlerInner(
               mandateId: auth.mandateId,
               boundsHash: auth.boundsHash,
               actionType: declaredActionType,
+              ...v08ProposalReaders(auth),
             });
             // AU4 — snapshot a preview read NOW, for a tool whose declared
             // preview carries no `version` (the connector has no revision
@@ -1974,6 +1975,7 @@ function createGatedToolHandlerInner(
                 mandateId: auth.mandateId,
                 boundsHash: auth.boundsHash,
                 actionType: declaredActionType,
+                ...v08ProposalReaders(auth),
               });
               // AU4 — see the deferred-commitment branch above for why.
               const previewHash = await computeSubmissionPreviewHash(
@@ -2153,6 +2155,21 @@ function recordAutomaticOutcome(
 }
 
 /** The refusal an agent gets for a listed tool no mandate covers — says what to do. */
+/**
+ * v0.8 (protocol.md → Proposals, rule 2): under a 0.8 mandate a proposal's
+ * readers are named by DID — the owner (`mandate_owners[0].did`) and the
+ * signed `above_cap_approvers` of the mandate the AS checks it against.
+ * Under a 0.7 mandate (or an undecodable one) nothing is added and the
+ * envelope keeps naming readers by account id, exactly as before.
+ */
+export function v08ProposalReaders(
+  auth: { proposalReaders?: { version: string; ownerDid: string; deciders: string[] } },
+): { readers?: { ownerDid: string; deciders: string[] } } {
+  const r = auth.proposalReaders;
+  if (!r || r.version !== '0.8') return {};
+  return { readers: { ownerDid: r.ownerDid, deciders: r.deciders } };
+}
+
 export function noMandateRefusal(toolName: string, profile: string): string {
   return `Refused: no mandate covers ${toolName} (${shortProfile(profile)}). Nothing was done. ` +
     `Ask the person to grant a ${shortProfile(profile)} mandate in the gateway, then try again. No ticket was requested.`;

@@ -195,3 +195,48 @@ describe('v0.8 local refusals — before anything leaves the machine', () => {
     expect(callTool).toHaveBeenCalledOnce();
   });
 });
+
+describe('v0.8 review proposal — readers named by DID (protocol.md → Proposals, rule 2)', () => {
+  function reviewState(version: '0.8' | '0.7') {
+    const kp = testReceiptKeypair();
+    const auth = {
+      ...AUTH,
+      authorizationId: 'authz_00000000-0000-4000-8000-0000000v08rv',
+      signedCommitmentMode: 'review',
+      deferredCommitmentDomains: ['owner'],
+      mandateVersion: version,
+      proposalReaders: { version, ownerDid: 'did:key:z6MkOwner', deciders: [] },
+    } as unknown as CachedAuthorization;
+    const submitProposal = vi.fn().mockResolvedValue({ proposal: { id: 'prop-v08' }, unreadableFor: [] });
+    const state = {
+      getEnrichedAuthorizations: () => [{ ...auth, gateContent: null } as EnrichedAuthorization],
+      spClient: { postReceipt: vi.fn(), submitProposal, isUnlocked: () => true, getAuthorizationSummary: vi.fn().mockResolvedValue({ created_by: 'owner-id' }) },
+      cache: { getAllAuthorizations: () => [auth], getPublicKey: async () => kp.publicKeyHex, getTrustedIssuer: async () => kp.issuer },
+      proposalSubmissions: { record: vi.fn(), get: () => undefined },
+      gatekeeper: { verifyExecution: vi.fn().mockResolvedValue({ result: { approved: true, errors: [] }, authorization: auth }) },
+      executionLog: { record: vi.fn() },
+      executionJournal: { begin: () => ({ ok: true }), complete: () => {} },
+      archiveReceipt: vi.fn().mockResolvedValue(undefined),
+    } as unknown as SharedState;
+    return { state, submitProposal };
+  }
+
+  it('under a 0.8 mandate the submission names the owner DID (and the signed deciders) as readers', async () => {
+    const { state, submitProposal } = reviewState('0.8');
+    const { integrationManager, callTool } = buildIntegrationManager();
+    await createGatedToolHandler(TOOL, integrationManager, state)({ amount: 5, currency: 'EUR' });
+    expect(callTool).not.toHaveBeenCalled();
+    expect(submitProposal).toHaveBeenCalledOnce();
+    const submitted = submitProposal.mock.calls[0][0] as { readers?: unknown; recipientUserIds: string[] };
+    expect(submitted.readers).toEqual({ ownerDid: 'did:key:z6MkOwner', deciders: [] });
+    expect(submitted.recipientUserIds).toEqual(['owner-id']);
+  });
+
+  it('under a 0.7 mandate nothing is added — readers stay by account id', async () => {
+    const { state, submitProposal } = reviewState('0.7');
+    const { integrationManager } = buildIntegrationManager();
+    await createGatedToolHandler(TOOL, integrationManager, state)({ amount: 5, currency: 'EUR' });
+    expect(submitProposal).toHaveBeenCalledOnce();
+    expect((submitProposal.mock.calls[0][0] as { readers?: unknown }).readers).toBeUndefined();
+  });
+});
