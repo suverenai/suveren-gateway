@@ -194,10 +194,10 @@ export function listAuthorizationsHandler(
         // Item 9 (re-approval UX): generic, not per-profile — a mandate the
         // AS can no longer verify (pre-0.7 blob) still shows, flagged, with
         // the clear action named below rather than silently vanishing.
-        const statusLabel = !auth.complete ? ' (PENDING)' : auth.needsReapproval ? ' (NEEDS RE-APPROVAL)' : '';
+        const statusLabel = !auth.complete ? ' (PENDING)' : auth.needsReapproval ? ' (MUST BE SIGNED AGAIN)' : '';
         output.push(`[${auth.path}] ${auth.profileId} (${remainingMin} min remaining)${statusLabel}`);
         if (auth.needsReapproval) {
-          output.push('  The Authority Server no longer verifies this mandate\'s protocol version. Ask the decision owner to re-approve it.');
+          output.push('  The Authority Server no longer accepts this mandate\'s protocol version. Ask the mandate owner to sign it again (Mandates page → Sign again).');
         }
         output.push('');
         output.push(`  Bounds: ${boundsDesc}`);
@@ -290,13 +290,13 @@ export function listAuthorizationsHandler(
         .join(', ');
 
       if (auth.complete) {
-        const statusLabel = auth.needsReapproval ? ' (NEEDS RE-APPROVAL)' : '';
+        const statusLabel = auth.needsReapproval ? ' (MUST BE SIGNED AGAIN)' : '';
         const lines = [`  [${auth.path}] ${auth.profileId} — ${remainingMin} min remaining${statusLabel}`];
         lines.push(`    Bounds: ${boundsDesc}`);
 
         // Item 9 (re-approval UX): generic, not per-profile.
         if (auth.needsReapproval) {
-          lines.push('    The Authority Server no longer verifies this mandate\'s protocol version. Ask the decision owner to re-approve it.');
+          lines.push('    The Authority Server no longer accepts this mandate\'s protocol version. Ask the mandate owner to sign it again (Mandates page → Sign again).');
         }
 
         // Flag review mode in the compact view (automatic is the unremarkable default)

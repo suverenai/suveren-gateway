@@ -193,7 +193,9 @@ export function createProposalStatusRouter(
   router.get('/:id/outcome', (req: Request, res: Response) => {
     try {
       const entry = findLatestByProposal(dataDir, req.params.id);
-      if (!entry) {
+      // v0.8: a `requested` row means the ticket was asked for and nothing
+      // started — the same as no local outcome for this card.
+      if (!entry || entry.state === 'requested') {
         const none: ProposalOutcome = { state: 'none' };
         res.json(none);
         return;

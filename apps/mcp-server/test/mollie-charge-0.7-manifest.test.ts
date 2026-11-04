@@ -41,7 +41,7 @@ import { createGatedToolHandler } from '../src/lib/tool-proxy';
 import type { SharedState, EnrichedAuthorization } from '../src/lib/shared-state';
 import type { CachedAuthorization } from '../src/lib/attestation-cache';
 import type { IntegrationManager, DiscoveredTool } from '../src/lib/integration-manager';
-import { testReceiptKeypair, makeSignedReceipt } from './helpers/real-receipt';
+import { testReceiptKeypair, makeSignedReceipt, echoTicketRequest } from './helpers/real-receipt';
 
 const MANIFESTS_DIR = join(import.meta.dirname, '..', '..', '..', 'content', 'integrations');
 
@@ -221,6 +221,7 @@ describe('charge acts (CreatePayment, CreatePaymentLink, CreateCapture) map an a
       receipt: makeSignedReceipt(kp, {
         id: 'rcpt-mollie-charge',
         action: req.action,
+        ...echoTicketRequest(req),
         executionContext: req.executionContext ?? {},
         authorizationId: req.authorizationId,
         profileId: req.profileId,

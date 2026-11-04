@@ -65,6 +65,10 @@ export function makeSignedReceipt(
   return signTestReceipt(
     {
       id,
+      // v0.8: a ticket verifier requires `mandateId` and reads the ticket under
+      // its `version` (0.8 or 0.7) — hap-core 0.13 refuses a ticket without them.
+      mandateId: 'mandate-test',
+      version: '0.7',
       boundsHash: 'sha256:test',
       profileId: 'test-profile',
       action,
@@ -76,4 +80,21 @@ export function makeSignedReceipt(
     },
     kp.privateKey,
   );
+}
+
+/**
+ * The request fields a real Authority Server echoes into the ticket it signs
+ * (protocol.md → Ticket Payload Schema, rule 4) that the per-test fakes did
+ * not echo before v0.8: `actionType`, `boundsHash`, `mandateId`. Spread into
+ * a fake's `makeSignedReceipt` call so its ticket names the request exactly
+ * like the real one does; a field the request did not carry keeps the
+ * fixture default.
+ */
+export function echoTicketRequest(request: object): Record<string, unknown> {
+  const req = request as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const k of ['actionType', 'boundsHash', 'mandateId'] as const) {
+    if (req[k] !== undefined) out[k] = req[k];
+  }
+  return out;
 }

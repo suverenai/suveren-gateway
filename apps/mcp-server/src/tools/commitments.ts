@@ -31,7 +31,7 @@ import type { CommittedExecutor, ExecutionResult } from '../lib/committed-execut
 import { ContentBindingError } from '@hap/core';
 import { AsKeyMismatchError } from '../lib/attestation-cache';
 import { ArchiveWriteError } from '../lib/receipt-archive';
-import { verifyTicket, TicketBindingMismatchError } from '../lib/ticket-verify';
+import { verifyTicket, TicketBindingMismatchError, mandateForTicket } from '../lib/ticket-verify';
 import { notifyControlPlane } from '../lib/cp-notify';
 import { resolveWhoLabel } from '../lib/who-label';
 import { resolveProposalToolArgs, decryptRejectionNote, computeProposalContentHash, ProposalContentError } from '../lib/proposal-content';
@@ -152,19 +152,8 @@ export async function executeCommitted(
   // already consumed it, the SP returns PROPOSAL_ALREADY_EXECUTED.
   //
   // `action` MUST be proposal.tool (the full namespaced name) for the
-  // SP's PROPOSAL_MISMATCH equality check. `actionType` comes from the
-  // executionContext that was captured at proposal creation time (from
-  // the manifest's staticExecution) — no prefix-based fallback.
-  const proposalActionType =
-    typeof proposal.executionContext.action_type === 'string'
-      ? proposal.executionContext.action_type
-      : undefined;
-  if (!proposalActionType) {
-    console.error(
-      `[Suveren MCP] Warning: proposal ${proposal.id} has no action_type in executionContext. ` +
-        `Bounds check may be skipped. Fix the integration manifest for ${proposal.tool}.`,
-    );
-  }
+  // SP's PROPOSAL_MISMATCH equality check. `actionType` is resolved below,
+  // once this gateway's own submission record is found.
 
   // Look up the cached authorization for this grant — parity with the
   // automatic path, which sends the boundsHash cross-check and the subject
@@ -225,6 +214,23 @@ export async function executeCommitted(
     // must not be logged as "Auto-executed" — see describeAutoExecutionLog.
     return { text: buildSkippedProposalNote(proposal.id), skipped: true };
   }
+  // `actionType` — from the manifest's staticExecution, captured at
+  // submission. v0.8: it travels once, as the proposal's own `actionType`,
+  // and is no longer repeated inside executionContext (Ticket Request Schema,
+  // rule 7) — so this gateway's own record of the submission is the source;
+  // a proposal submitted before 0.41 still carries it in executionContext.
+  // Never derived from the tool name.
+  const proposalActionType =
+    submitted.actionType ??
+    (typeof proposal.executionContext.action_type === 'string'
+      ? proposal.executionContext.action_type
+      : undefined);
+  if (!proposalActionType) {
+    console.error(
+      `[Suveren MCP] Warning: proposal ${proposal.id} has no action_type. ` +
+        `Bounds check may be skipped. Fix the integration manifest for ${proposal.tool}.`,
+    );
+  }
   // PE1 — resolve the approved content: the plain field on a legacy row, or
   // decrypt + verify the fingerprint on an encrypted one. Every later
   // reference to what was approved uses this local, resolved copy — never
@@ -279,11 +285,19 @@ export async function executeCommitted(
       toolArgs,
       proposalActionType,
     );
+    // v0.8 — One execution per ticket, rule 1: the `requested` row, keyed on
+    // the proposal, is written BEFORE the ticket request leaves the machine.
+    // (`?.` only for SharedState test doubles that predate the requested state.)
+    state.executionJournal?.requested?.({
+      requestKey: proposal.id, proposalId: proposal.id, tool: proposal.tool, argsHash: hashToolArgs(toolArgs),
+    });
     const { receipt: r, idempotent } = await state.spClient.postReceipt({
       authorizationId: proposal.authorizationId,
       // Optional cross-check — the AS fails closed on a mismatch. Parity
       // with the automatic path (tool-proxy.ts).
       boundsHash: cachedAuth?.boundsHash,
+      // v0.8 — the mandate by its signed id (Ticket Request Schema, rule 1).
+      mandateId: cachedAuth?.mandateId,
       profileId: proposal.profileId,
       action: proposal.tool,
       actionType: proposalActionType,
@@ -292,7 +306,10 @@ export async function executeCommitted(
         ? proposal.executionContext.amount
         : undefined,
       proposalId: proposal.id,
-      toolArgs,
+      // v0.8 (Ticket Request Schema; Proposals, rule 1): the content itself
+      // never travels on the ticket request — only its fingerprint below.
+      // Today's AS matches by `proposal_content_hash` first, so dropping the
+      // readable `toolArgs` it used to receive changes nothing it checks.
       // PE1 — the fingerprint of what THIS gateway resolved (decrypted, or
       // read plain on a legacy row) and is about to execute. The AS compares
       // it against its own stored content_hash and refuses without echoing
@@ -340,6 +357,8 @@ export async function executeCommitted(
       // refused by the Authority Server — a terminal state, same footing as
       // PROPOSAL_ALREADY_EXECUTED above. Never retried.
       if (code === 'PROPOSAL_REFUSED') {
+        // Close this attempt's `requested` row: the ticket never came.
+        state.executionJournal?.refusedBeforeTicket?.(proposal.id, 'as_refused', `${code}: ${err.message}`);
         return {
           text: `Proposal ${proposal.id}: the Authority Server refused this proposal's ticket earlier — ${err.message} ` +
             `Nothing ran. Do not retry the same values; ask the person (e.g. for a higher limit).`,
@@ -348,12 +367,12 @@ export async function executeCommitted(
       }
       // Item 9 (re-approval UX) — see tool-proxy.ts's
       // isVersionUnsupportedRefusal doc comment: flag, never invalidate.
-      if (err.statusCode === 409 && code === 'VERSION_UNSUPPORTED') {
+      if (code === 'VERSION_UNSUPPORTED') {
         state.cache.markNeedsReapproval(proposal.authorizationId);
         return {
-          text: `Proposal ${proposal.id}: blocked — mandate ${proposal.authorizationId} needs re-approval ` +
-            `— the Authority Server no longer verifies its protocol version. Ask the decision owner to ` +
-            `re-approve it (see list-authorizations). ${err.message}`,
+          text: `Proposal ${proposal.id}: blocked — mandate ${proposal.authorizationId} must be signed again ` +
+            `— the Authority Server no longer accepts its protocol version. Ask the mandate owner to ` +
+            `sign it again (Mandates page → Sign again; see list-authorizations). ${err.message}`,
           isError: true,
         };
       }
@@ -373,6 +392,7 @@ export async function executeCommitted(
       // a real ticket: `begin()`'s dedup on that synthetic id keeps a second
       // identical write here a no-op rather than an error.
       if (proposal.id) {
+        state.executionJournal?.refusedBeforeTicket?.(proposal.id, 'as_refused', `${code ?? 'TICKET_REFUSED'}: ${err.message}`);
         const asRefusedTicketId = `as_refused:${proposal.id}`;
         const begun = state.executionJournal.begin({
           ticketId: asRefusedTicketId,
@@ -424,6 +444,7 @@ export async function executeCommitted(
   // surfaces honestly instead.
   const begun = state.executionJournal.begin({
     ticketId: receiptId,
+    requestKey: proposal.id,
     proposalId: proposal.id,
     tool: proposal.tool,
     argsHash: hashToolArgs(toolArgs),
@@ -470,9 +491,18 @@ export async function executeCommitted(
       executionContext: proposal.executionContext,
       authorizationId: proposal.authorizationId,
       profileId: proposal.profileId,
+      actionType: proposalActionType,
+      boundsHash: cachedAuth?.boundsHash,
+      mandateId: cachedAuth?.mandateId,
+      mandateIds: cachedAuth?.mandateIds,
+      // v0.8 — lets the ticket's version be checked against its mandate and
+      // the approval signatures be verified under the deciders' own DIDs.
+      mandate: mandateForTicket(cachedAuth?.attestations, receipt.mandateId),
       proposalId: proposal.id,
+      proposalContentHash: computeProposalContentHash(toolArgs),
       contentHash: binding?.contentHash,
       contentBinding: binding?.contentBinding,
+      replay: replayed,
     });
 
     // Subject custody: archive the complete signed receipt locally (parity
@@ -701,7 +731,9 @@ export async function executeCommitted(
  */
 function localOutcomeOfExecuted(proposal: SPProposal, state: SharedState): { text: string; isError: boolean } | null {
   const entry = state.executionJournal?.findByProposal?.(proposal.id);
-  if (!entry) return null;
+  // v0.8: `requested` = the ticket was asked for and nothing started — no
+  // local outcome to report; the AS status stands.
+  if (!entry || entry.state === 'requested') return null;
   const integration = proposal.tool.split('__')[0];
   if (entry.state === 'done') {
     // 2026-10-13 fix: this used to return null here unconditionally, so a

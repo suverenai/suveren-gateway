@@ -29,7 +29,7 @@ import { hashToolArgs } from '../src/lib/execution-journal';
 import type { SharedState, EnrichedAuthorization } from '../src/lib/shared-state';
 import type { SPProposal } from '../src/lib/sp-client';
 import type { ReportSources } from '../src/lib/report';
-import { testReceiptKeypair, makeSignedReceipt } from './helpers/real-receipt';
+import { testReceiptKeypair, makeSignedReceipt, echoTicketRequest } from './helpers/real-receipt';
 
 const profilesDir =
   process.env.SUVEREN_PROFILES_DIR ?? join(import.meta.dirname, '..', '..', '..', '..', 'hap-profiles');
@@ -104,6 +104,7 @@ function buildState(enriched: EnrichedAuthorization[]) {
     receipt: makeSignedReceipt(kp, {
       id: 'ticket-1',
       action: req.action,
+      ...echoTicketRequest(req),
       executionContext: req.executionContext ?? {},
       authorizationId: req.authorizationId,
       profileId: req.profileId ?? enriched[0]?.profileId,
@@ -217,7 +218,7 @@ describe('a built-in tool goes through the same gate as a connector tool', () =>
     expect(r.isError).toBeFalsy();
     expect(r.content[0].text).toMatch(/Awaiting commitment/);
     expect(submitProposal).toHaveBeenCalledWith(expect.objectContaining({
-      tool: 'setup__propose_brief', executionContext: expect.objectContaining({ action_type: 'brief' }),
+      tool: 'setup__propose_brief', actionType: 'brief', // v0.8: the action type travels once, beside executionContext
     }));
     expect(postReceipt).not.toHaveBeenCalled();
     expect(handler).not.toHaveBeenCalled();

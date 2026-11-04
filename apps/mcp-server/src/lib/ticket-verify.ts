@@ -15,7 +15,7 @@
  *  1. The receipt's Ed25519 signature must verify against the PINNED
  *     Authority Server key (attestation-cache.ts) — not whatever key a live
  *     `/api/as/pubkey` happens to answer with right now, and not whatever
- *     `issuer` DID the ticket itself claims. hap-core 0.12's
+ *     `issuer` DID the ticket itself claims. hap-core's
  *     verifyTicketSignature() resolves the verification key from the
  *     ticket's own `issuer`; this module restricts that resolution to the
  *     did:key derived from the pinned hex (trustedIssuers), so a ticket
@@ -36,20 +36,28 @@
  *     artifact was approved, or the hash was swapped in transit.
  *  4. The receipt's signed `timestamp` must be recent — see
  *     TICKET_MAX_AGE_SECONDS / TICKET_MAX_CLOCK_SKEW_SECONDS below. This is
- *     hardening, not full replay protection on its own — see check 5.
+ *     hardening, not full replay protection on its own — see check 5. A
+ *     replayed ticket (the AS answered `idempotent: true`) keeps its original
+ *     timestamp by design and is exempt (protocol.md → Ticket Payload, rule 4);
+ *     the execution journal decides what may run on it.
  *  5. The receipt's `idempotencyKey` — whenever THIS call generated one (the
  *     automatic path always does; tool-proxy.ts's M3 key, reused across
  *     postReceipt's internal retries) — must match it exactly. The Authority
  *     Server signs `idempotencyKey` into the receipt verbatim whenever the
  *     request carried one, so a ticket genuinely signed for a DIFFERENT call
  *     of the same shape (same action/executionContext/grant, different
- *     invocation) can no longer be substituted for this one — closing the gap
- *     that used to exist here, where a fresh and validly-signed ticket for
- *     "the same kind of call" couldn't be told apart from a ticket for THIS
- *     specific call. Missing on the ticket when this call sent one is a
- *     mismatch, not a pass: the rollout order is Authority Server first, so
- *     by the time a gateway checks this, the AS it talks to always echoes
- *     the key back when given one.
+ *     invocation) can no longer be substituted for this one. Missing on the
+ *     ticket when this call sent one is a mismatch, not a pass.
+ *  6. v0.8 (protocol.md → Ticket Payload Schema, rule 4): the ticket names
+ *     the request it answers — hap-core's `verifyTicketAgainstRequest` checks
+ *     every echoed field, the `idempotencyKey`, the `mandateId` of the mandate
+ *     this gateway verified in Phase 1, and that the ticket's `version` is its
+ *     mandate's (`TICKET_REQUEST_MISMATCH`).
+ *  7. v0.8, review path: every `approvalSignature` / `approvalSignatures`
+ *     entry is rebuilt from the ticket and the mandate and verified under its
+ *     decider's own DID (`verifyTicketApprovals`) — what catches a ticket for
+ *     an operation the decider did not see (an AS that shows "archive" and
+ *     issues a ticket for "delete").
  *
  * What this does NOT do: cross-check a review-mode proposal's tool/args
  * against what THIS gateway itself submitted, when it was the submitter —
@@ -59,13 +67,21 @@
  * refusing-as-an-attack — see its own docs for why (a genuine AS legitimately
  * lists proposals submitted by the same operator's other gateways too).
  */
-import { verifyTicketSignature, type TicketPayload } from '@hap/core';
+import {
+  verifyTicketSignature,
+  verifyTicketAgainstRequest,
+  verifyTicketApprovals,
+  decodeMandateBlob,
+  HapError,
+  type TicketPayload,
+  type Mandate,
+} from '@hap/core';
 import { AttestationCache, AsKeyMismatchError } from './attestation-cache';
 import { hashToolArgs } from './execution-journal';
 
 /** Thrown when the ticket's signature verifies but its own bound fields
  *  (action / executionContext / authorizationId / profileId / proposalId /
- *  timestamp) disagree with what the caller asked for. */
+ *  mandateId / version / timestamp) disagree with what the caller asked for. */
 export class TicketBindingMismatchError extends Error {
   constructor(message: string) {
     super(message);
@@ -82,7 +98,8 @@ export class TicketBindingMismatchError extends Error {
  * clock drift and network latency between a gateway and a self-hosted AS on
  * a different machine, while still bounding how long a stolen or replayed
  * ticket stays usable. This is a hardening measure, NOT full replay
- * protection on its own — see the module doc comment.
+ * protection on its own — see the module doc comment. It is the protocol's
+ * own freshness window (Mandate rule 9's 300 s skew tolerance).
  */
 export const TICKET_MAX_AGE_SECONDS = 5 * 60;
 
@@ -103,6 +120,29 @@ export interface ExpectedTicket {
   authorizationId?: string;
   /** The profile id this call requested a ticket against. */
   profileId?: string;
+  /** v0.8 — the `actionType` and `boundsHash` the request carried; the AS echoes both. */
+  actionType?: string;
+  boundsHash?: string;
+  /**
+   * v0.8 — the HAP `mandate_id` this call sent, from the mandate this gateway
+   * verified in Phase 1 (CachedAuthorization.mandateId). The ticket MUST name
+   * it; a ticket for the mandate's revoked predecessor (same bounds_hash) is
+   * refused here.
+   */
+  mandateId?: string;
+  /**
+   * v0.8 — every signed `mandate_id` of the grant this call ran under
+   * (CachedAuthorization.mandateIds). When given, the ticket's `mandateId`
+   * must be one of them; it replaces the single {@link mandateId} check,
+   * because the Authority Server picks the live mandate among them.
+   */
+  mandateIds?: string[];
+  /**
+   * v0.8 — the signed mandate the ticket runs under, when the caller holds
+   * it: lets the ticket's `version` be checked against the mandate's and the
+   * review path's approval signatures be verified under their deciders' DIDs.
+   */
+  mandate?: Mandate;
   /**
    * The proposal id this call is executing — review path only. When set,
    * the receipt MUST carry the same `proposalId`: a receipt minted for a
@@ -112,6 +152,8 @@ export interface ExpectedTicket {
    * executed.
    */
   proposalId?: string;
+  /** v0.8, review path — the proposal's content fingerprint this call sent. */
+  proposalContentHash?: string;
   /**
    * The idempotency key THIS call generated and sent with its receipt
    * request, when it sent one — see check 5 in the module doc comment. The
@@ -132,6 +174,37 @@ export interface ExpectedTicket {
    *  alongside it; must match exactly (same version/kind/fields) so a
    *  verifier downstream knows what the hash actually covers. */
   contentBinding?: { version: string; kind: string; fields?: string[] };
+  /**
+   * v0.8 — the AS answered `idempotent: true`: it replayed the ticket it had
+   * already issued for this request instead of minting one. Exempt from the
+   * freshness window (protocol.md → Ticket Payload, rule 4); the execution
+   * journal decides whether anything may run on it (One execution per ticket,
+   * rule 2).
+   */
+  replay?: boolean;
+}
+
+/**
+ * The mandate a ticket runs under, from a cached authorization's blobs: the
+ * one whose signed `mandate_id` the ticket names. Undefined when none
+ * matches or decodes — the caller then skips the mandate-bound checks (the
+ * mandate-id membership check in {@link verifyTicket} still refuses a ticket
+ * for a mandate outside the grant).
+ */
+export function mandateForTicket(
+  attestations: ReadonlyArray<{ blob: string }> | undefined,
+  ticketMandateId: unknown,
+): Mandate | undefined {
+  if (typeof ticketMandateId !== 'string') return undefined;
+  for (const a of attestations ?? []) {
+    try {
+      const m = decodeMandateBlob(a.blob);
+      if (m.payload.mandate_id === ticketMandateId) return m;
+    } catch {
+      // undecodable blob — not this mandate
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -215,11 +288,8 @@ export async function verifyTicket(
   // G4: when THIS call sent an idempotency key with its receipt request, the
   // ticket must carry the identical one. An absent key on the ticket counts
   // as a mismatch (fail closed — see check 5 in the module doc comment), not
-  // as "the AS doesn't support this yet": the Authority Server is upgraded
-  // first by convention, so by the time a gateway enforces this, the AS it
-  // talks to always echoes the key back when given one. Idempotent replay of
-  // the SAME call (same key) still passes, by construction — nothing here
-  // changes between calls that reuse the same key for the same invocation.
+  // as "the AS doesn't support this yet". Idempotent replay of the SAME call
+  // (same key) still passes, by construction.
   if (expected.idempotencyKey !== undefined && receipt.idempotencyKey !== expected.idempotencyKey) {
     throw new TicketBindingMismatchError(
       `Ticket idempotencyKey "${String(receipt.idempotencyKey)}" does not match the one this call sent ` +
@@ -253,17 +323,90 @@ export async function verifyTicket(
   if (typeof timestamp !== 'number' || !Number.isFinite(timestamp)) {
     throw new TicketBindingMismatchError('Ticket carries no valid timestamp — refusing to execute.');
   }
-  const nowSec = Math.floor(Date.now() / 1000);
-  const ageSec = nowSec - timestamp;
-  if (ageSec > TICKET_MAX_AGE_SECONDS) {
-    throw new TicketBindingMismatchError(
-      `Ticket is ${ageSec}s old, older than the ${TICKET_MAX_AGE_SECONDS}s freshness window — refusing to execute.`,
-    );
+  // A replayed ticket keeps its ORIGINAL timestamp by design (the AS returns
+  // the ticket it issued), so the freshness window does not apply to it
+  // (protocol.md → Ticket Payload, rule 4) — the execution journal decides
+  // whether anything may run on it.
+  if (expected.replay !== true) {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const ageSec = nowSec - timestamp;
+    if (ageSec > TICKET_MAX_AGE_SECONDS) {
+      throw new TicketBindingMismatchError(
+        `Ticket is ${ageSec}s old, older than the ${TICKET_MAX_AGE_SECONDS}s freshness window — refusing to execute.`,
+      );
+    }
+    if (ageSec < -TICKET_MAX_CLOCK_SKEW_SECONDS) {
+      throw new TicketBindingMismatchError(
+        `Ticket is timestamped ${-ageSec}s in the future, beyond the ${TICKET_MAX_CLOCK_SKEW_SECONDS}s clock-skew ` +
+          `tolerance — refusing to execute.`,
+      );
+    }
   }
-  if (ageSec < -TICKET_MAX_CLOCK_SKEW_SECONDS) {
-    throw new TicketBindingMismatchError(
-      `Ticket is timestamped ${-ageSec}s in the future, beyond the ${TICKET_MAX_CLOCK_SKEW_SECONDS}s clock-skew ` +
-        `tolerance — refusing to execute.`,
-    );
+
+  // v0.8 — the ticket names the request it answers (check 6). hap-core
+  // compares the echoed fields it knows (profileId, actionType, boundsHash,
+  // executionContext, contentHash/contentBinding, proposalId,
+  // proposalContentHash), the idempotencyKey, the mandateId and the version
+  // against the mandate, and the 300 s freshness window (replay exempt).
+  // Suveren's own fields (action, authorizationId) were checked above. Where
+  // the caller did not state an expectation, the ticket's own value is passed
+  // so only the stated ones constrain.
+  const ticket = receipt as unknown as TicketPayload;
+  // The mandate the ticket names must be one this gateway verified for the
+  // grant. An authorization can hold several signed mandates (one per
+  // domain, or a renewal beside the expiring one) and the Authority Server
+  // picks the live one, so any of the grant's own mandate ids is accepted —
+  // anything else (a revoked predecessor, another grant's mandate) is not.
+  let acceptedMandateId = expected.mandateId;
+  if (expected.mandateIds && expected.mandateIds.length > 0) {
+    if (typeof ticket.mandateId !== 'string' || !expected.mandateIds.includes(ticket.mandateId)) {
+      throw new TicketBindingMismatchError(
+        `TICKET_REQUEST_MISMATCH: ticket mandateId ${String(ticket.mandateId)} is not a mandate of this grant — refusing to execute.`,
+      );
+    }
+    acceptedMandateId = ticket.mandateId;
   }
+  try {
+    verifyTicketAgainstRequest(
+      ticket,
+      {
+        profileId: expected.profileId ?? ticket.profileId,
+        actionType: expected.actionType ?? ticket.actionType,
+        boundsHash: expected.boundsHash ?? ticket.boundsHash,
+        executionContext: (expected.executionContext ?? ticket.executionContext ?? {}) as Record<string, unknown>,
+        mandateId: acceptedMandateId,
+        idempotencyKey: expected.idempotencyKey,
+        contentHash: expected.contentHash ?? ticket.contentHash,
+        contentBinding: expected.contentBinding !== undefined
+          ? (expected.contentBinding as TicketPayload['contentBinding'])
+          : ticket.contentBinding,
+        proposalId: expected.proposalId ?? ticket.proposalId,
+        // A v0.7 ticket has no `proposalContentHash` (today's Authority Server
+        // binds the fingerprint on the request only); a v0.8 ticket MUST carry
+        // the one this call sent.
+        proposalContentHash: ticket.version === '0.7'
+          ? ticket.proposalContentHash
+          : (expected.proposalContentHash ?? ticket.proposalContentHash),
+      },
+      { mandate: expected.mandate, replay: expected.replay === true },
+    );
+  } catch (err) {
+    if (err instanceof HapError) {
+      throw new TicketBindingMismatchError(`${err.message} — refusing to execute.`);
+    }
+    throw err;
+  }
+
+  // v0.8, review path (check 7): the approvals the ticket carries are
+  // rebuilt from the ticket + mandate and verified under each decider's DID.
+  if (expected.mandate && (ticket.approvalSignature || (ticket.approvalSignatures?.length ?? 0) > 0)) {
+    try {
+      await verifyTicketApprovals(ticket, expected.mandate);
+    } catch (err) {
+      throw new TicketBindingMismatchError(
+        `${err instanceof Error ? err.message : String(err)} — the approval does not cover this operation; refusing to execute.`,
+      );
+    }
+  }
+
 }

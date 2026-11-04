@@ -33,11 +33,25 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createHash } from 'node:crypto';
 
-export type JournalState = 'intent' | 'done' | 'failed';
+/**
+ * v0.8 (protocol.md → *One execution per ticket*, rule 1): `requested` is
+ * written BEFORE the ticket request is sent, `intent` ("started") before the
+ * downstream call, `done` / `failed` after. An interruption then leaves a
+ * state, never nothing.
+ */
+export type JournalState = 'requested' | 'intent' | 'done' | 'failed';
 
 export interface JournalEntry {
-  /** The ticket (receipt) id this execution ran under. Primary key. */
+  /** The ticket (receipt) id this execution ran under. Primary key once a
+   *  ticket exists; `''` while the row is only `requested`. */
   ticketId: string;
+  /**
+   * v0.8 — the request the ticket answers: the `idempotencyKey` on the
+   * synchronous path, the `proposalId` on the review path. The record is
+   * keyed on this as well as on the ticket id, so a second ticket with a new
+   * id for the same request finds the row and is not executed again.
+   */
+  requestKey?: string;
   /** Review path only — the proposal the ticket executed. */
   proposalId?: string;
   /** Namespaced tool name, e.g. `deploy-github__release`. */
@@ -123,18 +137,73 @@ export class ExecutionJournal {
 
   /** Look a ticket up. Always reads from disk — another process may have written. */
   get(ticketId: string): JournalEntry | undefined {
-    return this.load().entries.find(e => e.ticketId === ticketId);
+    return this.load().entries.find(e => e.ticketId === ticketId && ticketId !== '');
+  }
+
+  /** The row for a request (idempotencyKey / proposalId), whatever its state. */
+  getByRequest(requestKey: string): JournalEntry | undefined {
+    return this.load().entries.find(e => e.requestKey === requestKey);
   }
 
   /**
-   * Record intent to execute under `ticketId`. Refuses if any row for that
-   * ticket already exists, whatever its state — deciding what an existing row
-   * means is the caller's job, and it differs by state (see commitments.ts).
+   * v0.8 — record that a ticket is about to be REQUESTED for this request,
+   * before the request leaves the machine (*One execution per ticket*, rule 1).
+   * A lost response then leaves a `requested` row: "the ticket never arrived,
+   * so the action cannot have started" — the one case a replayed ticket may
+   * run (rule 2). Idempotent for the same request key: a retry of the request
+   * itself keeps the one row.
+   */
+  requested(entry: { requestKey: string; tool: string; argsHash: string; proposalId?: string }): void {
+    const file = this.load();
+    if (file.entries.some(e => e.requestKey === entry.requestKey)) return;
+    file.entries.push({
+      ticketId: '',
+      ...entry,
+      state: 'requested',
+      startedAt: nowSec(),
+      pid: process.pid,
+    });
+    this.persist(file);
+  }
+
+  /**
+   * Close a `requested` row whose ticket was never issued (the AS refused).
+   * Nothing ran; the row records that the request was judged and refused.
+   */
+  refusedBeforeTicket(requestKey: string, outcome: 'as_refused', detail?: string): void {
+    const file = this.load();
+    const row = file.entries.find(e => e.requestKey === requestKey && e.state === 'requested');
+    if (!row) return;
+    row.state = 'failed';
+    row.outcome = outcome;
+    if (detail !== undefined) row.detail = detail.length > DETAIL_CAP ? detail.slice(0, DETAIL_CAP) : detail;
+    row.finishedAt = nowSec();
+    this.persist(file);
+  }
+
+  /**
+   * Claim the ticket for execution — the atomic move to `intent` ("started")
+   * BEFORE the downstream call (*One execution per ticket*, rule 2). Refuses
+   * if a row for that ticket already exists, whatever its state — deciding
+   * what an existing row means is the caller's job, and it differs by state
+   * (see commitments.ts). With a `requestKey`, a row for the SAME request that
+   * is already `intent`/`done`/`failed` refuses too — a second ticket with a
+   * new id for the same request is not executed again; a `requested` row is
+   * upgraded in place.
    */
   begin(entry: Omit<JournalEntry, 'state' | 'startedAt' | 'pid'>): BeginResult {
     const file = this.load();
-    const existing = file.entries.find(e => e.ticketId === entry.ticketId);
+    const existing = file.entries.find(e => e.ticketId === entry.ticketId && e.ticketId !== '');
     if (existing) return { ok: false, existing };
+    if (entry.requestKey) {
+      const sameRequest = file.entries.find(e => e.requestKey === entry.requestKey);
+      if (sameRequest && sameRequest.state !== 'requested') return { ok: false, existing: sameRequest };
+      if (sameRequest) {
+        Object.assign(sameRequest, entry, { state: 'intent', startedAt: nowSec(), pid: process.pid });
+        this.persist(file);
+        return { ok: true };
+      }
+    }
     file.entries.push({
       ...entry,
       state: 'intent',

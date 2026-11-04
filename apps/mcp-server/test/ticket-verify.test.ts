@@ -10,6 +10,7 @@ import { AttestationCache, AsKeyMismatchError } from '../src/lib/attestation-cac
 import { SPClient } from '../src/lib/sp-client';
 import { verifyTicket, TicketBindingMismatchError } from '../src/lib/ticket-verify';
 import { testReceiptKeypair, makeSignedReceipt, signTestReceipt } from './helpers/real-receipt';
+import { signMandate } from '@hap/core';
 
 // AttestationCache.getPublicKey() needs an SPClient whose .url matches what
 // it fetches from — construct one against a URL that will never actually be
@@ -26,9 +27,68 @@ const BASE = {
   executionContext: { action_type: 'write' },
   authorizationId: 'authz_1',
   profileId: 'test-records@1',
+  // v0.8: every ticket names its mandate and carries its version; hap-core
+  // 0.13's verifier requires both, so the hand-signed fixtures carry them too.
+  mandateId: 'mandate-1',
+  version: '0.7',
+  actionType: 'write',
+  boundsHash: 'sha256:test',
 };
 
 describe('verifyTicket', () => {
+  describe('v0.8 — the ticket names the request it answers', () => {
+    it('rejects a ticket whose mandateId is not the mandate this call verified (a revoked predecessor shares the bounds_hash)', async () => {
+      const kp = testReceiptKeypair();
+      const receipt = makeSignedReceipt(kp, { ...BASE, mandateId: 'mandate-REVOKED' });
+      await expect(verifyTicket(cacheWithKey(kp.publicKeyHex), receipt, { ...BASE, mandateId: 'mandate-1' }))
+        .rejects.toBeInstanceOf(TicketBindingMismatchError);
+    });
+
+    it('rejects a ticket whose actionType or boundsHash differs from the request', async () => {
+      const kp = testReceiptKeypair();
+      const byType = makeSignedReceipt(kp, { ...BASE, actionType: 'delete' });
+      await expect(verifyTicket(cacheWithKey(kp.publicKeyHex), byType, { ...BASE, actionType: 'write' }))
+        .rejects.toBeInstanceOf(TicketBindingMismatchError);
+      const byHash = makeSignedReceipt(kp, { ...BASE, boundsHash: 'sha256:other' });
+      await expect(verifyTicket(cacheWithKey(kp.publicKeyHex), byHash, { ...BASE, boundsHash: 'sha256:test' }))
+        .rejects.toBeInstanceOf(TicketBindingMismatchError);
+    });
+
+    it('a replayed ticket (idempotent: true) keeps its original timestamp and is exempt from the freshness window', async () => {
+      const kp = testReceiptKeypair();
+      const receipt = signTestReceipt(
+        { id: 'r1', ...BASE, boundsHash: 'sha256:test', actionType: 'write', timestamp: Math.floor(Date.now() / 1000) - 60 * 60, issuer: kp.issuer },
+        kp.privateKey,
+      );
+      await expect(verifyTicket(cacheWithKey(kp.publicKeyHex), receipt, BASE)).rejects.toBeInstanceOf(TicketBindingMismatchError);
+      await expect(verifyTicket(cacheWithKey(kp.publicKeyHex), receipt, { ...BASE, replay: true })).resolves.toBeUndefined();
+    });
+
+    it('rejects a ticket whose version differs from its mandate\'s', async () => {
+      const kp = testReceiptKeypair();
+      const mandate = await signMandate(
+        {
+          mandate_id: 'mandate-1', version: '0.8', profile_id: BASE.profileId,
+          bounds_hash: 'sha256:test', scope_hash: 'sha256:' + 'e'.repeat(64), execution_context_hash: 'sha256:' + 'c'.repeat(64),
+          profile_hash: 'sha256:' + 'a'.repeat(64), issuer: kp.issuer, mandate_owners: [{ did: 'did:key:z6MktwupdmLXVVqTzCw4i46r4uGyosGXRnR3XjN4Zq7oMMsw' }],
+          gate_content_hashes: { intent: 'sha256:' + '4'.repeat(64) }, commitment_mode: 'automatic', issued_at: 1, expires_at: 2,
+        },
+        kp.privateKeyRaw,
+      );
+      const receipt = makeSignedReceipt(kp, { ...BASE, version: '0.7' });
+      await expect(verifyTicket(cacheWithKey(kp.publicKeyHex), receipt, { ...BASE, mandate }))
+        .rejects.toBeInstanceOf(TicketBindingMismatchError);
+      const matching = makeSignedReceipt(kp, { ...BASE, version: '0.8' });
+      await expect(verifyTicket(cacheWithKey(kp.publicKeyHex), matching, { ...BASE, version: '0.8', mandate })).resolves.toBeUndefined();
+    });
+
+    it('rejects an object that is a projection or a mandate payload, never a ticket', async () => {
+      const kp = testReceiptKeypair();
+      const projection = makeSignedReceipt(kp, { ...BASE, typ: 'HAP-ticket-projection' });
+      await expect(verifyTicket(cacheWithKey(kp.publicKeyHex), projection, BASE)).rejects.toBeInstanceOf(AsKeyMismatchError);
+    });
+  });
+
   it('accepts a fully valid, matching, fresh ticket', async () => {
     const kp = testReceiptKeypair();
     const receipt = makeSignedReceipt(kp, { id: 'r1', ...BASE });
@@ -217,8 +277,11 @@ describe('verifyTicket', () => {
     it('rejects a ticket with no timestamp at all', async () => {
       const kp = testReceiptKeypair();
       const receipt = signTestReceipt({ id: 'r1', ...BASE, issuer: kp.issuer }, kp.privateKey);
+      // hap-core 0.13: a ticket verifier MUST require `timestamp` (Ticket
+      // Payload Schema → Signature), so the object is refused as a ticket
+      // at the signature step — before any binding check runs.
       await expect(verifyTicket(cacheWithKey(kp.publicKeyHex), receipt, BASE))
-        .rejects.toBeInstanceOf(TicketBindingMismatchError);
+        .rejects.toBeInstanceOf(AsKeyMismatchError);
     });
 
     it('accepts a ticket within the clock-skew tolerance, slightly in the future', async () => {

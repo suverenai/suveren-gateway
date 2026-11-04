@@ -18,7 +18,7 @@ import { PreviewLog } from './preview-log';
 import { OutcomeOutbox } from './outcome-outbox';
 import { MCPGatekeeper } from './gatekeeper';
 import { ReportStore } from './report/report-store';
-import { PROTOCOL_VERSION } from '@hap/core';
+import { SUPPORTED_VERSIONS } from '@hap/core';
 
 export interface EnrichedAuthorization extends CachedAuthorization {
   gateContent: GateContent | null;
@@ -58,7 +58,7 @@ export class SharedState {
    * again whenever the AS URL this process pairs with changes — which, in
    * practice, only happens across a restart; see bin/http.ts's
    * `repairIfAsUrlChanged`). Non-null means the AS this gateway is paired
-   * with does not list {@link PROTOCOL_VERSION} among its
+   * with shares no version with SUPPORTED_VERSIONS among its
    * `supportedVersions` — every gated tool call MUST refuse with this
    * message rather than reach the AS at all (checked in tool-proxy.ts,
    * before anything else). `null` until the first check completes, which
@@ -68,6 +68,16 @@ export class SharedState {
    * unreachable at boot must not permanently brick the gateway).
    */
   asVersionRefusal: string | null = null;
+  /** v0.8: whether the paired Authority Server lists 0.8 among its supportedVersions —
+   * read once at start-up ({@link checkAsCompat}); false until known. Where the wire
+   * shape differs between a 0.7 and a 0.8 AS (today: nothing), this is the switch. */
+  asSpeaks08 = false;
+  /** v0.8: the paired AS's supportedVersions as read at start-up; null until
+   * known. A mandate whose signed version is not in it can no longer be
+   * exercised (protocol.md → Version negotiation, rule 3: a v0.8 AS issues no
+   * ticket against a v0.7 mandate) and is shown as needing to be signed again
+   * before any call is refused for it. */
+  asSupportedVersions: string[] | null = null;
 
   /**
    * @param dataDir Passed to the AttestationCache so it can enforce AS key
@@ -121,13 +131,19 @@ export class SharedState {
     // Missing/malformed is exactly as incompatible as a list that doesn't
     // name our version — both get the same clear refusal.
     const supported = Array.isArray(compat.supportedVersions) ? compat.supportedVersions : [];
-    if (!supported.includes(PROTOCOL_VERSION)) {
+    // v0.8 (protocol.md → Version negotiation, rule 1): the two sides need ONE
+    // version in common, not this package's newest. A gateway that verifies
+    // 0.8 and 0.7 keeps working against today's 0.7 AS and against a 0.8 AS.
+    const common = SUPPORTED_VERSIONS.filter((v) => supported.includes(v));
+    this.asSpeaks08 = supported.includes('0.8');
+    this.asSupportedVersions = supported.filter((v): v is string => typeof v === 'string');
+    if (common.length === 0) {
       this.asVersionRefusal = supported.length > 0
-        ? `This Authority Server supports protocol version(s) [${supported.join(', ')}], not ${PROTOCOL_VERSION}. ` +
+        ? `This Authority Server supports protocol version(s) [${supported.join(', ')}], none of [${SUPPORTED_VERSIONS.join(', ')}] this gateway speaks. ` +
           'Update the gateway or the Authority Server so the two agree, then restart. No gated action can run until then.'
         : `This Authority Server's /api/as/compat does not name a supportedVersions list (it answered ` +
           `${JSON.stringify(compat.protocolVersion ?? 'unknown')}), so it cannot be confirmed to support ` +
-          `protocol ${PROTOCOL_VERSION}. Update the gateway or the Authority Server, then restart. No gated action can run until then.`;
+          `any of protocol [${SUPPORTED_VERSIONS.join(', ')}]. Update the gateway or the Authority Server, then restart. No gated action can run until then.`;
       console.error(`[Suveren MCP] ${this.asVersionRefusal}`);
     } else {
       this.asVersionRefusal = null;
@@ -269,7 +285,10 @@ export class SharedState {
           gateContent: gateEntry?.gateContent ?? null,
           context: auth.context ?? gateEntry?.context,
           contextHash: auth.contextHash ?? gateEntry?.contextHash,
-          needsReapproval: this.cache.needsReapproval(auth.authorizationId),
+          needsReapproval: this.cache.needsReapproval(auth.authorizationId)
+            || (this.asSupportedVersions !== null && this.asSupportedVersions.length > 0
+              && typeof auth.mandateVersion === 'string'
+              && !this.asSupportedVersions.includes(auth.mandateVersion)),
         };
       })
       .filter(auth => auth.gateContent !== null);

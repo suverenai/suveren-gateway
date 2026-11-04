@@ -16,7 +16,7 @@ import { hashPreviewBody } from '../src/lib/preview';
 import type { SharedState } from '../src/lib/shared-state';
 import type { IntegrationManager, DiscoveredTool } from '../src/lib/integration-manager';
 import type { SPProposal } from '../src/lib/sp-client';
-import { testReceiptKeypair, makeSignedReceipt } from './helpers/real-receipt';
+import { testReceiptKeypair, makeSignedReceipt, echoTicketRequest } from './helpers/real-receipt';
 import { hashToolArgs } from '../src/lib/execution-journal';
 
 let manifestDir: string;
@@ -107,6 +107,7 @@ function buildState(opts: { previewHash?: string }) {
     receipt: makeSignedReceipt(kp, {
       id: 'rcpt-preview-1',
       action: req.action,
+      ...echoTicketRequest(req),
       executionContext: req.executionContext ?? {},
       authorizationId: req.authorizationId,
       profileId: req.profileId,

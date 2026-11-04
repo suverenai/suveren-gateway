@@ -26,7 +26,7 @@ import {
   isCommitmentModeAllowed,
   validateBoundsParams,
   validateScopeParams,
-  PROTOCOL_VERSION,
+  SUPPORTED_VERSIONS,
   type AgentProfile,
 } from '@hap/core';
 
@@ -277,7 +277,10 @@ export async function createMandate(req: MandateRequest, deps: CeremonyDeps): Pr
     authorization_id: authorizationId,
     profile_id: plan.profile.id,
     profile_hash: computeProfileHash(plan.profile),
-    supported_versions: [PROTOCOL_VERSION],
+    // v0.8: every version this gateway verifies and enforces, newest first
+    // (protocol.md → Version negotiation, rule 1). Today's 0.7 AS issues 0.7,
+    // a 0.8 AS issues 0.8 — the gateway reads each under its own rules.
+    supported_versions: [...SUPPORTED_VERSIONS],
     bounds: plan.bounds,
     bounds_hash: boundsHash,
     scope_hash: scopeHash,

@@ -25,7 +25,11 @@ export function createDecryptProposalContentRouter(vault: Vault): Router {
   const router = Router();
 
   router.post('/', async (req: Request, res: Response) => {
-    const { ciphertext, keys } = req.body as { ciphertext?: unknown; keys?: unknown };
+    const { ciphertext, hash, proposalContentHash } = req.body as {
+      ciphertext?: unknown; keys?: unknown; encrypted_keys?: unknown; hash?: unknown; proposalContentHash?: unknown;
+    };
+    // v0.8 wire name `encrypted_keys`; `keys` is the pre-0.8 name — same wraps.
+    const keys = (req.body as { encrypted_keys?: unknown; keys?: unknown }).encrypted_keys ?? (req.body as { keys?: unknown }).keys;
 
     if (typeof ciphertext !== 'string' || ciphertext.length === 0) {
       res.status(400).json({ error: 'Missing or invalid field: ciphertext (base64 string)' });
@@ -45,7 +49,14 @@ export function createDecryptProposalContentRouter(vault: Vault): Router {
     try {
       const kp = await loadOrGenerateKeyPair(vault);
       const plaintext = await decryptProposalContent(
-        { ciphertext, keys: keys as Record<string, { ct: string; enc: string }> },
+        {
+          ciphertext,
+          keys: keys as Record<string, { ct: string; enc: string }>,
+          // v0.8 rule 8: when the caller passes the proposal's fingerprint, the
+          // decrypted content is checked against it before it is shown.
+          ...(typeof hash === 'string' ? { hash } : {}),
+          ...(typeof proposalContentHash === 'string' ? { proposalContentHash } : {}),
+        },
         me.id,
         kp.privateKey,
       );

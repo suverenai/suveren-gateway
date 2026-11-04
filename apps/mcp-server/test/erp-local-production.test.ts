@@ -190,7 +190,7 @@ import { tmpdir } from 'node:os';
 import { executeCommitted } from '../src/tools/commitments';
 import type { SharedState } from '../src/lib/shared-state';
 import type { SPProposal } from '../src/lib/sp-client';
-import { testReceiptKeypair, makeSignedReceipt } from './helpers/real-receipt';
+import { testReceiptKeypair, makeSignedReceipt, echoTicketRequest } from './helpers/real-receipt';
 import { hashToolArgs } from '../src/lib/execution-journal';
 
 const CUSTOMER_ARGS = { name: 'Steiner GmbH', address_lines: ['Hauptstr. 1', '1010 Wien'], country: 'AT', uid: 'ATU12345678' };
@@ -206,7 +206,7 @@ function executionState(previewHash: string | undefined) {
   const complete = vi.fn();
   const state = {
     spClient: { postReceipt: vi.fn().mockImplementation(async (req: Record<string, unknown>) => ({
-      receipt: makeSignedReceipt(kp, { id: 'rcpt-am1', action: req.action as string, executionContext: (req.executionContext ?? {}) as Record<string, unknown>,
+      receipt: makeSignedReceipt(kp, { id: 'rcpt-am1', action: req.action as string, ...echoTicketRequest(req), executionContext: (req.executionContext ?? {}) as Record<string, unknown>,
         authorizationId: req.authorizationId as string, profileId: req.profileId as string, proposalId: req.proposalId as string,
         // The AS signs the binding the gateway asked for (master-data binds the whole arguments).
         ...(req.contentHash ? { contentHash: req.contentHash, contentBinding: req.contentBinding } : {}) }),

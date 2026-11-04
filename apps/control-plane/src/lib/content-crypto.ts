@@ -15,7 +15,11 @@
  * fatal (G4): the caller gets `unreadableFor` back to report it.
  */
 import { createHash } from 'node:crypto';
-import { canonicalize } from '@hap/core';
+import {
+  canonicalize,
+  encryptProposalContent as hapEncryptProposalContent,
+  decryptProposalContent as hapDecryptProposalContent,
+} from '@hap/core';
 import { encryptForRecipients, decryptIntent, type RecipientWrap } from './e2e-crypto';
 import { fetchAs, type AsFetchPinning } from './as-tls-pin';
 import { readPairing } from './as-pairing';
@@ -28,8 +32,20 @@ export interface ProposalContentWire {
   v: 1;
   alg: typeof CONTENT_ALG;
   ciphertext: string;
+  /** Suveren-internal name (pre-0.8), kept through the transition. */
   keys: Record<string, { ct: string; enc: string }>;
+  /** Suveren-internal name (pre-0.8) of the fingerprint `proposalContentHash`. */
   hash: string;
+  /**
+   * v0.8 normative envelope (protocol.md → Proposals — what the Authority
+   * Server receives, rules 2–3): the same wraps as `keys`, keyed by reader;
+   * `readers` ∪ `unreadable` is the owner plus every signed decider, and
+   * `readers` equals the key set of `encrypted_keys`. Readers are named by
+   * user id until the Authority Server names accounts by key-bearing DID.
+   */
+  encrypted_keys: Record<string, { ct: string; enc: string }>;
+  readers: string[];
+  unreadable: string[];
 }
 
 /**
@@ -127,15 +143,29 @@ export async function encryptProposalContent(
   recipientUserIds: string[],
   deps: ContentCryptoDeps,
 ): Promise<{ content: ProposalContentWire; unreadableFor: string[] }> {
-  const canonical = canonicalize(toolArgs);
-  const hash = computeProposalContentHash(toolArgs);
   const { resolved, unreadableFor } = await resolveRecipientPubkeys(recipientUserIds, deps);
   if (resolved.length === 0) {
     throw new Error('No recipient (including the submitter) has a registered end-to-end key — cannot encrypt this proposal.');
   }
-  const encrypted = await encryptForRecipients(canonical, resolved);
+  // v0.8 (protocol.md → Proposals, rules 1–4): hap-core's construction,
+  // byte for byte the conformance vector's — JCS content, AES-256-GCM under a
+  // fresh CEK, the CEK HPKE-sealed per reader, base64url throughout. Readers
+  // are named by account id until the Authority Server names accounts by
+  // key-bearing DID (Track B). The same wraps also travel as `keys` and the
+  // fingerprint as `hash`, the names today's AS stores and every 0.40
+  // gateway reads (Node's base64 decoder reads base64url too, so a 0.40
+  // gateway decrypts this content unchanged).
+  const { content: env, proposalContentHash } = await hapEncryptProposalContent(
+    toolArgs,
+    resolved.map((r) => ({ did: r.userId, publicKey: r.publicKey })),
+    { unreadable: unreadableFor },
+  );
   return {
-    content: { v: 1, alg: CONTENT_ALG, ciphertext: toB64(encrypted.intentCiphertext), keys: keysToWire(encrypted.encryptedKeys), hash },
+    content: {
+      v: 1, alg: CONTENT_ALG, ciphertext: env.ciphertext,
+      keys: env.encrypted_keys, hash: proposalContentHash,
+      encrypted_keys: env.encrypted_keys, readers: env.readers, unreadable: env.unreadable,
+    },
     unreadableFor,
   };
 }
@@ -166,15 +196,72 @@ export async function encryptProposalNote(
  * Generic over the plaintext: the caller decides whether it is JCS(toolArgs)
  * (then JSON.parse it) or a plain note.
  */
+/**
+ * v0.8 (protocol.md → Proposals, rule 8): an approval surface MUST recompute
+ * `proposalContentHash` over the plaintext it decrypted and MUST NOT offer a
+ * decision on a mismatch — AES-GCM is not key-committing, so one ciphertext
+ * can open to different plaintexts under different wrapped keys, and only the
+ * fingerprint shows it. Throws on a mismatch; a wire without a fingerprint
+ * (a note) is not checked.
+ */
+export function assertContentFingerprint(plaintext: string, wire: { hash?: string; proposalContentHash?: string }): void {
+  const expected = wire.proposalContentHash ?? wire.hash;
+  if (!expected) return;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(plaintext);
+  } catch {
+    throw new Error('Decrypted proposal content is not JSON — refusing to show it.');
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error('Decrypted proposal content is not a JSON object — refusing to show it.');
+  }
+  const actual = computeProposalContentHash(parsed as Record<string, unknown>);
+  if (actual !== expected) {
+    throw new Error('Decrypted proposal content does not match its fingerprint — refusing to show it.');
+  }
+}
+
+const STRICT_B64URL = /^[A-Za-z0-9_-]+$/;
+
 export async function decryptProposalContent(
-  wire: { ciphertext: string; keys: Record<string, { ct: string; enc: string }> },
+  wire: {
+    ciphertext: string;
+    keys?: Record<string, { ct: string; enc: string }>;
+    encrypted_keys?: Record<string, { ct: string; enc: string }>;
+    hash?: string;
+    proposalContentHash?: string;
+  },
   myUserId: string,
   myPrivateKey: Uint8Array,
 ): Promise<string> {
-  const wrap = wire.keys[myUserId];
+  const keys = wire.encrypted_keys ?? wire.keys ?? {};
+  const wrap = keys[myUserId];
   if (!wrap) {
     throw new Error('No key wrap for this account in this content — this device cannot read it.');
   }
+  const fingerprint = wire.proposalContentHash ?? wire.hash;
+  // v0.8 content (base64url, a fingerprint to check against): hap-core's
+  // decryption, which treats any failure as unreadable, never as partial
+  // content (Proposals, rule 3).
+  if (fingerprint && [wire.ciphertext, wrap.ct, wrap.enc].every((x) => STRICT_B64URL.test(x))) {
+    let opened: { contentJcs: string; proposalContentHash: string };
+    try {
+      opened = await hapDecryptProposalContent(
+        { ciphertext: wire.ciphertext, encrypted_keys: { [myUserId]: wrap }, readers: [myUserId], unreadable: [] },
+        myUserId,
+        myPrivateKey,
+      );
+    } catch (err) {
+      throw new Error(`This content could not be opened on this device: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    // v0.8 rule 8 — never show content whose fingerprint does not match.
+    if (opened.proposalContentHash !== fingerprint) {
+      throw new Error('Decrypted proposal content does not match its fingerprint — refusing to show it.');
+    }
+    return opened.contentJcs;
+  }
+  // Pre-0.41 content (standard base64) and change-needed notes (no fingerprint).
   const encrypted = {
     intentCiphertext: new Uint8Array(Buffer.from(wire.ciphertext, 'base64')),
     encryptedKeys: {
@@ -184,5 +271,8 @@ export async function decryptProposalContent(
       },
     },
   };
-  return decryptIntent(encrypted, myUserId, myPrivateKey);
+  const plaintext = await decryptIntent(encrypted, myUserId, myPrivateKey);
+  // v0.8 rule 8 — never show content whose fingerprint does not match.
+  assertContentFingerprint(plaintext, wire);
+  return plaintext;
 }

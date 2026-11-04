@@ -428,6 +428,10 @@ export class SPClient {
     authorizationId: string;
     /** Optional cross-check: must match the record's fingerprint when sent. */
     boundsHash?: string;
+    /** v0.8 (protocol.md → Ticket Request Schema, rule 1): the signed `mandate_id`
+     *  of the mandate being exercised; the AS resolves by it and refuses a
+     *  `boundsHash` that disagrees. Sent whenever this gateway knows it. */
+    mandateId?: string;
     profileId: string;
     action: string;
     actionType?: string;
@@ -473,7 +477,10 @@ export class SPClient {
     const { proposalContentHash, ...rest } = data;
     const body = JSON.stringify({
       ...rest,
-      ...(proposalContentHash ? { proposal_content_hash: proposalContentHash } : {}),
+      // v0.8 wire name is `proposalContentHash`; today's AS reads the
+      // Suveren-internal `proposal_content_hash`. Both are sent through the
+      // transition (same value); the AS of Track B reads the normative one.
+      ...(proposalContentHash ? { proposal_content_hash: proposalContentHash, proposalContentHash } : {}),
     });
     // Retries are only safe when the AS can dedup them: an idempotencyKey on
     // the synchronous path, or a proposalId on the review path (the AS replays
@@ -571,6 +578,12 @@ export class SPClient {
     // Phase 6
     pendingApprovers?: string[];
     createdBy?: string;
+    /** v0.8 — the normative proposal object names the mandate, its bounds
+     *  hash and the action type beside the readable fields (protocol.md →
+     *  Proposals — what the Authority Server receives). */
+    mandateId?: string;
+    boundsHash?: string;
+    actionType?: string;
   }): Promise<{ proposal: SPProposal; unreadableFor: string[] }> {
     const { content, unreadableFor } = await cpEncryptContent(data.toolArgs, data.recipientUserIds);
 
@@ -582,8 +595,18 @@ export class SPClient {
         path: data.path,
         pending_domains: data.pendingDomains,
         tool: data.tool,
+        // v0.8 normative object, beside the Suveren-internal fields today's AS
+        // reads: `content` carries `encrypted_keys`/`readers`/`unreadable` with
+        // the legacy `keys`/`hash`; the fingerprint travels as
+        // `proposalContentHash`; the operation as `action` + `actionType`.
         content,
+        proposalContentHash: content.hash,
+        action: data.tool,
+        ...(data.actionType ? { actionType: data.actionType } : {}),
+        ...(data.mandateId ? { mandateId: data.mandateId } : {}),
+        ...(data.boundsHash ? { boundsHash: data.boundsHash } : {}),
         execution_context: data.executionContext,
+        executionContext: data.executionContext,
         // Phase 6
         ...(data.pendingApprovers && data.pendingApprovers.length > 0
           ? { pending_approvers: data.pendingApprovers }

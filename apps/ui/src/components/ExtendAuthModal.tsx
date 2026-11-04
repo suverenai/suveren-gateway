@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { spClient, type PendingItem, type GateContentEntry } from '../lib/sp-client';
+import { spClient, type PendingItem, type GateContentEntry, SUPPORTED_PROTOCOL_VERSIONS } from '../lib/sp-client';
 import { computeBoundsHashBrowser, computeScopeHashBrowser, computeProfileHashBrowser, hashGateContent } from '../lib/frame';
 import { buildGateForwardArgs } from '../lib/gate-forward';
 import { profileDisplayName } from '../lib/profile-display';
@@ -131,7 +131,7 @@ export function ExtendAuthModal({ item, onClose, onSuccess }: Props) {
         renew: true,
         profile_id: item.profile_id,
         profile_hash: profileHash,
-        supported_versions: ['0.7'],
+        supported_versions: [...SUPPORTED_PROTOCOL_VERSIONS],
         bounds,
         bounds_hash: boundsHash,
         scope_hash: contextHash,

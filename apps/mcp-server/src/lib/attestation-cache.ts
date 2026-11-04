@@ -74,6 +74,23 @@ export interface CachedAuthorization {
    */
   signedCommitmentMode?: 'automatic' | 'review' | 'review_above_cap';
   /**
+   * v0.8 — the HAP `mandate_id` from the SIGNED mandate payload. Sent on every
+   * ticket request (`mandateId`) so a revoked mandate and its replacement —
+   * which share a `bounds_hash` — cannot be confused, and checked against the
+   * ticket the AS signs (protocol.md → Ticket Payload, rule 4). Undefined for
+   * a record whose blob could not be decoded.
+   */
+  mandateId?: string;
+  /**
+   * v0.8 — every signed `mandate_id` among the authorization's decodable
+   * blobs (one per domain, plus a renewal beside an expiring one). A ticket
+   * must name one of them (ticket-verify.ts); the Authority Server picks the
+   * live one. Empty when no blob decodes.
+   */
+  mandateIds?: string[];
+  /** v0.8 — the signed `version` of the mandate named by {@link mandateId}. */
+  mandateVersion?: string;
+  /**
    * v0.6 Identity Assurance — the signed verified-identity overlay from the
    * attestation (one per owner). Used to render the verification footer's
    * identity line. Absent ⇒ low/pseudonymous (no name).
@@ -330,6 +347,7 @@ export class AttestationCache {
     // — is the authoritative review-vs-automatic signal.
     let signedCommitmentMode: CachedAuthorization['signedCommitmentMode'];
     let subjects: CachedAuthorization['subjects'];
+    let mandateId: string | undefined;
     const firstBlob = result.attestations[0]?.blob;
     if (firstBlob) {
       try {
@@ -340,6 +358,28 @@ export class AttestationCache {
         signedCommitmentMode = undefined; // undecodable → no enforcement signal (treated as legacy)
       }
     }
+    // v0.8 — the mandate ids of this grant. The one sent on a ticket request
+    // is the first LIVE blob's (an expired renewal predecessor may still be
+    // listed); every decodable id is accepted back on the ticket.
+    const mandateIds: string[] = [];
+    let mandateVersion: string | undefined;
+    const nowSec = Math.floor(Date.now() / 1000);
+    for (const a of result.attestations) {
+      if (!a.blob) continue;
+      try {
+        const id = decodeMandateBlob(a.blob).payload.mandate_id;
+        if (typeof id !== 'string') continue;
+        if (!mandateIds.includes(id)) mandateIds.push(id);
+        if (mandateId === undefined && a.expires_at > nowSec) {
+          mandateId = id;
+          const v = decodeMandateBlob(a.blob).payload.version;
+          if (typeof v === 'string') mandateVersion = v;
+        }
+      } catch {
+        // undecodable — not a mandate this gateway can name
+      }
+    }
+    mandateId ??= mandateIds[0];
 
     const auth: CachedAuthorization = {
       authorizationId: result.authorization_id,
@@ -358,6 +398,9 @@ export class AttestationCache {
       attestedDomains: result.attested_domains ?? [],
       deferredCommitmentDomains: result.deferred_commitment_domains ?? [],
       signedCommitmentMode,
+      mandateId,
+      mandateIds,
+      mandateVersion,
       subjects,
       complete: result.complete,
       groupId,

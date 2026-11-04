@@ -40,7 +40,7 @@ const { hashToolArgs } = await import('../src/lib/execution-journal');
 const { buildMandateBrief } = await import('../src/lib/mandate-brief');
 const { writeContextFile, CONTEXT_MAX_BYTES } = await import('../src/lib/context-loader');
 const { computeSubmissionPreviewHash } = await import('../src/lib/preview');
-const { testReceiptKeypair, makeSignedReceipt } = await import('./helpers/real-receipt');
+const { testReceiptKeypair, makeSignedReceipt, echoTicketRequest } = await import('./helpers/real-receipt');
 import type { SharedState, EnrichedAuthorization } from '../src/lib/shared-state';
 import type { SPProposal } from '../src/lib/sp-client';
 import type { ReportSources } from '../src/lib/report';
@@ -124,7 +124,7 @@ function setup(auths: EnrichedAuthorization[] = [AUTH]) {
   const kp = testReceiptKeypair();
   const postReceipt = vi.fn().mockImplementation(async (req: Record<string, any>) => ({
     receipt: makeSignedReceipt(kp, {
-      id: 'ticket-brief', action: req.action, executionContext: req.executionContext ?? {},
+      id: 'ticket-brief', action: req.action, ...echoTicketRequest(req), executionContext: req.executionContext ?? {},
       authorizationId: req.authorizationId, profileId: DELEGATION.id, proposalId: req.proposalId,
       contentHash: req.contentHash, contentBinding: req.contentBinding,
     }),
@@ -291,7 +291,7 @@ describe('setup__create_mandate', () => {
     expect(r.isError, r.content[0].text).toBeFalsy();
     expect(r.content[0].text).toMatch(/Awaiting commitment/);
     expect(submitProposal).toHaveBeenCalledWith(expect.objectContaining({
-      tool: 'setup__create_mandate', executionContext: expect.objectContaining({ action_type: 'mandate' }),
+      tool: 'setup__create_mandate', actionType: 'mandate', // v0.8: the action type travels once, beside executionContext
     }));
     expect(seen.map((x) => x.dryRun)).toEqual([true]); // nothing created yet
 

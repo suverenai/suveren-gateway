@@ -78,7 +78,12 @@ export function createInternalContentCryptoRouter(
       res.status(401).json({ error: 'unauthorized' });
       return;
     }
-    const { ciphertext, keys } = (req.body ?? {}) as { ciphertext?: unknown; keys?: unknown };
+    const body = (req.body ?? {}) as {
+      ciphertext?: unknown; keys?: unknown; encrypted_keys?: unknown; hash?: unknown; proposalContentHash?: unknown;
+    };
+    const { ciphertext, hash, proposalContentHash } = body;
+    // v0.8 wire name `encrypted_keys`; `keys` is the pre-0.8 name — same wraps.
+    const keys = body.encrypted_keys ?? body.keys;
     if (typeof ciphertext !== 'string' || ciphertext.length === 0) {
       res.status(400).json({ error: 'ciphertext (base64 string) is required' });
       return;
@@ -95,7 +100,13 @@ export function createInternalContentCryptoRouter(
     try {
       const kp = await loadOrGenerateKeyPair(vault);
       const plaintext = await decryptProposalContent(
-        { ciphertext, keys: keys as Record<string, { ct: string; enc: string }> },
+        {
+          ciphertext,
+          keys: keys as Record<string, { ct: string; enc: string }>,
+          // v0.8 rule 8: checked against the fingerprint before it is returned.
+          ...(typeof hash === 'string' ? { hash } : {}),
+          ...(typeof proposalContentHash === 'string' ? { proposalContentHash } : {}),
+        },
         me.id,
         kp.privateKey,
       );

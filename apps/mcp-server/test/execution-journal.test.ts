@@ -129,3 +129,61 @@ describe('hashToolArgs', () => {
     expect(hashToolArgs({ commit: 'abc' })).not.toBe(hashToolArgs({ commit: 'abd' }));
   });
 });
+
+describe('ExecutionJournal — v0.8 One execution per ticket (requested → intent → done)', () => {
+  const row = { requestKey: 'idem-1', tool: 'x__y', argsHash: hashToolArgs({ a: 1 }) };
+
+  it('requested() writes a row BEFORE any ticket exists, keyed on the request; a retry of the same request keeps one row', () => {
+    const j = new ExecutionJournal(dir);
+    j.requested(row);
+    j.requested(row);
+    const r = j.getByRequest('idem-1');
+    expect(r?.state).toBe('requested');
+    expect(r?.ticketId).toBe('');
+    expect(j.getAll().filter(e => e.requestKey === 'idem-1')).toHaveLength(1);
+  });
+
+  it('begin() with the request key upgrades the requested row to intent under the ticket id', () => {
+    const j = new ExecutionJournal(dir);
+    j.requested(row);
+    expect(j.begin({ ticketId: 't1', ...row }).ok).toBe(true);
+    expect(j.getByRequest('idem-1')?.state).toBe('intent');
+    expect(j.get('t1')?.requestKey).toBe('idem-1');
+    expect(j.getAll()).toHaveLength(1);
+  });
+
+  it('a second ticket with a NEW id for the same request is refused once the first ran (rule 2)', () => {
+    const j = new ExecutionJournal(dir);
+    j.requested(row);
+    j.begin({ ticketId: 't1', ...row });
+    j.complete('t1', 'done');
+    const again = j.begin({ ticketId: 't2', ...row });
+    expect(again.ok).toBe(false);
+    if (!again.ok) expect(again.existing.state).toBe('done');
+  });
+
+  it('a request that was only requested (lost response) may still be claimed — the recovery case', () => {
+    const j = new ExecutionJournal(dir);
+    j.requested(row);
+    const r = j.begin({ ticketId: 't-replayed', ...row });
+    expect(r.ok).toBe(true);
+  });
+
+  it('refusedBeforeTicket() closes a requested row when the AS refused: nothing ran, and the row says so', () => {
+    const j = new ExecutionJournal(dir);
+    j.requested(row);
+    j.refusedBeforeTicket('idem-1', 'as_refused', 'BOUND_EXCEEDED');
+    const r = j.getByRequest('idem-1');
+    expect(r?.state).toBe('failed');
+    expect(r?.outcome).toBe('as_refused');
+    expect(r?.detail).toBe('BOUND_EXCEEDED');
+    // and the request cannot be claimed afterwards
+    expect(j.begin({ ticketId: 't1', ...row }).ok).toBe(false);
+  });
+
+  it('get() never returns a requested row by its empty ticket id', () => {
+    const j = new ExecutionJournal(dir);
+    j.requested(row);
+    expect(j.get('')).toBeUndefined();
+  });
+});

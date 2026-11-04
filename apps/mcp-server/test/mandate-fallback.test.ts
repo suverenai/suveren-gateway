@@ -27,7 +27,7 @@ import { SPReceiptError } from '../src/lib/sp-client';
 import type { SharedState, EnrichedAuthorization } from '../src/lib/shared-state';
 import type { CachedAuthorization } from '../src/lib/attestation-cache';
 import type { IntegrationManager, DiscoveredTool } from '../src/lib/integration-manager';
-import { testReceiptKeypair, makeSignedReceipt } from './helpers/real-receipt';
+import { testReceiptKeypair, makeSignedReceipt, echoTicketRequest } from './helpers/real-receipt';
 
 const profilesDir =
   process.env.SUVEREN_PROFILES_DIR ?? join(import.meta.dirname, '..', '..', '..', '..', 'hap-profiles');
@@ -156,6 +156,7 @@ describe('stale-mandate fallback (revoked / expired / not-found)', () => {
       // exactly like the real AS does, same as receipt-privacy.test.ts.
       return { receipt: makeSignedReceipt(kp, {
         action: req.action,
+        ...echoTicketRequest(req),
         executionContext: req.executionContext ?? {},
         authorizationId: req.authorizationId,
         profileId: SALES.id,
@@ -263,6 +264,7 @@ describe('re-approval UX (item 9) — VERSION_UNSUPPORTED', () => {
       if (req.authorizationId === WORK.authorizationId) throw versionUnsupportedError();
       return { receipt: makeSignedReceipt(kp, {
         action: req.action,
+        ...echoTicketRequest(req),
         executionContext: req.executionContext ?? {},
         authorizationId: req.authorizationId,
         profileId: SALES.id,
@@ -296,8 +298,8 @@ describe('re-approval UX (item 9) — VERSION_UNSUPPORTED', () => {
 
     expect(result.isError).toBe(true);
     const text = (result.content[0] as { text: string }).text;
-    expect(text).toContain('needs re-approval');
-    expect(text).toContain('Ask the decision owner to re-approve it');
+    expect(text).toContain('must be signed again');
+    expect(text).toContain('Ask the mandate owner to sign it again');
     expect(markNeedsReapproval).toHaveBeenCalledWith(WORK.authorizationId);
     expect(invalidate).not.toHaveBeenCalled();
     expect(callTool).not.toHaveBeenCalled();

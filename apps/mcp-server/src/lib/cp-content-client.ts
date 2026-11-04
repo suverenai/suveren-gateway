@@ -23,8 +23,16 @@ export interface ProposalContentWire {
   v: 1;
   alg: string;
   ciphertext: string;
+  /** Suveren-internal name (pre-0.8), kept through the transition. */
   keys: Record<string, { ct: string; enc: string }>;
+  /** Suveren-internal name (pre-0.8) of the fingerprint. */
   hash: string;
+  /** v0.8 normative (protocol.md → Proposals, rule 2): the same wraps as
+   *  `keys`, keyed by reader. Readers are named by user id until the
+   *  Authority Server names accounts by key-bearing DID (Track B). */
+  encrypted_keys?: Record<string, { ct: string; enc: string }>;
+  readers?: string[];
+  unreadable?: string[];
 }
 
 async function postInternal(path: string, body: unknown): Promise<Record<string, unknown>> {
@@ -70,7 +78,21 @@ export async function cpEncryptContent(
  * gateway's own signed-in user — resolved by the control plane itself from
  * its own session, never trusted from this call's arguments.
  */
-export async function cpDecryptContent(wire: { ciphertext: string; keys: Record<string, { ct: string; enc: string }> }): Promise<string> {
-  const data = await postInternal('/internal/decrypt-content', { ciphertext: wire.ciphertext, keys: wire.keys });
+export async function cpDecryptContent(
+  wire: {
+    ciphertext: string;
+    keys?: Record<string, { ct: string; enc: string }>;
+    encrypted_keys?: Record<string, { ct: string; enc: string }>;
+    hash?: string;
+    proposalContentHash?: string;
+  },
+): Promise<string> {
+  const data = await postInternal('/internal/decrypt-content', {
+    ciphertext: wire.ciphertext,
+    // v0.8 name first; the pre-0.8 `keys` carries the same wraps.
+    keys: wire.encrypted_keys ?? wire.keys,
+    // v0.8 rule 8: the control plane checks the decrypted content against the fingerprint.
+    ...(wire.proposalContentHash ? { proposalContentHash: wire.proposalContentHash } : wire.hash ? { hash: wire.hash } : {}),
+  });
   return data.plaintext as string;
 }

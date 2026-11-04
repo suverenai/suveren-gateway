@@ -194,3 +194,61 @@ describe('TR7 — team read ceiling: min(local, signed) in team mode only', () =
     expect(result.isError).toBeFalsy();
   });
 });
+
+describe('v0.8 Group ceilings, rule 2 — under a v0.8 mandate, enforcedBy:"gatekeeper" caps reads in EVERY mode', () => {
+  const MARKED = 'email-v08-ceiling-test';
+  beforeAll(() => {
+    const fields = PROFILE.boundsSchema!.fields as Record<string, Record<string, unknown>>;
+    registerProfile(MARKED, {
+      ...PROFILE,
+      id: MARKED,
+      boundsSchema: {
+        ...PROFILE.boundsSchema!,
+        fields: { ...fields, read_max_age_days: { ...fields.read_max_age_days, enforcedBy: 'gatekeeper' } },
+      },
+    } as unknown as AgentProfile);
+  });
+
+  function marked(auth: CachedAuthorization, mandateVersion = '0.8'): CachedAuthorization {
+    return { ...auth, mandateVersion, profileId: MARKED, frame: { ...auth.frame, profile: MARKED }, bounds: { ...auth.bounds, profile: MARKED } } as CachedAuthorization;
+  }
+  function markedTool(readAgeDaysLocal: number) {
+    const t = emailTool('get_message', readAgeDaysLocal);
+    (t.tool.gating as { profile: string }).profile = MARKED;
+    return t;
+  }
+
+  it('PERSONAL mode: a local window wider than the signed value is capped at the signed value', async () => {
+    const { tool, integrationManager } = markedTool(365);
+    const state = buildState(marked(authWith({ read_max_age_days: 30 }, 'group_personal_1')), false);
+    const old = { id: 'm1', internalDate: String(Date.now() - 90 * 24 * 60 * 60 * 1000) };
+    integrationManager.callTool = vi.fn().mockResolvedValue({ content: [{ type: 'text', text: JSON.stringify(old) }] });
+
+    const result = await createGatedToolHandler(tool, integrationManager, state)({ id: 'm1' });
+
+    expect(result.isError).toBe(true);
+    expect((result.content[0] as { text: string }).text).toMatch(/read_max_age_days/);
+  });
+
+  it('PERSONAL mode: a local window below the signed value still governs (it may be lower, never higher)', async () => {
+    const { tool, integrationManager } = markedTool(7);
+    const state = buildState(marked(authWith({ read_max_age_days: 30 }, 'group_personal_1')), false);
+    const tenDaysOld = { id: 'm1', internalDate: String(Date.now() - 10 * 24 * 60 * 60 * 1000) };
+    integrationManager.callTool = vi.fn().mockResolvedValue({ content: [{ type: 'text', text: JSON.stringify(tenDaysOld) }] });
+
+    const result = await createGatedToolHandler(tool, integrationManager, state)({ id: 'm1' });
+
+    expect(result.isError).toBe(true);
+  });
+
+  it('a v0.7 mandate is read under 0.7 rules: personally, the local window still governs', async () => {
+    const { tool, integrationManager } = markedTool(365);
+    const state = buildState(marked(authWith({ read_max_age_days: 30 }, 'group_personal_1'), '0.7'), false);
+    const old = { id: 'm1', internalDate: String(Date.now() - 90 * 24 * 60 * 60 * 1000) };
+    integrationManager.callTool = vi.fn().mockResolvedValue({ content: [{ type: 'text', text: JSON.stringify(old) }] });
+
+    const result = await createGatedToolHandler(tool, integrationManager, state)({ id: 'm1' });
+
+    expect(result.isError).toBeFalsy();
+  });
+});

@@ -339,6 +339,8 @@ describe('spClient.getProposalsCreatedByMe / withdrawProposal — real suveren-a
     const [, init] = fetchSpy.mock.calls[0];
     expect(JSON.parse((init as RequestInit).body as string)).toEqual({
       content_hash: 'sha256:abc',
+      // v0.8: the fingerprint also travels under its wire name (protocol.md → Proposals, rule 8).
+      proposalContentHash: 'sha256:abc',
       shown_hash: 'sha256:def',
     });
   });

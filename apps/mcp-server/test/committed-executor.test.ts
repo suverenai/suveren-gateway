@@ -148,6 +148,7 @@ function receiptFor(id: string): Record<string, unknown> {
   return makeSignedReceipt(kp, {
     id,
     action: PROPOSAL.tool,
+    actionType: PROPOSAL.executionContext.action_type,
     executionContext: PROPOSAL.executionContext,
     authorizationId: PROPOSAL.authorizationId,
     profileId: PROPOSAL.profileId,
@@ -268,6 +269,7 @@ describe('executeCommitted × ExecutionJournal', () => {
     // reason).
     const idlessReceipt = signTestReceipt({
       action: PROPOSAL.tool,
+    actionType: PROPOSAL.executionContext.action_type,
       executionContext: PROPOSAL.executionContext,
       authorizationId: PROPOSAL.authorizationId,
       profileId: PROPOSAL.profileId,
@@ -478,8 +480,14 @@ describe('executeCommitted: the Authority Server refuses the ticket (bound excee
     expect(r.text).toMatch(/refused this proposal's ticket earlier/i);
     expect(r.text).not.toMatch(/EXECUTED/);
     expect(callTool).not.toHaveBeenCalled();
-    // PROPOSAL_REFUSED returns before the as_refused journal write — that
-    // write exists only for the generic "this call was just refused" case.
-    expect(state.executionJournal.findByProposal(PROPOSAL.id)).toBeUndefined();
+    // PROPOSAL_REFUSED returns before the synthetic `as_refused:<id>` journal
+    // write — that exists only for the generic "this call was just refused"
+    // case. v0.8: the attempt's own `requested` row (written before the
+    // ticket request, One execution per ticket rule 1) is closed: nothing ran.
+    const row = state.executionJournal.findByProposal(PROPOSAL.id);
+    expect(row?.ticketId).toBe('');
+    expect(row?.state).toBe('failed');
+    expect(row?.outcome).toBe('as_refused');
+    expect(state.executionJournal.get(`as_refused:${PROPOSAL.id}`)).toBeUndefined();
   });
 });

@@ -63,6 +63,7 @@ function receiptFor(id: string): Record<string, unknown> {
   return makeSignedReceipt(kp, {
     id,
     action: PROPOSAL.tool,
+    actionType: PROPOSAL.executionContext.action_type,
     executionContext: PROPOSAL.executionContext,
     authorizationId: PROPOSAL.authorizationId,
     profileId: PROPOSAL.profileId,
@@ -126,7 +127,8 @@ describe('executeCommitted — encrypted proposal content', () => {
 
     const sentToPostReceipt = postReceipt.mock.calls[0][0];
     expect(sentToPostReceipt.proposalContentHash).toBe(CONTENT_HASH);
-    expect(sentToPostReceipt.toolArgs).toEqual(TOOL_ARGS);
+    // v0.8: the content never travels on the ticket request — only its fingerprint.
+    expect(sentToPostReceipt.toolArgs).toBeUndefined();
   });
 
   it('refuses, and never calls the tool, when this device cannot decrypt the content', async () => {

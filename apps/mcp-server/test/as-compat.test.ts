@@ -48,6 +48,38 @@ describe('SharedState#checkAsCompat', () => {
     expect(state.asVersionRefusal).toBeNull();
   });
 
+  // v0.8 (protocol.md → Version negotiation, rule 1): the two sides need ONE
+  // version in common. This gateway verifies 0.8 and 0.7, so today's 0.7 AS
+  // and a 0.8 AS are both compatible; a 0.7-only AS is not "0.8".
+  it('v0.8: a 0.7-only AS is compatible (overlap on 0.7) and is not read as speaking 0.8', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { protocolVersion: '0.7', supportedVersions: ['0.7'] }));
+    const state = new SharedState(BASE);
+    await state.checkAsCompat();
+    expect(state.asVersionRefusal).toBeNull();
+    expect(state.asSpeaks08).toBe(false);
+  });
+
+  it('v0.8: a 0.8 AS (0.8 only, or 0.8 + 0.7) is compatible and read as speaking 0.8', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { protocolVersion: '0.8', supportedVersions: ['0.8'] }));
+    const state = new SharedState(BASE);
+    await state.checkAsCompat();
+    expect(state.asVersionRefusal).toBeNull();
+    expect(state.asSpeaks08).toBe(true);
+
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { protocolVersion: '0.8', supportedVersions: ['0.8', '0.7'] }));
+    await state.checkAsCompat();
+    expect(state.asVersionRefusal).toBeNull();
+    expect(state.asSpeaks08).toBe(true);
+  });
+
+  it('v0.8: the refusal names every version this gateway speaks', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { protocolVersion: '0.6', supportedVersions: ['0.6'] }));
+    const state = new SharedState(BASE);
+    await state.checkAsCompat();
+    expect(state.asVersionRefusal).toContain('0.8');
+    expect(state.asVersionRefusal).toContain('0.7');
+  });
+
   it('clears a prior refusal once the AS becomes compatible (re-check)', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(200, { protocolVersion: '0.7', supportedVersions: ['0.6'] }));
     const state = new SharedState(BASE);
@@ -132,5 +164,21 @@ describe('createGatedToolHandler — V7 fail-closed on asVersionRefusal', () => 
     const state = new SharedState(BASE);
     await state.checkAsCompat();
     expect(state.asVersionRefusal).toBeNull();
+  });
+});
+
+describe('v0.8 — a mandate the AS no longer exercises is flagged before any call is refused', () => {
+  it('flags a 0.7 mandate when the AS lists only 0.8; not when it still lists 0.7', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { protocolVersion: '0.8', supportedVersions: ['0.8'] }));
+    const state = new SharedState(BASE);
+    await state.checkAsCompat();
+    const auth = { authorizationId: 'authz_x', mandateVersion: '0.7' };
+    (state as unknown as { cache: unknown }).cache = { getAllAuthorizations: () => [auth], needsReapproval: () => false };
+    (state as unknown as { gateStore: unknown }).gateStore = { get: () => ({ gateContent: {} }) };
+    expect(state.getEnrichedAuthorizations()[0].needsReapproval).toBe(true);
+
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { protocolVersion: '0.8', supportedVersions: ['0.8', '0.7'] }));
+    await state.checkAsCompat();
+    expect(state.getEnrichedAuthorizations()[0].needsReapproval).toBe(false);
   });
 });

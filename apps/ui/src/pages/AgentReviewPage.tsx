@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { COMMITMENT_LABEL, COMMITMENT_REVIEW, COMMITMENT_AUTOMATIC } from '../lib/commitment-words';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { spClient } from '../lib/sp-client';
+import { spClient, SUPPORTED_PROTOCOL_VERSIONS } from '../lib/sp-client';
 import { computeBoundsHashBrowser, computeScopeHashBrowser, computeProfileHashBrowser, hashGateContent } from '../lib/frame';
 import { buildGateForwardArgs } from '../lib/gate-forward';
 import { StepIndicator } from '../components/StepIndicator';
@@ -343,7 +343,7 @@ export function AgentReviewPage() {
         replaces: replacesId,
         profile_id: authData.profileId,
         profile_hash: profileHash,
-        supported_versions: ['0.7'],
+        supported_versions: [...SUPPORTED_PROTOCOL_VERSIONS],
         bounds: gateData.bounds,
         bounds_hash: boundsHash,
         scope_hash: contextHash,
