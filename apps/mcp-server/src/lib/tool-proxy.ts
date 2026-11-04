@@ -861,12 +861,15 @@ function createGatedToolHandlerInner(
           ? state.cache.isTeamGroup(matchingAuths[0]?.groupId)
           : undefined;
         // v0.8 (protocol.md → Read Authorization → Group ceilings, rules 2–3):
-        // a bound the profile marks `enforcedBy: "gatekeeper"` is a ceiling in
-        // EVERY mode — a local read policy may be lower, never higher. For a
-        // profile without the marker the pre-0.8 behaviour stands: the signed
-        // value caps a team, and personal mode follows the local policy.
+        // under a v0.8 mandate, a bound the profile marks `enforcedBy:
+        // "gatekeeper"` is a ceiling in EVERY mode — a local read policy may
+        // be lower, never higher. A v0.7 mandate is read under its own
+        // version's rules (Version negotiation, rule 4), as is a profile
+        // without the marker: the signed value caps a team, and personal mode
+        // follows the local policy.
         const ceilingMarked = ageBoundField !== null
-          && (boundsSchema?.fields?.[ageBoundField] as { enforcedBy?: string } | undefined)?.enforcedBy === 'gatekeeper';
+          && (boundsSchema?.fields?.[ageBoundField] as { enforcedBy?: string } | undefined)?.enforcedBy === 'gatekeeper'
+          && matchingAuths.some(a => a.mandateVersion === '0.8');
         readMaxAge = (ceilingMarked || isTeam === true) && signedAge !== null
           ? (localAge !== null ? Math.min(localAge, signedAge) : signedAge)
           : (localAge ?? signedAge);
@@ -1225,17 +1228,24 @@ function createGatedToolHandlerInner(
           checkExecutionValues(hapWireExecutionContext(execution, profileDef), profileDef);
         } catch (err) {
           const detail = err instanceof Error ? err.message : String(err);
+          const field = /executionContext\.([A-Za-z0-9_]+)/.exec(detail)?.[1];
+          const bounds = field
+            ? Object.entries(profileDef.boundsSchema?.fields ?? {})
+              .filter(([, def]) => (def as { boundType?: { of?: string } }).boundType?.of === field)
+              .map(([name]) => name)
+            : [];
           recordBlocked(state, tool, {
             kind: 'bound',
             detail,
+            ...(field ? { field } : {}),
             who: 'gateway',
             code: 'MALFORMED_TICKET_REQUEST',
           });
           return {
             content: [{
               type: 'text',
-              text: `Blocked by Gatekeeper: ${detail}. A value a bound reads must be a number of zero or more — ` +
-                `correct the request and try again.`,
+              text: `Blocked by Gatekeeper: ${field ? `"${field}" is not a number of zero or more` : 'a value a bound reads is not a number of zero or more'}` +
+                `${bounds.length > 0 ? ` (read by ${bounds.join(', ')})` : ''} — ${detail}. Correct the request and try again.`,
             }],
             isError: true,
           };
@@ -1586,8 +1596,12 @@ function createGatedToolHandlerInner(
         // the field a governing `cumulative_sum` bound reads is refused — the
         // spend cannot be counted. Only under an automatic mandate: under
         // review_above_cap the Authority Server routes it to an approval, and
-        // a committed above-cap approval adds zero.
-        if (auth.signedCommitmentMode === 'automatic') {
+        // a committed above-cap approval adds zero. A v0.8 rule, so only under
+        // a v0.8 mandate: a v0.7 mandate is exercised under 0.7 rules, where
+        // an amount-less call under a sum bound is issued (e.g. Mollie tools
+        // without an amount, which charge profiles do not yet exclude via
+        // appliesTo — see the profile track).
+        if (auth.signedCommitmentMode === 'automatic' && auth.mandateVersion === '0.8') {
           const profileDef = getProfile(auth.profileId);
           const missing = profileDef
             ? missingSumFields(wireExecutionContext(auth.profileId, execution), profileDef, declaredActionType!) // checked non-empty above

@@ -76,6 +76,7 @@ const AUTH: CachedAuthorization = {
   signedCommitmentMode: 'automatic',
   mandateId: 'mandate-live',
   mandateIds: ['mandate-expired', 'mandate-live'],
+  mandateVersion: '0.8',
   complete: true,
 } as unknown as CachedAuthorization;
 
@@ -181,5 +182,16 @@ describe('v0.8 local refusals — before anything leaves the machine', () => {
     expect(result.content[0].text).toMatch(/amount_daily_max/);
     expect(postReceipt).not.toHaveBeenCalled();
     expect(callTool).not.toHaveBeenCalled();
+  });
+
+  it('under a v0.7 mandate an absent amount is left to the Authority Server (0.7 rules)', async () => {
+    const { state, postReceipt } = buildState();
+    const enriched = state.getEnrichedAuthorizations();
+    (enriched[0] as { mandateVersion?: string }).mandateVersion = '0.7';
+    const { integrationManager, callTool } = buildIntegrationManager();
+    const result = await createGatedToolHandler(TOOL, integrationManager, state)({ currency: 'EUR' });
+    expect(result.isError, result.content[0].text).toBeFalsy();
+    expect(postReceipt).toHaveBeenCalledOnce();
+    expect(callTool).toHaveBeenCalledOnce();
   });
 });
