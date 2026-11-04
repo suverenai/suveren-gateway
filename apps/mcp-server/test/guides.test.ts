@@ -102,6 +102,8 @@ describe('guideHeader', () => {
   it('carries the rules: never the gateway page, the key or an approval; only the Suveren tools', () => {
     const h = guideHeader([]);
     expect(h).toMatch(/Never open or operate the Suveren Gateway's web page/);
+    expect(h).toMatch(/never claim to be human/);
+    expect(h).toMatch(/do the task this way instead and tell them why/);
     expect(h).toMatch(/Never ask for, read or type the person's API key/);
     expect(h).toMatch(/Never approve a proposal/);
     expect(h).toMatch(/No terminal, HTTP or browser calls to the gateway's ports/);
