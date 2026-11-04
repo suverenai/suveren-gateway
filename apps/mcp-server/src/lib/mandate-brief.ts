@@ -121,12 +121,12 @@ export function buildMandateBrief(opts: MandateBriefOptions): string {
   const needingReapproval = active.filter(a => a.needsReapproval);
   if (needingReapproval.length > 0) {
     lines.push('');
-    lines.push('=== NEEDS RE-APPROVAL ===');
+    lines.push('=== MUST BE SIGNED AGAIN ===');
     lines.push('');
     for (const auth of needingReapproval) {
       lines.push(
         `[${shortProfileName(auth.profileId)}] ${auth.authorizationId}: the Authority Server no longer ` +
-          'verifies this mandate\'s protocol version. Ask the decision owner to re-approve it.',
+          'accepts this mandate\'s protocol version. Ask the mandate owner to sign it again (Mandates page → Sign again).',
       );
     }
     lines.push('');

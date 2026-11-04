@@ -86,7 +86,8 @@ describe('createMandate — the sign page\'s request, from the gateway', () => {
     const bounds = { ...LIMITS, profile: SALES.id };
     expect(attest).toMatchObject({
       authorization_id: 'authz_new', profile_id: SALES.id, profile_hash: computeProfileHash(SALES),
-      supported_versions: ['0.7'], group_id: 'g_personal', domain: 'owner', did: USER.did,
+      // v0.8: every version this gateway verifies, newest first — the AS issues the highest both support.
+      supported_versions: ['0.8', '0.7'], group_id: 'g_personal', domain: 'owner', did: USER.did,
       mandate_owners: [{ did: USER.did }],
       bounds, bounds_hash: computeBoundsHash(bounds as never, SALES),
       scope_hash: computeScopeHash({ currency: 'EUR' } as never, SALES),

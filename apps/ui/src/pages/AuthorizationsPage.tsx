@@ -244,7 +244,7 @@ function AuthCard({
             area,
             since,
             <span className="ob-st" key="st">{status.charAt(0).toUpperCase() + status.slice(1)}{expiredOn ? ` ${new Date(expiredOn.iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}` : ''}</span>,
-            needsReapproval ? <span className="ob-st" key="re" title="The Authority Server no longer verifies this mandate's protocol version. Re-approve it to keep using this authority.">Needs re-approval</span> : null,
+            needsReapproval ? <span className="ob-st" key="re" title="The Authority Server no longer accepts mandates signed under this protocol version (since v0.8 every mandate is signed again). Sign it again to keep using it.">Sign again</span> : null,
             identity.testSetup ? 'Test setup' : null,
           ]}
         />
@@ -369,11 +369,11 @@ function AuthCard({
                 disabled={copyingHash === item.authorization_id}
                 title={
                   needsReapproval
-                    ? 'The Authority Server no longer verifies this mandate\'s protocol version. Re-approving opens the ceremony pre-filled with the same bounds, scope, and intent; signing it revokes this one.'
+                    ? 'The Authority Server no longer accepts mandates signed under this protocol version. Sign again opens the signing pre-filled with the same bounds, scope, and intent; signing it revokes this one.'
                     : 'Adjust intent, bounds, or scope: opens the ceremony pre-filled; signing the new mandate revokes this one'
                 }
               >
-                {needsReapproval ? 'Re-approve' : 'Edit'}
+                {needsReapproval ? 'Sign again' : 'Edit'}
               </button>
             )}
             {/* Extend only in Mine tab */}
