@@ -103,6 +103,44 @@ describe('POST /internal/encrypt-content, /internal/decrypt-content', () => {
     expect(JSON.parse(plaintext)).toEqual(toolArgs);
   });
 
+  it('v0.8 readers: names readers by DID (own DID wrapped to the local key), keeps `keys` by account id, and opens the stored wire by DID', async () => {
+    const selfVault = makeFakeVault({ sessionUser: { id: 'self', did: 'did:key:zSelf' } });
+    const kpSelf = await loadOrGenerateKeyPair(selfVault);
+    const kpAppr = await generateKeyPair();
+    fetchAsMock.mockImplementation((reqUrl: string) => {
+      if (reqUrl.includes('/users/self/pubkey')) return Promise.resolve(jsonResponse(200, { userId: 'self', did: 'did:key:zSelf', pubkey: Buffer.from(kpSelf.publicKey).toString('base64') }));
+      if (reqUrl.includes('/users/appr/pubkey')) return Promise.resolve(jsonResponse(200, { userId: 'appr', did: 'did:key:zAppr', pubkey: Buffer.from(kpAppr.publicKey).toString('base64') }));
+      return Promise.resolve(jsonResponse(404, {}));
+    });
+    const { url, close } = await startServer(selfVault);
+    stop = close;
+
+    const toolArgs = { amount: 7 };
+    const encRes = await post(url, '/internal/encrypt-content', {
+      toolArgs, recipientUserIds: ['appr'], readers: { ownerDid: 'did:key:zSelf', deciders: ['did:key:zAppr'] },
+    }, SECRET);
+    expect(encRes.status).toBe(200);
+    const { content } = await encRes.json() as { content: { ciphertext: string; keys: Record<string, { ct: string; enc: string }>; encrypted_keys: Record<string, { ct: string; enc: string }>; readers: string[]; unreadable: string[]; hash: string } };
+    expect(content.readers.sort()).toEqual(['did:key:zAppr', 'did:key:zSelf']);
+    expect(content.unreadable).toEqual([]);
+    expect(Object.keys(content.encrypted_keys).sort()).toEqual(['did:key:zAppr', 'did:key:zSelf']);
+    expect(Object.keys(content.keys).sort()).toEqual(['appr', 'self']);
+
+    // As the AS returns it (one merged `keys` map) — opened by this user's DID wrap.
+    const decRes = await post(url, '/internal/decrypt-content', {
+      ciphertext: content.ciphertext, keys: { 'did:key:zSelf': content.encrypted_keys['did:key:zSelf'] }, hash: content.hash,
+    }, SECRET);
+    expect(decRes.status).toBe(200);
+    expect(JSON.parse((await decRes.json() as { plaintext: string }).plaintext)).toEqual(toolArgs);
+  });
+
+  it('encrypt-content 400s on malformed v0.8 readers (not DIDs)', async () => {
+    const { url, close } = await startServer(makeFakeVault());
+    stop = close;
+    const res = await post(url, '/internal/encrypt-content', { toolArgs: { x: 1 }, recipientUserIds: [], readers: { ownerDid: 'self', deciders: [] } }, SECRET);
+    expect(res.status).toBe(400);
+  });
+
   it('decrypt-content 401s when the vault has no session user', async () => {
     const { url, close } = await startServer(makeFakeVault({ sessionUser: null }));
     stop = close;

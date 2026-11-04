@@ -110,7 +110,7 @@ async function resolveProposalToolArgsForRoute(
     try {
       const kp = await loadOrGenerateKeyPair(vault);
       const me = vault.getSessionUser();
-      const plaintext = await decryptProposalContent(proposal.content, me?.id ?? '', kp.privateKey);
+      const plaintext = await decryptProposalContent(proposal.content, me?.id ?? '', kp.privateKey, me?.did);
       return { tool: proposal.tool, toolArgs: JSON.parse(plaintext) as Record<string, unknown> };
     } catch (err) {
       res.json({ status: 'unavailable', reason: 'connector_error', message: `Could not decrypt this proposal's content on this device: ${err instanceof Error ? err.message : String(err)}` } satisfies PreviewResponse);
