@@ -44,6 +44,8 @@ describe('buildMandateBrief', () => {
       const brief = buildMandateBrief({ authorizations: [] });
       expect(brief).toContain('=== RULES ===');
       expect(brief).toMatch(/Never open or operate the Suveren Gateway's web page/);
+      expect(brief).toMatch(/never write as if you were that person or any person/);
+      expect(brief.indexOf('never write as if you were that person')).toBeLessThan(brief.indexOf('Never open or operate'));
       expect(brief).toMatch(/Use only the Suveren tools/);
     }
     delete process.env.SUVEREN_SIMULATION;
