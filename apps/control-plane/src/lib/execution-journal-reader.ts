@@ -17,7 +17,8 @@ export interface JournalEntryView {
   proposalId?: string;
   tool: string;
   argsHash: string;
-  state: 'intent' | 'done' | 'failed';
+  /** `requested` (v0.8): the ticket was asked for, nothing has started yet. */
+  state: 'requested' | 'intent' | 'done' | 'failed';
   outcome?: 'refused' | 'changed';
   detail?: string;
   startedAt: number;
