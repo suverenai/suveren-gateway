@@ -91,6 +91,15 @@ export interface CachedAuthorization {
   /** v0.8 — the signed `version` of the mandate named by {@link mandateId}. */
   mandateVersion?: string;
   /**
+   * v0.8 (protocol.md → Proposals, rule 2) — who a proposal under this grant
+   * is encrypted to, read from the SIGNED payload of the most recently issued
+   * decodable mandate (the one the Authority Server checks a proposal
+   * against: `latestMandatePayloadFor`): its `version`, the owner's DID
+   * (`mandate_owners[0].did`) and the signed deciders (`above_cap_approvers`).
+   * Undefined when no blob decodes.
+   */
+  proposalReaders?: { version: string; ownerDid: string; deciders: string[] };
+  /**
    * v0.6 Identity Assurance — the signed verified-identity overlay from the
    * attestation (one per owner). Used to render the verification footer's
    * identity line. Absent ⇒ low/pseudonymous (no name).
@@ -381,6 +390,23 @@ export class AttestationCache {
     }
     mandateId ??= mandateIds[0];
 
+    let proposalReaders: CachedAuthorization['proposalReaders'];
+    let latestIssuedAt = -Infinity;
+    for (const a of result.attestations) {
+      if (!a.blob) continue;
+      try {
+        const p = decodeMandateBlob(a.blob).payload;
+        const ownerDid = p.mandate_owners?.[0]?.did;
+        if (typeof p.version !== 'string' || typeof ownerDid !== 'string') continue;
+        const issuedAt = typeof p.issued_at === 'number' ? p.issued_at : 0;
+        if (issuedAt < latestIssuedAt) continue;
+        latestIssuedAt = issuedAt;
+        proposalReaders = { version: p.version, ownerDid, deciders: [...(p.above_cap_approvers ?? [])] };
+      } catch {
+        // undecodable — names no readers
+      }
+    }
+
     const auth: CachedAuthorization = {
       authorizationId: result.authorization_id,
       boundsHash: result.bounds_hash,  // content fingerprint (undefined for pre-v0.4 records)
@@ -401,6 +427,7 @@ export class AttestationCache {
       mandateId,
       mandateIds,
       mandateVersion,
+      proposalReaders,
       subjects,
       complete: result.complete,
       groupId,

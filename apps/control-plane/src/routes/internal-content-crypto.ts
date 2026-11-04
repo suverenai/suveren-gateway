@@ -14,8 +14,8 @@
  */
 import { Router } from 'express';
 import { timingSafeEqual } from 'node:crypto';
-import { encryptProposalContent, decryptProposalContent } from '../lib/content-crypto';
-import { loadOrGenerateKeyPair } from '../lib/e2e-key-manager';
+import { encryptProposalContent, decryptProposalContent, type V08Readers } from '../lib/content-crypto';
+import { loadOrGenerateKeyPair, getPublicKey } from '../lib/e2e-key-manager';
 import type { Vault } from '../lib/vault';
 
 /** The wire contract's cap (PE1 brief): ≤ 50 recipients per proposal. */
@@ -41,7 +41,7 @@ export function createInternalContentCryptoRouter(
       res.status(401).json({ error: 'unauthorized' });
       return;
     }
-    const { toolArgs, recipientUserIds } = (req.body ?? {}) as { toolArgs?: unknown; recipientUserIds?: unknown };
+    const { toolArgs, recipientUserIds, readers } = (req.body ?? {}) as { toolArgs?: unknown; recipientUserIds?: unknown; readers?: unknown };
     if (typeof toolArgs !== 'object' || toolArgs === null || Array.isArray(toolArgs)) {
       res.status(400).json({ error: 'toolArgs must be an object' });
       return;
@@ -54,6 +54,20 @@ export function createInternalContentCryptoRouter(
       res.status(400).json({ error: `too many recipients (max ${MAX_RECIPIENTS})` });
       return;
     }
+    // v0.8 only: the mandate's owner DID and signed deciders — readers by DID.
+    let v08: V08Readers | undefined;
+    if (readers !== undefined) {
+      const r = readers as { ownerDid?: unknown; deciders?: unknown } | null;
+      if (
+        !r || typeof r.ownerDid !== 'string' || !r.ownerDid.startsWith('did:')
+        || !Array.isArray(r.deciders) || !r.deciders.every((d) => typeof d === 'string' && d.startsWith('did:'))
+        || r.deciders.length > MAX_RECIPIENTS
+      ) {
+        res.status(400).json({ error: 'readers must be { ownerDid: DID, deciders: DID[] }' });
+        return;
+      }
+      v08 = { ownerDid: r.ownerDid, deciders: r.deciders as string[] };
+    }
     const me = vault.getSessionUser();
     const cookie = vault.getSpCookie();
     if (!me || !cookie) {
@@ -61,10 +75,12 @@ export function createInternalContentCryptoRouter(
       return;
     }
     try {
+      const selfPublicKey = v08 ? (await getPublicKey(vault)) ?? undefined : undefined;
       const { content, unreadableFor } = await encryptProposalContent(
         toolArgs as Record<string, unknown>,
         recipientUserIds as string[],
-        { spUrl, cookie, dataDir, selfUserId: me.id },
+        { spUrl, cookie, dataDir, selfUserId: me.id, ...(v08 ? { selfDid: me.did, selfPublicKey } : {}) },
+        v08,
       );
       res.json({ content, unreadableFor });
     } catch (err) {
@@ -82,8 +98,12 @@ export function createInternalContentCryptoRouter(
       ciphertext?: unknown; keys?: unknown; encrypted_keys?: unknown; hash?: unknown; proposalContentHash?: unknown;
     };
     const { ciphertext, hash, proposalContentHash } = body;
-    // v0.8 wire name `encrypted_keys`; `keys` is the pre-0.8 name — same wraps.
-    const keys = body.encrypted_keys ?? body.keys;
+    // Both names: under a 0.8 mandate `encrypted_keys` is keyed by DID and
+    // `keys` by account id (the same CEK); under 0.7 they are the same wraps.
+    const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+    const keys = isObj(body.encrypted_keys) || isObj(body.keys)
+      ? { ...(isObj(body.keys) ? body.keys : {}), ...(isObj(body.encrypted_keys) ? body.encrypted_keys : {}) }
+      : undefined;
     if (typeof ciphertext !== 'string' || ciphertext.length === 0) {
       res.status(400).json({ error: 'ciphertext (base64 string) is required' });
       return;
@@ -109,6 +129,7 @@ export function createInternalContentCryptoRouter(
         },
         me.id,
         kp.privateKey,
+        me.did,
       );
       res.json({ plaintext });
     } catch (err) {

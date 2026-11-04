@@ -28,8 +28,11 @@ export function createDecryptProposalContentRouter(vault: Vault): Router {
     const { ciphertext, hash, proposalContentHash } = req.body as {
       ciphertext?: unknown; keys?: unknown; encrypted_keys?: unknown; hash?: unknown; proposalContentHash?: unknown;
     };
-    // v0.8 wire name `encrypted_keys`; `keys` is the pre-0.8 name — same wraps.
-    const keys = (req.body as { encrypted_keys?: unknown; keys?: unknown }).encrypted_keys ?? (req.body as { keys?: unknown }).keys;
+    // Both names: under a 0.8 mandate `encrypted_keys` is keyed by DID and
+    // `keys` by account id (the same CEK); under 0.7 they are the same wraps.
+    const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+    const { encrypted_keys: ek, keys: lk } = req.body as { encrypted_keys?: unknown; keys?: unknown };
+    const keys = isObj(ek) || isObj(lk) ? { ...(isObj(lk) ? lk : {}), ...(isObj(ek) ? ek : {}) } : undefined;
 
     if (typeof ciphertext !== 'string' || ciphertext.length === 0) {
       res.status(400).json({ error: 'Missing or invalid field: ciphertext (base64 string)' });
@@ -59,6 +62,7 @@ export function createDecryptProposalContentRouter(vault: Vault): Router {
         },
         me.id,
         kp.privateKey,
+        me.did,
       );
       res.json({ plaintext });
     } catch (err) {
