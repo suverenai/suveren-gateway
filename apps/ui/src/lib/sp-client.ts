@@ -9,6 +9,16 @@
 import { queueDomains, mergeProposals } from './my-queue';
 import type { AttachmentPreviewResult } from './attachment-sealed';
 
+/**
+ * The HAP protocol versions this gateway verifies and enforces, newest first —
+ * what every mandate request sends as `supported_versions` so the Authority
+ * Server issues the highest version both sides support (protocol.md →
+ * Version negotiation, rule 1). Mirrors hap-core's `SUPPORTED_VERSIONS`; the UI
+ * bundle cannot import hap-core at runtime, so the two are kept equal by
+ * `supported-versions.test.ts`.
+ */
+export const SUPPORTED_PROTOCOL_VERSIONS: readonly string[] = ['0.8', '0.7'];
+
 export interface SPUser {
   id: string;
   name: string;
@@ -1061,9 +1071,9 @@ class SPClient {
     /** v0.7 — the content address of the AS's own provisioned bytes for
      *  this profile_id (protocol.md -> Profile hash); required. */
     profile_hash: string;
-    /** v0.7 — version negotiation (protocol.md -> Version negotiation);
-     *  required. A gateway/UI speaking only pre-0.7 omits this and the AS
-     *  answers VERSION_UNSUPPORTED, "re-approve this mandate". */
+    /** Version negotiation (protocol.md -> Version negotiation); required.
+     *  Send {@link SUPPORTED_PROTOCOL_VERSIONS}. A gateway/UI speaking only an
+     *  older version gets VERSION_UNSUPPORTED, "grant this mandate again". */
     supported_versions: string[];
     // v0.4
     bounds?: Record<string, string | number>;
@@ -1918,7 +1928,10 @@ class SPClient {
         ...rest,
         // Mutually exclusive on the wire: a sealed note replaces the plain one.
         ...(noteEncrypted ? { note_encrypted: noteEncrypted } : (note ? { note } : {})),
-        ...(contentHash ? { content_hash: contentHash } : {}),
+        // v0.8 (protocol.md → Proposals, rule 8): every decision carries the
+        // fingerprint. `proposalContentHash` is the wire name; `content_hash`
+        // is what today's AS reads — both through the transition.
+        ...(contentHash ? { content_hash: contentHash, proposalContentHash: contentHash } : {}),
         ...(shownHash ? { shown_hash: shownHash } : {}),
       }),
     });
@@ -1980,7 +1993,7 @@ class SPClient {
   }> {
     const body: Record<string, string> = {};
     // PE1 — the fingerprint of the toolArgs THIS device decrypted and showed.
-    if (contentHash) body.content_hash = contentHash;
+    if (contentHash) { body.content_hash = contentHash; body.proposalContentHash = contentHash; } // v0.8 wire name beside the legacy one
     if (shownHash) body.shown_hash = shownHash;
     const res = await this.fetch(`/api/proposals/${encodeURIComponent(id)}/approve`, {
       method: 'POST',
@@ -2024,7 +2037,7 @@ class SPClient {
         ...(noteEncrypted ? { note_encrypted: noteEncrypted } : (note ? { note } : {})),
       };
     }
-    if (contentHash) body.content_hash = contentHash;
+    if (contentHash) { body.content_hash = contentHash; body.proposalContentHash = contentHash; } // v0.8 wire name beside the legacy one
     if (shownHash) body.shown_hash = shownHash;
     const res = await this.fetch(`/api/proposals/${encodeURIComponent(id)}/reject`, {
       method: 'POST',
@@ -2075,7 +2088,7 @@ class SPClient {
     const body: Record<string, unknown> = {
       ...(noteEncrypted ? { note_encrypted: noteEncrypted } : (note ? { note } : {})),
     };
-    if (contentHash) body.content_hash = contentHash;
+    if (contentHash) { body.content_hash = contentHash; body.proposalContentHash = contentHash; } // v0.8 wire name beside the legacy one
     if (shownHash) body.shown_hash = shownHash;
     const res = await this.fetch(`/api/proposals/${encodeURIComponent(id)}/withdraw`, {
       method: 'POST',
