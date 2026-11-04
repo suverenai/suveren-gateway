@@ -22,6 +22,7 @@ import {
   computeBoundsHash,
   computeScopeHash,
   computeIntentHash,
+  computeExecutionContextHash,
   computeProfileHash,
   isCommitmentModeAllowed,
   validateBoundsParams,
@@ -258,7 +259,8 @@ export async function createMandate(req: MandateRequest, deps: CeremonyDeps): Pr
   const boundsHash = computeBoundsHash(plan.bounds as never, plan.profile);
   const scopeHash = computeScopeHash(plan.context as never, plan.profile);
   const intentHash = computeIntentHash(plan.intent);
-  const ecHash = computeIntentHash(JSON.stringify({ profile: plan.profile.id, domain: plan.domain, group: plan.groupId }));
+  // v0.8: the hash of the profile's executionContextSchema, not of per-call values.
+  const ecHash = computeExecutionContextHash(plan.profile);
 
   // Encrypt the intent for the team's approvers, like the sign page (eager, so a
   // cap tightened later still has the record).
