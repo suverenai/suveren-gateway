@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { spClient } from '../lib/sp-client';
 import { AutostartToggle } from '../components/AutostartToggle';
+import { DataFolderLine } from '../components/DataFolderLine';
 import { NotificationsToggle } from '../components/NotificationsToggle';
 import { OpenApprovalsToggle } from '../components/OpenApprovalsToggle';
 import { IdentityDisclosureToggle } from '../components/IdentityDisclosureToggle';
@@ -200,6 +201,7 @@ export function SettingsServicesPage() {
       <AutostartToggle />
       <NotificationsToggle />
       <OpenApprovalsToggle />
+      <DataFolderLine />
       {/* Only renders when IT policy has locked simulation mode */}
       <SimulationLockCard />
 
