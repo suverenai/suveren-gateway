@@ -467,7 +467,7 @@ export interface IntegrationManifest {
    *  what a tool DOES, in words, for the receipts list; `profile` is area
    *  per tool (a connector may span several areas; an override may name its
    *  OWN profile instead of the manifest's — see integration-grouping.ts's
-   *  `groupEntriesByArea`). */
+   *  `connectorAreas`). */
   toolGating?: {
     overrides?: Record<string, { profile?: string; actionLabel?: string; summary?: string; display?: { currencyField?: string } } | null>;
   } | null;

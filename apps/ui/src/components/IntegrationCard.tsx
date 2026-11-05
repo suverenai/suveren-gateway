@@ -13,7 +13,8 @@ import {
   statusWord, authWord, startsOpen, readsPhrase, connectorOneLine,
   type CardState,
 } from '../lib/integration-card-view';
-import { areasOf as areaProfilesOf } from '../lib/integration-grouping';
+import { areasOf as areaProfilesOf, type ConnectorArea } from '../lib/integration-grouping';
+import { AreaIcon } from './AreaIcon';
 
 /**
  * Does this integration read anything with an age dimension?
@@ -88,8 +89,8 @@ export function stoppedIntegrationDisplay(
 
 interface Props {
   manifest: IntegrationManifest;
-  /** The area this card is listed under (UI spec §20.3): shown, with its icon, in the type line. */
-  area?: { shortId: string; name: string };
+  /** Every area this connector serves (from its manifest): chips with the area icon under the name. */
+  areas?: ConnectorArea[];
   integration: McpIntegrationStatus | undefined;
   /**
    * Canonical state derived by IntegrationStatusContext. Drives the status
@@ -100,7 +101,7 @@ interface Props {
   onSuccess: (msg: string) => void;
 }
 
-export function IntegrationCard({ manifest, area, integration, state, onStatusChange, onSuccess }: Props) {
+export function IntegrationCard({ manifest, areas, integration, state, onStatusChange, onSuccess }: Props) {
   const [credValues, setCredValues] = useState<Record<string, string>>({});
   const [credConfigured, setCredConfigured] = useState(false);
   const [credsOnFile, setCredsOnFile] = useState(false); // vault has credentials stored
@@ -512,13 +513,8 @@ export function IntegrationCard({ manifest, area, integration, state, onStatusCh
         <div className="su-cn-head">
           <ObTypeLine
             tag="CONNECTOR"
-            profileId={area?.shortId}
             parts={[
-              area?.name,
               <span className={`ob-st${status.tone === 'muted' ? ' is-off' : ''}`}>{status.text}</span>,
-              simulated && (
-                <span className="ob-st is-sim" title="This connector answers from a simulated system with test data. Nothing reaches your real systems.">Simulation</span>
-              ),
               auth && (auth.tone === 'bold' ? <span className="ob-st">{auth.text}</span> : auth.text),
             ]}
           />
@@ -526,8 +522,20 @@ export function IntegrationCard({ manifest, area, integration, state, onStatusCh
             {manifest.name}
             {mode && <span className="ob-quiet-inline"> · {mode}</span>}
           </h3>
+          {areas && areas.length > 0 && (
+            <ul className="int-areas" data-testid="integration-areas">
+              {areas.map(a => (
+                <li key={a.shortId} className="int-area" data-area={a.shortId}><AreaIcon icon={a.icon} />{a.name}</li>
+              ))}
+            </ul>
+          )}
           <p className="ob-one" data-testid={note ? 'integration-mode-note' : undefined}>{oneLine}</p>
         </div>
+        <span
+          className={`int-mode${simulated ? ' is-sim' : ''}`}
+          data-testid="integration-mode-pill"
+          title={simulated ? 'This connector answers from a simulated system with test data. Nothing reaches your real systems.' : undefined}
+        >{simulated ? 'Simulation' : 'Live'}</span>
         <ObChev />
       </summary>
 

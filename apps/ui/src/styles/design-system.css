@@ -4775,6 +4775,11 @@ a.dash-row:hover, .dash-row:not([open]):hover { box-shadow: var(--elevation-2); 
 .su-cn[open] > summary { background: none; padding-bottom: var(--space-2); }
 .su-cn-head { min-width: 0; flex: 1; }
 .su-cn > summary .ob-chev { margin-left: 0; }
+.int-areas { list-style: none; display: flex; flex-wrap: wrap; gap: var(--space-2); margin: var(--space-2) 0 0; padding: 0; }
+.int-area { display: inline-flex; align-items: center; gap: 0.35rem; border: 1px solid var(--border-strong); border-radius: var(--radius-pill); padding: 0.1rem 0.6rem; font-size: var(--text-caption); color: var(--text-primary); }
+.int-area svg { width: 1rem; height: 1rem; flex: none; }
+.int-mode { flex: none; align-self: flex-start; border: 1px solid var(--text-primary); background: var(--text-primary); color: var(--bg-elevated); border-radius: var(--radius-pill); padding: 0.1rem 0.6rem; font-size: var(--text-micro); font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+.int-mode.is-sim { background: none; color: var(--text-primary); border-style: dashed; }
 .su-cn[open] > summary .ob-chev { transform: rotate(90deg); }
 .su-cn-body { padding: 0 var(--space-5) var(--space-5); }
 .su-cn-body .ob-tile { margin-top: var(--space-2); }

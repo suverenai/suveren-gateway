@@ -8,15 +8,6 @@ import { declaresSimulation } from './simulation';
 import { blockedBySimulation } from './integration-attention';
 import { resolveAreaName, areaIcon, type AreaIconName, type AreaCatalogEntry } from './area';
 
-export interface AreaGroupedEntries {
-  /** The area's short id (§13.3) — the manifest's own `profile`, or an
-   *  override's own `profile` (area per tool). */
-  shortId: string;
-  icon: AreaIconName;
-  name: string;
-  entries: IntegrationEntry[];
-}
-
 /**
  * Every area a connector's tools serve: the manifest's own `profile`, plus
  * any per-tool override's own `profile` (area per tool — a connector may
@@ -35,30 +26,28 @@ export function areasOf(manifest: IntegrationEntry['manifest']): string[] {
   return out;
 }
 
+export interface ConnectorArea {
+  shortId: string;
+  icon: AreaIconName;
+  name: string;
+}
+
 /**
- * Connectors grouped under their area heading (UI spec §13.3 — "a tool
- * serving several areas appears under each"). A connector serving several
- * areas (an override naming its own `profile`) appears under every one of
- * them, carrying its FULL entry each time — the Integrations page lists the
- * connector, not a filtered view of its tools. Alphabetical — this is a
- * lookup list, not a most-used ranking.
+ * The areas ONE connector serves, as chips for its single card: every area from its manifest
+ * (`areasOf`), named from the profile catalog, alphabetical by name (a lookup, not a ranking). One connector is one card — it is never repeated per area.
  */
-export function groupEntriesByArea(
-  entries: IntegrationEntry[],
+export function connectorAreas(
+  manifest: IntegrationEntry['manifest'],
   catalog: readonly AreaCatalogEntry[],
-): AreaGroupedEntries[] {
-  const groups = new Map<string, AreaGroupedEntries>();
-  for (const e of entries) {
-    for (const shortId of areasOf(e.manifest)) {
-      let g = groups.get(shortId);
-      if (!g) {
-        g = { shortId, icon: areaIcon(shortId), name: resolveAreaName(shortId, catalog), entries: [] };
-        groups.set(shortId, g);
-      }
-      g.entries.push(e);
-    }
-  }
-  return [...groups.values()].sort((a, b) => a.name.localeCompare(b.name));
+): ConnectorArea[] {
+  return areasOf(manifest)
+    .map(shortId => ({ shortId, icon: areaIcon(shortId), name: resolveAreaName(shortId, catalog) }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Connectors in a stable, alphabetical order (a lookup list, not a most-used ranking). */
+export function sortConnectors(entries: IntegrationEntry[]): IntegrationEntry[] {
+  return [...entries].sort((a, b) => a.manifest.name.localeCompare(b.manifest.name));
 }
 
 export interface GroupedIntegrations {
@@ -121,6 +110,9 @@ export function groupIntegrationsForDisplay(
 export interface UseSplit {
   inUse: IntegrationEntry[];
   notSetUp: IntegrationEntry[];
+  /** Stopped by the gateway on purpose (set to simulation while simulation mode is off, or the reverse) —
+   *  not broken and not waiting for the person's setup, so neither of the other two groups. */
+  paused: IntegrationEntry[];
 }
 
 /**
@@ -134,9 +126,11 @@ export interface UseSplit {
 export function splitByUse(entries: IntegrationEntry[]): UseSplit {
   const inUse: IntegrationEntry[] = [];
   const notSetUp: IntegrationEntry[] = [];
+  const paused: IntegrationEntry[] = [];
   for (const e of entries) {
+    if (e.state === 'paused') { paused.push(e); continue; }
     const waitingForAuth = e.authStatus === 'not_configured' || e.authStatus === 'not_connected';
     (e.state === 'running' && !waitingForAuth ? inUse : notSetUp).push(e);
   }
-  return { inUse, notSetUp };
+  return { inUse, notSetUp, paused };
 }
