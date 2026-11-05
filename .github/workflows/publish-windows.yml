@@ -414,29 +414,7 @@ jobs:
           # a Windows 11 VM. This is the commit custom action's job, with NO
           # manual `start`/`service install` call from this test — default
           # ports, since nothing here overrides them.
-          $targets = @('crm', 'records', 'erp')
-          $deadline = (Get-Date).AddSeconds(240)
-          $body = $null
-          while ((Get-Date) -lt $deadline) {
-            try {
-              $cp = Invoke-RestMethod -Uri 'http://localhost:3400/health' -TimeoutSec 5
-              if ($cp.status -eq 'ok') {
-                $body = Invoke-RestMethod -Uri 'http://localhost:3430/health' -TimeoutSec 5
-                $statuses = $body.integrations | Where-Object { $targets -contains $_.id }
-                $allUp = ($statuses.Count -eq $targets.Count) -and ($statuses | ForEach-Object { $_.running -and $_.toolCount -gt 0 }) -notcontains $false
-                if ($allUp) { break }
-              }
-            } catch {}
-            Start-Sleep -Seconds 3
-          }
-          if (-not $body) { throw "gateway never came up on its own after a silent install — StartGatewayAfterInstall did not work" }
-          Write-Host ($body | ConvertTo-Json -Depth 5)
-          foreach ($id in $targets) {
-            $entry = $body.integrations | Where-Object { $_.id -eq $id }
-            if (-not $entry -or -not $entry.running -or $entry.toolCount -le 0) {
-              throw "fresh-install: $id not running with tools after a silent install — nobody ran start or logged in"
-            }
-          }
+          & bundle\windows\ci-assert-connectors.ps1 -Label 'fresh-install' -Mode production -Hint ' — nobody ran start or logged in'
           Write-Host "confirmed: gateway came up on its own after a SILENT install, connectors running offline, with no manual start/service-install call."
 
           & bundle\windows\ci-assert-no-console-window.ps1   # while the gateway is still running
@@ -481,19 +459,7 @@ jobs:
           # Exactly the Finish checkbox's command (LaunchGatewayAfterInstall in Product.wxs).
           Start-Process -FilePath conhost.exe -ArgumentList "--headless cmd.exe /c `"`"$launcher`" open-ui`""
 
-          $targets = @('crm', 'records', 'erp')
-          $deadline = (Get-Date).AddSeconds(240)
-          $body = $null
-          while ((Get-Date) -lt $deadline) {
-            try {
-              $body = Invoke-RestMethod -Uri "http://localhost:$env:SUVEREN_MCP_PORT/health" -TimeoutSec 5
-              $statuses = $body.integrations | Where-Object { $targets -contains $_.id }
-              $allUp = ($statuses.Count -eq $targets.Count) -and ($statuses | ForEach-Object { $_.running -and $_.toolCount -gt 0 }) -notcontains $false
-              if ($allUp) { break }
-            } catch {}
-            Start-Sleep -Seconds 3
-          }
-          if (-not $body) { throw "open-ui (the Finish checkbox's own action) did not bring the gateway up" }
+          & bundle\windows\ci-assert-connectors.ps1 -Label 'open-ui' -Mode production -McpPort $env:SUVEREN_MCP_PORT
           Write-Host "confirmed: open-ui's underlying command works — service install + start + (a browser would open interactively)."
 
           # Best-effort window-visibility check (PR #47: windowsHide on the
@@ -618,26 +584,33 @@ jobs:
           }
           Write-Host "installMethod: msi (confirmed — interactive instance)"
 
-          $mcpDeadline = (Get-Date).AddSeconds(240)
-          $mcpBody = $null
-          $targets = @('crm', 'records', 'erp')
-          while ((Get-Date) -lt $mcpDeadline) {
-            try {
-              $mcpBody = Invoke-RestMethod -Uri $mcpHealth -TimeoutSec 5
-              $statuses = $mcpBody.integrations | Where-Object { $targets -contains $_.id }
-              $allUp = ($statuses.Count -eq $targets.Count) -and ($statuses | ForEach-Object { $_.running -and $_.toolCount -gt 0 } ) -notcontains $false
-              if ($allUp) { break }
-            } catch {}
-            Start-Sleep -Seconds 3
-          }
-          Write-Host ($mcpBody | ConvertTo-Json -Depth 5)
-          foreach ($id in $targets) {
-            $entry = $mcpBody.integrations | Where-Object { $_.id -eq $id }
-            if (-not $entry) { throw "${id}: not in the integration registry — did not auto-start" }
-            if (-not $entry.running) { throw "${id}: registered but not running ($($entry.error))" }
-            if ($entry.toolCount -le 0) { throw "${id}: running but discovered 0 tools" }
-            Write-Host "$id : running, $($entry.toolCount) tool(s) — started OFFLINE (SUVEREN_OFFLINE=1, npm unreachable)"
-          }
+          # Production (the default after install): records runs; crm and erp are paused
+          # by the mode (a gateway is simulation OR production, never both).
+          & bundle\windows\ci-assert-connectors.ps1 -Label 'interactive' -Mode production -McpPort 15430
+          Write-Host "interactive: production mode confirmed — records started OFFLINE (SUVEREN_OFFLINE=1, npm unreachable)"
+
+      - name: Switch to simulation the way a user does — crm-mcp and erp-mcp must start OFFLINE too
+        shell: pwsh
+        run: |
+          # crm-mcp and erp-mcp default to "simulation", so they only start once the gateway is in
+          # simulation mode. This is the offline proof for both: `simulation on` + `restart` (the
+          # user's own commands) under the same restricted PATH and unreachable npm as the start step.
+          $env:PATH = "$env:LOCALAPPDATA\Programs\Suveren\node;$env:SystemRoot\System32;$env:SystemRoot"
+          $cli = "$env:LOCALAPPDATA\Programs\Suveren\suveren-gateway.cmd"
+          & $cli simulation on
+          if ($LASTEXITCODE -ne 0) { throw "simulation on exited $LASTEXITCODE" }
+          & $cli restart
+          if ($LASTEXITCODE -ne 0) { throw "restart exited $LASTEXITCODE" }
+          & bundle\windows\ci-assert-connectors.ps1 -Label 'interactive-simulation' -Mode simulation -McpPort 15430
+          Write-Host "interactive-simulation: crm and erp started OFFLINE (SUVEREN_OFFLINE=1, npm unreachable), records paused by the mode"
+
+          # Back to production: the scheduled-task steps below run against the same data folder
+          # and assert production.
+          & $cli simulation off --confirm live
+          if ($LASTEXITCODE -ne 0) { throw "simulation off exited $LASTEXITCODE" }
+          & $cli restart
+          if ($LASTEXITCODE -ne 0) { throw "restart (back to production) exited $LASTEXITCODE" }
+          & bundle\windows\ci-assert-connectors.ps1 -Label 'interactive-production-again' -Mode production -McpPort 15430
 
       - name: service install — scheduled task created, pointed at the launcher
         shell: pwsh
@@ -686,27 +659,7 @@ jobs:
           }
           Write-Host "installMethod: msi (confirmed — scheduled-task instance)"
 
-          $mcpHealth = 'http://localhost:3430/health'
-          $deadline = (Get-Date).AddSeconds(240)
-          $targets = @('crm', 'records', 'erp')
-          $body = $null
-          while ((Get-Date) -lt $deadline) {
-            try {
-              $body = Invoke-RestMethod -Uri $mcpHealth -TimeoutSec 5
-              $statuses = $body.integrations | Where-Object { $targets -contains $_.id }
-              $allUp = ($statuses.Count -eq $targets.Count) -and ($statuses | ForEach-Object { $_.running -and $_.toolCount -gt 0 }) -notcontains $false
-              if ($allUp) { break }
-            } catch {}
-            Start-Sleep -Seconds 3
-          }
-          Write-Host ($body | ConvertTo-Json -Depth 5)
-          foreach ($id in $targets) {
-            $entry = $body.integrations | Where-Object { $_.id -eq $id }
-            if (-not $entry) { throw "autostart: ${id} not in the integration registry — did not auto-start via the scheduled task" }
-            if (-not $entry.running) { throw "autostart: ${id} registered but not running ($($entry.error))" }
-            if ($entry.toolCount -le 0) { throw "autostart: ${id} running but discovered 0 tools" }
-            Write-Host "autostart: $id running, $($entry.toolCount) tool(s) — offline, via the scheduled task"
-          }
+          & bundle\windows\ci-assert-connectors.ps1 -Label 'autostart' -Mode production -Hint ' — did not auto-start via the scheduled task'
 
       - name: Stop the task-spawned gateway
         if: always()
@@ -925,25 +878,7 @@ jobs:
       - name: Wait for the task-started gateway (OLD) — default ports, no CLI involved
         shell: pwsh
         run: |
-          $targets = @('crm', 'records', 'erp')
-          $deadline = (Get-Date).AddSeconds(240)
-          $body = $null
-          while ((Get-Date) -lt $deadline) {
-            try {
-              $body = Invoke-RestMethod -Uri 'http://localhost:3430/health' -TimeoutSec 5
-              $statuses = $body.integrations | Where-Object { $targets -contains $_.id }
-              $allUp = ($statuses.Count -eq $targets.Count) -and ($statuses | ForEach-Object { $_.running -and $_.toolCount -gt 0 }) -notcontains $false
-              if ($allUp) { break }
-            } catch {}
-            Start-Sleep -Seconds 3
-          }
-          Write-Host ($body | ConvertTo-Json -Depth 5)
-          foreach ($id in $targets) {
-            $entry = $body.integrations | Where-Object { $_.id -eq $id }
-            if (-not $entry -or -not $entry.running -or $entry.toolCount -le 0) {
-              throw "OLD: $id is not running with tools before the upgrade — nothing to prove an upgrade against"
-            }
-          }
+          & bundle\windows\ci-assert-connectors.ps1 -Label 'OLD' -Mode production
           Write-Host "OLD gateway confirmed running via the scheduled task, connectors up."
 
       - name: a) Install NEW over the running OLD — this is the hang this test exists to catch
@@ -1025,25 +960,7 @@ jobs:
       - name: a) Assert the gateway is running again after the upgrade — RestartScheduledTaskAfterInstall
         shell: pwsh
         run: |
-          $targets = @('crm', 'records', 'erp')
-          $deadline = (Get-Date).AddSeconds(240)
-          $body = $null
-          while ((Get-Date) -lt $deadline) {
-            try {
-              $body = Invoke-RestMethod -Uri 'http://localhost:3430/health' -TimeoutSec 5
-              $statuses = $body.integrations | Where-Object { $targets -contains $_.id }
-              $allUp = ($statuses.Count -eq $targets.Count) -and ($statuses | ForEach-Object { $_.running -and $_.toolCount -gt 0 }) -notcontains $false
-              if ($allUp) { break }
-            } catch {}
-            Start-Sleep -Seconds 3
-          }
-          Write-Host ($body | ConvertTo-Json -Depth 5)
-          foreach ($id in $targets) {
-            $entry = $body.integrations | Where-Object { $_.id -eq $id }
-            if (-not $entry) { throw "NEW: $id not in the integration registry after the upgrade — the gateway did not come back on its own" }
-            if (-not $entry.running) { throw "NEW: $id registered but not running after the upgrade ($($entry.error))" }
-            if ($entry.toolCount -le 0) { throw "NEW: $id running but discovered 0 tools after the upgrade" }
-          }
+          & bundle\windows\ci-assert-connectors.ps1 -Label 'NEW' -Mode production -Hint ' after the upgrade — the gateway did not come back on its own'
           Write-Host "gateway came back on its own after the upgrade (RestartScheduledTaskAfterInstall), connectors up offline — nobody had to log out and back in."
 
       - name: No visible window belongs to the gateway (console hosts included) — after the upgrade restarted it
