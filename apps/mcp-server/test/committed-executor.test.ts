@@ -375,8 +375,23 @@ describe('executeCommitted × ExecutionJournal', () => {
 
     expect(r.isError).toBe(true);
     const text = (r.content as Array<{ text: string }>)[0].text;
-    expect(text).toMatch(/the record changed in/);
+    expect(text).toMatch(/was approved, but running it was refused — nothing was done\./);
     expect(text).toMatch(/Reason: The record changed in deploy-github since it was requested\./);
+  });
+
+  it('a changed ATTACHMENT does not blame the email connector: neutral first line, the fingerprint as Reason (Rehearsal A14)', async () => {
+    const postReceipt = vi.fn();
+    const { state } = buildState(dir, postReceipt);
+    state.executionJournal.begin({ ticketId: 'rcpt-attach', proposalId: PROPOSAL.id, tool: PROPOSAL.tool, argsHash: 'x' });
+    state.executionJournal.complete('rcpt-attach', 'failed', 'changed',
+      'Refused: could not re-resolve attachment "REH-2026-1.pdf" (erp:invoice-pdf/REH-2026-1) at execution — the archived document does not match its stored fingerprint.');
+
+    const r = await checkPendingCommitmentsHandler(state, undefined)({ proposal_id: PROPOSAL.id });
+    const text = (r.content as Array<{ text: string }>)[0].text;
+    expect(r.isError).toBe(true);
+    expect(text).not.toMatch(/record changed in/);
+    expect(text).toMatch(/was approved, but running it was refused — nothing was done\./);
+    expect(text).toMatch(/Reason: Refused: could not re-resolve attachment "REH-2026-1\.pdf"/);
   });
 });
 

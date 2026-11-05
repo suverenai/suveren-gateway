@@ -777,9 +777,13 @@ function localOutcomeOfExecuted(proposal: SPProposal, state: SharedState): { tex
         : entry.outcome === 'refused'
         ? `Proposal ${proposal.id} was approved, but ${integration} refused to run it — nothing was done. ` +
           `Do not call the tool again with the same values; a new attempt needs a new request and approval.${reasonSuffix}`
+        // 'changed' covers a changed record AND a changed attachment/inserted
+        // value (AU4 + documents by reference); the Reason line says which.
+        // Wording A, signed off by Andreas 2026-11-05 (A14 found the old line
+        // blaming the email connector for a changed ERP PDF).
         : entry.outcome === 'changed'
-        ? `Proposal ${proposal.id} was approved, but the record changed in ${integration} since it was ` +
-          `requested — nothing was done. A new attempt needs a new request and approval.${reasonSuffix}`
+        ? `Proposal ${proposal.id} was approved, but running it was refused — nothing was done. ` +
+          `A new attempt needs a new request and approval.${reasonSuffix}`
         : `Proposal ${proposal.id} was approved, but running it failed — whether anything happened in ${integration} is unknown. ` +
           `Check ${integration} before trying again; a new attempt needs a new request and approval.${reasonSuffix}`,
       isError: true,
