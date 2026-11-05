@@ -1061,6 +1061,14 @@ export class IntegrationManager {
     return connectorCurrentlySimulated(getManifest(id), this.serviceCredentials.get(id)) ? 'production' : undefined;
   }
 
+  /** Built-ins that bring their own "no mandate" text, with the profile it is about —
+   *  so list-authorizations can say it even when their tools are not listed. */
+  builtinNoMandateTexts(): Array<{ id: string; profile: string; text: string }> {
+    return [...this.builtins.values()]
+      .filter(b => !!b.def.noMandateText)
+      .map(b => ({ id: b.def.id, profile: b.def.profile, text: b.def.noMandateText! }));
+  }
+
   /** A built-in's own "no mandate" text (see BuiltinIntegration.noMandateText), or undefined. */
   noMandateText(id: string): string | undefined {
     return this.builtins.get(id)?.def.noMandateText;

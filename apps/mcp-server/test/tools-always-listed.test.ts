@@ -216,3 +216,31 @@ describe('list-authorizations', () => {
     expect(text).not.toContain('describe_mandate_proposal');
   });
 });
+
+describe("list-authorizations — a built-in's own no-mandate text", () => {
+  const SETUP_TEXT = 'Not done: I may only prepare mandates once you have given me a **Setup** mandate.';
+  const withHint = () => ({
+    ...mockIntegrationManager(ALL),
+    builtinNoMandateTexts: () => [{ id: 'setup', profile: 'delegation', text: SETUP_TEXT }],
+  }) as unknown as IntegrationManager;
+
+  it('no mandate at all: the overview carries the text, so the agent reaches it although setup tools are hidden', async () => {
+    const text = (await listAuthorizationsHandler(mockState([]), withHint())()).content[0].text;
+    expect(text).toContain(SETUP_TEXT);
+  });
+
+  it('other mandates but none for the built-in: overview and an unmatched domain view both carry it', async () => {
+    const auths = [customersMandate()];
+    const overview = (await listAuthorizationsHandler(mockState(auths), withHint())()).content[0].text;
+    expect(overview).toContain(SETUP_TEXT);
+    const domainView = (await listAuthorizationsHandler(mockState(auths), withHint())({ domain: 'delegation' })).content[0].text;
+    expect(domainView).toContain(SETUP_TEXT);
+  });
+
+  it('a mandate on the built-in profile: the text is gone', async () => {
+    const setupAuth = { ...customersMandate(), profileId: 'github.com/humanagencyprotocol/hap-profiles/delegation@0.5' };
+    const text = (await listAuthorizationsHandler(mockState([setupAuth]), withHint())()).content[0].text;
+    expect(text).not.toContain(SETUP_TEXT);
+  });
+});
+
