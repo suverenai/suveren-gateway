@@ -15,7 +15,7 @@ import type { ProfileToolGating } from './tool-gating-types';
 import type { IntegrationConfig, ToolGatingConfig } from './integration-registry';
 import { getManifest, isExactSemver } from './manifest-loader';
 import { remotePreflightTarget, preflightRemoteAuth } from './remote-auth-preflight';
-import { isSimulationMode, connectorCurrentlySimulated, SIMULATION_BLOCK_REASON } from './simulation-mode';
+import { isSimulationMode, connectorCurrentlySimulated, SIMULATION_BLOCK_REASON, PRODUCTION_BLOCK_REASON } from './simulation-mode';
 import { inheritedConnectorEnv } from './connector-env';
 import { withSourceLink } from './request-context';
 import { withAttachmentAndInsertSchema } from './attachment-reference';
@@ -171,7 +171,7 @@ export interface IntegrationStatus {
    * typed as a union (not boolean) so a second cause, if one is ever added,
    * doesn't need a breaking shape change.
    */
-  paused?: 'simulation';
+  paused?: 'simulation' | 'production';
   /**
    * Local read-age window (days), or null when unset (the read path then falls
    * back to the signed grant bound). Null and 0 are different answers — 0 is
@@ -671,9 +671,9 @@ export class IntegrationManager {
     // depth), in case some future path ever starts an integration without
     // going through here. Uses `isSimulationSafe` (below) so this decision
     // and the status/call-time ones can never disagree.
-    if (isSimulationMode() && !this.isSimulationSafe(config.id)) {
-      throw new Error(`${config.id}: ${SIMULATION_BLOCK_REASON}`);
-    }
+    const blocked = this.modeBlock(config.id);
+    if (blocked === 'simulation') throw new Error(`${config.id}: ${SIMULATION_BLOCK_REASON}`);
+    if (blocked === 'production') throw new Error(`${config.id}: ${PRODUCTION_BLOCK_REASON}`);
 
     // Install (or update to the manifest-pinned version) npm package on-demand
     // if specified. Throws — and the integration does not start — if the
@@ -1041,6 +1041,26 @@ export class IntegrationManager {
    * …) are pushed to this gateway under its own id (control-plane's
    * `pushServiceCredentials(id, fields)`), never a shared/other service id.
    */
+  /**
+   * Why this connector may not run in the gateway's CURRENT mode, or undefined.
+   * Two worlds, never mixed (Andreas, 2026-11-05):
+   * - simulation mode on  → only simulation-safe connectors ('simulation' = a
+   *   real system is blocked);
+   * - simulation mode off → no connector whose current setting is simulated
+   *   ('production' = a simulated connector is blocked). Built-ins are the
+   *   gateway's own tools, not simulated data; `simulationOnly` ones are
+   *   already unavailable outside simulation mode.
+   * The one decision start, status and every call use, so they never disagree.
+   * While the vault is locked a connector's settings are not known yet and it
+   * reads as its manifest default (simulated) → it waits; the post-unlock
+   * sweep starts it with its real settings.
+   */
+  modeBlock(id: string): 'simulation' | 'production' | undefined {
+    if (isSimulationMode()) return this.isSimulationSafe(id) ? undefined : 'simulation';
+    if (this.builtins.has(id)) return undefined;
+    return connectorCurrentlySimulated(getManifest(id), this.serviceCredentials.get(id)) ? 'production' : undefined;
+  }
+
   isSimulationSafe(id: string): boolean {
     const builtin = this.builtins.get(id);
     if (builtin) return builtin.def.simulation === true;
@@ -1248,9 +1268,7 @@ export class IntegrationManager {
             // working as designed (see IntegrationStatus.paused). Genuine
             // start failures still surface via the one-shot `warning` string
             // returned by /internal/add-integration — they never land here.
-            paused: isSimulationMode() && !this.isSimulationSafe(config.id)
-              ? 'simulation'
-              : undefined,
+            paused: this.modeBlock(config.id),
           });
         }
       }

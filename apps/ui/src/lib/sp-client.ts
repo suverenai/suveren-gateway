@@ -515,7 +515,7 @@ export interface McpIntegrationStatus {
    * Paused-by-design, not broken — drives the neutral "Paused" chip and keeps
    * it out of "Needs your attention" (see IntegrationStatusContext).
    */
-  paused?: 'simulation';
+  paused?: 'simulation' | 'production';
   /**
    * Local read-age window in days, or null when unset (reads then fall back to
    * the signed grant bound). `0` means "read nothing" and is NOT the same as

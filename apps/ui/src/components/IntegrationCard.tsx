@@ -72,7 +72,7 @@ export interface StoppedIntegrationDisplay {
 export function stoppedIntegrationDisplay(
   integration: Pick<McpIntegrationStatus, 'running' | 'error' | 'paused'> | undefined,
 ): StoppedIntegrationDisplay {
-  if (integration?.paused === 'simulation') {
+  if (integration?.paused === 'simulation' || integration?.paused === 'production') {
     return { chip: { t: 'Paused' }, showStart: false };
   }
   if (integration && !integration.running && integration.error) {
@@ -739,7 +739,11 @@ export function IntegrationCard({ manifest, area, integration, state, onStatusCh
         {cardState === 'ready' && integration && !integration.running && (
           !stoppedDisplay.showStart ? (
             <>
-              <p className="ob-lbl ob-gap">Real systems are off while simulation mode is on.</p>
+              <p className="ob-lbl ob-gap">
+                {integration.paused === 'production'
+                  ? 'This connector is set to simulation, and simulation mode is off. Nothing runs on simulated data here — set it to a real system, or disable it.'
+                  : 'Real systems are off while simulation mode is on.'}
+              </p>
               <div className="ob-btns is-inline">
                 <button className="ob-btn" onClick={remove}>Disable</button>
               </div>

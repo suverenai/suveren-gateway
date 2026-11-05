@@ -62,7 +62,8 @@ import { getProfile, ContentBindingError, boundActionTypes } from '@hap/core';
 import { readFile } from 'node:fs/promises';
 import { extname } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { isSimulationMode } from './simulation-mode';
+import { isSimulationMode, manifestIsSimulated } from './simulation-mode';
+import { getManifest } from './manifest-loader';
 
 const IMAGE_MIME: Record<string, string> = {
   '.jpg': 'image/jpeg',
@@ -524,6 +525,33 @@ export function createGatedToolHandler(
   // tell simulation from live (Andreas, 2026-10-02). The explicit reason stays
   // on the human side — SIMULATION_BLOCK_REASON in the integration status, the
   // UI banner and `suveren-gateway simulation status`.
+  // The mirror (Andreas, 2026-11-05): outside simulation mode a SIMULATED
+  // connector never answers — an approved action must not land in a test
+  // mailbox. Same neutral text; the reason is on the human side
+  // (PRODUCTION_BLOCK_REASON in the status).
+  // Only a connector whose manifest declares a simulated mode can be in it, so
+  // only that one is asked; any other tool's handler never touches the manager here.
+  if (
+    !isSimulationMode()
+    && manifestIsSimulated(getManifest(tool.integrationId))
+    && integrationManager.modeBlock?.(tool.integrationId) === 'production'
+  ) {
+    return async () => {
+      recordBlocked(state, tool, {
+        kind: 'simulation',
+        detail: 'A simulated connector is blocked while simulation mode is off.',
+        who: 'gateway',
+        code: 'SIMULATION_MODE',
+      });
+      return {
+        content: [{
+          type: 'text',
+          text: `Refused: "${tool.namespacedName}" is not available. No ticket was requested.`,
+        }],
+        isError: true,
+      };
+    };
+  }
   if (isSimulationMode() && !integrationManager.isSimulationSafe(tool.integrationId)) {
     return async () => {
       recordBlocked(state, tool, {
