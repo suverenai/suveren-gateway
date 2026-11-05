@@ -19,6 +19,7 @@ param(
   [Parameter(Mandatory)][string]$Label,
   [Parameter(Mandatory)][ValidateSet('production', 'simulation')][string]$Mode,
   [string]$McpPort = '3430',
+  [string]$ControlPlanePort = '',   # when set, the control plane's /health must also answer status 'ok'
   [int]$TimeoutSec = 240,
   [string]$Hint = ''
 )
@@ -41,13 +42,21 @@ function Test-Expected($body) {
 
 $deadline = (Get-Date).AddSeconds($TimeoutSec)
 $body = $null
+$cpOk = -not $ControlPlanePort
 while ((Get-Date) -lt $deadline) {
   try {
-    $body = Invoke-RestMethod -Uri "http://localhost:$McpPort/health" -TimeoutSec 5
-    if (Test-Expected $body) { break }
+    if (-not $cpOk) {
+      $cp = Invoke-RestMethod -Uri "http://localhost:$ControlPlanePort/health" -TimeoutSec 5
+      $cpOk = ($cp.status -eq 'ok')
+    }
+    if ($cpOk) {
+      $body = Invoke-RestMethod -Uri "http://localhost:$McpPort/health" -TimeoutSec 5
+      if (Test-Expected $body) { break }
+    }
   } catch {}
   Start-Sleep -Seconds 3
 }
+if (-not $cpOk) { throw "${Label}: the control plane's /health on port $ControlPlanePort never reported status 'ok' within ${TimeoutSec}s (the UI half did not come up)" }
 if (-not $body) { throw "${Label}: the gateway's /health on port $McpPort never answered within ${TimeoutSec}s" }
 Write-Host ($body | ConvertTo-Json -Depth 5)
 

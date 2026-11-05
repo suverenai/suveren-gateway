@@ -414,7 +414,7 @@ jobs:
           # a Windows 11 VM. This is the commit custom action's job, with NO
           # manual `start`/`service install` call from this test — default
           # ports, since nothing here overrides them.
-          & bundle\windows\ci-assert-connectors.ps1 -Label 'fresh-install' -Mode production -Hint ' — nobody ran start or logged in'
+          & bundle\windows\ci-assert-connectors.ps1 -Label 'fresh-install' -Mode production -ControlPlanePort 3400 -Hint ' — nobody ran start or logged in'
           Write-Host "confirmed: gateway came up on its own after a SILENT install, connectors running offline, with no manual start/service-install call."
 
           & bundle\windows\ci-assert-no-console-window.ps1   # while the gateway is still running
