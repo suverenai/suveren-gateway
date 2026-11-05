@@ -833,6 +833,16 @@ export interface DifferentAccountSummary {
  * vault that belongs to a different user. The caller is expected to confirm
  * via UI and retry login with `{ confirmWipe: true }`.
  */
+/** Fired on {@link sessionEvents} when the control plane answers 401 to a signed-in request. */
+export const SESSION_GONE_EVENT = 'suveren:session-gone';
+/** Where the client announces a lost session; the auth context listens. */
+export const sessionEvents = new EventTarget();
+
+/** Requests whose 401 means "wrong credentials", not "session gone". */
+export function isAuthPath(path: string): boolean {
+  return /^\/(api\/)?auth\//.test(path);
+}
+
 export class DifferentAccountError extends Error {
   readonly summary: DifferentAccountSummary;
   constructor(summary: DifferentAccountSummary) {
@@ -995,7 +1005,7 @@ class SPClient {
   }
 
   private async fetch(path: string, init?: RequestInit): Promise<Response> {
-    return globalThis.fetch(path, {
+    const res = await globalThis.fetch(path, {
       ...init,
       headers: {
         'Content-Type': 'application/json',
@@ -1003,6 +1013,15 @@ class SPClient {
         ...init?.headers,
       },
     });
+    // A signed-in tab whose session the gateway no longer accepts — typically
+    // after a restart, which locks the vault and sends no 'session-locked'
+    // event. Without this every page shows its own wrong error (Integrations
+    // said "MCP server is not reachable"). Sign-in calls are excluded: a
+    // wrong key there is the login form's own error, not a lost session.
+    if (res.status === 401 && this.apiKey && !isAuthPath(path)) {
+      sessionEvents.dispatchEvent(new Event(SESSION_GONE_EVENT));
+    }
+    return res;
   }
 
   // ─── Auth ─────────────────────────────────────────────────────────────
