@@ -224,6 +224,7 @@ export function IntegrationCard({ manifest, area, integration, state, onStatusCh
       await spClient.setCredential(manifest.id, credValues);
       setCredConfigured(true);
       setCredValues({});
+      await reloadExistingCreds();
       // Auto-start: if this integration doesn't need OAuth, activating now
       // skips the dead state where credentials are saved but nothing runs.
       if (!manifest.oauth) {
@@ -259,6 +260,23 @@ export function IntegrationCard({ manifest, area, integration, state, onStatusCh
   };
   const credsDirty = Object.keys(changedCredFields()).length > 0;
 
+  // After a save, read the settings back from the gateway (backend truth): the
+  // mode label ("Test data" / "Local") and the edit form's pre-fill come from
+  // `existingCreds`, which was otherwise only loaded once on mount — a saved
+  // mode change kept showing the old mode until the page was reloaded (2026-11-05).
+  const reloadExistingCreds = async () => {
+    const status = await spClient.getCredential(manifest.id);
+    const current: Record<string, string> = {};
+    if (status.configured && status.fields) {
+      for (const f of manifest.credentials.fields) {
+        if (status.fields[f.key] != null) current[f.key] = status.fields[f.key];
+      }
+    }
+    setExistingCreds(current);
+    setSecretHints(status.secrets ?? {});
+    setCredUpdatedAt(status.updatedAt);
+  };
+
   // Save new credentials from the "Change credentials" edit panel (running
   // integration). For OAuth we stay in edit mode so the user can Connect with
   // the new client; for non-OAuth we restart with the new creds and exit.
@@ -270,6 +288,7 @@ export function IntegrationCard({ manifest, area, integration, state, onStatusCh
       await spClient.setCredential(manifest.id, changed);
       setCredValues({});
       setCredConfigured(true);
+      await reloadExistingCreds();
       if (manifest.oauth) {
         onSuccess(`${manifest.name} credentials saved — now click Connect.`);
       } else {
