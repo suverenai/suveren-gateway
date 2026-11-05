@@ -90,6 +90,26 @@ describe('shared sign-in group in the vault routes', () => {
     expect(g._oauthAccount).toBeUndefined();
   });
 
+  it('dry run says "this signs the group out" and changes nothing', async () => {
+    vault.setCredential('sign-in:google', { clientId: 'old', clientSecret: 'os', refreshToken: 'tok' });
+    const r = await fetch(`${base}/sign-in%3Agoogle?dryRun=1`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clientId: 'new' }) });
+    expect(await r.json()).toEqual({ ok: true, dryRun: true, signsOut: true, members: ['gmail', 'calendar'] });
+    expect(vault.getCredential('sign-in:google')).toEqual({ clientId: 'old', clientSecret: 'os', refreshToken: 'tok' });
+    expect(pushed).toEqual([]);
+  });
+
+  it('dry run for an unchanged client says it does not sign out', async () => {
+    vault.setCredential('sign-in:google', { clientId: 'same', clientSecret: 'ss', refreshToken: 'tok' });
+    const r = await fetch(`${base}/sign-in%3Agoogle?dryRun=1`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clientId: 'same' }) });
+    expect((await r.json() as { signsOut: boolean }).signsOut).toBe(false);
+  });
+
+  it('the real save reports signedOut', async () => {
+    vault.setCredential('sign-in:google', { clientId: 'old', clientSecret: 'os', refreshToken: 'tok' });
+    expect(await (await put('sign-in:google', { clientId: 'new' })).json()).toEqual({ ok: true, signedOut: true });
+    expect(await (await put('sign-in:google', { clientId: 'new' })).json()).toEqual({ ok: true, signedOut: false });
+  });
+
   it('re-saving the same client keeps the token', async () => {
     vault.setCredential('sign-in:google', { clientId: 'same', clientSecret: 'ss', refreshToken: 'tok' });
     await put('sign-in:google', { clientId: 'same', clientSecret: 'ss' });

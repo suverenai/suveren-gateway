@@ -466,6 +466,7 @@ export interface IntegrationManifest {
   oauth: {
     authUrl: string;
     tokenUrl: string;
+    revokeUrl?: string;
     scopes: string[];
     credentialKeys: Record<string, string>;
     tokenStorage: string;

@@ -7,7 +7,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   groupCredentialName, parseGroupCredentialName, groupOfMember, unionScopes, effectiveCredentials,
-  withoutSignIn, resolveGroupClient, credentialsToPush, type OAuthLike,
+  withoutSignIn, resolveGroupClient, credentialsToPush, normalizeScope, missingScopes, retireMemberSignIns,
+  changesGroupClient, revokeTokens, type OAuthLike,
 } from '../lib/sign-in-group';
 
 const oauth = (scopes: string[], group = { id: 'google', name: 'Google' }): OAuthLike => ({
@@ -124,5 +125,88 @@ describe('credentialsToPush', () => {
   it('non-members and unknown groups are untouched / empty', () => {
     expect(credentialsToPush('ai-config', MANIFESTS, n => (n === 'ai-config' ? { k: 'v' } : null))).toEqual([['ai-config', { k: 'v' }]]);
     expect(credentialsToPush('sign-in:nope', MANIFESTS, get)).toEqual([]);
+  });
+});
+
+const U = 'https://www.googleapis.com/auth/userinfo.';
+describe('scope coverage (Google reports short and long names)', () => {
+  it('normalizes userinfo.* to the short form', () => {
+    expect(normalizeScope(`${U}email`)).toBe('email');
+    expect(normalizeScope('email')).toBe('email');
+    expect(normalizeScope('openid')).toBe('openid');
+    expect(normalizeScope('https://www.googleapis.com/auth/gmail.send')).toBe('https://www.googleapis.com/auth/gmail.send');
+  });
+  const required = ['openid', `${U}email`, 'https://www.googleapis.com/auth/gmail.send'];
+  it('long manifest name is covered by a short granted name', () => {
+    expect(missingScopes('openid email https://www.googleapis.com/auth/gmail.send', required)).toEqual([]);
+  });
+  it('short manifest name is covered by a long granted name', () => {
+    expect(missingScopes(`openid ${U}email https://www.googleapis.com/auth/gmail.send`, ['openid', 'email', 'https://www.googleapis.com/auth/gmail.send'])).toEqual([]);
+  });
+  it('reports exactly the ungranted scopes', () => {
+    expect(missingScopes(`openid ${U}email`, required)).toEqual(['https://www.googleapis.com/auth/gmail.send']);
+    expect(missingScopes('openid', required)).toEqual([`${U}email`, 'https://www.googleapis.com/auth/gmail.send']);
+  });
+  it('unrecorded granted scopes (legacy token) never raise a false alarm', () => {
+    expect(missingScopes(undefined, required)).toEqual([]);
+    expect(missingScopes('  ', required)).toEqual([]);
+  });
+});
+
+describe('retireMemberSignIns', () => {
+  const group = groupOfMember(MANIFESTS, 'gmail')!;
+  it('removes members own tokens + metadata, keeps their client settings', () => {
+    const store: Record<string, Record<string, string>> = {
+      gmail: { clientId: 'i', clientSecret: 's', refreshToken: 't1', _oauthAccount: 'a' },
+      calendar: { clientId: 'i', clientSecret: 's', refreshToken: 't2' },
+    };
+    const retired = retireMemberSignIns(group, n => store[n] ?? null, (n, c) => { store[n] = c; });
+    expect(retired).toEqual(['gmail', 'calendar']);
+    expect(store.gmail).toEqual({ clientId: 'i', clientSecret: 's' });
+    expect(store.calendar).toEqual({ clientId: 'i', clientSecret: 's' });
+  });
+  it('skips members with nothing to retire (no write)', () => {
+    let writes = 0;
+    const retired = retireMemberSignIns(group, n => (n === 'gmail' ? { clientId: 'i' } : null), () => { writes++; });
+    expect(retired).toEqual([]);
+    expect(writes).toBe(0);
+  });
+});
+
+describe('changesGroupClient', () => {
+  const group = groupOfMember(MANIFESTS, 'gmail')!;
+  it('true only when a token exists AND the client id/secret differ', () => {
+    const prior = { clientId: 'a', clientSecret: 'b', refreshToken: 't' };
+    expect(changesGroupClient(group, prior, { clientId: 'x' })).toBe(true);
+    expect(changesGroupClient(group, prior, { clientId: 'a', clientSecret: 'b' })).toBe(false);
+    expect(changesGroupClient(group, prior, {})).toBe(false);
+    expect(changesGroupClient(group, { clientId: 'a', clientSecret: 'b' }, { clientId: 'x' })).toBe(false);
+    expect(changesGroupClient(group, null, { clientId: 'x' })).toBe(false);
+  });
+});
+
+describe('revokeTokens (provider endpoint stood in for by a fetch double)', () => {
+  const ok = (async () => new Response('{}', { status: 200 })) as typeof fetch;
+  it('revokes each DISTINCT token once and posts it as form field token', async () => {
+    const calls: string[] = [];
+    const f = (async (_u: string, init: RequestInit) => { calls.push(String(init.body)); return new Response('{}', { status: 200 }); }) as unknown as typeof fetch;
+    const out = await revokeTokens('https://p/revoke', [{ target: 'group', token: 'T1' }, { target: 'gmail', token: 'T1' }, { target: 'calendar', token: 'T2' }], f);
+    expect(calls).toEqual(['token=T1', 'token=T2']);
+    expect(out).toEqual([{ target: 'group', ok: true }, { target: 'calendar', ok: true }]);
+  });
+  it('a refusal is reported with the provider reason, and never contains the token', async () => {
+    const f = (async () => new Response(JSON.stringify({ error: 'invalid_token' }), { status: 400 })) as typeof fetch;
+    const out = await revokeTokens('https://p/revoke', [{ target: 'group', token: 'SECRET' }], f);
+    expect(out).toEqual([{ target: 'group', ok: false, error: 'invalid_token' }]);
+    expect(JSON.stringify(out)).not.toContain('SECRET');
+  });
+  it('a network failure is reported, not thrown', async () => {
+    const f = (async () => { throw new Error('offline'); }) as typeof fetch;
+    expect(await revokeTokens('https://p/revoke', [{ target: 'g', token: 'T' }], f)).toEqual([{ target: 'g', ok: false, error: 'offline' }]);
+  });
+  it('without a revokeUrl it says so instead of pretending', async () => {
+    const out = await revokeTokens(undefined, [{ target: 'g', token: 'T' }], ok);
+    expect(out[0].ok).toBe(false);
+    expect(out[0].error).toMatch(/revokeUrl/);
   });
 });

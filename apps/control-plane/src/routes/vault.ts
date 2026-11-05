@@ -16,7 +16,7 @@ import { credentialView, textFieldsFor, META_KEY } from '../lib/credential-meta'
 import { proxiedFetch } from '../lib/proxied-fetch';
 import {
   credentialsToPush, parseGroupCredentialName, getGroup, groupOfMember, groupCredentialName,
-  effectiveCredentials, withoutSignIn,
+  effectiveCredentials, withoutSignIn, changesGroupClient,
 } from '../lib/sign-in-group';
 
 /**
@@ -114,16 +114,21 @@ export function createVaultRouter(vault: Vault): Router {
     // back to their own entries, which are untouched.
     const manifests = await cachedManifests();
     const groupId = parseGroupCredentialName(name);
+    let signsOut = false;
     if (groupId) {
       const group = getGroup(manifests, groupId);
       if (!group) {
         res.status(404).json({ error: `Unknown sign-in group "${groupId}"` });
         return;
       }
-      const prior = vault.getCredential(name);
-      const keys = group.members[0].oauth!.credentialKeys;
-      const changed = Object.values(keys).some(k => prior?.[k] !== undefined && incoming[k] !== undefined && prior[k] !== incoming[k]);
-      if (changed) fields = withoutSignIn(fields, group.members[0].oauth!); // keeps the client just saved
+      signsOut = changesGroupClient(group, vault.getCredential(name), incoming);
+      // Dry run: tell the UI what saving WOULD do, change nothing. The UI asks
+      // before it saves a changed client.
+      if (req.query.dryRun === '1' || req.query.dryRun === 'true') {
+        res.json({ ok: true, dryRun: true, signsOut, members: group.members.map(m => m.id) });
+        return;
+      }
+      if (signsOut) fields = withoutSignIn(fields, group.members[0].oauth!); // keeps the client just saved
     }
 
     vault.setCredential(name, fields);
@@ -138,7 +143,7 @@ export function createVaultRouter(vault: Vault): Router {
       }
     }
 
-    res.json({ ok: true });
+    res.json(groupId ? { ok: true, signedOut: signsOut } : { ok: true });
   });
 
   /**

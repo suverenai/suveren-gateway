@@ -23,6 +23,8 @@ export interface OAuthLike {
   scopes: string[];
   credentialKeys: Record<string, string>;
   tokenStorage: string;
+  /** Provider's token revocation endpoint (RFC 7009). Optional. */
+  revokeUrl?: string;
   signInGroup?: { id: string; name: string };
 }
 
@@ -165,4 +167,102 @@ export function credentialsToPush(
   const m = member.members.find(x => x.id === name)!;
   const eff = effectiveCredentials(own, getCredential(groupCredentialName(member.id)), m.oauth);
   return eff ? [[name, eff]] : [];
+}
+
+// ─── scope coverage ─────────────────────────────────────────────────────────
+
+const USERINFO_PREFIX = 'https://www.googleapis.com/auth/userinfo.';
+
+/**
+ * Providers report a granted scope under more than one name. Google's
+ * "email" / "profile" are the same permission as ".../auth/userinfo.email" /
+ * ".../userinfo.profile", and the token response may use either form. Both
+ * sides are compared by their short form.
+ */
+export function normalizeScope(scope: string): string {
+  return scope.startsWith(USERINFO_PREFIX) ? scope.slice(USERINFO_PREFIX.length) : scope;
+}
+
+/**
+ * Scopes a member's manifest needs that the sign-in did not grant. `granted` is
+ * the provider's space-separated `scope` string as stored in `_oauthScopes`;
+ * undefined/empty means "not recorded" (a legacy per-connector token) -> [],
+ * never a false alarm.
+ */
+export function missingScopes(granted: string | undefined, required: string[]): string[] {
+  if (!granted || !granted.trim()) return [];
+  const have = new Set(granted.split(/\s+/).filter(Boolean).map(normalizeScope));
+  return required.filter(r => !have.has(normalizeScope(r)));
+}
+
+// ─── group lifecycle helpers ────────────────────────────────────────────────
+
+/**
+ * After the group token is stored: the members' OWN tokens and sign-in
+ * metadata are removed (their client settings stay). Called only after a
+ * successful group sign-in, so a failed one leaves old tokens working.
+ * Returns the member ids that had a token to retire.
+ */
+export function retireMemberSignIns(
+  group: SignInGroup,
+  get: (name: string) => Record<string, string> | null,
+  set: (name: string, cred: Record<string, string>) => void,
+): string[] {
+  const retired: string[] = [];
+  for (const m of group.members) {
+    const own = get(m.id);
+    if (!own || !m.oauth) continue;
+    const stripped = withoutSignIn(own, m.oauth);
+    if (Object.keys(stripped).length !== Object.keys(own).length) {
+      set(m.id, stripped);
+      retired.push(m.id);
+    }
+  }
+  return retired;
+}
+
+/** Would saving `incoming` change the group's OAuth client (which invalidates its token)? */
+export function changesGroupClient(
+  group: SignInGroup,
+  prior: Record<string, string> | null,
+  incoming: Record<string, string>,
+): boolean {
+  const keys = Object.values(group.members[0].oauth!.credentialKeys);
+  return !!prior?.[group.members[0].oauth!.tokenStorage] &&
+    keys.some(k => prior[k] !== undefined && incoming[k] !== undefined && prior[k] !== incoming[k]);
+}
+
+export interface RevokeOutcome { target: string; ok: boolean; error?: string }
+
+/**
+ * Best-effort RFC 7009 revocation of distinct tokens. Never throws, never
+ * returns or logs a token. `tokens` maps a label (group id / member id) to the token.
+ */
+export async function revokeTokens(
+  revokeUrl: string | undefined,
+  tokens: Array<{ target: string; token: string }>,
+  doFetch: typeof fetch = fetch,
+): Promise<RevokeOutcome[]> {
+  const seen = new Set<string>();
+  const out: RevokeOutcome[] = [];
+  for (const { target, token } of tokens) {
+    if (!token || seen.has(token)) continue;
+    seen.add(token);
+    if (!revokeUrl) { out.push({ target, ok: false, error: 'no revokeUrl declared in the manifest' }); continue; }
+    try {
+      const r = await doFetch(revokeUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ token }),
+      });
+      if (r.ok) out.push({ target, ok: true });
+      else {
+        const body = await r.json().catch(() => ({})) as { error?: string; error_description?: string };
+        out.push({ target, ok: false, error: body.error_description || body.error || `HTTP ${r.status}` });
+      }
+    } catch (err) {
+      out.push({ target, ok: false, error: err instanceof Error ? err.message : 'revocation request failed' });
+    }
+  }
+  return out;
 }

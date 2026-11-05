@@ -50,6 +50,8 @@ export interface ManifestOAuthConfig {
   credentialKeys: Record<string, string>;
   tokenStorage: string;
   extraParams?: Record<string, string>;
+  /** Optional token revocation endpoint (RFC 7009), called on sign-out. */
+  revokeUrl?: string;
   /**
    * Optional: this connector shares ONE sign-in with every other connector that
    * declares the same `signInGroup.id` (e.g. Gmail and Google Calendar are one
@@ -1375,7 +1377,7 @@ export function invalidSignInGroupMismatchReason(
     return `signInGroup "${g}" is named "${a.signInGroup.name}" here but "${b.signInGroup.name}" in ${first.id}`;
   }
   const same = (x: unknown, y: unknown) => JSON.stringify(sortKeys(x)) === JSON.stringify(sortKeys(y));
-  for (const field of ['authUrl', 'tokenUrl', 'tokenStorage', 'credentialKeys', 'extraParams'] as const) {
+  for (const field of ['authUrl', 'tokenUrl', 'revokeUrl', 'tokenStorage', 'credentialKeys', 'extraParams'] as const) {
     if (!same(a[field] ?? null, b[field] ?? null)) {
       return `signInGroup "${g}": oauth.${field} differs from ${first.id} — members of one sign-in must agree on it`;
     }

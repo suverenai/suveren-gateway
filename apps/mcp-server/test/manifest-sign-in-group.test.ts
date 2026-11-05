@@ -47,6 +47,7 @@ describe('invalidSignInGroupMismatchReason', () => {
   it.each([
     ['authUrl', { authUrl: 'https://other/o' }],
     ['tokenUrl', { tokenUrl: 'https://other/t' }],
+    ['revokeUrl', { revokeUrl: 'https://other/r' }],
     ['tokenStorage', { tokenStorage: 'accessToken' }],
     ['credentialKeys', { credentialKeys: { clientId: 'cid', clientSecret: 'clientSecret' } }],
     ['extraParams', { extraParams: { access_type: 'online' } }],
@@ -95,6 +96,11 @@ describe('loadManifests', () => {
 });
 
 describe('shipped manifests', () => {
+  it('gmail and calendar declare Google\'s revocation endpoint', () => {
+    loadManifests(SHIPPED);
+    expect(getManifest('gmail')!.oauth!.revokeUrl).toBe('https://oauth2.googleapis.com/revoke');
+    expect(getManifest('calendar')!.oauth!.revokeUrl).toBe('https://oauth2.googleapis.com/revoke');
+  });
   it('gmail and calendar declare the one Google sign-in; loading them yields the union of scopes', () => {
     loadManifests(SHIPPED);
     const g = getSignInGroups().find(x => x.id === 'google');

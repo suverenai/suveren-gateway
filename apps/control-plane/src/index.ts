@@ -36,7 +36,7 @@ import { createProxyMiddleware } from 'http-proxy-middleware';
 import { Vault } from './lib/vault';
 import {
   groupOfMember, unionScopes, effectiveCredentials, withoutSignIn, resolveGroupClient,
-  groupCredentialName, credentialsToPush, type OAuthLike,
+  groupCredentialName, credentialsToPush, missingScopes, retireMemberSignIns, revokeTokens, type OAuthLike,
 } from './lib/sign-in-group';
 import { ShownSnapshotStore } from './lib/shown-snapshot';
 import { detectInstallMethod as detectInstallMethodFrom } from './lib/install-method';
@@ -267,6 +267,7 @@ let manifestCache: Array<{
   oauth: {
     authUrl: string;
     tokenUrl: string;
+    revokeUrl?: string;
     scopes: string[];
     credentialKeys: Record<string, string>;
     tokenStorage: string;
@@ -454,6 +455,10 @@ app.get('/auth/oauth/:integrationId/callback', async (req: Request, res: Respons
       if (tokens.scope) groupCreds._oauthScopes = tokens.scope;
       vault.setCredential(groupName, groupCreds);
       console.log(`[Control Plane] sign-in group ${group.id} OAuth tokens stored in vault`);
+      // Only now, with the group token safely stored: the members' old
+      // per-connector tokens are retired (a failed sign-in never gets here).
+      const retired = retireMemberSignIns(group, n => vault.getCredential(n), (n, c) => vault.setCredential(n, c));
+      if (retired.length) console.log(`[Control Plane] retired own sign-in of: ${retired.join(', ')}`);
       await pushEffective(groupName, manifestCache);
     } else {
       // Store token alongside existing credentials (refresh_token for Gmail, access_token for LinkedIn, etc.)
@@ -511,6 +516,18 @@ app.post('/auth/oauth/:integrationId/disconnect', authGuard, async (req: Request
   const group = groupOfMember(manifestCache, integrationId);
   const targets = group ? group.members : [manifest as { id: string; oauth: OAuthLike }];
   try {
+    // Revoke at the provider FIRST (needs the tokens), best-effort: a refusal is
+    // reported in the response, and the local sign-out happens regardless.
+    const tokens: Array<{ target: string; token: string }> = [];
+    if (group) {
+      const g = vault.getCredential(groupCredentialName(group.id));
+      if (g?.[manifest.oauth.tokenStorage]) tokens.push({ target: `group:${group.id}`, token: g[manifest.oauth.tokenStorage] });
+    }
+    for (const t of targets) {
+      const own = vault.getCredential(t.id);
+      if (own?.[t.oauth!.tokenStorage]) tokens.push({ target: t.id, token: own[t.oauth!.tokenStorage] });
+    }
+    const revocation = await revokeTokens(manifest.oauth.revokeUrl, tokens);
     if (group) {
       const gname = groupCredentialName(group.id);
       const gcred = vault.getCredential(gname);
@@ -523,7 +540,14 @@ app.post('/auth/oauth/:integrationId/disconnect', authGuard, async (req: Request
     // Push explicitly (even an empty set): a member with no entry of its own
     // would otherwise keep running on the credentials pushed before sign-out.
     for (const t of targets) await pushServiceCredentials(t.id, vault.getCredential(t.id) ?? {});
-    res.json({ ok: true, signedOut: targets.map(t => t.id) });
+    res.json({
+      ok: true,
+      signedOut: targets.map(t => t.id),
+      // revoked: every distinct token was revoked at the provider. Local
+      // sign-out is done either way; `revocation` names what was refused.
+      revoked: revocation.length > 0 && revocation.every(r => r.ok),
+      revocation,
+    });
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : 'Sign-out failed' });
   }
@@ -603,7 +627,16 @@ app.get('/auth/oauth/:integrationId/health', authGuard, async (req: Request, res
       }),
     });
     const body = await r.json().catch(() => ({})) as { access_token?: string; error?: string; error_description?: string };
-    if (r.ok && body.access_token) { res.json({ status: 'ok', account }); return; }
+    if (r.ok && body.access_token) {
+      // The token works, but does it cover everything this connector needs?
+      // (A shared sign-in may have been granted fewer scopes than requested,
+      // or the manifest may have gained one since.) Only judged where the
+      // granted scopes were recorded - a legacy per-connector token has none.
+      const missing = missingScopes(creds._oauthScopes, oauth.scopes);
+      if (missing.length > 0) { res.json({ status: 'reconnect_needed', account, missingScopes: missing }); return; }
+      res.json({ status: 'ok', account });
+      return;
+    }
     res.json({ status: 'failed', account, error: body.error_description || body.error || `HTTP ${r.status}` });
   } catch (err) {
     res.json({ status: 'failed', account, error: err instanceof Error ? err.message : 'probe failed' });

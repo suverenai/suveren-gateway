@@ -39,6 +39,7 @@
     "signInGroup": { "id": "google", "name": "Google" },
     "authUrl": "https://accounts.google.com/o/oauth2/v2/auth",
     "tokenUrl": "https://oauth2.googleapis.com/token",
+    "revokeUrl": "https://oauth2.googleapis.com/revoke",
     "scopes": [
       "openid",
       "https://www.googleapis.com/auth/userinfo.email",
