@@ -39,7 +39,7 @@ export const NAV_ITEMS: NavItem[] = [
   { to: '/blocked', icon: 'blocked', label: 'Blocked', statusKey: 'blocked', group: 'core' },
   { to: '/team', icon: 'team', label: 'Team', teamOnly: true, group: 'setup' },
   { to: '/agent-brief', icon: 'brief', label: 'Agent Brief', statusKey: 'brief', group: 'setup' },
-  { to: '/integrations', icon: 'integrations', label: 'Integrations', statusKey: 'integrations', group: 'setup' },
+  { to: '/integrations', icon: 'integrations', label: 'Connectors', statusKey: 'integrations', group: 'setup' },
   { to: '/settings', icon: 'settings', label: 'Settings', statusKey: 'assistant', group: 'setup' },
 ];
 

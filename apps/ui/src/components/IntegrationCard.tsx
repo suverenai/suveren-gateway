@@ -254,7 +254,7 @@ export function IntegrationCard({ manifest, areas, integration, state, onStatusC
       // Auto-start: if this integration doesn't need OAuth, activating now
       // skips the dead state where credentials are saved but nothing runs.
       if (!manifest.oauth) {
-        onSuccess(`${manifest.name} credentials saved — starting integration...`);
+        onSuccess(`${manifest.name} credentials saved — starting connector...`);
         await activate();
       } else {
         onSuccess(`${manifest.name} credentials saved!`);
@@ -340,7 +340,7 @@ export function IntegrationCard({ manifest, areas, integration, state, onStatusC
           setEditingCreds(false);
           setAuthHealth(null);
           clearInterval(poll);
-          onSuccess(`${manifest.name} connected — starting integration...`);
+          onSuccess(`${manifest.name} connected — starting connector...`);
           // Re-probe auth health so the chip flips from "failed" to OK/account.
           spClient.getOAuthHealth(manifest.id).then(setAuthHealth).catch(() => {});
           // Auto-start after OAuth completes so the user doesn't have to click Start separately.
@@ -358,7 +358,7 @@ export function IntegrationCard({ manifest, areas, integration, state, onStatusC
       if (result.warning) {
         onSuccess(result.warning);
       } else {
-        onSuccess(`${manifest.name} integration started with ${result.tools.length} tools`);
+        onSuccess(`${manifest.name} connector started with ${result.tools.length} tools`);
       }
       onStatusChange();
     } catch (err) {
@@ -371,7 +371,7 @@ export function IntegrationCard({ manifest, areas, integration, state, onStatusC
   const remove = async () => {
     try {
       await spClient.removeMcpIntegration(manifest.id);
-      onSuccess(`${manifest.name} integration removed`);
+      onSuccess(`${manifest.name} connector removed`);
       onStatusChange();
     } catch {
       onSuccess(`Failed to remove ${manifest.name}`);
@@ -757,7 +757,7 @@ export function IntegrationCard({ manifest, areas, integration, state, onStatusC
             <button
               className="ob-btn"
               onClick={remove}
-              title="Stops the subprocess and removes the integration from the registry. It will NOT auto-start on next gateway restart. Re-enable with Install."
+              title="Stops the subprocess and removes the connector from the registry. It will NOT auto-start on next gateway restart. Re-enable with Install."
             >
               Disable
             </button>
@@ -822,7 +822,7 @@ export function IntegrationCard({ manifest, areas, integration, state, onStatusC
         {cardState === 'ready' && !integration && (
           <div className="ob-btns is-inline">
             <button className="ob-btn is-solid" onClick={activate} disabled={activating}>
-              {activating ? 'Starting...' : `Start ${manifest.name} Integration`}
+              {activating ? 'Starting...' : `Start ${manifest.name} Connector`}
             </button>
             {!manifest.oauth && (
               <button className="ob-btn" onClick={() => setCredConfigured(false)}>

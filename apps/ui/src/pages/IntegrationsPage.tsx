@@ -79,19 +79,19 @@ export function IntegrationsPage() {
   return (
     <div className="su-page">
       <div className="page-header">
-        <h1 className="page-title">Integrations</h1>
-        <p className="page-subtitle">Connect external services and manage MCP integrations.{subtitle}</p>
+        <h1 className="page-title">Connectors</h1>
+        <p className="page-subtitle">The systems your AI can reach, each under its mandate.{subtitle}</p>
       </div>
 
       {successMsg && <div className="alert alert-success">{successMsg}</div>}
 
       {loading ? (
-        <p style={{ color: 'var(--text-tertiary)' }}>Loading integrations...</p>
+        <p style={{ color: 'var(--text-tertiary)' }}>Loading connectors...</p>
       ) : mcpServerUp === false ? (
         <div className="status-banner status-banner-error">
           <span className="status-banner-icon">!</span>
           <span className="status-banner-text">
-            MCP server is not reachable. Make sure it is running.
+            The connector host is not reachable. Make sure it is running.
           </span>
         </div>
       ) : grouped.grouped ? (
@@ -134,17 +134,17 @@ export function IntegrationsPage() {
               <ConnectorCards entries={inUse} catalog={catalog} refresh={refresh} onSuccess={showSuccess} />
             </>
           )}
-          {notSetUp.length > 0 && (
-            <>
-              <GroupHeading title="Not set up" count={notSetUpCards} note="open one to set it up" />
-              <ConnectorCards entries={notSetUp} catalog={catalog} refresh={refresh} onSuccess={showSuccess} />
-            </>
-          )}
-
           {paused.length > 0 && (
             <>
               <GroupHeading title="Paused" count={paused.length} />
               <ConnectorCards entries={paused} catalog={catalog} refresh={refresh} onSuccess={showSuccess} />
+            </>
+          )}
+
+          {notSetUp.length > 0 && (
+            <>
+              <GroupHeading title="Not set up" count={notSetUpCards} note="open one to set it up" />
+              <ConnectorCards entries={notSetUp} catalog={catalog} refresh={refresh} onSuccess={showSuccess} />
             </>
           )}
 
@@ -160,14 +160,14 @@ function EmptyState({ manifestsError }: { manifestsError: boolean }) {
     <div className="status-banner status-banner-error">
       <span className="status-banner-icon">!</span>
       <span className="status-banner-text">
-        Couldn't load integrations — the gateway can't reach its MCP server
+        Couldn't load connectors — the gateway can't reach its connector host
         (or you're signed out). Check the control-plane's
-        {' '}<code>SUVEREN_MCP_INTERNAL_URL</code> (dev MCP is :3431), then refresh.
+        {' '}<code>SUVEREN_MCP_INTERNAL_URL</code> (dev: :3431), then refresh.
       </span>
     </div>
   ) : (
     <p style={{ color: 'var(--text-tertiary)', textAlign: 'center', marginTop: '2rem' }}>
-      No integrations available yet.
+      No connectors available yet.
     </p>
   );
 }
