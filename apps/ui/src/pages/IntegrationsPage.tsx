@@ -91,7 +91,7 @@ export function IntegrationsPage() {
         <div className="status-banner status-banner-error">
           <span className="status-banner-icon">!</span>
           <span className="status-banner-text">
-            The connector host is not reachable. Make sure it is running.
+            The gateway can't reach its connectors. Restart the gateway.
           </span>
         </div>
       ) : grouped.grouped ? (
@@ -160,7 +160,7 @@ function EmptyState({ manifestsError }: { manifestsError: boolean }) {
     <div className="status-banner status-banner-error">
       <span className="status-banner-icon">!</span>
       <span className="status-banner-text">
-        Couldn't load connectors — the gateway can't reach its connector host
+        Couldn't load connectors — the gateway can't reach its connectors
         (or you're signed out). Check the control-plane's
         {' '}<code>SUVEREN_MCP_INTERNAL_URL</code> (dev: :3431), then refresh.
       </span>
