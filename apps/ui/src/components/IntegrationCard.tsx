@@ -741,7 +741,7 @@ export function IntegrationCard({ manifest, area, integration, state, onStatusCh
             <>
               <p className="ob-lbl ob-gap">
                 {integration.paused === 'production'
-                  ? 'This connector is set to simulation, and simulation mode is off. Nothing runs on simulated data here — set it to a real system, or disable it.'
+                  ? 'This gateway runs in production, and this connector is set to simulation. Nothing runs on simulated data here — set it to a real system, or disable it.'
                   : 'Real systems are off while simulation mode is on.'}
               </p>
               <div className="ob-btns is-inline">

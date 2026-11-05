@@ -1061,6 +1061,11 @@ export class IntegrationManager {
     return connectorCurrentlySimulated(getManifest(id), this.serviceCredentials.get(id)) ? 'production' : undefined;
   }
 
+  /** A built-in's own "no mandate" text (see BuiltinIntegration.noMandateText), or undefined. */
+  noMandateText(id: string): string | undefined {
+    return this.builtins.get(id)?.def.noMandateText;
+  }
+
   isSimulationSafe(id: string): boolean {
     const builtin = this.builtins.get(id);
     if (builtin) return builtin.def.simulation === true;

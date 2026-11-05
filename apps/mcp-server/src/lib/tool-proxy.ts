@@ -58,7 +58,7 @@ import {
   hasBlockedValue,
   type BoundsSchemaLike,
 } from './read-gate';
-import { getProfile, ContentBindingError, boundActionTypes } from '@hap/core';
+import { getProfile, listProfiles, ContentBindingError, boundActionTypes } from '@hap/core';
 import { readFile } from 'node:fs/promises';
 import { extname } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -725,7 +725,7 @@ function createGatedToolHandlerInner(
         type: 'text',
         text: refusals.length > 0
           ? `Refused: ${reasons.charAt(0).toUpperCase() + reasons.slice(1)} No ticket was requested.`
-          : noMandateRefusal(tool.namespacedName, profile!),
+          : noMandateRefusal(tool.namespacedName, profile!, integrationManager.noMandateText?.(tool.integrationId)),
       }],
       isError: true,
     };
@@ -1235,7 +1235,7 @@ function createGatedToolHandlerInner(
         who: 'gateway',
         code: 'NO_MATCHING_MANDATE',
       });
-      return { content: [{ type: 'text', text: noMandateRefusal(tool.namespacedName, mandateLabel) }], isError: true };
+      return { content: [{ type: 'text', text: noMandateRefusal(tool.namespacedName, mandateLabel, integrationManager.noMandateText?.(tool.integrationId)) }], isError: true };
     }
 
     if (matchingAuths.length === 0) return noEligibleMandate(refusals);
@@ -2198,9 +2198,37 @@ export function v08ProposalReaders(
   return { readers: { ownerDid: r.ownerDid, deciders: r.deciders } };
 }
 
-export function noMandateRefusal(toolName: string, profile: string): string {
-  return `Refused: no mandate covers ${toolName} (${shortProfile(profile)}). Nothing was done. ` +
-    `Ask the person to grant a ${shortProfile(profile)} mandate in the gateway, then try again. No ticket was requested.`;
+/**
+ * Refusal when no mandate covers the call. A built-in may bring its own text
+ * (`noMandateText`, e.g. Setup's two ways forward); otherwise the area is named
+ * as the person sees it — the profile's `name` ("Email", "Setup"), falling back
+ * to its short id only when the profile is not in the local catalog.
+ */
+export function noMandateRefusal(toolName: string, profile: string, builtinText?: string): string {
+  if (builtinText) return `Refused: ${builtinText} No ticket was requested.`;
+  const area = areaName(profile);
+  return `Refused: no mandate covers ${toolName} (${area}). Nothing was done. ` +
+    `Ask the person to grant a ${area} mandate in the gateway, then try again. No ticket was requested.`;
+}
+
+function areaName(profile: string): string {
+  // Manifests name an area by its short id ("customers"); the catalog is keyed by
+  // full id, so a short id is matched against every known profile's short name.
+  // Names change between versions ("Delegation" → "Setup"): the NEWEST known
+  // version's name is the one the person sees in the mandate picker.
+  const short = shortProfile(profile).toLowerCase();
+  const ver = (id: string) => (id.split('@')[1] ?? '').split('.').map(n => Number(n) || 0);
+  const newer = (a: number[], b: number[]) => {
+    for (let i = 0; i < Math.max(a.length, b.length); i++) if ((a[i] ?? 0) !== (b[i] ?? 0)) return (a[i] ?? 0) > (b[i] ?? 0);
+    return false;
+  };
+  const p = profile.includes('@')
+    ? getProfile(profile)
+    : listProfiles().map(k => getProfile(k))
+        .filter((x): x is NonNullable<typeof x> => !!x && shortProfile(x.id).toLowerCase() === short)
+        .reduce<ReturnType<typeof getProfile>>((best, x) => (!best || newer(ver(x.id), ver(best.id)) ? x : best), undefined);
+  const name = p?.name;
+  return typeof name === 'string' && name.trim() ? name.trim() : shortProfile(profile);
 }
 
 function shortProfile(profileId: string): string {

@@ -171,10 +171,24 @@ describe('the refusal without a mandate', () => {
     const im = { ...mockIntegrationManager(ALL), mandateRefusal: () => null } as unknown as IntegrationManager;
     const r = await createGatedToolHandler(connectorTool, im, state)({ id: 'c-1' });
     expect(r.isError).toBe(true);
+    // The area by the name the person sees (the registered profile's `name`), not its id.
     expect(r.content[0].text).toBe(
-      'Refused: no mandate covers crm__update_contact (customers). Nothing was done. ' +
-        'Ask the person to grant a customers mandate in the gateway, then try again. No ticket was requested.',
+      'Refused: no mandate covers crm__update_contact (Customer Management). Nothing was done. ' +
+        'Ask the person to grant a Customer Management mandate in the gateway, then try again. No ticket was requested.',
     );
+  });
+
+  it("a built-in's own no-mandate text replaces the generic one (Setup's two ways forward)", async () => {
+    const state = { ...mockState([]), blocked: { record: () => {} } } as unknown as SharedState;
+    const text = 'Not done: I may only prepare mandates once you have given me a **Setup** mandate.';
+    const im = {
+      ...mockIntegrationManager(ALL),
+      mandateRefusal: () => null,
+      noMandateText: (id: string) => (id === connectorTool.integrationId ? text : undefined),
+    } as unknown as IntegrationManager;
+    const r = await createGatedToolHandler(connectorTool, im, state)({ id: 'c-1' });
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toBe(`Refused: ${text} No ticket was requested.`);
   });
 });
 
