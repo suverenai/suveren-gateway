@@ -183,4 +183,19 @@ describe('simulation mode — tool-proxy defence in depth', () => {
     expect(state.spClient.postReceipt as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
     expect(im.callTool as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
   });
+
+  it('decided per CALL: a handler created while allowed is refused once the mode changes', async () => {
+    // A session keeps the tools it listed; the mode can change underneath it.
+    delete process.env.SUVEREN_SIMULATION;
+    const state = mockState();
+    const im = mockIntegrationManager();
+    const handler = createGatedToolHandler(realTool(), im, state);
+    expect((await handler({})).content[0].text).toContain('no mandate covers');
+
+    process.env.SUVEREN_SIMULATION = '1';
+    const after = await handler({});
+    expect(after.isError).toBe(true);
+    expect(after.content[0].text).toContain('is not available. No ticket was requested.');
+    expect(im.callTool as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
+  });
 });

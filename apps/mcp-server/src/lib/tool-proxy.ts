@@ -529,46 +529,28 @@ export function createGatedToolHandler(
   // connector never answers — an approved action must not land in a test
   // mailbox. Same neutral text; the reason is on the human side
   // (PRODUCTION_BLOCK_REASON in the status).
+  // Decided on EVERY call, not once when a session registers the tool: a
+  // session can keep a tool it listed earlier while the connector's mode or
+  // the gateway's mode changes underneath it (2026-11-05 review finding).
   // Only a connector whose manifest declares a simulated mode can be in it, so
-  // only that one is asked; any other tool's handler never touches the manager here.
-  if (
-    !isSimulationMode()
-    && manifestIsSimulated(getManifest(tool.integrationId))
-    && integrationManager.modeBlock?.(tool.integrationId) === 'production'
-  ) {
-    return async () => {
-      recordBlocked(state, tool, {
-        kind: 'simulation',
-        detail: 'A simulated connector is blocked while simulation mode is off.',
-        who: 'gateway',
-        code: 'SIMULATION_MODE',
-      });
-      return {
-        content: [{
-          type: 'text',
-          text: `Refused: "${tool.namespacedName}" is not available. No ticket was requested.`,
-        }],
-        isError: true,
-      };
+  // only that one is asked; any other tool's call never touches the manager here.
+  const modeRefusal = (): { content: Array<{ type: 'text'; text: string }>; isError: true } | null => {
+    let detail: string | null = null;
+    if (isSimulationMode()) {
+      if (!integrationManager.isSimulationSafe(tool.integrationId)) detail = 'Real systems are blocked while simulation mode is on.';
+    } else if (
+      manifestIsSimulated(getManifest(tool.integrationId))
+      && integrationManager.modeBlock?.(tool.integrationId) === 'production'
+    ) {
+      detail = 'A simulated connector is blocked while simulation mode is off.';
+    }
+    if (!detail) return null;
+    recordBlocked(state, tool, { kind: 'simulation', detail, who: 'gateway', code: 'SIMULATION_MODE' });
+    return {
+      content: [{ type: 'text', text: `Refused: "${tool.namespacedName}" is not available. No ticket was requested.` }],
+      isError: true,
     };
-  }
-  if (isSimulationMode() && !integrationManager.isSimulationSafe(tool.integrationId)) {
-    return async () => {
-      recordBlocked(state, tool, {
-        kind: 'simulation',
-        detail: 'Real systems are blocked while simulation mode is on.',
-        who: 'gateway',
-        code: 'SIMULATION_MODE',
-      });
-      return {
-        content: [{
-          type: 'text',
-          text: `Refused: "${tool.namespacedName}" is not available. No ticket was requested.`,
-        }],
-        isError: true,
-      };
-    };
-  }
+  };
 
   const gated = createGatedToolHandlerInner(tool, integrationManager, state);
 
@@ -590,9 +572,11 @@ export function createGatedToolHandler(
   };
 
   const blocked = tool.gating?.blockedArgs ?? [];
-  if (blocked.length === 0) return inner;
+  if (blocked.length === 0) return async (args: Record<string, unknown>) => modeRefusal() ?? inner(args);
 
   return async (args: Record<string, unknown>) => {
+    const refused = modeRefusal();
+    if (refused) return refused;
     const present = blocked.filter(a => a in (args ?? {}));
     if (present.length === 0) return inner(args);
     return {
