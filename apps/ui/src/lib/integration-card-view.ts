@@ -62,6 +62,8 @@ export interface OneLineInput {
   reads: string | null;
   /** Registered but down: paused by simulation mode, or crashed (an error) — else plainly stopped. */
   stopped: 'paused' | 'crashed' | 'stopped';
+  /** Why a paused connector is paused (the gateway's `paused` field). Default: simulation. */
+  pausedBy?: 'simulation' | 'production';
 }
 
 function joinWords(items: string[]): string {
@@ -88,7 +90,7 @@ export function connectorOneLine(i: OneLineInput): string {
       return i.oauth ? `${needs}, then connect your account` : needs;
     }
     case 'ready':
-      if (i.stopped === 'paused') return 'Paused while simulation mode is on';
+      if (i.stopped === 'paused') return i.pausedBy === 'production' ? 'Paused in production' : 'Paused while simulation mode is on';
       if (i.stopped === 'crashed') return 'Stopped with an error';
       return 'Credentials saved — start it to use it';
   }

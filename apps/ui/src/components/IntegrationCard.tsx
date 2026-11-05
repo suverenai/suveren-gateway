@@ -406,6 +406,7 @@ export function IntegrationCard({ manifest, area, integration, state, onStatusCh
     setupHint: manifest.setupHint,
     reads: hasReadAge ? readsPhrase(readAge, readAgeLabel) : null,
     stopped: stoppedKind,
+    pausedBy: integration?.paused,
   });
   // Closed by default only when it is healthy; a card that needs something opens (until the person chooses).
   const activatableNow = authSatisfied && !manifest.oauth && manifest.credentials.fields.every(f => f.optional);
@@ -653,7 +654,7 @@ export function IntegrationCard({ manifest, area, integration, state, onStatusCh
         {editingCreds && (
           <div className="su-edit">
             <div className="ob-sent-h">{hasChoice ? 'Edit settings' : 'Change credentials'}</div>
-            {credsOnFile && (
+            {credsOnFile && manifest.credentials.fields.some(f => f.type === 'password') && (
               <p className="ob-lbl">
                 Leaving a secret blank keeps the stored one — editing other fields can never
                 silently wipe it.{manifest.oauth ? ' Save, then Connect to re-link the account.' : ''}

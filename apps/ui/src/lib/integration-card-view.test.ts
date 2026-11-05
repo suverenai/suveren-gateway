@@ -87,6 +87,7 @@ describe('connectorOneLine', () => {
   it('waiting for the account, stopped, paused, crashed, failed auth', () => {
     expect(connectorOneLine({ ...base, cardState: 'needs-oauth' })).toBe('Credentials saved — connect your account');
     expect(connectorOneLine({ ...base, cardState: 'ready', stopped: 'paused' })).toBe('Paused while simulation mode is on');
+    expect(connectorOneLine({ ...base, cardState: 'ready', stopped: 'paused', pausedBy: 'production' })).toBe('Paused in production');
     expect(connectorOneLine({ ...base, cardState: 'ready', stopped: 'crashed' })).toBe('Stopped with an error');
     expect(connectorOneLine({ ...base, cardState: 'ready', stopped: 'stopped' })).toBe('Credentials saved — start it to use it');
     expect(connectorOneLine({ ...base, authFailed: true })).toBe('The stored credentials stopped working — reconnect to use it again');
