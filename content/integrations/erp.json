@@ -37,9 +37,9 @@
       },
       {
         "key": "companyFile",
-        "label": "Company data file (optional)",
+        "label": "Company data file",
         "type": "text",
-        "placeholder": "Path to your company file (name, address, UID, bank, VAT mode) — required when the live adapter is \"local\"",
+        "placeholder": "Path to your company file (name, address, UID, bank, VAT mode)",
         "optional": true
       },
       {
@@ -101,6 +101,9 @@
       "sends": "the customer's country and VAT ID, and your own VAT ID"
     }
   ],
+  "modeOptions": {
+    "live": { "local": { "label": "On this computer", "fields": ["companyFile"] } }
+  },
   "adapterField": "liveAdapter",
   "personalDefault": true,
   "oauth": null,

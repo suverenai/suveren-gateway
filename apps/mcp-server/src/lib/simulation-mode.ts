@@ -92,3 +92,10 @@ export function connectorCurrentlySimulated(
  *  the integration status, and the tool-proxy call-time refusal. One string,
  *  so the UI, the CLI and the agent-facing refusal all say the same thing. */
 export const SIMULATION_BLOCK_REASON = 'blocked: simulation mode — real systems are off';
+
+/** Shown wherever a SIMULATED connector is refused because simulation mode is
+ *  OFF — the mirror of SIMULATION_BLOCK_REASON. A gateway is either in
+ *  simulation or in production, never both (Andreas, 2026-11-05): outside
+ *  simulation mode nothing may answer from simulated data, so an approved
+ *  "send" can never quietly land in a test mailbox. */
+export const PRODUCTION_BLOCK_REASON = 'blocked: simulated connector — simulation mode is off';

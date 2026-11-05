@@ -68,6 +68,9 @@ function mockIntegrationManager() {
     // not mere capability — `sim-conn`'s "mode" field is unset in the fixture
     // manifest, so this resolves via `simulation.default` ("simulation").
     isSimulationSafe: (id: string) => connectorCurrentlySimulated(getManifest(id), undefined),
+    // Production direction, same rule as IntegrationManager.modeBlock: with
+    // simulation mode off, a connector currently simulated is blocked.
+    modeBlock: (id: string) => (!process.env.SUVEREN_SIMULATION && connectorCurrentlySimulated(getManifest(id), undefined) ? 'production' : undefined),
   } as unknown as IntegrationManager;
 }
 
@@ -164,5 +167,35 @@ describe('simulation mode — tool-proxy defence in depth', () => {
     // — proving the simulated connector was NOT caught by the simulation gate.
     expect(result.content[0].text).toContain('no mandate covers');
     expect(result.content[0].text).not.toContain('is not available');
+  });
+
+  it('OFF: a call to a tool of a connector currently SIMULATED is refused with the same neutral text — no ticket requested', async () => {
+    delete process.env.SUVEREN_SIMULATION;
+    const state = mockState();
+    const im = mockIntegrationManager();
+    const handler = createGatedToolHandler(simulatedTool(), im, state);
+
+    const result = await handler({});
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('is not available. No ticket was requested.');
+    // The tool's own name contains "simulation"; the rest of the text must not.
+    expect(result.content[0].text.replace(/"[^"]*"/g, '').toLowerCase()).not.toMatch(/simulat|real system/);
+    expect(state.spClient.postReceipt as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
+    expect(im.callTool as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
+  });
+
+  it('decided per CALL: a handler created while allowed is refused once the mode changes', async () => {
+    // A session keeps the tools it listed; the mode can change underneath it.
+    delete process.env.SUVEREN_SIMULATION;
+    const state = mockState();
+    const im = mockIntegrationManager();
+    const handler = createGatedToolHandler(realTool(), im, state);
+    expect((await handler({})).content[0].text).toContain('no mandate covers');
+
+    process.env.SUVEREN_SIMULATION = '1';
+    const after = await handler({});
+    expect(after.isError).toBe(true);
+    expect(after.content[0].text).toContain('is not available. No ticket was requested.');
+    expect(im.callTool as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
   });
 });

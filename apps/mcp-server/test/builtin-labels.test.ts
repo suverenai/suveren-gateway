@@ -25,3 +25,17 @@ describe('getBuiltinLabels', () => {
     expect(JSON.stringify(labels)).not.toMatch(/executionMapping|staticExecution|category/);
   });
 });
+
+describe('Setup brings its own no-mandate text (wording A, 2026-11-05)', () => {
+  it('the real setup built-in registers it for list-authorizations, under its own profile', () => {
+    const im = new IntegrationManager(new Map());
+    const deps = { state: {} as SharedState, integrationManager: im, reportSources: {} as ReportSources };
+    im.registerBuiltin(setupBuiltin(deps));
+    const hint = im.builtinNoMandateTexts().find((h) => h.id === 'setup');
+    expect(hint?.profile).toBe('delegation');
+    expect(hint?.text).toContain('I may only prepare mandates once you have given me a **Setup** mandate.');
+    expect(hint?.text).toContain('Mandates → New mandate → Setup');
+    expect(im.noMandateText('setup')).toBe(hint?.text);
+  });
+});
+

@@ -360,6 +360,11 @@ export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
     // set_agent_brief now work outside simulation too (decision 1); only
     // get_guide keeps the per-tool flag below (decision 2).
     mandateRefusal: delegationMandateRefusal,
+    // Wording A, signed off by Andreas 2026-11-05. The agent passes it on to the person.
+    noMandateText:
+      'Not done: I may only prepare mandates once you have given me a **Setup** mandate. Two ways: ' +
+      '(1) In the gateway, open **Mandates → New mandate → Setup** and sign it. Then I prepare mandates and you approve each one. ' +
+      '(2) Or sign the mandate you want yourself: **Mandates → New mandate**, then pick the area. Tell me which you prefer.',
     toolGating: {
       overrides: {
         set_agent_brief: {

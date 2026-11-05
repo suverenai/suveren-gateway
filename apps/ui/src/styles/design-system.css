@@ -4790,6 +4790,21 @@ a.dash-row:hover, .dash-row:not([open]):hover { box-shadow: var(--elevation-2); 
   .su-cn-body { padding: 0 var(--space-4) var(--space-4); }
 }
 
+/* Mode choice on a connector card: radio cards (what the connector works with), tag, collapsed Advanced */
+.su-choice { border: 0; padding: 0; margin: 0 0 var(--space-3); min-width: 0; }
+.su-choice legend { font-weight: 700; font-size: var(--text-body); padding: 0; margin-bottom: var(--space-2); }
+.su-opt { display: flex; gap: var(--space-3); align-items: flex-start; padding: var(--space-3); border: 1px solid var(--border-strong); border-radius: var(--radius-md); background: var(--bg-elevated); margin-bottom: var(--space-2); cursor: pointer; }
+.su-opt input { margin-top: 0.2rem; accent-color: var(--text-primary); }
+.su-opt.is-on { border: 2px solid var(--text-primary); padding: calc(var(--space-3) - 1px); }
+.su-opt:focus-within { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.su-opt-t { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+.su-opt-t small { font-size: var(--text-body-sm); color: var(--text-muted); }
+.su-opt-tag { align-self: flex-start; font-size: var(--text-micro); text-transform: uppercase; letter-spacing: 0.06em; border: 1px dashed var(--text-primary); border-radius: var(--radius-pill); padding: 0 var(--space-2); }
+.su-req { font-size: var(--text-micro); text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); font-weight: 400; }
+.su-adv { margin: 0 0 var(--space-3); }
+.su-adv > summary { cursor: pointer; font-size: var(--text-body-sm); color: var(--text-muted); }
+.su-adv-b { margin-top: var(--space-3); }
+
 /* Settings: forms inside a card, the AI prompts fold */
 .su-card .su-fields { margin-top: var(--space-4); }
 .su-label-row { display: flex; justify-content: space-between; align-items: baseline; gap: var(--space-3); margin-bottom: var(--space-1); }

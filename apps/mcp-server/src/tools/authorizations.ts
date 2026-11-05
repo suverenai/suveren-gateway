@@ -136,6 +136,22 @@ function listedWithoutMandate(
   return [...byProfile.entries()].map(([profile, tools]) => `  ${profile}: ${tools.join(', ')}`);
 }
 
+/**
+ * A built-in's own "no mandate" text (e.g. Setup's two ways forward) for every
+ * built-in whose profile no complete mandate covers. Its tools are usually not
+ * listed without a mandate (setup is hidden), so without this the agent never
+ * reaches the text and can only say "I can't" (Andreas, 2026-11-05).
+ */
+function builtinHintsWithoutMandate(
+  authorizations: Array<{ profileId: string; complete: boolean }>,
+  integrationManager: IntegrationManager | undefined,
+): string[] {
+  const hints = integrationManager?.builtinNoMandateTexts?.() ?? [];
+  return hints
+    .filter(h => !authorizations.some(a => a.complete && profileMatches(a.profileId, h.profile)))
+    .map(h => h.text);
+}
+
 const LISTED_WITHOUT_MANDATE_HEADING =
   'Listed but not usable yet — no mandate covers these; every call is refused until the person grants one:';
 
@@ -156,10 +172,12 @@ export function listAuthorizationsHandler(
     const domain = args?.domain;
 
     const notYet = listedWithoutMandate(authorizations, integrationManager);
+    const hints = builtinHintsWithoutMandate(authorizations, integrationManager);
 
     if (authorizations.length === 0) {
       const text = ['No active authorizations — no tool is usable yet. Ask the person to grant a mandate in the gateway.'];
       if (notYet.length > 0) text.push('', LISTED_WITHOUT_MANDATE_HEADING, ...notYet);
+      for (const h of hints) text.push('', h);
       return { content: [{ type: 'text' as const, text: text.join('\n') }] };
     }
 
@@ -174,9 +192,9 @@ export function listAuthorizationsHandler(
         return {
           content: [{
             type: 'text' as const,
-            text: `No authorizations found for domain "${domain}". Active domains: ${
+            text: [`No authorizations found for domain "${domain}". Active domains: ${
               [...new Set(authorizations.map(a => shortProfileName(a.profileId)))].join(', ')
-            }`,
+            }`, ...hints.flatMap(h => ['', h])].join('\n'),
           }],
         };
       }
@@ -346,6 +364,10 @@ export function listAuthorizationsHandler(
       if (output.length > 0) output.push('');
       output.push(LISTED_WITHOUT_MANDATE_HEADING);
       output.push(...notYet);
+    }
+    for (const h of hints) {
+      if (output.length > 0) output.push('');
+      output.push(h);
     }
 
     return {

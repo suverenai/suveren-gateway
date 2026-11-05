@@ -171,10 +171,24 @@ describe('the refusal without a mandate', () => {
     const im = { ...mockIntegrationManager(ALL), mandateRefusal: () => null } as unknown as IntegrationManager;
     const r = await createGatedToolHandler(connectorTool, im, state)({ id: 'c-1' });
     expect(r.isError).toBe(true);
+    // The area by the name the person sees (the registered profile's `name`), not its id.
     expect(r.content[0].text).toBe(
-      'Refused: no mandate covers crm__update_contact (customers). Nothing was done. ' +
-        'Ask the person to grant a customers mandate in the gateway, then try again. No ticket was requested.',
+      'Refused: no mandate covers crm__update_contact (Customer Management). Nothing was done. ' +
+        'Ask the person to grant a Customer Management mandate in the gateway, then try again. No ticket was requested.',
     );
+  });
+
+  it("a built-in's own no-mandate text replaces the generic one (Setup's two ways forward)", async () => {
+    const state = { ...mockState([]), blocked: { record: () => {} } } as unknown as SharedState;
+    const text = 'Not done: I may only prepare mandates once you have given me a **Setup** mandate.';
+    const im = {
+      ...mockIntegrationManager(ALL),
+      mandateRefusal: () => null,
+      noMandateText: (id: string) => (id === connectorTool.integrationId ? text : undefined),
+    } as unknown as IntegrationManager;
+    const r = await createGatedToolHandler(connectorTool, im, state)({ id: 'c-1' });
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toBe(`Refused: ${text} No ticket was requested.`);
   });
 });
 
@@ -202,3 +216,31 @@ describe('list-authorizations', () => {
     expect(text).not.toContain('describe_mandate_proposal');
   });
 });
+
+describe("list-authorizations — a built-in's own no-mandate text", () => {
+  const SETUP_TEXT = 'Not done: I may only prepare mandates once you have given me a **Setup** mandate.';
+  const withHint = () => ({
+    ...mockIntegrationManager(ALL),
+    builtinNoMandateTexts: () => [{ id: 'setup', profile: 'delegation', text: SETUP_TEXT }],
+  }) as unknown as IntegrationManager;
+
+  it('no mandate at all: the overview carries the text, so the agent reaches it although setup tools are hidden', async () => {
+    const text = (await listAuthorizationsHandler(mockState([]), withHint())()).content[0].text;
+    expect(text).toContain(SETUP_TEXT);
+  });
+
+  it('other mandates but none for the built-in: overview and an unmatched domain view both carry it', async () => {
+    const auths = [customersMandate()];
+    const overview = (await listAuthorizationsHandler(mockState(auths), withHint())()).content[0].text;
+    expect(overview).toContain(SETUP_TEXT);
+    const domainView = (await listAuthorizationsHandler(mockState(auths), withHint())({ domain: 'delegation' })).content[0].text;
+    expect(domainView).toContain(SETUP_TEXT);
+  });
+
+  it('a mandate on the built-in profile: the text is gone', async () => {
+    const setupAuth = { ...customersMandate(), profileId: 'github.com/humanagencyprotocol/hap-profiles/delegation@0.5' };
+    const text = (await listAuthorizationsHandler(mockState([setupAuth]), withHint())()).content[0].text;
+    expect(text).not.toContain(SETUP_TEXT);
+  });
+});
+

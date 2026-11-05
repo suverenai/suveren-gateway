@@ -177,6 +177,25 @@ describe('simulation mode — IntegrationManager', () => {
     expect(im.isRunning('sim-conn')).toBe(true);
   });
 
+  // Production (simulation mode OFF) is the mirror image: a connector whose
+  // CURRENT mode is simulated must not run next to real systems — a gateway
+  // is either simulation or production, never both (Andreas, 2026-11-05).
+  it('OFF: a connector currently simulated (credential unset → declared default) is refused to start, named', async () => {
+    delete process.env.SUVEREN_SIMULATION;
+    im = new IntegrationManager(new Map());
+
+    await expect(im.startIntegration(simConfig())).rejects.toThrow(/simulated connector — simulation mode is off/);
+    expect(im.isRunning('sim-conn')).toBe(false);
+  });
+
+  it('OFF: a connector explicitly SET to simulation is refused to start too', async () => {
+    delete process.env.SUVEREN_SIMULATION;
+    im = new IntegrationManager(new Map([['sim-conn', { mode: 'simulation' }]]));
+
+    await expect(im.startIntegration(simConfig())).rejects.toThrow(/simulation mode is off/);
+    expect(im.isRunning('sim-conn')).toBe(false);
+  });
+
   it('OFF: a simulated connector keeps whatever mode the credential says (no forcing)', async () => {
     delete process.env.SUVEREN_SIMULATION;
     im = new IntegrationManager(new Map([['sim-conn', { mode: 'live' }]]));
@@ -234,6 +253,26 @@ describe('simulation mode — getStatus() reports paused, not error', () => {
     expect(status?.running).toBe(false);
     expect(status?.paused).toBe('simulation');
     expect(status?.error).toBeUndefined();
+  });
+
+  it('OFF: a connector currently simulated is paused "production", not errored', () => {
+    delete process.env.SUVEREN_SIMULATION;
+    im = new IntegrationManager(new Map());
+
+    const status = im.getStatus([simConfig()]).find(s => s.id === 'sim-conn');
+
+    expect(status?.running).toBe(false);
+    expect(status?.paused).toBe('production');
+    expect(status?.error).toBeUndefined();
+  });
+
+  it('OFF: a connector SET TO LIVE is not paused', () => {
+    delete process.env.SUVEREN_SIMULATION;
+    im = new IntegrationManager(new Map([['sim-conn', { mode: 'live' }]]));
+
+    const status = im.getStatus([simConfig()]).find(s => s.id === 'sim-conn');
+
+    expect(status?.paused).toBeUndefined();
   });
 
   it('OFF: a real connector that never started carries neither paused nor error — simulation mode is irrelevant here', () => {
