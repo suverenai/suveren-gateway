@@ -3,6 +3,11 @@ import { Link } from 'react-router-dom';
 import { spClient, type IntegrationManifest, type McpIntegrationStatus } from '../lib/sp-client';
 import type { IntegrationState } from '../contexts/IntegrationStatusContext';
 import { isSimulated, modeLabel, modeNote } from '../lib/simulation';
+import { useSimulationMode } from '../hooks/useSimulationMode';
+import {
+  modeOptions as modeOptionsOf, currentOption, choiceFieldKeys, optionValues, splitFields, pausedTag,
+  hasNoRealMode, NO_REAL_MODE_LINE,
+} from '../lib/mode-choice';
 import { ObTypeLine, ObFold, ObChev, useFoldAccordion } from './ObjectCard';
 import {
   statusWord, authWord, startsOpen, readsPhrase, connectorOneLine,
@@ -212,16 +217,36 @@ export function IntegrationCard({ manifest, area, integration, state, onStatusCh
     if (integration?.running) return 'running';
     // Not running, auth fine — but if there's config to (optionally) enter and
     // nothing saved yet, show the config form + Activate (e.g. CRM's DB URL).
-    if (!credConfigured && manifest.credentials.fields.length > 0) return 'unconfigured';
+    // A connector the gateway holds PAUSED (e.g. Activate in production on simulated data) shows the paused
+    // state + note, not the setup form again — the gateway's answer, not a toast.
+    const pausedByGateway = integration?.paused === 'simulation' || integration?.paused === 'production';
+    if (!credConfigured && manifest.credentials.fields.length > 0 && !pausedByGateway) return 'unconfigured';
     return 'ready';
   })();
+
+  // The mode choice (manifest-driven, see lib/mode-choice.ts). The panel's values live in `credValues`, so the
+  // chosen option is read back from them: nothing typed, only what the radio writes.
+  const gatewaySimulation = useSimulationMode();
+  const options = modeOptionsOf(manifest);
+  const hasChoice = options.length > 0;
+  const chosen = currentOption(manifest, credValues);
+  const parts = splitFields(manifest, chosen);
+  const hiddenKeys = new Set(parts.hidden.map(f => f.key));
+  // The chosen option's own fields are required while it is chosen; an unrecognised mode must be chosen first.
+  const choiceIncomplete = hasChoice && options.length > 1
+    && (!chosen || parts.optionFields.some(f => !credValues[f.key]?.trim()));
+  const pickOption = (key: string) => {
+    const o = options.find(x => x.key === key);
+    if (o) setCredValues(v => ({ ...v, ...optionValues(manifest, o) }));
+  };
 
   const saveCredentials = async () => {
     const hasValues = manifest.credentials.fields.some(f => credValues[f.key]?.trim());
     if (!hasValues) return;
     setSaving(true);
     try {
-      await spClient.setCredential(manifest.id, credValues);
+      const toSave = Object.fromEntries(Object.entries(credValues).filter(([k]) => !hiddenKeys.has(k)));
+      await spClient.setCredential(manifest.id, toSave);
       setCredConfigured(true);
       setCredValues({});
       await reloadExistingCreds();
@@ -249,6 +274,7 @@ export function IntegrationCard({ manifest, area, integration, state, onStatusCh
   const changedCredFields = (): Record<string, string> => {
     const out: Record<string, string> = {};
     for (const f of manifest.credentials.fields) {
+      if (hiddenKeys.has(f.key)) continue; // belongs to an option that is not chosen
       const typed = credValues[f.key];
       if (f.type === 'password') {
         if (typed?.trim()) out[f.key] = typed;
@@ -393,9 +419,9 @@ export function IntegrationCard({ manifest, area, integration, state, onStatusCh
 
   // One credential field (light input; secrets get a show/hide). `edit` = the "Change credentials" panel,
   // where a stored secret is shown as a recognition hint and left blank keeps it.
-  const renderField = (field: IntegrationManifest['credentials']['fields'][number], edit: boolean) => (
+  const renderField = (field: IntegrationManifest['credentials']['fields'][number], edit: boolean, required = false) => (
     <div className="form-group" key={field.key}>
-      <label className="form-label">{field.label}</label>
+      <label className="form-label">{field.label}{required && <span className="su-req"> required</span>}</label>
       {field.type === 'password' ? (
         <div className="cred-field">
           <input
@@ -431,6 +457,50 @@ export function IntegrationCard({ manifest, area, integration, state, onStatusCh
       )}
     </div>
   );
+
+  // "Where does <connector> get its data?" — radio cards from the manifest, then the chosen option's own
+  // fields, then everything optional under a collapsed "Advanced".
+  const renderChoice = (edit: boolean) => {
+    if (!hasChoice) return manifest.credentials.fields.map(field => renderField(field, edit));
+    const single = options.length === 1;
+    const noReal = hasNoRealMode(options);
+    return (
+      <>
+        <fieldset className="su-choice">
+          <legend>Where does {manifest.name} get its data?</legend>
+          {options.map(o => {
+            const on = single || chosen?.key === o.key;
+            const tag = pausedTag(o, gatewaySimulation);
+            return (
+              <label key={o.key} className={`su-opt${on ? ' is-on' : ''}`}>
+                <input
+                  type="radio"
+                  name={`${manifest.id}-mode`}
+                  checked={on}
+                  readOnly={single}
+                  onChange={() => pickOption(o.key)}
+                />
+                <span className="su-opt-t">
+                  <b>{o.label}</b>
+                  {tag && <span className="su-opt-tag">{tag}</span>}
+                  <small>{o.explanation}</small>
+                </span>
+              </label>
+            );
+          })}
+          {noReal && <p className="ob-lbl">{NO_REAL_MODE_LINE}</p>}
+        </fieldset>
+        {parts.optionFields.map(f => renderField(f, edit, true))}
+        {parts.main.map(f => renderField(f, edit))}
+        {parts.advanced.length > 0 && (
+          <details className="su-adv">
+            <summary>Advanced</summary>
+            <div className="su-adv-b">{parts.advanced.map(f => renderField(f, edit))}</div>
+          </details>
+        )}
+      </>
+    );
+  };
 
   return (
     <details className="card ob-card su-cn" open={open}>
@@ -477,6 +547,8 @@ export function IntegrationCard({ manifest, area, integration, state, onStatusCh
                 {manifest.credentials.fields.map(f => {
                   const isSecret = f.type === 'password';
                   const hint = secretHints[f.key];
+                  // The mode / adapter are shown as "<name> · <label>" and the choice — not as raw values.
+                  if (hasChoice && choiceFieldKeys(manifest).includes(f.key)) return null;
                   if (!isSecret && existingCreds[f.key] == null) return null;
                   if (isSecret && hint == null) return null;
                   const value = isSecret ? (hint.preview ?? 'set') : existingCreds[f.key];
@@ -580,18 +652,22 @@ export function IntegrationCard({ manifest, area, integration, state, onStatusCh
             is running or auth-failed. */}
         {editingCreds && (
           <div className="su-edit">
-            <div className="ob-sent-h">Change credentials</div>
+            <div className="ob-sent-h">{hasChoice ? 'Edit settings' : 'Change credentials'}</div>
             {credsOnFile && (
               <p className="ob-lbl">
                 Leaving a secret blank keeps the stored one — editing other fields can never
                 silently wipe it.{manifest.oauth ? ' Save, then Connect to re-link the account.' : ''}
               </p>
             )}
-            {manifest.credentials.fields.map(field => renderField(field, true))}
+            {renderChoice(true)}
             <div className="ob-btns is-inline is-tight">
-              <button className="ob-btn is-solid" onClick={saveCredsEdit} disabled={saving || !credsDirty}>
-                {saving ? 'Saving…' : 'Save'}
-              </button>
+              {/* A connector with one option (no real mode) has nothing to choose: Save appears only once
+                  an Advanced field was changed. */}
+              {(options.length !== 1 || credsDirty) && (
+                <button className="ob-btn is-solid" onClick={saveCredsEdit} disabled={saving || !credsDirty || choiceIncomplete}>
+                  {saving ? 'Saving…' : 'Save'}
+                </button>
+              )}
               {manifest.oauth && (
                 <button className="ob-btn" onClick={startOAuth}>
                   Connect {manifest.name}
@@ -601,7 +677,7 @@ export function IntegrationCard({ manifest, area, integration, state, onStatusCh
                 Cancel
               </button>
             </div>
-            {!credsDirty && !saving && <p className="ob-lbl ob-gap">No changes yet</p>}
+            {!credsDirty && !saving && options.length !== 1 && <p className="ob-lbl ob-gap">No changes yet</p>}
           </div>
         )}
 
@@ -661,9 +737,9 @@ export function IntegrationCard({ manifest, area, integration, state, onStatusCh
               <button
                 className="ob-btn"
                 onClick={() => { setCredValues({ ...existingCreds }); setEditingCreds(true); }}
-                title="Re-enter client ID / secret (e.g. a new OAuth client)."
+                title={hasChoice ? 'Choose where this connector gets its data.' : 'Re-enter client ID / secret (e.g. a new OAuth client).'}
               >
-                Edit credentials
+                {hasChoice ? 'Edit settings' : 'Edit credentials'}
               </button>
             )}
             {hasReadAge && readAge !== undefined && !editingReadAge && (
@@ -699,14 +775,14 @@ export function IntegrationCard({ manifest, area, integration, state, onStatusCh
                 </p>
               )}
               <div className="su-fields">
-                {manifest.credentials.fields.map(field => renderField(field, false))}
+                {renderChoice(false)}
               </div>
               <div className="ob-btns is-inline">
                 {(hasValues || hasRequiredFields) && (
                   <button
                     className="ob-btn is-solid"
                     onClick={saveCredentials}
-                    disabled={saving || !hasValues || (hasRequiredFields && !manifest.credentials.fields.filter(f => !f.optional).every(f => credValues[f.key]?.trim()))}
+                    disabled={saving || !hasValues || choiceIncomplete || (hasRequiredFields && !manifest.credentials.fields.filter(f => !f.optional).every(f => credValues[f.key]?.trim()))}
                   >
                     {saving ? 'Saving...' : 'Save & Encrypt'}
                   </button>
@@ -764,6 +840,11 @@ export function IntegrationCard({ manifest, area, integration, state, onStatusCh
                   : 'Real systems are off while simulation mode is on.'}
               </p>
               <div className="ob-btns is-inline">
+                {hasChoice && !editingCreds && (
+                  <button className="ob-btn is-solid" onClick={() => { setCredValues({ ...existingCreds }); setEditingCreds(true); }}>
+                    Edit settings
+                  </button>
+                )}
                 <button className="ob-btn" onClick={remove}>Disable</button>
               </div>
             </>

@@ -439,6 +439,8 @@ export interface AuthTemplate {
   tags: string[];
 }
 
+export interface ModeOptionDecl { label?: string; explanation?: string; fields?: string[] }
+
 export interface IntegrationManifest {
   id: string;
   name: string;
@@ -477,6 +479,10 @@ export interface IntegrationManifest {
    *  `adapterField` setting's value. See manifest-loader.ts's doc comment. */
   modeLabels?: Record<string, string | Record<string, string>> | null;
   modeNotes?: IntegrationManifest['modeLabels'];
+  /** The mode CHOICE on the card: same keys as `modeLabels`; a string-labelled mode maps to one option object,
+   *  an adapter-keyed mode maps adapter → option object. `fields` = credential keys needed only by that option.
+   *  See manifest-loader.ts's `modeOptions` doc comment. */
+  modeOptions?: Record<string, ModeOptionDecl | Record<string, ModeOptionDecl>> | null;
   /** Credential field holding which adapter backs a non-simulated mode (e.g. erp.json's `liveAdapter`). */
   adapterField?: string;
   /** Links the approval card offers so a reviewer can inspect the action. */

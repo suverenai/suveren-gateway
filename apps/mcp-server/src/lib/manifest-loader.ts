@@ -75,6 +75,8 @@ export interface ManifestContextDiscovery {
   extraFields?: Record<string, string>;
 }
 
+export interface ModeOption { label?: string; explanation?: string; fields?: string[] }
+
 export interface IntegrationManifest {
   id: string;
   name: string;
@@ -132,6 +134,21 @@ export interface IntegrationManifest {
   modeLabels?: Record<string, string | Record<string, string>> | null;
   /** A short note per mode, same shape as `modeLabels` — shown under the card title. */
   modeNotes?: IntegrationManifest['modeLabels'];
+  /**
+   * The mode CHOICE the Integrations card offers (radio cards, one per entry
+   * of `modeLabels`). Same keys as `modeLabels`: a mode with a plain-string
+   * label maps to ONE option object; a mode with an adapter-keyed label maps
+   * adapter value → option object. Every key is optional:
+   *   - `label`       the option's name on the choice (default: its modeLabels entry);
+   *   - `explanation` the line under it (default: generic wording by simulated / real);
+   *   - `fields`      credential-field keys needed ONLY by this option — shown
+   *                   (and required) only while it is chosen, e.g. erp.json's
+   *                   `companyFile` for live/local. All other optional fields
+   *                   fold into "Advanced".
+   * A new real option (e.g. an external CRM) is a modeLabels entry + a
+   * modeOptions entry + an adapter — no UI change.
+   */
+  modeOptions?: Record<string, ModeOption | Record<string, ModeOption>> | null;
   /**
    * Credential field holding which adapter backs a non-simulated mode (e.g.
    * erp.json's `liveAdapter`, env `ERP_LIVE_ADAPTER`). Required whenever
@@ -1323,6 +1340,57 @@ export function invalidModeLabelsReason(
   return null;
 }
 
+/**
+ * Returns a refusal reason if `manifest.modeOptions` (if any) is malformed.
+ * Keys must mirror `modeLabels` (a mode with a string label → option object;
+ * an adapter-keyed mode → adapter → option object), `label`/`explanation`
+ * are non-empty strings, `fields` name declared credential fields — and never
+ * the mode or adapter field themselves (the choice sets those).
+ */
+export function invalidModeOptionsReason(
+  manifest: Pick<IntegrationManifest, 'modeOptions' | 'modeLabels' | 'adapterField' | 'simulation' | 'credentials'>,
+): string | null {
+  const opts = manifest.modeOptions;
+  if (opts === undefined || opts === null) return null;
+  if (typeof opts !== 'object' || Array.isArray(opts)) return 'modeOptions must be an object keyed like modeLabels';
+  if (!manifest.simulation || !manifest.modeLabels) return 'modeOptions is set but this manifest declares no "simulation" marker and modeLabels';
+  const fieldKeys = new Set(manifest.credentials?.fields?.map(f => f.key) ?? []);
+  const chosenByChoice = new Set([manifest.simulation.field, manifest.adapterField].filter((k): k is string => !!k));
+  const checkOption = (at: string, o: unknown): string | null => {
+    if (o === null || typeof o !== 'object' || Array.isArray(o)) return `${at} must be an object`;
+    const e = o as Record<string, unknown>;
+    const extra = Object.keys(e).find(k => !['label', 'explanation', 'fields'].includes(k));
+    if (extra) return `${at} has unknown key "${extra}"`;
+    for (const k of ['label', 'explanation'] as const) {
+      if (e[k] !== undefined && (typeof e[k] !== 'string' || (e[k] as string).trim().length === 0)) return `${at}.${k} must be a non-empty string`;
+    }
+    if (e.fields !== undefined) {
+      if (!Array.isArray(e.fields) || e.fields.length === 0 || !e.fields.every(f => typeof f === 'string')) return `${at}.fields must be a non-empty list of credential field keys`;
+      for (const f of e.fields as string[]) {
+        if (!fieldKeys.has(f)) return `${at}.fields names "${f}", which is not a declared credential field`;
+        if (chosenByChoice.has(f)) return `${at}.fields must not name "${f}" — the choice itself sets it`;
+      }
+    }
+    return null;
+  };
+  for (const [mode, value] of Object.entries(opts)) {
+    const label = manifest.modeLabels[mode];
+    if (label === undefined) return `modeOptions.${mode} has no matching modeLabels entry`;
+    if (typeof label === 'string') {
+      const r = checkOption(`modeOptions.${mode}`, value);
+      if (r) return r;
+      continue;
+    }
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) return `modeOptions.${mode} must be an object keyed by adapter value`;
+    for (const [adapter, o] of Object.entries(value as Record<string, unknown>)) {
+      if (!(adapter in label)) return `modeOptions.${mode}.${adapter} has no matching modeLabels entry`;
+      const r = checkOption(`modeOptions.${mode}.${adapter}`, o);
+      if (r) return r;
+    }
+  }
+  return null;
+}
+
 // ─── Module state ───────────────────────────────────────────────────────────
 
 const manifests = new Map<string, IntegrationManifest>();
@@ -1423,7 +1491,8 @@ export function loadManifests(integrationsDir?: string): number {
       const modeLabelsReason = invalidModeLabelsReason(manifest)
         // modeNotes (a short line under the card title per mode, e.g. "On this
         // computer — no shared access") has exactly modeLabels' shape.
-        ?? (manifest.modeNotes ? invalidModeLabelsReason({ ...manifest, modeLabels: manifest.modeNotes })?.replace(/modeLabels/g, 'modeNotes') ?? null : null);
+        ?? (manifest.modeNotes ? invalidModeLabelsReason({ ...manifest, modeLabels: manifest.modeNotes })?.replace(/modeLabels/g, 'modeNotes') ?? null : null)
+        ?? invalidModeOptionsReason(manifest);
       if (modeLabelsReason) {
         console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${modeLabelsReason}`);
         continue;

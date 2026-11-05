@@ -52,6 +52,9 @@
   "modeNotes": {
     "live": { "local": "On this computer — no shared access" }
   },
+  "modeOptions": {
+    "live": { "local": { "label": "On this computer" } }
+  },
   "adapterField": "liveAdapter",
   "personalDefault": true,
   "oauth": null,

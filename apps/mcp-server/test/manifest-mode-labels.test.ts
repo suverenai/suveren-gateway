@@ -9,7 +9,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadManifests, getManifest, invalidModeLabelsReason } from '../src/lib/manifest-loader';
+import { loadManifests, getManifest, invalidModeLabelsReason, invalidModeOptionsReason } from '../src/lib/manifest-loader';
 
 const MANIFESTS_DIR = join(import.meta.dirname, '..', '..', '..', 'content', 'integrations');
 
@@ -194,3 +194,54 @@ describe('modeNotes — shipped manifests', () => {
   });
 });
 
+
+
+describe('invalidModeOptionsReason (the mode choice on the connector card)', () => {
+  const base = {
+    modeLabels: { simulation: 'Test data', live: { local: 'Local' } },
+    adapterField: 'liveAdapter',
+    simulation: { field: 'mode', default: 'simulation' },
+    credentials: {
+      fields: [
+        { key: 'mode', label: 'Mode', type: 'text' as const },
+        { key: 'liveAdapter', label: 'Live adapter', type: 'text' as const },
+        { key: 'companyFile', label: 'File', type: 'text' as const },
+      ],
+      envMapping: {},
+    },
+  };
+  it('null when absent', () => expect(invalidModeOptionsReason(base)).toBeNull());
+  it('accepts erp.json\'s shape', () => {
+    expect(invalidModeOptionsReason({ ...base, modeOptions: { live: { local: { label: 'On this computer', fields: ['companyFile'] } } } })).toBeNull();
+  });
+  it('accepts an option object on a string-labelled mode', () => {
+    expect(invalidModeOptionsReason({ ...base, modeOptions: { simulation: { explanation: 'Made-up data.' } } })).toBeNull();
+  });
+  it('refuses a mode that modeLabels does not have', () => {
+    expect(invalidModeOptionsReason({ ...base, modeOptions: { staging: { label: 'x' } } })).toMatch(/staging/);
+  });
+  it('refuses an adapter that modeLabels does not have', () => {
+    expect(invalidModeOptionsReason({ ...base, modeOptions: { live: { sap: { label: 'x' } } } })).toMatch(/sap/);
+  });
+  it('refuses fields that are not declared credential fields', () => {
+    expect(invalidModeOptionsReason({ ...base, modeOptions: { live: { local: { fields: ['nope'] } } } })).toMatch(/nope/);
+  });
+  it('refuses the choice\'s own fields (mode / adapter)', () => {
+    expect(invalidModeOptionsReason({ ...base, modeOptions: { live: { local: { fields: ['mode'] } } } })).toMatch(/choice itself/);
+  });
+  it('refuses unknown keys, empty labels and empty field lists', () => {
+    expect(invalidModeOptionsReason({ ...base, modeOptions: { live: { local: { colour: 'red' } } } as never })).toMatch(/unknown key/);
+    expect(invalidModeOptionsReason({ ...base, modeOptions: { live: { local: { label: '' } } } })).toMatch(/non-empty/);
+    expect(invalidModeOptionsReason({ ...base, modeOptions: { live: { local: { fields: [] } } } })).toMatch(/non-empty/);
+  });
+  it('refuses a flat object where an adapter-keyed one is needed', () => {
+    expect(invalidModeOptionsReason({ ...base, modeOptions: { live: 'x' as never } })).toMatch(/adapter/);
+  });
+  it('the shipped manifests all pass the full loader', () => {
+    dir = undefined;
+    for (const id of ['crm', 'erp', 'mail']) {
+      const m = JSON.parse(readFileSync(join(MANIFESTS_DIR, `${id}.json`), 'utf8'));
+      expect(invalidModeOptionsReason(m)).toBeNull();
+    }
+  });
+});
