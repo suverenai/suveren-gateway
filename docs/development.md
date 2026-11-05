@@ -85,6 +85,33 @@ By default, the gateway connects to `https://www.suveren.ai`. Just run `pnpm dev
 | `SUVEREN_SIMULATION` | `0` | `1` blocks every connector without a manifest `simulation` marker and forces simulated ones into that mode. Normally set by `bundle/server.js` from the CLI's saved config (`suveren-gateway simulation on\|off`), not by hand — see README's "Simulation mode" section. |
 | `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` | (unset) | Corporate proxy, upper or lower case (lower wins if both set). Honoured for every outbound call to the Authority Server, the update checker, and a remote AI assistant endpoint — see `proxy-env.ts` in both apps and README's "Behind a company proxy" section. A loopback target (incl. control-plane ↔ MCP-server, and a local AI assistant) is never proxied, independent of these. |
 
+## Shared sign-in groups
+
+Connectors that are the same account at the same provider (Gmail and Google Calendar are one Google account) declare it explicitly in their manifest:
+
+```json
+"oauth": { "signInGroup": { "id": "google", "name": "Google" }, "authUrl": "...", ... }
+```
+
+Nothing is inferred from `authUrl` or `clientId`. `id` is a lowercase slug, `name` is what a card will show. `manifest-loader.ts` refuses a manifest whose `signInGroup` is malformed, and refuses a later member whose `authUrl`, `tokenUrl`, `tokenStorage`, `credentialKeys` or `extraParams` differ from the first member's (one sign-in = one provider, one client, one token slot). Scopes may differ: the sign-in requests the union.
+
+Behaviour (control plane, `lib/sign-in-group.ts`):
+
+- **Sign-in.** `GET /auth/oauth/<any member>/start` signs the whole group in with the union of the members' scopes. The redirect URI stays `/auth/oauth/<that member>/callback`, so no URI has to be added in the provider's console. The token is stored once, in the vault entry `sign-in:<groupId>` (client id/secret, token, `_oauthAccount`, `_oauthConnectedAt`, `_oauthScopes` = what the provider granted).
+- **Members.** A member runs on its own vault entry with the group's sign-in fields laid over it, once the group holds a token. The MCP server and every `envMapping` are unchanged. `GET /vault/credentials/<member>` and `/auth/oauth/<member>/health` show the same effective view.
+- **Refresh.** Each connector process refreshes with the shared client + token exactly as before; the health probe refreshes with the effective credentials.
+- **Sign-out.** `POST /auth/oauth/<member>/disconnect` removes the group token and also each member's own legacy token (else the old tokens would take over again), keeps the client settings, and stops the connectors. The token is not revoked at the provider.
+- **Migration.** Nothing is rewritten on upgrade. Until the group holds a token, every member keeps its own client and token. Only a new sign-in writes the group token. Changing the group's client id/secret (`PUT /vault/credentials/sign-in:<id>`) drops the group token, because it was issued to the old client.
+- **UI data.** `GET /mcp/integrations/manifests` returns `signInGroups: [{ id, name, members, scopes }]` next to `manifests`.
+
+Hand test (needs a person in a browser; no automated test covers a real Google sign-in):
+
+1. Upgrade an install that has Gmail and Calendar signed in separately: both still show connected and work, with no sign-in.
+2. Start a sign-in from Gmail: Google's consent screen lists Gmail AND Calendar permissions; after consent both connectors run and show the same account.
+3. Revoke nothing, restart the gateway: both come back signed in.
+4. Disconnect: both stop, both show "not connected"; signing in again needs no client id/secret.
+5. Fresh install: enter the Google client settings once (`sign-in:google`), sign in once, both connectors work.
+
 ## Connector manifests — pinned versions
 
 Every manifest under `content/integrations/` that installs a connector via npm (`npmPackage` set) must also pin the exact tested version via `npmVersion` (e.g. `"0.3.3"`) — no ranges (`^1.2.3`), no dist-tags (`"latest"`), no git/URL/file specs. `manifest-loader.ts` refuses the whole manifest at load time, by name, if the pin is missing or not an exact semver; `manifest-npm-pin.test.ts` lints every shipped manifest so a new one can't ship without it.

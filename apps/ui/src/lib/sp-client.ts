@@ -439,6 +439,16 @@ export interface AuthTemplate {
   tags: string[];
 }
 
+/** A shared sign-in: one account, several connectors (from the manifests' `oauth.signInGroup`). */
+export interface SignInGroup {
+  id: string;
+  name: string;
+  /** Connector ids, in manifest order. */
+  members: string[];
+  /** Union of the members' scopes - what the one sign-in requests. */
+  scopes: string[];
+}
+
 export interface IntegrationManifest {
   id: string;
   name: string;
@@ -460,6 +470,8 @@ export interface IntegrationManifest {
     credentialKeys: Record<string, string>;
     tokenStorage: string;
     extraParams?: Record<string, string>;
+    /** Connectors with the same group id share ONE sign-in (declared in the manifest). */
+    signInGroup?: { id: string; name: string };
   } | null;
   /** Per-tool gating. Typed only where the UI reads it — `actionLabel` names
    *  what a tool DOES, in words, for the receipts list; `profile` is area
@@ -1714,7 +1726,7 @@ class SPClient {
     }
   }
 
-  async getIntegrationManifests(): Promise<{ manifests: IntegrationManifest[]; builtins?: IntegrationManifest[] }> {
+  async getIntegrationManifests(): Promise<{ manifests: IntegrationManifest[]; signInGroups?: SignInGroup[]; builtins?: IntegrationManifest[] }> {
     const res = await this.fetch('/mcp/integrations/manifests');
     if (!res.ok) throw new Error(`Failed to fetch manifests: ${res.status}`);
     return res.json();
