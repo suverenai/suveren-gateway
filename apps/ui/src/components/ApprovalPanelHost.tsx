@@ -214,7 +214,7 @@ export function ApprovalPanelHost() {
                 {q.autoOpen !== null && (
                   <button
                     type="button"
-                    className="av3-btn av3-btn-primary apr-auto"
+                    className={`av3-btn apr-auto${q.autoOpen ? '' : ' av3-btn-primary'}`}
                     onClick={q.autoOpen ? noAuto : () => { void q.setAutoOpen(true); }}
                     data-testid="approval-auto-toggle"
                   >
