@@ -40,6 +40,8 @@ export function ApprovalPanelHost() {
   // A decision the gateway answered: its card stays (with its result) until the next one opens.
   const [settling, setSettling] = useState<{ entry: QueueEntry; before: string[] } | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [headMenu, setHeadMenu] = useState(false);
+  const compact = useMediaQuery('(max-width: 1099px)');
   // The slide-out takes SLIDE_MS; the content stays mounted until it is gone.
   const [mounted, setMounted] = useState(false);
 
@@ -126,7 +128,7 @@ export function ApprovalPanelHost() {
   }, [chrome.panel]);
 
   // ── Actions ──
-  const goLater = useCallback(() => { setMenuOpen(false); setPanel((p) => ({ ...p, open: false })); }, []);
+  const goLater = useCallback(() => { setMenuOpen(false); setHeadMenu(false); setPanel((p) => ({ ...p, open: false })); }, []);
   const openPanel = useCallback(() => { setMenuOpen(false); setPanel((p) => ({ ...p, open: true, owed: false })); }, []);
 
   // Esc = Later.
@@ -196,33 +198,70 @@ export function ApprovalPanelHost() {
       >
         {(mounted || chrome.panel) && (
           <>
-            <header className="apr-head">
-              <h2 className="apr-title" tabIndex={-1} data-apr-focus>Waiting for you</h2>
-              {many ? (
-                <nav className="apr-nav" aria-label="Move between approvals">
-                  <button type="button" className="av3-btn" disabled={!prevId} onClick={() => prevId && setCurrentId(prevId)} data-testid="approval-prev">
-                    <Chevron dir="left" /> Previous
+            {compact ? (
+              /* Below 1100px: ONE compact row — title, ‹ k of N ›, then the menu and ✕ Later. */
+              <header className="apr-head is-compact">
+                <h2 className="apr-title" tabIndex={-1} data-apr-focus>Waiting for you</h2>
+                {many ? (
+                  <nav className="apr-nav" aria-label="Move between approvals">
+                    <button type="button" className="av3-btn apr-ico" aria-label="Previous approval" disabled={!prevId} onClick={() => prevId && setCurrentId(prevId)} data-testid="approval-prev"><Chevron dir="left" /></button>
+                    <span className="apr-pos" data-testid="approval-position" aria-live="polite">{pos ? `${pos.index} of ${total}` : ''}</span>
+                    <button type="button" className="av3-btn av3-btn-primary apr-ico" aria-label="Next approval" disabled={!nextId} onClick={() => nextId && setCurrentId(nextId)} data-testid="approval-next"><Chevron dir="right" /></button>
+                  </nav>
+                ) : <span className="apr-nav-ph" />}
+                <div className="apr-acts">
+                  {q.autoOpen !== null && (
+                    <span className="apr-menu-wrap">
+                      <button type="button" className="apr-btn apr-ico-plain" aria-label="More" title="More" aria-haspopup="menu" aria-expanded={headMenu} onClick={() => setHeadMenu((o) => !o)} data-testid="approval-head-menu">&#8942;</button>
+                      {headMenu && (
+                        <div className="apr-pop apr-head-pop" role="menu">
+                          <button
+                            type="button"
+                            role="menuitem"
+                            className={`av3-btn apr-auto${q.autoOpen ? '' : ' av3-btn-primary'}`}
+                            onClick={() => { setHeadMenu(false); if (q.autoOpen) noAuto(); else void q.setAutoOpen(true); }}
+                            data-testid="approval-auto-toggle"
+                          >
+                            {q.autoOpen ? 'Don’t open automatically' : 'Open automatically'}
+                          </button>
+                        </div>
+                      )}
+                    </span>
+                  )}
+                  <button type="button" className="apr-btn apr-ico-plain" aria-label="Later" title="Later" onClick={goLater} data-testid="approval-later">
+                    <svg className="apr-i" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8" /></svg>
                   </button>
-                  <span className="apr-pos" data-testid="approval-position" aria-live="polite">{pos ? `${pos.index} of ${total}` : ''}</span>
-                  <button type="button" className="av3-btn av3-btn-primary" disabled={!nextId} onClick={() => nextId && setCurrentId(nextId)} data-testid="approval-next">
-                    Next <Chevron dir="right" />
-                  </button>
-                </nav>
-              ) : <span className="apr-nav-ph" />}
-              <div className="apr-acts">
-                <button type="button" className="apr-btn" onClick={goLater} data-testid="approval-later">Later</button>
-                {q.autoOpen !== null && (
-                  <button
-                    type="button"
-                    className={`av3-btn apr-auto${q.autoOpen ? '' : ' av3-btn-primary'}`}
-                    onClick={q.autoOpen ? noAuto : () => { void q.setAutoOpen(true); }}
-                    data-testid="approval-auto-toggle"
-                  >
-                    {q.autoOpen ? 'Don’t open automatically' : 'Open automatically'}
-                  </button>
-                )}
-              </div>
-            </header>
+                </div>
+              </header>
+            ) : (
+              <header className="apr-head">
+                <h2 className="apr-title" tabIndex={-1} data-apr-focus>Waiting for you</h2>
+                {many ? (
+                  <nav className="apr-nav" aria-label="Move between approvals">
+                    <button type="button" className="av3-btn" disabled={!prevId} onClick={() => prevId && setCurrentId(prevId)} data-testid="approval-prev">
+                      <Chevron dir="left" /> Previous
+                    </button>
+                    <span className="apr-pos" data-testid="approval-position" aria-live="polite">{pos ? `${pos.index} of ${total}` : ''}</span>
+                    <button type="button" className="av3-btn av3-btn-primary" disabled={!nextId} onClick={() => nextId && setCurrentId(nextId)} data-testid="approval-next">
+                      Next <Chevron dir="right" />
+                    </button>
+                  </nav>
+                ) : <span className="apr-nav-ph" />}
+                <div className="apr-acts">
+                  <button type="button" className="apr-btn" onClick={goLater} data-testid="approval-later">Later</button>
+                  {q.autoOpen !== null && (
+                    <button
+                      type="button"
+                      className={`av3-btn apr-auto${q.autoOpen ? '' : ' av3-btn-primary'}`}
+                      onClick={q.autoOpen ? noAuto : () => { void q.setAutoOpen(true); }}
+                      data-testid="approval-auto-toggle"
+                    >
+                      {q.autoOpen ? 'Don’t open automatically' : 'Open automatically'}
+                    </button>
+                  )}
+                </div>
+              </header>
+            )}
             <div className="apr-body">
               {shown && (
                 <div className="apr-stage" key={shown.id} data-proposal-id={shown.id}>
