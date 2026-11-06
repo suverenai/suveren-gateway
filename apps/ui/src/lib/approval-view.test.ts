@@ -150,3 +150,11 @@ describe('argRows — hides the AI-authored-text argument (UI spec §15.2/§15.3
     expect(rows.map((r) => r.key)).toEqual(['to', 'body']);
   });
 });
+
+describe('argRows — the AI-text argument', () => {
+  it('is left out by default (the approval card shows it in its own box) and kept with includeAiText (ticket card)', () => {
+    const args = { to: ['a@x.example'], body: 'Hello' };
+    expect(argRows(args, { aiTextArg: 'body' } as never).map((r) => r.key)).toEqual(['to']);
+    expect(argRows(args, { aiTextArg: 'body' } as never, { includeAiText: true }).map((r) => r.key)).toEqual(['to', 'body']);
+  });
+});
