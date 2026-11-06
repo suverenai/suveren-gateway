@@ -584,11 +584,11 @@ export function createGatedToolHandler(
         type: 'text',
         text:
           `Refused: "${tool.namespacedName}" was called with ${present.map(b => `"${b}"`).join(', ')}, ` +
-          `which the integration manifest blocks. That argument carries the whole ` +
-          `request in one opaque value, so the recipients, the content and the ` +
-          `limits on this authorization cannot be read from it — the call could ` +
-          `not be shown to stay in scope, and could not be shown to a human for ` +
-          `approval in any form they could judge. Use the individual arguments instead.`,
+          `which the connector's manifest blocks: it would change what is sent without ` +
+          `that being shown for approval and sealed in the ticket (for example, the whole ` +
+          `request in one opaque value, or content the connector adds on its own). ` +
+          `Nothing was done and no ticket was requested. Leave it out and use the ` +
+          `individual arguments instead.`,
       }],
       isError: true,
     };

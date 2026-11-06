@@ -66,6 +66,10 @@ describe('the gmail manifest', () => {
 
     expect(overrides.send_message.blockedArgs).toContain('raw');
     expect(overrides.create_draft.blockedArgs).toContain('raw');
+    // A reply "into the thread" makes today's Gmail connector add a subject and a quote of
+    // the thread on its own — content not on the card, not in the ticket (2026-11-06).
+    expect(overrides.send_message.blockedArgs).toContain('threadId');
+    expect(overrides.create_draft.blockedArgs).toContain('threadId');
   });
 });
 
