@@ -106,7 +106,8 @@
           "action_type": "send"
         },
         "blockedArgs": [
-          "raw"
+          "raw",
+          "threadId"
         ],
         "argEncoding": {
           "subject": "rfc2047"
@@ -139,7 +140,8 @@
           "action_type": "send"
         },
         "blockedArgs": [
-          "raw"
+          "raw",
+          "threadId"
         ],
         "argEncoding": {
           "subject": "rfc2047"
