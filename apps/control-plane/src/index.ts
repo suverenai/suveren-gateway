@@ -571,7 +571,7 @@ app.use('/autostart', jsonParser, authGuard, createAutostartRouter());
 
 // E2EE intent encryption (P5.5)
 // Local display preferences (desktop notifications). Never holds secrets.
-app.use('/api/gateway-settings', jsonParser, authGuard, createGatewaySettingsRouter());
+app.use('/api/gateway-settings', jsonParser, authGuard, createGatewaySettingsRouter(DATA_DIR));
 
 // Archived mandates: a local display flag (hides expired/revoked mandates; deletes nothing)
 app.use('/api/archived-mandates', jsonParser, authGuard, createArchivedMandatesRouter());
