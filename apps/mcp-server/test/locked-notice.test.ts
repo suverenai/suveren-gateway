@@ -53,6 +53,18 @@ describe('lockedNotice', () => {
     }
   });
 
+  it('prefers the page port (SUVEREN_UI_PORT) — under pnpm dev the page is not on the control plane', () => {
+    const prev = { ui: process.env.SUVEREN_UI_PORT, cp: process.env.SUVEREN_CP_PORT };
+    process.env.SUVEREN_UI_PORT = '3401';
+    process.env.SUVEREN_CP_PORT = '3402';
+    try {
+      expect(lockedNotice()).toContain('http://localhost:3401');
+    } finally {
+      if (prev.ui === undefined) delete process.env.SUVEREN_UI_PORT; else process.env.SUVEREN_UI_PORT = prev.ui;
+      if (prev.cp === undefined) delete process.env.SUVEREN_CP_PORT; else process.env.SUVEREN_CP_PORT = prev.cp;
+    }
+  });
+
   it('names the blocked action when given one', () => {
     expect(lockedNotice('use gmail__send_message')).toContain('Cannot use gmail__send_message');
   });

@@ -175,6 +175,16 @@ function setup(auths: EnrichedAuthorization[] = [AUTH]) {
 }
 
 describe('setup__set_agent_brief', () => {
+  it('a Delegation mandate on a version this gateway does not know: says so, not "does not declare"', async () => {
+    const unknown = { ...AUTH, profileId: 'github.com/humanagencyprotocol/hap-profiles/delegation@9.9' } as unknown as EnrichedAuthorization;
+    const { call, submitProposal } = setup([unknown]);
+    const r = await call({ content: '# Brief' });
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toMatch(/does not know delegation 9\.9/);
+    expect(r.content[0].text).not.toMatch(/does not declare/);
+    expect(submitProposal).not.toHaveBeenCalled();
+  });
+
   // DL1 decision 1: set_agent_brief now works OUTSIDE simulation too — gated
   // instead by decision 5 (the held Delegation mandate's own profile version).
   it('outside simulation mode with a 0.1 (unscoped) Delegation mandate: refused and recorded under Blocked', async () => {

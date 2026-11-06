@@ -90,18 +90,14 @@ describe('shipped manifests: every argument of a sealed tool is classified', () 
   // fixing the cause — bind it in the profile, or, if it truly changes nothing
   // sent, declare it `nonContentArgs` in the manifest — and it fails when an
   // entry stops being unclassified, so it cannot go stale.
+  // Explicitly blocked in the gmail manifest (blockedArgs, decided by Andreas 2026-11-06): threadId (the
+  // connector adds a subject + quote of its own), bcc (hidden recipients), includeBodyHtml (format),
+  // send_draft.id (a draft is not bound). Only unclassified-by-version findings remain below.
   const KNOWN_REFUSED = [
-    'gmail.create_draft[bcc]',               // a recipient outside the bound set and the recipient scope
     'gmail.create_draft[cc]',                // email@0.4 only (binds the body only)
-    'gmail.create_draft[includeBodyHtml]',   // changes the format of what is sent
     'gmail.create_draft[subject]',           // email@0.4 only
-    'gmail.create_draft[threadId]',          // the connector adds a subject and a quote of its own
-    'gmail.send_draft[id]',                  // selects WHICH content is sent; a draft is not bound
-    'gmail.send_message[bcc]',
     'gmail.send_message[cc]',                // email@0.4 only
-    'gmail.send_message[includeBodyHtml]',
     'gmail.send_message[subject]',           // email@0.4 only
-    'gmail.send_message[threadId]',
     'linkedin.create_article_post[articleUrl]',   // publish@0.4-0.7 only (they bind the text only); bound from publish@0.8
     'linkedin.create_article_post[description]',  // publish@0.4-0.7 only
     'linkedin.create_article_post[title]',        // publish@0.4-0.7 only
