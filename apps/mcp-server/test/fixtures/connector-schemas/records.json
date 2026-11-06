@@ -1,0 +1,199 @@
+{
+  "integration": "records",
+  "npmPackage": "@humanagencyp/records-mcp",
+  "npmVersion": "1.1.0",
+  "tools": {
+    "archive_record": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Record ID"
+        }
+      },
+      "required": [
+        "id"
+      ]
+    },
+    "create_record": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "note",
+            "decision",
+            "research",
+            "bookmark",
+            "reference"
+          ],
+          "description": "Record type"
+        },
+        "title": {
+          "type": "string",
+          "description": "Record title"
+        },
+        "content": {
+          "type": "string",
+          "description": "Record content (markdown). For decisions, include rationale and alternatives."
+        },
+        "metadata": {
+          "type": "object",
+          "description": "Structured metadata (varies by type). Examples: { url: '...' } for bookmarks, { outcome: '...', alternatives: [...] } for decisions, { source: '...' } for research."
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Tags for categorization and retrieval"
+        },
+        "ticket_id": {
+          "type": "string",
+          "description": "Suveren mandate ticket id. Injected automatically by the gateway — agents do not set this."
+        }
+      },
+      "required": [
+        "type",
+        "title"
+      ]
+    },
+    "delete_record": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Record ID"
+        }
+      },
+      "required": [
+        "id"
+      ]
+    },
+    "export_records": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    },
+    "get_record": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Record ID"
+        }
+      },
+      "required": [
+        "id"
+      ]
+    },
+    "list_records": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "note",
+            "decision",
+            "research",
+            "bookmark",
+            "reference"
+          ],
+          "description": "Filter by record type"
+        },
+        "archived": {
+          "type": "boolean",
+          "description": "Show archived records (default: false)"
+        },
+        "limit": {
+          "type": "number",
+          "description": "Max results (default: 50)"
+        },
+        "offset": {
+          "type": "number",
+          "description": "Offset for pagination (default: 0)"
+        }
+      },
+      "required": []
+    },
+    "search_records": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Search terms"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "note",
+            "decision",
+            "research",
+            "bookmark",
+            "reference"
+          ],
+          "description": "Limit search to a specific record type"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Filter to records with ALL of these tags"
+        },
+        "archived": {
+          "type": "boolean",
+          "description": "Include archived records (default: false)"
+        },
+        "limit": {
+          "type": "number",
+          "description": "Max results (default: 20)"
+        }
+      },
+      "required": [
+        "query"
+      ]
+    },
+    "update_record": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Record ID"
+        },
+        "title": {
+          "type": "string"
+        },
+        "content": {
+          "type": "string"
+        },
+        "metadata": {
+          "type": "object"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "note",
+            "decision",
+            "research",
+            "bookmark",
+            "reference"
+          ]
+        },
+        "ticket_id": {
+          "type": "string",
+          "description": "Suveren mandate ticket id for this edit. Injected automatically by the gateway — agents do not set this."
+        }
+      },
+      "required": [
+        "id"
+      ]
+    }
+  }
+}
