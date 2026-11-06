@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { spClient } from '../lib/sp-client';
 import { AutostartToggle } from '../components/AutostartToggle';
 import { NotificationsToggle } from '../components/NotificationsToggle';
+import { OpenApprovalsToggle } from '../components/OpenApprovalsToggle';
 import { IdentityDisclosureToggle } from '../components/IdentityDisclosureToggle';
 import { VersionCard } from '../components/VersionCard';
 import { AuthorityServerCard } from '../components/AuthorityServerCard';
@@ -198,6 +199,7 @@ export function SettingsServicesPage() {
       {/* Autostart — the CLI's `service` command as a switch */}
       <AutostartToggle />
       <NotificationsToggle />
+      <OpenApprovalsToggle />
       {/* Only renders when IT policy has locked simulation mode */}
       <SimulationLockCard />
 

@@ -20,7 +20,7 @@ export const NAV_ITEMS = [
   { to: '/blocked', icon: 'blocked' as NavIconName, label: 'Blocked' },
   { to: '/team', icon: 'team' as NavIconName, label: 'Team' },
   { to: '/agent-brief', icon: 'brief' as NavIconName, label: 'Agent Brief' },
-  { to: '/integrations', icon: 'integrations' as NavIconName, label: 'Integrations' },
+  { to: '/integrations', icon: 'integrations' as NavIconName, label: 'Connectors' },
   { to: '/settings', icon: 'settings' as NavIconName, label: 'Settings' },
 ];
 

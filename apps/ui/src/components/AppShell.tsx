@@ -8,25 +8,30 @@ import { MobileMenu } from './MobileMenu';
 import { IntegrationStatusProvider } from '../contexts/IntegrationStatusContext';
 import { TabBadge } from './TabBadge';
 import { DockBadgePrompt } from './DockBadgePrompt';
+import { ApprovalQueueProvider } from '../contexts/ApprovalQueueContext';
+import { ApprovalPanelHost } from './ApprovalPanelHost';
 
 export function AppShell() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   return (
     <IntegrationStatusProvider>
-      {/* Reflects pending reviews in the tab title + favicon, and on the Dock / taskbar icon when installed. Renders nothing. */}
-      <TabBadge />
-      <TopNav onMenuToggle={() => setMobileMenuOpen(!mobileMenuOpen)} />
-      <UpdateBanner />
-      <SimulationBanner />
-      <Sidebar />
-      <MobileMenu open={mobileMenuOpen} onClose={() => setMobileMenuOpen(false)} />
-      <div className="main-content">
-        <div className="page-inner">
-          <DockBadgePrompt />
-          <Outlet />
+      <ApprovalQueueProvider>
+        {/* Reflects pending reviews in the tab title + favicon, and on the Dock / taskbar icon when installed. Renders nothing. */}
+        <TabBadge />
+        <TopNav onMenuToggle={() => setMobileMenuOpen(!mobileMenuOpen)} />
+        <UpdateBanner />
+        <SimulationBanner />
+        <Sidebar />
+        <MobileMenu open={mobileMenuOpen} onClose={() => setMobileMenuOpen(false)} />
+        <div className="main-content">
+          <div className="page-inner">
+            <DockBadgePrompt />
+            <Outlet />
+          </div>
         </div>
-      </div>
+        <ApprovalPanelHost />
+      </ApprovalQueueProvider>
     </IntegrationStatusProvider>
   );
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { groupIntegrationsForDisplay, groupEntriesByArea, splitByUse } from './integration-grouping';
+import { groupIntegrationsForDisplay, connectorAreas, sortConnectors, splitByUse } from './integration-grouping';
 import type { IntegrationEntry } from '../contexts/IntegrationStatusContext';
 import type { AreaCatalogEntry } from './area';
 
@@ -119,42 +119,30 @@ describe('groupIntegrationsForDisplay', () => {
   });
 });
 
-describe('groupEntriesByArea — UI spec §13.3', () => {
+describe('connectorAreas — one card per connector, areas from the manifest', () => {
   const catalog: AreaCatalogEntry[] = [{ id: 'customers@0.10', name: 'Customers' }];
 
-  it('groups connectors under their manifest-declared area, alphabetically', () => {
+  it('a connector with one area has one chip, named from the catalog', () => {
     const crm = entry({ name: 'CRM', state: 'running', profile: 'customers' });
-    const gmail = entry({ name: 'Gmail', state: 'running', profile: 'email' });
-    const g = groupEntriesByArea([crm, gmail], catalog);
-    expect(g.map(a => a.name)).toEqual(['Customers', 'Email']);
-    expect(g[0].entries).toEqual([crm]);
-    expect(g[0].icon).toBe('customers');
+    const a = connectorAreas(crm.manifest, catalog);
+    expect(a.map(x => x.name)).toEqual(['Customers']);
+    expect(a[0].icon).toBe('customers');
   });
 
-  it('two connectors serving the same area both appear under it', () => {
-    const gmail = entry({ name: 'Gmail', state: 'running', profile: 'email' });
-    const mail = entry({ name: 'Mail (simulation)', state: 'running', profile: 'email' });
-    const g = groupEntriesByArea([gmail, mail], catalog);
-    expect(g).toHaveLength(1);
-    expect(g[0].entries).toEqual([gmail, mail]);
+  it('a connector serving several areas (area per tool) lists them all, alphabetical by name', () => {
+    const erp = entry({ name: 'ERP', state: 'running', profile: 'sales', overrideProfiles: ['invoicing', 'master-data'] });
+    expect(connectorAreas(erp.manifest, catalog).map(a => a.shortId)).toEqual(['invoicing', 'master-data', 'sales']);
   });
 
-  it('a connector serving several areas (area per tool) appears under each, full entry both times', () => {
-    const erp = entry({ name: 'ERP', state: 'running', profile: 'sales', overrideProfiles: ['invoicing'] });
-    const gmail = entry({ name: 'Gmail', state: 'running', profile: 'email' });
-    const g = groupEntriesByArea([erp, gmail], catalog);
-    expect(g.map(a => a.shortId).sort()).toEqual(['email', 'invoicing', 'sales']);
-    const sales = g.find(a => a.shortId === 'sales');
-    const invoicing = g.find(a => a.shortId === 'invoicing');
-    expect(sales?.entries).toEqual([erp]);
-    expect(invoicing?.entries).toEqual([erp]);
+  it('repeated override profiles, or the manifest\'s own, are not listed twice', () => {
+    const erp = entry({ name: 'ERP', state: 'running', profile: 'sales', overrideProfiles: ['sales', 'invoicing', 'invoicing'] });
+    expect(connectorAreas(erp.manifest, catalog).map(a => a.shortId)).toEqual(['invoicing', 'sales']);
   });
 
-  it('a connector whose overrides repeat the manifest\'s own profile is not listed twice under it', () => {
-    const erp = entry({ name: 'ERP', state: 'running', profile: 'sales', overrideProfiles: ['sales', 'sales'] });
-    const g = groupEntriesByArea([erp], catalog);
-    expect(g).toHaveLength(1);
-    expect(g[0].entries).toEqual([erp]);
+  it('sortConnectors orders by name and keeps one entry per connector', () => {
+    const erp = entry({ name: 'ERP', state: 'running', profile: 'sales', overrideProfiles: ['invoicing', 'master-data'] });
+    const crm = entry({ name: 'CRM', state: 'running' });
+    expect(sortConnectors([erp, crm])).toEqual([crm, erp]);
   });
 });
 
@@ -184,5 +172,16 @@ describe('splitByUse — "In use" / "Not set up" (UI spec §20.3)', () => {
     const all = [running, stopped, crashed, starting, noAccount, revoked];
     const { inUse, notSetUp } = splitByUse(all);
     expect(inUse.length + notSetUp.length).toBe(all.length);
+  });
+});
+
+describe('splitByUse — Paused group', () => {
+  it('a connector the gateway paused is neither in use nor not set up', () => {
+    const paused = entry({ name: 'CRM', state: 'paused' });
+    const running = entry({ name: 'Records', state: 'running' });
+    const r = splitByUse([paused, running]);
+    expect(r.paused).toEqual([paused]);
+    expect(r.inUse).toEqual([running]);
+    expect(r.notSetUp).toEqual([]);
   });
 });

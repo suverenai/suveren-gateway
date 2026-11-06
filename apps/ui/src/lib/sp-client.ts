@@ -467,7 +467,7 @@ export interface IntegrationManifest {
    *  what a tool DOES, in words, for the receipts list; `profile` is area
    *  per tool (a connector may span several areas; an override may name its
    *  OWN profile instead of the manifest's — see integration-grouping.ts's
-   *  `groupEntriesByArea`). */
+   *  `connectorAreas`). */
   toolGating?: {
     overrides?: Record<string, { profile?: string; actionLabel?: string; summary?: string; display?: { currencyField?: string } } | null>;
   } | null;
@@ -991,6 +991,13 @@ export function parseApproverPubkeys(data: unknown): Array<{ userId: string; pub
     .map(([userId, publicKey]) => ({ userId, publicKey }));
 }
 
+/** The gateway's own preferences (control plane `settings.json`) — the persisted truth, never browser storage. */
+export interface GatewaySettings {
+  desktopNotifications: boolean;
+  /** An approval waiting for this person slides in by itself. Default on. */
+  openApprovalsAutomatically: boolean;
+}
+
 class SPClient {
   private apiKey: string | null = null;
 
@@ -1499,14 +1506,14 @@ class SPClient {
 
   // ─── Local gateway preferences (control plane, not the Authority Server) ───
 
-  async getGatewaySettings(): Promise<{ desktopNotifications: boolean }> {
+  async getGatewaySettings(): Promise<GatewaySettings> {
     const res = await this.fetch('/api/gateway-settings');
     if (!res.ok) throw new Error(`Failed to load settings: ${res.status}`);
     return res.json();
   }
 
   /** Returns the PERSISTED state, so callers render backend truth. */
-  async setGatewaySettings(patch: { desktopNotifications?: boolean }): Promise<{ desktopNotifications: boolean }> {
+  async setGatewaySettings(patch: Partial<GatewaySettings>): Promise<GatewaySettings> {
     const res = await this.fetch('/api/gateway-settings', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },

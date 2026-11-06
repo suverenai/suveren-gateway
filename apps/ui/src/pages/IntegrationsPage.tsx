@@ -2,17 +2,15 @@ import { useState, useCallback } from 'react';
 import { IntegrationCard } from '../components/IntegrationCard';
 import { useIntegrationStatus, type IntegrationEntry } from '../contexts/IntegrationStatusContext';
 import { useSimulationMode } from '../hooks/useSimulationMode';
-import { groupIntegrationsForDisplay, groupEntriesByArea, splitByUse } from '../lib/integration-grouping';
+import { groupIntegrationsForDisplay, connectorAreas, sortConnectors, splitByUse } from '../lib/integration-grouping';
 import { integrationIcon } from '../lib/integration-icon';
 import { useAreaCatalog } from '../lib/area-catalog';
-import { AreaIcon } from '../components/AreaIcon';
 
 /**
- * Connectors listed per area (UI spec §13.3: a tool serving several areas appears under each). The area
- * is shown in each card's type line with its icon (§20.3); the heading itself is kept for screen readers and
- * tests (`data-testid="integration-area"`), not drawn.
+ * One card per connector (UI spec §13.3 revised): the connector's areas, taken from its manifest, are
+ * chips under its name — a connector serving several areas is still ONE card with one form and one status.
  */
-function AreaCards({ entries, catalog, refresh, onSuccess }: {
+export function ConnectorCards({ entries, catalog, refresh, onSuccess }: {
   entries: IntegrationEntry[];
   catalog: ReturnType<typeof useAreaCatalog>;
   refresh: () => void;
@@ -20,24 +18,16 @@ function AreaCards({ entries, catalog, refresh, onSuccess }: {
 }) {
   return (
     <>
-      {groupEntriesByArea(entries, catalog).map(areaGroup => (
-        <div className="area-group su-area" key={areaGroup.shortId} data-testid="integration-area" data-area={areaGroup.shortId}>
-          <div className="area-group-h sr-only">
-            <AreaIcon icon={areaGroup.icon} />
-            <b>{areaGroup.name}</b>
-          </div>
-          {areaGroup.entries.map(entry => (
-            <IntegrationCard
-              key={entry.id}
-              manifest={entry.manifest}
-              area={{ shortId: areaGroup.shortId, name: areaGroup.name }}
-              integration={entry.integration}
-              state={entry.state}
-              onStatusChange={refresh}
-              onSuccess={onSuccess}
-            />
-          ))}
-        </div>
+      {sortConnectors(entries).map(entry => (
+        <IntegrationCard
+          key={entry.id}
+          manifest={entry.manifest}
+          areas={connectorAreas(entry.manifest, catalog)}
+          integration={entry.integration}
+          state={entry.state}
+          onStatusChange={refresh}
+          onSuccess={onSuccess}
+        />
       ))}
     </>
   );
@@ -78,12 +68,10 @@ export function IntegrationsPage() {
   }, []);
 
   const grouped = groupIntegrationsForDisplay(entries, simulationOn);
-  // Simulation mode off: "In use" / "Not set up". Counts are the cards shown (one connector can sit
-  // under several areas, e.g. ERP under Sales, Invoicing and Master data) so the number matches the page.
-  const { inUse, notSetUp } = splitByUse(entries);
-  const cardCount = (list: typeof entries) => groupEntriesByArea(list, catalog).reduce((n, g) => n + g.entries.length, 0);
-  const inUseCards = cardCount(inUse);
-  const notSetUpCards = cardCount(notSetUp);
+  // Simulation mode off: "In use" / "Not set up". One card per connector, so the counts are the connectors.
+  const { inUse, notSetUp, paused } = splitByUse(entries);
+  const inUseCards = inUse.length;
+  const notSetUpCards = notSetUp.length;
   const subtitle = !loading && mcpServerUp !== false && entries.length > 0 && !grouped.grouped
     ? ` ${inUseCards} in use · ${notSetUpCards} not set up.`
     : '';
@@ -91,19 +79,19 @@ export function IntegrationsPage() {
   return (
     <div className="su-page">
       <div className="page-header">
-        <h1 className="page-title">Integrations</h1>
-        <p className="page-subtitle">Connect external services and manage MCP integrations.{subtitle}</p>
+        <h1 className="page-title">Connectors</h1>
+        <p className="page-subtitle">The systems your AI can reach, each under its mandate.{subtitle}</p>
       </div>
 
       {successMsg && <div className="alert alert-success">{successMsg}</div>}
 
       {loading ? (
-        <p style={{ color: 'var(--text-tertiary)' }}>Loading integrations...</p>
+        <p style={{ color: 'var(--text-tertiary)' }}>Loading connectors...</p>
       ) : mcpServerUp === false ? (
         <div className="status-banner status-banner-error">
           <span className="status-banner-icon">!</span>
           <span className="status-banner-text">
-            MCP server is not reachable. Make sure it is running.
+            The gateway can't reach its connectors. Restart the gateway.
           </span>
         </div>
       ) : grouped.grouped ? (
@@ -112,7 +100,7 @@ export function IntegrationsPage() {
           {grouped.testSystems.length > 0 && (
             <>
               <GroupHeading title="Test systems" count={grouped.testSystems.length} />
-              <AreaCards entries={grouped.testSystems} catalog={catalog} refresh={refresh} onSuccess={showSuccess} />
+              <ConnectorCards entries={grouped.testSystems} catalog={catalog} refresh={refresh} onSuccess={showSuccess} />
             </>
           )}
 
@@ -122,7 +110,7 @@ export function IntegrationsPage() {
               {/* A genuine error (unrelated to the simulation block) stays a
                   full card — folding it into the paused disclosure would
                   bury an actual problem behind a collapsed, neutral summary. */}
-              <AreaCards entries={grouped.realErrors} catalog={catalog} refresh={refresh} onSuccess={showSuccess} />
+              <ConnectorCards entries={grouped.realErrors} catalog={catalog} refresh={refresh} onSuccess={showSuccess} />
               {grouped.pausedReal.length > 0 && (
                 <details className="int-paused-group" open>
                   <summary>Paused while simulation mode is on ({grouped.pausedReal.length})</summary>
@@ -143,13 +131,20 @@ export function IntegrationsPage() {
           {inUse.length > 0 && (
             <>
               <GroupHeading title="In use" count={inUseCards} />
-              <AreaCards entries={inUse} catalog={catalog} refresh={refresh} onSuccess={showSuccess} />
+              <ConnectorCards entries={inUse} catalog={catalog} refresh={refresh} onSuccess={showSuccess} />
             </>
           )}
+          {paused.length > 0 && (
+            <>
+              <GroupHeading title="Paused" count={paused.length} />
+              <ConnectorCards entries={paused} catalog={catalog} refresh={refresh} onSuccess={showSuccess} />
+            </>
+          )}
+
           {notSetUp.length > 0 && (
             <>
               <GroupHeading title="Not set up" count={notSetUpCards} note="open one to set it up" />
-              <AreaCards entries={notSetUp} catalog={catalog} refresh={refresh} onSuccess={showSuccess} />
+              <ConnectorCards entries={notSetUp} catalog={catalog} refresh={refresh} onSuccess={showSuccess} />
             </>
           )}
 
@@ -165,14 +160,14 @@ function EmptyState({ manifestsError }: { manifestsError: boolean }) {
     <div className="status-banner status-banner-error">
       <span className="status-banner-icon">!</span>
       <span className="status-banner-text">
-        Couldn't load integrations — the gateway can't reach its MCP server
+        Couldn't load connectors — the gateway can't reach its connectors
         (or you're signed out). Check the control-plane's
-        {' '}<code>SUVEREN_MCP_INTERNAL_URL</code> (dev MCP is :3431), then refresh.
+        {' '}<code>SUVEREN_MCP_INTERNAL_URL</code> (dev: :3431), then refresh.
       </span>
     </div>
   ) : (
     <p style={{ color: 'var(--text-tertiary)', textAlign: 'center', marginTop: '2rem' }}>
-      No integrations available yet.
+      No connectors available yet.
     </p>
   );
 }

@@ -13,7 +13,8 @@ import {
   statusWord, authWord, startsOpen, readsPhrase, connectorOneLine,
   type CardState,
 } from '../lib/integration-card-view';
-import { areasOf as areaProfilesOf } from '../lib/integration-grouping';
+import { areasOf as areaProfilesOf, type ConnectorArea } from '../lib/integration-grouping';
+import { AreaIcon } from './AreaIcon';
 
 /**
  * Does this integration read anything with an age dimension?
@@ -88,8 +89,8 @@ export function stoppedIntegrationDisplay(
 
 interface Props {
   manifest: IntegrationManifest;
-  /** The area this card is listed under (UI spec §20.3): shown, with its icon, in the type line. */
-  area?: { shortId: string; name: string };
+  /** Every area this connector serves (from its manifest): chips with the area icon under the name. */
+  areas?: ConnectorArea[];
   integration: McpIntegrationStatus | undefined;
   /**
    * Canonical state derived by IntegrationStatusContext. Drives the status
@@ -100,7 +101,7 @@ interface Props {
   onSuccess: (msg: string) => void;
 }
 
-export function IntegrationCard({ manifest, area, integration, state, onStatusChange, onSuccess }: Props) {
+export function IntegrationCard({ manifest, areas, integration, state, onStatusChange, onSuccess }: Props) {
   const [credValues, setCredValues] = useState<Record<string, string>>({});
   const [credConfigured, setCredConfigured] = useState(false);
   const [credsOnFile, setCredsOnFile] = useState(false); // vault has credentials stored
@@ -253,7 +254,7 @@ export function IntegrationCard({ manifest, area, integration, state, onStatusCh
       // Auto-start: if this integration doesn't need OAuth, activating now
       // skips the dead state where credentials are saved but nothing runs.
       if (!manifest.oauth) {
-        onSuccess(`${manifest.name} credentials saved — starting integration...`);
+        onSuccess(`${manifest.name} credentials saved — starting connector...`);
         await activate();
       } else {
         onSuccess(`${manifest.name} credentials saved!`);
@@ -339,7 +340,7 @@ export function IntegrationCard({ manifest, area, integration, state, onStatusCh
           setEditingCreds(false);
           setAuthHealth(null);
           clearInterval(poll);
-          onSuccess(`${manifest.name} connected — starting integration...`);
+          onSuccess(`${manifest.name} connected — starting connector...`);
           // Re-probe auth health so the chip flips from "failed" to OK/account.
           spClient.getOAuthHealth(manifest.id).then(setAuthHealth).catch(() => {});
           // Auto-start after OAuth completes so the user doesn't have to click Start separately.
@@ -357,7 +358,7 @@ export function IntegrationCard({ manifest, area, integration, state, onStatusCh
       if (result.warning) {
         onSuccess(result.warning);
       } else {
-        onSuccess(`${manifest.name} integration started with ${result.tools.length} tools`);
+        onSuccess(`${manifest.name} connector started with ${result.tools.length} tools`);
       }
       onStatusChange();
     } catch (err) {
@@ -370,7 +371,7 @@ export function IntegrationCard({ manifest, area, integration, state, onStatusCh
   const remove = async () => {
     try {
       await spClient.removeMcpIntegration(manifest.id);
-      onSuccess(`${manifest.name} integration removed`);
+      onSuccess(`${manifest.name} connector removed`);
       onStatusChange();
     } catch {
       onSuccess(`Failed to remove ${manifest.name}`);
@@ -512,13 +513,8 @@ export function IntegrationCard({ manifest, area, integration, state, onStatusCh
         <div className="su-cn-head">
           <ObTypeLine
             tag="CONNECTOR"
-            profileId={area?.shortId}
             parts={[
-              area?.name,
               <span className={`ob-st${status.tone === 'muted' ? ' is-off' : ''}`}>{status.text}</span>,
-              simulated && (
-                <span className="ob-st is-sim" title="This connector answers from a simulated system with test data. Nothing reaches your real systems.">Simulation</span>
-              ),
               auth && (auth.tone === 'bold' ? <span className="ob-st">{auth.text}</span> : auth.text),
             ]}
           />
@@ -526,8 +522,20 @@ export function IntegrationCard({ manifest, area, integration, state, onStatusCh
             {manifest.name}
             {mode && <span className="ob-quiet-inline"> · {mode}</span>}
           </h3>
+          {areas && areas.length > 0 && (
+            <ul className="int-areas" data-testid="integration-areas">
+              {areas.map(a => (
+                <li key={a.shortId} className="int-area" data-area={a.shortId}><AreaIcon icon={a.icon} />{a.name}</li>
+              ))}
+            </ul>
+          )}
           <p className="ob-one" data-testid={note ? 'integration-mode-note' : undefined}>{oneLine}</p>
         </div>
+        <span
+          className={`int-mode${simulated ? ' is-sim' : ''}`}
+          data-testid="integration-mode-pill"
+          title={simulated ? 'This connector answers from a simulated system with test data. Nothing reaches your real systems.' : undefined}
+        >{simulated ? 'Simulation' : 'Live'}</span>
         <ObChev />
       </summary>
 
@@ -749,7 +757,7 @@ export function IntegrationCard({ manifest, area, integration, state, onStatusCh
             <button
               className="ob-btn"
               onClick={remove}
-              title="Stops the subprocess and removes the integration from the registry. It will NOT auto-start on next gateway restart. Re-enable with Install."
+              title="Stops the subprocess and removes the connector from the registry. It will NOT auto-start on next gateway restart. Re-enable with Install."
             >
               Disable
             </button>
@@ -814,7 +822,7 @@ export function IntegrationCard({ manifest, area, integration, state, onStatusCh
         {cardState === 'ready' && !integration && (
           <div className="ob-btns is-inline">
             <button className="ob-btn is-solid" onClick={activate} disabled={activating}>
-              {activating ? 'Starting...' : `Start ${manifest.name} Integration`}
+              {activating ? 'Starting...' : `Start ${manifest.name} Connector`}
             </button>
             {!manifest.oauth && (
               <button className="ob-btn" onClick={() => setCredConfigured(false)}>
