@@ -9,11 +9,11 @@
 import { Router } from 'express';
 import { readSettings, writeSettings } from '../lib/gateway-settings';
 
-export function createGatewaySettingsRouter(): Router {
+export function createGatewaySettingsRouter(dataDir?: string): Router {
   const router = Router();
 
   router.get('/', (_req, res) => {
-    res.json(readSettings());
+    res.json(readSettings(dataDir));
   });
 
   router.put('/', (req, res) => {
@@ -22,11 +22,16 @@ export function createGatewaySettingsRouter(): Router {
       res.status(400).json({ error: 'desktopNotifications must be a boolean' });
       return;
     }
+    if ('openApprovalsAutomatically' in body && typeof body.openApprovalsAutomatically !== 'boolean') {
+      res.status(400).json({ error: 'openApprovalsAutomatically must be a boolean' });
+      return;
+    }
     try {
       // Unknown keys are dropped by writeSettings rather than persisted.
       const saved = writeSettings({
         desktopNotifications: body.desktopNotifications as boolean | undefined,
-      });
+        openApprovalsAutomatically: body.openApprovalsAutomatically as boolean | undefined,
+      }, dataDir);
       res.json(saved);
     } catch (err) {
       res.status(500).json({ error: `Could not save settings: ${(err as Error).message}` });

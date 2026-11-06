@@ -16,10 +16,17 @@ import { join, dirname } from 'node:path';
 export interface GatewaySettings {
   /** Native OS notification when something is waiting for review. */
   desktopNotifications: boolean;
+  /**
+   * An approval waiting for this person slides in by itself (UI: the approval
+   * panel). One operator per vault, so this IS the per-user setting. Stored
+   * here — never in the browser — so every browser and device shows the same.
+   */
+  openApprovalsAutomatically: boolean;
 }
 
 export const DEFAULT_SETTINGS: GatewaySettings = {
   desktopNotifications: true,
+  openApprovalsAutomatically: true,
 };
 
 function settingsPath(dataDir?: string): string {
@@ -35,6 +42,10 @@ export function readSettings(dataDir?: string): GatewaySettings {
         typeof raw.desktopNotifications === 'boolean'
           ? raw.desktopNotifications
           : DEFAULT_SETTINGS.desktopNotifications,
+      openApprovalsAutomatically:
+        typeof raw.openApprovalsAutomatically === 'boolean'
+          ? raw.openApprovalsAutomatically
+          : DEFAULT_SETTINGS.openApprovalsAutomatically,
     };
   } catch {
     // Missing, unreadable, or malformed — defaults, silently. A preferences
@@ -49,6 +60,9 @@ export function writeSettings(patch: Partial<GatewaySettings>, dataDir?: string)
     ...readSettings(dataDir),
     ...(typeof patch.desktopNotifications === 'boolean'
       ? { desktopNotifications: patch.desktopNotifications }
+      : {}),
+    ...(typeof patch.openApprovalsAutomatically === 'boolean'
+      ? { openApprovalsAutomatically: patch.openApprovalsAutomatically }
       : {}),
   };
   const path = settingsPath(dataDir);
