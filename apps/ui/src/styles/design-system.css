@@ -4890,9 +4890,14 @@ a.dash-row:hover, .dash-row:not([open]):hover { box-shadow: var(--elevation-2); 
   top: calc(var(--nav-height) + var(--update-banner-h, 0px) + var(--sim-banner-h, 0px) + var(--apr-bar-h, 0px));
   display: flex; flex-direction: column; background: var(--bg-sunken); box-shadow: var(--elevation-3);
   transform: translateX(100%); visibility: hidden;
-  transition: transform 0.38s ease, visibility 0s linear 0.38s;
+  transition: transform 0.38s ease, left 0.15s ease, visibility 0s linear 0.38s;
 }
-.apr-panel.is-open { transform: none; visibility: visible; transition: transform 0.38s ease; }
+.apr-panel.is-open { transform: none; visibility: visible; transition: transform 0.38s ease, left 0.15s ease; }
+/* The icon rail opens on hover or keyboard focus: the panel is PUSHED right by the nav's width (same 0.15s as the rail), never covered. */
+@media (min-width: 480px) {
+  body.apr-has-rail:has(.sidebar:hover) .apr-panel,
+  body.apr-has-rail:has(.sidebar :focus-visible) .apr-panel { left: 15rem; }
+}
 .apr-head { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 0 var(--space-1); min-height: 3.25rem; padding: 0 var(--space-4); }
 .apr-title { font-size: var(--text-body-sm); font-weight: 600; letter-spacing: 0; margin: 0; padding-left: var(--space-2); }
 .apr-title:focus { outline: none; }
@@ -4910,11 +4915,11 @@ a.dash-row:hover, .dash-row:not([open]):hover { box-shadow: var(--elevation-2); 
 .apr-stage { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 
 /* While the panel is open the sidebar is the icon rail, with a dot on Approvals */
-body.apr-has-anim .sidebar { transition: width 0.38s ease, box-shadow 0.15s ease; }
+body.apr-has-anim.apr-has-anim .sidebar { transition: width 0.38s ease, box-shadow 0.15s ease; }
 body.apr-has-anim .main-content { transition: margin-left 0.38s ease; }
 @media (min-width: 480px) {
   body.apr-has-rail { --sidebar-width: 3.5rem; }
-  body.apr-has-rail .sidebar { display: flex; overflow: hidden; padding-left: 0; padding-right: 0; }
+  body.apr-has-rail .sidebar { display: flex; overflow: hidden; padding-left: 0; padding-right: 0; transition: width 0.15s ease, box-shadow 0.15s ease; }
   body.apr-has-rail .sidebar:hover, body.apr-has-rail .sidebar:has(:focus-visible) { width: 15rem; box-shadow: var(--elevation-3); }
   body.apr-has-rail .sidebar:not(:hover):not(:has(:focus-visible)) .sidebar-label,
   body.apr-has-rail .sidebar:not(:hover):not(:has(:focus-visible)) .sidebar-group-label { opacity: 0; }
