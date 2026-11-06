@@ -211,8 +211,15 @@ export function ApprovalPanelHost() {
               ) : <span className="apr-nav-ph" />}
               <div className="apr-acts">
                 <button type="button" className="apr-btn" onClick={goLater} data-testid="approval-later">Later</button>
-                {q.autoOpen === true && (
-                  <button type="button" className="apr-btn" onClick={noAuto} data-testid="approval-no-auto">Don’t open automatically</button>
+                {q.autoOpen !== null && (
+                  <button
+                    type="button"
+                    className="av3-btn av3-btn-primary apr-auto"
+                    onClick={q.autoOpen ? noAuto : () => { void q.setAutoOpen(true); }}
+                    data-testid="approval-auto-toggle"
+                  >
+                    {q.autoOpen ? 'Don’t open automatically' : 'Open automatically'}
+                  </button>
                 )}
               </div>
             </header>

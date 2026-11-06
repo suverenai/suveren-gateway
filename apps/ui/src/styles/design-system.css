@@ -962,12 +962,14 @@ code {
    ══════════════════════════════════════════════ */
 .nav-tabs {
   display: flex;
+  overflow-x: auto; /* a long row of tabs scrolls inside itself — never widens the page */
   gap: 0;
   border-bottom: 1px solid var(--border);
   margin-bottom: 1.5rem;
 }
 
 .nav-tab {
+  flex: none; white-space: nowrap;
   padding: 0.75rem 1.25rem;
   font-size: 0.9rem;
   font-weight: 500;
@@ -4901,6 +4903,8 @@ a.dash-row:hover, .dash-row:not([open]):hover { box-shadow: var(--elevation-2); 
 /* Header: title left, Previous / "k of N" / Next CENTRED as real buttons, Later and the setting at the right edge. */
 .apr-head { flex: none; display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: var(--space-2) var(--space-3); min-height: 3.5rem; padding: var(--space-1) var(--space-4); }
 .apr-acts { justify-self: end; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 0 var(--space-1); }
+.apr-acts { align-items: center; gap: var(--space-2); }
+.apr-acts .apr-auto { padding: 0 var(--space-4); }
 .apr-nav { display: flex; align-items: center; gap: var(--space-3); }
 .apr-nav .av3-btn { display: inline-flex; align-items: center; justify-content: center; gap: 0.3rem; padding: 0 var(--space-4); }
 .apr-nav .av3-btn:disabled { background: transparent; color: var(--text-muted); box-shadow: inset 0 0 0 1px var(--border-strong); cursor: default; }
