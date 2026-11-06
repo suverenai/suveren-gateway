@@ -17,20 +17,20 @@ export function AppShell() {
   return (
     <IntegrationStatusProvider>
       <ApprovalQueueProvider>
-      {/* Reflects pending reviews in the tab title + favicon, and on the Dock / taskbar icon when installed. Renders nothing. */}
-      <TabBadge />
-      <TopNav onMenuToggle={() => setMobileMenuOpen(!mobileMenuOpen)} />
-      <UpdateBanner />
-      <SimulationBanner />
-      <Sidebar />
-      <MobileMenu open={mobileMenuOpen} onClose={() => setMobileMenuOpen(false)} />
-      <div className="main-content">
-        <div className="page-inner">
-          <DockBadgePrompt />
-          <Outlet />
+        {/* Reflects pending reviews in the tab title + favicon, and on the Dock / taskbar icon when installed. Renders nothing. */}
+        <TabBadge />
+        <TopNav onMenuToggle={() => setMobileMenuOpen(!mobileMenuOpen)} />
+        <UpdateBanner />
+        <SimulationBanner />
+        <Sidebar />
+        <MobileMenu open={mobileMenuOpen} onClose={() => setMobileMenuOpen(false)} />
+        <div className="main-content">
+          <div className="page-inner">
+            <DockBadgePrompt />
+            <Outlet />
+          </div>
         </div>
-      </div>
-      <ApprovalPanelHost />
+        <ApprovalPanelHost />
       </ApprovalQueueProvider>
     </IntegrationStatusProvider>
   );

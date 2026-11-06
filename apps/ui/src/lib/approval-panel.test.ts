@@ -82,6 +82,10 @@ describe('what is on screen', () => {
   it('keeps the panel for the last result even though the queue is empty', () => {
     expect(panelChrome({ count: 0, open: true, typing: false, onApprovalsPage: false, hold: true }).panel).toBe(true);
   });
+  it('no strip and no bar for a count of zero, even while the last result is still held', () => {
+    expect(panelChrome({ count: 0, open: false, typing: false, onApprovalsPage: false, hold: true })).toEqual({ panel: false, bar: false, strip: false });
+    expect(panelChrome({ count: 0, open: false, typing: true, onApprovalsPage: false, hold: true })).toEqual({ panel: false, bar: false, strip: false });
+  });
   it('the strip says when auto is off', () => {
     expect(stripAutoLabel(true)).toBe('');
     expect(stripAutoLabel(false)).toBe('Auto off');

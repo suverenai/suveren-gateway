@@ -4613,15 +4613,15 @@ body.is-updating .simulation-banner {
    per row; each column at most 760px; stacked below 1100px (the window, sidebar included). */
 .dash-cols { grid-template-columns: repeat(3, minmax(0, var(--box-max))); gap: var(--space-6); margin-top: 0; align-items: stretch; }
 .dash-cols > section { background: var(--bg-elevated); border-radius: var(--radius-lg); box-shadow: var(--elevation-1); padding: var(--space-4); min-width: 0; display: flex; flex-direction: column; }
-.dash-cols > section > .dash-btn { margin-top: auto; }
+.dash-cols > section > .dash-btn { flex: none; margin-top: auto; }
 .dash-cols > section > .dash-rows, .dash-cols > section > .core-quiet-line { margin-bottom: var(--space-3); }
-.dash-cols > section > .dash-btn { margin-top: auto; }
 .dash-cols .core-col-empty { padding: var(--space-1) 0 0; }
 /* The rows inside a white box: the grey of the page, no shadow of their own. */
 .dash-cols .ob-card.dash-row, .dash-cols .av3-row { background: var(--bg-sunken); box-shadow: none; border-radius: var(--radius-md); padding: var(--space-3); }
 .dash-cols a.dash-row:hover, .dash-cols .dash-row:not([open]):hover { box-shadow: none; background: var(--border); }
 .dash-cols .av3-row .av3-row-head { padding: var(--space-3); }
 .dash-cols .av3-row:hover { box-shadow: none; }
+@media (max-width: 479px) { .dash-cols .dash-row .ob-type { flex-wrap: wrap; white-space: normal; } }
 .dash-cols .core-col-h h2, .dash-sec .core-col-h h2 { font-size: var(--text-body); font-weight: 600; text-transform: none; letter-spacing: 0; color: var(--text-primary); }
 .dash-rows { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
 .dash-row { color: inherit; text-decoration: none; cursor: pointer; }
@@ -4866,7 +4866,7 @@ a.dash-row:hover, .dash-row:not([open]):hover { box-shadow: var(--elevation-2); 
    bar at the top offers it instead. Moved by CSS only (transform), so a slide
    is never cut short. Components: ApprovalPanelHost, QueueCard.
    ══════════════════════════════════════════════════════════════════════ */
-body.apr-bar { --apr-bar-h: 44px; }
+@media (min-width: 480px) { body.apr-has-bar { --apr-bar-h: 44px; } }
 .apr-i { width: 1rem; height: 1rem; flex: none; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 
 /* "1 approval waiting — Open" */
@@ -4896,7 +4896,6 @@ body.apr-bar { --apr-bar-h: 44px; }
 .apr-head { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 0 var(--space-1); min-height: 3.25rem; padding: 0 var(--space-4); }
 .apr-title { font-size: var(--text-body-sm); font-weight: 600; letter-spacing: 0; margin: 0; padding-left: var(--space-2); }
 .apr-title:focus { outline: none; }
-.apr-title:focus-visible { outline: 2px solid var(--text-primary); outline-offset: 2px; border-radius: var(--radius-xs); }
 .apr-m { color: var(--text-muted); font-weight: 400; }
 .apr-sp { flex: 1; }
 .apr-btn {
@@ -4911,37 +4910,37 @@ body.apr-bar { --apr-bar-h: 44px; }
 .apr-stage { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 
 /* While the panel is open the sidebar is the icon rail, with a dot on Approvals */
-body.apr-anim .sidebar { transition: width 0.38s ease, box-shadow 0.15s ease; }
-body.apr-anim .main-content { transition: margin-left 0.38s ease; }
+body.apr-has-anim .sidebar { transition: width 0.38s ease, box-shadow 0.15s ease; }
+body.apr-has-anim .main-content { transition: margin-left 0.38s ease; }
 @media (min-width: 480px) {
-  body.apr-rail { --sidebar-width: 3.5rem; }
-  body.apr-rail .sidebar { display: flex; overflow: hidden; padding-left: 0; padding-right: 0; }
-  body.apr-rail .sidebar:hover, body.apr-rail .sidebar:has(:focus-visible) { width: 15rem; box-shadow: var(--elevation-3); }
-  body.apr-rail .sidebar:not(:hover):not(:has(:focus-visible)) .sidebar-label,
-  body.apr-rail .sidebar:not(:hover):not(:has(:focus-visible)) .sidebar-group-label { opacity: 0; }
-  body.apr-rail .sidebar-label { white-space: nowrap; }
-  body.apr-rail .sidebar-item { position: relative; padding-left: 0.75rem; padding-right: 0.5rem; }
-  body.apr-rail .sidebar:not(:hover):not(:has(:focus-visible)) .sidebar-item > span[class*="nav-"],
-  body.apr-rail .sidebar:not(:hover):not(:has(:focus-visible)) .sidebar-item > span:not(.icon):not(.sidebar-label) {
+  body.apr-has-rail { --sidebar-width: 3.5rem; }
+  body.apr-has-rail .sidebar { display: flex; overflow: hidden; padding-left: 0; padding-right: 0; }
+  body.apr-has-rail .sidebar:hover, body.apr-has-rail .sidebar:has(:focus-visible) { width: 15rem; box-shadow: var(--elevation-3); }
+  body.apr-has-rail .sidebar:not(:hover):not(:has(:focus-visible)) .sidebar-label,
+  body.apr-has-rail .sidebar:not(:hover):not(:has(:focus-visible)) .sidebar-group-label { opacity: 0; }
+  body.apr-has-rail .sidebar-label { white-space: nowrap; }
+  body.apr-has-rail .sidebar-item { position: relative; padding-left: 0.75rem; padding-right: 0.5rem; }
+  body.apr-has-rail .sidebar:not(:hover):not(:has(:focus-visible)) .sidebar-item > span[class*="nav-"],
+  body.apr-has-rail .sidebar:not(:hover):not(:has(:focus-visible)) .sidebar-item > span:not(.icon):not(.sidebar-label) {
     position: absolute !important; top: 0.15rem; right: 0.2rem; margin: 0 !important; min-width: 0.9rem !important; height: 0.9rem !important; padding: 0 0.2rem !important; font-size: 0.55rem !important;
   }
-  body.apr-rail .sidebar:not(:hover):not(:has(:focus-visible)) .sidebar-setup .sidebar-nav,
-  body.apr-rail .sidebar:not(:hover):not(:has(:focus-visible)) .sidebar-setup .sidebar-group-label { display: none; }
-  body.apr-rail .sidebar:not(:hover):not(:has(:focus-visible)) .sidebar-setup-rail {
+  body.apr-has-rail .sidebar:not(:hover):not(:has(:focus-visible)) .sidebar-setup .sidebar-nav,
+  body.apr-has-rail .sidebar:not(:hover):not(:has(:focus-visible)) .sidebar-setup .sidebar-group-label { display: none; }
+  body.apr-has-rail .sidebar:not(:hover):not(:has(:focus-visible)) .sidebar-setup-rail {
     display: flex; position: relative; align-items: center; margin: 0 0.5rem; padding: 0.5rem 0.75rem; color: var(--text-muted);
   }
-  body.apr-rail .sidebar-setup-rail.is-active { color: var(--text-primary); background: var(--bg-main); box-shadow: inset 0 0 0 1px var(--border); border-radius: 0.5rem; }
-  body.apr-rail .sidebar-setup-rail.is-active::before { content: ''; position: absolute; left: 0; top: 0.4rem; bottom: 0.4rem; width: 2px; border-radius: 2px; background: var(--text-primary); }
-  body.apr-rail .sidebar-item.active::before { left: 0; }
+  body.apr-has-rail .sidebar-setup-rail.is-active { color: var(--text-primary); background: var(--bg-main); box-shadow: inset 0 0 0 1px var(--border); border-radius: 0.5rem; }
+  body.apr-has-rail .sidebar-setup-rail.is-active::before { content: ''; position: absolute; left: 0; top: 0.4rem; bottom: 0.4rem; width: 2px; border-radius: 2px; background: var(--text-primary); }
+  body.apr-has-rail .sidebar-item.active::before { left: 0; }
   /* the dot replaces the count on Approvals */
-  body.apr-rail .sidebar:not(:hover):not(:has(:focus-visible)) .sidebar-item[href="/approvals"] > span[class*="nav-"] { display: none !important; }
-  body.apr-rail .sidebar:not(:hover):not(:has(:focus-visible)) .sidebar-item[href="/approvals"]::after {
+  body.apr-has-rail .sidebar:not(:hover):not(:has(:focus-visible)) .sidebar-item[href="/approvals"] > span[class*="nav-"] { display: none !important; }
+  body.apr-has-rail .sidebar:not(:hover):not(:has(:focus-visible)) .sidebar-item[href="/approvals"]::after {
     content: ''; position: absolute; top: 0.35rem; right: 0.45rem; width: 0.5rem; height: 0.5rem; border-radius: var(--radius-circle); background: var(--neutral);
   }
 }
 
 /* The strip: where the panel goes when sent away */
-body.apr-strip .main-content { margin-right: 2.75rem; }
+body.apr-has-strip .main-content { margin-right: 2.75rem; }
 .apr-strip {
   position: fixed; z-index: 800; right: 0; bottom: 0; width: 2.75rem;
   top: calc(var(--nav-height) + var(--update-banner-h, 0px) + var(--sim-banner-h, 0px) + var(--apr-bar-h, 0px));
@@ -4969,11 +4968,13 @@ body.apr-strip .main-content { margin-right: 2.75rem; }
 
 /* Narrow (phone): the panel is a full-screen sheet; "Later" leaves a tab at the bottom with the count */
 @media (max-width: 479px) {
+  /* The bar goes to the bottom edge: at the top it would hide a dialog's title and its close button. */
+  .apr-bar { top: auto; bottom: 0; }
   .apr-panel { left: 0; top: 0; }
   .apr-head { padding: 0 var(--space-2); }
   .apr-body { padding: 0 var(--space-2) var(--space-2); }
   .apr-btn .apr-txt { display: none; }
-  body.apr-strip .main-content { margin-right: 0; margin-bottom: 3rem; }
+  body.apr-has-strip .main-content { margin-right: 0; margin-bottom: 3rem; }
   .apr-strip { top: auto; left: 0; width: auto; height: 3rem; flex-direction: row; padding: 0 var(--space-2) 0 var(--space-4); border-left: 0; border-top: 1px solid var(--border); }
   .apr-strip-open { flex-direction: row; flex: 1; justify-content: flex-start; }
   .apr-strip-l, .apr-strip-auto { writing-mode: horizontal-tb; }
@@ -4981,5 +4982,5 @@ body.apr-strip .main-content { margin-right: 2.75rem; }
   .apr-pop { right: var(--space-2); bottom: 3.5rem; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .apr-panel, .apr-panel.is-open, body.apr-anim .sidebar, body.apr-anim .main-content { transition: none; }
+  .apr-panel, .apr-panel.is-open, body.apr-has-anim .sidebar, body.apr-has-anim .main-content { transition: none; }
 }

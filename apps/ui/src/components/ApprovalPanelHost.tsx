@@ -86,14 +86,14 @@ export function ApprovalPanelHost() {
   // The rail while the panel is open; the strip's room at the edge.
   useEffect(() => {
     // Animate the sidebar's collapse/expand together with the slide (not for hover, which is quicker).
-    document.body.classList.add('apr-anim');
-    const done = window.setTimeout(() => document.body.classList.remove('apr-anim'), SLIDE_MS + 80);
-    document.body.classList.toggle('apr-rail', chrome.panel);
-    document.body.classList.toggle('apr-strip', chrome.strip);
-    document.body.classList.toggle('apr-bar', chrome.bar);
+    document.body.classList.add('apr-has-anim');
+    const done = window.setTimeout(() => document.body.classList.remove('apr-has-anim'), SLIDE_MS + 80);
+    document.body.classList.toggle('apr-has-rail', chrome.panel);
+    document.body.classList.toggle('apr-has-strip', chrome.strip);
+    document.body.classList.toggle('apr-has-bar', chrome.bar);
     return () => { window.clearTimeout(done); };
   }, [chrome.panel, chrome.strip, chrome.bar]);
-  useEffect(() => () => { document.body.classList.remove('apr-rail', 'apr-strip', 'apr-bar', 'apr-anim'); }, []);
+  useEffect(() => () => { document.body.classList.remove('apr-has-rail', 'apr-has-strip', 'apr-has-bar', 'apr-has-anim'); }, []);
 
   // ── Focus: into the panel when it opens (never when the person is typing — it does not open then), back when it goes ──
   const panelRef = useRef<HTMLElement | null>(null);

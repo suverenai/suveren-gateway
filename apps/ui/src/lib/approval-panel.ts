@@ -118,7 +118,8 @@ export interface PanelChrome { panel: boolean; bar: boolean; strip: boolean }
 export function panelChrome(args: { count: number; open: boolean; typing: boolean; onApprovalsPage: boolean; hold: boolean }): PanelChrome {
   const { count, open, typing, onApprovalsPage, hold } = args;
   if (onApprovalsPage || (count === 0 && !hold)) return { panel: false, bar: false, strip: false };
-  return { panel: open, bar: typing && !open, strip: !open && !typing };
+  // The bar and the strip only exist for approvals that still wait; the last result alone (hold) keeps just the panel.
+  return { panel: open, bar: count > 0 && typing && !open, strip: count > 0 && !open && !typing };
 }
 
 // ─── Moving between the waiting approvals ───
