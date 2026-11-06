@@ -85,7 +85,12 @@
           "content_type": "image",
           "action_type": "post"
         },
-        "actionLabel": "Image post published"
+        "actionLabel": "Image post published",
+        "approvalView": {
+          "imageUrl": { "label": "Image link" },
+          "imagePath": { "label": "Image file" },
+          "altText": { "label": "Image description" }
+        }
       },
       "create_article_post": {
         "message": { "text": "text", "verb": "Published" },
@@ -98,7 +103,12 @@
           "content_type": "article",
           "action_type": "post"
         },
-        "actionLabel": "Article published"
+        "actionLabel": "Article published",
+        "approvalView": {
+          "articleUrl": { "label": "Article link" },
+          "title": { "label": "Article title" },
+          "description": { "label": "Article description" }
+        }
       },
       "delete_post": {
         "summary": "Delete a LinkedIn post",

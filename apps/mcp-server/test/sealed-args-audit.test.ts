@@ -91,8 +91,6 @@ describe('shipped manifests: every argument of a sealed tool is classified', () 
   // sent, declare it `nonContentArgs` in the manifest — and it fails when an
   // entry stops being unclassified, so it cannot go stale.
   const KNOWN_REFUSED = [
-    'deploy-github.release[branch]',        // the ref the pipeline is dispatched on; optional
-    'deploy-github.release[deployment_url]', // the build that goes live; REQUIRED; only `commit` is bound
     'gmail.create_draft[bcc]',               // a recipient outside the bound set and the recipient scope
     'gmail.create_draft[cc]',                // email@0.4 only (binds the body only)
     'gmail.create_draft[includeBodyHtml]',   // changes the format of what is sent
@@ -104,15 +102,24 @@ describe('shipped manifests: every argument of a sealed tool is classified', () 
     'gmail.send_message[includeBodyHtml]',
     'gmail.send_message[subject]',           // email@0.4 only
     'gmail.send_message[threadId]',
-    'linkedin.create_article_post[articleUrl]',   // the linked article; only the text is bound
-    'linkedin.create_article_post[description]',
-    'linkedin.create_article_post[title]',
-    'linkedin.create_image_post[altText]',
-    'linkedin.create_image_post[imagePath]',      // the image itself; only the text is bound
-    'linkedin.create_image_post[imageUrl]',
+    'linkedin.create_article_post[articleUrl]',   // publish@0.4-0.7 only (they bind the text only); bound from publish@0.8
+    'linkedin.create_article_post[description]',  // publish@0.4-0.7 only
+    'linkedin.create_article_post[title]',        // publish@0.4-0.7 only
+    'linkedin.create_image_post[altText]',        // publish@0.4-0.7 only
+    'linkedin.create_image_post[imagePath]',      // publish@0.4-0.7 only; the file NAME is bound from 0.8, not its bytes
+    'linkedin.create_image_post[imageUrl]',       // publish@0.4-0.7 only; the URL is bound from 0.8, not the image bytes
     'mail.send_message[cc]',                      // email@0.4 only
     'mail.send_message[subject]',                 // email@0.4 only
   ];
+
+  it('seals the post media and the release target under the new profile versions (publish@0.8)', () => {
+    const cls = (c: string, t: string, v: string, a: string) =>
+      rows.find(r => r.connector === c && r.tool === t && r.profile === v && r.arg === a)?.cls;
+    for (const a of ['imageUrl', 'imagePath', 'altText']) expect(cls('linkedin', 'create_image_post', 'publish@0.8', a)).toBe('bound');
+    for (const a of ['articleUrl', 'title', 'description']) expect(cls('linkedin', 'create_article_post', 'publish@0.8', a)).toBe('bound');
+    // ...and an older publish mandate still refuses them (it must be signed again).
+    expect(cls('linkedin', 'create_image_post', 'publish@0.7', 'imageUrl')).toBe('UNCLASSIFIED');
+  });
 
   it('leaves no argument unclassified except the known, refused findings', () => {
     const unclassified = [...new Set(rows.filter(r => r.cls === 'UNCLASSIFIED').map(r => `${r.connector}.${r.tool}[${r.arg}]`))].sort();
