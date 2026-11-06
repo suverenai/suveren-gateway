@@ -199,3 +199,13 @@ describe('Result rows never show raw JSON (Rehearsal A3, 2026-10-19)', () => {
     expect(from.value).not.toContain('{');
   });
 });
+
+describe('sentRows — the AI-authored text stays visible on the ticket card', () => {
+  it('a tool with an AI-text argument (email body) still gets a body row on the ticket (no separate box there)', async () => {
+    const { sentRows } = await import('./ticket-what-was-done');
+    const display = { aiTextArg: 'body' } as Parameters<typeof sentRows>[1];
+    const rows = sentRows({ to: ['a@x.example'], body: 'Hello' }, display, undefined);
+    expect(rows.map((r) => r.key)).toEqual(['to', 'body']);
+    expect(rows.find((r) => r.key === 'body')?.value).toBe('Hello');
+  });
+});

@@ -96,7 +96,12 @@ function inferKind(value: unknown): RowKind {
   return 'text';
 }
 
-export function argRows(args: Record<string, unknown>, display?: ToolDisplay): ArgRow[] {
+/**
+ * `includeAiText`: the ticket card has no separate AI-text box, so there the
+ * AI-authored argument (e.g. an email body) must stay a row — otherwise a sealed
+ * body vanished from "Sealed in the ticket" (2026-11-06).
+ */
+export function argRows(args: Record<string, unknown>, display?: ToolDisplay, opts: { includeAiText?: boolean } = {}): ArgRow[] {
   const view = display?.approvalView ?? {};
   const props = ((display?.inputSchema as { properties?: Record<string, { description?: string }> } | undefined)?.properties) ?? {};
   // Declared order first, then the schema's order, then anything else the call carries.
@@ -105,7 +110,7 @@ export function argRows(args: Record<string, unknown>, display?: ToolDisplay): A
   for (const key of order) {
     // UI spec §15.2/§15.3 — the AI-authored-text argument gets its own
     // amber box (AiTextBox.tsx) instead of a row here.
-    if (!(key in args) || HIDDEN_ARG_KEYS.has(key) || key === display?.aiTextArg) continue;
+    if (!(key in args) || HIDDEN_ARG_KEYS.has(key) || (!opts.includeAiText && key === display?.aiTextArg)) continue;
     const value = args[key];
     const v = view[key] ?? {};
     const kind: RowKind = v.kind ?? inferKind(value);

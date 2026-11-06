@@ -135,7 +135,7 @@ export function sentRows(
   display: ToolDisplay | undefined,
   executionContext: Record<string, unknown> | undefined,
 ): SentRow[] {
-  return argRows(args, display).map((row) => ({
+  return argRows(args, display, { includeAiText: true }).map((row) => ({
     ...row,
     inTicket: inTicket(row.value, display?.executionMapping?.[row.key], executionContext),
   }));
