@@ -4858,3 +4858,128 @@ a.dash-row:hover, .dash-row:not([open]):hover { box-shadow: var(--elevation-2); 
 .ob-fold .ob-btn:hover:not(:disabled) { background: var(--border-strong); }
 .ob-fold .ob-btn.is-solid { background: var(--btn-primary-bg); }
 .ob-fold .ob-btn.is-solid:hover:not(:disabled) { background: var(--btn-primary-bg-hover); }
+/* ══════════════════════════════════════════════════════════════════════
+   APPROVALS OPEN BY THEMSELVES — signed off 2026-11-06 (mockup:
+   temp/layout-mockup/index.html, "Approvals open by themselves").
+   A panel slides in from the right over the page, leaving an icons-only rail;
+   "Later" sends it to a strip at the edge; while the person is in a form, a
+   bar at the top offers it instead. Moved by CSS only (transform), so a slide
+   is never cut short. Components: ApprovalPanelHost, QueueCard.
+   ══════════════════════════════════════════════════════════════════════ */
+body.apr-bar { --apr-bar-h: 44px; }
+.apr-i { width: 1rem; height: 1rem; flex: none; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+
+/* "1 approval waiting — Open" */
+.apr-bar {
+  position: fixed; z-index: 1550; left: 0; right: 0; height: 44px;
+  top: calc(var(--nav-height) + var(--update-banner-h, 0px) + var(--sim-banner-h, 0px));
+  display: flex; align-items: center; gap: var(--space-3); padding: 0 var(--space-4);
+  background: var(--neutral); color: var(--bg-elevated); font-size: var(--text-body-sm);
+}
+.apr-bar b { font-weight: 700; }
+.apr-bar button {
+  border: 0; background: none; color: inherit; font: inherit; font-weight: 700; min-height: 44px; padding: 0 var(--space-2);
+  text-decoration: underline; text-underline-offset: 3px; cursor: pointer;
+}
+.apr-bar button:focus-visible, .apr-btn:focus-visible, .apr-strip-open:focus-visible, .apr-menu-b:focus-visible, .apr-pop button:focus-visible { outline: 2px solid var(--text-primary); outline-offset: 2px; }
+.apr-bar button:focus-visible { outline-color: var(--bg-elevated); }
+
+/* The panel */
+.apr-panel {
+  position: fixed; z-index: 1600; left: 3.5rem; right: 0; bottom: 0;
+  top: calc(var(--nav-height) + var(--update-banner-h, 0px) + var(--sim-banner-h, 0px) + var(--apr-bar-h, 0px));
+  display: flex; flex-direction: column; background: var(--bg-sunken); box-shadow: var(--elevation-3);
+  transform: translateX(100%); visibility: hidden;
+  transition: transform 0.38s ease, visibility 0s linear 0.38s;
+}
+.apr-panel.is-open { transform: none; visibility: visible; transition: transform 0.38s ease; }
+.apr-head { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 0 var(--space-1); min-height: 3.25rem; padding: 0 var(--space-4); }
+.apr-title { font-size: var(--text-body-sm); font-weight: 600; letter-spacing: 0; margin: 0; padding-left: var(--space-2); }
+.apr-title:focus { outline: none; }
+.apr-title:focus-visible { outline: 2px solid var(--text-primary); outline-offset: 2px; border-radius: var(--radius-xs); }
+.apr-m { color: var(--text-muted); font-weight: 400; }
+.apr-sp { flex: 1; }
+.apr-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 0.25rem; height: 44px; min-width: 44px; padding: 0 var(--space-2);
+  border: 0; background: none; border-radius: var(--radius-md); font: inherit; font-size: var(--text-body-sm); font-weight: 500;
+  color: var(--text-primary); white-space: nowrap; cursor: pointer;
+}
+.apr-btn:hover:not(:disabled) { background: var(--bg-elevated); }
+.apr-btn:disabled { color: var(--text-muted); cursor: default; }
+/* The real card, at most 760px wide, at the LEFT inside the panel */
+.apr-body { flex: 1; min-height: 0; display: flex; flex-direction: column; width: 100%; max-width: 792px; padding: 0 var(--space-4) var(--space-4); }
+.apr-stage { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
+/* While the panel is open the sidebar is the icon rail, with a dot on Approvals */
+body.apr-anim .sidebar { transition: width 0.38s ease, box-shadow 0.15s ease; }
+body.apr-anim .main-content { transition: margin-left 0.38s ease; }
+@media (min-width: 480px) {
+  body.apr-rail { --sidebar-width: 3.5rem; }
+  body.apr-rail .sidebar { display: flex; overflow: hidden; padding-left: 0; padding-right: 0; }
+  body.apr-rail .sidebar:hover, body.apr-rail .sidebar:has(:focus-visible) { width: 15rem; box-shadow: var(--elevation-3); }
+  body.apr-rail .sidebar:not(:hover):not(:has(:focus-visible)) .sidebar-label,
+  body.apr-rail .sidebar:not(:hover):not(:has(:focus-visible)) .sidebar-group-label { opacity: 0; }
+  body.apr-rail .sidebar-label { white-space: nowrap; }
+  body.apr-rail .sidebar-item { position: relative; padding-left: 0.75rem; padding-right: 0.5rem; }
+  body.apr-rail .sidebar:not(:hover):not(:has(:focus-visible)) .sidebar-item > span[class*="nav-"],
+  body.apr-rail .sidebar:not(:hover):not(:has(:focus-visible)) .sidebar-item > span:not(.icon):not(.sidebar-label) {
+    position: absolute !important; top: 0.15rem; right: 0.2rem; margin: 0 !important; min-width: 0.9rem !important; height: 0.9rem !important; padding: 0 0.2rem !important; font-size: 0.55rem !important;
+  }
+  body.apr-rail .sidebar:not(:hover):not(:has(:focus-visible)) .sidebar-setup .sidebar-nav,
+  body.apr-rail .sidebar:not(:hover):not(:has(:focus-visible)) .sidebar-setup .sidebar-group-label { display: none; }
+  body.apr-rail .sidebar:not(:hover):not(:has(:focus-visible)) .sidebar-setup-rail {
+    display: flex; position: relative; align-items: center; margin: 0 0.5rem; padding: 0.5rem 0.75rem; color: var(--text-muted);
+  }
+  body.apr-rail .sidebar-setup-rail.is-active { color: var(--text-primary); background: var(--bg-main); box-shadow: inset 0 0 0 1px var(--border); border-radius: 0.5rem; }
+  body.apr-rail .sidebar-setup-rail.is-active::before { content: ''; position: absolute; left: 0; top: 0.4rem; bottom: 0.4rem; width: 2px; border-radius: 2px; background: var(--text-primary); }
+  body.apr-rail .sidebar-item.active::before { left: 0; }
+  /* the dot replaces the count on Approvals */
+  body.apr-rail .sidebar:not(:hover):not(:has(:focus-visible)) .sidebar-item[href="/approvals"] > span[class*="nav-"] { display: none !important; }
+  body.apr-rail .sidebar:not(:hover):not(:has(:focus-visible)) .sidebar-item[href="/approvals"]::after {
+    content: ''; position: absolute; top: 0.35rem; right: 0.45rem; width: 0.5rem; height: 0.5rem; border-radius: var(--radius-circle); background: var(--neutral);
+  }
+}
+
+/* The strip: where the panel goes when sent away */
+body.apr-strip .main-content { margin-right: 2.75rem; }
+.apr-strip {
+  position: fixed; z-index: 800; right: 0; bottom: 0; width: 2.75rem;
+  top: calc(var(--nav-height) + var(--update-banner-h, 0px) + var(--sim-banner-h, 0px) + var(--apr-bar-h, 0px));
+  display: flex; flex-direction: column; align-items: center; gap: var(--space-3); padding: var(--space-3) 0;
+  background: var(--bg-elevated); border-left: 1px solid var(--border); box-shadow: var(--elevation-1);
+}
+.apr-strip-open {
+  all: unset; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; gap: var(--space-3);
+  cursor: pointer; padding: var(--space-1); border-radius: var(--radius-md);
+}
+.apr-strip-open:hover { background: var(--bg-sunken); }
+.apr-strip-open:focus-visible { outline: 2px solid var(--text-primary); outline-offset: 2px; }
+.apr-n {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 1.5rem; height: 1.5rem; padding: 0 0.3rem; border-radius: var(--radius-pill);
+  background: var(--neutral); color: var(--bg-elevated); font-size: var(--text-caption); font-weight: 700;
+}
+.apr-strip-l { writing-mode: vertical-rl; font-size: var(--text-body-sm); font-weight: 600; letter-spacing: 0.02em; }
+.apr-strip-auto { font-size: var(--text-micro); color: var(--text-muted); writing-mode: vertical-rl; }
+.apr-menu-b { height: 44px; min-width: 44px; border: 0; background: none; border-radius: var(--radius-md); font-size: var(--text-lead); line-height: 1; color: var(--text-primary); cursor: pointer; }
+.apr-menu-b:hover { background: var(--bg-sunken); }
+.apr-pop { position: absolute; right: 3.25rem; bottom: var(--space-3); min-width: 15rem; background: var(--bg-elevated); border-radius: var(--radius-lg); box-shadow: var(--elevation-3); padding: var(--space-2); }
+.apr-pop button { display: block; width: 100%; text-align: left; min-height: 44px; padding: 0 var(--space-3); border: 0; background: none; border-radius: var(--radius-md); font: inherit; font-size: var(--text-body-sm); font-weight: 500; color: var(--text-primary); cursor: pointer; }
+.apr-pop button:hover { background: var(--bg-sunken); }
+.apr-err { margin: var(--space-2) var(--space-3); font-size: var(--text-caption); font-weight: 700; }
+
+/* Narrow (phone): the panel is a full-screen sheet; "Later" leaves a tab at the bottom with the count */
+@media (max-width: 479px) {
+  .apr-panel { left: 0; top: 0; }
+  .apr-head { padding: 0 var(--space-2); }
+  .apr-body { padding: 0 var(--space-2) var(--space-2); }
+  .apr-btn .apr-txt { display: none; }
+  body.apr-strip .main-content { margin-right: 0; margin-bottom: 3rem; }
+  .apr-strip { top: auto; left: 0; width: auto; height: 3rem; flex-direction: row; padding: 0 var(--space-2) 0 var(--space-4); border-left: 0; border-top: 1px solid var(--border); }
+  .apr-strip-open { flex-direction: row; flex: 1; justify-content: flex-start; }
+  .apr-strip-l, .apr-strip-auto { writing-mode: horizontal-tb; }
+  .apr-n { order: -1; }
+  .apr-pop { right: var(--space-2); bottom: 3.5rem; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .apr-panel, .apr-panel.is-open, body.apr-anim .sidebar, body.apr-anim .main-content { transition: none; }
+}
