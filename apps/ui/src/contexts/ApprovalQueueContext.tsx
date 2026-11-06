@@ -97,9 +97,7 @@ export function ApprovalQueueProvider({ children }: { children: ReactNode }) {
   }, [refresh]);
 
   // What the cards need besides the proposal itself. Enhancements: never block deciding on them.
-  useEffect(() => {
-    spClient.getLabelManifests().then(setManifests).catch(() => {});
-    spClient.getToolDisplay().then(setToolDisplay).catch(() => {});
+  const loadTitles = useCallback(() => {
     spClient.getMyAttestations()
       .then((items) => {
         const t: Record<string, string> = {};
@@ -108,10 +106,28 @@ export function ApprovalQueueProvider({ children }: { children: ReactNode }) {
       })
       .catch(() => {});
   }, []);
+  useEffect(() => {
+    spClient.getLabelManifests().then(setManifests).catch(() => {});
+    spClient.getToolDisplay().then(setToolDisplay).catch(() => {});
+    loadTitles();
+  }, [loadTitles]);
 
   useEffect(() => { setDecided((prev) => (prev.size === 0 ? prev : pruneDecided(prev, myProposals, approverProposals))); }, [myProposals, approverProposals]);
 
   const entries = useMemo(() => buildMyQueue(myProposals, approverProposals, decided, userId), [myProposals, approverProposals, decided, userId]);
+
+  // "Covered by" names the mandate. Titles were loaded once at start, so a mandate signed
+  // later showed only its area in the card (2026-11-06, e2e core-objects E). Reload them
+  // when a waiting approval names a mandate we don't know yet — once per unknown id.
+  const askedTitles = useRef(new Set<string>());
+  useEffect(() => {
+    const unknown = entries
+      .map((e) => e.proposal.authorizationId)
+      .filter((id): id is string => !!id && !titles[id] && !askedTitles.current.has(id));
+    if (unknown.length === 0) return;
+    unknown.forEach((id) => askedTitles.current.add(id));
+    loadTitles();
+  }, [entries, titles, loadTitles]);
   const ids = useMemo(() => entries.map((e) => e.id), [entries]);
 
   const markDecided = useCallback((id: string) => setDecided((prev) => new Set(prev).add(id)), []);
