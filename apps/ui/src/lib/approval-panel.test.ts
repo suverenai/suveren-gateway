@@ -68,6 +68,8 @@ describe('typing in a form', () => {
   it('knows a typing target from a button', () => {
     expect(isTypingTarget({ tagName: 'TEXTAREA' })).toBe(true);
     expect(isTypingTarget({ tagName: 'INPUT', type: 'text' })).toBe(true);
+    // A search box is not work in progress (nothing is lost when focus leaves it).
+    expect(isTypingTarget({ tagName: 'INPUT', type: 'search' })).toBe(false);
     expect(isTypingTarget({ tagName: 'INPUT', type: 'checkbox' })).toBe(false);
     expect(isTypingTarget({ tagName: 'BUTTON' })).toBe(false);
     expect(isTypingTarget({ tagName: 'DIV', isContentEditable: true })).toBe(true);

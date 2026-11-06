@@ -442,7 +442,7 @@ export function AuditPage() {
           <div className="search-input-wrap">
             <span className="search-icon">&#x2315;</span>
             <input
-              type="text"
+              type="search"
               className="form-input search-input"
               data-testid="tickets-search"
               placeholder="Search tickets"

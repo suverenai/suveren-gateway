@@ -54,7 +54,8 @@ export function isWizardRoute(pathname: string): boolean {
   return pathname === '/mandates/new' || pathname.startsWith('/mandates/new/');
 }
 
-const NON_TEXT_INPUT = new Set(['button', 'submit', 'reset', 'checkbox', 'radio', 'range', 'color', 'file', 'image']);
+// 'search': a search box is not work in progress — nothing is lost when it loses focus (2026-11-06).
+const NON_TEXT_INPUT = new Set(['button', 'submit', 'reset', 'checkbox', 'radio', 'range', 'color', 'file', 'image', 'search']);
 /** Does focus on this element mean "the person is typing"? */
 export function isTypingTarget(el: { tagName?: string; type?: string; isContentEditable?: boolean } | null | undefined): boolean {
   if (!el) return false;

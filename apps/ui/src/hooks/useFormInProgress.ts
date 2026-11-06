@@ -26,7 +26,22 @@ export function useFormInProgress(pathname: string): boolean {
     update();
     document.addEventListener('focusin', update);
     // focusout fires before the next element has focus: look again after the browser has moved it.
-    const afterOut = () => { window.setTimeout(update, 0); };
+    // While a pointer is pressed, wait for its release: hiding the bar between press and release
+    // shifted the page and the click landed on the element below (2026-11-06, e2e core-objects E).
+    let pressed = false;
+    let pending = false;
+    const onDown = () => { pressed = true; };
+    const onUp = () => {
+      pressed = false;
+      if (pending) { pending = false; window.setTimeout(update, 0); }
+    };
+    const afterOut = () => {
+      if (pressed) { pending = true; return; }
+      window.setTimeout(update, 0);
+    };
+    document.addEventListener('pointerdown', onDown, true);
+    document.addEventListener('pointerup', onUp, true);
+    document.addEventListener('pointercancel', onUp, true);
     document.addEventListener('focusout', afterOut);
     // Dialogs appear and go without focus events of their own.
     const mo = new MutationObserver(update);
@@ -34,6 +49,9 @@ export function useFormInProgress(pathname: string): boolean {
     return () => {
       document.removeEventListener('focusin', update);
       document.removeEventListener('focusout', afterOut);
+      document.removeEventListener('pointerdown', onDown, true);
+      document.removeEventListener('pointerup', onUp, true);
+      document.removeEventListener('pointercancel', onUp, true);
       mo.disconnect();
     };
   }, [pathname]);
