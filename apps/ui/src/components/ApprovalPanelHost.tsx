@@ -63,6 +63,15 @@ export function ApprovalPanelHost() {
     }));
   }, [idsKey, q.loaded, q.settingRead, q.autoOpen, typing, onApprovalsPage, hold]);
 
+  // The person clicked an approval (a row on the Approvals page, or a dashboard row): the panel opens on it.
+  const reqSeq = q.openRequest?.seq ?? 0;
+  useEffect(() => {
+    if (!q.openRequest) return;
+    setCurrentId(q.openRequest.id);
+    setPanel((p) => ({ ...p, open: true, owed: false }));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reqSeq]);
+
   // Going somewhere else through the icon rail sends the panel away (the approval stays in the strip).
   const lastPath = useRef(pathname);
   useEffect(() => {
@@ -188,24 +197,24 @@ export function ApprovalPanelHost() {
         {(mounted || chrome.panel) && (
           <>
             <header className="apr-head">
-              <h2 className="apr-title" tabIndex={-1} data-apr-focus>
-                Waiting for you{many && pos ? <span className="apr-m"> · {pos.index} of {total}</span> : null}
-              </h2>
-              <span className="apr-sp" />
-              {many && (
-                <>
-                  <button type="button" className="apr-btn" aria-label="Previous approval" disabled={!prevId} onClick={() => prevId && setCurrentId(prevId)} data-testid="approval-prev">
-                    <Chevron dir="left" /><span className="apr-txt">Previous</span>
+              <h2 className="apr-title" tabIndex={-1} data-apr-focus>Waiting for you</h2>
+              {many ? (
+                <nav className="apr-nav" aria-label="Move between approvals">
+                  <button type="button" className="av3-btn" disabled={!prevId} onClick={() => prevId && setCurrentId(prevId)} data-testid="approval-prev">
+                    <Chevron dir="left" /> Previous
                   </button>
-                  <button type="button" className="apr-btn" aria-label="Next approval" disabled={!nextId} onClick={() => nextId && setCurrentId(nextId)} data-testid="approval-next">
-                    <span className="apr-txt">Next</span><Chevron dir="right" />
+                  <span className="apr-pos" data-testid="approval-position" aria-live="polite">{pos ? `${pos.index} of ${total}` : ''}</span>
+                  <button type="button" className="av3-btn av3-btn-primary" disabled={!nextId} onClick={() => nextId && setCurrentId(nextId)} data-testid="approval-next">
+                    Next <Chevron dir="right" />
                   </button>
-                </>
-              )}
-              <button type="button" className="apr-btn" onClick={goLater} data-testid="approval-later">Later</button>
-              {q.autoOpen === true && (
-                <button type="button" className="apr-btn" onClick={noAuto} data-testid="approval-no-auto">Don’t open automatically</button>
-              )}
+                </nav>
+              ) : <span className="apr-nav-ph" />}
+              <div className="apr-acts">
+                <button type="button" className="apr-btn" onClick={goLater} data-testid="approval-later">Later</button>
+                {q.autoOpen === true && (
+                  <button type="button" className="apr-btn" onClick={noAuto} data-testid="approval-no-auto">Don’t open automatically</button>
+                )}
+              </div>
             </header>
             <div className="apr-body">
               {shown && (

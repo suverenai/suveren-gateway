@@ -1,14 +1,11 @@
-import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { spClient, type Proposal, type ExecutionReceipt } from '../lib/sp-client';
 import { aggregateThread, type ThreadItem } from '../lib/thread-aggregator';
-import { useMediaQuery } from '../hooks/useMediaQuery';
-import { nextAfter, nextLabel, announceApprovalDecided, navKeyFor, QUEUE_VIEWS, type QueueView, type DecisionKind, type DecisionResult } from '../lib/approval-flow';
+import { announceApprovalDecided, QUEUE_VIEWS, type QueueView } from '../lib/approval-flow';
 import { ActionCard } from '../components/ActionCard';
-import { QueueCard } from '../components/QueueCard';
 import { useApprovalQueue } from '../contexts/ApprovalQueueContext';
-import type { QueueEntry } from '../lib/approval-queue';
 import { profileDisplayName } from '../lib/profile-display';
 import { useVisiblePolling } from '../hooks/useVisiblePolling';
 import { useSSEEvent } from '../contexts/EventSourceContext';
@@ -37,7 +34,7 @@ export function ProposalReviewPage() {
 
   // ─── The queue "For me" is read once for the whole app (ApprovalQueueContext) ───
   // The page and the approval panel share it, so they can never disagree.
-  const { entries, ids, loaded, manifests, toolDisplay, titles, markDecided, refresh } = useApprovalQueue();
+  const { entries, ids, loaded, manifests, toolDisplay, titles, refresh, requestOpen } = useApprovalQueue();
   const fetchApproverProposals = refresh;
   const fetchMyProposals = refresh;
 
@@ -176,83 +173,20 @@ export function ProposalReviewPage() {
     return result.sort((a, b) => b.createdAt - a.createdAt);
   }, [approvedByMeStillPending, myPendingProposals]);
 
-  const idsRef = useRef<string[]>(ids);
-  idsRef.current = ids;
   const awaitingMeCount = entries.length;
 
-  // UI spec §17.1 — more than one waiting: the list opens first; exactly one:
-  // its card opens directly. `?open=<id>` (from the dashboard) opens that one.
-  const reducedMotion = useMediaQuery('(prefers-reduced-motion: reduce)');
-  const [searchParams] = useSearchParams();
-  const [openId, setOpenId] = useState<string | null>(() => searchParams.get('open'));
-  const [leaving, setLeaving] = useState(false);
-  // A decision on the open card is out or answered: no moving between cards meanwhile.
-  const [cardBusy, setCardBusy] = useState(false);
-  // A decision the gateway answered: its card stays on screen (stamp) until it slides out.
-  const [settling, setSettling] = useState<{ entry: QueueEntry; before: string[] } | null>(null);
-  // The card that just slid in: "Next · 2 of 3" for about two seconds.
-  const [arrived, setArrived] = useState<{ id: string; label: string | null } | null>(null);
-  const timers = useRef<number[]>([]);
-  useEffect(() => () => { timers.current.forEach(t => window.clearTimeout(t)); }, []);
-  const later = (fn: () => void, ms: number) => { timers.current.push(window.setTimeout(fn, ms)); };
-
-  // Both queues ("For me" = my domain's review queue + approver proposals) must
-  // have answered before the page decides anything: otherwise `?open=<id>` from
-  // the dashboard is dropped when one list arrives before the other.
+  // ONE way to see an approval: the slide-in panel. A row opens the panel on that approval
+  // (its "k of N" is its place in this same "For me" list). `?open=<id>` (from the dashboard) does the same, once.
+  const [searchParams, setSearchParams] = useSearchParams();
   const queueLoading = !loaded;
-  const autoOpenedRef = useRef<string | null>(null);
   useEffect(() => {
-    if (settling || queueLoading) return;
-    // A lone item opens by itself — once; going back to the list is respected.
-    if (ids.length === 1 && openId === null && autoOpenedRef.current !== ids[0]) {
-      autoOpenedRef.current = ids[0];
-      setOpenId(ids[0]);
-      return;
-    }
-    // The open one is gone without us deciding it (decided elsewhere, expired):
-    // the one that took its place, or the list. Only once the queue has loaded.
-    if (openId && !ids.includes(openId)) {
-      setOpenId(null);
-    }
-  }, [ids, openId, settling, queueLoading]);
-
-  // A lone item is about to open by itself (effect above): don't flash the list first.
-  const autoOpening = !queueLoading && !settling && ids.length === 1 && openId === null && autoOpenedRef.current !== ids[0];
-  const openEntry: QueueEntry | null = settling?.entry ?? (openId ? entries.find(e => e.id === openId) ?? null : null);
-  const position = openEntry && !settling ? ids.indexOf(openEntry.id) : -1;
-  const goTo = useCallback((id: string | null) => { setArrived(null); setOpenId(id); }, []);
-
-  /** The gateway answered (the card shows its stamp). Counts drop now; about a
-   *  second later the card slides out and the next one slides in. */
-  const handleDecided = useCallback((proposalId: string, _kind: DecisionKind, _result: DecisionResult) => {
-    const before = idsRef.current;
-    const entry = entries.find(e => e.id === proposalId);
-    if (!entry) return;
-    markDecided(proposalId);
-    setSettling({ entry, before });
-    // Re-read what the backend holds; the decision itself is already confirmed.
-    void fetchApproverProposals();
-    void fetchMyProposals();
-    void fetchApprovedByMe();
-    void fetchMyPendingProposals();
-    void fetchThread();
-    announceApprovalDecided();
-    const advance = () => {
-      const rest = before.filter(id => id !== proposalId);
-      const next = nextAfter(before, proposalId);
-      setSettling(null);
-      setLeaving(false);
-      setOpenId(next);
-      setArrived(next ? { id: next, label: nextLabel(rest, next) } : null);
-      if (next) later(() => setArrived(a => (a && a.id === next ? null : a)), 2200);
-    };
-    later(() => {
-      if (reducedMotion) { advance(); return; }
-      setLeaving(true);
-      later(advance, 320);
-    }, 1100);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [entries, reducedMotion, fetchApproverProposals, fetchMyProposals, fetchApprovedByMe, fetchMyPendingProposals, fetchThread]);
+    const id = searchParams.get('open');
+    if (!id || queueLoading) return;
+    if (ids.includes(id)) requestOpen(id);
+    const next = new URLSearchParams(searchParams);
+    next.delete('open');
+    setSearchParams(next, { replace: true });
+  }, [searchParams, queueLoading, ids, requestOpen, setSearchParams]);
 
   // A review-mode card in the "All" view was decided: re-read everything.
   const handleDecidedInThread = useCallback(() => {
@@ -263,35 +197,7 @@ export function ProposalReviewPage() {
     announceApprovalDecided();
   }, [fetchApproverProposals, fetchMyProposals, fetchApprovedByMe, fetchThread]);
 
-  // Keys (§17.1): ← / → between cards, Esc to the list. Nothing decides on a key.
-  useEffect(() => {
-    if (view !== 'me' || !openId || settling || cardBusy) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
-      const t = e.target as HTMLElement | null;
-      if (t && (t.tagName === 'TEXTAREA' || t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.isContentEditable)) return;
-      const nav = navKeyFor(e.key);
-      if (!nav) return;
-      const at = idsRef.current.indexOf(openId);
-      if (nav === 'prev' && at > 0) { e.preventDefault(); goTo(idsRef.current[at - 1]); }
-      else if (nav === 'next' && at >= 0 && at < idsRef.current.length - 1) { e.preventDefault(); goTo(idsRef.current[at + 1]); }
-      else if (nav === 'list') { e.preventDefault(); goTo(null); }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [view, openId, settling, cardBusy, goTo]);
-
   const mandateTitleOf = (p: Proposal) => (p.authorizationId ? titles[p.authorizationId] : undefined);
-
-  const card = (e: QueueEntry) => (
-    <QueueCard
-      key={e.id}
-      entry={e}
-      onDecided={handleDecided}
-      nextLabelText={arrived && arrived.id === e.id ? arrived.label : null}
-      onBusyChange={setCardBusy}
-    />
-  );
 
   // ─── Pieces of the page ────────────────────────────────────────────────
   const showMenu = (
@@ -328,33 +234,6 @@ export function ProposalReviewPage() {
   );
   const listHeader = pageHead(showMenu);
 
-  const cardNav = settling || cardBusy ? (
-    <span className="av3-pos">{awaitingMeCount > 0 ? `${awaitingMeCount} left` : 'none left'}</span>
-  ) : position >= 0 && ids.length > 1 ? (
-    <>
-      <span className="av3-pos" data-testid="card-position">{position + 1} of {ids.length}</span>
-      <button type="button" className="av3-ib" aria-label="Previous approval" disabled={position <= 0} onClick={() => goTo(ids[position - 1])}>
-        <svg className="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3 5 8l5 5" /></svg>
-      </button>
-      <button type="button" className="av3-ib" aria-label="Next approval" disabled={position >= ids.length - 1} onClick={() => goTo(ids[position + 1])}>
-        <svg className="i" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3 5 5-5 5" /></svg>
-      </button>
-    </>
-  ) : null;
-
-  // One card is open: the standard header, then the way back to the list above the card.
-  const cardHeader = (
-    <>
-      {pageHead(cardNav)}
-      <div className="av3-ph">
-        <button type="button" className="av3-back" data-testid="back-to-list" disabled={cardBusy} onClick={() => goTo(null)}>
-          <svg className="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3 5 8l5 5" /></svg>
-          Approvals <span className="n">{awaitingMeCount}</span>
-        </button>
-      </div>
-    </>
-  );
-
   const rows = (
     <div className="av3-rows">
       {entries.length > 0 && (
@@ -366,8 +245,7 @@ export function ProposalReviewPage() {
           proposal={e.proposal}
           manifests={manifests}
           titles={titles}
-          selected={openId === e.id}
-          onOpen={() => goTo(e.id)}
+          onOpen={() => requestOpen(e.id)}
           who={e.route === 'approver' ? 'Team approval — other people are involved' : undefined}
         />
       ))}
@@ -376,40 +254,19 @@ export function ProposalReviewPage() {
 
   const empty = <p className="av3-empty" data-testid="queue-empty">Nothing waiting for you.</p>;
 
-  // The card in its stage: slides out to the left, the next one in from the right.
-  const stage = openEntry && (
-    <div
-      key={openEntry.id}
-      className={`av3-stage is-open${settling && leaving ? ' av3-out' : ''}${arrived && arrived.id === openEntry.id ? ' av3-in' : ''}`}
-      // Narrow single-card layout keeps the old row hooks: the open approval is
-      // the one `approval-row` on screen (hap-e2e's openApprovalById).
-      data-testid="approval-row"
-      data-proposal-id={openEntry.id}
-    >
-      {card(openEntry)}
-    </div>
-  );
-
   return (
     <div className="av3-page" data-view={view}>
       {view === 'me' && (
-        (queueLoading || autoOpening) && !settling ? (
-          <>{listHeader}<p className="av3-empty">Loading…</p></>
-        ) : openEntry ? (
-          <>
-            {cardHeader}
-            <section className="av3-pane" aria-label="Approval">
-              <div className="av3-cbox">{stage}</div>
-            </section>
-          </>
-        ) : (
-          <>
-            {listHeader}
+        <>
+          {listHeader}
+          {queueLoading ? (
+            <p className="av3-empty">Loading…</p>
+          ) : (
             <section className="av3-pane" aria-label="Approvals">
               <div className="av3-pane-scroll">{awaitingMeCount === 0 ? empty : rows}</div>
             </section>
-          </>
-        )
+          )}
+        </>
       )}
 
       {/* ─── Others: waiting on other people ───────────────────────── */}

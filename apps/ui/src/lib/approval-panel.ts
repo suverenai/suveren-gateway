@@ -94,8 +94,10 @@ export function reconcilePanel(prev: PanelState, input: PanelInput): PanelState 
   if (!input.loaded) return prev;
   const { ids } = input;
   if (input.onApprovalsPage) {
-    // The page shows them: seen. Leaving the page later does not make them arrivals.
-    return { open: false, knownIds: ids, owed: false };
+    // The page lists them: seen — nothing slides in by itself here, and leaving the page later does not make
+    // them arrivals. A panel the person opened (by clicking a row) stays as it is.
+    if (ids.length === 0 && !input.hold) return { open: false, knownIds: [], owed: false };
+    return { open: prev.open, knownIds: ids, owed: false };
   }
   if (ids.length === 0) {
     return input.hold ? { ...prev, knownIds: [], owed: false } : { open: false, knownIds: [], owed: false };
@@ -117,7 +119,9 @@ export interface PanelChrome { panel: boolean; bar: boolean; strip: boolean }
 
 export function panelChrome(args: { count: number; open: boolean; typing: boolean; onApprovalsPage: boolean; hold: boolean }): PanelChrome {
   const { count, open, typing, onApprovalsPage, hold } = args;
-  if (onApprovalsPage || (count === 0 && !hold)) return { panel: false, bar: false, strip: false };
+  if (count === 0 && !hold) return { panel: false, bar: false, strip: false };
+  // On the Approvals page the list is the page: no strip or bar, but the panel shows once a row was clicked.
+  if (onApprovalsPage) return { panel: open, bar: false, strip: false };
   // The bar and the strip only exist for approvals that still wait; the last result alone (hold) keeps just the panel.
   return { panel: open, bar: count > 0 && typing && !open, strip: count > 0 && !open && !typing };
 }

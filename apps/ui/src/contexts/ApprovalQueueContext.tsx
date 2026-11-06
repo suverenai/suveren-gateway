@@ -34,6 +34,9 @@ interface ApprovalQueue {
   titles: Record<string, string>;
   /** The gateway answered a decision for this id: it leaves the queue at once. */
   markDecided: (id: string) => void;
+  /** The person clicked an approval (a row): the panel opens on it. `seq` makes a second click on the same id count. */
+  openRequest: { id: string; seq: number } | null;
+  requestOpen: (id: string) => void;
   /** Re-read the lists from the gateway. */
   refresh: () => Promise<void>;
   /** The gateway setting. null = not read (yet, or unreadable). */
@@ -61,6 +64,8 @@ export function ApprovalQueueProvider({ children }: { children: ReactNode }) {
   const [manifests, setManifests] = useState<IntegrationManifest[]>([]);
   const [toolDisplay, setToolDisplay] = useState<Record<string, ToolDisplay>>({});
   const [titles, setTitles] = useState<Record<string, string>>({});
+  const [openRequest, setOpenRequest] = useState<{ id: string; seq: number } | null>(null);
+  const requestOpen = useCallback((id: string) => setOpenRequest((p) => ({ id, seq: (p?.seq ?? 0) + 1 })), []);
   const [autoOpen, setAutoOpenState] = useState<boolean | null>(null);
   const [settingRead, setSettingRead] = useState(false);
   const [autoOpenError, setAutoOpenError] = useState<string | null>(null);
@@ -138,8 +143,8 @@ export function ApprovalQueueProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<ApprovalQueue>(() => ({
     entries, ids, loaded: approverLoaded && myLoaded, userId, manifests, toolDisplay, titles,
-    markDecided, refresh, autoOpen, settingRead, autoOpenError, setAutoOpen,
-  }), [entries, ids, approverLoaded, myLoaded, userId, manifests, toolDisplay, titles, markDecided, refresh, autoOpen, settingRead, autoOpenError, setAutoOpen]);
+    markDecided, refresh, openRequest, requestOpen, autoOpen, settingRead, autoOpenError, setAutoOpen,
+  }), [entries, ids, approverLoaded, myLoaded, userId, manifests, toolDisplay, titles, markDecided, refresh, openRequest, requestOpen, autoOpen, settingRead, autoOpenError, setAutoOpen]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

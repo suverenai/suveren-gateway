@@ -30,10 +30,15 @@ describe('which approvals open the panel', () => {
   it('stays open while a decision result is still shown', () => {
     expect(run({ open: true, knownIds: ['a'], owed: false }, { ids: [], hold: true }).open).toBe(true);
   });
-  it('never opens over the Approvals page, and what it showed there is not an arrival later', () => {
+  it('never slides in by itself on the Approvals page, and what it listed there is not an arrival later', () => {
     const on = run(INITIAL_PANEL, { ids: ['a'], onApprovalsPage: true });
     expect(on).toEqual({ open: false, knownIds: ['a'], owed: false });
     expect(run(on, { ids: ['a'] }).open).toBe(false); // left the page: strip, not panel
+  });
+  it('keeps a panel the person opened from a row, also when more arrive meanwhile', () => {
+    const opened: PanelState = { open: true, knownIds: ['a'], owed: false };
+    expect(run(opened, { ids: ['a', 'b'], onApprovalsPage: true }).open).toBe(true);
+    expect(run(opened, { ids: [], onApprovalsPage: true }).open).toBe(false);
   });
 });
 
@@ -71,9 +76,12 @@ describe('typing in a form', () => {
 });
 
 describe('what is on screen', () => {
-  it('nothing when no approval waits, or on the Approvals page', () => {
+  it('nothing when no approval waits', () => {
     expect(panelChrome({ count: 0, open: false, typing: false, onApprovalsPage: false, hold: false })).toEqual({ panel: false, bar: false, strip: false });
+  });
+  it('on the Approvals page: no strip or bar, the panel only once opened', () => {
     expect(panelChrome({ count: 2, open: false, typing: false, onApprovalsPage: true, hold: false })).toEqual({ panel: false, bar: false, strip: false });
+    expect(panelChrome({ count: 2, open: true, typing: false, onApprovalsPage: true, hold: false })).toEqual({ panel: true, bar: false, strip: false });
   });
   it('the strip when sent away; the panel when open', () => {
     expect(panelChrome({ count: 2, open: false, typing: false, onApprovalsPage: false, hold: false }).strip).toBe(true);

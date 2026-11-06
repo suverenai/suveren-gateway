@@ -4211,7 +4211,7 @@ body.is-updating .simulation-banner {
 .av3-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; width: 100%; max-width: var(--box-max); margin: 0; }
 .av3-pane-scroll { flex: 1; min-height: 0; overflow: auto; padding: 0 0 var(--space-4); }
 .av3-sp { flex: 1; }
-.av3-empty { padding: var(--space-8) var(--space-4); color: var(--text-muted); font-size: var(--text-body-sm); }
+.av3-empty { padding: var(--space-4) 0; margin: 0; color: var(--text-muted); font-size: var(--text-body-sm); }
 .av3-stack { display: flex; flex-direction: column; gap: var(--space-3); }
 
 /* Header: the card view has only "‹ Approvals N" and "2 of N ‹ ›". */
@@ -4898,7 +4898,19 @@ a.dash-row:hover, .dash-row:not([open]):hover { box-shadow: var(--elevation-2); 
   body.apr-has-rail:has(.sidebar:hover) .apr-panel,
   body.apr-has-rail:has(.sidebar :focus-visible) .apr-panel { left: 15rem; }
 }
-.apr-head { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 0 var(--space-1); min-height: 3.25rem; padding: 0 var(--space-4); }
+/* Header: title left, Previous / "k of N" / Next CENTRED as real buttons, Later and the setting at the right edge. */
+.apr-head { flex: none; display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: var(--space-2) var(--space-3); min-height: 3.5rem; padding: var(--space-1) var(--space-4); }
+.apr-acts { justify-self: end; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 0 var(--space-1); }
+.apr-nav { display: flex; align-items: center; gap: var(--space-3); }
+.apr-nav .av3-btn { display: inline-flex; align-items: center; justify-content: center; gap: 0.3rem; padding: 0 var(--space-4); }
+.apr-nav .av3-btn:disabled { background: transparent; color: var(--text-muted); box-shadow: inset 0 0 0 1px var(--border-strong); cursor: default; }
+.apr-pos { font-size: var(--text-body-sm); color: var(--text-muted); font-variant-numeric: tabular-nums; min-width: 4.5rem; text-align: center; }
+@media (max-width: 1099px) {
+  .apr-head { grid-template-columns: minmax(0, 1fr) auto; }
+  .apr-nav { grid-column: 1 / -1; grid-row: 2; justify-self: center; }
+  .apr-acts { grid-column: 2; grid-row: 1; }
+  .apr-nav-ph { display: none; }
+}
 .apr-title { font-size: var(--text-body-sm); font-weight: 600; letter-spacing: 0; margin: 0; padding-left: var(--space-2); }
 .apr-title:focus { outline: none; }
 .apr-m { color: var(--text-muted); font-weight: 400; }
@@ -4978,7 +4990,6 @@ body.apr-has-strip .main-content { margin-right: 2.75rem; }
   .apr-panel { left: 0; top: 0; }
   .apr-head { padding: 0 var(--space-2); }
   .apr-body { padding: 0 var(--space-2) var(--space-2); }
-  .apr-btn .apr-txt { display: none; }
   body.apr-has-strip .main-content { margin-right: 0; margin-bottom: 3rem; }
   .apr-strip { top: auto; left: 0; width: auto; height: 3rem; flex-direction: row; padding: 0 var(--space-2) 0 var(--space-4); border-left: 0; border-top: 1px solid var(--border); }
   .apr-strip-open { flex-direction: row; flex: 1; justify-content: flex-start; }
@@ -4989,3 +5000,9 @@ body.apr-has-strip .main-content { margin-right: 2.75rem; }
 @media (prefers-reduced-motion: reduce) {
   .apr-panel, .apr-panel.is-open, body.apr-has-anim .sidebar, body.apr-has-anim .main-content { transition: none; }
 }
+
+/* Empty states sit flush with the page title's left edge, on every page. */
+.main-content .empty-state { text-align: left; padding: var(--space-4) 0; }
+.main-content .empty-state-icon { display: none; }
+.main-content .empty-state-text { margin-left: 0; margin-right: 0; margin-bottom: 0; }
+.main-content .av3-empty, .main-content .core-col-empty { margin-left: 0; }
