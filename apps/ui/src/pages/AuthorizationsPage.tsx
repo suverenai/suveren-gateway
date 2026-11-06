@@ -979,17 +979,16 @@ export function AuthorizationsPage() {
 
   return (
     <div className="ob-page">
-      <div
-        className="page-header"
-        style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem', flexWrap: 'wrap' }}
-      >
-        <div>
+      <div className="page-header">
+        <div className="page-header-text">
           <h1 className="page-title">Mandates</h1>
           <p className="page-subtitle">Active, pending, expired, and archived agent mandates.</p>
         </div>
-        <button className="btn btn-primary" onClick={() => setShowPicker(true)}>
-          + New mandate
-        </button>
+        <div className="page-header-actions">
+          <button className="btn btn-primary" onClick={() => setShowPicker(true)}>
+            + New mandate
+          </button>
+        </div>
       </div>
 
       {showPicker && (

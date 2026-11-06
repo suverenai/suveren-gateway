@@ -6,7 +6,7 @@
  * "Technical details", the delegation checks to "Proposed through". Driven by
  * the preview's field names only; no per-profile code.
  */
-import { COMMITMENT_LABEL, COMMITMENT_REVIEW, COMMITMENT_AUTOMATIC } from './commitment-words';
+import { COMMITMENT_LABEL, COMMITMENT_REVIEW, COMMITMENT_AUTOMATIC, COMMITMENT_REVIEW_ABOVE_LIMIT } from './commitment-words';
 
 export const CREATE_MANDATE_TOOL = 'setup__create_mandate';
 
@@ -24,6 +24,8 @@ export function modeView(mode: unknown): ModeView | null {
       return { label: COMMITMENT_LABEL, ...COMMITMENT_REVIEW };
     case 'automatic':
       return { label: COMMITMENT_LABEL, ...COMMITMENT_AUTOMATIC };
+    case 'review_above_cap':
+      return { label: COMMITMENT_LABEL, ...COMMITMENT_REVIEW_ABOVE_LIMIT };
     default:
       return { label: COMMITMENT_LABEL, title: mode.trim(), text: '' };
   }

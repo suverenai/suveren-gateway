@@ -172,7 +172,7 @@ export function BlockedPage() {
     <div className="blocked-page ob-page">
       <div className="page-header blocked-header">
         <h1 className="page-title">Blocked actions</h1>
-        <span className="blocked-today">{today} today · nothing ran</span>
+        <p className="page-subtitle blocked-today">{today} today · nothing ran</p>
       </div>
 
       {records.length === 0 ? (

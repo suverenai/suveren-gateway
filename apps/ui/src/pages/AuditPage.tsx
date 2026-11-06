@@ -377,20 +377,19 @@ export function AuditPage() {
 
   return (
     <div className="ob-page">
-      <div
-        className="page-header"
-        style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem', flexWrap: 'wrap' }}
-      >
-        <div>
+      <div className="page-header">
+        <div className="page-header-text">
           <h1 className="page-title">Tickets</h1>
           <p className="page-subtitle">
             Execution history for agent actions.
             {newCount > 0 && <> <b data-testid="tickets-new-count">{newCount} new since your last visit</b></>}
           </p>
         </div>
-        <button className="btn btn-secondary" onClick={downloadEvidence} disabled={exporting}>
-          {exporting ? 'Preparing…' : 'Download evidence'}
-        </button>
+        <div className="page-header-actions">
+          <button className="btn btn-secondary" onClick={downloadEvidence} disabled={exporting}>
+            {exporting ? 'Preparing…' : 'Download evidence'}
+          </button>
+        </div>
       </div>
       {exportNote && (
         <div style={{ marginBottom: '1rem', color: 'var(--text-tertiary)', fontSize: '0.875rem' }}>

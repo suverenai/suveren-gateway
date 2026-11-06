@@ -7,7 +7,8 @@ describe('mandate proposal card parts', () => {
     expect(modeView('automatic')).toEqual({ label: 'Commitment', title: 'Automatic', text: 'Agent acts freely within your limits.' });
     expect(modeView('')).toBeNull();
     expect(modeView(undefined)).toBeNull();
-    expect(modeView('review_above_cap')?.title).toBe('review_above_cap');
+    expect(modeView('review_above_cap')?.title).toBe('Review above the limit');
+    expect(JSON.stringify(modeView('review_above_cap'))).not.toMatch(/above.cap/i);
   });
   it('pulls the parts out of the preview and builds the technical line', () => {
     const p = mandatePreviewParts({ intent: ' Quotes. ', mode: 'review', proposal: 'New mandate · Sales', profile_version: 'sales 0.4', workspace: 'Weninger Translations', checks: ['Sales is allowed by your Delegation mandate', 3] });

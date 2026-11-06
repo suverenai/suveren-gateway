@@ -169,7 +169,7 @@ export function AgentBriefPage() {
         </div>
       )}
 
-      <div className={`intent-layout su-duo${aiConfigured ? '' : ' no-chat'}`} style={{ marginBottom: '1rem' }}>
+      <div className={`intent-layout page-wide su-duo${aiConfigured ? '' : ' no-chat'}`} style={{ marginBottom: '1rem' }}>
         {/* LEFT — AI helper (hidden on ≤768px; reachable via floating button) — only with an AI assistant set up */}
         {aiConfigured && <article className="ob-card su-card su-helper intent-pane chat">
           <AssistantChatPanel
