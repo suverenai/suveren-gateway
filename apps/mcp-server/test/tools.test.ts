@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { registerProfile, clearProfiles } from '@hap/core';
 import { listAuthorizationsHandler } from '../src/tools/authorizations';
 import { checkPendingHandler } from '../src/tools/pending';
@@ -1145,6 +1147,48 @@ describe('createGatedToolHandler — time-range reads (ageFloorArg)', () => {
     await handler({ timeMin: tight });
 
     expect(sentArgs(im).timeMin).toBe(tight);
+  });
+
+  describe('mail list_messages (shipped manifest)', () => {
+    // The list view must be bounded like get_message is: the gateway sets
+    // received_after from the manifest's read adapter, whatever the AI sent.
+    const manifest = JSON.parse(readFileSync(join(import.meta.dirname, '..', '..', '..', 'content', 'integrations', 'mail.json'), 'utf8'));
+    const read = manifest.toolGating.overrides.list_messages.read;
+
+    function mailListTool(): DiscoveredTool {
+      const t = rangeTool();
+      return { ...t, originalName: 'list_messages', namespacedName: 'mail__list_messages', integrationId: 'mail',
+        gating: { ...t.gating, read } as unknown as DiscoveredTool['gating'] };
+    }
+
+    it('declares received_after as the age floor', () => {
+      expect(read.ageFloorArg).toBe('received_after');
+      expect(read.ageFloorFormat).toBe('iso');
+    });
+
+    it('sends received_after = now - window when the AI omitted it', async () => {
+      const im = mockIntegrationManager(30);
+      await createGatedToolHandler(mailListTool(), im, mockState([auth()]))({ folder: 'inbox' });
+      const sent = sentArgs(im);
+      expect(Math.abs(Date.parse(sent.received_after as string) - (Date.now() - 30 * 86_400_000))).toBeLessThan(5_000);
+      expect(sent.folder).toBe('inbox');
+    });
+
+    it('replaces a received_after older than the window', async () => {
+      const im = mockIntegrationManager(7);
+      await createGatedToolHandler(mailListTool(), im, mockState([auth()]))({ received_after: '2015-01-01T00:00:00Z' });
+      expect(Math.abs(Date.parse(sentArgs(im).received_after as string) - (Date.now() - 7 * 86_400_000))).toBeLessThan(5_000);
+    });
+
+    it('replaces junk and keeps a tighter value', async () => {
+      const im = mockIntegrationManager(7);
+      await createGatedToolHandler(mailListTool(), im, mockState([auth()]))({ received_after: 'last century' });
+      expect(Date.parse(sentArgs(im).received_after as string)).toBeGreaterThan(Date.now() - 8 * 86_400_000);
+      const tight = new Date(Date.now() - 86_400_000).toISOString();
+      const im2 = mockIntegrationManager(7);
+      await createGatedToolHandler(mailListTool(), im2, mockState([auth()]))({ received_after: tight });
+      expect(sentArgs(im2).received_after).toBe(tight);
+    });
   });
 
   it('enforces with NO signed age bound in the profile — local policy is enough', async () => {

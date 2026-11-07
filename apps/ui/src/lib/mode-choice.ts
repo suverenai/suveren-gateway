@@ -141,3 +141,20 @@ export function hasNoRealMode(options: ModeOption[]): boolean {
   return options.length === 1 && options[0].simulated;
 }
 export const NO_REAL_MODE_LINE = 'This connector has no real mode. Disable it to use a real one.';
+
+/**
+ * Does the connector's sign-in apply to the option in force? Always, unless the manifest scopes it to one option
+ * (`oauth.forOption`): then only while that exact option (mode, and adapter if named) is the current one.
+ * A manifest without OAuth never has one. `option` undefined = no recognised option = no sign-in yet.
+ */
+export function oauthAppliesTo(
+  manifest: Pick<IntegrationManifest, 'oauth'>,
+  option: ModeOption | undefined,
+): boolean {
+  if (!manifest.oauth) return false;
+  const f = manifest.oauth.forOption;
+  if (!f) return true;
+  if (!option) return false;
+  return option.mode.toLowerCase() === f.mode.toLowerCase()
+    && (f.adapter === undefined || option.adapter?.toLowerCase() === f.adapter.toLowerCase());
+}

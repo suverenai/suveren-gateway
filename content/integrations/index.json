@@ -1,7 +1,6 @@
 {
   "integrations": {
     "mollie": "mollie.json",
-    "gmail": "gmail.json",
     "crm": "crm.json",
     "records": "records.json",
     "linkedin": "linkedin.json",

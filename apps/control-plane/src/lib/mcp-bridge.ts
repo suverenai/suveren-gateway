@@ -195,6 +195,7 @@ export async function activateIntegration(manifest: {
   profile: string;
   toolGating?: unknown;
   npmPackage?: string;
+  oauth?: { tokenStorage?: string; forOption?: unknown } | null;
   /**
    * Starting local read window for this integration. Declared by the manifest
    * so the default is per-connector data, not a hardcoded provider rule in the
@@ -208,6 +209,9 @@ export async function activateIntegration(manifest: {
   const optionalKeys = new Set(
     manifest.credentials.fields.filter(f => f.optional).map(f => f.key),
   );
+  // A sign-in used by only one data-source option: its token is absent under the others,
+  // so it must not block the connector from starting there.
+  if (manifest.oauth?.forOption && manifest.oauth.tokenStorage) optionalKeys.add(manifest.oauth.tokenStorage);
   const envKeys: Record<string, string> = {};
   const optionalEnvKeys: Record<string, string> = {};
   for (const [envVar, credKey] of Object.entries(manifest.credentials.envMapping)) {
@@ -286,6 +290,26 @@ export async function getManifests(): Promise<unknown> {
   });
   if (!res.ok) throw new Error('Failed to fetch manifests');
   return res.json();
+}
+
+/**
+ * Swap a retired connector's registry entry for its replacement's (manifest
+ * `replaces`). The MCP server decides what is allowed; see
+ * mcp-server/src/lib/connector-replacement.ts.
+ */
+export async function replaceIntegration(
+  from: string, to: string, opts: { enableTarget: boolean },
+): Promise<{ removedOld: boolean; targetAction: string }> {
+  const res = await fetch(`${MCP_BASE}/internal/replace-integration`, {
+    method: 'POST',
+    headers: { ...internalHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ from, to, enableTarget: opts.enableTarget }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+    throw new Error((err as { error: string }).error);
+  }
+  return res.json() as Promise<{ removedOld: boolean; targetAction: string }>;
 }
 
 export async function removeIntegration(id: string): Promise<unknown> {

@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { IntegrationManifest } from './sp-client';
 import {
-  modeOptions, currentOption, optionValues, choiceFieldKeys, splitFields, pausedTag, hasNoRealMode, NO_REAL_MODE_LINE,
+  oauthAppliesTo, modeOptions, currentOption, optionValues, choiceFieldKeys, splitFields, pausedTag, hasNoRealMode, NO_REAL_MODE_LINE,
 } from './mode-choice';
 
 const load = (id: string) => JSON.parse(readFileSync(
@@ -32,10 +32,12 @@ describe('modeOptions from the shipped manifests', () => {
     expect(o[1].explanation).toBe('Your own ERP data. Runs in production.');
   });
 
-  it('mail: one option, the practice one — no real mode', () => {
+  it('mail: Test mailbox + Gmail; the Gmail client fields belong to Gmail only', () => {
     const o = modeOptions(mail);
-    expect(o.map(x => x.label)).toEqual(['Test mailbox']);
-    expect(hasNoRealMode(o)).toBe(true);
+    expect(o.map(x => x.label)).toEqual(['Test mailbox', 'Gmail']);
+    expect(o[1]).toMatchObject({ key: 'live:gmail', mode: 'live', adapter: 'gmail', simulated: false, fieldKeys: ['clientId', 'clientSecret'] });
+    expect(hasNoRealMode(o)).toBe(false);
+    expect(hasNoRealMode([o[0]])).toBe(true);
     expect(NO_REAL_MODE_LINE).toBe('This connector has no real mode. Disable it to use a real one.');
   });
 
@@ -65,7 +67,7 @@ describe('what Save writes — from manifest keys, not typed', () => {
   });
   it('the choice fields are mode and adapter', () => {
     expect(choiceFieldKeys(erp)).toEqual(['mode', 'liveAdapter']);
-    expect(choiceFieldKeys(mail)).toEqual(['mode']);
+    expect(choiceFieldKeys(mail)).toEqual(['mode', 'liveAdapter']);
   });
 });
 
@@ -111,8 +113,11 @@ describe('field visibility per option', () => {
     expect(keys(p.advanced)).toEqual(['databaseUrl']);
     expect(p.main).toEqual([]);
   });
-  it('mail: database URL under Advanced', () => {
+  it('mail: database URL under Advanced; the Gmail client fields only while Gmail is chosen', () => {
     expect(keys(splitFields(mail, currentOption(mail, {})).advanced)).toEqual(['databaseUrl']);
+    expect(keys(splitFields(mail, currentOption(mail, {})).hidden)).toEqual(['clientId', 'clientSecret']);
+    const gm = splitFields(mail, currentOption(mail, { mode: 'live', liveAdapter: 'gmail' }));
+    expect(keys(gm.optionFields)).toEqual(['clientId', 'clientSecret']);
   });
   it('a connector with no mode choice keeps all its fields as they were', () => {
     const plain = { name: 'X', credentials: { fields: [{ key: 'a', label: 'A', type: 'text' as const }], envMapping: {} } };
@@ -129,5 +134,22 @@ describe('the paused tags mirror each other', () => {
   it('simulation: the real option is paused', () => {
     expect(pausedTag(sim, true)).toBeNull();
     expect(pausedTag(live, true)).toBe('Paused in simulation');
+  });
+});
+
+describe('oauthAppliesTo — the sign-in belongs to the chosen data source', () => {
+  const calendar = load('calendar');
+  it('mail: no sign-in for the test mailbox (unset, simulation, or an unrecognised mode)', () => {
+    expect(oauthAppliesTo(mail, currentOption(mail, {}))).toBe(false);
+    expect(oauthAppliesTo(mail, currentOption(mail, { mode: 'simulation' }))).toBe(false);
+    expect(oauthAppliesTo(mail, currentOption(mail, { mode: 'live' }))).toBe(false); // adapter missing: nothing chosen yet
+  });
+  it('mail: sign-in with Google for Gmail only (case and spaces as the card reads them)', () => {
+    expect(oauthAppliesTo(mail, currentOption(mail, { mode: 'live', liveAdapter: 'gmail' }))).toBe(true);
+    expect(oauthAppliesTo(mail, currentOption(mail, { mode: ' LIVE ', liveAdapter: 'Gmail' }))).toBe(true);
+  });
+  it('a connector without forOption always has its sign-in; one without OAuth never', () => {
+    expect(oauthAppliesTo(calendar, currentOption(calendar, {}))).toBe(true);
+    expect(oauthAppliesTo(crm, currentOption(crm, { mode: 'live', liveAdapter: 'local' }))).toBe(false);
   });
 });

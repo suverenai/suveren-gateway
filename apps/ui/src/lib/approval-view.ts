@@ -18,7 +18,7 @@ import { formatUnit } from './bound-format';
 import type { IntegrationManifest } from './sp-client';
 
 export type ApprovalViewKind = 'text' | 'markdown' | 'list' | 'money' | 'profile' | 'profile-limits' | 'profile-scope';
-export type ApprovalView = Record<string, { label?: string; kind?: ApprovalViewKind; currencyArg?: string; profileArg?: string }>;
+export type ApprovalView = Record<string, { label?: string; kind?: ApprovalViewKind; currencyArg?: string; profileArg?: string; note?: string }>;
 /** The manifest's arg → executionContext mapping (gateway tool-gating-types.ts ExecutionMappingValue). */
 export type ExecutionMappingValue =
   | string
@@ -27,6 +27,9 @@ export type ExecutionMappingValue =
 export interface ToolDisplay {
   inputSchema?: Record<string, unknown>;
   approvalView?: ApprovalView;
+  /** The manifest's `nonContentArgs`: arguments that are sent but not sealed in the ticket
+   *  (HAP v0.8 "what is displayed MUST be what is bound") — shown apart from the sealed rows. */
+  nonContentArgs?: string[];
   /** Which args the signed ticket also carries, and as which field (UI spec §14.1 "in the ticket"). */
   executionMapping?: Record<string, ExecutionMappingValue>;
   /** UI spec §15.2/§15.3 — the manifest's `display.aiText`: the name of
@@ -50,6 +53,8 @@ export interface ArgRow {
   currency?: string;
   /** profile*: the profile id or short name taken from `profileArg` (or the value itself for `profile`). */
   profileRef?: string;
+  /** The manifest author's plain explanation of this field (approvalView `note`). */
+  note?: string;
 }
 
 /** Never shown: the gateway's ticket reference, secret-looking values, and
@@ -101,7 +106,13 @@ function inferKind(value: unknown): RowKind {
  * AI-authored argument (e.g. an email body) must stay a row — otherwise a sealed
  * body vanished from "Sealed in the ticket" (2026-11-06).
  */
-export function argRows(args: Record<string, unknown>, display?: ToolDisplay, opts: { includeAiText?: boolean } = {}): ArgRow[] {
+export function argRows(
+  args: Record<string, unknown>,
+  display?: ToolDisplay,
+  opts: { includeAiText?: boolean; part?: 'sealed' | 'unsealed' | 'all' } = {},
+): ArgRow[] {
+  const part = opts.part ?? 'sealed';
+  const nonContent = new Set(display?.nonContentArgs ?? []);
   const view = display?.approvalView ?? {};
   const props = ((display?.inputSchema as { properties?: Record<string, { description?: string }> } | undefined)?.properties) ?? {};
   // Declared order first, then the schema's order, then anything else the call carries.
@@ -111,10 +122,13 @@ export function argRows(args: Record<string, unknown>, display?: ToolDisplay, op
     // UI spec §15.2/§15.3 — the AI-authored-text argument gets its own
     // amber box (AiTextBox.tsx) instead of a row here.
     if (!(key in args) || HIDDEN_ARG_KEYS.has(key) || (!opts.includeAiText && key === display?.aiTextArg)) continue;
+    if (part === 'sealed' && nonContent.has(key)) continue;
+    if (part === 'unsealed' && !nonContent.has(key)) continue;
     const value = args[key];
     const v = view[key] ?? {};
     const kind: RowKind = v.kind ?? inferKind(value);
     const row: ArgRow = { key, label: v.label ?? humanizeKey(key), kind, value, hint: props[key]?.description };
+    if (v.note) row.note = v.note;
     if (kind === 'money' && v.currencyArg && typeof args[v.currencyArg] === 'string') row.currency = args[v.currencyArg] as string;
     if (kind === 'profile' && typeof value === 'string') row.profileRef = value;
     if ((kind === 'profile-limits' || kind === 'profile-scope') && v.profileArg && typeof args[v.profileArg] === 'string') {
@@ -123,6 +137,17 @@ export function argRows(args: Record<string, unknown>, display?: ToolDisplay, op
     rows.push(row);
   }
   return rows;
+}
+
+/** Notes of the declared fields present on this call, in declared order (no duplicates). */
+export function fieldNotes(args: Record<string, unknown>, display?: ToolDisplay, exceptKeys: string[] = []): string[] {
+  const nonContent = new Set(display?.nonContentArgs ?? []);
+  const notes: string[] = [];
+  for (const [key, v] of Object.entries(display?.approvalView ?? {})) {
+    if (!v.note || !(key in args) || nonContent.has(key) || exceptKeys.includes(key)) continue;
+    if (!notes.includes(v.note)) notes.push(v.note);
+  }
+  return notes;
 }
 
 /**

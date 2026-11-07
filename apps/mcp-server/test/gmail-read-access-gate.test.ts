@@ -27,7 +27,7 @@ import type { CachedAuthorization } from '../src/lib/attestation-cache';
 import type { IntegrationManager, DiscoveredTool } from '../src/lib/integration-manager';
 
 const MANIFEST = JSON.parse(
-  readFileSync(join(import.meta.dirname, '..', '..', '..', 'content', 'integrations', 'gmail.json'), 'utf8'),
+  readFileSync(join(import.meta.dirname, 'fixtures', 'gmail.json'), 'utf8'),
 ) as { profile: string; toolGating: { overrides: Record<string, Record<string, unknown>> } };
 
 const SHORT = 'email-gmail-gate-test';

@@ -2,11 +2,11 @@
   "id": "mail",
   "name": "Email",
   "version": "1.0.0",
-  "description": "Simulated inbox for testing an agent's email replies — nothing leaves the laptop",
+  "description": "Read and send email, from a test mailbox or your Gmail account",
   "icon": "mail",
   "profile": "email",
   "npmPackage": "@humanagencyp/email-mcp",
-  "npmVersion": "0.4.0",
+  "npmVersion": "0.5.0",
   "readPolicy": {
     "defaultAgeDays": 30
   },
@@ -29,11 +29,36 @@
         "type": "text",
         "placeholder": "Leave empty for local SQLite",
         "optional": true
+      },
+      {
+        "key": "liveAdapter",
+        "label": "Live adapter (optional)",
+        "type": "text",
+        "placeholder": "gmail — Leave empty unless Mode is \"live\"",
+        "optional": true
+      },
+      {
+        "key": "clientId",
+        "label": "Client ID",
+        "type": "text",
+        "placeholder": "From Google Cloud Console",
+        "optional": true
+      },
+      {
+        "key": "clientSecret",
+        "label": "Client Secret",
+        "type": "password",
+        "placeholder": "OAuth2 client secret",
+        "optional": true
       }
     ],
     "envMapping": {
       "EMAIL_MODE": "mode",
-      "DATABASE_URL": "databaseUrl"
+      "DATABASE_URL": "databaseUrl",
+      "EMAIL_LIVE_ADAPTER": "liveAdapter",
+      "CLIENT_ID": "clientId",
+      "CLIENT_SECRET": "clientSecret",
+      "REFRESH_TOKEN": "refreshToken"
     }
   },
   "simulation": {
@@ -41,10 +66,39 @@
     "default": "simulation"
   },
   "modeLabels": {
-    "simulation": "Test mailbox"
+    "simulation": "Test mailbox",
+    "live": {
+      "gmail": "Gmail"
+    }
   },
   "personalDefault": false,
-  "oauth": null,
+  "oauth": {
+    "forOption": {
+      "mode": "live",
+      "adapter": "gmail"
+    },
+    "signInGroup": {
+      "id": "google",
+      "name": "Google"
+    },
+    "authUrl": "https://accounts.google.com/o/oauth2/v2/auth",
+    "tokenUrl": "https://oauth2.googleapis.com/token",
+    "revokeUrl": "https://oauth2.googleapis.com/revoke",
+    "scopes": [
+      "openid",
+      "https://www.googleapis.com/auth/userinfo.email",
+      "https://www.googleapis.com/auth/gmail.modify"
+    ],
+    "credentialKeys": {
+      "clientId": "clientId",
+      "clientSecret": "clientSecret"
+    },
+    "tokenStorage": "refreshToken",
+    "extraParams": {
+      "access_type": "offline",
+      "prompt": "consent"
+    }
+  },
   "attachments": {
     "transport": "field",
     "arg": "attachments"
@@ -52,13 +106,23 @@
   "context": {
     "sources": {
       "message": {
-        "read": { "tool": "get_message", "args": { "id": "$id" } },
-        "keys": { "email": "from.email" },
+        "read": {
+          "tool": "get_message",
+          "args": {
+            "id": "$id"
+          }
+        },
+        "keys": {
+          "email": "from.email"
+        },
         "title": "subject",
         "author": "from.name",
         "at": "received_at",
         "body": "body",
-        "chain": { "field": "in_reply_to", "max": 5 }
+        "chain": {
+          "field": "in_reply_to",
+          "max": 5
+        }
       }
     }
   },
@@ -73,7 +137,9 @@
         "boundField": "read_access",
         "requiredValue": "unlimited",
         "read": {
-          "ageField": "read_age_days"
+          "ageField": "read_age_days",
+          "ageFloorArg": "received_after",
+          "ageFloorFormat": "iso"
         }
       },
       "get_message": {
@@ -94,7 +160,13 @@
         }
       },
       "send_message": {
-        "message": { "text": "body", "to": "to", "cc": "cc", "subject": "subject", "verb": "Sent" },
+        "message": {
+          "text": "body",
+          "to": "to",
+          "cc": "cc",
+          "subject": "subject",
+          "verb": "Sent"
+        },
         "summary": "Email to {to|list}: {subject|short}",
         "executionMapping": {
           "to": [
@@ -116,11 +188,20 @@
           "action_type": "send"
         },
         "actionLabel": "Email sent",
-        "sourceFromArg": { "kind": "message", "arg": "in_reply_to" },
-        "contextKeys": { "email": "to" },
+        "sourceFromArg": {
+          "kind": "message",
+          "arg": "in_reply_to"
+        },
+        "contextKeys": {
+          "email": "to"
+        },
         "attachmentsArg": "attachments",
-        "insertFields": ["body"],
-        "display": { "aiText": "body" }
+        "insertFields": [
+          "body"
+        ],
+        "display": {
+          "aiText": "body"
+        }
       },
       "load_simulation": {
         "executionMapping": {},
@@ -151,6 +232,54 @@
     {
       "title": "Optional: use a shared database",
       "description": "For team use, provide a PostgreSQL connection string in the Database URL field. Otherwise, leave it empty to use local SQLite storage."
+    },
+    {
+      "title": "Optional: use your Gmail account",
+      "description": "Choose Gmail as the data source. Create an OAuth client in the Google Cloud Console (Gmail API enabled), add http://localhost:7400/auth/oauth/mail/callback as an authorized redirect URI, enter its Client ID and Client Secret here, then sign in with Google.",
+      "link": "https://console.cloud.google.com/apis/credentials"
+    }
+  ],
+  "modeOptions": {
+    "live": {
+      "gmail": {
+        "label": "Gmail",
+        "fields": [
+          "clientId",
+          "clientSecret"
+        ]
+      }
+    }
+  },
+  "adapterField": "liveAdapter",
+  "network": [
+    {
+      "modes": {
+        "live": [
+          "gmail"
+        ]
+      },
+      "host": "gmail.googleapis.com",
+      "purpose": "Read and send email in your Gmail account",
+      "sends": "the mail you read or send: recipients, subject, text, attachments"
+    },
+    {
+      "modes": {
+        "live": [
+          "gmail"
+        ]
+      },
+      "host": "oauth2.googleapis.com",
+      "purpose": "Get a short-lived access token for your Google sign-in",
+      "sends": "your sign-in token with the client ID and secret"
+    }
+  ],
+  "replaces": [
+    {
+      "id": "gmail",
+      "set": {
+        "mode": "live",
+        "liveAdapter": "gmail"
+      }
     }
   ]
 }

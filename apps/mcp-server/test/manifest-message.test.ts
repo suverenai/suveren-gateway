@@ -43,8 +43,6 @@ describe('shipped manifests', () => {
     // (2026-10-18, listed from the installed connectors).
     const expected: Record<string, { text: string; verb: string }> = {
       'mail.json/send_message': { text: 'body', verb: 'Sent' },
-      'gmail.json/send_message': { text: 'body', verb: 'Sent' },
-      'gmail.json/create_draft': { text: 'body', verb: 'Sent' },
       'calendar.json/create_event': { text: 'description', verb: 'Sent' },
       'calendar.json/update_event': { text: 'description', verb: 'Sent' },
       'linkedin.json/create_post': { text: 'text', verb: 'Published' },

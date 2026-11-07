@@ -168,7 +168,7 @@ export type DenialReason =
  * other refusal of a gated call. Absent `kind` ⇒ 'read' (every record
  * predating AU2). Never carries message content — identifiers, field names
  * and numbers only. */
-export type DenialKind = 'read' | 'bound' | 'scope' | 'cumulative' | 'simulation' | 'not_authorized' | 'check';
+export type DenialKind = 'read' | 'bound' | 'scope' | 'cumulative' | 'simulation' | 'not_authorized' | 'check' | 'unsealed_arg';
 export interface DenialRecord {
   ts: number;
   tool: string;
@@ -441,6 +441,16 @@ export interface AuthTemplate {
 
 export interface ModeOptionDecl { label?: string; explanation?: string; fields?: string[] }
 
+/** A shared sign-in: one account, several connectors (from the manifests' `oauth.signInGroup`). */
+export interface SignInGroup {
+  id: string;
+  name: string;
+  /** Connector ids, in manifest order. */
+  members: string[];
+  /** Union of the members' scopes - what the one sign-in requests. */
+  scopes: string[];
+}
+
 export interface IntegrationManifest {
   id: string;
   name: string;
@@ -458,10 +468,15 @@ export interface IntegrationManifest {
   oauth: {
     authUrl: string;
     tokenUrl: string;
+    revokeUrl?: string;
     scopes: string[];
     credentialKeys: Record<string, string>;
     tokenStorage: string;
     extraParams?: Record<string, string>;
+    /** Connectors with the same group id share ONE sign-in (declared in the manifest). */
+    signInGroup?: { id: string; name: string };
+    /** The sign-in applies only while this data-source option is chosen. */
+    forOption?: { mode: string; adapter?: string };
   } | null;
   /** Per-tool gating. Typed only where the UI reads it — `actionLabel` names
    *  what a tool DOES, in words, for the receipts list; `profile` is area
@@ -1512,6 +1527,13 @@ class SPClient {
     return res.json();
   }
 
+  /** The data folder the running gateway actually uses (read-only). */
+  async getDataFolder(): Promise<{ dataDir: string }> {
+    const res = await this.fetch('/api/gateway-settings/data-folder');
+    if (!res.ok) throw new Error(`Failed to load data folder: ${res.status}`);
+    return res.json();
+  }
+
   /** Returns the PERSISTED state, so callers render backend truth. */
   async setGatewaySettings(patch: Partial<GatewaySettings>): Promise<GatewaySettings> {
     const res = await this.fetch('/api/gateway-settings', {
@@ -1727,7 +1749,7 @@ class SPClient {
     }
   }
 
-  async getIntegrationManifests(): Promise<{ manifests: IntegrationManifest[]; builtins?: IntegrationManifest[] }> {
+  async getIntegrationManifests(): Promise<{ manifests: IntegrationManifest[]; signInGroups?: SignInGroup[]; builtins?: IntegrationManifest[] }> {
     const res = await this.fetch('/mcp/integrations/manifests');
     if (!res.ok) throw new Error(`Failed to fetch manifests: ${res.status}`);
     return res.json();

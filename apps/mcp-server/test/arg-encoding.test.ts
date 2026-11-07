@@ -123,12 +123,12 @@ describe('encodeOutgoingArgs — declared per connector, applied by the engine',
   });
 });
 
-describe('the shipped gmail manifest declares it', () => {
+describe('a Gmail-shaped manifest (fixtures/gmail.json) declares it', () => {
   it('send_message and create_draft encode the subject', async () => {
     const { readFileSync } = await import('node:fs');
     const { join } = await import('node:path');
     const manifest = JSON.parse(
-      readFileSync(join(import.meta.dirname, '..', '..', '..', 'content', 'integrations', 'gmail.json'), 'utf-8'),
+      readFileSync(join(import.meta.dirname, 'fixtures', 'gmail.json'), 'utf-8'),
     );
     for (const tool of ['send_message', 'create_draft']) {
       expect(manifest.toolGating.overrides[tool].argEncoding).toEqual({ subject: 'rfc2047' });

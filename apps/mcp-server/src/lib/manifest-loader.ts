@@ -31,6 +31,7 @@ import {
   type ManifestValues,
   type MessageVerb,
 } from './tool-gating-types';
+import { GATEWAY_OWNED_ARGS } from './sealed-args';
 import { uncoveredReadSwitchReason, type BoundsSchemaLike } from './read-gate';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -50,6 +51,24 @@ export interface ManifestOAuthConfig {
   credentialKeys: Record<string, string>;
   tokenStorage: string;
   extraParams?: Record<string, string>;
+  /** Optional token revocation endpoint (RFC 7009), called on sign-out. */
+  revokeUrl?: string;
+  /**
+   * Optional: this connector shares ONE sign-in with every other connector that
+   * declares the same `signInGroup.id` (e.g. Gmail and Google Calendar are one
+   * Google account). Declared explicitly — never inferred from authUrl or
+   * clientId. See `invalidSignInGroupReason` for what a group's members must
+   * agree on, and docs/development.md ("Shared sign-in groups").
+   */
+  signInGroup?: { id: string; name: string };
+  /**
+   * Optional: this sign-in applies ONLY while one data-source option is chosen
+   * (e.g. Email signs in with Google only for its Gmail option, never for the
+   * test mailbox). `mode` is a key of `modeLabels`; `adapter` is required when
+   * that mode is adapter-keyed and names one of its adapters. Without it the
+   * sign-in always applies. See `invalidOAuthForOptionReason`.
+   */
+  forOption?: { mode: string; adapter?: string };
 }
 
 /**
@@ -74,6 +93,15 @@ export interface ManifestContextDiscovery {
   /** Optional extras surfaced to the wizard UI for each option (e.g. access role, timezone). */
   extraFields?: Record<string, string>;
 }
+
+/**
+ * This connector takes over a connector that is no longer offered. On the
+ * next sign-in the gateway moves what an install had for `id` (its credentials,
+ * its place in the registry, its read window) to this connector and applies `set`
+ * to the credential fields (e.g. choosing the data source the old connector
+ * stood for). See docs/development.md ("Replacing a connector").
+ */
+export interface ManifestReplaces { id: string; set?: Record<string, string> }
 
 export interface ModeOption { label?: string; explanation?: string; fields?: string[] }
 
@@ -105,6 +133,8 @@ export interface IntegrationManifest {
     envMapping: Record<string, string>;
   };
   oauth: ManifestOAuthConfig | null;
+  /** Connectors this one replaces (see `ManifestReplaces`). */
+  replaces?: ManifestReplaces[];
   /**
    * The connector CAN answer from a simulated system: `field` is the credential
    * field holding the mode, `default` the mode when it is unset. Two consumers:
@@ -678,6 +708,87 @@ export function invalidMessageReason(toolName: string, entry: unknown): string |
     if (m[key] !== undefined && (typeof m[key] !== 'string' || (m[key] as string).length === 0)) {
       return `${at}.${key} must be a non-empty string`;
     }
+  }
+  return null;
+}
+
+/**
+ * `nonContentArgs` (tool-gating-types.ts): arguments the author declares do
+ * not change what is sent. Refuses the whole manifest when the declaration
+ * is malformed (not a non-empty list of unique non-empty names), sits on a
+ * read/disabled tool (the rule only applies to sealed writes), or names an
+ * argument that is already classified another way — blocked, the message /
+ * attachments / source-link / content-field argument, `insert`, a mapped
+ * bound, or one the gateway owns. An argument cannot be both content and
+ * not-content; a contradiction here is a manifest bug, not a choice.
+ * (What the profile's binding seals is per profile version and checked by the
+ * shipped-manifest audit test, not at load.)
+ */
+export function invalidNonContentArgsReason(toolName: string, entry: unknown): string | null {
+  if (entry === null || typeof entry !== 'object') return null;
+  const e = entry as Record<string, unknown>;
+  const list = e.nonContentArgs;
+  if (list === undefined) return null;
+  const at = `override "${toolName}".nonContentArgs`;
+  if (!Array.isArray(list) || list.length === 0 || !list.every(a => typeof a === 'string' && a.length > 0)) {
+    return `${at} must be a non-empty list of argument names`;
+  }
+  if (new Set(list).size !== list.length) return `${at} lists an argument twice`;
+  if (e.category === 'read' || e.category === 'disabled') {
+    return `${at} is allowed on sealed write tools only (not category "${e.category}")`;
+  }
+  const message = (e.message ?? {}) as Record<string, unknown>;
+  const classified: Record<string, string> = {};
+  const mark = (name: unknown, why: string) => { if (typeof name === 'string' && name) classified[name] ??= why; };
+  for (const a of Array.isArray(e.blockedArgs) ? e.blockedArgs : []) mark(a, 'blocked (blockedArgs)');
+  for (const k of ['text', 'to', 'cc', 'subject']) mark(message[k], `the message ${k} argument`);
+  mark(e.contentField, 'the content field');
+  mark(e.attachmentsArg, 'the attachments argument');
+  mark((e.sourceFromArg as { arg?: unknown } | undefined)?.arg, 'the source-link argument');
+  if (Array.isArray(e.insertFields) && e.insertFields.length > 0) { mark('insert', 'the insert argument'); }
+  for (const a of Object.keys((e.executionMapping ?? {}) as object)) mark(a, 'a mapped bound (executionMapping)');
+  for (const a of GATEWAY_OWNED_ARGS) mark(a, 'owned by the gateway');
+  for (const a of list as string[]) {
+    if (classified[a]) return `${at} lists "${a}", which is already ${classified[a]}`;
+  }
+  return null;
+}
+
+export const APPROVAL_NOTE_MAX = 160;
+
+/** An `approvalView` field's optional `note`: a non-empty string of at most 160 characters. */
+export function invalidApprovalViewReason(toolName: string, entry: unknown): string | null {
+  if (entry === null || typeof entry !== 'object') return null;
+  const view = (entry as Record<string, unknown>).approvalView;
+  if (view === undefined) return null;
+  if (view === null || typeof view !== 'object' || Array.isArray(view)) {
+    return `override "${toolName}".approvalView must be an object mapping arguments to display hints`;
+  }
+  for (const [arg, v] of Object.entries(view as Record<string, unknown>)) {
+    if (v === null || typeof v !== 'object') continue;
+    const note = (v as Record<string, unknown>).note;
+    if (note === undefined) continue;
+    if (typeof note !== 'string' || note.trim().length === 0 || note.length > APPROVAL_NOTE_MAX) {
+      return `override "${toolName}".approvalView.${arg}.note must be a non-empty string of at most ${APPROVAL_NOTE_MAX} characters`;
+    }
+  }
+  return null;
+}
+
+export function invalidManifestApprovalViewReason(manifest: Pick<IntegrationManifest, 'toolGating'>): string | null {
+  const overrides = (manifest.toolGating?.overrides ?? {}) as Record<string, unknown>;
+  for (const [toolName, entry] of Object.entries(overrides)) {
+    const reason = invalidApprovalViewReason(toolName, entry);
+    if (reason) return reason;
+  }
+  return null;
+}
+
+export function invalidManifestNonContentArgsReason(manifest: Pick<IntegrationManifest, 'toolGating'>): string | null {
+  const overrides = (manifest.toolGating?.overrides ?? {}) as Record<string, unknown>;
+  for (const [toolName, entry] of Object.entries(overrides)) {
+    const reason = invalidNonContentArgsReason(toolName, entry);
+    if (reason) return reason;
   }
   return null;
 }
@@ -1391,6 +1502,150 @@ export function invalidModeOptionsReason(
   return null;
 }
 
+/**
+ * Returns a refusal reason if `oauth.forOption` (if any) does not name an option
+ * of this manifest's own mode choice: the manifest needs `simulation` and
+ * `modeLabels`, the mode must exist there, and the adapter is given exactly when
+ * that mode is adapter-keyed.
+ */
+export function invalidOAuthForOptionReason(
+  manifest: Pick<IntegrationManifest, 'oauth' | 'simulation' | 'modeLabels'>,
+): string | null {
+  const f = manifest.oauth?.forOption;
+  if (f === undefined) return null;
+  if (f === null || typeof f !== 'object' || Array.isArray(f)) return 'oauth.forOption must be an object { mode, adapter? }';
+  const extra = Object.keys(f).find(k => k !== 'mode' && k !== 'adapter');
+  if (extra) return `oauth.forOption has unknown key "${extra}"`;
+  if (typeof f.mode !== 'string' || f.mode.length === 0) return 'oauth.forOption.mode must be a non-empty string';
+  if (f.adapter !== undefined && (typeof f.adapter !== 'string' || f.adapter.length === 0)) {
+    return 'oauth.forOption.adapter must be a non-empty string';
+  }
+  if (!manifest.simulation || !manifest.modeLabels) return 'oauth.forOption needs a mode choice ("simulation" marker and modeLabels)';
+  const label = manifest.modeLabels[f.mode];
+  if (label === undefined) return `oauth.forOption.mode "${f.mode}" has no modeLabels entry`;
+  if (typeof label === 'string') {
+    return f.adapter === undefined ? null : `oauth.forOption.adapter is not allowed: mode "${f.mode}" has no adapters`;
+  }
+  if (f.adapter === undefined) return `oauth.forOption.adapter is required: mode "${f.mode}" is keyed by adapter`;
+  return f.adapter in label ? null : `oauth.forOption.adapter "${f.adapter}" has no modeLabels entry under "${f.mode}"`;
+}
+
+/**
+ * Returns a refusal reason if `manifest.replaces` (if any) is malformed: a
+ * non-empty list of `{ id, set? }`, ids are slugs other than the manifest's own,
+ * and `set` writes only declared credential fields with string values.
+ */
+export function invalidReplacesReason(
+  manifest: Pick<IntegrationManifest, 'id' | 'replaces' | 'credentials'>,
+): string | null {
+  const r = manifest.replaces;
+  if (r === undefined) return null;
+  if (!Array.isArray(r) || r.length === 0) return 'replaces must be a non-empty list of { id, set? }';
+  const fieldKeys = new Set(manifest.credentials?.fields?.map(f => f.key) ?? []);
+  const seen = new Set<string>();
+  for (const [i, e] of r.entries()) {
+    const at = `replaces[${i}]`;
+    if (e === null || typeof e !== 'object' || Array.isArray(e)) return `${at} must be an object { id, set? }`;
+    const extra = Object.keys(e).find(k => k !== 'id' && k !== 'set');
+    if (extra) return `${at} has unknown key "${extra}"`;
+    if (typeof e.id !== 'string' || !SIGN_IN_GROUP_ID.test(e.id)) return `${at}.id must be a connector id (lowercase letters, digits, "-")`;
+    if (e.id === manifest.id) return `${at}.id must not be the connector's own id`;
+    if (seen.has(e.id)) return `${at}.id "${e.id}" is listed twice`;
+    seen.add(e.id);
+    if (e.set !== undefined) {
+      if (e.set === null || typeof e.set !== 'object' || Array.isArray(e.set)) return `${at}.set must be an object of credential values`;
+      for (const [k, v] of Object.entries(e.set)) {
+        if (!fieldKeys.has(k)) return `${at}.set names "${k}", which is not a declared credential field`;
+        if (typeof v !== 'string') return `${at}.set.${k} must be a string`;
+      }
+    }
+  }
+  return null;
+}
+
+// ─── Shared sign-in groups ──────────────────────────────────────────────────
+
+const SIGN_IN_GROUP_ID = /^[a-z][a-z0-9-]*$/;
+
+/**
+ * Shape check for `oauth.signInGroup` on ONE manifest. A group needs an `oauth`
+ * block (nothing to share otherwise), a lowercase slug id (it becomes part of
+ * the vault entry name `sign-in:<id>`), and a display name.
+ */
+export function invalidSignInGroupReason(
+  manifest: Pick<IntegrationManifest, 'oauth'>,
+): string | null {
+  const g = manifest.oauth?.signInGroup;
+  if (g === undefined) return null;
+  if (g === null || typeof g !== 'object' || Array.isArray(g)) {
+    return 'oauth.signInGroup must be an object { id, name }';
+  }
+  if (typeof g.id !== 'string' || !SIGN_IN_GROUP_ID.test(g.id)) {
+    return 'oauth.signInGroup.id must be a lowercase slug (letters, digits, "-"), e.g. "google"';
+  }
+  if (typeof g.name !== 'string' || g.name.trim().length === 0) {
+    return 'oauth.signInGroup.name must be a non-empty string';
+  }
+  return null;
+}
+
+/**
+ * One sign-in means one provider, one client, one token slot. A member that
+ * disagrees with the group's first member on any of these could not be served
+ * by the shared token, so it is refused rather than half-shared. Scopes are
+ * NOT compared: the sign-in requests the union of the members' scopes.
+ */
+export function invalidSignInGroupMismatchReason(
+  manifest: Pick<IntegrationManifest, 'id' | 'oauth'>,
+  first: Pick<IntegrationManifest, 'id' | 'oauth'>,
+): string | null {
+  const a = manifest.oauth;
+  const b = first.oauth;
+  if (!a?.signInGroup || !b?.signInGroup) return null;
+  const g = a.signInGroup.id;
+  if (a.signInGroup.name !== b.signInGroup.name) {
+    return `signInGroup "${g}" is named "${a.signInGroup.name}" here but "${b.signInGroup.name}" in ${first.id}`;
+  }
+  const same = (x: unknown, y: unknown) => JSON.stringify(sortKeys(x)) === JSON.stringify(sortKeys(y));
+  for (const field of ['authUrl', 'tokenUrl', 'revokeUrl', 'tokenStorage', 'credentialKeys', 'extraParams'] as const) {
+    if (!same(a[field] ?? null, b[field] ?? null)) {
+      return `signInGroup "${g}": oauth.${field} differs from ${first.id} — members of one sign-in must agree on it`;
+    }
+  }
+  return null;
+}
+
+function sortKeys(v: unknown): unknown {
+  if (v === null || typeof v !== 'object' || Array.isArray(v)) return v;
+  return Object.fromEntries(Object.entries(v as Record<string, unknown>).sort(([x], [y]) => x < y ? -1 : 1).map(([k, val]) => [k, sortKeys(val)]));
+}
+
+export interface SignInGroupInfo {
+  id: string;
+  name: string;
+  /** Connector ids, in manifest order. */
+  members: string[];
+  /** Union of the members' scopes, in first-seen order — what ONE sign-in requests. */
+  scopes: string[];
+}
+
+/** The groups declared by a set of manifests. Pure; the list the UI draws one card per group from. */
+export function computeSignInGroups(list: Array<Pick<IntegrationManifest, 'id' | 'oauth'>>): SignInGroupInfo[] {
+  const groups = new Map<string, SignInGroupInfo>();
+  for (const m of list) {
+    const g = m.oauth?.signInGroup;
+    if (!g) continue;
+    let info = groups.get(g.id);
+    if (!info) {
+      info = { id: g.id, name: g.name, members: [], scopes: [] };
+      groups.set(g.id, info);
+    }
+    info.members.push(m.id);
+    for (const s of m.oauth?.scopes ?? []) if (!info.scopes.includes(s)) info.scopes.push(s);
+  }
+  return Array.from(groups.values());
+}
+
 // ─── Module state ───────────────────────────────────────────────────────────
 
 const manifests = new Map<string, IntegrationManifest>();
@@ -1441,6 +1696,16 @@ export function loadManifests(integrationsDir?: string): number {
       const internalReason = invalidManifestInternalReason(manifest);
       if (internalReason) {
         console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${internalReason}`);
+        continue;
+      }
+      const nonContentReason = invalidManifestNonContentArgsReason(manifest);
+      if (nonContentReason) {
+        console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${nonContentReason}`);
+        continue;
+      }
+      const approvalViewReason = invalidManifestApprovalViewReason(manifest);
+      if (approvalViewReason) {
+        console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${approvalViewReason}`);
         continue;
       }
       const readAlsoReason = invalidManifestReadAlsoUnderReason(manifest);
@@ -1497,6 +1762,30 @@ export function loadManifests(integrationsDir?: string): number {
         console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${modeLabelsReason}`);
         continue;
       }
+      const forOptionReason = invalidOAuthForOptionReason(manifest);
+      if (forOptionReason) {
+        console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${forOptionReason}`);
+        continue;
+      }
+      const replacesReason = invalidReplacesReason(manifest);
+      if (replacesReason) {
+        console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${replacesReason}`);
+        continue;
+      }
+      const groupReason = invalidSignInGroupReason(manifest);
+      if (groupReason) {
+        console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${groupReason}`);
+        continue;
+      }
+      const groupId = manifest.oauth?.signInGroup?.id;
+      if (groupId) {
+        const first = Array.from(manifests.values()).find(m => m.oauth?.signInGroup?.id === groupId);
+        const mismatch = first ? invalidSignInGroupMismatchReason(manifest, first) : null;
+        if (mismatch) {
+          console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${mismatch}`);
+          continue;
+        }
+      }
       manifests.set(id, manifest);
       loaded++;
     } catch (err) {
@@ -1520,4 +1809,9 @@ export function getManifest(id: string): IntegrationManifest | undefined {
  */
 export function getAllManifests(): IntegrationManifest[] {
   return Array.from(manifests.values());
+}
+
+/** Declared shared sign-in groups across all loaded manifests. */
+export function getSignInGroups(): SignInGroupInfo[] {
+  return computeSignInGroups(getAllManifests());
 }

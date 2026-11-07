@@ -35,7 +35,8 @@ import { isSimulationMode } from '../src/lib/simulation-mode';
 import { agentAccess, bindRefusal, resolveAgentToken, resolveBindHost } from '../src/lib/agent-access';
 import { readPairing } from '../src/lib/as-pairing';
 import { loadProfiles } from '../src/lib/profile-loader';
-import { loadManifests, getAllManifests, getManifest } from '../src/lib/manifest-loader';
+import { loadManifests, getAllManifests, getManifest, getSignInGroups } from '../src/lib/manifest-loader';
+import { planReplacement } from '../src/lib/connector-replacement';
 import { buildInternalPreview } from '../src/lib/preview';
 import { buildRequestContext } from '../src/lib/request-context';
 import { resolveAttachmentPreview } from '../src/lib/document-source';
@@ -604,6 +605,35 @@ app.post('/internal/add-integration', internalOnly, async (req: Request, res: Re
   }
 });
 
+/**
+ * A retired connector replaced by another (manifest `replaces`). Called by the
+ * control plane at sign-in, after it copied the credentials. Only the pair the
+ * replacement's own manifest names is accepted, and only while the old id is no
+ * longer a manifest of its own.
+ */
+app.post('/internal/replace-integration', internalOnly, async (req: Request, res: Response) => {
+  try {
+    const { from, to, enableTarget } = req.body as { from?: string; to?: string; enableTarget?: boolean };
+    const manifest = typeof to === 'string' ? getManifest(to) : undefined;
+    if (typeof from !== 'string' || !manifest || !manifest.replaces?.some(r => r.id === from) || getManifest(from)) {
+      res.status(400).json({ error: 'Not a declared replacement' });
+      return;
+    }
+    const plan = planReplacement(integrationRegistry.getAll(), manifest, from, enableTarget === true);
+    if (plan.removeOld) {
+      await integrationManager.stopIntegration(from);
+      integrationRegistry.remove(from);
+    }
+    if (plan.targetAction === 'added' && plan.add) integrationRegistry.add(plan.add);
+    if (plan.targetAction === 'enabled') integrationRegistry.update(manifest.id, { enabled: true });
+    console.error(`[Suveren MCP] ${from} replaced by ${to}: old ${plan.removeOld ? 'removed' : 'absent'}, new ${plan.targetAction}`);
+    res.json({ ok: true, removedOld: plan.removeOld, targetAction: plan.targetAction });
+  } catch (err) {
+    console.error('[Suveren MCP] replace-integration failed:', err);
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Replace failed' });
+  }
+});
+
 app.delete('/internal/remove-integration/:id', internalOnly, async (req: Request, res: Response) => {
   const id = req.params.id as string;
 
@@ -862,7 +892,7 @@ app.get('/internal/authorizations', internalOnly, (_req: Request, res: Response)
 app.get('/internal/manifests', internalOnly, (_req: Request, res: Response) => {
   // `builtins`: names and action labels of the gateway's own tool groups, for
   // the UI's ticket/approval labels only — never rendered as connectors.
-  res.json({ manifests: getAllManifests(), builtins: integrationManager?.getBuiltinLabels?.() ?? [] });
+  res.json({ manifests: getAllManifests(), signInGroups: getSignInGroups(), builtins: integrationManager?.getBuiltinLabels?.() ?? [] });
 });
 
 /**
@@ -1308,6 +1338,13 @@ async function startOneIntegration(
     console.error(
       `[Suveren MCP] ${config.id} cannot start — missing credentials: ${missing.join(', ')}`,
     );
+    // A restart means the credentials CHANGED under a running process. If they
+    // no longer resolve (sign-out removed the token), leaving it running would
+    // keep acting on the signed-out account's token.
+    if (opts.restart && integrationManager.isRunning(config.id)) {
+      console.error(`[Suveren MCP] ${config.id}: credentials removed — stopping`);
+      await integrationManager.stopIntegration(config.id);
+    }
     return;
   }
 

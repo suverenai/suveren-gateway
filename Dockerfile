@@ -55,7 +55,7 @@ RUN npm install --omit=dev --no-audit --no-fund && npm cache clean --force
 # Pre-install the integration MCP servers globally so the first
 # user-driven enable in the UI doesn't hit npm. The integration manager's
 # PATH includes /usr/local/lib/node_modules/.bin (Docker default).
-RUN npm install -g mcp-remote @humanagencyp/linkedin-mcp @humanagencyp/crm-mcp @humanagencyp/records-mcp @shinzolabs/gmail-mcp \
+RUN npm install -g mcp-remote @humanagencyp/linkedin-mcp @humanagencyp/crm-mcp @humanagencyp/records-mcp \
     && npm cache clean --force
 
 # Integration manifests (read-only source the gateway lists in the UI).

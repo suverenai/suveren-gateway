@@ -78,6 +78,8 @@ const TITLE: Record<DenialKind, string> = {
   // Wording pending Andreas's sign-off (temp/erp-checks-mockup) — kept minimal
   // so the Blocked page never shows an empty title for the new record kind.
   check: 'Blocked — a check failed',
+  // Wording pending Andreas's sign-off (sealed-args rule, 2026-11-06).
+  unsealed_arg: 'Blocked — not shown for approval',
   read: 'Read blocked',
 };
 
@@ -89,6 +91,7 @@ const WHAT_YOU_CAN_DO: Record<DenialKind, string> = {
   simulation: 'Nothing ran. Turn off simulation mode in Settings to use real systems.',
   not_authorized: 'Nothing ran. Grant a mandate for this, or ask the decision owner.',
   check: 'Nothing ran and no approval was asked for. The check reads the system\'s own data — correct the request or that data.',
+  unsealed_arg: 'Nothing ran and no approval was asked for. The AI sent an item that would change what is sent without being shown for approval — ask it to send the request without it.',
   read: 'Nothing was read.',
 };
 
@@ -272,6 +275,7 @@ const REASON_LEAD: Record<DenialKind, string> = {
   simulation: 'Simulation mode:',
   not_authorized: 'Not authorized:',
   check: 'A check failed:',
+  unsealed_arg: 'Not shown for approval:',
   read: 'Read blocked:',
 };
 

@@ -1,0 +1,957 @@
+{
+  "integration": "crm",
+  "npmPackage": "@humanagencyp/crm-mcp",
+  "npmVersion": "1.6.0",
+  "tools": {
+    "clear_simulation": {
+      "type": "object",
+      "properties": {
+        "ticket_id": {
+          "type": "string",
+          "description": "Authorization reference for this call, set by the governing gateway — agents do not set this."
+        }
+      },
+      "required": []
+    },
+    "complete_task": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Task ID"
+        },
+        "revision": {
+          "type": "number",
+          "description": "The task's current revision — refused if the task has moved on to a later one since this number was read."
+        },
+        "contact_type": {
+          "type": "string",
+          "enum": [
+            "customer",
+            "lead",
+            "partner",
+            "vendor"
+          ],
+          "description": "Required — the contact type this call acts on (for a task without a contact: the type it is for). Checked against the contact's actual stored type; refused if missing or on mismatch."
+        },
+        "ticket_id": {
+          "type": "string",
+          "description": "Authorization reference for this call, set by the governing gateway — agents do not set this."
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "contact_type"
+      ]
+    },
+    "convert_contact": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Contact ID"
+        },
+        "revision": {
+          "type": "number",
+          "description": "The contact's current revision — refused if the contact has moved on to a later one since this number was read."
+        },
+        "to_type": {
+          "type": "string",
+          "enum": [
+            "customer",
+            "lead",
+            "partner",
+            "vendor"
+          ],
+          "description": "The type to convert this contact to"
+        },
+        "contact_type": {
+          "type": "string",
+          "description": "Required — both types, the current and the new one, as \"<current>,<new>\" (e.g. \"lead,customer\"). The current type is checked against the contact's stored type, the new one must equal to_type."
+        },
+        "ticket_id": {
+          "type": "string",
+          "description": "Authorization reference for this call, set by the governing gateway — agents do not set this."
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "to_type",
+        "contact_type"
+      ]
+    },
+    "create_contact": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Contact's full name"
+        },
+        "email": {
+          "type": "string",
+          "description": "Email address"
+        },
+        "phone": {
+          "type": "string",
+          "description": "Phone number"
+        },
+        "company": {
+          "type": "string",
+          "description": "Company or organisation name"
+        },
+        "role": {
+          "type": "string",
+          "description": "Job title or role"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "customer",
+            "lead",
+            "partner",
+            "vendor"
+          ],
+          "description": "Contact type (default: customer)"
+        },
+        "stage": {
+          "type": "string",
+          "enum": [
+            "new",
+            "active",
+            "inactive",
+            "churned"
+          ],
+          "description": "Lifecycle stage (default: new)"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "List of tags"
+        },
+        "notes": {
+          "type": "string",
+          "description": "Free-form notes"
+        },
+        "ticket_id": {
+          "type": "string",
+          "description": "Authorization reference for this call, set by the governing gateway — agents do not set this."
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ]
+    },
+    "create_deal": {
+      "type": "object",
+      "properties": {
+        "contact_id": {
+          "type": "string",
+          "description": "Contact ID"
+        },
+        "title": {
+          "type": "string",
+          "description": "Deal title"
+        },
+        "value": {
+          "type": "number",
+          "description": "Deal value"
+        },
+        "currency": {
+          "type": "string",
+          "description": "Currency code (default: USD)"
+        },
+        "stage": {
+          "type": "string",
+          "enum": [
+            "lead",
+            "qualified",
+            "proposal",
+            "negotiation",
+            "won",
+            "lost"
+          ],
+          "description": "Pipeline stage (default: lead)"
+        },
+        "expected_close": {
+          "type": "string",
+          "description": "Expected close date (ISO 8601)"
+        },
+        "notes": {
+          "type": "string",
+          "description": "Notes about the deal"
+        },
+        "contact_type": {
+          "type": "string",
+          "enum": [
+            "customer",
+            "lead",
+            "partner",
+            "vendor"
+          ],
+          "description": "Required — the contact type this call acts on (for a task without a contact: the type it is for). Checked against the contact's actual stored type; refused if missing or on mismatch."
+        },
+        "ticket_id": {
+          "type": "string",
+          "description": "Authorization reference for this call, set by the governing gateway — agents do not set this."
+        }
+      },
+      "required": [
+        "contact_id",
+        "title",
+        "contact_type"
+      ]
+    },
+    "create_task": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "Task title"
+        },
+        "contact_id": {
+          "type": "string",
+          "description": "Contact ID (optional)"
+        },
+        "deal_id": {
+          "type": "string",
+          "description": "Deal ID (optional)"
+        },
+        "due_date": {
+          "type": "string",
+          "description": "Due date (ISO 8601)"
+        },
+        "assigned_to": {
+          "type": "string",
+          "description": "Name or identifier of assignee"
+        },
+        "contact_type": {
+          "type": "string",
+          "enum": [
+            "customer",
+            "lead",
+            "partner",
+            "vendor"
+          ],
+          "description": "Required — the contact type this call acts on (for a task without a contact: the type it is for). Checked against the contact's actual stored type; refused if missing or on mismatch."
+        },
+        "ticket_id": {
+          "type": "string",
+          "description": "Authorization reference for this call, set by the governing gateway — agents do not set this."
+        }
+      },
+      "required": [
+        "title",
+        "contact_type"
+      ]
+    },
+    "delete_contact": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Contact ID"
+        },
+        "revision": {
+          "type": "number",
+          "description": "The contact's current revision — refused if the contact has moved on to a later one since this number was read."
+        },
+        "contact_type": {
+          "type": "string",
+          "enum": [
+            "customer",
+            "lead",
+            "partner",
+            "vendor"
+          ],
+          "description": "Required — the contact type this call acts on (for a task without a contact: the type it is for). Checked against the contact's actual stored type; refused if missing or on mismatch."
+        },
+        "ticket_id": {
+          "type": "string",
+          "description": "Authorization reference for this call, set by the governing gateway — agents do not set this."
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "contact_type"
+      ]
+    },
+    "export_crm": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    },
+    "find_contacts": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Text search across name, email, and company"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "customer",
+            "lead",
+            "partner",
+            "vendor"
+          ],
+          "description": "Filter by contact type"
+        },
+        "stage": {
+          "type": "string",
+          "enum": [
+            "new",
+            "active",
+            "inactive",
+            "churned"
+          ],
+          "description": "Filter by lifecycle stage"
+        },
+        "include_archived": {
+          "type": "boolean",
+          "description": "Include archived contacts (default: false)"
+        },
+        "limit": {
+          "type": "number",
+          "description": "Maximum results to return (default: 50)"
+        }
+      },
+      "required": []
+    },
+    "get_activity": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Activity ID"
+        }
+      },
+      "required": [
+        "id"
+      ]
+    },
+    "get_contact": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Contact ID"
+        },
+        "revision": {
+          "type": "number",
+          "description": "Optional — return this past revision's content instead of the current one"
+        }
+      },
+      "required": [
+        "id"
+      ]
+    },
+    "get_deal": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Deal ID"
+        },
+        "revision": {
+          "type": "number",
+          "description": "Optional — return this past revision's content instead of the current one"
+        }
+      },
+      "required": [
+        "id"
+      ]
+    },
+    "get_pipeline": {
+      "type": "object",
+      "properties": {
+        "stage": {
+          "type": "string",
+          "enum": [
+            "lead",
+            "qualified",
+            "proposal",
+            "negotiation",
+            "won",
+            "lost"
+          ],
+          "description": "Filter to a specific pipeline stage"
+        },
+        "sort_by": {
+          "type": "string",
+          "enum": [
+            "expected_close",
+            "value",
+            "created_at",
+            "updated_at",
+            "title"
+          ],
+          "description": "Field to sort by (default: expected_close)"
+        },
+        "include_archived": {
+          "type": "boolean",
+          "description": "Include deals whose contact is archived (default: false)"
+        }
+      },
+      "required": []
+    },
+    "get_task": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Task ID"
+        },
+        "revision": {
+          "type": "number",
+          "description": "Optional — return this past revision's content instead of the current one"
+        }
+      },
+      "required": [
+        "id"
+      ]
+    },
+    "get_timeline": {
+      "type": "object",
+      "properties": {
+        "contact_id": {
+          "type": "string",
+          "description": "Contact ID"
+        },
+        "email": {
+          "type": "string",
+          "description": "Exact contact email to match (case-insensitive)"
+        },
+        "email_domain": {
+          "type": "string",
+          "description": "Contact email domain to match, e.g. \"example.com\" (case-insensitive; can match several contacts)"
+        },
+        "since": {
+          "type": "string",
+          "description": "Optional — ISO 8601 timestamp; only activities at or after this time"
+        },
+        "include_archived": {
+          "type": "boolean",
+          "description": "Include archived contacts when matching by email/email_domain (default: false)"
+        },
+        "limit": {
+          "type": "number",
+          "description": "Maximum activities to return (default: 20)"
+        }
+      },
+      "required": []
+    },
+    "list_tasks": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "open",
+            "done"
+          ],
+          "description": "Filter by status (default: open)"
+        },
+        "contact_id": {
+          "type": "string",
+          "description": "Filter by contact ID"
+        },
+        "deal_id": {
+          "type": "string",
+          "description": "Filter by deal ID"
+        },
+        "assigned_to": {
+          "type": "string",
+          "description": "Filter by assignee"
+        }
+      },
+      "required": []
+    },
+    "load_simulation": {
+      "type": "object",
+      "properties": {
+        "package": {
+          "type": "object",
+          "description": "Simulation package: one company's test world for the email, CRM and ERP simulators — each loads its part and ignores the rest. A simulator can be loaded once; a second load is refused. This connector loads `name`, `currency`, `customers` (as contacts) and optional `contacts`; `products` and `cases` are used by the ERP and the email simulator.",
+          "required": [
+            "name",
+            "currency",
+            "customers",
+            "products",
+            "cases"
+          ],
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Company name (renamed), e.g. \"Bergmann Ersatzteile GmbH\"."
+            },
+            "email": {
+              "type": "string",
+              "description": "Optional. The company's own mailbox the requests arrive in and replies are sent from, e.g. \"verkauf@bergmann-ersatzteile.example\"."
+            },
+            "currency": {
+              "type": "string",
+              "pattern": "^[A-Z]{3}$",
+              "description": "ISO 4217 code for all prices, e.g. \"EUR\"."
+            },
+            "customers": {
+              "type": "array",
+              "minItems": 1,
+              "description": "Customers as the cases need them (renamed). Used by CRM (as contacts) and ERP.",
+              "items": {
+                "type": "object",
+                "required": [
+                  "name",
+                  "credit_limit"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "description": "Optional stable id, e.g. \"cust-1\" (default: cust-<n> by position). Same id in CRM and ERP."
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Customer company name (renamed)."
+                  },
+                  "email": {
+                    "type": "string",
+                    "description": "Optional. Customer's email address (renamed) — the sender of their requests."
+                  },
+                  "country": {
+                    "type": "string",
+                    "description": "Optional. ISO country code, e.g. \"AT\"."
+                  },
+                  "credit_limit": {
+                    "type": "number",
+                    "minimum": 0,
+                    "description": "Credit limit in the package currency."
+                  },
+                  "open_balance": {
+                    "type": "number",
+                    "minimum": 0,
+                    "description": "Optional. Unpaid amount at the time of the cases (default 0)."
+                  },
+                  "payment_terms": {
+                    "type": "string",
+                    "description": "Optional, e.g. \"NET30\"."
+                  }
+                }
+              }
+            },
+            "products": {
+              "type": "array",
+              "minItems": 1,
+              "description": "Products/services as the cases need them (renamed). Used by ERP. Stock and price as at the time of the cases.",
+              "items": {
+                "type": "object",
+                "required": [
+                  "sku",
+                  "name",
+                  "list_price",
+                  "stock"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "description": "Optional stable id, e.g. \"item-1\" (default: item-<n> by position)."
+                  },
+                  "sku": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Article number, unique within the package."
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Product name (renamed if identifying)."
+                  },
+                  "unit": {
+                    "type": "string",
+                    "description": "Optional, e.g. \"pcs\", \"set\" (default \"pcs\")."
+                  },
+                  "list_price": {
+                    "type": "number",
+                    "minimum": 0,
+                    "description": "Net list price per unit in the package currency."
+                  },
+                  "stock": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Units in stock at the time of the cases (0 reproduces \"not in stock\")."
+                  }
+                }
+              }
+            },
+            "contacts": {
+              "type": "array",
+              "description": "Optional. Extra CRM contacts beyond the customers (leads, partners, vendors). Used by CRM.",
+              "items": {
+                "type": "object",
+                "required": [
+                  "name"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "email": {
+                    "type": "string"
+                  },
+                  "phone": {
+                    "type": "string"
+                  },
+                  "company": {
+                    "type": "string"
+                  },
+                  "role": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "customer",
+                      "lead",
+                      "partner",
+                      "vendor"
+                    ]
+                  },
+                  "stage": {
+                    "type": "string",
+                    "enum": [
+                      "new",
+                      "active",
+                      "inactive",
+                      "churned"
+                    ]
+                  },
+                  "tags": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "notes": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "cases": {
+              "type": "array",
+              "minItems": 1,
+              "description": "The real cases (renamed). Each request lands in the inbox; the reply is what the people actually sent — stored for comparison, never shown to the agent that works the inbox. Used by the email simulator.",
+              "items": {
+                "type": "object",
+                "required": [
+                  "id",
+                  "request",
+                  "reply"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Unique case id, e.g. \"c1\"."
+                  },
+                  "request": {
+                    "type": "object",
+                    "required": [
+                      "from",
+                      "subject",
+                      "body"
+                    ],
+                    "properties": {
+                      "from": {
+                        "type": "object",
+                        "required": [
+                          "name",
+                          "email"
+                        ],
+                        "properties": {
+                          "name": {
+                            "type": "string",
+                            "minLength": 1,
+                            "description": "Sender's name (renamed)."
+                          },
+                          "email": {
+                            "type": "string",
+                            "description": "Sender's email (renamed) — normally a customer's email."
+                          }
+                        }
+                      },
+                      "subject": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "body": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "The request text (a phone call becomes a short written note)."
+                      },
+                      "received_at": {
+                        "type": "string",
+                        "description": "Ignored — accepted for older packages. Requests are dated within the hour before the load, in case order."
+                      }
+                    }
+                  },
+                  "reply": {
+                    "type": "object",
+                    "required": [
+                      "subject",
+                      "body"
+                    ],
+                    "properties": {
+                      "subject": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "body": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "The reply the people actually sent (or confirmed as correct)."
+                      }
+                    }
+                  },
+                  "notes": {
+                    "type": "string",
+                    "description": "Optional. What was special about the case (not in stock, credit limit, discount …)."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "ticket_id": {
+          "type": "string",
+          "description": "Authorization reference for this call, set by the governing gateway — agents do not set this."
+        }
+      },
+      "required": [
+        "package"
+      ]
+    },
+    "log_activity": {
+      "type": "object",
+      "properties": {
+        "contact_id": {
+          "type": "string",
+          "description": "Contact ID"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "email",
+            "call",
+            "meeting",
+            "note",
+            "purchase"
+          ],
+          "description": "Activity type"
+        },
+        "summary": {
+          "type": "string",
+          "description": "Short summary of the activity"
+        },
+        "detail": {
+          "type": "string",
+          "description": "Additional detail or body text"
+        },
+        "date": {
+          "type": "string",
+          "description": "ISO 8601 date/time (default: now)"
+        },
+        "created_by": {
+          "type": "string",
+          "description": "Name or identifier of who logged this"
+        },
+        "contact_type": {
+          "type": "string",
+          "enum": [
+            "customer",
+            "lead",
+            "partner",
+            "vendor"
+          ],
+          "description": "Required — the contact type this call acts on (for a task without a contact: the type it is for). Checked against the contact's actual stored type; refused if missing or on mismatch."
+        },
+        "ticket_id": {
+          "type": "string",
+          "description": "Authorization reference for this call, set by the governing gateway — agents do not set this."
+        }
+      },
+      "required": [
+        "contact_id",
+        "type",
+        "summary",
+        "contact_type"
+      ]
+    },
+    "restore_contact": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Contact ID"
+        },
+        "revision": {
+          "type": "number",
+          "description": "The contact's current revision — refused if the contact has moved on to a later one since this number was read."
+        },
+        "contact_type": {
+          "type": "string",
+          "enum": [
+            "customer",
+            "lead",
+            "partner",
+            "vendor"
+          ],
+          "description": "Required — the contact type this call acts on (for a task without a contact: the type it is for). Checked against the contact's actual stored type; refused if missing or on mismatch."
+        },
+        "ticket_id": {
+          "type": "string",
+          "description": "Authorization reference for this call, set by the governing gateway — agents do not set this."
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "contact_type"
+      ]
+    },
+    "update_contact": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Contact ID"
+        },
+        "revision": {
+          "type": "number",
+          "description": "The contact's current revision — refused if the contact has moved on to a later one since this number was read."
+        },
+        "name": {
+          "type": "string"
+        },
+        "email": {
+          "type": "string"
+        },
+        "phone": {
+          "type": "string"
+        },
+        "company": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        },
+        "stage": {
+          "type": "string",
+          "enum": [
+            "new",
+            "active",
+            "inactive",
+            "churned"
+          ]
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "notes": {
+          "type": "string"
+        },
+        "contact_type": {
+          "type": "string",
+          "enum": [
+            "customer",
+            "lead",
+            "partner",
+            "vendor"
+          ],
+          "description": "Required — the contact type this call acts on (for a task without a contact: the type it is for). Checked against the contact's actual stored type; refused if missing or on mismatch."
+        },
+        "ticket_id": {
+          "type": "string",
+          "description": "Authorization reference for this call, set by the governing gateway — agents do not set this."
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "contact_type"
+      ]
+    },
+    "update_deal": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Deal ID"
+        },
+        "revision": {
+          "type": "number",
+          "description": "The deal's current revision — refused if the deal has moved on to a later one since this number was read."
+        },
+        "title": {
+          "type": "string"
+        },
+        "value": {
+          "type": "number"
+        },
+        "currency": {
+          "type": "string"
+        },
+        "stage": {
+          "type": "string",
+          "enum": [
+            "lead",
+            "qualified",
+            "proposal",
+            "negotiation",
+            "won",
+            "lost"
+          ]
+        },
+        "expected_close": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "string"
+        },
+        "contact_type": {
+          "type": "string",
+          "enum": [
+            "customer",
+            "lead",
+            "partner",
+            "vendor"
+          ],
+          "description": "Required — the contact type this call acts on (for a task without a contact: the type it is for). Checked against the contact's actual stored type; refused if missing or on mismatch."
+        },
+        "ticket_id": {
+          "type": "string",
+          "description": "Authorization reference for this call, set by the governing gateway — agents do not set this."
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "contact_type"
+      ]
+    }
+  }
+}

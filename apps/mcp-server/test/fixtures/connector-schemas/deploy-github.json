@@ -1,0 +1,123 @@
+{
+  "integration": "deploy-github",
+  "npmPackage": "@humanagencyp/deploy-mcp",
+  "npmVersion": "0.5.1",
+  "tools": {
+    "get_deployment": {
+      "type": "object",
+      "properties": {
+        "repo": {
+          "type": "string",
+          "description": "Repository as owner/name"
+        },
+        "deployment_id": {
+          "type": "number",
+          "description": "Deployment id from list_deployments"
+        }
+      },
+      "required": [
+        "repo",
+        "deployment_id"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "list_deployments": {
+      "type": "object",
+      "properties": {
+        "repo": {
+          "type": "string",
+          "description": "Repository as owner/name"
+        },
+        "environment": {
+          "type": "string",
+          "description": "Filter by environment"
+        },
+        "limit": {
+          "type": "number",
+          "description": "How many to return (default 10)"
+        }
+      },
+      "required": [
+        "repo"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "list_environments": {
+      "type": "object",
+      "properties": {
+        "repo": {
+          "type": "string",
+          "description": "Repository as owner/name"
+        }
+      },
+      "required": [
+        "repo"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "release": {
+      "type": "object",
+      "properties": {
+        "repo": {
+          "type": "string",
+          "description": "Repository as owner/name"
+        },
+        "workflow": {
+          "type": "string",
+          "description": "Pipeline that performs the release, e.g. deploy-website.yml"
+        },
+        "environment": {
+          "type": "string",
+          "description": "Target environment, e.g. production"
+        },
+        "deployment_url": {
+          "type": "string",
+          "description": "Immutable URL of the build to make live, from list_deployments. This is what the human inspects and what the receipt binds."
+        },
+        "commit": {
+          "type": "string",
+          "description": "Source commit this build was produced from (full 40-char sha). THIS is what the receipt binds. The deployment URL identifies the bytes but is assigned after they exist, so a page can never carry it; the source commit is known before the build and is already shown on the released page, which is what lets a reader tie the page to an approval without any account access."
+        },
+        "branch": {
+          "type": "string",
+          "description": "Branch the pipeline is dispatched on (default \"main\"). Nothing is built from it — the release activates deployment_url."
+        },
+        "ticket_id": {
+          "type": "string",
+          "description": "Injected by the gateway after the ticket is issued"
+        }
+      },
+      "required": [
+        "repo",
+        "workflow",
+        "environment",
+        "deployment_url",
+        "commit"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "resolve_ref": {
+      "type": "object",
+      "properties": {
+        "repo": {
+          "type": "string",
+          "description": "Repository as owner/name"
+        },
+        "ref": {
+          "type": "string",
+          "description": "Branch, tag or commit SHA (e.g. \"main\")"
+        }
+      },
+      "required": [
+        "repo",
+        "ref"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  }
+}

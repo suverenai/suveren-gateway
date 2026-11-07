@@ -67,7 +67,7 @@ export function IntegrationsPage() {
     setTimeout(() => setSuccessMsg(''), 5000);
   }, []);
 
-  const grouped = groupIntegrationsForDisplay(entries, simulationOn);
+  const grouped = groupIntegrationsForDisplay(entries, simulationOn === true);
   // Simulation mode off: "In use" / "Not set up". One card per connector, so the counts are the connectors.
   const { inUse, notSetUp, paused } = splitByUse(entries);
   const inUseCards = inUse.length;
@@ -85,7 +85,8 @@ export function IntegrationsPage() {
 
       {successMsg && <div className="alert alert-success">{successMsg}</div>}
 
-      {loading ? (
+      {/* Wait for the mode too: the two modes group the cards differently. */}
+      {loading || simulationOn === null ? (
         <p style={{ color: 'var(--text-tertiary)' }}>Loading connectors...</p>
       ) : mcpServerUp === false ? (
         <div className="status-banner status-banner-error">
