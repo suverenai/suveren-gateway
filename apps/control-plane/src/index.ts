@@ -35,7 +35,7 @@ import express, { type Request, type Response, type NextFunction } from 'express
 import { createProxyMiddleware } from 'http-proxy-middleware';
 import { Vault } from './lib/vault';
 import {
-  groupOfMember, unionScopes, effectiveCredentials, withoutSignIn, resolveGroupClient,
+  groupOfMember, unionScopes, oauthApplies, effectiveCredentials, withoutSignIn, resolveGroupClient,
   groupCredentialName, credentialsToPush, missingScopes, retireMemberSignIns, revokeTokens, type OAuthLike,
 } from './lib/sign-in-group';
 import { ShownSnapshotStore } from './lib/shown-snapshot';
@@ -264,6 +264,8 @@ const oauthRedirectUris = new Map<string, string>();
 // Cache manifests in memory (refreshed on first OAuth request)
 let manifestCache: Array<{
   id: string;
+  simulation?: { field: string; default: string } | null;
+  adapterField?: string;
   oauth: {
     authUrl: string;
     tokenUrl: string;
@@ -275,6 +277,8 @@ let manifestCache: Array<{
     // Shared sign-in (see lib/sign-in-group.ts): connectors declaring the same
     // group id are signed in once, with the union of their scopes.
     signInGroup?: { id: string; name: string };
+    // The sign-in applies only while this data-source option is chosen.
+    forOption?: { mode: string; adapter?: string };
     // Optional liveness probe for access-token integrations that have no
     // refresh grant (e.g. LinkedIn). A lightweight authenticated GET whose
     // 200/401 tells us whether the stored token still works. accountFields
@@ -355,6 +359,11 @@ app.get('/auth/oauth/:integrationId/start', async (req: Request, res: Response) 
     return;
   }
   const oauth = manifest.oauth;
+  // A sign-in scoped to one data-source option (oauth.forOption) is refused while another option is saved.
+  if (!oauthApplies(manifest, vault.getCredential(integrationId))) {
+    res.status(409).json({ error: `Sign-in is not used by the data source chosen for ${integrationId}` });
+    return;
+  }
   // A member of a shared sign-in group signs the WHOLE group in: the union of
   // the members' scopes, one token. The redirect URI stays this connector's own
   // (/auth/oauth/<id>/callback) so no URI has to be added at the provider.
@@ -379,7 +388,7 @@ app.get('/auth/oauth/:integrationId/start', async (req: Request, res: Response) 
     client_id: clientId,
     redirect_uri: redirectUri,
     response_type: 'code',
-    scope: (group ? unionScopes(group) : oauth.scopes).join(' '),
+    scope: (group ? unionScopes(group, id => vault.getCredential(id)) : oauth.scopes).join(' '),
     ...oauth.extraParams,
   });
   res.redirect(`${oauth.authUrl}?${params.toString()}`);
@@ -489,11 +498,11 @@ app.get('/auth/oauth/:integrationId/callback', async (req: Request, res: Respons
 
 // Backward compatibility: redirect old Gmail OAuth URLs to new generic handler
 app.get('/auth/gmail/start', (_req: Request, res: Response) => {
-  res.redirect('/auth/oauth/gmail/start');
+  res.redirect('/auth/oauth/mail/start');
 });
 app.get('/auth/gmail/callback', (req: Request, res: Response) => {
   const qs = new URLSearchParams(req.query as Record<string, string>).toString();
-  res.redirect(`/auth/oauth/gmail/callback${qs ? '?' + qs : ''}`);
+  res.redirect(`/auth/oauth/mail/callback${qs ? '?' + qs : ''}`);
 });
 
 // ─── Protected routes — require X-API-Key ────────────────────────────────
@@ -570,6 +579,8 @@ app.get('/auth/oauth/:integrationId/health', authGuard, async (req: Request, res
   const integrationId = String(req.params.integrationId);
   const manifest = await getOAuthManifest(integrationId);
   if (!manifest?.oauth) { res.json({ status: 'not_configured' }); return; }
+  // Sign-in scoped to a data-source option that is not the saved one: nothing to probe.
+  if (!oauthApplies(manifest, vault.getCredential(integrationId))) { res.json({ status: 'not_configured' }); return; }
   const oauth = manifest.oauth;
   const creds = memberCredentials(manifestCache, integrationId);
   const clientIdKey = oauth.credentialKeys.clientId ?? 'clientId';

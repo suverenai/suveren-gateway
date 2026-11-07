@@ -5,7 +5,7 @@ import type { IntegrationState } from '../contexts/IntegrationStatusContext';
 import { isSimulated, modeLabel, modeNote } from '../lib/simulation';
 import { useSimulationMode } from '../hooks/useSimulationMode';
 import {
-  modeOptions as modeOptionsOf, currentOption, choiceFieldKeys, optionValues, splitFields, pausedTag,
+  modeOptions as modeOptionsOf, currentOption, oauthAppliesTo, choiceFieldKeys, optionValues, splitFields, pausedTag,
   hasNoRealMode, NO_REAL_MODE_LINE,
 } from '../lib/mode-choice';
 import { ObTypeLine, ObFold, ObChev, useFoldAccordion } from './ObjectCard';
@@ -158,7 +158,7 @@ export function IntegrationCard({ manifest, areas, integration, state, onStatusC
       setSecretHints(status.secrets ?? {});
       setCredUpdatedAt(status.updatedAt);
       // Check if OAuth token exists, then probe whether it actually authenticates.
-      if (manifest.oauth) {
+      if (manifest.oauth && oauthAppliesTo(manifest, currentOption(manifest, status.fields))) {
         const connected = status.fieldNames?.includes(manifest.oauth.tokenStorage) ?? false;
         setOauthConnected(connected);
         if (connected) {
@@ -199,8 +199,11 @@ export function IntegrationCard({ manifest, areas, integration, state, onStatusC
 
   // Does this integration require auth at all? OAuth or any non-optional field.
   // CRM/Records have only optional fields → no auth needed, run out of the box.
-  const needsAuth = !!manifest.oauth || manifest.credentials.fields.some(f => !f.optional);
-  const authConnected = manifest.oauth ? oauthConnected : credConfigured;
+  // A sign-in the manifest scopes to one data-source option (oauth.forOption) exists only while that option is
+  // the saved or just-picked one; everything below reads `oauth`, never manifest.oauth.
+  const oauth = oauthAppliesTo(manifest, currentOption(manifest, { ...existingCreds, ...credValues })) ? manifest.oauth : null;
+  const needsAuth = !!oauth || manifest.credentials.fields.some(f => !f.optional);
+  const authConnected = oauth ? oauthConnected : credConfigured;
   // Auth is "satisfied" if none is needed, or the needed auth is present.
   const authSatisfied = !needsAuth || authConnected;
 
@@ -213,7 +216,7 @@ export function IntegrationCard({ manifest, areas, integration, state, onStatusC
     // needs credentials / an OAuth token can't do anything, so show the setup
     // it needs instead of a misleading green "Running".
     if (!authSatisfied) {
-      return manifest.oauth && credConfigured && !oauthConnected ? 'needs-oauth' : 'unconfigured';
+      return oauth && credConfigured && !oauthConnected ? 'needs-oauth' : 'unconfigured';
     }
     if (integration?.running) return 'running';
     // Not running, auth fine — but if there's config to (optionally) enter and
@@ -253,7 +256,7 @@ export function IntegrationCard({ manifest, areas, integration, state, onStatusC
       await reloadExistingCreds();
       // Auto-start: if this integration doesn't need OAuth, activating now
       // skips the dead state where credentials are saved but nothing runs.
-      if (!manifest.oauth) {
+      if (!oauth) {
         onSuccess(`${manifest.name} credentials saved — starting connector...`);
         await activate();
       } else {
@@ -302,6 +305,11 @@ export function IntegrationCard({ manifest, areas, integration, state, onStatusC
     setExistingCreds(current);
     setSecretHints(status.secrets ?? {});
     setCredUpdatedAt(status.updatedAt);
+    // The saved option may now use (or no longer use) a sign-in that already exists (e.g. the shared Google one).
+    if (manifest.oauth) {
+      setOauthConnected(oauthAppliesTo(manifest, currentOption(manifest, current))
+        && (status.fieldNames?.includes(manifest.oauth.tokenStorage) ?? false));
+    }
   };
 
   // Save new credentials from the "Change credentials" edit panel (running
@@ -316,7 +324,7 @@ export function IntegrationCard({ manifest, areas, integration, state, onStatusC
       setCredValues({});
       setCredConfigured(true);
       await reloadExistingCreds();
-      if (manifest.oauth) {
+      if (oauth) {
         onSuccess(`${manifest.name} credentials saved — now click Connect.`);
       } else {
         setEditingCreds(false);
@@ -335,7 +343,7 @@ export function IntegrationCard({ manifest, areas, integration, state, onStatusC
     const poll = setInterval(async () => {
       try {
         const cred = await spClient.getCredential(manifest.id);
-        if (cred.configured && manifest.oauth && cred.fieldNames?.includes(manifest.oauth.tokenStorage)) {
+        if (cred.configured && oauth && cred.fieldNames?.includes(oauth.tokenStorage)) {
           setOauthConnected(true);
           setEditingCreds(false);
           setAuthHealth(null);
@@ -380,7 +388,7 @@ export function IntegrationCard({ manifest, areas, integration, state, onStatusC
 
   const stoppedDisplay = stoppedIntegrationDisplay(integration);
   // needsAuth / authConnected computed above (needed by cardState).
-  const authFailed = manifest.oauth && oauthConnected && authHealth?.status === 'failed';
+  const authFailed = oauth && oauthConnected && authHealth?.status === 'failed';
 
   // Setup guides hardcode a redirect URI (e.g. the Docker :7400). Rewrite it to
   // THIS gateway's actual origin so npm/dev users register the correct URI.
@@ -402,19 +410,19 @@ export function IntegrationCard({ manifest, areas, integration, state, onStatusC
     authFailed: !!authFailed,
     modeNote: note,
     requiredLabels: manifest.credentials.fields.filter(f => !f.optional).map(f => f.label),
-    oauth: !!manifest.oauth,
-    noFields: manifest.credentials.fields.length === 0 && !manifest.oauth,
+    oauth: !!oauth,
+    noFields: manifest.credentials.fields.length === 0 && !oauth,
     setupHint: manifest.setupHint,
     reads: hasReadAge ? readsPhrase(readAge, readAgeLabel) : null,
     stopped: stoppedKind,
     pausedBy: integration?.paused,
   });
   // Closed by default only when it is healthy; a card that needs something opens (until the person chooses).
-  const activatableNow = authSatisfied && !manifest.oauth && manifest.credentials.fields.every(f => f.optional);
+  const activatableNow = authSatisfied && !oauth && manifest.credentials.fields.every(f => f.optional);
   const open = userOpen ?? (credsLoaded && startsOpen(cardState, !!authFailed, activatableNow));
 
   const isPath = (v: string) => v.includes('/') || v.includes('\\');
-  const canEditCreds = manifest.credentials.fields.length > 0 || !!manifest.oauth;
+  const canEditCreds = manifest.credentials.fields.length > 0 || !!oauth;
   const guide = manifest.setupGuide && manifest.setupGuide.length > 0 && (cardState !== 'running' || authFailed)
     ? manifest.setupGuide : null;
   const needsSetup = cardState === 'unconfigured' || cardState === 'needs-oauth';
@@ -550,7 +558,7 @@ export function IntegrationCard({ manifest, areas, integration, state, onStatusC
                 <dd>
                   {!needsAuth ? 'No auth'
                     : authFailed ? 'Auth failed'
-                    : manifest.oauth && oauthConnected && authHealth?.account ? <>Connected as <b>{authHealth.account}</b></>
+                    : oauth && oauthConnected && authHealth?.account ? <>Connected as <b>{authHealth.account}</b></>
                     : 'Auth OK'}
                 </dd>
                 {manifest.credentials.fields.map(f => {
@@ -590,14 +598,14 @@ export function IntegrationCard({ manifest, areas, integration, state, onStatusC
               <>
                 <dt>Status</dt>
                 <dd>{cardState === 'starting' ? 'Starting…' : status.text}</dd>
-                {manifest.oauth && cardState === 'unconfigured' && !credsOnFile && (
+                {oauth && cardState === 'unconfigured' && !credsOnFile && (
                   <><dt>Step</dt><dd className="ob-plain">1 of 2 — enter credentials, then connect your account</dd></>
                 )}
                 {cardState === 'needs-oauth' && (
                   <><dt>Step</dt><dd className="ob-plain">{'✓'} Step 1 done — credentials saved. Step 2: connect your {manifest.name} account to authorize access.</dd></>
                 )}
                 {cardState === 'ready' && !integration && (
-                  <><dt>Credentials</dt><dd className="ob-plain">{'✓'} {manifest.oauth ? `${manifest.name} account connected` : 'Credentials configured'}</dd></>
+                  <><dt>Credentials</dt><dd className="ob-plain">{'✓'} {oauth ? `${manifest.name} account connected` : 'Credentials configured'}</dd></>
                 )}
                 {cardState === 'ready' && integration && !integration.running && integration.error && (
                   <><dt>Error</dt><dd className="ob-plain">{integration.error}</dd></>
@@ -608,7 +616,7 @@ export function IntegrationCard({ manifest, areas, integration, state, onStatusC
         </section>
 
         {/* Connected account. Captured at OAuth connect; unknown for connections made before account capture. */}
-        {manifest.oauth && oauthConnected && !authHealth?.account && (
+        {oauth && oauthConnected && !authHealth?.account && (
           <p className="ob-lbl ob-gap">Account not recorded — reconnect to capture which account is used</p>
         )}
 
@@ -665,7 +673,7 @@ export function IntegrationCard({ manifest, areas, integration, state, onStatusC
             {credsOnFile && manifest.credentials.fields.some(f => f.type === 'password') && (
               <p className="ob-lbl">
                 Leaving a secret blank keeps the stored one — editing other fields can never
-                silently wipe it.{manifest.oauth ? ' Save, then Connect to re-link the account.' : ''}
+                silently wipe it.{oauth ? ' Save, then Connect to re-link the account.' : ''}
               </p>
             )}
             {renderChoice(true)}
@@ -677,7 +685,7 @@ export function IntegrationCard({ manifest, areas, integration, state, onStatusC
                   {saving ? 'Saving…' : 'Save'}
                 </button>
               )}
-              {manifest.oauth && (
+              {oauth && (
                 <button className="ob-btn" onClick={startOAuth}>
                   Connect {manifest.name}
                 </button>
@@ -777,7 +785,7 @@ export function IntegrationCard({ manifest, areas, integration, state, onStatusC
                   Existing values are encrypted in the vault and not shown. Enter new values below to replace them, or{' '}
                   <button
                     className="ob-link"
-                    onClick={() => { setCredConfigured(true); if (manifest.oauth) setOauthConnected(true); }}
+                    onClick={() => { setCredConfigured(true); if (oauth) setOauthConnected(true); }}
                   >
                     keep existing
                   </button>.
@@ -824,12 +832,12 @@ export function IntegrationCard({ manifest, areas, integration, state, onStatusC
             <button className="ob-btn is-solid" onClick={activate} disabled={activating}>
               {activating ? 'Starting...' : `Start ${manifest.name} Connector`}
             </button>
-            {!manifest.oauth && (
+            {!oauth && (
               <button className="ob-btn" onClick={() => setCredConfigured(false)}>
                 Update Credentials
               </button>
             )}
-            {manifest.oauth && (
+            {oauth && (
               <button className="ob-btn" onClick={() => { setCredConfigured(false); setOauthConnected(false); }}>
                 Change Credentials
               </button>
@@ -872,7 +880,7 @@ export function IntegrationCard({ manifest, areas, integration, state, onStatusC
           <dl className="ob-kv">
             <dt>What</dt><dd className="ob-plain">{manifest.description}</dd>
             {manifest.profile && (<><dt>Profile</dt><dd className="ob-plain">{areaProfilesOf(manifest).join(', ')}</dd></>)}
-            {manifest.oauth && (<><dt>Scopes</dt><dd className="ob-plain">{manifest.oauth.scopes?.join(', ') || '—'}</dd></>)}
+            {oauth && (<><dt>Scopes</dt><dd className="ob-plain">{oauth.scopes?.join(', ') || '—'}</dd></>)}
             {integration && (<><dt>Tools</dt><dd className="ob-plain">{integration.toolCount} gated</dd></>)}
           </dl>
         </ObFold>

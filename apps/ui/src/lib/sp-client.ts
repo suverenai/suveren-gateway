@@ -475,6 +475,8 @@ export interface IntegrationManifest {
     extraParams?: Record<string, string>;
     /** Connectors with the same group id share ONE sign-in (declared in the manifest). */
     signInGroup?: { id: string; name: string };
+    /** The sign-in applies only while this data-source option is chosen. */
+    forOption?: { mode: string; adapter?: string };
   } | null;
   /** Per-tool gating. Typed only where the UI reads it — `actionLabel` names
    *  what a tool DOES, in words, for the receipts list; `profile` is area

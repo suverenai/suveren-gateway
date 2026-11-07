@@ -1,7 +1,7 @@
 {
   "integration": "mail",
   "npmPackage": "@humanagencyp/email-mcp",
-  "npmVersion": "0.4.0",
+  "npmVersion": "0.5.0",
   "tools": {
     "clear_simulation": {
       "type": "object",
@@ -359,7 +359,7 @@
         },
         "in_reply_to": {
           "type": "string",
-          "description": "ID of the message this replies to (optional) — must exist"
+          "description": "ID of the message this replies to (optional) — must exist. When set, subject must be \"Re: \" + the original subject; the connector adds nothing itself."
         },
         "attachments": {
           "type": "array",

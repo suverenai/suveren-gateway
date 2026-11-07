@@ -56,11 +56,11 @@ describe('withoutBlockedArgs', () => {
   });
 });
 
-describe('the gmail manifest', () => {
+describe('a third-party Gmail connector manifest (test/fixtures/gmail.json — no longer shipped)', () => {
   it('blocks `raw` on both tools that can transmit', async () => {
     // create_draft matters as much as send_message: a draft built from `raw`
     // has recipients nobody checked, and send_draft will happily send it.
-    const manifest = await import('../../../content/integrations/gmail.json');
+    const manifest = await import('./fixtures/gmail.json');
     const overrides = (manifest.default as { toolGating: { overrides: Record<string, { blockedArgs?: string[] }> } })
       .toolGating.overrides;
 

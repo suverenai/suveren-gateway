@@ -36,6 +36,7 @@ import { agentAccess, bindRefusal, resolveAgentToken, resolveBindHost } from '..
 import { readPairing } from '../src/lib/as-pairing';
 import { loadProfiles } from '../src/lib/profile-loader';
 import { loadManifests, getAllManifests, getManifest, getSignInGroups } from '../src/lib/manifest-loader';
+import { planReplacement } from '../src/lib/connector-replacement';
 import { buildInternalPreview } from '../src/lib/preview';
 import { buildRequestContext } from '../src/lib/request-context';
 import { resolveAttachmentPreview } from '../src/lib/document-source';
@@ -601,6 +602,35 @@ app.post('/internal/add-integration', internalOnly, async (req: Request, res: Re
   } catch (err) {
     console.error('[Suveren MCP] Error adding integration:', err);
     res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+/**
+ * A retired connector replaced by another (manifest `replaces`). Called by the
+ * control plane at sign-in, after it copied the credentials. Only the pair the
+ * replacement's own manifest names is accepted, and only while the old id is no
+ * longer a manifest of its own.
+ */
+app.post('/internal/replace-integration', internalOnly, async (req: Request, res: Response) => {
+  try {
+    const { from, to, enableTarget } = req.body as { from?: string; to?: string; enableTarget?: boolean };
+    const manifest = typeof to === 'string' ? getManifest(to) : undefined;
+    if (typeof from !== 'string' || !manifest || !manifest.replaces?.some(r => r.id === from) || getManifest(from)) {
+      res.status(400).json({ error: 'Not a declared replacement' });
+      return;
+    }
+    const plan = planReplacement(integrationRegistry.getAll(), manifest, from, enableTarget === true);
+    if (plan.removeOld) {
+      await integrationManager.stopIntegration(from);
+      integrationRegistry.remove(from);
+    }
+    if (plan.targetAction === 'added' && plan.add) integrationRegistry.add(plan.add);
+    if (plan.targetAction === 'enabled') integrationRegistry.update(manifest.id, { enabled: true });
+    console.error(`[Suveren MCP] ${from} replaced by ${to}: old ${plan.removeOld ? 'removed' : 'absent'}, new ${plan.targetAction}`);
+    res.json({ ok: true, removedOld: plan.removeOld, targetAction: plan.targetAction });
+  } catch (err) {
+    console.error('[Suveren MCP] replace-integration failed:', err);
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Replace failed' });
   }
 });
 

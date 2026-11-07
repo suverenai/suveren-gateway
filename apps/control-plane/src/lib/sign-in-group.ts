@@ -26,11 +26,16 @@ export interface OAuthLike {
   /** Provider's token revocation endpoint (RFC 7009). Optional. */
   revokeUrl?: string;
   signInGroup?: { id: string; name: string };
+  /** The sign-in applies only while this data-source option is chosen (see manifest-loader). */
+  forOption?: { mode: string; adapter?: string };
 }
 
 export interface ManifestLike {
   id: string;
   oauth?: OAuthLike | null;
+  /** The mode choice `oauth.forOption` refers to. */
+  simulation?: { field: string; default: string } | null;
+  adapterField?: string;
 }
 
 export interface SignInGroup {
@@ -65,10 +70,40 @@ export function groupOfMember(manifests: unknown, integrationId: string): SignIn
   return gid ? getGroup(manifests, gid) : null;
 }
 
-/** What ONE sign-in requests: every member's scopes, deduplicated, first-seen order. */
-export function unionScopes(group: SignInGroup): string[] {
+const norm = (v: string | undefined) => (v ?? '').trim().toLowerCase();
+
+/**
+ * Does this connector's sign-in apply with these saved settings? Always, unless
+ * the manifest scopes it to one data-source option (`oauth.forOption`): then
+ * only while the saved mode (and adapter) are that option. Mode unset means the
+ * manifest's default, exactly as the card reads it.
+ */
+export function oauthApplies(m: ManifestLike, own: Record<string, string> | null | undefined): boolean {
+  const f = m.oauth?.forOption;
+  if (!m.oauth) return false;
+  if (!f) return true;
+  if (!m.simulation) return false;
+  const mode = norm(own?.[m.simulation.field]) || norm(m.simulation.default);
+  if (mode !== norm(f.mode)) return false;
+  if (f.adapter === undefined) return true;
+  return !!m.adapterField && norm(own?.[m.adapterField]) === norm(f.adapter);
+}
+
+/**
+ * What ONE sign-in requests: the scopes of every member whose sign-in applies,
+ * deduplicated, first-seen order. A member scoped to an option that is not
+ * chosen (`ownOf` gives its saved settings) asks for nothing - Calendar alone
+ * never requests Gmail access just because Email could use it.
+ */
+export function unionScopes(
+  group: SignInGroup,
+  ownOf: (memberId: string) => Record<string, string> | null = () => null,
+): string[] {
   const out: string[] = [];
-  for (const m of group.members) for (const s of m.oauth?.scopes ?? []) if (!out.includes(s)) out.push(s);
+  for (const m of group.members) {
+    if (!oauthApplies(m, ownOf(m.id))) continue;
+    for (const s of m.oauth?.scopes ?? []) if (!out.includes(s)) out.push(s);
+  }
   return out;
 }
 

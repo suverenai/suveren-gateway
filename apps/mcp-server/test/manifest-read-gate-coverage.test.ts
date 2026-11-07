@@ -202,8 +202,8 @@ describe('real manifests — read-gate coverage (D6)', () => {
     });
   }
 
-  it('gmail.json (email): list_messages/get_message/list_drafts/get_draft/get_attachment all reference read_access — the fixed defect', () => {
-    const manifest = JSON.parse(readFileSync(join(MANIFESTS_DIR, 'gmail.json'), 'utf8')) as { toolGating: { overrides: Record<string, { boundField?: string; requiredValue?: string }> } };
+  it('fixtures/gmail.json (a Gmail connector\'s shape): list_messages/get_message/list_drafts/get_draft/get_attachment all reference read_access — the fixed defect', () => {
+    const manifest = JSON.parse(readFileSync(join(import.meta.dirname, 'fixtures', 'gmail.json'), 'utf8')) as { toolGating: { overrides: Record<string, { boundField?: string; requiredValue?: string }> } };
     for (const tool of ['list_messages', 'get_message', 'list_drafts', 'get_draft', 'get_attachment']) {
       expect(manifest.toolGating.overrides[tool].boundField, tool).toBe('read_access');
       expect(manifest.toolGating.overrides[tool].requiredValue, tool).toBe('unlimited');

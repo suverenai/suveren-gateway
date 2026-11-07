@@ -8,7 +8,7 @@ import { describe, it, expect } from 'vitest';
 import {
   groupCredentialName, parseGroupCredentialName, groupOfMember, unionScopes, effectiveCredentials,
   withoutSignIn, resolveGroupClient, credentialsToPush, normalizeScope, missingScopes, retireMemberSignIns,
-  changesGroupClient, revokeTokens, type OAuthLike,
+  changesGroupClient, revokeTokens, oauthApplies, type OAuthLike,
 } from '../lib/sign-in-group';
 
 const oauth = (scopes: string[], group = { id: 'google', name: 'Google' }): OAuthLike => ({
@@ -208,5 +208,41 @@ describe('revokeTokens (provider endpoint stood in for by a fetch double)', () =
     const out = await revokeTokens(undefined, [{ target: 'g', token: 'T' }], ok);
     expect(out[0].ok).toBe(false);
     expect(out[0].error).toMatch(/revokeUrl/);
+  });
+});
+
+describe('oauth.forOption — a sign-in used by one data-source option only', () => {
+  const mail = {
+    id: 'mail',
+    simulation: { field: 'mode', default: 'simulation' },
+    adapterField: 'liveAdapter',
+    oauth: { ...oauth(['openid', 'mail.modify']), forOption: { mode: 'live', adapter: 'gmail' } },
+  };
+  const calendar = { id: 'calendar', oauth: oauth(['openid', 'cal.events']) };
+  const list = [mail, calendar];
+
+  it('applies only while that option is saved; unset mode means the manifest default', () => {
+    expect(oauthApplies(mail, null)).toBe(false);
+    expect(oauthApplies(mail, {})).toBe(false);
+    expect(oauthApplies(mail, { mode: 'simulation' })).toBe(false);
+    expect(oauthApplies(mail, { mode: 'live' })).toBe(false);
+    expect(oauthApplies(mail, { mode: 'live', liveAdapter: 'other' })).toBe(false);
+    expect(oauthApplies(mail, { mode: ' Live ', liveAdapter: 'GMAIL' })).toBe(true);
+  });
+  it('a connector without forOption always applies; without oauth never', () => {
+    expect(oauthApplies(calendar, null)).toBe(true);
+    expect(oauthApplies({ id: 'crm', oauth: null }, {})).toBe(false);
+  });
+  it('the group asks only for the scopes of members whose option is on: Calendar alone never requests Gmail access', () => {
+    const g = groupOfMember(list, 'calendar')!;
+    expect(unionScopes(g, () => ({ mode: 'simulation' }))).toEqual(['openid', 'cal.events']);
+    expect(unionScopes(g)).toEqual(['openid', 'cal.events']);
+    expect(unionScopes(g, id => (id === 'mail' ? { mode: 'live', liveAdapter: 'gmail' } : null)))
+      .toEqual(['openid', 'mail.modify', 'cal.events']);
+  });
+  it('one shared token serves both: Mail runs on the group token once Gmail is chosen', () => {
+    const group = { clientId: 'g', clientSecret: 's', refreshToken: 'T' };
+    const own = { mode: 'live', liveAdapter: 'gmail' };
+    expect(effectiveCredentials(own, group, mail.oauth)).toMatchObject({ mode: 'live', liveAdapter: 'gmail', refreshToken: 'T' });
   });
 });

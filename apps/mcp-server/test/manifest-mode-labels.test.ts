@@ -173,9 +173,10 @@ describe('bundled manifests — content/integrations', () => {
     expect(crm.npmVersion.localeCompare('1.6.0', undefined, { numeric: true })).toBeGreaterThanOrEqual(0);
   });
 
-  it('mail.json: simulation only — "Test mailbox"', () => {
+  it('mail.json: "Test mailbox" or "Gmail" (live, adapter gmail)', () => {
     const mail = JSON.parse(readFileSync(join(MANIFESTS_DIR, 'mail.json'), 'utf8'));
-    expect(mail.modeLabels).toEqual({ simulation: 'Test mailbox' });
+    expect(mail.modeLabels).toEqual({ simulation: 'Test mailbox', live: { gmail: 'Gmail' } });
+    expect(mail.adapterField).toBe('liveAdapter');
   });
 });
 

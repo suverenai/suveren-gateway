@@ -96,17 +96,17 @@ describe('loadManifests', () => {
 });
 
 describe('shipped manifests', () => {
-  it('gmail and calendar declare Google\'s revocation endpoint', () => {
+  it('mail and calendar declare Google\'s revocation endpoint', () => {
     loadManifests(SHIPPED);
-    expect(getManifest('gmail')!.oauth!.revokeUrl).toBe('https://oauth2.googleapis.com/revoke');
+    expect(getManifest('mail')!.oauth!.revokeUrl).toBe('https://oauth2.googleapis.com/revoke');
     expect(getManifest('calendar')!.oauth!.revokeUrl).toBe('https://oauth2.googleapis.com/revoke');
   });
-  it('gmail and calendar declare the one Google sign-in; loading them yields the union of scopes', () => {
+  it('mail and calendar declare the one Google sign-in; loading them yields the union of scopes', () => {
     loadManifests(SHIPPED);
     const g = getSignInGroups().find(x => x.id === 'google');
     expect(g?.name).toBe('Google');
-    expect(g?.members).toEqual(expect.arrayContaining(['gmail', 'calendar']));
-    const scopes = [...(getManifest('gmail')!.oauth!.scopes), ...(getManifest('calendar')!.oauth!.scopes)];
+    expect(g?.members).toEqual(expect.arrayContaining(['mail', 'calendar']));
+    const scopes = [...(getManifest('mail')!.oauth!.scopes), ...(getManifest('calendar')!.oauth!.scopes)];
     expect(new Set(g!.scopes)).toEqual(new Set(scopes));
     expect(g!.scopes.length).toBe(new Set(scopes).size);
   });
@@ -115,6 +115,6 @@ describe('shipped manifests', () => {
     const declared = Object.entries(index.integrations)
       .filter(([, f]) => JSON.parse(readFileSync(join(SHIPPED, f), 'utf-8')).oauth?.signInGroup)
       .map(([id]) => id).sort();
-    expect(declared).toEqual(['calendar', 'gmail']);
+    expect(declared).toEqual(['calendar', 'mail']);
   });
 });

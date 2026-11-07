@@ -61,6 +61,14 @@ export interface ManifestOAuthConfig {
    * agree on, and docs/development.md ("Shared sign-in groups").
    */
   signInGroup?: { id: string; name: string };
+  /**
+   * Optional: this sign-in applies ONLY while one data-source option is chosen
+   * (e.g. Email signs in with Google only for its Gmail option, never for the
+   * test mailbox). `mode` is a key of `modeLabels`; `adapter` is required when
+   * that mode is adapter-keyed and names one of its adapters. Without it the
+   * sign-in always applies. See `invalidOAuthForOptionReason`.
+   */
+  forOption?: { mode: string; adapter?: string };
 }
 
 /**
@@ -85,6 +93,15 @@ export interface ManifestContextDiscovery {
   /** Optional extras surfaced to the wizard UI for each option (e.g. access role, timezone). */
   extraFields?: Record<string, string>;
 }
+
+/**
+ * This connector takes over a connector that is no longer offered. On the
+ * next sign-in the gateway moves what an install had for `id` (its credentials,
+ * its place in the registry, its read window) to this connector and applies `set`
+ * to the credential fields (e.g. choosing the data source the old connector
+ * stood for). See docs/development.md ("Replacing a connector").
+ */
+export interface ManifestReplaces { id: string; set?: Record<string, string> }
 
 export interface ModeOption { label?: string; explanation?: string; fields?: string[] }
 
@@ -116,6 +133,8 @@ export interface IntegrationManifest {
     envMapping: Record<string, string>;
   };
   oauth: ManifestOAuthConfig | null;
+  /** Connectors this one replaces (see `ManifestReplaces`). */
+  replaces?: ManifestReplaces[];
   /**
    * The connector CAN answer from a simulated system: `field` is the credential
    * field holding the mode, `default` the mode when it is unset. Two consumers:
@@ -1483,6 +1502,67 @@ export function invalidModeOptionsReason(
   return null;
 }
 
+/**
+ * Returns a refusal reason if `oauth.forOption` (if any) does not name an option
+ * of this manifest's own mode choice: the manifest needs `simulation` and
+ * `modeLabels`, the mode must exist there, and the adapter is given exactly when
+ * that mode is adapter-keyed.
+ */
+export function invalidOAuthForOptionReason(
+  manifest: Pick<IntegrationManifest, 'oauth' | 'simulation' | 'modeLabels'>,
+): string | null {
+  const f = manifest.oauth?.forOption;
+  if (f === undefined) return null;
+  if (f === null || typeof f !== 'object' || Array.isArray(f)) return 'oauth.forOption must be an object { mode, adapter? }';
+  const extra = Object.keys(f).find(k => k !== 'mode' && k !== 'adapter');
+  if (extra) return `oauth.forOption has unknown key "${extra}"`;
+  if (typeof f.mode !== 'string' || f.mode.length === 0) return 'oauth.forOption.mode must be a non-empty string';
+  if (f.adapter !== undefined && (typeof f.adapter !== 'string' || f.adapter.length === 0)) {
+    return 'oauth.forOption.adapter must be a non-empty string';
+  }
+  if (!manifest.simulation || !manifest.modeLabels) return 'oauth.forOption needs a mode choice ("simulation" marker and modeLabels)';
+  const label = manifest.modeLabels[f.mode];
+  if (label === undefined) return `oauth.forOption.mode "${f.mode}" has no modeLabels entry`;
+  if (typeof label === 'string') {
+    return f.adapter === undefined ? null : `oauth.forOption.adapter is not allowed: mode "${f.mode}" has no adapters`;
+  }
+  if (f.adapter === undefined) return `oauth.forOption.adapter is required: mode "${f.mode}" is keyed by adapter`;
+  return f.adapter in label ? null : `oauth.forOption.adapter "${f.adapter}" has no modeLabels entry under "${f.mode}"`;
+}
+
+/**
+ * Returns a refusal reason if `manifest.replaces` (if any) is malformed: a
+ * non-empty list of `{ id, set? }`, ids are slugs other than the manifest's own,
+ * and `set` writes only declared credential fields with string values.
+ */
+export function invalidReplacesReason(
+  manifest: Pick<IntegrationManifest, 'id' | 'replaces' | 'credentials'>,
+): string | null {
+  const r = manifest.replaces;
+  if (r === undefined) return null;
+  if (!Array.isArray(r) || r.length === 0) return 'replaces must be a non-empty list of { id, set? }';
+  const fieldKeys = new Set(manifest.credentials?.fields?.map(f => f.key) ?? []);
+  const seen = new Set<string>();
+  for (const [i, e] of r.entries()) {
+    const at = `replaces[${i}]`;
+    if (e === null || typeof e !== 'object' || Array.isArray(e)) return `${at} must be an object { id, set? }`;
+    const extra = Object.keys(e).find(k => k !== 'id' && k !== 'set');
+    if (extra) return `${at} has unknown key "${extra}"`;
+    if (typeof e.id !== 'string' || !SIGN_IN_GROUP_ID.test(e.id)) return `${at}.id must be a connector id (lowercase letters, digits, "-")`;
+    if (e.id === manifest.id) return `${at}.id must not be the connector's own id`;
+    if (seen.has(e.id)) return `${at}.id "${e.id}" is listed twice`;
+    seen.add(e.id);
+    if (e.set !== undefined) {
+      if (e.set === null || typeof e.set !== 'object' || Array.isArray(e.set)) return `${at}.set must be an object of credential values`;
+      for (const [k, v] of Object.entries(e.set)) {
+        if (!fieldKeys.has(k)) return `${at}.set names "${k}", which is not a declared credential field`;
+        if (typeof v !== 'string') return `${at}.set.${k} must be a string`;
+      }
+    }
+  }
+  return null;
+}
+
 // ─── Shared sign-in groups ──────────────────────────────────────────────────
 
 const SIGN_IN_GROUP_ID = /^[a-z][a-z0-9-]*$/;
@@ -1680,6 +1760,16 @@ export function loadManifests(integrationsDir?: string): number {
         ?? invalidModeOptionsReason(manifest);
       if (modeLabelsReason) {
         console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${modeLabelsReason}`);
+        continue;
+      }
+      const forOptionReason = invalidOAuthForOptionReason(manifest);
+      if (forOptionReason) {
+        console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${forOptionReason}`);
+        continue;
+      }
+      const replacesReason = invalidReplacesReason(manifest);
+      if (replacesReason) {
+        console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${replacesReason}`);
         continue;
       }
       const groupReason = invalidSignInGroupReason(manifest);

@@ -87,7 +87,7 @@ By default, the gateway connects to `https://www.suveren.ai`. Just run `pnpm dev
 
 ## Shared sign-in groups
 
-Connectors that are the same account at the same provider (Gmail and Google Calendar are one Google account) declare it explicitly in their manifest:
+Connectors that are the same account at the same provider (Email's Gmail option and Google Calendar are one Google account) declare it explicitly in their manifest:
 
 ```json
 "oauth": { "signInGroup": { "id": "google", "name": "Google" }, "authUrl": "...", ... }
@@ -108,13 +108,43 @@ Behaviour (control plane, `lib/sign-in-group.ts`):
 
 Hand test (needs a person in a browser; no automated test covers a real Google sign-in):
 
-1. Upgrade an install that has Gmail and Calendar signed in separately: both still show connected and work, with no sign-in.
-2. Start a sign-in from Gmail: Google's consent screen lists Gmail AND Calendar permissions; after consent both connectors run and show the same account.
+1. Upgrade an install that has Email (Gmail option) and Calendar signed in separately: both still show connected and work, with no sign-in.
+2. Start a sign-in from Email (Gmail option): Google's consent screen lists Gmail AND Calendar permissions; after consent both connectors run and show the same account.
 3. Restart the gateway: both come back signed in. After step 2 the old per-connector tokens are gone from the vault (only the group token remains).
 4. Disconnect: both stop, both show "not connected", the response says `revoked: true`, and the gateway no longer appears under the Google account's third-party access; signing in again needs no client id/secret.
 4b. Untick Calendar permissions on Google's consent screen when signing in: Gmail shows ok, Calendar shows "reconnect needed" with the missing scope.
 4c. Change the group's client id: a dry run says it signs out; after saving, both show "not connected".
 5. Fresh install: enter the Google client settings once (`sign-in:google`), sign in once, both connectors work.
+
+## Sign-in for one data source only (`oauth.forOption`)
+
+A connector that offers a choice of data source (`modeLabels`/`modeOptions`, e.g. Email: Test mailbox or Gmail) may need a sign-in for only one of them:
+
+```json
+"oauth": { "forOption": { "mode": "live", "adapter": "gmail" }, "signInGroup": { "id": "google", "name": "Google" }, ... }
+```
+
+`forOption` names an option of the manifest's own choice: `mode` is a key of `modeLabels`; `adapter` is required exactly when that mode is adapter-keyed, and must be one of its adapters. `manifest-loader.ts` (`invalidOAuthForOptionReason`) refuses the manifest otherwise. Without `forOption` the sign-in always applies.
+
+- **Card** (`IntegrationCard.tsx`, `oauthAppliesTo` in `lib/mode-choice.ts`): the card reads the saved settings plus what is being edited. "Sign in" (and Connected / Scopes / the OAuth states) exist only while the named option is in force; under the others the card is an ordinary one with no sign-in.
+- **Control plane** (`lib/sign-in-group.ts`, `oauthApplies`): `/auth/oauth/<id>/start` answers 409 while another option is saved; `/health` answers `not_configured`; the group's requested scopes (`unionScopes`) include a member's scopes only while its option is on, so Calendar alone never asks for Gmail access. Choosing Gmail later on a group token without Gmail scopes shows "reconnect needed" (scope coverage, above).
+- **Start env.** The token stays out of the connector's required env under every other option: `activateIntegration` (and `configFromManifest` in the MCP server) treat `oauth.tokenStorage` as optional when `forOption` is set.
+
+## Replacing a connector (`replaces`)
+
+When a connector is no longer offered and another one takes its place, the new manifest says so:
+
+```json
+"replaces": [{ "id": "gmail", "set": { "mode": "live", "liveAdapter": "gmail" } }]
+```
+
+`set` writes only declared credential fields. At the next sign-in (vault open, BEFORE credentials are pushed) the control plane (`lib/connector-replacement.ts`) moves an install over, in this order, so a failure never loses the old setup:
+
+1. Copies the old vault entry's keys the new connector knows (its fields, env-mapped keys, OAuth client/token keys, `_oauth*` metadata) into the new connector's entry, then applies `set`. The old entry is untouched.
+2. Asks the MCP server (`POST /internal/replace-integration`, only for a pair the new manifest declares, only while the old id is no longer a manifest) to swap the registry entry (`connector-replacement.ts` in the MCP server): old enabled -> old removed, new registered and enabled with the old local read window; new already registered -> kept as it is, only switched on; old disabled or no credentials existed -> only the old entry goes.
+3. Only if both worked and the copy reads back equal: deletes the old vault entry.
+
+A failure (MCP server unreachable, ...) is logged without any value and repeated at the next sign-in; the old entry is still there. A second run finds nothing to do. Mandates are per profile (area), not per connector, so they stay valid. Pending proposals naming the old connector's tools (`gmail__...`) do not carry over.
 
 ## Connector manifests — pinned versions
 

@@ -79,7 +79,7 @@ describe('shipped manifests: every argument of a sealed tool is classified', () 
 
   it('audits the tools it is supposed to (guards against a silently empty audit)', () => {
     const tools = new Set(rows.map(r => `${r.connector}.${r.tool}`));
-    for (const t of ['gmail.send_message', 'mail.send_message', 'linkedin.create_post', 'deploy-github.release']) {
+    for (const t of ['mail.send_message', 'linkedin.create_post', 'deploy-github.release']) {
       expect(tools.has(t), `${t} should be audited`).toBe(true);
     }
   });
@@ -94,10 +94,6 @@ describe('shipped manifests: every argument of a sealed tool is classified', () 
   // connector adds a subject + quote of its own), bcc (hidden recipients), includeBodyHtml (format),
   // send_draft.id (a draft is not bound). Only unclassified-by-version findings remain below.
   const KNOWN_REFUSED = [
-    'gmail.create_draft[cc]',                // email@0.4 only (binds the body only)
-    'gmail.create_draft[subject]',           // email@0.4 only
-    'gmail.send_message[cc]',                // email@0.4 only
-    'gmail.send_message[subject]',           // email@0.4 only
     'linkedin.create_article_post[articleUrl]',   // publish@0.4-0.7 only (they bind the text only); bound from publish@0.8
     'linkedin.create_article_post[description]',  // publish@0.4-0.7 only
     'linkedin.create_article_post[title]',        // publish@0.4-0.7 only
