@@ -393,7 +393,7 @@ function denyRead(
  * touch a call site here. Never throws: `denialLog.record` already catches
  * internally, and `denialLog` may be absent in tests.
  */
-function recordBlocked(
+export function recordBlocked(
   state: SharedState,
   tool: DiscoveredTool,
   rec: {
@@ -580,6 +580,14 @@ export function createGatedToolHandler(
     if (refused) return refused;
     const present = blocked.filter(a => a in (args ?? {}));
     if (present.length === 0) return inner(args);
+    // Shown under Blocked like every other refusal — the person sees what the AI tried (2026-11-07).
+    recordBlocked(state, tool, {
+      kind: 'unsealed_arg',
+      detail: `Argument ${present.map(b => `"${b}"`).join(', ')} is blocked by the connector's manifest.`,
+      field: present[0],
+      who: 'gateway',
+      code: 'BLOCKED_ARG',
+    });
     return {
       content: [{
         type: 'text',

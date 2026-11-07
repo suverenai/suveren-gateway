@@ -90,9 +90,14 @@ describe('the refusal itself', () => {
 
   /** Reaching either of these means the guard did not short-circuit. */
   const explode = new Proxy({}, { get() { throw new Error('guard did not short-circuit'); } });
+  /** The state may only be used to RECORD the refusal under Blocked (2026-11-07) — nothing else. */
+  const recorded: Array<Record<string, unknown>> = [];
+  const recordOnly = new Proxy({ denialLog: { record: (r: Record<string, unknown>) => recorded.push(r) } }, {
+    get(t, k) { if (k in t) return (t as Record<string | symbol, unknown>)[k]; throw new Error('guard did not short-circuit'); },
+  });
 
   it('refuses the call when a blocked argument is present', async () => {
-    const handler = createGatedToolHandler(tool, explode as never, explode as never);
+    const handler = createGatedToolHandler(tool, explode as never, recordOnly as never);
     const result = await handler({ to: ['a@example.com'], raw: 'blob' });
 
     expect(result.isError).toBe(true);
@@ -104,8 +109,11 @@ describe('the refusal itself', () => {
     // The stubs throw on any property access, so this passing IS the assertion:
     // nothing downstream was consulted. A blocked argument means we cannot
     // reason about the call at all, so there is nothing later worth running.
-    const handler = createGatedToolHandler(tool, explode as never, explode as never);
+    const handler = createGatedToolHandler(tool, explode as never, recordOnly as never);
+    recorded.length = 0;
     await expect(handler({ raw: 'blob' })).resolves.toBeDefined();
+    // ...and the refusal is shown under Blocked, naming the argument.
+    expect(recorded).toEqual([expect.objectContaining({ kind: 'unsealed_arg', code: 'BLOCKED_ARG', field: 'raw' })]);
   });
 
   it('leaves an ordinary call alone', async () => {

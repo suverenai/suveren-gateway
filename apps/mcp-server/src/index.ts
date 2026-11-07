@@ -18,7 +18,7 @@ import { checkPendingHandler } from './tools/pending';
 import { listIntegrationsHandler } from './tools/integrations';
 import { checkPendingCommitmentsHandler } from './tools/commitments';
 import type { IntegrationManager, DiscoveredTool } from './lib/integration-manager';
-import { createGatedToolHandler, buildProxiedToolDescription, profileMatches, toolIsAuthorizedForDisplay, toolAlwaysListed } from './lib/tool-proxy';
+import { recordBlocked, createGatedToolHandler, buildProxiedToolDescription, profileMatches, toolIsAuthorizedForDisplay, toolAlwaysListed } from './lib/tool-proxy';
 import { jsonSchemaToZodShape } from './lib/json-schema-to-zod';
 import { wrapWithOutcomeOutbox } from './lib/outcome-outbox';
 
@@ -163,6 +163,13 @@ export function createMcpServer(
       const handler = (async (args: Record<string, unknown>, extra: unknown) => {
         const unknown = Object.keys(args ?? {}).filter(k => !offered.has(k) && !blockedArgs.has(k));
         if (unknown.length > 0) {
+          recordBlocked(state, tool, {
+            kind: 'unsealed_arg',
+            detail: `Argument ${unknown.map(u => `"${u}"`).join(', ')} is not offered by this tool.`,
+            field: unknown[0],
+            who: 'gateway',
+            code: 'UNKNOWN_ARG',
+          });
           return {
             content: [{
               type: 'text' as const,

@@ -14,6 +14,7 @@ import type { DiscoveredTool, IntegrationManager } from '../src/lib/integration-
 import type { SharedState } from '../src/lib/shared-state';
 
 const received: Record<string, unknown>[] = [];
+const denials: Record<string, unknown>[] = [];
 vi.mock('../src/lib/tool-proxy', async (orig) => {
   const real = await orig<typeof import('../src/lib/tool-proxy')>();
   return {
@@ -43,6 +44,7 @@ async function connect() {
     getEnrichedAuthorizations: () => [],
     executionLog: { record: () => {}, sumByWindow: () => 0, getAll: () => [], size: 0 },
     spClient: { isUnlocked: () => true, getAuthorizationSummary: async () => null },
+    denialLog: { record: (r: Record<string, unknown>) => denials.push(r) },
     outcomeOutbox: { take: () => [], drain: () => [], peek: () => [], getUndelivered: () => [], markDelivered: () => {} },
   } as unknown as SharedState;
   const im = { getAllTools: () => [SEND], isBuiltin: () => false } as unknown as IntegrationManager;
@@ -75,6 +77,7 @@ describe('arguments the tool does not advertise', () => {
     expect(text(r)).toContain('does not offer "bcc"');
     expect(text(r)).toContain('no ticket was requested');
     expect(received).toEqual([]);
+    expect(denials.at(-1)).toEqual(expect.objectContaining({ kind: 'unsealed_arg', code: 'UNKNOWN_ARG', field: 'bcc' }));
   });
 
   it('only advertised arguments: passes through unchanged', async () => {
