@@ -215,6 +215,9 @@ export interface ToolGatingConfig {
    */
   blockedArgs?: string[];
 
+  /** Arguments declared "not content" — see tool-gating-types.ts `nonContentArgs`; enforced by sealed-args.ts. */
+  nonContentArgs?: string[];
+
   /**
    * Transport encoding to apply to an outgoing argument, per field.
    *

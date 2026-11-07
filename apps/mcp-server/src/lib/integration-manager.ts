@@ -1423,6 +1423,7 @@ export class IntegrationManager {
         readGovernanceReason?: string;
         contentField?: string;
         blockedArgs?: string[];
+        nonContentArgs?: string[];
         argEncoding?: Record<string, string>;
         argNormalization?: Record<string, string>;
         hideUnlessAuthorized?: boolean;
@@ -1474,6 +1475,7 @@ export class IntegrationManager {
         // simply carries no binding, which only surfaces when a verifier asks.
         contentField: ext.contentField,
         blockedArgs: ext.blockedArgs,
+        nonContentArgs: ext.nonContentArgs,
         argEncoding: ext.argEncoding,
         argNormalization: ext.argNormalization,
         hideUnlessAuthorized: ext.hideUnlessAuthorized,

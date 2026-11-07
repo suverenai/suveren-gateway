@@ -54,7 +54,9 @@ export type LockedReason = 'restart' | 'expired' | 'as-key-mismatch' | 'as-tls-m
 
 /** Address the person should open. Honours a non-default control-plane port. */
 export function uiUrl(): string {
-  const port = process.env.SUVEREN_CP_PORT ?? '3400';
+  // The page is served by the control plane in an install; under `pnpm dev` Vite serves it on its
+  // own port (SUVEREN_UI_PORT) — the notice sent dev users to the live gateway's 3400 (2026-11-06).
+  const port = process.env.SUVEREN_UI_PORT ?? process.env.SUVEREN_CP_PORT ?? '3400';
   return `http://localhost:${port}`;
 }
 

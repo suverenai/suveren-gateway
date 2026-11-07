@@ -162,6 +162,14 @@ function delegationMandateRefusal(auth: MandateCandidate): string | undefined {
   if (isSimulationMode()) return undefined;
   const profile = getProfile(auth.profileId);
   if (profile?.scopeSchema?.fields?.allowed_profiles) return undefined;
+  // A version this gateway's profile catalog does not know: say so — "does not declare"
+  // was wrong (2026-11-06: delegation 0.6 signed on the AS, unknown to an older catalog).
+  if (!profile) {
+    return (
+      `this gateway does not know ${shortName(auth.profileId)} ${versionOf(auth.profileId)} — the version your ` +
+      'Delegation mandate was signed on. Ask the person to update the Suveren Gateway; nothing is wrong with the mandate.'
+    );
+  }
   return (
     `your Delegation mandate (${shortName(auth.profileId)} ${versionOf(auth.profileId)}) does not declare which ` +
     'profiles or modes you may propose — only a Delegation mandate on delegation 0.4 or later works outside ' +
