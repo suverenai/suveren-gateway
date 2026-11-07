@@ -1,7 +1,7 @@
 import { resolveProposalLinks, type ProposalLink } from '../lib/proposal-links';
 import type { ThreadItem } from '../lib/thread-aggregator';
 import { formatTimeLeft } from '../lib/time-left';
-import { ProposalArgs } from './ProposalArgs';
+import { ProposalArgs, NotSealedArgs, ImagePreviewNote } from './ProposalArgs';
 import { ProfileRail } from './ProfileRail';
 import { OutcomeBox } from './OutcomeBox';
 import { ApprovalCard } from './ApprovalCard';
@@ -308,6 +308,7 @@ function RecordCard({ item, proposalLinks, toolDisplay, manifests, currentUserId
               border: '1px solid var(--border)',
             }}
           />
+          <ImagePreviewNote args={args as Record<string, unknown>} display={toolDisplay} />
         </div>
       )}
 
@@ -337,6 +338,7 @@ function RecordCard({ item, proposalLinks, toolDisplay, manifests, currentUserId
           {isProposal ? (
             <>
               {args && <ProposalArgs args={args} display={toolDisplay} />}
+              {args && <NotSealedArgs args={args} display={toolDisplay} />}
               {ctxEntries.length > 0 && (
                 <div style={{ marginBottom: '0.75rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
                   {ctxEntries.map(([k, v]) => `${k}=${formatArgValue(v)}`).join(' · ')}

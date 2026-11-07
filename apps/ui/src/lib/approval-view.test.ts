@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { AgentProfile } from '@hap/core';
-import { argRows, profileFieldLines, humanizeKey, toolHeadline, systemDisplayName, aiTextValue } from './approval-view';
+import { argRows, profileFieldLines, humanizeKey, toolHeadline, systemDisplayName, aiTextValue, fieldNotes } from './approval-view';
 import type { IntegrationManifest } from './sp-client';
 
 /**
@@ -156,5 +156,40 @@ describe('argRows — the AI-text argument', () => {
     const args = { to: ['a@x.example'], body: 'Hello' };
     expect(argRows(args, { aiTextArg: 'body' } as never).map((r) => r.key)).toEqual(['to']);
     expect(argRows(args, { aiTextArg: 'body' } as never, { includeAiText: true }).map((r) => r.key)).toEqual(['to', 'body']);
+  });
+});
+
+describe('argRows — nonContentArgs and notes', () => {
+  const display = {
+    nonContentArgs: ['deployment_url'],
+    approvalView: {
+      deployment_url: { label: 'Build that goes live', note: 'not sealed' },
+      commit: { label: 'Source commit' },
+      imagePath: { label: 'Image file', note: 'Preview note' },
+    },
+  };
+  const args = { commit: 'abc', deployment_url: 'https://x.example', imagePath: '/a.png' };
+
+  it('keeps a nonContentArg out of the sealed rows', () => {
+    expect(argRows(args, display).map((r) => r.key)).toEqual(['commit', 'imagePath']);
+  });
+
+  it('returns it in its own block, with label and note', () => {
+    const rows = argRows(args, display, { part: 'unsealed' });
+    expect(rows.map((r) => [r.key, r.label, r.note])).toEqual([['deployment_url', 'Build that goes live', 'not sealed']]);
+  });
+
+  it('part "all" returns both (the ticket card)', () => {
+    expect(argRows(args, display, { part: 'all' }).map((r) => r.key).sort()).toEqual(['commit', 'deployment_url', 'imagePath']);
+  });
+
+  it('passes a note through on a sealed row', () => {
+    expect(argRows(args, display).find((r) => r.key === 'imagePath')?.note).toBe('Preview note');
+  });
+
+  it('fieldNotes: present, sealed fields only, no duplicates, minus excluded keys', () => {
+    expect(fieldNotes(args, display)).toEqual(['Preview note']);
+    expect(fieldNotes(args, display, ['imagePath'])).toEqual([]);
+    expect(fieldNotes({ commit: 'abc' }, display)).toEqual([]);
   });
 });

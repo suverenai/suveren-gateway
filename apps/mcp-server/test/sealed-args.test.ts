@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { registerProfile } from '@hap/core';
 import { classifySealedArgs, unclassifiedArgs, sealedArgsRefusalText } from '../src/lib/sealed-args';
-import { invalidNonContentArgsReason, invalidManifestNonContentArgsReason } from '../src/lib/manifest-loader';
+import { invalidNonContentArgsReason, invalidManifestNonContentArgsReason, invalidApprovalViewReason, invalidManifestApprovalViewReason } from '../src/lib/manifest-loader';
 import { createGatedToolHandler } from '../src/lib/tool-proxy';
 import { DenialLog } from '../src/lib/denial-log';
 import type { SharedState } from '../src/lib/shared-state';
@@ -157,5 +157,25 @@ describe('the refusal happens before any proposal or ticket', () => {
   it('lets a fully classified call go on to the normal path (it reaches the gatekeeper)', async () => {
     const handler = createGatedToolHandler(tool, manager, state());
     await expect(handler({ to: ['a@x.example'], body: 'b', page: 1 })).rejects.toThrow(/reached past the guard/);
+  });
+});
+
+describe('approvalView note — manifest validation', () => {
+  it('accepts a note up to 160 characters and absence', () => {
+    expect(invalidApprovalViewReason('t', { approvalView: { a: { label: 'A', note: 'x'.repeat(160) } } })).toBeNull();
+    expect(invalidApprovalViewReason('t', { approvalView: { a: { label: 'A' } } })).toBeNull();
+    expect(invalidApprovalViewReason('t', null)).toBeNull();
+  });
+
+  it.each([
+    ['empty', ''],
+    ['blank', '   '],
+    ['too long', 'x'.repeat(161)],
+    ['not a string', 3],
+  ])('refuses the manifest: note %s', (_n, note) => {
+    const entry = { approvalView: { a: { note } } };
+    const reason = invalidApprovalViewReason('t', entry);
+    expect(reason).toMatch(/approvalView\.a\.note/);
+    expect(invalidManifestApprovalViewReason({ toolGating: { overrides: { t: entry } } } as never)).toBe(reason);
   });
 });

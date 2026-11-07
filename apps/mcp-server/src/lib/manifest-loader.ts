@@ -725,6 +725,36 @@ export function invalidNonContentArgsReason(toolName: string, entry: unknown): s
   return null;
 }
 
+export const APPROVAL_NOTE_MAX = 160;
+
+/** An `approvalView` field's optional `note`: a non-empty string of at most 160 characters. */
+export function invalidApprovalViewReason(toolName: string, entry: unknown): string | null {
+  if (entry === null || typeof entry !== 'object') return null;
+  const view = (entry as Record<string, unknown>).approvalView;
+  if (view === undefined) return null;
+  if (view === null || typeof view !== 'object' || Array.isArray(view)) {
+    return `override "${toolName}".approvalView must be an object mapping arguments to display hints`;
+  }
+  for (const [arg, v] of Object.entries(view as Record<string, unknown>)) {
+    if (v === null || typeof v !== 'object') continue;
+    const note = (v as Record<string, unknown>).note;
+    if (note === undefined) continue;
+    if (typeof note !== 'string' || note.trim().length === 0 || note.length > APPROVAL_NOTE_MAX) {
+      return `override "${toolName}".approvalView.${arg}.note must be a non-empty string of at most ${APPROVAL_NOTE_MAX} characters`;
+    }
+  }
+  return null;
+}
+
+export function invalidManifestApprovalViewReason(manifest: Pick<IntegrationManifest, 'toolGating'>): string | null {
+  const overrides = (manifest.toolGating?.overrides ?? {}) as Record<string, unknown>;
+  for (const [toolName, entry] of Object.entries(overrides)) {
+    const reason = invalidApprovalViewReason(toolName, entry);
+    if (reason) return reason;
+  }
+  return null;
+}
+
 export function invalidManifestNonContentArgsReason(manifest: Pick<IntegrationManifest, 'toolGating'>): string | null {
   const overrides = (manifest.toolGating?.overrides ?? {}) as Record<string, unknown>;
   for (const [toolName, entry] of Object.entries(overrides)) {
@@ -1498,6 +1528,11 @@ export function loadManifests(integrationsDir?: string): number {
       const nonContentReason = invalidManifestNonContentArgsReason(manifest);
       if (nonContentReason) {
         console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${nonContentReason}`);
+        continue;
+      }
+      const approvalViewReason = invalidManifestApprovalViewReason(manifest);
+      if (approvalViewReason) {
+        console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${approvalViewReason}`);
         continue;
       }
       const readAlsoReason = invalidManifestReadAlsoUnderReason(manifest);

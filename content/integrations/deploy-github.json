@@ -91,7 +91,7 @@
         "nonContentArgs": ["deployment_url"],
         "blockedArgs": ["branch"],
         "approvalView": {
-          "deployment_url": { "label": "Build that goes live" },
+          "deployment_url": { "label": "Build that goes live", "note": "Build that goes live — not sealed; the connector checks it comes from the sealed commit" },
           "commit": { "label": "Source commit" }
         },
         "actionLabel": "Deployment released",

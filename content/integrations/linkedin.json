@@ -87,8 +87,8 @@
         },
         "actionLabel": "Image post published",
         "approvalView": {
-          "imageUrl": { "label": "Image link" },
-          "imagePath": { "label": "Image file" },
+          "imageUrl": { "label": "Image link", "note": "Preview — the image itself is not sealed, only its name" },
+          "imagePath": { "label": "Image file", "note": "Preview — the image itself is not sealed, only its name" },
           "altText": { "label": "Image description" }
         }
       },

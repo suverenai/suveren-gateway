@@ -6,7 +6,7 @@
 import { nestedValueView } from '../lib/preview-render';
 import { PreviewTableView } from './PreviewTableView';
 import { Fragment } from 'react';
-import { argRows, profileFieldLines, type ArgRow, type ToolDisplay } from '../lib/approval-view';
+import { argRows, fieldNotes, profileFieldLines, type ArgRow, type ToolDisplay } from '../lib/approval-view';
 import { profileDisplayName } from '../lib/profile-display';
 import { useProfile } from '../lib/profile-cache';
 
@@ -87,12 +87,49 @@ export function ArgValue({ row, altText }: { row: ArgRow; altText?: string }) {
     default:
       if (isImageArg(row.key, row.value)) {
         return (
-          <img src={row.value as string} alt={altText ?? row.key}
-            style={{ display: 'block', maxWidth: '100%', maxHeight: '240px', borderRadius: '0.375rem', border: '1px solid var(--border)' }} />
+          <>
+            <img src={row.value as string} alt={altText ?? row.key}
+              style={{ display: 'block', maxWidth: '100%', maxHeight: '240px', borderRadius: '0.375rem', border: '1px solid var(--border)' }} />
+            {row.note && <p className="ob-quiet" data-testid="image-note">{row.note}</p>}
+          </>
         );
       }
       return <>{plain(row.value)}</>;
   }
+}
+
+/** Notes under a locally rendered image preview (`_imagePreview`): the manifest's
+ *  `note` of the declared fields that preview stands for, in the same quiet style. */
+export function ImagePreviewNote({ args, display }: { args: Record<string, unknown>; display?: ToolDisplay }) {
+  const rows = argRows(args, display);
+  const imageRows = rows.filter(r => isImageArg(r.key, r.value)).map(r => r.key);
+  const notes = fieldNotes(args, display, imageRows);
+  if (notes.length === 0) return null;
+  return <>{notes.map(n => <p key={n} className="ob-quiet" data-testid="image-note" style={{ marginBottom: 'var(--space-3)' }}>{n}</p>)}</>;
+}
+
+/** Arguments the manifest declares `nonContentArgs`: sent, but not sealed. Shown
+ *  apart from the sealed tile in the quiet style the ticket card uses for
+ *  "Also sent — recorded by this gateway, not sealed in the ticket". */
+export function NotSealedArgs({ args, display }: { args: Record<string, unknown>; display?: ToolDisplay }) {
+  const rows = argRows(args, display, { part: 'unsealed' });
+  if (rows.length === 0) return null;
+  return (
+    <div data-testid="not-sealed-args">
+      <p className="ob-lbl ob-gap">Also sent — not sealed, not approvable</p>
+      <dl className="ob-kv">
+        {rows.map(row => (
+          <Fragment key={row.key}>
+            <dt title={row.hint}>{row.label}</dt>
+            <dd className="ob-plain">
+              <ArgValue row={row} />
+              {row.note && <p className="ob-quiet">{row.note}</p>}
+            </dd>
+          </Fragment>
+        ))}
+      </dl>
+    </div>
+  );
 }
 
 interface ProposalArgsProps {

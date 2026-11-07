@@ -109,6 +109,8 @@ export type ApprovalView = Record<string, {
   currencyArg?: string;
   /** profile-limits / profile-scope: the argument holding the profile id or short name. */
   profileArg?: string;
+  /** The manifest author's plain explanation, shown with this field (non-empty, at most 160 characters). */
+  note?: string;
 }>;
 
 export interface ToolGatingConfig {

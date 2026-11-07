@@ -29,7 +29,7 @@ import {
   type RequestContextResponse,
   type ShownSnapshotPayload,
 } from '../lib/sp-client';
-import { ProposalArgs } from './ProposalArgs';
+import { ProposalArgs, NotSealedArgs, ImagePreviewNote } from './ProposalArgs';
 import { PreviewBox } from './PreviewBox';
 import { RequestContextBox } from './RequestContextBox';
 import { useAreaCatalog } from '../lib/area-catalog';
@@ -405,6 +405,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
             className="av3-image"
           />
         )}
+        {imagePreview && content.toolArgs && <ImagePreviewNote args={content.toolArgs} display={toolDisplay} />}
         {boundOpen && readable && (
           <div className="preview-box preview-box-ok" data-testid="bound-values-open">
             <h4>What will be sent <span className="src-tag src-tag-sealed">sealed</span></h4>
@@ -447,6 +448,9 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
           </dl>
         )}
       </section>
+      {readable && content.toolArgs && (
+        <div style={{ order: 6 }}><NotSealedArgs args={content.toolArgs} display={toolDisplay} /></div>
+      )}
       {systemView && systemView.systemBoxes.length > 0 && (
         <div style={{ order: 7 }}><SystemBoxes view={systemView} /></div>
       )}

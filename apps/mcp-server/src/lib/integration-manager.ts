@@ -980,6 +980,8 @@ export class IntegrationManager {
   getToolDisplay(): Record<string, {
     inputSchema: Record<string, unknown>;
     approvalView?: import('./integration-registry').ApprovalView;
+    /** Arguments sent but not sealed (manifest `nonContentArgs`) — shown apart on the card. */
+    nonContentArgs?: string[];
     executionMapping?: Record<string, import('./tool-gating-types').ExecutionMappingValue>;
     /** UI spec §15.2/§15.3 — the manifest's `display.aiText`, the name of
      *  this tool's own argument that is AI-authored text. */
@@ -991,6 +993,7 @@ export class IntegrationManager {
       out[t.namespacedName] = {
         inputSchema: t.inputSchema,
         ...(t.gating?.approvalView ? { approvalView: t.gating.approvalView } : {}),
+        ...(t.gating?.nonContentArgs?.length ? { nonContentArgs: t.gating.nonContentArgs } : {}),
         // UI spec §14.1 — which sent values the signed ticket also carries
         // (arg → executionContext field), for the "in the ticket" tag.
         ...(mapping && Object.keys(mapping).length > 0 ? { executionMapping: mapping } : {}),
