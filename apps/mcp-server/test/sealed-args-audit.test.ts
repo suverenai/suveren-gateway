@@ -108,12 +108,18 @@ describe('shipped manifests: every argument of a sealed tool is classified', () 
     'mail.send_message[subject]',                 // email@0.4 only
   ];
 
-  it('seals the post media and the release target under the new profile versions (publish@0.8)', () => {
+  it('seals the post media under publish@0.8 (checked against a pinned copy of that profile)', () => {
+    // A copy of hap-profiles publish/0.8.profile.json (PR hap-profiles#22): CI reads the catalog
+    // from hap-profiles MAIN, which gets 0.8 only when gateway + profile are merged together.
+    const p08 = readJson(join(import.meta.dirname, 'fixtures', 'profiles', 'publish-0.8.profile.json')).content_binding;
+    const linkedin = readJson(join(MANIFESTS, 'linkedin.json'));
+    for (const [tool, args] of [['create_image_post', ['imageUrl', 'imagePath', 'altText']], ['create_article_post', ['articleUrl', 'title', 'description']]] as const) {
+      const c = classifySealedArgs(linkedin.toolGating.overrides[tool], p08);
+      for (const a of args) expect(c.classes.get(a), `${tool}[${a}] under publish@0.8`).toBe('bound');
+    }
+    // ...and an older publish mandate still refuses them (it must be signed again).
     const cls = (c: string, t: string, v: string, a: string) =>
       rows.find(r => r.connector === c && r.tool === t && r.profile === v && r.arg === a)?.cls;
-    for (const a of ['imageUrl', 'imagePath', 'altText']) expect(cls('linkedin', 'create_image_post', 'publish@0.8', a)).toBe('bound');
-    for (const a of ['articleUrl', 'title', 'description']) expect(cls('linkedin', 'create_article_post', 'publish@0.8', a)).toBe('bound');
-    // ...and an older publish mandate still refuses them (it must be signed again).
     expect(cls('linkedin', 'create_image_post', 'publish@0.7', 'imageUrl')).toBe('UNCLASSIFIED');
   });
 
