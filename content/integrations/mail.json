@@ -137,7 +137,9 @@
         "boundField": "read_access",
         "requiredValue": "unlimited",
         "read": {
-          "ageField": "read_age_days"
+          "ageField": "read_age_days",
+          "ageFloorArg": "received_after",
+          "ageFloorFormat": "iso"
         }
       },
       "get_message": {
