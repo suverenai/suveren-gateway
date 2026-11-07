@@ -151,8 +151,34 @@ export function createMcpServer(
         proxiedTools.delete(tool.namespacedName);
       }
 
-      const handler = createGatedToolHandler(tool, integrationManager, state);
-      const zodShape = jsonSchemaToZodShape(tool.inputSchema);
+      const gatedHandler = createGatedToolHandler(tool, integrationManager, state);
+      // The MCP layer passes every argument through (passthrough, below) instead of stripping
+      // what the advertised schema leaves out — a stripped argument let the call run without it
+      // and the AI was never told (2026-11-07, Rehearsal A16 on the real Gmail test account).
+      // A BLOCKED argument goes on to the gate, which refuses it with its own reason; any other
+      // argument this tool does not offer is refused here, by name. Nothing reaches a connector
+      // that the tool did not advertise.
+      const offered = new Set(Object.keys(((tool.inputSchema as { properties?: Record<string, unknown> } | undefined)?.properties) ?? {}));
+      const blockedArgs = new Set(tool.gating?.blockedArgs ?? []);
+      const handler = (async (args: Record<string, unknown>, extra: unknown) => {
+        const unknown = Object.keys(args ?? {}).filter(k => !offered.has(k) && !blockedArgs.has(k));
+        if (unknown.length > 0) {
+          return {
+            content: [{
+              type: 'text' as const,
+              text: `Refused: "${tool.namespacedName}" does not offer ${unknown.map(u => `"${u}"`).join(', ')}. ` +
+                'Nothing was done and no ticket was requested. Call it again with only the arguments the tool lists.',
+            }],
+            isError: true,
+          };
+        }
+        return (gatedHandler as (a: Record<string, unknown>, e: unknown) => unknown)(args, extra);
+      }) as typeof gatedHandler;
+      // passthrough: an argument the AI sends that the advertised schema leaves out (a blocked
+      // one such as gmail threadId/bcc, or an unknown one) must reach the gate and be REFUSED
+      // openly. A plain shape let the SDK strip it silently, so the call ran without it and the
+      // AI was never told (2026-11-07, Rehearsal A16 on the real Gmail test account).
+      const zodShape = z.object(jsonSchemaToZodShape(tool.inputSchema)).passthrough();
       const description = buildProxiedToolDescription(tool);
 
       try {
