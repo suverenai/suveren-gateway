@@ -480,7 +480,7 @@ export function IntegrationCard({ manifest, areas, integration, state, onStatusC
           <legend>Where does {manifest.name} get its data?</legend>
           {options.map(o => {
             const on = single || chosen?.key === o.key;
-            const tag = pausedTag(o, gatewaySimulation);
+            const tag = pausedTag(o, gatewaySimulation === true);
             return (
               <label key={o.key} className={`su-opt${on ? ' is-on' : ''}`}>
                 <input

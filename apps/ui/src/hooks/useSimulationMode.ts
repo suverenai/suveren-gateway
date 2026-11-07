@@ -8,9 +8,12 @@ import { useEffect, useState } from 'react';
  *
  * `/health` is unauthenticated (see useUpdateCheck's note), so this works
  * before login too — the banner is accurate on the login screen as well.
+ *
+ * `null` until the gateway has answered once. A layout that differs by mode (the Connectors page) waits for
+ * it — assuming "off" first drew the production layout and then rebuilt every card in the simulation one.
  */
-export function useSimulationMode(): boolean {
-  const [simulation, setSimulation] = useState(false);
+export function useSimulationMode(): boolean | null {
+  const [simulation, setSimulation] = useState<boolean | null>(null);
 
   useEffect(() => {
     let cancelled = false;

@@ -193,7 +193,7 @@ export function IntegrationStatusProvider({ children }: { children: ReactNode })
   const simulationOn = useSimulationMode();
   const attentionCount = useMemo(
     () => entries.filter(
-      e => !blockedBySimulation(e, simulationOn)
+      e => !blockedBySimulation(e, simulationOn === true)
         && (e.state === 'not-running' || e.state === 'error' || e.authStatus === 'failed'),
     ).length,
     [entries, simulationOn],
