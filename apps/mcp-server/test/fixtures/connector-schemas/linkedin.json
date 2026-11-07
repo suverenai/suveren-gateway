@@ -1,0 +1,121 @@
+{
+  "integration": "linkedin",
+  "npmPackage": "@humanagencyp/linkedin-mcp",
+  "npmVersion": "1.0.7",
+  "tools": {
+    "create_article_post": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "articleUrl": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "visibility": {
+          "type": "string",
+          "enum": [
+            "PUBLIC",
+            "CONNECTIONS"
+          ]
+        }
+      },
+      "required": [
+        "text",
+        "articleUrl"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "create_image_post": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "imageUrl": {
+          "type": "string"
+        },
+        "imagePath": {
+          "type": "string"
+        },
+        "altText": {
+          "type": "string"
+        },
+        "visibility": {
+          "type": "string",
+          "enum": [
+            "PUBLIC",
+            "CONNECTIONS"
+          ]
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "create_post": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "visibility": {
+          "type": "string",
+          "enum": [
+            "PUBLIC",
+            "CONNECTIONS"
+          ]
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "delete_post": {
+      "type": "object",
+      "properties": {
+        "postUrn": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "postUrn"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "get_post": {
+      "type": "object",
+      "properties": {
+        "postUrn": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "postUrn"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "get_profile": {
+      "type": "object",
+      "properties": {},
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "list_posts": {
+      "type": "object",
+      "properties": {
+        "count": {
+          "type": "number"
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  }
+}

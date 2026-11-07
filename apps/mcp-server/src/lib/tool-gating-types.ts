@@ -365,6 +365,19 @@ export interface ProfileToolGatingEntry {
    * adapter (an age window resolved from mixed profiles could weaken it).
    */
   readAlsoUnder?: string[];
+  /**
+   * Arguments of this tool that do NOT change what is sent — ids, paging,
+   * flags — declared by the manifest author. Only meaningful on a tool whose
+   * content is sealed (the profile's content_binding applies to it): there,
+   * every argument the AI passes must be bound and shown, a declared
+   * reference shown on the card, or listed here — anything else is refused
+   * before any proposal or ticket (sealed-args.ts). Not "this does not
+   * matter": declaring an argument that does change the outgoing content is
+   * exactly the hole this rule closes. Refused at load on a read tool, on an
+   * argument also blocked or already classified (message, attachments,
+   * insert, source link, execution mapping, content field).
+   */
+  nonContentArgs?: string[];
   /** D1 — see {@link CheckDeclaration}. Evaluated by checks.ts for the card. */
   checks?: CheckDeclaration[];
 }

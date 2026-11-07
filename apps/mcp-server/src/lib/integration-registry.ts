@@ -109,6 +109,8 @@ export type ApprovalView = Record<string, {
   currencyArg?: string;
   /** profile-limits / profile-scope: the argument holding the profile id or short name. */
   profileArg?: string;
+  /** The manifest author's plain explanation, shown with this field (non-empty, at most 160 characters). */
+  note?: string;
 }>;
 
 export interface ToolGatingConfig {
@@ -214,6 +216,9 @@ export interface ToolGatingConfig {
    * agent may ignore, so the call is refused as well.
    */
   blockedArgs?: string[];
+
+  /** Arguments declared "not content" — see tool-gating-types.ts `nonContentArgs`; enforced by sealed-args.ts. */
+  nonContentArgs?: string[];
 
   /**
    * Transport encoding to apply to an outgoing argument, per field.

@@ -18,6 +18,7 @@ import { isCommitmentDowngrade, AsKeyMismatchError } from './attestation-cache';
 import { ArchiveWriteError } from './receipt-archive';
 import { appendVerificationFooter, shouldAttachFooter } from './receipt-footer';
 import { computeContentBinding, attachTicketId } from './content-binding';
+import { unclassifiedArgs, sealedArgsRefusalText } from './sealed-args';
 import { hashToolArgs } from './execution-journal';
 import { computeSubmissionPreviewHash, failedBlockingChecks } from './preview';
 import { blockingRefusalReason } from './checks';
@@ -392,7 +393,7 @@ function denyRead(
  * touch a call site here. Never throws: `denialLog.record` already catches
  * internally, and `denialLog` may be absent in tests.
  */
-function recordBlocked(
+export function recordBlocked(
   state: SharedState,
   tool: DiscoveredTool,
   rec: {
@@ -579,6 +580,14 @@ export function createGatedToolHandler(
     if (refused) return refused;
     const present = blocked.filter(a => a in (args ?? {}));
     if (present.length === 0) return inner(args);
+    // Shown under Blocked like every other refusal — the person sees what the AI tried (2026-11-07).
+    recordBlocked(state, tool, {
+      kind: 'unsealed_arg',
+      detail: `Argument ${present.map(b => `"${b}"`).join(', ')} is blocked by the connector's manifest.`,
+      field: present[0],
+      who: 'gateway',
+      code: 'BLOCKED_ARG',
+    });
     return {
       content: [{
         type: 'text',
@@ -1223,6 +1232,31 @@ function createGatedToolHandlerInner(
     }
 
     if (matchingAuths.length === 0) return noEligibleMandate(refusals);
+
+    // Sealed arguments (sealed-args.ts): where the content is sealed, every
+    // argument must be bound and shown, a declared reference, or declared
+    // "not content" by the manifest. Anything else would change what is sent
+    // without being on the card or in the ticket. Refused HERE — before any
+    // proposal, bounds work or ticket. Judged under EVERY profile version a
+    // matching mandate is under (what is bound differs by version): the
+    // strictest wins, because the candidate picked later is not known yet.
+    {
+      const offending = new Set<string>();
+      for (const id of new Set(matchingAuths.map(a => a.profileId))) {
+        for (const arg of unclassifiedArgs(tool.gating!, getProfile(id)?.content_binding, args)) offending.add(arg);
+      }
+      if (offending.size > 0) {
+        const names = [...offending];
+        recordBlocked(state, tool, {
+          kind: 'unsealed_arg',
+          detail: `Argument ${names.map(n => `"${n}"`).join(', ')} would change what is sent without being shown or sealed.`,
+          field: names[0],
+          who: 'gateway',
+          code: 'UNSEALED_ARG',
+        });
+        return { content: [{ type: 'text', text: sealedArgsRefusalText(tool.namespacedName, names) }], isError: true };
+      }
+    }
 
     // v0.8 (protocol.md → Ticket Issuance, stage 7; Validation Steps, step 8):
     // every value a bound reads MUST be a finite, non-negative number. Refused

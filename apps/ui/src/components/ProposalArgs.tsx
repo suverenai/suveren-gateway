@@ -6,7 +6,7 @@
 import { nestedValueView } from '../lib/preview-render';
 import { PreviewTableView } from './PreviewTableView';
 import { Fragment } from 'react';
-import { argRows, profileFieldLines, type ArgRow, type ToolDisplay } from '../lib/approval-view';
+import { argRows, fieldNotes, profileFieldLines, type ArgRow, type ToolDisplay } from '../lib/approval-view';
 import { profileDisplayName } from '../lib/profile-display';
 import { useProfile } from '../lib/profile-cache';
 
@@ -85,7 +85,8 @@ export function ArgValue({ row, altText }: { row: ArgRow; altText?: string }) {
     case 'object':
       return <pre style={{ margin: 0, whiteSpace: 'pre-wrap', fontSize: '0.8rem' }}>{plain(row.value)}</pre>;
     default:
-      if (isImageArg(row.key, row.value)) {
+      // An image with a note is not sealed as bytes: NotSealedArgs shows it, not this row.
+      if (isImageArg(row.key, row.value) && !row.note) {
         return (
           <img src={row.value as string} alt={altText ?? row.key}
             style={{ display: 'block', maxWidth: '100%', maxHeight: '240px', borderRadius: '0.375rem', border: '1px solid var(--border)' }} />
@@ -93,6 +94,61 @@ export function ArgValue({ row, altText }: { row: ArgRow; altText?: string }) {
       }
       return <>{plain(row.value)}</>;
   }
+}
+
+/** An image the card renders whose field carries a manifest `note` is not sealed as
+ *  bytes (only its name is), so it must not sit in the sealed tile: it goes to the
+ *  "Not sealed" block with its note. Decided by the presence of the note — the
+ *  manifest has no other signal for "bytes not sealed". */
+export function unsealedPreviews(args: Record<string, unknown>, display?: ToolDisplay): { src: string; alt: string; notes: string[] }[] {
+  const alt = typeof args.altText === 'string' ? args.altText : 'image preview';
+  const out: { src: string; alt: string; notes: string[] }[] = [];
+  const urlRows = argRows(args, display).filter(r => r.note && isImageArg(r.key, r.value));
+  for (const r of urlRows) out.push({ src: r.value as string, alt, notes: [r.note!] });
+  const local = args._imagePreview;
+  if (typeof local === 'string') {
+    const notes = fieldNotes(args, display, urlRows.map(r => r.key));
+    if (notes.length > 0) out.push({ src: local, alt, notes });
+  }
+  return out;
+}
+
+/** True when the card shows its local `_imagePreview` in the Not sealed block instead of the tile. */
+export function localPreviewIsUnsealed(args: Record<string, unknown>, display?: ToolDisplay): boolean {
+  return typeof args._imagePreview === 'string' && fieldNotes(args, display).length > 0;
+}
+
+/** Everything shown but not sealed: arguments the manifest declares `nonContentArgs`,
+ *  and image previews whose bytes are not sealed. Apart from the sealed tile, in the
+ *  quiet style of the ticket card's "Also sent" block. */
+export function NotSealedArgs({ args, display }: { args: Record<string, unknown>; display?: ToolDisplay }) {
+  const rows = argRows(args, display, { part: 'unsealed' });
+  const previews = unsealedPreviews(args, display);
+  if (rows.length === 0 && previews.length === 0) return null;
+  return (
+    <div data-testid="not-sealed-args">
+      <p className="ob-lbl ob-gap">Not sealed</p>
+      {rows.length > 0 && (
+        <dl className="ob-kv">
+          {rows.map(row => (
+            <Fragment key={row.key}>
+              <dt title={row.hint}>{row.label}</dt>
+              <dd className="ob-plain">
+                <ArgValue row={row} />
+                {row.note && <p className="ob-quiet">{row.note}</p>}
+              </dd>
+            </Fragment>
+          ))}
+        </dl>
+      )}
+      {previews.map((pv, i) => (
+        <div key={i} style={{ marginTop: 'var(--space-2)' }} data-testid="unsealed-image">
+          <img src={pv.src} alt={pv.alt} className="av3-image" style={{ marginBottom: 'var(--space-1)' }} />
+          {pv.notes.map(n => <p key={n} className="ob-quiet">{n}</p>)}
+        </div>
+      ))}
+    </div>
+  );
 }
 
 interface ProposalArgsProps {

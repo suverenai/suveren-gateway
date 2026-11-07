@@ -29,7 +29,7 @@ import {
   type RequestContextResponse,
   type ShownSnapshotPayload,
 } from '../lib/sp-client';
-import { ProposalArgs } from './ProposalArgs';
+import { ProposalArgs, NotSealedArgs, localPreviewIsUnsealed } from './ProposalArgs';
 import { PreviewBox } from './PreviewBox';
 import { RequestContextBox } from './RequestContextBox';
 import { useAreaCatalog } from '../lib/area-catalog';
@@ -398,7 +398,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
             <dt>{mode.label}</dt><dd>{mode.title}</dd>
           </dl>
         )}
-        {imagePreview && (
+        {imagePreview && !(content.toolArgs && localPreviewIsUnsealed(content.toolArgs, toolDisplay)) && (
           <img
             src={imagePreview}
             alt={typeof content.toolArgs?.altText === 'string' ? (content.toolArgs.altText as string) : 'local image preview'}
@@ -447,6 +447,9 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
           </dl>
         )}
       </section>
+      {readable && content.toolArgs && (
+        <div style={{ order: 6 }}><NotSealedArgs args={content.toolArgs} display={toolDisplay} /></div>
+      )}
       {systemView && systemView.systemBoxes.length > 0 && (
         <div style={{ order: 7 }}><SystemBoxes view={systemView} /></div>
       )}

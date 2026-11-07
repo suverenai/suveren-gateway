@@ -31,6 +31,7 @@ import {
   type ManifestValues,
   type MessageVerb,
 } from './tool-gating-types';
+import { GATEWAY_OWNED_ARGS } from './sealed-args';
 import { uncoveredReadSwitchReason, type BoundsSchemaLike } from './read-gate';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -678,6 +679,87 @@ export function invalidMessageReason(toolName: string, entry: unknown): string |
     if (m[key] !== undefined && (typeof m[key] !== 'string' || (m[key] as string).length === 0)) {
       return `${at}.${key} must be a non-empty string`;
     }
+  }
+  return null;
+}
+
+/**
+ * `nonContentArgs` (tool-gating-types.ts): arguments the author declares do
+ * not change what is sent. Refuses the whole manifest when the declaration
+ * is malformed (not a non-empty list of unique non-empty names), sits on a
+ * read/disabled tool (the rule only applies to sealed writes), or names an
+ * argument that is already classified another way — blocked, the message /
+ * attachments / source-link / content-field argument, `insert`, a mapped
+ * bound, or one the gateway owns. An argument cannot be both content and
+ * not-content; a contradiction here is a manifest bug, not a choice.
+ * (What the profile's binding seals is per profile version and checked by the
+ * shipped-manifest audit test, not at load.)
+ */
+export function invalidNonContentArgsReason(toolName: string, entry: unknown): string | null {
+  if (entry === null || typeof entry !== 'object') return null;
+  const e = entry as Record<string, unknown>;
+  const list = e.nonContentArgs;
+  if (list === undefined) return null;
+  const at = `override "${toolName}".nonContentArgs`;
+  if (!Array.isArray(list) || list.length === 0 || !list.every(a => typeof a === 'string' && a.length > 0)) {
+    return `${at} must be a non-empty list of argument names`;
+  }
+  if (new Set(list).size !== list.length) return `${at} lists an argument twice`;
+  if (e.category === 'read' || e.category === 'disabled') {
+    return `${at} is allowed on sealed write tools only (not category "${e.category}")`;
+  }
+  const message = (e.message ?? {}) as Record<string, unknown>;
+  const classified: Record<string, string> = {};
+  const mark = (name: unknown, why: string) => { if (typeof name === 'string' && name) classified[name] ??= why; };
+  for (const a of Array.isArray(e.blockedArgs) ? e.blockedArgs : []) mark(a, 'blocked (blockedArgs)');
+  for (const k of ['text', 'to', 'cc', 'subject']) mark(message[k], `the message ${k} argument`);
+  mark(e.contentField, 'the content field');
+  mark(e.attachmentsArg, 'the attachments argument');
+  mark((e.sourceFromArg as { arg?: unknown } | undefined)?.arg, 'the source-link argument');
+  if (Array.isArray(e.insertFields) && e.insertFields.length > 0) { mark('insert', 'the insert argument'); }
+  for (const a of Object.keys((e.executionMapping ?? {}) as object)) mark(a, 'a mapped bound (executionMapping)');
+  for (const a of GATEWAY_OWNED_ARGS) mark(a, 'owned by the gateway');
+  for (const a of list as string[]) {
+    if (classified[a]) return `${at} lists "${a}", which is already ${classified[a]}`;
+  }
+  return null;
+}
+
+export const APPROVAL_NOTE_MAX = 160;
+
+/** An `approvalView` field's optional `note`: a non-empty string of at most 160 characters. */
+export function invalidApprovalViewReason(toolName: string, entry: unknown): string | null {
+  if (entry === null || typeof entry !== 'object') return null;
+  const view = (entry as Record<string, unknown>).approvalView;
+  if (view === undefined) return null;
+  if (view === null || typeof view !== 'object' || Array.isArray(view)) {
+    return `override "${toolName}".approvalView must be an object mapping arguments to display hints`;
+  }
+  for (const [arg, v] of Object.entries(view as Record<string, unknown>)) {
+    if (v === null || typeof v !== 'object') continue;
+    const note = (v as Record<string, unknown>).note;
+    if (note === undefined) continue;
+    if (typeof note !== 'string' || note.trim().length === 0 || note.length > APPROVAL_NOTE_MAX) {
+      return `override "${toolName}".approvalView.${arg}.note must be a non-empty string of at most ${APPROVAL_NOTE_MAX} characters`;
+    }
+  }
+  return null;
+}
+
+export function invalidManifestApprovalViewReason(manifest: Pick<IntegrationManifest, 'toolGating'>): string | null {
+  const overrides = (manifest.toolGating?.overrides ?? {}) as Record<string, unknown>;
+  for (const [toolName, entry] of Object.entries(overrides)) {
+    const reason = invalidApprovalViewReason(toolName, entry);
+    if (reason) return reason;
+  }
+  return null;
+}
+
+export function invalidManifestNonContentArgsReason(manifest: Pick<IntegrationManifest, 'toolGating'>): string | null {
+  const overrides = (manifest.toolGating?.overrides ?? {}) as Record<string, unknown>;
+  for (const [toolName, entry] of Object.entries(overrides)) {
+    const reason = invalidNonContentArgsReason(toolName, entry);
+    if (reason) return reason;
   }
   return null;
 }
@@ -1441,6 +1523,16 @@ export function loadManifests(integrationsDir?: string): number {
       const internalReason = invalidManifestInternalReason(manifest);
       if (internalReason) {
         console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${internalReason}`);
+        continue;
+      }
+      const nonContentReason = invalidManifestNonContentArgsReason(manifest);
+      if (nonContentReason) {
+        console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${nonContentReason}`);
+        continue;
+      }
+      const approvalViewReason = invalidManifestApprovalViewReason(manifest);
+      if (approvalViewReason) {
+        console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${approvalViewReason}`);
         continue;
       }
       const readAlsoReason = invalidManifestReadAlsoUnderReason(manifest);
