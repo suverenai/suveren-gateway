@@ -7,10 +7,18 @@
  */
 
 import { Router } from 'express';
+import { homedir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { readSettings, writeSettings } from '../lib/gateway-settings';
 
 export function createGatewaySettingsRouter(dataDir?: string): Router {
   const router = Router();
+
+  // The data folder this running control plane actually uses (resolved at
+  // startup: IT policy > env > saved install setting > default). Read-only.
+  router.get('/data-folder', (_req, res) => {
+    res.json({ dataDir: resolve(dataDir ?? process.env.SUVEREN_DATA_DIR ?? join(homedir(), '.suveren')) });
+  });
 
   router.get('/', (_req, res) => {
     res.json(readSettings(dataDir));

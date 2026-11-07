@@ -1512,6 +1512,13 @@ class SPClient {
     return res.json();
   }
 
+  /** The data folder the running gateway actually uses (read-only). */
+  async getDataFolder(): Promise<{ dataDir: string }> {
+    const res = await this.fetch('/api/gateway-settings/data-folder');
+    if (!res.ok) throw new Error(`Failed to load data folder: ${res.status}`);
+    return res.json();
+  }
+
   /** Returns the PERSISTED state, so callers render backend truth. */
   async setGatewaySettings(patch: Partial<GatewaySettings>): Promise<GatewaySettings> {
     const res = await this.fetch('/api/gateway-settings', {
