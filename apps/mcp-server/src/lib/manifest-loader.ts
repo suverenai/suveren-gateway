@@ -51,6 +51,16 @@ export interface ManifestOAuthConfig {
   credentialKeys: Record<string, string>;
   tokenStorage: string;
   extraParams?: Record<string, string>;
+  /** Optional token revocation endpoint (RFC 7009), called on sign-out. */
+  revokeUrl?: string;
+  /**
+   * Optional: this connector shares ONE sign-in with every other connector that
+   * declares the same `signInGroup.id` (e.g. Gmail and Google Calendar are one
+   * Google account). Declared explicitly — never inferred from authUrl or
+   * clientId. See `invalidSignInGroupReason` for what a group's members must
+   * agree on, and docs/development.md ("Shared sign-in groups").
+   */
+  signInGroup?: { id: string; name: string };
 }
 
 /**
@@ -1473,6 +1483,89 @@ export function invalidModeOptionsReason(
   return null;
 }
 
+// ─── Shared sign-in groups ──────────────────────────────────────────────────
+
+const SIGN_IN_GROUP_ID = /^[a-z][a-z0-9-]*$/;
+
+/**
+ * Shape check for `oauth.signInGroup` on ONE manifest. A group needs an `oauth`
+ * block (nothing to share otherwise), a lowercase slug id (it becomes part of
+ * the vault entry name `sign-in:<id>`), and a display name.
+ */
+export function invalidSignInGroupReason(
+  manifest: Pick<IntegrationManifest, 'oauth'>,
+): string | null {
+  const g = manifest.oauth?.signInGroup;
+  if (g === undefined) return null;
+  if (g === null || typeof g !== 'object' || Array.isArray(g)) {
+    return 'oauth.signInGroup must be an object { id, name }';
+  }
+  if (typeof g.id !== 'string' || !SIGN_IN_GROUP_ID.test(g.id)) {
+    return 'oauth.signInGroup.id must be a lowercase slug (letters, digits, "-"), e.g. "google"';
+  }
+  if (typeof g.name !== 'string' || g.name.trim().length === 0) {
+    return 'oauth.signInGroup.name must be a non-empty string';
+  }
+  return null;
+}
+
+/**
+ * One sign-in means one provider, one client, one token slot. A member that
+ * disagrees with the group's first member on any of these could not be served
+ * by the shared token, so it is refused rather than half-shared. Scopes are
+ * NOT compared: the sign-in requests the union of the members' scopes.
+ */
+export function invalidSignInGroupMismatchReason(
+  manifest: Pick<IntegrationManifest, 'id' | 'oauth'>,
+  first: Pick<IntegrationManifest, 'id' | 'oauth'>,
+): string | null {
+  const a = manifest.oauth;
+  const b = first.oauth;
+  if (!a?.signInGroup || !b?.signInGroup) return null;
+  const g = a.signInGroup.id;
+  if (a.signInGroup.name !== b.signInGroup.name) {
+    return `signInGroup "${g}" is named "${a.signInGroup.name}" here but "${b.signInGroup.name}" in ${first.id}`;
+  }
+  const same = (x: unknown, y: unknown) => JSON.stringify(sortKeys(x)) === JSON.stringify(sortKeys(y));
+  for (const field of ['authUrl', 'tokenUrl', 'revokeUrl', 'tokenStorage', 'credentialKeys', 'extraParams'] as const) {
+    if (!same(a[field] ?? null, b[field] ?? null)) {
+      return `signInGroup "${g}": oauth.${field} differs from ${first.id} — members of one sign-in must agree on it`;
+    }
+  }
+  return null;
+}
+
+function sortKeys(v: unknown): unknown {
+  if (v === null || typeof v !== 'object' || Array.isArray(v)) return v;
+  return Object.fromEntries(Object.entries(v as Record<string, unknown>).sort(([x], [y]) => x < y ? -1 : 1).map(([k, val]) => [k, sortKeys(val)]));
+}
+
+export interface SignInGroupInfo {
+  id: string;
+  name: string;
+  /** Connector ids, in manifest order. */
+  members: string[];
+  /** Union of the members' scopes, in first-seen order — what ONE sign-in requests. */
+  scopes: string[];
+}
+
+/** The groups declared by a set of manifests. Pure; the list the UI draws one card per group from. */
+export function computeSignInGroups(list: Array<Pick<IntegrationManifest, 'id' | 'oauth'>>): SignInGroupInfo[] {
+  const groups = new Map<string, SignInGroupInfo>();
+  for (const m of list) {
+    const g = m.oauth?.signInGroup;
+    if (!g) continue;
+    let info = groups.get(g.id);
+    if (!info) {
+      info = { id: g.id, name: g.name, members: [], scopes: [] };
+      groups.set(g.id, info);
+    }
+    info.members.push(m.id);
+    for (const s of m.oauth?.scopes ?? []) if (!info.scopes.includes(s)) info.scopes.push(s);
+  }
+  return Array.from(groups.values());
+}
+
 // ─── Module state ───────────────────────────────────────────────────────────
 
 const manifests = new Map<string, IntegrationManifest>();
@@ -1589,6 +1682,20 @@ export function loadManifests(integrationsDir?: string): number {
         console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${modeLabelsReason}`);
         continue;
       }
+      const groupReason = invalidSignInGroupReason(manifest);
+      if (groupReason) {
+        console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${groupReason}`);
+        continue;
+      }
+      const groupId = manifest.oauth?.signInGroup?.id;
+      if (groupId) {
+        const first = Array.from(manifests.values()).find(m => m.oauth?.signInGroup?.id === groupId);
+        const mismatch = first ? invalidSignInGroupMismatchReason(manifest, first) : null;
+        if (mismatch) {
+          console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${mismatch}`);
+          continue;
+        }
+      }
       manifests.set(id, manifest);
       loaded++;
     } catch (err) {
@@ -1612,4 +1719,9 @@ export function getManifest(id: string): IntegrationManifest | undefined {
  */
 export function getAllManifests(): IntegrationManifest[] {
   return Array.from(manifests.values());
+}
+
+/** Declared shared sign-in groups across all loaded manifests. */
+export function getSignInGroups(): SignInGroupInfo[] {
+  return computeSignInGroups(getAllManifests());
 }

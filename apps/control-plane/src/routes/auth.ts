@@ -8,7 +8,8 @@
  */
 
 import { Router, type Request, type Response, type NextFunction } from 'express';
-import { configure, unconfigureSession, pushServiceCredentials, resyncGates, startPendingIntegrations, stopAndRemoveAllIntegrations } from '../lib/mcp-bridge';
+import { credentialsToPush } from '../lib/sign-in-group';
+import { configure, unconfigureSession, getManifests, pushServiceCredentials, resyncGates, startPendingIntegrations, stopAndRemoveAllIntegrations } from '../lib/mcp-bridge';
 import type { Vault } from '../lib/vault';
 import { loadOrGenerateKeyPair, getPublicKey } from '../lib/e2e-key-manager';
 import { clientVersionHeaders } from '../lib/client-version';
@@ -562,12 +563,19 @@ export function createAuthRouter(
           }
         }
 
+        // Manifests decide which entries are shared sign-ins; if they cannot be
+        // read, every entry is pushed as it is stored (own credentials).
+        let manifestList: unknown = [];
+        try {
+          manifestList = (await getManifests() as { manifests?: unknown }).manifests ?? [];
+        } catch (err) {
+          console.error('[Control Plane] Could not read manifests for sign-in groups:', err);
+        }
         for (const credId of vault.listCredentials()) {
           try {
-            const creds = vault.getCredential(credId);
-            if (creds) {
-              await pushServiceCredentials(credId, creds);
-              console.error(`[Control Plane] Pushed ${credId} credentials to MCP`);
+            for (const [id, creds] of credentialsToPush(credId, manifestList, n => vault.getCredential(n))) {
+              await pushServiceCredentials(id, creds);
+              console.error(`[Control Plane] Pushed ${id} credentials to MCP`);
             }
           } catch (err) {
             console.error(`[Control Plane] Failed to push ${credId} credentials:`, err);

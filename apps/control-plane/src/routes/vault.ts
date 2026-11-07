@@ -14,6 +14,10 @@ import type { Vault, ServiceDef } from '../lib/vault';
 import { getManifests, pushServiceCredentials } from '../lib/mcp-bridge';
 import { credentialView, textFieldsFor, META_KEY } from '../lib/credential-meta';
 import { proxiedFetch } from '../lib/proxied-fetch';
+import {
+  credentialsToPush, parseGroupCredentialName, getGroup, groupOfMember, groupCredentialName,
+  effectiveCredentials, withoutSignIn, changesGroupClient,
+} from '../lib/sign-in-group';
 
 /**
  * Manifests decide which credential fields are `text` (returned as values)
@@ -56,7 +60,16 @@ export function createVaultRouter(vault: Vault): Router {
    */
   router.get('/credentials/:name', async (req: Request, res: Response) => {
     const { name } = req.params;
-    const cred = vault.getCredential(name);
+    const manifests = await cachedManifests();
+    // A member of a shared sign-in group is shown as it runs: its own entry
+    // with the group's sign-in laid over it (so "connected" is true for every
+    // member after one sign-in).
+    let cred = vault.getCredential(name);
+    const g = groupOfMember(manifests, name);
+    if (g) {
+      const m = g.members.find(x => x.id === name)!;
+      cred = effectiveCredentials(cred, vault.getCredential(groupCredentialName(g.id)), m.oauth);
+    }
     if (!cred) {
       res.json({ configured: false });
       return;
@@ -65,7 +78,7 @@ export function createVaultRouter(vault: Vault): Router {
     // recognition hints (prefix + last 4, nothing at all for short secrets).
     // The full value exists only inside the gateway; there is deliberately no
     // endpoint that returns it.
-    res.json(credentialView(cred, textFieldsFor(name, await cachedManifests())));
+    res.json(credentialView(cred, textFieldsFor(name, manifests)));
   });
 
   /**
@@ -95,24 +108,59 @@ export function createVaultRouter(vault: Vault): Router {
     // to tell two rotations of the same secret apart. Never client-supplied.
     fields = { ...fields, [META_KEY]: new Date().toISOString() };
 
-    vault.setCredential(name, fields);
-
-    // Push decrypted creds to MCP for service use
-    try {
-      await pushServiceCredentials(name, fields);
-    } catch (err) {
-      console.error(`[Vault] Failed to push credentials to MCP for ${name}:`, err);
+    // A shared sign-in's token is bound to the OAuth client that issued it.
+    // Saving a different client id/secret for the group drops its token (and
+    // metadata): the person signs in again with the new client. Members fall
+    // back to their own entries, which are untouched.
+    const manifests = await cachedManifests();
+    const groupId = parseGroupCredentialName(name);
+    let signsOut = false;
+    if (groupId) {
+      const group = getGroup(manifests, groupId);
+      if (!group) {
+        res.status(404).json({ error: `Unknown sign-in group "${groupId}"` });
+        return;
+      }
+      signsOut = changesGroupClient(group, vault.getCredential(name), incoming);
+      // Dry run: tell the UI what saving WOULD do, change nothing. The UI asks
+      // before it saves a changed client.
+      if (req.query.dryRun === '1' || req.query.dryRun === 'true') {
+        res.json({ ok: true, dryRun: true, signsOut, members: group.members.map(m => m.id) });
+        return;
+      }
+      if (signsOut) fields = withoutSignIn(fields, group.members[0].oauth!); // keeps the client just saved
     }
 
-    res.json({ ok: true });
+    vault.setCredential(name, fields);
+
+    // Push decrypted creds to MCP for service use (group overlay applied; a
+    // group entry fans out to its members)
+    for (const [id, creds] of credentialsToPush(name, manifests, n => vault.getCredential(n))) {
+      try {
+        await pushServiceCredentials(id, creds);
+      } catch (err) {
+        console.error(`[Vault] Failed to push credentials to MCP for ${id}:`, err);
+      }
+    }
+
+    res.json(groupId ? { ok: true, signedOut: signsOut } : { ok: true });
   });
 
   /**
    * DELETE /vault/credentials/:name
    */
-  router.delete('/credentials/:name', (req: Request, res: Response) => {
+  router.delete('/credentials/:name', async (req: Request, res: Response) => {
     const { name } = req.params;
     vault.deleteCredential(name);
+    // Deleting a sign-in group's entry returns its members to their own
+    // entries: push what they now run on.
+    if (parseGroupCredentialName(name)) {
+      for (const [id, creds] of credentialsToPush(name, await cachedManifests(), n => vault.getCredential(n))) {
+        try { await pushServiceCredentials(id, creds); } catch (err) {
+          console.error(`[Vault] Failed to push credentials to MCP for ${id}:`, err);
+        }
+      }
+    }
     res.json({ ok: true });
   });
 

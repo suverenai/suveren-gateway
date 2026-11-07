@@ -34,6 +34,10 @@ import { homedir } from 'node:os';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import { createProxyMiddleware } from 'http-proxy-middleware';
 import { Vault } from './lib/vault';
+import {
+  groupOfMember, unionScopes, effectiveCredentials, withoutSignIn, resolveGroupClient,
+  groupCredentialName, credentialsToPush, missingScopes, retireMemberSignIns, revokeTokens, type OAuthLike,
+} from './lib/sign-in-group';
 import { ShownSnapshotStore } from './lib/shown-snapshot';
 import { detectInstallMethod as detectInstallMethodFrom } from './lib/install-method';
 import { createAuthRouter } from './routes/auth';
@@ -263,10 +267,14 @@ let manifestCache: Array<{
   oauth: {
     authUrl: string;
     tokenUrl: string;
+    revokeUrl?: string;
     scopes: string[];
     credentialKeys: Record<string, string>;
     tokenStorage: string;
     extraParams?: Record<string, string>;
+    // Shared sign-in (see lib/sign-in-group.ts): connectors declaring the same
+    // group id are signed in once, with the union of their scopes.
+    signInGroup?: { id: string; name: string };
     // Optional liveness probe for access-token integrations that have no
     // refresh grant (e.g. LinkedIn). A lightweight authenticated GET whose
     // 200/401 tells us whether the stored token still works. accountFields
@@ -301,7 +309,7 @@ function decodeJwtEmail(idToken?: string): string | undefined {
   }
 }
 
-async function getOAuthManifest(integrationId: string) {
+async function loadManifestCache() {
   if (!manifestCache) {
     try {
       const data = await getManifests() as { manifests: typeof manifestCache };
@@ -310,7 +318,33 @@ async function getOAuthManifest(integrationId: string) {
       return null;
     }
   }
-  return manifestCache?.find(m => m.id === integrationId && m.oauth) ?? null;
+  return manifestCache;
+}
+
+async function getOAuthManifest(integrationId: string) {
+  const list = await loadManifestCache();
+  return list?.find(m => m.id === integrationId && m.oauth) ?? null;
+}
+
+/** A connector's credentials as it runs on them: own entry + its sign-in group's, if any. */
+function memberCredentials(list: unknown, integrationId: string): Record<string, string> | null {
+  const own = vault.getCredential(integrationId);
+  const g = groupOfMember(list, integrationId);
+  if (!g) return own;
+  const m = g.members.find(x => x.id === integrationId)!;
+  return effectiveCredentials(own, vault.getCredential(groupCredentialName(g.id)), m.oauth);
+}
+
+/** Push everything that follows from vault entry `name` to the MCP server. */
+async function pushEffective(name: string, list: unknown) {
+  for (const [id, creds] of credentialsToPush(name, list, n => vault.getCredential(n))) {
+    try {
+      await pushServiceCredentials(id, creds);
+      console.log(`[Control Plane] ${id} credentials pushed to MCP`);
+    } catch (err) {
+      console.error(`[Control Plane] Failed to push ${id} credentials to MCP:`, err);
+    }
+  }
 }
 
 app.get('/auth/oauth/:integrationId/start', async (req: Request, res: Response) => {
@@ -320,11 +354,21 @@ app.get('/auth/oauth/:integrationId/start', async (req: Request, res: Response) 
     res.status(404).json({ error: `No OAuth config found for integration "${integrationId}"` });
     return;
   }
-  const creds = vault.getCredential(integrationId);
   const oauth = manifest.oauth;
+  // A member of a shared sign-in group signs the WHOLE group in: the union of
+  // the members' scopes, one token. The redirect URI stays this connector's own
+  // (/auth/oauth/<id>/callback) so no URI has to be added at the provider.
+  const group = groupOfMember(manifestCache, integrationId);
   const clientIdKey = oauth.credentialKeys.clientId ?? 'clientId';
   const clientSecretKey = oauth.credentialKeys.clientSecret ?? 'clientSecret';
-  if (!creds?.[clientIdKey] || !creds?.[clientSecretKey]) {
+  let clientId: string | undefined;
+  if (group) {
+    clientId = resolveGroupClient(group, integrationId, vault.getCredential(groupCredentialName(group.id)), id => vault.getCredential(id))?.clientId;
+  } else {
+    const creds = vault.getCredential(integrationId);
+    clientId = creds?.[clientIdKey] && creds?.[clientSecretKey] ? creds[clientIdKey] : undefined;
+  }
+  if (!clientId) {
     res.status(400).json({ error: `${integrationId} OAuth credentials must be configured first` });
     return;
   }
@@ -332,10 +376,10 @@ app.get('/auth/oauth/:integrationId/start', async (req: Request, res: Response) 
   // Store redirect URI so callback can use the exact same value
   oauthRedirectUris.set(integrationId, redirectUri);
   const params = new URLSearchParams({
-    client_id: creds[clientIdKey],
+    client_id: clientId,
     redirect_uri: redirectUri,
     response_type: 'code',
-    scope: oauth.scopes.join(' '),
+    scope: (group ? unionScopes(group) : oauth.scopes).join(' '),
     ...oauth.extraParams,
   });
   res.redirect(`${oauth.authUrl}?${params.toString()}`);
@@ -353,10 +397,17 @@ app.get('/auth/oauth/:integrationId/callback', async (req: Request, res: Respons
     res.status(404).send('<html><body><h2>OAuth config not found</h2></body></html>');
     return;
   }
-  const creds = vault.getCredential(integrationId);
   const oauth = manifest.oauth;
   const clientIdKey = oauth.credentialKeys.clientId ?? 'clientId';
   const clientSecretKey = oauth.credentialKeys.clientSecret ?? 'clientSecret';
+  const group = groupOfMember(manifestCache, integrationId);
+  // Group: the client that /start used (group entry, else a member's own).
+  // Single connector: its own entry, as before.
+  let creds: Record<string, string> | null = vault.getCredential(integrationId);
+  if (group) {
+    const c = resolveGroupClient(group, integrationId, vault.getCredential(groupCredentialName(group.id)), id => vault.getCredential(id));
+    creds = c ? { [clientIdKey]: c.clientId, [clientSecretKey]: c.clientSecret } : null;
+  }
   if (!creds?.[clientIdKey] || !creds?.[clientSecretKey]) {
     res.status(400).send('<html><body><h2>Credentials missing</h2></body></html>');
     return;
@@ -377,7 +428,7 @@ app.get('/auth/oauth/:integrationId/callback', async (req: Request, res: Respons
         grant_type: 'authorization_code',
       }),
     });
-    const tokens = await tokenRes.json() as { refresh_token?: string; access_token?: string; id_token?: string; error?: string };
+    const tokens = await tokenRes.json() as { refresh_token?: string; access_token?: string; id_token?: string; scope?: string; error?: string };
     const tokenValue = tokens.refresh_token ?? tokens.access_token;
     if (tokens.error || !tokenValue) {
       res.status(400).send(`<html><body><h2>Token exchange failed</h2><p>${String(tokens.error || 'No token received')}</p><script>setTimeout(()=>window.close(),3000)</script></body></html>`);
@@ -387,25 +438,49 @@ app.get('/auth/oauth/:integrationId/callback', async (req: Request, res: Respons
     // the Integrations UI can show *which* account is connected. Stored under
     // reserved `_oauth*` keys; the vault route exposes them as `meta`.
     const account = decodeJwtEmail(tokens.id_token);
-    // Store token alongside existing credentials (refresh_token for Gmail, access_token for LinkedIn, etc.)
-    const updatedCreds: Record<string, string> = {
-      ...creds,
-      [oauth.tokenStorage]: tokenValue,
-      _oauthConnectedAt: new Date().toISOString(),
-    };
-    if (account) updatedCreds._oauthAccount = account;
-    vault.setCredential(integrationId, updatedCreds);
-    console.log(`[Control Plane] ${integrationId} OAuth tokens stored in vault`);
+    if (group) {
+      // ONE token for the group, written once. Members' own entries are left
+      // untouched (their old tokens stay valid until sign-out); the group entry
+      // is laid over them when pushed.
+      const groupName = groupCredentialName(group.id);
+      const groupCreds: Record<string, string> = {
+        ...(vault.getCredential(groupName) ?? {}),
+        [clientIdKey]: creds[clientIdKey],
+        [clientSecretKey]: creds[clientSecretKey],
+        [oauth.tokenStorage]: tokenValue,
+        _oauthConnectedAt: new Date().toISOString(),
+      };
+      if (account) groupCreds._oauthAccount = account;
+      // What the provider actually granted (it may be fewer than requested).
+      if (tokens.scope) groupCreds._oauthScopes = tokens.scope;
+      vault.setCredential(groupName, groupCreds);
+      console.log(`[Control Plane] sign-in group ${group.id} OAuth tokens stored in vault`);
+      // Only now, with the group token safely stored: the members' old
+      // per-connector tokens are retired (a failed sign-in never gets here).
+      const retired = retireMemberSignIns(group, n => vault.getCredential(n), (n, c) => vault.setCredential(n, c));
+      if (retired.length) console.log(`[Control Plane] retired own sign-in of: ${retired.join(', ')}`);
+      await pushEffective(groupName, manifestCache);
+    } else {
+      // Store token alongside existing credentials (refresh_token for Gmail, access_token for LinkedIn, etc.)
+      const updatedCreds: Record<string, string> = {
+        ...creds,
+        [oauth.tokenStorage]: tokenValue,
+        _oauthConnectedAt: new Date().toISOString(),
+      };
+      if (account) updatedCreds._oauthAccount = account;
+      vault.setCredential(integrationId, updatedCreds);
+      console.log(`[Control Plane] ${integrationId} OAuth tokens stored in vault`);
 
-    // Push updated credentials to MCP server so integration can start
-    try {
-      await pushServiceCredentials(integrationId, updatedCreds);
-      console.log(`[Control Plane] ${integrationId} credentials pushed to MCP`);
-    } catch (err) {
-      console.error(`[Control Plane] Failed to push ${integrationId} credentials to MCP:`, err);
+      // Push updated credentials to MCP server so integration can start
+      try {
+        await pushServiceCredentials(integrationId, updatedCreds);
+        console.log(`[Control Plane] ${integrationId} credentials pushed to MCP`);
+      } catch (err) {
+        console.error(`[Control Plane] Failed to push ${integrationId} credentials to MCP:`, err);
+      }
     }
 
-    res.send(`<html><body><h2>${manifest.id} connected successfully</h2><p>You can close this window.</p><script>setTimeout(()=>window.close(),2000)</script></body></html>`);
+    res.send(`<html><body><h2>${group ? group.name : manifest.id} connected successfully</h2><p>You can close this window.</p><script>setTimeout(()=>window.close(),2000)</script></body></html>`);
   } catch (err) {
     console.error(`[Control Plane] ${integrationId} OAuth error:`, err);
     res.status(500).send('<html><body><h2>OAuth error</h2><p>See server logs</p></body></html>');
@@ -426,6 +501,60 @@ app.get('/auth/gmail/callback', (req: Request, res: Response) => {
 const authGuard = requireAuth(vault);
 
 /**
+ * Sign out of a connector's OAuth account. For a member of a shared sign-in
+ * group it signs out the WHOLE group: the group's token and metadata are
+ * removed, and so is every member's own legacy token - otherwise the old
+ * per-connector tokens (kept valid for migration) would silently take over
+ * again. OAuth client settings (id + secret) are kept so signing in again needs
+ * no re-entry. The running connector(s) lose their token and stop.
+ * Not revoked at the provider (no revocation URL is declared in manifests).
+ */
+app.post('/auth/oauth/:integrationId/disconnect', authGuard, async (req: Request, res: Response) => {
+  const integrationId = String(req.params.integrationId);
+  const manifest = await getOAuthManifest(integrationId);
+  if (!manifest?.oauth) { res.status(404).json({ error: `No OAuth config found for integration "${integrationId}"` }); return; }
+  const group = groupOfMember(manifestCache, integrationId);
+  const targets = group ? group.members : [manifest as { id: string; oauth: OAuthLike }];
+  try {
+    // Revoke at the provider FIRST (needs the tokens), best-effort: a refusal is
+    // reported in the response, and the local sign-out happens regardless.
+    const tokens: Array<{ target: string; token: string }> = [];
+    if (group) {
+      const g = vault.getCredential(groupCredentialName(group.id));
+      if (g?.[manifest.oauth.tokenStorage]) tokens.push({ target: `group:${group.id}`, token: g[manifest.oauth.tokenStorage] });
+    }
+    for (const t of targets) {
+      const own = vault.getCredential(t.id);
+      if (own?.[t.oauth!.tokenStorage]) tokens.push({ target: t.id, token: own[t.oauth!.tokenStorage] });
+    }
+    const revocation = await revokeTokens(manifest.oauth.revokeUrl, tokens);
+    if (group) {
+      const gname = groupCredentialName(group.id);
+      const gcred = vault.getCredential(gname);
+      if (gcred) vault.setCredential(gname, withoutSignIn(gcred, manifest.oauth));
+    }
+    for (const t of targets) {
+      const own = vault.getCredential(t.id);
+      if (own) vault.setCredential(t.id, withoutSignIn(own, t.oauth!));
+    }
+    // Push explicitly (even an empty set): a member with no entry of its own
+    // would otherwise keep running on the credentials pushed before sign-out.
+    for (const t of targets) await pushServiceCredentials(t.id, vault.getCredential(t.id) ?? {});
+    res.json({
+      ok: true,
+      signedOut: targets.map(t => t.id),
+      // revoked: every distinct token was revoked at the provider. Local
+      // sign-out is done either way; `revocation` names what was refused.
+      revoked: revocation.length > 0 && revocation.every(r => r.ok),
+      revocation,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Sign-out failed' });
+  }
+});
+
+
+/**
  * Auth-health probe — the truthful "can this integration actually authenticate"
  * signal for the Integrations UI. For refresh-token integrations (Google
  * calendar/gmail) it attempts a real `refresh_token` grant against the
@@ -442,7 +571,7 @@ app.get('/auth/oauth/:integrationId/health', authGuard, async (req: Request, res
   const manifest = await getOAuthManifest(integrationId);
   if (!manifest?.oauth) { res.json({ status: 'not_configured' }); return; }
   const oauth = manifest.oauth;
-  const creds = vault.getCredential(integrationId);
+  const creds = memberCredentials(manifestCache, integrationId);
   const clientIdKey = oauth.credentialKeys.clientId ?? 'clientId';
   const clientSecretKey = oauth.credentialKeys.clientSecret ?? 'clientSecret';
   const account = creds?._oauthAccount;
@@ -498,7 +627,16 @@ app.get('/auth/oauth/:integrationId/health', authGuard, async (req: Request, res
       }),
     });
     const body = await r.json().catch(() => ({})) as { access_token?: string; error?: string; error_description?: string };
-    if (r.ok && body.access_token) { res.json({ status: 'ok', account }); return; }
+    if (r.ok && body.access_token) {
+      // The token works, but does it cover everything this connector needs?
+      // (A shared sign-in may have been granted fewer scopes than requested,
+      // or the manifest may have gained one since.) Only judged where the
+      // granted scopes were recorded - a legacy per-connector token has none.
+      const missing = missingScopes(creds._oauthScopes, oauth.scopes);
+      if (missing.length > 0) { res.json({ status: 'reconnect_needed', account, missingScopes: missing }); return; }
+      res.json({ status: 'ok', account });
+      return;
+    }
     res.json({ status: 'failed', account, error: body.error_description || body.error || `HTTP ${r.status}` });
   } catch (err) {
     res.json({ status: 'failed', account, error: err instanceof Error ? err.message : 'probe failed' });
@@ -687,7 +825,7 @@ app.get('/integrations/:id/discover/:field', authGuard, async (req: Request, res
     }
 
     // Resolve credentials from the vault
-    const creds = vault.getCredential(integrationId);
+    const creds = memberCredentials((manifestsResp as { manifests: unknown }).manifests, integrationId);
     if (!creds) {
       res.status(400).json({ error: `Integration "${integrationId}" has no credentials in the vault — complete OAuth first.` });
       return;

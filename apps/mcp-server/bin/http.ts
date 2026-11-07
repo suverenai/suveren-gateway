@@ -35,7 +35,7 @@ import { isSimulationMode } from '../src/lib/simulation-mode';
 import { agentAccess, bindRefusal, resolveAgentToken, resolveBindHost } from '../src/lib/agent-access';
 import { readPairing } from '../src/lib/as-pairing';
 import { loadProfiles } from '../src/lib/profile-loader';
-import { loadManifests, getAllManifests, getManifest } from '../src/lib/manifest-loader';
+import { loadManifests, getAllManifests, getManifest, getSignInGroups } from '../src/lib/manifest-loader';
 import { buildInternalPreview } from '../src/lib/preview';
 import { buildRequestContext } from '../src/lib/request-context';
 import { resolveAttachmentPreview } from '../src/lib/document-source';
@@ -862,7 +862,7 @@ app.get('/internal/authorizations', internalOnly, (_req: Request, res: Response)
 app.get('/internal/manifests', internalOnly, (_req: Request, res: Response) => {
   // `builtins`: names and action labels of the gateway's own tool groups, for
   // the UI's ticket/approval labels only — never rendered as connectors.
-  res.json({ manifests: getAllManifests(), builtins: integrationManager?.getBuiltinLabels?.() ?? [] });
+  res.json({ manifests: getAllManifests(), signInGroups: getSignInGroups(), builtins: integrationManager?.getBuiltinLabels?.() ?? [] });
 });
 
 /**
@@ -1308,6 +1308,13 @@ async function startOneIntegration(
     console.error(
       `[Suveren MCP] ${config.id} cannot start — missing credentials: ${missing.join(', ')}`,
     );
+    // A restart means the credentials CHANGED under a running process. If they
+    // no longer resolve (sign-out removed the token), leaving it running would
+    // keep acting on the signed-out account's token.
+    if (opts.restart && integrationManager.isRunning(config.id)) {
+      console.error(`[Suveren MCP] ${config.id}: credentials removed — stopping`);
+      await integrationManager.stopIntegration(config.id);
+    }
     return;
   }
 

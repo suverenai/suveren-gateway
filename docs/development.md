@@ -85,6 +85,37 @@ By default, the gateway connects to `https://www.suveren.ai`. Just run `pnpm dev
 | `SUVEREN_SIMULATION` | `0` | `1` blocks every connector without a manifest `simulation` marker and forces simulated ones into that mode. Normally set by `bundle/server.js` from the CLI's saved config (`suveren-gateway simulation on\|off`), not by hand — see README's "Simulation mode" section. |
 | `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` | (unset) | Corporate proxy, upper or lower case (lower wins if both set). Honoured for every outbound call to the Authority Server, the update checker, and a remote AI assistant endpoint — see `proxy-env.ts` in both apps and README's "Behind a company proxy" section. A loopback target (incl. control-plane ↔ MCP-server, and a local AI assistant) is never proxied, independent of these. |
 
+## Shared sign-in groups
+
+Connectors that are the same account at the same provider (Gmail and Google Calendar are one Google account) declare it explicitly in their manifest:
+
+```json
+"oauth": { "signInGroup": { "id": "google", "name": "Google" }, "authUrl": "...", ... }
+```
+
+Nothing is inferred from `authUrl` or `clientId`. `id` is a lowercase slug, `name` is what a card will show. `manifest-loader.ts` refuses a manifest whose `signInGroup` is malformed, and refuses a later member whose `authUrl`, `tokenUrl`, `tokenStorage`, `credentialKeys` or `extraParams` differ from the first member's (one sign-in = one provider, one client, one token slot). Scopes may differ: the sign-in requests the union.
+
+Behaviour (control plane, `lib/sign-in-group.ts`):
+
+- **Sign-in.** `GET /auth/oauth/<any member>/start` signs the whole group in with the union of the members' scopes. The redirect URI stays `/auth/oauth/<that member>/callback`, so no URI has to be added in the provider's console. The token is stored once, in the vault entry `sign-in:<groupId>` (client id/secret, token, `_oauthAccount`, `_oauthConnectedAt`, `_oauthScopes` = what the provider granted).
+- **Members.** A member runs on its own vault entry with the group's sign-in fields laid over it, once the group holds a token. The MCP server and every `envMapping` are unchanged. `GET /vault/credentials/<member>` and `/auth/oauth/<member>/health` show the same effective view.
+- **Refresh.** Each connector process refreshes with the shared client + token exactly as before; the health probe refreshes with the effective credentials.
+- **Sign-out.** `POST /auth/oauth/<member>/disconnect` first revokes every distinct token (the group's and the members' own) at the provider's optional `oauth.revokeUrl` (RFC 7009; Google: `https://oauth2.googleapis.com/revoke`), then removes the group token and each member's own token locally, keeps the client settings, and stops the connectors. Revocation is best-effort: local sign-out happens even if the provider refuses. The response says what happened: `{ ok, signedOut: [ids], revoked: boolean, revocation: [{ target, ok, error? }] }`; `revoked` is false when any revocation failed or no `revokeUrl` is declared.
+- **Migration.** Nothing is rewritten on upgrade. Until the group holds a token, every member keeps its own client and token, so two separate tokens keep working. The first SUCCESSFUL group sign-in writes the group token and, only after that is stored, removes the members' own tokens and sign-in metadata (their client settings stay). A failed sign-in changes nothing.
+- **Changing the group client.** The token was issued to the old client, so saving a different client id/secret for `sign-in:<id>` signs the group out (token and metadata dropped; members have no token left to fall back on). To let the UI warn first: `PUT /vault/credentials/sign-in:<id>?dryRun=1` with the same body saves nothing and answers `{ ok, dryRun: true, signsOut: boolean, members: [ids] }`. The real save answers `{ ok, signedOut: boolean }`.
+- **Scope coverage.** `GET /auth/oauth/<member>/health` answers `{ status: "reconnect_needed", missingScopes: [...] }` when the token works but the scopes the provider granted (`_oauthScopes`) do not cover the member's manifest scopes. Google's short names (`email`, `profile`) and long names (`.../auth/userinfo.email`) count as the same scope. A token with no recorded scopes (a legacy per-connector token) is never flagged.
+- **UI data.** `GET /mcp/integrations/manifests` returns `signInGroups: [{ id, name, members, scopes }]` next to `manifests`.
+
+Hand test (needs a person in a browser; no automated test covers a real Google sign-in):
+
+1. Upgrade an install that has Gmail and Calendar signed in separately: both still show connected and work, with no sign-in.
+2. Start a sign-in from Gmail: Google's consent screen lists Gmail AND Calendar permissions; after consent both connectors run and show the same account.
+3. Restart the gateway: both come back signed in. After step 2 the old per-connector tokens are gone from the vault (only the group token remains).
+4. Disconnect: both stop, both show "not connected", the response says `revoked: true`, and the gateway no longer appears under the Google account's third-party access; signing in again needs no client id/secret.
+4b. Untick Calendar permissions on Google's consent screen when signing in: Gmail shows ok, Calendar shows "reconnect needed" with the missing scope.
+4c. Change the group's client id: a dry run says it signs out; after saving, both show "not connected".
+5. Fresh install: enter the Google client settings once (`sign-in:google`), sign in once, both connectors work.
+
 ## Connector manifests — pinned versions
 
 Every manifest under `content/integrations/` that installs a connector via npm (`npmPackage` set) must also pin the exact tested version via `npmVersion` (e.g. `"0.3.3"`) — no ranges (`^1.2.3`), no dist-tags (`"latest"`), no git/URL/file specs. `manifest-loader.ts` refuses the whole manifest at load time, by name, if the pin is missing or not an exact semver; `manifest-npm-pin.test.ts` lints every shipped manifest so a new one can't ship without it.
