@@ -111,7 +111,7 @@ describe('shipped manifests: every argument of a sealed tool is classified', () 
   it('seals the post media under publish@0.8 (checked against a pinned copy of that profile)', () => {
     // A copy of hap-profiles publish/0.8.profile.json (PR hap-profiles#22): CI reads the catalog
     // from hap-profiles MAIN, which gets 0.8 only when gateway + profile are merged together.
-    const p08 = readJson(join(import.meta.dirname, 'fixtures', 'profiles', 'publish-0.8.profile.json')).content_binding;
+    const p08 = readJson(join(import.meta.dirname, 'fixtures', 'profile-fixtures', 'publish-0.8.profile.json')).content_binding;
     const linkedin = readJson(join(MANIFESTS, 'linkedin.json'));
     for (const [tool, args] of [['create_image_post', ['imageUrl', 'imagePath', 'altText']], ['create_article_post', ['articleUrl', 'title', 'description']]] as const) {
       const c = classifySealedArgs(linkedin.toolGating.overrides[tool], p08);
