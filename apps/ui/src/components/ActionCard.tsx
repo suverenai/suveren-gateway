@@ -1,7 +1,7 @@
 import { resolveProposalLinks, type ProposalLink } from '../lib/proposal-links';
 import type { ThreadItem } from '../lib/thread-aggregator';
 import { formatTimeLeft } from '../lib/time-left';
-import { ProposalArgs, NotSealedArgs, ImagePreviewNote } from './ProposalArgs';
+import { ProposalArgs, NotSealedArgs, localPreviewIsUnsealed } from './ProposalArgs';
 import { ProfileRail } from './ProfileRail';
 import { OutcomeBox } from './OutcomeBox';
 import { ApprovalCard } from './ApprovalCard';
@@ -290,7 +290,7 @@ function RecordCard({ item, proposalLinks, toolDisplay, manifests, currentUserId
         </div>
       )}
 
-      {isProposal && typeof (args as Record<string, unknown>)?._imagePreview === 'string' && (
+      {isProposal && typeof (args as Record<string, unknown>)?._imagePreview === 'string' && !localPreviewIsUnsealed(args as Record<string, unknown>, toolDisplay) && (
         <div style={{ marginBottom: '0.75rem' }}>
           <div style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.35rem' }}>
             Preview
@@ -308,7 +308,6 @@ function RecordCard({ item, proposalLinks, toolDisplay, manifests, currentUserId
               border: '1px solid var(--border)',
             }}
           />
-          <ImagePreviewNote args={args as Record<string, unknown>} display={toolDisplay} />
         </div>
       )}
 
