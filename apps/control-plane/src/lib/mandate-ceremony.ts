@@ -110,6 +110,12 @@ function refuse(msg: string): never {
   throw new MandateRefused(msg);
 }
 
+/** The Authority Server's own reason. Its refusals are `{ approved: false, errors: [{ code, message }] }`. */
+function asRefusalReason(status: number, body: any): string {
+  const first = Array.isArray(body?.errors) ? body.errors[0] : undefined;
+  return first?.message ?? body?.message ?? body?.detail ?? (typeof body?.error === 'string' ? body.error : undefined) ?? `status ${status}`;
+}
+
 async function resolveProfile(as: AsCall, requested: string): Promise<AgentProfile> {
   let id = requested.trim();
   if (!id.includes('@')) {
@@ -193,9 +199,11 @@ export async function planMandate(req: MandateRequest, deps: CeremonyDeps): Prom
 
   // Rights — the Authority Server's team authority gate, up front.
   let approvers: string[] = [];
+  let teamCaps: Record<string, unknown> = {};
   if (!isPersonal) {
     const cfg = await deps.as('GET', `/api/groups/${encodeURIComponent(group.id)}/profile-config/${encodeURIComponent(profile.id)}`);
     approvers = (cfg.status === 200 ? cfg.body?.config?.approvers : undefined) ?? [];
+    teamCaps = (cfg.status === 200 ? cfg.body?.config?.caps : undefined) ?? {};
     // The AS carries a team's settings over from an older version of the same
     // profile; an empty answer here means nothing could be carried (none
     // configured, or the new version adds a limit that needs a value).
@@ -218,6 +226,14 @@ export async function planMandate(req: MandateRequest, deps: CeremonyDeps): Prom
     if (typeof maximum === 'number' && typeof value === 'number' && value > maximum) {
       errors.push(`Field "${field}" may be at most ${maximum}.`);
     }
+  }
+  // A team's cap on a limit the gateway enforces itself must be set on the mandate; the Authority Server
+  // refuses it otherwise. Say so now, before the person is asked to approve something that cannot be created.
+  for (const [field, cap] of Object.entries(teamCaps)) {
+    const def = profile.boundsSchema?.fields[field] as { enforcedBy?: string } | undefined;
+    if (def?.enforcedBy !== 'gatekeeper' || bounds[field as keyof typeof bounds] !== undefined) continue;
+    const value = typeof cap === 'object' && cap !== null ? (cap as { value?: unknown }).value : cap;
+    errors.push(`"${group.name}" requires limit "${field}" on this mandate: set it in \`limits\`, at most ${String(value)}.`);
   }
   const context = scalarRecord('scope', req.scope);
   errors.push(...validateScopeParams(context as never, profile).errors);
@@ -301,8 +317,7 @@ export async function createMandate(req: MandateRequest, deps: CeremonyDeps): Pr
     intent_disclosure_hash: enc?.intentDisclosureHash,
   });
   if (res.status >= 300) {
-    const why = res.body?.message ?? res.body?.detail ?? res.body?.error ?? `status ${res.status}`;
-    refuse(`The Authority Server refused the mandate: ${why}`);
+    refuse(`The Authority Server refused the mandate: ${asRefusalReason(res.status, res.body)}`);
   }
 
   try {
