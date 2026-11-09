@@ -1,7 +1,7 @@
 {
   "integration": "mail",
   "npmPackage": "@humanagencyp/email-mcp",
-  "npmVersion": "0.5.1",
+  "npmVersion": "0.5.2",
   "tools": {
     "clear_simulation": {
       "type": "object",

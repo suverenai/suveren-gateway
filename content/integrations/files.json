@@ -6,7 +6,7 @@
   "icon": "file-text",
   "profile": "files",
   "npmPackage": "@humanagencyp/files-mcp",
-  "npmVersion": "0.0.0",
+  "npmVersion": "0.1.0",
   "personalDefault": true,
   "localOnly": true,
   "mcp": {
