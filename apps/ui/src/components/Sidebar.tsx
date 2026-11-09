@@ -199,12 +199,16 @@ export function Sidebar() {
         return (
           <div key={group} className={`sidebar-${group}`}>
             {group === 'setup' && <><div className="sidebar-divider" /><div className="sidebar-group-label">Setup</div></>}
-            {/* §19.4 — the closed icon rail shows Setup as ONE icon (dot = something needs attention);
+            {/* §19.4 — the closed icon rail shows Setup as ONE icon (its number = what needs attention);
                 opening the rail (hover / focus) shows the group in full, as the wide nav always does. */}
             {group === 'setup' && (
               <span className={`sidebar-setup-rail${items.some(i => location.pathname.startsWith(i.to)) ? ' is-active' : ''}`} aria-hidden="true">
                 <NavIcon name="settings" />
-                {items.some(i => i.statusKey && counts[i.statusKey]) && <span className="nav-dot" />}
+                {(() => {
+                  const total = items.reduce((n, i) => n + (i.statusKey && !i.newLabel ? (counts[i.statusKey] ?? 0) : 0), 0);
+                  if (total > 0) return <span className="nav-count nav-count-setup" data-testid="nav-count-setup-rail">{total > 99 ? '99+' : total}</span>;
+                  return items.some(i => i.statusKey && counts[i.statusKey]) ? <span className="nav-dot" /> : null;
+                })()}
               </span>
             )}
             <ul className="sidebar-nav">
@@ -225,7 +229,7 @@ export function Sidebar() {
                             className={`nav-count${item.quietCount || group === 'setup' ? ' nav-count-setup' : ''}`}
                             data-testid={`nav-count-${item.statusKey}`}
                             title={item.statusKey === 'authorizations' ? 'Expired mandates' : undefined}
-                          >{count}</span>) : null}
+                          >{count > 99 ? '99+' : count}</span>) : null}
                     </NavLink>
                   </li>
                 );
