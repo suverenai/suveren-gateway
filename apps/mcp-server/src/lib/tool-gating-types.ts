@@ -589,6 +589,13 @@ export interface DocumentSourceConfig {
    * can label the file name "given by the AI". Generic: no kind name in code.
    */
   aiSupplied?: boolean;
+  /**
+   * The tool of THIS connector that brings a document of this kind in (the Files
+   * connector's `save_file`). The AI is told: "save first with <connector>__<tool>".
+   * Must name a tool in this manifest's `toolGating.overrides`, not an internal one
+   * (checked at load time). Generic: no tool name in code.
+   */
+  savedBy?: string;
   /** Short name and one-line explanation of this source for the mandate form's
    *  "What the AI may attach" checkboxes. Optional; the form falls back to the label. */
   title?: string;

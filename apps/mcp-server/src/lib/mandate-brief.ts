@@ -18,6 +18,8 @@ import { agentVisibleAuthorizations } from './agent-visibility';
 import { isSimulationMode } from './simulation-mode';
 import { uiUrl } from './locked-notice';
 import { AGENT_RULES } from './agent-rules';
+import { firstMandateText, LEAD_THE_PERSON_RULE } from './guidance';
+import { setupCardName } from './guidance-runtime';
 
 /** Extract short profile name from full ID (e.g., "github.com/.../charge@0.3" → "charge") */
 function shortProfileName(profileId: string): string {
@@ -202,6 +204,15 @@ export function buildMandateBrief(opts: MandateBriefOptions): string {
     lines.push('');
   }
 
+  // A fresh gateway outside test mode: the one step only a person can take, with the page's own words.
+  // (Test mode has its own block above; its words must not tell the working AI which mode it is in.)
+  if (!isSimulationMode() && active.length === 0) {
+    lines.push('=== FIRST STEP ===');
+    lines.push('');
+    lines.push(firstMandateText({ url: uiUrl(), card: setupCardName(integrationManager) }));
+    lines.push('');
+  }
+
   // Always, in every mode: what an agent must never do with this gateway.
   lines.push('=== RULES ===');
   lines.push('');
@@ -209,7 +220,7 @@ export function buildMandateBrief(opts: MandateBriefOptions): string {
   lines.push('');
 
   // Instruction to use list-authorizations for detail
-  lines.push('When you receive a task, call list-authorizations(domain) to load full details for the relevant domain.');
+  lines.push('When you receive a task, call list-authorizations(domain) to load full details for the relevant domain. ' + LEAD_THE_PERSON_RULE);
 
   return lines.join('\n');
 }

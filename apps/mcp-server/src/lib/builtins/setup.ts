@@ -39,6 +39,7 @@ import { getAllManifests } from '../manifest-loader';
 import { getConsumptionState } from '../consumption';
 import { unifiedLineDiff } from '../unified-diff';
 import { getProfile, listProfiles, type AgentProfile } from '@hap/core';
+import { BEFORE_PROPOSING } from '../guidance';
 import type { IntegrationManager } from '../integration-manager';
 
 /** The delegation profile by its short name, as a manifest names it: a mandate under
@@ -301,7 +302,7 @@ const CREATE_MANDATE_INPUT_SCHEMA = {
     limits: { type: 'object', description: 'The limits (bounds) by field name, as the profile defines them.' },
     scope: { type: 'object', description: 'The scope (context) by field name, as the profile defines it.' },
     intent: { type: 'string', description: 'Why, goal and watch-outs — signed with the mandate (at most 2000 characters).' },
-    mode: { type: 'string', enum: ['review', 'automatic'], description: 'review = each action needs approval; automatic = within the limits.' },
+    mode: { type: 'string', enum: ['review', 'automatic'], description: 'review = each action needs approval; automatic = within the limits. Ask the person which they want; do not choose for them.' },
     duration_hours: { type: 'number', description: 'How long the mandate is valid, in hours. Omit for the profile default.' },
     title: { type: 'string', description: 'A short name for the mandate.' },
     ticket_id: {
@@ -357,7 +358,7 @@ export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
     // reads this as the mandate they're giving, so it must match the profile
     // name they'll see everywhere else (Mandates page, dashboard first-run
     // card), not the internal "test setup" framing. Description is unchanged.
-    name: 'Delegation',
+    name: 'Setup',
     description:
       'Your AI proposes mandates and its agent brief — in a test (simulation mode) and, within the profiles ' +
       'and modes you allow, on your real systems too. Every proposal waits for your approval.',
@@ -494,7 +495,7 @@ export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
           'screen. Checked against the profile before the proposal: unknown limits, a mode the profile does not ' +
           'allow, or a team where the person may not give this mandate are refused at once. Outside simulation ' +
           'mode, the profile and mode you may propose are themselves limited by your Delegation mandate\'s scope ' +
-          '— Delegation itself can never be proposed. Create only.',
+          '— Delegation itself can never be proposed. Create only. ' + BEFORE_PROPOSING,
         inputSchema: CREATE_MANDATE_INPUT_SCHEMA,
         validate: async (args) => {
           const fixed = proposalTargetRefusal(args);

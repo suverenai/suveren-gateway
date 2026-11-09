@@ -12,6 +12,9 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { SharedState } from './lib/shared-state';
+import { attachmentLine, attachmentSources, type GuideManifest } from './lib/guidance';
+import { toolNameOf } from './lib/guidance-runtime';
+import { getAllManifests } from './lib/manifest-loader';
 import { buildMandateBrief } from './lib/mandate-brief';
 import { listAuthorizationsHandler } from './tools/authorizations';
 import { checkPendingHandler } from './tools/pending';
@@ -112,7 +115,17 @@ export function createMcpServer(
 
   // ─── Proxied tools from downstream integrations ──────────────────────────
 
-  const proxiedTools = new Map<string, { tool: DiscoveredTool; registered: ReturnType<typeof server.registerTool> }>();
+  const proxiedTools = new Map<string, { tool: DiscoveredTool; registered: ReturnType<typeof server.registerTool>; description: string }>();
+
+  /** The description an agent sees: the fixed prefix plus, for a tool that takes attachments, what the manifests let it attach. */
+  function describeProxied(tool: DiscoveredTool): string {
+    let extra: string | undefined;
+    if (tool.gating?.attachmentsArg) {
+      const running = (getAllManifests() as unknown as GuideManifest[]).filter(m => integrationManager?.isRunning?.(m.id));
+      extra = attachmentLine(attachmentSources(running, toolNameOf));
+    }
+    return buildProxiedToolDescription(tool, extra);
+  }
 
   function registerProxiedTools() {
     if (!integrationManager) {
@@ -146,7 +159,15 @@ export function createMcpServer(
       // keeping it would enforce a gating config the backend no longer has.
       const existing = proxiedTools.get(tool.namespacedName);
       if (existing) {
-        if (existing.tool === tool) continue;
+        if (existing.tool === tool) {
+          // Same tool, but a connector that offers documents may have started since: keep the line current.
+          const fresh = describeProxied(tool);
+          if (fresh !== existing.description) {
+            existing.registered.update({ description: fresh });
+            existing.description = fresh;
+          }
+          continue;
+        }
         existing.registered.remove();
         proxiedTools.delete(tool.namespacedName);
       }
@@ -186,7 +207,7 @@ export function createMcpServer(
       // openly. A plain shape let the SDK strip it silently, so the call ran without it and the
       // AI was never told (2026-11-07, Rehearsal A16 on the real Gmail test account).
       const zodShape = z.object(jsonSchemaToZodShape(tool.inputSchema)).passthrough();
-      const description = buildProxiedToolDescription(tool);
+      const description = describeProxied(tool);
 
       try {
         const registered = server.registerTool(
@@ -204,7 +225,7 @@ export function createMcpServer(
           // decider's identity); setup tools are not the working agent's.
           (integrationManager?.isBuiltin?.(tool.integrationId) ? handler : withOutcomeOutbox(handler)) as Parameters<typeof server.registerTool>[2],
         );
-        proxiedTools.set(tool.namespacedName, { tool, registered });
+        proxiedTools.set(tool.namespacedName, { tool, registered, description });
       } catch (err) {
         console.error(`[MCP] Failed to register tool ${tool.namespacedName}:`, err);
       }

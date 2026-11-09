@@ -32,6 +32,7 @@ import {
 } from './attachment-resolution';
 import { validateDocumentReferences, validateInsertReferences } from './attachment-reference';
 import { ATTACHMENT_SOURCES_FIELD } from './attachment-policy';
+import { attachmentNotAllowedText, refusalNextStep } from './guidance';
 import { verifyTicket, TicketBindingMismatchError, mandateForTicket } from './ticket-verify';
 import { wireExecutionContext as hapWireExecutionContext, checkExecutionValues, missingSumFields } from '@hap/core';
 import { notifyControlPlane } from './cp-notify';
@@ -65,6 +66,12 @@ import { extname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { isSimulationMode, manifestIsSimulated } from './simulation-mode';
 import { getManifest } from './manifest-loader';
+import { sourceTitle } from './guidance';
+
+/** A document kind by the name the mandate form shows ("Saved files"), from its connector's manifest. */
+function sourceTitleOf(connector: string, kind: string): string {
+  return sourceTitle(kind, getManifest(connector)?.documents?.[kind]);
+}
 
 const IMAGE_MIME: Record<string, string> = {
   '.jpg': 'image/jpeg',
@@ -548,7 +555,8 @@ export function createGatedToolHandler(
     if (!detail) return null;
     recordBlocked(state, tool, { kind: 'simulation', detail, who: 'gateway', code: 'SIMULATION_MODE' });
     return {
-      content: [{ type: 'text', text: `Refused: "${tool.namespacedName}" is not available. No ticket was requested.` }],
+      content: [{ type: 'text', text: `Refused: "${tool.namespacedName}" is not available. No ticket was requested. ` +
+        'Tell the person it is not available right now; the connector\'s setting is under **Connectors**.' }],
       isError: true,
     };
   };
@@ -718,7 +726,7 @@ function createGatedToolHandlerInner(
         type: 'text',
         text: refusals.length > 0
           ? `Refused: ${reasons.charAt(0).toUpperCase() + reasons.slice(1)} No ticket was requested.`
-          : noMandateRefusal(tool.namespacedName, profile!, integrationManager.noMandateText?.(tool.integrationId)),
+          : noMandateRefusal(tool.namespacedName, profile!, integrationManager.noMandateText?.(tool.integrationId), getManifest(tool.integrationId)?.name),
       }],
       isError: true,
     };
@@ -1419,7 +1427,8 @@ function createGatedToolHandlerInner(
         content: [{
           type: 'text',
           text: `Tool call rejected by Gatekeeper. Tried ${matchingAuths.length} authorization(s):\n` +
-            errors.map(e => `  - ${e}`).join('\n'),
+            errors.map(e => `  - ${e}`).join('\n') +
+            '\nNothing ran. Tell the person which limit or scope stopped it. To change it they edit the mandate (**Mandates**, open it, **Edit**, sign again); or ask for something smaller. Do not retry the same call.',
         }],
         isError: true,
       };
@@ -1451,7 +1460,14 @@ function createGatedToolHandlerInner(
       const narrowed = candidatesAllowingAttachments(passers, refs, (id) => getProfile(id) as never);
       if (narrowed.allowed.length === 0) {
         return {
-          content: [{ type: 'text', text: `Refused: attachment not allowed by any ${tool.gating.profile ?? ''} mandate. ${narrowed.refusal ?? ''}`.trim() }],
+          content: [{ type: 'text', text: attachmentNotAllowedText({
+            tool: tool.namespacedName,
+            area: areaName(tool.gating.profile ?? ''),
+            candidates: passers,
+            refs,
+            profileOf: (id) => getProfile(id) as never,
+            titleOf: (connector, kind) => sourceTitleOf(connector, kind),
+          }) }],
           isError: true,
         };
       }
@@ -1497,7 +1513,7 @@ function createGatedToolHandlerInner(
               text: `Refusing to execute ${tool.originalName}: the signed authorization requires review ` +
                 `(commitment_mode="${auth.signedCommitmentMode}") but the Authority Server returned no pending ` +
                 `approvers. This inconsistency (a possible commitment-mode downgrade) is rejected fail-closed. ` +
-                `Re-fetch the authorization or contact the Authority Server operator.`,
+                `Nothing ran. Tell the person: they open the mandate under **Mandates** and sign it again, or contact the Authority Server operator.`,
             }],
             isError: true,
           };
@@ -1912,7 +1928,7 @@ function createGatedToolHandlerInner(
                   `(${code}) — no remaining candidates`,
               );
               return {
-                content: [{ type: 'text', text: `Blocked by SP: ${err.message}` }],
+                content: [{ type: 'text', text: `Blocked by SP: ${err.message} ${refusalNextStep(code, getManifest(tool.integrationId)?.name)}` }],
                 isError: true,
               };
             }
@@ -2090,7 +2106,7 @@ function createGatedToolHandlerInner(
             }
             recordAsRefusal(state, tool, auth.authorizationId, errors403?.[0]);
             return {
-              content: [{ type: 'text', text: `Blocked by SP: ${err.message}` }],
+              content: [{ type: 'text', text: `Blocked by SP: ${err.message} ${refusalNextStep(errors403?.[0]?.code, getManifest(tool.integrationId)?.name)}` }],
               isError: true,
             };
           }
@@ -2106,7 +2122,7 @@ function createGatedToolHandlerInner(
           }
           // SP unreachable — fail closed
           return {
-            content: [{ type: 'text', text: `SP unavailable — tool call blocked. ${err instanceof Error ? err.message : ''}` }],
+            content: [{ type: 'text', text: `SP unavailable — tool call blocked. ${err instanceof Error ? err.message : ''} Nothing ran. Tell the person the Authority Server cannot be reached; they check their connection and the gateway's sign-in on the page, then you try again.` }],
             isError: true,
           };
         }
@@ -2230,14 +2246,18 @@ export function v08ProposalReaders(
  * as the person sees it — the profile's `name` ("Email", "Setup"), falling back
  * to its short id only when the profile is not in the local catalog.
  */
-export function noMandateRefusal(toolName: string, profile: string, builtinText?: string): string {
+export function noMandateRefusal(toolName: string, profile: string, builtinText?: string, card?: string): string {
   if (builtinText) return `Refused: ${builtinText} No ticket was requested.`;
   const area = areaName(profile);
+  const where = card
+    ? `**Mandates → + New mandate →** card **${card}** → **Give a mandate**`
+    : '**Mandates → + New mandate**';
   return `Refused: no mandate covers ${toolName} (${area}). Nothing was done. ` +
-    `Ask the person to grant a ${area} mandate in the gateway, then try again. No ticket was requested.`;
+    `Tell the person to grant a ${area} mandate in the gateway: ${where}. list-authorizations() says whether you can propose it for them. ` +
+    'Then try again. No ticket was requested.';
 }
 
-function areaName(profile: string): string {
+export function areaName(profile: string): string {
   // Manifests name an area by its short id ("customers"); the catalog is keyed by
   // full id, so a short id is matched against every known profile's short name.
   // Names change between versions ("Delegation" → "Setup"): the NEWEST known
@@ -2272,10 +2292,12 @@ function shortProfile(profileId: string): string {
  * - [Suveren: crm — read; works only under a crm mandate, check list-authorizations]
  * - [Suveren: charge — charge, amount checked; works only under a charge mandate, check list-authorizations]
  */
-export function buildProxiedToolDescription(tool: DiscoveredTool): string {
+export function buildProxiedToolDescription(tool: DiscoveredTool, extra?: string): string {
   if (!tool.gating || !tool.gating.profile) {
     return `[Suveren: no gating config] ${tool.description}`;
   }
+  // What the connector manifests add for this tool (e.g. the attachment line); fixed per tool like the rest.
+  const tail = extra ? `\n\n${extra}` : '';
 
   const profile = tool.gating.profile;
   const areas = tool.gating.category === 'read'
@@ -2284,7 +2306,7 @@ export function buildProxiedToolDescription(tool: DiscoveredTool): string {
   const condition = `works only under a ${areas.join(' or ')} mandate, check list-authorizations`;
 
   if (tool.gating.category === 'read') {
-    return `[Suveren: ${profile} — read; ${condition}] ${tool.description}`;
+    return `[Suveren: ${profile} — read; ${condition}] ${tool.description}${tail}`;
   }
 
   // Build a short tag describing what's checked
@@ -2300,5 +2322,5 @@ export function buildProxiedToolDescription(tool: DiscoveredTool): string {
   }
 
   const tag = parts.length > 0 ? parts.join(', ') : 'gated';
-  return `[Suveren: ${profile} — ${tag}; ${condition}] ${tool.description}`;
+  return `[Suveren: ${profile} — ${tag}; ${condition}] ${tool.description}${tail}`;
 }

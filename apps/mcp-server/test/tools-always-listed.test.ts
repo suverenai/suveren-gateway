@@ -174,7 +174,8 @@ describe('the refusal without a mandate', () => {
     // The area by the name the person sees (the registered profile's `name`), not its id.
     expect(r.content[0].text).toBe(
       'Refused: no mandate covers crm__update_contact (Customer Management). Nothing was done. ' +
-        'Ask the person to grant a Customer Management mandate in the gateway, then try again. No ticket was requested.',
+        'Tell the person to grant a Customer Management mandate in the gateway: **Mandates → + New mandate**. ' +
+        'list-authorizations() says whether you can propose it for them. Then try again. No ticket was requested.',
     );
   });
 

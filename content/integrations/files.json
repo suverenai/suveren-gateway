@@ -31,11 +31,15 @@
   "documents": {
     "file": {
       "tool": "get_file",
-      "args": { "kind": "file", "id": "$id" },
+      "args": {
+        "kind": "file",
+        "id": "$id"
+      },
       "label": "saved file {id}",
       "aiSupplied": true,
       "title": "Saved files",
-      "description": "Files your AI saved, such as PDFs, images, video and text"
+      "description": "Files your AI saved, such as PDFs, images, video and text",
+      "savedBy": "save_file"
     }
   },
   "toolGating": {
@@ -67,7 +71,7 @@
   "setupGuide": [
     {
       "title": "Choose the shared folder",
-      "description": "Pick one folder on this computer and enter its full path. Your AI saves files into it, then names a file to the connector. The connector never reads outside this folder and refuses links to other places."
+      "description": "Pick one folder on this computer and enter its full path under \"Shared folder\". Your AI writes files into it, then names a file to the connector. The AI is told the path in its tools, so it never has to ask you. The connector never reads outside this folder and refuses links to other places."
     },
     {
       "title": "Your AI must work on this computer",
@@ -78,8 +82,16 @@
       "description": "PDF, PNG, JPEG, WebP, GIF, MP4, WebM, Markdown and plain text, up to 18 MB. Word, Excel, SVG, HTML and zip files are refused. A saved file never changes; a new version is a new file."
     },
     {
-      "title": "Letting the AI send a saved file",
-      "description": "Saving a file does not send it. To let emails carry saved files, tick Files under \"What the AI may attach\" in your email mandate. Every send is still checked against that mandate."
+      "title": "Give the Files mandate",
+      "description": "Saving a file needs a Files mandate. Open Mandates, press \"+ New mandate\", pick the card Files and press \"Give a mandate\". Your AI refuses to save until you have given it. If you gave your AI a Setup mandate that lists Files, it can propose this one for you to approve."
+    },
+    {
+      "title": "Give the Email mandate that lets the files leave",
+      "description": "Saving does not send. To let an email carry a saved file, your Email mandate must tick \"Saved files\" under \"What the AI may attach\" (new Email mandate, or Edit the existing one and sign it again). Every send is still checked against that mandate. Without the tick the email is refused and your AI stops and asks you."
+    },
+    {
+      "title": "In a team: an admin switches Files and Email on first",
+      "description": "In a team, a mandate can only be given for a profile the team has enabled. If you see \"Not enabled in <team>\", ask a team admin to open Team, then \"Manage this team in your Authority Server\", enable Files and Email, and name who may give their mandates."
     }
   ]
 }

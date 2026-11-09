@@ -6,13 +6,16 @@
  *   intent, and capability map.
  */
 
-import type { SharedState } from '../lib/shared-state';
-import { lockedNotice } from '../lib/locked-notice';
+import type { SharedState, EnrichedAuthorization } from '../lib/shared-state';
+import { lockedNotice, uiUrl } from '../lib/locked-notice';
 import type { IntegrationManager } from '../lib/integration-manager';
 import { getProfile } from '@hap/core';
 import { getConsumptionState, formatConsumptionCompact, formatConsumptionFull } from '../lib/consumption';
 import { readContextFile } from '../lib/context-loader';
 import { profileMatches, toolAlwaysListed } from '../lib/tool-proxy';
+import { isSimulationMode } from '../lib/simulation-mode';
+import { firstMandateText, connectorOverview, manifestAreas, type GuideManifest } from '../lib/guidance';
+import { overviewInput, guideManifests, setupCardName } from '../lib/guidance-runtime';
 import { agentVisibleAuthorizations } from '../lib/agent-visibility';
 
 /** Extract short profile name from full ID */
@@ -152,6 +155,32 @@ function builtinHintsWithoutMandate(
     .map(h => h.text);
 }
 
+/**
+ * What each connector still needs, for the whole gateway or for one area/connector.
+ * Empty when no connector is known (nothing to lead the person through).
+ */
+async function connectorsSection(
+  state: SharedState,
+  integrationManager: IntegrationManager | undefined,
+  authorizations: EnrichedAuthorization[],
+  domain?: string,
+): Promise<string> {
+  try {
+    let manifests: GuideManifest[] = guideManifests(integrationManager);
+    if (domain) {
+      const d = domain.toLowerCase();
+      manifests = manifests.filter(m => m.id.toLowerCase() === d || manifestAreas(m).some(a => profileMatches(a, domain) || a.toLowerCase() === d));
+    }
+    if (manifests.length === 0) return '';
+    const input = await overviewInput(state, integrationManager, authorizations, { onlyManifests: manifests });
+    return connectorOverview({ ...input, detail: !!domain });
+  } catch (err) {
+    // A guidance failure must never hide the mandates themselves.
+    console.error('[Suveren MCP] connector overview failed:', err);
+    return '';
+  }
+}
+
 const LISTED_WITHOUT_MANDATE_HEADING =
   'Listed but not usable yet — no mandate covers these; every call is refused until the person grants one:';
 
@@ -175,9 +204,14 @@ export function listAuthorizationsHandler(
     const hints = builtinHintsWithoutMandate(authorizations, integrationManager);
 
     if (authorizations.length === 0) {
-      const text = ['No active authorizations — no tool is usable yet. Ask the person to grant a mandate in the gateway.'];
+      // Test mode keeps the plain line: its words must not tell a working AI which mode it is in.
+      const text = isSimulationMode()
+        ? ['No active authorizations — no tool is usable yet. Ask the person to grant a mandate in the gateway.']
+        : ['No active authorizations — no tool is usable yet.', '', firstMandateText({ url: uiUrl(), card: setupCardName(integrationManager) })];
       if (notYet.length > 0) text.push('', LISTED_WITHOUT_MANDATE_HEADING, ...notYet);
       for (const h of hints) text.push('', h);
+      const section = await connectorsSection(state, integrationManager, authorizations, domain);
+      if (section) text.push('', section);
       return { content: [{ type: 'text' as const, text: text.join('\n') }] };
     }
 
@@ -189,12 +223,13 @@ export function listAuthorizationsHandler(
       });
 
       if (matching.length === 0) {
+        const section = await connectorsSection(state, integrationManager, authorizations, domain);
         return {
           content: [{
             type: 'text' as const,
             text: [`No authorizations found for domain "${domain}". Active domains: ${
               [...new Set(authorizations.map(a => shortProfileName(a.profileId)))].join(', ')
-            }`, ...hints.flatMap(h => ['', h])].join('\n'),
+            }`, ...hints.flatMap(h => ['', h]), ...(section ? ['', section] : [])].join('\n'),
           }],
         };
       }
@@ -283,6 +318,9 @@ export function listAuthorizationsHandler(
         output.push('');
       }
 
+      const domainSection = await connectorsSection(state, integrationManager, authorizations, domain);
+      if (domainSection) output.push(domainSection, '');
+
       return {
         content: [{
           type: 'text' as const,
@@ -368,6 +406,11 @@ export function listAuthorizationsHandler(
     for (const h of hints) {
       if (output.length > 0) output.push('');
       output.push(h);
+    }
+    const section = await connectorsSection(state, integrationManager, authorizations);
+    if (section) {
+      if (output.length > 0) output.push('');
+      output.push(section);
     }
 
     return {

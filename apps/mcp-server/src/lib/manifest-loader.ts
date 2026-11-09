@@ -1172,6 +1172,19 @@ function invalidDocumentSourceReason(
     const v = (entry as Record<string, unknown>)[key];
     if (v !== undefined && (typeof v !== 'string' || v.length === 0)) return `${label}.${key} must be a non-empty string`;
   }
+  // `savedBy`: the tool that brings a document of this kind in. It must exist on this manifest and
+  // be one the AI may call — telling the AI to "save first with" a tool it cannot call helps no one.
+  const savedBy = (entry as { savedBy?: unknown }).savedBy;
+  if (savedBy !== undefined) {
+    if (typeof savedBy !== 'string' || savedBy.length === 0) return `${label}.savedBy must be a non-empty string`;
+    const savedEntry = overrides[savedBy] as { internal?: unknown; category?: unknown } | null | undefined;
+    if (!savedEntry || typeof savedEntry !== 'object') {
+      return `${label}.savedBy "${savedBy}" is not a tool described in this manifest's toolGating.overrides`;
+    }
+    if (savedEntry.internal === true || savedEntry.category === 'disabled') {
+      return `${label}.savedBy "${savedBy}" must be a tool the AI can call (not internal, not disabled)`;
+    }
+  }
   return null;
 }
 
