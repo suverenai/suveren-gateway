@@ -1967,6 +1967,25 @@ function createGatedToolHandlerInner(
             return attemptWithCandidates(remaining);
           }
 
+          // A cumulative limit with no room left is a fact about THIS mandate's
+          // limit (the count is shared by the group, the limit is not): skip it
+          // for this call only and run the same selection over the rest. A
+          // refused ticket consumed nothing and its journal row is closed
+          // above, so the next candidate starts clean with its own key. With
+          // no candidate left, the refusal below stands, with the server's
+          // own reason.
+          if (err instanceof SPReceiptError && err.statusCode === 403
+              && (err.body?.errors as Array<{ code?: unknown }> | undefined)?.[0]?.code === 'CUMULATIVE_LIMIT_EXCEEDED') {
+            const remaining = candidates.filter(c => c.authorizationId !== auth.authorizationId);
+            if (remaining.length > 0) {
+              console.error(
+                `[Suveren MCP] fallback(${tool.namespacedName}): mandate ${auth.authorizationId} has no room ` +
+                  `(CUMULATIVE_LIMIT_EXCEEDED) → retrying with [${remaining.map(c => c.authorizationId).join(', ')}]`,
+              );
+              return attemptWithCandidates(remaining, earlier);
+            }
+          }
+
           if (err instanceof SPReceiptError && isStaleMandateRefusal(err)) {
             // The mandate selected for THIS call failed validity at the AS —
             // not a bound/approval refusal, so retrying the same call under a
