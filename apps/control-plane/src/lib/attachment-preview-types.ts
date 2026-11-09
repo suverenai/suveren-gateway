@@ -7,7 +7,7 @@
  */
 
 export type AttachmentPreviewResult =
-  | { status: 'ok'; filename: string; contentType: string; contentBase64: string; sha256: string; bytes: number }
+  | { status: 'ok'; filename: string; contentType: string; contentBase64: string; sha256: string; bytes: number; warnings?: string[]; aiSupplied?: true }
   | { status: 'changed'; message: string }
   | { status: 'unavailable'; message: string }
   | { status: 'not_found'; message: string }

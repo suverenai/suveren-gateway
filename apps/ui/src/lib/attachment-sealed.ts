@@ -21,6 +21,10 @@ export interface SealedAttachmentDisplay {
   contentType: string;
   sha256: string;
   bytes: number;
+  /** Connector-written sentences about the file (system data, never AI text). */
+  warnings?: string[];
+  /** The file name was given by the AI (manifest `documents.<kind>.aiSupplied`). */
+  aiSupplied?: true;
 }
 
 /** Mirrors the gateway's `SealedInsert`. */

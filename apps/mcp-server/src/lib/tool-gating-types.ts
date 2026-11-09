@@ -554,7 +554,9 @@ export interface MessageGatingDeclaration {
  * own field of that name — today only `$id` (the reference's `id`). The read
  * must answer `{ filename, contentType, contentBase64, sha256 }` (document-
  * source.ts shape-checks this and recomputes `sha256` itself — a connector's
- * own claim is never trusted blind).
+ * own claim is never trusted blind). The read may also answer `warnings:
+ * string[]` — fixed sentences the connector wrote about the saved file; they
+ * travel to the approval card as system data (document-source.ts).
  */
 export interface DocumentSourceConfig {
   tool: string;
@@ -570,6 +572,17 @@ export interface DocumentSourceConfig {
    * apps/ui/src/lib/attachment-sealed.ts `documentLabel`).
    */
   label?: string;
+  /**
+   * True when a document of this kind is put into the connector by the AI
+   * (the Documents connector's `file`), not issued by the system (an invoice
+   * archive). The gateway copies it onto the sealed attachment so the card
+   * can label the file name "given by the AI". Generic: no kind name in code.
+   */
+  aiSupplied?: boolean;
+  /** Short name and one-line explanation of this source for the mandate form's
+   *  "What the AI may attach" checkboxes. Optional; the form falls back to the label. */
+  title?: string;
+  description?: string;
 }
 
 /** Manifest top-level `documents` — kind name -> how to read it. */

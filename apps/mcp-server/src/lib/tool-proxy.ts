@@ -1639,6 +1639,14 @@ function createGatedToolHandlerInner(
           rebuildTransport = finalized.rebuildTransport;
         }
 
+        // What the journal hashes and the ticket archive keeps: the call WITHOUT
+        // the attachment bytes (`callArgs` — the sealed fingerprints instead),
+        // the same shape the review path records from its proposal. The bytes
+        // are pinned by the sealed sha256; keeping a 33 MB MIME message here
+        // would push every ticket with a file over the archive's size cap, and
+        // the ticket would then show "not kept" instead of what was sent.
+        const recordedArgs = callArgs;
+
         // v0.8 (protocol.md → Ticket Issuance, stage 7): an absent value for
         // the field a governing `cumulative_sum` bound reads is refused — the
         // spend cannot be counted. Only under an automatic mandate: under
@@ -1721,7 +1729,7 @@ function createGatedToolHandlerInner(
           // and that is the one case a replayed ticket may run.
           // (`?.` only for SharedState test doubles that predate the requested
           // state; the real journal always has it.)
-          state.executionJournal?.requested?.({ requestKey: idempotencyKey, tool: tool.namespacedName, argsHash: hashToolArgs(finalArgs) });
+          state.executionJournal?.requested?.({ requestKey: idempotencyKey, tool: tool.namespacedName, argsHash: hashToolArgs(recordedArgs) });
           autoRequestKey = idempotencyKey;
           const { receipt, idempotent } = await state.spClient.postReceipt({
             authorizationId: authzId,
@@ -1791,11 +1799,11 @@ function createGatedToolHandlerInner(
             boundContent: binding?.boundContent,
             // UI spec §14 — what this call sends, exactly the object the
             // journal's argsHash is computed from below
-            // (`hashToolArgs(finalArgs)`), so the ticket view can show it and
+            // (`hashToolArgs(recordedArgs)`), so the ticket view can show it and
             // check it (incl. any attachments' sealed fingerprints — UI spec
             // §15.2). Same write, so it is as fail-closed and as encrypted
             // as the rest of the entry.
-            sentArgs: finalArgs,
+            sentArgs: recordedArgs,
           });
         } catch (err) {
           // v0.8 — a ticket that was requested but never issued (the AS refused,
@@ -2141,7 +2149,7 @@ function createGatedToolHandlerInner(
             ticketId: receiptId,
             requestKey: autoRequestKey,
             tool: tool.namespacedName,
-            argsHash: hashToolArgs(finalArgs),
+            argsHash: hashToolArgs(recordedArgs),
           });
           if (!begun.ok) {
             return {

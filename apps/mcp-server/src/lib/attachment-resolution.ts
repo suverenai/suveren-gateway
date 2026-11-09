@@ -50,6 +50,7 @@ import {
 import { isAttachmentSourceAllowed } from './attachment-policy';
 import { resolveDocumentReference, type ResolvedDocument } from './document-source';
 import { resolveInsertValue, applyInserts, type ResolvedInsert } from './insert-values';
+import { MAX_ATTACHMENTS_TOTAL_BYTES, formatMiB } from './attachment-limits';
 import { buildMimeMessage, toBase64Url } from './mime-message';
 import type { DiscoveredTool } from './integration-manager';
 import type { MessageGatingDeclaration } from './tool-gating-types';
@@ -62,6 +63,12 @@ export interface SealedAttachment {
   contentType: string;
   sha256: string;
   bytes: number;
+  /** Connector-written sentences about the file (system data, never AI text).
+   *  Display only: not part of the content binding. */
+  warnings?: string[];
+  /** Copied from the manifest's `documents.<kind>.aiSupplied`: the file name
+   *  was given by the AI, so the card labels it so. */
+  aiSupplied?: true;
 }
 
 export interface SealedInsert {
@@ -131,6 +138,7 @@ export async function resolveAttachmentsAndInserts(
   }
 
   const sealedAttachments: SealedAttachment[] = [];
+  let totalBytes = 0;
   if (refsResult.refs.length > 0) {
     const profile = getProfile(profileId);
     for (const ref of refsResult.refs) {
@@ -142,6 +150,15 @@ export async function resolveAttachmentsAndInserts(
       if (!resolved.ok) {
         return { ok: false, message: `Refused: could not resolve attachment "${ref.connector}:${ref.kind}/${ref.id}" — ${resolved.error.message}` };
       }
+      // Checked on the bytes just read and hashed, before any ticket or
+      // proposal exists. Stops at the first file that takes the email over.
+      totalBytes += resolved.doc.bytes;
+      if (totalBytes > MAX_ATTACHMENTS_TOTAL_BYTES) {
+        return {
+          ok: false,
+          message: `Refused: the attachments come to more than ${formatMiB(MAX_ATTACHMENTS_TOTAL_BYTES)} in total. Nothing was sent and no ticket was requested.`,
+        };
+      }
       sealedAttachments.push({
         connector: ref.connector,
         kind: ref.kind,
@@ -150,6 +167,8 @@ export async function resolveAttachmentsAndInserts(
         contentType: resolved.doc.contentType,
         sha256: resolved.doc.sha256,
         bytes: resolved.doc.bytes,
+        ...(resolved.doc.warnings ? { warnings: resolved.doc.warnings } : {}),
+        ...(resolved.doc.aiSupplied ? { aiSupplied: true as const } : {}),
       });
     }
   }
@@ -239,6 +258,7 @@ export async function finalizeAttachmentsForExecution(
   }
 
   const resolvedDocs: ResolvedDocument[] = [];
+  let totalBytes = 0;
   for (const a of sealed.attachments) {
     const resolved = await resolveDocumentReference(integrationManager, { connector: a.connector, kind: a.kind, id: a.id });
     if (!resolved.ok) {
@@ -252,6 +272,10 @@ export async function finalizeAttachmentsForExecution(
         ok: false,
         message: `Refused: attachment "${a.filename}" (${a.connector}:${a.kind}/${a.id}) changed since this was approved — its fingerprint no longer matches.`,
       };
+    }
+    totalBytes += resolved.doc.bytes;
+    if (totalBytes > MAX_ATTACHMENTS_TOTAL_BYTES) {
+      return { ok: false, message: `Refused: the attachments come to more than ${formatMiB(MAX_ATTACHMENTS_TOTAL_BYTES)} in total — nothing was sent.` };
     }
     resolvedDocs.push(resolved.doc);
   }

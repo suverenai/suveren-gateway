@@ -1157,6 +1157,14 @@ function invalidDocumentSourceReason(
   if (docLabel !== undefined && (typeof docLabel !== 'string' || docLabel.length === 0)) {
     return `${label}.label must be a non-empty string`;
   }
+  const aiSupplied = (entry as { aiSupplied?: unknown }).aiSupplied;
+  if (aiSupplied !== undefined && typeof aiSupplied !== 'boolean') {
+    return `${label}.aiSupplied must be a boolean`;
+  }
+  for (const key of ['title', 'description'] as const) {
+    const v = (entry as Record<string, unknown>)[key];
+    if (v !== undefined && (typeof v !== 'string' || v.length === 0)) return `${label}.${key} must be a non-empty string`;
+  }
   return null;
 }
 

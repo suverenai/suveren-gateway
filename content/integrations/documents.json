@@ -1,0 +1,84 @@
+{
+  "id": "documents",
+  "name": "Documents",
+  "version": "1.0.0",
+  "description": "Files kept on this computer — saved from a shared folder, then attached to emails by name",
+  "icon": "file-text",
+  "profile": "documents",
+  "npmPackage": "@humanagencyp/documents-mcp",
+  "npmVersion": "0.0.0",
+  "personalDefault": true,
+  "mcp": {
+    "command": "documents-mcp",
+    "args": []
+  },
+  "credentials": {
+    "fields": [
+      {
+        "key": "sharedFolder",
+        "label": "Shared folder",
+        "type": "text",
+        "placeholder": "Full path of the folder your AI saves files into",
+        "optional": true
+      }
+    ],
+    "envMapping": {
+      "DOCUMENTS_FOLDER": "sharedFolder"
+    }
+  },
+  "oauth": null,
+  "documents": {
+    "file": {
+      "tool": "get_document",
+      "args": { "kind": "file", "id": "$id" },
+      "label": "saved document {id}",
+      "aiSupplied": true,
+      "title": "Saved documents",
+      "description": "Files your AI saved into Documents, such as PDFs, images, video and text"
+    }
+  },
+  "toolGating": {
+    "default": {
+      "executionMapping": {},
+      "staticExecution": {}
+    },
+    "overrides": {
+      "list_documents": {
+        "category": "read",
+        "boundField": "read_access",
+        "requiredValue": "unlimited"
+      },
+      "get_document": {
+        "category": "read",
+        "internal": true
+      },
+      "save_document": {
+        "summary": "Save a file into Documents",
+        "executionMapping": {},
+        "staticExecution": {
+          "action_type": "save"
+        },
+        "actionLabel": "Document saved"
+      }
+    }
+  },
+  "setupHint": "Choose a folder on this computer. Your AI puts files there; the connector keeps a copy of each file you name.",
+  "setupGuide": [
+    {
+      "title": "Choose the shared folder",
+      "description": "Pick one folder on this computer and enter its full path. Your AI saves files into it, then names a file to the connector. The connector never reads outside this folder and refuses links to other places."
+    },
+    {
+      "title": "Your AI must work on this computer",
+      "description": "Only an AI that can write to this computer can use the folder, for example an AI app running here. An AI that runs only in the cloud, such as ChatGPT in the browser, cannot reach it and cannot attach files. It can still send emails with text only. You can also drop a file into the folder yourself."
+    },
+    {
+      "title": "Files that can be saved",
+      "description": "PDF, PNG, JPEG, WebP, GIF, MP4, WebM, Markdown and plain text, up to 25 MB. Word, Excel, SVG, HTML and zip files are refused. A saved file never changes; a new version is a new document."
+    },
+    {
+      "title": "Letting the AI send a saved file",
+      "description": "Saving a file does not send it. To let emails carry saved documents, tick Documents under \"What the AI may attach\" in your email mandate. Every send is still checked against that mandate."
+    }
+  ]
+}
