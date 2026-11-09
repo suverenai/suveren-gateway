@@ -286,7 +286,19 @@ export class IntegrationManager {
    */
   private opQueues = new Map<string, Promise<unknown>>();
 
+  /** The ids listed in the registry (http.ts owns it; this class has no handle, as with the other setters). */
+  private registeredIds: (() => string[]) | null = null;
+
   constructor(private serviceCredentials: Map<string, Record<string, string>>) {}
+
+  setRegisteredIds(read: () => string[]): void {
+    this.registeredIds = read;
+  }
+
+  /** Listed on this gateway (activated once)? Undefined when nothing told this manager. */
+  isRegistered(id: string): boolean | undefined {
+    return this.registeredIds ? this.registeredIds().includes(id) : undefined;
+  }
 
   /** Run `task` after every previously queued operation for `id` has settled. */
   private runExclusive<T>(id: string, task: () => Promise<T>): Promise<T> {

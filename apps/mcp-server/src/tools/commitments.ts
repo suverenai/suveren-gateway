@@ -18,6 +18,7 @@
 
 import type { SharedState } from '../lib/shared-state';
 import { lockedNotice } from '../lib/locked-notice';
+import { endedFromRefusal, mandateEndedProposalText } from '../lib/guidance';
 import type { IntegrationManager } from '../lib/integration-manager';
 import { SPReceiptError, type SPProposal } from '../lib/sp-client';
 import { appendVerificationFooter, shouldAttachFooter } from '../lib/receipt-footer';
@@ -893,6 +894,11 @@ export function checkPendingCommitmentsHandler(
         // the AS's own `refusal` field — backend truth, no local lookup
         // needed for a fixed AS. Never EXECUTED for it.
         if (match.status === 'refused') {
+          // The mandate died while the proposal waited: it was never approved, so "was approved" would be false.
+          const ended = endedFromRefusal(match.refusal?.code);
+          if (ended) {
+            return { content: [{ type: 'text' as const, text: mandateEndedProposalText(match.id, ended) }], isError: true };
+          }
           const detail = match.refusal ? match.refusal.message : 'a bound was exceeded';
           return {
             content: [{
@@ -962,6 +968,16 @@ export function checkPendingCommitmentsHandler(
               text: `Proposal ${match.id} EXPIRED before it was approved, so the action never ran. ` +
                 `Re-submit the tool call if it is still wanted.`,
             }],
+          };
+        }
+
+        // Pending, but the mandate is dead: it can never be approved. Drop the cached
+        // mandate too, so list-authorizations stops offering it.
+        if (match.mandateEnded) {
+          state.cache.invalidate(match.authorizationId);
+          return {
+            content: [{ type: 'text' as const, text: mandateEndedProposalText(match.id, match.mandateEnded) }],
+            isError: true,
           };
         }
 

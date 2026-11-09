@@ -29,7 +29,7 @@ export interface GuideManifest {
   /** An entry marked `simulationOnly` is shown only while the gateway is in test mode. */
   setupGuide?: Array<{ title: string; description?: string; simulationOnly?: boolean }>;
   credentials?: { fields?: Array<{ key: string; label?: string; placeholder?: string; optional?: boolean }> };
-  oauth?: { signInGroup?: { name?: string }; forOption?: unknown } | null;
+  oauth?: { signInGroup?: { name?: string }; forOption?: unknown; tokenStorage?: string } | null;
   /** The where-does-it-get-its-data choice (same shape as the connector card's). */
   simulation?: { field: string; default: string } | null;
   modeLabels?: Record<string, string | Record<string, string>> | null;
@@ -37,6 +37,8 @@ export interface GuideManifest {
   documents?: Record<string, GuideDocument>;
   toolGating?: { overrides?: Record<string, { profile?: string; attachmentsArg?: string } | null> };
 }
+
+export type MandateEnded = 'revoked' | 'expired';
 
 export interface GuideAuth {
   profileId: string;
@@ -71,6 +73,10 @@ export interface ConnectorFacts {
   blocked?: 'simulation' | 'production';
   /** The person has saved settings for it. */
   hasCredentials: boolean;
+  /** It is listed on this gateway (activated once), so its card shows Paused / Start, not the setup form. */
+  registered?: boolean;
+  /** The account sign-in is done. Absent = not known. */
+  signedIn?: boolean;
 }
 
 // ─── Small helpers ──────────────────────────────────────────────────────────
@@ -133,59 +139,98 @@ export function pickerCard(m: GuideManifest, area: string, areaName: (a: string)
   return manifestAreas(m).length > 1 ? `${m.name} — ${areaName(area)}` : m.name;
 }
 
-interface ChoiceOption { label: string; simulated: boolean; fieldKeys: string[] }
+interface ChoiceOption { label: string; simulated: boolean; fieldKeys: string[]; isDefault: boolean }
 
 /** The options of "Where does <name> get its data?", same derivation as the connector card. */
 function choiceOptions(m: GuideManifest): ChoiceOption[] {
   if (!m.simulation || !m.modeLabels) return [];
   const out: ChoiceOption[] = [];
+  const isDefault = (mode: string) => mode === m.simulation!.default;
   for (const [mode, entry] of Object.entries(m.modeLabels)) {
     const decl = (m.modeOptions ?? {})[mode] as Record<string, unknown> | undefined;
     if (typeof entry === 'string') {
       const d = decl as { label?: string; fields?: string[] } | undefined;
-      out.push({ label: d?.label ?? entry, simulated: mode === 'simulation', fieldKeys: d?.fields ?? [] });
+      out.push({ label: d?.label ?? entry, simulated: mode === 'simulation', fieldKeys: d?.fields ?? [], isDefault: isDefault(mode) });
     } else {
       for (const [adapter, label] of Object.entries(entry)) {
         const d = decl?.[adapter] as { label?: string; fields?: string[] } | undefined;
-        out.push({ label: d?.label ?? label, simulated: mode === 'simulation', fieldKeys: d?.fields ?? [] });
+        out.push({ label: d?.label ?? label, simulated: mode === 'simulation', fieldKeys: d?.fields ?? [], isDefault: isDefault(mode) });
       }
     }
   }
   return out;
 }
 
+/** "**Client ID** (From Google Cloud Console)": a field as the card labels it. */
+function fieldWords(m: GuideManifest, key: string): string {
+  const f = (m.credentials?.fields ?? []).find(x => x.key === key);
+  if (!f) return `**${key}**`;
+  const hint = f.placeholder && !/^\w+ \(default\)/.test(f.placeholder) ? ` (${f.placeholder})` : '';
+  return `**${(f.label ?? key).replace(/\s*\(optional\)\s*$/i, '')}**${hint}`;
+}
+
+function chooseWords(m: GuideManifest, options: ChoiceOption[]): string {
+  return `chooses ${options.map(o => `**${o.label}**`).join(' or ')} under *Where does ${m.name} get its data?*`;
+}
+
+function connectWords(m: GuideManifest, button: string): string {
+  const group = m.oauth?.signInGroup?.name;
+  return `**${button}** and follows the steps on the card${group ? ` to connect ${group}` : ''}`;
+}
+
 /**
- * What the person does on the connector's card to get it going, from the manifest's own
- * fields and choice: the option to choose, the fields to fill, the button to press.
- * "" when there is nothing to do but start it.
+ * What the person does on the card of a connector that is not set up yet: the option to choose,
+ * the fields to fill, the button to press. Same states as IntegrationCard.tsx. "" never: there is
+ * always a button.
  */
 export function cardSteps(m: GuideManifest, simulation: boolean): string {
   const fields = m.credentials?.fields ?? [];
-  const label = (k: string) => {
-    const f = fields.find(x => x.key === k);
-    return f ? `**${(f.label ?? k).replace(/\s*\(optional\)\s*$/i, '')}**${f.placeholder && !/^\w+ \(default\)/.test(f.placeholder) ? ` (${f.placeholder})` : ''}` : `**${k}**`;
-  };
   // A sign-in that belongs to one option (the real one) does not apply to the practice data.
   const oauth = m.oauth && !(m.oauth.forOption && simulation) ? m.oauth : null;
   const options = choiceOptions(m);
   const wanted = options.filter(o => o.simulated === simulation);
   const parts: string[] = [];
   let needed = fields.filter(f => !f.optional).map(f => f.key);
-  if (options.length > 1 && wanted.some(o => o.fieldKeys.length > 0)) {
-    parts.push(`chooses ${wanted.map(o => `**${o.label}**`).join(' or ')} under *Where does ${m.name} get its data?*`);
+  // The card preselects the manifest's default option. It must be changed when the default is not one
+  // this gateway can run, and picking it is what makes the card offer Save & Encrypt.
+  const choose = options.length > 1 && wanted.length > 0 && (wanted.some(o => o.fieldKeys.length > 0) || !wanted.some(o => o.isDefault));
+  if (choose) {
+    parts.push(chooseWords(m, wanted));
     if (wanted.length === 1) needed = [...needed, ...wanted[0].fieldKeys.filter(k => !needed.includes(k))];
   }
-  if (needed.length > 0) parts.push(`enters ${needed.map(label).join(' and ')}`);
-  if (needed.length > 0) {
+  if (needed.length > 0) parts.push(`enters ${needed.map(k => fieldWords(m, k)).join(' and ')}`);
+  if (needed.length > 0 || choose) {
     parts.push(oauth
-      ? `presses **Save & Encrypt**, then **Connect ${m.name} Account** and follows the steps on the card${oauth.signInGroup?.name ? ` to connect ${oauth.signInGroup.name}` : ''}`
+      ? `presses **Save & Encrypt**, then ${connectWords(m, `Connect ${m.name} Account`)}`
       : 'presses **Save & Encrypt** (the connector then starts by itself)');
   } else if (oauth) {
-    parts.push(`presses **Connect ${m.name} Account** and follows the steps on the card${oauth.signInGroup?.name ? ` to connect ${oauth.signInGroup.name}` : ''}`);
+    parts.push(`presses ${connectWords(m, `Connect ${m.name} Account`)}`);
   } else {
     parts.push(`presses **Activate ${m.name}**`);
   }
   return parts.join(', ');
+}
+
+/**
+ * The steps for a connector this gateway holds back because it is set to practice data while the
+ * gateway runs for real. The card differs by what the person already did: listed = Paused with
+ * **Edit settings**; settings saved but never started = **Update Credentials**; untouched = the setup form.
+ */
+export function productionBlockedSteps(m: GuideManifest, facts: Pick<ConnectorFacts, 'registered' | 'hasCredentials'>): string {
+  const options = choiceOptions(m);
+  const real = options.filter(o => !o.simulated);
+  if (real.length === 0) return 'presses **Disable**: it has no real option, so it cannot run on this gateway';
+  if (facts.registered) {
+    const parts = ['presses **Edit settings**', chooseWords(m, real)];
+    if (real.length === 1 && real[0].fieldKeys.length > 0) parts.push(`enters ${real[0].fieldKeys.map(k => fieldWords(m, k)).join(' and ')}`);
+    parts.push(`presses **Save**${m.oauth ? `, then ${connectWords(m, `Connect ${m.name}`)}` : ' (the connector then starts by itself)'}`);
+    return parts.join(', ');
+  }
+  if (facts.hasCredentials) {
+    // The saved setting is the practice data, so a sign-in scoped to the real option does not apply yet.
+    return `presses **${m.oauth && !m.oauth.forOption ? 'Change Credentials' : 'Update Credentials'}**, ${cardSteps(m, false)}`;
+  }
+  return cardSteps(m, false);
 }
 
 /** The fields to give `create_mandate` for one profile, from its own schema: required, allowed values, units. */
@@ -255,6 +300,8 @@ export interface OverviewInput {
   simulation?: boolean;
   /** Did a mandate for this area exist before (and has ended)? Only when the gateway can know. */
   hadMandate?: (area: string) => boolean;
+  /** The Authority Server's own answer for this area: the last mandate was revoked or expired. Undefined = no such answer. */
+  endedMandate?: (area: string) => MandateEnded | undefined;
   /** The newest known profile of an area, and the modes it may be signed with — for the field list. */
   profileOf?: (area: string) => { profile: ProfileFieldsLike; modes: readonly string[] } | undefined;
 }
@@ -321,13 +368,16 @@ function connectorLine(m: GuideManifest, input: OverviewInput, sourcesByConsumer
     state = 'not available right now';
     rank = 4;
   } else if (f.blocked === 'production') {
-    state = `not running: it is set to test data, and this gateway runs for real. A person opens **Connectors**, ${card}, ${cardSteps(m, false) || 'and changes its setting'}`;
+    state = `not running: it is set to test data, and this gateway runs for real. A person opens **Connectors**, ${card}, ${productionBlockedSteps(m, f)}`;
     rank = 0;
   } else if (!f.hasCredentials) {
     state = `not set up. A person opens **Connectors**, ${card}, ${cardSteps(m, sim)}`;
     rank = 0;
+  } else if (m.oauth && !(m.oauth.forOption && sim) && f.signedIn === false) {
+    state = `settings saved, but not signed in. A person opens **Connectors**, ${card}, presses ${connectWords(m, `Connect ${m.name} Account`)}`;
+    rank = 0;
   } else {
-    state = `set up, but not running. A person opens **Connectors**, ${card} and presses **Start ${m.name} Connector**`;
+    state = `set up, but not running. A person opens **Connectors**, ${card} and presses **${f.registered ? 'Start' : `Start ${m.name} Connector`}**`;
     rank = 0;
   }
   lines.push(`- ${m.name}${m.description ? ` (${m.description})` : ''} — ${state}.`);
@@ -340,7 +390,10 @@ function connectorLine(m: GuideManifest, input: OverviewInput, sourcesByConsumer
       lines.push(`    mandate for ${input.areaName(area)}: yes${have.some(a => (a.deferredCommitmentDomains ?? []).length > 0) ? ' (review: each action needs approval)' : ''}`);
     } else {
       if (rank > 1 && f.running) rank = 1;
-      const before = input.hadMandate?.(area) ? ' An earlier one has ended (revoked or expired).' : '';
+      const ended = input.endedMandate?.(area);
+      const before = ended === 'revoked' ? ' The last one was revoked.'
+        : ended === 'expired' ? ' The last one has expired.'
+        : input.hadMandate?.(area) ? ' An earlier one has ended (revoked or expired).' : '';
       lines.push(`    mandate for ${input.areaName(area)}: none.${before} ${howToGetMandate(area, pickerCard(m, area, input.areaName), input)}`);
     }
   }
@@ -494,6 +547,21 @@ export function refusalNextStep(code: unknown, card?: string): string {
     default:
       return 'Nothing ran. Tell the person what is written above and ask what they want to do. Do not retry.';
   }
+}
+
+/** Why a proposal was refused, when the reason is that its mandate is dead. */
+export function endedFromRefusal(code: string | undefined): MandateEnded | undefined {
+  return code === 'MANDATE_REVOKED' ? 'revoked' : code === 'MANDATE_EXPIRED' ? 'expired' : undefined;
+}
+
+/**
+ * What the AI is told about a proposal whose mandate is dead: it can never be approved.
+ * Spoken once about the proposal, not about what the person did, so the AI stops waiting
+ * and does not send the person back to the Approve button.
+ */
+export function mandateEndedProposalText(proposalId: string, ended: MandateEnded): string {
+  const fact = ended === 'revoked' ? 'the mandate was revoked after this proposal' : 'the mandate expired after this proposal';
+  return `Proposal ${proposalId} can no longer be approved: ${fact}, so it will never run. Nothing ran. A new mandate is needed; tell the person so, and do not ask them to approve this proposal again.`;
 }
 
 /** The ending of a refusal about one attachment: what the person does, and that the AI stops. */

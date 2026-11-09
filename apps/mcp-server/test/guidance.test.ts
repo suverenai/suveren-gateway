@@ -7,7 +7,7 @@
  */
 import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import { join } from 'node:path';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { registerProfile } from '@hap/core';
 import {
   firstMandateText,
@@ -23,6 +23,10 @@ import {
   pickerCard,
   proposalFields,
   SIGN_STEP,
+  mandateEndedProposalText,
+  endedFromRefusal,
+  productionBlockedSteps,
+  cardSteps,
   type GuideManifest,
   type GuideAuth,
   type OverviewInput,
@@ -315,6 +319,30 @@ describe('7 more cases from the real-AI test', () => {
     const t = connectorOverview(input({ manifests: [MAIL], simulation: true }));
     expect(t).toContain('presses **Activate Email**');
     expect(t).not.toContain('Gmail');
+  });
+  it('a connector already paused on a production gateway: the Edit settings path, not a button that is not there', () => {
+    const t = connectorOverview(input({ manifests: [MAIL], blocked: { mail: 'production' }, facts: () => ({ running: false, hasCredentials: true, blocked: 'production', registered: true }) }));
+    expect(t).toContain('presses **Edit settings**, chooses **Gmail** under *Where does Email get its data?*, enters **Client ID** (From Google Cloud Console) and **Client Secret**, presses **Save**, then **Connect Email** and follows the steps on the card to connect Google');
+    expect(t).not.toContain('Activate');
+    expect(t).not.toContain('Save & Encrypt');
+  });
+  it('settings saved but never started on a production gateway: Update Credentials first', () => {
+    const t = connectorOverview(input({ manifests: [MAIL], blocked: { mail: 'production' }, facts: () => ({ running: false, hasCredentials: true, blocked: 'production', registered: false }) }));
+    expect(t).toContain('presses **Update Credentials**, chooses **Gmail**');
+  });
+  it('a sign-in that is missing is named, not "Start"', () => {
+    const CAL: GuideManifest = { id: 'cal', name: 'Calendar', profile: 'calendar', credentials: { fields: [{ key: 'clientId', label: 'Client ID' }] }, oauth: { tokenStorage: 'refreshToken', signInGroup: { name: 'Google' } } };
+    const t = connectorOverview(input({ manifests: [CAL], facts: () => ({ running: false, hasCredentials: true, signedIn: false }) }));
+    expect(t).toContain('settings saved, but not signed in. A person opens **Connectors**, the card **Calendar**, presses **Connect Calendar Account** and follows the steps on the card to connect Google');
+  });
+  it('registered and stopped says Start; never activated says Start <name> Connector', () => {
+    const cfg = (registered: boolean) => connectorOverview(input({ manifests: [NOTES], facts: () => ({ running: false, hasCredentials: true, registered }) }));
+    expect(cfg(true)).toContain('presses **Start**');
+    expect(cfg(false)).toContain('presses **Start Notes Connector**');
+  });
+  it('no real option: the only thing left is Disable', () => {
+    const ONLY: GuideManifest = { id: 'practice', name: 'Practice', profile: 'memo', simulation: { field: 'mode', default: 'simulation' }, modeLabels: { simulation: 'Practice data' } };
+    expect(productionBlockedSteps(ONLY, { registered: true, hasCredentials: false })).toBe('presses **Disable**: it has no real option, so it cannot run on this gateway');
   });
   it('the simulated-inbox guide step shows only in test mode', () => {
     expect(connectorOverview(input({ manifests: [MAIL], detail: true, simulation: false }))).not.toContain('A simulated inbox');
@@ -616,5 +644,75 @@ describe('through the gateway\'s own entry points', () => {
   it('buildProxiedToolDescription appends exactly what it is given', () => {
     expect(buildProxiedToolDescription(sendTool, 'EXTRA LINE')).toMatch(/Send an email\n\nEXTRA LINE$/);
     expect(buildProxiedToolDescription(sendTool)).toMatch(/Send an email$/);
+  });
+});
+
+describe('a proposal whose mandate is dead', () => {
+  it('says plainly it can no longer be approved and not to ask the person again', () => {
+    const t = mandateEndedProposalText('abc123', 'revoked');
+    expect(t).toBe('Proposal abc123 can no longer be approved: the mandate was revoked after this proposal, so it will never run. Nothing ran. A new mandate is needed; tell the person so, and do not ask them to approve this proposal again.');
+    expect(mandateEndedProposalText('abc123', 'expired')).toContain('the mandate expired after this proposal');
+  });
+  it('reads the reason only from a dead-mandate code', () => {
+    expect(endedFromRefusal('MANDATE_REVOKED')).toBe('revoked');
+    expect(endedFromRefusal('MANDATE_EXPIRED')).toBe('expired');
+    expect(endedFromRefusal('CUMULATIVE_LIMIT_EXCEEDED')).toBeUndefined();
+    expect(endedFromRefusal(undefined)).toBeUndefined();
+  });
+});
+
+// Every shipped manifest: each step the AI names must be a button the card really has.
+// The card's button labels are read from its own source, so renaming one breaks this test.
+describe('the steps name only buttons that exist on the connector card', () => {
+  const cardSource = readFileSync(join(ROOT, 'apps', 'ui', 'src', 'components', 'IntegrationCard.tsx'), 'utf8');
+  const dir = join(ROOT, 'content', 'integrations');
+  const shipped = readdirSync(dir).filter(f => f.endsWith('.json') && f !== 'index.json').map(f => JSON.parse(readFileSync(join(dir, f), 'utf8'))) as Array<GuideManifest & { oauth?: { tokenStorage?: string } | null }>;
+  // Each state the card can really be in, with the facts that make it so. Production-only states exist only
+  // for a connector that declares simulation; a sign-in state only for one with a sign-in.
+  const stated = (m: GuideManifest): Array<[string, string]> => {
+    const line = (facts: Parameters<typeof input>[0], sim = false) =>
+      connectorOverview(input({ manifests: [m], simulation: sim, ...facts })).split('\n')[1];
+    const prod = m.simulation ? ({ blocked: 'production' } as const) : ({} as const);
+    const out: Array<[string, string]> = [
+      ['production, not set up', line({ facts: () => ({ running: false, hasCredentials: false, ...prod, registered: false }) })],
+      ['simulation, not set up', line({ facts: () => ({ running: false, hasCredentials: false }) }, true)],
+      ['saved settings, never started', line({ facts: () => ({ running: false, hasCredentials: true, registered: false, signedIn: true }) })],
+      ['stopped or crashed', line({ facts: () => ({ running: false, hasCredentials: true, registered: true, signedIn: true }) })],
+    ];
+    if (m.simulation) {
+      out.push(['production, paused (listed, set to test data)', line({ facts: () => ({ running: false, hasCredentials: true, blocked: 'production', registered: true }) })]);
+      out.push(['production, test data saved, never started', line({ facts: () => ({ running: false, hasCredentials: true, blocked: 'production', registered: false }) })]);
+    }
+    if (m.oauth) out.push(['saved settings, no sign-in', line({ facts: () => ({ running: false, hasCredentials: true, registered: true, signedIn: false }) })]);
+    return out;
+  };
+  // A bold name is a button, or the label of a radio option or field (which come from the manifest).
+  const notButton = (m: GuideManifest): Set<string> => {
+    const words = new Set<string>();
+    for (const o of Object.values(m.modeOptions ?? {})) for (const e of Object.values(o as Record<string, { label?: string }>)) { if (e && typeof e === 'object' && (e as { label?: string }).label) words.add((e as { label: string }).label); }
+    for (const e of Object.values(m.modeLabels ?? {})) { if (typeof e === 'string') words.add(e); else for (const l of Object.values(e)) words.add(l); }
+    for (const f of m.credentials?.fields ?? []) words.add((f.label ?? f.key).replace(/\s*\(optional\)\s*$/i, ''));
+    return words;
+  };
+  for (const m of shipped) {
+    for (const [label, steps] of stated(m)) {
+      it(`${m.id}: ${label}`, () => {
+        const labels = notButton(m);
+        for (const [, name] of steps.matchAll(/\*\*([^*]+)\*\*/g)) {
+          if (labels.has(name) || name === 'Connectors' || name === m.name) continue;
+          // Named with the connector's own name in the source: `Activate ${manifest.name}`, or {manifest.name} in JSX.
+          const asTemplate = name.replace(m.name, '${manifest.name}');
+          const asJsx = name.replace(m.name, '{manifest.name}');
+          const found = [name, asTemplate, asJsx].some(n => cardSource.includes(n));
+          expect(found, `${m.id} / ${label}: "${name}" is not on the card`).toBe(true);
+        }
+      });
+    }
+  }
+  it('prints the matrix (read by the report)', () => {
+    for (const m of shipped) {
+      for (const [label, steps] of stated(m)) console.log(`MATRIX | ${m.name} | ${label} | ${steps}`);
+    }
+    expect(shipped.length).toBeGreaterThan(7);
   });
 });

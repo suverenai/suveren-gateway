@@ -82,6 +82,8 @@ export interface SPProposal {
    * even talking to one.
    */
   status: 'pending' | 'committed' | 'rejected' | 'expired' | 'executed' | 'refused';
+  /** Set by the Authority Server on a waiting proposal whose mandate is dead (see mandateEndedProposalText). */
+  mandateEnded?: 'revoked' | 'expired';
   executionResult: unknown | null;
   createdAt: number;
   expiresAt: number;
@@ -415,6 +417,18 @@ export class SPClient {
       attestations?: SPAttestationsResult['attestations'];
     };
     return { ...body, attestations: body.mandates ?? body.attestations ?? [] };
+  }
+
+  /**
+   * What became of each of the caller's mandates in the active workspace
+   * (GET /api/mandates/mine: `status` is active | pending | revoked | expired).
+   * Only so a list can say "the last one was revoked"; nothing is authorised from it.
+   */
+  async getMyMandateStatuses(): Promise<Array<{ profileId: string; status: string; createdAt: number }>> {
+    const res = await this.fetch('/api/mandates/mine');
+    if (!res.ok) throw new Error(`SP mandates request failed: ${res.status}`);
+    const data = await res.json() as { mandates?: Array<{ profileId: string; status: string; createdAt: number }> };
+    return data.mandates ?? [];
   }
 
   /**

@@ -20,6 +20,7 @@ import {
   type GuideAuth,
   type GuideManifest,
   type MissingMandateFacts,
+  type MandateEnded,
   type OverviewInput,
   type SetupMandateFacts,
   type ProfileFieldsLike,
@@ -125,11 +126,18 @@ export async function overviewInput(
 ): Promise<OverviewInput> {
   const manifests = opts.onlyManifests ?? guideManifests(im);
   const setup = setupMandateFacts(im, auths);
-  const facts = (id: string) => ({
-    running: im?.isRunning?.(id) ?? false,
-    blocked: im?.modeBlock?.(id),
-    hasCredentials: !!im?.getServiceCredentials?.(id),
-  });
+  const facts = (id: string) => {
+    const creds = im?.getServiceCredentials?.(id);
+    const token = manifests.find(m => m.id === id)?.oauth?.tokenStorage;
+    return {
+      running: im?.isRunning?.(id) ?? false,
+      blocked: im?.modeBlock?.(id),
+      hasCredentials: !!creds,
+      registered: im?.isRegistered?.(id),
+      // Only said when the manifest names the token field; the same field the card reads.
+      ...(token ? { signedIn: !!creds?.[token] } : {}),
+    };
+  };
   let team: Map<string, MissingMandateFacts> | undefined;
   if (opts.checkTeam !== false) {
     const missing = new Set<string>();
@@ -145,5 +153,13 @@ export async function overviewInput(
   let history: Array<{ profileId: string }> = [];
   try { history = state?.executionLog?.getAll?.() ?? []; } catch { /* unknown: say nothing */ }
   const hadMandate = (area: string) => history.some(e => profileMatches(e.profileId, area));
-  return { manifests, facts, auths, areaName, setup, team, toolName: toolNameOf, simulation: isSimulationMode(), hadMandate, profileOf: newestProfileOf };
+  // The Authority Server's list says what became of each mandate, so the AI can say so. Best effort:
+  // when it cannot be read, the local history above still gives the vaguer line.
+  let mine: Array<{ profileId: string; status: string; createdAt: number }> = [];
+  try { mine = (await state?.spClient?.getMyMandateStatuses?.()) ?? []; } catch { /* unknown: say nothing */ }
+  const endedMandate = (area: string): MandateEnded | undefined => {
+    const newest = mine.filter(r => profileMatches(r.profileId, area)).sort((a, b) => b.createdAt - a.createdAt)[0];
+    return newest?.status === 'revoked' || newest?.status === 'expired' ? newest.status : undefined;
+  };
+  return { manifests, facts, auths, areaName, setup, team, toolName: toolNameOf, simulation: isSimulationMode(), hadMandate, endedMandate, profileOf: newestProfileOf };
 }
