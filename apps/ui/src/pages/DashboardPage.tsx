@@ -17,7 +17,7 @@ import { CoreColumns } from '../components/CoreColumns';
 import { ReportLine } from '../components/ReportLine';
 import { SkippedCommitmentsCard } from '../components/SkippedCommitmentsCard';
 import { bucketAuths } from '../lib/auth-status';
-import { buildIntegrationAttentionItems, buildPausedSummary } from '../lib/integration-attention';
+import { buildIntegrationAttentionItems, buildPausedSummaries } from '../lib/integration-attention';
 import { deriveFirstRunCard } from '../lib/first-run-card';
 
 const EXPIRY_WARN_SECONDS = 30 * 60; // 30 minutes
@@ -132,7 +132,7 @@ export function DashboardPage() {
   // Paused (simulation-blocked) integrations are deliberately excluded here —
   // see buildIntegrationAttentionItems. They get one calm summary line
   // instead (pausedSummary, below), not an attention row each.
-  const pausedSummary = buildPausedSummary(integrationEntries);
+  const pausedSummaries = buildPausedSummaries(integrationEntries);
   // UI spec §12.4: approvals waiting for me — my domain's and those routed to
   // me as approver — once each.
   const waiting = [...pendingProposals, ...approverProposals.filter(a => !pendingProposals.some(p => p.id === a.id))];
@@ -240,22 +240,29 @@ export function DashboardPage() {
 
       </>}
 
-      {/* Real systems paused by simulation mode — one calm line, not an
-          attention row per connector. Only rendered while something IS
-          paused (see buildPausedSummary); otherwise simulation mode is either
-          off, or nothing real is registered yet. */}
-      {pausedSummary && (
-        <div className="sim-paused-summary" role="status">
+      {/* Connectors the gateway holds back — one calm line per reason, not an attention row each.
+          Simulation mode on: real systems are paused. Production: connectors set to simulation are paused. */}
+      {pausedSummaries.map((p) => (
+        <div className="sim-paused-summary" role="status" key={p.reason} data-testid={`paused-summary-${p.reason}`}>
           <span className="sim-paused-summary-icon" aria-hidden="true">&#9208;</span>
-          <span>
-            <b>
-              {pausedSummary.count} real system{pausedSummary.count === 1 ? '' : 's'}{' '}
-              {pausedSummary.count === 1 ? 'is' : 'are'} paused
-            </b>{' '}
-            while simulation mode is on — {pausedSummary.namesText}.
-          </span>
+          {p.reason === 'simulation' ? (
+            <span>
+              <b>
+                {p.count} real system{p.count === 1 ? '' : 's'}{' '}
+                {p.count === 1 ? 'is' : 'are'} paused
+              </b>{' '}
+              while simulation mode is on — {p.namesText}.
+            </span>
+          ) : (
+            <span>
+              <b>
+                {p.count} connector{p.count === 1 ? ' is' : 's are'} paused in production
+              </b>{' '}
+              — {p.namesText}. Set {p.count === 1 ? 'it' : 'them'} to a real system on Connectors, or disable {p.count === 1 ? 'it' : 'them'}.
+            </span>
+          )}
         </div>
-      )}
+      ))}
 
       {/* Approved commitments this gateway won't execute (submitted elsewhere) */}
       <SkippedCommitmentsCard />

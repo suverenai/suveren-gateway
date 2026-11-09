@@ -5111,3 +5111,6 @@ body.apr-has-strip .main-content { margin-right: 2.75rem; }
 .av3-shared-limit dd { margin: 0; }
 .av3-stamp-refused { text-align: left; align-items: stretch; }
 .av3-stamp-refused .refusal-result { margin: 0; background: var(--bg-elevated); }
+.av3-stamp-note { font-family: inherit; max-width: 42ch; }
+.av3-result-act { margin-top: var(--space-4); align-self: center; }
+.av3-foot .refusal-result { margin-bottom: var(--space-3); }

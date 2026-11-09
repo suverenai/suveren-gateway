@@ -219,6 +219,9 @@ export function refusalSentence(refusal: RefusalData, profile: AgentProfile | nu
     }
   }
 
+  if (refusal.code === 'MANDATE_REVOKED') return { text: `${lead} This mandate was revoked.`, basis: 'code' };
+  if (refusal.code === 'MANDATE_EXPIRED') return { text: `${lead} This mandate has expired.`, basis: 'code' };
+
   const msg = refusal.message?.trim();
   return { text: msg ? `${lead} ${msg}` : `${lead} The Authority Server refused it.`, basis: 'message' };
 }

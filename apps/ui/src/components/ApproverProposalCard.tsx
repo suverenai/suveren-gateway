@@ -16,6 +16,7 @@ import type { ToolDisplay } from '../lib/approval-view';
 import { ApprovalCard } from './ApprovalCard';
 import { decideAsApprover } from '../lib/approval-decision';
 import type { DecisionKind, DecisionResult } from '../lib/approval-flow';
+import type { ApprovalOutcome } from '../lib/approval-outcome';
 import { useApprovalTeamInfo } from '../lib/approval-team-info';
 import { isProposer as isProposerOf, visibleApprovers } from '../lib/proposal-proposer';
 
@@ -32,9 +33,12 @@ interface Props {
   onDecided?: (proposalId: string, kind: DecisionKind, result: DecisionResult) => void;
   nextLabelText?: string | null;
   onBusyChange?: (busy: boolean) => void;
+  onOutcome?: (outcome: ApprovalOutcome) => void;
+  dismissLabel?: string;
+  onDismissResult?: () => void;
 }
 
-export function ApproverProposalCard({ proposal, currentUserId, onDecided, proposalLinks, toolDisplay, manifests, mandateTitle, nextLabelText, onBusyChange }: Props) {
+export function ApproverProposalCard({ proposal, currentUserId, onDecided, proposalLinks, toolDisplay, manifests, mandateTitle, nextLabelText, onBusyChange, onOutcome, dismissLabel, onDismissResult }: Props) {
   // TR5: the proposer must never be shown as (or able to act as) one of their
   // own action's approvers — filtered defensively even if a stale cache lists them.
   const pendingApprovers = visibleApprovers(proposal);
@@ -104,6 +108,9 @@ export function ApproverProposalCard({ proposal, currentUserId, onDecided, propo
       nameOf={team.nameOf}
       nextLabelText={nextLabelText}
       onBusyChange={onBusyChange}
+      onOutcome={onOutcome}
+      dismissLabel={dismissLabel}
+      onDismissResult={onDismissResult}
       topExtras={extras}
       canApprove={!isProposer}
       alreadyDecided={alreadyApproved}

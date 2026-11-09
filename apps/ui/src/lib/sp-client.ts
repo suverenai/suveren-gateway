@@ -645,6 +645,8 @@ export interface Proposal {
    * matching field for why this is distinct from a human `rejected` decision.
    */
   status: 'pending' | 'committed' | 'rejected' | 'expired' | 'executed' | 'refused';
+  /** Set by the Authority Server on a waiting proposal whose mandate is revoked or expired: it can never be approved. */
+  mandateEnded?: 'revoked' | 'expired';
   executionResult: unknown | null;
   createdAt: number;
   expiresAt: number;

@@ -22,6 +22,10 @@ const MONEY = profile({
 });
 
 describe('refusalSentence (wording A)', () => {
+  it('a dead mandate says so in plain words, never the code', () => {
+    expect(refusalSentence({ code: 'MANDATE_REVOKED', message: 'The parent mandate has been revoked' }, NO_WORDS).text).toBe('Not done. This mandate was revoked.');
+    expect(refusalSentence({ code: 'MANDATE_EXPIRED', message: 'The parent mandate has expired' }, NO_WORDS).text).toBe('Not done. This mandate has expired.');
+  });
   it('uses the profile\'s noun and verb for a counted daily limit', () => {
     const r = refusalSentence({ code: 'CUMULATIVE_LIMIT_EXCEEDED', message: 'x', field: 'box_daily_max', expected: 5, actual: 6 }, WITH_WORDS, WORDS);
     expect(r).toEqual({ text: 'Not sent. The daily limit is used up: 5 of 5 emails today.', basis: 'data' });

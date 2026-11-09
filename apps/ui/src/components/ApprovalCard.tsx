@@ -22,6 +22,10 @@ import { validateChangeNote, CHANGE_NOTE_MAX } from '../lib/reject-outcome';
 import { decisionButtonsVisible } from '../lib/use-proposal-content';
 import { isAutomatedBrowser, AUTOMATION_REFUSAL } from '../lib/automation';
 import { RefusalResult } from './RefusalResult';
+import {
+  OUTCOME_POLL_MS, OUTCOME_WAIT_MS, OUTCOME_WAITING_LINE, OUTCOME_UNKNOWN_LINE, MANDATE_ENDED_DETAIL,
+  decisionAwaitsOutcome, decisionErrorWords, mandateEndedHead, outcomeOfProposal, type ApprovalOutcome,
+} from '../lib/approval-outcome';
 import { useVisiblePolling } from '../hooks/useVisiblePolling';
 import { useSSEEvent } from '../contexts/EventSourceContext';
 import { workingWord, stampWord, stampLine, type DecisionKind, type DecisionResult } from '../lib/approval-flow';
@@ -61,6 +65,11 @@ interface Props {
   nextLabelText?: string | null;
   /** A decision is out or answered: the page hides its position arrows meanwhile. */
   onBusyChange?: (busy: boolean) => void;
+  /** What became of an approval: the panel keeps this card on screen until it is known. */
+  onOutcome?: (outcome: ApprovalOutcome) => void;
+  /** The action under a result that stays on screen ("Next" / "Close"); with `onDismissResult` it is offered. */
+  dismissLabel?: string;
+  onDismissResult?: () => void;
   className?: string;
 }
 
@@ -72,7 +81,7 @@ type Phase =
 
 export function ApprovalCard({
   proposal, currentUserId, manifests, toolDisplay, proposalLinks, mandateTitle, nameOf, topExtras,
-  canApprove = true, alreadyDecided = false, decide, onDecided, nextLabelText, onBusyChange, className,
+  canApprove = true, alreadyDecided = false, decide, onDecided, nextLabelText, onBusyChange, onOutcome, dismissLabel, onDismissResult, className,
 }: Props) {
   const isMandate = proposal.tool === CREATE_MANDATE_TOOL;
   const [phase, setPhase] = useState<Phase>({ t: 'idle' });
@@ -110,7 +119,16 @@ export function ApprovalCard({
       setPhase({ t: 'done', kind, result });
       onDecided?.(kind, result);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed');
+      // The server may have closed the proposal in this same call (a dead mandate): show that result, not the error.
+      const fresh = kind === 'approve' ? await spClient.getProposal(proposal.id).catch(() => null) : null;
+      if (fresh && outcomeOfProposal(fresh) === 'refused') {
+        setRefusedAfter(fresh);
+        setPhase({ t: 'done', kind, result: {} });
+        onDecided?.(kind, {});
+        return;
+      }
+      if (fresh?.status === 'pending' && fresh.mandateEnded) setMandateEnded(fresh.mandateEnded);
+      setError(decisionErrorWords(err instanceof Error ? err.message : 'Failed'));
       setPhase(kind === 'change' ? { t: 'change' } : { t: 'idle' });
     }
   };
@@ -135,22 +153,56 @@ export function ApprovalCard({
     return () => el.removeEventListener('toggle', onToggle, true);
   }, []);
 
+  // A mandate can end while this card is open. Read it again on a slow poll and at once when this
+  // gateway revokes one; only what the server says is shown (`mandateEnded` on a waiting proposal).
+  const [mandateEnded, setMandateEnded] = useState<Proposal['mandateEnded']>(proposal.mandateEnded);
+  useEffect(() => { if (proposal.mandateEnded) setMandateEnded(proposal.mandateEnded); }, [proposal.mandateEnded]);
+  const watchMandate = phase.t === 'idle' || phase.t === 'change';
+  const checkMandate = () => {
+    if (!watchMandate) return;
+    spClient.getProposal(proposal.id)
+      .then((p) => { if (p.status === 'pending') setMandateEnded(p.mandateEnded); })
+      .catch(() => { /* keep what the server last said */ });
+  };
+  useSSEEvent('attestation-changed', checkMandate);
+  useVisiblePolling(checkMandate, 5_000, `${watchMandate}:${proposal.id}`);
+  useEffect(() => { if (mandateEnded && phase.t === 'change') setPhase({ t: 'idle' }); }, [mandateEnded, phase.t]);
+
   // After an approval the Authority Server may still refuse the ticket (a shared
-  // limit filled up in the meantime). The stamp must not stay "Approved" then:
-  // read the proposal again when the gateway reports a refusal, and on a slow
-  // poll as the fallback. Only what the server says is shown.
+  // limit filled up in the meantime). The card stays until the outcome is known:
+  // read the proposal again when the gateway reports something and on a short
+  // poll, and if no answer comes in reasonable time, say so instead of a false
+  // success. Only what the server says is shown.
   const [refusedAfter, setRefusedAfter] = useState<Proposal | null>(null);
-  const watching = phase.t === 'done' && phase.kind === 'approve' && !refusedAfter;
-  const checkRefusal = () => {
+  const [settled, setSettled] = useState(false);
+  const [timedOut, setTimedOut] = useState(false);
+  const awaits = phase.t === 'done' && decisionAwaitsOutcome(phase.kind, phase.result);
+  const outcome: ApprovalOutcome = phase.t !== 'done' ? 'none'
+    : refusedAfter ? 'refused'
+    : !awaits || settled ? 'done'
+    : timedOut ? 'unknown'
+    : 'waiting';
+  const watching = outcome === 'waiting' || outcome === 'unknown';
+  const checkOutcome = () => {
     if (!watching) return;
     spClient.getProposal(proposal.id)
-      .then((p) => { if (p.status === 'refused' && p.refusal) setRefusedAfter(p); })
-      .catch(() => { /* the stamp stays what the server last confirmed */ });
+      .then((p) => {
+        const o = outcomeOfProposal(p);
+        if (o === 'refused') setRefusedAfter(p);
+        else if (o === 'done') setSettled(true);
+      })
+      .catch(() => { /* the card stays at what the server last confirmed */ });
   };
-  useSSEEvent('denial-recorded', checkRefusal);
-  useSSEEvent('execution-failed', checkRefusal);
-  useSSEEvent('ticket-recorded', checkRefusal);
-  useVisiblePolling(checkRefusal, 10_000, `${watching}:${proposal.id}`);
+  useSSEEvent('denial-recorded', checkOutcome);
+  useSSEEvent('execution-failed', checkOutcome);
+  useSSEEvent('ticket-recorded', checkOutcome);
+  useVisiblePolling(checkOutcome, OUTCOME_POLL_MS, `${watching}:${proposal.id}`);
+  useEffect(() => {
+    if (outcome !== 'waiting') return;
+    const t = window.setTimeout(() => setTimedOut(true), OUTCOME_WAIT_MS);
+    return () => window.clearTimeout(t);
+  }, [outcome]);
+  useEffect(() => { onOutcome?.(outcome); }, [outcome]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const busy = phase.t === 'working' || phase.t === 'done';
   useEffect(() => {
@@ -159,6 +211,9 @@ export function ApprovalCard({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [busy]);
   const showButtons = !alreadyDecided && !busy && decisionButtonsVisible({ loading: contentLoading, readable: contentReadable });
+  const dismiss = onDismissResult && dismissLabel ? (
+    <button type="button" className="av3-btn av3-btn-primary av3-result-act" data-testid="result-dismiss" onClick={onDismissResult}>{dismissLabel}</button>
+  ) : null;
   const approveWord = isMandate ? 'Sign mandate' : 'Approve';
   const describedBy = `human-only-${proposal.id}`;
 
@@ -196,15 +251,26 @@ export function ApprovalCard({
       {showButtons && phase.t !== 'change' && (
         <footer className="av3-foot">
           {error && <p className="msg-error av3-error" role="alert">{error}</p>}
-          <div className={`av3-btns${canApprove ? '' : ' av3-btns-two'}`}>
-            {canApprove && (
+          {mandateEnded && (
+            <div className="refusal-result" role="status" data-testid="mandate-ended">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+              <div>
+                <div className="refusal-result-w" data-testid="mandate-ended-head">{mandateEndedHead(mandateEnded)}</div>
+                <div className="refusal-result-m">{MANDATE_ENDED_DETAIL}</div>
+              </div>
+            </div>
+          )}
+          <div className={`av3-btns${canApprove && !mandateEnded ? '' : ' av3-btns-two'}`}>
+            {canApprove && !mandateEnded && (
               <button type="button" className="av3-btn av3-btn-primary" data-testid="btn-approve" aria-describedby={describedBy} onClick={() => void run('approve')}>
                 {approveWord}
               </button>
             )}
-            <button type="button" className="av3-btn" data-testid="btn-change-needed" onClick={() => { setError(''); setPhase({ t: 'change' }); }}>
-              <span className="long">Ask for changes</span><span className="short">Changes</span>
-            </button>
+            {!mandateEnded && (
+              <button type="button" className="av3-btn" data-testid="btn-change-needed" onClick={() => { setError(''); setPhase({ t: 'change' }); }}>
+                <span className="long">Ask for changes</span><span className="short">Changes</span>
+              </button>
+            )}
             <button type="button" className="av3-btn" data-testid="btn-reject" onClick={() => void run('reject')}>
               Reject
             </button>
@@ -241,9 +307,24 @@ export function ApprovalCard({
       {phase.t === 'done' && refusedAfter && (
         <div className="av3-stamp av3-stamp-refused" data-testid="decision-refused">
           <RefusalResult proposal={refusedAfter} manifests={manifests} />
+          {dismiss}
         </div>
       )}
-      {phase.t === 'done' && !refusedAfter && (
+      {outcome === 'waiting' && phase.t === 'done' && (
+        <div className="av3-stamp" role="status" data-testid="decision-waiting">
+          <span className="av3-spin" aria-hidden="true" />
+          <div className="av3-stamp-w">{stampWord(phase.kind, isMandate)}</div>
+          <div className="av3-stamp-t">{OUTCOME_WAITING_LINE}</div>
+        </div>
+      )}
+      {outcome === 'unknown' && phase.t === 'done' && (
+        <div className="av3-stamp" role="status" data-testid="decision-unknown">
+          <div className="av3-stamp-w">{stampWord(phase.kind, isMandate)}</div>
+          <div className="av3-stamp-t av3-stamp-note">{OUTCOME_UNKNOWN_LINE}</div>
+          {dismiss}
+        </div>
+      )}
+      {outcome === 'done' && phase.t === 'done' && (
         <div className="av3-stamp" role="status" data-testid="decision-stamp">
           <svg className="av3-check" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5" /></svg>
           <div className="av3-stamp-w">{stampWord(phase.kind, isMandate)}</div>

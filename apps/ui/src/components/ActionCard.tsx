@@ -9,6 +9,7 @@ import { ApprovalCard } from './ApprovalCard';
 import { useAuth } from '../contexts/AuthContext';
 import { decideInQueue } from '../lib/approval-decision';
 import type { DecisionKind, DecisionResult } from '../lib/approval-flow';
+import type { ApprovalOutcome } from '../lib/approval-outcome';
 import { TicketWhatWasDone } from './TicketWhatWasDone';
 import { TicketWhatYouSaw } from './TicketWhatYouSaw';
 import { isTestSetupAction, profileIdentity } from '../lib/profile-identity';
@@ -119,7 +120,7 @@ interface Props {
  * A pending review-mode proposal: the approval card (UI spec §17). Decided
  * through the proposal's own workspace queue.
  */
-export function ReviewApprovalCard({ proposal, manifests, toolDisplay, proposalLinks, currentUserId, mandateTitle, onDecided, nextLabelText, onBusyChange }: {
+export function ReviewApprovalCard({ proposal, manifests, toolDisplay, proposalLinks, currentUserId, mandateTitle, onDecided, nextLabelText, onBusyChange, onOutcome, dismissLabel, onDismissResult }: {
   proposal: Proposal;
   manifests?: IntegrationManifest[];
   toolDisplay?: ToolDisplay;
@@ -129,6 +130,9 @@ export function ReviewApprovalCard({ proposal, manifests, toolDisplay, proposalL
   onDecided?: (proposalId: string, kind: DecisionKind, result: DecisionResult) => void;
   nextLabelText?: string | null;
   onBusyChange?: (busy: boolean) => void;
+  onOutcome?: (outcome: ApprovalOutcome) => void;
+  dismissLabel?: string;
+  onDismissResult?: () => void;
 }) {
   const { domain } = useAuth();
   return (
@@ -141,6 +145,9 @@ export function ReviewApprovalCard({ proposal, manifests, toolDisplay, proposalL
       mandateTitle={mandateTitle}
       nextLabelText={nextLabelText}
       onBusyChange={onBusyChange}
+      onOutcome={onOutcome}
+      dismissLabel={dismissLabel}
+      onDismissResult={onDismissResult}
       decide={(args) => decideInQueue(proposal, args, { activeDomain: domain, userId: currentUserId })}
       onDecided={(kind, result) => onDecided?.(proposal.id, kind, result)}
     />

@@ -21,7 +21,7 @@ export interface AttentionItem {
 
 /**
  * Attention rows contributed by integration state — error and not-running
- * only. `paused` entries never reach here (see `buildPausedSummary` for their
+ * only. `paused` entries never reach here (see `buildPausedSummaries` for their
  * one calm line instead); `starting` entries are handled separately by the
  * caller, same as before.
  */
@@ -81,23 +81,27 @@ export function buildIntegrationAttentionItems(entries: IntegrationEntry[], simu
   return items;
 }
 
-/** The calm summary line's data — count + names. The sentence itself (incl.
+/** Which way the gateway is holding a connector back: the two cases need different sentences. */
+export type PausedReason = 'simulation' | 'production';
+
+/** The calm summary line's data — count + names, for one reason. The sentence itself (incl.
  *  singular/plural wording and bolding) is assembled in the component so the
  *  pure, tested part stays the facts rather than the markup. */
 export interface PausedSummary {
+  reason: PausedReason;
   count: number;
   namesText: string;
 }
 
 /**
- * Summarizes real systems paused by simulation mode, or null when none are
- * paused — the caller renders nothing in that case rather than an empty box.
+ * The connectors the gateway holds back, one summary per reason; empty when
+ * none are. `simulation` = real systems paused because simulation mode is on;
+ * `production` = connectors set to simulation on a gateway running for real.
  */
-export function buildPausedSummary(entries: IntegrationEntry[]): PausedSummary | null {
-  const paused = entries.filter(e => e.state === 'paused');
-  if (paused.length === 0) return null;
-  return {
-    count: paused.length,
-    namesText: paused.map(e => e.manifest.name).join(', '),
-  };
+export function buildPausedSummaries(entries: IntegrationEntry[]): PausedSummary[] {
+  const byReason = (reason: PausedReason) => entries.filter(e => e.state === 'paused' && (e.integration?.paused ?? 'simulation') === reason);
+  return (['simulation', 'production'] as const).flatMap((reason) => {
+    const paused = byReason(reason);
+    return paused.length === 0 ? [] : [{ reason, count: paused.length, namesText: paused.map(e => e.manifest.name).join(', ') }];
+  });
 }
