@@ -1,8 +1,9 @@
 /**
  * The wire path of a large document, against a REAL MCP server over stdio
  * (fixtures/doc-server.mjs) with the gateway's own transport setting. What it
- * pins: a reply bigger than the SDK's 10 MiB default arrives; 25 MiB is the
- * most one attachment may be; 25 MiB is the most per email; the base64 handed
+ * pins: a reply bigger than the SDK's 10 MiB default arrives; the declared
+ * limit (18,000,000 bytes here) is the most one attachment may be and the most
+ * per call; the base64 handed
  * on is the canonical encoding of the bytes that were hashed; connector
  * warnings arrive cleaned.
  */
@@ -77,12 +78,15 @@ describe('a large document over the real stdio wire', () => {
     expect(r.doc.aiSupplied).toBe(true);
   }, 60_000);
 
-  it('delivers exactly 25 MiB and refuses 26 MiB as too large', async () => {
-    const ok = await resolveDocumentReference(manager, { connector: 'docs', kind: 'file', id: '25mb' });
+  it('at the declared limit: exactly 18,000,000 bytes arrives, one byte more is too large', async () => {
+    const ok = await resolveDocumentReference(manager, { connector: 'docs', kind: 'file', id: '18000000b' }, 18_000_000);
     expect(ok.ok).toBe(true);
-    const big = await resolveDocumentReference(manager, { connector: 'docs', kind: 'file', id: '26mb' });
+    const big = await resolveDocumentReference(manager, { connector: 'docs', kind: 'file', id: '18000001b' }, 18_000_000);
     expect(big.ok).toBe(false);
-    if (!big.ok) expect(big.error.code).toBe('TOO_LARGE');
+    if (!big.ok) {
+      expect(big.error.code).toBe('TOO_LARGE');
+      expect(big.error.message).toMatch(/18 MB/);
+    }
   }, 120_000);
 
   it('hands on cleaned connector warnings only', async () => {
@@ -95,12 +99,21 @@ describe('a large document over the real stdio wire', () => {
     expect(r.doc.warnings![2]).toHaveLength(300);
   });
 
-  it('refuses an email whose attachments add up to more than 25 MiB, for the total and not for a changed file', async () => {
+  it('refuses a send whose attachments add up to more than the declared limit, for the total and not for a changed file', async () => {
     const real = await resolveDocumentReference(manager, { connector: 'docs', kind: 'file', id: '13mb' });
     if (!real.ok) throw new Error('setup');
     const a = { connector: 'docs', kind: 'file', id: '13mb', filename: '13mb.pdf', contentType: 'application/pdf', sha256: real.doc.sha256, bytes: real.doc.bytes };
-    const r = await finalizeAttachmentsForExecution(manager, 'docs', { [ATTACHMENTS_SEALED_META_KEY]: { attachments: [a, a], inserts: [] } });
+    const r = await finalizeAttachmentsForExecution(manager, 'docs', { [ATTACHMENTS_SEALED_META_KEY]: { attachments: [a, a], inserts: [] } }, undefined, 18_000_000);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.message).toMatch(/in total/);
+  }, 60_000);
+
+  it('refuses to finalize attachments when the tool declared no limit (fail closed)', async () => {
+    const real = await resolveDocumentReference(manager, { connector: 'docs', kind: 'file', id: 'warn' });
+    if (!real.ok) throw new Error('setup');
+    const a = { connector: 'docs', kind: 'file', id: 'warn', filename: 'warn.pdf', contentType: 'application/pdf', sha256: real.doc.sha256, bytes: real.doc.bytes };
+    const r = await finalizeAttachmentsForExecution(manager, 'docs', { [ATTACHMENTS_SEALED_META_KEY]: { attachments: [a], inserts: [] } });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.message).toMatch(/no attachment limit/);
   }, 60_000);
 });

@@ -71,7 +71,7 @@ beforeAll(() => {
         overrides: {
           send_message: {
             executionMapping: {}, staticExecution: { action_type: 'send' },
-            attachmentsArg: 'attachments', insertFields: ['body'],
+            attachmentsArg: 'attachments', maxAttachmentBytes: 18_000_000, insertFields: ['body'],
           },
         },
       },
@@ -88,7 +88,7 @@ beforeAll(() => {
         overrides: {
           send_message: {
             executionMapping: {}, staticExecution: { action_type: 'send' }, blockedArgs: ['raw'],
-            attachmentsArg: 'attachments', insertFields: ['body'],
+            attachmentsArg: 'attachments', maxAttachmentBytes: 18_000_000, insertFields: ['body'],
           },
         },
       },
@@ -122,10 +122,10 @@ function buildIntegrationManager(responses: Record<string, Record<string, unknow
   return { getAllTools: () => tools, callTool, isBuiltin: () => false } as unknown as IntegrationManager;
 }
 
-const sendMessageMailTool = { integrationId: 'mail', namespacedName: 'mail__send_message', gating: { attachmentsArg: 'attachments', insertFields: ['body'] } };
+const sendMessageMailTool = { integrationId: 'mail', namespacedName: 'mail__send_message', gating: { attachmentsArg: 'attachments', maxAttachmentBytes: 18_000_000, insertFields: ['body'] } };
 // As gmail.json declares it: which arguments are the text, recipients and subject.
 const GMAIL_MESSAGE = { text: 'body', to: 'to', cc: 'cc', subject: 'subject', verb: 'Sent' as const };
-const sendMessageGmailTool = { integrationId: 'gmail', namespacedName: 'gmail__send_message', gating: { attachmentsArg: 'attachments', insertFields: ['body'], message: GMAIL_MESSAGE } };
+const sendMessageGmailTool = { integrationId: 'gmail', namespacedName: 'gmail__send_message', gating: { attachmentsArg: 'attachments', maxAttachmentBytes: 18_000_000, insertFields: ['body'], message: GMAIL_MESSAGE } };
 const plainTool = { integrationId: 'erp', namespacedName: 'erp__create_quote', gating: {} };
 
 describe('resolveAttachmentsAndInserts — fast no-op', () => {
@@ -204,14 +204,14 @@ describe('finalizeAttachmentsForExecution', () => {
   it('is a no-op when args carry no sealed meta', async () => {
     const im = buildIntegrationManager({});
     const args = { to: ['x@y.com'] };
-    const result = await finalizeAttachmentsForExecution(im, 'mail', args);
+    const result = await finalizeAttachmentsForExecution(im, 'mail', args, undefined, 18_000_000);
     expect(result).toEqual({ ok: true, args });
   });
 
   it('is a no-op when the sealed meta is present but empty', async () => {
     const im = buildIntegrationManager({});
     const args = { to: ['x@y.com'], [ATTACHMENTS_SEALED_META_KEY]: { attachments: [], inserts: [] } };
-    const result = await finalizeAttachmentsForExecution(im, 'mail', args);
+    const result = await finalizeAttachmentsForExecution(im, 'mail', args, undefined, 18_000_000);
     expect(result).toEqual({ ok: true, args });
   });
 
@@ -225,7 +225,7 @@ describe('finalizeAttachmentsForExecution', () => {
     );
     if (!resolved.ok) throw new Error('setup failed');
     const sealedArgs = { ...resolved.args, [ATTACHMENTS_SEALED_META_KEY]: resolved.sealed };
-    const result = await finalizeAttachmentsForExecution(im, 'mail', sealedArgs);
+    const result = await finalizeAttachmentsForExecution(im, 'mail', sealedArgs, undefined, 18_000_000);
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.args.attachments).toEqual([{ filename: 'invoice-2026-0003.pdf', contentType: 'application/pdf', contentBase64: PDF_BASE64 }]);
@@ -242,7 +242,7 @@ describe('finalizeAttachmentsForExecution', () => {
     );
     if (!resolved.ok) throw new Error('setup failed');
     const sealedArgs = { ...resolved.args, [ATTACHMENTS_SEALED_META_KEY]: resolved.sealed };
-    const result = await finalizeAttachmentsForExecution(im, 'gmail', sealedArgs, GMAIL_MESSAGE);
+    const result = await finalizeAttachmentsForExecution(im, 'gmail', sealedArgs, GMAIL_MESSAGE, 18_000_000);
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(typeof result.args.raw).toBe('string');
@@ -267,7 +267,7 @@ describe('finalizeAttachmentsForExecution', () => {
     );
     if (!resolved.ok) throw new Error('setup failed');
     const sealedArgs = { ...resolved.args, [ATTACHMENTS_SEALED_META_KEY]: resolved.sealed };
-    const result = await finalizeAttachmentsForExecution(im, 'gmail', sealedArgs, GMAIL_MESSAGE);
+    const result = await finalizeAttachmentsForExecution(im, 'gmail', sealedArgs, GMAIL_MESSAGE, 18_000_000);
     if (!result.ok || !result.rebuildTransport) throw new Error('expected a mime-raw rebuild');
 
     const rebuilt = result.rebuildTransport({ ...result.args, body: 'Anbei die Rechnung.\n\n-- ticket link --' });
@@ -288,7 +288,7 @@ describe('finalizeAttachmentsForExecution', () => {
     if (!resolved.ok) throw new Error('setup failed');
     const args = { ...resolved.args, recipients: ['buchhaltung@drautal.at'], betreff: 'Rechnung', inhalt: 'Anbei.' };
     const result = await finalizeAttachmentsForExecution(im, 'gmail', { ...args, [ATTACHMENTS_SEALED_META_KEY]: resolved.sealed },
-      { text: 'inhalt', to: 'recipients', subject: 'betreff', verb: 'Sent' });
+      { text: 'inhalt', to: 'recipients', subject: 'betreff', verb: 'Sent' }, 18_000_000);
     if (!result.ok) throw new Error(result.message);
     const mime = Buffer.from((result.args.raw as string).replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
     expect(mime).toContain('To: buchhaltung@drautal.at');
@@ -304,7 +304,7 @@ describe('finalizeAttachmentsForExecution', () => {
       'erp:invoice-pdf',
     );
     if (!resolved.ok) throw new Error('setup failed');
-    const result = await finalizeAttachmentsForExecution(im, 'gmail', { ...resolved.args, [ATTACHMENTS_SEALED_META_KEY]: resolved.sealed });
+    const result = await finalizeAttachmentsForExecution(im, 'gmail', { ...resolved.args, [ATTACHMENTS_SEALED_META_KEY]: resolved.sealed }, undefined, 18_000_000);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.message).toMatch(/declares no message fields/);
   });
@@ -318,7 +318,7 @@ describe('finalizeAttachmentsForExecution', () => {
       'erp:invoice-pdf',
     );
     if (!resolved.ok) throw new Error('setup failed');
-    const result = await finalizeAttachmentsForExecution(im, 'mail', { ...resolved.args, [ATTACHMENTS_SEALED_META_KEY]: resolved.sealed });
+    const result = await finalizeAttachmentsForExecution(im, 'mail', { ...resolved.args, [ATTACHMENTS_SEALED_META_KEY]: resolved.sealed }, undefined, 18_000_000);
     expect(result.ok && result.rebuildTransport).toBeFalsy();
   });
 
@@ -335,7 +335,7 @@ describe('finalizeAttachmentsForExecution', () => {
     // The document changed between proposal and approval.
     const CHANGED_BYTES = Buffer.from('%PDF-1.4 a DIFFERENT invoice');
     responses.get_document = { filename: 'invoice.pdf', contentType: 'application/pdf', contentBase64: CHANGED_BYTES.toString('base64'), sha256: sha256(CHANGED_BYTES) };
-    const result = await finalizeAttachmentsForExecution(im, 'mail', sealedArgs);
+    const result = await finalizeAttachmentsForExecution(im, 'mail', sealedArgs, undefined, 18_000_000);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.message).toMatch(/changed since this was approved/);
   });
@@ -351,7 +351,7 @@ describe('finalizeAttachmentsForExecution', () => {
     const sealedArgs = { ...resolved.args, [ATTACHMENTS_SEALED_META_KEY]: resolved.sealed };
     // The value read from Mollie changed between proposal and approval.
     responses.GetPaymentLink = { _links: { paymentLink: { href: 'https://paymentlink.mollie.com/payment/DIFFERENT' } } };
-    const result = await finalizeAttachmentsForExecution(im, 'mail', sealedArgs);
+    const result = await finalizeAttachmentsForExecution(im, 'mail', sealedArgs, undefined, 18_000_000);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.message).toMatch(/changed since this was approved/);
   });
@@ -382,7 +382,7 @@ describe('resolveAttachmentsAndInserts — inserts', () => {
 
   it('refuses an insert on a tool that declares no insertable fields', async () => {
     const im = buildIntegrationManager({ GetPaymentLink: { _links: { paymentLink: { href: 'https://paymentlink.mollie.com/x' } } } });
-    const noInsertTool = { integrationId: 'mail', namespacedName: 'mail__send_message', gating: { attachmentsArg: 'attachments' } };
+    const noInsertTool = { integrationId: 'mail', namespacedName: 'mail__send_message', gating: { attachmentsArg: 'attachments', maxAttachmentBytes: 18_000_000 } };
     const result = await resolveAttachmentsAndInserts(im, noInsertTool, HYPOTHETICAL_PROFILE, {
       to: ['x@y.com'], subject: 'S', body: 'B',
       insert: [{ placeholder: '{{link}}', connector: 'mollie', kind: 'payment-link', id: 'pl_1' }],

@@ -21,7 +21,7 @@ import { getManifest } from './manifest-loader';
 import { readPreview, unavailableReadMessage } from './preview';
 import { substitute } from './request-context';
 import type { DocumentReference } from './tool-gating-types';
-import { MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_BASE64_CHARS, DOCUMENT_READ_TIMEOUT_MS, formatMiB } from './attachment-limits';
+import { maxBase64Chars, DOCUMENT_READ_TIMEOUT_MS, formatMB } from './attachment-limits';
 
 export interface ResolvedDocument {
   filename: string;
@@ -87,6 +87,10 @@ function sha256Hex(buf: Buffer): string {
 export async function resolveDocumentReference(
   integrationManager: IntegrationManager,
   ref: DocumentReference,
+  /** The most this file may weigh, in bytes. Omitted only for a read-only
+   *  display of a file already sealed under a limit (its fingerprint is
+   *  checked against the sealed one). */
+  maxBytes?: number,
 ): Promise<DocumentResolutionResult> {
   const manifest = getManifest(ref.connector);
   if (!manifest) {
@@ -142,8 +146,8 @@ export async function resolveDocumentReference(
     return { ok: false, error: { code: 'MALFORMED_RESULT', message: 'Document result is missing "contentBase64".' } };
   }
 
-  if (contentBase64.length > MAX_ATTACHMENT_BASE64_CHARS) {
-    return { ok: false, error: { code: 'TOO_LARGE', message: `The document is larger than ${formatMiB(MAX_ATTACHMENT_BYTES)}, the most one attachment may be.` } };
+  if (maxBytes !== undefined && contentBase64.length > maxBase64Chars(maxBytes)) {
+    return { ok: false, error: { code: 'TOO_LARGE', message: `The file is larger than ${formatMB(maxBytes)}, the most this tool may send.` } };
   }
   // Buffer.from never throws on bad base64; it skips what it cannot read. So the
   // bytes hashed below are the DECODED bytes, and the base64 handed on is
@@ -152,8 +156,8 @@ export async function resolveDocumentReference(
   if (bytes.byteLength === 0) {
     return { ok: false, error: { code: 'MALFORMED_RESULT', message: '"contentBase64" is not valid base64.' } };
   }
-  if (bytes.byteLength > MAX_ATTACHMENT_BYTES) {
-    return { ok: false, error: { code: 'TOO_LARGE', message: `The document is ${formatMiB(bytes.byteLength)}, larger than the ${formatMiB(MAX_ATTACHMENT_BYTES)} one attachment may be.` } };
+  if (maxBytes !== undefined && bytes.byteLength > maxBytes) {
+    return { ok: false, error: { code: 'TOO_LARGE', message: `The file is larger than ${formatMB(maxBytes)}, the most this tool may send.` } };
   }
   const computedSha256 = sha256Hex(bytes);
   if (typeof claimedSha256 === 'string' && claimedSha256.length > 0 && claimedSha256 !== computedSha256) {

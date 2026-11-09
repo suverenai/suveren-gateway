@@ -1,6 +1,6 @@
 // A real MCP server over stdio that answers `get_document` like a document
 // connector: { filename, contentType, contentBase64, sha256?, warnings? }.
-// Id "<n>mb" gives n MiB of bytes; "warn" gives a small file with warnings.
+// Id "<n>mb" gives n MiB of bytes; "<n>b" gives exactly n bytes; "warn" gives a small file with warnings.
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
@@ -14,7 +14,9 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
   let bytes;
   let extra = {};
   const mb = /^(\d+)mb$/.exec(id);
+  const exact = /^(\d+)b$/.exec(id);
   if (mb) bytes = Buffer.alloc(Number(mb[1]) * 1024 * 1024, 7);
+  else if (exact) bytes = Buffer.alloc(Number(exact[1]), 7);
   else {
     bytes = Buffer.from('%PDF-1.4 small');
     extra = { warnings: ['The PDF has form fields.', 'ev‮il\nline', 42, 'x'.repeat(1000)] };

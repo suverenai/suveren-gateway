@@ -113,7 +113,7 @@ export function attachmentSourceLabel(manifests: SourceManifestLike[] | undefine
   return entry ? sourceTitle(kind, entry) : key;
 }
 
-/** "Issued invoice, Saved document" for a stored value; '' when nothing is allowed. */
+/** "Issued invoice, Saved file" for a stored value; '' when nothing is allowed. */
 export function formatAttachmentSources(value: string | number | undefined | null, manifests: SourceManifestLike[] | undefined): string {
   return parseSources(value == null ? '' : String(value)).map((k) => attachmentSourceLabel(manifests, k)).join(', ');
 }

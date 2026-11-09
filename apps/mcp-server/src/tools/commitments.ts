@@ -614,7 +614,7 @@ export async function executeCommitted(
   let finalToolArgs = toolArgs;
   let rebuildTransport: ((a: Record<string, unknown>) => Record<string, unknown>) | undefined;
   {
-    const finalized = await finalizeAttachmentsForExecution(integrationManager, integrationId, toolArgs, discovered?.gating?.message);
+    const finalized = await finalizeAttachmentsForExecution(integrationManager, integrationId, toolArgs, discovered?.gating?.message, discovered?.gating?.maxAttachmentBytes);
     if (!finalized.ok) {
       state.executionJournal.complete(receiptId, 'failed', 'changed', finalized.message);
       recordExecutionOutcome(state, proposal.id, receiptId, false, finalized.message);

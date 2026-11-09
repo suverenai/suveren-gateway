@@ -1442,6 +1442,7 @@ export class IntegrationManager {
         sourceFromArg?: { kind: string; arg: string };
         internal?: boolean;
         attachmentsArg?: string;
+        maxAttachmentBytes?: number;
         insertFields?: string[];
         display?: { aiText?: string };
         message?: import('./tool-gating-types').MessageGatingDeclaration;
@@ -1505,6 +1506,7 @@ export class IntegrationManager {
         requiredValue: ext.requiredValue,
         internal: ext.internal,
         attachmentsArg: ext.attachmentsArg,
+        maxAttachmentBytes: ext.maxAttachmentBytes,
         insertFields: ext.insertFields,
         aiTextArg: ext.display?.aiText,
         message: ext.message,

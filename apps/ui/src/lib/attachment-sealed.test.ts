@@ -135,7 +135,7 @@ describe('attachmentSameFileCheck', () => {
 });
 
 describe('sealed warnings', () => {
-  const base = { connector: 'documents', kind: 'file', id: '7', filename: 'a.pdf', contentType: 'application/pdf', sha256: 'ab'.repeat(32), bytes: 10 };
+  const base = { connector: 'files', kind: 'file', id: '7', filename: 'a.pdf', contentType: 'application/pdf', sha256: 'ab'.repeat(32), bytes: 10 };
   it('keeps connector warnings that are strings, drops everything else', () => {
     const r = extractAttachmentsSealed({ _attachmentsSealed: { attachments: [{ ...base, warnings: ['Has a form.', 5, '', null] }], inserts: [] } });
     expect(r.attachments[0].warnings).toEqual(['Has a form.']);

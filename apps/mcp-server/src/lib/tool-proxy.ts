@@ -1631,7 +1631,7 @@ function createGatedToolHandlerInner(
         let finalArgs = callArgs;
         let rebuildTransport: ((a: Record<string, unknown>) => Record<string, unknown>) | undefined;
         if (tool.gating?.attachmentsArg || tool.gating?.insertFields?.length) {
-          const finalized = await finalizeAttachmentsForExecution(integrationManager, tool.integrationId, callArgs, tool.gating?.message);
+          const finalized = await finalizeAttachmentsForExecution(integrationManager, tool.integrationId, callArgs, tool.gating?.message, tool.gating?.maxAttachmentBytes);
           if (!finalized.ok) {
             return { content: [{ type: 'text', text: finalized.message }], isError: true };
           }

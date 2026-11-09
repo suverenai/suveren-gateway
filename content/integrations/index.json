@@ -8,6 +8,6 @@
     "deploy-github": "deploy-github.json",
     "erp": "erp.json",
     "mail": "mail.json",
-    "documents": "documents.json"
+    "files": "files.json"
   }
 }

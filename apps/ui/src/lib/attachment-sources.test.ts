@@ -12,8 +12,8 @@ const ERP: SourceManifestLike = { id: 'erp', name: 'ERP', documents: {
   'invoice-pdf': { label: 'issued invoice {id}', title: 'Issued invoices', description: 'Finished invoices from the ERP archive' },
   'credit-note-pdf': { label: 'issued credit note {id}' },
 } };
-const DOCS: SourceManifestLike = { id: 'documents', name: 'Documents', documents: {
-  file: { label: 'saved document {id}', aiSupplied: true },
+const DOCS: SourceManifestLike = { id: 'files', name: 'Files', documents: {
+  file: { label: 'saved file {id}', aiSupplied: true },
 } };
 const NO_DOCS: SourceManifestLike = { id: 'crm', name: 'CRM' };
 
@@ -25,19 +25,19 @@ describe('attachment sources', () => {
   });
 
   it('keeps the stored value a comma-separated string', () => {
-    expect(parseSources(' erp:invoice-pdf, documents:file ,')).toEqual(['erp:invoice-pdf', 'documents:file']);
+    expect(parseSources(' erp:invoice-pdf, files:file ,')).toEqual(['erp:invoice-pdf', 'files:file']);
     expect(joinSources(['a:b', 'c:d'])).toBe('a:b,c:d');
     expect(joinSources([])).toBe('');
     expect(parseSources(undefined)).toEqual([]);
   });
 
   it('builds one group per manifest with documents, from the manifests alone', () => {
-    const g = attachmentSourceGroups([ERP, NO_DOCS, DOCS], new Set(['erp', 'documents']));
-    expect(g.map((x) => x.connectorId)).toEqual(['erp', 'documents']);
+    const g = attachmentSourceGroups([ERP, NO_DOCS, DOCS], new Set(['erp', 'files']));
+    expect(g.map((x) => x.connectorId)).toEqual(['erp', 'files']);
     expect(g[0].options.map((o) => o.key)).toEqual(['erp:invoice-pdf', 'erp:credit-note-pdf']);
     expect(g[0].options[0]).toMatchObject({ title: 'Issued invoices', description: 'Finished invoices from the ERP archive' });
     expect(g[0].options[1].title).toBe('Issued credit note'); // derived from the label template
-    expect(g[1].options[0]).toMatchObject({ key: 'documents:file', title: 'Saved document' });
+    expect(g[1].options[0]).toMatchObject({ key: 'files:file', title: 'Saved file' });
   });
 
   it('marks a connector that is not set up, and never disables on unknown status', () => {
@@ -56,22 +56,22 @@ describe('attachment sources', () => {
   });
 
   it('reads sources readably, unknown ones as stored', () => {
-    expect(attachmentSourceLabel([ERP, DOCS], 'documents:file')).toBe('Saved document');
+    expect(attachmentSourceLabel([ERP, DOCS], 'files:file')).toBe('Saved file');
     expect(attachmentSourceLabel([ERP], 'gone:thing')).toBe('gone:thing');
-    expect(formatAttachmentSources('erp:invoice-pdf,documents:file', [ERP, DOCS])).toBe('Issued invoices, Saved document');
+    expect(formatAttachmentSources('erp:invoice-pdf,files:file', [ERP, DOCS])).toBe('Issued invoices, Saved file');
     expect(formatAttachmentSources('', [ERP])).toBe('');
   });
 
   it('aiSupplied comes from the manifest flag, not from a name', () => {
-    expect(isAiSuppliedFileName([ERP, DOCS], 'documents', 'file')).toBe(true);
+    expect(isAiSuppliedFileName([ERP, DOCS], 'files', 'file')).toBe(true);
     expect(isAiSuppliedFileName([ERP, DOCS], 'erp', 'invoice-pdf')).toBe(false);
-    expect(isAiSuppliedFileName([ERP], 'documents', 'file')).toBe(false);
-    expect(isAiSuppliedFileName(undefined, 'documents', 'file')).toBe(false);
+    expect(isAiSuppliedFileName([ERP], 'files', 'file')).toBe(false);
+    expect(isAiSuppliedFileName(undefined, 'files', 'file')).toBe(false);
   });
 
   it('scope displays show the sources readably; other fields are unchanged', () => {
     const field = { format: 'connector:kind' };
-    expect(formatScopeFieldValue('allowed_attachment_sources', 'erp:invoice-pdf,documents:file', field, [ERP, DOCS])).toBe('Issued invoices, Saved document');
+    expect(formatScopeFieldValue('allowed_attachment_sources', 'erp:invoice-pdf,files:file', field, [ERP, DOCS])).toBe('Issued invoices, Saved file');
     expect(formatScopeFieldValue('allowed_attachment_sources', '', field, [ERP])).toBe('None: text only');
     expect(formatScopeFieldValue('allowed_recipients', 'a@b.com, c@d.com', { format: 'email' }, [ERP])).toBe('a@b.com, c@d.com');
   });
@@ -80,7 +80,7 @@ describe('attachment sources', () => {
     const profile = { scopeSchema: { keyOrder: ['allowed_attachment_sources'], fields: {
       allowed_attachment_sources: { displayName: 'Allowed attachment sources', format: 'connector:kind' },
     } } } as unknown as AgentProfile;
-    const lines = profileFieldLines({ allowed_attachment_sources: 'documents:file' }, profile, 'scope', [DOCS]);
-    expect(lines[0].value).toBe('Saved document');
+    const lines = profileFieldLines({ allowed_attachment_sources: 'files:file' }, profile, 'scope', [DOCS]);
+    expect(lines[0].value).toBe('Saved file');
   });
 });

@@ -41,7 +41,7 @@ export function formatScopeValue(
 /**
  * `formatScopeValue`, but aware of the field's profile definition: a list of
  * attachment sources (format "connector:kind") is shown by the connectors' own
- * names ("Issued invoice, Saved document"), and an empty list as "None: text
+ * names ("Issued invoice, Saved file"), and an empty list as "None: text
  * only". Any other field is formatted as before.
  */
 export function formatScopeFieldValue(

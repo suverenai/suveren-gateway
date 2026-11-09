@@ -50,7 +50,7 @@ import {
 import { isAttachmentSourceAllowed } from './attachment-policy';
 import { resolveDocumentReference, type ResolvedDocument } from './document-source';
 import { resolveInsertValue, applyInserts, type ResolvedInsert } from './insert-values';
-import { MAX_ATTACHMENTS_TOTAL_BYTES, formatMiB } from './attachment-limits';
+import { formatMB } from './attachment-limits';
 import { buildMimeMessage, toBase64Url } from './mime-message';
 import type { DiscoveredTool } from './integration-manager';
 import type { MessageGatingDeclaration } from './tool-gating-types';
@@ -140,23 +140,29 @@ export async function resolveAttachmentsAndInserts(
   const sealedAttachments: SealedAttachment[] = [];
   let totalBytes = 0;
   if (refsResult.refs.length > 0) {
+    // Validated at manifest load; refused here too, so a tool without a
+    // declared limit can never send a file.
+    const maxBytes = tool.gating?.maxAttachmentBytes;
+    if (!maxBytes) {
+      return { ok: false, message: `Refused: ${tool.namespacedName} declares no attachment limit, so it cannot send files. Nothing was sent and no ticket was requested.` };
+    }
     const profile = getProfile(profileId);
     for (const ref of refsResult.refs) {
       const policy = isAttachmentSourceAllowed(profileId, profile, allowedSourcesValue, ref);
       if (!policy.allowed) {
         return { ok: false, message: `Refused: attachment "${ref.connector}:${ref.kind}" is not allowed. ${policy.reason}` };
       }
-      const resolved = await resolveDocumentReference(integrationManager, ref);
+      const resolved = await resolveDocumentReference(integrationManager, ref, maxBytes);
       if (!resolved.ok) {
         return { ok: false, message: `Refused: could not resolve attachment "${ref.connector}:${ref.kind}/${ref.id}" — ${resolved.error.message}` };
       }
       // Checked on the bytes just read and hashed, before any ticket or
       // proposal exists. Stops at the first file that takes the email over.
       totalBytes += resolved.doc.bytes;
-      if (totalBytes > MAX_ATTACHMENTS_TOTAL_BYTES) {
+      if (totalBytes > maxBytes) {
         return {
           ok: false,
-          message: `Refused: the attachments come to more than ${formatMiB(MAX_ATTACHMENTS_TOTAL_BYTES)} in total. Nothing was sent and no ticket was requested.`,
+          message: `Refused: the attachments come to more than ${formatMB(maxBytes)} in total, the most this tool may send. Nothing was sent and no ticket was requested.`,
         };
       }
       sealedAttachments.push({
@@ -249,6 +255,9 @@ export async function finalizeAttachmentsForExecution(
    *  arguments are the text, recipients and subject. Required to build a
    *  "mime-raw" message; never guessed from argument names. */
   message?: MessageGatingDeclaration,
+  /** The calling tool's manifest `maxAttachmentBytes`. Required to finalize a
+   *  call that carries sealed attachments: no default, fail closed. */
+  maxAttachmentBytes?: number,
 ): Promise<AttachmentResolutionResult> {
   const sealed = (args as Record<string, unknown>)[ATTACHMENTS_SEALED_META_KEY] as
     | { attachments: SealedAttachment[]; inserts: SealedInsert[] }
@@ -257,10 +266,14 @@ export async function finalizeAttachmentsForExecution(
     return { ok: true, args };
   }
 
+  if (sealed.attachments.length > 0 && !maxAttachmentBytes) {
+    return { ok: false, message: `Refused: "${integrationId}" declares no attachment limit, so this file cannot be sent. Nothing was sent.` };
+  }
+
   const resolvedDocs: ResolvedDocument[] = [];
   let totalBytes = 0;
   for (const a of sealed.attachments) {
-    const resolved = await resolveDocumentReference(integrationManager, { connector: a.connector, kind: a.kind, id: a.id });
+    const resolved = await resolveDocumentReference(integrationManager, { connector: a.connector, kind: a.kind, id: a.id }, maxAttachmentBytes);
     if (!resolved.ok) {
       return {
         ok: false,
@@ -274,8 +287,8 @@ export async function finalizeAttachmentsForExecution(
       };
     }
     totalBytes += resolved.doc.bytes;
-    if (totalBytes > MAX_ATTACHMENTS_TOTAL_BYTES) {
-      return { ok: false, message: `Refused: the attachments come to more than ${formatMiB(MAX_ATTACHMENTS_TOTAL_BYTES)} in total — nothing was sent.` };
+    if (maxAttachmentBytes && totalBytes > maxAttachmentBytes) {
+      return { ok: false, message: `Refused: the attachments come to more than ${formatMB(maxAttachmentBytes)} in total — nothing was sent.` };
     }
     resolvedDocs.push(resolved.doc);
   }

@@ -368,7 +368,7 @@
         "attachments": {
           "type": "array",
           "maxItems": 10,
-          "description": "Files to attach, supplied by the governing gateway — agents do not set this directly. At most 10 files, 10 MB each, 25 MB total.",
+          "description": "Files to attach, supplied by the governing gateway — agents do not set this directly. At most 10 files, 18 MB each, 25 MB total.",
           "items": {
             "type": "object",
             "required": [

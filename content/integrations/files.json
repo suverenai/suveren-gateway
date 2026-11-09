@@ -1,16 +1,16 @@
 {
-  "id": "documents",
-  "name": "Documents",
+  "id": "files",
+  "name": "Files",
   "version": "1.0.0",
   "description": "Files kept on this computer — saved from a shared folder, then attached to emails by name",
   "icon": "file-text",
-  "profile": "documents",
-  "npmPackage": "@humanagencyp/documents-mcp",
+  "profile": "files",
+  "npmPackage": "@humanagencyp/files-mcp",
   "npmVersion": "0.0.0",
   "personalDefault": true,
   "localOnly": true,
   "mcp": {
-    "command": "documents-mcp",
+    "command": "files-mcp",
     "args": []
   },
   "credentials": {
@@ -24,18 +24,18 @@
       }
     ],
     "envMapping": {
-      "DOCUMENTS_FOLDER": "sharedFolder"
+      "FILES_FOLDER": "sharedFolder"
     }
   },
   "oauth": null,
   "documents": {
     "file": {
-      "tool": "get_document",
+      "tool": "get_file",
       "args": { "kind": "file", "id": "$id" },
-      "label": "saved document {id}",
+      "label": "saved file {id}",
       "aiSupplied": true,
-      "title": "Saved documents",
-      "description": "Files your AI saved into Documents, such as PDFs, images, video and text"
+      "title": "Saved files",
+      "description": "Files your AI saved, such as PDFs, images, video and text"
     }
   },
   "toolGating": {
@@ -44,22 +44,22 @@
       "staticExecution": {}
     },
     "overrides": {
-      "list_documents": {
+      "list_files": {
         "category": "read",
         "boundField": "read_access",
         "requiredValue": "unlimited"
       },
-      "get_document": {
+      "get_file": {
         "category": "read",
         "internal": true
       },
-      "save_document": {
-        "summary": "Save a file into Documents",
+      "save_file": {
+        "summary": "Save a file",
         "executionMapping": {},
         "staticExecution": {
           "action_type": "save"
         },
-        "actionLabel": "Document saved"
+        "actionLabel": "File saved"
       }
     }
   },
@@ -75,11 +75,11 @@
     },
     {
       "title": "Files that can be saved",
-      "description": "PDF, PNG, JPEG, WebP, GIF, MP4, WebM, Markdown and plain text, up to 25 MB. Word, Excel, SVG, HTML and zip files are refused. A saved file never changes; a new version is a new document."
+      "description": "PDF, PNG, JPEG, WebP, GIF, MP4, WebM, Markdown and plain text, up to 18 MB. Word, Excel, SVG, HTML and zip files are refused. A saved file never changes; a new version is a new file."
     },
     {
       "title": "Letting the AI send a saved file",
-      "description": "Saving a file does not send it. To let emails carry saved documents, tick Documents under \"What the AI may attach\" in your email mandate. Every send is still checked against that mandate."
+      "description": "Saving a file does not send it. To let emails carry saved files, tick Files under \"What the AI may attach\" in your email mandate. Every send is still checked against that mandate."
     }
   ]
 }

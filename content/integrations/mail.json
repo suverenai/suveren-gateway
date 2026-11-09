@@ -196,6 +196,7 @@
           "email": "to"
         },
         "attachmentsArg": "attachments",
+        "maxAttachmentBytes": 18000000,
         "insertFields": [
           "body"
         ],

@@ -341,6 +341,16 @@ export interface ProfileToolGatingEntry {
    */
   attachmentsArg?: string;
   /**
+   * The most this tool's attachments may weigh, per file and in total, in
+   * bytes. Required when `attachmentsArg` is declared (manifest-loader.ts
+   * refuses a manifest without it: there is no default, so a tool can never
+   * take files of unknown size). The gateway enforces it on the bytes it read
+   * and hashed, BEFORE any ticket or proposal, so a person is never asked to
+   * approve something that cannot be sent. Declared by the connector that
+   * sends the files, because that connector knows the limit of its system.
+   */
+  maxAttachmentBytes?: number;
+  /**
    * Names THIS tool's own text argument(s) eligible for `{{placeholder}}`
    * substitution via a sibling `insert` argument (insert-values.ts) — e.g.
    * `["body"]`. A placeholder in a listed field with no matching `insert`
@@ -574,7 +584,7 @@ export interface DocumentSourceConfig {
   label?: string;
   /**
    * True when a document of this kind is put into the connector by the AI
-   * (the Documents connector's `file`), not issued by the system (an invoice
+   * (the Files connector's `file`), not issued by the system (an invoice
    * archive). The gateway copies it onto the sealed attachment so the card
    * can label the file name "given by the AI". Generic: no kind name in code.
    */

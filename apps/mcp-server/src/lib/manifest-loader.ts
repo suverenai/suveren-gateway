@@ -1221,10 +1221,11 @@ export function invalidManifestDocumentsReason(
 
 /**
  * Returns a refusal reason if `manifest.attachments` (if any) is malformed,
- * OR any override's `attachmentsArg`/`insertFields` is malformed, OR an
- * override declares `attachmentsArg` while this manifest declares no
- * top-level `attachments` transport (a tool cannot opt in to attachments
- * without its connector saying how it receives them).
+ * OR any override's `attachmentsArg`/`maxAttachmentBytes`/`insertFields` is
+ * malformed, OR an override declares `attachmentsArg` while this manifest
+ * declares no top-level `attachments` transport or no `maxAttachmentBytes`
+ * (a tool cannot opt in to attachments without its connector saying how it
+ * receives them and how much it can send).
  */
 export function invalidManifestAttachmentsReason(
   manifest: Pick<IntegrationManifest, 'attachments' | 'toolGating'>,
@@ -1236,7 +1237,7 @@ export function invalidManifestAttachmentsReason(
   const overrides = manifest.toolGating?.overrides ?? {};
   for (const [toolName, entry] of Object.entries(overrides)) {
     if (entry === null || typeof entry !== 'object') continue;
-    const e = entry as { attachmentsArg?: unknown; insertFields?: unknown };
+    const e = entry as { attachmentsArg?: unknown; maxAttachmentBytes?: unknown; insertFields?: unknown };
     if (e.attachmentsArg !== undefined) {
       if (typeof e.attachmentsArg !== 'string' || e.attachmentsArg.length === 0) {
         return `override "${toolName}".attachmentsArg must be a non-empty string`;
@@ -1244,6 +1245,19 @@ export function invalidManifestAttachmentsReason(
       if (!manifest.attachments) {
         return `override "${toolName}" declares "attachmentsArg" but this manifest declares no ` +
           `top-level "attachments" transport`;
+      }
+      // Fail closed: there is no default limit. A tool that takes attachments
+      // says how many bytes it can send, or the manifest does not load.
+      if (e.maxAttachmentBytes === undefined) {
+        return `override "${toolName}" declares "attachmentsArg" but no "maxAttachmentBytes"`;
+      }
+    }
+    if (e.maxAttachmentBytes !== undefined) {
+      if (typeof e.maxAttachmentBytes !== 'number' || !Number.isSafeInteger(e.maxAttachmentBytes) || e.maxAttachmentBytes <= 0) {
+        return `override "${toolName}".maxAttachmentBytes must be a positive whole number of bytes`;
+      }
+      if (e.attachmentsArg === undefined) {
+        return `override "${toolName}" declares "maxAttachmentBytes" without "attachmentsArg"`;
       }
     }
     if (e.insertFields !== undefined) {
