@@ -19,6 +19,7 @@ import { isSimulationMode, connectorCurrentlySimulated, SIMULATION_BLOCK_REASON,
 import { inheritedConnectorEnv } from './connector-env';
 import { withSourceLink } from './request-context';
 import { withAttachmentAndInsertSchema } from './attachment-reference';
+import { CONNECTOR_STDIO_MAX_BUFFER_BYTES } from './attachment-limits';
 import type { BuiltinIntegration, BuiltinStatus, MandateCandidate } from './builtin-integration';
 
 const DEFAULT_DATA_DIR = process.env.SUVEREN_DATA_DIR ?? join(homedir(), '.suveren');
@@ -791,6 +792,9 @@ export class IntegrationManager {
     const transport = new StdioClientTransport({
       command: config.command,
       args,
+      // The SDK default (10 MiB) closes the connection on a document reply of
+      // about 5 MiB or more — see attachment-limits.ts.
+      maxBufferSize: CONNECTOR_STDIO_MAX_BUFFER_BYTES,
       // Only an allowlist of the gateway's environment — never its own
       // secrets (connector-env.ts). The allowlist includes
       // NODE_EXTRA_CA_CERTS, which is how a saved `--ca-file` reaches an
@@ -1080,6 +1084,8 @@ export class IntegrationManager {
   isSimulationSafe(id: string): boolean {
     const builtin = this.builtins.get(id);
     if (builtin) return builtin.def.simulation === true;
+    // A connector that touches only this computer is no real system.
+    if (getManifest(id)?.localOnly === true) return true;
     return connectorCurrentlySimulated(getManifest(id), this.serviceCredentials.get(id));
   }
 
@@ -1436,6 +1442,7 @@ export class IntegrationManager {
         sourceFromArg?: { kind: string; arg: string };
         internal?: boolean;
         attachmentsArg?: string;
+        maxAttachmentBytes?: number;
         insertFields?: string[];
         display?: { aiText?: string };
         message?: import('./tool-gating-types').MessageGatingDeclaration;
@@ -1499,6 +1506,7 @@ export class IntegrationManager {
         requiredValue: ext.requiredValue,
         internal: ext.internal,
         attachmentsArg: ext.attachmentsArg,
+        maxAttachmentBytes: ext.maxAttachmentBytes,
         insertFields: ext.insertFields,
         aiTextArg: ext.display?.aiText,
         message: ext.message,

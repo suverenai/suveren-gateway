@@ -9,6 +9,7 @@ import { Fragment } from 'react';
 import { argRows, fieldNotes, profileFieldLines, type ArgRow, type ToolDisplay } from '../lib/approval-view';
 import { profileDisplayName } from '../lib/profile-display';
 import { useProfile } from '../lib/profile-cache';
+import { useSourceManifests } from '../lib/source-manifests';
 
 const IMAGE_FIELD_RE = /^(image|img|photo|picture|thumbnail)(_?url)?$/i;
 function isImageArg(key: string, value: unknown): value is string {
@@ -27,7 +28,8 @@ function plain(v: unknown): string {
 
 function ProfileFields({ row, which }: { row: ArgRow; which: 'limits' | 'scope' }) {
   const profile = useProfile(row.profileRef);
-  const lines = profileFieldLines(row.value, profile, which);
+  const sourceManifests = useSourceManifests();
+  const lines = profileFieldLines(row.value, profile, which, sourceManifests);
   if (lines.length === 0) return <span style={{ color: 'var(--text-tertiary)' }}>none</span>;
   return (
     <dl style={{ display: 'grid', gridTemplateColumns: 'max-content 1fr', gap: '0.15rem 0.75rem', margin: 0 }}>

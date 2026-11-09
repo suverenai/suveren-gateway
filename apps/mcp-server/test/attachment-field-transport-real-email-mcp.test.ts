@@ -84,7 +84,7 @@ beforeAll(() => {
       attachments: { transport: 'field', arg: 'attachments' },
       toolGating: {
         default: { executionMapping: {} },
-        overrides: { send_message: { executionMapping: {}, staticExecution: { action_type: 'send' }, attachmentsArg: 'attachments', insertFields: ['body'] } },
+        overrides: { send_message: { executionMapping: {}, staticExecution: { action_type: 'send' }, attachmentsArg: 'attachments', maxAttachmentBytes: 18_000_000, insertFields: ['body'] } },
       },
     }),
   );
@@ -123,7 +123,7 @@ describe('field transport — real @humanagencyp/email-mcp 0.4.0 (stdio)', () =>
       sha256: pdfSha256,
     });
 
-    const mailTool = { integrationId: 'mail', namespacedName: 'mail__send_message', gating: { attachmentsArg: 'attachments', insertFields: ['body'] } };
+    const mailTool = { integrationId: 'mail', namespacedName: 'mail__send_message', gating: { attachmentsArg: 'attachments', maxAttachmentBytes: 18_000_000, insertFields: ['body'] } };
     const resolved = await resolveAttachmentsAndInserts(
       im, mailTool, PROFILE,
       { to: ['buchhaltung@drautal.at'], subject: 'Rechnung 2026-0003', body: 'Anbei die Rechnung.', attachments: [{ connector: 'erp', kind: 'invoice-pdf', id: 'inv-1' }] },
@@ -139,7 +139,7 @@ describe('field transport — real @humanagencyp/email-mcp 0.4.0 (stdio)', () =>
     // is "attachments", the manifest-declared field-transport shape
     // {filename, contentType, contentBase64}.
     const sealedArgs = { ...resolved.args, [ATTACHMENTS_SEALED_META_KEY]: resolved.sealed };
-    const finalized = await finalizeAttachmentsForExecution(im, 'mail', sealedArgs);
+    const finalized = await finalizeAttachmentsForExecution(im, 'mail', sealedArgs, undefined, 18_000_000);
     expect(finalized.ok).toBe(true);
     if (!finalized.ok) return;
     const outgoing = finalized.args;

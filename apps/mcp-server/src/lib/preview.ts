@@ -193,6 +193,8 @@ export async function readPreview(
   integrationId: string,
   previewTool: string,
   args: Record<string, unknown>,
+  /** Defaults to the preview timeout; a document read passes its own. */
+  timeoutMs: number = PREVIEW_READ_TIMEOUT_MS,
 ): Promise<PreviewReadResult> {
   const discovered = integrationManager
     .getAllTools()
@@ -203,7 +205,7 @@ export async function readPreview(
   try {
     const result = await withTimeout(
       integrationManager.callTool(integrationId, previewTool, args),
-      PREVIEW_READ_TIMEOUT_MS,
+      timeoutMs,
     );
     const text = (result.content as Array<{ text?: string }> | undefined)?.[0]?.text;
     if (result.isError) {

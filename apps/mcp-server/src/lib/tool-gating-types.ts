@@ -341,6 +341,16 @@ export interface ProfileToolGatingEntry {
    */
   attachmentsArg?: string;
   /**
+   * The most this tool's attachments may weigh, per file and in total, in
+   * bytes. Required when `attachmentsArg` is declared (manifest-loader.ts
+   * refuses a manifest without it: there is no default, so a tool can never
+   * take files of unknown size). The gateway enforces it on the bytes it read
+   * and hashed, BEFORE any ticket or proposal, so a person is never asked to
+   * approve something that cannot be sent. Declared by the connector that
+   * sends the files, because that connector knows the limit of its system.
+   */
+  maxAttachmentBytes?: number;
+  /**
    * Names THIS tool's own text argument(s) eligible for `{{placeholder}}`
    * substitution via a sibling `insert` argument (insert-values.ts) — e.g.
    * `["body"]`. A placeholder in a listed field with no matching `insert`
@@ -554,7 +564,9 @@ export interface MessageGatingDeclaration {
  * own field of that name — today only `$id` (the reference's `id`). The read
  * must answer `{ filename, contentType, contentBase64, sha256 }` (document-
  * source.ts shape-checks this and recomputes `sha256` itself — a connector's
- * own claim is never trusted blind).
+ * own claim is never trusted blind). The read may also answer `warnings:
+ * string[]` — fixed sentences the connector wrote about the saved file; they
+ * travel to the approval card as system data (document-source.ts).
  */
 export interface DocumentSourceConfig {
   tool: string;
@@ -570,6 +582,17 @@ export interface DocumentSourceConfig {
    * apps/ui/src/lib/attachment-sealed.ts `documentLabel`).
    */
   label?: string;
+  /**
+   * True when a document of this kind is put into the connector by the AI
+   * (the Files connector's `file`), not issued by the system (an invoice
+   * archive). The gateway copies it onto the sealed attachment so the card
+   * can label the file name "given by the AI". Generic: no kind name in code.
+   */
+  aiSupplied?: boolean;
+  /** Short name and one-line explanation of this source for the mandate form's
+   *  "What the AI may attach" checkboxes. Optional; the form falls back to the label. */
+  title?: string;
+  description?: string;
 }
 
 /** Manifest top-level `documents` — kind name -> how to read it. */

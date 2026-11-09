@@ -310,6 +310,8 @@ export interface ToolGatingConfig {
   internal?: boolean;
   /** See tool-gating-types.ts `ProfileToolGatingEntry.attachmentsArg`. */
   attachmentsArg?: string;
+  /** See tool-gating-types.ts `ProfileToolGatingEntry.maxAttachmentBytes`. */
+  maxAttachmentBytes?: number;
   /** See tool-gating-types.ts `ProfileToolGatingEntry.insertFields`. */
   insertFields?: string[];
   /** See tool-gating-types.ts `ToolDisplayHints.aiText`. */

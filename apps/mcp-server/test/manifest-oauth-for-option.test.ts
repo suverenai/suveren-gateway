@@ -97,7 +97,7 @@ describe('shipped manifests', () => {
     expect(m.modeLabels).toEqual({ simulation: 'Test mailbox', live: { gmail: 'Gmail' } });
     expect(m.modeOptions).toEqual({ live: { gmail: { label: 'Gmail', fields: ['clientId', 'clientSecret'] } } });
     expect(m.adapterField).toBe('liveAdapter');
-    expect(m.npmVersion).toBe('0.5.1');
+    expect(m.npmVersion).toBe('0.5.2');
     expect(m.credentials.envMapping).toMatchObject({
       EMAIL_MODE: 'mode', EMAIL_LIVE_ADAPTER: 'liveAdapter', CLIENT_ID: 'clientId', CLIENT_SECRET: 'clientSecret', REFRESH_TOKEN: 'refreshToken',
     });

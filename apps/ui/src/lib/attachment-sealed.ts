@@ -21,6 +21,10 @@ export interface SealedAttachmentDisplay {
   contentType: string;
   sha256: string;
   bytes: number;
+  /** Connector-written sentences about the file (system data, never AI text). */
+  warnings?: string[];
+  /** The file name was given by the AI (manifest `documents.<kind>.aiSupplied`). */
+  aiSupplied?: true;
 }
 
 /** Mirrors the gateway's `SealedInsert`. */
@@ -52,6 +56,15 @@ function isSealedAttachment(v: unknown): v is SealedAttachmentDisplay {
     && typeof a.bytes === 'number';
 }
 
+/** `warnings` is optional and shape-checked: only strings survive; none left = the key is dropped. */
+function withCleanWarnings(a: SealedAttachmentDisplay): SealedAttachmentDisplay {
+  const raw = (a as { warnings?: unknown }).warnings;
+  const { warnings: _drop, ...rest } = a;
+  void _drop;
+  const warnings = Array.isArray(raw) ? raw.filter((w): w is string => typeof w === 'string' && w.length > 0) : [];
+  return warnings.length > 0 ? { ...rest, warnings } : rest;
+}
+
 function isSealedInsert(v: unknown): v is SealedInsertDisplay {
   if (v === null || typeof v !== 'object') return false;
   const i = v as Record<string, unknown>;
@@ -70,7 +83,7 @@ export function extractAttachmentsSealed(toolArgs: Record<string, unknown> | nul
   const raw = toolArgs[ATTACHMENTS_SEALED_META_KEY];
   if (raw === null || typeof raw !== 'object') return empty;
   const r = raw as Record<string, unknown>;
-  const attachments = Array.isArray(r.attachments) ? r.attachments.filter(isSealedAttachment) : [];
+  const attachments = (Array.isArray(r.attachments) ? r.attachments.filter(isSealedAttachment) : []).map(withCleanWarnings);
   const inserts = Array.isArray(r.inserts) ? r.inserts.filter(isSealedInsert) : [];
   return { attachments, inserts };
 }
@@ -121,7 +134,7 @@ export function attachmentCheckEntries(toolArgs: Record<string, unknown> | null 
  *  duplicated for the same cross-package reason as `SealedAttachmentDisplay`
  *  above. */
 export type AttachmentPreviewResult =
-  | { status: 'ok'; filename: string; contentType: string; contentBase64: string; sha256: string; bytes: number }
+  | { status: 'ok'; filename: string; contentType: string; contentBase64: string; sha256: string; bytes: number; warnings?: string[] }
   | { status: 'changed'; message: string }
   | { status: 'unavailable'; message: string }
   | { status: 'not_found'; message: string }

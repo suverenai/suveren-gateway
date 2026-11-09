@@ -21,6 +21,7 @@ import { getManifest } from './manifest-loader';
 import { readPreview, unavailableReadMessage } from './preview';
 import { substitute } from './request-context';
 import type { DocumentReference } from './tool-gating-types';
+import { maxBase64Chars, DOCUMENT_READ_TIMEOUT_MS, formatMB } from './attachment-limits';
 
 export interface ResolvedDocument {
   filename: string;
@@ -32,6 +33,32 @@ export interface ResolvedDocument {
    *  hash format). */
   sha256: string;
   bytes: number;
+  /** Sentences the connector wrote about the saved file (system data, never AI
+   *  text). Absent when there are none. */
+  warnings?: string[];
+  /** The manifest's `aiSupplied` flag for this kind: the file name was given by
+   *  the AI. Absent when false. */
+  aiSupplied?: true;
+}
+
+const MAX_WARNINGS = 10;
+const MAX_WARNING_CHARS = 300;
+
+/**
+ * The connector's `warnings` as display-safe sentences: strings only, control
+ * and bidi characters removed, bounded. Anything else is dropped.
+ */
+export function cleanWarnings(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const out: string[] = [];
+  for (const v of value) {
+    if (typeof v !== 'string') continue;
+    // eslint-disable-next-line no-control-regex
+    const t = v.replace(/[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, MAX_WARNING_CHARS);
+    if (t) out.push(t);
+    if (out.length >= MAX_WARNINGS) break;
+  }
+  return out;
 }
 
 export type DocumentResolutionError =
@@ -41,6 +68,7 @@ export type DocumentResolutionError =
   | { code: 'UNAVAILABLE'; message: string }
   | { code: 'NOT_FOUND'; message: string }
   | { code: 'MALFORMED_RESULT'; message: string }
+  | { code: 'TOO_LARGE'; message: string }
   | { code: 'HASH_MISMATCH'; message: string };
 
 export type DocumentResolutionResult =
@@ -59,6 +87,10 @@ function sha256Hex(buf: Buffer): string {
 export async function resolveDocumentReference(
   integrationManager: IntegrationManager,
   ref: DocumentReference,
+  /** The most this file may weigh, in bytes. Omitted only for a read-only
+   *  display of a file already sealed under a limit (its fingerprint is
+   *  checked against the sealed one). */
+  maxBytes?: number,
 ): Promise<DocumentResolutionResult> {
   const manifest = getManifest(ref.connector);
   if (!manifest) {
@@ -90,7 +122,7 @@ export async function resolveDocumentReference(
   }
 
   const args = substitute(docConfig.args, { id: ref.id });
-  const read = await readPreview(integrationManager, ref.connector, docConfig.tool, args);
+  const read = await readPreview(integrationManager, ref.connector, docConfig.tool, args, DOCUMENT_READ_TIMEOUT_MS);
   if (read.status === 'not_found' || read.status === 'refused') {
     return { ok: false, error: { code: 'NOT_FOUND', message: read.message ?? `No document "${ref.kind}"/"${ref.id}" on "${ref.connector}".` } };
   }
@@ -114,11 +146,18 @@ export async function resolveDocumentReference(
     return { ok: false, error: { code: 'MALFORMED_RESULT', message: 'Document result is missing "contentBase64".' } };
   }
 
-  let bytes: Buffer;
-  try {
-    bytes = Buffer.from(contentBase64, 'base64');
-  } catch {
+  if (maxBytes !== undefined && contentBase64.length > maxBase64Chars(maxBytes)) {
+    return { ok: false, error: { code: 'TOO_LARGE', message: `The file is larger than ${formatMB(maxBytes)}, the most this tool may send.` } };
+  }
+  // Buffer.from never throws on bad base64; it skips what it cannot read. So the
+  // bytes hashed below are the DECODED bytes, and the base64 handed on is
+  // re-encoded from those same bytes — the connector's own string is dropped.
+  const bytes = Buffer.from(contentBase64, 'base64');
+  if (bytes.byteLength === 0) {
     return { ok: false, error: { code: 'MALFORMED_RESULT', message: '"contentBase64" is not valid base64.' } };
+  }
+  if (maxBytes !== undefined && bytes.byteLength > maxBytes) {
+    return { ok: false, error: { code: 'TOO_LARGE', message: `The file is larger than ${formatMB(maxBytes)}, the most this tool may send.` } };
   }
   const computedSha256 = sha256Hex(bytes);
   if (typeof claimedSha256 === 'string' && claimedSha256.length > 0 && claimedSha256 !== computedSha256) {
@@ -131,7 +170,19 @@ export async function resolveDocumentReference(
     };
   }
 
-  return { ok: true, doc: { filename, contentType, contentBase64, sha256: computedSha256, bytes: bytes.byteLength } };
+  const warnings = cleanWarnings((body as Record<string, unknown>).warnings);
+  return {
+    ok: true,
+    doc: {
+      filename,
+      contentType,
+      contentBase64: bytes.toString('base64'),
+      sha256: computedSha256,
+      bytes: bytes.byteLength,
+      ...(warnings.length > 0 ? { warnings } : {}),
+      ...(docConfig.aiSupplied === true ? { aiSupplied: true as const } : {}),
+    },
+  };
 }
 
 /**

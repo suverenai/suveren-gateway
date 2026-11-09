@@ -123,10 +123,10 @@ describe('invalidManifestAttachmentsReason', () => {
     expect(reason).toMatch(/attachmentsArg/);
   });
 
-  it('accepts an override declaring attachmentsArg when the transport is declared', () => {
+  it('accepts an override declaring attachmentsArg when the transport and the limit are declared', () => {
     const reason = invalidManifestAttachmentsReason({
       attachments: { transport: 'field', arg: 'attachments' },
-      toolGating: { default: { executionMapping: {} }, overrides: { send_message: { attachmentsArg: 'attachments' } } },
+      toolGating: { default: { executionMapping: {} }, overrides: { send_message: { attachmentsArg: 'attachments', maxAttachmentBytes: 18_000_000 } } },
     });
     expect(reason).toBeNull();
   });

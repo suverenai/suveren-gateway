@@ -6,7 +6,7 @@
   "icon": "mail",
   "profile": "email",
   "npmPackage": "@humanagencyp/email-mcp",
-  "npmVersion": "0.5.1",
+  "npmVersion": "0.5.2",
   "readPolicy": {
     "defaultAgeDays": 30
   },
@@ -196,6 +196,7 @@
           "email": "to"
         },
         "attachmentsArg": "attachments",
+        "maxAttachmentBytes": 18000000,
         "insertFields": [
           "body"
         ],

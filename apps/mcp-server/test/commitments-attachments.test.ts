@@ -71,7 +71,7 @@ beforeAll(() => {
       attachments: { transport: 'field', arg: 'attachments' },
       toolGating: {
         default: { executionMapping: {} },
-        overrides: { send_message: { executionMapping: {}, staticExecution: { action_type: 'send' }, attachmentsArg: 'attachments', insertFields: ['body'] } },
+        overrides: { send_message: { executionMapping: {}, staticExecution: { action_type: 'send' }, attachmentsArg: 'attachments', maxAttachmentBytes: 18_000_000, insertFields: ['body'] } },
       },
     }),
   );
@@ -84,7 +84,7 @@ beforeAll(() => {
       attachments: { transport: 'mime-raw', arg: 'raw' },
       toolGating: {
         default: { executionMapping: {} },
-        overrides: { send_message: { executionMapping: {}, staticExecution: { action_type: 'send' }, attachmentsArg: 'attachments', message: GMAIL_MESSAGE } },
+        overrides: { send_message: { executionMapping: {}, staticExecution: { action_type: 'send' }, attachmentsArg: 'attachments', maxAttachmentBytes: 18_000_000, message: GMAIL_MESSAGE } },
       },
     }),
   );
@@ -107,7 +107,7 @@ const GMAIL_TOOL: DiscoveredTool = {
   integrationId: 'gmail',
   description: '',
   inputSchema: { type: 'object', properties: {} },
-  gating: { profile: PROFILE, executionMapping: {}, staticExecution: { action_type: 'send' }, attachmentsArg: 'attachments', message: GMAIL_MESSAGE } as unknown as DiscoveredTool['gating'],
+  gating: { profile: PROFILE, executionMapping: {}, staticExecution: { action_type: 'send' }, attachmentsArg: 'attachments', maxAttachmentBytes: 18_000_000, message: GMAIL_MESSAGE } as unknown as DiscoveredTool['gating'],
 };
 
 const MAIL_TOOL: DiscoveredTool = {
@@ -116,7 +116,7 @@ const MAIL_TOOL: DiscoveredTool = {
   integrationId: 'mail',
   description: '',
   inputSchema: { type: 'object', properties: {} },
-  gating: { profile: PROFILE, executionMapping: {}, staticExecution: { action_type: 'send' }, attachmentsArg: 'attachments', insertFields: ['body'] } as unknown as DiscoveredTool['gating'],
+  gating: { profile: PROFILE, executionMapping: {}, staticExecution: { action_type: 'send' }, attachmentsArg: 'attachments', maxAttachmentBytes: 18_000_000, insertFields: ['body'] } as unknown as DiscoveredTool['gating'],
 };
 
 const ERP_TOOL: DiscoveredTool = {
