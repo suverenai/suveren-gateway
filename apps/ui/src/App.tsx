@@ -5,7 +5,10 @@ function Forward({ to }: { to: string }) {
   const { search, hash } = useLocation();
   return <Navigate to={`${to}${search}${hash}`} replace />;
 }
+import { useEffect } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { useUpdateCheck } from './hooks/useUpdateCheck';
+import { shouldReloadAfterUpdate } from './lib/reload-after-update';
 import { EventSourceProvider, useSSEEvent } from './contexts/EventSourceContext';
 import { AppShell } from './components/AppShell';
 import { LoginPage } from './pages/LoginPage';
@@ -34,6 +37,14 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
 
 function AppRoutes() {
   const { user, handleSessionLocked, refreshGroups } = useAuth();
+
+  // An update restarts the gateway and signs everyone out, which takes down the banner that reloads a
+  // stale tab. So while signed out, a tab running an older build reloads itself. Nothing is lost: the key
+  // lives only in memory and is already gone.
+  const { serverRestarted } = useUpdateCheck();
+  useEffect(() => {
+    if (shouldReloadAfterUpdate({ signedIn: !!user, serverRestarted })) window.location.reload();
+  }, [user, serverRestarted]);
 
   // The gateway locked ITSELF (AS session ended: 30-day expiry, or revoked)
   // — return to the sign-in screen with a reason, exactly like the UI
