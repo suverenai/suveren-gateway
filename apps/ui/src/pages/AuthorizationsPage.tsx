@@ -10,7 +10,8 @@ import { useAuth } from '../contexts/AuthContext';
 import { DomainBadge } from '../components/DomainBadge';
 import { ObTypeLine, ObFold, ObLock, useFoldAccordion } from '../components/ObjectCard';
 import { COMMITMENT_REVIEW, COMMITMENT_AUTOMATIC } from '../lib/commitment-words';
-import { useMandateReceipts, usedToday, ticketsUnder } from '../lib/mandate-card-usage';
+import { useMandateReceipts, usedTodayNumbers, ticketsUnder } from '../lib/mandate-card-usage';
+import { cumulativeBound, sharedLimitLabel } from '../lib/limit-words';
 import { actionLabel } from '../lib/receipt-summary';
 import { isToday, ticketTime } from '../lib/core-objects';
 import { EmptyState } from '../components/EmptyState';
@@ -449,8 +450,9 @@ function MandateLimits({ item, boundsEntries, limitLines, limitLabel, limitValue
   profile: ReturnType<typeof useProfile>;
 }) {
   const res = useMandateReceipts();
+  const { mode } = useAuth();
   const used = res.state === 'ok'
-    ? usedToday({
+    ? usedTodayNumbers({
         receipts: res.receipts,
         coversToday: res.coversToday,
         authorizationId: item.authorization_id,
@@ -463,9 +465,13 @@ function MandateLimits({ item, boundsEntries, limitLines, limitLabel, limitValue
     <dl className="ob-kv ob-sub" data-testid="mandate-limits">
       {boundsEntries.map(([k, v]) => {
         const r = aboveCapByKey.get(k);
+        // Any cumulative limit reads as the shared one: "Team limit per day", figures from the system.
+        const shared = cumulativeBound(profile, k)
+          ? sharedLimitLabel({ profile, key: k, team: mode === 'team', limit: v as number | string, used: used[k] })
+          : null;
         return (
           <Fragment key={k}>
-            <dt title={limitLines.get(k)?.hint}>{limitLabel(k)}</dt>
+            <dt title={limitLines.get(k)?.hint}>{shared?.name ?? limitLabel(k)}</dt>
             <dd>
               {r ? (
                 hasApprovers ? (
@@ -477,9 +483,11 @@ function MandateLimits({ item, boundsEntries, limitLines, limitLabel, limitValue
                     <s>{limitValue(k, v)}</s> → {r.cap}
                   </span>
                 )
+              ) : shared?.figures ? (
+                <span data-testid="shared-limit-figures" className="shared-limit-figures">{shared.figures}</span>
               ) : limitValue(k, v)}
             </dd>
-            <dd className="ob-use">{used[k] ?? ''}</dd>
+            <dd className="ob-use">{shared ? '' : (used[k] !== undefined ? `${used[k]} used today` : '')}</dd>
           </Fragment>
         );
       })}

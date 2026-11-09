@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import {
   spClient,
   type ExecutionReceipt,
+  type Proposal,
   type IntegrationManifest,
   type LocalAuthorization,
   type SignatureStatus,
@@ -10,6 +11,7 @@ import {
 import { actionLabel, scopeSummary, wasReviewed, profileVersionLabel } from '../lib/receipt-summary';
 import { ProfileBadge } from '../components/ProfileBadge';
 import { ReceiptCard } from '../components/ReceiptCard';
+import { NoTicketRow } from '../components/NoTicketRow';
 import { ReceiptCompleteDialog } from '../components/ReceiptCompleteDialog';
 import { EmptyState } from '../components/EmptyState';
 import { AreaFilterPills, type AreaFilterOption } from '../components/AreaFilterPills';
@@ -63,7 +65,7 @@ function mergeReceipts(prev: ExecutionReceipt[], incoming: ExecutionReceipt[]): 
 }
 
 export function AuditPage() {
-  const { activeTeam, groupId } = useAuth();
+  const { activeTeam, groupId, domain } = useAuth();
   const isAdmin = activeTeam?.isAdmin === true;
 
   const [viewTab, setViewTab] = useState<'mine' | 'team'>('mine');
@@ -89,6 +91,9 @@ export function AuditPage() {
   const [seenCutoff, setSeenCutoff] = useState<number | null>(null);
   const seenCapturedRef = useRef(false);
   const [receipts, setReceipts] = useState<ExecutionReceipt[]>([]);
+  // Approved actions the Authority Server then refused: "No ticket" rows. Read
+  // from the proposals the Approvals page already reads (their own `refusal`).
+  const [refused, setRefused] = useState<Proposal[]>([]);
   // Connector manifests name their own actions ("Email sent"); /health carries
   // the Authority Server's base URL so each row can link to its receipt.
   const [manifests, setManifests] = useState<IntegrationManifest[]>([]);
@@ -170,6 +175,14 @@ export function AuditPage() {
   }, [cursor, loadingMore, fetchPage]);
 
   useVisiblePolling(fetchReceipts, 120_000);
+
+  const fetchRefused = useCallback(() => {
+    spClient.getMyProposals(domain, 'all')
+      .then(ps => setRefused(ps.filter(p => p.status === 'refused' && !!p.refusal)))
+      // Never serve an old list as if it were current: a failed read shows none.
+      .catch(() => setRefused([]));
+  }, [domain]);
+  useVisiblePolling(fetchRefused, 120_000, domain);
 
   // A ticket was just issued (MCP server -> control plane -> SSE): refresh
   // now instead of waiting for the poll. If the page is in view, move the
@@ -314,6 +327,27 @@ export function AuditPage() {
   const filtered = useMemo(
     () => filteredByKind.filter(r => matchesAreaFilter(r.profileId, areaFilter)),
     [filteredByKind, areaFilter],
+  );
+
+  // "No ticket" rows ride the Approved and All views (a refused action was
+  // approved by a person), only for the person's own list, under the same
+  // area filter and time range as the tickets around them.
+  const noTicket = useMemo(() => {
+    if (viewTab !== 'mine' || kind === 'automatic') return [] as Array<Proposal & { timestamp: number }>;
+    const cutoff = timeRange === 'all' ? 0 : Math.floor(Date.now() / 1000) - (timeRange === '1d' ? 1 : timeRange === '7d' ? 7 : 30) * 86400;
+    return refused
+      .filter(p => matchesAreaFilter(p.profileId, areaFilter) && p.refusal!.at >= cutoff)
+      .map(p => ({ ...p, timestamp: p.refusal!.at }))
+      .sort((a, b) => b.timestamp - a.timestamp);
+  }, [refused, viewTab, kind, areaFilter, timeRange]);
+
+  // Tickets and "No ticket" rows, newest first, grouped by day together.
+  const dayEntries = useMemo(
+    () => [
+      ...filtered.map(r => ({ timestamp: r.timestamp, receipt: r as ExecutionReceipt | null, refusal: null as Proposal | null })),
+      ...noTicket.map(p => ({ timestamp: p.timestamp, receipt: null as ExecutionReceipt | null, refusal: p as Proposal | null })),
+    ].sort((a, b) => b.timestamp - a.timestamp),
+    [filtered, noTicket],
   );
 
   const newCount = useMemo(
@@ -569,7 +603,7 @@ export function AuditPage() {
 
       {loading && receipts.length === 0 ? (
         <p style={{ color: 'var(--text-tertiary)' }}>Loading...</p>
-      ) : filtered.length === 0 ? (
+      ) : filtered.length === 0 && noTicket.length === 0 ? (
         <EmptyState
           icon={'\u2315'}
           title={receipts.length === 0 ? 'No tickets in the last 30 days' : 'No matching tickets'}
@@ -584,14 +618,22 @@ export function AuditPage() {
               ? `${receipts.length} ticket${receipts.length !== 1 ? 's' : ''}`
               : `${filtered.length} of ${receipts.length} tickets`}
           </div>
-          {groupTicketsByDay(filtered, Date.now()).map(day => (
+          {groupTicketsByDay(dayEntries, Date.now()).map(day => (
             <section key={day.key} className={`ticket-day${day.isToday ? ' is-today' : ''}`} data-testid="ticket-day">
               <div className="ticket-day-head">
                 <span>{day.label}</span>
-                <small>{day.tickets.length} ticket{day.tickets.length !== 1 ? 's' : ''}</small>
+                <small>{day.tickets.filter(t => t.receipt).length} ticket{day.tickets.filter(t => t.receipt).length !== 1 ? 's' : ''}</small>
               </div>
               <div className="ob-list">
-                {day.tickets.map(receipt => {
+                {day.tickets.map(entry => {
+                  if (!entry.receipt) {
+                    return (
+                      <div className="ob-list-item" key={`no-ticket-${entry.refusal!.id}`}>
+                        <NoTicketRow proposal={entry.refusal!} manifests={manifests} />
+                      </div>
+                    );
+                  }
+                  const receipt = entry.receipt;
                   const owner = receipt.userId ? userById[receipt.userId] : undefined;
                   return (
                     <div className="ob-list-item" key={receipt.id}>

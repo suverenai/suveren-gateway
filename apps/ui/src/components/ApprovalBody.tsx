@@ -42,6 +42,7 @@ import { SystemBoxes } from './RenderedCreationView';
 import { isTestSetupAction, profileIdentity, shortProfileId } from '../lib/profile-identity';
 import { AttachmentsSealedBox } from './AttachmentsSealedBox';
 import { AiTextBox } from './AiTextBox';
+import { SharedLimitRows } from './SharedLimitRows';
 import { extractAttachmentsSealed, attachmentCheckEntries, type LimitCheckLike } from '../lib/attachment-sealed';
 import { boundValuesOpen } from '../lib/approval-preview-view';
 import { aiTextValue, contextFieldLabel, splitTool, systemDisplayName, toolHeadline, type ToolDisplay } from '../lib/approval-view';
@@ -458,6 +459,17 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
         <p className="av3-quiet" style={{ order: 7 }} data-testid="proposal-cannot-read">
           Cannot read this proposal yet: {cannotRead.map(id => nameOf?.(id) ?? id).join(', ')} — shared automatically once they sign in on a device.
         </p>
+      )}
+
+      {/* The shared limits that govern this action, with the figures the system read. */}
+      {!isMandate && (
+        <SharedLimitRows
+          authorizationId={proposal.authorizationId}
+          bounds={mandateBounds}
+          profile={profile}
+          actionType={typeof proposal.executionContext?.action_type === 'string' ? proposal.executionContext.action_type : undefined}
+          style={{ order: 8 }}
+        />
       )}
 
       {/* ── Folded rows (§17.3): one line each, chevron, no lines between ── */}

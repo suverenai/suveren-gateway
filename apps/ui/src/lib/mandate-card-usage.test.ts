@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { AgentProfile } from '@hap/core';
 import type { ExecutionReceipt } from './sp-client';
-import { coversToday, ticketsUnder, usedToday } from './mandate-card-usage';
+import { coversToday, ticketsUnder, usedToday, usedTodayNumbers, usedTodayForBound } from './mandate-card-usage';
 
 const NOW = new Date('2026-10-23T12:00:00').getTime();
 const sec = (iso: string) => Math.floor(new Date(iso).getTime() / 1000);
@@ -57,5 +57,25 @@ describe('usedToday', () => {
   });
   it('shows nothing without bounds', () => {
     expect(usedToday({ receipts: [], coversToday: true, authorizationId: 'a1', bounds: undefined, profile: PROFILE, nowMs: NOW })).toEqual({});
+  });
+});
+
+describe('usedTodayNumbers / usedTodayForBound', () => {
+  it('gives the number behind "N used today"', () => {
+    const r = [ticket({ cumulativeState: { daily: { count: 3, amount: 0 }, monthly: { count: 3, amount: 0 } } })];
+    expect(usedTodayNumbers({ receipts: r, coversToday: true, authorizationId: 'a1', bounds: BOUNDS, profile: PROFILE, nowMs: NOW })).toEqual({ quotes_daily_max: 3 });
+  });
+  it('counts across mandates of the profile for a mandate not yet made', () => {
+    const r = [ticket({ authorizationId: 'other', cumulativeState: { daily: { count: 4, amount: 0 }, monthly: { count: 4, amount: 0 } } })];
+    expect(usedTodayForBound({ receipts: r, coversToday: true, profileId: 'github.com/x/sales@0.5', key: 'quotes_daily_max', profile: PROFILE, nowMs: NOW })).toBe(4);
+  });
+  it('is 0 with a complete read and nothing today, and unknown without proof', () => {
+    expect(usedTodayForBound({ receipts: [], coversToday: true, profileId: 'sales@0.5', key: 'quotes_daily_max', profile: PROFILE, nowMs: NOW })).toBe(0);
+    expect(usedTodayForBound({ receipts: [], coversToday: false, profileId: 'sales@0.5', key: 'quotes_daily_max', profile: PROFILE, nowMs: NOW })).toBeUndefined();
+  });
+  it('ignores another profile and a bound that is not a daily cumulative one', () => {
+    const r = [ticket({ profileId: 'email@0.5' })];
+    expect(usedTodayForBound({ receipts: r, coversToday: true, profileId: 'sales@0.5', key: 'quotes_daily_max', profile: PROFILE, nowMs: NOW })).toBe(0);
+    expect(usedTodayForBound({ receipts: r, coversToday: true, profileId: 'sales@0.5', key: 'max_value', profile: PROFILE, nowMs: NOW })).toBeUndefined();
   });
 });

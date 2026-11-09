@@ -647,7 +647,15 @@ export interface Proposal {
   createdAt: number;
   expiresAt: number;
   /** Set iff status === 'refused' — the AS's own code/message for why. */
-  refusal?: { code: string; message: string; at: number };
+  refusal?: {
+    code: string;
+    message: string;
+    at: number;
+    /** The bound the refusal is about, and the numbers — present only on an Authority Server that records them. */
+    field?: string;
+    expected?: unknown;
+    actual?: unknown;
+  };
   // Phase 6 fields
   pendingApprovers?: string[];
   approvedBy?: Record<string, { receiptId: string; at: number }>;
