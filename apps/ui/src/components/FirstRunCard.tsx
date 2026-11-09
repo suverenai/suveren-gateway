@@ -147,11 +147,11 @@ export function FirstRunCard({
           </span>
           {state.step2.status === 'done' ? (
             <span className="flow-step-title flow-done-title">
-              Delegation mandate given &middot; <Link to="/mandates">review or revoke under Mandates</Link>
+              Setup mandate given &middot; <Link to="/mandates">review or revoke under Mandates</Link>
             </span>
           ) : (
             <StepTitle todo={state.step2.status === 'todo'} onOpen={() => setChosen(1)}>
-              Give the Delegation mandate
+              Give the Setup mandate
             </StepTitle>
           )}
         </div>
@@ -159,7 +159,7 @@ export function FirstRunCard({
         {state.step2.status === 'open' && (
           <div className="flow-step-body">
             <p>
-              Delegation lets your AI propose the rest of its own setup — new mandates
+              Setup lets your AI propose the rest of its own setup — new mandates
               and its working instructions. It can only propose; nothing changes until
               you approve it.
             </p>
@@ -169,23 +169,13 @@ export function FirstRunCard({
               <li>Propose an updated agent brief — also waits for your approval</li>
             </ul>
 
-            {state.step2.simulationOn ? (
-              <>
-                <Link to={DELEGATION_MANDATE_HREF} className="btn btn-primary">
-                  Give the Delegation mandate &#8594;
-                </Link>
-                <p className="cta-helper">You set the daily limit in the next step.</p>
-                {state.step2.variant === 'managed' && (
-                  <p className="managed-note">
-                    In a company team you may need approver rights — ask your IT if the button is refused.
-                  </p>
-                )}
-              </>
-            ) : (
-              <p className="managed-note" style={{ marginTop: 0 }}>
-                {state.step2.variant === 'managed'
-                  ? 'Delegation works in simulation mode only. Ask your IT to turn on simulation mode.'
-                  : <>Delegation works in simulation mode only. Turn it on with <code>suveren-gateway simulation on</code> and restart.</>}
+            <Link to={DELEGATION_MANDATE_HREF} className="btn btn-primary">
+              Give the Setup mandate &#8594;
+            </Link>
+            <p className="cta-helper">You set the daily limit in the next step.</p>
+            {state.step2.variant === 'managed' && (
+              <p className="managed-note">
+                In a company team you may need approver rights — ask your IT if the button is refused.
               </p>
             )}
           </div>

@@ -200,7 +200,7 @@ export function buildMandateBrief(opts: MandateBriefOptions): string {
     lines.push('');
     lines.push(canSetUp
       ? 'If the person asks how to start with Suveren or how to set up their work with it: call setup__get_guide first and follow its steps in order.'
-      : `If the person asks how to start with Suveren: they first create a "Delegation" mandate in the Suveren Gateway at ${uiUrl()}. With it you can read the setup guide and lead them through the setup.`);
+      : `If the person asks how to start with Suveren: they first create a "Setup" mandate in the Suveren Gateway at ${uiUrl()}. With it you can read the setup guide and lead them through the setup.`);
     lines.push('');
   }
 

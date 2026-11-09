@@ -465,11 +465,11 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
         <details className="av3-fold" style={{ order: 10 }} data-testid="proposed-through">
           <summary>
             <span className="h">Proposed through</span>
-            <span className="one">Delegation{parts.checks[0] ? ` · ${parts.checks[0]}` : ''}</span>
+            <span className="one">Setup{parts.checks[0] ? ` · ${parts.checks[0]}` : ''}</span>
             <Chev />
           </summary>
           <div className="av3-fold-body">
-            <p>Proposed by the AI through your <strong>Delegation</strong> mandate.</p>
+            <p>Proposed by the AI through your <strong>Setup</strong> mandate.</p>
             {parts.checks.length > 0 && (
               <ul className="av3-plain" data-testid="mandate-checks">{parts.checks.map((c) => <li key={c}>{c}</li>)}</ul>
             )}

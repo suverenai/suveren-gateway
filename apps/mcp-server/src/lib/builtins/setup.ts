@@ -60,7 +60,7 @@ const DELEGATION_INTENT_HINT = [
   // DL1 — outside simulation, the same mandate also covers ongoing, real-system
   // use: the Scope above (which profiles, which mode) is what actually bounds
   // the AI from here, not simulation mode. Plain words, per the brief.
-  'Outside simulation — once you have connected real systems: the AI proposes mandates and its own working instructions (agent brief) for the profiles you allow above; you approve each one before it takes effect. Delegation itself can never be proposed.',
+  'Outside simulation — once you have connected real systems: the AI proposes mandates and its own working instructions (agent brief) for the profiles you allow above; you approve each one before it takes effect. Setup itself can never be proposed.',
 ].join('\n');
 
 function briefRefusal(args: Record<string, unknown>): string | undefined {
@@ -168,13 +168,13 @@ function delegationMandateRefusal(auth: MandateCandidate): string | undefined {
   if (!profile) {
     return (
       `this gateway does not know ${shortName(auth.profileId)} ${versionOf(auth.profileId)} — the version your ` +
-      'Delegation mandate was signed on. Ask the person to update the Suveren Gateway; nothing is wrong with the mandate.'
+      'Setup mandate was signed on. Ask the person to update the Suveren Gateway; nothing is wrong with the mandate.'
     );
   }
   return (
-    `your Delegation mandate (${shortName(auth.profileId)} ${versionOf(auth.profileId)}) does not declare which ` +
-    'profiles or modes you may propose — only a Delegation mandate on delegation 0.4 or later works outside ' +
-    'simulation mode. Ask the person to give a current Delegation mandate.'
+    `your Setup mandate (${shortName(auth.profileId)} ${versionOf(auth.profileId)}) does not declare which ` +
+    'profiles or modes you may propose — only a Setup mandate on delegation 0.4 or later works outside ' +
+    'simulation mode. Ask the person to give a current Setup mandate.'
   );
 }
 
@@ -260,15 +260,15 @@ function delegationChecks(
 
   const checks: string[] = [
     profileOk
-      ? `${targetDisplayName} is allowed by your Delegation mandate`
-      : `${targetDisplayName} is not confirmed as allowed by an active Delegation mandate`,
+      ? `${targetDisplayName} is allowed by your Setup mandate`
+      : `${targetDisplayName} is not confirmed as allowed by an active Setup mandate`,
   ];
   checks.push(
     mode === ''
       ? 'No mode was given'
       : modeOk
-        ? `${mode} — within the modes your Delegation mandate allows`
-        : `${mode} is not among the modes your Delegation mandate allows`,
+        ? `${mode} — within the modes your Setup mandate allows`
+        : `${mode} is not among the modes your Setup mandate allows`,
   );
 
   const first = governing[0];
@@ -494,8 +494,8 @@ export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
           'proposal; only after approval is the mandate created, exactly as if they had signed it on the mandate ' +
           'screen. Checked against the profile before the proposal: unknown limits, a mode the profile does not ' +
           'allow, or a team where the person may not give this mandate are refused at once. Outside simulation ' +
-          'mode, the profile and mode you may propose are themselves limited by your Delegation mandate\'s scope ' +
-          '— Delegation itself can never be proposed. Create only. ' + BEFORE_PROPOSING,
+          'mode, the profile and mode you may propose are themselves limited by your Setup mandate\'s scope ' +
+          '— the Setup mandate itself can never be proposed. Create only. ' + BEFORE_PROPOSING,
         inputSchema: CREATE_MANDATE_INPUT_SCHEMA,
         validate: async (args) => {
           const fixed = proposalTargetRefusal(args);

@@ -133,7 +133,7 @@ describe('buildMandateBrief', () => {
     const im = { getAllTools: () => [{ gating: { profile: 'github.com/humanagencyprotocol/hap-profiles/delegation@0.1' } }] } as never;
     afterEach(() => { delete process.env.SUVEREN_SIMULATION; delete process.env.SUVEREN_CP_PORT; });
 
-    it('with a Delegation mandate: points the AI at the setup guide', () => {
+    it('with a Setup mandate: points the AI at the setup guide', () => {
       process.env.SUVEREN_SIMULATION = '1';
       const brief = buildMandateBrief({ authorizations: [delegation()], integrationManager: im });
       expect(brief).toContain('=== GETTING STARTED ===');
@@ -144,7 +144,7 @@ describe('buildMandateBrief', () => {
       process.env.SUVEREN_SIMULATION = '1';
       process.env.SUVEREN_CP_PORT = '3500';
       const brief = buildMandateBrief({ authorizations: [], integrationManager: im });
-      expect(brief).toContain('create a "Delegation" mandate in the Suveren Gateway at http://localhost:3500');
+      expect(brief).toContain('create a "Setup" mandate in the Suveren Gateway at http://localhost:3500');
       expect(brief).not.toContain('setup__get_guide first');
     });
 

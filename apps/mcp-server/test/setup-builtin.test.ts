@@ -507,7 +507,7 @@ describe('setup__describe_mandate_proposal (AU3 internal preview — DL1 Interfa
     const checks = result.structuredContent!.checks as string[];
     expect(Array.isArray(checks)).toBe(true);
     expect(checks.length).toBeGreaterThan(0);
-    expect(checks.join(' ')).toMatch(/Sales is allowed by your Delegation mandate/);
+    expect(checks.join(' ')).toMatch(/Sales is allowed by your Setup mandate/);
   });
 
   it('workspace reflects the account\'s OWN Personal workspace name, not a fixed "Personal"', async () => {

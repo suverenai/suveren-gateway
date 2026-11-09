@@ -175,7 +175,7 @@ async function delegationWorkspace<G extends { id: string; name: string; isPerso
   if (found.length === 0) return personal;
   if (found.length === 1) return found[0];
   const names = found.map(g => (g.isPersonal ? 'the personal workspace' : `"${g.name}"`)).join(', ');
-  refuse(`Delegation mandates exist in several workspaces (${names}): say which in \`team\` — a team's name, or "personal".`);
+  refuse(`Setup mandates exist in several workspaces (${names}): say which in \`team\` — a team's name, or "personal".`);
 }
 
 /** The workspace, the profile and the person's right to give it — everything before limits and scope. */
