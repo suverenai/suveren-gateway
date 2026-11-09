@@ -1146,6 +1146,8 @@ const pinnedProxyAgent = SP_URL.startsWith('https:')
     }, SP_URL)
   : undefined;
 
+const AS_PROXY_TIMEOUT_MS = 30_000;
+
 // Proxy /api/* to SP — mounted at root so http-proxy-middleware sees the full path
 app.use(
   createProxyMiddleware({
@@ -1155,6 +1157,11 @@ app.use(
     ...(pinnedProxyAgent ? { agent: pinnedProxyAgent } : {}),
     on: {
       proxyReq: (proxyReq) => {
+        // Without a limit one lost answer kept the page on "Loading..." until a reload (= a new sign-in).
+        // Not the `proxyTimeout` option: it aborts, an aborted request raises no error, and the caller never gets an answer.
+        proxyReq.setTimeout(AS_PROXY_TIMEOUT_MS, () => {
+          proxyReq.destroy(Object.assign(new Error('Authority Server did not answer'), { code: 'ETIMEDOUT' }));
+        });
         // Inject server-side SP session cookie instead of forwarding browser cookies
         const cookie = vault.getSpCookie();
         if (cookie) {
@@ -1165,10 +1172,26 @@ app.use(
       // handshake — nothing (not even this call's own cookie) reached the
       // network. Lock the gateway with the real reason, loudly; an ordinary
       // network error (AS outage) is NOT a pin failure (see isPinCheckError
-      // / as-tls-pin.ts's module doc comment on outage misclassification)
-      // and falls through to http-proxy-middleware's default error handling.
+      // / as-tls-pin.ts's module doc comment on outage misclassification).
+      // Having this handler switches off http-proxy-middleware's own error
+      // answer, so every path here must answer: an unanswered request left
+      // the page on "Loading..." until a reload (= a new sign-in).
       error: (err, _req, res) => {
-        if (!isPinCheckError(err)) return;
+        if (!isPinCheckError(err)) {
+          const code = (err as NodeJS.ErrnoException).code ?? 'unknown';
+          console.error(`[Control Plane] /api proxy: Authority Server not reachable (${code})`);
+          if (res && 'writeHead' in res) {
+            if (!res.headersSent) {
+              res.writeHead(code === 'ECONNREFUSED' || code === 'ENOTFOUND' ? 502 : 504, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'as_unreachable', message: 'The Authority Server did not answer.' }));
+            } else {
+              res.end();
+            }
+          } else if (res && 'destroy' in res) {
+            res.destroy();
+          }
+          return;
+        }
         console.error('[Control Plane] /api proxy: TLS pin mismatch — gateway LOCKED:', err.message);
         lockAsTlsMismatch();
         if (res && 'writeHead' in res && !res.headersSent) {
