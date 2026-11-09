@@ -10,7 +10,8 @@ import { DomainBadge } from '../components/DomainBadge';
 import { profileDisplayName } from '../lib/profile-display';
 import { offeredCommitModes, settleCommitMode, toProtocolMode } from '../lib/commit-mode';
 import { scopesOverlap } from '../lib/scope-overlap';
-import { formatScopeValue } from '../lib/scope-labels';
+import { formatScopeFieldValue } from '../lib/scope-labels';
+import { useSourceManifests } from '../lib/source-manifests';
 import { mandateRight } from '../lib/mandate-rights';
 import { replacedOutcomeArgs, replacedWithdrawRoute } from '../lib/reject-outcome';
 import type { AgentProfile, AgentBoundsParams, AgentScopeParams } from '@hap/core';
@@ -60,6 +61,7 @@ export function AgentReviewPage() {
   const [authData, setAuthData] = useState<AuthData | null>(null);
   const [gateData, setGateData] = useState<GateData | null>(null);
   const [profile, setProfile] = useState<AgentProfile | null>(null);
+  const sourceManifests = useSourceManifests();
   // Review is the DEFAULT commitment mode: the agent proposes, the human
   // approves. Automatic is the deliberate opt-in (or a template's choice).
   const [commitMode, setCommitMode] = useState<'immediate' | 'per-action'>('per-action');
@@ -729,7 +731,7 @@ export function AgentReviewPage() {
               {contextEntries.map(([k, v]) => (
                 <span key={k} style={{ display: 'contents' }}>
                   <dt>{k}</dt>
-                  <dd>{formatScopeValue(k, v, gateData.contextLabels)}</dd>
+                  <dd>{formatScopeFieldValue(k, v, profile?.scopeSchema?.fields?.[k], sourceManifests, gateData.contextLabels)}</dd>
                 </span>
               ))}
               {boundsEntries.map(([k, v]) => (

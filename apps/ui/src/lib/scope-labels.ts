@@ -10,6 +10,8 @@
  * raw value.
  */
 
+import { isAttachmentSourceField, formatAttachmentSources, type SourceManifestLike } from './attachment-sources';
+
 export type ContextLabels = Record<string, Record<string, string>>;
 
 /** Shorten an opaque identifier for display: keep enough to recognize it. */
@@ -34,4 +36,23 @@ export function formatScopeValue(
       return label ? `${label} (${shortId(p)})` : p;
     })
     .join(', ');
+}
+
+/**
+ * `formatScopeValue`, but aware of the field's profile definition: a list of
+ * attachment sources (format "connector:kind") is shown by the connectors' own
+ * names ("Issued invoice, Saved document"), and an empty list as "None: text
+ * only". Any other field is formatted as before.
+ */
+export function formatScopeFieldValue(
+  fieldKey: string,
+  value: string | number,
+  field: { format?: string } | undefined,
+  manifests: SourceManifestLike[] | undefined,
+  labels?: ContextLabels,
+): string {
+  if (isAttachmentSourceField(field)) {
+    return formatAttachmentSources(value, manifests) || 'None: text only';
+  }
+  return formatScopeValue(fieldKey, value, labels);
 }

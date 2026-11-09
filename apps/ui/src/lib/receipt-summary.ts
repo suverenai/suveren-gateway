@@ -26,6 +26,7 @@ import type { ExecutionReceipt, IntegrationManifest } from './sp-client';
 import { profileDisplayName } from './profile-display';
 import { humanizeKey } from './approval-view';
 import { formatUnit } from './bound-format';
+import { isAttachmentSourceField, formatAttachmentSources, type SourceManifestLike } from './attachment-sources';
 
 /** `gmail__send_message` → `{ integrationId: 'gmail', toolName: 'send_message' }`. */
 export function splitAction(action: string): { integrationId: string; toolName: string } {
@@ -73,7 +74,7 @@ export function actionLabel(
  * prefix at all). Without a profile (old grant, unknown id) there is nothing
  * to read that from, so nothing is shown — never a guess from the key's shape.
  */
-export function scopeSummary(receipt: ExecutionReceipt, profile?: AgentProfile | null): string {
+export function scopeSummary(receipt: ExecutionReceipt, profile?: AgentProfile | null, manifests?: SourceManifestLike[]): string {
   const scopeFields = profile?.scopeSchema?.fields;
   if (!scopeFields) return '';
   const parts: string[] = [];
@@ -81,7 +82,9 @@ export function scopeSummary(receipt: ExecutionReceipt, profile?: AgentProfile |
     if (!(key in scopeFields)) continue;
     const text = String(value ?? '').trim();
     if (!text) continue;
-    parts.push(text.split(',').map(v => v.trim()).filter(Boolean).join(', '));
+    parts.push(isAttachmentSourceField(scopeFields[key])
+      ? formatAttachmentSources(text, manifests)
+      : text.split(',').map(v => v.trim()).filter(Boolean).join(', '));
   }
   return parts.join(' · ');
 }
@@ -102,6 +105,7 @@ export function scopeSummary(receipt: ExecutionReceipt, profile?: AgentProfile |
 export function allowedSummary(
   context: Record<string, string | number> | undefined,
   profile?: AgentProfile | null,
+  manifests?: SourceManifestLike[],
 ): string {
   if (!context) return '';
   const scopeFields = profile?.scopeSchema?.fields ?? {};
@@ -111,7 +115,9 @@ export function allowedSummary(
     const text = String(value ?? '').trim();
     if (!text) continue;
     const label = scopeFields[key]?.displayName ?? key;
-    parts.push(`${label} ${text.split(',').map(v => v.trim()).filter(Boolean).join(', ')}`);
+    parts.push(`${label} ${isAttachmentSourceField(scopeFields[key])
+      ? formatAttachmentSources(text, manifests)
+      : text.split(',').map(v => v.trim()).filter(Boolean).join(', ')}`);
   }
   return parts.join(' · ');
 }

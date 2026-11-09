@@ -26,6 +26,7 @@ import {
 } from '../lib/receipt-summary';
 import { profileIdentity, isTestSetupAction } from '../lib/profile-identity';
 import { useProfile } from '../lib/profile-cache';
+import { useSourceManifests } from '../lib/source-manifests';
 import { useAreaCatalog } from '../lib/area-catalog';
 import { ObTypeLine, ObFold, useFoldAccordion } from './ObjectCard';
 import { TicketHeadline } from './TicketHeadline';
@@ -88,8 +89,9 @@ export function ReceiptCard({
   quiet = false,
 }: Props) {
   const profile = useProfile(receipt.profileId);
-  const scope = scopeSummary(receipt, profile);
-  const allowed = allowedSummary(localAuth?.context, profile);
+  const sourceManifests = useSourceManifests();
+  const scope = scopeSummary(receipt, profile, sourceManifests);
+  const allowed = allowedSummary(localAuth?.context, profile, sourceManifests);
   const usage = usageSummary(receipt, localAuth?.bounds ?? receipt.limits, profile);
   const intent = localAuth?.intent;
   // Test setup: the delegation profile, OR a setup__* tool — both run only

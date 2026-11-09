@@ -2,6 +2,8 @@ import { useState, useRef, useEffect, type KeyboardEvent, type ClipboardEvent, t
 import { Link } from 'react-router-dom';
 import type { AgentProfile, AgentBoundsParams, AgentScopeParams, ProfileBoundsField, ProfileScopeField } from '@hap/core';
 import { DiscoveredScopeField } from './DiscoveredScopeField';
+import { AttachmentSourcePicker } from './AttachmentSourcePicker';
+import { isAttachmentSourceField } from '../lib/attachment-sources';
 import { spClient, type IntegrationManifest, type ProfileConfig, type CapKind } from '../lib/sp-client';
 import { minForBound, maxForBound, seedForBound, numericBoundValue } from '../lib/bound-defaults';
 import { formatUnit } from '../lib/bound-format';
@@ -507,6 +509,16 @@ function FieldRow({
 }) {
   const label = humanizeFieldName(fieldKey, fieldDef);
   const fieldId = `${prefix}-field-${fieldKey}`;
+
+  // A list of document sources (profile format "connector:kind"): its own
+  // heading and note, checkboxes from the connectors' manifests.
+  if (isAttachmentSourceField(fieldDef)) {
+    return (
+      <div className="form-group" key={`${prefix}-${fieldKey}`}>
+        <AttachmentSourcePicker id={fieldId} value={value} onChange={v => onChange(fieldKey, v)} disabled={readOnly} />
+      </div>
+    );
+  }
 
   const input = (
     <>
