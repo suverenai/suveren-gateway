@@ -132,6 +132,32 @@ export class SPReceiptError extends Error {
 }
 
 /**
+ * The Authority Server refused to CREATE a proposal. Same message as the plain
+ * Error this replaced (it extends Error), plus what the refusal said.
+ * Since the "no dead proposals" change the server refuses a proposal that
+ * could never be ticketed — `MANDATE_REVOKED`, `MANDATE_EXPIRED`,
+ * `CUMULATIVE_LIMIT_EXCEEDED` — in the ticket route's envelope
+ * `{ approved: false, errors: [{ code, message }] }`. Read `errors[0]`,
+ * never the message, to tell them apart (see `refusal`).
+ */
+export class SPProposalError extends Error {
+  constructor(
+    message: string,
+    public readonly statusCode: number,
+    public readonly body: Record<string, unknown>,
+  ) {
+    super(message);
+    this.name = 'SPProposalError';
+  }
+
+  /** The first structured error of the envelope, if the server sent one. */
+  get refusal(): { code: string; message?: string; [k: string]: unknown } | undefined {
+    const first = (this.body?.errors as Array<Record<string, unknown>> | undefined)?.[0];
+    return first && typeof first.code === 'string' ? (first as { code: string }) : undefined;
+  }
+}
+
+/**
  * Retry policy for the receipt pre-flight. Only engaged when the AS can dedup
  * a retried request: an `idempotencyKey` (synchronous path) or a `proposalId`
  * (review path — the AS replays the original receipt to the same caller once
@@ -620,7 +646,14 @@ export class SPClient {
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({})) as Record<string, unknown>;
-      throw new Error((body.error as string) ?? `SP proposal submission failed: ${res.status}`);
+      const first = (body.errors as Array<{ message?: unknown }> | undefined)?.[0];
+      throw new SPProposalError(
+        (typeof body.error === 'string' ? body.error : undefined)
+          ?? (typeof first?.message === 'string' ? first.message : undefined)
+          ?? `SP proposal submission failed: ${res.status}`,
+        res.status,
+        body,
+      );
     }
 
     // A proposal now exists and a human has to act on it — but this process

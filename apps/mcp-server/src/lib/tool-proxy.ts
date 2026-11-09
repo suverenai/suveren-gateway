@@ -13,7 +13,7 @@ import type { IntegrationManager, DiscoveredTool } from './integration-manager';
 import type { SharedState, EnrichedAuthorization } from './shared-state';
 import { lockedNotice } from './locked-notice';
 import type { DenialReason, DenialKind } from './denial-log';
-import { SPReceiptError } from './sp-client';
+import { SPReceiptError, SPProposalError } from './sp-client';
 import { isCommitmentDowngrade, AsKeyMismatchError } from './attestation-cache';
 import { ArchiveWriteError } from './receipt-archive';
 import { appendVerificationFooter, shouldAttachFooter } from './receipt-footer';
@@ -474,6 +474,62 @@ function recordAsRefusal(
 }
 
 /**
+ * Why the Authority Server would not CREATE a proposal. Since "no dead
+ * proposals" it refuses one that could never be ticketed, in the ticket's
+ * envelope — read from `errors[0].code`, never the message:
+ *  - the mandate is dead (revoked, expired, unknown): drop it from the local
+ *    cache and try the next candidate, as the ticket path does;
+ *  - the mandate is fine but a cumulative limit has no room left today: skip
+ *    it for THIS call only (it is still a valid mandate) and try the next.
+ * Anything else (a 5xx, a locked session, an older server that never refuses
+ * this way) is not this and keeps its existing handling.
+ */
+interface ProposalRefusalNote {
+  kind: 'dead-mandate' | 'no-room';
+  code: string;
+  message: string;
+  path: string;
+  authorizationId: string;
+  detail: { code?: unknown; field?: unknown; expected?: unknown; actual?: unknown };
+}
+
+function proposalRefusalNote(err: unknown, auth: { authorizationId: string; path: string }): ProposalRefusalNote | null {
+  if (!(err instanceof SPProposalError)) return null;
+  const first = err.refusal;
+  if (!first) return null;
+  const kind = isStaleMandateRefusal(err)
+    ? 'dead-mandate'
+    : err.statusCode === 403 && first.code === 'CUMULATIVE_LIMIT_EXCEEDED'
+      ? 'no-room'
+      : null;
+  if (!kind) return null;
+  return {
+    kind,
+    code: first.code,
+    message: typeof first.message === 'string' ? first.message : err.message,
+    path: auth.path,
+    authorizationId: auth.authorizationId,
+    detail: first,
+  };
+}
+
+/** The one refusal the AI gets when no mandate could carry the proposal. */
+function proposalRefusalText(notes: ProposalRefusalNote[]): string {
+  const reasons = notes.map((n) =>
+    n.code === 'MANDATE_REVOKED' ? `the mandate "${n.path}" was revoked`
+    : n.code === 'MANDATE_EXPIRED' ? `the mandate "${n.path}" has expired`
+    : n.kind === 'dead-mandate' ? `the mandate "${n.path}" is no longer known to the Authority Server`
+    : n.message);
+  const head = notes.length === 1
+    ? `Refused: ${reasons[0]}.`
+    : `Refused: none of the ${notes.length} mandates that fit could carry this: ${reasons.join('; ')}.`;
+  const tail = notes.every((n) => n.kind === 'dead-mandate')
+    ? ' Ask the person to grant a new mandate.'
+    : ' The limit counts everything done under it today, so trying again will not help; the person decides whether to raise it.';
+  return `${head} No proposal was created and nothing ran.${tail}`;
+}
+
+/**
  * Create a handler function for a proxied tool that gates calls through Suveren.
  *
  * All tools require authorization:
@@ -625,7 +681,7 @@ export function createGatedToolHandler(
  * `authz-store.ts`'s `renewAuthorization`) rather than minting a new one, so
  * a superseded mandate surfaces as one of these two codes, not a third.
  */
-function isStaleMandateRefusal(err: SPReceiptError): boolean {
+function isStaleMandateRefusal(err: Pick<SPReceiptError, 'statusCode' | 'body'>): boolean {
   const errors = err.body?.errors as Array<{ code?: unknown }> | undefined;
   const code = errors?.[0]?.code;
   if (err.statusCode === 403 && (code === 'MANDATE_REVOKED' || code === 'MANDATE_EXPIRED')) {
@@ -1463,7 +1519,9 @@ function createGatedToolHandlerInner(
     // checked non-empty above, and the only recursive call site below only
     // recurses when at least one candidate remains — when none do, it returns
     // the AS's own refusal directly instead of recursing into an empty pool.
-    async function attemptWithCandidates(candidates: EnrichedAuthorization[]): Promise<ToolResult> {
+    // `earlier` carries the refusals of candidates already dropped for THIS call
+    // because the server would not create a proposal on them (proposalRefusalNote).
+    async function attemptWithCandidates(candidates: EnrichedAuthorization[], earlier: ProposalRefusalNote[] = []): Promise<ToolResult> {
       const selection = selectAuthorization(
         contextKeys,
         candidates.map(a => ({
@@ -1483,6 +1541,28 @@ function createGatedToolHandlerInner(
 
         // Every SP reference (receipt, proposals, summary) is the per-ceremony id.
         const authzId = auth.authorizationId;
+
+        // The server refused to create a proposal on this mandate because it
+        // could never be ticketed (see proposalRefusalNote). Drop the mandate
+        // from THIS call's pool and select again among the rest; when none is
+        // left, one refusal with the real reason(s) and no proposal anywhere.
+        const retryWithoutThisMandate = (note: ProposalRefusalNote): Promise<ToolResult> => {
+          if (note.kind === 'dead-mandate') state.cache.invalidate(auth.authorizationId);
+          const remaining = candidates.filter(c => c.authorizationId !== auth.authorizationId);
+          const notes = [...earlier, note];
+          if (remaining.length === 0) {
+            recordAsRefusal(state, tool, auth.authorizationId, note.detail);
+            console.error(
+              `[Suveren MCP] proposal(${tool.namespacedName}): no mandate left after ${note.code} on ${auth.authorizationId}`,
+            );
+            return Promise.resolve({ content: [{ type: 'text', text: proposalRefusalText(notes) }], isError: true });
+          }
+          console.error(
+            `[Suveren MCP] proposal(${tool.namespacedName}): ${note.code} on ${auth.authorizationId} → ` +
+              `retrying with [${remaining.map(c => c.authorizationId).join(', ')}]`,
+          );
+          return attemptWithCandidates(remaining, notes);
+        };
 
         // Enforce the SIGNED commitment_mode (defense against a downgrade via
         // unsigned AS metadata). For an honest AS, commitment_mode === 'review'
@@ -1606,6 +1686,8 @@ function createGatedToolHandlerInner(
             // The submission's 401 (if that's what it was) already cleared our
             // session inside SPClient.fetch() — check the RESULT, not the error
             // shape, so this catches it regardless of how submitProposal threw.
+            const refusedNote = proposalRefusalNote(err, auth);
+            if (refusedNote) return retryWithoutThisMandate(refusedNote);
             if (!state.spClient.isUnlocked()) {
               return {
                 content: [{ type: 'text', text: lockedNotice(`use ${tool.namespacedName}`, 'expired') }],
@@ -2057,6 +2139,8 @@ function createGatedToolHandlerInner(
                 }],
               };
             } catch (proposalErr) {
+              const refusedNote = proposalRefusalNote(proposalErr, auth);
+              if (refusedNote) return retryWithoutThisMandate(refusedNote);
               if (!state.spClient.isUnlocked()) {
                 return {
                   content: [{ type: 'text', text: lockedNotice(`use ${tool.namespacedName}`, 'expired') }],
