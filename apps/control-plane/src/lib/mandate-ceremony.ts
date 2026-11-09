@@ -204,11 +204,13 @@ export async function planMandate(req: MandateRequest, deps: CeremonyDeps): Prom
     const cfg = await deps.as('GET', `/api/groups/${encodeURIComponent(group.id)}/profile-config/${encodeURIComponent(profile.id)}`);
     approvers = (cfg.status === 200 ? cfg.body?.config?.approvers : undefined) ?? [];
     teamCaps = (cfg.status === 200 ? cfg.body?.config?.caps : undefined) ?? {};
+    // Who may give this mandate is `grantors`; `approvers` only decide above-cap actions, and a team may have none.
+    const grantors: string[] | 'all' = (cfg.status === 200 ? cfg.body?.config?.grantors : undefined) ?? approvers;
     // The AS carries a team's settings over from an older version of the same
     // profile; an empty answer here means nothing could be carried (none
     // configured, or the new version adds a limit that needs a value).
-    if (approvers.length === 0) refuse(`${name} ${versionOf(profile.id)} is not enabled in "${group.name}". Ask an admin of "${group.name}" to enable ${name} ${versionOf(profile.id)} and name who may give its mandates.`);
-    if (!approvers.includes(user.id)) refuse(`Only ${name}'s approvers in "${group.name}" can give this mandate, and the signed-in person is not one of them.`);
+    if (grantors !== 'all' && grantors.length === 0) refuse(`${name} ${versionOf(profile.id)} is not enabled in "${group.name}". Ask an admin of "${group.name}" to enable ${name} ${versionOf(profile.id)} and name who may give its mandates.`);
+    if (grantors !== 'all' && !grantors.includes(user.id)) refuse(`Only ${name}'s approvers in "${group.name}" can give this mandate, and the signed-in person is not one of them.`);
   }
 
   // Limits and scope against the profile.

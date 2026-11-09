@@ -28,7 +28,7 @@ const LIMITS = {
   quote_daily_max: 10, send_daily_max: 10, order_daily_max: 0, setup_daily_max: 0,
 };
 
-function fakeAs(opts: { approvers?: string[]; attestStatus?: number; attestBody?: unknown; delegationIn?: string[] } = {}) {
+function fakeAs(opts: { approvers?: string[]; grantors?: string[] | 'all'; attestStatus?: number; attestBody?: unknown; delegationIn?: string[] } = {}) {
   const calls: Array<{ method: string; path: string; body?: any }> = [];
   const profiles = [SALES, DELEGATION, REPORTING, { ...SALES, id: SALES.id.replace('@0.4', '@0.2'), version: '0.2' }];
   const as: CeremonyDeps['as'] = async (method, path, body) => {
@@ -50,7 +50,7 @@ function fakeAs(opts: { approvers?: string[]; attestStatus?: number; attestBody?
       return { status: 200, body: { pubkeys: Object.fromEntries((opts.approvers ?? []).map((u) => [u, Buffer.alloc(32, 7).toString('base64')])) } };
     }
     if (path.includes('/profile-config/')) {
-      return opts.approvers ? { status: 200, body: { config: { approvers: opts.approvers } } } : { status: 404, body: { error: 'No config' } };
+      return opts.approvers ? { status: 200, body: { config: { approvers: opts.approvers, ...(opts.grantors !== undefined ? { grantors: opts.grantors } : {}) } } } : { status: 404, body: { error: 'No config' } };
     }
     if (path === '/api/as/mandate') return { status: opts.attestStatus ?? 201, body: opts.attestBody ?? { authorization_id: (body as { authorization_id?: string }).authorization_id } };
     if (path.endsWith('/revoke')) return { status: 200, body: {} };
@@ -183,6 +183,21 @@ describe('workspace when `team` is omitted — the Delegation mandate\'s', () =>
     const plan = await planMandate(REQ, deps(as).d);
     expect(plan.groupId).toBe('g_team');
     expect(plan.domain).toBe('u_anna');
+  });
+
+  it('a team that names who may give mandates (grantors) and no above-cap approvers: allowed', async () => {
+    const { as } = fakeAs({ delegationIn: ['g_team'], approvers: [], grantors: ['u_anna'] });
+    expect((await planMandate(REQ, deps(as).d)).groupId).toBe('g_team');
+  });
+
+  it('grantors: "all" lets any member give the mandate', async () => {
+    const { as } = fakeAs({ delegationIn: ['g_team'], approvers: [], grantors: 'all' });
+    expect((await planMandate(REQ, deps(as).d)).groupId).toBe('g_team');
+  });
+
+  it('the person is an above-cap approver but not named to give mandates: refused', async () => {
+    const { as } = fakeAs({ delegationIn: ['g_team'], approvers: ['u_anna'], grantors: ['u_bernd'] });
+    await expect(planMandate(REQ, deps(as).d)).rejects.toBeInstanceOf(MandateRefused);
   });
 
   it('Delegation mandates in two workspaces: refused, naming both — the AI must say which', async () => {
