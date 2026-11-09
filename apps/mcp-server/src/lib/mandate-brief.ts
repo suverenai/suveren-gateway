@@ -42,7 +42,7 @@ function countToolsByGating(
   for (const tool of allTools) {
     // Never shown to anyone, gateway-internal only (DL1) — would otherwise
     // inflate "N gated tools" by the builtin's own preview helpers.
-    if (tool.internal) continue;
+    if (tool.internal || (tool.simulationOnly && !isSimulationMode())) continue;
     if (!tool.gating || !tool.gating.profile) {
       // No gating config at all — ungated
       readOnly++;

@@ -423,8 +423,10 @@ export function IntegrationCard({ manifest, areas, integration, state, onStatusC
 
   const isPath = (v: string) => v.includes('/') || v.includes('\\');
   const canEditCreds = manifest.credentials.fields.length > 0 || !!oauth;
-  const guide = manifest.setupGuide && manifest.setupGuide.length > 0 && (cardState !== 'running' || authFailed)
-    ? manifest.setupGuide : null;
+  // A step marked simulationOnly (e.g. the practice inbox) is shown only while the gateway is in simulation mode.
+  const guideSteps = (manifest.setupGuide ?? []).filter(g => !g.simulationOnly || gatewaySimulation === true);
+  const guide = guideSteps.length > 0 && (cardState !== 'running' || authFailed)
+    ? guideSteps : null;
   const needsSetup = cardState === 'unconfigured' || cardState === 'needs-oauth';
 
   // One credential field (light input; secrets get a show/hide). `edit` = the "Change credentials" panel,

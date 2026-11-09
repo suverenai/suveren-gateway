@@ -505,7 +505,7 @@ export interface IntegrationManifest {
   proposalLinks?: Array<{ label: string; template: string; description?: string }>;
   templates?: AuthTemplate[];
   setupHint?: string;
-  setupGuide?: Array<{ title: string; description: string; link?: string }>;
+  setupGuide?: Array<{ title: string; description: string; link?: string; simulationOnly?: boolean }>;
   /** Declares which context-scope fields can be discovered from the target service (wizard-only). */
   contextDiscovery?: Record<string, {
     baseUrl: string;

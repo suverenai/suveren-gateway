@@ -147,6 +147,8 @@ export interface DiscoveredTool {
   outputSchema?: Record<string, unknown>;
   /** See `BuiltinTool.internal` — undefined (falsy) for every connector tool. */
   internal?: boolean;
+  /** A built-in's tool that exists only in simulation mode (`BuiltinTool.simulationOnly`): outside it, never listed to an agent. */
+  simulationOnly?: boolean;
   gating: ToolGatingConfig | null;
 }
 
@@ -956,6 +958,7 @@ export class IntegrationManager {
         inputSchema: withoutBlockedArgs(tool.inputSchema, gating?.blockedArgs),
         ...(tool.outputSchema ? { outputSchema: tool.outputSchema } : {}),
         ...(tool.internal ? { internal: true } : {}),
+        ...(tool.simulationOnly ? { simulationOnly: true } : {}),
         gating,
       };
     });

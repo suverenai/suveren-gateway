@@ -54,7 +54,7 @@ function buildCapabilityMap(
   for (const tool of allTools) {
     // A built-in's internal tools are never listed or callable by an agent —
     // naming them here (even as "refused") only invites a call.
-    if (tool.internal || !tool.gating || !tool.gating.profile) {
+    if (tool.internal || !tool.gating || !tool.gating.profile || (tool.simulationOnly && !isSimulationMode())) {
       continue;
     }
 

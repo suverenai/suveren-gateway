@@ -32,7 +32,7 @@ import {
 } from './attachment-resolution';
 import { validateDocumentReferences, validateInsertReferences } from './attachment-reference';
 import { ATTACHMENT_SOURCES_FIELD } from './attachment-policy';
-import { attachmentNotAllowedText, refusalNextStep } from './guidance';
+import { attachmentNotAllowedText, refusalNextStep, pickerCard } from './guidance';
 import { verifyTicket, TicketBindingMismatchError, mandateForTicket } from './ticket-verify';
 import { wireExecutionContext as hapWireExecutionContext, checkExecutionValues, missingSumFields } from '@hap/core';
 import { notifyControlPlane } from './cp-notify';
@@ -67,6 +67,12 @@ import { randomUUID } from 'node:crypto';
 import { isSimulationMode, manifestIsSimulated } from './simulation-mode';
 import { getManifest } from './manifest-loader';
 import { sourceTitle } from './guidance';
+
+/** The card the mandate picker shows for this tool's connector and area ("ERP — Invoicing" for a connector with several areas). */
+function cardNameOf(tool: DiscoveredTool): string | undefined {
+  const m = getManifest(tool.integrationId);
+  return m && tool.gating?.profile ? pickerCard(m as never, tool.gating.profile, areaName) : m?.name;
+}
 
 /** A document kind by the name the mandate form shows ("Saved files"), from its connector's manifest. */
 function sourceTitleOf(connector: string, kind: string): string {
@@ -726,7 +732,7 @@ function createGatedToolHandlerInner(
         type: 'text',
         text: refusals.length > 0
           ? `Refused: ${reasons.charAt(0).toUpperCase() + reasons.slice(1)} No ticket was requested.`
-          : noMandateRefusal(tool.namespacedName, profile!, integrationManager.noMandateText?.(tool.integrationId), getManifest(tool.integrationId)?.name),
+          : noMandateRefusal(tool.namespacedName, profile!, integrationManager.noMandateText?.(tool.integrationId), cardNameOf(tool)),
       }],
       isError: true,
     };
@@ -1928,7 +1934,7 @@ function createGatedToolHandlerInner(
                   `(${code}) — no remaining candidates`,
               );
               return {
-                content: [{ type: 'text', text: `Blocked by SP: ${err.message} ${refusalNextStep(code, getManifest(tool.integrationId)?.name)}` }],
+                content: [{ type: 'text', text: `Blocked by SP: ${err.message} ${refusalNextStep(code, cardNameOf(tool))}` }],
                 isError: true,
               };
             }
@@ -2106,7 +2112,7 @@ function createGatedToolHandlerInner(
             }
             recordAsRefusal(state, tool, auth.authorizationId, errors403?.[0]);
             return {
-              content: [{ type: 'text', text: `Blocked by SP: ${err.message} ${refusalNextStep(errors403?.[0]?.code, getManifest(tool.integrationId)?.name)}` }],
+              content: [{ type: 'text', text: `Blocked by SP: ${err.message} ${refusalNextStep(errors403?.[0]?.code, cardNameOf(tool))}` }],
               isError: true,
             };
           }

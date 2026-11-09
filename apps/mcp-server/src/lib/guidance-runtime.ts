@@ -14,6 +14,7 @@ import { getAllManifests } from './manifest-loader';
 import { isSimulationMode } from './simulation-mode';
 import { controlPlaneMandate } from './cp-mandate';
 import { profileMatches, areaName } from './tool-proxy';
+import { getProfile, listProfiles, allowedCommitmentModes } from '@hap/core';
 import {
   manifestAreas,
   type GuideAuth,
@@ -21,6 +22,7 @@ import {
   type MissingMandateFacts,
   type OverviewInput,
   type SetupMandateFacts,
+  type ProfileFieldsLike,
 } from './guidance';
 
 /** The tool name an AI calls: `<connector>__<tool>`. */
@@ -62,6 +64,23 @@ export function setupMandateFacts(
 /** The name of the card the person picks to give the mandate that lets an AI prepare mandates. */
 export function setupCardName(im: IntegrationManager | undefined): string {
   return setupMandateFacts(im, []).card;
+}
+
+/** The newest known version of an area's profile, with the modes it may be signed with. */
+export function newestProfileOf(area: string): { profile: ProfileFieldsLike; modes: readonly string[] } | undefined {
+  const short = area.replace(/@.*$/, '').split('/').pop()!.toLowerCase();
+  const num = (id: string) => (id.split('@')[1] ?? '').split('.').map(n => Number(n) || 0);
+  const newer = (a: number[], b: number[]) => {
+    for (let i = 0; i < Math.max(a.length, b.length); i++) if ((a[i] ?? 0) !== (b[i] ?? 0)) return (a[i] ?? 0) > (b[i] ?? 0);
+    return false;
+  };
+  let best: ReturnType<typeof getProfile>;
+  for (const key of listProfiles()) {
+    const p = getProfile(key);
+    if (!p || (p.id.replace(/@.*$/, '').split('/').pop() ?? '').toLowerCase() !== short) continue;
+    if (!best || newer(num(p.id), num(best.id))) best = p;
+  }
+  return best ? { profile: best as unknown as ProfileFieldsLike, modes: allowedCommitmentModes(best) } : undefined;
 }
 
 const TEAM_CHECK_MS = 8000;
@@ -122,5 +141,9 @@ export async function overviewInput(
     }
     team = (await teamChecks(state, [...missing])).checks;
   }
-  return { manifests, facts, auths, areaName, setup, team, toolName: toolNameOf };
+  // An area that has run under a mandate before, and has none now, ended: only the local execution log can say.
+  let history: Array<{ profileId: string }> = [];
+  try { history = state?.executionLog?.getAll?.() ?? []; } catch { /* unknown: say nothing */ }
+  const hadMandate = (area: string) => history.some(e => profileMatches(e.profileId, area));
+  return { manifests, facts, auths, areaName, setup, team, toolName: toolNameOf, simulation: isSimulationMode(), hadMandate, profileOf: newestProfileOf };
 }

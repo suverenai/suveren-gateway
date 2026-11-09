@@ -15,6 +15,7 @@ import { SharedState } from './lib/shared-state';
 import { attachmentLine, attachmentSources, type GuideManifest } from './lib/guidance';
 import { toolNameOf } from './lib/guidance-runtime';
 import { getAllManifests } from './lib/manifest-loader';
+import { isSimulationMode } from './lib/simulation-mode';
 import { buildMandateBrief } from './lib/mandate-brief';
 import { listAuthorizationsHandler } from './tools/authorizations';
 import { checkPendingHandler } from './tools/pending';
@@ -242,6 +243,8 @@ export function createMcpServer(
     // Descriptions are fixed per tool (see buildProxiedToolDescription); only
     // visibility is recomputed here.
     for (const [, { tool, registered }] of proxiedTools) {
+      // A tool that exists only in simulation mode (get_guide) is not offered outside it: its answer would be "not available".
+      if (tool.simulationOnly && !isSimulationMode()) { registered.disable(); continue; }
       // Connector tools are listed whether or not a mandate exists — the gate
       // refuses an uncovered call (see toolAlwaysListed).
       if (toolAlwaysListed(tool, isBuiltin, builtinAlwaysListed)) {

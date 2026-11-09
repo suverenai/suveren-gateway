@@ -26,10 +26,14 @@ export interface GuideManifest {
   description?: string;
   /** The connector's own area (profile short name or full id). */
   profile?: string;
-  setupHint?: string;
-  setupGuide?: Array<{ title: string; description?: string }>;
-  credentials?: { fields?: Array<{ key: string; optional?: boolean }> };
-  oauth?: unknown;
+  /** An entry marked `simulationOnly` is shown only while the gateway is in test mode. */
+  setupGuide?: Array<{ title: string; description?: string; simulationOnly?: boolean }>;
+  credentials?: { fields?: Array<{ key: string; label?: string; placeholder?: string; optional?: boolean }> };
+  oauth?: { signInGroup?: { name?: string }; forOption?: unknown } | null;
+  /** The where-does-it-get-its-data choice (same shape as the connector card's). */
+  simulation?: { field: string; default: string } | null;
+  modeLabels?: Record<string, string | Record<string, string>> | null;
+  modeOptions?: Record<string, { label?: string; fields?: string[] } | Record<string, { label?: string; fields?: string[] }>> | null;
   documents?: Record<string, GuideDocument>;
   toolGating?: { overrides?: Record<string, { profile?: string; attachmentsArg?: string } | null> };
 }
@@ -40,6 +44,25 @@ export interface GuideAuth {
   needsReapproval?: boolean;
   context?: Record<string, string | number>;
   deferredCommitmentDomains?: string[];
+}
+
+/** The slice of a profile the field list needs. */
+export interface ProfileFieldsLike {
+  boundsSchema?: { fields?: Record<string, FieldLike> };
+  scopeSchema?: { fields?: Record<string, FieldLike> };
+  ttl?: { default?: number; max?: number };
+  commitment_modes?: unknown;
+}
+interface FieldLike {
+  required?: boolean;
+  displayName?: string;
+  unit?: string;
+  default?: unknown;
+  maximum?: number;
+  enum?: string[];
+  format?: string;
+  valuesFrom?: string;
+  boundType?: { kind?: string; values?: string[] };
 }
 
 export interface ConnectorFacts {
@@ -83,10 +106,6 @@ function csv(value: unknown): string[] {
   return typeof value === 'string' ? value.split(',').map(s => s.trim()).filter(Boolean) : [];
 }
 
-/** Does the connector need the person to enter something before it can start? */
-function needsSettings(m: GuideManifest): boolean {
-  return !!m.oauth || (m.credentials?.fields ?? []).some(f => !f.optional);
-}
 
 // ─── 1. The first mandate ───────────────────────────────────────────────────
 
@@ -97,11 +116,106 @@ function needsSettings(m: GuideManifest): boolean {
  */
 export function firstMandateText(opts: { url: string; card: string }): string {
   return [
-    'No mandate exists yet, so no tool works. An AI can never create the first one: a person signs it. If the person asks how to start, tell them, in this order:',
+    'No active mandate exists, so no tool works. An AI can never create the first one: a person signs it. If the person asks how to start, tell them, in this order:',
     `1. Open the Suveren Gateway at ${opts.url}. In the left menu choose **Mandates**, then **+ New mandate** (top right).`,
     `2. Pick the card **${opts.card}** and press **Give a mandate**. It lets you prepare further mandates; the person approves each one before it exists. (Instead, they can pick the card of the area they need and sign that mandate themselves.)`,
-    '3. The form has three steps: **Scope & Limits**, **Intent**, **Sign**. In Scope & Limits they name the areas you may prepare mandates for, the modes you may propose (review = they approve every action; automatic = it runs within the limits) and how many proposals a day. In Intent they write, in their own words, why they give it. Then they press **Sign mandate (asks first)**.',
+    '3. The form has three steps: **Scope & Limits**, **Intent**, **Sign**. In Scope & Limits they name the areas you may prepare mandates for, the modes you may propose (review = they approve every action; automatic = it runs within the limits) and how many proposals a day. In Intent they write, in their own words, why. In Sign they give it a **Title** (required), choose how it runs and for how long, then press **Sign mandate**. Ask them first whether it should run automatically or ask each time.',
     'Afterwards call list-authorizations(): it says what is still missing and what to do next.',
+  ].join('\n');
+}
+
+/** The Sign step, as the AI tells it whenever a person signs a mandate themselves. */
+export const SIGN_STEP =
+  'Ask them first whether it should run automatically or ask each time. On the **Sign** step they give it a **Title** (required) and choose **Review Each Action** or **Automatic**, then press **Sign mandate**.';
+
+/** The name of the card the mandate picker shows: "Name — Area" when the connector serves several areas. */
+export function pickerCard(m: GuideManifest, area: string, areaName: (a: string) => string): string {
+  return manifestAreas(m).length > 1 ? `${m.name} — ${areaName(area)}` : m.name;
+}
+
+interface ChoiceOption { label: string; simulated: boolean; fieldKeys: string[] }
+
+/** The options of "Where does <name> get its data?", same derivation as the connector card. */
+function choiceOptions(m: GuideManifest): ChoiceOption[] {
+  if (!m.simulation || !m.modeLabels) return [];
+  const out: ChoiceOption[] = [];
+  for (const [mode, entry] of Object.entries(m.modeLabels)) {
+    const decl = (m.modeOptions ?? {})[mode] as Record<string, unknown> | undefined;
+    if (typeof entry === 'string') {
+      const d = decl as { label?: string; fields?: string[] } | undefined;
+      out.push({ label: d?.label ?? entry, simulated: mode === 'simulation', fieldKeys: d?.fields ?? [] });
+    } else {
+      for (const [adapter, label] of Object.entries(entry)) {
+        const d = decl?.[adapter] as { label?: string; fields?: string[] } | undefined;
+        out.push({ label: d?.label ?? label, simulated: mode === 'simulation', fieldKeys: d?.fields ?? [] });
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * What the person does on the connector's card to get it going, from the manifest's own
+ * fields and choice: the option to choose, the fields to fill, the button to press.
+ * "" when there is nothing to do but start it.
+ */
+export function cardSteps(m: GuideManifest, simulation: boolean): string {
+  const fields = m.credentials?.fields ?? [];
+  const label = (k: string) => {
+    const f = fields.find(x => x.key === k);
+    return f ? `**${(f.label ?? k).replace(/\s*\(optional\)\s*$/i, '')}**${f.placeholder && !/^\w+ \(default\)/.test(f.placeholder) ? ` (${f.placeholder})` : ''}` : `**${k}**`;
+  };
+  // A sign-in that belongs to one option (the real one) does not apply to the practice data.
+  const oauth = m.oauth && !(m.oauth.forOption && simulation) ? m.oauth : null;
+  const options = choiceOptions(m);
+  const wanted = options.filter(o => o.simulated === simulation);
+  const parts: string[] = [];
+  let needed = fields.filter(f => !f.optional).map(f => f.key);
+  if (options.length > 1 && wanted.some(o => o.fieldKeys.length > 0)) {
+    parts.push(`chooses ${wanted.map(o => `**${o.label}**`).join(' or ')} under *Where does ${m.name} get its data?*`);
+    if (wanted.length === 1) needed = [...needed, ...wanted[0].fieldKeys.filter(k => !needed.includes(k))];
+  }
+  if (needed.length > 0) parts.push(`enters ${needed.map(label).join(' and ')}`);
+  if (needed.length > 0) {
+    parts.push(oauth
+      ? `presses **Save & Encrypt**, then **Connect ${m.name} Account** and follows the steps on the card${oauth.signInGroup?.name ? ` to connect ${oauth.signInGroup.name}` : ''}`
+      : 'presses **Save & Encrypt** (the connector then starts by itself)');
+  } else if (oauth) {
+    parts.push(`presses **Connect ${m.name} Account** and follows the steps on the card${oauth.signInGroup?.name ? ` to connect ${oauth.signInGroup.name}` : ''}`);
+  } else {
+    parts.push(`presses **Activate ${m.name}**`);
+  }
+  return parts.join(', ');
+}
+
+/** The fields to give `create_mandate` for one profile, from its own schema: required, allowed values, units. */
+export function proposalFields(
+  tool: string,
+  area: string,
+  p: ProfileFieldsLike,
+  modes: readonly string[],
+): string {
+  const one = (key: string, f: FieldLike): string => {
+    const bits: string[] = [];
+    const values = f.boundType?.kind === 'enum' ? f.boundType.values : f.enum;
+    if (values && values.length) bits.push(values.join('|'));
+    else if (f.format === 'connector:kind') bits.push('comma-separated connector:kind sources, for example files:file');
+    else if (f.valuesFrom) bits.push(`comma-separated names from the ${f.valuesFrom} available`);
+    else bits.push(f.boundType ? 'number' : 'text');
+    const extra: string[] = [];
+    if (f.unit && f.unit !== 'count') extra.push(f.unit);
+    if (f.maximum !== undefined) extra.push(`at most ${f.maximum}`);
+    if (f.default !== undefined) extra.push(`default ${String(f.default)}`);
+    return `${key}${f.required ? '*' : ''}${f.displayName ? ` (${f.displayName})` : ''} = ${bits.join('')}${extra.length ? ` [${extra.join(', ')}]` : ''}`;
+  };
+  const list = (fields: Record<string, FieldLike> | undefined) =>
+    Object.entries(fields ?? {}).filter(([k]) => k !== 'profile').map(([k, f]) => one(k, f)).join('; ') || 'none';
+  const hours = p.ttl?.max ? `, at most ${Math.floor(p.ttl.max / 3600)}` : '';
+  return [
+    `Fields for ${tool}(profile: "${shortOf(area)}", ...), * = required; any other field name is refused:`,
+    `      limits {name: value}: ${list(p.boundsSchema?.fields)}`,
+    `      scope {name: value}: ${list(p.scopeSchema?.fields)}`,
+    `      mode = ${modes.join('|') || 'none allowed'} (ask the person); intent = text, at most 2000 characters; title = short name; duration_hours = number${hours}${p.ttl?.default ? `, default ${Math.floor(p.ttl.default / 3600)}` : ''}`,
   ].join('\n');
 }
 
@@ -135,8 +249,14 @@ export interface OverviewInput {
   team?: Map<string, MissingMandateFacts>;
   /** The AI-callable name of a connector's tool ("files__save_file"). */
   toolName: (connectorId: string, tool: string) => string;
-  /** One connector asked for by name: print its whole setup guide, not just the titles. */
+  /** One connector asked for by name: print its whole setup guide, the field list for proposing, not just the overview. */
   detail?: boolean;
+  /** The gateway is in test mode: shows the guide entries marked simulationOnly, and the test-data choice. */
+  simulation?: boolean;
+  /** Did a mandate for this area exist before (and has ended)? Only when the gateway can know. */
+  hadMandate?: (area: string) => boolean;
+  /** The newest known profile of an area, and the modes it may be signed with — for the field list. */
+  profileOf?: (area: string) => { profile: ProfileFieldsLike; modes: readonly string[] } | undefined;
 }
 
 /** Which of `areas` a held mandate covers. */
@@ -148,7 +268,7 @@ function covering(auths: GuideAuth[], area: string): GuideAuth[] {
 export function howToGetMandate(
   area: string,
   card: string,
-  input: Pick<OverviewInput, 'areaName' | 'setup' | 'team'>,
+  input: Pick<OverviewInput, 'areaName' | 'setup' | 'team' | 'detail' | 'profileOf'>,
 ): string {
   const name = input.areaName(area);
   const t = input.team?.get(shortOf(area));
@@ -167,13 +287,17 @@ export function howToGetMandate(
   };
   if (setup.tool && setup.held.length > 0) {
     if (listed(setup.fields.profile, shortOf(area)) === false) {
-      return `Not yours to propose: the person's ${setup.card} mandate does not list ${name}. Tell them either to sign it themselves (**Mandates → + New mandate →** card **${card}**) or to add ${name} to the ${setup.card} mandate (**Mandates**, open it, **Edit**); then you can propose it.`;
+      return `Not yours to propose: the person's ${setup.card} mandate does not list ${name}. Tell them either to sign it themselves (**Mandates → + New mandate →** card **${card}**; ${SIGN_STEP}) or to add ${name} to the ${setup.card} mandate (**Mandates**, open it, **Edit**); then you can propose it.`;
     }
     const modes = [...new Set(setup.held.flatMap(h => csv(setup.fields.mode ? h.context?.[setup.fields.mode] : undefined)))];
     const modeNote = modes.length > 0 ? ` (modes you may propose: ${modes.join(', ')})` : '';
-    return `Propose it with ${setup.tool}(profile: "${shortOf(area)}", ...)${modeNote}. ${BEFORE_PROPOSING} The person approves it in the gateway.`;
+    const known = input.profileOf?.(area);
+    const fields = input.detail && known
+      ? `\n      ${proposalFields(setup.tool, area, known.profile, known.modes)}`
+      : known ? ` Its fields: list-authorizations(domain: "${shortOf(area)}").` : '';
+    return `Propose it with ${setup.tool}(profile: "${shortOf(area)}", ...)${modeNote}. ${BEFORE_PROPOSING} The person approves it in the gateway.${fields}`;
   }
-  return `A person signs it: **Mandates → + New mandate**, card **${card}**, **Give a mandate**. (With a ${setup.card} mandate you could prepare it for them.)`;
+  return `A person signs it: **Mandates → + New mandate**, card **${card}**, **Give a mandate**. ${SIGN_STEP} (With a ${setup.card} mandate you could prepare it for them.)`;
 }
 
 interface ConnectorLine {
@@ -188,6 +312,8 @@ function connectorLine(m: GuideManifest, input: OverviewInput, sourcesByConsumer
   const lines: string[] = [];
   let rank = 3;
 
+  const sim = input.simulation ?? false;
+  const card = `the card **${m.name}**`;
   let state: string;
   if (f.running) {
     state = 'running';
@@ -195,13 +321,13 @@ function connectorLine(m: GuideManifest, input: OverviewInput, sourcesByConsumer
     state = 'not available right now';
     rank = 4;
   } else if (f.blocked === 'production') {
-    state = 'not running: it is set to test data, and this gateway runs for real. A person changes its setting under **Connectors**';
+    state = `not running: it is set to test data, and this gateway runs for real. A person opens **Connectors**, ${card}, ${cardSteps(m, false) || 'and changes its setting'}`;
     rank = 0;
-  } else if (needsSettings(m) && !f.hasCredentials) {
-    state = 'not set up. A person opens **Connectors**, finds the card **' + m.name + '** and follows the steps on it' + (input.detail && m.setupHint ? ` (${m.setupHint})` : '');
+  } else if (!f.hasCredentials) {
+    state = `not set up. A person opens **Connectors**, ${card}, ${cardSteps(m, sim)}`;
     rank = 0;
   } else {
-    state = 'set up, but not running. A person opens **Connectors**, finds the card **' + m.name + '** and presses its start button';
+    state = `set up, but not running. A person opens **Connectors**, ${card} and presses **Start ${m.name} Connector**`;
     rank = 0;
   }
   lines.push(`- ${m.name}${m.description ? ` (${m.description})` : ''} — ${state}.`);
@@ -214,7 +340,8 @@ function connectorLine(m: GuideManifest, input: OverviewInput, sourcesByConsumer
       lines.push(`    mandate for ${input.areaName(area)}: yes${have.some(a => (a.deferredCommitmentDomains ?? []).length > 0) ? ' (review: each action needs approval)' : ''}`);
     } else {
       if (rank > 1 && f.running) rank = 1;
-      lines.push(`    mandate for ${input.areaName(area)}: none. ${howToGetMandate(area, m.name, input)}`);
+      const before = input.hadMandate?.(area) ? ' An earlier one has ended (revoked or expired).' : '';
+      lines.push(`    mandate for ${input.areaName(area)}: none.${before} ${howToGetMandate(area, pickerCard(m, area, input.areaName), input)}`);
     }
   }
 
@@ -239,9 +366,10 @@ function connectorLine(m: GuideManifest, input: OverviewInput, sourcesByConsumer
     }
   }
   const guide = m.setupGuide ?? [];
-  if (guide.length > 0 && input.detail) {
+  const shown = guide.filter(g => !g.simulationOnly || sim);
+  if (shown.length > 0 && input.detail) {
     lines.push('    Its setup guide (what the person is shown on its card):');
-    guide.forEach((g, i) => lines.push(`      ${i + 1}. ${g.title}${g.description ? ` — ${g.description}` : ''}`));
+    shown.forEach((g, i) => lines.push(`      ${i + 1}. ${g.title}${g.description ? ` — ${g.description}` : ''}`));
   }
   return { rank, text: lines.join('\n') };
 }

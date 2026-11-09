@@ -20,6 +20,9 @@ import {
   refusalNextStep,
   sourceTitle,
   manifestAreas,
+  pickerCard,
+  proposalFields,
+  SIGN_STEP,
   type GuideManifest,
   type GuideAuth,
   type OverviewInput,
@@ -43,7 +46,7 @@ afterEach(() => { delete process.env.SUVEREN_SIMULATION; });
 const FILES: GuideManifest = {
   id: 'files', name: 'Files', description: 'Files kept on this computer', profile: 'files',
   setupHint: 'Choose a folder on this computer.',
-  credentials: { fields: [{ key: 'sharedFolder', optional: true }] },
+  credentials: { fields: [{ key: 'sharedFolder', label: 'Shared folder', placeholder: 'Full path of the folder your AI saves files into' }] },
   documents: { file: { title: 'Saved files', label: 'saved file {id}', savedBy: 'save_file' } },
   setupGuide: [{ title: 'Choose the shared folder', description: 'Pick one folder.' }, { title: 'Give the Files mandate' }],
   toolGating: { overrides: { save_file: { profile: 'files' } } },
@@ -51,13 +54,14 @@ const FILES: GuideManifest = {
 const LEDGER: GuideManifest = {
   id: 'ledger', name: 'Ledger', description: 'Bookkeeping', profile: 'invoicing',
   setupHint: 'Paste your API key.',
-  credentials: { fields: [{ key: 'apiKey' }] },
+  credentials: { fields: [{ key: 'apiKey', label: 'API key' }] },
   documents: { 'invoice-pdf': { label: 'issued invoice {id}' }, 'quote-pdf': { label: 'quote {id}' } },
   toolGating: { overrides: { issue: { profile: 'invoicing' }, quote: { profile: 'sales' } } },
 };
 const POST: GuideManifest = {
   id: 'post', name: 'Post', description: 'Send mail', profile: 'email',
-  oauth: {},
+  oauth: { signInGroup: { name: 'Google' } },
+  credentials: { fields: [{ key: 'clientId', label: 'Client ID' }] },
   toolGating: { overrides: { send: { profile: 'email', attachmentsArg: 'attachments' } } },
 };
 const NOTES: GuideManifest = { id: 'notes', name: 'Notes', profile: 'memo', toolGating: { overrides: {} } };
@@ -101,7 +105,10 @@ describe('1. the first mandate', () => {
     expect(t).toContain('card **Setup**');
     expect(t).toContain('**Give a mandate**');
     expect(t).toContain('Scope & Limits');
-    expect(t).toContain('**Sign mandate (asks first)**');
+    expect(t).toMatch(/In Sign they give it a \*\*Title\*\* \(required\), choose how it runs and for how long, then press \*\*Sign mandate\*\*/);
+    expect(t).toContain('Ask them first whether it should run automatically or ask each time.');
+    expect(t).toContain('No active mandate exists');
+    expect(t).not.toContain('yet');
     expect(t).toContain('list-authorizations()');
     expect(t.indexOf('1.')).toBeLessThan(t.indexOf('2.'));
     expect(t.indexOf('2.')).toBeLessThan(t.indexOf('3.'));
@@ -172,23 +179,22 @@ describe('2. what is needed for a goal — the connector overview', () => {
     expect(t.indexOf('- Files')).toBeLessThan(t.indexOf('- Notes'));
     expect(t.indexOf('- Ledger')).toBeLessThan(t.indexOf('- Notes'));
     // Set up or not: Ledger needs a key (no settings saved), Files has only optional settings, Post needs a sign-in.
-    expect(t).toMatch(/- Ledger \(Bookkeeping\) — not set up\. A person opens \*\*Connectors\*\*, finds the card \*\*Ledger\*\*/);
-    expect(t).toMatch(/- Post \(Send mail\) — not set up\./);
-    expect(t).toMatch(/- Files \(Files kept on this computer\) — set up, but not running\./);
-    expect(t).not.toContain('Paste your API key.'); // the hint is for the detail view
-    expect(connectorOverview(input({ manifests: [LEDGER], detail: true }))).toContain('(Paste your API key.)');
+    expect(t).toMatch(/- Ledger \(Bookkeeping\) — not set up\. A person opens \*\*Connectors\*\*, the card \*\*Ledger\*\*, enters \*\*API key\*\*, presses \*\*Save & Encrypt\*\* \(the connector then starts by itself\)/);
+    expect(t).toMatch(/- Post \(Send mail\) — not set up\..*presses \*\*Save & Encrypt\*\*, then \*\*Connect Post Account\*\* and follows the steps on the card to connect Google/);
+    expect(t).toMatch(/- Files \(Files kept on this computer\) — not set up\. A person opens \*\*Connectors\*\*, the card \*\*Files\*\*, enters \*\*Shared folder\*\* \(Full path of the folder your AI saves files into\) and presses \*\*Save & Encrypt\*\*/);
+
     expect(t).toContain('- Notes — running.');
   });
 
   it('settings saved: set up but not running; running: no step for the connector itself', () => {
     const t = connectorOverview(input({ creds: ['ledger'], running: ['post'] }));
-    expect(t).toMatch(/- Ledger \(Bookkeeping\) — set up, but not running\. A person opens \*\*Connectors\*\*.*presses its start button/);
+    expect(t).toMatch(/- Ledger \(Bookkeeping\) — set up, but not running\. A person opens \*\*Connectors\*\*, the card \*\*Ledger\*\* and presses \*\*Start Ledger Connector\*\*/);
     expect(t).toMatch(/- Post \(Send mail\) — running\./);
   });
 
   it('a blocked connector says so and where the setting is', () => {
     const t = connectorOverview(input({ blocked: { ledger: 'production' } }));
-    expect(t).toMatch(/- Ledger.*runs for real.*under \*\*Connectors\*\*/s);
+    expect(t).toMatch(/- Ledger.*runs for real\. A person opens \*\*Connectors\*\*, the card \*\*Ledger\*\*/s);
   });
 
   it('mandate per AREA: a connector serving two areas is checked for both', () => {
@@ -267,7 +273,7 @@ describe('2. how to get a missing mandate', () => {
 
   it('no Setup mandate: the person signs it on the page, with the card name', () => {
     const t = howToGetMandate('email', 'Post', args(noSetup));
-    expect(t).toBe('A person signs it: **Mandates → + New mandate**, card **Post**, **Give a mandate**. (With a Setup mandate you could prepare it for them.)');
+    expect(t).toBe('A person signs it: **Mandates → + New mandate**, card **Post**, **Give a mandate**. Ask them first whether it should run automatically or ask each time. On the **Sign** step they give it a **Title** (required) and choose **Review Each Action** or **Automatic**, then press **Sign mandate**. (With a Setup mandate you could prepare it for them.)');
   });
 
   it('the team has not enabled the profile: says what an admin does, and that nothing else helps', () => {
@@ -281,6 +287,97 @@ describe('2. how to get a missing mandate', () => {
   it('enabled, but the person is not a grantor', () => {
     const t = howToGetMandate('email', 'Post', args(noSetup, new Map([['email', { teamCode: 'not_a_grantor', teamName: 'Sales Vienna' }]])));
     expect(t).toContain('Blocked: Email is enabled in "Sales Vienna", but the person is not one of those who may give it.');
+  });
+});
+
+describe('7 more cases from the real-AI test', () => {
+  const MAIL: GuideManifest = {
+    id: 'mail', name: 'Email', description: 'Read and send email', profile: 'email',
+    simulation: { field: 'mode', default: 'simulation' },
+    modeLabels: { simulation: 'Test mailbox', live: { gmail: 'Gmail' } },
+    modeOptions: { live: { gmail: { label: 'Gmail', fields: ['clientId', 'clientSecret'] } } },
+    credentials: { fields: [
+      { key: 'mode', label: 'Mode (optional)', optional: true },
+      { key: 'clientId', label: 'Client ID', placeholder: 'From Google Cloud Console', optional: true },
+      { key: 'clientSecret', label: 'Client Secret', optional: true },
+    ] },
+    oauth: { signInGroup: { name: 'Google' }, forOption: { mode: 'live' } },
+    setupGuide: [{ title: 'Ready to use', description: 'A simulated inbox.', simulationOnly: true }, { title: 'Use Gmail', description: 'Create an OAuth client.' }],
+    toolGating: { overrides: { send: { profile: 'email', attachmentsArg: 'attachments' } } },
+  };
+  const ERP: GuideManifest = { id: 'erp', name: 'ERP', profile: 'sales', toolGating: { overrides: { issue: { profile: 'invoicing' } } } };
+
+  it('the data choice comes from the manifest: Gmail is named, with its fields, button and sign-in', () => {
+    const t = connectorOverview(input({ manifests: [MAIL], blocked: { mail: 'production' } }));
+    expect(t).toContain('chooses **Gmail** under *Where does Email get its data?*, enters **Client ID** (From Google Cloud Console) and **Client Secret**, presses **Save & Encrypt**, then **Connect Email Account** and follows the steps on the card to connect Google');
+  });
+  it('in test mode the choice is the practice data and nothing is asked for', () => {
+    const t = connectorOverview(input({ manifests: [MAIL], simulation: true }));
+    expect(t).toContain('presses **Activate Email**');
+    expect(t).not.toContain('Gmail');
+  });
+  it('the simulated-inbox guide step shows only in test mode', () => {
+    expect(connectorOverview(input({ manifests: [MAIL], detail: true, simulation: false }))).not.toContain('A simulated inbox');
+    expect(connectorOverview(input({ manifests: [MAIL], detail: true, simulation: true }))).toContain('A simulated inbox');
+  });
+  it('the card name is the one the picker shows: "Name — Area" for a connector with several areas', () => {
+    const t = connectorOverview(input({ manifests: [ERP], running: ['erp'] }));
+    expect(t).toContain('card **ERP — Sales**');
+    expect(t).toContain('card **ERP — Invoicing**');
+    expect(t).not.toContain('card **ERP**,');
+    expect(pickerCard(NOTES, 'memo', (a) => a)).toBe('Notes');
+  });
+  it('an area that had a mandate before says so; otherwise nothing is claimed', () => {
+    const had = connectorOverview(input({ manifests: [NOTES], running: ['notes'], hadMandate: (a) => a === 'memo' }));
+    expect(had).toContain('mandate for Memo: none. An earlier one has ended (revoked or expired).');
+    const never = connectorOverview(input({ manifests: [NOTES], running: ['notes'] }));
+    expect(never).not.toContain('earlier one');
+  });
+  it('the signing person is asked the automatic-or-review question first', () => {
+    expect(SIGN_STEP).toMatch(/^Ask them first whether it should run automatically or ask each time\./);
+    expect(SIGN_STEP).toContain('**Title** (required)');
+  });
+
+  describe('the field list for proposing, from the profile schema', () => {
+    const profile = {
+      boundsSchema: { fields: {
+        profile: { required: true },
+        read_access: { required: true, displayName: 'Read', boundType: { kind: 'enum', values: ['unlimited', 'none'] } },
+        send_daily_max: { required: true, unit: 'count', default: 5, boundType: { kind: 'cumulative_count' } },
+        spend_max: { unit: 'currency:EUR', maximum: 1000, boundType: { kind: 'max' } },
+      } },
+      scopeSchema: { fields: {
+        allowed_attachment_sources: { format: 'connector:kind' },
+        allowed_profiles: { required: true, valuesFrom: 'profiles' },
+        kind: { enum: ['a', 'b'] },
+      } },
+      ttl: { default: 86400, max: 2592000 },
+    };
+    it('lists limits and scope with required marks, allowed values, units and sources', () => {
+      const t = proposalFields('setup__create_mandate', 'github.com/x/email@0.9', profile, ['review', 'automatic']);
+      expect(t).toContain('Fields for setup__create_mandate(profile: "email", ...), * = required; any other field name is refused:');
+      expect(t).toContain('read_access* (Read) = unlimited|none');
+      expect(t).toContain('send_daily_max* = number [default 5]');
+      expect(t).toContain('spend_max = number [EUR, at most 1000]'.replace('EUR,', 'currency:EUR,'));
+      expect(t).not.toContain('profile* ');
+      expect(t).toContain('allowed_attachment_sources = comma-separated connector:kind sources, for example files:file');
+      expect(t).toContain('allowed_profiles* = comma-separated names from the profiles available');
+      expect(t).toContain('kind = a|b');
+      expect(t).toContain('mode = review|automatic (ask the person)');
+      expect(t).toContain('duration_hours = number, at most 720, default 24');
+    });
+    it('a profile that allows only review says only review', () => {
+      expect(proposalFields('t', 'x', profile, ['review'])).toContain('mode = review (ask the person)');
+    });
+    it('the overview points at the field list; the connector detail carries it', () => {
+      const setup = { tool: 'setup__create_mandate', card: 'Setup', fields: { profile: 'allowed_profiles', mode: 'allowed_modes' }, held: [auth('delegation@0.6', { context: { allowed_profiles: 'memo', allowed_modes: 'review' } })] };
+      const profileOf = () => ({ profile, modes: ['review'] as const });
+      const short = connectorOverview(input({ manifests: [NOTES], running: ['notes'], setup, profileOf }));
+      expect(short).toContain('Its fields: list-authorizations(domain: "memo").');
+      expect(short).not.toContain('Fields for');
+      const long = connectorOverview(input({ manifests: [NOTES], running: ['notes'], setup, profileOf, detail: true }));
+      expect(long).toContain('Fields for setup__create_mandate(profile: "memo", ...)');
+    });
   });
 });
 
@@ -464,6 +561,41 @@ describe('through the gateway\'s own entry points', () => {
       fetchSpy.mockRestore();
       delete process.env.SUVEREN_INTERNAL_SECRET;
     }
+  });
+
+  it('setup__get_guide is not offered outside simulation mode, and not named in the capability map', async () => {
+    const guide: DiscoveredTool = {
+      originalName: 'get_guide', namespacedName: 'setup__get_guide', integrationId: 'setup', description: 'Guides', inputSchema: {}, simulationOnly: true,
+      gating: { profile: 'delegation', category: 'read', boundField: 'read_access', requiredValue: 'unlimited' } as DiscoveredTool['gating'],
+    };
+    const tools = [createTool, guide];
+    const setupMandate = mandate(SETUP_PROFILE.id, { allowed_profiles: 'files', allowed_modes: 'review' });
+    (setupMandate as unknown as { frame: Record<string, unknown> }).frame = { profile: SETUP_PROFILE.id, read_access: 'unlimited', mandate_daily_max: 5 };
+    const reg = (auths: EnrichedAuthorization[]) => {
+      const { server, refreshTools } = createMcpServer(state(auths), im({ running: [], tools }));
+      refreshTools();
+      return (server as unknown as { _registeredTools: Record<string, { enabled: boolean }> })._registeredTools;
+    };
+    expect(reg([setupMandate]).setup__get_guide.enabled).toBe(false);
+    const cap = (await listAuthorizationsHandler(state([setupMandate]), im({ running: [], tools }))({ domain: 'delegation' })).content[0].text;
+    expect(cap).not.toContain('get_guide');
+    process.env.SUVEREN_SIMULATION = '1';
+    expect(reg([setupMandate]).setup__get_guide.enabled).toBe(true);
+    expect((await listAuthorizationsHandler(state([setupMandate]), im({ running: [], tools }))({ domain: 'delegation' })).content[0].text).toContain('get_guide');
+  });
+
+  it('the Files card asks for the folder: the field is required, so the card says what to enter and which button', () => {
+    const f = getManifest('files')!;
+    expect(f.credentials.fields.find(x => x.key === 'sharedFolder')!.optional).toBeFalsy();
+    const t = connectorOverview({ ...input({ manifests: [f as never] }) });
+    expect(t).toContain('enters **Shared folder**');
+    expect(t).toContain('presses **Save & Encrypt** (the connector then starts by itself)');
+  });
+
+  it('the Email manifest hides its simulated-inbox step outside test mode', () => {
+    const m = getManifest('mail')! as unknown as GuideManifest;
+    expect(m.setupGuide![0].simulationOnly).toBe(true);
+    expect(connectorOverview(input({ manifests: [m], detail: true }))).not.toContain('simulated inbox');
   });
 
   it('4. the sender\'s description gets the attachment line from the manifests; a connector that starts later updates it', () => {
