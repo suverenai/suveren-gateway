@@ -66,6 +66,7 @@ export function AttachmentSourcePicker({ id, value, onChange, disabled }: {
               <label className={`attach-src-opt${off ? ' attach-src-off' : ''}`} key={o.key}>
                 <input
                   type="checkbox"
+                  data-source={o.key}
                   checked={checked}
                   // Not set up: cannot be ticked, but a tick already there can be removed.
                   disabled={disabled || (off && !checked)}
