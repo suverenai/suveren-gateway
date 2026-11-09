@@ -36,19 +36,19 @@ export function ticketsUnder(receipts: ExecutionReceipt[], authorizationId: stri
 }
 
 /**
- * "N used today" per limit key. The newest ticket today carries the
- * Authority Server's running figure for the bound that governs it; a daily
- * cumulative bound with no ticket today and a complete read is "0 used today".
+ * The Authority Server's running figure per limit key, as numbers: the newest
+ * ticket today carries it for the bound that governs it; a daily cumulative
+ * bound with no ticket today and a complete read is 0.
  */
-export function usedToday(opts: {
+export function usedTodayNumbers(opts: {
   receipts: ExecutionReceipt[];
   coversToday: boolean;
   authorizationId: string;
   bounds: Record<string, string | number> | undefined;
   profile: AgentProfile | null | undefined;
   nowMs: number;
-}): Record<string, string> {
-  const out: Record<string, string> = {};
+}): Record<string, number> {
+  const out: Record<string, number> = {};
   const { bounds, profile, authorizationId, nowMs } = opts;
   if (!bounds) return out;
   const today = ticketsUnder(opts.receipts, authorizationId).filter((r) => isToday(r.timestamp, nowMs));
@@ -60,17 +60,56 @@ export function usedToday(opts: {
   if (newest) {
     const chosen = chooseCumulativeBound(newest, bounds, profile, 'daily');
     const state = newest.cumulativeState?.daily;
-    if (chosen && state) out[chosen.key] = `${chosen.isAmount ? state.amount : state.count} used today`;
+    if (chosen && state) out[chosen.key] = chosen.isAmount ? state.amount : state.count;
     return out;
   }
   if (!opts.coversToday) return out;
   for (const [key, def] of Object.entries(profile?.boundsSchema?.fields ?? {})) {
     const bt = def.boundType;
     if (key in bounds && bt && (bt.kind === 'cumulative_sum' || bt.kind === 'cumulative_count') && bt.window === 'daily') {
-      out[key] = '0 used today';
+      out[key] = 0;
     }
   }
   return out;
+}
+
+/** "N used today" per limit key (mandate card rows). */
+export function usedToday(opts: Parameters<typeof usedTodayNumbers>[0]): Record<string, string> {
+  return Object.fromEntries(Object.entries(usedTodayNumbers(opts)).map(([k, n]) => [k, `${n} used today`]));
+}
+
+/**
+ * The same running figure for a mandate that does not exist yet (the form):
+ * the newest ticket today under ANY mandate of this profile that a bound of
+ * this key governs. A daily bound with no such ticket and a complete read is
+ * 0; anything the read cannot prove is left out.
+ */
+export function usedTodayForBound(opts: {
+  receipts: ExecutionReceipt[];
+  coversToday: boolean;
+  profileId: string;
+  key: string;
+  profile: AgentProfile | null | undefined;
+  nowMs: number;
+}): number | undefined {
+  const def = (opts.profile?.boundsSchema?.fields ?? {})[opts.key];
+  const bt = def?.boundType;
+  if (!def || !bt || (bt.kind !== 'cumulative_sum' && bt.kind !== 'cumulative_count') || bt.window !== 'daily') return undefined;
+  const family = (id: string) => id.replace(/@.*$/, '').split('/').pop();
+  const governs = def.appliesTo;
+  let newest: ExecutionReceipt | null = null;
+  for (const r of opts.receipts) {
+    if (family(r.profileId) !== family(opts.profileId) || !isToday(r.timestamp, opts.nowMs)) continue;
+    const at = r.actionType ?? (typeof r.executionContext?.action_type === 'string' ? (r.executionContext.action_type as string) : undefined);
+    if (governs && at && !governs.includes(at)) continue;
+    if (!newest || r.timestamp > newest.timestamp
+      || (r.timestamp === newest.timestamp && (r.cumulativeState?.daily?.count ?? 0) > (newest.cumulativeState?.daily?.count ?? 0))) newest = r;
+  }
+  if (newest) {
+    const state = newest.cumulativeState?.daily;
+    return state ? (bt.kind === 'cumulative_sum' ? state.amount : state.count) : undefined;
+  }
+  return opts.coversToday ? 0 : undefined;
 }
 
 const TTL_MS = 15_000;

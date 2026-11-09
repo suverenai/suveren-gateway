@@ -136,6 +136,9 @@ export function ProposalReviewPage() {
   }, [domain, statusFilter]);
 
   useVisiblePolling(fetchThread, 30_000, `${domain}:${statusFilter}`);
+  // A refusal after approval arrives later, from the Authority Server: read the list again when the gateway says so.
+  useSSEEvent('denial-recorded', fetchThread);
+  useSSEEvent('execution-failed', fetchThread);
 
   const profileIds = useMemo(() => {
     const set = new Set<string>();

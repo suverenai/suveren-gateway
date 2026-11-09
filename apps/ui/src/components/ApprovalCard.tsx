@@ -21,6 +21,9 @@ import { ApprovalBody } from './ApprovalBody';
 import { validateChangeNote, CHANGE_NOTE_MAX } from '../lib/reject-outcome';
 import { decisionButtonsVisible } from '../lib/use-proposal-content';
 import { isAutomatedBrowser, AUTOMATION_REFUSAL } from '../lib/automation';
+import { RefusalResult } from './RefusalResult';
+import { useVisiblePolling } from '../hooks/useVisiblePolling';
+import { useSSEEvent } from '../contexts/EventSourceContext';
 import { workingWord, stampWord, stampLine, type DecisionKind, type DecisionResult } from '../lib/approval-flow';
 
 const CREATE_MANDATE_TOOL = 'setup__create_mandate';
@@ -132,6 +135,23 @@ export function ApprovalCard({
     return () => el.removeEventListener('toggle', onToggle, true);
   }, []);
 
+  // After an approval the Authority Server may still refuse the ticket (a shared
+  // limit filled up in the meantime). The stamp must not stay "Approved" then:
+  // read the proposal again when the gateway reports a refusal, and on a slow
+  // poll as the fallback. Only what the server says is shown.
+  const [refusedAfter, setRefusedAfter] = useState<Proposal | null>(null);
+  const watching = phase.t === 'done' && phase.kind === 'approve' && !refusedAfter;
+  const checkRefusal = () => {
+    if (!watching) return;
+    spClient.getProposal(proposal.id)
+      .then((p) => { if (p.status === 'refused' && p.refusal) setRefusedAfter(p); })
+      .catch(() => { /* the stamp stays what the server last confirmed */ });
+  };
+  useSSEEvent('denial-recorded', checkRefusal);
+  useSSEEvent('execution-failed', checkRefusal);
+  useSSEEvent('ticket-recorded', checkRefusal);
+  useVisiblePolling(checkRefusal, 10_000, `${watching}:${proposal.id}`);
+
   const busy = phase.t === 'working' || phase.t === 'done';
   useEffect(() => {
     onBusyChange?.(busy);
@@ -218,7 +238,12 @@ export function ApprovalCard({
           {workingWord(phase.kind, isMandate)}…
         </div>
       )}
-      {phase.t === 'done' && (
+      {phase.t === 'done' && refusedAfter && (
+        <div className="av3-stamp av3-stamp-refused" data-testid="decision-refused">
+          <RefusalResult proposal={refusedAfter} manifests={manifests} />
+        </div>
+      )}
+      {phase.t === 'done' && !refusedAfter && (
         <div className="av3-stamp" role="status" data-testid="decision-stamp">
           <svg className="av3-check" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5" /></svg>
           <div className="av3-stamp-w">{stampWord(phase.kind, isMandate)}</div>

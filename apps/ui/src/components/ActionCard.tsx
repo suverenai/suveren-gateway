@@ -3,6 +3,7 @@ import type { ThreadItem } from '../lib/thread-aggregator';
 import { formatTimeLeft } from '../lib/time-left';
 import { ProposalArgs, NotSealedArgs, localPreviewIsUnsealed } from './ProposalArgs';
 import { ProfileRail } from './ProfileRail';
+import { RefusalResult } from './RefusalResult';
 import { OutcomeBox } from './OutcomeBox';
 import { ApprovalCard } from './ApprovalCard';
 import { useAuth } from '../contexts/AuthContext';
@@ -274,12 +275,7 @@ function RecordCard({ item, proposalLinks, toolDisplay, manifests, currentUserId
       {/* 2026-10-12 fix — the Authority Server's own terminal refusal
           (a bound exceeded after approval). Backend truth, straight off
           `proposal.refusal` — never EXECUTED for this. */}
-      {refused && (
-        <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>
-          <div>By the Authority Server, {formatTimestamp(refused.at)}</div>
-          <div data-testid="outcome-note" style={{ marginTop: '0.2rem' }}>Reason: {refused.message}</div>
-        </div>
-      )}
+      {refused && isProposal && <RefusalResult proposal={item.proposal} manifests={manifests} />}
 
       {destructive && (
         <div className="note-attention" style={{

@@ -487,6 +487,8 @@ export interface IntegrationManifest {
   toolGating?: {
     overrides?: Record<string, { profile?: string; actionLabel?: string; summary?: string; display?: { currencyField?: string } } | null>;
   } | null;
+  /** Words for a shared limit's sentences, keyed by the bound's key (validated by the manifest loader). */
+  limitWords?: Record<string, { noun: string; pastParticiple: string }> | null;
   /** Declares a simulation mode: the credential field holding it and its default. Drives the "Simulation" badge. */
   simulation?: { field: string; default: string } | null;
   /** Display labels for this connector's CURRENT mode — "<name> · <label>" on
@@ -647,7 +649,15 @@ export interface Proposal {
   createdAt: number;
   expiresAt: number;
   /** Set iff status === 'refused' — the AS's own code/message for why. */
-  refusal?: { code: string; message: string; at: number };
+  refusal?: {
+    code: string;
+    message: string;
+    at: number;
+    /** The bound the refusal is about, and the numbers — present only on an Authority Server that records them. */
+    field?: string;
+    expected?: unknown;
+    actual?: unknown;
+  };
   // Phase 6 fields
   pendingApprovers?: string[];
   approvedBy?: Record<string, { receiptId: string; at: number }>;
@@ -661,6 +671,19 @@ export interface Proposal {
    * reject/change_needed/replaced). Never set by any other route.
    */
   withdrawnBy?: { userId: string; at: number; note?: string; noteEncrypted?: NoteEncryptedWire };
+}
+
+/** One cumulative bound as it stands now, for one action type (Authority Server `cumulative_usage`). */
+export interface CumulativeUsageEntry {
+  field: string;
+  action_type: string;
+  kind: 'cumulative_count' | 'cumulative_sum';
+  window: 'daily' | 'weekly' | 'monthly';
+  of?: string;
+  /** Consumed in the window, team-wide. */
+  used: number;
+  /** The stricter of the mandate's bound and the group ceiling; null if neither is set. */
+  limit: number | null;
 }
 
 export interface ExecutionReceipt {
@@ -2236,6 +2259,20 @@ class SPClient {
     const res = await this.fetch(`/api/evidence/receipt/${encodeURIComponent(receiptId)}/attachment-preview/${encodeURIComponent(sha256)}`);
     if (!res.ok) throw new Error(`Failed to fetch attachment preview: ${res.status}`);
     return res.json();
+  }
+
+  /**
+   * One mandate's summary. `cumulative_usage` is additive: the Authority
+   * Server sends it only to an active member of the mandate's group, with the
+   * TEAM-wide count per cumulative bound and action type (`used`) and the
+   * limit the ticket enforces (`limit`, null if none). Absent → null here.
+   * SP endpoint: GET /api/authorizations/:id
+   */
+  async getAuthorizationUsage(authorizationId: string): Promise<CumulativeUsageEntry[] | null> {
+    const res = await this.fetch(`/api/authorizations/${encodeURIComponent(authorizationId)}`);
+    if (!res.ok) return null;
+    const body = await res.json().catch(() => null) as { cumulative_usage?: unknown } | null;
+    return Array.isArray(body?.cumulative_usage) ? (body!.cumulative_usage as CumulativeUsageEntry[]) : null;
   }
 
   /**
