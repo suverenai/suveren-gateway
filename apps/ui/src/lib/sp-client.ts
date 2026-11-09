@@ -487,6 +487,8 @@ export interface IntegrationManifest {
   toolGating?: {
     overrides?: Record<string, { profile?: string; actionLabel?: string; summary?: string; display?: { currencyField?: string } } | null>;
   } | null;
+  /** Words for a shared limit's sentences, keyed by the bound's key (validated by the manifest loader). */
+  limitWords?: Record<string, { noun: string; pastParticiple: string }> | null;
   /** Declares a simulation mode: the credential field holding it and its default. Drives the "Simulation" badge. */
   simulation?: { field: string; default: string } | null;
   /** Display labels for this connector's CURRENT mode — "<name> · <label>" on

@@ -11,7 +11,7 @@ import { effectiveCapKind, enumExceedsCap, isCapped, type CapFieldShape } from '
 import { useProfileValuedOptions, type Workspace } from '../lib/profile-valued-options';
 import { useAuth } from '../contexts/AuthContext';
 import { useMandateReceipts, usedTodayForBound } from '../lib/mandate-card-usage';
-import { cumulativeBound, sharedLimitHelper, sharedLimitLabel } from '../lib/limit-words';
+import { cumulativeBound, sharedLimitHelper, sharedLimitLabel, limitWordsForProfile, type LimitWords } from '../lib/limit-words';
 
 interface Props {
   profile: AgentProfile;
@@ -908,10 +908,13 @@ export function BoundsEditor({
   // this profile's context fields. The wizard uses this to render live-fetched
   // option lists for those fields (e.g. Google calendar IDs).
   const [discoveryIntegration, setDiscoveryIntegration] = useState<IntegrationManifest | null>(null);
+  // The connector's words for a shared limit (manifest `limitWords`) — used only for the helper line.
+  const [limitWords, setLimitWords] = useState<LimitWords | undefined>(undefined);
   useEffect(() => {
     const shortName = shortProfileName(profile.id);
     spClient.getIntegrationManifests()
       .then(({ manifests }) => {
+        setLimitWords(limitWordsForProfile(manifests, profile.id));
         const match = manifests.find(
           m => m.profile === shortName && m.contextDiscovery && Object.keys(m.contextDiscovery).length > 0,
         );
@@ -1132,7 +1135,7 @@ export function BoundsEditor({
                     onChange={handleBoundsChange}
                     prefix="bounds"
                     readOnly={readOnly}
-                    sharedLimit={shared ? { name: shared.name, figures: shared.figures, helper: sharedLimitHelper(cumulativeBound(profile, key)!, mode === 'team') } : undefined}
+                    sharedLimit={shared ? { name: shared.name, figures: shared.figures, helper: sharedLimitHelper(cumulativeBound(profile, key)!, mode === 'team', limitWords) } : undefined}
                     twoColumn
                     capMax={capState?.kind === 'hard' && typeof capState.cap === 'number' ? capState.cap : undefined}
                     enumAllowedFrom={capState?.kind === 'hard' ? enumAllowedFromIndex(fieldDef, capState.cap) : undefined}

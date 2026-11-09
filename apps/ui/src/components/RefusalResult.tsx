@@ -6,21 +6,21 @@
  * The list row says "Not run"; this card does not.
  */
 import { useProfile } from '../lib/profile-cache';
-import { refusalSentence } from '../lib/limit-words';
-import type { Proposal } from '../lib/sp-client';
+import { refusalSentence, limitWordsForTool } from '../lib/limit-words';
+import type { IntegrationManifest, Proposal } from '../lib/sp-client';
 
 function clock(unixSeconds: number): string {
   return new Date(unixSeconds * 1000).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
 }
 
 /** The sentence for a refused proposal, with the profile resolved. */
-export function useRefusalSentence(proposal: Pick<Proposal, 'profileId' | 'refusal'>): string | null {
+export function useRefusalSentence(proposal: Pick<Proposal, 'profileId' | 'refusal' | 'tool'>, manifests?: IntegrationManifest[]): string | null {
   const profile = useProfile(proposal.profileId);
-  return proposal.refusal ? refusalSentence(proposal.refusal, profile).text : null;
+  return proposal.refusal ? refusalSentence(proposal.refusal, profile, limitWordsForTool(manifests, proposal.tool)).text : null;
 }
 
-export function RefusalResult({ proposal }: { proposal: Pick<Proposal, 'profileId' | 'refusal'> }) {
-  const sentence = useRefusalSentence(proposal);
+export function RefusalResult({ proposal, manifests }: { proposal: Pick<Proposal, 'profileId' | 'refusal' | 'tool'>; manifests?: IntegrationManifest[] }) {
+  const sentence = useRefusalSentence(proposal, manifests);
   if (!sentence || !proposal.refusal) return null;
   return (
     <div className="refusal-result" role="status" data-testid="refusal">

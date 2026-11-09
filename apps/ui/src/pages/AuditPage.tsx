@@ -183,6 +183,7 @@ export function AuditPage() {
       .catch(() => setRefused([]));
   }, [domain]);
   useVisiblePolling(fetchRefused, 120_000, domain);
+  useSSEEvent('denial-recorded', fetchRefused);
 
   // A ticket was just issued (MCP server -> control plane -> SSE): refresh
   // now instead of waiting for the poll. If the page is in view, move the

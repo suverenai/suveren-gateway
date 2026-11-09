@@ -7,9 +7,10 @@
  * Nothing here names a connector, a profile or a field. Every word comes from
  * the profile's bounds schema (`boundType.kind` / `window`, `unit`,
  * `displayName`, `appliesTo`) and from the numbers the Authority Server sent.
- * Two optional words a profile MAY declare on a cumulative bound, used only
- * when present:
- *   - `noun`          the plural thing that is counted ("emails")
+ * Two optional words come from the CONNECTOR MANIFEST (`limitWords`, keyed by
+ * the bound's key), never from the profile: a published profile is hashed
+ * into signed mandates, so changing it would force re-signing.
+ *   - `noun`           the plural thing that is counted ("emails")
  *   - `pastParticiple` what did not happen ("sent")
  * Without them the sentence is still true, just plainer ("Not done." / no noun).
  *
@@ -33,8 +34,28 @@ interface BoundDef {
   unit?: string;
   appliesTo?: readonly string[];
   boundType?: { kind?: string; window?: string };
-  noun?: string;
-  pastParticiple?: string;
+}
+
+/** What a manifest declares per bound key (manifest `limitWords`). */
+export type LimitWords = Record<string, { noun: string; pastParticiple: string } | undefined>;
+
+/** The `limitWords` of the manifest that owns this tool (`<integration>__<tool>`), if any. */
+export function limitWordsForTool(
+  manifests: ReadonlyArray<{ id: string; limitWords?: LimitWords | null }> | undefined,
+  tool: string,
+): LimitWords | undefined {
+  const id = tool.split('__')[0];
+  return manifests?.find((m) => m.id === id)?.limitWords ?? undefined;
+}
+
+/** The `limitWords` of the manifest(s) serving this profile (by short id), merged. */
+export function limitWordsForProfile(
+  manifests: ReadonlyArray<{ profile?: string; limitWords?: LimitWords | null }> | undefined,
+  profileId: string,
+): LimitWords | undefined {
+  const short = profileId.replace(/@.*$/, '').split('/').pop();
+  const found = (manifests ?? []).filter((m) => m.profile === short && m.limitWords);
+  return found.length ? Object.assign({}, ...found.map((m) => m.limitWords)) : undefined;
 }
 
 export interface CumulativeBound {
@@ -44,8 +65,6 @@ export interface CumulativeBound {
   displayName: string;
   unit?: string;
   appliesTo?: readonly string[];
-  noun?: string;
-  pastParticiple?: string;
 }
 
 function fieldsOf(profile: AgentProfile | null | undefined): Record<string, BoundDef> {
@@ -63,8 +82,6 @@ function asCumulative(key: string, def: BoundDef | undefined): CumulativeBound |
     displayName: def.displayName ?? key,
     unit: def.unit,
     appliesTo: def.appliesTo,
-    noun: typeof def.noun === 'string' && def.noun ? def.noun : undefined,
-    pastParticiple: typeof def.pastParticiple === 'string' && def.pastParticiple ? def.pastParticiple : undefined,
   };
 }
 
@@ -105,6 +122,13 @@ export function sharedLimitLabel(opts: {
   key: string;
   team: boolean;
   used?: number;
+  /**
+   * True only for a count the Authority Server made across the whole team.
+   * In a team, a count read from this account's own tickets is NOT the team's:
+   * a wrong number is worse than none, so without this flag a team shows no
+   * figure at all. (The server does not supply a team-wide count yet.)
+   */
+  usedIsTeamWide?: boolean;
   limit?: number | string;
 }): SharedLimitLabel | null {
   const b = cumulativeBound(opts.profile, opts.key);
@@ -116,20 +140,22 @@ export function sharedLimitLabel(opts: {
   const base = `${opts.team ? 'Team limit' : 'Limit'} per ${w.per}`;
   const name = ambiguous ? `${base} · ${b.displayName}` : base;
   const limit = Number(opts.limit);
+  const used = opts.team && !opts.usedIsTeamWide ? undefined : opts.used;
   let figures: string | undefined;
-  if (opts.used !== undefined && Number.isFinite(opts.used) && opts.limit !== undefined && opts.limit !== '' && Number.isFinite(limit)) {
+  if (used !== undefined && Number.isFinite(used) && opts.limit !== undefined && opts.limit !== '' && Number.isFinite(limit)) {
     figures = b.kind === 'cumulative_sum'
-      ? `${fmtAmount(opts.used, b.unit)} of ${fmtAmount(limit, b.unit)} used`
-      : `${opts.used} of ${limit} used`;
+      ? `${fmtAmount(used!, b.unit)} of ${fmtAmount(limit, b.unit)} used`
+      : `${used} of ${limit} used`;
   }
   return { name, figures, text: figures ? `${name} (${figures})` : name };
 }
 
 /** The helper line under the field — only where several people share the number. */
-export function sharedLimitHelper(bound: CumulativeBound, team: boolean): string | null {
+export function sharedLimitHelper(bound: CumulativeBound, team: boolean, words?: LimitWords): string | null {
   if (!team) return null;
-  return bound.noun
-    ? `Every colleague's ${bound.noun} count toward this one number.`
+  const noun = words?.[bound.key]?.noun;
+  return noun
+    ? `Every colleague's ${noun} count toward this one number.`
     : 'Everyone on the team counts toward this one number.';
 }
 
@@ -160,16 +186,17 @@ const num = (v: unknown): number | undefined => (typeof v === 'number' && Number
  * says "limit of limit" because that is what is true. For a summed limit
  * `actual` is the total the call would have reached.
  */
-export function refusalSentence(refusal: RefusalData, profile: AgentProfile | null | undefined): RefusalSentence {
+export function refusalSentence(refusal: RefusalData, profile: AgentProfile | null | undefined, words?: LimitWords): RefusalSentence {
   const bound = refusal.field ? cumulativeBound(profile, refusal.field) : null;
-  const lead = bound?.pastParticiple ? `Not ${bound.pastParticiple}.` : 'Not done.';
+  const w0 = refusal.field ? words?.[refusal.field] : undefined;
+  const lead = w0?.pastParticiple ? `Not ${w0.pastParticiple}.` : 'Not done.';
   const limit = num(refusal.expected);
 
   if (refusal.code === 'CUMULATIVE_LIMIT_EXCEEDED') {
     if (bound && limit !== undefined) {
       const w = WINDOW_WORDS[bound.window];
       if (bound.kind === 'cumulative_count') {
-        const noun = bound.noun ? ` ${bound.noun}` : '';
+        const noun = w0?.noun ? ` ${w0.noun}` : '';
         return { text: `${lead} The ${w.adj} limit is used up: ${limit} of ${limit}${noun} ${w.tail}.`, basis: 'data' };
       }
       const total = num(refusal.actual);

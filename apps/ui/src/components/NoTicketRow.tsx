@@ -13,7 +13,7 @@ import { resolveAreaName } from '../lib/area';
 
 export function NoTicketRow({ proposal, manifests }: { proposal: Proposal; manifests: IntegrationManifest[] }) {
   const catalog = useAreaCatalog();
-  const sentence = useRefusalSentence(proposal);
+  const sentence = useRefusalSentence(proposal, manifests);
   if (!proposal.refusal || !sentence) return null;
   const at = new Date(proposal.refusal.at * 1000);
   return (

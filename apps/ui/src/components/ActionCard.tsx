@@ -241,7 +241,7 @@ function RecordCard({ item, proposalLinks, toolDisplay, manifests, currentUserId
             data-testid={outcome || refused ? 'outcome-kind' : undefined}
             className={`status-badge ${outcome ? OUTCOME_CLASS[outcome.kind] : refused ? OUTCOME_CLASS.REFUSED : STATUS_CLASS[status]}`}
           >
-            {outcome ? outcome.kind : refused ? 'Not run' : STATUS_LABEL[status]}
+            {outcome ? outcome.kind : refused ? refused.kind : STATUS_LABEL[status]}
           </span>
           <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
             {formatTimestamp(item.sortTimestamp)}
@@ -275,7 +275,7 @@ function RecordCard({ item, proposalLinks, toolDisplay, manifests, currentUserId
       {/* 2026-10-12 fix — the Authority Server's own terminal refusal
           (a bound exceeded after approval). Backend truth, straight off
           `proposal.refusal` — never EXECUTED for this. */}
-      {refused && isProposal && <RefusalResult proposal={item.proposal} />}
+      {refused && isProposal && <RefusalResult proposal={item.proposal} manifests={manifests} />}
 
       {destructive && (
         <div className="note-attention" style={{

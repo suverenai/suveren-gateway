@@ -1,12 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import type { AgentProfile } from '@hap/core';
-import { refusalSentence, sharedLimitLabel, sharedLimitHelper, cumulativeBound } from './limit-words';
+import { refusalSentence, sharedLimitLabel, sharedLimitHelper, cumulativeBound, limitWordsForTool, limitWordsForProfile } from './limit-words';
+
+// Words come from a manifest, keyed by bound key (never from the profile).
+const WORDS = { box_daily_max: { noun: 'emails', pastParticiple: 'sent' }, bills_monthly_max: { noun: 'bills', pastParticiple: 'issued' } };
 
 const profile = (fields: Record<string, unknown>) => ({ boundsSchema: { keyOrder: [], fields } }) as unknown as AgentProfile;
 
 // Three profiles, all invented for the test: none of the code under test knows their names.
 const WITH_WORDS = profile({
-  box_daily_max: { displayName: 'Daily box limit', unit: 'count', noun: 'emails', pastParticiple: 'sent', appliesTo: ['send'], boundType: { kind: 'cumulative_count', window: 'daily' } },
+  box_daily_max: { displayName: 'Daily box limit', unit: 'count', appliesTo: ['send'], boundType: { kind: 'cumulative_count', window: 'daily' } },
   per_box_max: { displayName: 'Per box', unit: 'count', boundType: { kind: 'per_transaction', of: 'n' } },
 });
 const NO_WORDS = profile({
@@ -14,13 +17,13 @@ const NO_WORDS = profile({
 });
 const MONEY = profile({
   total_monthly_max: { displayName: 'Billed per month', unit: 'currency:EUR', appliesTo: ['bill'], boundType: { kind: 'cumulative_sum', of: 'net', window: 'monthly' } },
-  bills_monthly_max: { displayName: 'Bills per month', unit: 'count', noun: 'bills', pastParticiple: 'issued', appliesTo: ['bill'], boundType: { kind: 'cumulative_count', window: 'monthly' } },
+  bills_monthly_max: { displayName: 'Bills per month', unit: 'count', appliesTo: ['bill'], boundType: { kind: 'cumulative_count', window: 'monthly' } },
   net_max: { displayName: 'Max net', unit: 'currency:EUR', boundType: { kind: 'per_transaction', of: 'net' } },
 });
 
 describe('refusalSentence (wording A)', () => {
   it('uses the profile\'s noun and verb for a counted daily limit', () => {
-    const r = refusalSentence({ code: 'CUMULATIVE_LIMIT_EXCEEDED', message: 'x', field: 'box_daily_max', expected: 5, actual: 6 }, WITH_WORDS);
+    const r = refusalSentence({ code: 'CUMULATIVE_LIMIT_EXCEEDED', message: 'x', field: 'box_daily_max', expected: 5, actual: 6 }, WITH_WORDS, WORDS);
     expect(r).toEqual({ text: 'Not sent. The daily limit is used up: 5 of 5 emails today.', basis: 'data' });
   });
   it('is still true without a noun or verb in the profile', () => {
@@ -28,7 +31,7 @@ describe('refusalSentence (wording A)', () => {
     expect(r.text).toBe('Not done. The weekly limit is used up: 3 of 3 this week.');
   });
   it('takes another area\'s noun, verb and window from that profile', () => {
-    const r = refusalSentence({ code: 'CUMULATIVE_LIMIT_EXCEEDED', message: 'x', field: 'bills_monthly_max', expected: 10, actual: 11 }, MONEY);
+    const r = refusalSentence({ code: 'CUMULATIVE_LIMIT_EXCEEDED', message: 'x', field: 'bills_monthly_max', expected: 10, actual: 11 }, MONEY, WORDS);
     expect(r.text).toBe('Not issued. The monthly limit is used up: 10 of 10 bills this month.');
   });
   it('says what would have been reached for a summed limit', () => {
@@ -63,7 +66,7 @@ describe('refusalSentence (wording A)', () => {
 
 describe('sharedLimitLabel (wording B)', () => {
   it('reads "Team limit per day (3 of 5 used)" in a team', () => {
-    const l = sharedLimitLabel({ profile: WITH_WORDS, key: 'box_daily_max', team: true, used: 3, limit: 5 })!;
+    const l = sharedLimitLabel({ profile: WITH_WORDS, key: 'box_daily_max', team: true, used: 3, usedIsTeamWide: true, limit: 5 })!;
     expect(l.text).toBe('Team limit per day (3 of 5 used)');
     expect(l.name).toBe('Team limit per day');
     expect(l.figures).toBe('3 of 5 used');
@@ -74,16 +77,24 @@ describe('sharedLimitLabel (wording B)', () => {
   it('follows the window of the bound', () => {
     expect(sharedLimitLabel({ profile: NO_WORDS, key: 'thing_weekly_max', team: true })!.name).toBe('Team limit per week');
   });
+  it('in a team, never shows a count that is only this account\'s own', () => {
+    const l = sharedLimitLabel({ profile: WITH_WORDS, key: 'box_daily_max', team: true, used: 3, limit: 5 })!;
+    expect(l.figures).toBeUndefined();
+    expect(l.text).toBe('Team limit per day');
+  });
+  it('in a personal workspace the account\'s own count is the whole count', () => {
+    expect(sharedLimitLabel({ profile: WITH_WORDS, key: 'box_daily_max', team: false, used: 3, limit: 5 })!.text).toBe('Limit per day (3 of 5 used)');
+  });
   it('leaves the brackets out when the figures cannot be proven', () => {
     const l = sharedLimitLabel({ profile: WITH_WORDS, key: 'box_daily_max', team: true, limit: 5 })!;
     expect(l.text).toBe('Team limit per day');
     expect(l.figures).toBeUndefined();
   });
   it('leaves the brackets out while the form value is empty', () => {
-    expect(sharedLimitLabel({ profile: WITH_WORDS, key: 'box_daily_max', team: true, used: 3, limit: '' })!.figures).toBeUndefined();
+    expect(sharedLimitLabel({ profile: WITH_WORDS, key: 'box_daily_max', team: true, used: 3, usedIsTeamWide: true, limit: '' })!.figures).toBeUndefined();
   });
   it('shows money with its unit, and keeps the field name when two limits share a window', () => {
-    const l = sharedLimitLabel({ profile: MONEY, key: 'total_monthly_max', team: true, used: 1200, limit: 5000 })!;
+    const l = sharedLimitLabel({ profile: MONEY, key: 'total_monthly_max', team: true, used: 1200, usedIsTeamWide: true, limit: 5000 })!;
     expect(l.text).toBe('Team limit per month · Billed per month (1,200 EUR of 5,000 EUR used)');
   });
   it('does not add the field name when the other limit governs a different action', () => {
@@ -98,8 +109,25 @@ describe('sharedLimitLabel (wording B)', () => {
     expect(cumulativeBound(WITH_WORDS, 'missing')).toBeNull();
   });
   it('the helper line names the thing only when the profile does, and only in a team', () => {
-    expect(sharedLimitHelper(cumulativeBound(WITH_WORDS, 'box_daily_max')!, true)).toBe("Every colleague's emails count toward this one number.");
+    expect(sharedLimitHelper(cumulativeBound(WITH_WORDS, 'box_daily_max')!, true, WORDS)).toBe("Every colleague's emails count toward this one number.");
     expect(sharedLimitHelper(cumulativeBound(NO_WORDS, 'thing_weekly_max')!, true)).toBe('Everyone on the team counts toward this one number.');
     expect(sharedLimitHelper(cumulativeBound(WITH_WORDS, 'box_daily_max')!, false)).toBeNull();
+  });
+});
+
+describe('limit words from the manifest', () => {
+  const manifests = [{ id: 'mail', profile: 'email', limitWords: WORDS }, { id: 'other', profile: 'email' }];
+  it('finds them by the tool\'s connector', () => {
+    expect(limitWordsForTool(manifests, 'mail__send_message')).toBe(WORDS);
+    expect(limitWordsForTool(manifests, 'other__x')).toBeUndefined();
+    expect(limitWordsForTool(undefined, 'mail__x')).toBeUndefined();
+  });
+  it('finds them by profile for the form, from any version id', () => {
+    expect(limitWordsForProfile(manifests, 'github.com/x/hap-profiles/email@0.10')).toEqual(WORDS);
+    expect(limitWordsForProfile(manifests, 'sales@0.4')).toBeUndefined();
+  });
+  it('a bound with no words still gets the plain sentence', () => {
+    expect(refusalSentence({ code: 'CUMULATIVE_LIMIT_EXCEEDED', message: 'm', field: 'box_daily_max', expected: 5, actual: 6 }, WITH_WORDS, {}).text)
+      .toBe('Not done. The daily limit is used up: 5 of 5 today.');
   });
 });
