@@ -6,7 +6,7 @@
   "icon": "mail",
   "profile": "email",
   "npmPackage": "@humanagencyp/email-mcp",
-  "npmVersion": "0.5.0",
+  "npmVersion": "0.5.1",
   "readPolicy": {
     "defaultAgeDays": 30
   },
