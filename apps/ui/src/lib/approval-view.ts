@@ -15,6 +15,7 @@
  */
 import type { AgentProfile } from '@hap/core';
 import { formatUnit } from './bound-format';
+import { isAttachmentSourceField, formatAttachmentSources, type SourceManifestLike } from './attachment-sources';
 import type { IntegrationManifest } from './sp-client';
 
 export type ApprovalViewKind = 'text' | 'markdown' | 'list' | 'money' | 'profile' | 'profile-limits' | 'profile-scope';
@@ -195,10 +196,11 @@ export function profileFieldLines(
   value: unknown,
   profile: AgentProfile | null,
   which: 'limits' | 'scope',
+  manifests?: SourceManifestLike[],
 ): FieldLine[] {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
   const schema = which === 'limits' ? profile?.boundsSchema : profile?.scopeSchema;
-  const fields = (schema?.fields ?? {}) as Record<string, { displayName?: string; description?: string; unit?: string }>;
+  const fields = (schema?.fields ?? {}) as Record<string, { displayName?: string; description?: string; unit?: string; format?: string }>;
   const order = [...new Set([...(schema?.keyOrder ?? []), ...Object.keys(value as object)])];
   const lines: FieldLine[] = [];
   for (const key of order) {
@@ -206,7 +208,9 @@ export function profileFieldLines(
     const raw = (value as Record<string, unknown>)[key];
     const f = fields[key];
     const unit = formatUnit(f?.unit);
-    const shown = Array.isArray(raw) ? raw.join(', ') : String(raw);
+    const shown = isAttachmentSourceField(f)
+      ? (formatAttachmentSources(Array.isArray(raw) ? raw.join(',') : String(raw), manifests) || 'None: text only')
+      : Array.isArray(raw) ? raw.join(', ') : String(raw);
     lines.push({
       key,
       label: f?.displayName ?? humanizeKey(key),

@@ -133,3 +133,16 @@ describe('attachmentSameFileCheck', () => {
     expect(attachmentSameFileCheck(LABEL, { status: 'error', message: 'x' })).toBeNull();
   });
 });
+
+describe('sealed warnings', () => {
+  const base = { connector: 'documents', kind: 'file', id: '7', filename: 'a.pdf', contentType: 'application/pdf', sha256: 'ab'.repeat(32), bytes: 10 };
+  it('keeps connector warnings that are strings, drops everything else', () => {
+    const r = extractAttachmentsSealed({ _attachmentsSealed: { attachments: [{ ...base, warnings: ['Has a form.', 5, '', null] }], inserts: [] } });
+    expect(r.attachments[0].warnings).toEqual(['Has a form.']);
+  });
+  it('leaves no warnings key when there are none', () => {
+    const r = extractAttachmentsSealed({ _attachmentsSealed: { attachments: [{ ...base, warnings: 'nope' }, { ...base, id: '8' }], inserts: [] } });
+    expect('warnings' in r.attachments[0]).toBe(false);
+    expect('warnings' in r.attachments[1]).toBe(false);
+  });
+});

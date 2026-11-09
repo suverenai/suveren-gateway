@@ -20,7 +20,9 @@
  * checking emptiness itself.
  */
 import { useEffect, useState } from 'react';
-import { DocumentPreviewBox } from './DocumentPreviewBox';
+import { DocumentPreviewBox, DocumentWarnings } from './DocumentPreviewBox';
+import { cleanDisplayText } from '../lib/attachment-media';
+import { isAiSuppliedFileName } from '../lib/attachment-sources';
 import {
   humanFileSize,
   documentLabel,
@@ -60,6 +62,16 @@ function AttachmentBox({ a, manifests, preview }: {
 }) {
   const systemName = systemDisplayName(a.connector, manifests);
   const label = documentLabel(manifests, a.connector, a.kind, a.id);
+  // Connector warnings: system data. Sealed ones first, then any the live read adds; never AI text.
+  const warnings = [...new Set([
+    ...(a.warnings ?? []),
+    ...(preview && preview !== 'loading' && preview.status === 'ok' ? preview.warnings ?? [] : []),
+  ])];
+  // The one labelled exception to "no AI text reaches the approver": the file
+  // name, when the manifest says the AI supplied it. Amber = the AI's own claim.
+  const filenameNote = isAiSuppliedFileName(manifests, a.connector, a.kind)
+    ? <span className="src-tag src-tag-ai filename-ai-tag" data-testid="filename-ai">file name given by the AI</span>
+    : undefined;
   const sourceLine = (
     <>
       <span className="src-tag-value src-tag-system-cell">from {systemName}</span>
@@ -74,6 +86,10 @@ function AttachmentBox({ a, manifests, preview }: {
         heading="Attachment"
         sourceLine={sourceLine}
         trailingNote={null}
+        sealedSha256={a.sha256}
+        filenameNote={filenameNote}
+        warnings={warnings}
+        systemName={systemName}
       />
     );
   }
@@ -86,7 +102,8 @@ function AttachmentBox({ a, manifests, preview }: {
     <div className="document-preview-box" data-testid="attachment-sealed">
       <h4>Attachment</h4>
       <div className="document-preview-meta">
-        <div className="document-preview-filename">{a.filename}</div>
+        <div className="document-preview-filename">{cleanDisplayText(a.filename)}</div>
+        {filenameNote && <div className="preview-note">{filenameNote}</div>}
         <div className="preview-note">{humanFileSize(a.bytes)}</div>
         <div className="preview-note">{sourceLine}</div>
         <div className="preview-note">
@@ -103,6 +120,7 @@ function AttachmentBox({ a, manifests, preview }: {
           <div className="preview-note">Preview not available.</div>
         )}
       </div>
+      <DocumentWarnings warnings={warnings} systemName={systemName} />
     </div>
   );
 }

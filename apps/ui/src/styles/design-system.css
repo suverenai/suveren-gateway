@@ -3954,6 +3954,17 @@ body.is-updating .simulation-banner {
 .document-preview-box h4 { font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-tertiary); margin-bottom: 0.5rem; }
 .document-preview-body { display: flex; gap: var(--space-4); align-items: flex-start; }
 .document-preview-frame { width: 9.5rem; height: 12.5rem; flex-shrink: 0; border: 1px solid var(--border-strong); border-radius: 0.25rem; box-shadow: var(--elevation-1); background: var(--bg-elevated); }
+/* Attachment media (images, video, text): stacked, tokens only. Every file is
+   shown through <img>/<video>/<pre> — never as markup, never inline SVG. */
+.document-preview-body-stacked { flex-direction: column; }
+.document-preview-media { display: block; max-width: 100%; max-height: 20rem; width: auto; height: auto; object-fit: contain; border: 1px solid var(--border-strong); border-radius: var(--radius-xs); background: var(--bg-sunken); }
+video.document-preview-media { width: 100%; }
+.document-preview-text { margin: 0; width: 100%; box-sizing: border-box; max-height: 16rem; overflow: auto; padding: var(--space-3); border: 1px solid var(--border-strong); border-radius: var(--radius-xs); background: var(--bg-sunken); color: var(--text-primary); font-family: var(--font-mono); font-size: var(--text-caption); line-height: var(--line-normal); white-space: pre-wrap; overflow-wrap: anywhere; }
+.src-tag.filename-ai-tag { text-transform: none; letter-spacing: 0; margin-left: 0; font-size: var(--text-caption); font-weight: 600; }
+/* Connector warnings: from the system (blue), same as other system data. */
+.document-warnings { margin-top: var(--space-3); padding: var(--space-2) var(--space-3); border-left: 3px solid var(--prov-system); background: var(--prov-system-subtle); border-radius: var(--radius-xs); }
+.document-warnings-head { font-size: var(--text-micro); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--prov-system); margin-bottom: var(--space-1); }
+.document-warnings ul { margin: 0; padding-left: var(--space-4); color: var(--prov-system); font-weight: 600; font-size: var(--text-body-sm); }
 .document-preview-meta { font-size: var(--text-body-sm); min-width: 0; }
 .document-preview-filename { font-weight: 600; color: var(--text-primary); margin-bottom: 0.2rem; }
 .document-preview-meta .preview-note { margin: 0.15rem 0; }
@@ -5064,3 +5075,15 @@ body.apr-has-strip .main-content { margin-right: 2.75rem; }
 .is-quiet .obj-line, .is-quiet .ob-one, .is-quiet .ob-check:not(.ob-check-x) { display: none; }
 .is-quiet .ob-title { font-size: var(--text-body-sm); font-weight: 400; color: var(--text-tertiary); }
 .ticket-row-time { flex: none; font-size: var(--text-body-sm); color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
+
+/* ─── Attachment source picker (mandate form; mockup temp/attachment-selector-mockup) ─── */
+.attach-src-title { margin: 0 0 var(--space-1); font-size: var(--text-body); font-weight: 600; color: var(--text-primary); }
+.attach-src-note { margin: 0 0 var(--space-3); font-size: var(--text-body-sm); color: var(--text-secondary); }
+.attach-src-group { margin-top: var(--space-3); }
+.attach-src-group h4 { margin: 0 0 var(--space-1); font-size: var(--text-caption); font-weight: 600; color: var(--text-secondary); }
+.attach-src-opt { display: flex; gap: var(--space-3); align-items: flex-start; padding: var(--space-2) 0; cursor: pointer; font-size: var(--text-body-sm); color: var(--text-primary); }
+.attach-src-opt input { margin-top: 0.2rem; width: 1.05rem; height: 1.05rem; accent-color: var(--text-primary); flex: none; }
+.attach-src-opt small { display: block; font-size: var(--text-caption); color: var(--text-secondary); }
+.attach-src-off { cursor: default; color: var(--text-muted); }
+.attach-src-off small { color: var(--text-muted); }
+.attach-src-status { margin-left: auto; font-size: var(--text-caption); color: var(--text-muted); white-space: nowrap; }

@@ -15,7 +15,7 @@ import { actionLabel } from '../lib/receipt-summary';
 import { isToday, ticketTime } from '../lib/core-objects';
 import { EmptyState } from '../components/EmptyState';
 import { ExtendAuthModal } from '../components/ExtendAuthModal';
-import { formatScopeValue } from '../lib/scope-labels';
+import { formatScopeFieldValue } from '../lib/scope-labels';
 import { useVisiblePolling } from '../hooks/useVisiblePolling';
 import { useSSEEvent } from '../contexts/EventSourceContext';
 import { getAuthStatus, getAuthView, isArchivable, isArchived, statusTimestamp, type AuthStatusOptions, type AuthView } from '../lib/auth-status';
@@ -331,7 +331,7 @@ function AuthCard({
                   <dt>Scope</dt>
                   <dd>
                     {Object.entries(gateEntry.context).map(([k, v]) => (
-                      <div key={k} title={String(v)}>{formatScopeValue(k, v, gateEntry.contextLabels)}</div>
+                      <div key={k} title={String(v)}>{formatScopeFieldValue(k, v, profile?.scopeSchema?.fields?.[k], manifests, gateEntry.contextLabels)}</div>
                     ))}
                   </dd>
                 </>
