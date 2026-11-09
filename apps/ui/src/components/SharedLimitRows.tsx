@@ -9,6 +9,7 @@
 import type { AgentProfile } from '@hap/core';
 import { useMandateReceipts, usedTodayNumbers } from '../lib/mandate-card-usage';
 import { cumulativeBounds, sharedLimitLabel } from '../lib/limit-words';
+import { useCumulativeUsage, usageEntryFor } from '../lib/cumulative-usage';
 import { useAuth } from '../contexts/AuthContext';
 
 export function SharedLimitRows({ authorizationId, bounds, profile, actionType, style }: {
@@ -20,6 +21,7 @@ export function SharedLimitRows({ authorizationId, bounds, profile, actionType, 
 }) {
   const { mode } = useAuth();
   const res = useMandateReceipts();
+  const server = useCumulativeUsage(authorizationId);
   if (!bounds || !profile) return null;
   const governing = cumulativeBounds(profile).filter((b) =>
     b.key in bounds && (!b.appliesTo || (actionType !== undefined && b.appliesTo.includes(actionType))));
@@ -30,7 +32,14 @@ export function SharedLimitRows({ authorizationId, bounds, profile, actionType, 
   return (
     <dl className="av3-shared-limits" style={style} data-testid="shared-limits">
       {governing.map((b) => {
-        const label = sharedLimitLabel({ profile, key: b.key, team: mode === 'team', limit: bounds[b.key], used: used[b.key] })!;
+        // The server's team-wide count wins; without it a team shows no figure.
+        const entry = usageEntryFor(server, b.key, actionType);
+        const label = sharedLimitLabel({
+          profile, key: b.key, team: mode === 'team',
+          limit: entry?.limit ?? bounds[b.key],
+          used: entry ? entry.used : used[b.key],
+          usedIsTeamWide: !!entry,
+        })!;
         return (
           <div key={b.key} className="av3-shared-limit">
             <dt>{label.name}</dt>

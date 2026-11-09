@@ -11,6 +11,7 @@ import { DomainBadge } from '../components/DomainBadge';
 import { ObTypeLine, ObFold, ObLock, useFoldAccordion } from '../components/ObjectCard';
 import { COMMITMENT_REVIEW, COMMITMENT_AUTOMATIC } from '../lib/commitment-words';
 import { useMandateReceipts, usedTodayNumbers, ticketsUnder } from '../lib/mandate-card-usage';
+import { useCumulativeUsage, usageEntryFor } from '../lib/cumulative-usage';
 import { cumulativeBound, sharedLimitLabel } from '../lib/limit-words';
 import { actionLabel } from '../lib/receipt-summary';
 import { isToday, ticketTime } from '../lib/core-objects';
@@ -451,6 +452,7 @@ function MandateLimits({ item, boundsEntries, limitLines, limitLabel, limitValue
 }) {
   const res = useMandateReceipts();
   const { mode } = useAuth();
+  const server = useCumulativeUsage(item.authorization_id);
   const used = res.state === 'ok'
     ? usedTodayNumbers({
         receipts: res.receipts,
@@ -467,7 +469,16 @@ function MandateLimits({ item, boundsEntries, limitLines, limitLabel, limitValue
         const r = aboveCapByKey.get(k);
         // Any cumulative limit reads as the shared one: "Team limit per day", figures from the system.
         const shared = cumulativeBound(profile, k)
-          ? sharedLimitLabel({ profile, key: k, team: mode === 'team', limit: v as number | string, used: used[k] })
+          ? (() => {
+              // The server's team-wide count wins; without it a team shows no figure.
+              const entry = usageEntryFor(server, k);
+              return sharedLimitLabel({
+                profile, key: k, team: mode === 'team',
+                limit: entry?.limit ?? (v as number | string),
+                used: entry ? entry.used : used[k],
+                usedIsTeamWide: !!entry,
+              });
+            })()
           : null;
         return (
           <Fragment key={k}>

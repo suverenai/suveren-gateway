@@ -64,6 +64,17 @@ describe('refusalSentence (wording A)', () => {
   });
 });
 
+describe('refusalSentence with the facts the server recorded', () => {
+  const P = profile({ write_daily_max: { displayName: 'Writes per day', unit: 'count', appliesTo: ['write'], boundType: { kind: 'cumulative_count', window: 'daily' } } });
+  it('reads the example refusal as "2 of 2"', () => {
+    const r = refusalSentence({ code: 'CUMULATIVE_LIMIT_EXCEEDED', message: 'm', field: 'write_daily_max', expected: 2, actual: 3 }, P, { write_daily_max: { noun: 'writes', pastParticiple: 'done' } });
+    expect(r.text).toBe('Not done. The daily limit is used up: 2 of 2 writes today.');
+  });
+  it('a row written before the facts existed keeps the fallback', () => {
+    expect(refusalSentence({ code: 'CUMULATIVE_LIMIT_EXCEEDED', message: 'Cumulative daily count (3) exceeds write_daily_max=2' }, P).text).toBe('Not done. A shared limit is used up.');
+  });
+});
+
 describe('sharedLimitLabel (wording B)', () => {
   it('reads "Team limit per day (3 of 5 used)" in a team', () => {
     const l = sharedLimitLabel({ profile: WITH_WORDS, key: 'box_daily_max', team: true, used: 3, usedIsTeamWide: true, limit: 5 })!;

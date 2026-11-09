@@ -23,6 +23,7 @@ sc.getProfile = async () => profile;
 sc.getEnrichedAuthorizations = async () => [{ authorizationId: 'a1', bounds: { send_daily_max: 5, recipient_max: 3, read_access: 'unlimited' } }];
 sc.getMyReceiptsPage = async () => ({ receipts: [{ id: 't1', authorizationId: 'a1', profileId: profile.id, actionType: 'send', action: 'mail__send_message', timestamp: now - 600, executionContext: {}, cumulativeState: { daily: { count: 3, amount: 0 }, monthly: { count: 9, amount: 0 } } }], nextBefore: null });
 const manifests: any[] = [{ id: 'mail', profile: 'email', limitWords: withWords ? { send_daily_max: { noun: 'emails', pastParticiple: 'sent' } } : undefined }];
+sc.getAuthorizationUsage = async () => q.get('usage') === '0' ? null : [{ field: 'send_daily_max', action_type: 'send', kind: 'cumulative_count', window: 'daily', used: 3, limit: 5 }];
 sc.getLabelManifests = async () => manifests;
 sc.getIntegrationManifests = async () => ({ manifests, builtins: [] });
 const proposal: any = {

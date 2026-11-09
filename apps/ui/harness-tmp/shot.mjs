@@ -3,7 +3,7 @@ const out = '/Users/andreasschadauer/Development/HAP/temp/refusal-limit-mockup/b
 const b = await chromium.launch();
 const shots = [
   ['light', 'theme=light', 680], ['dark', 'theme=dark', 680], ['phone-390', 'theme=light', 390],
-  ['light-missing-data', 'theme=light&data=0&words=0', 680],
+  ['light-missing-data', 'theme=light&data=0&words=0&usage=0', 680],
 ];
 for (const [name, qs, w] of shots) {
   const p = await b.newPage({ viewport: { width: w, height: 900 }, deviceScaleFactor: 2 });
