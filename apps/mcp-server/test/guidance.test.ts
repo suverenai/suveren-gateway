@@ -181,7 +181,7 @@ describe('2. what is needed for a goal — the connector overview', () => {
     // Set up or not: Ledger needs a key (no settings saved), Files has only optional settings, Post needs a sign-in.
     expect(t).toMatch(/- Ledger \(Bookkeeping\) — not set up\. A person opens \*\*Connectors\*\*, the card \*\*Ledger\*\*, enters \*\*API key\*\*, presses \*\*Save & Encrypt\*\* \(the connector then starts by itself\)/);
     expect(t).toMatch(/- Post \(Send mail\) — not set up\..*presses \*\*Save & Encrypt\*\*, then \*\*Connect Post Account\*\* and follows the steps on the card to connect Google/);
-    expect(t).toMatch(/- Files \(Files kept on this computer\) — not set up\. A person opens \*\*Connectors\*\*, the card \*\*Files\*\*, enters \*\*Shared folder\*\* \(Full path of the folder your AI saves files into\) and presses \*\*Save & Encrypt\*\*/);
+    expect(t).toMatch(/- Files \(Files kept on this computer\) — not set up\. A person opens \*\*Connectors\*\*, the card \*\*Files\*\*, enters \*\*Shared folder\*\* \(Full path of the folder your AI saves files into\), presses \*\*Save & Encrypt\*\*/);
 
     expect(t).toContain('- Notes — running.');
   });
