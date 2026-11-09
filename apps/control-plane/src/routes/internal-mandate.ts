@@ -3,7 +3,9 @@
  * create a mandate for the signed-in person (simulation setup S8,
  * `setup__create_mandate`). Body: `{ dryRun: boolean, request: MandateRequest }`.
  *
- * - dryRun: validate only (rights, profile, limits, scope, mode, duration, intent)
+ * - dryRun: validate only (rights, profile, limits, scope, mode, duration, intent);
+ *   with `request.rightsOnly` only the rights (team authority gate) — the 422 then carries
+ *   a `code` (`profile_not_enabled` / `not_a_grantor`) so the gateway can name the next step
  *   — the tool calls this BEFORE a proposal exists, so a person is never asked to
  *   approve a mandate that could not be created;
  * - otherwise: create it, exactly as the sign page does (lib/mandate-ceremony.ts).
@@ -16,7 +18,7 @@
  */
 import { Router } from 'express';
 import { timingSafeEqual, randomUUID } from 'node:crypto';
-import { planMandate, createMandate, MandateRefused, type CeremonyDeps, type MandateRequest } from '../lib/mandate-ceremony';
+import { planMandate, createMandate, checkMandateRight, MandateRefused, type CeremonyDeps, type MandateRequest } from '../lib/mandate-ceremony';
 
 function secretMatches(provided: string | undefined, expected: string): boolean {
   if (!expected || !provided) return false;
@@ -42,6 +44,12 @@ export function createInternalMandateRouter(
     }
     const d: CeremonyDeps = { ...deps(), newAuthorizationId: () => `authz_${randomUUID()}` };
     try {
+      if (dryRun === true && (request as { rightsOnly?: unknown }).rightsOnly === true) {
+        // Only "may this person give a mandate for this profile here?" — no limits needed.
+        const r = await checkMandateRight(request, d);
+        res.json({ ok: true, groupName: r.groupName, profileId: r.profileId });
+        return;
+      }
       if (dryRun === true) {
         const plan = await planMandate(request, d);
         res.json({ ok: true, groupName: plan.groupName, profileId: plan.profile.id, mode: plan.mode, ttlSeconds: plan.ttlSeconds });
@@ -51,7 +59,7 @@ export function createInternalMandateRouter(
       res.json({ ok: true, authorizationId, profileId: plan.profile.id, groupName: plan.groupName, mode: plan.mode, ttlSeconds: plan.ttlSeconds });
     } catch (err) {
       if (err instanceof MandateRefused) {
-        res.status(422).json({ error: 'mandate_refused', message: err.message });
+        res.status(422).json({ error: 'mandate_refused', message: err.message, ...(err.code ? { code: err.code } : {}) });
         return;
       }
       console.error('[Control Plane] /internal/mandate failed:', err);

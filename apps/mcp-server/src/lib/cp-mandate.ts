@@ -11,6 +11,8 @@ export interface MandateResult {
   ok: boolean;
   /** Refusal or failure text, when !ok. */
   message?: string;
+  /** Why the control plane refused, when it said (`profile_not_enabled`, `not_a_grantor`). */
+  code?: string;
   authorizationId?: string;
   profileId?: string;
   groupName?: string;
@@ -30,7 +32,11 @@ export async function controlPlaneMandate(dryRun: boolean, request: Record<strin
     });
     const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     if (res.ok) return { ok: true, ...(body as Omit<MandateResult, 'ok'>) };
-    return { ok: false, message: typeof body.message === 'string' ? body.message : `control plane answered ${res.status}` };
+    return {
+      ok: false,
+      message: typeof body.message === 'string' ? body.message : `control plane answered ${res.status}`,
+      ...(typeof body.code === 'string' ? { code: body.code } : {}),
+    };
   } catch (err) {
     return { ok: false, message: `the control plane could not be reached (${err instanceof Error ? err.message : String(err)}).` };
   }
