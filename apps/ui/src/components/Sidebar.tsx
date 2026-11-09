@@ -1,3 +1,4 @@
+import { isNewTicket } from '../lib/core-objects';
 import { NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useState, useCallback, useEffect, useRef } from 'react';
@@ -16,7 +17,7 @@ export interface NavItem {
   /** The drawn, monochrome icon (UI spec §19.1). */
   icon: NavIconName;
   label: string;
-  statusKey?: 'integrations' | 'assistant' | 'authorizations' | 'proposals' | 'brief' | 'blocked' | 'report';
+  statusKey?: 'integrations' | 'assistant' | 'authorizations' | 'proposals' | 'brief' | 'blocked' | 'report' | 'tickets';
   teamOnly?: boolean;
   /** UI spec §12.1: 'core' = the unlabelled main group; 'setup' = the quieter group below. */
   group?: 'top' | 'core' | 'setup';
@@ -33,7 +34,7 @@ export const NAV_ITEMS: NavItem[] = [
   // at the level a buyer reads; routes keep their names.
   { to: '/approvals', icon: 'approvals', label: 'Approvals', statusKey: 'proposals', group: 'core' },
   { to: '/mandates', icon: 'mandates', label: 'Mandates', statusKey: 'authorizations', group: 'core', quietCount: true },
-  { to: '/tickets', icon: 'tickets', label: 'Tickets', group: 'core' },
+  { to: '/tickets', icon: 'tickets', label: 'Tickets', statusKey: 'tickets', group: 'core' },
   // A report is a result to read, not setup (reports mockup, 2026-10-16).
   { to: '/reports', icon: 'reports', label: 'Reports', statusKey: 'report', newLabel: true, group: 'core' },
   { to: '/blocked', icon: 'blocked', label: 'Blocked', statusKey: 'blocked', group: 'core' },
@@ -54,7 +55,7 @@ function useOtherNavStatus() {
 
   const poll = useCallback(async () => {
     try {
-      const [aiStatus, authData, proposalData, approverProposals, briefText, archivedIds, denials, lastSeenBlockedAt, reportData, lastSeenReportAt] = await Promise.all([
+      const [aiStatus, authData, proposalData, approverProposals, briefText, archivedIds, denials, lastSeenBlockedAt, reportData, lastSeenReportAt, ticketPage, lastSeenTicketsAt] = await Promise.all([
         spClient.getCredential('ai-config').catch(() => null),
         spClient.getMyAttestations().catch(() => null),
         spClient.getMyProposals(activeDomain).catch(() => null),
@@ -65,6 +66,8 @@ function useOtherNavStatus() {
         spClient.getLastSeenBlockedAt().catch(() => 0),
         spClient.getReport().catch(() => null),
         spClient.getLastSeenReportAt().catch(() => Number.POSITIVE_INFINITY),
+        spClient.getMyReceiptsPage({ limit: 200 }).catch(() => null),
+        spClient.getLastSeenTicketsAt().catch(() => Number.POSITIVE_INFINITY),
       ]);
 
       const next: Record<string, number> = {};
@@ -96,6 +99,9 @@ function useOtherNavStatus() {
       }
       // The one report: new since the Reports page was last opened.
       if (isNewReport(reportData?.report, lastSeenReportAt)) next.report = 1;
+      // Tickets issued since the Tickets page was last opened.
+      const newTickets = ticketPage ? ticketPage.receipts.filter(r => isNewTicket(r, lastSeenTicketsAt)).length : 0;
+      if (newTickets > 0) next.tickets = newTickets;
       setCounts(next);
     } catch {
       // ignore
@@ -114,6 +120,7 @@ function useOtherNavStatus() {
   // waiting on the 5-minute fallback poll below.
   useSSEEvent('denial-recorded', poll);
   useSSEEvent('report-written', poll);
+  useSSEEvent('ticket-recorded', poll);
   // Archive is a local flag (no SSE event): the Mandates page announces it.
   useEffect(() => {
     window.addEventListener('suveren:archived-changed', poll);
@@ -125,12 +132,14 @@ function useOtherNavStatus() {
   useEffect(() => {
     window.addEventListener('suveren:blocked-seen-changed', poll);
     window.addEventListener('suveren:report-seen-changed', poll);
+    window.addEventListener('suveren:tickets-seen-changed', poll);
     // The approvals page announces a decision the gateway has confirmed.
     window.addEventListener(APPROVALS_CHANGED_EVENT, poll);
     return () => {
       window.removeEventListener(APPROVALS_CHANGED_EVENT, poll);
       window.removeEventListener('suveren:blocked-seen-changed', poll);
       window.removeEventListener('suveren:report-seen-changed', poll);
+      window.removeEventListener('suveren:tickets-seen-changed', poll);
     };
   }, [poll]);
   // Fallback full-sync every 5min in case of missed events.
@@ -199,12 +208,16 @@ export function Sidebar() {
         return (
           <div key={group} className={`sidebar-${group}`}>
             {group === 'setup' && <><div className="sidebar-divider" /><div className="sidebar-group-label">Setup</div></>}
-            {/* §19.4 — the closed icon rail shows Setup as ONE icon (dot = something needs attention);
+            {/* §19.4 — the closed icon rail shows Setup as ONE icon (its number = what needs attention);
                 opening the rail (hover / focus) shows the group in full, as the wide nav always does. */}
             {group === 'setup' && (
               <span className={`sidebar-setup-rail${items.some(i => location.pathname.startsWith(i.to)) ? ' is-active' : ''}`} aria-hidden="true">
                 <NavIcon name="settings" />
-                {items.some(i => i.statusKey && counts[i.statusKey]) && <span className="nav-dot" />}
+                {(() => {
+                  const total = items.reduce((n, i) => n + (i.statusKey && !i.newLabel ? (counts[i.statusKey] ?? 0) : 0), 0);
+                  if (total > 0) return <span className="nav-count nav-count-setup" data-testid="nav-count-setup-rail">{total > 99 ? '99+' : total}</span>;
+                  return items.some(i => i.statusKey && counts[i.statusKey]) ? <span className="nav-dot" /> : null;
+                })()}
               </span>
             )}
             <ul className="sidebar-nav">
@@ -225,7 +238,7 @@ export function Sidebar() {
                             className={`nav-count${item.quietCount || group === 'setup' ? ' nav-count-setup' : ''}`}
                             data-testid={`nav-count-${item.statusKey}`}
                             title={item.statusKey === 'authorizations' ? 'Expired mandates' : undefined}
-                          >{count}</span>) : null}
+                          >{count > 99 ? '99+' : count}</span>) : null}
                     </NavLink>
                   </li>
                 );

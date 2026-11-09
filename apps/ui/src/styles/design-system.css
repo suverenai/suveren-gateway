@@ -4457,7 +4457,7 @@ body.is-updating .simulation-banner {
   .sidebar-item { position: relative; padding-left: 0.75rem; padding-right: 0.5rem; }
   .sidebar:not(:hover):not(:has(:focus-visible)) .sidebar-item > span[class*="nav-"],
   .sidebar:not(:hover):not(:has(:focus-visible)) .sidebar-item > span:not(.icon):not(.sidebar-label) {
-    position: absolute !important; top: 0.15rem; right: 0.2rem; margin: 0 !important; min-width: 0.9rem !important; height: 0.9rem !important; padding: 0 0.2rem !important; font-size: 0.55rem !important;
+    position: absolute !important; top: 0; right: 0.1rem; margin: 0 !important; min-width: 1.25rem !important; height: 1.25rem !important; padding: 0 0.3rem !important; font-size: 0.75rem !important; line-height: 1 !important; font-weight: 700 !important;
   }
 }
 
@@ -4895,10 +4895,10 @@ a.dash-row:hover, .dash-row:not([open]):hover { box-shadow: var(--elevation-2); 
   transition: transform 0.38s ease, left 0.15s ease, visibility 0s linear 0.38s;
 }
 .apr-panel.is-open { transform: none; visibility: visible; transition: transform 0.38s ease, left 0.15s ease; }
-/* The icon rail opens on hover or keyboard focus: the panel is PUSHED right by the nav's width (same 0.15s as the rail), never covered. */
+/* The icon rail opens on hover or keyboard focus: the panel is PUSHED right by the nav's width (same 0.15s as the rail), never covered, and keeps its own width: its right edge goes off screen. */
 @media (min-width: 480px) {
   body.apr-has-rail:has(.sidebar:hover) .apr-panel,
-  body.apr-has-rail:has(.sidebar :focus-visible) .apr-panel { left: 15rem; }
+  body.apr-has-rail:has(.sidebar :focus-visible) .apr-panel { left: 15rem; right: calc(var(--sidebar-width) - 15rem); }
 }
 /* Header: title left, Previous / "k of N" / Next CENTRED as real buttons, Later and the setting at the right edge. */
 .apr-head { flex: none; display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: var(--space-2) var(--space-3); min-height: 3.5rem; padding: var(--space-1) var(--space-4); }
@@ -4947,7 +4947,7 @@ body.apr-has-anim .main-content { transition: margin-left 0.38s ease; }
   body.apr-has-rail .sidebar-item { position: relative; padding-left: 0.75rem; padding-right: 0.5rem; }
   body.apr-has-rail .sidebar:not(:hover):not(:has(:focus-visible)) .sidebar-item > span[class*="nav-"],
   body.apr-has-rail .sidebar:not(:hover):not(:has(:focus-visible)) .sidebar-item > span:not(.icon):not(.sidebar-label) {
-    position: absolute !important; top: 0.15rem; right: 0.2rem; margin: 0 !important; min-width: 0.9rem !important; height: 0.9rem !important; padding: 0 0.2rem !important; font-size: 0.55rem !important;
+    position: absolute !important; top: 0; right: 0.1rem; margin: 0 !important; min-width: 1.25rem !important; height: 1.25rem !important; padding: 0 0.3rem !important; font-size: 0.75rem !important; line-height: 1 !important; font-weight: 700 !important;
   }
   body.apr-has-rail .sidebar:not(:hover):not(:has(:focus-visible)) .sidebar-setup .sidebar-nav,
   body.apr-has-rail .sidebar:not(:hover):not(:has(:focus-visible)) .sidebar-setup .sidebar-group-label { display: none; }
@@ -4958,10 +4958,6 @@ body.apr-has-anim .main-content { transition: margin-left 0.38s ease; }
   body.apr-has-rail .sidebar-setup-rail.is-active::before { content: ''; position: absolute; left: 0; top: 0.4rem; bottom: 0.4rem; width: 2px; border-radius: 2px; background: var(--text-primary); }
   body.apr-has-rail .sidebar-item.active::before { left: 0; }
   /* the dot replaces the count on Approvals */
-  body.apr-has-rail .sidebar:not(:hover):not(:has(:focus-visible)) .sidebar-item[href="/approvals"] > span[class*="nav-"] { display: none !important; }
-  body.apr-has-rail .sidebar:not(:hover):not(:has(:focus-visible)) .sidebar-item[href="/approvals"]::after {
-    content: ''; position: absolute; top: 0.35rem; right: 0.45rem; width: 0.5rem; height: 0.5rem; border-radius: var(--radius-circle); background: var(--neutral);
-  }
 }
 
 /* The strip: where the panel goes when sent away */
@@ -5014,3 +5010,57 @@ body.apr-has-strip .main-content { margin-right: 2.75rem; }
 .main-content .empty-state-icon { display: none; }
 .main-content .empty-state-text { margin-left: 0; margin-right: 0; margin-bottom: 0; }
 .main-content .av3-empty, .main-content .core-col-empty { margin-left: 0; }
+
+/* A read could not reach the server (ConnectionNotice). Floats, so the page does not jump when it comes and goes. */
+.connection-notice {
+  position: fixed;
+  left: 50%;
+  bottom: var(--space-4);
+  transform: translateX(-50%);
+  z-index: 2100;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  padding: var(--space-2) var(--space-4);
+  border-radius: 8px;
+  background: var(--text-primary);
+  color: var(--bg-elevated);
+  font-size: 14px;
+}
+.connection-notice-btn {
+  flex: none;
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 2px 10px;
+  cursor: pointer;
+}
+/* The icon rail opens: the page moves right and keeps its width; its right edge goes off screen (never covered, never reflowed). */
+@media (min-width: 480px) and (max-width: 1099px) {
+  .main-content { transition: transform 0.15s ease; }
+  body:has(.sidebar:hover), body:has(.sidebar :focus-visible) { overflow-x: clip; }
+  body:has(.sidebar:hover) .main-content, body:has(.sidebar :focus-visible) .main-content { transform: translateX(calc(15rem - var(--sidebar-width))); }
+}
+@media (prefers-reduced-motion: reduce) { .main-content { transition: none; } }
+
+/* The closed rail's Setup number reads as clearly as the others. */
+.sidebar-setup-rail .nav-count { position: absolute; top: -0.45rem; right: 0.1rem; min-width: 1.25rem; height: 1.25rem; padding: 0 0.3rem; font-size: 0.75rem; line-height: 1; font-weight: 700; background: var(--bg-elevated); color: var(--text-primary); box-shadow: inset 0 0 0 1.5px var(--text-primary); }
+
+/* Tickets by day: today in full, new ones marked by form; earlier days are one quiet line until opened. */
+.ticket-day { max-width: var(--box-max); }
+.ticket-day + .ticket-day { margin-top: var(--space-5); }
+.ticket-day-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: var(--space-2); color: var(--text-tertiary); font-size: var(--text-body-sm); font-weight: 500; }
+.ticket-day.is-today .ticket-day-head { color: var(--text-primary); font-size: var(--text-body); font-weight: 700; }
+.ticket-day-head small { font-size: var(--text-body-sm); font-weight: 400; color: var(--text-tertiary); }
+.ob-card.ticket-obj-card.is-new:not(.is-quiet) { box-shadow: var(--elevation-2), inset 4px 0 0 var(--text-primary); }
+.ob-type .ob-st-new { padding: 0 0.4rem; border-radius: var(--radius-sm); background: var(--btn-primary-bg); color: var(--btn-primary-fg); font-weight: 700; }
+.ob-card.ticket-obj-card.is-quiet { padding: var(--space-2) var(--space-4); background: transparent; box-shadow: none; border-radius: 0; border-bottom: 1px solid var(--border); }
+.ticket-day:not(.is-today) .ob-list { gap: 0; }
+.is-quiet .ticket-obj-head { display: flex; align-items: baseline; gap: var(--space-3); flex-direction: row-reverse; justify-content: space-between; width: 100%; }
+.is-quiet .obj-line, .is-quiet .ob-one, .is-quiet .ob-check:not(.ob-check-x) { display: none; }
+.is-quiet .ob-title { font-size: var(--text-body-sm); font-weight: 400; color: var(--text-tertiary); }
+.ticket-row-time { flex: none; font-size: var(--text-body-sm); color: var(--text-tertiary); font-variant-numeric: tabular-nums; }

@@ -98,6 +98,36 @@ export function isNewTicket(r: ExecutionReceipt, lastSeenMs: number): boolean {
   return r.timestamp * 1000 > lastSeenMs;
 }
 
+export interface TicketDay<T> {
+  key: string;
+  /** "Today", "Yesterday" or "Nov 6". */
+  label: string;
+  isToday: boolean;
+  tickets: T[];
+}
+
+/** Tickets by local calendar day, keeping their order (newest first on the Tickets page). */
+export function groupTicketsByDay<T extends { timestamp: number }>(tickets: readonly T[], nowMs: number): TicketDay<T>[] {
+  const dayKey = (d: Date) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+  const now = new Date(nowMs);
+  const today = dayKey(now);
+  const yesterday = dayKey(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1));
+  const days = new Map<string, TicketDay<T>>();
+  for (const t of tickets) {
+    const at = new Date(t.timestamp * 1000);
+    const key = dayKey(at);
+    let day = days.get(key);
+    if (!day) {
+      const label = key === today ? 'Today' : key === yesterday ? 'Yesterday'
+        : at.toLocaleDateString('en-US', { month: 'short', day: 'numeric', ...(at.getFullYear() === now.getFullYear() ? {} : { year: 'numeric' }) });
+      day = { key, label, isToday: key === today, tickets: [] };
+      days.set(key, day);
+    }
+    day.tickets.push(t);
+  }
+  return [...days.values()];
+}
+
 export interface AutomaticGroup {
   key: string;
   area: string;

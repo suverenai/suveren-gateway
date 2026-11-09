@@ -6,6 +6,7 @@
  * No cookies are used — the API key is stored in React state only.
  */
 
+import { isRetriableRead, unreachableRetry } from './unreachable-retry';
 import { queueDomains, mergeProposals } from './my-queue';
 import type { AttachmentPreviewResult } from './attachment-sealed';
 
@@ -1022,6 +1023,7 @@ class SPClient {
 
   clearApiKey(): void {
     this.apiKey = null;
+    unreachableRetry.cancelAll();
   }
 
   /**
@@ -1033,14 +1035,17 @@ class SPClient {
   }
 
   private async fetch(path: string, init?: RequestInit): Promise<Response> {
-    const res = await globalThis.fetch(path, {
+    const send = (signal?: AbortSignal) => globalThis.fetch(path, {
       ...init,
+      ...(signal ? { signal } : {}),
       headers: {
         'Content-Type': 'application/json',
         ...(this.apiKey ? { 'X-API-Key': this.apiKey } : {}),
         ...init?.headers,
       },
     });
+    // A call without init is a plain read: safe to try again (see unreachable-retry.ts). Writes are never repeated.
+    const res = init === undefined && isRetriableRead(path) ? await unreachableRetry.read(path, send) : await send();
     // A signed-in tab whose session the gateway no longer accepts — typically
     // after a restart, which locks the vault and sends no 'session-locked'
     // event. Without this every page shows its own wrong error (Integrations

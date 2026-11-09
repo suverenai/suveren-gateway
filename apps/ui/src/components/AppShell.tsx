@@ -10,6 +10,7 @@ import { TabBadge } from './TabBadge';
 import { DockBadgePrompt } from './DockBadgePrompt';
 import { ApprovalQueueProvider } from '../contexts/ApprovalQueueContext';
 import { ApprovalPanelHost } from './ApprovalPanelHost';
+import { ConnectionNotice } from './ConnectionNotice';
 
 export function AppShell() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -31,6 +32,7 @@ export function AppShell() {
           </div>
         </div>
         <ApprovalPanelHost />
+        <ConnectionNotice />
       </ApprovalQueueProvider>
     </IntegrationStatusProvider>
   );

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { AgentProfile } from '@hap/core';
 import type { ExecutionReceipt, IntegrationManifest } from './sp-client';
 import type { AreaCatalogEntry } from './area';
+import { groupTicketsByDay } from './core-objects';
 import {
   parseTicketFilter, matchesTicketFilter, areaName, ageLabel, waitingLabel, deadlineLabel,
   shortTicketId, isToday, groupAutomatic, mandatesAtWork, nearLimit,
@@ -162,5 +163,27 @@ describe('dashboard items carry the mandate name (UI spec §13.2)', () => {
     const [g] = groupAutomatic([receipt({})], { catalog, manifests, lastSeenMs: 0 });
     expect(g.area).toBe('Customers');
     expect(g.mandateTitle).toBeUndefined();
+  });
+});
+
+describe('groupTicketsByDay', () => {
+  const at = (y: number, m: number, d: number, h = 12) => ({ timestamp: new Date(y, m, d, h).getTime() / 1000 });
+  const now = new Date(2026, 10, 9, 10).getTime();
+
+  it('splits today, yesterday and older days and keeps the order', () => {
+    const a = at(2026, 10, 9, 9); const b = at(2026, 10, 9, 1); const c = at(2026, 10, 8); const d = at(2026, 10, 6);
+    const days = groupTicketsByDay([a, b, c, d], now);
+    expect(days.map((x) => x.label)).toEqual(['Today', 'Yesterday', 'Nov 6']);
+    expect(days[0].tickets).toEqual([a, b]);
+    expect(days.map((x) => x.isToday)).toEqual([true, false, false]);
+  });
+
+  it('names the year for a ticket from another year', () => {
+    expect(groupTicketsByDay([at(2025, 11, 30)], now)[0].label).toBe('Dec 30, 2025');
+  });
+
+  it('crosses a month boundary for yesterday', () => {
+    const firstOfMonth = new Date(2026, 11, 1, 10).getTime();
+    expect(groupTicketsByDay([at(2026, 10, 30)], firstOfMonth)[0].label).toBe('Yesterday');
   });
 });

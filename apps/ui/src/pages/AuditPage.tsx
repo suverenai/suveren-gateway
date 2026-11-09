@@ -16,7 +16,7 @@ import { AreaFilterPills, type AreaFilterOption } from '../components/AreaFilter
 import { useVisiblePolling } from '../hooks/useVisiblePolling';
 import { useAuth } from '../contexts/AuthContext';
 import { useSSEEvent } from '../contexts/EventSourceContext';
-import { parseTicketFilter, matchesTicketFilter, isNewTicket, TICKET_FILTERS, type TicketFilter } from '../lib/core-objects';
+import { parseTicketFilter, matchesTicketFilter, isNewTicket, groupTicketsByDay, TICKET_FILTERS, type TicketFilter } from '../lib/core-objects';
 import { useAreaCatalog } from '../lib/area-catalog';
 import { resolveAreaName, areaIcon, parseAreaFilter, matchesAreaFilter } from '../lib/area';
 import { shortProfileId } from '../lib/profile-identity';
@@ -179,7 +179,9 @@ export function AuditPage() {
     fetchReceipts();
     if (seenCutoff === null) return;
     if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
-    spClient.markTicketsSeen(Date.now()).catch(() => {});
+    spClient.markTicketsSeen(Date.now())
+      .then(() => { window.dispatchEvent(new Event('suveren:tickets-seen-changed')); })
+      .catch(() => {});
   }, [fetchReceipts, seenCutoff]);
   useSSEEvent('ticket-recorded', handleNewTicket);
 
@@ -193,6 +195,7 @@ export function AuditPage() {
         setSeenCutoff(previous);
         return spClient.markTicketsSeen(Date.now());
       })
+      .then(() => { window.dispatchEvent(new Event('suveren:tickets-seen-changed')); })
       .catch(() => setSeenCutoff(Number.POSITIVE_INFINITY));
   }, [loading]);
 
@@ -581,33 +584,42 @@ export function AuditPage() {
               ? `${receipts.length} ticket${receipts.length !== 1 ? 's' : ''}`
               : `${filtered.length} of ${receipts.length} tickets`}
           </div>
-          <div className="ob-list">
-            {filtered.map(receipt => {
-              const owner = receipt.userId ? userById[receipt.userId] : undefined;
-              return (
-                <div className="ob-list-item" key={receipt.id}>
-                  <ReceiptCard
-                    receipt={receipt}
-                    manifests={manifests}
-                    localAuth={receipt.authorizationId ? localAuths[receipt.authorizationId] : undefined}
-                    localUnavailable={localUnavailable}
-                    signature={signatures[receipt.id]}
-                    grantTitle={receipt.authorizationId ? grantTitles[receipt.authorizationId] : null}
-                    ownerLabel={
-                      viewTab === 'team' && receipt.userId
-                        ? (owner ? `${owner.name} (${owner.email})` : receipt.userId)
-                        : null
-                    }
-                    spUrl={spUrl}
-                    formatDate={formatDate}
-                    onOpenComplete={() => setOpenReceipt(receipt)}
-                    isNew={seenCutoff !== null && isNewTicket(receipt, seenCutoff)}
-                    defaultOpen={filtered.length === 1}
-                  />
-                </div>
-              );
-            })}
-          </div>
+          {groupTicketsByDay(filtered, Date.now()).map(day => (
+            <section key={day.key} className={`ticket-day${day.isToday ? ' is-today' : ''}`} data-testid="ticket-day">
+              <div className="ticket-day-head">
+                <span>{day.label}</span>
+                <small>{day.tickets.length} ticket{day.tickets.length !== 1 ? 's' : ''}</small>
+              </div>
+              <div className="ob-list">
+                {day.tickets.map(receipt => {
+                  const owner = receipt.userId ? userById[receipt.userId] : undefined;
+                  return (
+                    <div className="ob-list-item" key={receipt.id}>
+                      <ReceiptCard
+                        receipt={receipt}
+                        manifests={manifests}
+                        localAuth={receipt.authorizationId ? localAuths[receipt.authorizationId] : undefined}
+                        localUnavailable={localUnavailable}
+                        signature={signatures[receipt.id]}
+                        grantTitle={receipt.authorizationId ? grantTitles[receipt.authorizationId] : null}
+                        ownerLabel={
+                          viewTab === 'team' && receipt.userId
+                            ? (owner ? `${owner.name} (${owner.email})` : receipt.userId)
+                            : null
+                        }
+                        spUrl={spUrl}
+                        formatDate={formatDate}
+                        onOpenComplete={() => setOpenReceipt(receipt)}
+                        isNew={seenCutoff !== null && isNewTicket(receipt, seenCutoff)}
+                        defaultOpen={filtered.length === 1}
+                        quiet={!day.isToday}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          ))}
         </>
       )}
 

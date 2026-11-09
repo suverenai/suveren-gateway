@@ -68,6 +68,8 @@ interface Props {
   isNew?: boolean;
   /** Start opened — e.g. the only ticket, or a direct link. Default: a compact row. */
   defaultOpen?: boolean;
+  /** An earlier day: one quiet line until it is opened. */
+  quiet?: boolean;
 }
 
 export function ReceiptCard({
@@ -83,6 +85,7 @@ export function ReceiptCard({
   onOpenComplete,
   isNew = false,
   defaultOpen = false,
+  quiet = false,
 }: Props) {
   const profile = useProfile(receipt.profileId);
   const scope = scopeSummary(receipt, profile);
@@ -110,11 +113,12 @@ export function ReceiptCard({
 
   return (
     <div
-      className={`ob-card ticket-obj-card${isNew ? ' is-new' : ''}${open ? ' is-open' : ''}`}
+      className={`ob-card ticket-obj-card${isNew ? ' is-new' : ''}${open ? ' is-open' : ''}${quiet && !open ? ' is-quiet' : ''}`}
       data-new={isNew ? 'true' : 'false'}
       data-testid="ticket-card"
     >
       <button type="button" className="ob-head ticket-obj-head" aria-expanded={open} onClick={() => setOpen(o => !o)}>
+        {quiet && !open && <span className="ticket-row-time">{when}</span>}
         <ObTypeLine
           tag="Ticket"
           profileId={receipt.profileId}
@@ -125,7 +129,7 @@ export function ReceiptCard({
             when,
             <span className="ob-st" key="st">{wasReviewed(receipt) ? 'Approved' : 'Automatic'}</span>,
             testSetup ? 'Test setup' : null,
-            isNew ? <span className="ob-st" key="new" aria-label="new since your last visit">New</span> : null,
+            isNew ? <span className="ob-st ob-st-new" key="new" aria-label="new since your last visit">New</span> : null,
           ]}
         />
         {/* Headline: what happened, in words — "<Area> · <summary>" (§18.1). */}
