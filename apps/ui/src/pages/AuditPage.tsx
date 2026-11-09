@@ -179,7 +179,9 @@ export function AuditPage() {
     fetchReceipts();
     if (seenCutoff === null) return;
     if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
-    spClient.markTicketsSeen(Date.now()).catch(() => {});
+    spClient.markTicketsSeen(Date.now())
+      .then(() => { window.dispatchEvent(new Event('suveren:tickets-seen-changed')); })
+      .catch(() => {});
   }, [fetchReceipts, seenCutoff]);
   useSSEEvent('ticket-recorded', handleNewTicket);
 
@@ -193,6 +195,7 @@ export function AuditPage() {
         setSeenCutoff(previous);
         return spClient.markTicketsSeen(Date.now());
       })
+      .then(() => { window.dispatchEvent(new Event('suveren:tickets-seen-changed')); })
       .catch(() => setSeenCutoff(Number.POSITIVE_INFINITY));
   }, [loading]);
 
