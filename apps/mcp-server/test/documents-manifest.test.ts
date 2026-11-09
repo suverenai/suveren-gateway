@@ -6,6 +6,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { IntegrationManager } from '../src/lib/integration-manager';
 import { loadManifests, getManifest, invalidManifestDocumentsReason } from '../src/lib/manifest-loader';
 
 const ROOT = join(import.meta.dirname, '..', '..', '..');
@@ -27,6 +28,22 @@ describe('documents manifest', () => {
     expect(invalidManifestDocumentsReason(doc({ aiSupplied: 'yes' }))).toMatch(/aiSupplied/);
     expect(invalidManifestDocumentsReason(doc({ title: '' }))).toMatch(/title/);
     expect(invalidManifestDocumentsReason(doc({ aiSupplied: true, title: 'a', description: 'b' }))).toBeNull();
+  });
+
+  it('runs with simulation mode on and off (it touches only this computer)', () => {
+    const im = new IntegrationManager(new Map());
+    const prev = process.env.SUVEREN_SIMULATION;
+    try {
+      process.env.SUVEREN_SIMULATION = '1';
+      expect(im.modeBlock('documents')).toBeUndefined();
+      expect(im.isSimulationSafe('documents')).toBe(true);
+      // A real system stays blocked in simulation mode: the rule did not loosen for others.
+      expect(im.modeBlock('records')).toBe('simulation');
+      delete process.env.SUVEREN_SIMULATION;
+      expect(im.modeBlock('documents')).toBeUndefined();
+    } finally {
+      if (prev === undefined) delete process.env.SUVEREN_SIMULATION; else process.env.SUVEREN_SIMULATION = prev;
+    }
   });
 
   it('gates the tools on bounds the documents profile declares', () => {

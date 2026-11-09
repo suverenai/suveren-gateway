@@ -1084,6 +1084,8 @@ export class IntegrationManager {
   isSimulationSafe(id: string): boolean {
     const builtin = this.builtins.get(id);
     if (builtin) return builtin.def.simulation === true;
+    // A connector that touches only this computer is no real system.
+    if (getManifest(id)?.localOnly === true) return true;
     return connectorCurrentlySimulated(getManifest(id), this.serviceCredentials.get(id));
   }
 

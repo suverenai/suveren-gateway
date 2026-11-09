@@ -221,6 +221,13 @@ export interface IntegrationManifest {
    */
   documents?: ManifestDocuments;
   /**
+   * True for a connector that touches only this computer: its own store and a
+   * local folder, no outside system. It is not a "real system", so it runs in
+   * simulation mode too (IntegrationManager.isSimulationSafe) and has no
+   * simulated mode of its own, so it runs when simulation mode is off as well.
+   */
+  localOnly?: boolean;
+  /**
    * How THIS connector receives attachment bytes on an outgoing message —
    * see tool-gating-types.ts `AttachmentTransportConfig`. Declared once per
    * connector; a tool opts in by setting its own override's
@@ -1739,6 +1746,14 @@ export function loadManifests(integrationsDir?: string): number {
       const readGateReason = invalidManifestReadGateReason(manifest);
       if (readGateReason) {
         console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${readGateReason}`);
+        continue;
+      }
+      if (manifest.localOnly !== undefined && typeof manifest.localOnly !== 'boolean') {
+        console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): localOnly must be a boolean`);
+        continue;
+      }
+      if (manifest.localOnly === true && manifest.simulation) {
+        console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): localOnly and simulation exclude each other`);
         continue;
       }
       const documentsReason = invalidManifestDocumentsReason(manifest);
