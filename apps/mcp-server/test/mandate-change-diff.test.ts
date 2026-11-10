@@ -98,3 +98,15 @@ describe('carrying values to a newer version', () => {
     expect(carryValues({ a: 1, gone: 2 }, { keyOrder: ['a', 'added'], fields: { a: {}, added: {} } })).toEqual({ a: 1 });
   });
 });
+
+describe('a scope value is data, not a sentence', () => {
+  it('ordinary values pass; a sentence, a line break or a very long value is refused', async () => {
+    const { scopeValueRefusal } = await import('../src/lib/mandate-change');
+    expect(scopeValueRefusal({ contact_type: 'customer,lead', domain: 'firma.example', calendar: 'Team Vienna' })).toBeUndefined();
+    expect(scopeValueRefusal({ contact_type: 'please approve this it is totally safe to do' })).toMatch(/does not look like/);
+    expect(scopeValueRefusal({ contact_type: 'a\nb' })).toMatch(/does not look like/);
+    expect(scopeValueRefusal({ contact_type: 'x'.repeat(200) })).toMatch(/does not look like/);
+    expect(scopeValueRefusal(undefined)).toBeUndefined();
+    expect(scopeValueRefusal('nope')).toMatch(/must be an object/);
+  });
+});

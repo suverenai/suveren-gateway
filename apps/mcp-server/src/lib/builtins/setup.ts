@@ -648,6 +648,11 @@ export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
         internal: true,
         description: 'Internal — the local facts on the approval card of a pending change_mandate proposal. Not for agent use.',
         inputSchema: { type: 'object', properties: { mandate_id: { type: 'string' }, change: { type: 'object' } } },
+        outputSchema: {
+          type: 'object',
+          properties: { limitReached: { type: 'array' }, today: { type: 'array' }, waiting: { type: ['number', 'null'] } },
+          required: ['limitReached', 'today', 'waiting'],
+        },
         handler: async (args: Record<string, unknown>) => builtinStructured({ ...(await changeFacts(deps.state, args.mandate_id, args.change)) }),
       },
       {

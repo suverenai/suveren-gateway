@@ -75,6 +75,12 @@ function isSubset(def: FieldDef | undefined): boolean {
 }
 
 /** Higher number = more room: true for every numeric limit a profile declares today. */
+function asNumber(v: string | number | undefined): number | undefined {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : undefined;
+  if (typeof v === 'string' && v.trim() !== '' && Number.isFinite(Number(v))) return Number(v);
+  return undefined;
+}
+
 function numberTag(before: number, after: number): ChangeTag {
   return after > before ? 'More' : after < before ? 'Less' : 'Changed';
 }
@@ -88,7 +94,10 @@ function scalarRow(section: ChangeRow['section'], key: string, def: FieldDef | u
   const base = { section, field: key, label: fieldLabel(def, key), ...(unit ? { unit } : {}) };
   if (before === undefined) return { ...base, before: null, after: after ?? null, tag: 'New' };
   if (after === undefined) return { ...base, before, after: null, tag: 'Gone' };
-  const tag = typeof before === 'number' && typeof after === 'number' ? numberTag(before, after) : 'Changed';
+  // A limit with a numeric bound compares as numbers even when the form sent a string.
+  const [x, y] = [asNumber(before), asNumber(after)];
+  const numeric = !!def?.boundType && def.boundType.kind !== 'enum';
+  const tag = numeric && x !== undefined && y !== undefined ? numberTag(x, y) : 'Changed';
   return { ...base, before, after, tag };
 }
 
@@ -168,7 +177,7 @@ export function computeMandateDiff(input: DiffInput): MandateDiff {
         if (b[key] !== undefined) rows.push(scalarRow(section, key, def, b[key], undefined));
         continue;
       }
-      if (b[key] === a[key] || (isEmpty(b[key]) && isEmpty(a[key]))) {
+      if (String(b[key] ?? '') === String(a[key] ?? '')) {
         if (!isEmpty(a[key])) stays.push({ label: fieldLabel(def, key), value: valueText(key, def, a[key]) });
         continue;
       }

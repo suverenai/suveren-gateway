@@ -42,7 +42,7 @@ function buildManager() {
   return im;
 }
 
-const INTERNAL_TOOLS = ['setup__describe_mandate_proposal', 'setup__describe_brief_proposal'];
+const INTERNAL_TOOLS = ['setup__describe_mandate_proposal', 'setup__describe_brief_proposal', 'setup__describe_mandate_change'];
 
 describe('internal builtin tools (DL1) — never listed, never callable by an agent', () => {
   it('A. DiscoveredTool.internal is set for the two preview tools, and ONLY for them', () => {
