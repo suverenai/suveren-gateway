@@ -111,7 +111,6 @@ export function AuthorizePicker({ onDismiss, preselectProfileId }: Props) {
       groupId,
       groupName: group?.name ?? null,
       domain,
-      isTeam,
       // The AS's own discriminator (attest gates approvers on !group.isPersonal).
       // groupId is NOT a team signal — the personal workspace has one too.
       isPersonal: !!group?.isPersonal,

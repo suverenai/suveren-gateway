@@ -12,7 +12,8 @@ import { offeredCommitModes, settleCommitMode, toProtocolMode } from '../lib/com
 import { scopesOverlap } from '../lib/scope-overlap';
 import { formatScopeFieldValue } from '../lib/scope-labels';
 import { useSourceManifests } from '../lib/source-manifests';
-import { mandateRight } from '../lib/mandate-rights';
+import { encryptsIntent, mandateRight } from '../lib/mandate-rights';
+import { replacedRevokeProblem } from '../lib/mandate-replace';
 import { replacedOutcomeArgs, replacedWithdrawRoute } from '../lib/reject-outcome';
 import type { AgentProfile, AgentBoundsParams, AgentScopeParams } from '@hap/core';
 import { effectiveGrantors, type ProfileConfig } from '../lib/sp-client';
@@ -41,7 +42,6 @@ interface AuthData {
   groupId: string;
   groupName?: string;
   domain: string;
-  isTeam?: boolean;
   /** True when groupId is the auto-provisioned personal workspace — the same
    *  flag the AS uses to skip the approver requirement. Absent in snapshots
    *  written before this flag existed; treated as "team" (the safe side —
@@ -303,7 +303,7 @@ export function AgentReviewPage() {
       let approversFrozen: string[] | undefined;
       let intentDisclosureHash: string | undefined;
 
-      if (authData.isTeam) {
+      if (encryptsIntent(authData)) {
         const approverPubkeys = await spClient.getApproversPubkeys(
           authData.groupId,
           authData.profileId,
@@ -392,14 +392,16 @@ export function AgentReviewPage() {
       // per-ceremony identity keeps them independent). The resync drops the
       // revoked grant from the MCP cache immediately; enforcement doesn't
       // depend on it (receipts for revoked grants are refused server-side).
+      let revokeProblem = '';
       if (replacesId) {
         try {
           await spClient.revokeAttestation(replacesId, `Replaced by ${authorizationId} (edit)`);
           spClient.resyncGates().catch(() => {});
-        } catch {
-          // Old grant may already be revoked/expired — the new one is live
-          // either way; the Authorizations page still shows the old row for
-          // manual cleanup if this ever fails.
+        } catch (e) {
+          // After a reduction the old, wider mandate would stay live: the
+          // person must be told. Already revoked or expired is fine — the
+          // new one is live and nothing is left running.
+          revokeProblem = replacedRevokeProblem(e);
         }
       }
 
@@ -438,6 +440,11 @@ export function AgentReviewPage() {
       sessionStorage.removeItem('agentGate');
       sessionStorage.removeItem('agentEditReplaces');
       sessionStorage.removeItem('agentReplacesProposal');
+      if (revokeProblem) {
+        // Stay on the page: a mandate the person believes is replaced is still live.
+        setError(revokeProblem);
+        return;
+      }
       if (withdrawProblem) {
         // The mandate is live; only the AI's proposal is still open. Stay on
         // the page and say what to do instead of hiding it.
