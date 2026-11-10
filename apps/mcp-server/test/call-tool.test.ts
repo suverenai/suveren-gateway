@@ -37,7 +37,8 @@ vi.mock('../src/lib/tool-proxy', async (orig) => {
 });
 
 const { createMcpServer } = await import('../src/index');
-const { newToolsNote } = await import('../src/lib/change-notice');
+const { newToolsNote, SessionChangeNotice } = await import('../src/lib/change-notice');
+type Told = import('../src/lib/change-notice').Told;
 
 const tool = (name: string, over: Partial<DiscoveredTool> = {}): DiscoveredTool => ({
   originalName: name.split('__')[1],
@@ -207,5 +208,26 @@ describe('the change note names tools added since the chat started', () => {
     const names = Array.from({ length: 12 }, (_, i) => `mollie__T${i}`).concat(['mail__a']);
     expect(newToolsNote(names, false)).toBe('New tools are available since this chat started: 12 from mollie, 1 from mail. list-authorizations(domain) names them.');
     expect(newToolsNote([], true)).toBeUndefined();
+  });
+
+  it('a new session of an app that keeps its old list hears about tools added since it last connected', async () => {
+    // Codex opens a new session inside the same chat after a gateway restart, and keeps its list.
+    const store = new Map<string, Told>();
+    const ledger = { lastTold: (app: string) => store.get(app), record: (app: string, t: Told) => { store.set(app, t); } };
+    let tools = ['list-authorizations', 'call-tool'];
+    const session = () => {
+      const n = new SessionChangeNotice({ now: () => ({ brief: '', mandates: [] }), currentBrief: () => null, ledger, appName: () => 'keeps-its-list', listed: () => tools });
+      n.startListing();
+      return n;
+    };
+    const first = session();
+    expect(first.noteForAnswer()).toBeUndefined();
+    tools = [...tools, 'mail__send_message'];
+    // The old session never answered again; a new one starts with the longer list.
+    const second = session();
+    expect(second.noteForAnswer()).toBe('[Suveren gateway] New tools are available since this app last connected: mail__send_message. If they are not in your tool list, call them through call-tool(tool: "<name>", arguments: {...}). Or the person restarts the AI app, which then lists them.');
+    expect(second.noteForAnswer()).toBeUndefined();
+    // A third session of the same app, with nothing new, hears nothing.
+    expect(session().noteForAnswer()).toBeUndefined();
   });
 });

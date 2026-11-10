@@ -47,6 +47,8 @@ export interface Told {
   /** Hash of the brief, or '' when there is none. Never the text. */
   brief: string;
   mandates: MandateSeen[];
+  /** The tool names the AI has been offered, when known. Kept per app like the rest. */
+  tools?: string[];
 }
 
 const sha = (text: string): string => createHash('sha256').update(text).digest('hex').slice(0, 32);
@@ -75,6 +77,11 @@ export function currentTold(
 export function sameTold(a: Told, b: Told): boolean {
   if (a.brief !== b.brief || a.mandates.length !== b.mandates.length) return false;
   return a.mandates.every((m, i) => m.id === b.mandates[i].id && m.fingerprint === b.mandates[i].fingerprint);
+}
+
+function sameTools(a: string[] | undefined, b: string[] | undefined): boolean {
+  if (!a || !b) return a === b;
+  return a.length === b.length && [...a].sort().every((x, i) => x === [...b].sort()[i]);
 }
 
 export type SinceWhen = 'chat' | 'app';
@@ -174,7 +181,7 @@ export class ChangeLedger {
       const oldest = names.reduce((x, y) => (this.apps[x].at <= this.apps[y].at ? x : y));
       delete this.apps[oldest];
     }
-    if (!prev || !sameTold(prev, told)) this.persist();
+    if (!prev || !sameTold(prev, told) || !sameTools(prev.tools, told.tools)) this.persist();
   }
 
   private get plainPath(): string { return join(this.baseDir, 'change-ledger.json'); }
@@ -240,11 +247,11 @@ const MAX_TOOLS_NAMED = 10;
  * the AI never sees a tool added later (a connector that started, Setup signed). The first time,
  * the note also says how to reach them anyway.
  */
-export function newToolsNote(names: string[], firstTime: boolean): string | undefined {
+export function newToolsNote(names: string[], firstTime: boolean, when: SinceWhen = 'chat'): string | undefined {
   if (names.length === 0) return undefined;
   let what: string;
   if (names.length <= MAX_TOOLS_NAMED) {
-    what = `New tools are available since this chat started: ${names.join(', ')}.`;
+    what = `New tools are available ${since(when)}: ${names.join(', ')}.`;
   } else {
     const byConnector = new Map<string, number>();
     for (const n of names) {
@@ -252,7 +259,7 @@ export function newToolsNote(names: string[], firstTime: boolean): string | unde
       byConnector.set(c, (byConnector.get(c) ?? 0) + 1);
     }
     const parts = [...byConnector.entries()].map(([c, k]) => `${k} from ${c}`);
-    what = `New tools are available since this chat started: ${parts.join(', ')}. list-authorizations(domain) names them.`;
+    what = `New tools are available ${since(when)}: ${parts.join(', ')}. list-authorizations(domain) names them.`;
   }
   if (!firstTime) return what;
   return `${what} If they are not in your tool list, call them through ${CALL_TOOL}(tool: "<name>", arguments: {...}). Or the person restarts the AI app, which then lists them.`;
@@ -268,6 +275,7 @@ export class SessionChangeNotice {
   private when: SinceWhen = 'chat';
   /** Every tool name this chat has been offered; undefined until `startListing`. */
   private toolsTold: Set<string> | undefined;
+  private toolsWhen: SinceWhen = 'chat';
   private toolHintGiven = false;
 
   constructor(private deps: ChangeNoticeDeps) {
@@ -285,7 +293,8 @@ export class SessionChangeNotice {
     const now = this.deps.listed();
     const fresh = now.filter(n => !this.toolsTold!.has(n));
     for (const n of now) this.toolsTold.add(n);
-    const note = newToolsNote(fresh, !this.toolHintGiven);
+    const note = newToolsNote(fresh, !this.toolHintGiven, this.toolsWhen);
+    this.toolsWhen = 'chat';
     if (note) this.toolHintGiven = true;
     return note;
   }
@@ -301,13 +310,19 @@ export class SessionChangeNotice {
         this.told = last;
         this.when = 'app';
       }
+      // Tools too: an app that keeps its tool list across sessions (Codex after a gateway restart,
+      // ChatGPT) was last offered what it heard last, not what this session listed.
+      if (last?.tools && this.toolsTold && !sameTools(last.tools, [...this.toolsTold])) {
+        this.toolsTold = new Set(last.tools);
+        this.toolsWhen = 'app';
+      }
     }
     const now = this.deps.now();
     const changed = changeNote(this.told, now, this.when, this.deps.currentBrief());
     this.told = now;
     this.when = 'chat';
-    this.deps.ledger?.record(app, now);
     const tools = this.newTools();
+    this.deps.ledger?.record(app, this.toolsTold ? { ...now, tools: [...this.toolsTold].sort() } : now);
     if (!tools) return changed;
     return changed ? `${changed}\n\n${tools}` : `[Suveren gateway] ${tools}`;
   }
