@@ -280,3 +280,43 @@ describe('the web page signs through this module', () => {
     expect(deliverGateContent).not.toHaveBeenCalled();
   });
 });
+
+
+describe('replacing a mandate', () => {
+  const base: MandateRequest = { team: 'personal', profile: SALES.id, limits: LIMITS, scope: {}, intent: 'Because.', mode: 'review', replaces: 'authz_old' };
+
+  it('signs, delivers, then revokes the old one — in that order', async () => {
+    const { as, calls } = fakeAs();
+    const order: string[] = [];
+    const { d } = deps(async (m, p, b) => { order.push(p); return as(m, p, b); }, { deliverGateContent: vi.fn(async () => { order.push('deliver'); }) });
+    const r = await createMandate(base, d);
+    expect(r.revokeError).toBeUndefined();
+    expect(calls.find((c) => c.path === '/api/as/mandate')!.body.replaces).toBe('authz_old');
+    expect(order.indexOf('deliver')).toBeGreaterThan(order.indexOf('/api/as/mandate'));
+    expect(order.indexOf('/api/authorizations/authz_old/revoke')).toBeGreaterThan(order.indexOf('deliver'));
+  });
+
+  it('a failed revoke is reported, the new mandate stays', async () => {
+    const { as } = fakeAs();
+    const failing: CeremonyDeps['as'] = async (m, p, b) => (p.endsWith('/revoke') ? { status: 500, body: { error: 'database down' } } : as(m, p, b));
+    const { d } = deps(failing);
+    const r = await createMandate(base, d);
+    expect(r.authorizationId).toBe('authz_new');
+    expect(r.revokeError).toBe('database down');
+  });
+
+  it('an old mandate that was already revoked is not an error', async () => {
+    const { as } = fakeAs();
+    const gone: CeremonyDeps['as'] = async (m, p, b) => (p.endsWith('/revoke') ? { status: 409, body: { error: 'Already revoked' } } : as(m, p, b));
+    const { d } = deps(gone);
+    expect((await createMandate(base, d)).revokeError).toBeUndefined();
+  });
+
+  it('an undelivered new mandate is revoked and the old one is left alone', async () => {
+    const { as, calls } = fakeAs();
+    const { d } = deps(as, { deliverGateContent: vi.fn(async () => { throw new Error('mcp down'); }) });
+    await expect(createMandate(base, d)).rejects.toThrow(/revoked/);
+    const revoked = calls.filter((c) => c.path.endsWith('/revoke')).map((c) => c.path);
+    expect(revoked).toEqual(['/api/authorizations/authz_new/revoke']);
+  });
+});

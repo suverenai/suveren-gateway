@@ -2601,11 +2601,12 @@ class SPClient {
     ttlSeconds: number;
     title: string;
     discloseIdentity: boolean;
-  }): Promise<{ authorizationId: string }> {
+    replaces?: string;
+  }): Promise<{ authorizationId: string; revokeError?: string }> {
     const res = await this.fetch('/api/mandate/sign', { method: 'POST', body: JSON.stringify(request) });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(asErrorMessage(body, `Signing failed: ${res.status}`));
-    return body as { authorizationId: string };
+    return body as { authorizationId: string; revokeError?: string };
   }
 
   /** Extend a mandate: only its expiry moves. */

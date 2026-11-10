@@ -291,7 +291,7 @@ export function AgentReviewPage() {
       // The control plane runs the signing steps (hash, encrypt for the team's
       // approvers, Authority Server, deliver the intent) — the same code as the
       // AI path. A refusal arrives as an error with the reason.
-      const { authorizationId } = await spClient.signMandate({
+      const { authorizationId, revokeError } = await spClient.signMandate({
         team: authData.isPersonal ? 'personal' : authData.groupId,
         profile: authData.profileId,
         limits: gateData.bounds as Record<string, string | number>,
@@ -302,26 +302,12 @@ export function AgentReviewPage() {
         ttlSeconds,
         title: authTitle.trim(),
         discloseIdentity,
+        replaces: replacesId,
       });
 
-      // Edit flow: the new grant is signed AND delivered — retire the one it
-      // replaces. Order matters: revoke only after the replacement is fully
-      // live, so there is never a coverage gap (a brief twin overlap is safe —
-      // per-ceremony identity keeps them independent). The resync drops the
-      // revoked grant from the MCP cache immediately; enforcement doesn't
-      // depend on it (receipts for revoked grants are refused server-side).
-      let revokeProblem = '';
-      if (replacesId) {
-        try {
-          await spClient.revokeAttestation(replacesId, `Replaced by ${authorizationId} (edit)`);
-          spClient.resyncGates().catch(() => {});
-        } catch (e) {
-          // After a reduction the old, wider mandate would stay live: the
-          // person must be told. Already revoked or expired is fine — the
-          // new one is live and nothing is left running.
-          revokeProblem = replacedRevokeProblem(e);
-        }
-      }
+      // A failed revoke of the old mandate must be told, never swallowed
+      // (lib/mandate-ceremony.ts retires it only after the new one is delivered).
+      const revokeProblem = replacedRevokeProblem(revokeError);
 
       // DL6 "Edit before signing": the mandate is signed AND delivered —
       // withdraw the proposal it was opened from, so the two can never both

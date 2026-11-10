@@ -62,6 +62,8 @@ export interface MandateRequest {
   discloseIdentity?: boolean;
   /** Discovered display names per scope field (value → label). Local only, never signed. */
   contextLabels?: Record<string, Record<string, string>>;
+  /** Replace this mandate: after the new one is signed and delivered, it is revoked. */
+  replaces?: string;
 }
 
 export interface AsResponse { status: number; body: any }
@@ -89,6 +91,8 @@ export interface CeremonyDeps {
     path?: string;
   }) => Promise<void>;
   newAuthorizationId: () => string;
+  /** Drop a revoked mandate from the MCP server's list now rather than at next login. */
+  resyncGates?: () => Promise<unknown>;
 }
 
 /** Everything `create` needs, resolved and checked. */
@@ -296,8 +300,27 @@ export async function planMandate(req: MandateRequest, deps: CeremonyDeps): Prom
   };
 }
 
-/** Create the mandate the plan describes. Returns its authorization id. */
-export async function createMandate(req: MandateRequest, deps: CeremonyDeps): Promise<{ authorizationId: string; plan: MandatePlan }> {
+/**
+ * Retire a mandate after its replacement is signed AND delivered — never before,
+ * so a failed delivery can never leave the person with no mandate at all. Both are
+ * live for a moment: a brief overlap is safe, a gap is not. A failed revoke is
+ * returned, never swallowed: after a reduction the old, wider mandate stays live.
+ */
+async function retireReplaced(oldId: string, newId: string, deps: CeremonyDeps): Promise<{ revokeError?: string }> {
+  let res: AsResponse;
+  try {
+    res = await deps.as('POST', `/api/authorizations/${encodeURIComponent(oldId)}/revoke`, { reason: `Replaced by ${newId}` });
+  } catch (err) {
+    return { revokeError: err instanceof Error ? err.message : String(err) };
+  }
+  // Already revoked (409) is what was wanted.
+  if (res.status >= 300 && res.status !== 409) return { revokeError: readRefusal(res.body, `status ${res.status}`).message };
+  void deps.resyncGates?.().catch(() => {});
+  return {};
+}
+
+/** Create the mandate the plan describes (and retire the one it replaces). Returns its authorization id. */
+export async function createMandate(req: MandateRequest, deps: CeremonyDeps): Promise<{ authorizationId: string; plan: MandatePlan; revokeError?: string }> {
   const plan = await planMandate(req, deps);
   const user = deps.user!;
 
@@ -344,6 +367,7 @@ export async function createMandate(req: MandateRequest, deps: CeremonyDeps): Pr
     encrypted_keys: enc?.encryptedKeys,
     approvers_frozen: enc?.approversFrozen,
     intent_disclosure_hash: enc?.intentDisclosureHash,
+    ...(req.replaces ? { replaces: req.replaces } : {}),
     ...(req.discloseIdentity !== undefined ? { disclose_identity: req.discloseIdentity } : {}),
   });
   if (res.status >= 300) {
@@ -367,7 +391,8 @@ export async function createMandate(req: MandateRequest, deps: CeremonyDeps): Pr
     }).catch(() => {});
     refuse(`The mandate was signed but its intent could not be delivered to the gateway, so it was revoked. (${err instanceof Error ? err.message : String(err)})`);
   }
-  return { authorizationId, plan };
+  const retired = req.replaces ? await retireReplaced(req.replaces, authorizationId, deps) : {};
+  return { authorizationId, plan, ...retired };
 }
 
 export interface RenewRequest {

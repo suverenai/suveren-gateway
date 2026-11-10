@@ -697,6 +697,7 @@ const mandateCeremonyDeps = (): Omit<CeremonyDeps, 'newAuthorizationId'> => ({
   },
   encrypt: encryptIntentForRecipients,
   deliverGateContent: (args) => pushGateContent(args),
+  resyncGates: () => resyncGates(),
 });
 app.use('/internal', jsonParser, createInternalMandateRouter(() => internalSecret, mandateCeremonyDeps));
 

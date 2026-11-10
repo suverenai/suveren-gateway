@@ -23,8 +23,8 @@ export function createMandateRouter(deps: () => Omit<CeremonyDeps, 'newAuthoriza
     const request = (req.body ?? {}) as MandateRequest;
     try {
       const d: CeremonyDeps = { ...deps(), newAuthorizationId: () => `authz_${randomUUID()}` };
-      const { authorizationId } = await createMandate(request, d);
-      res.json({ ok: true, authorizationId });
+      const { authorizationId, revokeError } = await createMandate(request, d);
+      res.json({ ok: true, authorizationId, ...(revokeError ? { revokeError } : {}) });
     } catch (err) { answerRefusal(res, err); }
   });
   router.post('/renew', async (req, res) => {
