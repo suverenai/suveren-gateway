@@ -145,7 +145,8 @@ describe('buildMandateBrief', () => {
       process.env.SUVEREN_CP_PORT = '3500';
       const brief = buildMandateBrief({ authorizations: [], integrationManager: im });
       expect(brief).toContain('=== FIRST STEP ===');
-      expect(brief).toContain('Open the Suveren Gateway at http://localhost:3500');
+      expect(brief).toContain('They open the Suveren Gateway page themselves, in their own browser, outside this chat.');
+      expect(brief).not.toMatch(/https?:\/\/localhost/);
       expect(brief).toContain('card **Setup**');
       expect(brief).not.toContain('setup__get_guide first');
     });

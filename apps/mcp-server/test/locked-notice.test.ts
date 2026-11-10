@@ -37,7 +37,7 @@ describe('lockedNotice', () => {
 
   it('gives the exact fix: the URL and what to enter', () => {
     const notice = lockedNotice();
-    expect(notice).toContain('http://localhost:3400');
+    expect(notice).toContain('the Suveren Gateway page'); expect(notice).not.toMatch(/localhost/);
     expect(notice).toMatch(/API key/i);
   });
 
@@ -46,7 +46,7 @@ describe('lockedNotice', () => {
     process.env.SUVEREN_CP_PORT = '7400';
     try {
       // Sending someone to the wrong port is its own dead end.
-      expect(lockedNotice()).toContain('http://localhost:7400');
+      expect(lockedNotice()).toContain('the Suveren Gateway page'); expect(lockedNotice()).not.toMatch(/localhost/);
     } finally {
       if (prev === undefined) delete process.env.SUVEREN_CP_PORT;
       else process.env.SUVEREN_CP_PORT = prev;
@@ -58,7 +58,7 @@ describe('lockedNotice', () => {
     process.env.SUVEREN_UI_PORT = '3401';
     process.env.SUVEREN_CP_PORT = '3402';
     try {
-      expect(lockedNotice()).toContain('http://localhost:3401');
+      expect(lockedNotice()).toContain('the Suveren Gateway page'); expect(lockedNotice()).not.toMatch(/localhost/);
     } finally {
       if (prev.ui === undefined) delete process.env.SUVEREN_UI_PORT; else process.env.SUVEREN_UI_PORT = prev.ui;
       if (prev.cp === undefined) delete process.env.SUVEREN_CP_PORT; else process.env.SUVEREN_CP_PORT = prev.cp;
@@ -103,7 +103,7 @@ describe('lockedNotice(action, "expired")', () => {
   it('tells the agent to relay the fix, with the URL', () => {
     const notice = lockedNotice(undefined, 'expired');
     expect(notice).toContain('TELL THE USER');
-    expect(notice).toContain('http://localhost:3400');
+    expect(notice).toContain('the Suveren Gateway page'); expect(notice).not.toMatch(/localhost/);
     expect(notice).toMatch(/API key/i);
   });
 

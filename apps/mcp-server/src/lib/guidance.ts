@@ -122,10 +122,10 @@ function csv(value: unknown): string[] {
  * signed by a person on the page: an AI cannot propose it. `card` is the name
  * the page shows on the mandate that lets the AI prepare other mandates.
  */
-export function firstMandateText(opts: { url: string; card: string }): string {
+export function firstMandateText(opts: { card: string }): string {
   return [
     'No active mandate exists, so no tool works. An AI can never create the first one: a person signs it. This is the next step, whatever the person opens with. Lead them through it, one step at a time:',
-    `1. Open the Suveren Gateway at ${opts.url}. In the left menu choose **Mandates**, then **+ New mandate** (top right).`,
+    '1. They open the Suveren Gateway page themselves, in their own browser, outside this chat. In the left menu they choose **Mandates**, then **+ New mandate** (top right).',
     `2. Pick the card **${opts.card}** and press **Give a mandate**. Tell them why: they sign it once, and from then on they manage their mandates from this chat. They say what you should be able to do, you prepare the mandate, and they only approve it. (Instead, they can pick the card of the area they need and sign that mandate themselves.)`,
     '3. The form has three steps: **Scope & Limits**, **Intent**, **Sign**. In Scope & Limits they name the areas you may prepare mandates for, the modes you may propose (review = they approve every action; automatic = it runs within the limits) and how many proposals a day. In Intent they write, in their own words, why. In Sign they give it a **Title** (required), choose how it runs and for how long, then press **Sign mandate**. Ask them first whether it should run automatically or ask each time.',
     'Afterwards call list-authorizations(): it says what is still missing and what to do next.',
@@ -288,8 +288,6 @@ export interface MissingMandateFacts {
 }
 
 export interface OverviewInput {
-  /** The gateway's own page; used to give the AI this gateway's real addresses. */
-  url?: string;
   manifests: GuideManifest[];
   facts: (id: string) => ConnectorFacts;
   auths: GuideAuth[];
@@ -433,7 +431,7 @@ function connectorLine(m: GuideManifest, input: OverviewInput, sourcesByConsumer
   const shown = guide.filter(g => !g.simulationOnly || sim);
   if (shown.length > 0 && input.detail) {
     lines.push('    Its setup guide (what the person is shown on its card):');
-    shown.forEach((g, i) => lines.push(`      ${i + 1}. ${g.title}${g.description ? ` — ${withOwnRedirectUri(g.description, m.id, input.url)}` : ''}`));
+    shown.forEach((g, i) => lines.push(`      ${i + 1}. ${g.title}${g.description ? ` — ${withoutGatewayAddress(g.description)}` : ''}`));
   }
   return { rank, text: lines.join('\n') };
 }
@@ -512,12 +510,11 @@ export function attachmentNotAllowedText(opts: {
  * then the rest.
  */
 /**
- * Setup guides name an example sign-in return address. The card rewrites it to this gateway's own
- * address before a person sees it; the AI must get the same address, or it tells them a wrong one.
+ * Setup guides name an example sign-in return address on this gateway. The AI never gets a
+ * gateway address (a chat app turns it into a preview of the page); the card shows the real one.
  */
-export function withOwnRedirectUri(text: string, connectorId: string, url: string | undefined): string {
-  if (!url) return text;
-  return text.replace(/https?:\/\/[^\s)]+\/auth\/oauth\/[a-z-]+\/callback/gi, `${url.replace(/\/$/, '')}/auth/oauth/${connectorId}/callback`);
+export function withoutGatewayAddress(text: string): string {
+  return text.replace(/https?:\/\/[^\s)]+\/auth\/oauth\/[a-z-]+\/callback/gi, 'the return address shown on the card');
 }
 
 export function connectorOverview(input: OverviewInput): string {
@@ -573,8 +570,9 @@ function joinAreas(names: string[]): string {
 }
 
 /** The facts the AI draws on, stated as facts: it finds the words. Identical in every mode. */
-export function factsLines(opts: { card: string; areas: string[] }): string[] {
+export function factsLines(opts: { card: string; areas: string[]; port?: string }): string[] {
   return [
+    `The Suveren Gateway page is opened by the person, in their own browser, outside this chat. You never write its address.${opts.port ? ` Only if they cannot find it, say in words that it runs on this computer on port ${opts.port}.` : ''}`,
     'A mandate is a permission the person gives their AI, with limits they choose. For example: "Send up to 5 emails a day, and show me each one first." It says what the AI may do, how much, for how long, and whether each action needs their approval or runs by itself within the limits. The AI needs a mandate for each kind of work. They can change or revoke it at any time.',
     `The ${opts.card} mandate is how the person manages their mandates from this chat. They sign it once. After that they just say here what the AI should be able to do; the AI prepares the mandate with its limits and duration, and they only approve it. Without it they fill in a form themselves for every mandate.`,
     `The ${opts.card} mandate allows no work. None of the mandates the AI prepares exists until the person approves it. It is the easiest start. An AI can never create the first mandate: a person signs it.`,
@@ -585,8 +583,6 @@ export function factsLines(opts: { card: string; areas: string[] }): string[] {
 // ─── 4. The short answer to list-authorizations() with no argument ──────────
 
 export interface ShortAnswerInput extends Pick<OverviewInput, 'manifests' | 'facts' | 'auths' | 'areaName' | 'setup' | 'team'> {
-  /** The gateway's own page. */
-  url: string;
 }
 
 /** One line: every area this gateway can work in, and which of them a mandate covers. */
@@ -612,7 +608,7 @@ function oneNextStep(input: ShortAnswerInput): string {
     if (auths.length > 0) return 'Wait for the other owners above to sign. Ask the person to remind them.';
     if (setup.area && input.team?.get(setup.area)?.teamCode) return howToGetMandate(setup.area, setup.card, input);
     const fields = setup.area ? ` The form, step by step: list-authorizations(domain: "${setup.area}").` : '';
-    return `A person signs the first mandate: an AI can never create it. In the Suveren Gateway at ${input.url} they open **Mandates**, then **+ New mandate**, pick the card **${setup.card}** and press **Give a mandate**. Tell them why: they sign it once, and from then on they manage their mandates from this chat. They say what you should be able to do, you prepare the mandate, and they only approve it. It allows no work itself. They can sign the mandate of one area themselves instead, by filling in its form.${fields}`;
+    return `A person signs the first mandate: an AI can never create it. On the Suveren Gateway page, which they open themselves in their own browser, outside this chat, they open **Mandates**, then **+ New mandate**, pick the card **${setup.card}** and press **Give a mandate**. Tell them why: they sign it once, and from then on they manage their mandates from this chat. They say what you should be able to do, you prepare the mandate, and they only approve it. It allows no work itself. They can sign the mandate of one area themselves instead, by filling in its form.${fields}`;
   }
   const askAndDo = 'Ask what the person wants done';
   if (setup.tool && complete.length === setup.held.length) {

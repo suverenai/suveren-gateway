@@ -18,7 +18,6 @@
  */
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { uiUrl } from './locked-notice';
 import { AGENT_RULES } from './agent-rules';
 
 export interface Guide {
@@ -123,7 +122,7 @@ export function guideHeader(systems: SystemLine[], inactive: string[] = []): str
     lines.push('**Available but not activated:** ' + inactive.map(n => `**${n}**`).join(', ') + '. Before anything else, ask the person to activate the ones the work needs: in the Suveren Gateway, Integrations → the system\'s card → Activate. Then read this guide again — a system you cannot see here does not exist for the test.');
   }
   lines.push('');
-  lines.push(`**Approvals:** every mandate and brief you propose waits until the person approves it in the Suveren Gateway at ${uiUrl()}/approvals. Tell them each time you propose one.`);
+  lines.push(`**Approvals:** every mandate and brief you propose waits until the person approves it under **Approvals** on the Suveren Gateway page, which they open themselves in their own browser. Tell them each time you propose one.`);
   lines.push('');
   lines.push('**Rules:**');
   for (const r of AGENT_RULES) lines.push(`- ${r}`);

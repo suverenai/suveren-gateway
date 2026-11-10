@@ -16,7 +16,7 @@ import { getConsumptionState, formatConsumptionCompact } from './consumption';
 import { getContextForBrief } from './context-loader';
 import { agentVisibleAuthorizations } from './agent-visibility';
 import { isSimulationMode } from './simulation-mode';
-import { uiUrl } from './locked-notice';
+import { uiPort } from './locked-notice';
 import { AGENT_RULES } from './agent-rules';
 import { firstMandateText, LEAD_THE_PERSON_RULE, ROLE_TEXT, factsLines, possibleAreas } from './guidance';
 import { setupCardName, guideManifests } from './guidance-runtime';
@@ -196,7 +196,7 @@ export function buildMandateBrief(opts: MandateBriefOptions): string {
   if (active.length === 0) {
     lines.push('=== FIRST STEP ===');
     lines.push('');
-    lines.push(firstMandateText({ url: uiUrl(), card: setupCardName(integrationManager) }));
+    lines.push(firstMandateText({ card: setupCardName(integrationManager) }));
     lines.push('');
   }
 
@@ -208,7 +208,7 @@ export function buildMandateBrief(opts: MandateBriefOptions): string {
     lines.push('');
     lines.push(canSetUp
       ? 'To set up their work with Suveren, call setup__get_guide first and follow its steps in order.'
-      : `To set up more of their work, they first create a "${setupCardName(integrationManager)}" mandate in the Suveren Gateway at ${uiUrl()}. With it you can read the setup guide and lead them through the setup.`);
+      : `To set up more of their work, they first create a "${setupCardName(integrationManager)}" mandate on the Suveren Gateway page, which they open themselves in their own browser. With it you can read the setup guide and lead them through the setup.`);
     lines.push('');
   }
 
@@ -228,7 +228,7 @@ export function buildMandateBrief(opts: MandateBriefOptions): string {
   lines.push('');
   lines.push('=== FACTS YOU CAN DRAW ON ===');
   lines.push('');
-  for (const f of factsLines({ card: setupCardName(integrationManager), areas: possibleAreas(manifests, areaName) })) lines.push(`- ${f}`);
+  for (const f of factsLines({ port: uiPort(), card: setupCardName(integrationManager), areas: possibleAreas(manifests, areaName) })) lines.push(`- ${f}`);
   lines.push('');
 
   // Instruction to use list-authorizations for detail

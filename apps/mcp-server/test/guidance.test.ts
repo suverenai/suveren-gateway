@@ -107,7 +107,7 @@ describe('1. the first mandate', () => {
   it('names the page, the buttons and the card, in order, and the follow-up call', () => {
     const t = firstMandateText({ url: 'http://localhost:3400', card: 'Setup' });
     expect(t).toContain('An AI can never create the first one');
-    expect(t).toContain('http://localhost:3400');
+    expect(t).toContain('the Suveren Gateway page'); expect(t).not.toMatch(/localhost/);
     expect(t).toMatch(/\*\*Mandates\*\*, then \*\*\+ New mandate\*\*/);
     expect(t).toContain('card **Setup**');
     expect(t).toContain('**Give a mandate**');

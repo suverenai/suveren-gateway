@@ -8,7 +8,7 @@
  */
 
 import type { SharedState, EnrichedAuthorization } from '../lib/shared-state';
-import { lockedNotice, uiUrl } from '../lib/locked-notice';
+import { lockedNotice } from '../lib/locked-notice';
 import type { IntegrationManager } from '../lib/integration-manager';
 import { getProfile } from '@hap/core';
 import { getConsumptionState, formatConsumptionCompact, formatConsumptionFull } from '../lib/consumption';
@@ -174,7 +174,7 @@ async function connectorsSection(
     }
     if (manifests.length === 0) return '';
     const input = await overviewInput(state, integrationManager, authorizations, { onlyManifests: manifests });
-    return connectorOverview({ ...input, detail: !!domain, url: uiUrl() });
+    return connectorOverview({ ...input, detail: !!domain });
   } catch (err) {
     // A guidance failure must never hide the mandates themselves.
     console.error('[Suveren MCP] connector overview failed:', err);
@@ -193,7 +193,7 @@ async function shortAnswerPart(
     // Only the step this answer names can be blocked by a team: the first mandate.
     const teamAreas = authorizations.length === 0 && setup.area ? [setup.area] : [];
     const input = await overviewInput(state, integrationManager, authorizations, { teamAreas });
-    return shortAnswer({ ...input, url: uiUrl() });
+    return shortAnswer(input);
   } catch (err) {
     // A guidance failure must never hide the mandates themselves.
     console.error('[Suveren MCP] short answer failed:', err);
@@ -254,7 +254,7 @@ export function listAuthorizationsHandler(
         if (short) text.push('', short);
         return { content: [{ type: 'text' as const, text: text.join('\n') }] };
       }
-      text.push('', firstMandateText({ url: uiUrl(), card: setupCardName(integrationManager) }));
+      text.push('', firstMandateText({ card: setupCardName(integrationManager) }));
       const rows = rowsForDomain(notYet, domain, integrationManager);
       if (rows.length > 0) text.push('', LISTED_WITHOUT_MANDATE_HEADING, ...rows);
       for (const h of hints) text.push('', h);
