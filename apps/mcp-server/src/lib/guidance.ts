@@ -532,6 +532,13 @@ export function connectorOverview(input: OverviewInput): string {
   return [...head, ...lines.map(l => l.text)].join('\n');
 }
 
+/** The tool that calls any other tool by name, for an app that keeps the tool list it loaded when the chat started. */
+export const CALL_TOOL = 'call-tool';
+
+/** Said wherever the gateway names tools: the AI's app may not list a tool added after the chat started. */
+export const CALL_THROUGH_RULE =
+  `If a tool named here is not in your tool list, call it through ${CALL_TOOL}(tool: "<exact name>", arguments: {...}).`;
+
 /** Short pointer for the session instructions: where the AI finds the steps. */
 export const LEAD_THE_PERSON_RULE =
   'When the person wants something done and a tool is refused or not set up, call list-authorizations(domain) with the area of the task: it gives what is missing and the exact steps the person takes. Name the buttons exactly as it does and wait; never work around a refusal. list-authorizations() with no argument gives only where things stand and the one next step.';
@@ -648,6 +655,7 @@ export function shortAnswer(input: ShortAnswerInput): string {
   lines.push(`The one next step: ${oneNextStep(input)}`);
   lines.push(whatYouCanDo(input));
   lines.push('For the exact steps of one area: list-authorizations(domain: "<area>"), with the area of the task.');
+  if (input.setup.tool) lines.push(CALL_THROUGH_RULE);
   return lines.join('\n');
 }
 

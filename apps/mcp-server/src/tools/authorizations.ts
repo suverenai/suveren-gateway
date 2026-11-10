@@ -15,7 +15,7 @@ import { getConsumptionState, formatConsumptionCompact, formatConsumptionFull } 
 import { readContextFile } from '../lib/context-loader';
 import { profileMatches, toolAlwaysListed, areaName } from '../lib/tool-proxy';
 import { isSimulationMode } from '../lib/simulation-mode';
-import { firstMandateText, connectorOverview, manifestAreas, shortAnswer, possibleAreas, type GuideManifest } from '../lib/guidance';
+import { firstMandateText, connectorOverview, manifestAreas, shortAnswer, possibleAreas, CALL_THROUGH_RULE, type GuideManifest } from '../lib/guidance';
 import { overviewInput, guideManifests, setupCardName, setupMandateFacts } from '../lib/guidance-runtime';
 import { agentVisibleAuthorizations } from '../lib/agent-visibility';
 
@@ -67,13 +67,13 @@ function buildCapabilityMap(
     const gating = tool.gating;
 
     if (gating.category === 'read') {
-      readOnly.push(tool.originalName);
+      readOnly.push(tool.namespacedName);
     } else if (gating.category === 'disabled') {
       // Either explicitly disabled, or (disabledReason set) not described by
       // any manifest entry — either way the gate refuses it; no permissive
       // default exists to fall back on. Listing it as gated would tell the
       // agent it may call something every call of which is refused.
-      undescribed.push(tool.originalName);
+      undescribed.push(tool.namespacedName);
     } else {
       const mappingDesc = Object.entries(gating.executionMapping ?? {})
         .map(([arg, mapping]) => {
@@ -84,7 +84,7 @@ function buildCapabilityMap(
         })
         .join(', ');
       const actionType = gating.staticExecution?.action_type ?? 'unknown';
-      gated.push(`      - ${tool.originalName}: ${actionType}${mappingDesc ? `, ${mappingDesc}` : ''}`);
+      gated.push(`      - ${tool.namespacedName}: ${actionType}${mappingDesc ? `, ${mappingDesc}` : ''}`);
     }
   }
 
@@ -228,6 +228,21 @@ const LISTED_WITHOUT_MANDATE_HEADING =
   'Listed but not usable yet — no mandate covers these; every call is refused until the person grants one:';
 
 export function listAuthorizationsHandler(
+  state: SharedState,
+  integrationManager?: IntegrationManager,
+  contextDir?: string,
+) {
+  const answer = listAuthorizations(state, integrationManager, contextDir);
+  return async (args?: { domain?: string }) => {
+    const result = await answer(args);
+    // An answer for one area names tools by the exact name; the AI's app may not list a tool added since the chat started.
+    if (!args?.domain || !state.spClient.isUnlocked()) return result;
+    const [first, ...rest] = result.content;
+    return { ...result, content: [{ ...first, text: `${first.text}\n\n${CALL_THROUGH_RULE}` }, ...rest] };
+  };
+}
+
+function listAuthorizations(
   state: SharedState,
   integrationManager?: IntegrationManager,
   contextDir?: string,

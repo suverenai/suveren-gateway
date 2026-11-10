@@ -30,6 +30,7 @@ import type { IntegrationManager } from './integration-manager';
 import { getContextForBrief } from './context-loader';
 import { agentVisibleAuthorizations } from './agent-visibility';
 import { areaName } from './tool-proxy';
+import { CALL_TOOL } from './guidance';
 
 export interface MandateSeen {
   id: string;
@@ -224,6 +225,37 @@ export interface ChangeNoticeDeps {
   ledger?: Pick<ChangeLedger, 'lastTold' | 'record'>;
   /** The app's own name, known only after `initialize`. */
   appName: () => string | undefined;
+  /** The names of the tools listed to the AI right now. Absent = tools are not part of the note. */
+  listed?: () => string[];
+}
+
+export { CALL_TOOL };
+
+/** Above this many new tools the note names the connectors instead of every tool. */
+const MAX_TOOLS_NAMED = 10;
+
+/**
+ * The tools that became available since this chat started. Many AI apps (ChatGPT among them) load
+ * the tool list once, when the chat starts, and ignore the gateway's "the list changed" message, so
+ * the AI never sees a tool added later (a connector that started, Setup signed). The first time,
+ * the note also says how to reach them anyway.
+ */
+export function newToolsNote(names: string[], firstTime: boolean): string | undefined {
+  if (names.length === 0) return undefined;
+  let what: string;
+  if (names.length <= MAX_TOOLS_NAMED) {
+    what = `New tools are available since this chat started: ${names.join(', ')}.`;
+  } else {
+    const byConnector = new Map<string, number>();
+    for (const n of names) {
+      const c = n.includes('__') ? n.split('__')[0] : n;
+      byConnector.set(c, (byConnector.get(c) ?? 0) + 1);
+    }
+    const parts = [...byConnector.entries()].map(([c, k]) => `${k} from ${c}`);
+    what = `New tools are available since this chat started: ${parts.join(', ')}. list-authorizations(domain) names them.`;
+  }
+  if (!firstTime) return what;
+  return `${what} If they are not in your tool list, call them through ${CALL_TOOL}(tool: "<name>", arguments: {...}). Or the person restarts the AI app, which then lists them.`;
 }
 
 /**
@@ -234,9 +266,28 @@ export class SessionChangeNotice {
   private told: Told;
   private answered = false;
   private when: SinceWhen = 'chat';
+  /** Every tool name this chat has been offered; undefined until `startListing`. */
+  private toolsTold: Set<string> | undefined;
+  private toolHintGiven = false;
 
   constructor(private deps: ChangeNoticeDeps) {
     this.told = deps.now();
+  }
+
+  /** What the AI was offered when the chat started: call once the session's tools are registered. */
+  startListing(): void {
+    if (this.deps.listed) this.toolsTold = new Set(this.deps.listed());
+  }
+
+  /** The tools offered now that this chat has not been offered before, and remember them. */
+  private newTools(): string | undefined {
+    if (!this.toolsTold || !this.deps.listed) return undefined;
+    const now = this.deps.listed();
+    const fresh = now.filter(n => !this.toolsTold!.has(n));
+    for (const n of now) this.toolsTold.add(n);
+    const note = newToolsNote(fresh, !this.toolHintGiven);
+    if (note) this.toolHintGiven = true;
+    return note;
   }
 
   /** The note this answer should carry, if any; moves what this session has been told. */
@@ -252,11 +303,13 @@ export class SessionChangeNotice {
       }
     }
     const now = this.deps.now();
-    const note = changeNote(this.told, now, this.when, this.deps.currentBrief());
+    const changed = changeNote(this.told, now, this.when, this.deps.currentBrief());
     this.told = now;
     this.when = 'chat';
     this.deps.ledger?.record(app, now);
-    return note;
+    const tools = this.newTools();
+    if (!tools) return changed;
+    return changed ? `${changed}\n\n${tools}` : `[Suveren gateway] ${tools}`;
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
