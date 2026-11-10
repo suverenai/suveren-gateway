@@ -246,6 +246,15 @@ export interface IntegrationManifest {
    * settings; the gateway does not proxy or police the call.
    */
   network?: NetworkDeclaration[];
+  /**
+   * Words for a shared (cumulative) limit's sentences, keyed by the bound's key
+   * in the profile: `noun` is what is counted, plural ("emails"), and
+   * `pastParticiple` what did not happen ("sent"). They live HERE, not in the
+   * profile — a published profile is hashed into signed mandates, so editing it
+   * would force re-signing. Display only: the UI reads them to say "Not sent.
+   * The daily limit is used up: 5 of 5 emails today." Absent → plainer words.
+   */
+  limitWords?: Record<string, { noun: string; pastParticiple: string }>;
 }
 
 interface ManifestIndex {
@@ -1172,6 +1181,19 @@ function invalidDocumentSourceReason(
     const v = (entry as Record<string, unknown>)[key];
     if (v !== undefined && (typeof v !== 'string' || v.length === 0)) return `${label}.${key} must be a non-empty string`;
   }
+  // `savedBy`: the tool that brings a document of this kind in. It must exist on this manifest and
+  // be one the AI may call — telling the AI to "save first with" a tool it cannot call helps no one.
+  const savedBy = (entry as { savedBy?: unknown }).savedBy;
+  if (savedBy !== undefined) {
+    if (typeof savedBy !== 'string' || savedBy.length === 0) return `${label}.savedBy must be a non-empty string`;
+    const savedEntry = overrides[savedBy] as { internal?: unknown; category?: unknown } | null | undefined;
+    if (!savedEntry || typeof savedEntry !== 'object') {
+      return `${label}.savedBy "${savedBy}" is not a tool described in this manifest's toolGating.overrides`;
+    }
+    if (savedEntry.internal === true || savedEntry.category === 'disabled') {
+      return `${label}.savedBy "${savedBy}" must be a tool the AI can call (not internal, not disabled)`;
+    }
+  }
   return null;
 }
 
@@ -1413,6 +1435,33 @@ export function invalidManifestReadGateReason(
  * scheme, path or port); `modes` keys are modes, each `true` or a non-empty
  * list of adapter values. Refuses the manifest otherwise.
  */
+/**
+ * `limitWords` must map non-empty bound keys to `{ noun, pastParticiple }`, both
+ * short single-line words. Anything else refuses the manifest.
+ */
+export function invalidLimitWordsReason(manifest: Pick<IntegrationManifest, 'limitWords'>): string | null {
+  const lw = (manifest as { limitWords?: unknown }).limitWords;
+  if (lw === undefined) return null;
+  if (lw === null || typeof lw !== 'object' || Array.isArray(lw) || Object.keys(lw).length === 0) {
+    return 'limitWords must be a non-empty object keyed by bound key';
+  }
+  for (const [key, raw] of Object.entries(lw as Record<string, unknown>)) {
+    const at = `limitWords["${key}"]`;
+    if (key.trim().length === 0) return 'limitWords has an empty bound key';
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return `${at} must be an object`;
+    const w = raw as Record<string, unknown>;
+    const extra = Object.keys(w).find((k) => k !== 'noun' && k !== 'pastParticiple');
+    if (extra) return `${at} has unknown key "${extra}"`;
+    for (const k of ['noun', 'pastParticiple'] as const) {
+      const v = w[k];
+      if (typeof v !== 'string' || v.trim().length === 0 || v.length > 40 || /[\r\n]/.test(v)) {
+        return `${at}.${k} must be a short single-line word`;
+      }
+    }
+  }
+  return null;
+}
+
 export function invalidNetworkReason(manifest: Pick<IntegrationManifest, 'network'>): string | null {
   const network = (manifest as { network?: unknown }).network;
   if (network === undefined) return null;
@@ -1783,6 +1832,11 @@ export function loadManifests(integrationsDir?: string): number {
       const valuesReason = invalidManifestValuesReason(manifest);
       if (valuesReason) {
         console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${valuesReason}`);
+        continue;
+      }
+      const limitWordsReason = invalidLimitWordsReason(manifest);
+      if (limitWordsReason) {
+        console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${limitWordsReason}`);
         continue;
       }
       const networkReason = invalidNetworkReason(manifest);

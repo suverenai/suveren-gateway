@@ -51,6 +51,7 @@ import { isAttachmentSourceAllowed } from './attachment-policy';
 import { resolveDocumentReference, type ResolvedDocument } from './document-source';
 import { resolveInsertValue, applyInserts, type ResolvedInsert } from './insert-values';
 import { formatMB } from './attachment-limits';
+import { attachmentFailureStep } from './guidance';
 import { buildMimeMessage, toBase64Url } from './mime-message';
 import type { DiscoveredTool } from './integration-manager';
 import type { MessageGatingDeclaration } from './tool-gating-types';
@@ -110,6 +111,13 @@ export type AttachmentResolutionResult = AttachmentResolutionOk | AttachmentReso
  * other gated tool is unaffected. Does not embed attachment bytes into the
  * returned args — see {@link finalizeAttachmentsForExecution} for that.
  */
+/** The ending for a failed attachment: what the person does, and that the AI stops and asks. */
+function attachFail(code: string | undefined, ref: { connector: string; kind: string }): string {
+  const m = getManifest(ref.connector);
+  const savedBy = m?.documents?.[ref.kind]?.savedBy;
+  return attachmentFailureStep({ code, connector: ref.connector, connectorName: m?.name, ...(savedBy ? { savedBy: `${ref.connector}__${savedBy}` } : {}) });
+}
+
 export async function resolveAttachmentsAndInserts(
   integrationManager: IntegrationManager,
   tool: Pick<DiscoveredTool, 'integrationId' | 'namespacedName' | 'gating'>,
@@ -150,11 +158,11 @@ export async function resolveAttachmentsAndInserts(
     for (const ref of refsResult.refs) {
       const policy = isAttachmentSourceAllowed(profileId, profile, allowedSourcesValue, ref);
       if (!policy.allowed) {
-        return { ok: false, message: `Refused: attachment "${ref.connector}:${ref.kind}" is not allowed. ${policy.reason}` };
+        return { ok: false, message: `Refused: attachment "${ref.connector}:${ref.kind}" is not allowed. ${policy.reason} Tell the person: **Mandates**, open the mandate, **Edit**, tick it under **What the AI may attach**, sign again. Do not send without the attachment they asked for: stop and ask.` };
       }
       const resolved = await resolveDocumentReference(integrationManager, ref, maxBytes);
       if (!resolved.ok) {
-        return { ok: false, message: `Refused: could not resolve attachment "${ref.connector}:${ref.kind}/${ref.id}" — ${resolved.error.message}` };
+        return { ok: false, message: `Refused: could not resolve attachment "${ref.connector}:${ref.kind}/${ref.id}" — ${resolved.error.message} ${attachFail(resolved.error.code, ref)}` };
       }
       // Checked on the bytes just read and hashed, before any ticket or
       // proposal exists. Stops at the first file that takes the email over.
@@ -162,7 +170,7 @@ export async function resolveAttachmentsAndInserts(
       if (totalBytes > maxBytes) {
         return {
           ok: false,
-          message: `Refused: the attachments come to more than ${formatMB(maxBytes)} in total, the most this tool may send. Nothing was sent and no ticket was requested.`,
+          message: `Refused: the attachments come to more than ${formatMB(maxBytes)} in total, the most this tool may send. Nothing was sent and no ticket was requested. ${attachFail('TOO_LARGE', ref)}`,
         };
       }
       sealedAttachments.push({
@@ -277,18 +285,18 @@ export async function finalizeAttachmentsForExecution(
     if (!resolved.ok) {
       return {
         ok: false,
-        message: `Refused: could not re-resolve attachment "${a.filename}" (${a.connector}:${a.kind}/${a.id}) at execution — ${resolved.error.message}`,
+        message: `Refused: could not re-resolve attachment "${a.filename}" (${a.connector}:${a.kind}/${a.id}) at execution — ${resolved.error.message} ${attachFail(resolved.error.code, a)}`,
       };
     }
     if (resolved.doc.sha256 !== a.sha256) {
       return {
         ok: false,
-        message: `Refused: attachment "${a.filename}" (${a.connector}:${a.kind}/${a.id}) changed since this was approved — its fingerprint no longer matches.`,
+        message: `Refused: attachment "${a.filename}" (${a.connector}:${a.kind}/${a.id}) changed since this was approved — its fingerprint no longer matches. Nothing was sent. Tell the person; if they still want it sent, propose it again with the current file.`,
       };
     }
     totalBytes += resolved.doc.bytes;
     if (maxAttachmentBytes && totalBytes > maxAttachmentBytes) {
-      return { ok: false, message: `Refused: the attachments come to more than ${formatMB(maxAttachmentBytes)} in total — nothing was sent.` };
+      return { ok: false, message: `Refused: the attachments come to more than ${formatMB(maxAttachmentBytes)} in total — nothing was sent. ${attachFail('TOO_LARGE', a)}` };
     }
     resolvedDocs.push(resolved.doc);
   }

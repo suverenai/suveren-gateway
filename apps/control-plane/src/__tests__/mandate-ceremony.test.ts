@@ -15,7 +15,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { computeBoundsHash, computeScopeHash, computeIntentHash, computeProfileHash, computeExecutionContextHash } from '@hap/core';
-import { planMandate, createMandate, approverPubkeys, MandateRefused, type CeremonyDeps, type MandateRequest } from '../lib/mandate-ceremony';
+import { planMandate, createMandate, checkMandateRight, approverPubkeys, MandateRefused, type CeremonyDeps, type MandateRequest } from '../lib/mandate-ceremony';
 
 const profilesDir = process.env.SUVEREN_PROFILES_DIR ?? join(import.meta.dirname, '..', '..', '..', '..', '..', 'hap-profiles');
 const SALES = JSON.parse(readFileSync(join(profilesDir, 'sales', '0.4.profile.json'), 'utf8'));
@@ -28,7 +28,7 @@ const LIMITS = {
   quote_daily_max: 10, send_daily_max: 10, order_daily_max: 0, setup_daily_max: 0,
 };
 
-function fakeAs(opts: { approvers?: string[]; attestStatus?: number; attestBody?: unknown; delegationIn?: string[] } = {}) {
+function fakeAs(opts: { approvers?: string[]; grantors?: string[] | 'all'; attestStatus?: number; attestBody?: unknown; delegationIn?: string[] } = {}) {
   const calls: Array<{ method: string; path: string; body?: any }> = [];
   const profiles = [SALES, DELEGATION, REPORTING, { ...SALES, id: SALES.id.replace('@0.4', '@0.2'), version: '0.2' }];
   const as: CeremonyDeps['as'] = async (method, path, body) => {
@@ -50,7 +50,7 @@ function fakeAs(opts: { approvers?: string[]; attestStatus?: number; attestBody?
       return { status: 200, body: { pubkeys: Object.fromEntries((opts.approvers ?? []).map((u) => [u, Buffer.alloc(32, 7).toString('base64')])) } };
     }
     if (path.includes('/profile-config/')) {
-      return opts.approvers ? { status: 200, body: { config: { approvers: opts.approvers } } } : { status: 404, body: { error: 'No config' } };
+      return opts.approvers ? { status: 200, body: { config: { approvers: opts.approvers, ...(opts.grantors !== undefined ? { grantors: opts.grantors } : {}) } } } : { status: 404, body: { error: 'No config' } };
     }
     if (path === '/api/as/mandate') return { status: opts.attestStatus ?? 201, body: opts.attestBody ?? { authorization_id: (body as { authorization_id?: string }).authorization_id } };
     if (path.endsWith('/revoke')) return { status: 200, body: {} };
@@ -185,6 +185,21 @@ describe('workspace when `team` is omitted — the Delegation mandate\'s', () =>
     expect(plan.domain).toBe('u_anna');
   });
 
+  it('a team that names who may give mandates (grantors) and no above-cap approvers: allowed', async () => {
+    const { as } = fakeAs({ delegationIn: ['g_team'], approvers: [], grantors: ['u_anna'] });
+    expect((await planMandate(REQ, deps(as).d)).groupId).toBe('g_team');
+  });
+
+  it('grantors: "all" lets any member give the mandate', async () => {
+    const { as } = fakeAs({ delegationIn: ['g_team'], approvers: [], grantors: 'all' });
+    expect((await planMandate(REQ, deps(as).d)).groupId).toBe('g_team');
+  });
+
+  it('the person is an above-cap approver but not named to give mandates: refused', async () => {
+    const { as } = fakeAs({ delegationIn: ['g_team'], approvers: ['u_anna'], grantors: ['u_bernd'] });
+    await expect(planMandate(REQ, deps(as).d)).rejects.toBeInstanceOf(MandateRefused);
+  });
+
   it('Delegation mandates in two workspaces: refused, naming both — the AI must say which', async () => {
     const { as, calls } = fakeAs({ delegationIn: ['g_team', 'g_personal'], approvers: ['u_anna'] });
     await expect(planMandate(REQ, deps(as).d)).rejects.toThrow(/several workspaces.*"Sales Vienna".*personal/);
@@ -194,5 +209,28 @@ describe('workspace when `team` is omitted — the Delegation mandate\'s', () =>
   it('`team: "personal"` picks the personal workspace even when a team holds the Delegation mandate', async () => {
     const { as } = fakeAs({ delegationIn: ['g_team'] });
     expect((await planMandate({ ...REQ, team: 'personal' }, deps(as).d)).groupId).toBe('g_personal');
+  });
+});
+
+describe('checkMandateRight — only the team authority gate, no limits needed', () => {
+  it('personal workspace: allowed', async () => {
+    const { as } = fakeAs();
+    await expect(checkMandateRight({ profile: 'sales', team: 'personal' }, deps(as).d)).resolves.toMatchObject({ groupName: 'Anna', profileId: SALES.id });
+  });
+  it('a team where the profile is not enabled: refused with the code an admin step follows from', async () => {
+    const { as } = fakeAs();
+    const err = await checkMandateRight({ profile: 'sales', team: 'g_team' }, deps(as).d).catch((e) => e);
+    expect(err).toBeInstanceOf(MandateRefused);
+    expect(err.code).toBe('profile_not_enabled');
+    expect(err.message).toMatch(/Ask an admin of "Sales Vienna" to enable/);
+  });
+  it('a team where the person is not a grantor: refused with its own code', async () => {
+    const { as } = fakeAs({ approvers: ['u_bernd'], grantors: ['u_bernd'] });
+    const err = await checkMandateRight({ profile: 'sales', team: 'g_team' }, deps(as).d).catch((e) => e);
+    expect(err.code).toBe('not_a_grantor');
+  });
+  it('a team that enabled it for the person: allowed', async () => {
+    const { as } = fakeAs({ approvers: ['u_bernd'], grantors: ['u_anna'] });
+    await expect(checkMandateRight({ profile: 'sales', team: 'g_team' }, deps(as).d)).resolves.toMatchObject({ groupName: 'Sales Vienna' });
   });
 });

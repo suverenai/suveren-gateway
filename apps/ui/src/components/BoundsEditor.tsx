@@ -9,6 +9,9 @@ import { minForBound, maxForBound, seedForBound, numericBoundValue } from '../li
 import { formatUnit } from '../lib/bound-format';
 import { effectiveCapKind, enumExceedsCap, isCapped, type CapFieldShape } from '../lib/team-caps';
 import { useProfileValuedOptions, type Workspace } from '../lib/profile-valued-options';
+import { useAuth } from '../contexts/AuthContext';
+import { useMandateReceipts, usedTodayForBound } from '../lib/mandate-card-usage';
+import { cumulativeBound, sharedLimitHelper, sharedLimitLabel, limitWordsForProfile, type LimitWords } from '../lib/limit-words';
 
 interface Props {
   profile: AgentProfile;
@@ -283,15 +286,21 @@ function FieldLabel({
   htmlFor,
   label,
   description,
+  figures,
 }: {
   htmlFor: string;
   label: string;
   description?: string;
+  /** What the system read for a shared limit — "(3 of 5 used)", in the "from the system" blue. */
+  figures?: string;
 }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="field-label-with-tip">
-      <label className="form-label" htmlFor={htmlFor}>{label}</label>
+      <label className="form-label" htmlFor={htmlFor}>
+        {label}
+        {figures && <> <span className="shared-limit-figures" data-testid="shared-limit-figures">({figures})</span></>}
+      </label>
       {description && (
         <>
           <button
@@ -476,8 +485,11 @@ function FieldRow({
   capMax,
   enumAllowedFrom,
   options,
+  sharedLimit,
 }: {
   fieldKey: string;
+  /** A cumulative limit that several people use up together: its label, the figures the system read, and the helper line. */
+  sharedLimit?: { name: string; figures?: string; helper?: string | null };
   fieldDef: FieldDef;
   value: string;
   onChange: (key: string, value: string) => void;
@@ -507,7 +519,7 @@ function FieldRow({
    *  (`valuesFrom: "profiles"`) — rendered like an enum subset field. */
   options?: string[];
 }) {
-  const label = humanizeFieldName(fieldKey, fieldDef);
+  const label = sharedLimit?.name ?? humanizeFieldName(fieldKey, fieldDef);
   const fieldId = `${prefix}-field-${fieldKey}`;
 
   // A list of document sources (profile format "connector:kind"): its own
@@ -611,17 +623,21 @@ function FieldRow({
     return (
       <div className="bounds-field-row" key={`${prefix}-${fieldKey}`}>
         <div className="bounds-field-label">
-          <FieldLabel htmlFor={fieldId} label={label} description={fieldDef.description} />
+          <FieldLabel htmlFor={fieldId} label={label} description={fieldDef.description} figures={sharedLimit?.figures} />
         </div>
-        <div className="bounds-field-input">{input}</div>
+        <div className="bounds-field-input">
+          {input}
+          {sharedLimit?.helper && <small className="shared-limit-helper">{sharedLimit.helper}</small>}
+        </div>
       </div>
     );
   }
 
   return (
     <div className="form-group" key={`${prefix}-${fieldKey}`}>
-      <FieldLabel htmlFor={fieldId} label={label} description={fieldDef.description} />
+      <FieldLabel htmlFor={fieldId} label={label} description={fieldDef.description} figures={sharedLimit?.figures} />
       {input}
+      {sharedLimit?.helper && <small className="shared-limit-helper">{sharedLimit.helper}</small>}
     </div>
   );
 }
@@ -778,6 +794,8 @@ export function BoundsEditor({
   workspace,
 }: Props) {
   const boundsSchema = profile.boundsSchema;
+  const { mode } = useAuth();
+  const receipts = useMandateReceipts();
   const profileValuedOptions = useProfileValuedOptions(profile, workspace);
   const contextSchema = profile.scopeSchema;
 
@@ -890,10 +908,13 @@ export function BoundsEditor({
   // this profile's context fields. The wizard uses this to render live-fetched
   // option lists for those fields (e.g. Google calendar IDs).
   const [discoveryIntegration, setDiscoveryIntegration] = useState<IntegrationManifest | null>(null);
+  // The connector's words for a shared limit (manifest `limitWords`) — used only for the helper line.
+  const [limitWords, setLimitWords] = useState<LimitWords | undefined>(undefined);
   useEffect(() => {
     const shortName = shortProfileName(profile.id);
     spClient.getIntegrationManifests()
       .then(({ manifests }) => {
+        setLimitWords(limitWordsForProfile(manifests, profile.id));
         const match = manifests.find(
           m => m.profile === shortName && m.contextDiscovery && Object.keys(m.contextDiscovery).length > 0,
         );
@@ -1093,6 +1114,18 @@ export function BoundsEditor({
           <div className="bounds-fields-grid">
             {boundsFields.map(([key, fieldDef]) => {
               const capState = capStates[key];
+              // Any cumulative limit is shared: it reads as one, with the figures the system read.
+              const shared = cumulativeBound(profile, key)
+                ? sharedLimitLabel({
+                    profile,
+                    key,
+                    team: mode === 'team',
+                    limit: boundsValues[key],
+                    used: receipts.state === 'ok'
+                      ? usedTodayForBound({ receipts: receipts.receipts, coversToday: receipts.coversToday, profileId: profile.id, key, profile, nowMs: Date.now() })
+                      : undefined,
+                  })
+                : null;
               return (
                 <div key={`bounds-${key}`} style={{ display: 'contents' }}>
                   <FieldRow
@@ -1102,6 +1135,7 @@ export function BoundsEditor({
                     onChange={handleBoundsChange}
                     prefix="bounds"
                     readOnly={readOnly}
+                    sharedLimit={shared ? { name: shared.name, figures: shared.figures, helper: sharedLimitHelper(cumulativeBound(profile, key)!, mode === 'team', limitWords) } : undefined}
                     twoColumn
                     capMax={capState?.kind === 'hard' && typeof capState.cap === 'number' ? capState.cap : undefined}
                     enumAllowedFrom={capState?.kind === 'hard' ? enumAllowedFromIndex(fieldDef, capState.cap) : undefined}

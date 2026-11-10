@@ -16,8 +16,11 @@ import { getConsumptionState, formatConsumptionCompact } from './consumption';
 import { getContextForBrief } from './context-loader';
 import { agentVisibleAuthorizations } from './agent-visibility';
 import { isSimulationMode } from './simulation-mode';
-import { uiUrl } from './locked-notice';
+import { uiPort } from './locked-notice';
 import { AGENT_RULES } from './agent-rules';
+import { firstMandateText, LEAD_THE_PERSON_RULE, ROLE_TEXT, factsLines, possibleAreas } from './guidance';
+import { setupCardName, guideManifests } from './guidance-runtime';
+import { areaName } from './tool-proxy';
 
 /** Extract short profile name from full ID (e.g., "github.com/.../charge@0.3" → "charge") */
 function shortProfileName(profileId: string): string {
@@ -40,7 +43,7 @@ function countToolsByGating(
   for (const tool of allTools) {
     // Never shown to anyone, gateway-internal only (DL1) — would otherwise
     // inflate "N gated tools" by the builtin's own preview helpers.
-    if (tool.internal) continue;
+    if (tool.internal || (tool.simulationOnly && !isSimulationMode())) continue;
     if (!tool.gating || !tool.gating.profile) {
       // No gating config at all — ungated
       readOnly++;
@@ -187,18 +190,25 @@ export function buildMandateBrief(opts: MandateBriefOptions): string {
     lines.push('');
   }
 
-  // First contact in simulation mode: a person asking their AI "how do I start
-  // with Suveren?" must get led into the setup guide, or told the one step only
-  // a person can take (the Delegation mandate). Neutral words — no "simulation"
-  // or "test" — because the working AI reads these lines too and must not be
-  // able to tell simulation from live (see agent-visibility.ts).
-  if (isSimulationMode()) {
+  // No mandate at all: the one step only a person can take, in the page's own words. The same block
+  // in every mode, with no condition on how the person opens: its words must not tell a working AI
+  // which mode it is in (see agent-visibility.ts).
+  if (active.length === 0) {
+    lines.push('=== FIRST STEP ===');
+    lines.push('');
+    lines.push(firstMandateText({ card: setupCardName(integrationManager) }));
+    lines.push('');
+  }
+
+  // Test mode, with a mandate in place: lead into the setup guide, or name the one step a person takes
+  // (the Setup mandate). Neutral words — no "simulation" or "test" — because the working AI reads them too.
+  if (isSimulationMode() && active.length > 0) {
     const canSetUp = active.some(a => shortProfileName(a.profileId) === 'delegation');
     lines.push('=== GETTING STARTED ===');
     lines.push('');
     lines.push(canSetUp
-      ? 'If the person asks how to start with Suveren or how to set up their work with it: call setup__get_guide first and follow its steps in order.'
-      : `If the person asks how to start with Suveren: they first create a "Delegation" mandate in the Suveren Gateway at ${uiUrl()}. With it you can read the setup guide and lead them through the setup.`);
+      ? 'To set up their work with Suveren, call setup__get_guide first and follow its steps in order.'
+      : `To set up more of their work, they first create a "${setupCardName(integrationManager)}" mandate on the Suveren Gateway page, which they open themselves in their own browser. With it you can read the setup guide and lead them through the setup.`);
     lines.push('');
   }
 
@@ -208,8 +218,21 @@ export function buildMandateBrief(opts: MandateBriefOptions): string {
   for (const r of AGENT_RULES) lines.push(`- ${r}`);
   lines.push('');
 
+  // Always, in every mode, and after the rules so the golden rule stays first of all: the AI's role
+  // and the facts it draws on. The words are the AI's own to find, so they must never say which
+  // mode this is; the area line differs only by what the connectors offer here.
+  const manifests = guideManifests(integrationManager);
+  lines.push('=== YOUR ROLE ===');
+  lines.push('');
+  lines.push(ROLE_TEXT);
+  lines.push('');
+  lines.push('=== FACTS YOU CAN DRAW ON ===');
+  lines.push('');
+  for (const f of factsLines({ port: uiPort(), card: setupCardName(integrationManager), areas: possibleAreas(manifests, areaName) })) lines.push(`- ${f}`);
+  lines.push('');
+
   // Instruction to use list-authorizations for detail
-  lines.push('When you receive a task, call list-authorizations(domain) to load full details for the relevant domain.');
+  lines.push('When you receive a task, call list-authorizations(domain) to load full details for the relevant domain. ' + LEAD_THE_PERSON_RULE);
 
   return lines.join('\n');
 }

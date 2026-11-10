@@ -55,6 +55,7 @@ export function SetupGuide({ aiConfigured, hasRunningIntegration, hasActiveAuth,
     },
     {
       label: 'Give your agent a mandate',
+      detail: 'Start with the Setup mandate: it lets your AI prepare the other mandates, and you approve each one. Or pick the area you need and sign its mandate yourself.',
       to: '/mandates?new=1',
       status: hasActiveAuth ? 'done' : 'pending',
     },

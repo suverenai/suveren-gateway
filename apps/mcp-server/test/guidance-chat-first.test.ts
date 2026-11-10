@@ -1,0 +1,51 @@
+import { describe, it, expect } from 'vitest';
+import { AGENT_RULES } from '../src/lib/agent-rules';
+import { factsLines, firstMandateText, withoutGatewayAddress, BEFORE_PROPOSING } from '../src/lib/guidance';
+import { setupBuiltin } from '../src/lib/builtins/setup';
+
+describe('the person works from the chat; the gateway page is theirs', () => {
+  const rules = AGENT_RULES.join('\n');
+
+  it('forbids showing the gateway page as a link or preview, or offering to open it', () => {
+    expect(rules).toMatch(/not in a preview or built-in browser inside this chat/);
+    expect(rules).toMatch(/Never show it as a clickable link, a web preview or an open button, and never offer to open it/);
+    expect(rules).toMatch(/Never write its web address in any form/);
+    expect(rules).toMatch(/opens the page themselves, in their own browser, outside this chat/);
+  });
+
+  it('says why the Setup mandate exists: mandates are managed from this chat', () => {
+    const facts = factsLines({ card: 'Vollmacht', areas: [] }).join('\n');
+    expect(facts).toContain('The Vollmacht mandate is how the person manages their mandates from this chat.');
+    expect(facts).toContain('they only approve it');
+    expect(firstMandateText({ card: 'Vollmacht' })).toContain('from then on they manage their mandates from this chat');
+  });
+
+  it('never hands the AI a gateway address', () => {
+    expect(firstMandateText({ card: 'Setup' })).not.toMatch(/localhost|https?:\/\//);
+    const facts = factsLines({ card: 'Setup', areas: [], port: '3600' }).join('\n');
+    expect(facts).not.toMatch(/localhost|https?:\/\//);
+    expect(facts).toContain('You never write its address.');
+    const guide = 'add http://localhost:7400/auth/oauth/mail/callback as an authorized redirect URI';
+    expect(withoutGatewayAddress(guide)).toBe('add the return address shown on the card as an authorized redirect URI');
+  });
+
+  it('asks for mode, amount and duration together, and asks again only for what is missing', () => {
+    expect(BEFORE_PROPOSING).toContain('ask everything you need in one message, as a short bullet list');
+    expect(BEFORE_PROPOSING).toContain('ask again only the points still open, as a shorter list, until none is left');
+    expect(BEFORE_PROPOSING).not.toMatch(/shortest duration/);
+  });
+
+  it('the pre-filled Setup intent: real work on a real gateway, test data only in test mode', () => {
+    const before = process.env.SUVEREN_SIMULATION;
+    try {
+      delete process.env.SUVEREN_SIMULATION;
+      const real = (setupBuiltin as (...a: unknown[]) => { intentHint?: string })().intentHint ?? '';
+      expect(real).toContain('hand routine work to my AI');
+      expect(real).not.toMatch(/test data/i);
+      process.env.SUVEREN_SIMULATION = '1';
+      expect((setupBuiltin as (...a: unknown[]) => { intentHint?: string })().intentHint).toMatch(/^Why — With test data only/);
+    } finally {
+      if (before === undefined) delete process.env.SUVEREN_SIMULATION; else process.env.SUVEREN_SIMULATION = before;
+    }
+  });
+});

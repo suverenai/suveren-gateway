@@ -13,7 +13,7 @@ import type { IntegrationManager, DiscoveredTool } from './integration-manager';
 import type { SharedState, EnrichedAuthorization } from './shared-state';
 import { lockedNotice } from './locked-notice';
 import type { DenialReason, DenialKind } from './denial-log';
-import { SPReceiptError } from './sp-client';
+import { SPReceiptError, SPProposalError } from './sp-client';
 import { isCommitmentDowngrade, AsKeyMismatchError } from './attestation-cache';
 import { ArchiveWriteError } from './receipt-archive';
 import { appendVerificationFooter, shouldAttachFooter } from './receipt-footer';
@@ -32,6 +32,7 @@ import {
 } from './attachment-resolution';
 import { validateDocumentReferences, validateInsertReferences } from './attachment-reference';
 import { ATTACHMENT_SOURCES_FIELD } from './attachment-policy';
+import { attachmentNotAllowedText, refusalNextStep, pickerCard } from './guidance';
 import { verifyTicket, TicketBindingMismatchError, mandateForTicket } from './ticket-verify';
 import { wireExecutionContext as hapWireExecutionContext, checkExecutionValues, missingSumFields } from '@hap/core';
 import { notifyControlPlane } from './cp-notify';
@@ -65,6 +66,18 @@ import { extname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { isSimulationMode, manifestIsSimulated } from './simulation-mode';
 import { getManifest } from './manifest-loader';
+import { sourceTitle } from './guidance';
+
+/** The card the mandate picker shows for this tool's connector and area ("ERP — Invoicing" for a connector with several areas). */
+function cardNameOf(tool: DiscoveredTool): string | undefined {
+  const m = getManifest(tool.integrationId);
+  return m && tool.gating?.profile ? pickerCard(m as never, tool.gating.profile, areaName) : m?.name;
+}
+
+/** A document kind by the name the mandate form shows ("Saved files"), from its connector's manifest. */
+function sourceTitleOf(connector: string, kind: string): string {
+  return sourceTitle(kind, getManifest(connector)?.documents?.[kind]);
+}
 
 const IMAGE_MIME: Record<string, string> = {
   '.jpg': 'image/jpeg',
@@ -474,6 +487,62 @@ function recordAsRefusal(
 }
 
 /**
+ * Why the Authority Server would not CREATE a proposal. Since "no dead
+ * proposals" it refuses one that could never be ticketed, in the ticket's
+ * envelope — read from `errors[0].code`, never the message:
+ *  - the mandate is dead (revoked, expired, unknown): drop it from the local
+ *    cache and try the next candidate, as the ticket path does;
+ *  - the mandate is fine but a cumulative limit has no room left today: skip
+ *    it for THIS call only (it is still a valid mandate) and try the next.
+ * Anything else (a 5xx, a locked session, an older server that never refuses
+ * this way) is not this and keeps its existing handling.
+ */
+interface ProposalRefusalNote {
+  kind: 'dead-mandate' | 'no-room';
+  code: string;
+  message: string;
+  path: string;
+  authorizationId: string;
+  detail: { code?: unknown; field?: unknown; expected?: unknown; actual?: unknown };
+}
+
+function proposalRefusalNote(err: unknown, auth: { authorizationId: string; path: string }): ProposalRefusalNote | null {
+  if (!(err instanceof SPProposalError)) return null;
+  const first = err.refusal;
+  if (!first) return null;
+  const kind = isStaleMandateRefusal(err)
+    ? 'dead-mandate'
+    : err.statusCode === 403 && first.code === 'CUMULATIVE_LIMIT_EXCEEDED'
+      ? 'no-room'
+      : null;
+  if (!kind) return null;
+  return {
+    kind,
+    code: first.code,
+    message: typeof first.message === 'string' ? first.message : err.message,
+    path: auth.path,
+    authorizationId: auth.authorizationId,
+    detail: first,
+  };
+}
+
+/** The one refusal the AI gets when no mandate could carry the proposal. */
+function proposalRefusalText(notes: ProposalRefusalNote[]): string {
+  const reasons = notes.map((n) =>
+    n.code === 'MANDATE_REVOKED' ? `the mandate "${n.path}" was revoked`
+    : n.code === 'MANDATE_EXPIRED' ? `the mandate "${n.path}" has expired`
+    : n.kind === 'dead-mandate' ? `the mandate "${n.path}" is no longer known to the Authority Server`
+    : n.message);
+  const head = notes.length === 1
+    ? `Refused: ${reasons[0]}.`
+    : `Refused: none of the ${notes.length} mandates that fit could carry this: ${reasons.join('; ')}.`;
+  const tail = notes.every((n) => n.kind === 'dead-mandate')
+    ? ' Ask the person to grant a new mandate.'
+    : ' The limit counts everything done under it today, so trying again will not help; the person decides whether to raise it.';
+  return `${head} No proposal was created and nothing ran.${tail}`;
+}
+
+/**
  * Create a handler function for a proxied tool that gates calls through Suveren.
  *
  * All tools require authorization:
@@ -548,7 +617,8 @@ export function createGatedToolHandler(
     if (!detail) return null;
     recordBlocked(state, tool, { kind: 'simulation', detail, who: 'gateway', code: 'SIMULATION_MODE' });
     return {
-      content: [{ type: 'text', text: `Refused: "${tool.namespacedName}" is not available. No ticket was requested.` }],
+      content: [{ type: 'text', text: `Refused: "${tool.namespacedName}" is not available. No ticket was requested. ` +
+        'Tell the person it is not available right now; the connector\'s setting is under **Connectors**.' }],
       isError: true,
     };
   };
@@ -625,7 +695,7 @@ export function createGatedToolHandler(
  * `authz-store.ts`'s `renewAuthorization`) rather than minting a new one, so
  * a superseded mandate surfaces as one of these two codes, not a third.
  */
-function isStaleMandateRefusal(err: SPReceiptError): boolean {
+function isStaleMandateRefusal(err: Pick<SPReceiptError, 'statusCode' | 'body'>): boolean {
   const errors = err.body?.errors as Array<{ code?: unknown }> | undefined;
   const code = errors?.[0]?.code;
   if (err.statusCode === 403 && (code === 'MANDATE_REVOKED' || code === 'MANDATE_EXPIRED')) {
@@ -718,7 +788,7 @@ function createGatedToolHandlerInner(
         type: 'text',
         text: refusals.length > 0
           ? `Refused: ${reasons.charAt(0).toUpperCase() + reasons.slice(1)} No ticket was requested.`
-          : noMandateRefusal(tool.namespacedName, profile!, integrationManager.noMandateText?.(tool.integrationId)),
+          : noMandateRefusal(tool.namespacedName, profile!, integrationManager.noMandateText?.(tool.integrationId), cardNameOf(tool)),
       }],
       isError: true,
     };
@@ -1228,7 +1298,7 @@ function createGatedToolHandlerInner(
         who: 'gateway',
         code: 'NO_MATCHING_MANDATE',
       });
-      return { content: [{ type: 'text', text: noMandateRefusal(tool.namespacedName, mandateLabel, integrationManager.noMandateText?.(tool.integrationId)) }], isError: true };
+      return { content: [{ type: 'text', text: noMandateRefusal(tool.namespacedName, mandateLabel, integrationManager.noMandateText?.(tool.integrationId), undefined, profile!) }], isError: true };
     }
 
     if (matchingAuths.length === 0) return noEligibleMandate(refusals);
@@ -1419,7 +1489,8 @@ function createGatedToolHandlerInner(
         content: [{
           type: 'text',
           text: `Tool call rejected by Gatekeeper. Tried ${matchingAuths.length} authorization(s):\n` +
-            errors.map(e => `  - ${e}`).join('\n'),
+            errors.map(e => `  - ${e}`).join('\n') +
+            '\nNothing ran. Tell the person which limit or scope stopped it. To change it they edit the mandate (**Mandates**, open it, **Edit**, sign again); or ask for something smaller. Do not retry the same call.',
         }],
         isError: true,
       };
@@ -1451,7 +1522,14 @@ function createGatedToolHandlerInner(
       const narrowed = candidatesAllowingAttachments(passers, refs, (id) => getProfile(id) as never);
       if (narrowed.allowed.length === 0) {
         return {
-          content: [{ type: 'text', text: `Refused: attachment not allowed by any ${tool.gating.profile ?? ''} mandate. ${narrowed.refusal ?? ''}`.trim() }],
+          content: [{ type: 'text', text: attachmentNotAllowedText({
+            tool: tool.namespacedName,
+            area: areaName(tool.gating.profile ?? ''),
+            candidates: passers,
+            refs,
+            profileOf: (id) => getProfile(id) as never,
+            titleOf: (connector, kind) => sourceTitleOf(connector, kind),
+          }) }],
           isError: true,
         };
       }
@@ -1463,7 +1541,9 @@ function createGatedToolHandlerInner(
     // checked non-empty above, and the only recursive call site below only
     // recurses when at least one candidate remains — when none do, it returns
     // the AS's own refusal directly instead of recursing into an empty pool.
-    async function attemptWithCandidates(candidates: EnrichedAuthorization[]): Promise<ToolResult> {
+    // `earlier` carries the refusals of candidates already dropped for THIS call
+    // because the server would not create a proposal on them (proposalRefusalNote).
+    async function attemptWithCandidates(candidates: EnrichedAuthorization[], earlier: ProposalRefusalNote[] = []): Promise<ToolResult> {
       const selection = selectAuthorization(
         contextKeys,
         candidates.map(a => ({
@@ -1484,6 +1564,28 @@ function createGatedToolHandlerInner(
         // Every SP reference (receipt, proposals, summary) is the per-ceremony id.
         const authzId = auth.authorizationId;
 
+        // The server refused to create a proposal on this mandate because it
+        // could never be ticketed (see proposalRefusalNote). Drop the mandate
+        // from THIS call's pool and select again among the rest; when none is
+        // left, one refusal with the real reason(s) and no proposal anywhere.
+        const retryWithoutThisMandate = (note: ProposalRefusalNote): Promise<ToolResult> => {
+          if (note.kind === 'dead-mandate') state.cache.invalidate(auth.authorizationId);
+          const remaining = candidates.filter(c => c.authorizationId !== auth.authorizationId);
+          const notes = [...earlier, note];
+          if (remaining.length === 0) {
+            recordAsRefusal(state, tool, auth.authorizationId, note.detail);
+            console.error(
+              `[Suveren MCP] proposal(${tool.namespacedName}): no mandate left after ${note.code} on ${auth.authorizationId}`,
+            );
+            return Promise.resolve({ content: [{ type: 'text', text: proposalRefusalText(notes) }], isError: true });
+          }
+          console.error(
+            `[Suveren MCP] proposal(${tool.namespacedName}): ${note.code} on ${auth.authorizationId} → ` +
+              `retrying with [${remaining.map(c => c.authorizationId).join(', ')}]`,
+          );
+          return attemptWithCandidates(remaining, notes);
+        };
+
         // Enforce the SIGNED commitment_mode (defense against a downgrade via
         // unsigned AS metadata). For an honest AS, commitment_mode === 'review'
         // always comes with deferred commitment domains; if the signed payload
@@ -1497,7 +1599,7 @@ function createGatedToolHandlerInner(
               text: `Refusing to execute ${tool.originalName}: the signed authorization requires review ` +
                 `(commitment_mode="${auth.signedCommitmentMode}") but the Authority Server returned no pending ` +
                 `approvers. This inconsistency (a possible commitment-mode downgrade) is rejected fail-closed. ` +
-                `Re-fetch the authorization or contact the Authority Server operator.`,
+                `Nothing ran. Tell the person: they open the mandate under **Mandates** and sign it again, or contact the Authority Server operator.`,
             }],
             isError: true,
           };
@@ -1606,6 +1708,8 @@ function createGatedToolHandlerInner(
             // The submission's 401 (if that's what it was) already cleared our
             // session inside SPClient.fetch() — check the RESULT, not the error
             // shape, so this catches it regardless of how submitProposal threw.
+            const refusedNote = proposalRefusalNote(err, auth);
+            if (refusedNote) return retryWithoutThisMandate(refusedNote);
             if (!state.spClient.isUnlocked()) {
               return {
                 content: [{ type: 'text', text: lockedNotice(`use ${tool.namespacedName}`, 'expired') }],
@@ -1885,6 +1989,25 @@ function createGatedToolHandlerInner(
             return attemptWithCandidates(remaining);
           }
 
+          // A cumulative limit with no room left is a fact about THIS mandate's
+          // limit (the count is shared by the group, the limit is not): skip it
+          // for this call only and run the same selection over the rest. A
+          // refused ticket consumed nothing and its journal row is closed
+          // above, so the next candidate starts clean with its own key. With
+          // no candidate left, the refusal below stands, with the server's
+          // own reason.
+          if (err instanceof SPReceiptError && err.statusCode === 403
+              && (err.body?.errors as Array<{ code?: unknown }> | undefined)?.[0]?.code === 'CUMULATIVE_LIMIT_EXCEEDED') {
+            const remaining = candidates.filter(c => c.authorizationId !== auth.authorizationId);
+            if (remaining.length > 0) {
+              console.error(
+                `[Suveren MCP] fallback(${tool.namespacedName}): mandate ${auth.authorizationId} has no room ` +
+                  `(CUMULATIVE_LIMIT_EXCEEDED) → retrying with [${remaining.map(c => c.authorizationId).join(', ')}]`,
+              );
+              return attemptWithCandidates(remaining, earlier);
+            }
+          }
+
           if (err instanceof SPReceiptError && isStaleMandateRefusal(err)) {
             // The mandate selected for THIS call failed validity at the AS —
             // not a bound/approval refusal, so retrying the same call under a
@@ -1912,7 +2035,7 @@ function createGatedToolHandlerInner(
                   `(${code}) — no remaining candidates`,
               );
               return {
-                content: [{ type: 'text', text: `Blocked by SP: ${err.message}` }],
+                content: [{ type: 'text', text: `Blocked by SP: ${err.message} ${refusalNextStep(code, cardNameOf(tool))}` }],
                 isError: true,
               };
             }
@@ -2057,6 +2180,8 @@ function createGatedToolHandlerInner(
                 }],
               };
             } catch (proposalErr) {
+              const refusedNote = proposalRefusalNote(proposalErr, auth);
+              if (refusedNote) return retryWithoutThisMandate(refusedNote);
               if (!state.spClient.isUnlocked()) {
                 return {
                   content: [{ type: 'text', text: lockedNotice(`use ${tool.namespacedName}`, 'expired') }],
@@ -2090,7 +2215,7 @@ function createGatedToolHandlerInner(
             }
             recordAsRefusal(state, tool, auth.authorizationId, errors403?.[0]);
             return {
-              content: [{ type: 'text', text: `Blocked by SP: ${err.message}` }],
+              content: [{ type: 'text', text: `Blocked by SP: ${err.message} ${refusalNextStep(errors403?.[0]?.code, cardNameOf(tool))}` }],
               isError: true,
             };
           }
@@ -2106,7 +2231,7 @@ function createGatedToolHandlerInner(
           }
           // SP unreachable — fail closed
           return {
-            content: [{ type: 'text', text: `SP unavailable — tool call blocked. ${err instanceof Error ? err.message : ''}` }],
+            content: [{ type: 'text', text: `SP unavailable — tool call blocked. ${err instanceof Error ? err.message : ''} Nothing ran. Tell the person the Authority Server cannot be reached; they check their connection and the gateway's sign-in on the page, then you try again.` }],
             isError: true,
           };
         }
@@ -2230,14 +2355,18 @@ export function v08ProposalReaders(
  * as the person sees it — the profile's `name` ("Email", "Setup"), falling back
  * to its short id only when the profile is not in the local catalog.
  */
-export function noMandateRefusal(toolName: string, profile: string, builtinText?: string): string {
+export function noMandateRefusal(toolName: string, profile: string, builtinText?: string, card?: string, stepsArea: string = profile): string {
   if (builtinText) return `Refused: ${builtinText} No ticket was requested.`;
   const area = areaName(profile);
+  const where = card
+    ? `**Mandates → + New mandate →** card **${card}** → **Give a mandate**`
+    : '**Mandates → + New mandate**';
   return `Refused: no mandate covers ${toolName} (${area}). Nothing was done. ` +
-    `Ask the person to grant a ${area} mandate in the gateway, then try again. No ticket was requested.`;
+    `Tell the person to grant a ${area} mandate in the gateway: ${where}. list-authorizations(domain: "${shortProfile(stepsArea)}") gives the exact steps and says whether you can propose it for them. ` +
+    'Then try again. No ticket was requested.';
 }
 
-function areaName(profile: string): string {
+export function areaName(profile: string): string {
   // Manifests name an area by its short id ("customers"); the catalog is keyed by
   // full id, so a short id is matched against every known profile's short name.
   // Names change between versions ("Delegation" → "Setup"): the NEWEST known
@@ -2272,10 +2401,12 @@ function shortProfile(profileId: string): string {
  * - [Suveren: crm — read; works only under a crm mandate, check list-authorizations]
  * - [Suveren: charge — charge, amount checked; works only under a charge mandate, check list-authorizations]
  */
-export function buildProxiedToolDescription(tool: DiscoveredTool): string {
+export function buildProxiedToolDescription(tool: DiscoveredTool, extra?: string): string {
   if (!tool.gating || !tool.gating.profile) {
     return `[Suveren: no gating config] ${tool.description}`;
   }
+  // What the connector manifests add for this tool (e.g. the attachment line); fixed per tool like the rest.
+  const tail = extra ? `\n\n${extra}` : '';
 
   const profile = tool.gating.profile;
   const areas = tool.gating.category === 'read'
@@ -2284,7 +2415,7 @@ export function buildProxiedToolDescription(tool: DiscoveredTool): string {
   const condition = `works only under a ${areas.join(' or ')} mandate, check list-authorizations`;
 
   if (tool.gating.category === 'read') {
-    return `[Suveren: ${profile} — read; ${condition}] ${tool.description}`;
+    return `[Suveren: ${profile} — read; ${condition}] ${tool.description}${tail}`;
   }
 
   // Build a short tag describing what's checked
@@ -2300,5 +2431,5 @@ export function buildProxiedToolDescription(tool: DiscoveredTool): string {
   }
 
   const tag = parts.length > 0 ? parts.join(', ') : 'gated';
-  return `[Suveren: ${profile} — ${tag}; ${condition}] ${tool.description}`;
+  return `[Suveren: ${profile} — ${tag}; ${condition}] ${tool.description}${tail}`;
 }

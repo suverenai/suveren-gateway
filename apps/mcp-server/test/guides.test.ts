@@ -111,7 +111,7 @@ describe('guideHeader', () => {
   it('tells the AI where the person approves its proposals', () => {
     process.env.SUVEREN_CP_PORT = '3500';
     try {
-      expect(guideHeader([])).toContain('approves it in the Suveren Gateway at http://localhost:3500/approvals');
+      expect(guideHeader([])).toContain('under **Approvals** on the Suveren Gateway page');
     } finally { delete process.env.SUVEREN_CP_PORT; }
   });
 });

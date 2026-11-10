@@ -174,7 +174,8 @@ describe('the refusal without a mandate', () => {
     // The area by the name the person sees (the registered profile's `name`), not its id.
     expect(r.content[0].text).toBe(
       'Refused: no mandate covers crm__update_contact (Customer Management). Nothing was done. ' +
-        'Ask the person to grant a Customer Management mandate in the gateway, then try again. No ticket was requested.',
+        'Tell the person to grant a Customer Management mandate in the gateway: **Mandates → + New mandate**. ' +
+        'list-authorizations(domain: "customers") gives the exact steps and says whether you can propose it for them. Then try again. No ticket was requested.',
     );
   });
 
@@ -193,8 +194,15 @@ describe('the refusal without a mandate', () => {
 });
 
 describe('list-authorizations', () => {
-  it('no mandate at all: says nothing is usable and lists the connector tools as "not usable yet"', async () => {
+  it('no mandate at all: the short answer says nothing is usable, with no tool lists', async () => {
     const text = (await listAuthorizationsHandler(mockState([]), mockIntegrationManager(ALL))()).content[0].text;
+    expect(text).toContain('no tool is usable yet');
+    expect(text).not.toContain('Listed but not usable yet');
+    expect(text).not.toContain('crm__get_contact');
+  });
+
+  it('asked for the area: says nothing is usable and lists its connector tools as "not usable yet"', async () => {
+    const text = (await listAuthorizationsHandler(mockState([]), mockIntegrationManager(ALL))({ domain: 'customers' })).content[0].text;
     expect(text).toContain('no tool is usable yet');
     expect(text).toContain('Listed but not usable yet');
     expect(text).toContain('customers: crm__update_contact, crm__get_contact');
@@ -224,15 +232,17 @@ describe("list-authorizations — a built-in's own no-mandate text", () => {
     builtinNoMandateTexts: () => [{ id: 'setup', profile: 'delegation', text: SETUP_TEXT }],
   }) as unknown as IntegrationManager;
 
-  it('no mandate at all: the overview carries the text, so the agent reaches it although setup tools are hidden', async () => {
-    const text = (await listAuthorizationsHandler(mockState([]), withHint())()).content[0].text;
+  it('no mandate at all: the area view carries the text, so the agent reaches it although setup tools are hidden', async () => {
+    const text = (await listAuthorizationsHandler(mockState([]), withHint())({ domain: 'delegation' })).content[0].text;
     expect(text).toContain(SETUP_TEXT);
+    // The short answer names the first mandate itself instead.
+    const short = (await listAuthorizationsHandler(mockState([]), withHint())()).content[0].text;
+    expect(short).toContain('**Setup**');
+    expect(short).not.toContain(SETUP_TEXT);
   });
 
-  it('other mandates but none for the built-in: overview and an unmatched domain view both carry it', async () => {
+  it('other mandates but none for the built-in: an unmatched domain view carries it', async () => {
     const auths = [customersMandate()];
-    const overview = (await listAuthorizationsHandler(mockState(auths), withHint())()).content[0].text;
-    expect(overview).toContain(SETUP_TEXT);
     const domainView = (await listAuthorizationsHandler(mockState(auths), withHint())({ domain: 'delegation' })).content[0].text;
     expect(domainView).toContain(SETUP_TEXT);
   });

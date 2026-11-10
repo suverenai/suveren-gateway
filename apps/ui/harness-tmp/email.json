@@ -1,0 +1,259 @@
+{
+  "id": "github.com/humanagencyprotocol/hap-profiles/email@0.10",
+  "name": "Email",
+  "version": "0.10",
+  "description": "Email authority — governs sending, drafting, and reading email via Gmail",
+  "whatsNew": "This area now says what kind of value each sealed field is — recipients are lists, subject and text are text, attachments are files — so anyone checking an email on its ticket page can drop in the attached file instead of typing its fingerprint. Limits and sealed content are unchanged.",
+  "boundsSchema": {
+    "actionTypes": [
+      "delete",
+      "send",
+      "setup"
+    ],
+    "keyOrder": [
+      "profile",
+      "read_access",
+      "recipient_max",
+      "send_daily_max",
+      "read_max_age_days",
+      "setup_daily_max"
+    ],
+    "fields": {
+      "profile": {
+        "type": "string",
+        "required": true
+      },
+      "recipient_max": {
+        "type": "number",
+        "required": false,
+        "displayName": "Recipients per email",
+        "description": "Maximum recipients per email",
+        "unit": "count",
+        "boundType": {
+          "kind": "per_transaction",
+          "of": "recipient_count"
+        }
+      },
+      "send_daily_max": {
+        "type": "number",
+        "required": false,
+        "displayName": "Daily send limit",
+        "description": "Maximum emails sent or drafted per day",
+        "unit": "count",
+        "boundType": {
+          "kind": "cumulative_count",
+          "window": "daily"
+        },
+        "appliesTo": [
+          "send"
+        ]
+      },
+      "read_max_age_days": {
+        "type": "number",
+        "required": false,
+        "displayName": "Max email age (days)",
+        "description": "Maximum age in days for email search. Enforced locally by the Gatekeeper, never by the Authority Server: reads carry no ticket, so no signed check ever reads this value. Set it on the integration instead, where it is live-editable. Kept in the schema as the fallback for grants issued before that setting existed.",
+        "unit": "days",
+        "enforcedBy": "gatekeeper",
+        "boundType": {
+          "kind": "per_transaction",
+          "of": "read_age_days"
+        }
+      },
+      "read_access": {
+        "type": "string",
+        "required": true,
+        "displayName": "Read access",
+        "description": "Allow the agent to list and read messages in the mailbox (simulated or real). Sending is governed separately.",
+        "boundType": {
+          "kind": "enum",
+          "values": [
+            "unlimited",
+            "none"
+          ]
+        },
+        "toolsDescription": "list_messages, get_message",
+        "default": "unlimited"
+      },
+      "setup_daily_max": {
+        "type": "number",
+        "required": true,
+        "displayName": "Test-data loads per day",
+        "description": "How many times per day the simulated system may be loaded with a simulation package (load_simulation). Only works while the connector runs in simulation mode, and only into an empty system — a load cannot edit or replace existing test data. 0 = not allowed. Grant it only in a separate setup mandate, never in the mandate the AI uses for its work.",
+        "unit": "count",
+        "boundType": {
+          "kind": "cumulative_count",
+          "window": "daily"
+        },
+        "appliesTo": [
+          "setup"
+        ],
+        "default": 0
+      }
+    }
+  },
+  "scopeSchema": {
+    "keyOrder": [
+      "allowed_recipients",
+      "allowed_domains",
+      "allowed_attachment_sources"
+    ],
+    "fields": {
+      "allowed_recipients": {
+        "type": "string",
+        "required": false,
+        "displayName": "Allowed recipients",
+        "format": "email",
+        "description": "Comma-separated list of allowed email addresses",
+        "constraint": {
+          "type": "string",
+          "enforceable": [
+            "subset"
+          ],
+          "requiredFor": [
+            "send"
+          ]
+        }
+      },
+      "allowed_domains": {
+        "type": "string",
+        "required": false,
+        "displayName": "Allowed domains",
+        "format": "domain",
+        "description": "Comma-separated list of allowed recipient domains (e.g. acme.com,partner.org)",
+        "constraint": {
+          "type": "string",
+          "enforceable": [
+            "subset"
+          ],
+          "requiredFor": [
+            "send"
+          ]
+        }
+      },
+      "allowed_attachment_sources": {
+        "type": "string",
+        "required": false,
+        "displayName": "Allowed attachment sources",
+        "format": "connector:kind",
+        "description": "Comma-separated list of document sources this mandate may attach, as connector:kind (e.g. erp:invoice-pdf,erp:credit-note-pdf). Empty = no attachments. The gateway fetches each attached document itself; the AI only names it.",
+        "constraint": {
+          "type": "string",
+          "enforceable": [
+            "subset"
+          ]
+        }
+      }
+    }
+  },
+  "executionContextSchema": {
+    "fields": {
+      "recipient_count": {
+        "source": "declared",
+        "description": "Number of recipients in this email",
+        "required": true,
+        "constraint": {
+          "type": "number",
+          "enforceable": [
+            "max"
+          ]
+        }
+      },
+      "allowed_recipients": {
+        "source": "declared",
+        "description": "Comma-separated recipient addresses from this call (checked against context)",
+        "required": false,
+        "constraint": {
+          "type": "string",
+          "enforceable": [
+            "subset"
+          ]
+        }
+      },
+      "allowed_domains": {
+        "source": "declared",
+        "description": "Comma-separated unique recipient domains from this call (checked against context)",
+        "required": false,
+        "constraint": {
+          "type": "string",
+          "enforceable": [
+            "subset"
+          ]
+        }
+      },
+      "send_count_daily": {
+        "source": "cumulative",
+        "cumulativeField": "_count",
+        "window": "daily",
+        "description": "Running daily send/draft count (resolved from execution log)",
+        "required": true,
+        "constraint": {
+          "type": "number",
+          "enforceable": [
+            "max"
+          ]
+        }
+      },
+      "setup_count_daily": {
+        "source": "cumulative",
+        "cumulativeField": "_count",
+        "window": "daily",
+        "description": "Running daily count of test-data loads",
+        "required": true,
+        "constraint": {
+          "type": "number",
+          "enforceable": [
+            "max"
+          ]
+        }
+      },
+      "allowed_attachment_sources": {
+        "source": "declared",
+        "description": "Comma-separated connector:kind sources of this call's attachments (checked against scope; absent when the email has none)",
+        "required": false,
+        "constraint": {
+          "type": "string",
+          "enforceable": [
+            "subset"
+          ]
+        }
+      }
+    }
+  },
+  "requiredGates": [
+    "bounds",
+    "intent",
+    "commitment",
+    "mandate_owner"
+  ],
+  "ttl": {
+    "default": 86400,
+    "max": 31536000
+  },
+  "retention_minimum": 7776000,
+  "content_binding": {
+    "version": "2",
+    "kind": "jcs",
+    "fields": [
+      "to",
+      "cc",
+      "subject",
+      "body",
+      "attachments"
+    ],
+    "required_fields": [
+      "to",
+      "body"
+    ],
+    "appliesTo": [
+      "send"
+    ],
+    "field_kinds": {
+      "to": "list",
+      "cc": "list",
+      "subject": "text",
+      "body": "text",
+      "attachments": "files"
+    }
+  }
+}

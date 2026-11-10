@@ -82,8 +82,7 @@ export function FirstRunCard({
     <div className="card setup-card">
       <h2 className="card-title">Get started</h2>
       <p className="setup-intro">
-        You decide what your AI can do — it acts only within that. Every action that
-        changes something gets a signed ticket.
+        Tell your AI what you want done. You decide what it may do.
       </p>
 
       {/* Step 1 — Connect your AI */}
@@ -117,7 +116,7 @@ export function FirstRunCard({
               </>
             ) : (
               <>
-                <p>Ask your AI to connect to Suveren. Copy this into it:</p>
+                <p>Copy this into your AI:</p>
                 <div className="gate-content-block" style={{ marginBottom: '0.75rem' }}>
                   <div className="quote-box">
                     <span className="quote-text">{connectSnippet}</span>
@@ -125,7 +124,7 @@ export function FirstRunCard({
                   </div>
                 </div>
                 <p className="cta-helper" style={{ marginTop: 0, marginBottom: '0.75rem' }}>
-                  If your AI can't add it itself, it will tell you how. In ChatGPT, use a local session.
+                  If your AI can't add it itself, it will tell you how.
                 </p>
                 <details className="int-details">
                   <summary>Set it up by hand</summary>
@@ -147,11 +146,11 @@ export function FirstRunCard({
           </span>
           {state.step2.status === 'done' ? (
             <span className="flow-step-title flow-done-title">
-              Delegation mandate given &middot; <Link to="/mandates">review or revoke under Mandates</Link>
+              First mandate given &middot; <Link to="/mandates">review or revoke under Mandates</Link>
             </span>
           ) : (
             <StepTitle todo={state.step2.status === 'todo'} onOpen={() => setChosen(1)}>
-              Give the Delegation mandate
+              Give your AI its first mandate
             </StepTitle>
           )}
         </div>
@@ -159,33 +158,20 @@ export function FirstRunCard({
         {state.step2.status === 'open' && (
           <div className="flow-step-body">
             <p>
-              Delegation lets your AI propose the rest of its own setup — new mandates
-              and its working instructions. It can only propose; nothing changes until
-              you approve it.
+              A mandate is a permission you give your AI, with limits you choose. For
+              example: &ldquo;Send up to 5 emails a day, and show me each one first.&rdquo;
             </p>
-            <ul className="bound-list">
-              <li>Read the setup guides</li>
-              <li>Propose new mandates — each waits for your approval</li>
-              <li>Propose an updated agent brief — also waits for your approval</li>
-            </ul>
+            <p>
+              Your AI needs a mandate for each kind of work. This first one lets it prepare
+              all the others for you. You say yes or no to each. It does no work itself.
+            </p>
 
-            {state.step2.simulationOn ? (
-              <>
-                <Link to={DELEGATION_MANDATE_HREF} className="btn btn-primary">
-                  Give the Delegation mandate &#8594;
-                </Link>
-                <p className="cta-helper">You set the daily limit in the next step.</p>
-                {state.step2.variant === 'managed' && (
-                  <p className="managed-note">
-                    In a company team you may need approver rights — ask your IT if the button is refused.
-                  </p>
-                )}
-              </>
-            ) : (
-              <p className="managed-note" style={{ marginTop: 0 }}>
-                {state.step2.variant === 'managed'
-                  ? 'Delegation works in simulation mode only. Ask your IT to turn on simulation mode.'
-                  : <>Delegation works in simulation mode only. Turn it on with <code>suveren-gateway simulation on</code> and restart.</>}
+            <Link to={DELEGATION_MANDATE_HREF} className="btn btn-primary">
+              Give the first mandate &#8594;
+            </Link>
+            {state.step2.variant === 'managed' && (
+              <p className="managed-note">
+                In a company team you may need approver rights — ask your IT if the button is refused.
               </p>
             )}
           </div>
@@ -199,22 +185,13 @@ export function FirstRunCard({
             3
           </span>
           <StepTitle todo={state.step3.status === 'todo'} onOpen={() => setChosen(2)}>
-            Ask your AI: &ldquo;How do I start with Suveren?&rdquo;
+            Tell your AI what you want done
           </StepTitle>
         </div>
 
         {state.step3.status === 'open' && (
           <div className="flow-step-body">
-            <div className="gate-content-block" style={{ marginBottom: '0.875rem' }}>
-              <div className="quote-box">
-                <span className="quote-text">&ldquo;How do I start with Suveren?&rdquo;</span>
-                <CopyButton text="How do I start with Suveren?" />
-              </div>
-            </div>
-            <p>
-              It will interview you, suggest test data, and propose mandates and a brief.
-              Approve its proposals under <Link to="/approvals">Approvals</Link>.
-            </p>
+            <p>Go back to your chat and say what you want done.</p>
           </div>
         )}
       </div>

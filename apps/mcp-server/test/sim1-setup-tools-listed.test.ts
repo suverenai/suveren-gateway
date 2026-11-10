@@ -215,7 +215,8 @@ describe('SIM1 — calling load_simulation without a setup mandate (gateway-wide
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toBe(
       'Refused: no mandate covers crm__load_simulation (setup). Nothing was done. ' +
-        'Ask the person to grant a setup mandate in the gateway, then try again. No ticket was requested.',
+        'Tell the person to grant a setup mandate in the gateway: **Mandates → + New mandate**. ' +
+        'list-authorizations(domain: "customers") gives the exact steps and says whether you can propose it for them. Then try again. No ticket was requested.',
     );
   });
 

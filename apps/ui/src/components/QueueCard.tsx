@@ -9,15 +9,20 @@ import { ApproverProposalCard } from './ApproverProposalCard';
 import { useApprovalQueue } from '../contexts/ApprovalQueueContext';
 import type { QueueEntry } from '../lib/approval-queue';
 import type { DecisionKind, DecisionResult } from '../lib/approval-flow';
+import type { ApprovalOutcome } from '../lib/approval-outcome';
 
 interface Props {
   entry: QueueEntry;
   onDecided: (proposalId: string, kind: DecisionKind, result: DecisionResult) => void;
   nextLabelText?: string | null;
   onBusyChange?: (busy: boolean) => void;
+  /** What became of an approval on this card. */
+  onOutcome?: (proposalId: string, outcome: ApprovalOutcome) => void;
+  dismissLabel?: string;
+  onDismissResult?: () => void;
 }
 
-export function QueueCard({ entry, onDecided, nextLabelText, onBusyChange }: Props) {
+export function QueueCard({ entry, onDecided, nextLabelText, onBusyChange, onOutcome, dismissLabel, onDismissResult }: Props) {
   const { manifests, toolDisplay, titles, userId } = useApprovalQueue();
   const { proposal } = entry;
   // The tool is namespaced `<integrationId>__<tool>`, the only link back to the connector that produced it.
@@ -35,6 +40,9 @@ export function QueueCard({ entry, onDecided, nextLabelText, onBusyChange }: Pro
       onDecided={onDecided}
       nextLabelText={nextLabelText}
       onBusyChange={onBusyChange}
+      onOutcome={onOutcome ? (o) => onOutcome(proposal.id, o) : undefined}
+      dismissLabel={dismissLabel}
+      onDismissResult={onDismissResult}
     />
   ) : (
     <ApproverProposalCard
@@ -48,6 +56,9 @@ export function QueueCard({ entry, onDecided, nextLabelText, onBusyChange }: Pro
       onDecided={onDecided}
       nextLabelText={nextLabelText}
       onBusyChange={onBusyChange}
+      onOutcome={onOutcome ? (o) => onOutcome(proposal.id, o) : undefined}
+      dismissLabel={dismissLabel}
+      onDismissResult={onDismissResult}
     />
   );
 }

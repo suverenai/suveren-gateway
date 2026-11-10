@@ -1254,6 +1254,8 @@ app.use(
           void runCommittedProposals().catch(() => {});
         } else if (method === 'POST' && /^\/api\/proposals\/[^/]+\/approve$/.test(path)) {
           eventBus.emit('proposal-approved');
+          // Same nudge as /resolve: the card waits for the outcome, so it must not wait for the poll.
+          void runCommittedProposals().catch(() => {});
         } else if (method === 'POST' && /^\/api\/proposals\/[^/]+\/reject$/.test(path)) {
           eventBus.emit('proposal-rejected');
         } else if (

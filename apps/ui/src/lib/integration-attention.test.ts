@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildIntegrationAttentionItems, buildPausedSummary, blockedBySimulation } from './integration-attention';
+import { buildIntegrationAttentionItems, buildPausedSummaries, blockedBySimulation } from './integration-attention';
 import type { IntegrationEntry } from '../contexts/IntegrationStatusContext';
 
 /**
@@ -15,7 +15,7 @@ function entry(o: {
   state: IntegrationEntry['state'];
   error?: string;
   /** The gateway's own (now current-mode-aware) block signal. */
-  paused?: 'simulation';
+  paused?: 'simulation' | 'production';
 }): IntegrationEntry {
   return {
     id: o.id ?? o.name ?? 'conn',
@@ -123,32 +123,50 @@ describe('buildIntegrationAttentionItems', () => {
   });
 });
 
-describe('buildPausedSummary', () => {
-  it('null when nothing is paused — caller renders nothing, not an empty box', () => {
-    expect(buildPausedSummary([entry({ name: 'ERP', state: 'running' })])).toBeNull();
-    expect(buildPausedSummary([])).toBeNull();
+describe('buildPausedSummaries', () => {
+  it('empty when nothing is paused — caller renders nothing, not an empty box', () => {
+    expect(buildPausedSummaries([entry({ name: 'ERP', state: 'running' })])).toEqual([]);
+    expect(buildPausedSummaries([])).toEqual([]);
   });
 
-  it('singular count for exactly one paused system', () => {
-    const summary = buildPausedSummary([entry({ name: 'Gmail', state: 'paused' })]);
-    expect(summary).toEqual({ count: 1, namesText: 'Gmail' });
+  it('a real system paused by simulation mode', () => {
+    expect(buildPausedSummaries([entry({ name: 'Gmail', state: 'paused' })])).toEqual([
+      { reason: 'simulation', count: 1, namesText: 'Gmail' },
+    ]);
   });
 
-  it('plural count and a comma-joined name list, in entry order', () => {
-    const summary = buildPausedSummary([
+  it('comma-joined names, in entry order', () => {
+    const [one] = buildPausedSummaries([
       entry({ name: 'Gmail', state: 'paused' }),
       entry({ name: 'Google Calendar', state: 'paused' }),
       entry({ name: 'Mollie', state: 'paused' }),
     ]);
-    expect(summary).toEqual({ count: 3, namesText: 'Gmail, Google Calendar, Mollie' });
+    expect(one).toEqual({ reason: 'simulation', count: 3, namesText: 'Gmail, Google Calendar, Mollie' });
   });
 
   it('ignores non-paused entries when building the list', () => {
-    const summary = buildPausedSummary([
+    expect(buildPausedSummaries([
       entry({ name: 'Gmail', state: 'paused' }),
       entry({ name: 'ERP', state: 'running' }),
       entry({ name: 'Mollie', state: 'error', error: 'x' }),
+    ])).toEqual([{ reason: 'simulation', count: 1, namesText: 'Gmail' }]);
+  });
+
+  // The bug: on a production gateway CRM and ERP are paused the OTHER way, and the
+  // dashboard said "paused while simulation mode is on".
+  it('a connector paused in production is its own reason, never "simulation"', () => {
+    const summaries = buildPausedSummaries([
+      entry({ name: 'CRM', state: 'paused', paused: 'production' }),
+      entry({ name: 'ERP', state: 'paused', paused: 'production' }),
     ]);
-    expect(summary).toEqual({ count: 1, namesText: 'Gmail' });
+    expect(summaries).toEqual([{ reason: 'production', count: 2, namesText: 'CRM, ERP' }]);
+  });
+
+  it('both reasons get their own line', () => {
+    const summaries = buildPausedSummaries([
+      entry({ name: 'Gmail', state: 'paused', paused: 'simulation' }),
+      entry({ name: 'CRM', state: 'paused', paused: 'production' }),
+    ]);
+    expect(summaries.map((s) => s.reason)).toEqual(['simulation', 'production']);
   });
 });

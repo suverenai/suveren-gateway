@@ -158,6 +158,7 @@ const serviceCredentials = new Map<string, Record<string, string>>();
 
 const integrationRegistry = new IntegrationRegistry();
 const integrationManager = new IntegrationManager(serviceCredentials);
+integrationManager.setRegisteredIds(() => integrationRegistry.getAll().map(c => c.id));
 
 // ─── Track active MCP sessions for refresh propagation ─────────────────────
 

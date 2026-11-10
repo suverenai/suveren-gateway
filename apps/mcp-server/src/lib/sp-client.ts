@@ -82,6 +82,8 @@ export interface SPProposal {
    * even talking to one.
    */
   status: 'pending' | 'committed' | 'rejected' | 'expired' | 'executed' | 'refused';
+  /** Set by the Authority Server on a waiting proposal whose mandate is dead (see mandateEndedProposalText). */
+  mandateEnded?: 'revoked' | 'expired';
   executionResult: unknown | null;
   createdAt: number;
   expiresAt: number;
@@ -128,6 +130,32 @@ export class SPReceiptError extends Error {
   ) {
     super(message);
     this.name = 'SPReceiptError';
+  }
+}
+
+/**
+ * The Authority Server refused to CREATE a proposal. Same message as the plain
+ * Error this replaced (it extends Error), plus what the refusal said.
+ * Since the "no dead proposals" change the server refuses a proposal that
+ * could never be ticketed — `MANDATE_REVOKED`, `MANDATE_EXPIRED`,
+ * `CUMULATIVE_LIMIT_EXCEEDED` — in the ticket route's envelope
+ * `{ approved: false, errors: [{ code, message }] }`. Read `errors[0]`,
+ * never the message, to tell them apart (see `refusal`).
+ */
+export class SPProposalError extends Error {
+  constructor(
+    message: string,
+    public readonly statusCode: number,
+    public readonly body: Record<string, unknown>,
+  ) {
+    super(message);
+    this.name = 'SPProposalError';
+  }
+
+  /** The first structured error of the envelope, if the server sent one. */
+  get refusal(): { code: string; message?: string; [k: string]: unknown } | undefined {
+    const first = (this.body?.errors as Array<Record<string, unknown>> | undefined)?.[0];
+    return first && typeof first.code === 'string' ? (first as { code: string }) : undefined;
   }
 }
 
@@ -392,6 +420,18 @@ export class SPClient {
   }
 
   /**
+   * What became of each of the caller's mandates in the active workspace
+   * (GET /api/mandates/mine: `status` is active | pending | revoked | expired).
+   * Only so a list can say "the last one was revoked"; nothing is authorised from it.
+   */
+  async getMyMandateStatuses(): Promise<Array<{ profileId: string; status: string; createdAt: number }>> {
+    const res = await this.fetch('/api/mandates/mine');
+    if (!res.ok) throw new Error(`SP mandates request failed: ${res.status}`);
+    const data = await res.json() as { mandates?: Array<{ profileId: string; status: string; createdAt: number }> };
+    return data.mandates ?? [];
+  }
+
+  /**
    * Get pending mandates for a domain.
    *
    * v0.7: moved from GET /api/attestations/pending (which now answers 410)
@@ -620,7 +660,14 @@ export class SPClient {
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({})) as Record<string, unknown>;
-      throw new Error((body.error as string) ?? `SP proposal submission failed: ${res.status}`);
+      const first = (body.errors as Array<{ message?: unknown }> | undefined)?.[0];
+      throw new SPProposalError(
+        (typeof body.error === 'string' ? body.error : undefined)
+          ?? (typeof first?.message === 'string' ? first.message : undefined)
+          ?? `SP proposal submission failed: ${res.status}`,
+        res.status,
+        body,
+      );
     }
 
     // A proposal now exists and a human has to act on it — but this process

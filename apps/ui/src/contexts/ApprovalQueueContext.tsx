@@ -50,7 +50,7 @@ interface ApprovalQueue {
 
 const Ctx = createContext<ApprovalQueue | null>(null);
 
-const REFRESH_EVENTS = ['proposal-added', 'proposal-approved', 'proposal-rejected', 'proposal-resolved', 'action-approval-needed', 'action-resolved', 'team-membership-changed'] as const;
+const REFRESH_EVENTS = ['proposal-added', 'proposal-approved', 'proposal-rejected', 'proposal-resolved', 'action-approval-needed', 'action-resolved', 'team-membership-changed', 'attestation-changed'] as const;
 
 export function ApprovalQueueProvider({ children }: { children: ReactNode }) {
   const { user, domain } = useAuth();
@@ -86,6 +86,7 @@ export function ApprovalQueueProvider({ children }: { children: ReactNode }) {
   useSSEEvent(REFRESH_EVENTS[4], refresh);
   useSSEEvent(REFRESH_EVENTS[5], refresh);
   useSSEEvent(REFRESH_EVENTS[6], refresh);
+  useSSEEvent(REFRESH_EVENTS[7], refresh); // a mandate was revoked: waiting cards must say so
   useVisiblePolling(fetchApprover, 30_000);
   useVisiblePolling(fetchMine, 30_000, domain);
 

@@ -5087,3 +5087,30 @@ body.apr-has-strip .main-content { margin-right: 2.75rem; }
 .attach-src-off { cursor: default; color: var(--text-muted); }
 .attach-src-off small { color: var(--text-muted); }
 .attach-src-status { margin-left: auto; font-size: var(--text-caption); color: var(--text-muted); white-space: nowrap; }
+
+/* ── Refusal after approval, shared limit (decisions 2026-11-09) ─────────────
+   Monochrome on purpose: a refused action is not a failed check, so no red.
+   Form carries it: heavy outline + cross (result), dashed outline = asked for,
+   never issued (Tickets row). Blue only for figures the system read. */
+.refusal-result { display: flex; gap: var(--space-3); align-items: flex-start; border: 2px solid var(--text-primary); border-radius: var(--radius-lg); padding: var(--space-4); margin-bottom: var(--space-4); }
+.refusal-result svg { width: 28px; height: 28px; flex: none; margin-top: 2px; stroke: var(--text-primary); stroke-width: 2.2; fill: none; stroke-linecap: round; }
+.refusal-result-w { font-size: var(--text-lead); font-weight: 700; line-height: var(--line-tight); overflow-wrap: anywhere; letter-spacing: -0.01em; }
+.refusal-result-m { font-size: var(--text-caption); color: var(--text-muted); margin-top: var(--space-1); }
+.no-ticket-row { border: 1px dashed var(--border-strong); border-radius: var(--radius-md); padding: var(--space-3) var(--space-4); background: var(--bg-elevated); min-width: 0; }
+.no-ticket-l1 { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); font-weight: 600; font-size: var(--text-body-sm); }
+.no-ticket-title { overflow-wrap: anywhere; min-width: 0; }
+.no-ticket-pill { display: inline-flex; align-items: center; height: 20px; padding: 0 var(--space-2); border: 1px dashed var(--border-strong); border-radius: var(--radius-pill); font-size: var(--text-micro); font-weight: 600; color: var(--text-muted); white-space: nowrap; }
+.no-ticket-l2 { font-size: var(--text-caption); color: var(--text-muted); margin-top: 2px; }
+.no-ticket-why { display: flex; gap: var(--space-2); font-size: var(--text-body-sm); font-weight: 500; margin-top: var(--space-2); }
+.no-ticket-why b { font-weight: 700; flex: none; }
+.shared-limit-figures { color: var(--prov-system); font-weight: 600; }
+.shared-limit-helper { display: block; color: var(--text-muted); font-size: var(--text-caption); margin-top: var(--space-1); }
+.av3-shared-limits { margin: 0 0 var(--space-5); font-size: var(--text-body-sm); }
+.av3-shared-limit { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-2); }
+.av3-shared-limit dt { font-weight: 700; }
+.av3-shared-limit dd { margin: 0; }
+.av3-stamp-refused { text-align: left; align-items: stretch; }
+.av3-stamp-refused .refusal-result { margin: 0; background: var(--bg-elevated); }
+.av3-stamp-note { font-family: inherit; max-width: 42ch; }
+.av3-result-act { margin-top: var(--space-4); align-self: center; }
+.av3-foot .refusal-result { margin-bottom: var(--space-3); }

@@ -224,11 +224,15 @@
       }
     }
   },
+  "limitWords": {
+    "send_daily_max": { "noun": "emails", "pastParticiple": "sent" }
+  },
   "setupHint": "No configuration needed — works out of the box, in simulation mode.",
   "setupGuide": [
     {
       "title": "Ready to use",
-      "description": "This connector stores a simulated inbox locally on your machine. Nothing is sent anywhere until you load test data with a separate, reviewed setup mandate."
+      "description": "This connector stores a simulated inbox locally on your machine. Nothing is sent anywhere until you load test data with a separate, reviewed setup mandate.",
+      "simulationOnly": true
     },
     {
       "title": "Optional: use a shared database",

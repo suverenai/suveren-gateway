@@ -147,6 +147,8 @@ export interface DiscoveredTool {
   outputSchema?: Record<string, unknown>;
   /** See `BuiltinTool.internal` — undefined (falsy) for every connector tool. */
   internal?: boolean;
+  /** A built-in's tool that exists only in simulation mode (`BuiltinTool.simulationOnly`): outside it, never listed to an agent. */
+  simulationOnly?: boolean;
   gating: ToolGatingConfig | null;
 }
 
@@ -284,7 +286,19 @@ export class IntegrationManager {
    */
   private opQueues = new Map<string, Promise<unknown>>();
 
+  /** The ids listed in the registry (http.ts owns it; this class has no handle, as with the other setters). */
+  private registeredIds: (() => string[]) | null = null;
+
   constructor(private serviceCredentials: Map<string, Record<string, string>>) {}
+
+  setRegisteredIds(read: () => string[]): void {
+    this.registeredIds = read;
+  }
+
+  /** Listed on this gateway (activated once)? Undefined when nothing told this manager. */
+  isRegistered(id: string): boolean | undefined {
+    return this.registeredIds ? this.registeredIds().includes(id) : undefined;
+  }
 
   /** Run `task` after every previously queued operation for `id` has settled. */
   private runExclusive<T>(id: string, task: () => Promise<T>): Promise<T> {
@@ -956,6 +970,7 @@ export class IntegrationManager {
         inputSchema: withoutBlockedArgs(tool.inputSchema, gating?.blockedArgs),
         ...(tool.outputSchema ? { outputSchema: tool.outputSchema } : {}),
         ...(tool.internal ? { internal: true } : {}),
+        ...(tool.simulationOnly ? { simulationOnly: true } : {}),
         gating,
       };
     });

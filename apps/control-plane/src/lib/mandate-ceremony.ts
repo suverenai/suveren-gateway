@@ -99,15 +99,18 @@ export interface MandatePlan {
   approvers: string[];
 }
 
-export class MandateRefused extends Error {}
+export class MandateRefused extends Error {
+  /** Why, in a form a caller can act on without reading the sentence. */
+  constructor(message: string, readonly code?: 'profile_not_enabled' | 'not_a_grantor') { super(message); }
+}
 
 const INTENT_MAX = 2000; // the mandate screen's limit
 
 const shortOf = (id: string): string => id.replace(/@.*$/, '').split('/').pop() ?? id;
 const versionOf = (id: string): string => id.split('@')[1] ?? '';
 
-function refuse(msg: string): never {
-  throw new MandateRefused(msg);
+function refuse(msg: string, code?: MandateRefused['code']): never {
+  throw new MandateRefused(msg, code);
 }
 
 /** The Authority Server's own reason. Its refusals are `{ approved: false, errors: [{ code, message }] }`. */
@@ -172,11 +175,11 @@ async function delegationWorkspace<G extends { id: string; name: string; isPerso
   if (found.length === 0) return personal;
   if (found.length === 1) return found[0];
   const names = found.map(g => (g.isPersonal ? 'the personal workspace' : `"${g.name}"`)).join(', ');
-  refuse(`Delegation mandates exist in several workspaces (${names}): say which in \`team\` — a team's name, or "personal".`);
+  refuse(`Setup mandates exist in several workspaces (${names}): say which in \`team\` — a team's name, or "personal".`);
 }
 
-/** Validate the request and resolve everything needed — creates nothing. */
-export async function planMandate(req: MandateRequest, deps: CeremonyDeps): Promise<MandatePlan> {
+/** The workspace, the profile and the person's right to give it — everything before limits and scope. */
+async function resolveWorkspaceAndRight(req: Pick<MandateRequest, 'team' | 'profile'>, deps: CeremonyDeps) {
   const user = deps.user;
   if (!user) refuse('The gateway is not signed in.');
 
@@ -204,12 +207,33 @@ export async function planMandate(req: MandateRequest, deps: CeremonyDeps): Prom
     const cfg = await deps.as('GET', `/api/groups/${encodeURIComponent(group.id)}/profile-config/${encodeURIComponent(profile.id)}`);
     approvers = (cfg.status === 200 ? cfg.body?.config?.approvers : undefined) ?? [];
     teamCaps = (cfg.status === 200 ? cfg.body?.config?.caps : undefined) ?? {};
+    // Who may give this mandate is `grantors`; `approvers` only decide above-cap actions, and a team may have none.
+    const grantors: string[] | 'all' = (cfg.status === 200 ? cfg.body?.config?.grantors : undefined) ?? approvers;
     // The AS carries a team's settings over from an older version of the same
     // profile; an empty answer here means nothing could be carried (none
     // configured, or the new version adds a limit that needs a value).
-    if (approvers.length === 0) refuse(`${name} ${versionOf(profile.id)} is not enabled in "${group.name}". Ask an admin of "${group.name}" to enable ${name} ${versionOf(profile.id)} and name who may give its mandates.`);
-    if (!approvers.includes(user.id)) refuse(`Only ${name}'s approvers in "${group.name}" can give this mandate, and the signed-in person is not one of them.`);
+    if (grantors !== 'all' && grantors.length === 0) refuse(`${name} ${versionOf(profile.id)} is not enabled in "${group.name}". Ask an admin of "${group.name}" to enable ${name} ${versionOf(profile.id)} and name who may give its mandates.`, 'profile_not_enabled');
+    if (grantors !== 'all' && !grantors.includes(user.id)) refuse(`Only ${name}'s approvers in "${group.name}" can give this mandate, and the signed-in person is not one of them.`, 'not_a_grantor');
   }
+  return { user, group, isPersonal, profile, name, approvers, teamCaps };
+}
+
+/**
+ * Only the team authority gate: may the signed-in person give a mandate for this profile in this
+ * workspace? Throws {@link MandateRefused} (with a code) when not — so the gateway can tell a person,
+ * before anything is proposed, that a team admin must enable a profile.
+ */
+export async function checkMandateRight(
+  req: Pick<MandateRequest, 'team' | 'profile'>,
+  deps: CeremonyDeps,
+): Promise<{ groupName: string; profileId: string }> {
+  const r = await resolveWorkspaceAndRight(req, deps);
+  return { groupName: r.group.name, profileId: r.profile.id };
+}
+
+/** Validate the request and resolve everything needed — creates nothing. */
+export async function planMandate(req: MandateRequest, deps: CeremonyDeps): Promise<MandatePlan> {
+  const { user, group, isPersonal, profile, name, approvers, teamCaps } = await resolveWorkspaceAndRight(req, deps);
 
   // Limits and scope against the profile.
   const bounds = { ...scalarRecord('limits', req.limits), profile: profile.id };

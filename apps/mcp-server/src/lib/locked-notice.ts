@@ -52,12 +52,10 @@
 /** Why the gateway is locked right now. */
 export type LockedReason = 'restart' | 'expired' | 'as-key-mismatch' | 'as-tls-mismatch' | 'as-url-changed' | 'managed-wrong-team';
 
-/** Address the person should open. Honours a non-default control-plane port. */
-export function uiUrl(): string {
-  // The page is served by the control plane in an install; under `pnpm dev` Vite serves it on its
-  // own port (SUVEREN_UI_PORT) — the notice sent dev users to the live gateway's 3400 (2026-11-06).
-  const port = process.env.SUVEREN_UI_PORT ?? process.env.SUVEREN_CP_PORT ?? '3400';
-  return `http://localhost:${port}`;
+/** The page's port, for a person who cannot find it. The AI never gets the page's address. */
+export function uiPort(): string {
+  // The page is served by the control plane in an install; under `pnpm dev` Vite serves it on its own port.
+  return process.env.SUVEREN_UI_PORT ?? process.env.SUVEREN_CP_PORT ?? '3400';
 }
 
 function bootLockedNotice(what: string): string {
@@ -66,7 +64,7 @@ function bootLockedNotice(what: string): string {
     `mandates or credentials.\n\n` +
     `This is not the same as having no mandates — yours are on disk, ` +
     `encrypted, and unreadable until someone unlocks them.\n\n` +
-    `TELL THE USER: open ${uiUrl()} and enter your Suveren API key to unlock ` +
+    `TELL THE USER: open the Suveren Gateway page in your own browser and enter your Suveren API key to unlock ` +
     `the gateway. It boots locked by design after every restart; the key is ` +
     `never stored.`
   );
@@ -76,7 +74,7 @@ function expiredSessionNotice(what: string): string {
   return (
     `${what} Suveren gateway's sign-in has ended (sign-ins last 30 days, or ` +
     `it was revoked), so it is now LOCKED.\n\n` +
-    `TELL THE USER: open ${uiUrl()} and enter your Suveren API key to sign ` +
+    `TELL THE USER: open the Suveren Gateway page in your own browser and enter your Suveren API key to sign ` +
     `in again. Your mandates are safe; nothing ran.`
   );
 }
@@ -89,7 +87,7 @@ function asKeyMismatchNotice(what: string): string {
     `signing in again will be refused until the mismatch is resolved.\n\n` +
     `TELL THE USER: this needs an operator to check whether the Authority ` +
     `Server's key changed intentionally (e.g. a reinstall) or something else ` +
-    `is answering at that address, at ${uiUrl()}. Nothing ran under the ` +
+    `is answering at that address on the Suveren Gateway page. Nothing ran under the ` +
     `unrecognized key.`
   );
 }
@@ -101,7 +99,7 @@ function asTlsMismatchNotice(what: string): string {
     `This is NOT an ended sign-in — signing in again will be refused until the mismatch is resolved.\n\n` +
     `TELL THE USER: this needs an operator to check whether the Authority Server's certificate changed ` +
     `intentionally (e.g. a new TLS key, not just a renewal) or something else is answering at that ` +
-    `address, at ${uiUrl()}. Nothing was sent under the unrecognized certificate.`
+    `address on the Suveren Gateway page. Nothing was sent under the unrecognized certificate.`
   );
 }
 
@@ -110,7 +108,7 @@ function asUrlChangedNotice(what: string): string {
     `${what} Suveren gateway is LOCKED because the Authority Server it points ` +
     `at has changed since it last signed in. Cached mandates from the old ` +
     `server were cleared.\n\n` +
-    `TELL THE USER: open ${uiUrl()} and sign in again to pair with the new ` +
+    `TELL THE USER: open the Suveren Gateway page in your own browser and sign in again to pair with the new ` +
     `Authority Server.`
   );
 }
@@ -121,7 +119,7 @@ function managedWrongTeamNotice(what: string): string {
     `signed-in account is no longer in that team (it left, or was removed). This is NOT an ended ` +
     `sign-in — signing in again will be refused until the account is back in that team.\n\n` +
     `TELL THE USER: ask your IT administrator, or sign in with an account that is in the team this ` +
-    `gateway is set up for, at ${uiUrl()}. Nothing ran while unsigned.`
+    `gateway is set up for on the Suveren Gateway page. Nothing ran while unsigned.`
   );
 }
 

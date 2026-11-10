@@ -42,6 +42,7 @@ import { SystemBoxes } from './RenderedCreationView';
 import { isTestSetupAction, profileIdentity, shortProfileId } from '../lib/profile-identity';
 import { AttachmentsSealedBox } from './AttachmentsSealedBox';
 import { AiTextBox } from './AiTextBox';
+import { SharedLimitRows } from './SharedLimitRows';
 import { extractAttachmentsSealed, attachmentCheckEntries, type LimitCheckLike } from '../lib/attachment-sealed';
 import { boundValuesOpen } from '../lib/approval-preview-view';
 import { aiTextValue, contextFieldLabel, splitTool, systemDisplayName, toolHeadline, type ToolDisplay } from '../lib/approval-view';
@@ -460,16 +461,27 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
         </p>
       )}
 
+      {/* The shared limits that govern this action, with the figures the system read. */}
+      {!isMandate && (
+        <SharedLimitRows
+          authorizationId={proposal.authorizationId}
+          bounds={mandateBounds}
+          profile={profile}
+          actionType={typeof proposal.executionContext?.action_type === 'string' ? proposal.executionContext.action_type : undefined}
+          style={{ order: 8 }}
+        />
+      )}
+
       {/* ── Folded rows (§17.3): one line each, chevron, no lines between ── */}
       {isMandate ? (
         <details className="av3-fold" style={{ order: 10 }} data-testid="proposed-through">
           <summary>
             <span className="h">Proposed through</span>
-            <span className="one">Delegation{parts.checks[0] ? ` · ${parts.checks[0]}` : ''}</span>
+            <span className="one">Setup{parts.checks[0] ? ` · ${parts.checks[0]}` : ''}</span>
             <Chev />
           </summary>
           <div className="av3-fold-body">
-            <p>Proposed by the AI through your <strong>Delegation</strong> mandate.</p>
+            <p>Proposed by the AI through your <strong>Setup</strong> mandate.</p>
             {parts.checks.length > 0 && (
               <ul className="av3-plain" data-testid="mandate-checks">{parts.checks.map((c) => <li key={c}>{c}</li>)}</ul>
             )}

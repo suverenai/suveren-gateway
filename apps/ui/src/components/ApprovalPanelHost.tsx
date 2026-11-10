@@ -19,6 +19,7 @@ import { useMediaQuery } from '../hooks/useMediaQuery';
 import { QueueCard } from './QueueCard';
 import { announceApprovalDecided, type DecisionKind, type DecisionResult } from '../lib/approval-flow';
 import type { QueueEntry } from '../lib/approval-queue';
+import { resultDismissLabel, type ApprovalOutcome } from '../lib/approval-outcome';
 import {
   INITIAL_PANEL, RESULT_SHOW_MS, SLIDE_MS, afterDecision, neighbour, panelChrome, positionOf,
   reconcilePanel, resolveCurrent, stripAutoLabel, type PanelState,
@@ -38,7 +39,9 @@ export function ApprovalPanelHost() {
   const [panel, setPanel] = useState<PanelState>(INITIAL_PANEL);
   const [currentId, setCurrentId] = useState<string | null>(null);
   // A decision the gateway answered: its card stays (with its result) until the next one opens.
-  const [settling, setSettling] = useState<{ entry: QueueEntry; before: string[] } | null>(null);
+  // `stay`: a refused or unconfirmed approval. The card waits for the person, it never times away.
+  const [settling, setSettling] = useState<{ entry: QueueEntry; before: string[]; stay: boolean } | null>(null);
+  const settlingRef = useRef<{ id: string; before: string[] } | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [headMenu, setHeadMenu] = useState(false);
   const compact = useMediaQuery('(max-width: 1099px)');
@@ -128,7 +131,12 @@ export function ApprovalPanelHost() {
   }, [chrome.panel]);
 
   // ── Actions ──
-  const goLater = useCallback(() => { setMenuOpen(false); setHeadMenu(false); setPanel((p) => ({ ...p, open: false })); }, []);
+  const goLater = useCallback(() => {
+    setMenuOpen(false); setHeadMenu(false);
+    setPanel((p) => ({ ...p, open: false }));
+    // A result the person sent away is done with: it must not reappear when the next approval opens the panel.
+    if (settlingRef.current) { settlingRef.current = null; setSettling(null); }
+  }, []);
   const openPanel = useCallback(() => { setMenuOpen(false); setPanel((p) => ({ ...p, open: true, owed: false })); }, []);
 
   // Esc = Later.
@@ -143,27 +151,42 @@ export function ApprovalPanelHost() {
     return () => document.removeEventListener('keydown', onKey);
   }, [chrome.panel, goLater]);
 
+  // The card's result has been on screen long enough, or the person pressed Next / Close: move on.
+  const finishSettling = useCallback((id: string) => {
+    const s = settlingRef.current;
+    if (!s || s.id !== id) return;
+    settlingRef.current = null;
+    const { next } = afterDecision(s.before, id);
+    if (next) {
+      setCurrentId(next);
+      setSettling(null);
+    } else {
+      // Nothing left: slide out completely, keep the result on screen until it is gone.
+      setPanel((p) => ({ ...p, open: false }));
+      later(() => setSettling(null), reducedMotion ? 0 : SLIDE_MS + 80);
+    }
+  }, [later, reducedMotion]);
+
   const handleDecided = useCallback((id: string, _kind: DecisionKind, _result: DecisionResult) => {
     const before = idsRef.current;
     const entry = q.entries.find((e) => e.id === id);
     if (!entry) return;
     q.markDecided(id);
-    setSettling({ entry, before });
+    settlingRef.current = { id, before };
+    setSettling({ entry, before, stay: false });
     void q.refresh();
     announceApprovalDecided();
-    later(() => {
-      const { next } = afterDecision(before, id);
-      if (next) {
-        setCurrentId(next);
-        setSettling(null);
-      } else {
-        // Nothing left: slide out completely, keep the result on screen until it is gone.
-        setPanel((p) => ({ ...p, open: false }));
-        later(() => setSettling(null), reducedMotion ? 0 : SLIDE_MS + 80);
-      }
-    }, RESULT_SHOW_MS);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q.entries, q.markDecided, q.refresh, later, reducedMotion]);
+  }, [q.entries, q.markDecided, q.refresh]);
+
+  const handleOutcome = useCallback((id: string, outcome: ApprovalOutcome) => {
+    if (settlingRef.current?.id !== id) return;
+    if (outcome === 'done') {
+      later(() => finishSettling(id), RESULT_SHOW_MS);
+    } else if (outcome === 'refused' || outcome === 'unknown') {
+      setSettling((s) => (s && s.entry.id === id ? { ...s, stay: true } : s));
+    }
+  }, [later, finishSettling]);
 
   const [busy, setBusy] = useState(false);
   const noAuto = useCallback(() => { goLater(); void q.setAutoOpen(false); }, [goLater, q]);
@@ -265,7 +288,16 @@ export function ApprovalPanelHost() {
             <div className="apr-body">
               {shown && (
                 <div className="apr-stage" key={shown.id} data-proposal-id={shown.id}>
-                  <QueueCard entry={shown} onDecided={handleDecided} onBusyChange={setBusy} />
+                  <QueueCard
+                    entry={shown}
+                    onDecided={handleDecided}
+                    onBusyChange={setBusy}
+                    onOutcome={handleOutcome}
+                    {...(settling?.stay && settling.entry.id === shown.id ? {
+                      dismissLabel: resultDismissLabel(afterDecision(settling.before, shown.id).next !== null),
+                      onDismissResult: () => finishSettling(shown.id),
+                    } : {})}
+                  />
                 </div>
               )}
             </div>

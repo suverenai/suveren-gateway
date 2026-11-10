@@ -65,7 +65,8 @@ export function AgentReviewPage() {
   // Review is the DEFAULT commitment mode: the agent proposes, the human
   // approves. Automatic is the deliberate opt-in (or a template's choice).
   const [commitMode, setCommitMode] = useState<'immediate' | 'per-action'>('per-action');
-  const [ttlSeconds, setTtlSeconds] = useState(1800);
+  // 0 = not chosen yet: the person decides how long, unless a template or an AI proposal already says.
+  const [ttlSeconds, setTtlSeconds] = useState(0);
   const [ttlMax, setTtlMax] = useState(86400);
   const [customTtl, setCustomTtl] = useState('');
   const [customTtlUnit, setCustomTtlUnit] = useState<'hours' | 'days'>('hours');
@@ -121,7 +122,6 @@ export function AgentReviewPage() {
 
     // Set TTL from profile config
     if (gate.ttlConfig) {
-      setTtlSeconds(gate.ttlConfig.default ?? 1800);
       setTtlMax(gate.ttlConfig.max ?? 86400);
     }
 
@@ -681,6 +681,9 @@ export function AgentReviewPage() {
               <option value="days">days</option>
             </select>
           </div>
+          {ttlSeconds <= 0 && (
+            <p className="cta-helper" data-testid="duration-needed" style={{ width: '100%', margin: 0 }}>Choose how long this mandate should last.</p>
+          )}
           {ttlExceedsMax && (
             <span className="msg-error" style={{ fontSize: '0.75rem' }}>
               Maximum: {ttlMax >= 86400 ? `${Math.floor(ttlMax / 86400)} days` : `${Math.floor(ttlMax / 3600)} hours`}
@@ -846,7 +849,7 @@ export function AgentReviewPage() {
             className="btn btn-primary btn-lg"
             style={{ flex: 1 }}
             onClick={handleCommit}
-            disabled={submitting || !authTitle.trim() || blockedByTeamGate || noModeAllowed}
+            disabled={submitting || !authTitle.trim() || blockedByTeamGate || noModeAllowed || ttlSeconds <= 0}
           >
             {submitting ? 'Signing...' : commitMode === 'immediate' ? 'Sign mandate' : 'Sign mandate (asks first)'}
           </button>
