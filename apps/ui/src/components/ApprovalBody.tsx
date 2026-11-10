@@ -321,7 +321,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
   const isMandate = proposal.tool === CREATE_MANDATE_TOOL;
   const mandateArgs = isMandate ? (content.toolArgs as CreateMandateProposalArgs | null) : null;
   // A mandate proposal is about the area it names, not the Delegation it rides on.
-  const typeProfile = isMandate ? mandateTargetProfile(mandateArgs, proposal.profileId) : proposal.profileId;
+  const typeProfile = (isMandate || proposal.tool === CHANGE_MANDATE_TOOL) ? mandateTargetProfile(content.toolArgs, proposal.profileId) : proposal.profileId;
   const typeArea = areaName(typeProfile, catalog);
   // A mandate proposal is test setup when the profile it creates a mandate for is (§17.3).
   const testSetup = isMandate
@@ -360,6 +360,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
       <MandateChangeBody
         proposalId={proposal.id}
         args={content.toolArgs as ChangeArgs}
+        areaTitle={typeArea}
         onChangeMyself={() => void handleChangeMyself()}
         editBusy={editingBeforeSigning}
         editError={editError}

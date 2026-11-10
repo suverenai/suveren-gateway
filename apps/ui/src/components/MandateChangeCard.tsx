@@ -86,9 +86,11 @@ export function MandateChangeDiff({ diff, intentByAi }: { diff: MandateDiff; int
   );
 }
 
-export function MandateChangeBody({ proposalId, args, onChangeMyself, editBusy, editError }: {
+export function MandateChangeBody({ proposalId, args, areaTitle, onChangeMyself, editBusy, editError }: {
   proposalId: string;
   args: ChangeArgs;
+  /** The area's name, shown when the mandate has no title of its own. */
+  areaTitle: string;
   onChangeMyself: () => void;
   editBusy: boolean;
   editError: string | null;
@@ -117,7 +119,7 @@ export function MandateChangeBody({ proposalId, args, onChangeMyself, editBusy, 
     <div className="mc-card" data-testid="mandate-change-card" style={{ order: 6 }}>
       <div className="mc-head" data-testid="change-kicker">Waiting for you · Change to a mandate</div>
       <div className="mc-in">
-        <h2 data-testid="change-title">{args.mandate_title ?? 'Mandate'}</h2>
+        <h2 data-testid="change-title">{args.mandate_title ?? areaTitle}</h2>
         <p className="mc-sub">Your AI proposes this through your Setup mandate.</p>
         <MandateChangeDiff diff={diff} intentByAi />
         {(factLines.length > 0 || diff.versionMove) && (
