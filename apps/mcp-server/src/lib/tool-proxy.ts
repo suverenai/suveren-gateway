@@ -32,7 +32,8 @@ import {
 } from './attachment-resolution';
 import { validateDocumentReferences, validateInsertReferences } from './attachment-reference';
 import { ATTACHMENT_SOURCES_FIELD } from './attachment-policy';
-import { attachmentNotAllowedText, refusalNextStep, pickerCard } from './guidance';
+import { attachmentNotAllowedText, refusalNextStep, pickerCard, howToGetMandate } from './guidance';
+import { setupMandateFacts, newestProfileOf } from './guidance-runtime';
 import { verifyTicket, TicketBindingMismatchError, mandateForTicket } from './ticket-verify';
 import { wireExecutionContext as hapWireExecutionContext, checkExecutionValues, missingSumFields } from '@hap/core';
 import { notifyControlPlane } from './cp-notify';
@@ -772,6 +773,12 @@ function createGatedToolHandlerInner(
       });
     return { matching, refusals };
   };
+  // With a Setup mandate the AI prepares the missing mandate itself, from the chat: the refusal says so.
+  const setupWay = (): string | undefined => {
+    const setup = setupMandateFacts(integrationManager, state.getEnrichedAuthorizations());
+    if (!setup.tool) return undefined;
+    return howToGetMandate(profile!, cardNameOf(tool) ?? areaName(profile!), { setup, areaName, profileOf: newestProfileOf });
+  };
   const noEligibleMandate = (refusals: string[]): ToolResult => {
     const reasons = [...new Set(refusals)].join(' ');
     recordBlocked(state, tool, {
@@ -788,7 +795,7 @@ function createGatedToolHandlerInner(
         type: 'text',
         text: refusals.length > 0
           ? `Refused: ${reasons.charAt(0).toUpperCase() + reasons.slice(1)} No ticket was requested.`
-          : noMandateRefusal(tool.namespacedName, profile!, integrationManager.noMandateText?.(tool.integrationId), cardNameOf(tool)),
+          : noMandateRefusal(tool.namespacedName, profile!, integrationManager.noMandateText?.(tool.integrationId), cardNameOf(tool), profile!, setupWay()),
       }],
       isError: true,
     };
@@ -2355,9 +2362,10 @@ export function v08ProposalReaders(
  * as the person sees it — the profile's `name` ("Email", "Setup"), falling back
  * to its short id only when the profile is not in the local catalog.
  */
-export function noMandateRefusal(toolName: string, profile: string, builtinText?: string, card?: string, stepsArea: string = profile): string {
+export function noMandateRefusal(toolName: string, profile: string, builtinText?: string, card?: string, stepsArea: string = profile, setupWay?: string): string {
   if (builtinText) return `Refused: ${builtinText} No ticket was requested.`;
   const area = areaName(profile);
+  if (setupWay) return `Refused: no mandate covers ${toolName} (${area}). Nothing was done. ${setupWay} Then try again. No ticket was requested.`;
   const where = card
     ? `**Mandates → + New mandate →** card **${card}** → **Give a mandate**`
     : '**Mandates → + New mandate**';

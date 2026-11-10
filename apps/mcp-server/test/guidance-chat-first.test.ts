@@ -49,3 +49,15 @@ describe('the person works from the chat; the gateway page is theirs', () => {
     }
   });
 });
+
+describe('a missing mandate when the person holds a Setup mandate', () => {
+  it('the refusal tells the AI to prepare it from the chat, not to send the person to the form', async () => {
+    const { noMandateRefusal } = await import('../src/lib/tool-proxy');
+    const way = 'You can prepare this mandate yourself, so do not send the person to the form. Propose it with setup__create_mandate(profile: "files", ...).';
+    const t = noMandateRefusal('files__save_file', 'files', undefined, 'Files', 'files', way);
+    expect(t).toContain(way);
+    expect(t).not.toContain('+ New mandate');
+    expect(t).toMatch(/Nothing was done/);
+    expect(noMandateRefusal('files__save_file', 'files', undefined, 'Files')).toContain('+ New mandate');
+  });
+});

@@ -346,7 +346,7 @@ export function howToGetMandate(
     const fields = input.detail && known
       ? `\n      ${proposalFields(setup.tool, area, known.profile, known.modes)}`
       : known ? ` Its fields: list-authorizations(domain: "${shortOf(area)}").` : '';
-    return `Propose it with ${setup.tool}(profile: "${shortOf(area)}", ...)${modeNote}. ${BEFORE_PROPOSING} The person approves it in the gateway.${fields}`;
+    return `You can prepare this mandate yourself, so do not send the person to the form. Propose it with ${setup.tool}(profile: "${shortOf(area)}", ...)${modeNote}. ${BEFORE_PROPOSING} The person approves it in the gateway.${fields}`;
   }
   return `A person signs it: **Mandates → + New mandate**, card **${card}**, **Give a mandate**. ${SIGN_STEP} (With a ${setup.card} mandate you could prepare it for them.)`;
 }
