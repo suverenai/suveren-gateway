@@ -854,6 +854,14 @@ describe('through the gateway\'s own entry points', () => {
       expect(byName).toContain('mandate for Kunden und Kontakte: none');
     });
 
+    it('the first mandate itself can be asked for, by its card name too: the form step by step, not "no such area"', async () => {
+      for (const asked of ['Setup', 'delegation']) {
+        const text = (await listAuthorizationsHandler(state([]), im({ running: [] }))({ domain: asked })).content[0].text;
+        expect(text).toContain('Scope & Limits');
+        expect(text).not.toContain('No area or connector called');
+      }
+    });
+
     it('an area that does not exist says what does, so the AI can ask again', async () => {
       const text = (await listAuthorizationsHandler(state([]), im({ running: [] }))({ domain: 'nosuch' })).content[0].text;
       expect(text).toContain('No area or connector called "nosuch". Possible here:');

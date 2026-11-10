@@ -204,6 +204,8 @@ async function shortAnswerPart(
 /** The area a domain names: the name the person sees ("Payments") means its area; anything else is left as given. */
 function resolveDomain(domain: string, integrationManager: IntegrationManager | undefined): string {
   const d = domain.toLowerCase();
+  const setup = setupMandateFacts(integrationManager, []);
+  if (setup.area && (setup.card.toLowerCase() === d || setup.area.toLowerCase() === d)) return setup.area;
   for (const m of guideManifests(integrationManager)) {
     const hit = manifestAreas(m).find(a => areaName(a).toLowerCase() === d);
     if (hit) return hit;
@@ -258,7 +260,7 @@ export function listAuthorizationsHandler(
       for (const h of hints) text.push('', h);
       const section = await connectorsSection(state, integrationManager, authorizations, domain);
       if (section) text.push('', section);
-      else {
+      else if (domain !== setupMandateFacts(integrationManager, authorizations).area) {
         const areas = possibleAreas(guideManifests(integrationManager), areaName);
         if (areas.length > 0) text.push('', `No area or connector called "${args?.domain}". Possible here: ${areas.join(', ')}.`);
       }

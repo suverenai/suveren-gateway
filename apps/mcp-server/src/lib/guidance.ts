@@ -592,7 +592,7 @@ function oneNextStep(input: ShortAnswerInput): string {
   if (complete.length === 0) {
     if (auths.length > 0) return 'Wait for the other owners above to sign. Ask the person to remind them.';
     if (setup.area && input.team?.get(setup.area)?.teamCode) return howToGetMandate(setup.area, setup.card, input);
-    const fields = setup.area ? ` The fields of the form: list-authorizations(domain: "${setup.area}").` : '';
+    const fields = setup.area ? ` The form, step by step: list-authorizations(domain: "${setup.area}").` : '';
     return `A person signs the first mandate: an AI can never create it. In the Suveren Gateway at ${input.url} they open **Mandates**, then **+ New mandate**, pick the card **${setup.card}** and press **Give a mandate**. It allows no work; it only lets you prepare other mandates, and each one waits for their approval. They can sign the mandate of one area themselves instead.${fields}`;
   }
   const askAndDo = 'Ask what the person wants done';
