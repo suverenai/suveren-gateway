@@ -302,6 +302,7 @@ export function listAuthorizationsHandler(
         // the clear action named below rather than silently vanishing.
         const statusLabel = !auth.complete ? ' (PENDING)' : auth.needsReapproval ? ' (MUST BE SIGNED AGAIN)' : '';
         output.push(`[${auth.path}] ${auth.profileId} (${remainingMin} min remaining)${statusLabel}`);
+        if (auth.complete) output.push(`  Mandate id: ${auth.authorizationId}`);
         if (auth.needsReapproval) {
           output.push('  The Authority Server no longer accepts this mandate\'s protocol version. Ask the mandate owner to sign it again (Mandates page → Sign again).');
         }
@@ -401,6 +402,7 @@ export function listAuthorizationsHandler(
       if (auth.complete) {
         const statusLabel = auth.needsReapproval ? ' (MUST BE SIGNED AGAIN)' : '';
         const lines = [`  [${auth.path}] ${auth.profileId} — ${remainingMin} min remaining${statusLabel}`];
+        lines.push(`    Mandate id: ${auth.authorizationId}`);
         lines.push(`    Bounds: ${boundsDesc}`);
 
         // Item 9 (re-approval UX): generic, not per-profile.

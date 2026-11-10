@@ -31,6 +31,7 @@ import {
   type AgentProfile,
 } from '@hap/core';
 import { readRefusal } from '@hap/core/refusal';
+import { carryValues, computeMandateDiff, diffIsEmpty, type MandateDiff } from '@hap/core/mandate-change';
 
 export interface MandateRequest {
   /**
@@ -114,7 +115,7 @@ export interface MandatePlan {
 
 export class MandateRefused extends Error {
   /** Why, in a form a caller can act on without reading the sentence. */
-  constructor(message: string, readonly code?: 'profile_not_enabled' | 'not_a_grantor') { super(message); }
+  constructor(message: string, readonly code?: 'profile_not_enabled' | 'not_a_grantor' | 'not_your_mandate' | 'mandate_not_active' | 'no_change' | 'changed_since_proposal') { super(message); }
 }
 
 const INTENT_MAX = 2000; // the mandate screen's limit
@@ -444,4 +445,143 @@ export async function renewMandate(req: RenewRequest, deps: CeremonyDeps): Promi
     ...(req.path ? { path: req.path } : {}),
   });
   return { authorizationId: req.authorizationId };
+}
+
+
+// ─── Changing a mandate ─────────────────────────────────────────────────────
+
+/** The signed mandate being changed, as the MCP server read it from its signed copy. */
+export interface SignedMandate {
+  authorizationId: string;
+  profileId: string;
+  groupId: string;
+  ownerDid: string;
+  bounds: Record<string, string | number>;
+  context: Record<string, string | number>;
+  intent: string;
+  mode: 'review' | 'automatic';
+  /** Seconds since the epoch. */
+  expiresAt: number;
+  title?: string;
+  /** The verified name shows on this mandate's actions. */
+  disclosesIdentity?: boolean;
+}
+
+export interface MandateChangeRequest {
+  old: SignedMandate;
+  changes: {
+    limits?: Record<string, unknown>;
+    scope?: Record<string, unknown>;
+    mode?: string;
+    durationHours?: number;
+    intent?: string;
+  };
+  /** On execution: the diff sealed with the proposal. A mandate that would differ from it is refused. */
+  sealedDiff?: MandateDiff;
+}
+
+export interface MandateChangePlan {
+  plan: MandatePlan;
+  diff: MandateDiff;
+  request: MandateRequest;
+}
+
+function unknownFields(label: string, values: Record<string, unknown> | undefined, schema: AgentProfile['boundsSchema'] | AgentProfile['scopeSchema'] | undefined): string[] {
+  const declared = schema?.fields ?? {};
+  return Object.keys(values ?? {}).filter(k => !(k in declared) || k === 'profile' || k === 'path').map(k => `\`${label}.${k}\``);
+}
+
+/** The values a newer profile version needs that the old mandate does not have. */
+function newRequiredFields(values: Record<string, unknown>, schema: AgentProfile['boundsSchema'] | AgentProfile['scopeSchema'] | undefined): string[] {
+  return Object.entries(schema?.fields ?? {})
+    .filter(([k, def]) => k !== 'profile' && k !== 'path' && (def as { required?: boolean }).required && values[k] === undefined)
+    .map(([k, def]) => (def as { displayName?: string }).displayName ?? k);
+}
+
+/** Build the new mandate from the signed old one and the changing values, and compute what differs. Creates nothing. */
+export async function planMandateChange(req: MandateChangeRequest, deps: CeremonyDeps): Promise<MandateChangePlan> {
+  const user = deps.user;
+  if (!user) refuse('The gateway is not signed in.');
+  const { old, changes } = req;
+
+  // Only the person's own mandates. A group admin can revoke a colleague's on the AS;
+  // the gateway must not turn that into a way for an AI to replace someone else's.
+  if (old.ownerDid !== user.did) refuse('This mandate was given by someone else. Only the person who gave it can change it.', 'not_your_mandate');
+
+  // Still active — the local list can lag behind the Authority Server.
+  const mine = await deps.as('GET', '/api/mandates/mine?status=active');
+  const rows = (mine.status === 200 ? mine.body?.mandates ?? [] : []) as Array<{ authorization_id?: string; authorizationId?: string }>;
+  if (!rows.some(r => (r.authorization_id ?? r.authorizationId) === old.authorizationId)) {
+    refuse('This mandate is no longer active, so there is nothing to change.', 'mandate_not_active');
+  }
+
+  // A change always moves to the newest version of the area's profile: the AS issues no other.
+  const newest = await resolveProfile(deps.as, shortOf(old.profileId));
+  const oldProfile = old.profileId === newest.id ? newest : await resolveProfile(deps.as, old.profileId);
+
+  const bad = [...unknownFields('limits', changes.limits, newest.boundsSchema), ...unknownFields('scope', changes.scope, newest.scopeSchema)];
+  if (bad.length) refuse(`${bad.join(', ')} ${bad.length === 1 ? 'is' : 'are'} not part of ${shortOf(newest.id)} ${versionOf(newest.id)}.`);
+
+  const limits = { ...carryValues(old.bounds, newest.boundsSchema), ...scalarRecord('limits', changes.limits) } as Record<string, string | number>;
+  const scope = { ...carryValues(old.context, newest.scopeSchema), ...scalarRecord('scope', changes.scope) } as Record<string, string | number>;
+
+  // A field new in the newest version has no signed value and no default to lean on:
+  // the person must say what it should be, so it reaches the card as a value they gave.
+  const missing = [...newRequiredFields(limits, newest.boundsSchema), ...newRequiredFields(scope, newest.scopeSchema)];
+  if (missing.length) {
+    refuse(`${shortOf(newest.id)} ${versionOf(newest.id)} needs a value this mandate does not have yet: ${missing.join(', ')}. Ask the person, and include it in the change.`);
+  }
+
+  // The end date stays unless a new one is proposed.
+  const nowSec = Math.floor(Date.now() / 1000);
+  if (old.expiresAt <= nowSec) refuse('This mandate has already ended.', 'mandate_not_active');
+  const ttlSeconds = changes.durationHours !== undefined
+    ? Math.round(changes.durationHours * 3600)
+    : Math.min(old.expiresAt - nowSec, newest.ttl.max);
+  const expiresAt = changes.durationHours !== undefined ? nowSec + ttlSeconds : Math.min(old.expiresAt, nowSec + newest.ttl.max);
+
+  const groups = (await deps.as('GET', '/api/groups')).body?.groups as Array<{ id: string; isPersonal?: boolean }> | undefined;
+  const group = groups?.find(g => g.id === old.groupId);
+  if (!group) refuse('This mandate belongs to a workspace you are not in.');
+
+  const request: MandateRequest = {
+    team: group.isPersonal ? 'personal' : old.groupId,
+    profile: newest.id,
+    limits,
+    scope,
+    intent: changes.intent ?? old.intent,
+    mode: changes.mode ?? old.mode,
+    ttlSeconds,
+    title: old.title || (newest.name ?? shortOf(newest.id)),
+    replaces: old.authorizationId,
+    ...(old.disclosesIdentity ? { discloseIdentity: true } : {}),
+  };
+  // The same validation as a new mandate: rights, limits, scope, mode, duration, intent.
+  const plan = await planMandate(request, deps);
+
+  const diff = computeMandateDiff({
+    before: { profile: oldProfile, bounds: old.bounds, scope: old.context, intent: old.intent, mode: old.mode, expiresAt: old.expiresAt },
+    after: { profile: newest, bounds: limits, scope, intent: plan.intent, mode: plan.mode, expiresAt },
+  });
+  if (diffIsEmpty(diff)) refuse('These values are what the mandate already says, so there is nothing to change.', 'no_change');
+
+  return { plan, diff, request };
+}
+
+/** A change's end date moves when it is signed, so it is compared without its moving part. */
+function diffForCompare(d: MandateDiff): unknown {
+  return { ...d, ...(d.lastsUntil ? { lastsUntil: { ...d.lastsUntil, after: 0 } } : {}) };
+}
+
+/**
+ * Sign the new mandate, deliver it, retire the old one. Runs after a person approved the
+ * proposal, possibly long after: everything is computed again from the signed old mandate,
+ * and anything that would differ from what the person saw is refused.
+ */
+export async function changeMandate(req: MandateChangeRequest, deps: CeremonyDeps): Promise<{ authorizationId: string; plan: MandatePlan; revokeError?: string }> {
+  const { diff, request } = await planMandateChange(req, deps);
+  if (req.sealedDiff && JSON.stringify(diffForCompare(diff)) !== JSON.stringify(diffForCompare(req.sealedDiff))) {
+    refuse('The mandate or its area changed after this was proposed, so what you approved is no longer what would be signed. Nothing was signed. Ask for the change again.', 'changed_since_proposal');
+  }
+  return createMandate(request, deps);
 }

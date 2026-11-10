@@ -1110,6 +1110,16 @@ export class IntegrationManager {
   }
 
   /**
+   * A built-in's own argument preparation (`BuiltinTool.prepare`), run before validation and
+   * the gate. Returns the arguments to continue with, or a refusal.
+   */
+  async prepareBuiltin(tool: DiscoveredTool, args: Record<string, unknown>): Promise<{ args: Record<string, unknown> } | { refusal: string; code: string }> {
+    const builtin = this.builtins.get(tool.integrationId);
+    const def = builtin?.def.tools.find(t => t.name === tool.originalName);
+    return def?.prepare ? def.prepare(args) : { args };
+  }
+
+  /**
    * The built-in's own refusal for this call, checked before the gate (no proposal,
    * no ticket): an `internal` tool (defence in depth — `index.ts` already never
    * registers one with the MCP server, so an agent cannot reach this in the first

@@ -81,6 +81,13 @@ export interface BuiltinTool {
    * The handler must still check again: approval can come much later.
    */
   validate?: (args: Record<string, unknown>) => string | undefined | Promise<string | undefined>;
+  /**
+   * Replaces the arguments before anything else sees them: the gateway fills in what
+   * the AI must not supply itself (the values the scope check reads, the differences a
+   * person will see). Runs after input normalization, before `validate` and the gate.
+   * Return `{ args }` to continue with those arguments, or `{ refusal, code }` to stop.
+   */
+  prepare?: (args: Record<string, unknown>) => Promise<{ args: Record<string, unknown> } | { refusal: string; code: string }>;
 }
 
 /** What `mandateRefusal` sees of a held mandate — EnrichedAuthorization fits. */

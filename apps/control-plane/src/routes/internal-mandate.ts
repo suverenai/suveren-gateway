@@ -18,7 +18,7 @@
  */
 import { Router } from 'express';
 import { timingSafeEqual, randomUUID } from 'node:crypto';
-import { planMandate, createMandate, checkMandateRight, MandateRefused, type CeremonyDeps, type MandateRequest } from '../lib/mandate-ceremony';
+import { planMandate, createMandate, checkMandateRight, planMandateChange, changeMandate, MandateRefused, type CeremonyDeps, type MandateChangeRequest, type MandateRequest } from '../lib/mandate-ceremony';
 
 function secretMatches(provided: string | undefined, expected: string): boolean {
   if (!expected || !provided) return false;
@@ -44,6 +44,17 @@ export function createInternalMandateRouter(
     }
     const d: CeremonyDeps = { ...deps(), newAuthorizationId: () => `authz_${randomUUID()}` };
     try {
+      const change = (request as { change?: MandateChangeRequest }).change;
+      if (change) {
+        if (dryRun === true) {
+          const { plan, diff } = await planMandateChange(change, d);
+          res.json({ ok: true, groupName: plan.groupName, profileId: plan.profile.id, mode: plan.mode, ttlSeconds: plan.ttlSeconds, diff });
+          return;
+        }
+        const { authorizationId, plan, revokeError } = await changeMandate(change, d);
+        res.json({ ok: true, authorizationId, profileId: plan.profile.id, groupName: plan.groupName, mode: plan.mode, ttlSeconds: plan.ttlSeconds, ...(revokeError ? { revokeError } : {}) });
+        return;
+      }
       if (dryRun === true && (request as { rightsOnly?: unknown }).rightsOnly === true) {
         // Only "may this person give a mandate for this profile here?" — no limits needed.
         const r = await checkMandateRight(request, d);

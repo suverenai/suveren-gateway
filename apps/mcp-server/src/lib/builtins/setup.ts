@@ -39,6 +39,7 @@ import { getAllManifests } from '../manifest-loader';
 import { getConsumptionState } from '../consumption';
 import { unifiedLineDiff } from '../unified-diff';
 import { getProfile, listProfiles, type AgentProfile } from '@hap/core';
+import { readSignedMandate, scopeValueRefusal, changeFacts, verifySignedCopy, type SignedMandateRead } from '../mandate-change';
 import { BEFORE_PROPOSING } from '../guidance';
 import type { IntegrationManager } from '../integration-manager';
 
@@ -361,6 +362,79 @@ const DESCRIBE_BRIEF_PROPOSAL_OUTPUT_SCHEMA = {
   required: ['change', 'words'],
 };
 
+const CHANGE_MANDATE_DESCRIPTION =
+  'Propose a change to one of the person\'s active mandates. Name it by `mandate_id` (shown by list-authorizations) ' +
+  'and give only what should change: `limits`, `scope`, `mode`, `duration_hours` or `intent`. The gateway builds the new ' +
+  'mandate from the signed one and shows the person only the differences. A person approves or rejects; nothing changes ' +
+  'until then, even for a reduction. A Setup mandate can never be changed. Any other argument is refused.';
+
+const CHANGE_MANDATE_INPUT_SCHEMA = {
+  type: 'object',
+  properties: {
+    mandate_id: { type: 'string', description: 'The mandate to change, as shown by list-authorizations.' },
+    limits: { type: 'object', description: 'Only the limits that change, by field name.' },
+    scope: { type: 'object', description: 'Only the scope fields that change, by field name. The full new value of each.' },
+    mode: { type: 'string', enum: ['review', 'automatic'], description: 'Only if the mode should change.' },
+    duration_hours: { type: 'number', description: 'Only if the end date should change: new lifetime in hours from now.' },
+    intent: { type: 'string', description: 'The full new intent, only if it should change.' },
+  },
+  required: ['mandate_id'],
+};
+
+/** Hidden until step 7 of the rollout: the tool exists but is not offered to any AI. */
+function changeMandateAvailable(): boolean {
+  return process.env.SUVEREN_CHANGE_MANDATE === '1';
+}
+
+const CHANGE_ARGS = new Set(Object.keys(CHANGE_MANDATE_INPUT_SCHEMA.properties));
+
+function changesFrom(args: Record<string, unknown>) {
+  return {
+    limits: args.limits as Record<string, unknown> | undefined,
+    scope: args.scope as Record<string, unknown> | undefined,
+    mode: typeof args.mode === 'string' ? args.mode : undefined,
+    durationHours: typeof args.duration_hours === 'number' ? args.duration_hours : undefined,
+    intent: typeof args.intent === 'string' ? args.intent : undefined,
+  };
+}
+
+function signedOldMandate(deps: BuiltinDeps, id: unknown): SignedMandateRead | { refusal: string; code: string } {
+  return typeof id === 'string' && id
+    ? readSignedMandate(deps.state, id)
+    : { refusal: '`mandate_id` is required — the id list-authorizations shows.', code: 'MANDATE_ID_REQUIRED' };
+}
+
+/**
+ * The step before the Gatekeeper. Reads the signed old mandate, fills in `profile` and
+ * `mode` (the fields the scope check reads) from it, overwriting anything the AI sent,
+ * computes the differences and seals them as the proposal's arguments.
+ */
+async function prepareChange(deps: BuiltinDeps, args: Record<string, unknown>): Promise<{ args: Record<string, unknown> } | { refusal: string; code: string }> {
+  // Nothing may reach the card or the signing that the person's AI should not set.
+  const extra = Object.keys(args).filter(k => !CHANGE_ARGS.has(k));
+  if (extra.length > 0) return { refusal: `${extra.map(k => `\`${k}\``).join(', ')} ${extra.length === 1 ? 'is' : 'are'} not part of a mandate change. Give only \`mandate_id\` and the values that change.`, code: 'CHANGE_ARGUMENT_REFUSED' };
+
+  const read = signedOldMandate(deps, args.mandate_id);
+  if ('refusal' in read) return read;
+  const fixed = proposalTargetRefusal({ profile: read.short });
+  if (fixed) return { refusal: fixed.code === 'DELEGATION_NOT_PROPOSABLE' ? 'A Setup mandate can never be changed by an AI.' : fixed.message, code: fixed.code };
+
+  try {
+    await verifySignedCopy(deps.state, read.authorization);
+  } catch {
+    return { refusal: 'This mandate\'s signature could not be verified, so it cannot be changed. Tell the person.', code: 'MANDATE_SIGNATURE_INVALID' };
+  }
+
+  const scopeBad = scopeValueRefusal(args.scope);
+  if (scopeBad) return { refusal: scopeBad, code: 'SCOPE_VALUE_REFUSED' };
+
+  const check = await controlPlaneMandate(true, { change: { old: read.old, changes: changesFrom(args) } });
+  if (!check.ok) return { refusal: check.message ?? 'The change could not be checked.', code: check.code ?? 'CHANGE_REFUSED' };
+
+  // What the Gatekeeper and the card see: the signed area, the resulting mode, the sealed differences.
+  return { args: { ...args, profile: read.short, mode: check.mode, change: check.diff } };
+}
+
 export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
   return {
     id: 'setup',
@@ -425,6 +499,16 @@ export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
         // of falling through to the "not described in manifest" default.
         describe_mandate_proposal: { category: 'disabled' },
         describe_brief_proposal: { category: 'disabled' },
+        change_mandate: {
+          // The scope check reads `profile` and `mode`: filled in by `prepare` from the
+          // signed mandate, never taken from the AI.
+          executionMapping: { profile: 'allowed_profiles', mode: 'allowed_modes' },
+          staticExecution: { action_type: MANDATE_ACTION },
+          actionLabel: 'Mandate change proposed',
+          hideUnlessAuthorized: true,
+          preview: { tool: 'describe_mandate_change', args: { mandate_id: 'mandate_id', change: 'change' }, displayOnly: true },
+        },
+        describe_mandate_change: { category: 'disabled' },
       },
     } as unknown as BuiltinIntegration['toolGating'],
     tools: [
@@ -534,6 +618,37 @@ export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
           );
         },
       },
+      ...(changeMandateAvailable() ? [{
+        name: 'change_mandate',
+        description: CHANGE_MANDATE_DESCRIPTION,
+        inputSchema: CHANGE_MANDATE_INPUT_SCHEMA,
+        prepare: async (args: Record<string, unknown>) => prepareChange(deps, args),
+        handler: async (args: Record<string, unknown>) => {
+          // Approval can come long after the proposal: everything is checked again.
+          const read = signedOldMandate(deps, args.mandate_id);
+          if ('refusal' in read) return { ...builtinText(`Refused: ${read.refusal}`), isError: true };
+          const fixed = proposalTargetRefusal({ profile: read.short });
+          if (fixed) return { ...builtinText(`Refused: ${fixed.message}`), isError: true };
+          const r = await controlPlaneMandate(false, { change: { old: read.old, changes: changesFrom(args), sealedDiff: args.change } });
+          if (!r.ok) return { ...builtinText(`Refused: ${r.message}`), isError: true };
+          if (r.revokeError) {
+            return {
+              ...builtinText(`The new mandate ${r.authorizationId} is signed and active, but the old mandate ${read.old.authorizationId} could not be revoked and is still live with its old limits. Tell the person: they should revoke the old one in the gateway. (${r.revokeError})`),
+              isError: true,
+            };
+          }
+          return builtinText(
+            `Mandate changed: ${r.authorizationId} replaces ${read.old.authorizationId} — profile ${r.profileId}, ${r.groupName}, mode ${r.mode}. It is active now.`,
+          );
+        },
+      }, {
+        // Internal, like describe_mandate_proposal: the card's local facts, never listed.
+        name: 'describe_mandate_change',
+        internal: true,
+        description: 'Internal — the local facts on the approval card of a pending change_mandate proposal. Not for agent use.',
+        inputSchema: { type: 'object', properties: { mandate_id: { type: 'string' }, change: { type: 'object' } } },
+        handler: async (args: Record<string, unknown>) => builtinStructured({ ...(await changeFacts(deps.state, args.mandate_id, args.change)) }),
+      }] : []),
       {
         // AU3 internal preview (DL1 Interface contract) — never listed, never
         // callable by an agent. Builds the "What you would sign" card for a

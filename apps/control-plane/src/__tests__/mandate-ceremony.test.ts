@@ -15,7 +15,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { computeBoundsHash, computeScopeHash, computeIntentHash, computeProfileHash, computeExecutionContextHash } from '@hap/core';
-import { planMandate, createMandate, renewMandate, checkMandateRight, approverPubkeys, MandateRefused, type CeremonyDeps, type MandateRequest } from '../lib/mandate-ceremony';
+import { planMandate, createMandate, renewMandate, planMandateChange, changeMandate, checkMandateRight, approverPubkeys, MandateRefused, type CeremonyDeps, type MandateRequest } from '../lib/mandate-ceremony';
 
 const profilesDir = process.env.SUVEREN_PROFILES_DIR ?? join(import.meta.dirname, '..', '..', '..', '..', '..', 'hap-profiles');
 const SALES = JSON.parse(readFileSync(join(profilesDir, 'sales', '0.4.profile.json'), 'utf8'));
@@ -236,12 +236,14 @@ describe('checkMandateRight — only the team authority gate, no limits needed',
 });
 
 
+const SCOPE = { currency: 'EUR' };
+
 describe('the web page signs through this module', () => {
   it('a duration in seconds wins, and the name disclosure and local labels pass through', async () => {
     const { as, calls } = fakeAs();
     const { d, deliverGateContent } = deps(as);
     await createMandate({
-      team: 'personal', profile: SALES.id, limits: LIMITS, scope: {}, intent: 'Because.', mode: 'review',
+      team: 'personal', profile: SALES.id, limits: LIMITS, scope: SCOPE, intent: 'Because.', mode: 'review',
       ttlSeconds: 7200, discloseIdentity: false, contextLabels: { list: { a: 'A' } },
     }, d);
     const sent = calls.find((c) => c.path === '/api/as/mandate')!.body;
@@ -253,7 +255,7 @@ describe('the web page signs through this module', () => {
   it('without the page\'s checkbox nothing is sent about disclosure — the standing choice stays with the AS', async () => {
     const { as, calls } = fakeAs();
     const { d } = deps(as);
-    await createMandate({ team: 'personal', profile: SALES.id, limits: LIMITS, scope: {}, intent: 'Because.', mode: 'review' }, d);
+    await createMandate({ team: 'personal', profile: SALES.id, limits: LIMITS, scope: SCOPE, intent: 'Because.', mode: 'review' }, d);
     expect(calls.find((c) => c.path === '/api/as/mandate')!.body).not.toHaveProperty('disclose_identity');
   });
 
@@ -262,7 +264,7 @@ describe('the web page signs through this module', () => {
     const { d, deliverGateContent } = deps(as);
     await renewMandate({
       authorizationId: 'authz_1', profileId: SALES.id, groupId: 'g_personal',
-      bounds: { ...LIMITS, profile: SALES.id }, context: {}, intent: 'Because.', mode: 'review', domain: 'owner', ttlSeconds: 3600,
+      bounds: { ...LIMITS, profile: SALES.id }, context: SCOPE, intent: 'Because.', mode: 'review', domain: 'owner', ttlSeconds: 3600,
     }, d);
     const sent = calls.find((c) => c.path === '/api/as/mandate')!.body;
     expect(sent).toMatchObject({ authorization_id: 'authz_1', renew: true, ttl: 3600, commitment_mode: 'review' });
@@ -275,7 +277,7 @@ describe('the web page signs through this module', () => {
     const { d, deliverGateContent } = deps(as);
     await expect(renewMandate({
       authorizationId: 'authz_1', profileId: SALES.id, groupId: 'g_personal',
-      bounds: { ...LIMITS, profile: SALES.id }, context: {}, intent: 'x', mode: 'review', domain: 'owner', ttlSeconds: 3600,
+      bounds: { ...LIMITS, profile: SALES.id }, context: SCOPE, intent: 'x', mode: 'review', domain: 'owner', ttlSeconds: 3600,
     }, d)).rejects.toThrow(/Revoked\./);
     expect(deliverGateContent).not.toHaveBeenCalled();
   });
@@ -283,7 +285,7 @@ describe('the web page signs through this module', () => {
 
 
 describe('replacing a mandate', () => {
-  const base: MandateRequest = { team: 'personal', profile: SALES.id, limits: LIMITS, scope: {}, intent: 'Because.', mode: 'review', replaces: 'authz_old' };
+  const base: MandateRequest = { team: 'personal', profile: SALES.id, limits: LIMITS, scope: SCOPE, intent: 'Because.', mode: 'review', replaces: 'authz_old' };
 
   it('signs, delivers, then revokes the old one — in that order', async () => {
     const { as, calls } = fakeAs();
@@ -318,5 +320,98 @@ describe('replacing a mandate', () => {
     await expect(createMandate(base, d)).rejects.toThrow(/revoked/);
     const revoked = calls.filter((c) => c.path.endsWith('/revoke')).map((c) => c.path);
     expect(revoked).toEqual(['/api/authorizations/authz_new/revoke']);
+  });
+});
+
+describe('changing a mandate: built from the signed old one, never from what the AI claims', () => {
+  const OLD = {
+    authorizationId: 'authz_old', profileId: SALES.id, groupId: 'g_personal', ownerDid: USER.did,
+    bounds: { ...LIMITS, profile: SALES.id }, context: SCOPE, intent: 'Quotes for existing customers.', mode: 'review' as const,
+    expiresAt: Math.floor(Date.now() / 1000) + 86400 * 10, title: 'Quotes',
+  };
+  function asWithMandate(active: boolean) {
+    const { as, calls } = fakeAs();
+    const wrapped: CeremonyDeps['as'] = async (m, p, b) => (p === '/api/mandates/mine?status=active'
+      ? { status: 200, body: { mandates: active ? [{ authorization_id: 'authz_old', profileId: SALES.id, groupId: 'g_personal' }] : [] } }
+      : as(m, p, b));
+    return { as: wrapped, calls };
+  }
+
+  it('raising a limit: only that row differs, tagged More, the rest stays', async () => {
+    const { as } = asWithMandate(true);
+    const { diff, plan } = await planMandateChange({ old: OLD, changes: { limits: { quote_daily_max: 15 } } }, deps(as).d);
+    expect(diff.rows).toEqual([expect.objectContaining({ field: 'quote_daily_max', before: 10, after: 15, tag: 'More', section: 'limit' })]);
+    expect(diff.stays.map((s) => s.label)).toContain('mode');
+    expect(plan.bounds.quote_daily_max).toBe(15);
+  });
+
+  it('lowering a limit is tagged Less', async () => {
+    const { as } = asWithMandate(true);
+    const { diff } = await planMandateChange({ old: OLD, changes: { limits: { quote_daily_max: 2 } } }, deps(as).d);
+    expect(diff.rows[0]).toMatchObject({ tag: 'Less', before: 10, after: 2 });
+  });
+
+  it('the end date stays unless a new one is proposed', async () => {
+    const { as } = asWithMandate(true);
+    const stays = await planMandateChange({ old: OLD, changes: { limits: { quote_daily_max: 2 } } }, deps(as).d);
+    expect(stays.diff.lastsUntil).toBeUndefined();
+    expect(stays.plan.ttlSeconds).toBeGreaterThan(86400 * 9);
+    expect(stays.plan.ttlSeconds).toBeLessThanOrEqual(86400 * 10);
+    const moved = await planMandateChange({ old: OLD, changes: { durationHours: 48 } }, deps(as).d);
+    expect(moved.diff.lastsUntil?.tag).toBe('Less');
+  });
+
+  it('refuses someone else\'s mandate', async () => {
+    const { as } = asWithMandate(true);
+    await expect(planMandateChange({ old: { ...OLD, ownerDid: 'did:key:someone' }, changes: { limits: { quote_daily_max: 2 } } }, deps(as).d))
+      .rejects.toMatchObject({ code: 'not_your_mandate' });
+  });
+
+  it('refuses a mandate no longer active', async () => {
+    const { as } = asWithMandate(false);
+    await expect(planMandateChange({ old: OLD, changes: { limits: { quote_daily_max: 2 } } }, deps(as).d))
+      .rejects.toMatchObject({ code: 'mandate_not_active' });
+  });
+
+  it('refuses no change at all', async () => {
+    const { as } = asWithMandate(true);
+    await expect(planMandateChange({ old: OLD, changes: { limits: { quote_daily_max: 10 } } }, deps(as).d))
+      .rejects.toMatchObject({ code: 'no_change' });
+  });
+
+  it('refuses a limit the area does not have', async () => {
+    const { as } = asWithMandate(true);
+    await expect(planMandateChange({ old: OLD, changes: { limits: { totally_new: 1 } } }, deps(as).d))
+      .rejects.toThrow(/`limits.totally_new`/);
+  });
+
+  it('a mandate on an older version: fields new in the newest version must be given, then appear as New', async () => {
+    const older = { ...SALES, id: SALES.id.replace('@0.4', '@0.3'), version: '0.3' };
+    const { as } = asWithMandate(true);
+    const oldBounds: Record<string, string | number> = { ...LIMITS, profile: older.id };
+    delete oldBounds.quote_daily_max; // pretend this limit is new in 0.4
+    const fetching: CeremonyDeps['as'] = async (m, p, b) => (p === `/api/profiles/${encodeURIComponent(older.id)}` ? { status: 200, body: older } : as(m, p, b));
+    const old = { ...OLD, profileId: older.id, bounds: oldBounds };
+    await expect(planMandateChange({ old, changes: {} }, deps(fetching).d)).rejects.toThrow(/needs a value/);
+    const { diff } = await planMandateChange({ old, changes: { limits: { quote_daily_max: 7 } } }, deps(fetching).d);
+    expect(diff.rows.find((r) => r.field === 'quote_daily_max')).toMatchObject({ tag: 'New', before: null, after: 7 });
+    expect(diff.versionMove).toEqual({ from: older.id, to: SALES.id });
+  });
+
+  it('a mandate that would differ from what the person saw is refused before signing', async () => {
+    const { as, calls } = asWithMandate(true);
+    const { diff } = await planMandateChange({ old: OLD, changes: { limits: { quote_daily_max: 15 } } }, deps(as).d);
+    await expect(changeMandate({ old: OLD, changes: { limits: { quote_daily_max: 16 } }, sealedDiff: diff }, deps(as).d))
+      .rejects.toMatchObject({ code: 'changed_since_proposal' });
+    expect(calls.some((c) => c.path === '/api/as/mandate')).toBe(false);
+  });
+
+  it('after approval: signs with `replaces`, keeps the signed title, reports a failed revoke', async () => {
+    const { as, calls } = asWithMandate(true);
+    const failing: CeremonyDeps['as'] = async (m, p, b) => (p.endsWith('/revoke') ? { status: 500, body: { error: 'down' } } : as(m, p, b));
+    const { diff } = await planMandateChange({ old: OLD, changes: { limits: { quote_daily_max: 15 } } }, deps(as).d);
+    const r = await changeMandate({ old: OLD, changes: { limits: { quote_daily_max: 15 } }, sealedDiff: diff }, deps(failing).d);
+    expect(r.revokeError).toBe('down');
+    expect(calls.find((c) => c.path === '/api/as/mandate')!.body).toMatchObject({ replaces: 'authz_old', title: 'Quotes' });
   });
 });

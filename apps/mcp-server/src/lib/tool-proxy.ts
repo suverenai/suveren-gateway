@@ -637,8 +637,14 @@ export function createGatedToolHandler(
   // that refusal must not depend on — or touch — the manager.
   const gateable = !!tool.gating?.profile && tool.gating.category !== 'disabled';
   const inner = async (args: Record<string, unknown>) => {
-    const normalized = normalizeIncomingArgs(tool, args);
-    // Optional call: test doubles of the manager predate built-ins.
+    let normalized = normalizeIncomingArgs(tool, args);
+    // Optional calls: test doubles of the manager predate built-ins.
+    const prepared = gateable ? await integrationManager.prepareBuiltin?.(tool, normalized) : undefined;
+    if (prepared && 'refusal' in prepared) {
+      recordBlocked(state, tool, { kind: 'bound', detail: prepared.refusal, who: 'gateway', code: prepared.code });
+      return { content: [{ type: 'text', text: `Refused: ${prepared.refusal}` }], isError: true };
+    }
+    if (prepared) normalized = prepared.args;
     const refusal = gateable ? await integrationManager.precheckBuiltin?.(tool, normalized) : null;
     if (refusal) return { content: [{ type: 'text', text: refusal }], isError: true };
     return gated(normalized);
