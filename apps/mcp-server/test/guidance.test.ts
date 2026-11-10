@@ -697,7 +697,7 @@ describe('through the gateway\'s own entry points', () => {
       expect(facts).toContain('signed permission for one area of work');
       expect(facts).toContain('They can change or revoke it at any time.');
       expect(facts).toContain('The Setup mandate allows no work.');
-      expect(facts).toContain('none of those exists until the person approves it');
+      expect(facts).toContain('None of the mandates the AI prepares exists until the person approves it');
       expect(facts).toContain('An AI can never create the first mandate');
     });
 

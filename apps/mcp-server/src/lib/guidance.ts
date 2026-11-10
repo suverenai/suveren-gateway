@@ -124,7 +124,7 @@ export function firstMandateText(opts: { url: string; card: string }): string {
   return [
     'No active mandate exists, so no tool works. An AI can never create the first one: a person signs it. This is the next step, whatever the person opens with. Lead them through it, one step at a time:',
     `1. Open the Suveren Gateway at ${opts.url}. In the left menu choose **Mandates**, then **+ New mandate** (top right).`,
-    `2. Pick the card **${opts.card}** and press **Give a mandate**. It lets you prepare further mandates; the person approves each one before it exists. (Instead, they can pick the card of the area they need and sign that mandate themselves.)`,
+    `2. Pick the card **${opts.card}** and press **Give a mandate**. Tell them why: they sign it once, and from then on they manage their mandates from this chat. They say what you should be able to do, you prepare the mandate, and they only approve it. (Instead, they can pick the card of the area they need and sign that mandate themselves.)`,
     '3. The form has three steps: **Scope & Limits**, **Intent**, **Sign**. In Scope & Limits they name the areas you may prepare mandates for, the modes you may propose (review = they approve every action; automatic = it runs within the limits) and how many proposals a day. In Intent they write, in their own words, why. In Sign they give it a **Title** (required), choose how it runs and for how long, then press **Sign mandate**. Ask them first whether it should run automatically or ask each time.',
     'Afterwards call list-authorizations(): it says what is still missing and what to do next.',
   ].join('\n');
@@ -558,7 +558,8 @@ function joinAreas(names: string[]): string {
 export function factsLines(opts: { card: string; areas: string[] }): string[] {
   return [
     'A mandate is a person\'s signed permission for one area of work: what the AI may do, how much, for how long, and whether each action needs their approval or runs by itself within the limits. They can change or revoke it at any time.',
-    `The ${opts.card} mandate allows no work. It only lets the AI prepare other mandates, and none of those exists until the person approves it. It is the easiest start. An AI can never create the first mandate: a person signs it.`,
+    `The ${opts.card} mandate is how the person manages their mandates from this chat. They sign it once. After that they just say here what the AI should be able to do; the AI prepares the mandate with its limits and duration, and they only approve it. Without it they fill in a form themselves for every mandate.`,
+    `The ${opts.card} mandate allows no work. None of the mandates the AI prepares exists until the person approves it. It is the easiest start. An AI can never create the first mandate: a person signs it.`,
     ...(opts.areas.length > 0 ? [`Possible on this gateway: ${joinAreas(opts.areas)}.`] : []),
   ];
 }
@@ -593,7 +594,7 @@ function oneNextStep(input: ShortAnswerInput): string {
     if (auths.length > 0) return 'Wait for the other owners above to sign. Ask the person to remind them.';
     if (setup.area && input.team?.get(setup.area)?.teamCode) return howToGetMandate(setup.area, setup.card, input);
     const fields = setup.area ? ` The form, step by step: list-authorizations(domain: "${setup.area}").` : '';
-    return `A person signs the first mandate: an AI can never create it. In the Suveren Gateway at ${input.url} they open **Mandates**, then **+ New mandate**, pick the card **${setup.card}** and press **Give a mandate**. It allows no work; it only lets you prepare other mandates, and each one waits for their approval. They can sign the mandate of one area themselves instead.${fields}`;
+    return `A person signs the first mandate: an AI can never create it. In the Suveren Gateway at ${input.url} they open **Mandates**, then **+ New mandate**, pick the card **${setup.card}** and press **Give a mandate**. Tell them why: they sign it once, and from then on they manage their mandates from this chat. They say what you should be able to do, you prepare the mandate, and they only approve it. It allows no work itself. They can sign the mandate of one area themselves instead, by filling in its form.${fields}`;
   }
   const askAndDo = 'Ask what the person wants done';
   if (setup.tool && complete.length === setup.held.length) {
