@@ -17,7 +17,7 @@ import { ReportLine } from '../components/ReportLine';
 import { SkippedCommitmentsCard } from '../components/SkippedCommitmentsCard';
 import { bucketAuths } from '../lib/auth-status';
 import { buildIntegrationAttentionItems, buildPausedSummaries } from '../lib/integration-attention';
-import { deriveFirstRunCard } from '../lib/first-run-card';
+import { deriveFirstRunCard, pausedSummariesToShow } from '../lib/first-run-card';
 
 const EXPIRY_WARN_SECONDS = 30 * 60; // 30 minutes
 
@@ -228,7 +228,7 @@ export function DashboardPage() {
 
       {/* Connectors the gateway holds back — one calm line per reason, not an attention row each.
           Simulation mode on: real systems are paused. Production: connectors set to simulation are paused. */}
-      {pausedSummaries.map((p) => (
+      {pausedSummariesToShow(pausedSummaries, showFirstRun).map((p) => (
         <div className="sim-paused-summary" role="status" key={p.reason} data-testid={`paused-summary-${p.reason}`}>
           <span className="sim-paused-summary-icon" aria-hidden="true">&#9208;</span>
           {p.reason === 'simulation' ? (
