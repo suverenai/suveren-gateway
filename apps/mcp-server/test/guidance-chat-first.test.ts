@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { AGENT_RULES } from '../src/lib/agent-rules';
-import { factsLines, firstMandateText, withOwnRedirectUri } from '../src/lib/guidance';
+import { factsLines, firstMandateText, withOwnRedirectUri, BEFORE_PROPOSING } from '../src/lib/guidance';
+import { setupBuiltin } from '../src/lib/builtins/setup';
 
 describe('the person works from the chat; the gateway page is theirs', () => {
   const rules = AGENT_RULES.join('\n');
@@ -22,5 +23,25 @@ describe('the person works from the chat; the gateway page is theirs', () => {
     const guide = 'add http://localhost:7400/auth/oauth/mail/callback as an authorized redirect URI';
     expect(withOwnRedirectUri(guide, 'mail', 'http://localhost:3600')).toBe('add http://localhost:3600/auth/oauth/mail/callback as an authorized redirect URI');
     expect(withOwnRedirectUri(guide, 'mail', undefined)).toBe(guide);
+  });
+
+  it('asks for mode, amount and duration together, and asks again only for what is missing', () => {
+    expect(BEFORE_PROPOSING).toContain('ask everything you need in one message, as a short bullet list');
+    expect(BEFORE_PROPOSING).toContain('ask again only the points still open, as a shorter list, until none is left');
+    expect(BEFORE_PROPOSING).not.toMatch(/shortest duration/);
+  });
+
+  it('the pre-filled Setup intent: real work on a real gateway, test data only in test mode', () => {
+    const before = process.env.SUVEREN_SIMULATION;
+    try {
+      delete process.env.SUVEREN_SIMULATION;
+      const real = (setupBuiltin as (...a: unknown[]) => { intentHint?: string })().intentHint ?? '';
+      expect(real).toContain('hand routine work to my AI');
+      expect(real).not.toMatch(/test data/i);
+      process.env.SUVEREN_SIMULATION = '1';
+      expect((setupBuiltin as (...a: unknown[]) => { intentHint?: string })().intentHint).toMatch(/^Why — With test data only/);
+    } finally {
+      if (before === undefined) delete process.env.SUVEREN_SIMULATION; else process.env.SUVEREN_SIMULATION = before;
+    }
   });
 });

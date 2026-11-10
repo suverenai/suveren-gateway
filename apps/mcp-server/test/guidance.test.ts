@@ -265,8 +265,9 @@ describe('2. how to get a missing mandate', () => {
   it('a Setup mandate allows the area: propose it, ask automatic-or-review first, lowest limits, say what it allows', () => {
     const t = howToGetMandate('email', 'Post', args(heldSetup('email, files', 'review')));
     expect(t).toContain('Propose it with setup__create_mandate(profile: "email", ...) (modes you may propose: review).');
-    expect(t).toContain('ask the person whether it should run automatically or ask them each time (review)');
-    expect(t).toContain('lowest limits and the shortest duration that cover the work');
+    expect(t).toContain('should it run by itself or ask them each time');
+    expect(t).toContain('ask everything you need in one message');
+    expect(t).toContain('Never set a one-day duration unless they asked for it');
     expect(t).toContain('what the mandate really allows');
   });
 
@@ -555,7 +556,7 @@ describe('through the gateway\'s own entry points', () => {
     const setup = mandate(SETUP_PROFILE.id, { allowed_profiles: 'files,email', allowed_modes: 'review' });
     const text = (await listAuthorizationsHandler(state([setup]), im({ running: ['files'] }))({ domain: 'files' })).content[0].text;
     expect(text).toContain('Propose it with setup__create_mandate(profile: "files", ...)');
-    expect(text).toContain('whether it should run automatically or ask them each time');
+    expect(text).toContain('should it run by itself or ask them each time');
   });
 
   it('2. asked for one connector, the whole setup guide comes with its mandate state', async () => {

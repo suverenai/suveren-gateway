@@ -47,6 +47,16 @@ import type { IntegrationManager } from '../integration-manager';
  *  created under the newest version the Authority Server serves. */
 export const DELEGATION_PROFILE = 'delegation';
 
+/** Seeded into the Setup mandate's intent on a real gateway: the person's own words when they sign,
+ *  and standing instructions for the AI. The test-mode text below is for a test run with test data. */
+const SETUP_INTENT_HINT_REAL = [
+  'Why — I want to hand routine work to my AI, so I can focus on what matters. I decide what it may do.',
+  '',
+  'Goal — When I tell you what I want done, prepare the mandates it needs and your working instructions. Explain each one in simple words.',
+  '',
+  'Watch out — You only prepare. Nothing happens until I approve it. Ask, don\'t guess: never invent a rule, a limit or a step. Ask me what limits I want and how long it should last, and suggest what fits. One at a time. Anything other people would see starts with my review.',
+].join('\n');
+
 /** Seeded into the Delegation mandate's intent (the person edits it and signs their
  *  own words). Written for two readers: the person signing — what they allow, in
  *  plain words — and the setup AI, which reads it as standing instructions. */
@@ -303,7 +313,7 @@ const CREATE_MANDATE_INPUT_SCHEMA = {
     scope: { type: 'object', description: 'The scope (context) by field name, as the profile defines it.' },
     intent: { type: 'string', description: 'Why, goal and watch-outs — signed with the mandate (at most 2000 characters).' },
     mode: { type: 'string', enum: ['review', 'automatic'], description: 'review = each action needs approval; automatic = within the limits. Ask the person which they want; do not choose for them.' },
-    duration_hours: { type: 'number', description: 'How long the mandate is valid, in hours. Omit for the profile default.' },
+    duration_hours: { type: 'number', description: 'How long the mandate is valid, in hours. Ask the person, and always set it.' },
     title: { type: 'string', description: 'A short name for the mandate.' },
     ticket_id: {
       type: 'string',
@@ -362,7 +372,7 @@ export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
     description:
       'Your AI proposes mandates and its agent brief — in a test (simulation mode) and, within the profiles ' +
       'and modes you allow, on your real systems too. Every proposal waits for your approval.',
-    intentHint: DELEGATION_INTENT_HINT,
+    get intentHint() { return isSimulationMode() ? DELEGATION_INTENT_HINT : SETUP_INTENT_HINT_REAL; },
     profile: DELEGATION_PROFILE,
     simulation: true,
     // DL1: no longer simulationOnly at the GROUP level — create_mandate and

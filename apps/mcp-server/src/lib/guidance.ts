@@ -28,6 +28,8 @@ export interface GuideManifest {
   profile?: string;
   /** An entry marked `simulationOnly` is shown only while the gateway is in test mode. */
   setupGuide?: Array<{ title: string; description?: string; simulationOnly?: boolean }>;
+  /** Ready-made settings the connector offers: limits, mode and duration. */
+  templates?: Array<{ name?: string; ttl?: number; mode?: string; bounds?: Record<string, unknown> }>;
   credentials?: { fields?: Array<{ key: string; label?: string; placeholder?: string; optional?: boolean }> };
   oauth?: { signInGroup?: { name?: string }; forOption?: unknown; tokenStorage?: string } | null;
   /** The where-does-it-get-its-data choice (same shape as the connector card's). */
@@ -422,6 +424,11 @@ function connectorLine(m: GuideManifest, input: OverviewInput, sourcesByConsumer
       lines.push('    A source that is not ticked needs the person to edit that mandate: **Mandates**, open it, **Edit**, tick it under **What the AI may attach**, sign again.');
     }
   }
+  if (input.detail && m.templates?.length) {
+    const days = (ttl?: number) => (ttl ? `${Math.round(ttl / 86400)} days` : 'duration to ask');
+    const said = m.templates.map(t => `"${t.name ?? 'Suggested'}" (${t.mode ?? 'mode to ask'}, ${days(t.ttl)}${t.bounds ? `; ${Object.entries(t.bounds).map(([k, v]) => `${k} ${String(v)}`).join(', ')}` : ''})`);
+    lines.push(`    suggested settings you can offer: ${said.join('; ')}`);
+  }
   const guide = m.setupGuide ?? [];
   const shown = guide.filter(g => !g.simulationOnly || sim);
   if (shown.length > 0 && input.detail) {
@@ -649,7 +656,7 @@ export function shortAnswer(input: ShortAnswerInput): string {
 
 /** What the AI does before it proposes a mandate. */
 export const BEFORE_PROPOSING =
-  'Before you propose: ask the person whether it should run automatically or ask them each time (review). Use the lowest limits and the shortest duration that cover the work. Tell them in plain words what the mandate really allows (what, how much, to whom, for how long).';
+  'Before you propose a mandate, ask everything you need in one message, as a short bullet list: should it run by itself or ask them each time, how much may it do, how long should it last. After each answer, ask again only the points still open, as a shorter list, until none is left. If this connector offers suggested settings, offer those; otherwise suggest what fits the work and say why. They decide. Never set a one-day duration unless they asked for it. Tell them in plain words what the mandate really allows (what, how much, to whom, for how long).';
 
 /**
  * The step for the person after the Authority Server (or the gate's own check) refused a call,
