@@ -2,7 +2,6 @@ import { useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { spClient, type PendingItem, type Proposal, type AgentContact } from '../lib/sp-client';
-import { SetupGuide } from '../components/SetupGuide';
 import { FirstRunCard } from '../components/FirstRunCard';
 import { useVisiblePolling } from '../hooks/useVisiblePolling';
 import { useMcpEndpoint } from '../hooks/useMcpEndpoint';
@@ -119,12 +118,9 @@ export function DashboardPage() {
     managed,
     simulationOn,
   });
-  // The first-run card belongs to simulation mode, where the Delegation mandate
-  // exists and the person's AI sets up the rest. Outside it, the live-mode
-  // SetupGuide stays; inside it, that guide never shows — once the card is done
-  // the person is set up through their AI, and the guide's four steps would
-  // contradict it.
-  const showFirstRun = simulationOn && firstRun.visible;
+  // The first-run card leads every new person, in simulation and in production:
+  // the Setup mandate exists in both, and the person's AI sets up the rest.
+  const showFirstRun = firstRun.visible;
   const soonExpiring = active.filter(a => a.remaining_seconds !== null && a.remaining_seconds <= EXPIRY_WARN_SECONDS);
   const pendingProposals = proposals.filter(isPendingProposal);
   const runningIntegrations = integrationEntries.filter(e => e.state === 'running');
@@ -207,26 +203,16 @@ export function DashboardPage() {
           real data flipped every step to "done" and it vanished). Waiting for
           allReady means it either appears once with the correct progress, or
           never appears at all for a fully-set-up user. */}
-      {allReady && mcpEndpoint && (
-        showFirstRun ? (
-          <FirstRunCard
-            contact={contact}
-            hasDelegationMandate={hasDelegationMandate}
-            otherMandateCount={otherMandateCount}
-            delegationProposalCount={delegationProposalCount}
-            managed={managed}
-            simulationOn={simulationOn}
-            mcpEndpoint={mcpEndpoint}
-          />
-        ) : !simulationOn && (
-          <SetupGuide
-            aiConfigured={aiConfigured}
-            hasRunningIntegration={runningIntegrations.length > 0}
-            hasActiveAuth={active.length > 0}
-            hasAgentConnected={activeSessions > 0}
-            mcpEndpoint={mcpEndpoint}
-          />
-        )
+      {allReady && mcpEndpoint && showFirstRun && (
+        <FirstRunCard
+          contact={contact}
+          hasDelegationMandate={hasDelegationMandate}
+          otherMandateCount={otherMandateCount}
+          delegationProposalCount={delegationProposalCount}
+          managed={managed}
+          simulationOn={simulationOn}
+          mcpEndpoint={mcpEndpoint}
+        />
       )}
 
       {/* Stats + "Needs your attention" stay hidden while the first-run card
