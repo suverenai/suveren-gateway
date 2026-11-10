@@ -252,6 +252,9 @@ export function listAuthorizationsHandler(
       if (!domain) {
         const short = await shortAnswerPart(state, integrationManager, authorizations);
         if (short) text.push('', short);
+        // The change note sends the AI here for the current brief, also before any mandate exists.
+        const brief = readContextFile(contextDir);
+        if (brief) text.push('', '=== CONTEXT ===', brief);
         return { content: [{ type: 'text' as const, text: text.join('\n') }] };
       }
       text.push('', firstMandateText({ card: setupCardName(integrationManager) }));

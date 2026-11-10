@@ -56,7 +56,7 @@ describe('the note for one chat', () => {
     await s.call();
     state.now = told('h2'); state.brief = 'New brief: only quotes.';
     const r = await s.call();
-    expect(noteOf(r)).toBe('[Suveren gateway] The agent brief changed since this chat started. This is the current one:\n\nNew brief: only quotes.');
+    expect(noteOf(r)).toBe('[Suveren gateway] The agent brief changed since this chat started. Call list-authorizations() with no area to read the current one.');
     expect(noteOf(await s.call())).toBe('');
   });
 
@@ -64,7 +64,7 @@ describe('the note for one chat', () => {
     const state = { now: told('h1'), brief: 'Old.' };
     const s = session(state);
     state.now = told('h2'); state.brief = 'New.';
-    expect(noteOf(await s.call())).toContain('This is the current one:\n\nNew.');
+    expect(noteOf(await s.call())).toContain('Call list-authorizations() with no area to read the current one.');
   });
 
   it('a second edit gives a second note', async () => {
@@ -72,7 +72,7 @@ describe('the note for one chat', () => {
     const s = session(state);
     state.now = told('h2'); state.brief = 'b'; await s.call();
     state.now = told('h3'); state.brief = 'c';
-    expect(noteOf(await s.call())).toContain('\n\nc');
+    expect(noteOf(await s.call())).toContain('The agent brief changed'); expect(noteOf(await s.call())).not.toContain('c');
   });
 
   it('names mandates by the title the person gave: added, revoked, expired', () => {
@@ -115,7 +115,7 @@ describe('the note for one chat', () => {
     const r = await call() as { content: Array<{ text?: string }>; isError?: boolean };
     expect(r.isError).toBe(true);
     expect(r.content[0].text).toBe('Refused: no mandate covers it.');
-    expect(r.content[1].text).toContain('Now b.');
+    expect(r.content[1].text).toContain('The agent brief changed'); expect(r.content[1].text).not.toContain('Now b.');
   });
 
   it('two calls racing get one note between them', async () => {
@@ -136,7 +136,7 @@ describe('the note for one chat', () => {
     expect(await call()).toBeUndefined();
     bad = false;
     const r = await call() as { content: Array<{ text?: string }> };
-    expect(r.content[1].text).toContain('\n\nb');
+    expect(r.content[1].text).toContain('The agent brief changed'); expect(r.content[1].text).not.toContain('\n\nb');
   });
 });
 
@@ -153,7 +153,7 @@ describe('an app that keeps its old instructions across a new session (reconnect
     state.now = told('h2'); state.brief = 'New.';
     const reconnected = session(state, 'codex', ledger); // session opens after the edit; its own start already says h2
     const r = await reconnected.call();
-    expect(noteOf(r)).toBe('[Suveren gateway] The agent brief changed since this app last connected. This is the current one:\n\nNew.');
+    expect(noteOf(r)).toBe('[Suveren gateway] The agent brief changed since this app last connected. Call list-authorizations() with no area to read the current one.');
     expect(noteOf(await reconnected.call())).toBe('');
   });
 
@@ -183,7 +183,7 @@ describe('an app that keeps its old instructions across a new session (reconnect
     await session(state, 'claude', ledger).call();
     state.now = told('h2'); state.brief = 'y';
     expect(noteOf(await session(state, 'codex', ledger).call())).toBe(''); // codex has no record yet
-    expect(noteOf(await session(state, 'claude', ledger).call())).toContain('\n\ny');
+    expect(noteOf(await session(state, 'claude', ledger).call())).toContain('The agent brief changed'); expect(noteOf(await session(state, 'claude', ledger).call())).not.toContain('y');
   });
 
   it('a live session never needs the ledger', async () => {
@@ -193,7 +193,7 @@ describe('an app that keeps its old instructions across a new session (reconnect
     await live.call();
     state.now = told('h2'); state.brief = 'y';
     await session(state, 'claude', ledger).call(); // another chat is told first
-    expect(noteOf(await live.call())).toContain('\n\ny'); // the live one is still told
+    expect(noteOf(await live.call())).toContain('The agent brief changed'); expect(noteOf(await live.call())).not.toContain('y'); // the live one is still told
   });
 });
 
@@ -231,7 +231,7 @@ describe('through the real MCP server wiring', () => {
     writeFileSync(join(dataDir, 'context.md'), 'Brief version two.');
     auths.pop();
     const second = await client.callTool({ name: 'list-authorizations', arguments: {} });
-    expect(text(second)).toContain('The agent brief changed since this chat started. This is the current one:\n\nBrief version two.');
+    expect(text(second)).toContain('The agent brief changed since this chat started. Call list-authorizations() with no area to read the current one.');
     expect(text(second)).toContain('revoked "Customer records"');
     const third = await client.callTool({ name: 'list-authorizations', arguments: {} });
     expect(text(third)).not.toContain('[Suveren gateway]');

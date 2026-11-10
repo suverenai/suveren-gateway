@@ -652,12 +652,16 @@ export function shortAnswer(input: ShortAnswerInput): string {
 }
 
 /** What the AI does before it proposes a mandate. */
+/** The intent says why; the numbers live in the mandate's own fields, so a change never has to touch both. */
+export const INTENT_HAS_NO_LIMITS =
+  'Write the intent as why and what for. Never put limits, amounts, durations, recipients or modes in it: those have their own fields, and the person would have to change them twice.';
+
 export const BEFORE_PROPOSING =
-  'Before you propose a mandate, ask everything you need in one message, as a short bullet list: should it run by itself or ask them each time, how much may it do, how long should it last. After each answer, ask again only the points still open, as a shorter list, until none is left. If this connector offers suggested settings, offer those; otherwise suggest what fits the work and say why. They decide. Never set a one-day duration unless they asked for it. Tell them in plain words what the mandate really allows (what, how much, to whom, for how long).';
+  'Before you propose a mandate, ask everything you need in one message, as a short bullet list: should it run by itself or ask them each time, how much may it do, how long should it last. After each answer, ask again only the points still open, as a shorter list, until none is left. If this connector offers suggested settings, offer those; otherwise suggest what fits the work and say why. They decide. Never set a one-day duration unless they asked for it. Tell them in plain words what the mandate really allows (what, how much, to whom, for how long).' + ' ' + INTENT_HAS_NO_LIMITS;
 
 /** How the AI brings up a change to a mandate: only with a reason, once, one list. */
 export const WHEN_TO_SUGGEST_A_CHANGE =
-  'Suggest a change only when there is a reason: a limit was reached, the mandate is about to end, or the same refusal keeps coming back. Say the reason once and do not press. Ask for everything you need in one short bullet list, including any new limit the area asks for, and ask again only what is still open. Tell them in plain words what the change really allows.';
+  'Suggest a change only when there is a reason: a limit was reached, the mandate is about to end, or the same refusal keeps coming back. Say the reason once and do not press. Ask for everything you need in one short bullet list, including any new limit the area asks for, and ask again only what is still open. Tell them in plain words what the change really allows.' + ' ' + INTENT_HAS_NO_LIMITS;
 
 /**
  * The step for the person after the Authority Server (or the gate's own check) refused a call,

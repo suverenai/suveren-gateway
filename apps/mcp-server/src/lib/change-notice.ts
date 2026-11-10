@@ -98,7 +98,7 @@ export function changeNote(
   const parts: string[] = [];
   if (from.brief !== to.brief) {
     parts.push(currentBrief
-      ? `The agent brief changed ${since(when)}. This is the current one:\n\n${currentBrief}`
+      ? `The agent brief changed ${since(when)}. Call list-authorizations() with no area to read the current one.`
       : `The agent brief was removed ${since(when)}. There is none now.`);
   }
 
