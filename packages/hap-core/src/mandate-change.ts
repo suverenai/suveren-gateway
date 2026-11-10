@@ -139,6 +139,13 @@ export function wordDiff(before: string, after: string): WordPart[] {
     else if (j < b.length && (i >= a.length || lcs[i][j + 1] >= lcs[i + 1][j])) { push('add', b[j]); j++; }
     else { push('del', a[i]); i++; }
   }
+  // A word and the next, separated only by a shared space, read as one change.
+  for (let n = parts.length - 2; n >= 1; n--) {
+    if (parts[n].kind === 'same' && /^\s+$/.test(parts[n].text) && parts[n - 1].kind === parts[n + 1].kind && parts[n - 1].kind !== 'same') {
+      parts[n - 1].text += parts[n].text + parts[n + 1].text;
+      parts.splice(n, 2);
+    }
+  }
   return parts;
 }
 
