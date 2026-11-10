@@ -403,6 +403,7 @@ function writeReportTool(deps: BuiltinDeps): BuiltinTool {
 export const reportBuiltin: BuiltinFactory = (deps) => ({
   id: 'report',
   name: 'Report',
+  evidenceOnly: true,
   // Short name — matches the real registration in profile-loader.ts (full id
   // AND short name both registered); profileMatches() accepts either.
   profile: 'reporting',

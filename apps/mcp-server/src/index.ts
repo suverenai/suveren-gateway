@@ -25,6 +25,8 @@ import type { IntegrationManager, DiscoveredTool } from './lib/integration-manag
 import { recordBlocked, createGatedToolHandler, buildProxiedToolDescription, profileMatches, toolIsAuthorizedForDisplay, toolAlwaysListed } from './lib/tool-proxy';
 import { jsonSchemaToZodShape } from './lib/json-schema-to-zod';
 import { wrapWithOutcomeOutbox } from './lib/outcome-outbox';
+import { SessionChangeNotice, currentTold } from './lib/change-notice';
+import { getContextForBrief } from './lib/context-loader';
 
 // ─── JSON Schema → Zod conversion ──────────────────────────────────────────
 
@@ -36,6 +38,14 @@ export function createMcpServer(
   integrationManager?: IntegrationManager,
 ) {
   const { cache } = state;
+
+  // Taken right where the instructions are built: this is what the AI will have been told.
+  const changeNotice = new SessionChangeNotice({
+    now: () => currentTold(state.getEnrichedAuthorizations(), integrationManager),
+    currentBrief: () => getContextForBrief().brief,
+    ledger: state.changeLedger,
+    appName: () => server.server.getClientVersion()?.name,
+  });
 
   // Build mandate brief from current enriched authorizations
   const enriched = state.getEnrichedAuthorizations();
@@ -60,6 +70,10 @@ export function createMcpServer(
   const withOutcomeOutbox = <T>(handler: T): T =>
     wrapWithOutcomeOutbox(state.outcomeOutbox, handler as Parameters<typeof wrapWithOutcomeOutbox>[1]) as T;
 
+  // Every tool answer also tells a running chat what changed since it was told (change-notice.ts).
+  const withNotes = <T>(handler: T): T =>
+    changeNotice.wrap(withOutcomeOutbox(handler) as (...args: unknown[]) => unknown) as T;
+
   // ─── list-authorizations ─────────────────────────────────────────────────
 
   server.registerTool(
@@ -70,7 +84,7 @@ export function createMcpServer(
         domain: z.string().optional().describe('The area of the task (e.g., "charge", "deploy"), by its short name or the name the person sees. Omit for the short answer.'),
       },
     },
-    withOutcomeOutbox(listAuthorizationsHandler(state, integrationManager))
+    withNotes(listAuthorizationsHandler(state, integrationManager))
   );
 
   // ─── check-pending-mandates (v0.7; was check-pending-attestations) ───────
@@ -83,7 +97,7 @@ export function createMcpServer(
         domain: z.string().describe('The owner\'s domain (e.g., "compliance")'),
       },
     },
-    withOutcomeOutbox(checkPendingHandler(cache))
+    withNotes(checkPendingHandler(cache))
   );
 
   // ─── list-integrations ─────────────────────────────────────────────────
@@ -94,7 +108,7 @@ export function createMcpServer(
       description: 'List all running integrations and their authorization status. Returns a compact overview — use list-authorizations(domain) for full details on a specific profile.',
       inputSchema: {},
     },
-    withOutcomeOutbox(listIntegrationsHandler(state, integrationManager))
+    withNotes(listIntegrationsHandler(state, integrationManager))
   );
 
   // ─── check-pending-commitments ─────────────────────────────────────────
@@ -111,7 +125,7 @@ export function createMcpServer(
           .describe('Only with proposal_id: wait up to this many seconds (max 50) while the proposal is still pending; answers as soon as the person decides. Omit or 0 to answer at once.'),
       },
     },
-    withOutcomeOutbox(checkPendingCommitmentsHandler(state, integrationManager))
+    withNotes(checkPendingCommitmentsHandler(state, integrationManager))
   );
 
   // ─── Proxied tools from downstream integrations ──────────────────────────
@@ -224,7 +238,12 @@ export function createMcpServer(
           // Built-in tools (reports, setup) never carry the outcome line: a
           // report's output is evidence and must not mix in a notice (nor the
           // decider's identity); setup tools are not the working agent's.
-          (integrationManager?.isBuiltin?.(tool.integrationId) ? handler : withOutcomeOutbox(handler)) as Parameters<typeof server.registerTool>[2],
+          // A built-in that declares evidenceOnly carries no change note either.
+          (integrationManager?.builtinEvidenceOnly?.(tool.integrationId)
+            ? handler
+            : integrationManager?.isBuiltin?.(tool.integrationId)
+              ? changeNotice.wrap(handler as (...args: unknown[]) => unknown)
+              : withNotes(handler)) as Parameters<typeof server.registerTool>[2],
         );
         proxiedTools.set(tool.namespacedName, { tool, registered, description });
       } catch (err) {

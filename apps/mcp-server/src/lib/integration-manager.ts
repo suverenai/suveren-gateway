@@ -1048,6 +1048,11 @@ export class IntegrationManager {
     return this.builtins.get(id)?.def.alwaysListed === true;
   }
 
+  /** A built-in whose answers are evidence: no gateway note may be appended to them. */
+  builtinEvidenceOnly(id: string): boolean {
+    return this.builtins.get(id)?.def.evidenceOnly === true;
+  }
+
   /**
    * Whether `id` may run while simulation mode is on: a built-in that
    * declares `simulation: true`, or a connector whose CURRENT setting (the

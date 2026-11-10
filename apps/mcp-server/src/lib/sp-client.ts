@@ -44,6 +44,8 @@ export interface SPAttestationsResult {
   /** v0.6 — true when the AS has revoked this attestation (drop it from the cache). */
   revoked?: boolean;
   revoked_at?: number;
+  /** The title the person gave this mandate when signing it; absent on a mandate that has none. */
+  title?: string | null;
 }
 
 /** RJ1 — the three ways a reject can resolve. Absent on an on-disk row ⇒

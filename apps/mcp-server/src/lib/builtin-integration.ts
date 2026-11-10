@@ -142,6 +142,11 @@ export interface BuiltinIntegration {
    * Fixed text owned by the gateway; never built from agent input.
    */
   noMandateText?: string;
+  /**
+   * Its answers are evidence the AI quotes back: no gateway note (a change notice) is ever appended
+   * to them, so a report can never mix a notice into what it proves. Default false.
+   */
+  evidenceOnly?: boolean;
   tools: BuiltinTool[];
 }
 
