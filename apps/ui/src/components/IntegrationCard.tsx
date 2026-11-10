@@ -817,12 +817,14 @@ export function IntegrationCard({ manifest, areas, integration, state, onStatusC
         })()}
 
         {/* Needs OAuth — step 2 */}
-        {cardState === 'needs-oauth' && (
+        {cardState === 'needs-oauth' && !editingCreds && (
           <div className="ob-btns is-inline">
             <button className="ob-btn is-solid" onClick={startOAuth}>
               Connect {manifest.name} Account
             </button>
-            <button className="ob-btn" onClick={() => setCredConfigured(false)}>
+            {/* Opens the same edit panel as a running connector: the saved choice and fields, not the
+                first-time form (which, for a connector with a data choice, showed its default option). */}
+            <button className="ob-btn" onClick={() => { setCredValues({ ...existingCreds }); setEditingCreds(true); }}>
               Change Credentials
             </button>
           </div>
