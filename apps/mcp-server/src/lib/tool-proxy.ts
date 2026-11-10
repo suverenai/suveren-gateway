@@ -1298,7 +1298,7 @@ function createGatedToolHandlerInner(
         who: 'gateway',
         code: 'NO_MATCHING_MANDATE',
       });
-      return { content: [{ type: 'text', text: noMandateRefusal(tool.namespacedName, mandateLabel, integrationManager.noMandateText?.(tool.integrationId)) }], isError: true };
+      return { content: [{ type: 'text', text: noMandateRefusal(tool.namespacedName, mandateLabel, integrationManager.noMandateText?.(tool.integrationId), undefined, profile!) }], isError: true };
     }
 
     if (matchingAuths.length === 0) return noEligibleMandate(refusals);
@@ -2355,14 +2355,14 @@ export function v08ProposalReaders(
  * as the person sees it — the profile's `name` ("Email", "Setup"), falling back
  * to its short id only when the profile is not in the local catalog.
  */
-export function noMandateRefusal(toolName: string, profile: string, builtinText?: string, card?: string): string {
+export function noMandateRefusal(toolName: string, profile: string, builtinText?: string, card?: string, stepsArea: string = profile): string {
   if (builtinText) return `Refused: ${builtinText} No ticket was requested.`;
   const area = areaName(profile);
   const where = card
     ? `**Mandates → + New mandate →** card **${card}** → **Give a mandate**`
     : '**Mandates → + New mandate**';
   return `Refused: no mandate covers ${toolName} (${area}). Nothing was done. ` +
-    `Tell the person to grant a ${area} mandate in the gateway: ${where}. list-authorizations() says whether you can propose it for them. ` +
+    `Tell the person to grant a ${area} mandate in the gateway: ${where}. list-authorizations(domain: "${shortProfile(stepsArea)}") gives the exact steps and says whether you can propose it for them. ` +
     'Then try again. No ticket was requested.';
 }
 

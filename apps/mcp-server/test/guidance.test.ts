@@ -20,6 +20,9 @@ import {
   refusalNextStep,
   sourceTitle,
   manifestAreas,
+  possibleAreas,
+  factsLines,
+  shortAnswer,
   pickerCard,
   proposalFields,
   SIGN_STEP,
@@ -413,7 +416,7 @@ describe('5. refusal endings', () => {
   it('"no mandate covers" ends with where the person goes, the card, and a way to find out more', () => {
     expect(noMandateRefusal('post__send', 'email', undefined, 'Post')).toBe(
       'Refused: no mandate covers post__send (email). Nothing was done. Tell the person to grant a email mandate in the gateway: ' +
-      '**Mandates → + New mandate →** card **Post** → **Give a mandate**. list-authorizations() says whether you can propose it for them. ' +
+      '**Mandates → + New mandate →** card **Post** → **Give a mandate**. list-authorizations(domain: "email") gives the exact steps and says whether you can propose it for them. ' +
       'Then try again. No ticket was requested.',
     );
     // A built-in's own signed-off text still wins.
@@ -512,34 +515,45 @@ describe('through the gateway\'s own entry points', () => {
     expect(brief.indexOf('=== FIRST STEP ===')).toBeLessThan(brief.indexOf('=== RULES ==='));
     const rules = brief.slice(brief.indexOf('=== RULES ==='));
     expect(rules.indexOf('never write as if you were that person')).toBeLessThan(rules.indexOf('Never open or operate'));
-    expect(rules).toContain('call list-authorizations() with no argument');
+    expect(rules).toContain('call list-authorizations(domain) with the area of the task');
   });
 
   it('a gateway that has a mandate does not repeat the first step', () => {
     const brief = buildMandateBrief({ authorizations: [mandate(EMAIL_PROFILE.id)] as never });
     expect(brief).not.toContain('=== FIRST STEP ===');
-    expect(brief).toContain('call list-authorizations() with no argument');
+    expect(brief).toContain('call list-authorizations(domain) with the area of the task');
   });
 
-  it('test mode keeps its own neutral block and has no FIRST STEP', () => {
+  it('no mandate reads the same in test mode: the first step, no block of its own', () => {
+    const live = buildMandateBrief({ authorizations: [], integrationManager: im({ running: [] }) });
     process.env.SUVEREN_SIMULATION = '1';
-    const brief = buildMandateBrief({ authorizations: [] });
+    const test = buildMandateBrief({ authorizations: [], integrationManager: im({ running: [] }) });
+    expect(test).toContain('=== FIRST STEP ===');
+    expect(test).not.toContain('=== GETTING STARTED ===');
+    expect(test).toBe(live);
+  });
+
+  it('test mode with a mandate keeps its neutral block and has no first step', () => {
+    process.env.SUVEREN_SIMULATION = '1';
+    const brief = buildMandateBrief({ authorizations: [mandate(EMAIL_PROFILE.id)] as never, integrationManager: im({ running: ['mail'] }) });
     expect(brief).not.toContain('=== FIRST STEP ===');
     expect(brief).toContain('=== GETTING STARTED ===');
   });
 
-  it('1. list-authorizations on a fresh gateway: first step, then every connector with its next step', async () => {
-    const text = (await listAuthorizationsHandler(state([]), im({ running: ['files'] }))()).content[0].text;
+  it('1. list-authorizations(domain) on a fresh gateway: the first step, then that area\'s exact steps', async () => {
+    const text = (await listAuthorizationsHandler(state([]), im({ running: ['files'] }))({ domain: 'files' })).content[0].text;
     expect(text).toContain('No active authorizations — no tool is usable yet.');
     expect(text).toContain('An AI can never create the first one');
     expect(text).toContain('Connectors, in the order to act');
     expect(text).toMatch(/- Files .* — running\./);
     expect(text).toMatch(/mandate for Files: none\. A person signs it: \*\*Mandates → \+ New mandate\*\*, card \*\*Files\*\*/);
+    // Only that area: no other connector's steps.
+    expect(text).not.toContain('- Email');
   });
 
   it('2. with a Setup mandate that lists the area, the overview says to propose it, with the tool and the questions', async () => {
     const setup = mandate(SETUP_PROFILE.id, { allowed_profiles: 'files,email', allowed_modes: 'review' });
-    const text = (await listAuthorizationsHandler(state([setup]), im({ running: ['files'] }))()).content[0].text;
+    const text = (await listAuthorizationsHandler(state([setup]), im({ running: ['files'] }))({ domain: 'files' })).content[0].text;
     expect(text).toContain('Propose it with setup__create_mandate(profile: "files", ...)');
     expect(text).toContain('whether it should run automatically or ask them each time');
   });
@@ -563,7 +577,7 @@ describe('through the gateway\'s own entry points', () => {
     try {
       const st = state([]);
       (st.spClient as unknown as { getActiveTeamGroupId: () => Promise<string> }).getActiveTeamGroupId = async () => 'g_team';
-      const text = (await listAuthorizationsHandler(st, im({ running: ['files'] }))()).content[0].text;
+      const text = (await listAuthorizationsHandler(st, im({ running: ['files'] }))({ domain: 'files' })).content[0].text;
       expect(text).toContain('Blocked: the team "Sales Vienna" has not enabled Files');
       expect(text).toContain('Team → Manage this team in your Authority Server');
       // Only the rights are asked for, for the active team, and only for a connector that runs.
@@ -582,7 +596,7 @@ describe('through the gateway\'s own entry points', () => {
     try {
       const st = state([]);
       (st.spClient as unknown as { getActiveTeamGroupId: () => Promise<string> }).getActiveTeamGroupId = async () => 'g_team';
-      const text = (await listAuthorizationsHandler(st, im({ running: ['files'] }))()).content[0].text;
+      const text = (await listAuthorizationsHandler(st, im({ running: ['files'] }))({ domain: 'files' })).content[0].text;
       expect(text).not.toContain('Blocked: the team');
       expect(text).toContain('mandate for Files: none. A person signs it');
     } finally {
@@ -639,6 +653,233 @@ describe('through the gateway\'s own entry points', () => {
     expect(reg.mail__send_email.description).toContain('stop and ask the person');
     // A tool that takes no attachments gets no such line.
     expect(reg.files__save_file.description).not.toContain('May attach');
+  });
+
+  // ── The role, the facts and the short answer (Andreas, 2026-11-10) ──────
+
+  const sectionOf = (brief: string, heading: string) => {
+    const at = brief.indexOf(`=== ${heading} ===`);
+    expect(at, heading).toBeGreaterThanOrEqual(0);
+    const next = brief.indexOf('\n=== ', at + heading.length);
+    return brief.slice(at, next < 0 ? undefined : next);
+  };
+  const MODE_WORDS = /simulat|\btest|practice|\bdemo\b/i;
+
+  describe('the role and the facts in the session instructions', () => {
+    const everyMode = (auths: EnrichedAuthorization[]) => {
+      const live = buildMandateBrief({ authorizations: auths as never, integrationManager: im({ running: [] }) });
+      process.env.SUVEREN_SIMULATION = '1';
+      const test = buildMandateBrief({ authorizations: auths as never, integrationManager: im({ running: [] }) });
+      delete process.env.SUVEREN_SIMULATION;
+      return { live, test };
+    };
+
+    it.each([['no mandate', () => [] as EnrichedAuthorization[]], ['a mandate', () => [mandate(EMAIL_PROFILE.id)]]])('%s: the role is sent, word for word the same in every mode, and says nothing about the mode', (_label, auths) => {
+      const { live, test } = everyMode(auths());
+      for (const heading of ['YOUR ROLE', 'FACTS YOU CAN DRAW ON']) {
+        const inLive = sectionOf(live, heading);
+        expect(sectionOf(test, heading)).toBe(inLive);
+        expect(inLive, heading).not.toMatch(MODE_WORDS);
+      }
+      expect(sectionOf(live, 'YOUR ROLE')).toContain('They are the final authority, not Suveren and not you.');
+    });
+
+    it('the golden rule stays first of all rules, ahead of the role', () => {
+      const brief = buildMandateBrief({ authorizations: [], integrationManager: im({ running: [] }) });
+      const rules = brief.indexOf('=== RULES ===');
+      expect(rules).toBeLessThan(brief.indexOf('=== YOUR ROLE ==='));
+      expect(brief.indexOf('never write as if you were that person')).toBeLessThan(brief.indexOf('They are the final authority'));
+    });
+
+    it('the facts say what a mandate and the Setup mandate are, in plain words', () => {
+      const { live } = everyMode([]);
+      const facts = sectionOf(live, 'FACTS YOU CAN DRAW ON');
+      expect(facts).toContain('signed permission for one area of work');
+      expect(facts).toContain('They can change or revoke it at any time.');
+      expect(facts).toContain('The Setup mandate allows no work.');
+      expect(facts).toContain('none of those exists until the person approves it');
+      expect(facts).toContain('An AI can never create the first mandate');
+    });
+
+    it('no line depends on how the person opens', () => {
+      const { live, test } = everyMode([]);
+      const { live: liveHeld, test: testHeld } = everyMode([mandate(EMAIL_PROFILE.id)]);
+      for (const t of [live, test, liveHeld, testHeld, firstMandateText({ url: 'u', card: 'Setup' })]) {
+        expect(t).not.toMatch(/asks how to (start|begin|get started)/i);
+      }
+      expect(live).toContain('whatever the person opens with');
+      expect(test).toContain('whatever the person opens with');
+    });
+
+    it('the areas come from the manifests, not from a list in the code', () => {
+      expect(possibleAreas([NOTES, LEDGER], a => a.toUpperCase())).toEqual(['MEMO', 'INVOICING', 'SALES']);
+      expect(possibleAreas([{ id: 'x', name: 'X', profile: 'github.com/y/zebra@1.0' }], a => a)).toEqual(['zebra']);
+      expect(factsLines({ card: 'Setup', areas: possibleAreas([NOTES], () => 'Zebra pens') }).join('\n')).toContain('Possible on this gateway: Zebra pens.');
+      expect(factsLines({ card: 'Setup', areas: [] }).join('\n')).not.toContain('Possible on this gateway');
+    });
+
+    it('the real manifests give the line in the instructions, one short line', () => {
+      const facts = sectionOf(buildMandateBrief({ authorizations: [], integrationManager: im({ running: [] }) }), 'FACTS YOU CAN DRAW ON');
+      const line = facts.split('\n').find(l => l.includes('Possible on this gateway:'))!;
+      expect(line).toContain('Email');
+      expect(line).toContain('Files');
+      expect(line.length).toBeLessThan(300);
+    });
+
+    it('with a card name from the built-in, not a word in the code', () => {
+      expect(factsLines({ card: 'Vollmacht', areas: [] }).join('\n')).toContain('The Vollmacht mandate allows no work.');
+      expect(factsLines({ card: 'Setup', areas: [] }).join('\n')).toContain('The Setup mandate');
+    });
+  });
+
+  /**
+   * The limit: 1600 characters, about a quarter of a page (some 300 words). That fits what the
+   * answer must say — where things stand, one line of areas, the one step with its buttons, what
+   * the AI can do — and stops the old answer coming back (ten connectors with every step ran to
+   * several thousand characters, and ChatGPT summarised it instead of leading the person).
+   */
+  const SHORT_ANSWER_LIMIT = 1600;
+
+  describe('list-authorizations() with no argument is the short answer', () => {
+    it('on an empty gateway: short, with the one next step, the card, and no connector steps', async () => {
+      const text = (await listAuthorizationsHandler(state([]), im({ running: [] }))()).content[0].text;
+      console.log(`EMPTY GATEWAY ANSWER (${text.length} chars)\n${text}`);
+      expect(text.length).toBeLessThanOrEqual(SHORT_ANSWER_LIMIT);
+      expect(text.match(/The one next step:/g)).toHaveLength(1);
+      expect(text).toContain('**Setup**');
+      expect(text).toContain('**+ New mandate**');
+      expect(text).toContain('**Give a mandate**');
+      expect(text).toContain('You can do yourself:');
+      expect(text).toContain('list-authorizations(domain: "<area>")');
+      expect(text).toContain('Email');
+      expect(text).not.toContain('Connectors, in the order');
+      expect(text).not.toContain('**Connectors**');
+      expect(text).not.toContain('Save & Encrypt');
+    });
+
+    it('stays under the limit however many connectors exist', () => {
+      const many = Array.from({ length: 40 }, (_, i): GuideManifest => ({
+        id: `c${i}`, name: `Connector ${i}`, profile: `area${i}`,
+        credentials: { fields: [{ key: 'k', label: 'K' }] },
+      }));
+      const text = shortAnswer({ ...input({ manifests: many }), url: 'http://localhost:3400', setup: { card: 'Setup', held: [], fields: {}, area: 'delegation' } });
+      expect(text.length).toBeLessThanOrEqual(SHORT_ANSWER_LIMIT);
+      expect(text).toContain('and 20 more');
+    });
+
+    it('reads the same in test mode on an empty gateway (the words never say which mode)', async () => {
+      const live = (await listAuthorizationsHandler(state([]), im({ running: [] }))()).content[0].text;
+      process.env.SUVEREN_SIMULATION = '1';
+      const test = (await listAuthorizationsHandler(state([]), im({ running: [] }))()).content[0].text;
+      expect(test).toBe(live);
+      expect(live).not.toMatch(MODE_WORDS);
+    });
+
+    it('with mandates: the mandates, one line of areas, the one next step, no connector steps', async () => {
+      const setup = mandate(SETUP_PROFILE.id, { allowed_profiles: 'files', allowed_modes: 'review' });
+      const text = (await listAuthorizationsHandler(state([setup]), im({ running: ['files'] }))()).content[0].text;
+      expect(text).toContain('Active authorizations (usable now):');
+      expect(text.match(/The one next step:/g)).toHaveLength(1);
+      expect(text).toContain('Ask what the person wants done, then propose the mandate for that area with setup__create_mandate');
+      expect(text).toContain('propose new mandates with setup__create_mandate');
+      expect(text).toContain('Possible here:');
+      expect(text).not.toContain('Connectors, in the order');
+      expect(text).not.toContain('**Connectors**');
+    });
+
+    it('with a work mandate: asks and does, and says what to call when no mandate covers it', () => {
+      const t = shortAnswer({ ...input({ manifests: [NOTES], running: ['notes'], auths: [auth('memo@0.1')] }), url: 'u' });
+      expect(t).toContain('With a mandate: Memo.');
+      expect(t).toContain('The one next step: Ask what the person wants done and do it within the active mandates.');
+      expect(t).toContain('do the work the active mandates allow');
+      expect(t).not.toContain('Only a person can sign');
+    });
+
+    it('a mandate whose connector is not running: that is the one next step, and the per-area call has the buttons', () => {
+      const t = shortAnswer({ ...input({ manifests: [NOTES], auths: [auth('memo@0.1')] }), url: 'u' });
+      expect(t).toContain('The one next step: The Notes connector is not running, so its mandate does nothing yet. The steps: list-authorizations(domain: "memo").');
+    });
+
+    it('a mandate that must be signed again comes first', () => {
+      const t = shortAnswer({ ...input({ manifests: [NOTES], running: ['notes'], auths: [auth('memo@0.1', { needsReapproval: true })] }), url: 'u' });
+      expect(t).toContain('The one next step: A person signs these again: Memo. They open **Mandates** and press **Sign again**.');
+    });
+
+    it('a team that blocks the first mandate is the one next step, with "nothing else helps"', () => {
+      const t = shortAnswer({
+        ...input({ manifests: [NOTES] }), url: 'u',
+        setup: { card: 'Setup', held: [], fields: {}, area: 'delegation' },
+        team: new Map([['delegation', { teamCode: 'profile_not_enabled', teamName: 'Sales Vienna' }]]),
+      });
+      expect(t).toContain('The one next step: Blocked: the team "Sales Vienna" has not enabled');
+      expect(t).toContain('Nothing else helps until then.');
+      expect(t).not.toContain('+ New mandate');
+    });
+
+    it('through the real wiring: a team check is made for the first mandate only, and reaches the AI', async () => {
+      process.env.SUVEREN_INTERNAL_SECRET = 'secret';
+      const calls: Array<{ request: Record<string, unknown> }> = [];
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+        calls.push(JSON.parse(String((init as RequestInit).body)));
+        return new Response(JSON.stringify({ error: 'mandate_refused', code: 'not_a_grantor', message: 'Setup is enabled in "Sales Vienna"' }), { status: 422 });
+      });
+      try {
+        const st = state([]);
+        (st.spClient as unknown as { getActiveTeamGroupId: () => Promise<string> }).getActiveTeamGroupId = async () => 'g_team';
+        const text = (await listAuthorizationsHandler(st, im({ running: ['files', 'mail'] }))()).content[0].text;
+        expect(calls.map(c => c.request.profile)).toEqual(['delegation']);
+        expect(text).toContain('The one next step: Blocked: Setup is enabled in "Sales Vienna"');
+      } finally {
+        fetchSpy.mockRestore();
+        delete process.env.SUVEREN_INTERNAL_SECRET;
+      }
+    });
+  });
+
+  describe('list-authorizations(domain) keeps the exact steps of one area', () => {
+    it('a connector that is not set up: the button, exactly as the card has it', async () => {
+      const text = (await listAuthorizationsHandler(state([]), im({ running: [] }))({ domain: 'files' })).content[0].text;
+      expect(text).toContain('enters **Shared folder**');
+      expect(text).toContain('presses **Save & Encrypt** (the connector then starts by itself)');
+      expect(text).toContain('Scope & Limits');
+    });
+
+    it('accepts the name the person sees, not only the short id', async () => {
+      // A name that differs from the area's id ("customers"), so the name really has to be resolved.
+      const p = profile('customers/0.6.profile.json');
+      registerProfile(p.id, { ...p, name: 'Kunden und Kontakte' });
+      const byName = (await listAuthorizationsHandler(state([]), im({ running: [] }))({ domain: 'kunden und kontakte' })).content[0].text;
+      const byId = (await listAuthorizationsHandler(state([]), im({ running: [] }))({ domain: 'customers' })).content[0].text;
+      expect(byName).toBe(byId);
+      expect(byName).toContain('mandate for Kunden und Kontakte: none');
+    });
+
+    it('an area that does not exist says what does, so the AI can ask again', async () => {
+      const text = (await listAuthorizationsHandler(state([]), im({ running: [] }))({ domain: 'nosuch' })).content[0].text;
+      expect(text).toContain('No area or connector called "nosuch". Possible here:');
+      expect(text).toContain('Email');
+    });
+
+    it('a team block still reaches the AI for that area, with "nothing else helps"', async () => {
+      process.env.SUVEREN_INTERNAL_SECRET = 'secret';
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(JSON.stringify({ error: 'mandate_refused', code: 'profile_not_enabled', message: 'Files is not enabled in "Sales Vienna".' }), { status: 422 }));
+      try {
+        const st = state([mandate(EMAIL_PROFILE.id)]);
+        (st.spClient as unknown as { getActiveTeamGroupId: () => Promise<string> }).getActiveTeamGroupId = async () => 'g_team';
+        const text = (await listAuthorizationsHandler(st, im({ running: ['files'] }))({ domain: 'files' })).content[0].text;
+        expect(text).toContain('Blocked: the team "Sales Vienna" has not enabled Files');
+        expect(text).toContain('Nothing else helps until then.');
+      } finally {
+        fetchSpy.mockRestore();
+        delete process.env.SUVEREN_INTERNAL_SECRET;
+      }
+    });
+
+    it('the tools listed but not usable are per area now', async () => {
+      const text = (await listAuthorizationsHandler(state([]), im({ running: [] }))({ domain: 'files' })).content[0].text;
+      expect(text).toContain('files: files__save_file');
+      expect(text).not.toContain('email:');
+    });
   });
 
   it('buildProxiedToolDescription appends exactly what it is given', () => {

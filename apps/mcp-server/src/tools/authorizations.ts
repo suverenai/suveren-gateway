@@ -1,9 +1,10 @@
 /**
  * list-authorizations tool — Tier 2 of the two-tier context model.
  *
- * No argument: compact overview of all active authorities (refreshed).
- * With domain: full detail for matching authority — bounds, consumption,
- *   intent, and capability map.
+ * No argument: the short answer — the active mandates, what is possible here
+ *   in one line, the ONE next step and what the AI can do itself.
+ * With domain: the exact steps for that area, per connector state, and full
+ *   detail for matching mandates — bounds, consumption, intent, capability map.
  */
 
 import type { SharedState, EnrichedAuthorization } from '../lib/shared-state';
@@ -12,10 +13,10 @@ import type { IntegrationManager } from '../lib/integration-manager';
 import { getProfile } from '@hap/core';
 import { getConsumptionState, formatConsumptionCompact, formatConsumptionFull } from '../lib/consumption';
 import { readContextFile } from '../lib/context-loader';
-import { profileMatches, toolAlwaysListed } from '../lib/tool-proxy';
+import { profileMatches, toolAlwaysListed, areaName } from '../lib/tool-proxy';
 import { isSimulationMode } from '../lib/simulation-mode';
-import { firstMandateText, connectorOverview, manifestAreas, type GuideManifest } from '../lib/guidance';
-import { overviewInput, guideManifests, setupCardName } from '../lib/guidance-runtime';
+import { firstMandateText, connectorOverview, manifestAreas, shortAnswer, possibleAreas, type GuideManifest } from '../lib/guidance';
+import { overviewInput, guideManifests, setupCardName, setupMandateFacts } from '../lib/guidance-runtime';
 import { agentVisibleAuthorizations } from '../lib/agent-visibility';
 
 /** Extract short profile name from full ID */
@@ -121,7 +122,7 @@ function buildCapabilityMap(
 function listedWithoutMandate(
   authorizations: Array<{ profileId: string; complete: boolean }>,
   integrationManager: IntegrationManager | undefined,
-): string[] {
+): Array<{ profile: string; line: string }> {
   if (!integrationManager) return [];
   // Optional call: test doubles of the manager predate this hook.
   const isBuiltin = (id: string) => integrationManager.isBuiltin?.(id) ?? false;
@@ -136,7 +137,7 @@ function listedWithoutMandate(
     const short = shortProfileName(profile);
     byProfile.set(short, [...(byProfile.get(short) ?? []), tool.namespacedName]);
   }
-  return [...byProfile.entries()].map(([profile, tools]) => `  ${profile}: ${tools.join(', ')}`);
+  return [...byProfile.entries()].map(([profile, tools]) => ({ profile, line: `  ${profile}: ${tools.join(', ')}` }));
 }
 
 /**
@@ -181,6 +182,46 @@ async function connectorsSection(
   }
 }
 
+/** The short answer's part after the mandates. Empty only if guidance itself fails. */
+async function shortAnswerPart(
+  state: SharedState,
+  integrationManager: IntegrationManager | undefined,
+  authorizations: EnrichedAuthorization[],
+): Promise<string> {
+  try {
+    const setup = setupMandateFacts(integrationManager, authorizations);
+    // Only the step this answer names can be blocked by a team: the first mandate.
+    const teamAreas = authorizations.length === 0 && setup.area ? [setup.area] : [];
+    const input = await overviewInput(state, integrationManager, authorizations, { teamAreas });
+    return shortAnswer({ ...input, url: uiUrl() });
+  } catch (err) {
+    // A guidance failure must never hide the mandates themselves.
+    console.error('[Suveren MCP] short answer failed:', err);
+    return '';
+  }
+}
+
+/** The area a domain names: the name the person sees ("Payments") means its area; anything else is left as given. */
+function resolveDomain(domain: string, integrationManager: IntegrationManager | undefined): string {
+  const d = domain.toLowerCase();
+  for (const m of guideManifests(integrationManager)) {
+    const hit = manifestAreas(m).find(a => areaName(a).toLowerCase() === d);
+    if (hit) return hit;
+  }
+  return domain;
+}
+
+/** Which listed-but-unusable rows belong to this area or connector. */
+function rowsForDomain(
+  rows: Array<{ profile: string; line: string }>,
+  domain: string,
+  integrationManager: IntegrationManager | undefined,
+): string[] {
+  const d = domain.toLowerCase();
+  const areas = guideManifests(integrationManager).filter(m => m.id.toLowerCase() === d).flatMap(m => manifestAreas(m));
+  return rows.filter(r => profileMatches(r.profile, domain) || areas.some(a => profileMatches(r.profile, a))).map(r => r.line);
+}
+
 const LISTED_WITHOUT_MANDATE_HEADING =
   'Listed but not usable yet — no mandate covers these; every call is refused until the person grants one:';
 
@@ -198,20 +239,29 @@ export function listAuthorizationsHandler(
     // integration — see agent-visibility.ts. A no-op outside simulation.
     const authorizations = agentVisibleAuthorizations(state.getEnrichedAuthorizations(), integrationManager);
     const now = Math.floor(Date.now() / 1000);
-    const domain = args?.domain;
+    const domain = args?.domain ? resolveDomain(args.domain, integrationManager) : undefined;
 
     const notYet = listedWithoutMandate(authorizations, integrationManager);
     const hints = builtinHintsWithoutMandate(authorizations, integrationManager);
 
     if (authorizations.length === 0) {
-      // Test mode keeps the plain line: its words must not tell a working AI which mode it is in.
-      const text = isSimulationMode()
-        ? ['No active authorizations — no tool is usable yet. Ask the person to grant a mandate in the gateway.']
-        : ['No active authorizations — no tool is usable yet.', '', firstMandateText({ url: uiUrl(), card: setupCardName(integrationManager) })];
-      if (notYet.length > 0) text.push('', LISTED_WITHOUT_MANDATE_HEADING, ...notYet);
+      // No mandate at all reads the same in every mode: the words must not tell a working AI which mode it is in.
+      const text = ['No active authorizations — no tool is usable yet.'];
+      if (!domain) {
+        const short = await shortAnswerPart(state, integrationManager, authorizations);
+        if (short) text.push('', short);
+        return { content: [{ type: 'text' as const, text: text.join('\n') }] };
+      }
+      text.push('', firstMandateText({ url: uiUrl(), card: setupCardName(integrationManager) }));
+      const rows = rowsForDomain(notYet, domain, integrationManager);
+      if (rows.length > 0) text.push('', LISTED_WITHOUT_MANDATE_HEADING, ...rows);
       for (const h of hints) text.push('', h);
       const section = await connectorsSection(state, integrationManager, authorizations, domain);
       if (section) text.push('', section);
+      else {
+        const areas = possibleAreas(guideManifests(integrationManager), areaName);
+        if (areas.length > 0) text.push('', `No area or connector called "${args?.domain}". Possible here: ${areas.join(', ')}.`);
+      }
       return { content: [{ type: 'text' as const, text: text.join('\n') }] };
     }
 
@@ -224,12 +274,13 @@ export function listAuthorizationsHandler(
 
       if (matching.length === 0) {
         const section = await connectorsSection(state, integrationManager, authorizations, domain);
+        const rows = rowsForDomain(notYet, domain, integrationManager);
         return {
           content: [{
             type: 'text' as const,
             text: [`No authorizations found for domain "${domain}". Active domains: ${
               [...new Set(authorizations.map(a => shortProfileName(a.profileId)))].join(', ')
-            }`, ...hints.flatMap(h => ['', h]), ...(section ? ['', section] : [])].join('\n'),
+            }`, ...hints.flatMap(h => ['', h]), ...(rows.length > 0 ? ['', LISTED_WITHOUT_MANDATE_HEADING, ...rows] : []), ...(section ? ['', section] : [])].join('\n'),
           }],
         };
       }
@@ -398,19 +449,11 @@ export function listAuthorizationsHandler(
       output.push('Pending (missing owners):');
       output.push(...pending);
     }
-    if (notYet.length > 0) {
+    // The steps of each connector come from list-authorizations(domain); this stays short.
+    const short = await shortAnswerPart(state, integrationManager, authorizations);
+    if (short) {
       if (output.length > 0) output.push('');
-      output.push(LISTED_WITHOUT_MANDATE_HEADING);
-      output.push(...notYet);
-    }
-    for (const h of hints) {
-      if (output.length > 0) output.push('');
-      output.push(h);
-    }
-    const section = await connectorsSection(state, integrationManager, authorizations);
-    if (section) {
-      if (output.length > 0) output.push('');
-      output.push(section);
+      output.push(short);
     }
 
     return {

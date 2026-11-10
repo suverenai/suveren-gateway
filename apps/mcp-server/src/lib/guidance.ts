@@ -122,7 +122,7 @@ function csv(value: unknown): string[] {
  */
 export function firstMandateText(opts: { url: string; card: string }): string {
   return [
-    'No active mandate exists, so no tool works. An AI can never create the first one: a person signs it. If the person asks how to start, tell them, in this order:',
+    'No active mandate exists, so no tool works. An AI can never create the first one: a person signs it. This is the next step, whatever the person opens with. Lead them through it, one step at a time:',
     `1. Open the Suveren Gateway at ${opts.url}. In the left menu choose **Mandates**, then **+ New mandate** (top right).`,
     `2. Pick the card **${opts.card}** and press **Give a mandate**. It lets you prepare further mandates; the person approves each one before it exists. (Instead, they can pick the card of the area they need and sign that mandate themselves.)`,
     '3. The form has three steps: **Scope & Limits**, **Intent**, **Sign**. In Scope & Limits they name the areas you may prepare mandates for, the modes you may propose (review = they approve every action; automatic = it runs within the limits) and how many proposals a day. In Intent they write, in their own words, why. In Sign they give it a **Title** (required), choose how it runs and for how long, then press **Sign mandate**. Ask them first whether it should run automatically or ask each time.',
@@ -269,6 +269,8 @@ export function proposalFields(
 export interface SetupMandateFacts {
   /** The tool that proposes a mandate, as the AI calls it (e.g. "setup__create_mandate"); undefined = not listed to it. */
   tool?: string;
+  /** The area that governs that tool (short name); undefined = not known here. */
+  area?: string;
   /** The name of the card the person picks to give that mandate. */
   card: string;
   /** Held complete mandates of the authority that governs `tool`. */
@@ -517,7 +519,121 @@ export function connectorOverview(input: OverviewInput): string {
 
 /** Short pointer for the session instructions: where the AI finds the steps. */
 export const LEAD_THE_PERSON_RULE =
-  'When the person wants something done and a tool is refused or not set up, call list-authorizations() with no argument: it lists every connector, what is missing and the exact steps the person takes. Say those steps in its words and wait; never work around a refusal.';
+  'When the person wants something done and a tool is refused or not set up, call list-authorizations(domain) with the area of the task: it gives what is missing and the exact steps the person takes. Name the buttons exactly as it does and wait; never work around a refusal. list-authorizations() with no argument gives only where things stand and the one next step.';
+
+// ─── 3. Who the AI is for the person, and the facts it draws on ─────────────
+
+/**
+ * The AI's role, sent in every mode (Andreas, 2026-11-10): nobody should need to learn
+ * Suveren to get their work done. Their AI leads them, with Suveren's help, in the fewest
+ * steps and the plainest words. It gives the AI a role and leaves the words to it, so it
+ * holds whatever the person opens with. No sentence here may differ by mode: the working
+ * AI reads it too and must not be able to tell a test gateway from a real one.
+ */
+export const ROLE_TEXT =
+  'Your person probably knows nothing about Suveren, and may expect to learn a tool and click through it. They do not have to. ' +
+  'Meet them wherever they start: a greeting, a question, a task, a complaint. ' +
+  'Lead them to the new way of working: they say what they want done, you do the work, they set the limits and decide. ' +
+  'Do not teach the tool; find the result they want. If they ask where to click or describe steps, ask what they want to end up with and take it from there. ' +
+  'If work repeats, offer to take it over. Get their task done in the fewest steps. Use short, plain words. ' +
+  'Explain a Suveren word only when it is needed, in one sentence. If they do not know what they want, say what is possible here and suggest one thing. ' +
+  'Give one next step at a time. Do everything you can yourself and leave them only what only they can do: sign, approve, decide. ' +
+  'Recommend safe limits and say why. They decide; you never decide for them and never press them. ' +
+  'They are the final authority, not Suveren and not you.';
+
+/** How many area names one line may carry. Above this the line says how many more there are. */
+const MAX_AREAS_IN_ONE_LINE = 20;
+
+/** The areas of work these connectors serve, once each, by the name the person sees. */
+export function possibleAreas(manifests: GuideManifest[], areaName: (area: string) => string): string[] {
+  return [...new Set(manifests.flatMap(m => manifestAreas(m)).map(areaName))];
+}
+
+function joinAreas(names: string[]): string {
+  const shown = names.slice(0, MAX_AREAS_IN_ONE_LINE).join(', ');
+  return names.length > MAX_AREAS_IN_ONE_LINE ? `${shown} and ${names.length - MAX_AREAS_IN_ONE_LINE} more` : shown;
+}
+
+/** The facts the AI draws on, stated as facts: it finds the words. Identical in every mode. */
+export function factsLines(opts: { card: string; areas: string[] }): string[] {
+  return [
+    'A mandate is a person\'s signed permission for one area of work: what the AI may do, how much, for how long, and whether each action needs their approval or runs by itself within the limits. They can change or revoke it at any time.',
+    `The ${opts.card} mandate allows no work. It only lets the AI prepare other mandates, and none of those exists until the person approves it. It is the easiest start. An AI can never create the first mandate: a person signs it.`,
+    ...(opts.areas.length > 0 ? [`Possible on this gateway: ${joinAreas(opts.areas)}.`] : []),
+  ];
+}
+
+// ─── 4. The short answer to list-authorizations() with no argument ──────────
+
+export interface ShortAnswerInput extends Pick<OverviewInput, 'manifests' | 'facts' | 'auths' | 'areaName' | 'setup' | 'team'> {
+  /** The gateway's own page. */
+  url: string;
+}
+
+/** One line: every area this gateway can work in, and which of them a mandate covers. */
+function possibleLine(input: ShortAnswerInput): string | undefined {
+  const areas = input.manifests.flatMap(m => manifestAreas(m));
+  if (areas.length === 0) return undefined;
+  const nameOf = (list: string[]) => [...new Set(list.map(input.areaName))];
+  const covered = areas.filter(a => covering(input.auths, a).length > 0);
+  const open = areas.filter(a => covering(input.auths, a).length === 0);
+  if (covered.length === 0) return `Possible here: ${joinAreas(nameOf(open))}.`;
+  return `Possible here. With a mandate: ${joinAreas(nameOf(covered))}.${open.length > 0 ? ` No mandate yet: ${joinAreas(nameOf(open))}.` : ''}`;
+}
+
+/** What the current state requires, as ONE step. The steps of one area come from list-authorizations(domain). */
+function oneNextStep(input: ShortAnswerInput): string {
+  const { auths, setup, manifests, areaName } = input;
+  const complete = auths.filter(a => a.complete);
+  const stale = complete.filter(a => a.needsReapproval);
+  if (stale.length > 0) {
+    return `A person signs these again: ${joinAreas([...new Set(stale.map(a => areaName(shortOf(a.profileId))))])}. They open **Mandates** and press **Sign again**. Until then they do not work.`;
+  }
+  if (complete.length === 0) {
+    if (auths.length > 0) return 'Wait for the other owners above to sign. Ask the person to remind them.';
+    if (setup.area && input.team?.get(setup.area)?.teamCode) return howToGetMandate(setup.area, setup.card, input);
+    const fields = setup.area ? ` The fields of the form: list-authorizations(domain: "${setup.area}").` : '';
+    return `A person signs the first mandate: an AI can never create it. In the Suveren Gateway at ${input.url} they open **Mandates**, then **+ New mandate**, pick the card **${setup.card}** and press **Give a mandate**. It allows no work; it only lets you prepare other mandates, and each one waits for their approval. They can sign the mandate of one area themselves instead.${fields}`;
+  }
+  const askAndDo = 'Ask what the person wants done';
+  if (setup.tool && complete.length === setup.held.length) {
+    return `${askAndDo}, then propose the mandate for that area with ${setup.tool}. For its fields: list-authorizations(domain: "<area>").`;
+  }
+  const stopped = manifests.find(m => {
+    const f = input.facts(m.id);
+    return !f.running && f.blocked !== 'simulation' && manifestAreas(m).some(a => covering(auths, a).length > 0);
+  });
+  if (stopped) {
+    const area = manifestAreas(stopped).find(a => covering(auths, a).length > 0)!;
+    return `The ${stopped.name} connector is not running, so its mandate does nothing yet. The steps: list-authorizations(domain: "${area}").`;
+  }
+  return `${askAndDo} and do it within the active mandates. If no mandate covers it: list-authorizations(domain: "<area>").`;
+}
+
+/** What the AI can do without the person, in this state. */
+function whatYouCanDo(input: ShortAnswerInput): string {
+  const works = input.auths.some(a => a.complete && !a.needsReapproval && !input.setup.held.includes(a));
+  const parts: string[] = [];
+  if (works) parts.push('do the work the active mandates allow (under a review mandate you create a proposal and the person approves it)');
+  if (input.setup.tool) parts.push(`propose new mandates with ${input.setup.tool}, for the person to approve`);
+  if (parts.length === 0) parts.push('find out what the person wants done, say which area it belongs to and recommend safe limits. Only a person can sign');
+  return `You can do yourself: ${parts.join('; and ')}.`;
+}
+
+/**
+ * The short answer an AI gets when it asks without naming an area: what is possible, the ONE
+ * next step, what it can do itself. Every connector's steps live in list-authorizations(domain):
+ * an AI handed all of them summarises status and never gets to the step that matters (2026-11-10).
+ */
+export function shortAnswer(input: ShortAnswerInput): string {
+  const lines: string[] = [];
+  const possible = possibleLine(input);
+  if (possible) lines.push(possible);
+  lines.push(`The one next step: ${oneNextStep(input)}`);
+  lines.push(whatYouCanDo(input));
+  lines.push('For the exact steps of one area: list-authorizations(domain: "<area>"), with the area of the task.');
+  return lines.join('\n');
+}
 
 /** What the AI does before it proposes a mandate. */
 export const BEFORE_PROPOSING =

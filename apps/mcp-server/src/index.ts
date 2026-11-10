@@ -65,9 +65,9 @@ export function createMcpServer(
   server.registerTool(
     'list-authorizations',
     {
-      description: 'List what you are currently authorized to do. Call with no arguments for a compact overview, or with a domain (e.g., "charge") for full details including consumption, bounds, and capability map.',
+      description: 'Where things stand. With no argument: a short answer with what is possible here, the one next step and what you can do yourself. With a domain (the area of the task, e.g. "charge"): the exact steps the person takes for that area, and the full details of its mandates, including consumption, bounds and capability map.',
       inputSchema: {
-        domain: z.string().optional().describe('Profile domain to show full details for (e.g., "charge", "deploy"). Omit for compact overview.'),
+        domain: z.string().optional().describe('The area of the task (e.g., "charge", "deploy"), by its short name or the name the person sees. Omit for the short answer.'),
       },
     },
     withOutcomeOutbox(listAuthorizationsHandler(state, integrationManager))

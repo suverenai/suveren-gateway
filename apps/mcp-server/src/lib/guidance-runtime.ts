@@ -56,6 +56,7 @@ export function setupMandateFacts(
   const held = auths.filter(a => a.complete && !a.needsReapproval && profileMatches(a.profileId, tool.gating!.profile!));
   return {
     card: builtin?.name ?? none.card,
+    area: tool.gating.profile.replace(/@.*$/, '').split('/').pop(),
     held,
     fields: { profile: field('profile'), mode: field('mode') },
     ...(held.length > 0 ? { tool: tool.namespacedName } : {}),
@@ -122,7 +123,7 @@ export async function overviewInput(
   state: SharedState | undefined,
   im: IntegrationManager | undefined,
   auths: GuideAuth[],
-  opts: { onlyManifests?: GuideManifest[]; checkTeam?: boolean } = {},
+  opts: { onlyManifests?: GuideManifest[]; checkTeam?: boolean; teamAreas?: string[] } = {},
 ): Promise<OverviewInput> {
   const manifests = opts.onlyManifests ?? guideManifests(im);
   const setup = setupMandateFacts(im, auths);
@@ -139,7 +140,9 @@ export async function overviewInput(
     };
   };
   let team: Map<string, MissingMandateFacts> | undefined;
-  if (opts.checkTeam !== false) {
+  if (opts.teamAreas) {
+    team = (await teamChecks(state, opts.teamAreas)).checks;
+  } else if (opts.checkTeam !== false) {
     const missing = new Set<string>();
     for (const m of manifests) {
       if (!facts(m.id).running) continue;
