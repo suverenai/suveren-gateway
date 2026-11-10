@@ -2589,6 +2589,42 @@ class SPClient {
     return data.authorizations ?? [];
   }
 
+  /** Sign a mandate through the control plane: the same steps as the AI path. */
+  async signMandate(request: {
+    team: string;
+    profile: string;
+    limits: Record<string, string | number>;
+    scope: Record<string, string | number>;
+    contextLabels?: Record<string, Record<string, string>>;
+    intent: string;
+    mode: 'review' | 'automatic';
+    ttlSeconds: number;
+    title: string;
+    discloseIdentity: boolean;
+  }): Promise<{ authorizationId: string }> {
+    const res = await this.fetch('/api/mandate/sign', { method: 'POST', body: JSON.stringify(request) });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(asErrorMessage(body, `Signing failed: ${res.status}`));
+    return body as { authorizationId: string };
+  }
+
+  /** Extend a mandate: only its expiry moves. */
+  async renewMandate(request: {
+    authorizationId: string;
+    profileId: string;
+    groupId: string;
+    bounds: Record<string, string | number>;
+    context: Record<string, string | number>;
+    intent: string;
+    mode: 'review' | 'automatic';
+    domain: string;
+    ttlSeconds: number;
+    path?: string;
+  }): Promise<void> {
+    const res = await this.fetch('/api/mandate/renew', { method: 'POST', body: JSON.stringify(request) });
+    if (!res.ok) throw new Error(asErrorMessage(await res.json().catch(() => ({})), `Extending failed: ${res.status}`));
+  }
+
   async pushGateContent(data: {
     authorizationId?: string;
     boundsHash?: string;

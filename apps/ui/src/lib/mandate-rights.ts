@@ -61,14 +61,3 @@ export function mandateRight(i: MandateRightInput): MandateRight {
   }
   return { can: true };
 }
-
-/**
- * Whether the intent is encrypted for the team's approvers when signing. Decided
- * by the workspace, never by how the form was opened: the flag used to be set
- * only by the mandate picker, so Edit and Copy in a team silently skipped the
- * encryption and approvers could not read the intent (found 2026-11-10). A
- * snapshot without the flag counts as a team, like {@link mandateRight}.
- */
-export function encryptsIntent(i: { isPersonal?: boolean }): boolean {
-  return !i.isPersonal;
-}

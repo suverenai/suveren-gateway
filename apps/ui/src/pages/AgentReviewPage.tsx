@@ -2,9 +2,8 @@ import { useState, useEffect } from 'react';
 import { COMMITMENT_LABEL, COMMITMENT_REVIEW, COMMITMENT_AUTOMATIC } from '../lib/commitment-words';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { spClient, SUPPORTED_PROTOCOL_VERSIONS } from '../lib/sp-client';
-import { computeBoundsHashBrowser, computeScopeHashBrowser, computeProfileHashBrowser, computeExecutionContextHashBrowser, hashGateContent } from '../lib/frame';
-import { buildGateForwardArgs } from '../lib/gate-forward';
+import { spClient } from '../lib/sp-client';
+import { computeBoundsHashBrowser } from '../lib/frame';
 import { StepIndicator } from '../components/StepIndicator';
 import { DomainBadge } from '../components/DomainBadge';
 import { profileDisplayName } from '../lib/profile-display';
@@ -12,7 +11,7 @@ import { offeredCommitModes, settleCommitMode, toProtocolMode } from '../lib/com
 import { scopesOverlap } from '../lib/scope-overlap';
 import { formatScopeFieldValue } from '../lib/scope-labels';
 import { useSourceManifests } from '../lib/source-manifests';
-import { encryptsIntent, mandateRight } from '../lib/mandate-rights';
+import { mandateRight } from '../lib/mandate-rights';
 import { replacedRevokeProblem } from '../lib/mandate-replace';
 import { replacedOutcomeArgs, replacedWithdrawRoute } from '../lib/reject-outcome';
 import type { AgentProfile, AgentBoundsParams, AgentScopeParams } from '@hap/core';
@@ -57,7 +56,7 @@ interface AuthData {
 
 export function AgentReviewPage() {
   const navigate = useNavigate();
-  const { user, mode, domain: authDomain } = useAuth();
+  const { user } = useAuth();
   const [authData, setAuthData] = useState<AuthData | null>(null);
   const [gateData, setGateData] = useState<GateData | null>(null);
   const [profile, setProfile] = useState<AgentProfile | null>(null);
@@ -280,50 +279,6 @@ export function AgentReviewPage() {
     setSubmitting(true);
     setError('');
     try {
-      // P4.6: domains are no longer a per-member primitive. Personal groups
-      // sign with 'owner'; team groups sign with the caller's userId. Trust
-      // the live AuthContext value over a possibly-stale sessionStorage one.
-      const domain = authDomain || authData.domain || 'owner';
-
-      const boundsHash = await computeBoundsHashBrowser(gateData.bounds, profile);
-      const contextHash = await computeScopeHashBrowser(gateData.context, profile);
-
-      const [intentHashValue, ecHash] = await Promise.all([
-        hashGateContent(gateData.gateContent.intent),
-        // v0.8: the hash of the profile's executionContextSchema, not of per-call values.
-        computeExecutionContextHashBrowser(profile),
-      ]);
-
-      // Phase 5 — Eager intent encryption.
-      // Fetch approver pubkeys eagerly (encrypt even
-      // within-cap when the profile has approvers, to handle "cap tightened later").
-      // If empty array returned, skip encryption.
-      let intentCiphertext: string | undefined;
-      let encryptedKeys: Record<string, { ct: string; enc: string }> | undefined;
-      let approversFrozen: string[] | undefined;
-      let intentDisclosureHash: string | undefined;
-
-      if (encryptsIntent(authData)) {
-        const approverPubkeys = await spClient.getApproversPubkeys(
-          authData.groupId,
-          authData.profileId,
-        );
-        if (approverPubkeys.length > 0) {
-          const encData = await spClient.encryptIntent(
-            gateData.gateContent.intent,
-            approverPubkeys,
-          );
-          intentCiphertext = encData.intentCiphertext;
-          encryptedKeys = encData.encryptedKeys;
-          approversFrozen = encData.approversFrozen;
-          intentDisclosureHash = encData.intentDisclosureHash;
-        }
-      }
-
-      // Attest (creates the attestation on SP).
-      // Every ceremony mints its own per-ceremony identity — the AS enforces
-      // uniqueness (NX) and content-hash idempotency on it.
-      const authorizationId = `authz_${crypto.randomUUID()}`;
       // Edit flow: this ceremony supersedes an existing grant. Grants are
       // content-immutable (the attestation signature freezes bounds/scope/
       // intent), so "edit" = sign a NEW grant, then revoke the old one below.
@@ -333,58 +288,21 @@ export function AgentReviewPage() {
       // (rejected) below only once this signing fully succeeds, never before
       // (decision 6: "nothing is created until the person signs there").
       const replacesProposalId = sessionStorage.getItem('agentReplacesProposal') || undefined;
-      // v0.4: commitment_mode is part of the signed payload. 'review' means
-      // each action requires per-action human approval via a proposal;
-      // 'automatic' lets the agent act within bounds without per-action review.
-      const profileHash = await computeProfileHashBrowser(profile);
-      const result = await spClient.attest({
-        authorization_id: authorizationId,
-        replaces: replacesId,
-        profile_id: authData.profileId,
-        profile_hash: profileHash,
-        supported_versions: [...SUPPORTED_PROTOCOL_VERSIONS],
-        bounds: gateData.bounds,
-        bounds_hash: boundsHash,
-        scope_hash: contextHash,
-        domain,
-        did: user.did,
-        mandate_owners: [{ did: user.did }],
-        gate_content_hashes: { intent: intentHashValue },
-        execution_context_hash: ecHash,
-        group_id: authData.groupId,
-        ttl: ttlSeconds,
-        commitment_mode: toProtocolMode(commitMode),
+      // The control plane runs the signing steps (hash, encrypt for the team's
+      // approvers, Authority Server, deliver the intent) — the same code as the
+      // AI path. A refusal arrives as an error with the reason.
+      const { authorizationId } = await spClient.signMandate({
+        team: authData.isPersonal ? 'personal' : authData.groupId,
+        profile: authData.profileId,
+        limits: gateData.bounds as Record<string, string | number>,
+        scope: gateData.context as Record<string, string | number>,
+        contextLabels: gateData.contextLabels,
+        intent: gateData.gateContent.intent,
+        mode: toProtocolMode(commitMode),
+        ttlSeconds,
         title: authTitle.trim(),
-        // Phase 5 — E2EE intent fields (undefined when no approvers)
-        intent_ciphertext: intentCiphertext,
-        encrypted_keys: encryptedKeys,
-        approvers_frozen: approversFrozen,
-        // v0.5 — disclosure cross-check (AS recomputes and rejects mismatch)
-        intent_disclosure_hash: intentDisclosureHash,
-        // v0.6 — disclose the owner's verified name (only stamped if high-verified)
-        disclose_identity: discloseIdentity,
+        discloseIdentity,
       });
-
-      // Push gate content + context to MCP server (after attestation exists on SP).
-      // All downstream references use the per-ceremony id.
-
-      try {
-        await spClient.pushGateContent(
-          buildGateForwardArgs(result, {
-            boundsHash,
-            contextHash,
-            context: gateData.context,
-            contextLabels: gateData.contextLabels,
-            gateContent: gateData.gateContent,
-          }),
-        );
-      } catch (pushErr) {
-        // Gate content push failed — revoke the attestation so it doesn't orphan
-        try {
-          await spClient.revokeAttestation(authorizationId, 'Auto-revoked: gate content push failed');
-        } catch { /* best effort */ }
-        throw new Error(`Mandate signed but gate content delivery failed. The mandate was revoked. Please try again. (${pushErr instanceof Error ? pushErr.message : 'Unknown error'})`);
-      }
 
       // Edit flow: the new grant is signed AND delivered — retire the one it
       // replaces. Order matters: revoke only after the replacement is fully

@@ -15,7 +15,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { computeBoundsHash, computeScopeHash, computeIntentHash, computeProfileHash, computeExecutionContextHash } from '@hap/core';
-import { planMandate, createMandate, checkMandateRight, approverPubkeys, MandateRefused, type CeremonyDeps, type MandateRequest } from '../lib/mandate-ceremony';
+import { planMandate, createMandate, renewMandate, checkMandateRight, approverPubkeys, MandateRefused, type CeremonyDeps, type MandateRequest } from '../lib/mandate-ceremony';
 
 const profilesDir = process.env.SUVEREN_PROFILES_DIR ?? join(import.meta.dirname, '..', '..', '..', '..', '..', 'hap-profiles');
 const SALES = JSON.parse(readFileSync(join(profilesDir, 'sales', '0.4.profile.json'), 'utf8'));
@@ -232,5 +232,51 @@ describe('checkMandateRight — only the team authority gate, no limits needed',
   it('a team that enabled it for the person: allowed', async () => {
     const { as } = fakeAs({ approvers: ['u_bernd'], grantors: ['u_anna'] });
     await expect(checkMandateRight({ profile: 'sales', team: 'g_team' }, deps(as).d)).resolves.toMatchObject({ groupName: 'Sales Vienna' });
+  });
+});
+
+
+describe('the web page signs through this module', () => {
+  it('a duration in seconds wins, and the name disclosure and local labels pass through', async () => {
+    const { as, calls } = fakeAs();
+    const { d, deliverGateContent } = deps(as);
+    await createMandate({
+      team: 'personal', profile: SALES.id, limits: LIMITS, scope: {}, intent: 'Because.', mode: 'review',
+      ttlSeconds: 7200, discloseIdentity: false, contextLabels: { list: { a: 'A' } },
+    }, d);
+    const sent = calls.find((c) => c.path === '/api/as/mandate')!.body;
+    expect(sent.ttl).toBe(7200);
+    expect(sent.disclose_identity).toBe(false);
+    expect(deliverGateContent).toHaveBeenCalledWith(expect.objectContaining({ contextLabels: { list: { a: 'A' } } }));
+  });
+
+  it('without the page\'s checkbox nothing is sent about disclosure — the standing choice stays with the AS', async () => {
+    const { as, calls } = fakeAs();
+    const { d } = deps(as);
+    await createMandate({ team: 'personal', profile: SALES.id, limits: LIMITS, scope: {}, intent: 'Because.', mode: 'review' }, d);
+    expect(calls.find((c) => c.path === '/api/as/mandate')!.body).not.toHaveProperty('disclose_identity');
+  });
+
+  it('renewing moves only the expiry: same id, renew flag, the signed values', async () => {
+    const { as, calls } = fakeAs();
+    const { d, deliverGateContent } = deps(as);
+    await renewMandate({
+      authorizationId: 'authz_1', profileId: SALES.id, groupId: 'g_personal',
+      bounds: { ...LIMITS, profile: SALES.id }, context: {}, intent: 'Because.', mode: 'review', domain: 'owner', ttlSeconds: 3600,
+    }, d);
+    const sent = calls.find((c) => c.path === '/api/as/mandate')!.body;
+    expect(sent).toMatchObject({ authorization_id: 'authz_1', renew: true, ttl: 3600, commitment_mode: 'review' });
+    expect(sent.bounds_hash).toBe(computeBoundsHash({ ...LIMITS, profile: SALES.id } as never, SALES));
+    expect(deliverGateContent).toHaveBeenCalledOnce();
+  });
+
+  it('a renewal the Authority Server refuses is passed on, not swallowed', async () => {
+    const { as } = fakeAs({ attestStatus: 403, attestBody: { approved: false, errors: [{ code: 'MANDATE_REVOKED', message: 'Revoked.' }] } });
+    const { d, deliverGateContent } = deps(as);
+    await expect(renewMandate({
+      authorizationId: 'authz_1', profileId: SALES.id, groupId: 'g_personal',
+      bounds: { ...LIMITS, profile: SALES.id }, context: {}, intent: 'x', mode: 'review', domain: 'owner', ttlSeconds: 3600,
+    }, d)).rejects.toThrow(/Revoked\./);
+    expect(deliverGateContent).not.toHaveBeenCalled();
   });
 });

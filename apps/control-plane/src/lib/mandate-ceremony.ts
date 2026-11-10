@@ -55,7 +55,13 @@ export interface MandateRequest {
   mode: string;
   /** Lifetime in hours; absent = the profile's default. */
   durationHours?: number;
+  /** Lifetime in seconds — the sign page's own unit. Wins over `durationHours`. */
+  ttlSeconds?: number;
   title?: string;
+  /** Show the owner's verified name on actions under this mandate (the sign page's checkbox). */
+  discloseIdentity?: boolean;
+  /** Discovered display names per scope field (value → label). Local only, never signed. */
+  contextLabels?: Record<string, Record<string, string>>;
 }
 
 export interface AsResponse { status: number; body: any }
@@ -78,7 +84,9 @@ export interface CeremonyDeps {
     boundsHash: string;
     contextHash: string;
     context: Record<string, string | number>;
+    contextLabels?: Record<string, Record<string, string>>;
     gateContent: { intent: string };
+    path?: string;
   }) => Promise<void>;
   newAuthorizationId: () => string;
 }
@@ -262,7 +270,9 @@ export async function planMandate(req: MandateRequest, deps: CeremonyDeps): Prom
     refuse(`Profile ${profile.id} allows mode ${allowedCommitmentModes(profile).join(' or ') || 'none'}, not "${req.mode}".`);
   }
 
-  const ttlSeconds = req.durationHours === undefined ? profile.ttl.default : Math.round(req.durationHours * 3600);
+  const ttlSeconds = req.ttlSeconds !== undefined
+    ? req.ttlSeconds
+    : req.durationHours === undefined ? profile.ttl.default : Math.round(req.durationHours * 3600);
   if (!(ttlSeconds > 0)) refuse('`duration_hours` must be positive.');
   if (ttlSeconds > profile.ttl.max) refuse(`At most ${profile.ttl.max / 3600} hours for profile ${profile.id}.`);
 
@@ -334,13 +344,21 @@ export async function createMandate(req: MandateRequest, deps: CeremonyDeps): Pr
     encrypted_keys: enc?.encryptedKeys,
     approvers_frozen: enc?.approversFrozen,
     intent_disclosure_hash: enc?.intentDisclosureHash,
+    ...(req.discloseIdentity !== undefined ? { disclose_identity: req.discloseIdentity } : {}),
   });
   if (res.status >= 300) {
     refuse(`The Authority Server refused the mandate: ${readRefusal(res.body, `status ${res.status}`).message}`);
   }
 
   try {
-    await deps.deliverGateContent({ authorizationId, boundsHash, contextHash: scopeHash, context: plan.context, gateContent: { intent: plan.intent } });
+    await deps.deliverGateContent({
+      authorizationId,
+      boundsHash,
+      contextHash: scopeHash,
+      context: plan.context,
+      ...(req.contextLabels && Object.keys(req.contextLabels).length > 0 ? { contextLabels: req.contextLabels } : {}),
+      gateContent: { intent: plan.intent },
+    });
   } catch (err) {
     // Same rule as the sign page: a mandate whose intent never reached the
     // gateway must not stay active.
@@ -350,4 +368,55 @@ export async function createMandate(req: MandateRequest, deps: CeremonyDeps): Pr
     refuse(`The mandate was signed but its intent could not be delivered to the gateway, so it was revoked. (${err instanceof Error ? err.message : String(err)})`);
   }
   return { authorizationId, plan };
+}
+
+export interface RenewRequest {
+  authorizationId: string;
+  profileId: string;
+  groupId: string;
+  /** Exactly the signed values: renewing moves only the expiry, the AS refuses any other change. */
+  bounds: Record<string, string | number>;
+  context: Record<string, string | number>;
+  intent: string;
+  mode: 'automatic' | 'review';
+  domain: string;
+  ttlSeconds: number;
+  path?: string;
+}
+
+/** Extend = renew: the same per-ceremony id with `renew: true`. Only the expiry moves. */
+export async function renewMandate(req: RenewRequest, deps: CeremonyDeps): Promise<{ authorizationId: string }> {
+  const user = deps.user;
+  if (!user) refuse('The gateway is not signed in.');
+  const profile = await resolveProfile(deps.as, req.profileId);
+  const boundsHash = computeBoundsHash(req.bounds as never, profile);
+  const scopeHash = computeScopeHash(req.context as never, profile);
+  const res = await deps.as('POST', '/api/as/mandate', {
+    authorization_id: req.authorizationId,
+    renew: true,
+    profile_id: profile.id,
+    profile_hash: computeProfileHash(profile),
+    supported_versions: [...SUPPORTED_VERSIONS],
+    bounds: req.bounds,
+    bounds_hash: boundsHash,
+    scope_hash: scopeHash,
+    domain: req.domain,
+    did: user.did,
+    mandate_owners: [{ did: user.did }],
+    gate_content_hashes: { intent: computeIntentHash(req.intent) },
+    execution_context_hash: computeExecutionContextHash(profile),
+    group_id: req.groupId,
+    commitment_mode: req.mode,
+    ttl: req.ttlSeconds,
+  });
+  if (res.status >= 300) refuse(`The Authority Server refused the renewal: ${readRefusal(res.body, `status ${res.status}`).message}`);
+  await deps.deliverGateContent({
+    authorizationId: req.authorizationId,
+    boundsHash: res.body?.bounds_hash ?? boundsHash,
+    contextHash: scopeHash,
+    context: req.context,
+    gateContent: { intent: req.intent },
+    ...(req.path ? { path: req.path } : {}),
+  });
+  return { authorizationId: req.authorizationId };
 }

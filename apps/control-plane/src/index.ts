@@ -71,6 +71,8 @@ import { createTicketsSeenRouter } from './routes/tickets-seen';
 import { createReportSeenRouter } from './routes/report-seen';
 import { createInternalEventsRouter } from './routes/internal-events';
 import { createInternalMandateRouter } from './routes/internal-mandate';
+import { createMandateRouter } from './routes/mandate';
+import type { CeremonyDeps } from './lib/mandate-ceremony';
 import { encryptIntentForRecipients } from './lib/intent-encryption';
 import { fetchAs as fetchAsForMandate, AsTlsMismatchError as MandateTlsMismatch } from './lib/as-tls-pin';
 import { startNotificationDispatcher } from './lib/notification-dispatcher';
@@ -669,7 +671,7 @@ app.use('/internal', jsonParser, createInternalEventsRouter(() => internalSecret
 // The gateway creating a mandate for the signed-in person after a person
 // approved the AI's proposal (simulation setup S8) — the sign page's steps, run
 // here with this process's AS session. See routes/internal-mandate.ts.
-app.use('/internal', jsonParser, createInternalMandateRouter(() => internalSecret, () => ({
+const mandateCeremonyDeps = (): Omit<CeremonyDeps, 'newAuthorizationId'> => ({
   user: vault.getSessionUser(),
   as: async (method, path, body) => {
     const cookie = vault.getSpCookie();
@@ -695,7 +697,8 @@ app.use('/internal', jsonParser, createInternalMandateRouter(() => internalSecre
   },
   encrypt: encryptIntentForRecipients,
   deliverGateContent: (args) => pushGateContent(args),
-})));
+});
+app.use('/internal', jsonParser, createInternalMandateRouter(() => internalSecret, mandateCeremonyDeps));
 
 // PE1 — the MCP server sealing/opening proposal content (toolArgs, change-
 // needed notes) for recipients it does not itself have key material for.
@@ -720,6 +723,8 @@ app.use('/autostart', jsonParser, authGuard, createAutostartRouter());
 
 // E2EE intent encryption (P5.5)
 // Local display preferences (desktop notifications). Never holds secrets.
+// The web page signs mandates through the same steps as the AI path (lib/mandate-ceremony.ts).
+app.use('/api/mandate', jsonParser, authGuard, createMandateRouter(mandateCeremonyDeps));
 app.use('/api/gateway-settings', jsonParser, authGuard, createGatewaySettingsRouter(DATA_DIR));
 
 // Archived mandates: a local display flag (hides expired/revoked mandates; deletes nothing)
