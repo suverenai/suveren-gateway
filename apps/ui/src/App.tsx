@@ -41,7 +41,7 @@ function AppRoutes() {
   // An update restarts the gateway and signs everyone out, which takes down the banner that reloads a
   // stale tab. So while signed out, a tab running an older build reloads itself. Nothing is lost: the key
   // lives only in memory and is already gone.
-  const { serverRestarted } = useUpdateCheck();
+  const { serverRestarted } = useUpdateCheck({ signedOut: !user });
   useEffect(() => {
     if (shouldReloadAfterUpdate({ signedIn: !!user, serverRestarted })) window.location.reload();
   }, [user, serverRestarted]);
