@@ -31,6 +31,7 @@ import { useSSEEvent } from '../contexts/EventSourceContext';
 import { workingWord, stampWord, stampLine, type DecisionKind, type DecisionResult } from '../lib/approval-flow';
 
 const CREATE_MANDATE_TOOL = 'setup__create_mandate';
+const CHANGE_MANDATE_TOOL = 'setup__change_mandate';
 
 export interface DecideArgs {
   kind: DecisionKind;
@@ -83,7 +84,8 @@ export function ApprovalCard({
   proposal, currentUserId, manifests, toolDisplay, proposalLinks, mandateTitle, nameOf, topExtras,
   canApprove = true, alreadyDecided = false, decide, onDecided, nextLabelText, onBusyChange, onOutcome, dismissLabel, onDismissResult, className,
 }: Props) {
-  const isMandate = proposal.tool === CREATE_MANDATE_TOOL;
+  const isChange = proposal.tool === CHANGE_MANDATE_TOOL;
+  const isMandate = proposal.tool === CREATE_MANDATE_TOOL || isChange;
   const [phase, setPhase] = useState<Phase>({ t: 'idle' });
   const [note, setNote] = useState('');
   const [error, setError] = useState('');
@@ -214,7 +216,7 @@ export function ApprovalCard({
   const dismiss = onDismissResult && dismissLabel ? (
     <button type="button" className="av3-btn av3-btn-primary av3-result-act" data-testid="result-dismiss" onClick={onDismissResult}>{dismissLabel}</button>
   ) : null;
-  const approveWord = isMandate ? 'Sign mandate' : 'Approve';
+  const approveWord = isChange ? 'Approve and sign' : isMandate ? 'Sign mandate' : 'Approve';
   const describedBy = `human-only-${proposal.id}`;
 
   return (
@@ -260,13 +262,13 @@ export function ApprovalCard({
               </div>
             </div>
           )}
-          <div className={`av3-btns${canApprove && !mandateEnded ? '' : ' av3-btns-two'}`}>
+          <div className={`av3-btns${canApprove && !mandateEnded && !isChange ? '' : ' av3-btns-two'}`}>
             {canApprove && !mandateEnded && (
               <button type="button" className="av3-btn av3-btn-primary" data-testid="btn-approve" aria-describedby={describedBy} onClick={() => void run('approve')}>
                 {approveWord}
               </button>
             )}
-            {!mandateEnded && (
+            {!mandateEnded && !isChange && (
               <button type="button" className="av3-btn" data-testid="btn-change-needed" onClick={() => { setError(''); setPhase({ t: 'change' }); }}>
                 <span className="long">Ask for changes</span><span className="short">Changes</span>
               </button>

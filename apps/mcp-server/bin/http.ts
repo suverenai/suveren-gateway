@@ -884,6 +884,9 @@ app.get('/internal/authorizations', internalOnly, (_req: Request, res: Response)
     context: a.context ?? {},
     intent: a.gateContent?.intent ?? null,
     deferredCommitmentDomains: a.deferredCommitmentDomains ?? [],
+    // The change card's "Lasts until" and the edit diff need the signed end.
+    expiresAt: a.attestations.length > 0 ? Math.max(...a.attestations.map(x => x.expiresAt)) : null,
+    title: a.title ?? null,
     // Item 9 (re-approval UX) — the AS told us, via a VERSION_UNSUPPORTED
     // ticket refusal, that this authorization's mandate blob is pre-0.7.
     needsReapproval: a.needsReapproval ?? false,

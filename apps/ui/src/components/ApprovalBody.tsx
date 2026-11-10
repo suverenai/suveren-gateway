@@ -58,6 +58,9 @@ import { profileDisplayName } from '../lib/profile-display';
 import { useAuth } from '../contexts/AuthContext';
 import { newestProfileOf, carryBoundsForward, carryContextForward } from '../lib/profile-upgrade';
 import { mandatePrefillGate, type CreateMandateProposalArgs } from '../lib/create-mandate-prefill';
+import { CHANGE_MANDATE_TOOL, type ChangeArgs } from '../lib/mandate-change-view';
+import { MandateChangeBody } from './MandateChangeCard';
+import { applyChangeForEdit } from '../lib/mandate-change-edit';
 
 // NEVER truncate: approvers commit to exactly what they can read here, so
 // the full content must be visible at once (an email body cut at 200 chars
@@ -219,6 +222,36 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
     }
   };
 
+  // "Change it myself": the form opens pre-filled with what the AI proposed, computed
+  // from the signed mandate; the diff is recomputed on the form's review step.
+  const handleChangeMyself = async () => {
+    if (!groupId) { setEditError('No active workspace; cannot open the mandate screen.'); return; }
+    setEditingBeforeSigning(true);
+    setEditError(null);
+    try {
+      const args = content.toolArgs as ChangeArgs | null;
+      if (!args?.mandate_id || !args.change) { setEditError('This content is not readable on this device yet.'); return; }
+      const old = (await spClient.getEnrichedAuthorizations()).find((a) => a.authorizationId === args.mandate_id);
+      if (!old) { setEditError('The mandate is no longer active.'); return; }
+      const catalog = await spClient.listProfiles();
+      const newest = newestProfileOf(old.profileId, catalog);
+      if (!newest) { setEditError('Unknown area.'); return; }
+      const prefill = applyChangeForEdit(old, args);
+      sessionStorage.setItem('agentAuth', JSON.stringify({
+        profileId: newest.id, groupId, groupName: group?.name ?? null, domain, isPersonal: !!group?.isPersonal,
+      }));
+      sessionStorage.setItem('agentGate', JSON.stringify(prefill));
+      sessionStorage.setItem('agentEditReplaces', args.mandate_id);
+      sessionStorage.setItem('agentReplacesProposal', proposal.id);
+      sessionStorage.setItem('agentChangeAiIntent', typeof args.intent === 'string' ? args.intent : '');
+      navigate('/mandates/new/intent');
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : 'Could not open the mandate screen.');
+    } finally {
+      setEditingBeforeSigning(false);
+    }
+  };
+
   // The bound values — the content the person approves. Shown OPEN as "What
   // will be sent" when there is no working preview (lib/approval-preview-view.ts
   // boundValuesOpen); folded under Details only when a preview already shows the
@@ -318,6 +351,21 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
   const imagePreview = typeof content.toolArgs?._imagePreview === 'string' ? (content.toolArgs._imagePreview as string) : null;
   const sealedHeading = isMandate ? 'You sign this' : 'Runs exactly as shown';
   const technicalOne = isMandate ? mandateTechnicalLine(parts) : `${headline} · ${shortProfileId(proposal.profileId)}${proposal.profileId.includes('@') ? `@${proposal.profileId.split('@')[1]}` : ''}`;
+
+  if (proposal.tool === CHANGE_MANDATE_TOOL) {
+    if (content.loading || !readable || !content.toolArgs) {
+      return <div className="av3-note" style={{ order: 5 }} data-testid="proposal-decrypting">{content.loading ? 'Decrypting…' : 'This content is not readable on this device yet.'}</div>;
+    }
+    return (
+      <MandateChangeBody
+        proposalId={proposal.id}
+        args={content.toolArgs as ChangeArgs}
+        onChangeMyself={() => void handleChangeMyself()}
+        editBusy={editingBeforeSigning}
+        editError={editError}
+      />
+    );
+  }
 
   return (
     <>

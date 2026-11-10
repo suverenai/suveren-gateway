@@ -120,8 +120,10 @@ function valueText(key: string, def: FieldDef | undefined, v: string | number | 
 
 /** Word-level difference: longest common subsequence over words and the spaces between them. */
 export function wordDiff(before: string, after: string): WordPart[] {
-  const a = before.split(/(\s+)/).filter(Boolean);
-  const b = after.split(/(\s+)/).filter(Boolean);
+  // A word carries its trailing space, so a changed phrase reads as one run.
+  const tokens = (t: string) => t.split(/(?<=\s)(?=\S)/).filter(Boolean);
+  const a = tokens(before);
+  const b = tokens(after);
   const lcs: number[][] = Array.from({ length: a.length + 1 }, () => new Array<number>(b.length + 1).fill(0));
   for (let i = a.length - 1; i >= 0; i--) {
     for (let j = b.length - 1; j >= 0; j--) {
@@ -138,13 +140,6 @@ export function wordDiff(before: string, after: string): WordPart[] {
     if (i < a.length && j < b.length && a[i] === b[j]) { push('same', a[i]); i++; j++; }
     else if (j < b.length && (i >= a.length || lcs[i][j + 1] >= lcs[i + 1][j])) { push('add', b[j]); j++; }
     else { push('del', a[i]); i++; }
-  }
-  // A word and the next, separated only by a shared space, read as one change.
-  for (let n = parts.length - 2; n >= 1; n--) {
-    if (parts[n].kind === 'same' && /^\s+$/.test(parts[n].text) && parts[n - 1].kind === parts[n + 1].kind && parts[n - 1].kind !== 'same') {
-      parts[n - 1].text += parts[n].text + parts[n + 1].text;
-      parts.splice(n, 2);
-    }
   }
   return parts;
 }

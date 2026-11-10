@@ -14,6 +14,8 @@ import { useSourceManifests } from '../lib/source-manifests';
 import { mandateRight } from '../lib/mandate-rights';
 import { replacedRevokeProblem } from '../lib/mandate-replace';
 import { replacedOutcomeArgs, replacedWithdrawRoute } from '../lib/reject-outcome';
+import { computeMandateDiff, type MandateDiff } from '@hap/core/mandate-change';
+import { MandateChangeDiff } from '../components/MandateChangeCard';
 import type { AgentProfile, AgentBoundsParams, AgentScopeParams } from '@hap/core';
 import { effectiveGrantors, type ProfileConfig } from '../lib/sp-client';
 
@@ -242,6 +244,31 @@ export function AgentReviewPage() {
       .catch(() => setExistingSameProfile([]));
   }, [authData?.profileId]);
 
+  // Edit / "Change it myself": the differences, recomputed against the signed
+  // mandate on every change of the form — what the person is about to sign.
+  const [editDiff, setEditDiff] = useState<MandateDiff | null>(null);
+  useEffect(() => {
+    const replacesId = sessionStorage.getItem('agentEditReplaces');
+    if (!replacesId || !profile || !gateData) { setEditDiff(null); return; }
+    let cancelled = false;
+    spClient.getEnrichedAuthorizations()
+      .then(async (auths) => {
+        const old = auths.find((a) => a.authorizationId === replacesId);
+        if (!old || !old.expiresAt) return;
+        const oldProfile = old.profileId === profile.id ? profile : await spClient.getProfile(old.profileId);
+        if (cancelled) return;
+        const mode = (domains: string[]) => (domains.length > 0 ? 'review' : 'automatic');
+        const nowSec = Math.floor(Date.now() / 1000);
+        setEditDiff(computeMandateDiff({
+          before: { profile: oldProfile, bounds: old.bounds, scope: old.context, intent: old.intent ?? '', mode: mode(old.deferredCommitmentDomains), expiresAt: old.expiresAt },
+          after: { profile, bounds: gateData.bounds, scope: gateData.context, intent: gateData.gateContent.intent, mode: toProtocolMode(commitMode), expiresAt: ttlSeconds > 0 ? nowSec + ttlSeconds : old.expiresAt },
+        }));
+      })
+      .catch(() => { if (!cancelled) setEditDiff(null); });
+    return () => { cancelled = true; };
+  }, [profile, gateData, commitMode, ttlSeconds]);
+  const aiIntent = typeof window !== 'undefined' ? sessionStorage.getItem('agentChangeAiIntent') : null;
+
   // Duplicate-bounds detection: hash the ceremony's bounds and each existing
   // same-profile grant's bounds with the same canonicalization the attest
   // flow uses, then count exact matches. Purely advisory — per-ceremony
@@ -344,6 +371,7 @@ export function AgentReviewPage() {
       sessionStorage.removeItem('agentGate');
       sessionStorage.removeItem('agentEditReplaces');
       sessionStorage.removeItem('agentReplacesProposal');
+      sessionStorage.removeItem('agentChangeAiIntent');
       if (revokeProblem) {
         // Stay on the page: a mandate the person believes is replaced is still live.
         setError(revokeProblem);
@@ -479,6 +507,13 @@ export function AgentReviewPage() {
         )}
 
         {error && <div className="error-message">{error}</div>}
+
+        {/* Replacing a signed mandate: the differences, as on the change card. */}
+        {editDiff && (
+          <div className="info-block" data-testid="edit-diff">
+            <MandateChangeDiff diff={editDiff} intentByAi={!!aiIntent && aiIntent === gateData.gateContent.intent} />
+          </div>
+        )}
 
         {/* Title — first: it names the decision everything below describes. */}
         <div className="field-editable">

@@ -5114,3 +5114,39 @@ body.apr-has-strip .main-content { margin-right: 2.75rem; }
 .av3-stamp-note { font-family: inherit; max-width: 42ch; }
 .av3-result-act { margin-top: var(--space-4); align-self: center; }
 .av3-foot .refusal-result { margin-bottom: var(--space-3); }
+
+/* Mandate change card (signed-off mockup, temp/mandate-change-mockup) — tokens only. */
+.mc-card { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
+.mc-head { background: var(--text-primary); color: var(--bg-elevated); padding: var(--space-3) var(--space-5); font-size: var(--text-caption); font-weight: 600; }
+.mc-in { padding: var(--space-5); }
+.mc-in h2 { font-size: var(--text-h3); line-height: var(--line-tight); margin: 0 0 var(--space-1); }
+.mc-sub { color: var(--text-secondary); font-size: var(--text-body-sm); margin: 0 0 var(--space-4); }
+.mc-lab { font-size: var(--text-micro); letter-spacing: .05em; color: var(--text-tertiary); font-weight: 600; margin: 0 0 var(--space-2); text-transform: uppercase; }
+.mc-row { display: grid; grid-template-columns: 1fr auto auto; gap: var(--space-2) var(--space-3); align-items: baseline; padding: var(--space-3) 0; border-top: 1px solid var(--border); }
+.mc-row:first-of-type { border-top: 0; }
+.mc-name { font-weight: 600; }
+.mc-val { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mc-old { color: var(--text-tertiary); text-decoration: line-through; }
+.mc-new { font-weight: 700; }
+.mc-arrow { color: var(--text-tertiary); margin: 0 var(--space-2); }
+.mc-tag { font-size: var(--text-caption); font-weight: 700; padding: 2px var(--space-2); border-radius: var(--radius-pill); white-space: nowrap; }
+.mc-more { background: var(--text-primary); color: var(--bg-elevated); }
+.mc-less { border: 1px solid var(--border); color: var(--text-secondary); }
+.mc-list { grid-column: 1 / -1; font-size: var(--text-body-sm); }
+.mc-list span { display: block; padding: 1px 0; }
+.mc-add { font-weight: 700; }
+.mc-add::before { content: "+ "; }
+.mc-rem { color: var(--text-tertiary); text-decoration: line-through; }
+.mc-rem::before { content: "– "; display: inline-block; }
+.mc-intent { border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-3) var(--space-3); margin: 0; font-size: var(--text-body-sm); line-height: var(--line-relaxed); }
+.mc-intent del { color: var(--text-tertiary); }
+.mc-intent ins { text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 3px; font-weight: 700; }
+.mc-note { font-size: var(--text-caption); color: var(--text-tertiary); margin: var(--space-2) 0 0; }
+.mc-block { margin: var(--space-4) 0 0; }
+.mc-fact { font-size: var(--text-body-sm); color: var(--text-secondary); margin: 0; padding: var(--space-1) 0; }
+.mc-warn { border: 2px solid var(--text-primary); border-radius: var(--radius-md); padding: var(--space-3); font-size: var(--text-body-sm); margin: var(--space-4) 0 0; font-weight: 600; }
+.mc-details { margin: var(--space-4) 0 0; font-size: var(--text-body-sm); color: var(--text-secondary); }
+.mc-details summary { cursor: pointer; }
+.mc-details ul { margin: var(--space-2) 0 0; padding-left: var(--space-4); }
+.mc-edit { margin-top: var(--space-4); }
+@media (max-width: 520px) { .mc-tag { justify-self: start; } .mc-row { grid-template-columns: 1fr auto; } .mc-row .mc-val { grid-column: 1 / -1; white-space: normal; } }

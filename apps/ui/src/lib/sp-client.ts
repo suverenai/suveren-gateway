@@ -570,6 +570,9 @@ export interface EnrichedAuthorizationEntry {
   context: Record<string, string | number>;
   intent: string | null;
   deferredCommitmentDomains: string[];
+  /** Seconds since the epoch: when this mandate ends. */
+  expiresAt?: number | null;
+  title?: string | null;
   /** v0.7 item 9 — the AS no longer verifies this mandate's protocol
    *  version (a VERSION_UNSUPPORTED ticket refusal). Learned lazily by the
    *  gateway, only once an execution was actually attempted under it. */
