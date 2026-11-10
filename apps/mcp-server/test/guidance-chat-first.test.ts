@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { AGENT_RULES } from '../src/lib/agent-rules';
-import { factsLines, firstMandateText, withoutGatewayAddress, BEFORE_PROPOSING } from '../src/lib/guidance';
+import { factsLines, firstMandateText, withoutGatewayAddress, BEFORE_PROPOSING, roleText } from '../src/lib/guidance';
 import { setupBuiltin } from '../src/lib/builtins/setup';
 
 describe('the person works from the chat; the gateway page is theirs', () => {
@@ -18,6 +18,13 @@ describe('the person works from the chat; the gateway page is theirs', () => {
     expect(facts).toContain('The Vollmacht mandate is how the person manages their mandates from this chat.');
     expect(facts).toContain('they only approve it');
     expect(firstMandateText({ card: 'Vollmacht' })).toContain('from then on they manage their mandates from this chat');
+  });
+
+  it('tells the AI to keep replies short and to offer the first mandate before anything else', () => {
+    const role = roleText('Vollmacht');
+    expect(role).toContain('Keep each reply to a few sentences.');
+    expect(role).toContain('When a task needs a mandate and they do not have a Vollmacht mandate yet, offer them that one first, before anything else.');
+    expect(role).not.toMatch(/simulation|\btest\b/i);
   });
 
   it('never hands the AI a gateway address', () => {

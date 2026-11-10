@@ -18,7 +18,7 @@ import { agentVisibleAuthorizations } from './agent-visibility';
 import { isSimulationMode } from './simulation-mode';
 import { uiPort } from './locked-notice';
 import { AGENT_RULES } from './agent-rules';
-import { firstMandateText, LEAD_THE_PERSON_RULE, ROLE_TEXT, factsLines, possibleAreas } from './guidance';
+import { firstMandateText, LEAD_THE_PERSON_RULE, roleText, factsLines, possibleAreas } from './guidance';
 import { setupCardName, guideManifests } from './guidance-runtime';
 import { areaName } from './tool-proxy';
 
@@ -224,7 +224,7 @@ export function buildMandateBrief(opts: MandateBriefOptions): string {
   const manifests = guideManifests(integrationManager);
   lines.push('=== YOUR ROLE ===');
   lines.push('');
-  lines.push(ROLE_TEXT);
+  lines.push(roleText(setupCardName(integrationManager)));
   lines.push('');
   lines.push('=== FACTS YOU CAN DRAW ON ===');
   lines.push('');
