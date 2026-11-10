@@ -568,9 +568,19 @@ export async function planMandateChange(req: MandateChangeRequest, deps: Ceremon
   return { plan, diff, request };
 }
 
-/** A change's end date moves when it is signed, so it is compared without its moving part. */
-function diffForCompare(d: MandateDiff): unknown {
-  return { ...d, ...(d.lastsUntil ? { lastsUntil: { ...d.lastsUntil, after: 0 } } : {}) };
+/**
+ * A change's end date moves when it is signed, so it is compared without its moving
+ * part. Stable key order: the sealed copy travels as canonical JSON.
+ */
+function diffForCompare(d: MandateDiff): string {
+  const sorted = (v: unknown): unknown => {
+    if (Array.isArray(v)) return v.map(sorted);
+    if (v && typeof v === 'object') {
+      return Object.fromEntries(Object.keys(v as object).sort().map(k => [k, sorted((v as Record<string, unknown>)[k])]));
+    }
+    return v;
+  };
+  return JSON.stringify(sorted({ ...d, ...(d.lastsUntil ? { lastsUntil: { ...d.lastsUntil, after: 0 } } : {}) }));
 }
 
 /**
@@ -580,7 +590,7 @@ function diffForCompare(d: MandateDiff): unknown {
  */
 export async function changeMandate(req: MandateChangeRequest, deps: CeremonyDeps): Promise<{ authorizationId: string; plan: MandatePlan; revokeError?: string }> {
   const { diff, request } = await planMandateChange(req, deps);
-  if (req.sealedDiff && JSON.stringify(diffForCompare(diff)) !== JSON.stringify(diffForCompare(req.sealedDiff))) {
+  if (req.sealedDiff && diffForCompare(diff) !== diffForCompare(req.sealedDiff)) {
     refuse('The mandate or its area changed after this was proposed, so what you approved is no longer what would be signed. Nothing was signed. Ask for the change again.', 'changed_since_proposal');
   }
   return createMandate(request, deps);

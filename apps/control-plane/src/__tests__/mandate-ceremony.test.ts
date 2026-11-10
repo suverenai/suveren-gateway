@@ -406,6 +406,14 @@ describe('changing a mandate: built from the signed old one, never from what the
     expect(calls.some((c) => c.path === '/api/as/mandate')).toBe(false);
   });
 
+  it('a sealed copy that only changed key order is still the same change', async () => {
+    const { as, calls } = asWithMandate(true);
+    const { diff } = await planMandateChange({ old: OLD, changes: { limits: { quote_daily_max: 15 } } }, deps(as).d);
+    const reorder = (v: any): any => (Array.isArray(v) ? v.map(reorder) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().reverse().map((k) => [k, reorder(v[k])])) : v);
+    await changeMandate({ old: OLD, changes: { limits: { quote_daily_max: 15 } }, sealedDiff: reorder(diff) }, deps(as).d);
+    expect(calls.some((c) => c.path === '/api/as/mandate')).toBe(true);
+  });
+
   it('after approval: signs with `replaces`, keeps the signed title, reports a failed revoke', async () => {
     const { as, calls } = asWithMandate(true);
     const failing: CeremonyDeps['as'] = async (m, p, b) => (p.endsWith('/revoke') ? { status: 500, body: { error: 'down' } } : as(m, p, b));
