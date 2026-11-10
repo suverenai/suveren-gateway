@@ -30,6 +30,7 @@ import {
   SUPPORTED_VERSIONS,
   type AgentProfile,
 } from '@hap/core';
+import { readRefusal } from '@hap/core/refusal';
 
 export interface MandateRequest {
   /**
@@ -111,12 +112,6 @@ const versionOf = (id: string): string => id.split('@')[1] ?? '';
 
 function refuse(msg: string, code?: MandateRefused['code']): never {
   throw new MandateRefused(msg, code);
-}
-
-/** The Authority Server's own reason. Its refusals are `{ approved: false, errors: [{ code, message }] }`. */
-function asRefusalReason(status: number, body: any): string {
-  const first = Array.isArray(body?.errors) ? body.errors[0] : undefined;
-  return first?.message ?? body?.message ?? body?.detail ?? (typeof body?.error === 'string' ? body.error : undefined) ?? `status ${status}`;
 }
 
 async function resolveProfile(as: AsCall, requested: string): Promise<AgentProfile> {
@@ -341,7 +336,7 @@ export async function createMandate(req: MandateRequest, deps: CeremonyDeps): Pr
     intent_disclosure_hash: enc?.intentDisclosureHash,
   });
   if (res.status >= 300) {
-    refuse(`The Authority Server refused the mandate: ${asRefusalReason(res.status, res.body)}`);
+    refuse(`The Authority Server refused the mandate: ${readRefusal(res.body, `status ${res.status}`).message}`);
   }
 
   try {

@@ -62,6 +62,7 @@ import {
   type BoundsSchemaLike,
 } from './read-gate';
 import { getProfile, listProfiles, ContentBindingError, boundActionTypes } from '@hap/core';
+import { readRefusal } from '@hap/core/refusal';
 import { readFile } from 'node:fs/promises';
 import { extname } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -697,8 +698,7 @@ export function createGatedToolHandler(
  * a superseded mandate surfaces as one of these two codes, not a third.
  */
 function isStaleMandateRefusal(err: Pick<SPReceiptError, 'statusCode' | 'body'>): boolean {
-  const errors = err.body?.errors as Array<{ code?: unknown }> | undefined;
-  const code = errors?.[0]?.code;
+  const code = readRefusal(err.body).code;
   if (err.statusCode === 403 && (code === 'MANDATE_REVOKED' || code === 'MANDATE_EXPIRED')) {
     return true;
   }
@@ -724,10 +724,9 @@ function isStaleMandateRefusal(err: Pick<SPReceiptError, 'statusCode' | 'body'>)
  * disappearing it would hide exactly the authorization that needs action.
  */
 function isVersionUnsupportedRefusal(err: SPReceiptError): boolean {
-  const errors = err.body?.errors as Array<{ code?: unknown }> | undefined;
   // The canonical code decides, not the status: today's AS answers 409 for a
   // pre-0.7 mandate, a v0.8 AS may answer another 4xx for a v0.7 one.
-  return errors?.[0]?.code === 'VERSION_UNSUPPORTED';
+  return readRefusal(err.body).code === 'VERSION_UNSUPPORTED';
 }
 
 function createGatedToolHandlerInner(
@@ -1922,7 +1921,7 @@ function createGatedToolHandlerInner(
           // `requested` journal row: nothing ran, and the row says so.
           if (autoRequestKey && !receiptId) {
             const refusalCode = err instanceof SPReceiptError
-              ? ((err.body?.errors as Array<{ code?: string }> | undefined)?.[0]?.code ?? 'TICKET_REFUSED')
+              ? (readRefusal(err.body).code ?? 'TICKET_REFUSED')
               : 'REQUEST_FAILED';
             state.executionJournal?.refusedBeforeTicket?.(autoRequestKey, 'as_refused', refusalCode);
           }
@@ -2004,7 +2003,7 @@ function createGatedToolHandlerInner(
           // no candidate left, the refusal below stands, with the server's
           // own reason.
           if (err instanceof SPReceiptError && err.statusCode === 403
-              && (err.body?.errors as Array<{ code?: unknown }> | undefined)?.[0]?.code === 'CUMULATIVE_LIMIT_EXCEEDED') {
+              && readRefusal(err.body).code === 'CUMULATIVE_LIMIT_EXCEEDED') {
             const remaining = candidates.filter(c => c.authorizationId !== auth.authorizationId);
             if (remaining.length > 0) {
               console.error(

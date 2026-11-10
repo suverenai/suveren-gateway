@@ -6,6 +6,7 @@
  */
 
 import type { ContentBinding } from '@hap/core';
+import { readRefusal } from '@hap/core/refusal';
 import { notifyControlPlane } from './cp-notify';
 import { clientVersionHeaders } from './client-version';
 import { readPairing } from './as-pairing';
@@ -156,8 +157,8 @@ export class SPProposalError extends Error {
 
   /** The first structured error of the envelope, if the server sent one. */
   get refusal(): { code: string; message?: string; [k: string]: unknown } | undefined {
-    const first = (this.body?.errors as Array<Record<string, unknown>> | undefined)?.[0];
-    return first && typeof first.code === 'string' ? (first as { code: string }) : undefined;
+    const r = readRefusal(this.body, '');
+    return r.code ? { ...r.facts, code: r.code, ...(r.message ? { message: r.message } : {}) } : undefined;
   }
 }
 
@@ -566,14 +567,7 @@ export class SPClient {
       // Any 4xx (limit exceeded, approval_required, mismatch, not-authorized)
       // is a definitive answer from the AS — fail closed, never retry.
       if (!res.ok || respBody.approved === false) {
-        const errors = respBody.errors as Array<Record<string, unknown>> | undefined;
-        const first = errors?.[0];
-        const message =
-          (first?.message as string) ??
-          (first?.code as string) ??
-          (respBody.error as string) ??
-          `SP receipt request failed: ${res.status}`;
-        throw new SPReceiptError(message, res.status, respBody);
+        throw new SPReceiptError(readRefusal(respBody, `SP receipt request failed: ${res.status}`).message, res.status, respBody);
       }
 
       // `idempotent: true` means the AS did NOT issue a new ticket — it
@@ -662,14 +656,7 @@ export class SPClient {
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({})) as Record<string, unknown>;
-      const first = (body.errors as Array<{ message?: unknown }> | undefined)?.[0];
-      throw new SPProposalError(
-        (typeof body.error === 'string' ? body.error : undefined)
-          ?? (typeof first?.message === 'string' ? first.message : undefined)
-          ?? `SP proposal submission failed: ${res.status}`,
-        res.status,
-        body,
-      );
+      throw new SPProposalError(readRefusal(body, `SP proposal submission failed: ${res.status}`).message, res.status, body);
     }
 
     // A proposal now exists and a human has to act on it — but this process

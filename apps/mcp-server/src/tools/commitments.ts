@@ -16,6 +16,7 @@
  * transition is atomic with receipt issuance, not a separate step.
  */
 
+import { readRefusal } from '@hap/core/refusal';
 import type { SharedState } from '../lib/shared-state';
 import { lockedNotice } from '../lib/locked-notice';
 import { endedFromRefusal, mandateEndedProposalText } from '../lib/guidance';
@@ -345,7 +346,7 @@ export async function executeCommitted(
       };
     }
     if (err instanceof SPReceiptError) {
-      const code = (err.body.errors as Array<{ code?: string }> | undefined)?.[0]?.code;
+      const code = readRefusal(err.body).code;
       if (code === 'PROPOSAL_ALREADY_EXECUTED') {
         const local = localOutcomeOfExecuted(proposal, state);
         if (local) return local;

@@ -6,6 +6,7 @@
  * No cookies are used — the API key is stored in React state only.
  */
 
+import { readRefusal } from '@hap/core/refusal';
 import { isRetriableRead, unreachableRetry } from './unreachable-retry';
 import { queueDomains, mergeProposals } from './my-queue';
 import type { AttachmentPreviewResult } from './attachment-sealed';
@@ -1013,15 +1014,8 @@ export interface BuiltinStatus {
  * envelope per method, which is exactly how this bug happened).
  */
 export function asErrorMessage(body: unknown, fallback: string): string {
-  const b = (body ?? {}) as {
-    errors?: Array<{ code?: string; message?: string }>;
-    error?: string;
-    detail?: string;
-  };
-  const first = Array.isArray(b.errors) ? b.errors[0] : undefined;
-  if (first?.message) return first.code ? `${first.message} (${first.code})` : first.message;
-  if (first?.code) return first.code;
-  return b.error || b.detail || fallback;
+  const r = readRefusal(body, fallback);
+  return r.code && r.message !== r.code ? `${r.message} (${r.code})` : r.message;
 }
 
 export function parseApproverPubkeys(data: unknown): Array<{ userId: string; publicKey: string }> {
