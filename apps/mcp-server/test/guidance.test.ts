@@ -694,7 +694,7 @@ describe('through the gateway\'s own entry points', () => {
     it('the facts say what a mandate and the Setup mandate are, in plain words', () => {
       const { live } = everyMode([]);
       const facts = sectionOf(live, 'FACTS YOU CAN DRAW ON');
-      expect(facts).toContain('signed permission for one area of work');
+      expect(facts).toContain('A mandate is a permission the person gives their AI, with limits they choose.');
       expect(facts).toContain('They can change or revoke it at any time.');
       expect(facts).toContain('The Setup mandate allows no work.');
       expect(facts).toContain('None of the mandates the AI prepares exists until the person approves it');

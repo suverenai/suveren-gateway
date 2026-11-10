@@ -286,6 +286,8 @@ export interface MissingMandateFacts {
 }
 
 export interface OverviewInput {
+  /** The gateway's own page; used to give the AI this gateway's real addresses. */
+  url?: string;
   manifests: GuideManifest[];
   facts: (id: string) => ConnectorFacts;
   auths: GuideAuth[];
@@ -424,7 +426,7 @@ function connectorLine(m: GuideManifest, input: OverviewInput, sourcesByConsumer
   const shown = guide.filter(g => !g.simulationOnly || sim);
   if (shown.length > 0 && input.detail) {
     lines.push('    Its setup guide (what the person is shown on its card):');
-    shown.forEach((g, i) => lines.push(`      ${i + 1}. ${g.title}${g.description ? ` — ${g.description}` : ''}`));
+    shown.forEach((g, i) => lines.push(`      ${i + 1}. ${g.title}${g.description ? ` — ${withOwnRedirectUri(g.description, m.id, input.url)}` : ''}`));
   }
   return { rank, text: lines.join('\n') };
 }
@@ -502,6 +504,15 @@ export function attachmentNotAllowedText(opts: {
  * connectors the person still has to set up, then running connectors with no mandate,
  * then the rest.
  */
+/**
+ * Setup guides name an example sign-in return address. The card rewrites it to this gateway's own
+ * address before a person sees it; the AI must get the same address, or it tells them a wrong one.
+ */
+export function withOwnRedirectUri(text: string, connectorId: string, url: string | undefined): string {
+  if (!url) return text;
+  return text.replace(/https?:\/\/[^\s)]+\/auth\/oauth\/[a-z-]+\/callback/gi, `${url.replace(/\/$/, '')}/auth/oauth/${connectorId}/callback`);
+}
+
 export function connectorOverview(input: OverviewInput): string {
   const consumers = new Map<string, AttachSource[]>();
   const all = attachmentSources(input.manifests, input.toolName);
@@ -557,7 +568,7 @@ function joinAreas(names: string[]): string {
 /** The facts the AI draws on, stated as facts: it finds the words. Identical in every mode. */
 export function factsLines(opts: { card: string; areas: string[] }): string[] {
   return [
-    'A mandate is a person\'s signed permission for one area of work: what the AI may do, how much, for how long, and whether each action needs their approval or runs by itself within the limits. They can change or revoke it at any time.',
+    'A mandate is a permission the person gives their AI, with limits they choose. For example: "Send up to 5 emails a day, and show me each one first." It says what the AI may do, how much, for how long, and whether each action needs their approval or runs by itself within the limits. The AI needs a mandate for each kind of work. They can change or revoke it at any time.',
     `The ${opts.card} mandate is how the person manages their mandates from this chat. They sign it once. After that they just say here what the AI should be able to do; the AI prepares the mandate with its limits and duration, and they only approve it. Without it they fill in a form themselves for every mandate.`,
     `The ${opts.card} mandate allows no work. None of the mandates the AI prepares exists until the person approves it. It is the easiest start. An AI can never create the first mandate: a person signs it.`,
     ...(opts.areas.length > 0 ? [`Possible on this gateway: ${joinAreas(opts.areas)}.`] : []),

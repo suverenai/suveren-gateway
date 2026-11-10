@@ -174,7 +174,7 @@ async function connectorsSection(
     }
     if (manifests.length === 0) return '';
     const input = await overviewInput(state, integrationManager, authorizations, { onlyManifests: manifests });
-    return connectorOverview({ ...input, detail: !!domain });
+    return connectorOverview({ ...input, detail: !!domain, url: uiUrl() });
   } catch (err) {
     // A guidance failure must never hide the mandates themselves.
     console.error('[Suveren MCP] connector overview failed:', err);
