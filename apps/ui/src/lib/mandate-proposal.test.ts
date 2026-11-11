@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { modeView, mandatePreviewParts, mandateTechnicalLine, mandateTitleText, mandateTitleParts, mandateTargetProfile, MANDATE_TILE_OMIT } from './mandate-proposal';
+import { modeView, mandatePreviewParts, mandateTechnicalLine, mandateTitleText, mandateTitleParts, mandateTargetProfile, MANDATE_TILE_OMIT, omitLimitLabels } from './mandate-proposal';
 
 describe('mandate proposal card parts', () => {
   it('words the mode', () => {
@@ -28,5 +28,20 @@ describe('mandate proposal card parts', () => {
     // Title is shown after "Applies to", from the preview parts.
     expect(MANDATE_TILE_OMIT as readonly string[]).toContain('title');
     expect(mandatePreviewParts({ title: ' Quotes ' }).title).toBe('Quotes');
+  });
+});
+
+describe('omitLimitLabels — a mandate proposal without the limits not shown outside simulation', () => {
+  it('drops exactly the named limits from the preview; the rest of the preview is untouched', () => {
+    const resp = { status: 'ok', tool: 'describe', body: { structured: { proposal: 'X', limits: { 'Daily write limit': '20', 'Test-data loads per day': '0' } } } };
+    const out = omitLimitLabels(resp, new Set(['Test-data loads per day']));
+    expect(out.body.structured.limits).toEqual({ 'Daily write limit': '20' });
+    expect(out.body.structured.proposal).toBe('X');
+    expect(resp.body.structured.limits).toHaveProperty('Test-data loads per day'); // a copy, never mutated
+  });
+  it('nothing to hide, or no limits: the same object', () => {
+    const resp = { status: 'ok', body: { structured: { proposal: 'X' } } };
+    expect(omitLimitLabels(resp, new Set(['A']))).toBe(resp);
+    expect(omitLimitLabels(resp, new Set())).toBe(resp);
   });
 });

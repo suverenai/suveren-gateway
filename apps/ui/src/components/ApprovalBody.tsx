@@ -17,7 +17,9 @@
 import { approvalSummary } from '../lib/approval-summary';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { CREATE_MANDATE_TOOL, MANDATE_TILE_OMIT, mandatePreviewParts, mandateTechnicalLine, mandateTitleParts, mandateTargetProfile, modeView } from '../lib/mandate-proposal';
+import { useSimulationMode } from '../hooks/useSimulationMode';
+import { hiddenLimitKeys, type ManifestGatingLike } from '../lib/simulation-only-limits';
+import { CREATE_MANDATE_TOOL, MANDATE_TILE_OMIT, omitLimitLabels, mandatePreviewParts, mandateTechnicalLine, mandateTitleParts, mandateTargetProfile, modeView } from '../lib/mandate-proposal';
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { resolveProposalLinks, type ProposalLink } from '../lib/proposal-links';
@@ -330,6 +332,15 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
   // A mandate proposal is about the area it names, not the Delegation it rides on.
   const typeProfile = (isMandate || proposal.tool === CHANGE_MANDATE_TOOL) ? mandateTargetProfile(content.toolArgs, proposal.profileId) : proposal.profileId;
   const typeArea = areaName(typeProfile, catalog);
+  // Outside simulation, a limit only test-data tools use is not shown (it stays signed):
+  // in a mandate proposal's limits, and in the shared limits of an action.
+  const simulation = useSimulationMode();
+  const targetProfile = useProfile(isMandate ? typeProfile : undefined);
+  const hiddenTarget = hiddenLimitKeys(targetProfile, manifests as ManifestGatingLike[] | undefined, simulation);
+  const hiddenTargetLabels = new Set([...hiddenTarget].map((k) => (targetProfile?.boundsSchema?.fields as Record<string, { displayName?: string }> | undefined)?.[k]?.displayName ?? k));
+  const shownPreview = isMandate ? { ...previewState, resp: omitLimitLabels(previewState.resp, hiddenTargetLabels) } : previewState;
+  const hiddenOwn = hiddenLimitKeys(profile, manifests as ManifestGatingLike[] | undefined, simulation);
+  const shownBounds = mandateBounds ? Object.fromEntries(Object.entries(mandateBounds).filter(([k]) => !hiddenOwn.has(k))) : mandateBounds;
   // A mandate proposal is test setup when the profile it creates a mandate for is (§17.3).
   const testSetup = isMandate
     ? profileIdentity(mandateTargetProfile(mandateArgs, proposal.profileId)).testSetup
@@ -486,7 +497,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
         )}
         {readable && !recordOutside && (
           <PreviewBoxShow
-            state={previewState}
+            state={shownPreview}
             systemName={systemName}
             toolArgs={content.toolArgs}
             sealed={content.sealed}
@@ -509,7 +520,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
       {readable && recordOutside && (
         <div style={{ order: 6 }} data-testid="record-from-system">
           <PreviewBoxShow
-              state={previewState}
+              state={shownPreview}
               systemName={systemName}
               toolArgs={content.toolArgs}
               sealed={content.sealed}
@@ -533,7 +544,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
       {!isMandate && (
         <SharedLimitRows
           authorizationId={proposal.authorizationId}
-          bounds={mandateBounds}
+          bounds={shownBounds}
           profile={profile}
           actionType={typeof proposal.executionContext?.action_type === 'string' ? proposal.executionContext.action_type : undefined}
           words={limitWordsForTool(manifests, proposal.tool)}

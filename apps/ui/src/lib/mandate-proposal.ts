@@ -77,3 +77,18 @@ export function mandateTargetProfile(args: object | null | undefined, fallbackPr
   const t = (args as Record<string, unknown> | null | undefined)?.profile;
   return typeof t === 'string' && t ? t : fallbackProfileId;
 }
+
+/**
+ * The mandate proposal's preview without the limits listed in `labels` (the
+ * profile's displayNames of limits not shown outside simulation — see
+ * simulation-only-limits.ts). The preview lists limits by those names. A copy;
+ * the proposal itself, and what is signed, are unchanged.
+ */
+export function omitLimitLabels<T>(resp: T, labels: ReadonlySet<string>): T {
+  if (labels.size === 0 || !resp || typeof resp !== 'object') return resp;
+  const r = resp as { status?: string; body?: { structured?: Record<string, unknown> } };
+  const limits = r.status === 'ok' ? r.body?.structured?.limits : undefined;
+  if (!limits || typeof limits !== 'object' || Array.isArray(limits)) return resp;
+  const kept = Object.fromEntries(Object.entries(limits as Record<string, unknown>).filter(([k]) => !labels.has(k)));
+  return { ...r, body: { ...r.body, structured: { ...r.body!.structured, limits: kept } } } as T;
+}

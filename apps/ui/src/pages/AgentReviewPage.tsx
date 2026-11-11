@@ -11,6 +11,8 @@ import { offeredCommitModes, settleCommitMode, toProtocolMode } from '../lib/com
 import { scopesOverlap } from '../lib/scope-overlap';
 import { formatScopeFieldValue } from '../lib/scope-labels';
 import { useSourceManifests } from '../lib/source-manifests';
+import { useSimulationMode } from '../hooks/useSimulationMode';
+import { hiddenLimitKeys, type ManifestGatingLike } from '../lib/simulation-only-limits';
 import { mandateRight } from '../lib/mandate-rights';
 import { replacedRevokeProblem } from '../lib/mandate-replace';
 import { replacedOutcomeArgs, replacedWithdrawRoute } from '../lib/reject-outcome';
@@ -64,6 +66,7 @@ export function AgentReviewPage() {
   const [gateData, setGateData] = useState<GateData | null>(null);
   const [profile, setProfile] = useState<AgentProfile | null>(null);
   const sourceManifests = useSourceManifests();
+  const simulation = useSimulationMode();
   // Review is the DEFAULT commitment mode: the agent proposes, the human
   // approves. Automatic is the deliberate opt-in (or a template's choice).
   const [commitMode, setCommitMode] = useState<'immediate' | 'per-action'>('per-action');
@@ -396,7 +399,9 @@ export function AgentReviewPage() {
     return <p style={{ color: 'var(--text-tertiary)' }}>Loading...</p>;
   }
 
-  const boundsEntries = Object.entries(gateData.bounds).filter(([k]) => k !== 'profile' && k !== 'path');
+  // Outside simulation, a limit only test-data tools use is not listed; it is still signed.
+  const hiddenLimits = hiddenLimitKeys(profile, sourceManifests as ManifestGatingLike[] | undefined, simulation);
+  const boundsEntries = Object.entries(gateData.bounds).filter(([k]) => k !== 'profile' && k !== 'path' && !hiddenLimits.has(k));
   const contextEntries = Object.entries(gateData.context);
 
   // Pre-compute display strings — keeps all string interpolation out of JSX

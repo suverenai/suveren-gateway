@@ -6,6 +6,8 @@ import { AttachmentSourcePicker } from './AttachmentSourcePicker';
 import { isAttachmentSourceField } from '../lib/attachment-sources';
 import { atLeastOneGroups, boundsAllowAction, atLeastOneFormHint, type UnmetGroup } from '@hap/core/scope-rules';
 import { spClient, type IntegrationManifest, type ProfileConfig, type CapKind } from '../lib/sp-client';
+import { useSimulationMode } from '../hooks/useSimulationMode';
+import { hiddenLimitKeys, type ManifestGatingLike } from '../lib/simulation-only-limits';
 import { minForBound, maxForBound, seedForBound, numericBoundValue } from '../lib/bound-defaults';
 import { formatUnit } from '../lib/bound-format';
 import { effectiveCapKind, enumExceedsCap, isCapped, type CapFieldShape } from '../lib/team-caps';
@@ -911,10 +913,17 @@ export function BoundsEditor({
   const [discoveryIntegration, setDiscoveryIntegration] = useState<IntegrationManifest | null>(null);
   // The connector's words for a shared limit (manifest `limitWords`) — used only for the helper line.
   const [limitWords, setLimitWords] = useState<LimitWords | undefined>(undefined);
+  // Outside simulation, a limit only test-data tools use is not shown. Its
+  // value stays in boundsValues (seeded like every other), so it is still sent
+  // and signed — only the control is left out.
+  const simulation = useSimulationMode();
+  const [gatingManifests, setGatingManifests] = useState<ManifestGatingLike[] | undefined>(undefined);
+  const hiddenLimits = hiddenLimitKeys(profile, gatingManifests, simulation);
   useEffect(() => {
     const shortName = shortProfileName(profile.id);
     spClient.getIntegrationManifests()
       .then(({ manifests }) => {
+        setGatingManifests(manifests as ManifestGatingLike[]);
         setLimitWords(limitWordsForProfile(manifests, profile.id));
         const match = manifests.find(
           m => m.profile === shortName && m.contextDiscovery && Object.keys(m.contextDiscovery).length > 0,
@@ -1128,7 +1137,7 @@ export function BoundsEditor({
             </div>
           </div>
           <div className="bounds-fields-grid">
-            {boundsFields.map(([key, fieldDef]) => {
+            {boundsFields.filter(([key]) => !hiddenLimits.has(key)).map(([key, fieldDef]) => {
               const capState = capStates[key];
               // Any cumulative limit is shared: it reads as one, with the figures the system read.
               const shared = cumulativeBound(profile, key)
