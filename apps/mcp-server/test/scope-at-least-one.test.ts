@@ -13,7 +13,7 @@ import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 import { join } from 'node:path';
 import { registerProfile, clearProfiles, getAllProfiles, boundActionTypes, type AgentProfile } from '@hap/core';
 import {
-  atLeastOneGroups, boundGovernsActions, unmetForMandate, unmetForAction, unmetUnderNewerVersion,
+  atLeastOneGroups, boundGovernsActions, unmetForMandate, unmetForAction,
   atLeastOneBuildRefusal, atLeastOneExecutionRefusal,
 } from '@hap/core/scope-rules';
 import { createGatedToolHandler } from '../src/lib/tool-proxy';
@@ -187,12 +187,6 @@ describe('scope-rules: building a mandate', () => {
     expect(atLeastOneGroups(odd)).toEqual([]);
   });
 
-  it('points out an open mandate under an older version only while the newer version declares the group and its limits allow the action', () => {
-    expect(unmetUnderNewerVersion(OLD, NEW, {}, { book_daily_max: 2 })).toHaveLength(1);
-    expect(unmetUnderNewerVersion(OLD, NEW, { rooms: 'a' }, { book_daily_max: 2 })).toEqual([]);
-    expect(unmetUnderNewerVersion(OLD, NEW, {}, { book_daily_max: 0 })).toEqual([]);
-    expect(unmetUnderNewerVersion(NEW, NEW, {}, { book_daily_max: 2 })).toEqual([]);
-  });
 });
 
 describe('scope-rules reads which actions a bound governs exactly as hap-core does', () => {

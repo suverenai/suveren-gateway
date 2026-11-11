@@ -18,7 +18,6 @@ import { SkippedCommitmentsCard } from '../components/SkippedCommitmentsCard';
 import { bucketAuths } from '../lib/auth-status';
 import { buildIntegrationAttentionItems, buildPausedSummaries } from '../lib/integration-attention';
 import { deriveFirstRunCard, pausedSummariesToShow } from '../lib/first-run-card';
-import { useOlderVersionItems } from '../lib/older-version-scope';
 
 const EXPIRY_WARN_SECONDS = 30 * 60; // 30 minutes
 
@@ -122,8 +121,6 @@ export function DashboardPage() {
   // The first-run card leads every new person, in simulation and in production:
   // the Setup mandate exists in both, and the person's AI sets up the rest.
   const showFirstRun = firstRun.visible;
-  // An open mandate under an older version that a newer version would not let be signed (scope-rules atLeastOne).
-  const olderVersion = useOlderVersionItems(active, spClient);
   const soonExpiring = active.filter(a => a.remaining_seconds !== null && a.remaining_seconds <= EXPIRY_WARN_SECONDS);
   const pendingProposals = proposals.filter(isPendingProposal);
   const runningIntegrations = integrationEntries.filter(e => e.state === 'running');
@@ -158,9 +155,6 @@ export function DashboardPage() {
     });
   }
 
-  for (const o of olderVersion) {
-    attentionItems.push({ label: o.label, detail: o.detail, to: '/mandates', color: 'var(--text-primary)' });
-  }
 
   attentionItems.push(...buildIntegrationAttentionItems(integrationEntries, simulationOn));
   for (const e of startingIntegrations) {

@@ -270,31 +270,4 @@ export function atLeastOneSignHint(profile: AtLeastOneProfileLike | undefined, u
   return `Name at least one ${groupNoun(profile, unmet.group)} in step 2: this mandate allows ${gerund(unmet.actionType)}.`;
 }
 
-/**
- * The groups a newer version of an area declares that a mandate under an older
- * version leaves unmet while its limits allow the action — that older mandate is
- * not refused (its version declares nothing), so the dashboard points it out.
- * Empty when the mandate is already on `newer`.
- */
-export function unmetUnderNewerVersion(
-  mandateProfile: AtLeastOneProfileLike | undefined,
-  newer: AtLeastOneProfileLike | undefined,
-  scope: Record<string, unknown> | undefined,
-  bounds: Record<string, unknown> | undefined,
-): UnmetGroup[] {
-  if (!newer || !mandateProfile || newer.id === mandateProfile.id) return [];
-  if (atLeastOneGroups(mandateProfile).length > 0) return [];
-  return atLeastOneGroups(newer)
-    .filter(g => !groupSatisfied(g, scope))
-    .map(group => ({ group, actionType: group.requiredFor.find(a => boundsAllowAction(mandateProfile, bounds, a)) }))
-    .filter((u): u is UnmetGroup => typeof u.actionType === 'string');
-}
 
-/**
- * The dashboard's one line for such a mandate:
- * "names no allowed recipient or domain. Email 0.10 requires one: open it under Mandates and press Edit to replace it."
- */
-export function atLeastOneOlderVersionLine(newer: AtLeastOneProfileLike & { version?: string }, unmet: UnmetGroup): string {
-  const version = newer.version ?? (newer.id?.split('@')[1] ?? '');
-  return `names no ${groupNoun(newer, unmet.group)}. ${areaOf(newer)} ${version} requires one: open it under Mandates and press Edit to replace it.`;
-}
