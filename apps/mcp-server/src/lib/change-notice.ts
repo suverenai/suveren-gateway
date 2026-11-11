@@ -234,6 +234,8 @@ export interface ChangeNoticeDeps {
   appName: () => string | undefined;
   /** The names of the tools listed to the AI right now. Absent = tools are not part of the note. */
   listed?: () => string[];
+  /** A listed tool's compact call form, `name(arg, opt?)` (see `compactSignature`). Absent = names only. */
+  signature?: (name: string) => string;
 }
 
 export { CALL_TOOL };
@@ -242,16 +244,39 @@ export { CALL_TOOL };
 const MAX_TOOLS_NAMED = 10;
 
 /**
+ * A tool's compact call form from its own input schema: `name(to, subject, attachments?)`.
+ * Required arguments first, then the optional ones with `?`, each in the schema's order. No
+ * types and no descriptions (more text makes the AI less precise, Andreas 2026-11-11); a nested
+ * object is named by its top-level name only.
+ */
+export function compactSignature(name: string, inputSchema: unknown): string {
+  const s = (inputSchema && typeof inputSchema === 'object' ? inputSchema : {}) as { properties?: unknown; required?: unknown };
+  const props = s.properties && typeof s.properties === 'object' ? Object.keys(s.properties as object) : [];
+  const required = new Set(Array.isArray(s.required) ? s.required.filter((r): r is string => typeof r === 'string') : []);
+  const args = [...props.filter(p => required.has(p)), ...props.filter(p => !required.has(p)).map(p => `${p}?`)];
+  return `${name}(${args.join(', ')})`;
+}
+
+/** Said once per session, after the first list of new tools. */
+const REACH_HINT = `If they are not in your tool list, call them through ${CALL_TOOL}.`;
+
+/**
  * The tools that became available since this chat started. Many AI apps (ChatGPT among them) load
  * the tool list once, when the chat starts, and ignore the gateway's "the list changed" message, so
- * the AI never sees a tool added later (a connector that started, Setup signed). The first time,
- * the note also says how to reach them anyway.
+ * the AI never sees a tool added later (a connector that started, Setup signed). Up to
+ * MAX_TOOLS_NAMED tools are named with their arguments, so the first call through call-tool fits;
+ * above that, the connectors are counted. The first time, the note also says how to reach them.
  */
-export function newToolsNote(names: string[], firstTime: boolean, when: SinceWhen = 'chat'): string | undefined {
+export function newToolsNote(
+  names: string[],
+  firstTime: boolean,
+  when: SinceWhen = 'chat',
+  signature: (name: string) => string = n => n,
+): string | undefined {
   if (names.length === 0) return undefined;
   let what: string;
   if (names.length <= MAX_TOOLS_NAMED) {
-    what = `New tools are available ${since(when)}: ${names.join(', ')}.`;
+    what = `New tools ${since(when)}: ${names.map(signature).join(', ')}.`;
   } else {
     const byConnector = new Map<string, number>();
     for (const n of names) {
@@ -261,8 +286,7 @@ export function newToolsNote(names: string[], firstTime: boolean, when: SinceWhe
     const parts = [...byConnector.entries()].map(([c, k]) => `${k} from ${c}`);
     what = `New tools are available ${since(when)}: ${parts.join(', ')}. list-authorizations(domain) names them.`;
   }
-  if (!firstTime) return what;
-  return `${what} If they are not in your tool list, call them through ${CALL_TOOL}(tool: "<name>", arguments: {...}). Or the person restarts the AI app, which then lists them.`;
+  return firstTime ? `${what} ${REACH_HINT}` : what;
 }
 
 /**
@@ -293,7 +317,7 @@ export class SessionChangeNotice {
     const now = this.deps.listed();
     const fresh = now.filter(n => !this.toolsTold!.has(n));
     for (const n of now) this.toolsTold.add(n);
-    const note = newToolsNote(fresh, !this.toolHintGiven, this.toolsWhen);
+    const note = newToolsNote(fresh, !this.toolHintGiven, this.toolsWhen, this.deps.signature);
     this.toolsWhen = 'chat';
     if (note) this.toolHintGiven = true;
     return note;

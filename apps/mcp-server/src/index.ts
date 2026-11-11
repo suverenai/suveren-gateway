@@ -11,6 +11,7 @@
 
 import { McpServer, type RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { normalizeObjectSchema, safeParseAsync, getParseErrorMessage } from '@modelcontextprotocol/sdk/server/zod-compat.js';
+import { toJsonSchemaCompat } from '@modelcontextprotocol/sdk/server/zod-json-schema-compat.js';
 import { z } from 'zod';
 import { SharedState } from './lib/shared-state';
 import { attachmentLine, attachmentSources, type GuideManifest } from './lib/guidance';
@@ -26,7 +27,7 @@ import type { IntegrationManager, DiscoveredTool } from './lib/integration-manag
 import { recordBlocked, createGatedToolHandler, buildProxiedToolDescription, profileMatches, toolIsAuthorizedForDisplay, toolAlwaysListed } from './lib/tool-proxy';
 import { jsonSchemaToZodShape } from './lib/json-schema-to-zod';
 import { wrapWithOutcomeOutbox } from './lib/outcome-outbox';
-import { SessionChangeNotice, currentTold, CALL_TOOL } from './lib/change-notice';
+import { SessionChangeNotice, currentTold, compactSignature, CALL_TOOL } from './lib/change-notice';
 import { getContextForBrief } from './lib/context-loader';
 
 // ─── JSON Schema → Zod conversion ──────────────────────────────────────────
@@ -47,7 +48,20 @@ export function createMcpServer(
     ledger: state.changeLedger,
     appName: () => server.server.getClientVersion()?.name,
     listed: () => [...callable.entries()].filter(([, t]) => t.enabled).map(([name]) => name).sort(),
+    signature: (name: string) => signatureOf(name),
   });
+
+  /**
+   * `name(arg, opt?)` from the tool's own input schema: a connector's (or built-in's) schema as
+   * discovered, else the JSON schema `tools/list` sends for it.
+   */
+  function signatureOf(name: string): string {
+    const proxied = proxiedTools.get(name);
+    if (proxied) return compactSignature(name, proxied.tool.inputSchema);
+    const t = callable.get(name);
+    const obj = t?.inputSchema ? normalizeObjectSchema(t.inputSchema) : undefined;
+    return compactSignature(name, obj ? toJsonSchemaCompat(obj, { strictUnions: true, pipeStrategy: 'input' }) : {});
+  }
 
   /**
    * Every tool this session registered, by the name the AI calls — what `call-tool` may reach.
@@ -179,7 +193,7 @@ export function createMcpServer(
       const schema = normalizeObjectSchema(target.inputSchema) ?? target.inputSchema;
       const parsed = await safeParseAsync(schema, args.arguments ?? {});
       if (!parsed.success) {
-        return refuse(`Refused: the arguments do not fit "${args.tool}": ${getParseErrorMessage(parsed.error)}. Nothing was done and no ticket was requested. Call it again with the arguments that tool takes.`);
+        return refuse(`Refused: the arguments do not fit "${args.tool}": ${getParseErrorMessage(parsed.error)}. Nothing was done and no ticket was requested. Call it again with the arguments that tool takes: ${signatureOf(args.tool)}.`);
       }
       return (target.handler as (a: unknown, e: unknown) => unknown)(parsed.data, extra);
     }) as Parameters<typeof server.registerTool>[2],

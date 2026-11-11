@@ -37,7 +37,7 @@ vi.mock('../src/lib/tool-proxy', async (orig) => {
 });
 
 const { createMcpServer } = await import('../src/index');
-const { newToolsNote, SessionChangeNotice } = await import('../src/lib/change-notice');
+const { newToolsNote, compactSignature, SessionChangeNotice } = await import('../src/lib/change-notice');
 type Told = import('../src/lib/change-notice').Told;
 
 const tool = (name: string, over: Partial<DiscoveredTool> = {}): DiscoveredTool => ({
@@ -77,6 +77,10 @@ function stack(initial: DiscoveredTool[]) {
     setTools: (t: DiscoveredTool[]) => { tools = t; made.registerProxiedTools(); made.refreshTools(); },
     grantSetup: () => {
       auths = [{ profileId: 'github.com/x/delegation@0.4', complete: true, attestations: [{ expiresAt: Math.floor(Date.now() / 1000) + 3600 }], bounds: {}, context: {} }];
+      made.refreshTools();
+    },
+    grant: (profile: string, title: string) => {
+      auths = [...auths, { authorizationId: `authz_${title}`, title, profileId: `github.com/x/${profile}@0.1`, complete: true, attestations: [{ expiresAt: Math.floor(Date.now() / 1000) + 3600 }], bounds: {}, context: {} }];
       made.refreshTools();
     },
   };
@@ -136,6 +140,8 @@ describe('call-tool', () => {
     expect(r.isError).toBe(true);
     expect(first(r)).toContain('Refused: the arguments do not fit "mail__send_message"');
     expect(first(r)).toContain('no ticket was requested');
+    // The tool's own argument list, so the next attempt fits.
+    expect(first(r)).toMatch(/Call it again with the arguments that tool takes: mail__send_message\(to, count\?\)\.$/);
     expect(reached).toEqual([]);
     await c.close();
   });
@@ -190,24 +196,78 @@ describe('the change note names tools added since the chat started', () => {
     expect(all(await c.callTool({ name: 'list-integrations', arguments: {} }))).not.toContain('[Suveren gateway]');
     s.setTools([SEND]);
     const one = all(await c.callTool({ name: 'list-integrations', arguments: {} }));
-    expect(one).toContain('[Suveren gateway] New tools are available since this chat started: mail__send_message. If they are not in your tool list, call them through call-tool(tool: "<name>", arguments: {...}). Or the person restarts the AI app, which then lists them.');
+    expect(one).toContain('[Suveren gateway] New tools since this chat started: mail__send_message(to, count?). If they are not in your tool list, call them through call-tool.');
     expect(all(await c.callTool({ name: 'list-integrations', arguments: {} }))).not.toContain('[Suveren gateway]');
     s.setTools([SEND, SETUP]);
     s.grantSetup();
     const two = all(await c.callTool({ name: 'call-tool', arguments: { tool: 'list-integrations', arguments: {} } }));
     // Setup was signed too: one note carries both.
     expect(two).toContain('[Suveren gateway] Mandates changed since this chat started: added');
-    expect(two).toContain('\n\nNew tools are available since this chat started: setup__create_mandate.');
-    expect(two).not.toContain('restarts');
+    expect(two).toContain('\n\nNew tools since this chat started: setup__create_mandate(to, count?).');
+    expect(two).not.toContain('call them through');
     // One note per answer, also through call-tool.
     expect(two.split('[Suveren gateway]')).toHaveLength(2);
     await c.close();
   });
 
-  it('many tools are counted per connector', () => {
+  it('more than 10 new tools: counted per connector, without arguments', () => {
     const names = Array.from({ length: 12 }, (_, i) => `mollie__T${i}`).concat(['mail__a']);
-    expect(newToolsNote(names, false)).toBe('New tools are available since this chat started: 12 from mollie, 1 from mail. list-authorizations(domain) names them.');
+    const sig = (n: string) => `${n}(x)`;
+    expect(newToolsNote(names, false, 'chat', sig)).toBe('New tools are available since this chat started: 12 from mollie, 1 from mail. list-authorizations(domain) names them.');
+    expect(newToolsNote(names, true, 'chat', sig)).toBe('New tools are available since this chat started: 12 from mollie, 1 from mail. list-authorizations(domain) names them. If they are not in your tool list, call them through call-tool.');
     expect(newToolsNote([], true)).toBeUndefined();
+    // Exactly 10 are still named one by one, with arguments.
+    const ten = Array.from({ length: 10 }, (_, i) => `mail__t${i}`);
+    expect(newToolsNote(ten, false, 'chat', sig)).toBe(`New tools since this chat started: ${ten.map(sig).join(', ')}.`);
+  });
+
+  it('the compact argument list: required first, optional with ?, no types, nested only by name', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        attachments: { type: 'array', items: { type: 'object', properties: { connector: { type: 'string' }, id: { type: 'string' } }, required: ['id'] } },
+        to: { type: 'string', description: 'Recipient' },
+        options: { type: 'object', properties: { cc: { type: 'string' } }, required: ['cc'] },
+        subject: { type: 'string' },
+        body: { type: 'string' },
+      },
+      required: ['to', 'subject', 'body'],
+    };
+    expect(compactSignature('mail__send_message', schema)).toBe('mail__send_message(to, subject, body, attachments?, options?)');
+    expect(compactSignature('mail__list_messages', { type: 'object', properties: { query: {}, max: { type: 'number' } } })).toBe('mail__list_messages(query?, max?)');
+    expect(compactSignature('crm__export', { type: 'object' })).toBe('crm__export()');
+    expect(compactSignature('crm__export', undefined)).toBe('crm__export()');
+  });
+
+  it('the note lists a started connector\'s tools with their own arguments', async () => {
+    const SEND_FULL = tool('mail__send_message', { inputSchema: {
+      type: 'object',
+      properties: { attachments: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' } } } }, to: { type: 'string' }, subject: { type: 'string' }, body: { type: 'string' } },
+      required: ['to', 'subject', 'body'],
+    } } as Partial<DiscoveredTool>);
+    const LIST = tool('mail__list_messages', { inputSchema: { type: 'object', properties: { query: { type: 'string' }, max: { type: 'number' } } } } as Partial<DiscoveredTool>);
+    const s = stack([]);
+    const c = await client(s.server);
+    expect(all(await c.callTool({ name: 'list-integrations', arguments: {} }))).not.toContain('[Suveren gateway]');
+    s.setTools([LIST, SEND_FULL, INTERNAL]);
+    const note = all(await c.callTool({ name: 'list-integrations', arguments: {} }));
+    expect(note).toContain('[Suveren gateway] New tools since this chat started: mail__list_messages(query?, max?), mail__send_message(to, subject, body, attachments?). If they are not in your tool list, call them through call-tool.');
+    // Never an internal tool.
+    expect(note).not.toContain('describe_mandate_proposal');
+    await c.close();
+  });
+
+  it('a new mandate for a connector that already runs adds no tool note: its tools were listed from the start', async () => {
+    const s = stack([SEND]);
+    const c = await client(s.server);
+    expect((await c.listTools()).tools.map(t => t.name)).toContain('mail__send_message');
+    s.grant('email', 'Mail to customers');
+    const note = all(await c.callTool({ name: 'list-integrations', arguments: {} }));
+    expect(note).toContain('[Suveren gateway] Mandates changed since this chat started: added "Mail to customers".');
+    expect(note).not.toContain('New tools');
+    expect(note).not.toContain('mail__send_message(');
+    expect(note).not.toContain('call-tool');
+    await c.close();
   });
 
   it('a new session of an app that keeps its old list hears about tools added since it last connected', async () => {
@@ -225,7 +285,7 @@ describe('the change note names tools added since the chat started', () => {
     tools = [...tools, 'mail__send_message'];
     // The old session never answered again; a new one starts with the longer list.
     const second = session();
-    expect(second.noteForAnswer()).toBe('[Suveren gateway] New tools are available since this app last connected: mail__send_message. If they are not in your tool list, call them through call-tool(tool: "<name>", arguments: {...}). Or the person restarts the AI app, which then lists them.');
+    expect(second.noteForAnswer()).toBe('[Suveren gateway] New tools since this app last connected: mail__send_message. If they are not in your tool list, call them through call-tool.');
     expect(second.noteForAnswer()).toBeUndefined();
     // A third session of the same app, with nothing new, hears nothing.
     expect(session().noteForAnswer()).toBeUndefined();
