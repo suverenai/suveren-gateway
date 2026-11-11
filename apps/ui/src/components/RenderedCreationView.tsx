@@ -81,7 +81,7 @@ export function RenderedCreationView({ view, systemName }: { view: CreationView;
             {b.row.lines.map((l) => (
               <tr key={l.key}>
                 <td className="compare-label">{l.label}</td>
-                <td className="compare-now">{l.now}</td>
+                <td className={l.now !== l.next ? 'compare-now compare-replaced' : 'compare-now'}>{l.now}</td>
                 <td className="compare-new">{l.next}</td>
               </tr>
             ))}

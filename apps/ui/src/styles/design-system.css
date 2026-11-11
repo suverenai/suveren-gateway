@@ -4197,6 +4197,8 @@ video.document-preview-media { width: 100%; }
 .compare-table td { padding: 0.15rem var(--space-3) 0.15rem 0; vertical-align: top; word-break: break-word; }
 .compare-table .compare-label { color: var(--text-tertiary); white-space: nowrap; }
 .compare-table .compare-now { color: var(--prov-system); font-weight: 600; }
+/* The value being replaced: struck through, keeping its source colour (Andreas, 2026-11-11). */
+.compare-table .compare-replaced { text-decoration: line-through; text-decoration-thickness: 1px; }
 .compare-table .compare-new { color: var(--text-primary); font-weight: 700; }
 /* An update's unchanged fields — folded under the change table (record-change.ts). */
 .change-unchanged { margin: 0.2rem 0 0.4rem; font-size: var(--text-body-sm); }
