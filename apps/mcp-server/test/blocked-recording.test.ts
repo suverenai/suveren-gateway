@@ -21,9 +21,11 @@ import type { IntegrationManager, DiscoveredTool } from '../src/lib/integration-
 const profilesDir =
   process.env.SUVEREN_PROFILES_DIR ?? join(import.meta.dirname, '..', '..', '..', '..', 'hap-profiles');
 const EMAIL = JSON.parse(readFileSync(join(profilesDir, 'email', '0.8.profile.json'), 'utf8'));
+const EMAIL_09 = JSON.parse(readFileSync(join(profilesDir, 'email', '0.9.profile.json'), 'utf8'));
 
 beforeAll(() => {
   registerProfile(EMAIL.id, EMAIL);
+  registerProfile(EMAIL_09.id, EMAIL_09);
 });
 
 afterEach(() => {
@@ -275,5 +277,20 @@ describe('AU2 — every refusal is recorded', () => {
     expect(recent[0].who).toBe('authority-server');
     expect(recent[0].code).toBe('BOUND_EXCEEDED');
     assertNoContent(recent[0], ['customer@alpenwerk.example', 'SECRET-BODY-TEXT']);
+  });
+
+  it('an attachment source the mandate does not list: refused and recorded (kind "scope"), by its source only', async () => {
+    const auth = { ...AUTH, profileId: EMAIL_09.id, context: { ...EMAIL_SCOPE, allowed_attachment_sources: '' }, gateContent: null } as unknown as EnrichedAuthorization;
+    const state = buildState({ getEnrichedAuthorizations: () => [auth] });
+    const tool = { ...SEND_TOOL, gating: { ...SEND_TOOL.gating, attachmentsArg: 'attachments' } } as DiscoveredTool;
+    const handler = createGatedToolHandler(tool, buildIntegrationManager(), state);
+
+    const result = await handler({ to: 'customer@alpenwerk.example', body: 'SECRET-BODY-TEXT', attachments: [{ connector: 'files', kind: 'file', id: 'SECRET-FILE-ID' }] });
+
+    expect(result.isError).toBe(true);
+    const recent = denialLog.getRecent();
+    expect(recent).toHaveLength(1);
+    expect(recent[0]).toMatchObject({ kind: 'scope', who: 'gateway', field: 'allowed_attachment_sources', value: 'files:file', mandateId: AUTH.authorizationId });
+    assertNoContent(recent[0], ['customer@alpenwerk.example', 'SECRET-BODY-TEXT', 'SECRET-FILE-ID']);
   });
 });

@@ -23,7 +23,7 @@ import { hashToolArgs } from './execution-journal';
 import { computeSubmissionPreviewHash, failedBlockingChecks } from './preview';
 import { blockingRefusalReason } from './checks';
 import { stripSourceLink } from './request-context';
-import { candidatesAllowingAttachments } from './attachment-policy';
+import { candidatesAllowingAttachments, isAttachmentSourceAllowed } from './attachment-policy';
 import {
   resolveAttachmentsAndInserts,
   finalizeAttachmentsForExecution,
@@ -459,6 +459,36 @@ function recordGatekeeperRefusal(
     limit: asValueOrString(pick.bound),
     who: 'gateway',
     code: pick.code,
+  });
+}
+
+/**
+ * Record an attachment the mandates do not allow (attachment-policy.ts) for the
+ * "Blocked" view and the mandate change card: which sources were refused, as
+ * `connector:kind` identifiers — never a file name or content. The mandate is
+ * named only when exactly one could have carried the call.
+ */
+function recordAttachmentRefusal(
+  state: SharedState,
+  tool: DiscoveredTool,
+  candidates: EnrichedAuthorization[],
+  refs: Array<{ connector: string; kind: string }>,
+): void {
+  const valueOf = (c: EnrichedAuthorization) =>
+    typeof c.context?.[ATTACHMENT_SOURCES_FIELD] === 'string' ? (c.context[ATTACHMENT_SOURCES_FIELD] as string) : undefined;
+  const refused = [...new Set(refs
+    .filter(ref => !candidates.some(c => isAttachmentSourceAllowed(c.profileId, getProfile(c.profileId) as never, valueOf(c), ref).allowed))
+    .map(ref => `${ref.connector}:${ref.kind}`))];
+  if (refused.length === 0) return;
+  const only = candidates.length === 1 ? candidates[0] : undefined;
+  recordBlocked(state, tool, {
+    kind: 'scope',
+    detail: 'Refused locally: the mandate does not allow this attachment source.',
+    field: ATTACHMENT_SOURCES_FIELD,
+    value: refused.join(','),
+    ...(only ? { mandateId: only.authorizationId, limit: valueOf(only) ?? '' } : {}),
+    who: 'gateway',
+    code: 'BOUND_EXCEEDED',
   });
 }
 
@@ -1533,6 +1563,7 @@ function createGatedToolHandlerInner(
         : [];
       const narrowed = candidatesAllowingAttachments(passers, refs, (id) => getProfile(id) as never);
       if (narrowed.allowed.length === 0) {
+        recordAttachmentRefusal(state, tool, passers, refs);
         return {
           content: [{ type: 'text', text: attachmentNotAllowedText({
             tool: tool.namespacedName,

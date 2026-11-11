@@ -5138,6 +5138,7 @@ body.apr-has-strip .main-content { margin-right: 2.75rem; }
 .mc-add::before { content: "+ "; }
 .mc-rem { color: var(--text-tertiary); text-decoration: line-through; }
 .mc-rem::before { content: "– "; display: inline-block; }
+.mc-meaning { grid-column: 1 / -1; font-size: var(--text-body-sm); color: var(--text-secondary); margin: 0; }
 .mc-intent { border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-3) var(--space-3); margin: 0; font-size: var(--text-body-sm); line-height: var(--line-relaxed); }
 .mc-intent del { color: var(--text-tertiary); }
 .mc-intent ins { text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 3px; font-weight: 700; }

@@ -11,7 +11,7 @@
  * false for it, so {@link isAttachmentSourceAllowed} always returns
  * `allowed: false` below, regardless of what the caller passes as
  * `allowedSourcesValue` — generic (field name is the only profile-specific
- * thing, declared once below), so it also activates automatically for any
+ * thing, declared once in @hap/core/scope-rules), so it also activates automatically for any
  * OTHER profile that later adds the same field.
  *
  * Deliberately NOT relying solely on hap-core's generic scope `subset`
@@ -26,7 +26,11 @@
  * defence in depth, for every mandate that DOES set the scope value.
  */
 
-export const ATTACHMENT_SOURCES_FIELD = 'allowed_attachment_sources';
+import { ATTACHMENT_SOURCES_FIELD, emptyScopeMeans } from '@hap/core/scope-rules';
+
+// Declared once, in @hap/core/scope-rules, with the rule "empty allows nothing"
+// that the mandate change card reads too.
+export { ATTACHMENT_SOURCES_FIELD };
 
 /** The shape of a profile this module needs — narrower than hap-core's full `Profile`. */
 export interface AttachmentPolicyProfileLike {
@@ -70,6 +74,10 @@ export function isAttachmentSourceAllowed(
     (allowedSourcesValue ?? '').split(',').map(s => s.trim()).filter(Boolean),
   );
   const key = `${ref.connector}:${ref.kind}`;
+  // An empty list allows nothing (scope-rules.ts): the same rule the card shows.
+  if (allowedSet.size === 0 && emptyScopeMeans(ATTACHMENT_SOURCES_FIELD) !== 'nothing') {
+    return { allowed: true, reason: '' };
+  }
   if (!allowedSet.has(key)) {
     return {
       allowed: false,

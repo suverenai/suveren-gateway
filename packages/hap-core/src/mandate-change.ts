@@ -4,8 +4,12 @@
  * it against the signed mandate when the person edits the change themselves).
  *
  * Driven only by what a profile declares: no field or profile name is written
- * here. Pure, no node imports: the browser bundle imports this file directly.
+ * here; what an empty list allows comes from scope-rules.ts, the rule the
+ * gateway enforces. Pure, no node imports: the browser bundle imports this file directly.
  */
+import { emptyScopeMeans, type EmptyMeans } from './scope-rules';
+
+export type { EmptyMeans } from './scope-rules';
 
 export type ChangeTag = 'More' | 'Less' | 'Changed' | 'New' | 'Gone';
 
@@ -21,6 +25,8 @@ export interface ChangeProfile {
 interface FieldDef {
   displayName?: string;
   unit?: string;
+  /** A profile value format, e.g. `connector:kind` for document sources. */
+  format?: string;
   boundType?: { kind?: string };
   constraint?: { enforceable?: string[] };
 }
@@ -37,6 +43,10 @@ export interface ChangeRow {
   /** For a list: only what is added and what is removed. */
   added?: string[];
   removed?: string[];
+  /** For a list: what an empty value allows, as the gateway enforces it. */
+  emptyMeans?: EmptyMeans;
+  /** The profile's value format, when it declares one (the card names `connector:kind` values). */
+  format?: string;
 }
 
 export type WordPart = { kind: 'same' | 'add' | 'del'; text: string };
@@ -47,8 +57,8 @@ export interface MandateDiff {
   lastsUntil?: { before: number; after: number; tag: ChangeTag };
   /** The intent, word by word. Absent when it does not change. */
   intent?: WordPart[];
-  /** The rest, one line each, for "Stays the same". */
-  stays: Array<{ label: string; value: string }>;
+  /** The rest, one line each, for "Stays the same". `format`: as on a row. */
+  stays: Array<{ label: string; value: string; format?: string }>;
   /** Set when the change moves to a newer version of the area's profile. */
   versionMove?: { from: string; to: string };
 }
@@ -102,9 +112,14 @@ function scalarRow(section: ChangeRow['section'], key: string, def: FieldDef | u
 }
 
 /**
- * A list field. An empty list on a scope field means "anything": no restriction.
- * Setting one narrows it, removing it widens it. With both an addition and a
- * removal the row counts as More: it reaches somewhere it could not before.
+ * A list field. What an empty list allows is the gateway's rule for that field
+ * (scope-rules.ts):
+ *  - "anything" (no restriction): setting a list narrows it (Less), emptying it
+ *    widens it (More);
+ *  - "nothing" (fail-closed): the list is exactly what is allowed, so an
+ *    addition is More and a removal Less, from or to empty too.
+ * With both an addition and a removal the row counts as More: it reaches
+ * somewhere it could not before.
  */
 function listRow(key: string, def: FieldDef | undefined, before: Values[string], after: Values[string]): ChangeRow | null {
   const a = listOf(before);
@@ -112,19 +127,25 @@ function listRow(key: string, def: FieldDef | undefined, before: Values[string],
   const added = b.filter(x => !a.includes(x));
   const removed = a.filter(x => !b.includes(x));
   if (added.length === 0 && removed.length === 0) return null;
+  const emptyMeans = emptyScopeMeans(key);
   let tag: ChangeTag;
-  if (isEmpty(before)) tag = 'Less';
-  else if (isEmpty(after)) tag = 'More';
+  if (emptyMeans === 'anything' && a.length === 0) tag = 'Less';
+  else if (emptyMeans === 'anything' && b.length === 0) tag = 'More';
   else tag = added.length > 0 ? 'More' : 'Less';
   return {
     section: 'scope', field: key, label: fieldLabel(def, key),
     before: isEmpty(before) ? null : (before as string), after: isEmpty(after) ? null : (after as string),
-    tag, added, removed,
+    tag, added, removed, emptyMeans,
+    ...(def?.format ? { format: def.format } : {}),
   };
 }
 
 function valueText(key: string, def: FieldDef | undefined, v: string | number | undefined): string {
   return v === undefined || v === '' ? '—' : String(v);
+}
+
+function stay(def: FieldDef | undefined, key: string, v: string | number | undefined): MandateDiff['stays'][number] {
+  return { label: fieldLabel(def, key), value: valueText(key, def, v), ...(def?.format ? { format: def.format } : {}) };
 }
 
 /** Word-level difference: longest common subsequence over words and the spaces between them. */
@@ -178,13 +199,13 @@ export function computeMandateDiff(input: DiffInput): MandateDiff {
         continue;
       }
       if (String(b[key] ?? '') === String(a[key] ?? '')) {
-        if (!isEmpty(a[key])) stays.push({ label: fieldLabel(def, key), value: valueText(key, def, a[key]) });
+        if (!isEmpty(a[key])) stays.push(stay(def, key, a[key]));
         continue;
       }
       if (section === 'scope' && isSubset(def)) {
         const row = listRow(key, def, b[key], a[key]);
         if (row) rows.push(row);
-        else if (!isEmpty(a[key])) stays.push({ label: fieldLabel(def, key), value: valueText(key, def, a[key]) });
+        else if (!isEmpty(a[key])) stays.push(stay(def, key, a[key]));
       } else {
         rows.push(scalarRow(section, key, def, b[key], a[key]));
       }

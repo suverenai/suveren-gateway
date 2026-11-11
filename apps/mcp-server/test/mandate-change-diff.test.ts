@@ -5,6 +5,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { computeMandateDiff, diffIsEmpty, wordDiff, carryValues, type ChangeProfile } from '@hap/core/mandate-change';
+import { ATTACHMENT_SOURCES_FIELD } from '@hap/core/scope-rules';
 
 const profile: ChangeProfile = {
   id: 'p/area@1',
@@ -63,6 +64,34 @@ describe('direction of a change', () => {
     const d = computeMandateDiff({ before: side({ daily_max: 5 }, {}), after: { profile: newer, bounds: { extra: 3 }, scope: {}, intent: 'Why.', mode: 'review', expiresAt: 1000 } });
     expect(d.rows.map((r) => [r.field, r.tag])).toEqual([['extra', 'New'], ['daily_max', 'Gone']]);
     expect(d.versionMove).toEqual({ from: 'p/area@1', to: 'p/area@2' });
+  });
+});
+
+describe('a list whose empty value allows nothing (the attachment sources)', () => {
+  const sources: ChangeProfile = {
+    ...profile,
+    scopeSchema: { keyOrder: [ATTACHMENT_SOURCES_FIELD], fields: { [ATTACHMENT_SOURCES_FIELD]: { displayName: 'Allowed attachment sources', format: 'connector:kind', constraint: { enforceable: ['subset'] } } as never } },
+  };
+  const s = (scope: Record<string, string>) => side({}, scope, { profile: sources });
+  const row = (before: Record<string, string>, after: Record<string, string>) => computeMandateDiff({ before: s(before), after: s(after) }).rows[0];
+
+  it('adding a source to an empty list is More: it allows something that was refused', () => {
+    expect(row({}, { [ATTACHMENT_SOURCES_FIELD]: 'files:file' })).toMatchObject({ tag: 'More', added: ['files:file'], removed: [], emptyMeans: 'nothing', format: 'connector:kind' });
+    expect(row({ [ATTACHMENT_SOURCES_FIELD]: '' }, { [ATTACHMENT_SOURCES_FIELD]: 'files:file' }).tag).toBe('More');
+  });
+  it('removing the last source is Less: nothing may be attached any more', () => {
+    expect(row({ [ATTACHMENT_SOURCES_FIELD]: 'files:file' }, {})).toMatchObject({ tag: 'Less', removed: ['files:file'], after: null });
+  });
+  it('between non-empty lists it reads as any list: an addition More, a removal Less', () => {
+    expect(row({ [ATTACHMENT_SOURCES_FIELD]: 'erp:invoice-pdf' }, { [ATTACHMENT_SOURCES_FIELD]: 'erp:invoice-pdf,files:file' }).tag).toBe('More');
+    expect(row({ [ATTACHMENT_SOURCES_FIELD]: 'erp:invoice-pdf,files:file' }, { [ATTACHMENT_SOURCES_FIELD]: 'files:file' }).tag).toBe('Less');
+  });
+  it('a list whose empty value allows anything keeps its rule and says so', () => {
+    expect(computeMandateDiff({ before: side({}, {}), after: side({}, { recipients: 'a@x' }) }).rows[0]).toMatchObject({ tag: 'Less', emptyMeans: 'anything' });
+  });
+  it('an unchanged source list stays, named with its format so the card can show names', () => {
+    const d = computeMandateDiff({ before: side({ daily_max: 5 }, { [ATTACHMENT_SOURCES_FIELD]: 'files:file' }, { profile: sources }), after: side({ daily_max: 6 }, { [ATTACHMENT_SOURCES_FIELD]: 'files:file' }, { profile: sources }) });
+    expect(d.stays).toContainEqual({ label: 'Allowed attachment sources', value: 'files:file', format: 'connector:kind' });
   });
 });
 

@@ -9,34 +9,43 @@ import { useEffect, useState } from 'react';
 import type { ChangeRow, ChangeTag, MandateDiff, WordPart } from '@hap/core/mandate-change';
 import { spClient } from '../lib/sp-client';
 import {
-  dateText, gatewayFacts, modeWord, rowValue, staysLines, tagClass, waitingWarning,
+  dateText, gatewayFacts, lastsUntilMeaning, modeMeaning, modeWord, rowLabel, rowMeaning, rowValue, staysLines, tagClass, valueName, waitingWarning,
   type ChangeArgs, type ChangeFacts,
 } from '../lib/mandate-change-view';
+import { useSourceManifests } from '../lib/source-manifests';
+import type { SourceManifestLike } from '../lib/attachment-sources';
 
 function Tag({ tag }: { tag: ChangeTag }) {
   return <span className={`mc-tag ${tagClass(tag)}`} data-testid="change-tag">{tag}</span>;
 }
 
-function Row({ row }: { row: ChangeRow }) {
+/** What the change allows, in one sentence from the gateway: never the AI's words. */
+function Meaning({ text }: { text: string }) {
+  return <p className="mc-meaning" data-testid="change-meaning">{text}</p>;
+}
+
+function Row({ row, manifests }: { row: ChangeRow; manifests: SourceManifestLike[] | undefined }) {
   if (row.added || row.removed) {
     return (
       <div className="mc-row" data-testid="change-row" data-field={row.field}>
-        <span className="mc-name">{row.label}</span><span /><Tag tag={row.tag} />
+        <span className="mc-name">{rowLabel(row)}</span><span /><Tag tag={row.tag} />
         <div className="mc-list">
-          {(row.added ?? []).map((v) => <span key={`a-${v}`} className="mc-add">{v}</span>)}
-          {(row.removed ?? []).map((v) => <span key={`r-${v}`} className="mc-rem">{v}</span>)}
+          {(row.added ?? []).map((v) => <span key={`a-${v}`} className="mc-add">{valueName(row, v, manifests)}</span>)}
+          {(row.removed ?? []).map((v) => <span key={`r-${v}`} className="mc-rem">{valueName(row, v, manifests)}</span>)}
         </div>
+        <Meaning text={rowMeaning(row, manifests)} />
       </div>
     );
   }
   return (
     <div className="mc-row" data-testid="change-row" data-field={row.field}>
-      <span className="mc-name">{row.label}</span>
+      <span className="mc-name">{rowLabel(row)}</span>
       <span className="mc-val">
         {row.before !== null && <><span className="mc-old">{rowValue(row, row.before)}</span><span className="mc-arrow">→</span></>}
         <span className="mc-new">{rowValue(row, row.after)}</span>
       </span>
       <Tag tag={row.tag} />
+      <Meaning text={rowMeaning(row, manifests)} />
     </div>
   );
 }
@@ -51,6 +60,7 @@ export function WordDiff({ parts }: { parts: WordPart[] }) {
 
 /** The differences, used by the card and the form's review step. */
 export function MandateChangeDiff({ diff, intentByAi }: { diff: MandateDiff; intentByAi: boolean }) {
+  const manifests = useSourceManifests();
   const hasRows = diff.rows.length > 0 || !!diff.mode || !!diff.lastsUntil;
   const intentLabel = (head: string) => (intentByAi ? `${head} · words proposed by the AI` : head);
   return (
@@ -58,12 +68,13 @@ export function MandateChangeDiff({ diff, intentByAi }: { diff: MandateDiff; int
       {hasRows && (
         <>
           <p className="mc-lab">What would change</p>
-          {diff.rows.map((r) => <Row key={`${r.section}-${r.field}`} row={r} />)}
+          {diff.rows.map((r) => <Row key={`${r.section}-${r.field}`} row={r} manifests={manifests} />)}
           {diff.mode && (
             <div className="mc-row" data-testid="change-row" data-field="mode">
               <span className="mc-name">How it runs</span>
               <span className="mc-val"><span className="mc-old">{modeWord(diff.mode.before)}</span><span className="mc-arrow">→</span><span className="mc-new">{modeWord(diff.mode.after)}</span></span>
               <Tag tag={diff.mode.tag} />
+              <Meaning text={modeMeaning(diff.mode.tag)} />
             </div>
           )}
           {diff.lastsUntil && (
@@ -71,6 +82,7 @@ export function MandateChangeDiff({ diff, intentByAi }: { diff: MandateDiff; int
               <span className="mc-name">Lasts until</span>
               <span className="mc-val"><span className="mc-old">{dateText(diff.lastsUntil.before)}</span><span className="mc-arrow">→</span><span className="mc-new">{dateText(diff.lastsUntil.after)}</span></span>
               <Tag tag={diff.lastsUntil.tag} />
+              <Meaning text={lastsUntilMeaning(diff.lastsUntil.tag)} />
             </div>
           )}
         </>
@@ -96,6 +108,7 @@ export function MandateChangeBody({ proposalId, args, areaTitle, onChangeMyself,
   editError: string | null;
 }) {
   const diff = args.change;
+  const manifests = useSourceManifests();
   const [facts, setFacts] = useState<ChangeFacts | null>(null);
   const [factsReady, setFactsReady] = useState(false);
   useEffect(() => {
@@ -111,10 +124,10 @@ export function MandateChangeBody({ proposalId, args, areaTitle, onChangeMyself,
   }, [proposalId]);
 
   if (!diff) return <p className="msg-error" data-testid="change-unreadable">This change cannot be read. Reject it and ask the AI again.</p>;
-  const factLines = gatewayFacts(facts, diff);
+  const factLines = gatewayFacts(facts, diff, manifests);
   // Before the local read answers, say nothing: it must not flash the unknown-waiting sentence.
   const warning = factsReady ? waitingWarning(facts ? facts.waiting : null) : null;
-  const stays = staysLines(diff);
+  const stays = staysLines(diff, manifests);
   return (
     <div className="mc-card" data-testid="mandate-change-card" style={{ order: 6 }}>
       <div className="mc-head" data-testid="change-kicker">Waiting for you · Change to a mandate</div>
@@ -128,7 +141,7 @@ export function MandateChangeBody({ proposalId, args, areaTitle, onChangeMyself,
             {diff.versionMove && (
               <p className="mc-fact" data-testid="change-version">This mandate is on an older version of the area. It moves to the newest one.</p>
             )}
-            {factLines.map((l) => <p key={l} className="mc-fact">{l}</p>)}
+            {factLines.map((l) => <p key={l} className="mc-fact" data-testid="change-fact">{l}</p>)}
           </div>
         )}
         {warning && <div className="mc-warn" data-testid="change-warning">{warning}</div>}

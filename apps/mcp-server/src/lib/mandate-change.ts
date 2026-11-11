@@ -6,6 +6,7 @@ import { computeBoundsHash, computeIntentHash, computeScopeHash, decodeMandateBl
 import type { ChangeRow, MandateDiff } from '@hap/core/mandate-change';
 import type { SharedState, EnrichedAuthorization } from './shared-state';
 import { getConsumptionState } from './consumption';
+import type { DenialRecord } from './denial-log';
 import { issuerFromPublicKeyHex } from './issuer-from-hex';
 
 export interface SignedMandate {
@@ -118,11 +119,42 @@ export interface LocalChangeFacts {
   today: Array<{ field: string; label: string; current: number; unit?: string }>;
   /** Requests waiting under the old mandate, which close when it is revoked. Null = could not be read. */
   waiting: number | null;
+  /**
+   * Recent refusals this gateway recorded under this mandate's area that the change would
+   * have allowed, newest first, at most two. Values are only those the change adds (already
+   * on the card); a number is the refused amount from the gateway's own record.
+   */
+  refused: Array<{ field: string; ts: number; values?: string[]; value?: number }>;
+}
+
+const MAX_REFUSED = 2;
+const lower = (v: string) => v.trim().toLowerCase();
+
+/**
+ * Would this changed row have allowed that refused call? Only the gateway's own record and the
+ * sealed row are read. A list: every refused value is allowed after the change (an empty list
+ * by the gateway's rule for it). A number: the refused value fits the new limit.
+ */
+function wouldAllow(row: ChangeRow, d: DenialRecord, execField: string | undefined): { values?: string[]; value?: number } | null {
+  if (d.field !== row.field && (execField === undefined || d.field !== execField)) return null;
+  if (row.added || row.removed) {
+    if (d.kind !== 'scope' || typeof d.value !== 'string') return null;
+    const refused = d.value.split(',').map(lower).filter(Boolean);
+    const after = typeof row.after === 'string' ? row.after.split(',').map(lower).filter(Boolean) : [];
+    const allowsAll = after.length === 0 && row.emptyMeans !== 'nothing';
+    if (refused.length === 0 || !(allowsAll || refused.every(v => after.includes(v)))) return null;
+    const values = (row.added ?? []).filter(v => refused.includes(lower(v)));
+    return values.length > 0 ? { values } : allowsAll ? {} : null;
+  }
+  const value = typeof d.value === 'number' ? d.value : typeof d.value === 'string' && d.value.trim() !== '' ? Number(d.value) : NaN;
+  if (d.kind !== 'bound' || !Number.isFinite(value) || typeof row.after !== 'number') return null;
+  if (value > row.after || (typeof row.before === 'number' && value <= row.before)) return null;
+  return { value };
 }
 
 /** Local facts for the card: from this gateway's own logs, never from the AI. */
 export async function changeFacts(state: SharedState, mandateId: unknown, change: unknown): Promise<LocalChangeFacts> {
-  const facts: LocalChangeFacts = { limitReached: [], today: [], waiting: null };
+  const facts: LocalChangeFacts = { limitReached: [], today: [], waiting: null, refused: [] };
   const auth = state.getEnrichedAuthorizations().find(a => a.authorizationId === mandateId);
   const rows = (change as MandateDiff | undefined)?.rows ?? [];
   if (auth) {
@@ -140,6 +172,19 @@ export async function changeFacts(state: SharedState, mandateId: unknown, change
         .map(d => dayOf(d.ts)));
       if (days.size > 0 && typeof row.before === 'number') {
         facts.limitReached.push({ field: row.field, label: row.label, limit: row.before, days: days.size, ofDays: 7 });
+      }
+    }
+    // Refusals under this mandate (or, when the record names no mandate, its area) that the change would have allowed.
+    const area = short(auth.profileId);
+    const mine = denials
+      .filter(d => d.ts >= since && (d.mandateId ? d.mandateId === auth.authorizationId : !!d.profile && short(d.profile) === area))
+      .sort((x, y) => y.ts - x.ts);
+    for (const d of mine) {
+      if (facts.refused.length >= MAX_REFUSED) break;
+      for (const row of rows as ChangeRow[]) {
+        const bt = profile?.boundsSchema?.fields?.[row.field]?.boundType as { of?: string } | undefined;
+        const hit = wouldAllow(row, d, row.section === 'limit' ? bt?.of : undefined);
+        if (hit) { facts.refused.push({ field: row.field, ts: d.ts, ...hit }); break; }
       }
     }
   }

@@ -8,6 +8,7 @@
 import { useEffect, useState } from 'react';
 import { spClient } from '../lib/sp-client';
 import {
+  ATTACHMENT_SOURCE_HEADING,
   attachmentSourceGroups,
   joinSources,
   parseSources,
@@ -52,7 +53,7 @@ export function AttachmentSourcePicker({ id, value, onChange, disabled }: {
 
   return (
     <div className="attach-src" id={id}>
-      <h3 className="attach-src-title">What the AI may attach</h3>
+      <h3 className="attach-src-title">{ATTACHMENT_SOURCE_HEADING}</h3>
       <p className="attach-src-note">Tick what may leave with these emails. Nothing ticked means text only.</p>
       {loaded === 'loading' && <p className="attach-src-note">Loading the connectors…</p>}
       {loaded === 'error' && <p className="attach-src-note" role="alert">Could not load the connectors. Nothing was changed.</p>}

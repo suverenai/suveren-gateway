@@ -13,6 +13,9 @@
 /** The profile field `format` that marks an attachment-source list. */
 export const ATTACHMENT_SOURCE_FORMAT = 'connector:kind';
 
+/** The mandate form's heading for such a list; every surface that names the field uses it. */
+export const ATTACHMENT_SOURCE_HEADING = 'What the AI may attach';
+
 export function isAttachmentSourceField(field: { format?: string } | null | undefined): boolean {
   return field?.format === ATTACHMENT_SOURCE_FORMAT;
 }
