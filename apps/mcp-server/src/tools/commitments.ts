@@ -693,10 +693,15 @@ export async function executeCommitted(
     logExecutionOutcome(proposal.id, true);
     // Record locally for cumulative tracking (parity with the automatic path).
     // Reached once per ticket, by construction of the journal above.
+    // v0.8: the wire context no longer carries `action_type` (it travels as the proposal's own
+    // `actionType`). Without it here the entry counted against every limit of the mandate, so one
+    // approved send read "1/0" on its test-data loads (sumByWindow counts an untyped entry everywhere).
     state.executionLog.record({
       profileId: proposal.profileId,
       path: proposal.path,
-      execution: proposal.executionContext,
+      execution: proposalActionType
+        ? { ...proposal.executionContext, action_type: proposalActionType }
+        : proposal.executionContext,
       timestamp: Math.floor(Date.now() / 1000),
     });
     return { text: `Proposal ${proposal.id} committed and executed.\nResult: ${resultText}` };
