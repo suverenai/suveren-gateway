@@ -15,6 +15,7 @@ import { mandateRight } from '../lib/mandate-rights';
 import { replacedRevokeProblem } from '../lib/mandate-replace';
 import { replacedOutcomeArgs, replacedWithdrawRoute } from '../lib/reject-outcome';
 import { computeMandateDiff, type MandateDiff } from '@hap/core/mandate-change';
+import { unmetForMandate, atLeastOneSignHint } from '@hap/core/scope-rules';
 import { MandateChangeDiff } from '../components/MandateChangeCard';
 import type { AgentProfile, AgentBoundsParams, AgentScopeParams } from '@hap/core';
 import { effectiveGrantors, type ProfileConfig } from '../lib/sp-client';
@@ -429,6 +430,9 @@ export function AgentReviewPage() {
   // those — the AS refuses any other (commitment_mode_not_allowed).
   const offeredModes = offeredCommitModes(profile);
   const noModeAllowed = offeredModes.length === 0;
+  // The profile's `scopeSchema.atLeastOne`: while the limits allow a listed action,
+  // one of the group's fields must be filled — the gateway refuses to sign otherwise.
+  const atLeastOneUnmet = profile ? unmetForMandate(profile, gateData.context, gateData.bounds) : [];
   const ttlExceedsMax = ttlSeconds > ttlMax;
   const commitStyleImmediate = {
     flex: 1,
@@ -789,13 +793,19 @@ export function AgentReviewPage() {
           </div>
         ) : null}
 
+        {atLeastOneUnmet.length > 0 && profile && (
+          <p className="cta-helper" data-testid="at-least-one-needed" style={{ marginBottom: '0.5rem' }}>
+            {atLeastOneSignHint(profile, atLeastOneUnmet[0])}
+          </p>
+        )}
+
         <div style={{ display: 'flex', gap: '0.5rem' }}>
           <button className="btn btn-ghost" onClick={() => navigate('/mandates/new/intent')}>Back</button>
           <button
             className="btn btn-primary btn-lg"
             style={{ flex: 1 }}
             onClick={handleCommit}
-            disabled={submitting || !authTitle.trim() || blockedByTeamGate || noModeAllowed || ttlSeconds <= 0}
+            disabled={submitting || !authTitle.trim() || blockedByTeamGate || noModeAllowed || ttlSeconds <= 0 || atLeastOneUnmet.length > 0}
           >
             {submitting ? 'Signing...' : commitMode === 'immediate' ? 'Sign mandate' : 'Sign mandate (asks first)'}
           </button>

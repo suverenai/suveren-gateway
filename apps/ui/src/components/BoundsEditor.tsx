@@ -4,6 +4,7 @@ import type { AgentProfile, AgentBoundsParams, AgentScopeParams, ProfileBoundsFi
 import { DiscoveredScopeField } from './DiscoveredScopeField';
 import { AttachmentSourcePicker } from './AttachmentSourcePicker';
 import { isAttachmentSourceField } from '../lib/attachment-sources';
+import { atLeastOneGroups, boundsAllowAction, atLeastOneFormHint, type UnmetGroup } from '@hap/core/scope-rules';
 import { spClient, type IntegrationManifest, type ProfileConfig, type CapKind } from '../lib/sp-client';
 import { minForBound, maxForBound, seedForBound, numericBoundValue } from '../lib/bound-defaults';
 import { formatUnit } from '../lib/bound-format';
@@ -1071,6 +1072,16 @@ export function BoundsEditor({
   // Whether the primary Continue button should be disabled.
   const continueBlocked = hardViolatingKeys.length > 0;
 
+  // The profile's `scopeSchema.atLeastOne` groups that apply with the limits as
+  // they stand now (a listed action still allowed): their fields read "at least
+  // one of these". Signing stays off on the review step until one is filled.
+  const [liveBounds] = buildBoundsAndContext();
+  const applyingGroups: UnmetGroup[] = atLeastOneGroups(profile)
+    .map(group => ({ group, actionType: group.requiredFor.find(a => boundsAllowAction(profile, liveBounds, a)) }))
+    .filter((g): g is UnmetGroup => typeof g.actionType === 'string');
+  const groupHintBefore = (key: string): UnmetGroup | undefined =>
+    applyingGroups.find(g => contextFields.find(([k]) => g.group.fields.includes(k))?.[0] === key);
+
   return (
     <div>
       {contextFields.length > 0 && (
@@ -1084,9 +1095,13 @@ export function BoundsEditor({
           </div>
           {contextFields.map(([key, fieldDef]) => {
             const hasDiscovery = !!discoveryIntegration?.contextDiscovery?.[key];
+            const hint = groupHintBefore(key);
             return (
+              <div key={`context-${key}`} style={{ display: 'contents' }}>
+              {hint && (
+                <p className="cta-helper" data-testid="at-least-one-hint">{atLeastOneFormHint(profile, hint)}</p>
+              )}
               <FieldRow
-                key={`context-${key}`}
                 fieldKey={key}
                 fieldDef={fieldDef}
                 value={contextValues[key]}
@@ -1097,6 +1112,7 @@ export function BoundsEditor({
                 onLabels={(fieldKey, labels) => setContextLabels(prev => ({ ...prev, [fieldKey]: labels }))}
                 options={withSelected(profileValuedOptions[key], contextValues[key])}
               />
+              </div>
             );
           })}
         </div>
