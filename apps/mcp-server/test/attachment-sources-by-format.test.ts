@@ -127,8 +127,9 @@ describe('the change card tags the list the way the gateway enforces it', () => 
 
 describe('the AI\'s guidance reads the declared field', () => {
   it('the field list for a proposal says what the field takes', () => {
-    expect(proposalFields('setup__create_mandate', 'bulletin', BULLETIN as never, ['review'])).toContain(
-      `${FIELD} (Documents it may include) = comma-separated connector:kind sources, for example files:file`,
+    const sources = [{ key: 'files:file', connectorId: 'files', kind: 'file', title: 'Saved files' }];
+    expect(proposalFields('setup__create_mandate', 'bulletin', BULLETIN as never, ['review'], sources)).toContain(
+      `${FIELD} (Documents it may include) = comma-separated, from Saved files (files:file); when the work attaches files`,
     );
   });
 

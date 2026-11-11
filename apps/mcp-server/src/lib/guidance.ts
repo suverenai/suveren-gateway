@@ -16,6 +16,7 @@
 
 import { attachmentSourcesFieldDeclared, attachmentSourcesValue, isAttachmentSourceAllowed, type AttachmentPolicyProfileLike } from './attachment-policy';
 import { isDocumentSourcesField, atLeastOneGroups } from '@hap/core/scope-rules';
+import { classifyEnumSwitches } from './read-gate';
 
 // ─── Inputs (narrow views, so tests and callers need no full types) ─────────
 
@@ -253,24 +254,42 @@ export function productionBlockedSteps(m: GuideManifest, facts: Pick<ConnectorFa
   return cardSteps(m, false);
 }
 
+/**
+ * What an attachment-source field takes: the sources this gateway's connectors offer, by the title the
+ * mandate form shows, with what each holds (the manifest's own description says "images" is a saved file).
+ */
+function sourcesWords(sources: readonly AttachSource[]): string {
+  if (sources.length === 0) return 'comma-separated connector:kind sources; no connector here offers one';
+  const list = sources.map(s => `${s.title} (${s.key}${s.description ? `: ${s.description}` : ''})`).join(', ');
+  return `comma-separated, from ${list}; when the work attaches files, include the source they come from, or every attachment is refused`;
+}
+
 /** The fields to give `create_mandate` for one profile, from its own schema: required, allowed values, units. */
 export function proposalFields(
   tool: string,
   area: string,
   p: ProfileFieldsLike,
   modes: readonly string[],
+  sources: readonly AttachSource[] = [],
 ): string {
+  // The read switch (an enum bound of exactly unlimited|none): its declared default stands unless the
+  // person says otherwise — without reading, the AI cannot check what it just did.
+  const readSwitches = new Set(classifyEnumSwitches(p.boundsSchema as never).readSide);
   const one = (key: string, f: FieldLike): string => {
     const bits: string[] = [];
     const values = f.boundType?.kind === 'enum' ? f.boundType.values : f.enum;
     if (values && values.length) bits.push(values.join('|'));
-    else if (isDocumentSourcesField(f)) bits.push('comma-separated connector:kind sources, for example files:file');
+    else if (isDocumentSourcesField(f)) bits.push(sourcesWords(sources));
     else if (f.valuesFrom) bits.push(`comma-separated names from the ${f.valuesFrom} available`);
     else bits.push(f.boundType ? 'number' : 'text');
     const extra: string[] = [];
     if (f.unit && f.unit !== 'count') extra.push(f.unit);
     if (f.maximum !== undefined) extra.push(`at most ${f.maximum}`);
-    if (f.default !== undefined) extra.push(`default ${String(f.default)}`);
+    if (f.default !== undefined) {
+      extra.push(readSwitches.has(key)
+        ? `default ${String(f.default)}: keep it unless the person says otherwise${f.default !== 'none' ? '; you need it to check your own results' : ''}`
+        : `default ${String(f.default)}`);
+    }
     return `${key}${f.required ? '*' : ''}${f.displayName ? ` (${f.displayName})` : ''} = ${bits.join('')}${extra.length ? ` [${extra.join(', ')}]` : ''}`;
   };
   const list = (fields: Record<string, FieldLike> | undefined) =>
@@ -311,6 +330,8 @@ export interface MissingMandateFacts {
 
 export interface OverviewInput {
   manifests: GuideManifest[];
+  /** Where the attachable documents come from when `manifests` is narrowed to one area; default `manifests`. */
+  sourceManifests?: GuideManifest[];
   facts: (id: string) => ConnectorFacts;
   auths: GuideAuth[];
   /** The area's name as the person sees it ("Email"). */
@@ -344,6 +365,8 @@ export function howToGetMandate(
   area: string,
   card: string,
   input: Pick<OverviewInput, 'areaName' | 'setup' | 'team' | 'detail' | 'profileOf'>,
+  /** The attachment sources this gateway offers, for an area whose profile has an attachment-source field. */
+  sources: readonly AttachSource[] = [],
 ): string {
   const name = input.areaName(area);
   const t = input.team?.get(shortOf(area));
@@ -368,7 +391,7 @@ export function howToGetMandate(
     const modeNote = modes.length > 0 ? ` (modes you may propose: ${modes.join(', ')})` : '';
     const known = input.profileOf?.(area);
     const fields = input.detail && known
-      ? `\n      ${proposalFields(setup.tool, area, known.profile, known.modes)}`
+      ? `\n      ${proposalFields(setup.tool, area, known.profile, known.modes, sources)}`
       : known ? ` Its fields: list-authorizations(domain: "${shortOf(area)}").` : '';
     return `You can prepare this mandate yourself, so do not send the person to the form. Propose it with ${setup.tool}(profile: "${shortOf(area)}", ...)${modeNote}. ${BEFORE_PROPOSING} The person approves it in the gateway.${fields}`;
   }
@@ -381,7 +404,7 @@ interface ConnectorLine {
 }
 
 /** One connector: is it running, set up, covered by a mandate; and the next step for each gap. */
-function connectorLine(m: GuideManifest, input: OverviewInput, sourcesByConsumer: Map<string, AttachSource[]>): ConnectorLine {
+function connectorLine(m: GuideManifest, input: OverviewInput, sourcesByConsumer: Map<string, AttachSource[]>, all: AttachSource[]): ConnectorLine {
   const f = input.facts(m.id);
   const areas = manifestAreas(m);
   const lines: string[] = [];
@@ -422,7 +445,7 @@ function connectorLine(m: GuideManifest, input: OverviewInput, sourcesByConsumer
       const before = ended === 'revoked' ? ' The last one was revoked.'
         : ended === 'expired' ? ' The last one has expired.'
         : input.hadMandate?.(area) ? ' An earlier one has ended (revoked or expired).' : '';
-      lines.push(`    mandate for ${input.areaName(area)}: none.${before} ${howToGetMandate(area, pickerCard(m, area, input.areaName), input)}`);
+      lines.push(`    mandate for ${input.areaName(area)}: none.${before} ${howToGetMandate(area, pickerCard(m, area, input.areaName), input, all)}`);
     }
   }
 
@@ -468,6 +491,8 @@ export interface AttachSource {
   title: string;
   /** The tool that brings this kind in, as the AI calls it. */
   savedBy?: string;
+  /** What it holds, as the manifest says ("Files your AI saved, such as PDFs, images, video and text"). */
+  description?: string;
 }
 
 /** All attachable document kinds across `manifests`, each with the tool that saves it (if declared). */
@@ -484,6 +509,7 @@ export function attachmentSources(
         kind,
         title: sourceTitle(kind, doc),
         ...(doc.savedBy ? { savedBy: toolName(m.id, doc.savedBy) } : {}),
+        ...(doc.description?.trim() ? { description: doc.description.trim() } : {}),
       });
     }
   }
@@ -543,12 +569,13 @@ export function withoutGatewayAddress(text: string): string {
 
 export function connectorOverview(input: OverviewInput): string {
   const consumers = new Map<string, AttachSource[]>();
-  const all = attachmentSources(input.manifests, input.toolName);
+  // Every connector's documents, also when the answer shows only one area: the Email answer must name Saved files.
+  const all = attachmentSources(input.sourceManifests ?? input.manifests, input.toolName);
   for (const m of input.manifests) {
     const takes = Object.values(m.toolGating?.overrides ?? {}).some(o => !!o?.attachmentsArg);
     if (takes) consumers.set(m.id, all);
   }
-  const lines = input.manifests.map(m => connectorLine(m, input, consumers));
+  const lines = input.manifests.map(m => connectorLine(m, input, consumers, all));
   lines.sort((a, b) => a.rank - b.rank);
   const head = [
     'Connectors, in the order to act (a connector must run before its mandate does anything):',
