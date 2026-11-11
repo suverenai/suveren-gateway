@@ -598,7 +598,7 @@
           "verb": "changed",
           "order": ["id", "email", "crm_contact_id"],
           "labels": {
-            "id": "Customer", "email": "Email (new)", "crm_contact_id": "CRM contact (new)",
+            "id": "Customer", "email": "Email", "crm_contact_id": "CRM contact",
             "id.email": "Email (now)", "id.crm_contact_id": "CRM contact (now)"
           }
         }
@@ -694,13 +694,7 @@
         "checks": [
           { "key": "revision", "label": "Request is for the record's current version", "blocking": true, "showOnly": "fail",
             "path": "id.$version.approved", "compare": { "op": "eq", "to": "id.$version.current" },
-            "detail": "request for version {id.$version.approved}, record at version {id.$version.current}" },
-          { "key": "price-change", "label": "List price", "path": "list_price",
-            "compare": { "op": "eq", "to": "id.list_price" }, "onTrue": "pass", "onFalse": "notice",
-            "detail": "{id.list_price|money} → {list_price|money}" },
-          { "key": "vat-change", "label": "VAT rate", "path": "vat_rate",
-            "compare": { "op": "eq", "to": "id.vat_rate" }, "onTrue": "pass", "onFalse": "notice",
-            "detail": "{id.vat_rate|percent} → {vat_rate|percent}" }
+            "detail": "request for version {id.$version.approved}, record at version {id.$version.current}" }
         ],
         "display": {
           "verb": "changed",
@@ -708,8 +702,8 @@
           "percent": ["vat_rate", "id.vat_rate"],
           "currencyField": "id.currency",
           "labels": {
-            "id": "Item", "list_price": "List price (new)", "id.list_price": "List price (now)",
-            "vat_rate": "VAT rate (new)", "id.vat_rate": "VAT rate (now)"
+            "id": "Item", "list_price": "List price", "id.list_price": "List price (now)",
+            "vat_rate": "VAT rate", "id.vat_rate": "VAT rate (now)"
           }
         }
       },

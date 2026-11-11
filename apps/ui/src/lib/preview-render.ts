@@ -1087,7 +1087,8 @@ function targetChanges(
     if (same) continue;
     lines.push({
       key,
-      label: props[key]?.title ?? humanizeKey(key),
+      // The manifest's label for the bound argument, as on every other row.
+      label: resolveLabel(hints, key, props[key]?.title ?? humanizeKey(key)),
       now: Array.isArray(record[key]) ? (record[key] as unknown[]).map((x) => formatScalar(x)).join(', ') || '—' : formatHinted(record[key], hints, `${section.attach}.${key}`, currency).value || '—',
       next: Array.isArray(value) ? value.map((x) => formatScalar(x)).join(', ') || '—' : formatHinted(value, hints, key, currency).value || '—',
     });

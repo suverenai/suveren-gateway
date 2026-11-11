@@ -319,7 +319,7 @@ describe('the change heading and changes in a list of reads', () => {
       tool: 'get_item', attach: 'id', ...(target ? { target: true as const } : {}),
       result: { status: 'ok', body: { structured: { id: 'i-1', name: 'Paper', list_price: 10, vat_rate: 20, currency: 'EUR', revision: 3 } } },
     }],
-    display: { verb: 'changed', money: ['list_price', 'id.list_price'], percent: ['vat_rate', 'id.vat_rate'], currencyField: 'id.currency', labels: { id: 'Item', list_price: 'List price (new)' } },
+    display: { verb: 'changed', money: ['list_price', 'id.list_price'], percent: ['vat_rate', 'id.vat_rate'], currencyField: 'id.currency', labels: { id: 'Item', list_price: 'List price', vat_rate: 'VAT rate' } },
   });
   const args = { id: 'i-1', revision: 3, list_price: 12, vat_rate: 20 };
 
@@ -334,6 +334,12 @@ describe('the change heading and changes in a list of reads', () => {
     const identity = rows.find((r) => r.kind === 'identity') as { identity: { context: Array<{ key: string }> } };
     expect(identity.identity.context.map((c) => c.key)).not.toContain('list_price');
     expect(sealedTileHeading(v, false)).toBe('You approve this change');
+  });
+
+  it('a row is labelled with the manifest\'s own label for the argument (round 3)', () => {
+    const v = previewBoxView(item(true), 'ERP', { ...args, vat_rate: 10 });
+    const compare = v.creation!.rows.find((r) => r.kind === 'compare') as { lines: Array<{ key: string; label: string; now: string; next: string }> };
+    expect(compare.lines.find((l) => l.key === 'vat_rate')).toEqual({ key: 'vat_rate', label: 'VAT rate', now: '20 %', next: '10 %' });
   });
 
   it('without a version on the read nothing is shown as a change', () => {
