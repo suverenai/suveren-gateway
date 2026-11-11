@@ -15,7 +15,7 @@
  */
 
 import { attachmentSourcesFieldDeclared, attachmentSourcesValue, isAttachmentSourceAllowed, type AttachmentPolicyProfileLike } from './attachment-policy';
-import { isDocumentSourcesField } from '@hap/core/scope-rules';
+import { isDocumentSourcesField, atLeastOneGroups } from '@hap/core/scope-rules';
 
 // ─── Inputs (narrow views, so tests and callers need no full types) ─────────
 
@@ -54,7 +54,7 @@ export interface GuideAuth {
 /** The slice of a profile the field list needs. */
 export interface ProfileFieldsLike {
   boundsSchema?: { fields?: Record<string, FieldLike> };
-  scopeSchema?: { fields?: Record<string, FieldLike> };
+  scopeSchema?: { fields?: Record<string, FieldLike>; atLeastOne?: unknown };
   ttl?: { default?: number; max?: number };
   commitment_modes?: unknown;
 }
@@ -259,10 +259,14 @@ export function proposalFields(
   const list = (fields: Record<string, FieldLike> | undefined) =>
     Object.entries(fields ?? {}).filter(([k]) => k !== 'profile').map(([k, f]) => one(k, f)).join('; ') || 'none';
   const hours = p.ttl?.max ? `, at most ${Math.floor(p.ttl.max / 3600)}` : '';
+  // The profile's `scopeSchema.atLeastOne`: said before the AI proposes, so it asks the person first.
+  const atLeastOne = atLeastOneGroups(p).map(g =>
+    `      scope rule: when the limits allow ${g.requiredFor.join(' or ')}, set at least one of ${g.fields.join(', ')}${g.ask ? ` (ask the person ${g.ask})` : ''}; otherwise the proposal is refused`);
   return [
     `Fields for ${tool}(profile: "${shortOf(area)}", ...), * = required; any other field name is refused:`,
     `      limits {name: value}: ${list(p.boundsSchema?.fields)}`,
     `      scope {name: value}: ${list(p.scopeSchema?.fields)}`,
+    ...atLeastOne,
     `      mode = ${modes.join('|') || 'none allowed'} (ask the person); intent = text, at most 2000 characters; title = short name; duration_hours = number${hours}${p.ttl?.default ? `, default ${Math.floor(p.ttl.default / 3600)}` : ''}`,
   ].join('\n');
 }

@@ -399,6 +399,12 @@ describe('7 more cases from the real-AI test', () => {
       expect(t).toContain('mode = review|automatic (ask the person)');
       expect(t).toContain('duration_hours = number, at most 720, default 24');
     });
+    it('a declared scopeSchema.atLeastOne group is said before the AI proposes (made-up names)', () => {
+      const withGroup = { ...profile, scopeSchema: { ...profile.scopeSchema, atLeastOne: [{ fields: ['rooms', 'buildings'], requiredFor: ['book'], ask: 'where the AI may book' }] } };
+      expect(proposalFields('t', 'x', withGroup, ['review'])).toContain(
+        'scope rule: when the limits allow book, set at least one of rooms, buildings (ask the person where the AI may book); otherwise the proposal is refused');
+      expect(proposalFields('t', 'x', profile, ['review'])).not.toContain('scope rule');
+    });
     it('a profile that allows only review says only review', () => {
       expect(proposalFields('t', 'x', profile, ['review'])).toContain('mode = review (ask the person)');
     });

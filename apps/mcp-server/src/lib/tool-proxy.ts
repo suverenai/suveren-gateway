@@ -62,6 +62,7 @@ import {
 } from './read-gate';
 import { getProfile, listProfiles, ContentBindingError, boundActionTypes } from '@hap/core';
 import { readRefusal } from '@hap/core/refusal';
+import { unmetForAction, atLeastOneExecutionRefusal } from '@hap/core/scope-rules';
 import { readFile } from 'node:fs/promises';
 import { extname } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -1460,6 +1461,10 @@ function createGatedToolHandlerInner(
     // alongside the strings above — for the "Blocked" record only, never for
     // the agent-facing message built from `errors`.
     const structuredRefusals: Array<{ authorizationId: string; profileId: string; code: string; field?: string; bound?: unknown; actual?: unknown }> = [];
+    // The profile's `scopeSchema.atLeastOne` (scope-rules.ts): a mandate whose scope
+    // sets none of a group's fields cannot do the group's action types. Scope never
+    // reaches the Authority Server, so this gateway is the only place that can refuse it.
+    const atLeastOneRefusals: Array<{ authorizationId: string; field: string; sentence: string }> = [];
     for (const candidate of matchingAuths) {
       // Capability gate (enum boundType, e.g. records.json's archive_access/
       // delete_access on archive_record/delete_record): checked BEFORE the
@@ -1514,7 +1519,20 @@ function createGatedToolHandlerInner(
           bound: 0,
         });
       } else if (result.approved) {
-        passers.push(candidate);
+        const unmet = unmetForAction(getProfile(candidate.profileId) as never, candidate.context, typeof execution.action_type === 'string' ? execution.action_type : undefined);
+        if (unmet) {
+          const sentence = atLeastOneExecutionRefusal(getProfile(candidate.profileId) as never, unmet);
+          errors.push(`${candidate.path}: ${sentence}`);
+          atLeastOneRefusals.push({ authorizationId: candidate.authorizationId, field: unmet.group.fields[0], sentence });
+          structuredRefusals.push({
+            authorizationId: candidate.authorizationId,
+            profileId: candidate.profileId,
+            code: 'SCOPE_INVALID_VALUE',
+            field: unmet.group.fields[0],
+          });
+        } else {
+          passers.push(candidate);
+        }
       } else {
         const reasons = result.errors.map(e => {
           if (e.code === 'BOUND_EXCEEDED') {
@@ -1534,6 +1552,24 @@ function createGatedToolHandlerInner(
           });
         }
       }
+    }
+
+    if (passers.length === 0 && atLeastOneRefusals.length > 0 && atLeastOneRefusals.length === matchingAuths.length) {
+      // Every mandate that could carry the call names none of a required group:
+      // the one sentence, nothing run, no ticket or proposal requested.
+      const only = atLeastOneRefusals.length === 1 ? atLeastOneRefusals[0] : undefined;
+      recordBlocked(state, tool, {
+        kind: 'scope',
+        detail: atLeastOneRefusals[0].sentence,
+        field: atLeastOneRefusals[0].field,
+        ...(only ? { mandateId: only.authorizationId } : {}),
+        who: 'gateway',
+        code: 'SCOPE_INVALID_VALUE',
+      });
+      return {
+        content: [{ type: 'text', text: `${atLeastOneRefusals[0].sentence} Nothing ran.` }],
+        isError: true,
+      };
     }
 
     if (passers.length === 0) {

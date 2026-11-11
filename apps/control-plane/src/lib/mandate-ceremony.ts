@@ -32,6 +32,7 @@ import {
 } from '@hap/core';
 import { readRefusal } from '@hap/core/refusal';
 import { carryValues, computeMandateDiff, diffIsEmpty, type MandateDiff } from '@hap/core/mandate-change';
+import { atLeastOneBuildRefusal, unmetForMandate } from '@hap/core/scope-rules';
 
 export interface MandateRequest {
   /**
@@ -115,7 +116,7 @@ export interface MandatePlan {
 
 export class MandateRefused extends Error {
   /** Why, in a form a caller can act on without reading the sentence. */
-  constructor(message: string, readonly code?: 'profile_not_enabled' | 'not_a_grantor' | 'not_your_mandate' | 'mandate_not_active' | 'no_change' | 'changed_since_proposal') { super(message); }
+  constructor(message: string, readonly code?: 'profile_not_enabled' | 'not_a_grantor' | 'not_your_mandate' | 'mandate_not_active' | 'no_change' | 'changed_since_proposal' | 'scope_at_least_one') { super(message); }
 }
 
 const INTENT_MAX = 2000; // the mandate screen's limit
@@ -270,6 +271,10 @@ export async function planMandate(req: MandateRequest, deps: CeremonyDeps): Prom
   const context = scalarRecord('scope', req.scope);
   errors.push(...validateScopeParams(context as never, profile).errors);
   if (errors.length) refuse(`The mandate does not fit profile ${profile.id}: ${errors.join(' ')}`);
+  // The profile's `scopeSchema.atLeastOne`: while the limits allow a listed action,
+  // an empty group would mean "no limit" (scope-rules.ts). Never reaches the AS.
+  const unmet = unmetForMandate(profile, context, bounds);
+  if (unmet.length) refuse(atLeastOneBuildRefusal(profile, unmet[0]), 'scope_at_least_one');
 
   if (!isCommitmentModeAllowed(profile, req.mode)) {
     refuse(`Profile ${profile.id} allows mode ${allowedCommitmentModes(profile).join(' or ') || 'none'}, not "${req.mode}".`);
