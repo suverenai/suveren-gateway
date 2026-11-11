@@ -92,6 +92,15 @@ const PATHS: Record<AreaIconName, React.ReactNode> = {
       <circle cx="10" cy="17" r="2" />
     </>
   ),
+  // Files — two stacked pages (the manifest's `file-text`), so it never reads
+  // as Sales' single page.
+  files: (
+    <>
+      <path d="M9 7h7l3 3v11H9z" />
+      <path d="M16 7v3h3" />
+      <path d="M6 17V4h7" />
+    </>
+  ),
   // Unknown area — a neutral circle-question mark, same shape family as
   // ProfileIcon's 'help-circle', never guessed from the id beyond this.
   unknown: (

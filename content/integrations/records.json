@@ -3,7 +3,7 @@
   "name": "Records",
   "version": "1.0.0",
   "description": "Personal knowledge store — notes, decisions, research, bookmarks managed by AI agents",
-  "icon": "file-text",
+  "icon": "folder",
   "profile": "records",
   "npmPackage": "@humanagencyp/records-mcp",
   "npmVersion": "1.1.0",

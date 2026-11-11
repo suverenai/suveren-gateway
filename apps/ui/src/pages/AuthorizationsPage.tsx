@@ -24,6 +24,7 @@ import { getAuthStatus, getAuthView, isArchivable, isArchived, statusTimestamp, 
 import { newestProfileOf, carryBoundsForward, carryContextForward } from '../lib/profile-upgrade';
 import { profileFieldLines } from '../lib/approval-view';
 import { useProfile } from '../lib/profile-cache';
+import { useAreaCatalog } from '../lib/area-catalog';
 
 type StatusFilter = AuthView;
 type ViewTab = 'mine' | 'team';
@@ -532,6 +533,8 @@ function MandateTickets({ item, manifests }: { item: PendingItem; manifests: Int
 }
 
 export function AuthorizationsPage() {
+  // Loads the connector manifests' area icons (lib/area.ts) and re-renders once they are known.
+  useAreaCatalog();
   // Mine tab state
   const [items, setItems] = useState<PendingItem[]>([]);
   const [mineLoading, setMineLoading] = useState(true);
