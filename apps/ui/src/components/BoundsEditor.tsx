@@ -1137,6 +1137,8 @@ export function BoundsEditor({
                     key,
                     team: mode === 'team',
                     limit: boundsValues[key],
+                    shownWith: boundsFields.map(([k]) => k),
+                    words: limitWords,
                     used: receipts.state === 'ok'
                       ? usedTodayForBound({ receipts: receipts.receipts, coversToday: receipts.coversToday, profileId: profile.id, key, profile, nowMs: Date.now() })
                       : undefined,

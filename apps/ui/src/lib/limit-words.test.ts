@@ -119,6 +119,30 @@ describe('sharedLimitLabel (wording B)', () => {
     });
     expect(sharedLimitLabel({ profile: p, key: 'a_daily', team: true })!.name).toBe('Team limit per day');
   });
+  // Walkthrough 2026-11-11: a CRM mandate card listed "Team limit per day" three
+  // times (write, delete, test data) with no way to tell them apart.
+  describe('a list that shows every limit at once (mandate card, form)', () => {
+    const p = profile({
+      w_daily: { displayName: 'Daily write limit', unit: 'count', appliesTo: ['write'], boundType: { kind: 'cumulative_count', window: 'daily' } },
+      d_daily: { displayName: 'Daily delete limit', unit: 'count', appliesTo: ['delete'], boundType: { kind: 'cumulative_count', window: 'daily' } },
+      m_monthly: { displayName: 'Monthly thing', unit: 'count', appliesTo: ['write'], boundType: { kind: 'cumulative_count', window: 'monthly' } },
+    });
+    const all = ['w_daily', 'd_daily', 'm_monthly'];
+    it('names each row by the profile\'s displayName when another limit shares its window', () => {
+      expect(sharedLimitLabel({ profile: p, key: 'w_daily', team: true, shownWith: all, used: 1, usedIsTeamWide: true, limit: 20 })!.text)
+        .toBe('Team limit per day · Daily write limit (1 of 20 used)');
+      expect(sharedLimitLabel({ profile: p, key: 'm_monthly', team: true, shownWith: all })!.name).toBe('Team limit per month');
+    });
+    it('prefers the manifest\'s noun when it gives one', () => {
+      expect(sharedLimitLabel({ profile: p, key: 'w_daily', team: true, shownWith: all, words: { w_daily: { noun: 'writes', pastParticiple: 'written' } } })!.name)
+        .toBe('Team limit per day · Writes');
+    });
+    it('a limit of 0 reads "not allowed", never "0 of 0 used"', () => {
+      const l = sharedLimitLabel({ profile: p, key: 'd_daily', team: true, shownWith: all, used: 0, usedIsTeamWide: true, limit: 0 })!;
+      expect(l.figures).toBe('not allowed');
+      expect(l.text).toBe('Team limit per day · Daily delete limit (not allowed)');
+    });
+  });
   it('is null for a bound that is not cumulative', () => {
     expect(sharedLimitLabel({ profile: WITH_WORDS, key: 'per_box_max', team: true })).toBeNull();
     expect(cumulativeBound(WITH_WORDS, 'missing')).toBeNull();

@@ -103,6 +103,9 @@ function fmtAmount(n: number, unit?: string): string {
 
 // ─── Wording B: the shared limit ────────────────────────────────────────────
 
+/** What a cumulative limit of 0 says instead of "0 of 0 used". */
+export const NOT_ALLOWED = 'not allowed';
+
 export interface SharedLimitLabel {
   /** "Team limit per day" — plus " · <field name>" when two limits share a window. */
   name: string;
@@ -130,16 +133,34 @@ export function sharedLimitLabel(opts: {
    */
   usedIsTeamWide?: boolean;
   limit?: number | string;
+  /**
+   * The other bound keys shown in the same list (a mandate card or the form
+   * lists every limit at once). Any of them that is cumulative in the same
+   * window makes this row need its own name — otherwise three rows all read
+   * "Team limit per day". Without it, only limits that can govern the same
+   * action count (the approval card shows just the governing ones).
+   */
+  shownWith?: readonly string[];
+  /** The manifest's `limitWords`: its noun names the row before the profile's displayName does. */
+  words?: LimitWords;
 }): SharedLimitLabel | null {
   const b = cumulativeBound(opts.profile, opts.key);
   if (!b) return null;
   const w = WINDOW_WORDS[b.window];
   // Two limits in one window only need telling apart when they can govern the same action.
   const overlap = (o: CumulativeBound) => !o.appliesTo || !b.appliesTo || o.appliesTo.some((a) => b.appliesTo!.includes(a));
-  const ambiguous = cumulativeBounds(opts.profile).some((o) => o.window === b.window && o.key !== b.key && overlap(o));
+  const shown = opts.shownWith ? new Set(opts.shownWith) : null;
+  const ambiguous = cumulativeBounds(opts.profile).some((o) => o.window === b.window && o.key !== b.key
+    && (shown ? shown.has(o.key) : overlap(o)));
   const base = `${opts.team ? 'Team limit' : 'Limit'} per ${w.per}`;
-  const name = ambiguous ? `${base} · ${b.displayName}` : base;
+  const noun = opts.words?.[b.key]?.noun;
+  const what = noun ? noun.charAt(0).toUpperCase() + noun.slice(1) : b.displayName;
+  const name = ambiguous ? `${base} · ${what}` : base;
   const limit = Number(opts.limit);
+  // A limit of 0 is not a budget to count against: it means the action is not allowed.
+  if (opts.limit !== undefined && opts.limit !== '' && limit === 0) {
+    return { name, figures: NOT_ALLOWED, text: `${name} (${NOT_ALLOWED})` };
+  }
   const used = opts.team && !opts.usedIsTeamWide ? undefined : opts.used;
   let figures: string | undefined;
   if (used !== undefined && Number.isFinite(used) && opts.limit !== undefined && opts.limit !== '' && Number.isFinite(limit)) {
