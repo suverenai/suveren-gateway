@@ -492,6 +492,8 @@ export interface IntegrationManifest {
   limitWords?: Record<string, { noun: string; pastParticiple: string }> | null;
   /** Declares a simulation mode: the credential field holding it and its default. Drives the "Simulation" badge. */
   simulation?: { field: string; default: string } | null;
+  /** Touches only this computer (e.g. Files): runs in simulation mode too, so it is never paused by it. */
+  localOnly?: boolean;
   /** Display labels for this connector's CURRENT mode — "<name> · <label>" on
    *  the Integrations card (e.g. "ERP · Built-in", "ERP · Test data"). Keyed
    *  by the `simulation.field` value; an object entry is keyed by the

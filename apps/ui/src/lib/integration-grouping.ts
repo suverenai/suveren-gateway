@@ -99,8 +99,12 @@ export function groupIntegrationsForDisplay(
     return { grouped: false, testSystems: [], realErrors: [], pausedReal: [], ungrouped: entries };
   }
 
-  const testSystems = entries.filter(e => declaresSimulation(e.manifest) && !blockedBySimulation(e, simulationOn));
-  const real = entries.filter(e => !declaresSimulation(e.manifest) || blockedBySimulation(e, simulationOn));
+  // A connector that touches only this computer (manifest `localOnly`, e.g. Files) runs in simulation mode
+  // too: a full card with the test systems, never "paused".
+  const runsInSimulation = (e: IntegrationEntry) => e.manifest.localOnly === true
+    || (declaresSimulation(e.manifest) && !blockedBySimulation(e, simulationOn));
+  const testSystems = entries.filter(runsInSimulation);
+  const real = entries.filter(e => !runsInSimulation(e));
   const realErrors = real.filter(e => e.state === 'error');
   const pausedReal = real.filter(e => e.state !== 'error');
 

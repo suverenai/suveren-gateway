@@ -200,3 +200,21 @@ describe('a connector that runs but says it cannot work (its own status check)',
     expect(buildIntegrationAttentionItems([e])[0].detail).toBe('Files: Files stopped while starting. It said: [files-mcp] fatal: no store');
   });
 });
+
+describe('a connector that touches only this computer (manifest localOnly, e.g. Files)', () => {
+  const files = (state: IntegrationEntry['state'], integration: Record<string, unknown> = {}): IntegrationEntry => ({
+    id: 'files',
+    manifest: { id: 'files', name: 'Files', simulation: null, localOnly: true } as unknown as IntegrationEntry['manifest'],
+    integration: { id: 'files', name: 'Files', running: state === 'running', toolCount: 4, ...integration } as unknown as IntegrationEntry['integration'],
+    state,
+  });
+
+  it('is never paused by simulation mode: the gateway runs it there too', () => {
+    expect(blockedBySimulation(files('running'), true)).toBe(false);
+  });
+
+  it('so its problem reaches the dashboard in simulation mode as well', () => {
+    const items = buildIntegrationAttentionItems([files('running', { problem: 'The Files connector cannot use /x: …' })], true);
+    expect(items.map(i => i.label)).toEqual(['Files needs attention']);
+  });
+});

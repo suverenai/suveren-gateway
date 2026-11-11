@@ -38,6 +38,9 @@ export interface AttentionItem {
  * once did.
  */
 export function blockedBySimulation(e: IntegrationEntry, simulationOn: boolean): boolean {
+  // A connector that touches only this computer (manifest `localOnly`, e.g.
+  // Files) is no real system: the gateway runs it in simulation mode too.
+  if (e.manifest.localOnly === true) return false;
   return simulationOn && (!declaresSimulation(e.manifest) || e.integration?.paused === 'simulation');
 }
 
