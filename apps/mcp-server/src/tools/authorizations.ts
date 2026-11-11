@@ -167,14 +167,16 @@ async function connectorsSection(
   domain?: string,
 ): Promise<string> {
   try {
-    let manifests: GuideManifest[] = guideManifests(integrationManager);
+    const everyManifest: GuideManifest[] = guideManifests(integrationManager);
+    let manifests = everyManifest;
     if (domain) {
       const d = domain.toLowerCase();
       manifests = manifests.filter(m => m.id.toLowerCase() === d || manifestAreas(m).some(a => profileMatches(a, domain) || a.toLowerCase() === d));
     }
     if (manifests.length === 0) return '';
     const input = await overviewInput(state, integrationManager, authorizations, { onlyManifests: manifests });
-    return connectorOverview({ ...input, detail: !!domain });
+    // The documents another connector holds can be attached here too: an area's answer names them all.
+    return connectorOverview({ ...input, detail: !!domain, sourceManifests: everyManifest });
   } catch (err) {
     // A guidance failure must never hide the mandates themselves.
     console.error('[Suveren MCP] connector overview failed:', err);

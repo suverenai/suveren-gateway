@@ -396,10 +396,13 @@ describe('7 more cases from the real-AI test', () => {
       const t = proposalFields('setup__create_mandate', 'github.com/x/email@0.9', profile, ['review', 'automatic']);
       expect(t).toContain('Fields for setup__create_mandate(profile: "email", ...), * = required; any other field name is refused:');
       expect(t).toContain('read_access* (Read) = unlimited|none');
+      expect(t).not.toContain('check your own results');
       expect(t).toContain('send_daily_max* = number [default 5]');
       expect(t).toContain('spend_max = number [EUR, at most 1000]'.replace('EUR,', 'currency:EUR,'));
       expect(t).not.toContain('profile* ');
-      expect(t).toContain('allowed_attachment_sources = comma-separated connector:kind sources, for example files:file');
+      // No connector name of its own: with no source offered, it says so.
+      expect(t).toContain('allowed_attachment_sources = comma-separated connector:kind sources; no connector here offers one');
+      expect(t).not.toContain('files:file');
       expect(t).toContain('allowed_profiles* = comma-separated names from the profiles available');
       expect(t).toContain('kind = a|b');
       expect(t).toContain('mode = review|automatic (ask the person)');
@@ -410,6 +413,21 @@ describe('7 more cases from the real-AI test', () => {
       expect(proposalFields('t', 'x', withGroup, ['review'])).toContain(
         'scope rule: when the limits allow book, set at least one of rooms, buildings (ask the person where the AI may book); otherwise the proposal is refused');
       expect(proposalFields('t', 'x', profile, ['review'])).not.toContain('scope rule');
+    });
+    it('the attachment-source field lists the sources the manifests offer, by title and what they hold', () => {
+      const sources = attachmentSources([FILES, LEDGER, { ...NOTES, documents: { memo: { title: 'Memos', description: 'Notes with pictures' } } }], (c, t) => `${c}__${t}`);
+      const t = proposalFields('setup__create_mandate', 'email', profile, ['review'], sources);
+      expect(t).toContain('allowed_attachment_sources = comma-separated, from Saved files (files:file), Issued invoice (ledger:invoice-pdf), Quote (ledger:quote-pdf), Memos (notes:memo: Notes with pictures); when the work attaches files, include the source they come from, or every attachment is refused');
+    });
+    // Walkthrough 2026-11-11: ChatGPT proposed a CRM mandate with read access none, and could not check its own update.
+    it('a read switch (an enum of exactly unlimited|none) keeps its declared default, and says why; other enums do not', () => {
+      const withDefaults = { ...profile, boundsSchema: { fields: {
+        may_look: { required: true, default: 'unlimited', boundType: { kind: 'enum', values: ['unlimited', 'none'] } },
+        may_dump: { required: true, default: 'none', boundType: { kind: 'enum', values: ['allowed', 'none'] } },
+      } } };
+      const t = proposalFields('t', 'x', withDefaults, ['review']);
+      expect(t).toContain('may_look* = unlimited|none [default unlimited: keep it unless the person says otherwise; you need it to check your own results]');
+      expect(t).toContain('may_dump* = allowed|none [default none]');
     });
     it('a profile that allows only review says only review', () => {
       expect(proposalFields('t', 'x', profile, ['review'])).toContain('mode = review (ask the person)');
@@ -582,6 +600,20 @@ describe('through the gateway\'s own entry points', () => {
     const text = (await listAuthorizationsHandler(state([setup]), im({ running: ['files'] }))({ domain: 'files' })).content[0].text;
     expect(text).toContain('Propose it with setup__create_mandate(profile: "files", ...)');
     expect(text).toContain('should it run by itself or ask them each time');
+  });
+
+  // Walkthrough 2026-11-11: asked to set up email with images, ChatGPT proposed an Email mandate without the
+  // saved-files source. The Email answer listed no source at all: it showed only the Email connector's documents.
+  it('2. the Email answer names every attachable source by title, what it holds, and to include the one the work needs', async () => {
+    const setup = mandate(SETUP_PROFILE.id, { allowed_profiles: 'files,email', allowed_modes: 'review' });
+    const text = (await listAuthorizationsHandler(state([setup]), im({ running: ['files', 'mail'] }))({ domain: 'email' })).content[0].text;
+    expect(text).toContain('Propose it with setup__create_mandate(profile: "email", ...)');
+    expect(text).toContain('allowed_attachment_sources (Allowed attachment sources) = comma-separated, from ');
+    expect(text).toContain('Saved files (files:file: Files your AI saved, such as PDFs, images, video and text)');
+    expect(text).toContain('when the work attaches files, include the source they come from, or every attachment is refused');
+    expect(text).toMatch(/may attach: .*Saved files \(save the file first with files__save_file\)/);
+    // The Email answer still shows only the Email connector's own steps.
+    expect(text).not.toContain('- Files');
   });
 
   it('2. asked for one connector, the whole setup guide comes with its mandate state', async () => {

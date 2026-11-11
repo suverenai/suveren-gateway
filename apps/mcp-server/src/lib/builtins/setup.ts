@@ -48,6 +48,24 @@ import { readSignedMandate, scopeValueRefusal, changeFacts, verifySignedCopy, ty
 import { BEFORE_PROPOSING, WHEN_TO_SUGGEST_A_CHANGE } from '../guidance';
 import type { IntegrationManager } from '../integration-manager';
 import { readSwitchGate } from './read-switch';
+import { classifyEnumSwitches, type BoundsSchemaLike } from '../read-gate';
+import { newestProfileOf } from '../guidance-runtime';
+
+/**
+ * A proposal that leaves out the target profile's read switch (the enum bound of exactly
+ * unlimited|none) gets the profile's declared default, so the person sees on the card what
+ * the AI did not say. A value the AI did set, `none` included, is never changed.
+ */
+export function withReadDefaults(args: Record<string, unknown>): Record<string, unknown> {
+  const limits = args.limits;
+  if (typeof args.profile !== 'string' || !limits || typeof limits !== 'object' || Array.isArray(limits)) return args;
+  const fields = (newestProfileOf(args.profile.trim())?.profile.boundsSchema?.fields ?? {}) as Record<string, { default?: unknown }>;
+  const filled: Record<string, unknown> = { ...(limits as Record<string, unknown>) };
+  for (const field of classifyEnumSwitches({ fields } as BoundsSchemaLike).readSide) {
+    if (filled[field] === undefined && typeof fields[field]?.default === 'string') filled[field] = fields[field].default;
+  }
+  return { ...args, limits: filled };
+}
 
 /** Setup's own profile, by its short name, as a manifest names it — declared once,
  *  here, and read from here everywhere else: a mandate under any version governs
@@ -602,6 +620,7 @@ export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
           'mode, the profile and mode you may propose are themselves limited by your Setup mandate\'s scope ' +
           '— the Setup mandate itself can never be proposed. Create only. ' + BEFORE_PROPOSING,
         inputSchema: CREATE_MANDATE_INPUT_SCHEMA,
+        prepare: async (args: Record<string, unknown>) => ({ args: withReadDefaults(args) }),
         validate: async (args) => {
           const fixed = proposalTargetRefusal(args);
           // Decision 7: never silent — recorded under Blocked even though
