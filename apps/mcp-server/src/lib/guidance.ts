@@ -119,19 +119,36 @@ function csv(value: unknown): string[] {
 // ─── 1. The first mandate ───────────────────────────────────────────────────
 
 /**
+ * The one step that starts everything, as ONE step: the AI passes on what it is handed, so it is
+ * handed one step, not the form (real-AI release check 2026-11-11: given three numbered steps and the
+ * form, Claude relayed all of it and answered "hi" in 250 words). `area` is the Setup mandate's own
+ * area: list-authorizations(domain) on it gives the form, for when the person asks.
+ */
+function firstStepWords(card: string, area?: string): string {
+  return 'They open the Suveren Gateway page themselves, in their own browser, outside this chat, then ' +
+    `**Mandates → + New mandate**, card **${card}**, **Give a mandate**. Say it as one step, with one sentence on why: ` +
+    'after that they just say here what you should do, you prepare each mandate, and they only approve it.' +
+    (area ? ` Only if they ask how to fill in the form: list-authorizations(domain: "${area}").` : '');
+}
+
+/**
  * What to tell a person when nothing is set up. The first mandate can only be
  * signed by a person on the page: an AI cannot propose it. `card` is the name
- * the page shows on the mandate that lets the AI prepare other mandates.
+ * the page shows on the mandate that lets the AI prepare other mandates; `form`
+ * adds the form's steps (asked for by the Setup mandate's own area).
  */
-export function firstMandateText(opts: { card: string }): string {
+export function firstMandateText(opts: { card: string; area?: string; form?: boolean }): string {
   return [
-    'No active mandate exists, so no tool works. An AI can never create the first one: a person signs it. This is the next step, whatever the person opens with. Lead them through it, one step at a time:',
-    '1. They open the Suveren Gateway page themselves, in their own browser, outside this chat. In the left menu they choose **Mandates**, then **+ New mandate** (top right).',
-    `2. Pick the card **${opts.card}** and press **Give a mandate**. Tell them why: they sign it once, and from then on they manage their mandates from this chat. They say what you should be able to do, you prepare the mandate, and they only approve it. (Instead, they can pick the card of the area they need and sign that mandate themselves.)`,
-    '3. The form has three steps: **Scope & Limits**, **Intent**, **Sign**. In Scope & Limits they name the areas you may prepare mandates for, the modes you may propose (review = they approve every action; automatic = it runs within the limits) and how many proposals a day. The **Intent** is already filled in; they leave it as it is. In Sign they give it a **Title** (required), choose how it runs and for how long, then press **Sign mandate**. Ask them first whether it should run automatically or ask each time.',
-    'Afterwards call list-authorizations(): it says what is still missing and what to do next.',
+    'No active mandate exists, so no tool works. An AI can never create the first one: a person signs it. This is the next step, whatever the person opens with.',
+    firstStepWords(opts.card, opts.form ? undefined : opts.area),
+    ...(opts.form ? [SETUP_FORM] : []),
+    'Once they have signed, call list-authorizations() for what comes next.',
   ].join('\n');
 }
+
+/** The Setup mandate's form, given only when the person asks how to fill it in. */
+const SETUP_FORM =
+  'The form, if they ask: **Scope & Limits**: the areas you may prepare mandates for, the modes you may propose (review = they approve every action; automatic = it runs within the limits) and how many proposals a day. **Intent** is already filled in; they leave it as it is. **Sign**: a **Title** (required), how it runs and for how long, then **Sign mandate**. Ask them first whether it should run automatically or ask each time.';
 
 /** The Sign step, as the AI tells it whenever a person signs a mandate themselves. */
 export const SIGN_STEP =
@@ -548,7 +565,23 @@ export const CALL_THROUGH_RULE =
 
 /** Short pointer for the session instructions: where the AI finds the steps. */
 export const LEAD_THE_PERSON_RULE =
-  'When the person wants something done and a tool is refused or not set up, call list-authorizations(domain) with the area of the task: it gives what is missing and the exact steps the person takes. Name the buttons exactly as it does and wait; never work around a refusal. list-authorizations() with no argument gives only where things stand and the one next step.';
+  'When you receive a task, call list-authorizations(domain: "<area>"): it gives the details, what is missing and the exact steps the person takes. Name the buttons as it does.';
+
+/**
+ * How long a reply is, said concretely and at the top of the instructions (Andreas, 2026-11-11):
+ * "a few sentences" was read as 250–320 words. Claude Code cuts a server's instructions after
+ * 4096 characters, so this must sit near the start, not inside the role further down.
+ */
+export const REPLY_RULE =
+  'How you reply: at most 4 short sentences in plain words, unless the person asks for detail; a Suveren word only with a few words that explain it. Give one next step at a time; never pass on a list of steps or a tool answer in full.';
+
+/**
+ * The first line of the instructions. Some apps show the AI only this line until it loads the tools
+ * (Codex lists the server as a tool namespace described by its first line), so it alone must say
+ * what Suveren is for and the one call that tells the AI the rest. The same in every state and mode.
+ */
+export const FIRST_LINE =
+  'Suveren lets this person have you, their AI, do their work within limits they set; before your first reply in a chat, call list-authorizations() and follow the one next step it gives.';
 
 // ─── 3. Who the AI is for the person, and the facts it draws on ─────────────
 
@@ -560,16 +593,14 @@ export const LEAD_THE_PERSON_RULE =
  * AI reads it too and must not be able to tell a test gateway from a real one.
  */
 export const roleText = (card: string): string =>
-  'Your person probably knows nothing about Suveren, and may expect to learn a tool and click through it. They do not have to. ' +
-  'Meet them wherever they start: a greeting, a question, a task, a complaint. ' +
-  'Lead them to the new way of working: they say what they want done, you do the work, they set the limits and decide. ' +
-  'Do not teach the tool; find the result they want. If they ask where to click or describe steps, ask what they want to end up with and take it from there. ' +
-  'If work repeats, offer to take it over. Get their task done in the fewest steps. Use short, plain words. Keep each reply to a few sentences. ' +
-  'Explain a Suveren word only when it is needed, in one sentence. If they do not know what they want, say what is possible here and suggest one thing. ' +
-  'Give one next step at a time. Do everything you can yourself and leave them only what only they can do: sign, approve, decide. ' +
-  `When a task needs a mandate and they do not have a ${card} mandate yet, offer them that one first, before anything else. ` +
-  'Recommend safe limits and say why. They decide; you never decide for them and never press them. ' +
-  'They are the final authority, not Suveren and not you.';
+  'Your person probably knows nothing about Suveren and does not have to learn it. ' +
+  'Meet them wherever they start; they say what they want done, you do the work, they set the limits and decide. ' +
+  'Recommend safe limits and say why; never decide for them and never press them. ' +
+  'They are the final authority, not Suveren and not you. ' +
+  'Leave them only what only they can do: sign, approve, decide. ' +
+  `When a task needs a mandate and they have no ${card} mandate yet, offer that one first. ` +
+  'If they ask where to click, ask what they want to end up with. ' +
+  'If work repeats, offer to take it over; if they do not know what they want, suggest one thing.';
 
 /** How many area names one line may carry. Above this the line says how many more there are. */
 const MAX_AREAS_IN_ONE_LINE = 20;
@@ -590,17 +621,17 @@ function joinAreas(names: string[]): string {
  */
 export function connectedLine(connected: string[], notConnected: string[]): string {
   const yes = connected.length > 0 ? `Connected: ${joinAreas(connected)}.` : 'Nothing is connected yet.';
-  const no = notConnected.length > 0 ? ` Not connected yet: ${joinAreas(notConnected)}. The person sets one up under **Connectors** when a task needs it; mention this briefly.` : '';
+  const no = notConnected.length > 0 ? ` Not connected yet: ${joinAreas(notConnected)}. The person sets one up under **Connectors** when a task needs it.` : '';
   return yes + no;
 }
 
 /** The facts the AI draws on, stated as facts: it finds the words. Identical in every mode. */
-export function factsLines(opts: { card: string; areas: string[]; port?: string; connected?: string[]; notConnected?: string[] }): string[] {
+export function factsLines(opts: { card: string; areas: string[]; port?: string; connected?: string[]; notConnected?: string[]; gateway?: boolean }): string[] {
   return [
-    `The Suveren Gateway page is opened by the person, in their own browser, outside this chat. You never write its address.${opts.port ? ` Only if they cannot find it, say in words that it runs on this computer on port ${opts.port}.` : ''}`,
-    'A mandate is a permission the person gives their AI, with limits they choose. For example: "Send up to 5 emails a day, and show me each one first." It says what the AI may do, how much, for how long, and whether each action needs their approval or runs by itself within the limits. The AI needs a mandate for each kind of work. They can change or revoke it at any time.',
-    `The ${opts.card} mandate is how the person manages their mandates from this chat. They sign it once. After that they just say here what the AI should be able to do; the AI prepares the mandate with its limits and duration, and they only approve it. Without it they fill in a form themselves for every mandate.`,
-    `The ${opts.card} mandate allows no work. None of the mandates the AI prepares exists until the person approves it. It is the easiest start. An AI can never create the first mandate: a person signs it.`,
+    ...(opts.port ? [`Only if the person cannot find the Suveren Gateway page, say in words that it runs on this computer on port ${opts.port}.`] : []),
+    'A mandate is a permission the person gives their AI, with limits they choose, for one kind of work: for example "send up to 5 emails a day, and show me each one first". They can change or revoke it at any time.',
+    `The ${opts.card} mandate lets the person manage mandates from this chat: they say what the AI should do, the AI prepares the mandate, and it exists only once they approve it. The ${opts.card} mandate allows no work itself. Without it they fill in a form for every mandate.`,
+    ...(opts.gateway ? ['Suveren is built on the open-source Human Agency Protocol (HAP).'] : []),
     ...(opts.areas.length > 0 ? [`Possible on this gateway: ${joinAreas(opts.areas)}.`] : []),
     ...(opts.connected || opts.notConnected ? [connectedLine(opts.connected ?? [], opts.notConnected ?? [])] : []),
   ];
@@ -636,8 +667,7 @@ function oneNextStep(input: ShortAnswerInput): string {
   if (complete.length === 0) {
     if (auths.length > 0) return 'Wait for the other owners above to sign. Ask the person to remind them.';
     if (setup.area && input.team?.get(setup.area)?.teamCode) return howToGetMandate(setup.area, setup.card, input);
-    const fields = setup.area ? ` The form, step by step: list-authorizations(domain: "${setup.area}").` : '';
-    return `A person signs the first mandate: an AI can never create it. On the Suveren Gateway page, which they open themselves in their own browser, outside this chat, they open **Mandates**, then **+ New mandate**, pick the card **${setup.card}** and press **Give a mandate**. Tell them why: they sign it once, and from then on they manage their mandates from this chat. They say what you should be able to do, you prepare the mandate, and they only approve it. It allows no work itself. They can sign the mandate of one area themselves instead, by filling in its form.${fields}`;
+    return `A person signs the first mandate: an AI can never create it. ${firstStepWords(setup.card, setup.area)}`;
   }
   const askAndDo = 'Ask what the person wants done';
   if (setup.tool && complete.length === setup.held.length) {
@@ -660,7 +690,7 @@ function whatYouCanDo(input: ShortAnswerInput): string {
   const parts: string[] = [];
   if (works) parts.push('do the work the active mandates allow (under a review mandate you create a proposal and the person approves it)');
   if (input.setup.tool) parts.push(`propose new mandates with ${input.setup.tool}, for the person to approve`);
-  if (parts.length === 0) parts.push('find out what the person wants done, say which area it belongs to and recommend safe limits. Only a person can sign');
+  if (parts.length === 0) parts.push('find out what the person wants done and recommend safe limits. Only a person can sign');
   return `You can do yourself: ${parts.join('; and ')}.`;
 }
 

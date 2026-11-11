@@ -16,7 +16,7 @@ import { readContextFile } from '../lib/context-loader';
 import { profileMatches, toolAlwaysListed, areaName } from '../lib/tool-proxy';
 import { isSimulationMode } from '../lib/simulation-mode';
 import { firstMandateText, connectorOverview, manifestAreas, shortAnswer, possibleAreas, CALL_THROUGH_RULE, type GuideManifest } from '../lib/guidance';
-import { overviewInput, guideManifests, setupCardName, setupMandateFacts } from '../lib/guidance-runtime';
+import { overviewInput, guideManifests, setupMandateFacts } from '../lib/guidance-runtime';
 import { agentVisibleAuthorizations } from '../lib/agent-visibility';
 
 /** Extract short profile name from full ID */
@@ -272,7 +272,9 @@ function listAuthorizations(
         if (brief) text.push('', '=== CONTEXT ===', brief);
         return { content: [{ type: 'text' as const, text: text.join('\n') }] };
       }
-      text.push('', firstMandateText({ card: setupCardName(integrationManager) }));
+      // The form's steps only when the Setup mandate itself is asked for; any other area gets the one step.
+      const setup = setupMandateFacts(integrationManager, authorizations);
+      text.push('', firstMandateText({ card: setup.card, area: setup.area, form: !!setup.area && domain === setup.area }));
       const rows = rowsForDomain(notYet, domain, integrationManager);
       if (rows.length > 0) text.push('', LISTED_WITHOUT_MANDATE_HEADING, ...rows);
       for (const h of hints) text.push('', h);
