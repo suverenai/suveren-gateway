@@ -8,7 +8,7 @@
  */
 import type { AgentProfile } from '@hap/core';
 import { useMandateReceipts, usedTodayNumbers } from '../lib/mandate-card-usage';
-import { cumulativeBounds, sharedLimitLabel } from '../lib/limit-words';
+import { cumulativeBounds, sharedLimitLabel, NOT_ALLOWED } from '../lib/limit-words';
 import { useCumulativeUsage, usageEntryFor } from '../lib/cumulative-usage';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -43,7 +43,7 @@ export function SharedLimitRows({ authorizationId, bounds, profile, actionType, 
         return (
           <div key={b.key} className="av3-shared-limit">
             <dt>{label.name}</dt>
-            <dd>{label.figures ? <span className="shared-limit-figures">({label.figures})</span> : null}</dd>
+            <dd>{label.figures === NOT_ALLOWED ? `(${NOT_ALLOWED})` : label.figures ? <span className="shared-limit-figures">({label.figures})</span> : null}</dd>
           </div>
         );
       })}

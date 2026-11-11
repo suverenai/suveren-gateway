@@ -12,7 +12,7 @@ import { effectiveCapKind, enumExceedsCap, isCapped, type CapFieldShape } from '
 import { useProfileValuedOptions, type Workspace } from '../lib/profile-valued-options';
 import { useAuth } from '../contexts/AuthContext';
 import { useMandateReceipts, usedTodayForBound } from '../lib/mandate-card-usage';
-import { cumulativeBound, sharedLimitHelper, sharedLimitLabel, limitWordsForProfile, type LimitWords } from '../lib/limit-words';
+import { cumulativeBound, sharedLimitHelper, sharedLimitLabel, limitWordsForProfile, NOT_ALLOWED, type LimitWords } from '../lib/limit-words';
 
 interface Props {
   profile: AgentProfile;
@@ -300,7 +300,7 @@ function FieldLabel({
     <div className="field-label-with-tip">
       <label className="form-label" htmlFor={htmlFor}>
         {label}
-        {figures && <> <span className="shared-limit-figures" data-testid="shared-limit-figures">({figures})</span></>}
+        {figures === NOT_ALLOWED ? <> ({NOT_ALLOWED})</> : figures && <> <span className="shared-limit-figures" data-testid="shared-limit-figures">({figures})</span></>}
       </label>
       {description && (
         <>

@@ -12,7 +12,7 @@ import { ObTypeLine, ObFold, ObLock, useFoldAccordion } from '../components/Obje
 import { COMMITMENT_REVIEW, COMMITMENT_AUTOMATIC } from '../lib/commitment-words';
 import { useMandateReceipts, usedTodayNumbers, ticketsUnder } from '../lib/mandate-card-usage';
 import { useCumulativeUsage, usageEntryFor } from '../lib/cumulative-usage';
-import { cumulativeBound, sharedLimitLabel, limitWordsForProfile } from '../lib/limit-words';
+import { cumulativeBound, sharedLimitLabel, limitWordsForProfile, NOT_ALLOWED } from '../lib/limit-words';
 import { actionLabel } from '../lib/receipt-summary';
 import { isToday, ticketTime } from '../lib/core-objects';
 import { EmptyState } from '../components/EmptyState';
@@ -500,6 +500,9 @@ function MandateLimits({ item, manifests, boundsEntries, limitLines, limitLabel,
                     <s>{limitValue(k, v)}</s> → {r.cap}
                   </span>
                 )
+              ) : shared?.figures === NOT_ALLOWED ? (
+                // The signed value itself, not a figure read from the system.
+                <span data-testid="limit-not-allowed">{NOT_ALLOWED}</span>
               ) : shared?.figures ? (
                 <span data-testid="shared-limit-figures" className="shared-limit-figures">{shared.figures}</span>
               ) : limitValue(k, v)}
