@@ -3,6 +3,7 @@
 **Implementation:** Suveren — Suveren Gateway (Gatekeeper + Executor; open source) and Suveren Authority Server (Authority Server; **proprietary**, hosted at suveren.ai), built on `@humanagencyp/hap-core` (open source).
 **Specification:** Human Agency Protocol, `content/<version>/` at [humanagencyprotocol/hap-protocol](https://github.com/humanagencyprotocol/hap-protocol). **v0.8 was published on 2026-11-02** (`content/0.8/`, commit `ec81c52`).
 **Report date:** 2026-11-04 (describes hap-core **0.13.0**, Gateway 0.40.0 and the Authority Server on suveren.ai; the two products still speak the **v0.7** wire; the previous report was dated 2026-10-28). **Maintainer:** Suveren. **Update rule:** this file changes in the same change as any implementation change that affects a normative requirement.
+**Update 2026-11-11:** since Gateway 0.41.0, the review path sends the Authority Server only the values a bound reads and the proposal's fingerprint, never the tool arguments. Requirement 1 and the *Privacy Invariant* below are updated for that; everything else still describes Gateway 0.40.0.
 
 This is *one implementation's* statement of where it stands against the specification, in the specification's terms (`governance.md` → *Reference Conformance* → *Implementation reports*). It replaces the status registers that lived in the specification's `review.md` until 2026-09-03: a specification must be checkable by readers who cannot see the implementation, and the Authority Server here is proprietary, so status written into the spec was an unverifiable claim.
 
@@ -39,7 +40,7 @@ The suites that read the published files fail in CI when the vector directory is
 
 | # | v0.8 requirement | Core library (0.13.0) | Gateway (0.40.0) | Authority Server (suveren.ai) |
 |---|---|---|---|---|
-| 1 | Only what a bound reads travels; no scope values, no `_` keys | `wireExecutionContext`, `checkExecutionValues` | Met on the automatic path; **not met on the review path** (tool arguments in the clear) | **Not met**: `_` keys and keys no bound reads are accepted |
+| 1 | Only what a bound reads travels; no scope values, no `_` keys | `wireExecutionContext`, `checkExecutionValues` | Met since 0.41.0, on both paths: only the values a bound reads, no scope values, no `_` keys. (0.40.0: not met on the review path, tool arguments in the clear.) | **Not met**: `_` keys and keys no bound reads are accepted |
 | 2 | One execution per ticket, durable record before the call, replay is a recovery signal | — (Gatekeeper behaviour) | Met | — |
 | 3 | A ticket names its request (`idempotencyKey` signed; the Gatekeeper refuses a mismatch) | `verifyTicketAgainstRequest`, `TICKET_REQUEST_MISMATCH` | Met for the key; `mandateId`, `version` and freshness checks not yet wired | Met: the key is signed; `mandateId` on the request is not read |
 | 4 | Proposal content never at the AS: encrypted, fingerprinted, bound into the ticket; clear content refused | `encryptProposalContent`, `computeProposalContentHash`, `checkProposalReaders` | Encrypts; envelope not yet in the normative shape (`encrypted_keys` by DID, base64url, `readers`/`unreadable`) | **Partly**: encryption and fingerprint exist; clear content refused only behind an operator flag; fingerprint **not signed into the ticket**; normative envelope and `proposalContentHash` on request and decision not accepted |
@@ -94,7 +95,7 @@ Unchanged from the previous report, and still true against v0.8 where v0.8 kept 
 
 ## Requirements not met, beyond the contract above (in the specification's terms)
 
-- *Privacy Invariant* — on the review path the ticket request carries the full tool arguments to the Authority Server (Gateway); the Authority Server accepts proposal content in the clear unless the operator sets a flag.
+- *Privacy Invariant* — the Authority Server accepts proposal content in the clear under a v0.7 mandate unless the operator sets a flag, and stores whatever execution context a gateway sends. (The Gateway carried full tool arguments on the review path until 0.40.0; fixed in 0.41.0.)
 - *Ticket Request Schema*, rule 1 — the ticket request is resolved through the authorization record; `boundsHash` is checked against it but is not the sole lookup key, and `mandateId` is not read.
 - *Ticket Issuance* — the request's `profileId` is not checked against the mandate's `profile_id`; `profile_hash` is not re-checked against the served profile at ticket time.
 - *Identity Assurance* — the signed `subjects` field on the ticket is never populated.
