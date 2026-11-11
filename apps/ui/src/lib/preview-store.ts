@@ -1,12 +1,13 @@
 /**
  * The preview each open approval card already read, shared by proposal id —
  * so the row's summary sentence can name a record the card resolved
- * (`{customer_id|ref}` → "Steiner Landtechnik GmbH (c-1007)") without a
+ * (`{customer_id|ref}` → "Steiner Landtechnik GmbH") without a
  * second connector read. Holds only what a card fetched; never fetches.
  */
 import { useSyncExternalStore } from 'react';
 import type { PreviewResponse } from './sp-client';
-import { resolveAttachedIdentity } from './preview-render';
+import { resolveAttachedIdentity, resolveBodyObject } from './preview-render';
+import type { SummaryPreview } from './approval-summary';
 
 const previews = new Map<string, PreviewResponse>();
 const listeners = new Set<() => void>();
@@ -36,5 +37,22 @@ export function refNameFrom(resp: PreviewResponse | undefined, toolArgs: Record<
     const section = resp.reads.find((s) => s.attach === argPath && !s.forEach && !s.displayOnly);
     if (!section) return undefined;
     return resolveAttachedIdentity(section.result, toolArgs[argPath], { pathPrefix: argPath, displayHints: resp.display }).name;
+  };
+}
+
+/**
+ * What the title may take from the card's read: the attached record's name
+ * (`{x|ref}`) and the attached record's raw body (a `currencyField` such as
+ * "id.currency"). Only non-forEach, non-display-only attaches — the same
+ * reads the card's Now / New table uses.
+ */
+export function summaryPreviewFrom(resp: PreviewResponse | undefined, toolArgs: Record<string, unknown> | null | undefined): SummaryPreview {
+  return {
+    refName: refNameFrom(resp, toolArgs),
+    attachedBody: (topKey) => {
+      if (!resp || resp.status !== 'ok' || !('reads' in resp)) return undefined;
+      const result = resp.reads.find((s) => s.attach === topKey && !s.forEach && !s.displayOnly)?.result;
+      return result && result.status === 'ok' ? resolveBodyObject(result.body)?.obj : undefined;
+    },
   };
 }

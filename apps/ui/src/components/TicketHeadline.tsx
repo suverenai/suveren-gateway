@@ -44,7 +44,7 @@ function FromProposal({ proposal, tool, manifests, label }: { proposal: Proposal
 /**
  * A ticket's headline (UI spec §13.4): for an approved ticket, the sentence
  * the approver saw — built from the proposal's sealed values on this device
- * and the manifest's summary template ("Payment link of €0.10: Suveren test
+ * and the manifest's summary template ("Payment link of 0.10 EUR: Suveren test
  * charge"). For an automatic ticket, the same sentence from what this
  * gateway sent (§14). Otherwise — not readable here, older than §14, no
  * template — the manifest's past-tense label ("Payment link created").

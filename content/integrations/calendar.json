@@ -125,7 +125,7 @@
       },
       "create_event": {
         "message": { "text": "description", "verb": "Sent" },
-        "summary": "Event: {summary|short}[ on {start.dateTime,start.date|date}]",
+        "summary": "New event: {summary|short}[ on {start.dateTime,start.date|date}]",
         "executionMapping": {
           "duration_minutes": "duration",
           "lookahead_days": "lookahead",
@@ -150,7 +150,7 @@
       },
       "update_event": {
         "message": { "text": "description", "verb": "Sent" },
-        "summary": "Update event[: {summary|short}]",
+        "summary": "Change event[: {summary|short}]",
         "executionMapping": {
           "attendees": [
             {

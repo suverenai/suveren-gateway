@@ -721,7 +721,7 @@ function resolveLabel(hints: ToolDisplayHints | undefined, path: string, fallbac
   return hints?.labels?.[path] ?? fallback;
 }
 
-function formatMoney(value: unknown, currency: string | undefined): { value: string; valueTitle?: string } {
+export function formatMoney(value: unknown, currency: string | undefined): { value: string; valueTitle?: string } {
   const n = typeof value === 'number' ? value : Number(value);
   if (!Number.isFinite(n)) return cellFor(value);
   // Fixed 'en-US' grouping (not the runtime's locale) so "10,000.00 EUR"
@@ -732,7 +732,7 @@ function formatMoney(value: unknown, currency: string | undefined): { value: str
   return { value: display };
 }
 
-function formatPercent(value: unknown): { value: string; valueTitle?: string } {
+export function formatPercent(value: unknown): { value: string; valueTitle?: string } {
   if (typeof value !== 'number' && typeof value !== 'string') return cellFor(value);
   return { value: `${value} %` };
 }
@@ -765,8 +765,8 @@ function isHidden(hints: ToolDisplayHints | undefined, path: string): boolean {
  * Undefined (money still shows, just with no currency suffix) rather than
  * guessing when the field is absent or not a string.
  */
-function resolveCurrency(
-  hints: ToolDisplayHints | undefined,
+export function resolveCurrency(
+  hints: Pick<ToolDisplayHints, 'currencyField'> | undefined,
   toolArgs: Record<string, unknown>,
   attachedBody: (topKey: string) => Record<string, unknown> | undefined,
 ): string | undefined {

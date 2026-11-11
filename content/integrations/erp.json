@@ -263,7 +263,7 @@
         }
       },
       "update_quote": {
-        "summary": "Update quote to {value|money} net[ — {discount_pct|percent} discount]",
+        "summary": "Change quote: {value|money} net[ — {discount_pct|percent} discount]",
         "executionMapping": {
           "value": "value",
           "discount_pct": "discount_pct",
@@ -576,7 +576,7 @@
       },
       "update_customer": {
         "profile": "master-data",
-        "summary": "Change contact data of customer {id|ref}",
+        "summary": "Change customer {id|ref}: contact data",
         "executionMapping": {},
         "staticExecution": { "action_type": "customer_update" },
         "actionLabel": "Customer updated",
@@ -605,7 +605,7 @@
       },
       "update_customer_tax_data": {
         "profile": "master-data",
-        "summary": "Change tax data of customer {id|ref}: {name}, {country}[ — VAT ID {uid}]",
+        "summary": "Change customer {id|ref}: tax data",
         "executionMapping": {},
         "staticExecution": { "action_type": "customer_tax" },
         "actionLabel": "Customer tax data changed",
@@ -683,7 +683,7 @@
       },
       "update_item_price": {
         "profile": "master-data",
-        "summary": "Price of item {id|ref}: {list_price|money}, VAT {vat_rate|percent}",
+        "summary": "Change price of {id|ref}: {list_price|money}, VAT {vat_rate|percent}",
         "executionMapping": { "list_price": "list_price" },
         "staticExecution": { "action_type": "item_price" },
         "actionLabel": "Item price changed",

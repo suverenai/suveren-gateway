@@ -1,7 +1,7 @@
 import type { IntegrationManifest, Proposal } from '../lib/sp-client';
 import { useProposalContent } from '../lib/use-proposal-content';
 import { approvalSummary } from '../lib/approval-summary';
-import { refNameFrom, useProposalPreview } from '../lib/preview-store';
+import { summaryPreviewFrom, useProposalPreview } from '../lib/preview-store';
 import { useAreaCatalog } from '../lib/area-catalog';
 import { areaName } from '../lib/core-objects';
 import { CREATE_MANDATE_TOOL, mandateTitleParts, mandateTargetProfile } from '../lib/mandate-proposal';
@@ -21,5 +21,5 @@ export function ApprovalSummary({ proposal, manifests }: { proposal: Proposal; m
     const t = mandateTitleParts(areaName(mandateTargetProfile(content.toolArgs, proposal.profileId), catalog), content.toolArgs);
     return <>{t.area} · {t.name ?? 'new mandate'}</>;
   }
-  return <>{approvalSummary(proposal.tool, content.toolArgs, manifests, undefined, refNameFrom(preview, content.toolArgs))}</>;
+  return <>{approvalSummary(proposal.tool, content.toolArgs, manifests, undefined, summaryPreviewFrom(preview, content.toolArgs))}</>;
 }

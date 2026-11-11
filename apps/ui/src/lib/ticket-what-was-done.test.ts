@@ -10,7 +10,7 @@ import type { ToolDisplay } from './approval-view';
 import { ticketHeadline, sentView, unsealedExtras, sentRows, inTicket, resultBody } from './ticket-what-was-done';
 
 const manifests = [
-  { id: 'crm', name: 'CRM', toolGating: { overrides: { create_contact: { summary: 'Create contact {name}[ ({company})]', actionLabel: 'Contact created' } } } },
+  { id: 'crm', name: 'CRM', toolGating: { overrides: { create_contact: { summary: 'New contact {name}[ ({company})]', actionLabel: 'Contact created' } } } },
   { id: 'mollie', name: 'Mollie', toolGating: { overrides: { CreatePaymentLink: { summary: 'Payment link of {amount|money}: {description}', display: { currencyField: 'currency' } } } } },
 ] as unknown as IntegrationManifest[];
 
@@ -19,14 +19,14 @@ describe('ticketHeadline — which values the sentence is built from', () => {
     expect(ticketHeadline({
       tool: 'crm__create_contact', manifests, label: 'Contact created', approved: false,
       sentArgs: { name: 'Anna Auto', company: 'Drautal Maschinenbau' },
-    })).toBe('Create contact Anna Auto (Drautal Maschinenbau)');
+    })).toBe('New contact Anna Auto (Drautal Maschinenbau)');
   });
 
   it('approved: from the proposal the approver saw — never from the sent copy', () => {
     expect(ticketHeadline({
       tool: 'crm__create_contact', manifests, label: 'Contact created', approved: true,
       proposalArgs: { name: 'Approved Name' }, sentArgs: { name: 'Other' },
-    })).toBe('Create contact Approved Name');
+    })).toBe('New contact Approved Name');
   });
 
   it('automatic never borrows proposal args', () => {
