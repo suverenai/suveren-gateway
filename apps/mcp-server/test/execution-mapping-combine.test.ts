@@ -14,7 +14,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { registerProfile, clearProfiles, type AgentProfile } from '@hap/core';
-import { createGatedToolHandler, mapExecutionArgs } from '../src/lib/tool-proxy';
+import { createGatedToolHandler, mapExecutionArgs, malformedMappedItem } from '../src/lib/tool-proxy';
 import {
   invalidExecutionMappingReason,
   invalidManifestExecutionMappingReason,
@@ -61,9 +61,9 @@ const PROFILE = {
 
 /** Every stop argument maps to the same three fields. */
 const STOP_MAPPING = [
-  { field: 'stop_count', transform: 'length' },
-  { field: 'allowed_stops', transform: 'join' },
-  { field: 'allowed_regions', transform: 'join_domains' },
+  { field: 'stop_count', transform: 'length', format: 'email' },
+  { field: 'allowed_stops', transform: 'join', format: 'email' },
+  { field: 'allowed_regions', transform: 'join_domains', format: 'email' },
 ] as const;
 
 const SHIP: DiscoveredTool = {
@@ -172,7 +172,7 @@ describe('mapExecutionArgs (pure)', () => {
 
   it('each argument reads its own declared `item`', () => {
     const m = {
-      hosts: { field: 'guests', transform: 'join', item: 'email' },
+      hosts: { field: 'guests', transform: 'join', item: 'email' },  // no format: read as is
       extra: { field: 'guests', transform: 'join' },
     } as const;
     expect(mapExecutionArgs(m, { hosts: [{ email: 'h@x.example' }], extra: ['e@y.example'] })).toEqual({ guests: 'h@x.example,e@y.example' });
@@ -191,7 +191,7 @@ describe('the manifest validator', () => {
 
   it('refuses two arguments copied directly into one field (one would overwrite the other)', () => {
     expect(invalidExecutionMappingReason('ship', { executionMapping: { a: 'x', b: 'x' } }))
-      .toBe('override "ship".executionMapping maps "a" and "b" to "x"; several arguments can share a field only through the same list transform (length, join or join_domains)');
+      .toBe('override "ship".executionMapping maps "a" and "b" to "x"; several arguments can share a field only through the same list transform (length, join or join_domains) and the same format');
   });
 
   it('refuses a divisor shared by two arguments', () => {
@@ -249,5 +249,80 @@ describe('the shipped manifests', () => {
       if (reason) reasons.push(`${id}: ${reason}`);
     }
     expect(reasons).toEqual([]);
+  });
+});
+
+describe('format "email": one plain address per entry, checked at the gate', () => {
+  const SMUGGLED = [
+    'x@evil.example,a@north.example',   // two addresses in one entry (join splits on the comma)
+    'x@evil.example <a@north.example>', // display-name form: the last "@" is inside the brackets
+    'x@evil.example;a@north.example',
+    'a@north.example b@north.example',
+    '"x@evil.example"@north.example',
+    'x@evil.example@north.example',
+    '@north.example',
+    'a@',
+  ];
+
+  for (const bad of SMUGGLED) {
+    it(`refuses ${JSON.stringify(bad)}: nothing reaches the Gatekeeper, no ticket, nothing runs`, async () => {
+      const r = await ship({ deliver_to: ['a@north.example'], copy_to: [bad] });
+      expect(r.result.isError).toBe(true);
+      expect((r.result.content[0] as { text: string }).text).toBe(
+        `Refused: parcel__ship's "copy_to" entry ${JSON.stringify(bad)} is not one email address. ` +
+        'Give one plain address per entry, e.g. ["anna@example.com", "ben@example.com"]. Nothing was sent and no ticket was requested.',
+      );
+      expect(r.verifyExecution).not.toHaveBeenCalled();
+      expect(r.postReceipt).not.toHaveBeenCalled();
+      expect(r.callTool).not.toHaveBeenCalled();
+    });
+  }
+
+  it('the first argument is checked too', async () => {
+    const r = await ship({ deliver_to: ['x@evil.example,a@north.example'] });
+    expect(r.result.isError).toBe(true);
+    expect((r.result.content[0] as { text: string }).text).toContain('"deliver_to" entry');
+    expect(r.callTool).not.toHaveBeenCalled();
+  });
+
+  it('plain addresses pass (plus-tags, dots and subdomains included)', async () => {
+    const r = await ship({ deliver_to: ['anna.b+orders@mail.north.example'], copy_to: ['c@north.example'] });
+    expect(r.result.isError).toBeFalsy();
+    expect(r.callTool).toHaveBeenCalledOnce();
+  });
+
+  it('an object item is checked as read by `item`; an object without it is refused', () => {
+    const m = { guests: [{ field: 'g', transform: 'join', item: 'email', format: 'email' }] } as const;
+    expect(malformedMappedItem(m, { guests: [{ email: 'a@x.example' }] })).toBeNull();
+    expect(malformedMappedItem(m, { guests: [{ email: 'a@x.example, b@y.example' }] })).toEqual({ arg: 'guests', item: 'a@x.example, b@y.example', format: 'email' });
+    expect(malformedMappedItem(m, { guests: [{ name: 'no address' }] })?.item).toBe('[object Object]');
+  });
+
+  it('no format declared: nothing is checked (the declaration is explicit)', () => {
+    expect(malformedMappedItem({ tags: [{ field: 't', transform: 'join' }] }, { tags: ['a, b'] })).toBeNull();
+  });
+});
+
+describe('the manifest validator and `format`', () => {
+  it('refuses join_domains without "format": "email"', () => {
+    expect(invalidExecutionMappingReason('ship', { executionMapping: { to: [{ field: 'd', transform: 'join_domains' }] } }))
+      .toBe('override "ship".executionMapping "to" -> "d" uses join_domains and must declare "format": "email"');
+  });
+
+  it('refuses an unknown format', () => {
+    expect(invalidExecutionMappingReason('ship', { executionMapping: { to: [{ field: 'r', transform: 'join', format: 'phone' }] } }))
+      .toBe('override "ship".executionMapping "to" -> "r" has an unknown format "phone" (known: email)');
+  });
+
+  it('refuses two arguments on one field with different formats', () => {
+    expect(invalidExecutionMappingReason('ship', { executionMapping: { a: [{ field: 'r', transform: 'join', format: 'email' }], b: [{ field: 'r', transform: 'join' }] } }))
+      .toMatch(/and the same format$/);
+  });
+
+  it('refuses a cc that is mapped without the format its to declares', () => {
+    const message = { text: 'body', to: 'deliver_to', cc: 'copy_to', verb: 'Sent' };
+    const plain = STOP_MAPPING.map(({ field, transform }) => ({ field, transform }));
+    expect(invalidMessageRecipientsReason('ship', { message, executionMapping: { deliver_to: [...STOP_MAPPING], copy_to: plain } }))
+      .toMatch(/missing: stop_count, allowed_stops, allowed_regions\)$/);
   });
 });

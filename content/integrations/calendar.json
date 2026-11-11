@@ -133,12 +133,14 @@
             {
               "field": "allowed_attendees",
               "transform": "join",
-              "item": "email"
+              "item": "email",
+              "format": "email"
             },
             {
               "field": "allowed_domains",
               "transform": "join_domains",
-              "item": "email"
+              "item": "email",
+              "format": "email"
             }
           ],
           "calendarId": "allowed_calendars"
@@ -156,12 +158,14 @@
             {
               "field": "allowed_attendees",
               "transform": "join",
-              "item": "email"
+              "item": "email",
+              "format": "email"
             },
             {
               "field": "allowed_domains",
               "transform": "join_domains",
-              "item": "email"
+              "item": "email",
+              "format": "email"
             }
           ],
           "calendarId": "allowed_calendars"

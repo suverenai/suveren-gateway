@@ -183,29 +183,35 @@
           "to": [
             {
               "field": "recipient_count",
-              "transform": "length"
+              "transform": "length",
+              "format": "email"
             },
             {
               "field": "allowed_recipients",
-              "transform": "join"
+              "transform": "join",
+              "format": "email"
             },
             {
               "field": "allowed_domains",
-              "transform": "join_domains"
+              "transform": "join_domains",
+              "format": "email"
             }
           ],
           "cc": [
             {
               "field": "recipient_count",
-              "transform": "length"
+              "transform": "length",
+              "format": "email"
             },
             {
               "field": "allowed_recipients",
-              "transform": "join"
+              "transform": "join",
+              "format": "email"
             },
             {
               "field": "allowed_domains",
-              "transform": "join_domains"
+              "transform": "join_domains",
+              "format": "email"
             }
           ]
         },

@@ -32,6 +32,7 @@ import {
   type MessageVerb,
   type ReportDeclaration,
   LIST_TRANSFORMS,
+  MAPPING_ITEM_FORMATS,
 } from './tool-gating-types';
 import { GATEWAY_OWNED_ARGS } from './sealed-args';
 import { uncoveredReadSwitchReason, type BoundsSchemaLike } from './read-gate';
@@ -866,7 +867,7 @@ export function invalidManifestMessageReason(manifest: Pick<IntegrationManifest,
   return null;
 }
 
-type MappingTarget = { arg: string; transform?: string; divisor?: number };
+type MappingTarget = { arg: string; transform?: string; divisor?: number; format?: unknown };
 
 /** Each execution field of one entry's `executionMapping` -> the arguments (and how) that write it. */
 function mappingTargets(entry: unknown): Map<string, MappingTarget[]> {
@@ -878,8 +879,8 @@ function mappingTargets(entry: unknown): Map<string, MappingTarget[]> {
     for (const m of list) {
       const field = typeof m === 'string' ? m : (m as { field?: unknown } | null)?.field;
       if (typeof field !== 'string') continue;
-      const t = typeof m === 'string' ? {} : (m as { transform?: string; divisor?: number });
-      targets.set(field, [...(targets.get(field) ?? []), { arg, transform: t.transform, divisor: t.divisor }]);
+      const t = typeof m === 'string' ? {} : (m as { transform?: string; divisor?: number; format?: unknown });
+      targets.set(field, [...(targets.get(field) ?? []), { arg, transform: t.transform, divisor: t.divisor, format: t.format }]);
     }
   }
   return targets;
@@ -887,6 +888,16 @@ function mappingTargets(entry: unknown): Map<string, MappingTarget[]> {
 
 function executionMappingReasonAt(at: string, entry: unknown): string | null {
   for (const [field, writers] of mappingTargets(entry)) {
+    for (const w of writers) {
+      if (w.format !== undefined && !(MAPPING_ITEM_FORMATS as readonly unknown[]).includes(w.format)) {
+        return `${at}.executionMapping "${w.arg}" -> "${field}" has an unknown format ${JSON.stringify(w.format)} (known: ${MAPPING_ITEM_FORMATS.join(', ')})`;
+      }
+      // join_domains reads the text after the last "@": only safe on items
+      // checked to be exactly one address (tool-gating-types.ts `format`).
+      if (w.transform === 'join_domains' && w.format !== 'email') {
+        return `${at}.executionMapping "${w.arg}" -> "${field}" uses join_domains and must declare "format": "email"`;
+      }
+    }
     if (writers.length < 2) continue;
     const args = writers.map(w => w.arg);
     const twice = args.find((a, i) => args.indexOf(a) !== i);
@@ -894,10 +905,11 @@ function executionMappingReasonAt(at: string, entry: unknown): string | null {
     const first = writers[0];
     const combinable = writers.every(w =>
       w.divisor === undefined && typeof w.transform === 'string' &&
-      (LIST_TRANSFORMS as readonly string[]).includes(w.transform) && w.transform === first.transform);
+      (LIST_TRANSFORMS as readonly string[]).includes(w.transform) && w.transform === first.transform &&
+      w.format === first.format);
     if (!combinable) {
       return `${at}.executionMapping maps ${args.map(a => `"${a}"`).join(' and ')} to "${field}"; ` +
-        `several arguments can share a field only through the same list transform (${LIST_TRANSFORMS.join(', ').replace(/, (?=[^,]*$)/, ' or ')})`;
+        `several arguments can share a field only through the same list transform (${LIST_TRANSFORMS.join(', ').replace(/, (?=[^,]*$)/, ' or ')}) and the same format`;
     }
   }
   return null;
@@ -919,7 +931,7 @@ export function invalidExecutionMappingReason(toolName: string, entry: unknown):
  * A tool's declared message recipients (`message.to`, `message.cc`): when the
  * `to` argument feeds execution fields (a recipient count, recipient/domain
  * scope lists), the `cc` argument must feed every one of them with the same
- * transform — otherwise a recipient in cc is neither counted nor
+ * transform and format — otherwise a recipient in cc is neither counted nor
  * scope-checked. Generic: the argument names come from the manifest's own
  * `message` declaration.
  */
@@ -935,7 +947,7 @@ export function invalidMessageRecipientsReason(toolName: string, entry: unknown)
     const fromTo = writers.find(w => w.arg === to);
     if (!fromTo) continue;
     const fromCc = writers.find(w => w.arg === cc);
-    if (!fromCc || fromCc.transform !== fromTo.transform || fromCc.divisor !== fromTo.divisor) missing.push(field);
+    if (!fromCc || fromCc.transform !== fromTo.transform || fromCc.divisor !== fromTo.divisor || fromCc.format !== fromTo.format) missing.push(field);
   }
   if (missing.length === 0) return null;
   return `override "${toolName}": the message cc argument "${cc}" must map to every field the to argument "${to}" maps to (missing: ${missing.join(', ')})`;

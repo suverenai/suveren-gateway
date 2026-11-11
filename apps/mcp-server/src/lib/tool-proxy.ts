@@ -199,7 +199,47 @@ export function applyMapping(
   }
 }
 
-type MappingEntry = { field: string; divisor?: number; transform?: string; item?: string };
+type MappingEntry = { field: string; divisor?: number; transform?: string; item?: string; format?: string };
+
+/**
+ * Exactly one plain email address: one `@`, a non-empty local part and domain,
+ * and none of the characters that let one entry carry a second recipient or a
+ * display name (comma, semicolon, whitespace, angle brackets, quotes,
+ * parentheses, backslash).
+ */
+const ONE_PLAIN_ADDRESS = /^[^@\s,;<>"'()\\]+@[^@\s,;<>"'()\\]+$/;
+
+/**
+ * The first item of a call that breaks its mapping's declared `format`
+ * (tool-gating-types.ts `MappingItemFormat`), or null when every item is
+ * well-formed. Run before the execution context is built: an item such as
+ * "x@evil.com,a@customer.com" would otherwise be joined, counted and
+ * domain-checked as one recipient in customer.com. Generic — the argument
+ * names and the format come from the manifest.
+ */
+export function malformedMappedItem(
+  executionMapping: Record<string, ExecutionMappingValue>,
+  args: Record<string, unknown>,
+): { arg: string; item: string; format: string } | null {
+  for (const [argName, mapping] of Object.entries(executionMapping)) {
+    const value = args[argName];
+    if (value === undefined || value === null || typeof mapping === 'string') continue;
+    const entries: MappingEntry[] = Array.isArray(mapping) ? mapping : [mapping];
+    for (const m of entries) {
+      if (m.format !== 'email') continue;
+      for (const item of listItems(m, value)) {
+        if (!ONE_PLAIN_ADDRESS.test(item)) return { arg: argName, item, format: m.format };
+      }
+    }
+  }
+  return null;
+}
+
+/** The AI-facing refusal for {@link malformedMappedItem}. Names the entry, says what to do. */
+export function malformedItemRefusalText(toolName: string, bad: { arg: string; item: string }): string {
+  return `Refused: ${toolName}'s "${bad.arg}" entry ${JSON.stringify(bad.item)} is not one email address. ` +
+    `Give one plain address per entry, e.g. ["anna@example.com", "ben@example.com"]. Nothing was sent and no ticket was requested.`;
+}
 
 /**
  * The execution-context fields a tool call's arguments produce under the
@@ -1287,6 +1327,23 @@ function createGatedToolHandlerInner(
 
     // Start with static values (e.g., scope: "external")
     const execution: Record<string, string | number> = { ...staticExecution };
+
+    // One plain address per entry, where the manifest declares it — before
+    // anything is joined, counted or scope-checked (malformedMappedItem).
+    {
+      const bad = malformedMappedItem(executionMapping, args);
+      if (bad) {
+        recordBlocked(state, tool, {
+          kind: 'scope',
+          detail: `"${bad.arg}" entry is not one ${bad.format} address.`,
+          field: bad.arg,
+          value: bad.item,
+          who: 'gateway',
+          code: 'SCOPE_INVALID_VALUE',
+        });
+        return { content: [{ type: 'text', text: malformedItemRefusalText(tool.namespacedName, bad) }], isError: true };
+      }
+    }
 
     // Build execution context from tool args using the mapping. Several
     // arguments on one field combine (an email's to + cc): mapExecutionArgs.

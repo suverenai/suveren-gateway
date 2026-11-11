@@ -41,12 +41,26 @@ export const LIST_TRANSFORMS: readonly ExecutionMappingTransform[] = ['length', 
  * argument's items are objects — e.g. calendar attendees `{ email, … }` →
  * `"item": "email"`. Declared by the manifest, never assumed: an object item
  * without it does not become a value the scope check could accept.
+ *
+ * `format: "email"` (with a transform): every item of the argument must be
+ * exactly ONE plain email address — no comma, semicolon, whitespace, angle
+ * brackets, quotes, parentheses, a second `@`, an empty local part or domain.
+ * Otherwise the call is refused at the gate, before any proposal or ticket:
+ * `join` separates items with commas and `join_domains` reads the text after
+ * the last `@`, so "x@evil.com,a@customer.com" or "x@evil.com
+ * <a@customer.com>" would count as one recipient in customer.com. Required on
+ * every `join_domains` entry (the manifest loader refuses one without it);
+ * declare it on every entry of a recipient argument. Checked on the item as
+ * read (after `item`).
  */
+export type MappingItemFormat = 'email';
+export const MAPPING_ITEM_FORMATS: readonly MappingItemFormat[] = ['email'];
+
 export type ExecutionMappingValue =
   | string
   | { field: string; divisor: number }
-  | { field: string; transform: ExecutionMappingTransform; item?: string }
-  | Array<{ field: string; divisor?: number; transform?: ExecutionMappingTransform; item?: string }>;
+  | { field: string; transform: ExecutionMappingTransform; item?: string; format?: MappingItemFormat }
+  | Array<{ field: string; divisor?: number; transform?: ExecutionMappingTransform; item?: string; format?: MappingItemFormat }>;
 
 /**
  * Preview declaration (AU3) — a manifest's description of how an action
