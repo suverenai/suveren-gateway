@@ -1,6 +1,6 @@
 /**
  * The shared limits that govern THIS action, on the approval card: one row per
- * cumulative bound of the mandate — "Team limit per day (3 of 5 used)". The
+ * cumulative bound of the mandate — "Daily send limit (team) (3 of 5 used)". The
  * figures are the Authority Server's own running count (read from the newest
  * ticket under the mandate); without proof, the row says only that the limit
  * exists. Which bounds govern is read from the profile (`appliesTo`), never
@@ -8,16 +8,18 @@
  */
 import type { AgentProfile } from '@hap/core';
 import { useMandateReceipts, usedTodayNumbers } from '../lib/mandate-card-usage';
-import { cumulativeBounds, sharedLimitLabel, NOT_ALLOWED } from '../lib/limit-words';
+import { cumulativeBounds, sharedLimitLabel, type LimitWords } from '../lib/limit-words';
 import { useCumulativeUsage, usageEntryFor } from '../lib/cumulative-usage';
 import { useAuth } from '../contexts/AuthContext';
 
-export function SharedLimitRows({ authorizationId, bounds, profile, actionType, style }: {
+export function SharedLimitRows({ authorizationId, bounds, profile, actionType, style, words }: {
   authorizationId: string;
   bounds: Record<string, string | number> | undefined;
   profile: AgentProfile | null;
   actionType?: string;
   style?: React.CSSProperties;
+  /** The connector manifest's `limitWords` — the limit's noun, when it gives one. */
+  words?: LimitWords;
 }) {
   const { mode } = useAuth();
   const res = useMandateReceipts();
@@ -39,11 +41,12 @@ export function SharedLimitRows({ authorizationId, bounds, profile, actionType, 
           limit: entry?.limit ?? bounds[b.key],
           used: entry ? entry.used : used[b.key],
           usedIsTeamWide: !!entry,
+          words,
         })!;
         return (
           <div key={b.key} className="av3-shared-limit">
             <dt>{label.name}</dt>
-            <dd>{label.figures === NOT_ALLOWED ? `(${NOT_ALLOWED})` : label.figures ? <span className="shared-limit-figures">({label.figures})</span> : null}</dd>
+            <dd>{label.figures ? <span className="shared-limit-figures">({label.figures})</span> : null}</dd>
           </div>
         );
       })}

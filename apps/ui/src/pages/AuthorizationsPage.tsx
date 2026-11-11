@@ -12,7 +12,7 @@ import { ObTypeLine, ObFold, ObLock, useFoldAccordion } from '../components/Obje
 import { COMMITMENT_REVIEW, COMMITMENT_AUTOMATIC } from '../lib/commitment-words';
 import { useMandateReceipts, usedTodayNumbers, ticketsUnder } from '../lib/mandate-card-usage';
 import { useCumulativeUsage, usageEntryFor } from '../lib/cumulative-usage';
-import { cumulativeBound, sharedLimitLabel, limitWordsForProfile, NOT_ALLOWED } from '../lib/limit-words';
+import { cumulativeBound, sharedLimitLabel, limitWordsForProfile } from '../lib/limit-words';
 import { actionLabel } from '../lib/receipt-summary';
 import { isToday, ticketTime } from '../lib/core-objects';
 import { EmptyState } from '../components/EmptyState';
@@ -470,15 +470,13 @@ function MandateLimits({ item, manifests, boundsEntries, limitLines, limitLabel,
     <dl className="ob-kv ob-sub" data-testid="mandate-limits">
       {boundsEntries.map(([k, v]) => {
         const r = aboveCapByKey.get(k);
-        // Any cumulative limit reads as the shared one: "Team limit per day", figures from the system.
+        // Any cumulative limit reads by its own name ("Daily write limit (team)"), figures from the system.
         const shared = cumulativeBound(profile, k)
           ? (() => {
               // The server's team-wide count wins; without it a team shows no figure.
               const entry = usageEntryFor(server, k);
               return sharedLimitLabel({
                 profile, key: k, team: mode === 'team',
-                // Every limit of the mandate is listed here: each says which one it is.
-                shownWith: boundsEntries.map(([key]) => key),
                 words: limitWordsForProfile(manifests, item.profile_id),
                 limit: entry?.limit ?? (v as number | string),
                 used: entry ? entry.used : used[k],
@@ -500,9 +498,6 @@ function MandateLimits({ item, manifests, boundsEntries, limitLines, limitLabel,
                     <s>{limitValue(k, v)}</s> → {r.cap}
                   </span>
                 )
-              ) : shared?.figures === NOT_ALLOWED ? (
-                // The signed value itself, not a figure read from the system.
-                <span data-testid="limit-not-allowed">{NOT_ALLOWED}</span>
               ) : shared?.figures ? (
                 <span data-testid="shared-limit-figures" className="shared-limit-figures">{shared.figures}</span>
               ) : limitValue(k, v)}

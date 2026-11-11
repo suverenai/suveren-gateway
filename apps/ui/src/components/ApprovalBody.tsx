@@ -37,6 +37,7 @@ import { areaName, ageLabel, deadlineLabel } from '../lib/core-objects';
 import { areaIcon } from '../lib/area';
 import { AreaIcon } from './AreaIcon';
 import { useMandateUsage } from '../lib/mandate-usage';
+import { limitWordsForTool } from '../lib/limit-words';
 import { previewBoxView } from '../lib/approval-preview-view';
 import { SystemBoxes } from './RenderedCreationView';
 import { isTestSetupAction, profileIdentity, shortProfileId } from '../lib/profile-identity';
@@ -535,6 +536,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
           bounds={mandateBounds}
           profile={profile}
           actionType={typeof proposal.executionContext?.action_type === 'string' ? proposal.executionContext.action_type : undefined}
+          words={limitWordsForTool(manifests, proposal.tool)}
           style={{ order: 8 }}
         />
       )}
