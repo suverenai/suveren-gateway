@@ -46,6 +46,9 @@ import { createAIRouter } from './routes/ai';
 import { createAIPromptsRouter } from './routes/ai-prompts';
 import { requireAuth, requireAuthQueryOrHeader } from './middleware/auth';
 import { requireAllowedHost } from './middleware/host-guard';
+import { refuseAmbiguousPath, isApiPath } from './middleware/request-path';
+import { oauthResultPage } from './lib/html-escape';
+import { OAuthStateStore } from './lib/oauth-state';
 import { mcpPublicPort } from './lib/mcp-public-port';
 import { getToolDisplay, pushGateContent, pushServiceCredentials, setInternalSecret, getManifests, getGateContent, getEnrichedAuthorizations, getSkippedCommitments, getMyPendingProposals, MCP_BASE, runCommittedProposals, resyncGates, setReadPolicy } from './lib/mcp-bridge';
 import { backfillReadPolicyDefaults } from './lib/read-policy-defaults';
@@ -158,6 +161,15 @@ setInternalSecret(internalSecret);
 const app = express();
 // Before every route and the /api proxy: no other site may frame this page.
 app.use(noForeignFraming);
+// Before every route and the /api proxy: one path, read one way. A path two
+// parsers could read differently (`/api\as\pubkey`, `//api/x`) is refused
+// here, so the API-key guard and the proxy can never disagree about it
+// (middleware/request-path.ts).
+app.use(refuseAmbiguousPath);
+// Before every route: DNS-rebinding guard — the Host header must name this
+// machine (middleware/host-guard.ts). A page on another domain that resolves
+// to 127.0.0.1 is refused on /auth, /internal, /api, /mcp and the UI alike.
+app.use(requireAllowedHost);
 
 // Only parse JSON on routes we handle directly — NOT on /api/* which is proxied.
 // express.json() consumes the request body stream, which prevents
@@ -257,9 +269,11 @@ function resolveOrigin(req: Request): string {
   return `${req.protocol}://${req.get('host')}`;
 }
 
-// ─── OAuth redirect URI storage (must match exactly between start/callback) ─
+// ─── OAuth state: one random, single-use, short-lived value per sign-in,
+// bound to the connector and to the redirect URI that start sent (which the
+// token exchange must repeat exactly). See lib/oauth-state.ts. ────────────
 
-const oauthRedirectUris = new Map<string, string>();
+const oauthStates = new OAuthStateStore();
 
 // ─── Generic OAuth flow (driven by integration manifests) ───────────────
 
@@ -384,28 +398,42 @@ app.get('/auth/oauth/:integrationId/start', async (req: Request, res: Response) 
     return;
   }
   const redirectUri = `${resolveOrigin(req)}/auth/oauth/${integrationId}/callback`;
-  // Store redirect URI so callback can use the exact same value
-  oauthRedirectUris.set(integrationId, redirectUri);
+  // The callback is accepted only with this state, once, for this connector.
+  const state = oauthStates.issue({ integrationId, redirectUri });
   const params = new URLSearchParams({
     client_id: clientId,
     redirect_uri: redirectUri,
     response_type: 'code',
     scope: (group ? unionScopes(group, id => vault.getCredential(id)) : oauth.scopes).join(' '),
     ...oauth.extraParams,
+    // After extraParams: a manifest cannot replace it.
+    state,
   });
   res.redirect(`${oauth.authUrl}?${params.toString()}`);
 });
 
 app.get('/auth/oauth/:integrationId/callback', async (req: Request, res: Response) => {
   const { integrationId } = req.params;
-  const { code, error } = req.query;
+  const { code, error, state } = req.query;
+  // First: was this sign-in started here, for this connector, moments ago?
+  // Without that, any page could hand the browser a code for the ATTACKER's
+  // account and the gateway would store its token. The state is spent now,
+  // whatever happens next.
+  const started = oauthStates.consume(state, integrationId);
+  if (!started) {
+    res.status(400).send(oauthResultPage(
+      'Sign-in not accepted',
+      'This sign-in was not started from this gateway, or it took too long. Start it again from the Integrations page.',
+    ));
+    return;
+  }
   if (error || !code) {
-    res.status(400).send(`<html><body><h2>Authorization failed</h2><p>${String(error || 'No authorization code received')}</p><script>setTimeout(()=>window.close(),3000)</script></body></html>`);
+    res.status(400).send(oauthResultPage('Authorization failed', String(error || 'No authorization code received'), 3000));
     return;
   }
   const manifest = await getOAuthManifest(integrationId);
   if (!manifest?.oauth) {
-    res.status(404).send('<html><body><h2>OAuth config not found</h2></body></html>');
+    res.status(404).send(oauthResultPage('OAuth config not found'));
     return;
   }
   const oauth = manifest.oauth;
@@ -420,13 +448,11 @@ app.get('/auth/oauth/:integrationId/callback', async (req: Request, res: Respons
     creds = c ? { [clientIdKey]: c.clientId, [clientSecretKey]: c.clientSecret } : null;
   }
   if (!creds?.[clientIdKey] || !creds?.[clientSecretKey]) {
-    res.status(400).send('<html><body><h2>Credentials missing</h2></body></html>');
+    res.status(400).send(oauthResultPage('Credentials missing'));
     return;
   }
-  // Use the redirect URI stored during /start to ensure exact match
-  const redirectUri = oauthRedirectUris.get(integrationId)
-    ?? `${resolveOrigin(req)}/auth/oauth/${integrationId}/callback`;
-  oauthRedirectUris.delete(integrationId);
+  // The redirect URI /start sent: the token exchange must repeat it exactly.
+  const redirectUri = started.redirectUri;
   try {
     const tokenRes = await fetch(oauth.tokenUrl, {
       method: 'POST',
@@ -442,7 +468,7 @@ app.get('/auth/oauth/:integrationId/callback', async (req: Request, res: Respons
     const tokens = await tokenRes.json() as { refresh_token?: string; access_token?: string; id_token?: string; scope?: string; error?: string };
     const tokenValue = tokens.refresh_token ?? tokens.access_token;
     if (tokens.error || !tokenValue) {
-      res.status(400).send(`<html><body><h2>Token exchange failed</h2><p>${String(tokens.error || 'No token received')}</p><script>setTimeout(()=>window.close(),3000)</script></body></html>`);
+      res.status(400).send(oauthResultPage('Token exchange failed', String(tokens.error || 'No token received'), 3000));
       return;
     }
     // Capture the connected account (email from the OIDC id_token) + timestamp so
@@ -491,10 +517,10 @@ app.get('/auth/oauth/:integrationId/callback', async (req: Request, res: Respons
       }
     }
 
-    res.send(`<html><body><h2>${group ? group.name : manifest.id} connected successfully</h2><p>You can close this window.</p><script>setTimeout(()=>window.close(),2000)</script></body></html>`);
+    res.send(oauthResultPage(`${group ? group.name : manifest.id} connected successfully`, 'You can close this window.', 2000));
   } catch (err) {
     console.error(`[Control Plane] ${integrationId} OAuth error:`, err);
-    res.status(500).send('<html><body><h2>OAuth error</h2><p>See server logs</p></body></html>');
+    res.status(500).send(oauthResultPage('OAuth error', 'See server logs'));
   }
 });
 
@@ -661,7 +687,8 @@ app.get('/auth/oauth/:integrationId/health', authGuard, async (req: Request, res
 // query-string variant of the auth middleware so the API key can ride in ?key=.
 // The host guard runs FIRST: a DNS-rebinding attempt should be refused before
 // the API key in ?key= is even looked at.
-app.get('/events', requireAllowedHost, requireAuthQueryOrHeader(vault), createEventsHandler());
+// Host guard: app-wide, at the top (requireAllowedHost).
+app.get('/events', requireAuthQueryOrHeader(vault), createEventsHandler());
 
 // Sibling-process events (MCP server → control plane). Authenticated by the
 // shared internal secret, NOT by a user session: the MCP server has none.
@@ -1154,12 +1181,17 @@ const pinnedProxyAgent = SP_URL.startsWith('https:')
 
 const AS_PROXY_TIMEOUT_MS = 30_000;
 
-// Proxy /api/* to SP — mounted at root so http-proxy-middleware sees the full path
-app.use(
-  createProxyMiddleware({
+// Proxy /api/* to SP — mounted at root so http-proxy-middleware sees the full path.
+// The proxy attaches the signed-in person's AS session cookie, so it must
+// never forward a request the API-key guard did not pass. Both decide with
+// the same rule (isApiPath; `/apix` is not /api), and the guard runs again
+// right in front of the proxy — not only on Express's `app.use('/api')`
+// mount above, which reads the path differently from the proxy's own parser
+// (security review 2026-11, finding B; see middleware/request-path.ts).
+const asProxy = createProxyMiddleware({
     target: SP_URL,
     changeOrigin: true,
-    pathFilter: '/api',
+    pathFilter: (pathname: string) => isApiPath(pathname),
     ...(pinnedProxyAgent ? { agent: pinnedProxyAgent } : {}),
     on: {
       proxyReq: (proxyReq) => {
@@ -1287,8 +1319,11 @@ app.use(
         }
       },
     },
-  }),
-);
+  });
+app.use((req: Request, res: Response, next: NextFunction) => {
+  if (!isApiPath(req.path)) { next(); return; }
+  authGuard(req, res, () => { void asProxy(req, res, next); });
+});
 
 // ─── Health check (public) ──────────────────────────────────────────────
 

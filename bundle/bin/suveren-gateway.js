@@ -1650,6 +1650,10 @@ Environment:
                       else lets other machines connect as your agent, so it needs:
   SUVEREN_MCP_TOKEN   Token an AI assistant must send to open a session
                       (Authorization: Bearer <token>, or ?token=<token>)
+  SUVEREN_ALLOWED_HOSTS
+                      Extra hostnames the UI + API port answers to (comma-separated, no
+                      port). By default only localhost and IP addresses are accepted;
+                      add a name when you reach the gateway as e.g. mybox.local
   HTTP_PROXY / HTTPS_PROXY / NO_PROXY (upper or lower case)
                       Corporate proxy — honoured for every outbound call to the Authority
                       Server, the update checker, and a remote AI assistant endpoint. A
