@@ -246,14 +246,24 @@ const MAX_TOOLS_NAMED = 10;
 /**
  * A tool's compact call form from its own input schema: `name(to, subject, attachments?)`.
  * Required arguments first, then the optional ones with `?`, each in the schema's order. No
- * types and no descriptions (more text makes the AI less precise, Andreas 2026-11-11); a nested
- * object is named by its top-level name only.
+ * types and no descriptions (more text makes the AI less precise, Andreas 2026-11-11), except one
+ * mark: an argument that takes a list is `to[]` — the one type real AIs got wrong without it. A
+ * nested object is named by its top-level name only.
  */
 export function compactSignature(name: string, inputSchema: unknown): string {
   const s = (inputSchema && typeof inputSchema === 'object' ? inputSchema : {}) as { properties?: unknown; required?: unknown };
-  const props = s.properties && typeof s.properties === 'object' ? Object.keys(s.properties as object) : [];
+  const propsObj = (s.properties && typeof s.properties === 'object' ? s.properties : {}) as Record<string, unknown>;
+  const props = Object.keys(propsObj);
   const required = new Set(Array.isArray(s.required) ? s.required.filter((r): r is string => typeof r === 'string') : []);
-  const args = [...props.filter(p => required.has(p)), ...props.filter(p => !required.has(p)).map(p => `${p}?`)];
+  const isList = (p: string): boolean => {
+    const d = propsObj[p] as { type?: unknown; anyOf?: unknown; oneOf?: unknown } | undefined;
+    if (!d || typeof d !== 'object') return false;
+    if (d.type === 'array' || (Array.isArray(d.type) && d.type.includes('array'))) return true;
+    const alts = [...(Array.isArray(d.anyOf) ? d.anyOf : []), ...(Array.isArray(d.oneOf) ? d.oneOf : [])] as Array<{ type?: unknown }>;
+    return alts.length > 0 && alts.every(a => a?.type === 'array');
+  };
+  const show = (p: string) => (isList(p) ? `${p}[]` : p);
+  const args = [...props.filter(p => required.has(p)).map(show), ...props.filter(p => !required.has(p)).map(p => `${show(p)}?`)];
   return `${name}(${args.join(', ')})`;
 }
 

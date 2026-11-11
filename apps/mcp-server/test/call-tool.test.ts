@@ -233,7 +233,7 @@ describe('the change note names tools added since the chat started', () => {
       },
       required: ['to', 'subject', 'body'],
     };
-    expect(compactSignature('mail__send_message', schema)).toBe('mail__send_message(to, subject, body, attachments?, options?)');
+    expect(compactSignature('mail__send_message', schema)).toBe('mail__send_message(to, subject, body, attachments[]?, options?)');
     expect(compactSignature('mail__list_messages', { type: 'object', properties: { query: {}, max: { type: 'number' } } })).toBe('mail__list_messages(query?, max?)');
     expect(compactSignature('crm__export', { type: 'object' })).toBe('crm__export()');
     expect(compactSignature('crm__export', undefined)).toBe('crm__export()');
@@ -251,7 +251,7 @@ describe('the change note names tools added since the chat started', () => {
     expect(all(await c.callTool({ name: 'list-integrations', arguments: {} }))).not.toContain('[Suveren gateway]');
     s.setTools([LIST, SEND_FULL, INTERNAL]);
     const note = all(await c.callTool({ name: 'list-integrations', arguments: {} }));
-    expect(note).toContain('[Suveren gateway] New tools since this chat started: mail__list_messages(query?, max?), mail__send_message(to, subject, body, attachments?). If they are not in your tool list, call them through call-tool.');
+    expect(note).toContain('[Suveren gateway] New tools since this chat started: mail__list_messages(query?, max?), mail__send_message(to, subject, body, attachments[]?). If they are not in your tool list, call them through call-tool.');
     // Never an internal tool.
     expect(note).not.toContain('describe_mandate_proposal');
     await c.close();
@@ -289,5 +289,13 @@ describe('the change note names tools added since the chat started', () => {
     expect(second.noteForAnswer()).toBeUndefined();
     // A third session of the same app, with nothing new, hears nothing.
     expect(session().noteForAnswer()).toBeUndefined();
+  });
+});
+
+describe('a list argument is marked, nothing else is typed', () => {
+  it('marks an array argument with [] and leaves the rest bare', async () => {
+    const { compactSignature } = await import('../src/lib/change-notice');
+    const schema = { type: 'object', required: ['to', 'subject'], properties: { to: { type: 'array', items: { type: 'string' } }, subject: { type: 'string' }, cc: { anyOf: [{ type: 'array' }] }, max: { type: 'number' } } };
+    expect(compactSignature('mail__send_message', schema)).toBe('mail__send_message(to[], subject, cc[]?, max?)');
   });
 });
