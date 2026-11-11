@@ -9,6 +9,11 @@
 import { describe, it, expect } from 'vitest';
 import { setupBuiltin } from '../setup';
 import type { BuiltinDeps } from '../index';
+import { loadProfiles } from '../../profile-loader';
+
+// The built-ins read their read gate from their own profile when they are built
+// (builtins/read-switch.ts), as at real start-up: load the profile catalog first.
+loadProfiles();
 
 // setupBuiltin's factory body only builds static tool definitions — the
 // closures that touch `deps` (handler/validate) are never invoked here.

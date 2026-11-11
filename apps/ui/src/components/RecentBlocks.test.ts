@@ -43,12 +43,14 @@ describe('denialView — reason → chip / severity / fix route', () => {
 });
 
 describe('sourceName', () => {
-  it('maps known integration ids to display names', () => {
-    expect(sourceName('gmail')).toBe('Gmail');
-    expect(sourceName('calendar')).toBe('Google Calendar');
+  it('names a connector by its manifest, whatever its id — no list in code', () => {
+    const manifests = [{ id: 'calendar', name: 'Google Calendar' }, { id: 'helpdesk-x', name: 'Help Desk' }];
+    expect(sourceName('calendar', manifests)).toBe('Google Calendar');
+    expect(sourceName('helpdesk-x', manifests)).toBe('Help Desk');
   });
-  it('falls back to the raw id for an unknown integration', () => {
-    expect(sourceName('weird-mcp')).toBe('weird-mcp');
+  it('falls back to the raw id for an unknown integration, or while the manifests load', () => {
+    expect(sourceName('weird-mcp', [{ id: 'calendar', name: 'Google Calendar' }])).toBe('weird-mcp');
+    expect(sourceName('calendar')).toBe('calendar');
   });
 });
 

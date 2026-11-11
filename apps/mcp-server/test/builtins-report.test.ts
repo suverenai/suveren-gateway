@@ -30,7 +30,8 @@ import { createMcpServer } from '../src/index';
 import { registerBuiltins } from '../src/lib/builtins';
 import { createGatedToolHandler, toolIsAuthorizedForDisplay } from '../src/lib/tool-proxy';
 import { ReportStore } from '../src/lib/report/report-store';
-import { REPORT_BRIEF } from '../src/lib/report-brief';
+import { reportBrief } from '../src/lib/report-brief';
+import { reportSystems } from '../src/lib/report/systems';
 import { MAX_REPORT_HTML_BYTES, reportBuiltin } from '../src/lib/builtins/report';
 import { buildScenario, AS_URL } from './report/fixtures/scenario';
 import { buildExportBundle, buildExportDocument } from '../src/lib/report/export-report';
@@ -171,7 +172,7 @@ describe('report built-in registration', () => {
 
   it("write_report's description IS the report brief (R3/R4: the brief reaches the AI via the tool description)", () => {
     const { tools } = setup([]);
-    expect(tools.write_report.description).toBe(REPORT_BRIEF);
+    expect(tools.write_report.description).toBe(reportBrief(reportSystems()));
   });
 });
 

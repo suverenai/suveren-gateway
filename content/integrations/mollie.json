@@ -454,7 +454,7 @@
       "context": {
         "currency": "EUR"
       },
-      "intent": "Allow the agent to create payment links and payments for routine amounts. An open-amount link, or one above €50, is refused. No lookups.",
+      "intent": "Allow the agent to create payment links and payments for routine customer payments, so customers can pay without waiting for me. It does not look anything up.",
       "ttl": 2592000,
       "tags": [
         "€50/tx",

@@ -7,6 +7,8 @@ import { useAreaCatalog } from '../lib/area-catalog';
 import { resolveAreaName } from '../lib/area';
 import { blockedView, formatBlockedWhen, plainTitle, reasonLead } from '../lib/blocked-view';
 import { ObTypeLine } from './ObjectCard';
+import { connectorName, useLabelManifests } from '../lib/display-names';
+import type { SourceManifestLike } from '../lib/attachment-sources';
 
 /**
  * Recent blocks — read denials the Gatekeeper made, so the owner can tell a
@@ -15,12 +17,8 @@ import { ObTypeLine } from './ObjectCard';
  * line + a calm severity (amber = a limit fired; red = needs you; grey = info).
  */
 
-const SOURCE: Record<string, string> = {
-  gmail: 'Gmail', calendar: 'Google Calendar', crm: 'CRM',
-  linkedin: 'LinkedIn', records: 'Records', mollie: 'Mollie',
-};
-/** Integration id → human name. Pure; exported for tests. */
-export const sourceName = (id: string): string => SOURCE[id] ?? id;
+/** Integration id → its manifest's name (the id while the manifests load, or when none names it). Pure; exported for tests. */
+export const sourceName = (id: string, manifests?: SourceManifestLike[]): string => connectorName(id, manifests);
 
 export type Severity = 'warn' | 'act' | 'info';
 
@@ -45,12 +43,13 @@ export function denialView(reason: DenialReason | undefined): { chip: string; se
 }
 
 /** The plain-language sentence (presentation). Coarse target only, never content. */
-function lineFor(r: DenialRecord): React.ReactNode {
-  const src = sourceName(r.integrationId);
+function lineFor(r: DenialRecord, manifests: SourceManifestLike[] | undefined): React.ReactNode {
+  const src = sourceName(r.integrationId, manifests);
   switch (r.reason) {
     case 'resource':
-      return r.integrationId === 'calendar'
-        ? <>Tried to read your <b>{r.target ?? 'restricted'}</b> calendar</>
+      // The container the record names (a calendar, a folder), for any connector.
+      return r.target
+        ? <>Tried to read <b>{r.target}</b> in {src}</>
         : <>Tried to read a restricted location in {src}</>;
     case 'spam':         return <>Tried to open a message in <b>spam or trash</b></>;
     case 'age':          return <>Tried to read {src} older than your read window</>;
@@ -92,6 +91,7 @@ export function RecentBlocks() {
   // condition as the Blocked nav count; once seen, the panel is gone.
   const [lastSeen, setLastSeen] = useState<number | null>(null);
   const catalog = useAreaCatalog();
+  const manifests = useLabelManifests();
 
   const load = useCallback(() => {
     spClient.getDenials({ limit: 200 })
@@ -122,7 +122,7 @@ export function RecentBlocks() {
 
   // UI spec §18.5 — each new block is the closed BLOCKED row of the Blocked page (§18.4).
   const row = (r: DenialRecord, i: number) => {
-    const area = r.profile ? resolveAreaName(r.profile, catalog) : sourceName(r.integrationId);
+    const area = r.profile ? resolveAreaName(r.profile, catalog) : sourceName(r.integrationId, manifests);
     const v = denialView(r.reason);
     return (
       <Link className="ob-card dash-row" to="/blocked" key={`${r.ts}-${i}`} data-testid="dash-blocked">
@@ -130,12 +130,12 @@ export function RecentBlocks() {
           tag="Blocked"
           className="obj-line"
           profileId={r.profile ?? undefined}
-          parts={[area, `via ${sourceName(r.integrationId)}`, formatBlockedWhen(r.ts, Date.now())]}
+          parts={[area, `via ${sourceName(r.integrationId, manifests)}`, formatBlockedWhen(r.ts, Date.now())]}
         />
-        <span className="ob-title">{r.reason ? lineFor(r) : plainTitle(r)}</span>
+        <span className="ob-title">{r.reason ? lineFor(r, manifests) : plainTitle(r)}</span>
         <span className="ob-one ob-check-x">
           <span aria-hidden="true">✕</span> <b>{reasonLead(r)}</b>{' '}
-          <span className="ob-quiet-inline">{r.reason ? v.chip : blockedView(r).sentence}</span>
+          <span className="ob-quiet-inline">{r.reason ? v.chip : blockedView(r, undefined, undefined, { manifests, catalog }).sentence}</span>
         </span>
       </Link>
     );

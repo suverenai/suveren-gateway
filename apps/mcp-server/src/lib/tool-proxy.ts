@@ -135,11 +135,35 @@ async function unreadableForNote(unreadableFor: string[], state: SharedState): P
 }
 
 /**
+ * The ticket request's `amount`: the value of the execution field the
+ * profile's `cumulative_sum` bound reads (`boundType.of`; with several, the
+ * first in `keyOrder`) — the field the Authority Server sums and the spec
+ * names for the ticket's cumulative `amount` (protocol.md, Ticket Payload).
+ * Read from the profile, never from a field called "amount" (charge sums
+ * `amount`, purchase `spend`). Undefined when the profile sums nothing or the
+ * value is not a number.
+ */
+export function cumulativeSumValue(
+  profile: { boundsSchema?: { keyOrder?: string[]; fields?: Record<string, unknown> } } | undefined,
+  execution: Record<string, unknown>,
+): number | undefined {
+  const fields = profile?.boundsSchema?.fields ?? {};
+  const order = [...new Set([...(profile?.boundsSchema?.keyOrder ?? []), ...Object.keys(fields)])];
+  for (const key of order) {
+    const bt = (fields[key] as { boundType?: { kind?: string; of?: string } } | undefined)?.boundType;
+    if (bt?.kind !== 'cumulative_sum' || !bt.of) continue;
+    const v = execution[bt.of];
+    return typeof v === 'number' ? v : undefined;
+  }
+  return undefined;
+}
+
+/**
  * Apply a single mapping entry to produce an execution context field.
  * Handles divisor, transform, and direct copy.
  */
-function applyMapping(
-  m: { field: string; divisor?: number; transform?: string },
+export function applyMapping(
+  m: { field: string; divisor?: number; transform?: string; item?: string },
   value: unknown,
   execution: Record<string, string | number>,
 ): void {
@@ -148,14 +172,14 @@ function applyMapping(
     execution[m.field] = numValue / m.divisor;
     return;
   }
-  // Extract .email when the item is an attendee object — Google Calendar
-  // accepts attendees as `{ email, displayName?, ... }` objects, but the
-  // join / join_domains transforms only know how to read flat strings.
-  // Without this, an object stringifies to "[object Object]" and the
-  // gatekeeper rejects with "[object object] not in authorized set".
+  // An item that is an object (Google Calendar attendees are `{ email,
+  // displayName?, ... }`) is read by the property the manifest names in
+  // `item` — the join / join_domains transforms only know flat strings. An
+  // object without a declared `item` stringifies to "[object Object]", which
+  // no scope accepts: fail-closed, never a guessed property.
   const coerce = (v: unknown): string => {
-    if (typeof v === 'object' && v !== null && 'email' in v) {
-      return String((v as { email: unknown }).email);
+    if (m.item && typeof v === 'object' && v !== null && m.item in v) {
+      return String((v as Record<string, unknown>)[m.item]);
     }
     return String(v);
   };
@@ -1935,7 +1959,7 @@ function createGatedToolHandlerInner(
             action: tool.namespacedName,
             actionType,
             executionContext: wireExecCtx,
-            amount: typeof execution.amount === 'number' ? execution.amount : undefined,
+            amount: cumulativeSumValue(getProfile(auth.profileId), execution),
             idempotencyKey,
             // Privacy: send the hash and how to reproduce it — never the
             // preimage. `binding` also carries `boundContent`, the plaintext

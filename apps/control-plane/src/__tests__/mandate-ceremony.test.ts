@@ -173,42 +173,56 @@ describe('approverPubkeys', () => {
 });
 
 describe('workspace when `team` is omitted — the Delegation mandate\'s', () => {
+  // As the Setup built-in sends it: the workspace of the person's own mandate under its profile.
+  const SETUP_REQ = { ...REQ, workspaceOf: 'delegation' };
+
   it('no Delegation mandate: the personal workspace', async () => {
     const { as } = fakeAs();
-    expect((await planMandate(REQ, deps(as).d)).groupId).toBe('g_personal');
+    expect((await planMandate(SETUP_REQ, deps(as).d)).groupId).toBe('g_personal');
   });
 
   it('Delegation mandate in a team: that team (domain = user id)', async () => {
     const { as } = fakeAs({ delegationIn: ['g_team'], approvers: ['u_anna'] });
-    const plan = await planMandate(REQ, deps(as).d);
+    const plan = await planMandate(SETUP_REQ, deps(as).d);
     expect(plan.groupId).toBe('g_team');
     expect(plan.domain).toBe('u_anna');
   });
 
   it('a team that names who may give mandates (grantors) and no above-cap approvers: allowed', async () => {
     const { as } = fakeAs({ delegationIn: ['g_team'], approvers: [], grantors: ['u_anna'] });
-    expect((await planMandate(REQ, deps(as).d)).groupId).toBe('g_team');
+    expect((await planMandate(SETUP_REQ, deps(as).d)).groupId).toBe('g_team');
   });
 
   it('grantors: "all" lets any member give the mandate', async () => {
     const { as } = fakeAs({ delegationIn: ['g_team'], approvers: [], grantors: 'all' });
-    expect((await planMandate(REQ, deps(as).d)).groupId).toBe('g_team');
+    expect((await planMandate(SETUP_REQ, deps(as).d)).groupId).toBe('g_team');
   });
 
   it('the person is an above-cap approver but not named to give mandates: refused', async () => {
     const { as } = fakeAs({ delegationIn: ['g_team'], approvers: ['u_anna'], grantors: ['u_bernd'] });
-    await expect(planMandate(REQ, deps(as).d)).rejects.toBeInstanceOf(MandateRefused);
+    await expect(planMandate(SETUP_REQ, deps(as).d)).rejects.toBeInstanceOf(MandateRefused);
   });
 
   it('Delegation mandates in two workspaces: refused, naming both — the AI must say which', async () => {
     const { as, calls } = fakeAs({ delegationIn: ['g_team', 'g_personal'], approvers: ['u_anna'] });
-    await expect(planMandate(REQ, deps(as).d)).rejects.toThrow(/several workspaces.*"Sales Vienna".*personal/);
+    await expect(planMandate(SETUP_REQ, deps(as).d)).rejects.toThrow(/several workspaces.*"Sales Vienna".*personal/);
     expect(calls.some((c) => c.path === '/api/as/mandate')).toBe(false);
   });
 
   it('`team: "personal"` picks the personal workspace even when a team holds the Delegation mandate', async () => {
     const { as } = fakeAs({ delegationIn: ['g_team'] });
-    expect((await planMandate({ ...REQ, team: 'personal' }, deps(as).d)).groupId).toBe('g_personal');
+    expect((await planMandate({ ...SETUP_REQ, team: 'personal' }, deps(as).d)).groupId).toBe('g_personal');
+  });
+
+  it('the profile comes from the request, never a name in code: a made-up one finds its own mandate\'s workspace', async () => {
+    const { as } = fakeAs({ delegationIn: ['g_team'], approvers: ['u_anna'] });
+    // A Setup-like profile under another name: the Delegation mandate in g_team is not its mandate.
+    expect((await planMandate({ ...REQ, workspaceOf: 'helpdesk-setup' }, deps(as).d)).groupId).toBe('g_personal');
+  });
+
+  it('no `workspaceOf` and no `team`: the personal workspace', async () => {
+    const { as } = fakeAs({ delegationIn: ['g_team'], approvers: ['u_anna'] });
+    expect((await planMandate(REQ, deps(as).d)).groupId).toBe('g_personal');
   });
 });
 

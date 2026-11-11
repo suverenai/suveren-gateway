@@ -12,6 +12,8 @@ import { loadProfile } from '../lib/profile-cache';
 import { resolveAreaName, areaIcon, parseAreaFilter, matchesAreaFilter } from '../lib/area';
 import { shortProfileId } from '../lib/profile-identity';
 import { sourceName } from '../components/RecentBlocks';
+import { useLabelManifests } from '../lib/display-names';
+import type { SourceManifestLike } from '../lib/attachment-sources';
 import { useVisiblePolling } from '../hooks/useVisiblePolling';
 import { useSSEEvent } from '../contexts/EventSourceContext';
 
@@ -31,6 +33,7 @@ export function BlockedPage() {
   const [profiles, setProfiles] = useState<Record<string, AgentProfile | null>>({});
   const [failed, setFailed] = useState(false);
   const catalog = useAreaCatalog();
+  const manifests = useLabelManifests();
 
   // UI spec §13.3 — area filter pills, next to the kind dot/legend; the URL
   // carries it so a link can land on one area directly.
@@ -188,7 +191,7 @@ export function BlockedPage() {
         <AreaFilterPills areas={areaOptions} selected={areaFilter} onSelect={setAreaFilter} totalCount={records.length} />
         <div className="blocked-list">
           {filteredRecords.map((r, i) => {
-            const view = blockedView(r, r.profile ? profiles[r.profile] ?? undefined : undefined, mandateTitlesById);
+            const view = blockedView(r, r.profile ? profiles[r.profile] ?? undefined : undefined, mandateTitlesById, { manifests, catalog });
             const unseen = seenCutoff !== null && r.ts > seenCutoff;
             const pid = r.profile ?? r.integrationId;
             return (
@@ -199,6 +202,7 @@ export function BlockedPage() {
                 area={resolveAreaName(pid, catalog)}
                 unseen={unseen}
                 mandateTitle={resolveMandateTitle(r, mandateTitlesById)}
+                manifests={manifests}
               />
             );
           })}
@@ -215,12 +219,13 @@ export function BlockedPage() {
  * for failed checks on approval cards), who refused. No grey tile: nothing was
  * signed and nothing ran.
  */
-function BlockedCard({ record: r, view, area, unseen, mandateTitle }: {
+function BlockedCard({ record: r, view, area, unseen, mandateTitle, manifests }: {
   record: DenialRecord;
   view: BlockedView;
   area: string;
   unseen: boolean;
   mandateTitle: string | undefined;
+  manifests: SourceManifestLike[] | undefined;
 }) {
   const ref = useFoldAccordion<HTMLDivElement>();
   return (
@@ -236,7 +241,7 @@ function BlockedCard({ record: r, view, area, unseen, mandateTitle }: {
           className="obj-line"
           parts={[
             area,
-            r.integrationId ? `via ${sourceName(r.integrationId)}` : null,
+            r.integrationId ? `via ${sourceName(r.integrationId, manifests)}` : null,
             formatBlockedWhen(r.ts, Date.now()),
             unseen ? <span className="ob-st new-pill" data-testid="blocked-new">New</span> : null,
           ]}
@@ -252,7 +257,7 @@ function BlockedCard({ record: r, view, area, unseen, mandateTitle }: {
         </ObFold>
         <ObFold title="Technical details" summary={r.code ?? undefined} testId="blocked-technical">
           <dl className="ob-kv">
-            <dt>Action</dt><dd className="ob-mono">{sourceName(r.integrationId)} · {r.tool}</dd>
+            <dt>Action</dt><dd className="ob-mono">{sourceName(r.integrationId, manifests)} · {r.tool}</dd>
             <dt>Mandate</dt>
             <dd>
               {mandateTitle ?? (r.mandateId ? '' : 'none covers it')}

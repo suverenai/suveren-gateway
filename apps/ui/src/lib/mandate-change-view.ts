@@ -7,7 +7,15 @@
 import type { ChangeRow, ChangeTag, MandateDiff } from '@hap/core/mandate-change';
 import { formatUnit } from './bound-format';
 import { modeView } from './mandate-proposal';
-import { ATTACHMENT_SOURCE_HEADING, attachmentSourceLabel, isAttachmentSourceField, type SourceManifestLike } from './attachment-sources';
+import { ATTACHMENT_SOURCE_HEADING, isAttachmentSourceField, type SourceManifestLike } from './attachment-sources';
+import { scopeValueName, type NameSources } from './display-names';
+
+/** Where the card's names come from: the manifests (document sources), plus the profile catalog (areas). */
+export type ChangeNames = NameSources | SourceManifestLike[] | undefined;
+
+function sourcesOf(names: ChangeNames): NameSources {
+  return Array.isArray(names) ? { manifests: names } : names ?? {};
+}
 
 export const CHANGE_MANDATE_TOOL = 'setup__change_mandate';
 
@@ -64,12 +72,12 @@ export function rowLabel(row: Pick<ChangeRow, 'label' | 'format'>): string {
   return isAttachmentSourceField(row) ? ATTACHMENT_SOURCE_HEADING : row.label;
 }
 
-/** One list value by the name the person knows: a document source by its manifest title. */
-export function valueName(row: Pick<ChangeRow, 'format'>, value: string, manifests: SourceManifestLike[] | undefined): string {
-  return isAttachmentSourceField(row) ? attachmentSourceLabel(manifests, value) : value;
+/** One list value by the name the person knows: a document source by its manifest title, an area by its profile's name. */
+export function valueName(row: Pick<ChangeRow, 'format' | 'valuesFrom'>, value: string, manifests: ChangeNames): string {
+  return scopeValueName(row, value, sourcesOf(manifests));
 }
 
-function names(row: ChangeRow, values: string[] | undefined, manifests: SourceManifestLike[] | undefined): string {
+function names(row: ChangeRow, values: string[] | undefined, manifests: ChangeNames): string {
   return (values ?? []).map((v) => valueName(row, v, manifests)).join(', ');
 }
 
@@ -79,7 +87,7 @@ function names(row: ChangeRow, values: string[] | undefined, manifests: SourceMa
  * list reads in the form's own terms (the picker's "these emails", "text only"); every other
  * field uses the generic "This allows more/less than before: ..." form.
  */
-export function rowMeaning(row: ChangeRow, manifests: SourceManifestLike[] | undefined): string {
+export function rowMeaning(row: ChangeRow, manifests: ChangeNames): string {
   if (row.added || row.removed) {
     const added = names(row, row.added, manifests);
     const removed = names(row, row.removed, manifests);
@@ -131,7 +139,7 @@ export function whenText(ms: number, now = Date.now()): string {
 export function refusalLine(
   r: NonNullable<ChangeFacts['refused']>[number],
   diff: MandateDiff,
-  manifests: SourceManifestLike[] | undefined,
+  manifests: ChangeNames,
   now = Date.now(),
 ): string | null {
   const row = diff.rows.find((x) => x.field === r.field);
@@ -149,7 +157,7 @@ export function refusalLine(
 }
 
 /** "From your gateway": local facts about limits, one sentence each. */
-export function gatewayFacts(facts: ChangeFacts | null, diff: MandateDiff, manifests?: SourceManifestLike[], now = Date.now()): string[] {
+export function gatewayFacts(facts: ChangeFacts | null, diff: MandateDiff, manifests?: ChangeNames, now = Date.now()): string[] {
   const lines: string[] = [];
   // Why the change is asked for, from the gateway's own refusal log: at most two lines.
   for (const r of (facts?.refused ?? []).slice(0, 2)) {
@@ -170,7 +178,7 @@ export function gatewayFacts(facts: ChangeFacts | null, diff: MandateDiff, manif
   return lines;
 }
 
-export function staysLines(diff: MandateDiff, manifests?: SourceManifestLike[]): string[] {
+export function staysLines(diff: MandateDiff, manifests?: ChangeNames): string[] {
   return diff.stays.flatMap((s) => {
     if (s.label === 'mode') return [modeWord(s.value)];
     if (s.label === 'lasts-until') return [`Lasts until ${dateText(Number(s.value))}`];
@@ -179,6 +187,8 @@ export function staysLines(diff: MandateDiff, manifests?: SourceManifestLike[]):
       const named = s.value.split(',').map((v) => v.trim()).filter(Boolean).map((v) => valueName(s, v, manifests)).join(', ');
       return [`${ATTACHMENT_SOURCE_HEADING}: ${named}`];
     }
+    // A list whose values the profile declares (areas): each by its name.
+    if (s.valuesFrom) return [`${s.label}: ${s.value.split(',').map((v) => v.trim()).filter(Boolean).map((v) => valueName(s, v, manifests)).join(', ')}`];
     return [`${s.label}: ${s.value}`];
   });
 }

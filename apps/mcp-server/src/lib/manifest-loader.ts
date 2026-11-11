@@ -1769,7 +1769,8 @@ export function computeSignInGroups(list: Array<Pick<IntegrationManifest, 'id' |
 // ─── report declaration ─────────────────────────────────────────────────────
 
 const REPORT_KEYS = new Set(['system', 'label', 'cases', 'tables']);
-const REPORT_TABLE_KEYS = new Set(['name', 'required', 'record', 'matchBy', 'causingTicket', 'refusalTime']);
+const REPORT_TABLE_KEYS = new Set(['name', 'required', 'record', 'matchBy', 'causingTicket', 'refusalTime', 'time']);
+const REPORT_TIME_KEYS = new Set(['column', 'ticket']);
 const REPORT_SYSTEM_RE = /^[a-z][a-z0-9-]*$/;
 
 const isText = (v: unknown): v is string => typeof v === 'string' && v.length > 0;
@@ -1811,6 +1812,13 @@ export function invalidManifestReportReason(manifest: Pick<IntegrationManifest, 
     }
     if (tt.causingTicket !== undefined && !isText(tt.causingTicket)) return `${at}.causingTicket must be a column name`;
     if (tt.refusalTime !== undefined && !isText(tt.refusalTime)) return `${at}.refusalTime must be a column name`;
+    // The reporting window dates every row by it: without it the table would be invisible in every report.
+    const time = tt.time as Record<string, unknown> | undefined;
+    if (!time || typeof time !== 'object' || Array.isArray(time)) return `${at}.time must say when a row came into being: { "column": ..., "ticket"?: ... }`;
+    const extraTimeKey = Object.keys(time).find(k => !REPORT_TIME_KEYS.has(k));
+    if (extraTimeKey) return `${at}.time has unknown key "${extraTimeKey}"`;
+    if (!isText(time.column)) return `${at}.time.column must be a column name`;
+    if (time.ticket !== undefined && !isText(time.ticket)) return `${at}.time.ticket must be a column name`;
   }
   return null;
 }

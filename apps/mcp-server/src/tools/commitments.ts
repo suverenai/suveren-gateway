@@ -30,7 +30,8 @@ import { previewChangedSinceSubmission } from '../lib/preview';
 import { stripSourceLink } from '../lib/request-context';
 import { finalizeAttachmentsForExecution, stripAttachmentsSealedMeta } from '../lib/attachment-resolution';
 import type { CommittedExecutor, ExecutionResult } from '../lib/committed-executor';
-import { ContentBindingError } from '@hap/core';
+import { ContentBindingError, getProfile } from '@hap/core';
+import { cumulativeSumValue } from '../lib/tool-proxy';
 import { AsKeyMismatchError } from '../lib/attestation-cache';
 import { ArchiveWriteError } from '../lib/receipt-archive';
 import { verifyTicket, TicketBindingMismatchError, mandateForTicket } from '../lib/ticket-verify';
@@ -304,9 +305,7 @@ export async function executeCommitted(
       action: proposal.tool,
       actionType: proposalActionType,
       executionContext: proposal.executionContext,
-      amount: typeof proposal.executionContext.amount === 'number'
-        ? proposal.executionContext.amount
-        : undefined,
+      amount: cumulativeSumValue(getProfile(proposal.profileId), proposal.executionContext),
       proposalId: proposal.id,
       // v0.8 (Ticket Request Schema; Proposals, rule 1): the content itself
       // never travels on the ticket request — only its fingerprint below.

@@ -44,12 +44,18 @@ import { resolveAgeBoundField, maxReadAgeDays, type BoundsSchemaLike } from '../
 import { parseTimestampSeconds } from './time';
 import { formatDateTime } from './format';
 import { isCaseSourceExport } from './types';
-import { caseSystem, isSystemExport } from './systems';
+import { caseSystem, isSystemExport, reportSystem } from './systems';
+import type { ReportTableDeclaration } from '../tool-gating-types';
 import type { ArchivedReceipt, ArchivedAuthorization } from '../receipt-archive';
 import type { ReceiptArchiveReader, ReportSources, RunConnectorExport, ExportSystem } from './types';
 
-/** The execution field a read adapter produces from an item's date — the
- *  reporting window bound is the profile bound that compares it. */
+/** The Report built-in's own declarations, defined once here and read from here
+ *  everywhere else (builtins/report.ts included):
+ *  - REPORT_AGE_FIELD: the execution field its reads produce from an item's
+ *    date — what a connector's read adapter declares as `ageField`. The window
+ *    bound is whichever profile bound compares it (`boundType.of`), found in the
+ *    profile schema, never by the bound's own name.
+ *  - REPORTING_PROFILE: the profile that governs it, by its short name. */
 export const REPORT_AGE_FIELD = 'read_age_days';
 export const REPORTING_PROFILE = 'reporting';
 export const END_SKEW_SECONDS = 120;
@@ -226,47 +232,52 @@ export function windowArchive(base: ReceiptArchiveReader, window: ReportWindow):
 // ─── Connector records ──────────────────────────────────────────────────────
 
 /**
- * When a connector record came into being, for the window:
- *  1. a row a ticket produced (`receipt_id`) is as old as that ticket — the
- *     signed timestamp, the same time the ticket itself is windowed by;
- *  2. else its own date column. Tables differ (email `received_at`, ERP/CRM
- *     `created_at`, change/refusal logs `at`, CRM activities only `date`), so
- *     the first parseable one wins.
- * A row with neither is outside every window (fail closed).
+ * When a connector record came into being, for the window — as its table's
+ * manifest declaration says (`report.tables[].time`), never by a column name here:
+ *  1. a row whose `time.ticket` column names a ticket the gateway holds is as
+ *     old as that ticket — the signed timestamp, the same time the ticket
+ *     itself is windowed by;
+ *  2. else its own date column, `time.column`.
+ * A row with neither, or a table without a declaration, is outside every
+ * window (fail closed).
  */
-const RECORD_TIME_COLUMNS = ['received_at', 'created_at', 'at', 'date'] as const;
-
-function recordTime(row: unknown, loadedAt: number | null, ticketTimes: Map<string, number>): number | undefined {
-  if (!row || typeof row !== 'object') return undefined;
+function recordTime(
+  row: unknown,
+  time: ReportTableDeclaration['time'] | undefined,
+  loadedAt: number | null,
+  ticketTimes: Map<string, number>,
+): number | undefined {
+  if (!row || typeof row !== 'object' || !time) return undefined;
   const r = row as Record<string, unknown>;
-  if (typeof r.receipt_id === 'string' && ticketTimes.has(r.receipt_id)) return ticketTimes.get(r.receipt_id);
-  for (const col of RECORD_TIME_COLUMNS) {
-    const t = parseTimestampSeconds(r[col]);
-    if (t !== undefined) {
-      // A test package backdates its rows (an email "received" at 08:33 for
-      // data loaded at 09:24): such a row exists only since the load — the
-      // same effective-time rule a case start uses (case-resolvers.ts, SR4).
-      return loadedAt !== null ? Math.max(t, loadedAt) : t;
-    }
-  }
-  return undefined;
+  const ticket = time.ticket ? r[time.ticket] : undefined;
+  if (typeof ticket === 'string' && ticketTimes.has(ticket)) return ticketTimes.get(ticket);
+  const t = parseTimestampSeconds(r[time.column]);
+  if (t === undefined) return undefined;
+  // A test package backdates its rows (an email "received" at 08:33 for
+  // data loaded at 09:24): such a row exists only since the load — the
+  // same effective-time rule a case start uses (case-resolvers.ts, SR4).
+  return loadedAt !== null ? Math.max(t, loadedAt) : t;
 }
 
-/** Every array-of-rows table in an export, filtered to the window; scalar
- *  fields (mode, exported_at, simulation_load) are kept as they are.
+/** Every array-of-rows table in an export, filtered to the window by its
+ *  declared `time` (`tables`: the system's report declaration — a table it
+ *  does not declare keeps no rows); scalar fields (mode, exported_at,
+ *  simulation_load) are kept as they are.
  *  `ticketTimes`: ticket id → signed timestamp, from the UNSCOPED archive, so
  *  a row produced by a ticket outside the window is recognised as old. */
 export function windowExport(
   exported: unknown,
+  tables: ReadonlyArray<Pick<ReportTableDeclaration, 'name' | 'time'>>,
   window: ReportWindow,
   loadedAt: number | null,
   ticketTimes: Map<string, number> = new Map(),
 ): unknown {
   if (!exported || typeof exported !== 'object' || Array.isArray(exported)) return exported;
+  const timeOf = new Map(tables.map(t => [t.name, t.time]));
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(exported as Record<string, unknown>)) {
     out[key] = Array.isArray(value)
-      ? value.filter(row => isInWindow(recordTime(row, loadedAt, ticketTimes), window))
+      ? value.filter(row => isInWindow(recordTime(row, timeOf.get(key), loadedAt, ticketTimes), window))
       : value;
   }
   return out;
@@ -325,7 +336,8 @@ function scopedSources(base: ReportSources, window: ReportWindow, loadedAt: numb
       const t = ticketTime(r);
       if (typeof id === 'string' && t !== undefined) ticketTimes.set(id, t);
     }
-    return windowExport(await base.runExport(system), window, loadedAt, ticketTimes);
+    // A system no manifest declares has no tables to date its rows by: nothing of it is shown.
+    return windowExport(await base.runExport(system), reportSystem(system)?.tables ?? [], window, loadedAt, ticketTimes);
   };
   return { archive: windowArchive(base.archive, window), runExport, window };
 }

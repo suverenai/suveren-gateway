@@ -33,6 +33,10 @@ const { IntegrationManager } = await import('../src/lib/integration-manager');
 const { registerBuiltins } = await import('../src/lib/builtins');
 const { createGatedToolHandler } = await import('../src/lib/tool-proxy');
 const { createMcpServer } = await import('../src/index');
+const { loadProfiles } = await import('../src/lib/profile-loader');
+// The built-ins read their read gate from their own profile when they are built
+// (builtins/read-switch.ts), as at real start-up: load the profile catalog first.
+loadProfiles();
 import type { SharedState } from '../src/lib/shared-state';
 import type { ReportSources } from '../src/lib/report';
 

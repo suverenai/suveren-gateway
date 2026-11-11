@@ -27,6 +27,8 @@ interface FieldDef {
   unit?: string;
   /** A profile value format, e.g. `connector:kind` for document sources. */
   format?: string;
+  /** Where a list's values come from, e.g. `profiles` (area short names). */
+  valuesFrom?: string;
   boundType?: { kind?: string };
   constraint?: { enforceable?: string[] };
 }
@@ -47,6 +49,8 @@ export interface ChangeRow {
   emptyMeans?: EmptyMeans;
   /** The profile's value format, when it declares one (the card names `connector:kind` values). */
   format?: string;
+  /** Where the profile says a list's values come from (`profiles`: the card names areas). */
+  valuesFrom?: string;
 }
 
 export type WordPart = { kind: 'same' | 'add' | 'del'; text: string };
@@ -57,8 +61,8 @@ export interface MandateDiff {
   lastsUntil?: { before: number; after: number; tag: ChangeTag };
   /** The intent, word by word. Absent when it does not change. */
   intent?: WordPart[];
-  /** The rest, one line each, for "Stays the same". `format`: as on a row. */
-  stays: Array<{ label: string; value: string; format?: string }>;
+  /** The rest, one line each, for "Stays the same". `format`, `valuesFrom`: as on a row. */
+  stays: Array<{ label: string; value: string; format?: string; valuesFrom?: string }>;
   /** Set when the change moves to a newer version of the area's profile. */
   versionMove?: { from: string; to: string };
 }
@@ -136,7 +140,7 @@ function listRow(key: string, def: FieldDef | undefined, before: Values[string],
     section: 'scope', field: key, label: fieldLabel(def, key),
     before: isEmpty(before) ? null : (before as string), after: isEmpty(after) ? null : (after as string),
     tag, added, removed, emptyMeans,
-    ...(def?.format ? { format: def.format } : {}),
+    ...declaredKind(def),
   };
 }
 
@@ -144,8 +148,13 @@ function valueText(key: string, def: FieldDef | undefined, v: string | number | 
   return v === undefined || v === '' ? '—' : String(v);
 }
 
+/** What the profile declares about a list's values — the card names them by it. Only what is declared. */
+function declaredKind(def: FieldDef | undefined): { format?: string; valuesFrom?: string } {
+  return { ...(def?.format ? { format: def.format } : {}), ...(def?.valuesFrom ? { valuesFrom: def.valuesFrom } : {}) };
+}
+
 function stay(def: FieldDef | undefined, key: string, v: string | number | undefined): MandateDiff['stays'][number] {
-  return { label: fieldLabel(def, key), value: valueText(key, def, v), ...(def?.format ? { format: def.format } : {}) };
+  return { label: fieldLabel(def, key), value: valueText(key, def, v), ...declaredKind(def) };
 }
 
 /** Word-level difference: longest common subsequence over words and the spaces between them. */

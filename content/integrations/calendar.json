@@ -132,11 +132,13 @@
           "attendees": [
             {
               "field": "allowed_attendees",
-              "transform": "join"
+              "transform": "join",
+              "item": "email"
             },
             {
               "field": "allowed_domains",
-              "transform": "join_domains"
+              "transform": "join_domains",
+              "item": "email"
             }
           ],
           "calendarId": "allowed_calendars"
@@ -153,11 +155,13 @@
           "attendees": [
             {
               "field": "allowed_attendees",
-              "transform": "join"
+              "transform": "join",
+              "item": "email"
             },
             {
               "field": "allowed_domains",
-              "transform": "join_domains"
+              "transform": "join_domains",
+              "item": "email"
             }
           ],
           "calendarId": "allowed_calendars"
@@ -199,7 +203,7 @@
         "allowed_attendees": "",
         "allowed_domains": ""
       },
-      "intent": "Allow the agent to read the primary calendar (only) to help with scheduling suggestions. No create or modify. To read other calendars, add them to allowed_calendars.",
+      "intent": "Allow the agent to read my calendar to help with scheduling suggestions. It creates and changes nothing.",
       "ttl": 2592000,
       "tags": [
         "read-only",
