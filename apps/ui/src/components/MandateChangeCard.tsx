@@ -13,7 +13,13 @@ import {
   type ChangeArgs, type ChangeFacts,
 } from '../lib/mandate-change-view';
 import { useSourceManifests } from '../lib/source-manifests';
-import type { SourceManifestLike } from '../lib/attachment-sources';
+import { useAreaCatalog } from '../lib/area-catalog';
+import type { NameSources } from '../lib/display-names';
+
+/** The gateway's own names for codes on the card: document sources (manifests) and areas (the profile catalog). */
+function useChangeNames(): NameSources {
+  return { manifests: useSourceManifests(), catalog: useAreaCatalog() };
+}
 
 function Tag({ tag }: { tag: ChangeTag }) {
   return <span className={`mc-tag ${tagClass(tag)}`} data-testid="change-tag">{tag}</span>;
@@ -24,7 +30,7 @@ function Meaning({ text }: { text: string }) {
   return <p className="mc-meaning" data-testid="change-meaning">{text}</p>;
 }
 
-function Row({ row, manifests }: { row: ChangeRow; manifests: SourceManifestLike[] | undefined }) {
+function Row({ row, manifests }: { row: ChangeRow; manifests: NameSources }) {
   if (row.added || row.removed) {
     return (
       <div className="mc-row" data-testid="change-row" data-field={row.field}>
@@ -60,7 +66,7 @@ export function WordDiff({ parts }: { parts: WordPart[] }) {
 
 /** The differences, used by the card and the form's review step. */
 export function MandateChangeDiff({ diff, intentByAi }: { diff: MandateDiff; intentByAi: boolean }) {
-  const manifests = useSourceManifests();
+  const manifests = useChangeNames();
   const hasRows = diff.rows.length > 0 || !!diff.mode || !!diff.lastsUntil;
   const intentLabel = (head: string) => (intentByAi ? `${head} · words proposed by the AI` : head);
   return (
@@ -108,7 +114,7 @@ export function MandateChangeBody({ proposalId, args, areaTitle, onChangeMyself,
   editError: string | null;
 }) {
   const diff = args.change;
-  const manifests = useSourceManifests();
+  const manifests = useChangeNames();
   const [facts, setFacts] = useState<ChangeFacts | null>(null);
   const [factsReady, setFactsReady] = useState(false);
   useEffect(() => {

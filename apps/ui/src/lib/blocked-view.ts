@@ -30,6 +30,7 @@ import type { AgentProfile } from '@hap/core';
 import type { DenialRecord, DenialKind } from './sp-client';
 import { sourceName } from '../components/RecentBlocks';
 import { humanizeKey, splitTool } from './approval-view';
+import { scopeValueNames, type NameSources } from './display-names';
 
 /** A denial with `kind` resolved — absent on disk ⇒ 'read' (every record
  * written before AU2 was a read block). */
@@ -107,10 +108,15 @@ function formatNum(v: number | string | undefined): string {
 }
 
 /** The "value vs. limit" sentence — generic across every kind, built only
- * from the record's own fields (no lookups). */
-function sentenceFor(r: DenialRecord, label: string): string {
+ * from the record's own fields (no lookups). A scope value reads by the name
+ * a person knows when the profile declares what it holds (display-names.ts):
+ * a document source by its manifest title, an area by the profile's name. */
+function sentenceFor(r: DenialRecord, label: string, profile: AgentProfile | undefined, names: NameSources): string {
   const kind = kindOf(r);
-  const value = formatNum(r.value);
+  const scopeDef = r.field ? profile?.scopeSchema?.fields?.[r.field] : undefined;
+  const value = kind === 'scope' && scopeDef && typeof r.value === 'string'
+    ? scopeValueNames(scopeDef, r.value, names)
+    : formatNum(r.value);
   const limit = formatNum(r.limit);
   switch (kind) {
     case 'bound':
@@ -166,9 +172,9 @@ function mandateParts(r: DenialRecord, mandateTitlesById?: Readonly<Record<strin
   return [];
 }
 
-function sourceLine(r: DenialRecord, mandateTitlesById?: Readonly<Record<string, string>>): SourcePart[] {
+function sourceLine(r: DenialRecord, mandateTitlesById: Readonly<Record<string, string>> | undefined, names: NameSources): SourcePart[] {
   const kind = kindOf(r);
-  const src = sourceName(r.integrationId);
+  const src = sourceName(r.integrationId, names.manifests);
   const who = r.who === 'authority-server'
     ? 'refused by the Authority Server'
     : kind === 'read'
@@ -197,18 +203,21 @@ export function sourceLineText(parts: SourcePart[]): string {
  *   mandate list (`authorization_id` -> title), already loaded for the
  *   Mandates page. See the module doc above for why this exists and the
  *   resolution order.
+ * @param names The gateway's own manifests and profile catalog, to name
+ *   connectors, document sources and areas; while they load, codes show as stored.
  */
 export function blockedView(
   r: DenialRecord,
   profile?: AgentProfile,
   mandateTitlesById?: Readonly<Record<string, string>>,
+  names: NameSources = {},
 ): BlockedView {
   const kind = kindOf(r);
   const label = fieldLabel(profile, r.field);
   return {
     title: TITLE[kind],
-    sentence: sentenceFor(r, label),
-    sourceLine: sourceLine(r, mandateTitlesById),
+    sentence: sentenceFor(r, label, profile, names),
+    sourceLine: sourceLine(r, mandateTitlesById, names),
     whatYouCanDo: WHAT_YOU_CAN_DO[kind],
   };
 }
