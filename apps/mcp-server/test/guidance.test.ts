@@ -104,21 +104,27 @@ describe('manifestAreas / sourceTitle', () => {
 });
 
 describe('1. the first mandate', () => {
-  it('names the page, the buttons and the card, in order, and the follow-up call', () => {
-    const t = firstMandateText({ url: 'http://localhost:3400', card: 'Setup' });
+  // Real-AI release check 2026-11-11: handed three numbered steps and the form, Claude relayed all of
+  // it and answered "hi" in 250 words. The AI is handed ONE step; the form only when it is asked for.
+  it('names the page, the buttons and the card as one step, and the follow-up call; no form', () => {
+    const t = firstMandateText({ url: 'http://localhost:3400', card: 'Setup', area: 'delegation' } as never);
     expect(t).toContain('An AI can never create the first one');
     expect(t).toContain('the Suveren Gateway page'); expect(t).not.toMatch(/localhost/);
-    expect(t).toMatch(/\*\*Mandates\*\*, then \*\*\+ New mandate\*\*/);
-    expect(t).toContain('card **Setup**');
-    expect(t).toContain('**Give a mandate**');
-    expect(t).toContain('Scope & Limits');
-    expect(t).toMatch(/In Sign they give it a \*\*Title\*\* \(required\), choose how it runs and for how long, then press \*\*Sign mandate\*\*/);
-    expect(t).toContain('Ask them first whether it should run automatically or ask each time.');
+    expect(t).toContain('**Mandates → + New mandate**, card **Setup**, **Give a mandate**');
+    expect(t).toContain('Say it as one step');
+    expect(t).toContain('Only if they ask how to fill in the form: list-authorizations(domain: "delegation").');
+    expect(t).not.toContain('Scope & Limits');
+    expect(t).not.toMatch(/^\d\./m);
     expect(t).toContain('No active mandate exists');
     expect(t).not.toContain('yet');
     expect(t).toContain('list-authorizations()');
-    expect(t.indexOf('1.')).toBeLessThan(t.indexOf('2.'));
-    expect(t.indexOf('2.')).toBeLessThan(t.indexOf('3.'));
+  });
+  it('the form, when the Setup mandate itself is asked for', () => {
+    const t = firstMandateText({ card: 'Setup', area: 'delegation', form: true });
+    expect(t).toContain('Scope & Limits');
+    expect(t).toMatch(/\*\*Sign\*\*: a \*\*Title\*\* \(required\), how it runs and for how long, then \*\*Sign mandate\*\*/);
+    expect(t).toContain('Ask them first whether it should run automatically or ask each time.');
+    expect(t).not.toContain('Only if they ask how to fill in the form');
   });
   it('uses the card name it is given, whatever it is', () => {
     expect(firstMandateText({ url: 'u', card: 'Delegation' })).toContain('card **Delegation**');
@@ -520,16 +526,28 @@ describe('through the gateway\'s own entry points', () => {
     expect(brief).toContain('=== FIRST STEP ===');
     expect(brief).toContain('An AI can never create the first one');
     expect(brief).toContain('card **Setup**');
-    expect(brief.indexOf('=== FIRST STEP ===')).toBeLessThan(brief.indexOf('=== RULES ==='));
+    // Claude Code keeps only the first 4096 characters: the rules come before the state.
+    expect(brief.indexOf('=== RULES ===')).toBeLessThan(brief.indexOf('=== FIRST STEP ==='));
     const rules = brief.slice(brief.indexOf('=== RULES ==='));
     expect(rules.indexOf('never write as if you were that person')).toBeLessThan(rules.indexOf('Never open or operate'));
-    expect(rules).toContain('call list-authorizations(domain) with the area of the task');
+    expect(brief).toContain('When you receive a task, call list-authorizations(domain: "<area>")');
+  });
+
+  // Claude Code keeps only the first 4096 characters of the instructions. With every shipped
+  // connector, an empty gateway's instructions put the reply rule past that cut before 2026-11-11.
+  it('an empty gateway with every shipped connector: what Claude Code keeps has the reply rule, the one step, what a mandate is, the role', () => {
+    const kept = buildMandateBrief({ authorizations: [], integrationManager: im({ running: [] }) }).slice(0, 4096);
+    expect(kept).toContain('at most 4 short sentences');
+    expect(kept).toContain('never write as if you were that person');
+    expect(kept).toContain('card **Setup**, **Give a mandate**');
+    expect(kept).toContain('A mandate is a permission the person gives their AI');
+    expect(kept).toContain('They are the final authority, not Suveren and not you.');
   });
 
   it('a gateway that has a mandate does not repeat the first step', () => {
     const brief = buildMandateBrief({ authorizations: [mandate(EMAIL_PROFILE.id)] as never });
     expect(brief).not.toContain('=== FIRST STEP ===');
-    expect(brief).toContain('call list-authorizations(domain) with the area of the task');
+    expect(brief).toContain('When you receive a task, call list-authorizations(domain: "<area>")');
   });
 
   it('no mandate reads the same in test mode: the first step, no block of its own', () => {
@@ -702,11 +720,10 @@ describe('through the gateway\'s own entry points', () => {
     it('the facts say what a mandate and the Setup mandate are, in plain words', () => {
       const { live } = everyMode([]);
       const facts = sectionOf(live, 'FACTS YOU CAN DRAW ON');
-      expect(facts).toContain('A mandate is a permission the person gives their AI, with limits they choose.');
+      expect(facts).toContain('A mandate is a permission the person gives their AI, with limits they choose, for one kind of work');
       expect(facts).toContain('They can change or revoke it at any time.');
-      expect(facts).toContain('The Setup mandate allows no work.');
-      expect(facts).toContain('None of the mandates the AI prepares exists until the person approves it');
-      expect(facts).toContain('An AI can never create the first mandate');
+      expect(facts).toContain('The Setup mandate allows no work itself.');
+      expect(facts).toContain('it exists only once they approve it');
     });
 
     it('no line depends on how the person opens', () => {
@@ -727,7 +744,7 @@ describe('through the gateway\'s own entry points', () => {
     });
 
     it('the real manifests give the line in the instructions, one short line', () => {
-      const facts = sectionOf(buildMandateBrief({ authorizations: [], integrationManager: im({ running: [] }) }), 'FACTS YOU CAN DRAW ON');
+      const facts = sectionOf(buildMandateBrief({ authorizations: [], integrationManager: im({ running: [] }) }), 'ON THIS GATEWAY');
       const line = facts.split('\n').find(l => l.includes('Possible on this gateway:'))!;
       expect(line).toContain('Email');
       expect(line).toContain('Files');
@@ -735,7 +752,7 @@ describe('through the gateway\'s own entry points', () => {
     });
 
     it('with a card name from the built-in, not a word in the code', () => {
-      expect(factsLines({ card: 'Vollmacht', areas: [] }).join('\n')).toContain('The Vollmacht mandate allows no work.');
+      expect(factsLines({ card: 'Vollmacht', areas: [] }).join('\n')).toContain('The Vollmacht mandate allows no work itself.');
       expect(factsLines({ card: 'Setup', areas: [] }).join('\n')).toContain('The Setup mandate');
     });
   });
@@ -755,13 +772,16 @@ describe('through the gateway\'s own entry points', () => {
       expect(text.length).toBeLessThanOrEqual(SHORT_ANSWER_LIMIT);
       expect(text.match(/The one next step:/g)).toHaveLength(1);
       expect(text).toContain('**Setup**');
-      expect(text).toContain('**+ New mandate**');
+      expect(text).toContain('**Mandates → + New mandate**');
       expect(text).toContain('**Give a mandate**');
+      // One step, not the form: the form is one call away, asked for only when the person asks.
+      expect(text).not.toContain('Scope & Limits');
+      expect(text).toContain('list-authorizations(domain: "delegation")');
       expect(text).toContain('You can do yourself:');
       expect(text).toContain('list-authorizations(domain: "<area>")');
       expect(text).toContain('Email');
       expect(text).not.toContain('Connectors, in the order');
-      expect(text).toContain('The person sets one up under **Connectors** when a task needs it; mention this briefly.');
+      expect(text).toContain('The person sets one up under **Connectors** when a task needs it.');
       expect(text).not.toContain('Save & Encrypt');
     });
 
@@ -849,7 +869,9 @@ describe('through the gateway\'s own entry points', () => {
       const text = (await listAuthorizationsHandler(state([]), im({ running: [] }))({ domain: 'files' })).content[0].text;
       expect(text).toContain('enters **Shared folder**');
       expect(text).toContain('presses **Save & Encrypt** (the connector then starts by itself)');
-      expect(text).toContain('Scope & Limits');
+      // Another area gets the first step as one step; the form comes with the Setup area only.
+      expect(text).toContain('card **Setup**, **Give a mandate**');
+      expect(text).not.toContain('Scope & Limits');
     });
 
     it('accepts the name the person sees, not only the short id', async () => {

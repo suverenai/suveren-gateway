@@ -15,15 +15,22 @@ describe('the person works from the chat; the gateway page is theirs', () => {
 
   it('says why the Setup mandate exists: mandates are managed from this chat', () => {
     const facts = factsLines({ card: 'Vollmacht', areas: [] }).join('\n');
-    expect(facts).toContain('The Vollmacht mandate is how the person manages their mandates from this chat.');
-    expect(facts).toContain('they only approve it');
-    expect(firstMandateText({ card: 'Vollmacht' })).toContain('from then on they manage their mandates from this chat');
+    expect(facts).toContain('The Vollmacht mandate lets the person manage mandates from this chat');
+    expect(facts).toContain('the AI prepares the mandate, and it exists only once they approve it');
+    expect(firstMandateText({ card: 'Vollmacht' })).toContain('after that they just say here what you should do, you prepare each mandate, and they only approve it');
   });
 
-  it('tells the AI to keep replies short and to offer the first mandate before anything else', () => {
+  // Real-AI release check 2026-11-11: "Keep each reply to a few sentences" sat inside the role, past
+  // the 4096 characters Claude Code keeps of the instructions, and the first replies ran 250-320 words.
+  it('tells the AI how long a reply is, in numbers, near the start; and to offer the first mandate first', async () => {
+    const { REPLY_RULE } = await import('../src/lib/guidance');
+    expect(REPLY_RULE).toContain('at most 4 short sentences');
+    expect(REPLY_RULE).toContain('never pass on a list of steps or a tool answer in full');
+    const brief = (await import('../src/lib/mandate-brief')).buildMandateBrief({ authorizations: [] });
+    expect(brief.indexOf(REPLY_RULE)).toBeGreaterThanOrEqual(0);
+    expect(brief.indexOf(REPLY_RULE) + REPLY_RULE.length).toBeLessThan(600);
     const role = roleText('Vollmacht');
-    expect(role).toContain('Keep each reply to a few sentences.');
-    expect(role).toContain('When a task needs a mandate and they do not have a Vollmacht mandate yet, offer them that one first, before anything else.');
+    expect(role).toContain('When a task needs a mandate and they have no Vollmacht mandate yet, offer that one first.');
     expect(role).not.toMatch(/simulation|\btest\b/i);
   });
 
@@ -31,7 +38,8 @@ describe('the person works from the chat; the gateway page is theirs', () => {
     expect(firstMandateText({ card: 'Setup' })).not.toMatch(/localhost|https?:\/\//);
     const facts = factsLines({ card: 'Setup', areas: [], port: '3600' }).join('\n');
     expect(facts).not.toMatch(/localhost|https?:\/\//);
-    expect(facts).toContain('You never write its address.');
+    expect(facts).toContain('say in words that it runs on this computer on port 3600');
+    expect(AGENT_RULES.join('\n')).toContain('Never write its web address in any form');
     const guide = 'add http://localhost:7400/auth/oauth/mail/callback as an authorized redirect URI';
     expect(withoutGatewayAddress(guide)).toBe('add the return address shown on the card as an authorized redirect URI');
   });
@@ -83,8 +91,8 @@ describe('what a chat trusts, and what an intent holds', () => {
 
 describe('the intent of the first mandate, and what is connected', () => {
   it('the Setup intent is pre-filled: the person is not asked to write one', async () => {
-    const t = firstMandateText({ card: 'Setup' });
-    expect(t).toContain('The **Intent** is already filled in; they leave it as it is.');
+    const t = firstMandateText({ card: 'Setup', area: 'delegation', form: true });
+    expect(t).toContain('**Intent** is already filled in; they leave it as it is.');
     expect(t).not.toMatch(/in their own words/);
   });
 
@@ -95,7 +103,7 @@ describe('the intent of the first mandate, and what is connected', () => {
 
   it('says briefly what is connected, and where the rest is set up', async () => {
     const { connectedLine } = await import('../src/lib/guidance');
-    expect(connectedLine(['Email'], ['CRM', 'ERP'])).toBe('Connected: Email. Not connected yet: CRM, ERP. The person sets one up under **Connectors** when a task needs it; mention this briefly.');
+    expect(connectedLine(['Email'], ['CRM', 'ERP'])).toBe('Connected: Email. Not connected yet: CRM, ERP. The person sets one up under **Connectors** when a task needs it.');
     expect(connectedLine([], ['Email'])).toMatch(/^Nothing is connected yet\. Not connected yet: Email\./);
     expect(factsLines({ card: 'Setup', areas: ['Email'], connected: ['Email'], notConnected: [] }).join('\n')).toContain('Connected: Email.');
   });
