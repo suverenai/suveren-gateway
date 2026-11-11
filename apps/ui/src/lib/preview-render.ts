@@ -985,11 +985,24 @@ export function buildCreationView(
   const order = displayHints?.order ?? [];
   const allKeys = [...new Set([...order, ...Object.keys(toolArgs)])];
 
+  // The record this action changes (a read the manifest gave a `version`): each
+  // bound argument that changes one of its fields shows as Now / New. A
+  // manifest that declares `display.compare` has chosen its own Now / New rows,
+  // and that declaration wins — the change is never shown twice.
+  const changes = Object.keys(displayHints?.compare ?? {}).length === 0
+    ? targetChanges(toolArgs, sections, displayHints, currencyStr)
+    : null;
+  const changed = new Set(changes?.lines.map((l) => l.key) ?? []);
+
   const rows: CreationRow[] = [];
   const compared = new Set(Object.keys(displayHints?.compare ?? {}));
   for (const key of allKeys) {
     if (!(key in toolArgs)) continue;
     if (HIDDEN_ARG_KEYS.has(key) || isHidden(displayHints, key)) continue;
+    if (changed.has(key)) {
+      if (!rows.some((r) => r.kind === 'compare')) rows.push({ kind: 'compare', key: 'compare', label: '', lines: changes!.lines });
+      continue;
+    }
     if (compared.has(key)) {
       // All compared args as ONE Now / New table, at the first one's place.
       if (!rows.some((r) => r.kind === 'compare')) {
@@ -1009,6 +1022,8 @@ export function buildCreationView(
     const attachSection = byAttachKey.get(key);
     if (attachSection) {
       const identity = resolveAttachedIdentity(attachSection.result, toolArgs[key], { pathPrefix: key, displayHints, currency: currencyStr, fields: attachSection.fields });
+      // A field shown in the Now / New table is not repeated as the record's context.
+      if (attachSection === changes?.section) identity.context = identity.context.filter((c) => !changed.has(c.key));
       rows.push({ kind: 'identity', key, label, identity });
       continue;
     }
@@ -1038,6 +1053,46 @@ export function buildCreationView(
 
   const builtSections = ownSections.map(buildOwnSection).filter((s): s is PreviewOwnSection => s !== null);
   return { rows, sections: builtSections, systemBoxes };
+}
+
+/** A value the Now / New table can show on one line: a scalar, or a list of scalars.
+ *  Records and lists of records keep their own rendering (a table). */
+function isLineValue(v: unknown): boolean {
+  if (Array.isArray(v)) return v.every((x) => x === null || typeof x !== 'object');
+  return v === null || typeof v !== 'object';
+}
+
+/** The record (a `target` read with an `attach`) and each bound argument that
+ *  changes one of its fields — matched by name, nothing named in code. */
+function targetChanges(
+  toolArgs: Record<string, unknown>,
+  sections: PreviewReadSection[],
+  hints: ToolDisplayHints | undefined,
+  currency: string | undefined,
+): { section: PreviewReadSection; lines: CompareLine[] } | null {
+  const section = sections.find((s) => s.target && s.attach && !s.forEach && s.result?.status === 'ok');
+  if (!section || section.result?.status !== 'ok') return null;
+  const resolved = resolveBodyObject(section.result.body);
+  if (!resolved) return null;
+  const record = resolved.obj;
+  const props = resolved.schema?.properties ?? {};
+  const lines: CompareLine[] = [];
+  for (const [key, value] of Object.entries(toolArgs)) {
+    if (key === section.attach || key === section.version?.field || HIDDEN_ARG_KEYS.has(key) || key.startsWith('_') || isHidden(hints, key)) continue;
+    if (!(key in record) || !isLineValue(value) || !isLineValue(record[key])) continue;
+    // 5 and "5" are the same to a person; null and "" both empty.
+    const same = Array.isArray(value) || Array.isArray(record[key])
+      ? JSON.stringify(record[key] ?? []) === JSON.stringify(value ?? [])
+      : String(record[key] ?? '') === String(value ?? '');
+    if (same) continue;
+    lines.push({
+      key,
+      label: props[key]?.title ?? humanizeKey(key),
+      now: Array.isArray(record[key]) ? (record[key] as unknown[]).map((x) => formatScalar(x)).join(', ') || '—' : formatHinted(record[key], hints, `${section.attach}.${key}`, currency).value || '—',
+      next: Array.isArray(value) ? value.map((x) => formatScalar(x)).join(', ') || '—' : formatHinted(value, hints, key, currency).value || '—',
+    });
+  }
+  return lines.length > 0 ? { section, lines } : null;
 }
 
 function capRefusal(message: string): string {

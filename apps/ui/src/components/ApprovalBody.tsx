@@ -8,7 +8,7 @@
  *   1. type line ("Action · Invoicing · 12 min"), title (manifest sentence)
  *   2. failed check, over-limit block (only when present)
  *   3. notice / "not checked" lines
- *   4. the sealed tile — "Runs exactly as shown" / "You sign these limits"
+ *   4. the sealed tile — "Runs exactly as shown" / "You approve this change" / "You sign this"
  *   5. folded rows: Covered by · ✓ N checks passed · Request · History ·
  *      Technical details (mandate: Intent stays open above the rows,
  *      "Proposed through" is a row)
@@ -30,14 +30,15 @@ import {
   type ShownSnapshotPayload,
 } from '../lib/sp-client';
 import { ProposalArgs, NotSealedArgs, localPreviewIsUnsealed } from './ProposalArgs';
-import { PreviewBox } from './PreviewBox';
+import { PreviewBoxShow, useProposalPreview } from './PreviewBox';
 import { RequestContextBox } from './RequestContextBox';
 import { useAreaCatalog } from '../lib/area-catalog';
 import { areaName, ageLabel, deadlineLabel } from '../lib/core-objects';
 import { areaIcon } from '../lib/area';
 import { AreaIcon } from './AreaIcon';
 import { useMandateUsage } from '../lib/mandate-usage';
-import { previewBoxView } from '../lib/approval-preview-view';
+import { limitWordsForTool } from '../lib/limit-words';
+import { previewBoxView, sealedTileHeading } from '../lib/approval-preview-view';
 import { SystemBoxes } from './RenderedCreationView';
 import { isTestSetupAction, profileIdentity, shortProfileId } from '../lib/profile-identity';
 import { AttachmentsSealedBox } from './AttachmentsSealedBox';
@@ -257,7 +258,6 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
   // boundValuesOpen); folded under Details only when a preview already shows the
   // record from the system.
   const [previewTone, setPreviewTone] = useState<string | null>(null);
-  const boundOpen = boundValuesOpen(previewTone);
 
   // AU10 §8.4 — the raw AU8/AU10 data, as it is CURRENTLY rendered (set via
   // PreviewBox/RequestContextBox's own `onData`), combined into one snapshot
@@ -266,6 +266,13 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
   // when it has one, else the moment this box last combined the two (a
   // preview-less tool still has a request-context read worth timestamping).
   const [previewData, setPreviewData] = useState<PreviewResponse | null>(null);
+  // One fetch for the card; where the box sits depends on what it shows.
+  const previewState = useProposalPreview(proposal.id, systemName, content.toolArgs, setPreviewTone, setPreviewData, readable);
+  const previewView = previewData ? previewBoxView(previewData, systemName, content.toolArgs ?? undefined) : undefined;
+  // A record read from the system that is NOT shown as a change is context,
+  // not what runs: it sits after the sealed tile, and the bound values are open.
+  const recordOutside = !!previewView?.context;
+  const boundOpen = boundValuesOpen(previewTone, previewView);
   // UI spec §4.2.2 — one line per check: limits + attachments, then the
   // manifest checks the gateway evaluated with this card's own reads.
   const lines = checkLines(checks, previewData?.checks);
@@ -349,7 +356,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
   const lowerTool = proposal.tool.toLowerCase();
   const destructive = ['delete', 'refund', 'cancel', 'revoke'].some((w) => lowerTool.includes(w));
   const imagePreview = typeof content.toolArgs?._imagePreview === 'string' ? (content.toolArgs._imagePreview as string) : null;
-  const sealedHeading = isMandate ? 'You sign this' : 'Runs exactly as shown';
+  const sealedHeading = sealedTileHeading(previewView, isMandate);
   const technicalOne = isMandate ? mandateTechnicalLine(parts) : `${headline} · ${shortProfileId(proposal.profileId)}${proposal.profileId.includes('@') ? `@${proposal.profileId.split('@')[1]}` : ''}`;
 
   if (proposal.tool === CHANGE_MANDATE_TOOL) {
@@ -477,17 +484,15 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
             onChecks={setAttachmentChecks}
           />
         )}
-        {readable && (
-          <PreviewBox
-            proposalId={proposal.id}
+        {readable && !recordOutside && (
+          <PreviewBoxShow
+            state={previewState}
             systemName={systemName}
             toolArgs={content.toolArgs}
             sealed={content.sealed}
             systemBoxes={false}
             omitKeys={isMandate ? MANDATE_TILE_OMIT : undefined}
             hideNote
-            onTone={setPreviewTone}
-            onData={setPreviewData}
           />
         )}
         {isMandate && (parts.workspace || parts.title) && (
@@ -499,6 +504,20 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
       </section>
       {readable && content.toolArgs && (
         <div style={{ order: 6 }}><NotSealedArgs args={content.toolArgs} display={toolDisplay} /></div>
+      )}
+      {/* The record as the system holds it — read by the gateway, not what runs. */}
+      {readable && recordOutside && (
+        <div style={{ order: 6 }} data-testid="record-from-system">
+          <PreviewBoxShow
+              state={previewState}
+              systemName={systemName}
+              toolArgs={content.toolArgs}
+              sealed={content.sealed}
+              systemBoxes={false}
+              omitKeys={isMandate ? MANDATE_TILE_OMIT : undefined}
+              hideNote
+            />
+        </div>
       )}
       {systemView && systemView.systemBoxes.length > 0 && (
         <div style={{ order: 7 }}><SystemBoxes view={systemView} /></div>
@@ -517,6 +536,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
           bounds={mandateBounds}
           profile={profile}
           actionType={typeof proposal.executionContext?.action_type === 'string' ? proposal.executionContext.action_type : undefined}
+          words={limitWordsForTool(manifests, proposal.tool)}
           style={{ order: 8 }}
         />
       )}

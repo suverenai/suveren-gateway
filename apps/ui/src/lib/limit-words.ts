@@ -1,6 +1,6 @@
 /**
  * The words about a shared limit — ONE place, used by the mandate form, the
- * mandate card, the approval card (label "Team limit per day (3 of 5 used)")
+ * mandate card, the approval card (label "Daily send limit (team) (3 of 5 used)")
  * and by the result of a refusal after approval ("Not sent. The daily limit is
  * used up: 5 of 5 emails today.").
  *
@@ -104,7 +104,7 @@ function fmtAmount(n: number, unit?: string): string {
 // ─── Wording B: the shared limit ────────────────────────────────────────────
 
 export interface SharedLimitLabel {
-  /** "Team limit per day" — plus " · <field name>" when two limits share a window. */
+  /** "Daily write limit" — plus " (team)" when the team shares the number. */
   name: string;
   /** "3 of 5 used" — what the system read; undefined while it cannot be proven. */
   figures?: string;
@@ -112,10 +112,15 @@ export interface SharedLimitLabel {
   text: string;
 }
 
+/** Does this name already say its window ("Daily …", "… per day", "… this month")? */
+const WINDOW_WORD = /\b(day|days|daily|today|week|weeks|weekly|month|months|monthly)\b/i;
+
 /**
- * "Team limit per day (3 of 5 used)". `team` false (a personal workspace) reads
- * "Limit per day": there is no team to share it with. `used` is what the
- * system proved (never a guess) — without it the brackets are left out.
+ * "Daily write limit (3 of 5 used)"; in a team "Daily write limit (team)". The
+ * words are the manifest's `limitWords` noun, else the profile's displayName —
+ * never a key or a word from code. A name that does not say its window gets it
+ * once, in plain words ("Emails per day"). `used` is what the system proved
+ * (never a guess) — without it the figures are left out.
  */
 export function sharedLimitLabel(opts: {
   profile: AgentProfile | null | undefined;
@@ -130,15 +135,16 @@ export function sharedLimitLabel(opts: {
    */
   usedIsTeamWide?: boolean;
   limit?: number | string;
+  /** The manifest's `limitWords`: its noun names the limit before the profile's displayName does. */
+  words?: LimitWords;
 }): SharedLimitLabel | null {
   const b = cumulativeBound(opts.profile, opts.key);
   if (!b) return null;
   const w = WINDOW_WORDS[b.window];
-  // Two limits in one window only need telling apart when they can govern the same action.
-  const overlap = (o: CumulativeBound) => !o.appliesTo || !b.appliesTo || o.appliesTo.some((a) => b.appliesTo!.includes(a));
-  const ambiguous = cumulativeBounds(opts.profile).some((o) => o.window === b.window && o.key !== b.key && overlap(o));
-  const base = `${opts.team ? 'Team limit' : 'Limit'} per ${w.per}`;
-  const name = ambiguous ? `${base} · ${b.displayName}` : base;
+  const noun = opts.words?.[b.key]?.noun;
+  const what = noun ? noun.charAt(0).toUpperCase() + noun.slice(1) : b.displayName;
+  const named = WINDOW_WORD.test(what) ? what : `${what} per ${w.per}`;
+  const name = opts.team ? `${named} (team)` : named;
   const limit = Number(opts.limit);
   const used = opts.team && !opts.usedIsTeamWide ? undefined : opts.used;
   let figures: string | undefined;

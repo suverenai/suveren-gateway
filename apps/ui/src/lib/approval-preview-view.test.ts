@@ -5,7 +5,7 @@
  * anything that would contradict it).
  */
 import { describe, it, expect } from 'vitest';
-import { previewBoxView, outcomeBoxView } from './approval-preview-view';
+import { previewBoxView, outcomeBoxView, boundValuesOpen, sealedTileHeading } from './approval-preview-view';
 import type { OutcomeResponse, PreviewResponse } from './sp-client';
 
 describe('previewBoxView', () => {
@@ -254,5 +254,110 @@ describe('a refused read', () => {
   it('one of several reads: its section says the refusal, not "Not found"', async () => {
     const { buildOwnSection } = await import('./preview-render');
     expect(buildOwnSection({ tool: 'preview_invoice', result: { status: 'refused', message: 'Refused: outside the EU.' } })?.note).toBe('Refused: outside the EU.');
+  });
+});
+
+// Walkthrough 2026-11-11: an update's card listed the contact as it is ("Name:
+// Andreas", revision 1, every field) under "Runs exactly as shown" — the change
+// to "Andreas Schadauer" was nowhere to be seen.
+describe('an update shows its change, old → new', () => {
+  const contact: PreviewResponse = {
+    status: 'ok', integration: 'crm', tool: 'get_contact', readAt: 1, target: true,
+    body: { structured: { id: 'c-1', name: 'Andreas', company: 'Sublin', email: 'a@x.at', revision: 1 } },
+    fields: ['name', 'company', 'email', 'revision'],
+    version: { field: 'revision', approved: 1, current: 1, stale: false },
+  };
+  const args = { id: 'c-1', revision: 1, name: 'Andreas Schadauer', contact_type: 'customer', ticket_id: 't' };
+
+  it('the changed field is now → new; unchanged fields are folded apart; the record itself is not shown as what runs', () => {
+    const v = previewBoxView(contact, 'CRM', args);
+    expect(v.heading).toBe('What will be changed in CRM');
+    expect(v.rendered).toBeUndefined();
+    expect(v.change?.lines).toEqual([{ key: 'name', label: 'Name', now: 'Andreas', next: 'Andreas Schadauer' }]);
+    expect(v.change?.unchanged.fields.map((f) => f.key)).toEqual(['company', 'email', 'revision']);
+    // Bound, but not a field of the record: sent as it is. The gateway's own ticket_id never shows.
+    expect(v.change?.also).toEqual([{ key: 'contact_type', label: 'Contact type', value: 'customer' }]);
+    expect(v.versionNote).toBe('You approve revision 1; if it changes, CRM refuses it.');
+  });
+
+  it('a read that is not the changed record (no target) stays the record, and the bound values open beside it', () => {
+    const { target: _t, ...linked } = contact as Extract<PreviewResponse, { tool: string }>;
+    const v = previewBoxView(linked as PreviewResponse, 'CRM', { contact_id: 'c-1', name: 'Call' });
+    expect(v.change).toBeUndefined();
+    expect(v.rendered?.kind).toBe('structured');
+    expect(boundValuesOpen('ok', v)).toBe(true);
+  });
+
+  it('nothing changes (archive by id + revision): the record, with the bound values open', () => {
+    const v = previewBoxView(contact, 'CRM', { id: 'c-1', revision: 1, contact_type: 'customer' });
+    expect(v.change).toBeUndefined();
+    expect(v.rendered?.kind).toBe('structured');
+    expect(boundValuesOpen('ok', v)).toBe(true);
+  });
+
+  it('a change view keeps the bound values folded — the table already shows them', () => {
+    expect(boundValuesOpen('ok', previewBoxView(contact, 'CRM', args))).toBe(false);
+  });
+});
+
+describe('the gateway\'s own description of a proposal stays what is signed', () => {
+  it('a builtin describe read (describesProposal) is not context: the bound values stay folded', () => {
+    const resp: PreviewResponse = { status: 'ok', integration: 'setup', tool: 'describe_mandate_proposal', readAt: 1, describesProposal: true, body: { structured: { profile: 'x' } } };
+    const v = previewBoxView(resp, 'Setup', { profile: 'x' });
+    expect(v.rendered?.kind).toBe('structured');
+    expect(v.context).toBeUndefined();
+    expect(boundValuesOpen('ok', v)).toBe(false);
+  });
+});
+
+// Andreas 2026-11-11: "You approve this change" over a Now → New table, and ERP
+// updates (previews that are lists of reads) get the same table.
+describe('the change heading and changes in a list of reads', () => {
+  const item = (target: boolean): PreviewResponse => ({
+    status: 'ok', integration: 'erp', readAt: 1,
+    reads: [{
+      tool: 'get_item', attach: 'id', ...(target ? { target: true as const } : {}),
+      result: { status: 'ok', body: { structured: { id: 'i-1', name: 'Paper', list_price: 10, vat_rate: 20, currency: 'EUR', revision: 3 } } },
+    }],
+    display: { verb: 'changed', money: ['list_price', 'id.list_price'], percent: ['vat_rate', 'id.vat_rate'], currencyField: 'id.currency', labels: { id: 'Item', list_price: 'List price (new)' } },
+  });
+  const args = { id: 'i-1', revision: 3, list_price: 12, vat_rate: 20 };
+
+  it('the versioned read is the record: List price now → new, once; unchanged VAT stays a plain row', () => {
+    const v = previewBoxView(item(true), 'ERP', args);
+    const rows = v.creation!.rows;
+    const compare = rows.filter((r) => r.kind === 'compare');
+    expect(compare).toHaveLength(1);
+    expect((compare[0] as { lines: unknown[] }).lines).toEqual([{ key: 'list_price', label: 'List price', now: '10.00 EUR', next: '12.00 EUR' }]);
+    expect(rows.some((r) => r.key === 'list_price' && r.kind === 'scalar')).toBe(false);
+    // The record's own context does not repeat the changed field.
+    const identity = rows.find((r) => r.kind === 'identity') as { identity: { context: Array<{ key: string }> } };
+    expect(identity.identity.context.map((c) => c.key)).not.toContain('list_price');
+    expect(sealedTileHeading(v, false)).toBe('You approve this change');
+  });
+
+  it('without a version on the read nothing is shown as a change', () => {
+    const v = previewBoxView(item(false), 'ERP', args);
+    expect(v.creation!.rows.some((r) => r.kind === 'compare')).toBe(false);
+    expect(sealedTileHeading(v, false)).toBe('Runs exactly as shown');
+  });
+
+  it('a manifest that declares display.compare keeps its own rows; the change is not shown twice', () => {
+    const resp = item(true) as Extract<PreviewResponse, { reads: unknown }>;
+    const declared = { ...resp, display: { ...resp.display, compare: { vat_rate: 'id.vat_rate' } } } as PreviewResponse;
+    const rows = previewBoxView(declared, 'ERP', args).creation!.rows;
+    const compare = rows.filter((r) => r.kind === 'compare') as Array<{ lines: Array<{ key: string }> }>;
+    expect(compare).toHaveLength(1);
+    expect(compare[0].lines.map((l) => l.key)).toEqual(['vat_rate']);
+  });
+
+  it('a single read shown as a change gets the change heading; a record or a mandate keeps its own', () => {
+    const crm: PreviewResponse = {
+      status: 'ok', integration: 'crm', tool: 'get_contact', readAt: 1, target: true,
+      body: { structured: { id: 'c-1', name: 'Andreas', revision: 1 } },
+    };
+    expect(sealedTileHeading(previewBoxView(crm, 'CRM', { id: 'c-1', revision: 1, name: 'Andreas Schadauer' }), false)).toBe('You approve this change');
+    expect(sealedTileHeading(previewBoxView(crm, 'CRM', { id: 'c-1', revision: 1 }), false)).toBe('Runs exactly as shown');
+    expect(sealedTileHeading(undefined, true)).toBe('You sign this');
   });
 });

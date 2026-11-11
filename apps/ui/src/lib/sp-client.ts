@@ -298,6 +298,8 @@ export interface PreviewReadSection {
   as?: string;
   /** The source a display-only read names ("EU VIES"). */
   label?: string;
+  /** The read is the record the action changes (manifest declares `version` on it). */
+  target?: true;
 }
 
 /** `GET /proposal-status/:id/preview` — always 200 unless auth/proposal fetch fails. */
@@ -316,6 +318,14 @@ export type PreviewResponse = (
       /** Manifest-declared `preview.fields` — the top-level fields to show
        *  first, in that order (see tool-gating-types.ts ToolPreviewConfig). */
       fields?: string[];
+      /** The read is the very record the action changes (the manifest declares
+       *  a `version` for it): the card shows the bound arguments as changes to
+       *  it, old → new. Absent: the read is context only. */
+      target?: true;
+      /** The read is the gateway's own description of the proposal (a
+       *  builtin's describe_* read: what the person signs), not a record read
+       *  from a connected system. */
+      describesProposal?: true;
     }
   /** AU8 — several reads (manifest `preview` is a list). Distinguished from
    *  the single-read "ok" above by `reads` (never both on the same object). */

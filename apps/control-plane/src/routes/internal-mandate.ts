@@ -19,6 +19,7 @@
 import { Router } from 'express';
 import { timingSafeEqual, randomUUID } from 'node:crypto';
 import { planMandate, createMandate, checkMandateRight, planMandateChange, changeMandate, MandateRefused, type CeremonyDeps, type MandateChangeRequest, type MandateRequest } from '../lib/mandate-ceremony';
+import { eventBus } from '../lib/event-bus';
 
 function secretMatches(provided: string | undefined, expected: string): boolean {
   if (!expected || !provided) return false;
@@ -52,6 +53,10 @@ export function createInternalMandateRouter(
           return;
         }
         const { authorizationId, plan, revokeError } = await changeMandate(change, d);
+        // The Authority Server holds the new mandate now: the Mandates list and the
+        // dashboard re-read it at once (this path never crosses the /api proxy,
+        // which is where every other mandate write announces itself).
+        eventBus.emit('attestation-changed');
         res.json({ ok: true, authorizationId, profileId: plan.profile.id, groupName: plan.groupName, mode: plan.mode, ttlSeconds: plan.ttlSeconds, ...(revokeError ? { revokeError } : {}) });
         return;
       }
@@ -67,6 +72,7 @@ export function createInternalMandateRouter(
         return;
       }
       const { authorizationId, plan } = await createMandate(request, d);
+      eventBus.emit('attestation-changed'); // see the change branch above
       res.json({ ok: true, authorizationId, profileId: plan.profile.id, groupName: plan.groupName, mode: plan.mode, ttlSeconds: plan.ttlSeconds });
     } catch (err) {
       if (err instanceof MandateRefused) {

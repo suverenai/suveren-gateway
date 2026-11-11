@@ -12,7 +12,7 @@ import { ObTypeLine, ObFold, ObLock, useFoldAccordion } from '../components/Obje
 import { COMMITMENT_REVIEW, COMMITMENT_AUTOMATIC } from '../lib/commitment-words';
 import { useMandateReceipts, usedTodayNumbers, ticketsUnder } from '../lib/mandate-card-usage';
 import { useCumulativeUsage, usageEntryFor } from '../lib/cumulative-usage';
-import { cumulativeBound, sharedLimitLabel } from '../lib/limit-words';
+import { cumulativeBound, sharedLimitLabel, limitWordsForProfile } from '../lib/limit-words';
 import { actionLabel } from '../lib/receipt-summary';
 import { isToday, ticketTime } from '../lib/core-objects';
 import { EmptyState } from '../components/EmptyState';
@@ -318,6 +318,7 @@ function AuthCard({
                   <dd>
                     <MandateLimits
                       item={item}
+                      manifests={manifests}
                       boundsEntries={boundsEntries}
                       limitLines={limitLines}
                       limitLabel={limitLabel}
@@ -441,8 +442,9 @@ function AuthCard({
 }
 
 /** The signed limits, one row each, with "N used today" where the tickets prove it (§18.2). */
-function MandateLimits({ item, boundsEntries, limitLines, limitLabel, limitValue, aboveCapByKey, hasApprovers, profile }: {
+function MandateLimits({ item, manifests, boundsEntries, limitLines, limitLabel, limitValue, aboveCapByKey, hasApprovers, profile }: {
   item: PendingItem;
+  manifests: IntegrationManifest[];
   boundsEntries: Array<[string, unknown]>;
   limitLines: Map<string, { hint?: string }>;
   limitLabel: (k: string) => string;
@@ -468,13 +470,14 @@ function MandateLimits({ item, boundsEntries, limitLines, limitLabel, limitValue
     <dl className="ob-kv ob-sub" data-testid="mandate-limits">
       {boundsEntries.map(([k, v]) => {
         const r = aboveCapByKey.get(k);
-        // Any cumulative limit reads as the shared one: "Team limit per day", figures from the system.
+        // Any cumulative limit reads by its own name ("Daily write limit (team)"), figures from the system.
         const shared = cumulativeBound(profile, k)
           ? (() => {
               // The server's team-wide count wins; without it a team shows no figure.
               const entry = usageEntryFor(server, k);
               return sharedLimitLabel({
                 profile, key: k, team: mode === 'team',
+                words: limitWordsForProfile(manifests, item.profile_id),
                 limit: entry?.limit ?? (v as number | string),
                 used: entry ? entry.used : used[k],
                 usedIsTeamWide: !!entry,

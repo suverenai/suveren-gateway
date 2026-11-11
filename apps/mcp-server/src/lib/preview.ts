@@ -403,6 +403,9 @@ async function runPreviewReadPlan(
       ...(item.displayOnly ? { displayOnly: true } : {}),
       ...(item.as ? { as: item.as } : {}),
       ...(item.label ? { label: item.label } : {}),
+      // Declared, never derived from the answer: a read with a `version` is the
+      // record this action changes (see the single-read `target`).
+      ...(item.version && item.elements === undefined ? { target: true as const } : {}),
     };
     if (item.elements !== undefined) {
       const elements: PreviewReadOutcome[] = [];
@@ -631,6 +634,9 @@ export interface PreviewReadSection {
   overflow?: { shown: number; total: number };
   /** Non-`forEach` reads only — see {@link PreviewReadConfig.version}. */
   version?: PreviewVersionInfo;
+  /** The manifest declares a `version` on this read: it is the record the
+   *  action changes, and the card shows the bound arguments as changes to it. */
+  target?: true;
 }
 
 export type InternalPreviewResult = (
@@ -649,6 +655,21 @@ export type InternalPreviewResult = (
        *  so the UI's field order/priority comes from the same one place —
        *  never re-declared or guessed on the wire. */
       fields?: string[];
+      /**
+       * True when this read is the very record the action changes: the
+       * manifest declares a `version` for it (the connector refuses the action
+       * if that record moved on). The card then shows the action's bound
+       * arguments as changes to this record (old → new); without it the read
+       * is context only (e.g. the contact an activity is logged on).
+       */
+      target?: true;
+      /**
+       * True when the read is the gateway's OWN description of the proposal (a
+       * builtin's `describe_*` read: the mandate or brief the person signs), not
+       * a record read from a connected system. The card keeps such a read in
+       * the sealed tile; a system's record is context and sits beside it.
+       */
+      describesProposal?: true;
     }
   /** AU8 — several reads (manifest `preview` is a list): one section per
    *  declared read, degraded independently (a failing read never blocks the
@@ -749,6 +770,8 @@ async function buildPreviewReads(
     tool: preview.tool,
     body: read1.body,
     ...(preview.fields ? { fields: preview.fields } : {}),
+    ...(preview.version ? { target: true as const } : {}),
+    ...(integrationManager.isBuiltin(integrationId) ? { describesProposal: true as const } : {}),
     ...extra,
   });
 
