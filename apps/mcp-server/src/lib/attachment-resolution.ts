@@ -124,8 +124,8 @@ export async function resolveAttachmentsAndInserts(
   profileId: string,
   args: Record<string, unknown>,
   /**
-   * The SELECTED authorization's own resolved value for
-   * attachment-policy.ts's `ATTACHMENT_SOURCES_FIELD` scope field, when one
+   * The SELECTED authorization's own resolved value for its profile's
+   * attachment-source scope field (format `connector:kind`), when one
    * is available (undefined for a profile that doesn't declare it, or a
    * mandate that leaves it unset — isAttachmentSourceAllowed then refuses
    * every attachment, fail-closed).

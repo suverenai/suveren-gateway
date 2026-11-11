@@ -164,5 +164,6 @@ export async function overviewInput(
     const newest = mine.filter(r => profileMatches(r.profileId, area)).sort((a, b) => b.createdAt - a.createdAt)[0];
     return newest?.status === 'revoked' || newest?.status === 'expired' ? newest.status : undefined;
   };
-  return { manifests, facts, auths, areaName, setup, team, toolName: toolNameOf, simulation: isSimulationMode(), hadMandate, endedMandate, profileOf: newestProfileOf };
+  return { manifests, facts, auths, areaName, setup, team, toolName: toolNameOf, simulation: isSimulationMode(), hadMandate, endedMandate, profileOf: newestProfileOf,
+    mandateProfileOf: (id) => getProfile(id) as never };
 }

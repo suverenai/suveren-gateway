@@ -14,7 +14,8 @@
  * tool-proxy.ts) hand in facts; tests hand in several different manifests.
  */
 
-import { ATTACHMENT_SOURCES_FIELD, attachmentSourcesFieldDeclared, isAttachmentSourceAllowed } from './attachment-policy';
+import { attachmentSourcesFieldDeclared, attachmentSourcesValue, isAttachmentSourceAllowed, type AttachmentPolicyProfileLike } from './attachment-policy';
+import { isDocumentSourcesField } from '@hap/core/scope-rules';
 
 // ─── Inputs (narrow views, so tests and callers need no full types) ─────────
 
@@ -246,7 +247,7 @@ export function proposalFields(
     const bits: string[] = [];
     const values = f.boundType?.kind === 'enum' ? f.boundType.values : f.enum;
     if (values && values.length) bits.push(values.join('|'));
-    else if (f.format === 'connector:kind') bits.push('comma-separated connector:kind sources, for example files:file');
+    else if (isDocumentSourcesField(f)) bits.push('comma-separated connector:kind sources, for example files:file');
     else if (f.valuesFrom) bits.push(`comma-separated names from the ${f.valuesFrom} available`);
     else bits.push(f.boundType ? 'number' : 'text');
     const extra: string[] = [];
@@ -308,6 +309,8 @@ export interface OverviewInput {
   endedMandate?: (area: string) => MandateEnded | undefined;
   /** The newest known profile of an area, and the modes it may be signed with — for the field list. */
   profileOf?: (area: string) => { profile: ProfileFieldsLike; modes: readonly string[] } | undefined;
+  /** The profile a held mandate is signed on (by its profile id) — where its attachment-source field is declared. */
+  mandateProfileOf?: (profileId: string) => AttachmentPolicyProfileLike | undefined;
 }
 
 /** Which of `areas` a held mandate covers. */
@@ -411,7 +414,7 @@ function connectorLine(m: GuideManifest, input: OverviewInput, sourcesByConsumer
   const wanted = sourcesByConsumer.get(m.id) ?? [];
   if (wanted.length > 0) {
     const consumerAreas = areas.filter(a => covering(input.auths, a).length > 0);
-    const ticked = new Set(consumerAreas.flatMap(a => covering(input.auths, a).flatMap(h => csv(h.context?.[ATTACHMENT_SOURCES_FIELD]))));
+    const ticked = new Set(consumerAreas.flatMap(a => covering(input.auths, a).flatMap(h => csv(attachmentSourcesValue(input.mandateProfileOf?.(h.profileId), h.context)))));
     const parts = wanted.map(s => {
       const how = s.savedBy ? ` (save the file first with ${s.savedBy})` : '';
       const state = consumerAreas.length === 0 ? '' : ticked.has(s.key) ? ' — allowed' : ' — not ticked in the mandate';
@@ -490,8 +493,8 @@ export function attachmentNotAllowedText(opts: {
   titleOf: (connector: string, kind: string) => string;
 }): string {
   const missing = opts.refs.filter(ref => !opts.candidates.some(c => {
-    const v = typeof c.context?.[ATTACHMENT_SOURCES_FIELD] === 'string' ? (c.context[ATTACHMENT_SOURCES_FIELD] as string) : undefined;
-    return isAttachmentSourceAllowed(c.profileId, opts.profileOf(c.profileId), v, ref).allowed;
+    const profile = opts.profileOf(c.profileId);
+    return isAttachmentSourceAllowed(c.profileId, profile, attachmentSourcesValue(profile, c.context), ref).allowed;
   }));
   const named = (missing.length > 0 ? missing : opts.refs).map(r => `${opts.titleOf(r.connector, r.kind)} (${r.connector}:${r.kind})`);
   const titles = [...new Set(named)].join(', ');

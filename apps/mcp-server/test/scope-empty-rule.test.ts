@@ -14,9 +14,9 @@ import {
   type AgentProfile,
 } from '@hap/core';
 import { computeMandateDiff, type ChangeProfile } from '@hap/core/mandate-change';
-import { emptyScopeMeans } from '@hap/core/scope-rules';
+import { emptyScopeMeans, isDocumentSourcesField } from '@hap/core/scope-rules';
 import { loadProfiles } from '../src/lib/profile-loader';
-import { ATTACHMENT_SOURCES_FIELD, candidatesAllowingAttachments } from '../src/lib/attachment-policy';
+import { candidatesAllowingAttachments } from '../src/lib/attachment-policy';
 import { testReceiptKeypair } from './helpers/real-receipt';
 
 const PROFILES_DIR = process.env.SUVEREN_PROFILES_DIR ?? join(import.meta.dirname, '..', '..', '..', '..', 'hap-profiles');
@@ -100,7 +100,7 @@ async function enforcementAllows(p: Profile, field: string, def: Field, scopeVal
   const result = await verify({ bounds: bounds as never, mandates: [encodeMandateBlob(blob as never)], execution, scope: scope as never }, { trustedIssuers: [kp.issuer] });
   if (!result.approved) return false;
   // tool-proxy.ts narrows the mandates by their attachment sources before selection.
-  if (field === ATTACHMENT_SOURCES_FIELD) {
+  if (isDocumentSourcesField(def)) {
     const [connector, kind] = value.split(':');
     const { allowed } = candidatesAllowingAttachments([{ profileId: p.id, context: scope }], [{ connector, kind }], () => p as never);
     return allowed.length > 0;
@@ -116,7 +116,7 @@ describe('an empty list scope field allows what the gateway enforces, field by f
   it('the shipped profiles are loaded and declare list fields, among them the attachment sources', () => {
     const fields = listFields();
     expect(fields.length, `no list scope fields in ${PROFILES_DIR}`).toBeGreaterThan(5);
-    expect(fields.some((f) => f.field === ATTACHMENT_SOURCES_FIELD)).toBe(true);
+    expect(fields.some((f) => isDocumentSourcesField(f.def))).toBe(true);
   });
 
   it('for every list field: the rule, the enforcement and the change card agree', async () => {
@@ -139,7 +139,7 @@ describe('an empty list scope field allows what the gateway enforces, field by f
       }
       const emptyAllows = emptyResult === true || (emptyResult === 'unsignable' && absentResult === true);
       if (emptyResult !== 'unsignable' && absentResult !== 'unsignable') expect(absentResult, `${name}: empty and absent differ`).toBe(emptyResult);
-      expect(emptyScopeMeans(field), name).toBe(emptyAllows ? 'anything' : 'nothing');
+      expect(emptyScopeMeans(def), name).toBe(emptyAllows ? 'anything' : 'nothing');
 
       // The card: adding the value to an empty list, and emptying a list that held it.
       const add = computeMandateDiff({ before: side(p, {}), after: side(p, { [field]: v }) }).rows.find((r) => r.field === field);

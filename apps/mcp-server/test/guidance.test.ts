@@ -144,7 +144,7 @@ describe('4. attachments, built from the manifests', () => {
   });
 
   describe('the refusal names the mandate and the source to tick', () => {
-    const emailProfile = { scopeSchema: { fields: { allowed_attachment_sources: {} } } };
+    const emailProfile = { scopeSchema: { fields: { allowed_attachment_sources: { format: 'connector:kind' } } } };
     const oldProfile = { scopeSchema: { fields: {} } };
     const refs = [{ connector: 'files', kind: 'file' }];
     const base = { tool: 'post__send', area: 'Email', refs, titleOf: (c: string, k: string) => (c === 'files' && k === 'file' ? 'Saved files' : k) };
@@ -230,6 +230,7 @@ describe('2. what is needed for a goal — the connector overview', () => {
     const t = connectorOverview(input({
       running: ['files', 'ledger', 'post'],
       auths: [auth('email@0.9', { context: { allowed_attachment_sources: 'files:file' } }), auth('files@0.1'), auth('invoicing@0.4'), auth('sales@0.4')],
+      mandateProfileOf: (id) => (id === 'email@0.9' ? { scopeSchema: { fields: { allowed_attachment_sources: { format: 'connector:kind' } } } } : undefined),
     }));
     expect(t).toContain('its documents (Saved files) can be attached to messages if the sending mandate ticks them under **What the AI may attach**');
     expect(t).toMatch(/may attach: Saved files \(save the file first with files__save_file\) — allowed; Issued invoice — not ticked in the mandate; Quote — not ticked in the mandate/);

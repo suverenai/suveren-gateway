@@ -53,7 +53,7 @@ beforeAll(() => {
     id: PROFILE,
     version: '0.9',
     description: 'test',
-    scopeSchema: { keyOrder: ['allowed_attachment_sources'], fields: { allowed_attachment_sources: { type: 'string', required: false } } },
+    scopeSchema: { keyOrder: ['allowed_attachment_sources'], fields: { allowed_attachment_sources: { type: 'string', required: false, format: 'connector:kind' } } },
     executionContextSchema: { fields: {} },
     requiredGates: [],
     ttl: { default: 1, max: 1 },

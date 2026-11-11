@@ -15,7 +15,10 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { join } from 'node:path';
 import { getProfile, clearProfiles } from '@hap/core';
 import { loadProfiles } from '../src/lib/profile-loader';
-import { isAttachmentSourceAllowed, candidatesAllowingAttachments, ATTACHMENT_SOURCES_FIELD } from '../src/lib/attachment-policy';
+import { isAttachmentSourceAllowed, candidatesAllowingAttachments } from '../src/lib/attachment-policy';
+
+/** email@0.9's attachment-source field; the gateway finds it by its format, `connector:kind`. */
+const ATTACHMENT_SOURCES_FIELD = 'allowed_attachment_sources';
 
 const EMAIL_09 = 'github.com/humanagencyprotocol/hap-profiles/email@0.9';
 
@@ -74,7 +77,7 @@ describe('email@0.9 — allowed_attachment_sources (real profile)', () => {
     expect(older).toBeTruthy();
     const result = isAttachmentSourceAllowed('email@0.8', older, 'erp:invoice-pdf', { connector: 'erp', kind: 'invoice-pdf' });
     expect(result.allowed).toBe(false);
-    expect(result.reason).toContain(ATTACHMENT_SOURCES_FIELD);
+    expect(result.reason).toContain('does not yet declare an attachment-source field (format "connector:kind")');
   });
 });
 
@@ -94,7 +97,7 @@ describe('several email mandates: the one that allows the attachment is chosen (
   it('none allows it → empty, with a reason', () => {
     const r = candidatesAllowingAttachments([old1, old2], [ref], (id) => getProfile(id) as never);
     expect(r.allowed).toEqual([]);
-    expect(r.refusal).toMatch(/allowed_attachment_sources/);
+    expect(r.refusal).toMatch(/attachment-source field \(format "connector:kind"\)/);
   });
 
   it('no attachments → every candidate stays', () => {

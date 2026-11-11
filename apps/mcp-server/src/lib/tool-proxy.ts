@@ -23,7 +23,7 @@ import { hashToolArgs } from './execution-journal';
 import { computeSubmissionPreviewHash, failedBlockingChecks } from './preview';
 import { blockingRefusalReason } from './checks';
 import { stripSourceLink } from './request-context';
-import { candidatesAllowingAttachments, isAttachmentSourceAllowed } from './attachment-policy';
+import { candidatesAllowingAttachments, isAttachmentSourceAllowed, attachmentSourcesField, attachmentSourcesValue } from './attachment-policy';
 import {
   resolveAttachmentsAndInserts,
   finalizeAttachmentsForExecution,
@@ -31,7 +31,6 @@ import {
   stripAttachmentsSealedMeta,
 } from './attachment-resolution';
 import { validateDocumentReferences, validateInsertReferences } from './attachment-reference';
-import { ATTACHMENT_SOURCES_FIELD } from './attachment-policy';
 import { attachmentNotAllowedText, refusalNextStep, pickerCard, howToGetMandate } from './guidance';
 import { setupMandateFacts, newestProfileOf } from './guidance-runtime';
 import { verifyTicket, TicketBindingMismatchError, mandateForTicket } from './ticket-verify';
@@ -474,17 +473,22 @@ function recordAttachmentRefusal(
   candidates: EnrichedAuthorization[],
   refs: Array<{ connector: string; kind: string }>,
 ): void {
-  const valueOf = (c: EnrichedAuthorization) =>
-    typeof c.context?.[ATTACHMENT_SOURCES_FIELD] === 'string' ? (c.context[ATTACHMENT_SOURCES_FIELD] as string) : undefined;
+  const valueOf = (c: EnrichedAuthorization) => attachmentSourcesValue(getProfile(c.profileId) as never, c.context);
   const refused = [...new Set(refs
     .filter(ref => !candidates.some(c => isAttachmentSourceAllowed(c.profileId, getProfile(c.profileId) as never, valueOf(c), ref).allowed))
     .map(ref => `${ref.connector}:${ref.kind}`))];
   if (refused.length === 0) return;
   const only = candidates.length === 1 ? candidates[0] : undefined;
+  // The field is the one the profile declares with format `connector:kind`:
+  // a candidate's own, else the area's newest profile (a mandate on an older
+  // version that has no such field is refused under the field it lacks).
+  const field = [...candidates.map(c => c.profileId), tool.gating?.profile ?? '']
+    .map(id => attachmentSourcesField(getProfile(id) as never))
+    .find((f): f is string => !!f);
   recordBlocked(state, tool, {
     kind: 'scope',
     detail: 'Refused locally: the mandate does not allow this attachment source.',
-    field: ATTACHMENT_SOURCES_FIELD,
+    ...(field ? { field } : {}),
     value: refused.join(','),
     ...(only ? { mandateId: only.authorizationId, limit: valueOf(only) ?? '' } : {}),
     who: 'gateway',
@@ -1229,7 +1233,8 @@ function createGatedToolHandlerInner(
     }
 
     // Documents by reference, continued — the call's OWN attachment
-    // sources, as an execution-context field (email/0.9's
+    // sources, as an execution-context field named like the profile's
+    // `connector:kind` scope field (email/0.9's
     // executionContextSchema.allowed_attachment_sources: "checked against
     // scope; absent when the email has none"). This lets hap-core's generic
     // scope `subset` check (gatekeeper.ts's checkScopeConstraints) run
@@ -1239,7 +1244,13 @@ function createGatedToolHandlerInner(
     // since the generic check skips enforcement when a mandate's scope
     // value is absent.
     if (attachmentSourcesForExecution) {
-      execution[ATTACHMENT_SOURCES_FIELD] = attachmentSourcesForExecution;
+      // Named by every profile in play — the area's and each held mandate's
+      // version — so the subset check runs whichever mandate is picked.
+      const ids = [profile!, ...eligibleMandates().matching.map(a => a.profileId)];
+      for (const id of new Set(ids)) {
+        const field = attachmentSourcesField(getProfile(id) as never);
+        if (field) execution[field] = attachmentSourcesForExecution;
+      }
     }
 
     // A connector's OWN tool schema may require the same value as a STRING
@@ -1650,7 +1661,7 @@ function createGatedToolHandlerInner(
 
         // Documents/inserts by reference (item 1 of "emails carry documents
         // by reference") — resolve for display now that a SPECIFIC mandate
-        // is selected, against ITS OWN allowed_attachment_sources scope
+        // is selected, against ITS OWN attachment-source scope
         // value (never resolved before a mandate is chosen). "Resolve for
         // display" only: fetches each document to seal its fingerprint and
         // substitutes any inserted value into the text (so content binding
@@ -1660,9 +1671,7 @@ function createGatedToolHandlerInner(
         // re-resolves from the original, untouched `args`.
         let callArgs = args;
         if (tool.gating?.attachmentsArg || tool.gating?.insertFields?.length) {
-          const allowedSourcesValue = typeof auth.context?.[ATTACHMENT_SOURCES_FIELD] === 'string'
-            ? (auth.context[ATTACHMENT_SOURCES_FIELD] as string)
-            : undefined;
+          const allowedSourcesValue = attachmentSourcesValue(getProfile(auth.profileId) as never, auth.context);
           const resolved = await resolveAttachmentsAndInserts(integrationManager, tool, auth.profileId, args, allowedSourcesValue);
           if (!resolved.ok) {
             return { content: [{ type: 'text', text: resolved.message }], isError: true };

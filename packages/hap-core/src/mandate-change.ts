@@ -127,7 +127,7 @@ function listRow(key: string, def: FieldDef | undefined, before: Values[string],
   const added = b.filter(x => !a.includes(x));
   const removed = a.filter(x => !b.includes(x));
   if (added.length === 0 && removed.length === 0) return null;
-  const emptyMeans = emptyScopeMeans(key);
+  const emptyMeans = emptyScopeMeans(def);
   let tag: ChangeTag;
   if (emptyMeans === 'anything' && a.length === 0) tag = 'Less';
   else if (emptyMeans === 'anything' && b.length === 0) tag = 'More';

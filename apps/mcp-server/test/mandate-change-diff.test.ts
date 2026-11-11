@@ -5,7 +5,8 @@
  */
 import { describe, it, expect } from 'vitest';
 import { computeMandateDiff, diffIsEmpty, wordDiff, carryValues, type ChangeProfile } from '@hap/core/mandate-change';
-import { ATTACHMENT_SOURCES_FIELD } from '@hap/core/scope-rules';
+/** email@0.9's attachment-source field; the gateway finds it by its format, `connector:kind`. */
+const ATTACHMENT_SOURCES_FIELD = 'allowed_attachment_sources';
 
 const profile: ChangeProfile = {
   id: 'p/area@1',
