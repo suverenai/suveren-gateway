@@ -83,6 +83,19 @@ describe('crm.json — approval preview', () => {
     expect(r).toMatchObject({ status: 'ok', version: { approved: 2, current: 3, stale: true } });
   });
 
+  // Walkthrough 2026-11-11: an update's card showed the contact as it is, not the
+  // change. The card can only show old → new when it knows the read IS the record
+  // being changed — the manifest says so by declaring a version on it.
+  it('a versioned read is marked as the record the action changes; a linked-contact read is not', async () => {
+    const { im } = crm(1);
+    const upd = await buildInternalPreview(im, 'crm', 'update_contact', { id: 'c-1', revision: 1, contact_type: 'customer', name: 'Maria Huber-Berger' });
+    expect(upd).toMatchObject({ status: 'ok', target: true, body: { structured: { name: 'Maria Huber' } } });
+    expect((upd as { describesProposal?: unknown }).describesProposal).toBeUndefined();
+    const act = await buildInternalPreview(im, 'crm', 'create_task', { title: 'Call back', contact_id: 'c-1', contact_type: 'customer' });
+    expect(act).toMatchObject({ status: 'ok' });
+    expect((act as { target?: unknown }).target).toBeUndefined();
+  });
+
   it('create_task WITH a contact previews that contact', async () => {
     const { im, callTool } = crm();
     const r = await buildInternalPreview(im, 'crm', 'create_task', { title: 'Call back', contact_id: 'c-1', contact_type: 'customer' });

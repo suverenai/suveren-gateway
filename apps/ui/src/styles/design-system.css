@@ -4198,6 +4198,9 @@ video.document-preview-media { width: 100%; }
 .compare-table .compare-label { color: var(--text-tertiary); white-space: nowrap; }
 .compare-table .compare-now { color: var(--prov-system); font-weight: 600; }
 .compare-table .compare-new { color: var(--text-primary); font-weight: 700; }
+/* An update's unchanged fields — folded under the change table (record-change.ts). */
+.change-unchanged { margin: 0.2rem 0 0.4rem; font-size: var(--text-body-sm); }
+.change-unchanged > summary { cursor: pointer; color: var(--text-tertiary); }
 
 /* A display-only read — "From <source> — checked <time>", from the system, not sealed. */
 .system-box { border: 1px solid var(--border); border-left: 3px solid var(--prov-system); background: var(--prov-system-subtle); border-radius: var(--radius-md); padding: var(--space-3) var(--space-3); margin: 0.5rem 0; font-size: var(--text-body-sm); }

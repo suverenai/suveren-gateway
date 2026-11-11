@@ -30,7 +30,7 @@ import {
   type ShownSnapshotPayload,
 } from '../lib/sp-client';
 import { ProposalArgs, NotSealedArgs, localPreviewIsUnsealed } from './ProposalArgs';
-import { PreviewBox } from './PreviewBox';
+import { PreviewBoxShow, useProposalPreview } from './PreviewBox';
 import { RequestContextBox } from './RequestContextBox';
 import { useAreaCatalog } from '../lib/area-catalog';
 import { areaName, ageLabel, deadlineLabel } from '../lib/core-objects';
@@ -257,7 +257,6 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
   // boundValuesOpen); folded under Details only when a preview already shows the
   // record from the system.
   const [previewTone, setPreviewTone] = useState<string | null>(null);
-  const boundOpen = boundValuesOpen(previewTone);
 
   // AU10 §8.4 — the raw AU8/AU10 data, as it is CURRENTLY rendered (set via
   // PreviewBox/RequestContextBox's own `onData`), combined into one snapshot
@@ -266,6 +265,13 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
   // when it has one, else the moment this box last combined the two (a
   // preview-less tool still has a request-context read worth timestamping).
   const [previewData, setPreviewData] = useState<PreviewResponse | null>(null);
+  // One fetch for the card; where the box sits depends on what it shows.
+  const previewState = useProposalPreview(proposal.id, systemName, content.toolArgs, setPreviewTone, setPreviewData, readable);
+  const previewView = previewData ? previewBoxView(previewData, systemName, content.toolArgs ?? undefined) : undefined;
+  // A record read from the system that is NOT shown as a change is context,
+  // not what runs: it sits after the sealed tile, and the bound values are open.
+  const recordOutside = !!previewView?.context;
+  const boundOpen = boundValuesOpen(previewTone, previewView);
   // UI spec §4.2.2 — one line per check: limits + attachments, then the
   // manifest checks the gateway evaluated with this card's own reads.
   const lines = checkLines(checks, previewData?.checks);
@@ -477,17 +483,15 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
             onChecks={setAttachmentChecks}
           />
         )}
-        {readable && (
-          <PreviewBox
-            proposalId={proposal.id}
+        {readable && !recordOutside && (
+          <PreviewBoxShow
+            state={previewState}
             systemName={systemName}
             toolArgs={content.toolArgs}
             sealed={content.sealed}
             systemBoxes={false}
             omitKeys={isMandate ? MANDATE_TILE_OMIT : undefined}
             hideNote
-            onTone={setPreviewTone}
-            onData={setPreviewData}
           />
         )}
         {isMandate && (parts.workspace || parts.title) && (
@@ -499,6 +503,20 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
       </section>
       {readable && content.toolArgs && (
         <div style={{ order: 6 }}><NotSealedArgs args={content.toolArgs} display={toolDisplay} /></div>
+      )}
+      {/* The record as the system holds it — read by the gateway, not what runs. */}
+      {readable && recordOutside && (
+        <div style={{ order: 6 }} data-testid="record-from-system">
+          <PreviewBoxShow
+              state={previewState}
+              systemName={systemName}
+              toolArgs={content.toolArgs}
+              sealed={content.sealed}
+              systemBoxes={false}
+              omitKeys={isMandate ? MANDATE_TILE_OMIT : undefined}
+              hideNote
+            />
+        </div>
       )}
       {systemView && systemView.systemBoxes.length > 0 && (
         <div style={{ order: 7 }}><SystemBoxes view={systemView} /></div>

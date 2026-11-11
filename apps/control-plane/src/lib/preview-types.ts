@@ -76,6 +76,10 @@ export type InternalPreviewResult =
       version?: PreviewVersionInfo;
       /** Manifest-declared `preview.fields` — see tool-gating-types.ts in apps/mcp-server. */
       fields?: string[];
+      /** The read is the record the action changes (manifest `version` declared) — see apps/mcp-server preview.ts. */
+      target?: true;
+      /** The read is the gateway's own description of the proposal (a builtin), not a system's record. */
+      describesProposal?: true;
     }
   /** AU8 — several reads (manifest `preview` is a list). Distinguished from
    *  the single-read "ok" above by `reads` (never both on the same object). */
@@ -94,6 +98,10 @@ export type PreviewResponse =
       body: PreviewBody;
       version?: PreviewVersionInfo;
       fields?: string[];
+      /** The read is the record the action changes (manifest `version` declared) — see apps/mcp-server preview.ts. */
+      target?: true;
+      /** The read is the gateway's own description of the proposal (a builtin), not a system's record. */
+      describesProposal?: true;
     }
   | { status: 'ok'; integration: string; readAt: number; reads: PreviewReadSection[]; display?: ToolDisplayHints };
 

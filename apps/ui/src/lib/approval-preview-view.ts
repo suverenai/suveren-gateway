@@ -12,6 +12,7 @@
  */
 import { buildCreationView, diffPreviewBodies, renderPreviewBody, type CreationView, type RenderedPreview } from './preview-render';
 import type { OutcomeResponse, PreviewResponse } from './sp-client';
+import { recordChange, type RecordChange } from './record-change';
 
 const MESSAGE_CAP = 500;
 
@@ -44,8 +45,17 @@ export interface PreviewBoxView {
   heading: string;
   /** One line of lead text — always present, always honest about what this is. */
   note: string;
-  /** Present only for status 'ok' with a SINGLE read (the AU3 legacy shape). */
+  /** Present only for status 'ok' with a SINGLE read (the AU3 legacy shape)
+   *  that is NOT shown as a change: the record as the system holds it. It is
+   *  context, not what runs — the card shows it outside the sealed tile. */
   rendered?: RenderedPreview;
+  /** Single read of the record the action changes (`target`), with at least
+   *  one bound argument that changes it: old → new. Exclusive with `rendered`. */
+  change?: RecordChange;
+  /** `rendered` is a record read from a connected system — context beside
+   *  what runs, not part of it (false for the gateway's own description of a
+   *  proposal, e.g. the mandate a person signs). */
+  context?: boolean;
   /** AU8 — present only for status 'ok' with SEVERAL reads (manifest
    *  `preview` is a list); mutually exclusive with `rendered`. */
   creation?: CreationView;
@@ -124,12 +134,22 @@ export function previewBoxView(resp: PreviewResponse, systemName: string, toolAr
         };
       }
 
-      const rendered = renderPreviewBody(resp.body, { fields: resp.fields });
-      const view: PreviewBoxView = {
-        heading: `From ${systemName}, before it runs`,
-        note: `Read by the gateway with ${resp.tool} when you opened this card — the AI is not involved.`,
-        rendered,
-      };
+      // The read IS the record this action changes: show the change, not the record.
+      const change = resp.target && toolArgs
+        ? recordChange(resp.body, toolArgs, { fields: resp.fields, exclude: resp.version ? [resp.version.field] : [] })
+        : null;
+      const view: PreviewBoxView = change
+        ? {
+            heading: `What will be changed in ${systemName}`,
+            note: `Now: read by the gateway with ${resp.tool} when you opened this card — the AI is not involved. New: exactly what runs.`,
+            change,
+          }
+        : {
+            heading: `From ${systemName}, before it runs`,
+            note: `Read by the gateway with ${resp.tool} when you opened this card — the AI is not involved.`,
+            rendered: renderPreviewBody(resp.body, { fields: resp.fields }),
+            ...(resp.describesProposal ? {} : { context: true }),
+          };
       const version = resp.version;
       if (version) {
         view.versionNote = `You approve ${version.field} ${version.approved}; if it changes, ${systemName} refuses it.`;
@@ -191,7 +211,10 @@ export function outcomeBoxView(outcome: OutcomeResponse, systemName: string): Ou
  * (found 2026-10-10 on a Gmail send: the email text sat folded under Details).
  * While the preview is still loading the answer is not known yet: folded.
  */
-export function boundValuesOpen(tone: string | null): boolean {
+export function boundValuesOpen(tone: string | null, view?: PreviewBoxView): boolean {
+  // A single read shown as a record (not as a change) shows the system's
+  // record, not what runs: the bound values must be open beside it.
+  if (view?.context) return true;
   return tone !== null && tone !== 'loading' && tone !== 'ok' && tone !== 'stale';
 }
 

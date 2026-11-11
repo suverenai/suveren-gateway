@@ -649,6 +649,21 @@ export type InternalPreviewResult = (
        *  so the UI's field order/priority comes from the same one place —
        *  never re-declared or guessed on the wire. */
       fields?: string[];
+      /**
+       * True when this read is the very record the action changes: the
+       * manifest declares a `version` for it (the connector refuses the action
+       * if that record moved on). The card then shows the action's bound
+       * arguments as changes to this record (old → new); without it the read
+       * is context only (e.g. the contact an activity is logged on).
+       */
+      target?: true;
+      /**
+       * True when the read is the gateway's OWN description of the proposal (a
+       * builtin's `describe_*` read: the mandate or brief the person signs), not
+       * a record read from a connected system. The card keeps such a read in
+       * the sealed tile; a system's record is context and sits beside it.
+       */
+      describesProposal?: true;
     }
   /** AU8 — several reads (manifest `preview` is a list): one section per
    *  declared read, degraded independently (a failing read never blocks the
@@ -749,6 +764,8 @@ async function buildPreviewReads(
     tool: preview.tool,
     body: read1.body,
     ...(preview.fields ? { fields: preview.fields } : {}),
+    ...(preview.version ? { target: true as const } : {}),
+    ...(integrationManager.isBuiltin(integrationId) ? { describesProposal: true as const } : {}),
     ...extra,
   });
 

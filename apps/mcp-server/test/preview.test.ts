@@ -177,6 +177,22 @@ describe('getToolPreviewConfig', () => {
   });
 });
 
+describe('a builtin\'s preview describes the proposal itself (walkthrough 2026-11-11)', () => {
+  // The card moves a connector's record out of the sealed tile (it is context,
+  // not what runs); the gateway's own description of a mandate must stay in it.
+  it('marks a builtin read describesProposal; a connector read is not marked', async () => {
+    const tool = (integrationId: string, originalName: string) => ({ originalName, namespacedName: `${integrationId}__${originalName}`, integrationId, description: '', inputSchema: { type: 'object' }, gating: null });
+    const im = {
+      isBuiltin: (id: string) => id === 'setup',
+      getBuiltinToolPreview: (id: string, t: string) => (id === 'setup' && t === 'create_mandate' ? { tool: 'describe_mandate_proposal', args: { profile: 'profile' } } : undefined),
+      getAllTools: () => [tool('setup', 'describe_mandate_proposal')],
+      callTool: vi.fn(async () => ({ content: [{ type: 'text', text: 'x' }], structuredContent: { profile: 'sales' } })),
+    } as unknown as IntegrationManager;
+    const r = await buildInternalPreview(im, 'setup', 'create_mandate', { profile: 'sales' });
+    expect(r).toMatchObject({ status: 'ok', describesProposal: true });
+  });
+});
+
 describe('readPreview — only a tool CURRENTLY discovered can ever be called', () => {
   it('calls exactly the named tool, with the mapped args, and returns its structured body + outputSchema', async () => {
     const { integrationManager, callTool } = buildIntegrationManager();
