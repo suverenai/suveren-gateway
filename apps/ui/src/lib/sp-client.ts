@@ -298,6 +298,8 @@ export interface PreviewReadSection {
   as?: string;
   /** The source a display-only read names ("EU VIES"). */
   label?: string;
+  /** The read is the record the action changes (manifest declares `version` on it). */
+  target?: true;
 }
 
 /** `GET /proposal-status/:id/preview` — always 200 unless auth/proposal fetch fails. */

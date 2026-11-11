@@ -8,7 +8,7 @@
  *   1. type line ("Action · Invoicing · 12 min"), title (manifest sentence)
  *   2. failed check, over-limit block (only when present)
  *   3. notice / "not checked" lines
- *   4. the sealed tile — "Runs exactly as shown" / "You sign these limits"
+ *   4. the sealed tile — "Runs exactly as shown" / "You approve this change" / "You sign this"
  *   5. folded rows: Covered by · ✓ N checks passed · Request · History ·
  *      Technical details (mandate: Intent stays open above the rows,
  *      "Proposed through" is a row)
@@ -38,7 +38,7 @@ import { areaIcon } from '../lib/area';
 import { AreaIcon } from './AreaIcon';
 import { useMandateUsage } from '../lib/mandate-usage';
 import { limitWordsForTool } from '../lib/limit-words';
-import { previewBoxView } from '../lib/approval-preview-view';
+import { previewBoxView, sealedTileHeading } from '../lib/approval-preview-view';
 import { SystemBoxes } from './RenderedCreationView';
 import { isTestSetupAction, profileIdentity, shortProfileId } from '../lib/profile-identity';
 import { AttachmentsSealedBox } from './AttachmentsSealedBox';
@@ -356,7 +356,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
   const lowerTool = proposal.tool.toLowerCase();
   const destructive = ['delete', 'refund', 'cancel', 'revoke'].some((w) => lowerTool.includes(w));
   const imagePreview = typeof content.toolArgs?._imagePreview === 'string' ? (content.toolArgs._imagePreview as string) : null;
-  const sealedHeading = isMandate ? 'You sign this' : 'Runs exactly as shown';
+  const sealedHeading = sealedTileHeading(previewView, isMandate);
   const technicalOne = isMandate ? mandateTechnicalLine(parts) : `${headline} · ${shortProfileId(proposal.profileId)}${proposal.profileId.includes('@') ? `@${proposal.profileId.split('@')[1]}` : ''}`;
 
   if (proposal.tool === CHANGE_MANDATE_TOOL) {

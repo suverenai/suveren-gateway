@@ -403,6 +403,9 @@ async function runPreviewReadPlan(
       ...(item.displayOnly ? { displayOnly: true } : {}),
       ...(item.as ? { as: item.as } : {}),
       ...(item.label ? { label: item.label } : {}),
+      // Declared, never derived from the answer: a read with a `version` is the
+      // record this action changes (see the single-read `target`).
+      ...(item.version && item.elements === undefined ? { target: true as const } : {}),
     };
     if (item.elements !== undefined) {
       const elements: PreviewReadOutcome[] = [];
@@ -631,6 +634,9 @@ export interface PreviewReadSection {
   overflow?: { shown: number; total: number };
   /** Non-`forEach` reads only — see {@link PreviewReadConfig.version}. */
   version?: PreviewVersionInfo;
+  /** The manifest declares a `version` on this read: it is the record the
+   *  action changes, and the card shows the bound arguments as changes to it. */
+  target?: true;
 }
 
 export type InternalPreviewResult = (

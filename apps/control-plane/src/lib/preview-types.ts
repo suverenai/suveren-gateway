@@ -55,6 +55,8 @@ export interface PreviewReadSection {
   version?: PreviewVersionInfo;
   /** See apps/mcp-server/src/lib/tool-gating-types.ts `PreviewReadConfig.kind`. */
   kind?: 'document';
+  /** The read is the record the action changes (manifest declares `version` on it). */
+  target?: true;
 }
 
 /**

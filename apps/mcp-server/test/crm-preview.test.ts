@@ -117,3 +117,24 @@ describe('crm.json — approval preview', () => {
     expect(callTool).not.toHaveBeenCalled();
   });
 });
+
+// Andreas 2026-11-11: ERP updates must get the same old → new card. Their
+// previews are lists of reads; the read that declares `version` is the record
+// changed — marked the same way, never by tool name.
+describe('erp.json — a versioned read inside a preview list is the target', () => {
+  beforeAll(() => { loadManifests(MANIFESTS_DIR); });
+  it('update_item_price: the versioned get_item section carries target; an unversioned read does not', async () => {
+    const callTool = vi.fn().mockImplementation(async (_i: string, tool: string, args: Record<string, unknown>) => ({
+      content: [{ type: 'text', text: 'ok' }],
+      structuredContent: tool === 'get_item' ? { id: args.id, name: 'Paper', list_price: 10, vat_rate: 20, revision: 1 } : { duplicates: [] },
+    }));
+    const tools = ['get_item', 'get_customer', 'check_customer_duplicates'].map((t) => ({ originalName: t, namespacedName: `erp__${t}`, integrationId: 'erp', description: '', inputSchema: { type: 'object' }, gating: null }));
+    const im = { getAllTools: () => tools, callTool, isBuiltin: () => false } as unknown as IntegrationManager;
+    const r = await buildInternalPreview(im, 'erp', 'update_item_price', { id: 'i-1', revision: 1, list_price: 12 });
+    expect(r).toMatchObject({ status: 'ok', reads: [{ tool: 'get_item', attach: 'id', target: true }] });
+    const c = await buildInternalPreview(im, 'erp', 'update_customer', { id: 'c-1', revision: 1, email: 'a@b.at', crm_contact_id: 'x' });
+    const reads = (c as { reads: Array<{ tool: string; target?: true }> }).reads;
+    expect(reads.find((s) => s.tool === 'get_customer')?.target).toBe(true);
+    expect(reads.find((s) => s.tool === 'check_customer_duplicates')?.target).toBeUndefined();
+  });
+});

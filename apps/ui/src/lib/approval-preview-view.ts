@@ -230,3 +230,14 @@ export function hasSystemValues(view: CreationView): boolean {
     return false;
   });
 }
+
+/**
+ * The sealed tile's heading. Over a Now → New table the person approves a
+ * change, not a finished object: "You approve this change" (Andreas,
+ * 2026-11-11). Every other card keeps its heading.
+ */
+export function sealedTileHeading(view: PreviewBoxView | undefined, isMandate: boolean): string {
+  if (isMandate) return 'You sign this';
+  const showsChange = !!view?.change || !!view?.creation?.rows.some((r) => r.kind === 'compare');
+  return showsChange ? 'You approve this change' : 'Runs exactly as shown';
+}
