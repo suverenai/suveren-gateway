@@ -592,7 +592,9 @@ export async function getAgentContact(): Promise<unknown> {
 }
 
 export async function getMcpHealth(): Promise<unknown> {
-  const res = await fetch(`${MCP_BASE}/health`);
+  // `check=connectors`: the MCP server first runs each connector's own status
+  // check, so the integration status carries what the connector says now.
+  const res = await fetch(`${MCP_BASE}/health?check=connectors`);
   if (!res.ok) throw new Error('MCP server unreachable');
   return res.json();
 }

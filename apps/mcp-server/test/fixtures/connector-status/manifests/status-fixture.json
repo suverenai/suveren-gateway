@@ -1,0 +1,19 @@
+{
+  "id": "status-fixture",
+  "name": "Status Fixture",
+  "description": "A test connector with a status check",
+  "icon": "file-text",
+  "profile": "status-fixture",
+  "localOnly": true,
+  "mcp": { "command": "node", "args": [] },
+  "credentials": { "fields": [], "envMapping": {} },
+  "oauth": null,
+  "status": { "tool": "check_status" },
+  "toolGating": {
+    "default": { "executionMapping": {}, "staticExecution": {} },
+    "overrides": {
+      "echo": { "category": "read" },
+      "check_status": { "category": "read", "internal": true }
+    }
+  }
+}

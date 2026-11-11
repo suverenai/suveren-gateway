@@ -222,6 +222,20 @@ export interface IntegrationManifest {
    */
   documents?: ManifestDocuments;
   /**
+   * The connector's own status check: a tool the gateway calls (no
+   * arguments) to learn whether the connector can do its work right now —
+   * e.g. Files reporting that the computer does not let it use its shared
+   * folder. The answer's `structuredContent.problem` is a sentence for a
+   * person, in the connector's own words, or absent/empty when all is well.
+   * The connector card and the dashboard show that sentence as the
+   * connector's words, never as AI text. Called after the connector starts
+   * and when the UI asks for status (IntegrationManager.refreshStatusChecks).
+   * The named tool must be `internal: true` on this SAME manifest's
+   * `toolGating`, so the AI never sees or calls it (checked at load time —
+   * `invalidManifestStatusReason`).
+   */
+  status?: { tool: string };
+  /**
    * True for a connector that touches only this computer: its own store and a
    * local folder, no outside system. It is not a "real system", so it runs in
    * simulation mode too (IntegrationManager.isSimulationSafe) and has no
@@ -1249,6 +1263,27 @@ export function invalidManifestDocumentsReason(
 }
 
 /**
+ * Returns a refusal reason if `manifest.status` (if any) is malformed: it must
+ * name a tool, and that tool must be `internal: true` in this manifest's
+ * `toolGating.overrides` — the status check is the gateway's, never the AI's.
+ */
+export function invalidManifestStatusReason(
+  manifest: Pick<IntegrationManifest, 'status' | 'toolGating'>,
+): string | null {
+  const status = (manifest as { status?: unknown }).status;
+  if (status === undefined) return null;
+  const tool = (status as { tool?: unknown } | null)?.tool;
+  if (status === null || typeof status !== 'object' || typeof tool !== 'string' || tool.length === 0) {
+    return 'status must be an object with a non-empty "tool"';
+  }
+  const override = (manifest.toolGating?.overrides ?? {})[tool] as { internal?: unknown } | null | undefined;
+  if (!override || override.internal !== true) {
+    return `status.tool "${tool}" must be declared in toolGating.overrides with "internal": true`;
+  }
+  return null;
+}
+
+/**
  * Returns a refusal reason if `manifest.attachments` (if any) is malformed,
  * OR any override's `attachmentsArg`/`maxAttachmentBytes`/`insertFields` is
  * malformed, OR an override declares `attachmentsArg` while this manifest
@@ -1909,6 +1944,11 @@ function readManifestDir(dir: string, into: Map<string, IntegrationManifest>): n
       const documentsReason = invalidManifestDocumentsReason(manifest);
       if (documentsReason) {
         console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${documentsReason}`);
+        continue;
+      }
+      const statusReason = invalidManifestStatusReason(manifest);
+      if (statusReason) {
+        console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${statusReason}`);
         continue;
       }
       const attachmentsReason = invalidManifestAttachmentsReason(manifest);

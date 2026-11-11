@@ -27,6 +27,9 @@
     }
   },
   "oauth": null,
+  "status": {
+    "tool": "get_status"
+  },
   "documents": {
     "file": {
       "tool": "get_file",
@@ -53,6 +56,10 @@
         "requiredValue": "unlimited"
       },
       "get_file": {
+        "category": "read",
+        "internal": true
+      },
+      "get_status": {
         "category": "read",
         "internal": true
       },

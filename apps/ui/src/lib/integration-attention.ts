@@ -38,6 +38,9 @@ export interface AttentionItem {
  * once did.
  */
 export function blockedBySimulation(e: IntegrationEntry, simulationOn: boolean): boolean {
+  // A connector that touches only this computer (manifest `localOnly`, e.g.
+  // Files) is no real system: the gateway runs it in simulation mode too.
+  if (e.manifest.localOnly === true) return false;
   return simulationOn && (!declaresSimulation(e.manifest) || e.integration?.paused === 'simulation');
 }
 
@@ -46,11 +49,20 @@ export function buildIntegrationAttentionItems(entries: IntegrationEntry[], simu
 
   for (const e of entries) {
     if (blockedBySimulation(e, simulationOn)) continue;
-    if (e.state === 'error') {
+    if (e.state === 'running' && (e.integration?.problem || e.integration?.error)) {
+      // Running is not the same as working: the connector's own status check
+      // said why it cannot (its words), or the gateway got no answer from it.
+      items.push({
+        label: `${e.manifest.name} needs attention`,
+        detail: e.integration.problem ?? e.integration.error!,
+        to: '/integrations',
+        color: 'var(--text-primary)',
+      });
+    } else if (e.state === 'error') {
       items.push({
         label: 'Integration error',
         detail: e.integration?.error
-          ? `${e.manifest.name}: ${e.integration.error}`
+          ? `${e.manifest.name}: ${e.integration.error}${e.integration.problem ? ` It said: ${e.integration.problem}` : ''}`
           : `${e.manifest.name} is not running`,
         to: '/integrations',
         color: 'var(--text-primary)',

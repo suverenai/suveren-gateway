@@ -492,6 +492,8 @@ export interface IntegrationManifest {
   limitWords?: Record<string, { noun: string; pastParticiple: string }> | null;
   /** Declares a simulation mode: the credential field holding it and its default. Drives the "Simulation" badge. */
   simulation?: { field: string; default: string } | null;
+  /** Touches only this computer (e.g. Files): runs in simulation mode too, so it is never paused by it. */
+  localOnly?: boolean;
   /** Display labels for this connector's CURRENT mode — "<name> · <label>" on
    *  the Integrations card (e.g. "ERP · Built-in", "ERP · Test data"). Keyed
    *  by the `simulation.field` value; an object entry is keyed by the
@@ -534,6 +536,14 @@ export interface McpIntegrationStatus {
   /** A REAL problem (crash, failed spawn, etc). Never set for the simulation
    *  block — see `paused`, which is structural, not an error. */
   error?: string;
+  /**
+   * The connector's OWN words for why it cannot do its work (never the
+   * gateway's, never the AI's): its status check's answer while running, or
+   * its last error output when it stopped while starting. Shown as
+   * "<connector> says", apart from `error`. Also set on a RUNNING connector —
+   * running is not the same as working.
+   */
+  problem?: string;
   /**
    * Set instead of `error` when this connector is not running SOLELY because
    * simulation mode is on and its manifest declares no `simulation` marker.

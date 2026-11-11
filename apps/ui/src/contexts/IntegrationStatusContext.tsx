@@ -194,7 +194,9 @@ export function IntegrationStatusProvider({ children }: { children: ReactNode })
   const attentionCount = useMemo(
     () => entries.filter(
       e => !blockedBySimulation(e, simulationOn === true)
-        && (e.state === 'not-running' || e.state === 'error' || e.authStatus === 'failed'),
+        && (e.state === 'not-running' || e.state === 'error' || e.authStatus === 'failed'
+          // Running but the connector says it cannot work (or its status check got no answer).
+          || (e.state === 'running' && !!(e.integration?.problem || e.integration?.error))),
     ).length,
     [entries, simulationOn],
   );

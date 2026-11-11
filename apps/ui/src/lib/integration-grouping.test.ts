@@ -185,3 +185,17 @@ describe('splitByUse — Paused group', () => {
     expect(r.notSetUp).toEqual([]);
   });
 });
+
+describe('groupIntegrationsForDisplay — a localOnly connector (Files) in simulation mode', () => {
+  it('is a full card with the connectors that run, never under "paused" real systems', () => {
+    const files = {
+      id: 'files', state: 'running',
+      manifest: { id: 'files', name: 'Files', profile: 'files', simulation: null, localOnly: true },
+      integration: { id: 'files', name: 'Files', running: true, toolCount: 4 },
+    } as unknown as IntegrationEntry;
+    const g = groupIntegrationsForDisplay([files], true);
+    expect(g.testSystems.map(e => e.id)).toEqual(['files']);
+    expect(g.pausedReal).toEqual([]);
+    expect(g.realErrors).toEqual([]);
+  });
+});
