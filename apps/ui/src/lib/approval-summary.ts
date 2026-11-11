@@ -9,15 +9,20 @@
  * `invalidSummaryReason`, same grammar):
  *   {path}               the value at `path` (dotted; arrays by index not supported)
  *   {a,b}                the first of `a`, `b` that has a value
- *   {path|money}         amount, in the currency of display.currencyField or `currency`
- *   {path|percent}       "5%"
+ *   {path|money}         "1,200.00 EUR" — the card's own money format; the currency is
+ *                        display.currencyField (a bound arg, or `attach.field` from the
+ *                        card's read — the same rule as the Now / New table), else `currency`
+ *   {path|percent}       "5 %" — the card's own percent format
  *   {path|list}          an array as "a, b +2"
  *   {path|short}         shortened to 60 characters
  *   {path|date}          an ISO date/time as a short local date
- *   {path|ref}           an id, named when the card's attached read resolved it: "Name (id)"
+ *   {path|ref}           a record: its name when the card's attached read resolved one,
+ *                        else a short reference (a long id cut to 8 characters + "…").
+ *                        Never the id next to the name — the id is under Technical details.
  *   [ … ]                an optional part: dropped when any value inside is empty
  */
 import { humanizeKey, splitTool } from './approval-view';
+import { formatMoney, formatPercent, resolveCurrency } from './preview-render';
 import type { IntegrationManifest } from './sp-client';
 
 const MAX_LEN = 140;
@@ -28,6 +33,15 @@ export type SummaryFormat = 'money' | 'percent' | 'list' | 'short' | 'date' | 'r
 const FORMATS: readonly SummaryFormat[] = ['money', 'percent', 'list', 'short', 'date', 'ref'];
 /** Resolves a bound arg to the name the card's own read gave it (preview-store.ts). */
 export type RefName = (argPath: string) => string | undefined;
+/**
+ * What the card's own read already holds, for the title (preview-store.ts
+ * `summaryPreviewFrom`): the name of an attached record, and an attached
+ * record's raw body (for a `currencyField` like "id.currency"). Never fetches.
+ */
+export interface SummaryPreview {
+  refName?: RefName;
+  attachedBody?: (topKey: string) => Record<string, unknown> | undefined;
+}
 
 interface Override { summary?: string; display?: { currencyField?: string } }
 
@@ -54,15 +68,13 @@ function present(v: unknown): boolean {
 }
 
 function format(v: unknown, fmt: SummaryFormat | undefined, currency: string | undefined, locale?: string): string {
+  // Money and percent read exactly as on the card's Now / New table (preview-render.ts).
   if (fmt === 'money') {
     const n = typeof v === 'number' ? v : Number(v);
     if (!Number.isFinite(n)) return String(v);
-    if (currency && /^[A-Za-z]{3}$/.test(currency)) {
-      try { return new Intl.NumberFormat(locale, { style: 'currency', currency: currency.toUpperCase() }).format(n); } catch { /* fall through */ }
-    }
-    return new Intl.NumberFormat(locale, { maximumFractionDigits: 2 }).format(n);
+    return formatMoney(n, currency).value;
   }
-  if (fmt === 'percent') return `${v}%`;
+  if (fmt === 'percent') return formatPercent(v).value;
   if (fmt === 'date') {
     const d = new Date(String(v));
     return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleDateString(locale, { day: 'numeric', month: 'short' });
@@ -84,11 +96,12 @@ function fill(text: string, args: Record<string, unknown>, currency: string | un
     const value = paths.split(',').map((p) => at(args, p.trim())).find(present);
     if (!present(value)) { missing = true; return ''; }
     if (fmt === 'ref') {
+      // The record's name alone; a short reference only when it has none.
+      // The full id stays under Technical details.
       const name = refName?.(paths.split(',')[0].trim());
-      // A long id (a UUID) is shortened in the sentence; the card shows it in full.
+      if (name && name.trim()) return name;
       const id = String(value);
-      const shortId = id.length > 12 ? `${id.slice(0, 8)}…` : id;
-      return name ? `${name} (${shortId})` : id;
+      return id.length > 12 ? `${id.slice(0, 8)}…` : id;
     }
     return format(value, fmt as SummaryFormat | undefined, currency, locale);
   });
@@ -99,10 +112,9 @@ function fill(text: string, args: Record<string, unknown>, currency: string | un
 export function renderSummary(
   template: string,
   args: Record<string, unknown>,
-  opts: { currencyField?: string; locale?: string; refName?: RefName } = {},
+  opts: { currencyField?: string; locale?: string; refName?: RefName; attachedBody?: SummaryPreview['attachedBody'] } = {},
 ): string | null {
-  const cur = at(args, opts.currencyField ?? 'currency');
-  const currency = typeof cur === 'string' ? cur : undefined;
+  const currency = resolveCurrency({ currencyField: opts.currencyField ?? 'currency' }, args, (k) => opts.attachedBody?.(k));
   // Optional parts first: [ … ] vanishes when anything inside is empty.
   const withOptional = template.replace(/\[([^[\]]*)\]/g, (_m, inner: string) => fill(inner, args, currency, opts.locale, opts.refName) ?? '');
   const out = fill(withOptional, args, currency, opts.locale, opts.refName);
@@ -121,12 +133,12 @@ export function approvalSummary(
   args: Record<string, unknown> | null | undefined,
   manifests: IntegrationManifest[] | undefined,
   locale?: string,
-  refName?: RefName,
+  preview?: SummaryPreview,
 ): string {
   const fallback = humanizeKey(splitTool(tool).toolName);
   const o = overrideFor(tool, manifests);
   if (!o?.summary || !args) return fallback;
-  return renderSummary(o.summary, args, { currencyField: o.display?.currencyField, locale, refName }) ?? fallback;
+  return renderSummary(o.summary, args, { currencyField: o.display?.currencyField, locale, refName: preview?.refName, attachedBody: preview?.attachedBody }) ?? fallback;
 }
 
 /**

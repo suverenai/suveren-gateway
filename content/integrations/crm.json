@@ -105,7 +105,7 @@
     },
     "overrides": {
       "create_contact": {
-        "summary": "Create contact {name}[ ({company})]",
+        "summary": "New contact {name}[ ({company})]",
         "executionMapping": {
           "type": "contact_type"
         },
@@ -126,7 +126,7 @@
         }
       },
       "update_contact": {
-        "summary": "Update contact {name,id}",
+        "summary": "Change contact {name,id}",
         "executionMapping": {
           "contact_type": "contact_type"
         },
@@ -267,7 +267,7 @@
         }
       },
       "create_deal": {
-        "summary": "Create deal: {title|short}[ — {value|money}]",
+        "summary": "New deal: {title|short}[ — {value|money}]",
         "actionLabel": "Deal created",
         "executionMapping": {
           "contact_type": "contact_type"
@@ -288,7 +288,7 @@
         }
       },
       "update_deal": {
-        "summary": "Update deal[: {title|short}][ — {value|money}]",
+        "summary": "Change deal[: {title|short}][ — {value|money}]",
         "actionLabel": "Deal updated",
         "executionMapping": {
           "contact_type": "contact_type"
@@ -318,7 +318,7 @@
         }
       },
       "create_task": {
-        "summary": "Create task: {title|short}[ (due {due_date|date})]",
+        "summary": "New task: {title|short}[ (due {due_date|date})]",
         "actionLabel": "Task created",
         "executionMapping": {
           "contact_type": "contact_type"

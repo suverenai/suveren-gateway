@@ -56,7 +56,7 @@ import { useProposalContent, missingRecipients } from '../lib/use-proposal-conte
 import { limitChecks } from '../lib/receipt-summary';
 import { checkLines } from '../lib/checks-view';
 import { ChecksLines } from './ChecksLines';
-import { refNameFrom, setProposalPreview } from '../lib/preview-store';
+import { summaryPreviewFrom, setProposalPreview } from '../lib/preview-store';
 import { profileDisplayName } from '../lib/profile-display';
 import { useAuth } from '../contexts/AuthContext';
 import { newestProfileOf, carryBoundsForward, carryContextForward } from '../lib/profile-upgrade';
@@ -397,7 +397,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
       </div>
       {/* §4.2.1 — one sentence from the manifest's summary template and the
           sealed values (never AI text). */}
-      <h2 className="av3-title" style={{ order: 1 }} data-testid="approval-summary">{isMandate ? <>{typeArea} · {mandateTitleParts(typeArea, mandateArgs).name ?? 'new mandate'}</> : approvalSummary(proposal.tool, content.toolArgs, manifests, undefined, refNameFrom(previewData ?? undefined, content.toolArgs))}</h2>
+      <h2 className="av3-title" style={{ order: 1 }} data-testid="approval-summary">{isMandate ? <>{typeArea} · {mandateTitleParts(typeArea, mandateArgs).name ?? 'new mandate'}</> : approvalSummary(proposal.tool, content.toolArgs, manifests, undefined, summaryPreviewFrom(previewData ?? undefined, content.toolArgs))}</h2>
       {due && <p className="av3-quiet av3-due" style={{ order: 1 }} data-testid="approval-deadline">{due}</p>}
       {/* §4.2.2 — a failed check is the one red line, right under the title. */}
       <ChecksLines lines={lines} placement="top" />

@@ -46,6 +46,27 @@ describe('bundled manifests', () => {
     }
     expect(templates).toBeGreaterThan(30);
   });
+
+  // The approved title rule (Andreas, 2026-11-11): something new is "New …",
+  // a change is "Change …", removing is "Archive …" / "Delete …"; a few
+  // action verbs and document nouns that already read right stay. Never
+  // "Create …" / "Update …", and never an id next to a record's name.
+  const APPROVED_START = /^(New|Change|Archive|Delete|Restore|Convert|Complete|Log|Send|Save|Release|Revoke|Email to|Quote|Order of|Invoice|Credit note|Payment link|Payment of|Capture of|LinkedIn (post|image post|article):)(?=[ [])/;
+  it('every summary starts with an approved verb or noun pattern', () => {
+    const files = readdirSync(MANIFESTS_DIR).filter((f) => f.endsWith('.json') && f !== 'index.json');
+    const offenders: string[] = [];
+    for (const f of files) {
+      const m = JSON.parse(readFileSync(join(MANIFESTS_DIR, f), 'utf8'));
+      for (const [tool, o] of Object.entries(m.toolGating?.overrides ?? {}) as Array<[string, { summary?: string } | null]>) {
+        const s = o?.summary;
+        if (!s) continue;
+        // A leading optional part ("[…]") or placeholder is not a verb.
+        const ok = APPROVED_START.test(s) && !/\b(Create|Update)\b/.test(s) && !/\(\{[^}]*\|ref\}\)/.test(s);
+        if (!ok) offenders.push(`${f} ${tool}: ${s}`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
 });
 
 describe('loader', () => {
