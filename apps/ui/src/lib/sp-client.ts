@@ -535,6 +535,14 @@ export interface McpIntegrationStatus {
    *  block — see `paused`, which is structural, not an error. */
   error?: string;
   /**
+   * The connector's OWN words for why it cannot do its work (never the
+   * gateway's, never the AI's): its status check's answer while running, or
+   * its last error output when it stopped while starting. Shown as
+   * "<connector> says", apart from `error`. Also set on a RUNNING connector —
+   * running is not the same as working.
+   */
+  problem?: string;
+  /**
    * Set instead of `error` when this connector is not running SOLELY because
    * simulation mode is on and its manifest declares no `simulation` marker.
    * Paused-by-design, not broken — drives the neutral "Paused" chip and keeps

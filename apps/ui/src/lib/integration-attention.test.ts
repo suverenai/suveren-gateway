@@ -170,3 +170,33 @@ describe('buildPausedSummaries', () => {
     expect(summaries.map((s) => s.reason)).toEqual(['simulation', 'production']);
   });
 });
+
+describe('a connector that runs but says it cannot work (its own status check)', () => {
+  const files = (integration: Record<string, unknown>): IntegrationEntry => ({
+    id: 'files',
+    manifest: { id: 'files', name: 'Files', simulation: null } as unknown as IntegrationEntry['manifest'],
+    integration: { id: 'files', name: 'Files', running: true, toolCount: 4, ...integration } as unknown as IntegrationEntry['integration'],
+    state: 'running',
+  });
+  const reason = 'The Files connector cannot use /Users/anna/Documents/x: this computer does not allow it to read or write there (Operation not permitted).';
+
+  it('is an attention row with the connector\'s own sentence', () => {
+    expect(buildIntegrationAttentionItems([files({ problem: reason })])).toEqual([
+      { label: 'Files needs attention', detail: reason, to: '/integrations', color: 'var(--text-primary)' },
+    ]);
+  });
+
+  it('the gateway\'s sentence when the status check got no answer', () => {
+    const items = buildIntegrationAttentionItems([files({ error: 'Files did not answer when the gateway checked whether it works.' })]);
+    expect(items.map(i => i.detail)).toEqual(['Files did not answer when the gateway checked whether it works.']);
+  });
+
+  it('running and fine: no row', () => {
+    expect(buildIntegrationAttentionItems([files({})])).toEqual([]);
+  });
+
+  it('stopped while starting: the gateway\'s sentence, then the connector\'s last words', () => {
+    const e = { ...files({ running: false, error: 'Files stopped while starting.', problem: '[files-mcp] fatal: no store' }), state: 'error' as const };
+    expect(buildIntegrationAttentionItems([e])[0].detail).toBe('Files: Files stopped while starting. It said: [files-mcp] fatal: no store');
+  });
+});

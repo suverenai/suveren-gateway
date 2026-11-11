@@ -16,8 +16,10 @@ export interface StatusWord {
 }
 
 /** The process status word. `stopped` is the registered-but-down chip text (Paused / Crashed / Stopped). */
-export function statusWord(cardState: CardState, stopped: { t: string }): StatusWord {
-  if (cardState === 'running') return { text: 'Running', tone: 'bold' };
+/** `trouble`: the process runs, but the connector says it cannot do its work (its status check's
+ *  `problem`), or the gateway could not get an answer from that check (`error`). */
+export function statusWord(cardState: CardState, stopped: { t: string }, trouble = false): StatusWord {
+  if (cardState === 'running') return trouble ? { text: 'Needs attention', tone: 'bold' } : { text: 'Running', tone: 'bold' };
   if (cardState === 'starting') return { text: 'Starting', tone: 'muted' };
   if (cardState === 'unconfigured' || cardState === 'needs-oauth') return { text: 'Not set up', tone: 'muted' };
   return { text: stopped.t, tone: stopped.t === 'Crashed' ? 'bold' : 'muted' };

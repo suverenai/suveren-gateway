@@ -829,7 +829,12 @@ app.all('/mcp', guardAgent, async (req: Request, res: Response) => {
 // every gated action with "Unknown profile" — surfaced here for observability.
 let profilesLoaded = 0;
 
-app.get('/health', (_req: Request, res: Response) => {
+app.get('/health', async (req: Request, res: Response) => {
+  // The UI's status read (control plane, `?check=connectors`) first asks every
+  // connector that declares a status check whether it can work, so a card
+  // shows the connector's own current words. Other callers (the bundle's
+  // readiness probe, with a 3 s timeout) never wait on a connector.
+  if (req.query.check === 'connectors') await integrationManager.refreshStatusChecks();
   res.json({
     status: 'ok',
     transports: ['sse', 'streamable-http'],

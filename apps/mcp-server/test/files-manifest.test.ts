@@ -55,6 +55,12 @@ describe('files manifest', () => {
     expect(fields.save_daily_max.appliesTo).toContain(o.save_file.staticExecution.action_type);
     expect(o.get_file.internal).toBe(true);
   });
+
+  it('declares its status check, internal: the gateway asks it, the AI never sees it', () => {
+    const m = getManifest('files')!;
+    expect(m.status).toEqual({ tool: 'get_status' });
+    expect((m.toolGating!.overrides as Record<string, any>).get_status.internal).toBe(true);
+  });
 });
 
 describe('maxAttachmentBytes', () => {
