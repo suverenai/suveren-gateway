@@ -787,3 +787,44 @@ export interface ProfileToolGating {
   default: ProfileToolGatingEntry;
   overrides?: Record<string, ProfileToolGatingEntry | null>;
 }
+
+/**
+ * Manifest top-level `report` — this connector's records can be shown and
+ * checked in an evidence-backed report (report/*). The gateway runs the
+ * connector's own operator command `<mcp.command> export` (never an MCP tool,
+ * so the AI cannot reach it), which prints the connector's records as one JSON
+ * object of tables (arrays of rows), and reads it only through this
+ * declaration: which tables a report may show, which of them the export must
+ * have, and how an `sv-record` reference resolves to a row. A connector takes
+ * part in reports by declaring this; the gateway names no connector.
+ */
+export interface ReportDeclaration {
+  /** The name a report uses for this system: `sv-record system="…"`, `get_records`'s `system`. Unique across manifests. */
+  system: string;
+  /** How a sentence names it: `No ${label} record "…" in the simulator export.` */
+  label: string;
+  /**
+   * This export holds the loaded business cases: `sv-case`, `list_cases`,
+   * coverage and the test-data load time read it. Its export has the case
+   * shape (`inbox` and `sent` message rows, `simulation_load`; report/types.ts
+   * `CaseSourceExport`). At most one manifest declares it.
+   */
+  cases?: boolean;
+  /** The tables a report may show and reference, in order. Any other table of the export is never shown. */
+  tables: ReportTableDeclaration[];
+}
+
+export interface ReportTableDeclaration {
+  /** The export's top-level array. */
+  name: string;
+  /** The export is malformed without this array (checked before any row is shown). */
+  required?: boolean;
+  /** Facts every row of this table resolves to, before the row's own columns: `kind` names the record ("quote"); more (e.g. `folder`) may follow. */
+  record: { kind: string } & Record<string, string>;
+  /** The columns an `sv-record ref` may match, each tried over all rows in turn. Default `["id"]`. */
+  matchBy?: string[];
+  /** The column naming the ticket that produced the row; resolves as `causingReceiptId`. */
+  causingTicket?: string;
+  /** This table lists the system's refusals; the column holding each refusal's time (the `refusals` figure). */
+  refusalTime?: string;
+}

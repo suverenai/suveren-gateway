@@ -30,6 +30,7 @@ import {
   type AttachmentTransportConfig,
   type ManifestValues,
   type MessageVerb,
+  type ReportDeclaration,
 } from './tool-gating-types';
 import { GATEWAY_OWNED_ARGS } from './sealed-args';
 import { uncoveredReadSwitchReason, type BoundsSchemaLike } from './read-gate';
@@ -255,6 +256,12 @@ export interface IntegrationManifest {
    * The daily limit is used up: 5 of 5 emails today." Absent → plainer words.
    */
   limitWords?: Record<string, { noun: string; pastParticiple: string }>;
+  /**
+   * This connector's records can be shown and checked in a report — see
+   * tool-gating-types.ts `ReportDeclaration`. Checked at load time
+   * (`invalidManifestReportReason`, and unique `system` / one `cases`).
+   */
+  report?: ReportDeclaration;
 }
 
 interface ManifestIndex {
@@ -1724,9 +1731,74 @@ export function computeSignInGroups(list: Array<Pick<IntegrationManifest, 'id' |
   return Array.from(groups.values());
 }
 
+// ─── report declaration ─────────────────────────────────────────────────────
+
+const REPORT_KEYS = new Set(['system', 'label', 'cases', 'tables']);
+const REPORT_TABLE_KEYS = new Set(['name', 'required', 'record', 'matchBy', 'causingTicket', 'refusalTime']);
+const REPORT_SYSTEM_RE = /^[a-z][a-z0-9-]*$/;
+
+const isText = (v: unknown): v is string => typeof v === 'string' && v.length > 0;
+
+/**
+ * Returns a refusal reason if `manifest.report` (if any) is malformed, or null
+ * if absent/well-formed. The export is run as `<mcp.command> export`, so a
+ * report connector must declare its command.
+ */
+export function invalidManifestReportReason(manifest: Pick<IntegrationManifest, 'report' | 'mcp'>): string | null {
+  const r = manifest.report as unknown;
+  if (r === undefined) return null;
+  if (!r || typeof r !== 'object' || Array.isArray(r)) return 'report must be an object';
+  const o = r as Record<string, unknown>;
+  const extra = Object.keys(o).find(k => !REPORT_KEYS.has(k));
+  if (extra) return `report has unknown key "${extra}"`;
+  if (!isText(o.system) || !REPORT_SYSTEM_RE.test(o.system)) return 'report.system must be a lowercase name (a-z, 0-9, -)';
+  if (!isText(o.label)) return 'report.label must be a non-empty string';
+  if (o.cases !== undefined && typeof o.cases !== 'boolean') return 'report.cases must be a boolean';
+  if (!isText(manifest.mcp?.command)) return 'report needs mcp.command: the export runs as "<mcp.command> export"';
+  if (!Array.isArray(o.tables) || o.tables.length === 0) return 'report.tables must be a non-empty array';
+  const names = new Set<string>();
+  for (const [i, t] of o.tables.entries()) {
+    const at = `report.tables[${i}]`;
+    if (!t || typeof t !== 'object' || Array.isArray(t)) return `${at} must be an object`;
+    const tt = t as Record<string, unknown>;
+    const extraKey = Object.keys(tt).find(k => !REPORT_TABLE_KEYS.has(k));
+    if (extraKey) return `${at} has unknown key "${extraKey}"`;
+    if (!isText(tt.name)) return `${at}.name must be a non-empty string`;
+    if (names.has(tt.name)) return `${at}.name "${tt.name}" is declared twice`;
+    names.add(tt.name);
+    if (tt.required !== undefined && typeof tt.required !== 'boolean') return `${at}.required must be a boolean`;
+    const rec = tt.record;
+    if (!rec || typeof rec !== 'object' || Array.isArray(rec)) return `${at}.record must be an object`;
+    if (!isText((rec as Record<string, unknown>).kind)) return `${at}.record.kind must be a non-empty string`;
+    if (Object.values(rec).some(v => typeof v !== 'string')) return `${at}.record values must be strings`;
+    if (tt.matchBy !== undefined && (!Array.isArray(tt.matchBy) || tt.matchBy.length === 0 || !tt.matchBy.every(isText))) {
+      return `${at}.matchBy must be a non-empty array of column names`;
+    }
+    if (tt.causingTicket !== undefined && !isText(tt.causingTicket)) return `${at}.causingTicket must be a column name`;
+    if (tt.refusalTime !== undefined && !isText(tt.refusalTime)) return `${at}.refusalTime must be a column name`;
+  }
+  return null;
+}
+
+/** Why `manifest.report` cannot join the already loaded ones: the same system twice, or a second case source. */
+export function reportConflictReason(
+  manifest: Pick<IntegrationManifest, 'report'>,
+  loaded: Array<Pick<IntegrationManifest, 'id' | 'report'>>,
+): string | null {
+  const r = manifest.report;
+  if (!r) return null;
+  const same = loaded.find(m => m.report?.system === r.system);
+  if (same) return `report.system "${r.system}" is already declared by ${same.id}`;
+  const cases = r.cases ? loaded.find(m => m.report?.cases) : undefined;
+  if (cases) return `report.cases is already declared by ${cases.id}`;
+  return null;
+}
+
 // ─── Module state ───────────────────────────────────────────────────────────
 
 const manifests = new Map<string, IntegrationManifest>();
+/** Set once loadManifests() ran in this process, whatever it found. */
+let manifestsLoaded = false;
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
@@ -1735,12 +1807,27 @@ const manifests = new Map<string, IntegrationManifest>();
  * Returns the number of manifests loaded.
  */
 export function loadManifests(integrationsDir?: string): number {
+  manifestsLoaded = true;
+  return readManifestDir(manifestDir(integrationsDir), manifests);
+}
+
+/** The directory loadManifests() reads: the argument, else SUVEREN_MANIFESTS_DIR, else the gateway's own. */
+function manifestDir(integrationsDir?: string): string {
   // Default: ../../../../content/integrations relative to this file (src/lib/ → apps/mcp-server → suveren-gateway/content/integrations)
-  const dir = resolve(
+  return resolve(
     integrationsDir ??
     process.env.SUVEREN_MANIFESTS_DIR ??
     join(import.meta.dirname ?? __dirname, '..', '..', '..', '..', 'content', 'integrations'),
   );
+}
+
+/**
+ * Reads and checks every manifest `dir`'s index names into `into` — the
+ * registry for loadManifests(), a private map otherwise. Checks that compare
+ * manifests (a shared sign-in group, a report system) see what `into` holds.
+ */
+function readManifestDir(dir: string, into: Map<string, IntegrationManifest>): number {
+  const manifests = into;
   const indexPath = join(dir, 'index.json');
 
   if (!existsSync(indexPath)) {
@@ -1868,6 +1955,12 @@ export function loadManifests(integrationsDir?: string): number {
         console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${groupReason}`);
         continue;
       }
+      const reportReason = invalidManifestReportReason(manifest)
+        ?? reportConflictReason(manifest, Array.from(manifests.values()).filter(m => m.id !== manifest.id));
+      if (reportReason) {
+        console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${reportReason}`);
+        continue;
+      }
       const groupId = manifest.oauth?.signInGroup?.id;
       if (groupId) {
         const first = Array.from(manifests.values()).find(m => m.oauth?.signInGroup?.id === groupId);
@@ -1900,6 +1993,27 @@ export function getManifest(id: string): IntegrationManifest | undefined {
  */
 export function getAllManifests(): IntegrationManifest[] {
   return Array.from(manifests.values());
+}
+
+/** The gateway's own manifests, read once, never registered — see getManifestsOrOwn(). */
+let ownManifests: IntegrationManifest[] | undefined;
+
+/**
+ * The loaded manifests; before loadManifests() has run in this process, the
+ * gateway's own (what loadManifests() would load), read once and NOT
+ * registered — so a module used outside the gateway's startup too (the report
+ * verifier in a test or a CLI) sees the shipped declarations without changing
+ * what getManifest() answers for anyone else. The running gateway always
+ * loads at startup, so it always gets the loaded set.
+ */
+export function getManifestsOrOwn(): IntegrationManifest[] {
+  if (manifestsLoaded) return getAllManifests();
+  if (!ownManifests) {
+    const own = new Map<string, IntegrationManifest>();
+    readManifestDir(manifestDir(), own);
+    ownManifests = Array.from(own.values());
+  }
+  return ownManifests;
 }
 
 /** Declared shared sign-in groups across all loaded manifests. */

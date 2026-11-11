@@ -41,17 +41,23 @@
  * `reference_replies` (the people's actual reference answers — see
  * hap-email-mcp's `cli.ts`: "must never be reachable through any tool call")
  * is excluded by construction in `list_cases`/`get_records`: neither handler
- * ever reads that key off the raw export, and `EMAIL_RECORD_KINDS` below does
- * not list it, so there is no code path that could forward it to the agent.
+ * ever reads that key off the raw export, and no manifest's `report.tables`
+ * lists it (only declared tables are ever shown), so there is no code path
+ * that could forward it to the agent.
+ *
+ * Which systems there are, their tables and how their export is checked come
+ * from the connectors' manifests (`report`, report/systems.ts): this file
+ * names no system.
  */
 import { REPORT_BRIEF } from '../report-brief';
 import { builtinText, type BuiltinIntegration, type BuiltinTool } from '../builtin-integration';
 import {
   buildTicketDetails, glossaryUsage,
-  isEmailExport, isErpExport, isCrmExport, profileShortLabel,
-  type EmailExport, type ErpExport, type CrmExport, type ExportSystem,
+  isCaseSourceExport, profileShortLabel,
+  type CaseSourceExport,
   type VerifyReportResult,
 } from '../report';
+import { reportSystems, reportSystem, caseSystem, recordKinds, isSystemExport, capitalLabel, type ReportSystem } from '../report/systems';
 import { scopeReportSources, reportingMandateRefusal, type ScopeResolution, type ReportWindow } from '../report/window';
 import { agentTicketRow, agentTicket, agentApproval, agentMandate } from '../report/agent-view';
 import { isSimulationMode } from '../simulation-mode';
@@ -65,13 +71,10 @@ export const MAX_REPORT_HTML_BYTES = 512 * 1024;
 
 const READ_GATE = { category: 'read', boundField: 'read_access', requiredValue: 'unlimited' };
 
-// Tables each simulator's `export` CLI exposes that are safe to hand to the
-// report-writing agent as `sv-record` references. Deliberately closed lists —
-// adding a system key here is how a future connector's export would be opted
-// IN, not something that falls out of spreading the raw export object.
-const EMAIL_RECORD_KINDS = ['inbox', 'sent', 'changes', 'refusals'] as const;
-const ERP_RECORD_KINDS = ['quotes', 'orders', 'changes', 'refusals'] as const;
-const CRM_RECORD_KINDS = ['contacts', 'deals', 'tasks', 'activities', 'changes', 'refusals'] as const;
+// The tables each system's `export` CLI exposes that are safe to hand to the
+// report-writing agent as `sv-record` references are the ones its manifest
+// declares (`report.tables`) — a closed list per connector: a table opts IN by
+// being declared, never by appearing in the raw export object.
 
 function errorText(text: string) {
   return { content: [{ type: 'text' as const, text }], isError: true as const };
@@ -183,14 +186,18 @@ function listCasesTool(deps: BuiltinDeps): BuiltinTool {
     handler: async () => {
       const scoped = await scope(deps);
       if (!scoped.ok) return errorText(scoped.reason);
+      const source = caseSystem();
+      if (!source) return errorText('No connected system holds the loaded cases.');
       let exported: unknown;
       try {
-        exported = await scoped.sources.runExport('email');
+        exported = await scoped.sources.runExport(source.system);
       } catch (err) {
-        return errorText(`Could not read email records: ${err instanceof Error ? err.message : String(err)}`);
+        return errorText(`Could not read ${source.label} records: ${err instanceof Error ? err.message : String(err)}`);
       }
-      if (!isEmailExport(exported)) return errorText('Email records were returned in an unexpected shape.');
-      const exp: EmailExport = exported;
+      if (!isSystemExport(source, exported) || !isCaseSourceExport(exported)) {
+        return errorText(`${capitalLabel(source)} records were returned in an unexpected shape.`);
+      }
+      const exp: CaseSourceExport = exported;
       const cases = exp.inbox
         .filter((m) => !!m.case_id)
         .map((m) => ({
@@ -217,33 +224,39 @@ function listCasesTool(deps: BuiltinDeps): BuiltinTool {
   };
 }
 
-function recordKindsFor(system: ExportSystem): readonly string[] {
-  if (system === 'email') return EMAIL_RECORD_KINDS;
-  if (system === 'erp') return ERP_RECORD_KINDS;
-  return CRM_RECORD_KINDS;
+/** "a, b or c" */
+function orList(items: string[]): string {
+  return items.length <= 1 ? items.join('') : `${items.slice(0, -1).join(', ')} or ${items[items.length - 1]}`;
+}
+
+/** get_records' description, from the declared systems and their tables. */
+export function getRecordsDescription(systems: ReportSystem[]): string {
+  return (
+    `Rows from one connected system (${orList(systems.map(s => s.system))}) that you may reference with <sv-record system="..." ref="...">. ` +
+    `Optionally narrow to one table via "kind" (${systems.map(s => `${s.system}: ${recordKinds(s).join('/')}`).join('; ')}) — omit it to get every table for that system. ` +
+    'Only rows inside your reporting window. Never returns the team\'s own reference replies.'
+  );
 }
 
 function getRecordsTool(deps: BuiltinDeps): BuiltinTool {
+  const systems = reportSystems();
   return {
     name: 'get_records',
-    description:
-      'Rows from one connected system (email, erp or crm) that you may reference with <sv-record system="..." ref="...">. ' +
-      'Optionally narrow to one table via "kind" (email: inbox/sent/changes/refusals; erp: quotes/orders/changes/refusals; ' +
-      'crm: contacts/deals/tasks/activities/changes/refusals) — omit it to get every table for that system. ' +
-      'Only rows inside your reporting window. Never returns the team\'s own reference replies.',
+    description: getRecordsDescription(systems),
     inputSchema: {
       type: 'object',
       properties: {
-        system: { type: 'string', enum: ['email', 'erp', 'crm'] },
+        system: { type: 'string', enum: systems.map(s => s.system) },
         kind: { type: 'string', description: 'Optional: one table name within that system\'s records.' },
       },
       required: ['system'],
     },
     handler: async (args) => {
-      const system = args.system;
-      if (system !== 'email' && system !== 'erp' && system !== 'crm') {
-        return errorText('system must be one of "email", "erp", "crm".');
+      const declared = reportSystem(args.system);
+      if (!declared) {
+        return errorText(`system must be one of ${reportSystems().map(s => `"${s.system}"`).join(', ')}.`);
       }
+      const system = declared.system;
       const scoped = await scope(deps);
       if (!scoped.ok) return errorText(scoped.reason);
       let exported: unknown;
@@ -252,22 +265,20 @@ function getRecordsTool(deps: BuiltinDeps): BuiltinTool {
       } catch (err) {
         return errorText(`Could not read ${system} records: ${err instanceof Error ? err.message : String(err)}`);
       }
-      const ok = system === 'email' ? isEmailExport(exported) : system === 'erp' ? isErpExport(exported) : isCrmExport(exported);
-      if (!ok) return errorText(`${system} records were returned in an unexpected shape.`);
+      if (!isSystemExport(declared, exported)) return errorText(`${system} records were returned in an unexpected shape.`);
 
-      const allowedKinds = recordKindsFor(system);
+      const allowedKinds = recordKinds(declared);
       const requestedKind = typeof args.kind === 'string' ? args.kind : undefined;
       if (requestedKind && !allowedKinds.includes(requestedKind)) {
         return errorText(`kind must be one of ${allowedKinds.join(', ')} for system "${system}".`);
       }
       const kinds = requestedKind ? [requestedKind] : allowedKinds;
       const records: Record<string, unknown[]> = {};
-      // Indexing by an allow-listed kind name only — reference_replies is not
-      // in any allowedKinds list above, so it can never be selected here even
-      // if a future export shape adds more tables to the raw JSON.
-      const exp = exported as unknown as EmailExport | ErpExport | CrmExport;
+      // Indexing by a declared kind name only — reference_replies is not in
+      // any manifest's tables, so it can never be selected here even if a
+      // future export shape adds more tables to the raw JSON.
       for (const kind of kinds) {
-        records[kind] = (exp as unknown as Record<string, unknown[]>)[kind] ?? [];
+        records[kind] = (exported as Record<string, unknown[]>)[kind] ?? [];
       }
       return builtinText(JSON.stringify({ system, window: windowInfo(scoped.window), records }, null, 2));
     },

@@ -136,6 +136,16 @@
       }
     }
   },
+  "report": {
+    "system": "erp",
+    "label": "ERP",
+    "tables": [
+      { "name": "quotes", "required": true, "record": { "kind": "quote" }, "matchBy": ["id", "number"] },
+      { "name": "orders", "required": true, "record": { "kind": "order" }, "matchBy": ["id", "number"] },
+      { "name": "changes", "required": true, "record": { "kind": "change" }, "causingTicket": "receipt_id" },
+      { "name": "refusals", "required": true, "record": { "kind": "refusal" }, "refusalTime": "at" }
+    ]
+  },
   "toolGating": {
     "default": {
       "executionMapping": {},

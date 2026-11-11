@@ -12,8 +12,8 @@ import type { ArchivedAuthorization, ArchivedReceipt } from '../receipt-archive'
 import type { ReportWindow } from './window';
 import type { SanitizeNotes } from './sanitize';
 
-/** The three simulator connectors a report can reference records from. */
-export type ExportSystem = 'email' | 'crm' | 'erp';
+/** A report system's name, as a connector's manifest declares it (`report.system`, systems.ts). */
+export type ExportSystem = string;
 
 /** Verification outcome for one placed element. */
 export type ElementStatus = 'verified' | 'unverifiable' | 'warning';
@@ -53,7 +53,7 @@ export interface ProofSummary {
 
 export interface CoverageSummary {
   /**
-   * Set when the email simulator export could not be read at all (connector
+   * Set when the case source's export (the email simulator's today) could not be read at all (connector
    * not installed, crashed, bad JSON, …). When this is set, `loadedCases` /
    * `coveredCases` / `missingCases` below are EMPTY ARRAYS BUT UNKNOWN, NOT
    * ZERO — a caller must not render "0 of 0" (which reads as "fully
@@ -119,7 +119,7 @@ export interface ReceiptArchiveReader {
 }
 
 /**
- * Runs ONE simulator's own `export` CLI and returns its parsed JSON exactly as
+ * Runs ONE report system's own `export` CLI and returns its parsed JSON exactly as
  * printed — this module does not reshape it beyond narrowing the type, so a
  * schema drift in a connector is visible immediately rather than silently
  * absorbed. Called at most once per system per `verifyReport()` call (the
@@ -136,11 +136,13 @@ export interface ReportSources {
 }
 
 // ─── Connector export shapes ────────────────────────────────────────────────
-// Narrow types for the fields this module actually reads, taken from each
-// connector's own `exportRecord()` (hap-erp-mcp/hap-crm-mcp/hap-email-mcp
-// `src/cli.ts`, `src/db.ts` — read 2026-10-05). Deliberately not exhaustive:
-// an extra column on the real export is not our concern; a MISSING one is
-// caught by `isXExport` below, which is why every field read here is listed.
+// A system's tables, which of them it requires and how a reference resolves
+// are read from its manifest (systems.ts) — the gateway names no system. The
+// one shape the gateway reads column by column is the CASE SOURCE's (the
+// system whose manifest declares `report.cases`): its `inbox` and `sent`
+// message rows and `simulation_load`, below — hap-email-mcp's export today
+// (`src/cli.ts`, `src/db.ts` — read 2026-10-05). The ERP and CRM shapes are
+// kept as reference types for tests and fixtures; no gateway logic reads them.
 
 export interface EmailMessage {
   id: string;
@@ -184,7 +186,8 @@ export interface EmailSimulationLoad {
   email?: string | null;
 }
 
-export interface EmailExport {
+/** The case source's export: the loaded cases are its case-tagged `inbox` rows. */
+export interface CaseSourceExport {
   mode: string;
   exported_at: string;
   /** The single row of the email simulator's simulation_load table (null before any load). */
@@ -247,20 +250,18 @@ export interface CrmExport {
   refusals: SimulatorRefusal[];
 }
 
-export function isEmailExport(v: unknown): v is EmailExport {
-  const o = v as EmailExport;
-  return !!o && Array.isArray(o.inbox) && Array.isArray(o.sent) &&
-    Array.isArray(o.changes) && Array.isArray(o.refusals);
+/** The name the case source's export had when only the email simulator could be one. */
+export type EmailExport = CaseSourceExport;
+
+/**
+ * The columns the case logic reads are there: `inbox` and `sent` are arrays.
+ * Callers also check the system's own declared tables (systems.ts
+ * `isSystemExport`).
+ */
+export function isCaseSourceExport(v: unknown): v is CaseSourceExport {
+  const o = v as CaseSourceExport;
+  return !!o && Array.isArray(o.inbox) && Array.isArray(o.sent);
 }
 
-export function isErpExport(v: unknown): v is ErpExport {
-  const o = v as ErpExport;
-  return !!o && Array.isArray(o.quotes) && Array.isArray(o.orders) &&
-    Array.isArray(o.changes) && Array.isArray(o.refusals);
-}
-
-export function isCrmExport(v: unknown): v is CrmExport {
-  const o = v as CrmExport;
-  return !!o && Array.isArray(o.contacts) && Array.isArray(o.deals) &&
-    Array.isArray(o.changes) && Array.isArray(o.refusals);
-}
+/** {@link isCaseSourceExport} under its earlier name. */
+export const isEmailExport = isCaseSourceExport;

@@ -21,7 +21,8 @@
  *    profile's `maximum` when the schema declares one. Window = [now − N days,
  *    now].
  *  - In simulation mode the window also starts no earlier than the test data's
- *    load time (`simulation_load.loaded_at` from the email connector's export).
+ *    load time (`simulation_load.loaded_at` from the case source's export —
+ *    the email connector's today, systems.ts `caseSystem`).
  *  - A mandate whose profile declares no such bound (reporting@0.1) is refused,
  *    in simulation mode too, with a message that says to create a new one
  *    (decision Andreas, 2026-10-06: old reporting mandates need not work).
@@ -42,7 +43,8 @@ import { profileMatches } from '../tool-proxy';
 import { resolveAgeBoundField, maxReadAgeDays, type BoundsSchemaLike } from '../read-gate';
 import { parseTimestampSeconds } from './time';
 import { formatDateTime } from './format';
-import { isEmailExport } from './types';
+import { isCaseSourceExport } from './types';
+import { caseSystem, isSystemExport } from './systems';
 import type { ArchivedReceipt, ArchivedAuthorization } from '../receipt-archive';
 import type { ReceiptArchiveReader, ReportSources, RunConnectorExport, ExportSystem } from './types';
 
@@ -270,12 +272,14 @@ export function windowExport(
   return out;
 }
 
-/** Test-data load time from the email connector's export, or null when there
- *  is none or it cannot be read. */
+/** Test-data load time from the case source's export, or null when there
+ *  is none, no connector declares a case source, or it cannot be read. */
 export async function readLoadedAt(runExport: RunConnectorExport): Promise<number | null> {
+  const cases = caseSystem();
+  if (!cases) return null;
   try {
-    const exp = await runExport('email');
-    if (!isEmailExport(exp)) return null;
+    const exp = await runExport(cases.system);
+    if (!isSystemExport(cases, exp) || !isCaseSourceExport(exp)) return null;
     return parseTimestampSeconds(exp.simulation_load?.loaded_at) ?? null;
   } catch {
     return null;
