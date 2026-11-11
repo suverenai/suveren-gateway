@@ -47,6 +47,13 @@ export interface MandateRequest {
    * explicitly; the Authority Server re-checks membership either way.
    */
   team?: string;
+  /**
+   * With no `team`: the profile (short name) of the caller's own mandate whose
+   * workspace the new mandate goes to — the Setup built-in sends its own
+   * profile, declared once in the gateway (builtins/setup.ts). Absent too: the
+   * personal workspace. Never a profile name written here.
+   */
+  workspaceOf?: string;
   /** Full profile id, or the short name ("sales") for its newest version. */
   profile: string;
   /** Limits (bounds), without `profile` — added here. */
@@ -167,19 +174,23 @@ export function approverPubkeys(body: unknown): Array<{ userId: string; publicKe
 }
 
 /**
- * The workspace of the person's active Delegation mandate(s): that one when they
- * all sit in one workspace, the personal workspace when there are none, and a
- * refusal naming the workspaces when there are several — the AI must then say
- * which (`team`), never guess.
+ * The workspace of the person's active mandate(s) under `workspaceOf` (the
+ * caller's own profile — Setup's): that one when they all sit in one
+ * workspace, the personal workspace when there are none (or no profile is
+ * named), and a refusal naming the workspaces when there are several — the AI
+ * must then say which (`team`), never guess.
  */
 async function delegationWorkspace<G extends { id: string; name: string; isPersonal?: boolean }>(
   deps: CeremonyDeps,
   groups: G[],
+  workspaceOf: string | undefined,
 ): Promise<G | undefined> {
   const personal = groups.find(g => g.isPersonal);
+  if (!workspaceOf) return personal;
   const mine = await deps.as('GET', '/api/mandates/mine?status=active');
   const rows = (mine.status === 200 ? mine.body?.mandates ?? [] : []) as Array<{ profileId?: string; groupId?: string }>;
-  const ids = new Set(rows.filter(r => r.profileId && shortOf(r.profileId) === 'delegation' && r.groupId).map(r => r.groupId!));
+  const own = shortOf(workspaceOf);
+  const ids = new Set(rows.filter(r => r.profileId && shortOf(r.profileId) === own && r.groupId).map(r => r.groupId!));
   const found = groups.filter(g => ids.has(g.id));
   if (found.length === 0) return personal;
   if (found.length === 1) return found[0];
@@ -188,7 +199,7 @@ async function delegationWorkspace<G extends { id: string; name: string; isPerso
 }
 
 /** The workspace, the profile and the person's right to give it — everything before limits and scope. */
-async function resolveWorkspaceAndRight(req: Pick<MandateRequest, 'team' | 'profile'>, deps: CeremonyDeps) {
+async function resolveWorkspaceAndRight(req: Pick<MandateRequest, 'team' | 'profile' | 'workspaceOf'>, deps: CeremonyDeps) {
   const user = deps.user;
   if (!user) refuse('The gateway is not signed in.');
 
@@ -202,7 +213,7 @@ async function resolveWorkspaceAndRight(req: Pick<MandateRequest, 'team' | 'prof
     ? groups.find(g => g.isPersonal)
     : req.team
       ? groups.find(g => !g.isPersonal && (g.id === req.team || g.name === req.team))
-      : await delegationWorkspace(deps, groups);
+      : await delegationWorkspace(deps, groups, req.workspaceOf);
   if (!group) refuse(req.team && req.team !== 'personal' ? `You are not a member of a team "${req.team}".` : 'No personal workspace found.');
   const isPersonal = !!group.isPersonal;
 

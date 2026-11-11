@@ -132,11 +132,13 @@
           "attendees": [
             {
               "field": "allowed_attendees",
-              "transform": "join"
+              "transform": "join",
+              "item": "email"
             },
             {
               "field": "allowed_domains",
-              "transform": "join_domains"
+              "transform": "join_domains",
+              "item": "email"
             }
           ],
           "calendarId": "allowed_calendars"
@@ -153,11 +155,13 @@
           "attendees": [
             {
               "field": "allowed_attendees",
-              "transform": "join"
+              "transform": "join",
+              "item": "email"
             },
             {
               "field": "allowed_domains",
-              "transform": "join_domains"
+              "transform": "join_domains",
+              "item": "email"
             }
           ],
           "calendarId": "allowed_calendars"

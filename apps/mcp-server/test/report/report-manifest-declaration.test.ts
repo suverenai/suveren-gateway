@@ -14,9 +14,9 @@ const LEDGER_REPORT = {
   system: 'ledger',
   label: 'Ledger',
   tables: [
-    { name: 'entries', required: true, record: { kind: 'entry', book: 'main' }, matchBy: ['id', 'ref_no'] },
-    { name: 'changes', required: true, record: { kind: 'change' }, causingTicket: 'receipt_id' },
-    { name: 'refusals', record: { kind: 'refusal' }, refusalTime: 'at' },
+    { name: 'entries', required: true, record: { kind: 'entry', book: 'main' }, matchBy: ['id', 'ref_no'], time: { column: 'created_at' } },
+    { name: 'changes', required: true, record: { kind: 'change' }, causingTicket: 'receipt_id', time: { column: 'at', ticket: 'receipt_id' } },
+    { name: 'refusals', record: { kind: 'refusal' }, refusalTime: 'at', time: { column: 'at' } },
   ],
 };
 const LEDGER = { id: 'ledger', mcp: { command: 'ledger-mcp', args: [] }, report: LEDGER_REPORT };
@@ -55,6 +55,11 @@ describe('the declaration is checked at load', () => {
     expect(invalidManifestReportReason({ ...LEDGER, report: { ...LEDGER_REPORT, tables: [] } } as never)).toMatch(/report.tables/);
     expect(invalidManifestReportReason({ ...LEDGER, report: { ...LEDGER_REPORT, tables: [{ name: 'x', record: {} }] } } as never)).toMatch(/record.kind/);
     expect(invalidManifestReportReason({ ...LEDGER, report: { ...LEDGER_REPORT, extra: 1 } } as never)).toMatch(/unknown key "extra"/);
+    // The reporting window dates every row by `time`: a table without it is refused at load.
+    const noTime = { name: 'x', record: { kind: 'x' } };
+    expect(invalidManifestReportReason({ ...LEDGER, report: { ...LEDGER_REPORT, tables: [noTime] } } as never)).toMatch(/report.tables\[0\].time must say when a row came into being/);
+    expect(invalidManifestReportReason({ ...LEDGER, report: { ...LEDGER_REPORT, tables: [{ ...noTime, time: { column: '' } }] } } as never)).toMatch(/time.column/);
+    expect(invalidManifestReportReason({ ...LEDGER, report: { ...LEDGER_REPORT, tables: [{ ...noTime, time: { column: 'd', when: 'x' } }] } } as never)).toMatch(/time has unknown key "when"/);
   });
 
   it('a second connector cannot declare the same system, nor a second case source', () => {

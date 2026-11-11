@@ -47,11 +47,22 @@ import { getProfile, listProfiles, type AgentProfile } from '@hap/core';
 import { readSignedMandate, scopeValueRefusal, changeFacts, verifySignedCopy, type SignedMandateRead } from '../mandate-change';
 import { BEFORE_PROPOSING, WHEN_TO_SUGGEST_A_CHANGE } from '../guidance';
 import type { IntegrationManager } from '../integration-manager';
+import { readSwitchGate } from './read-switch';
 
-/** The delegation profile by its short name, as a manifest names it: a mandate under
- *  any version governs these tools (0.1 grants keep working), and a new mandate is
- *  created under the newest version the Authority Server serves. */
+/** Setup's own profile, by its short name, as a manifest names it — declared once,
+ *  here, and read from here everywhere else: a mandate under any version governs
+ *  these tools (0.1 grants keep working), and a new mandate is created under the
+ *  newest version the Authority Server serves. */
 export const DELEGATION_PROFILE = 'delegation';
+
+/**
+ * Setup's own declaration (its manifest, in code): which scope field of its
+ * profile bounds each argument of a mandate proposal — the `executionMapping`
+ * of `create_mandate` and `change_mandate`. Declared once; the scope check
+ * (Gatekeeper), the "does this mandate declare that scope" refusal and the
+ * approval card's checks all read it from here, never a field name of their own.
+ */
+const PROPOSAL_SCOPE: Readonly<Record<'profile' | 'mode', string>> = { profile: 'allowed_profiles', mode: 'allowed_modes' };
 
 /** Seeded into the Setup mandate's intent on a real gateway: the person's own words when they sign,
  *  and standing instructions for the AI. The test-mode text below is for a test run with test data. */
@@ -166,7 +177,7 @@ function proposalTargetRefusal(args: Record<string, unknown>): { code: string; m
 
 /**
  * Decision 5 (DL1 brief): outside simulation, only a Delegation mandate whose
- * PROFILE declares the allowed_profiles/allowed_modes scope (0.4+) governs
+ * PROFILE declares every scope field PROPOSAL_SCOPE names (0.4+) governs
  * create_mandate / set_agent_brief / get_guide. An older, unscoped mandate's
  * profile has no `scopeSchema` at all, so hap-core's generic scope check has
  * nothing to compare against and passes trivially — exactly the "unscoped
@@ -178,7 +189,8 @@ function proposalTargetRefusal(args: Record<string, unknown>): { code: string; m
 function delegationMandateRefusal(auth: MandateCandidate): string | undefined {
   if (isSimulationMode()) return undefined;
   const profile = getProfile(auth.profileId);
-  if (profile?.scopeSchema?.fields?.allowed_profiles) return undefined;
+  const scopeFields = profile?.scopeSchema?.fields ?? {};
+  if (profile && Object.values(PROPOSAL_SCOPE).every(f => scopeFields[f])) return undefined;
   // A version this gateway's profile catalog does not know: say so — "does not declare"
   // was wrong (2026-11-06: delegation 0.6 signed on the AS, unknown to an older catalog).
   if (!profile) {
@@ -270,9 +282,9 @@ function delegationChecks(
       ? (ctx[field] as string).split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
       : [];
 
-  const profileOk = governing.some(g => listed(g.context, 'allowed_profiles').includes(targetShortName.toLowerCase()));
+  const profileOk = governing.some(g => listed(g.context, PROPOSAL_SCOPE.profile).includes(targetShortName.toLowerCase()));
   const mode = typeof args.mode === 'string' ? args.mode : '';
-  const modeOk = mode !== '' && governing.some(g => listed(g.context, 'allowed_modes').includes(mode.toLowerCase()));
+  const modeOk = mode !== '' && governing.some(g => listed(g.context, PROPOSAL_SCOPE.mode).includes(mode.toLowerCase()));
 
   const checks: string[] = [
     profileOk
@@ -437,6 +449,8 @@ async function prepareChange(deps: BuiltinDeps, args: Record<string, unknown>): 
 }
 
 export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
+  // The setup guides' read gate: the read switch Setup's own profile declares.
+  const readGate = readSwitchGate(DELEGATION_PROFILE);
   return {
     id: 'setup',
     // Shown as the picker card title (apps/ui AuthorizePicker) — the person
@@ -471,13 +485,9 @@ export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
           // Interface contract). Identity arg mapping: same field name either side.
           preview: { tool: 'describe_brief_proposal', args: { content: 'content' } },
         },
-        get_guide: {
-          category: 'read',
-          boundField: 'read_access',
-          requiredValue: 'unlimited',
-        },
+        get_guide: readGate,
         create_mandate: {
-          executionMapping: { profile: 'allowed_profiles', mode: 'allowed_modes' },
+          executionMapping: { ...PROPOSAL_SCOPE },
           staticExecution: { action_type: MANDATE_ACTION },
           actionLabel: 'Mandate proposed',
           hideUnlessAuthorized: true,
@@ -503,7 +513,7 @@ export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
         change_mandate: {
           // The scope check reads `profile` and `mode`: filled in by `prepare` from the
           // signed mandate, never taken from the AI.
-          executionMapping: { profile: 'allowed_profiles', mode: 'allowed_modes' },
+          executionMapping: { ...PROPOSAL_SCOPE },
           staticExecution: { action_type: MANDATE_ACTION },
           actionLabel: 'Mandate change proposed',
           hideUnlessAuthorized: true,
@@ -726,6 +736,8 @@ export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
  */
 function mandateRequest(args: Record<string, unknown>): Record<string, unknown> {
   return {
+    // The new mandate goes to the workspace of the person's own Setup mandate.
+    workspaceOf: DELEGATION_PROFILE,
     profile: args.profile,
     limits: args.limits,
     scope: args.scope,

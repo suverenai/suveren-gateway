@@ -22,12 +22,17 @@ export type ExecutionMappingTransform = 'join' | 'join_domains' | 'length';
  * - { field, divisor }: numeric division (e.g., cents / 100 -> EUR)
  * - { field, transform }: array transform (e.g., join_domains)
  * - Array form: one argument maps to multiple execution fields
+ *
+ * `item` (with a transform): the property to read from each item when the
+ * argument's items are objects — e.g. calendar attendees `{ email, … }` →
+ * `"item": "email"`. Declared by the manifest, never assumed: an object item
+ * without it does not become a value the scope check could accept.
  */
 export type ExecutionMappingValue =
   | string
   | { field: string; divisor: number }
-  | { field: string; transform: ExecutionMappingTransform }
-  | Array<{ field: string; divisor?: number; transform?: ExecutionMappingTransform }>;
+  | { field: string; transform: ExecutionMappingTransform; item?: string }
+  | Array<{ field: string; divisor?: number; transform?: ExecutionMappingTransform; item?: string }>;
 
 /**
  * Preview declaration (AU3) — a manifest's description of how an action
@@ -827,4 +832,13 @@ export interface ReportTableDeclaration {
   causingTicket?: string;
   /** This table lists the system's refusals; the column holding each refusal's time (the `refusals` figure). */
   refusalTime?: string;
+  /**
+   * When a row came into being, for the reporting window (report/window.ts).
+   * Required: a table the window cannot date would be invisible in every report.
+   *  - `column`: the row's own date column;
+   *  - `ticket` (optional): the column naming the ticket that produced or last
+   *    changed the row — when the gateway holds that ticket, the row is as old
+   *    as the ticket's signed time, which wins over `column`.
+   */
+  time: { column: string; ticket?: string };
 }

@@ -169,13 +169,20 @@ describe('windowExport', () => {
       ],
       changes: [{ id: 'ch-in', at: iso(NOW - 60), tool: 't' }],
     });
-    const out = windowExport(exp, w, loadedAt) as typeof exp;
+    // The email manifest's declaration: messages by received_at, logs by at, each row also by its ticket.
+    const tables = [
+      { name: 'inbox', time: { column: 'received_at', ticket: 'receipt_id' } },
+      { name: 'sent', time: { column: 'received_at', ticket: 'receipt_id' } },
+      { name: 'changes', time: { column: 'at', ticket: 'receipt_id' } },
+      { name: 'refusals', time: { column: 'at', ticket: 'receipt_id' } },
+    ];
+    const out = windowExport(exp, tables, w, loadedAt) as typeof exp;
     expect(out.inbox.map(m => m.id)).toEqual(['m-backdated']);
     expect(out.changes.map(c => c.id)).toEqual(['ch-in']);
     expect(out.simulation_load).toEqual(exp.simulation_load);
 
     // Without the load-time rule, a row older than the window is dropped.
-    const outNoLoad = windowExport(exp, w, null) as typeof exp;
+    const outNoLoad = windowExport(exp, tables, w, null) as typeof exp;
     expect(outNoLoad.inbox).toEqual([]);
   });
 });
@@ -193,8 +200,27 @@ describe('windowExport — rows a ticket produced, and tables with other date co
       ],
     };
     const ticketTimes = new Map([['tk-old', NOW - 40 * DAY], ['tk-new', NOW - 60]]);
-    const out = windowExport(exp, w, null, ticketTimes) as typeof exp;
+    const out = windowExport(exp, [{ name: 'activities', time: { column: 'date', ticket: 'receipt_id' } }], w, null, ticketTimes) as typeof exp;
     expect(out.activities.map(a => a.id)).toEqual(['a-new', 'a-by-new-ticket']);
+  });
+
+  it('a made-up table dates its rows by the columns its declaration names — no column name is built in', () => {
+    const w = { start: NOW - 30 * DAY, end: NOW, days: 30, loadedAt: null, label: 'x' };
+    const iso = (t: number) => new Date(t * 1000).toISOString();
+    const exp = {
+      mode: 'live',
+      postings: [
+        { id: 'p-new', posted_on: iso(NOW - DAY), created_at: iso(NOW - 90 * DAY) },
+        { id: 'p-old', posted_on: iso(NOW - 90 * DAY), created_at: iso(NOW - DAY) },
+        { id: 'p-by-new-voucher', posted_on: iso(NOW - 90 * DAY), voucher: 'tk-new' },
+      ],
+      undeclared: [{ id: 'u-1', created_at: iso(NOW - DAY) }],
+    };
+    const out = windowExport(exp, [{ name: 'postings', time: { column: 'posted_on', ticket: 'voucher' } }], w, null,
+      new Map([['tk-new', NOW - 60]])) as typeof exp;
+    expect(out.postings.map(p => p.id)).toEqual(['p-new', 'p-by-new-voucher']);
+    // A table no declaration dates is never shown, whatever columns it has (fail closed).
+    expect(out.undeclared).toEqual([]);
   });
 });
 

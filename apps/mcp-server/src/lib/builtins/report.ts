@@ -49,7 +49,7 @@
  * from the connectors' manifests (`report`, report/systems.ts): this file
  * names no system.
  */
-import { REPORT_BRIEF } from '../report-brief';
+import { reportBrief } from '../report-brief';
 import { builtinText, type BuiltinIntegration, type BuiltinTool } from '../builtin-integration';
 import {
   buildTicketDetails, glossaryUsage,
@@ -58,7 +58,8 @@ import {
   type VerifyReportResult,
 } from '../report';
 import { reportSystems, reportSystem, caseSystem, recordKinds, isSystemExport, capitalLabel, type ReportSystem } from '../report/systems';
-import { scopeReportSources, reportingMandateRefusal, type ScopeResolution, type ReportWindow } from '../report/window';
+import { scopeReportSources, reportingMandateRefusal, REPORTING_PROFILE, type ScopeResolution, type ReportWindow } from '../report/window';
+import { readSwitchGate } from './read-switch';
 import { agentTicketRow, agentTicket, agentApproval, agentMandate } from '../report/agent-view';
 import { isSimulationMode } from '../simulation-mode';
 import { sanitizeReport } from '../report/sanitize';
@@ -68,8 +69,6 @@ import type { BuiltinDeps, BuiltinFactory } from './index';
  *  plan's "size cap (e.g. 512 KB)". Checked on the RAW bytes the AI sent, so
  *  an oversize report never reaches sanitize/verify at all. */
 export const MAX_REPORT_HTML_BYTES = 512 * 1024;
-
-const READ_GATE = { category: 'read', boundField: 'read_access', requiredValue: 'unlimited' };
 
 // The tables each system's `export` CLI exposes that are safe to hand to the
 // report-writing agent as `sv-record` references are the ones its manifest
@@ -372,7 +371,8 @@ function writeReportTool(deps: BuiltinDeps): BuiltinTool {
     name: 'write_report',
     // The brief IS the description — this is how it reaches the AI (R3/R4 plan,
     // the same pattern mail.json's load_simulation uses for its package guide).
-    description: REPORT_BRIEF,
+    // Its system names come from the manifests' report declarations.
+    description: reportBrief(reportSystems()),
     inputSchema: {
       type: 'object',
       properties: {
@@ -411,41 +411,46 @@ function writeReportTool(deps: BuiltinDeps): BuiltinTool {
   };
 }
 
-export const reportBuiltin: BuiltinFactory = (deps) => ({
-  id: 'report',
-  name: 'Report',
-  evidenceOnly: true,
-  // Short name — matches the real registration in profile-loader.ts (full id
-  // AND short name both registered); profileMatches() accepts either.
-  profile: 'reporting',
-  // Touches no real system (reads the local archive + each simulator's own
-  // read-only export CLI; writes only the local, vault-encrypted report file)
-  // — safe during a simulation-mode test.
-  simulation: true,
-  // Listed without a mandate, like connector tools: an AI client that ignores
-  // tools/list_changed (ChatGPT) otherwise never sees report__* after the
-  // reporting mandate is signed mid-chat (simulation finding, 2026-10-16).
-  // Listing authorizes nothing — the gate still refuses a call without one.
-  alwaysListed: true,
-  // The same predicate the reporting window uses to refuse a mandate
-  // (reporting@0.1, or no window set): the gate never selects such a mandate
-  // for ANY report tool — so write_report is never ticketed under (and never
-  // charges report_daily_max of) a mandate every read tool refuses (RR7).
-  mandateRefusal: (auth) => reportingMandateRefusal(auth),
-  toolGating: {
-    overrides: {
-      list_tickets: READ_GATE,
-      get_ticket: READ_GATE,
-      list_cases: READ_GATE,
-      get_records: READ_GATE,
-      write_report: { executionMapping: {}, staticExecution: { action_type: 'report' }, actionLabel: 'Report written' },
-    },
-  } as unknown as BuiltinIntegration['toolGating'],
-  tools: [
-    listTicketsTool(deps),
-    getTicketTool(deps),
-    listCasesTool(deps),
-    getRecordsTool(deps),
-    writeReportTool(deps),
-  ],
-});
+export const reportBuiltin: BuiltinFactory = (deps) => {
+  // The read tools' gate: the read switch the Report built-in's own profile declares.
+  const READ_GATE = readSwitchGate(REPORTING_PROFILE);
+  return {
+    id: 'report',
+    name: 'Report',
+    evidenceOnly: true,
+    // Short name — matches the real registration in profile-loader.ts (full id
+    // AND short name both registered); profileMatches() accepts either. Declared
+    // once, in report/window.ts (the reporting window reads the same mandates).
+    profile: REPORTING_PROFILE,
+    // Touches no real system (reads the local archive + each simulator's own
+    // read-only export CLI; writes only the local, vault-encrypted report file)
+    // — safe during a simulation-mode test.
+    simulation: true,
+    // Listed without a mandate, like connector tools: an AI client that ignores
+    // tools/list_changed (ChatGPT) otherwise never sees report__* after the
+    // reporting mandate is signed mid-chat (simulation finding, 2026-10-16).
+    // Listing authorizes nothing — the gate still refuses a call without one.
+    alwaysListed: true,
+    // The same predicate the reporting window uses to refuse a mandate
+    // (reporting@0.1, or no window set): the gate never selects such a mandate
+    // for ANY report tool — so write_report is never ticketed under (and never
+    // charges report_daily_max of) a mandate every read tool refuses (RR7).
+    mandateRefusal: (auth) => reportingMandateRefusal(auth),
+    toolGating: {
+      overrides: {
+        list_tickets: READ_GATE,
+        get_ticket: READ_GATE,
+        list_cases: READ_GATE,
+        get_records: READ_GATE,
+        write_report: { executionMapping: {}, staticExecution: { action_type: 'report' }, actionLabel: 'Report written' },
+      },
+    } as unknown as BuiltinIntegration['toolGating'],
+    tools: [
+      listTicketsTool(deps),
+      getTicketTool(deps),
+      listCasesTool(deps),
+      getRecordsTool(deps),
+      writeReportTool(deps),
+    ],
+  };
+};

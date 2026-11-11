@@ -3,7 +3,11 @@
  * forbid scripts, and keep the proof rules — the brief is the AI's only guide.
  */
 import { describe, it, expect } from 'vitest';
-import { REPORT_BRIEF, REPORT_ELEMENTS, REPORT_BLOCKS } from '../src/lib/report-brief';
+import { reportBrief, REPORT_ELEMENTS, REPORT_BLOCKS } from '../src/lib/report-brief';
+import { reportSystems } from '../src/lib/report/systems';
+
+/** The brief as the gateway's own manifests make it. */
+const REPORT_BRIEF = reportBrief(reportSystems());
 
 describe('report brief', () => {
   it('teaches every verifiable element, with its reference syntax', () => {
@@ -69,5 +73,27 @@ describe('report brief', () => {
 
   it('explains how a case is timed (later of email date and test load — review SR4)', () => {
     expect(REPORT_BRIEF).toMatch(/the later of the two/);
+  });
+});
+
+describe('report brief — systems come from the manifests', () => {
+  it('the gateway\'s own manifests: every declared system is named, the case source starts sv-case', () => {
+    for (const s of reportSystems()) expect(REPORT_BRIEF).toContain(s.system);
+    expect(REPORT_BRIEF).toContain('<sv-record system="crm|erp|email" ref="RECORD_ID"></sv-record> — a record from CRM, ERP or email.');
+    expect(REPORT_BRIEF).toContain('<sv-case start="email:MESSAGE_ID"');
+  });
+
+  it('made-up systems with other names: the brief names those and nothing else', () => {
+    const brief = reportBrief([
+      { system: 'tickets', label: 'the helpdesk', cases: true },
+      { system: 'books', label: 'the ledger' },
+    ]);
+    expect(brief).toContain('<sv-record system="tickets|books" ref="RECORD_ID"></sv-record> — a record from the helpdesk or the ledger.');
+    expect(brief).toContain('<sv-case start="tickets:MESSAGE_ID"');
+    expect(brief).not.toMatch(/email\|crm|system="email/);
+  });
+
+  it('no case source declared: sv-case takes the bare message id', () => {
+    expect(reportBrief([{ system: 'books', label: 'the ledger' }])).toContain('<sv-case start="MESSAGE_ID"');
   });
 });

@@ -131,10 +131,10 @@
     "label": "email",
     "cases": true,
     "tables": [
-      { "name": "inbox", "required": true, "record": { "kind": "message", "folder": "inbox" } },
-      { "name": "sent", "required": true, "record": { "kind": "message", "folder": "sent" } },
-      { "name": "changes", "required": true, "record": { "kind": "change" }, "causingTicket": "receipt_id" },
-      { "name": "refusals", "required": true, "record": { "kind": "refusal" }, "refusalTime": "at" }
+      { "name": "inbox", "required": true, "record": { "kind": "message", "folder": "inbox" }, "time": { "column": "received_at", "ticket": "receipt_id" } },
+      { "name": "sent", "required": true, "record": { "kind": "message", "folder": "sent" }, "time": { "column": "received_at", "ticket": "receipt_id" } },
+      { "name": "changes", "required": true, "record": { "kind": "change" }, "causingTicket": "receipt_id", "time": { "column": "at", "ticket": "receipt_id" } },
+      { "name": "refusals", "required": true, "record": { "kind": "refusal" }, "refusalTime": "at", "time": { "column": "at", "ticket": "receipt_id" } }
     ]
   },
   "toolGating": {

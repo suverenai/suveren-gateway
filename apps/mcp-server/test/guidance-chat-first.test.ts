@@ -2,6 +2,11 @@ import { describe, it, expect } from 'vitest';
 import { AGENT_RULES } from '../src/lib/agent-rules';
 import { factsLines, firstMandateText, withoutGatewayAddress, BEFORE_PROPOSING, roleText } from '../src/lib/guidance';
 import { setupBuiltin } from '../src/lib/builtins/setup';
+import { loadProfiles } from '../src/lib/profile-loader';
+
+// The built-ins read their read gate from their own profile when they are built
+// (builtins/read-switch.ts), as at real start-up: load the profile catalog first.
+loadProfiles();
 
 describe('the person works from the chat; the gateway page is theirs', () => {
   const rules = AGENT_RULES.join('\n');

@@ -34,9 +34,9 @@ const LEDGER_REPORT = {
   system: 'ledger',
   label: 'Ledger',
   tables: [
-    { name: 'entries', required: true, record: { kind: 'entry', book: 'main' }, matchBy: ['id', 'ref_no'] },
-    { name: 'changes', required: true, record: { kind: 'change' }, causingTicket: 'receipt_id' },
-    { name: 'refusals', record: { kind: 'refusal' }, refusalTime: 'at' },
+    { name: 'entries', required: true, record: { kind: 'entry', book: 'main' }, matchBy: ['id', 'ref_no'], time: { column: 'created_at' } },
+    { name: 'changes', required: true, record: { kind: 'change' }, causingTicket: 'receipt_id', time: { column: 'at', ticket: 'receipt_id' } },
+    { name: 'refusals', record: { kind: 'refusal' }, refusalTime: 'at', time: { column: 'at' } },
   ],
 };
 const LEDGER = {
@@ -62,8 +62,8 @@ const DESK = {
   report: {
     system: 'desk', label: 'help desk', cases: true,
     tables: [
-      { name: 'inbox', required: true, record: { kind: 'message', folder: 'inbox' } },
-      { name: 'sent', required: true, record: { kind: 'message', folder: 'sent' } },
+      { name: 'inbox', required: true, record: { kind: 'message', folder: 'inbox' }, time: { column: 'received_at' } },
+      { name: 'sent', required: true, record: { kind: 'message', folder: 'sent' }, time: { column: 'received_at' } },
     ],
   },
 };

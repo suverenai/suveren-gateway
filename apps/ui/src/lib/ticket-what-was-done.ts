@@ -163,13 +163,15 @@ export function inTicket(
 ): boolean {
   if (!mapping || !executionContext || value === undefined || value === null) return false;
   const entries = typeof mapping === 'string' ? [{ field: mapping }] : Array.isArray(mapping) ? mapping : [mapping];
-  return entries.some((m: { field: string; divisor?: number; transform?: string }) => {
+  return entries.some((m: { field: string; divisor?: number; transform?: string; item?: string }) => {
     if (!(m.field in executionContext)) return false;
     const signed = executionContext[m.field];
     if (m.divisor) return Number.isFinite(Number(value)) && Number(value) / m.divisor === Number(signed);
     if (m.transform === 'join') {
+      // An object item is read by the property the manifest's mapping names (`item`), as the gateway does.
       const arr = Array.isArray(value) ? value : [value];
-      return arr.map((x) => (x && typeof x === 'object' && 'email' in x ? String((x as { email: unknown }).email) : String(x))).join(',') === String(signed);
+      const read = (x: unknown) => (m.item && x && typeof x === 'object' && m.item in x ? String((x as Record<string, unknown>)[m.item]) : String(x));
+      return arr.map(read).join(',') === String(signed);
     }
     if (m.transform) return false;
     return sameValue(value, signed);
