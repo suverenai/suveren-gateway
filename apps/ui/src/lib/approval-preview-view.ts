@@ -131,12 +131,14 @@ export function previewBoxView(resp: PreviewResponse, systemName: string, toolAr
             ? `Values marked from the system were read by the gateway, not by the AI — read at ${formatReadAt(resp.readAt)}.`
             : '',
           creation,
+          // The same sentence as a single read's: the version is approved, not a row.
+          ...(creation.version ? { versionNote: `You approve ${creation.version.field} ${creation.version.approved}; if it changes, ${systemName} refuses it.` } : {}),
         };
       }
 
       // The read IS the record this action changes: show the change, not the record.
       const change = resp.target && toolArgs
-        ? recordChange(resp.body, toolArgs, { fields: resp.fields, exclude: resp.version ? [resp.version.field] : [] })
+        ? recordChange(resp.body, toolArgs, { fields: resp.fields, exclude: [resp.versionArg ?? resp.version?.field].filter((k): k is string => !!k) })
         : null;
       const view: PreviewBoxView = change
         ? {

@@ -57,6 +57,8 @@ export interface PreviewReadSection {
   kind?: 'document';
   /** The read is the record the action changes (manifest declares `version` on it). */
   target?: true;
+  /** With `target`: the action argument that carries the record's version (the manifest's `version.arg`). */
+  versionArg?: string;
 }
 
 /**
@@ -80,6 +82,8 @@ export type InternalPreviewResult =
       fields?: string[];
       /** The read is the record the action changes (manifest `version` declared) — see apps/mcp-server preview.ts. */
       target?: true;
+      /** With `target`: the action argument that carries the record's version (the manifest's `version.arg`). */
+      versionArg?: string;
       /** The read is the gateway's own description of the proposal (a builtin), not a system's record. */
       describesProposal?: true;
     }
@@ -102,6 +106,8 @@ export type PreviewResponse =
       fields?: string[];
       /** The read is the record the action changes (manifest `version` declared) — see apps/mcp-server preview.ts. */
       target?: true;
+      /** With `target`: the action argument that carries the record's version (the manifest's `version.arg`). */
+      versionArg?: string;
       /** The read is the gateway's own description of the proposal (a builtin), not a system's record. */
       describesProposal?: true;
     }

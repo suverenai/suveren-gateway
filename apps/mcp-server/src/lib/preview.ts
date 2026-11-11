@@ -405,7 +405,7 @@ async function runPreviewReadPlan(
       ...(item.label ? { label: item.label } : {}),
       // Declared, never derived from the answer: a read with a `version` is the
       // record this action changes (see the single-read `target`).
-      ...(item.version && item.elements === undefined ? { target: true as const } : {}),
+      ...(item.version && item.elements === undefined ? { target: true as const, versionArg: item.version.arg } : {}),
     };
     if (item.elements !== undefined) {
       const elements: PreviewReadOutcome[] = [];
@@ -637,6 +637,8 @@ export interface PreviewReadSection {
   /** The manifest declares a `version` on this read: it is the record the
    *  action changes, and the card shows the bound arguments as changes to it. */
   target?: true;
+  /** With `target`: the action argument that carries the record's version (the manifest's `version.arg`). */
+  versionArg?: string;
 }
 
 export type InternalPreviewResult = (
@@ -663,6 +665,8 @@ export type InternalPreviewResult = (
        * is context only (e.g. the contact an activity is logged on).
        */
       target?: true;
+      /** With `target`: the action argument that carries the record's version (the manifest's `version.arg`). */
+      versionArg?: string;
       /**
        * True when the read is the gateway's OWN description of the proposal (a
        * builtin's `describe_*` read: the mandate or brief the person signs), not
@@ -770,7 +774,7 @@ async function buildPreviewReads(
     tool: preview.tool,
     body: read1.body,
     ...(preview.fields ? { fields: preview.fields } : {}),
-    ...(preview.version ? { target: true as const } : {}),
+    ...(preview.version ? { target: true as const, versionArg: preview.version.arg } : {}),
     ...(integrationManager.isBuiltin(integrationId) ? { describesProposal: true as const } : {}),
     ...extra,
   });

@@ -300,6 +300,8 @@ export interface PreviewReadSection {
   label?: string;
   /** The read is the record the action changes (manifest declares `version` on it). */
   target?: true;
+  /** With `target`: the action argument that carries the record's version (the manifest's `version.arg`). */
+  versionArg?: string;
 }
 
 /** `GET /proposal-status/:id/preview` — always 200 unless auth/proposal fetch fails. */
@@ -322,6 +324,8 @@ export type PreviewResponse = (
        *  a `version` for it): the card shows the bound arguments as changes to
        *  it, old → new. Absent: the read is context only. */
       target?: true;
+      /** With `target`: the action argument that carries the record's version (the manifest's `version.arg`). */
+      versionArg?: string;
       /** The read is the gateway's own description of the proposal (a
        *  builtin's describe_* read: what the person signs), not a record read
        *  from a connected system. */

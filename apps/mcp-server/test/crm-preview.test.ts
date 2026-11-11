@@ -89,7 +89,7 @@ describe('crm.json — approval preview', () => {
   it('a versioned read is marked as the record the action changes; a linked-contact read is not', async () => {
     const { im } = crm(1);
     const upd = await buildInternalPreview(im, 'crm', 'update_contact', { id: 'c-1', revision: 1, contact_type: 'customer', name: 'Maria Huber-Berger' });
-    expect(upd).toMatchObject({ status: 'ok', target: true, body: { structured: { name: 'Maria Huber' } } });
+    expect(upd).toMatchObject({ status: 'ok', target: true, versionArg: 'revision', body: { structured: { name: 'Maria Huber' } } });
     expect((upd as { describesProposal?: unknown }).describesProposal).toBeUndefined();
     const act = await buildInternalPreview(im, 'crm', 'create_task', { title: 'Call back', contact_id: 'c-1', contact_type: 'customer' });
     expect(act).toMatchObject({ status: 'ok' });
@@ -131,7 +131,7 @@ describe('erp.json — a versioned read inside a preview list is the target', ()
     const tools = ['get_item', 'get_customer', 'check_customer_duplicates'].map((t) => ({ originalName: t, namespacedName: `erp__${t}`, integrationId: 'erp', description: '', inputSchema: { type: 'object' }, gating: null }));
     const im = { getAllTools: () => tools, callTool, isBuiltin: () => false } as unknown as IntegrationManager;
     const r = await buildInternalPreview(im, 'erp', 'update_item_price', { id: 'i-1', revision: 1, list_price: 12 });
-    expect(r).toMatchObject({ status: 'ok', reads: [{ tool: 'get_item', attach: 'id', target: true }] });
+    expect(r).toMatchObject({ status: 'ok', reads: [{ tool: 'get_item', attach: 'id', target: true, versionArg: 'revision' }] });
     const c = await buildInternalPreview(im, 'erp', 'update_customer', { id: 'c-1', revision: 1, email: 'a@b.at', crm_contact_id: 'x' });
     const reads = (c as { reads: Array<{ tool: string; target?: true }> }).reads;
     expect(reads.find((s) => s.tool === 'get_customer')?.target).toBe(true);

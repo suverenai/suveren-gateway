@@ -323,7 +323,7 @@ describe('the change heading and changes in a list of reads', () => {
   });
   const args = { id: 'i-1', revision: 3, list_price: 12, vat_rate: 20 };
 
-  it('the versioned read is the record: List price now → new, once; unchanged VAT stays a plain row', () => {
+  it('the versioned read is the record: List price now → new, once', () => {
     const v = previewBoxView(item(true), 'ERP', args);
     const rows = v.creation!.rows;
     const compare = rows.filter((r) => r.kind === 'compare');
@@ -340,6 +340,27 @@ describe('the change heading and changes in a list of reads', () => {
     const v = previewBoxView(item(true), 'ERP', { ...args, vat_rate: 10 });
     const compare = v.creation!.rows.find((r) => r.kind === 'compare') as { lines: Array<{ key: string; label: string; now: string; next: string }> };
     expect(compare.lines.find((l) => l.key === 'vat_rate')).toEqual({ key: 'vat_rate', label: 'VAT rate', now: '20 %', next: '10 %' });
+  });
+
+  // Round 4 (Andreas 2026-11-11): as calm as the CRM card.
+  it('the record by its name only, then Now → New; equal values and the version are not rows', () => {
+    const withVersion = { ...item(true) } as Extract<PreviewResponse, { reads: unknown }>;
+    withVersion.reads = [{ ...withVersion.reads[0], versionArg: 'revision', version: { field: 'revision', approved: 3, current: 3, stale: false } }];
+    const v = previewBoxView(withVersion as PreviewResponse, 'ERP', args);
+    const rows = v.creation!.rows;
+    expect(rows.map((r) => r.kind)).toEqual(['identity', 'compare']);
+    const identity = (rows[0] as { identity: { name?: string; nameOnly?: boolean; context: unknown[] } }).identity;
+    expect(identity).toMatchObject({ name: 'Paper', nameOnly: true, context: [] });
+    // VAT 20 → 20 is unchanged: folded with the record's other fields, not a row.
+    const unchanged = v.creation!.unchanged!;
+    expect([...unchanged.fields, ...unchanged.moreFields].map((f) => f.key)).toEqual(expect.arrayContaining(['vat_rate', 'name', 'currency', 'revision']));
+    expect([...unchanged.fields, ...unchanged.moreFields].map((f) => f.key)).not.toContain('list_price');
+    expect(v.versionNote).toBe('You approve revision 3; if it changes, ERP refuses it.');
+  });
+
+  it('a bound value the record does not carry is still a row, after the change', () => {
+    const v = previewBoxView(item(true), 'ERP', { ...args, note: 'Spring prices' });
+    expect(v.creation!.rows.map((r) => `${r.kind}:${r.key}`)).toEqual(['identity:id', 'compare:compare', 'scalar:note']);
   });
 
   it('without a version on the read nothing is shown as a change', () => {
