@@ -41,6 +41,7 @@ import { encodeOutgoingArgs } from './arg-encoding';
 import { normalizeIncomingArgs } from './arg-normalization';
 import { selectAuthorization } from './scope-specificity';
 import { coerceDeclaredNumericFields } from './numeric-execution';
+import { LIST_TRANSFORMS, type ExecutionMappingValue } from './tool-gating-types';
 import {
   boundsSatisfyReadGate,
   resolveAgeBoundField,
@@ -177,13 +178,7 @@ export function applyMapping(
   // `item` — the join / join_domains transforms only know flat strings. An
   // object without a declared `item` stringifies to "[object Object]", which
   // no scope accepts: fail-closed, never a guessed property.
-  const coerce = (v: unknown): string => {
-    if (m.item && typeof v === 'object' && v !== null && m.item in v) {
-      return String((v as Record<string, unknown>)[m.item]);
-    }
-    return String(v);
-  };
-  const arr = Array.isArray(value) ? value.map(coerce) : [coerce(value)];
+  const arr = listItems(m, value);
   switch (m.transform) {
     case 'length':
       execution[m.field] = arr.length;
@@ -202,6 +197,63 @@ export function applyMapping(
     default:
       execution[m.field] = typeof value === 'number' ? value : String(value);
   }
+}
+
+type MappingEntry = { field: string; divisor?: number; transform?: string; item?: string };
+
+/**
+ * The execution-context fields a tool call's arguments produce under the
+ * manifest's `executionMapping` (tool-gating-types.ts `ExecutionMappingValue`).
+ * An absent or null argument produces nothing.
+ *
+ * Several arguments that map to the same field through a list transform
+ * (`length`, `join`, `join_domains`) COMBINE: their items are gathered first,
+ * in mapping order, and the transform runs once over all of them — the count
+ * is the sum, the lists the union. So an email's `cc` is counted and
+ * scope-checked together with its `to`, instead of one overwriting the other.
+ * Every other mapping (direct copy, divisor) applies as before; the manifest
+ * loader refuses one of those shared by two arguments.
+ */
+export function mapExecutionArgs(
+  executionMapping: Record<string, ExecutionMappingValue>,
+  args: Record<string, unknown>,
+): Record<string, string | number> {
+  const out: Record<string, string | number> = {};
+  const lists = new Map<string, { transform: string; items: string[] }>();
+  for (const [argName, mapping] of Object.entries(executionMapping)) {
+    const value = args[argName];
+    if (value === undefined || value === null) continue;
+    if (typeof mapping === 'string') {
+      // Direct mapping: argName → contextField
+      out[mapping] = typeof value === 'number' ? value : String(value);
+      continue;
+    }
+    const entries: MappingEntry[] = Array.isArray(mapping) ? mapping : [mapping];
+    for (const m of entries) {
+      if (m.transform && (LIST_TRANSFORMS as readonly string[]).includes(m.transform) && !m.divisor) {
+        // Gather this argument's items (read by its own declared `item`);
+        // the transform runs once below, over every argument on this field.
+        const acc = lists.get(m.field) ?? { transform: m.transform, items: [] };
+        acc.items.push(...listItems(m, value));
+        lists.set(m.field, acc);
+      } else {
+        applyMapping(m, value, out);
+      }
+    }
+  }
+  for (const [field, { transform, items }] of lists) applyMapping({ field, transform }, items, out);
+  return out;
+}
+
+/** An argument's items as strings, read by the mapping's declared `item` — the same reading `applyMapping` does. */
+function listItems(m: MappingEntry, value: unknown): string[] {
+  const coerce = (v: unknown): string => {
+    if (m.item && typeof v === 'object' && v !== null && m.item in v) {
+      return String((v as Record<string, unknown>)[m.item]);
+    }
+    return String(v);
+  };
+  return Array.isArray(value) ? value.map(coerce) : [coerce(value)];
 }
 
 /** Match a short profile name (e.g. "charge") against a full qualified ID (e.g. "github.com/.../charge@0.3") */
@@ -1236,26 +1288,9 @@ function createGatedToolHandlerInner(
     // Start with static values (e.g., scope: "external")
     const execution: Record<string, string | number> = { ...staticExecution };
 
-    // Build execution context from tool args using the mapping
-    for (const [argName, mapping] of Object.entries(executionMapping)) {
-      const value = args[argName];
-      if (value !== undefined && value !== null) {
-        if (typeof mapping === 'string') {
-          // Direct mapping: argName → contextField
-          execution[mapping] = typeof value === 'number' ? value : String(value);
-        } else if (Array.isArray(mapping)) {
-          // Array mapping: one arg → multiple execution fields
-          for (const m of mapping) applyMapping(m, value, execution);
-        } else if ('divisor' in mapping) {
-          // Divisor mapping: convert units (e.g., cents ÷ 100 → EUR)
-          const numValue = typeof value === 'number' ? value : Number(value);
-          execution[mapping.field] = numValue / mapping.divisor;
-        } else if ('transform' in mapping) {
-          // Transform mapping: array-aware transforms
-          applyMapping(mapping, value, execution);
-        }
-      }
-    }
+    // Build execution context from tool args using the mapping. Several
+    // arguments on one field combine (an email's to + cc): mapExecutionArgs.
+    Object.assign(execution, mapExecutionArgs(executionMapping, args));
 
     // Documents by reference, continued — the call's OWN attachment
     // sources, as an execution-context field named like the profile's

@@ -16,12 +16,26 @@
 /** How to transform an array-valued tool argument into one execution field. */
 export type ExecutionMappingTransform = 'join' | 'join_domains' | 'length';
 
+/** The list transforms — the only ones several arguments may share a field through. */
+export const LIST_TRANSFORMS: readonly ExecutionMappingTransform[] = ['length', 'join', 'join_domains'];
+
 /**
  * Execution mapping value — how a tool argument maps to execution context field(s).
  * - string: direct copy (argName -> fieldName)
  * - { field, divisor }: numeric division (e.g., cents / 100 -> EUR)
  * - { field, transform }: array transform (e.g., join_domains)
  * - Array form: one argument maps to multiple execution fields
+ *
+ * Several arguments, one field: when two or more arguments map to the same
+ * execution field, their items COMBINE before the transform runs — `length`
+ * counts the items of all of them (the sum), `join` lists all of them (the
+ * union, in mapping order), `join_domains` the distinct domains of all of
+ * them. An email's `to` and `cc` both map to the recipient count and the
+ * recipient/domain lists this way, so every recipient is counted and
+ * scope-checked. Allowed only when every argument on that field uses the
+ * SAME list transform; a direct copy or divisor shared by two arguments
+ * would have one overwrite the other, so the manifest loader refuses it
+ * (manifest-loader.ts `invalidExecutionMappingReason`).
  *
  * `item` (with a transform): the property to read from each item when the
  * argument's items are objects — e.g. calendar attendees `{ email, … }` →

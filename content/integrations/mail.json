@@ -193,6 +193,20 @@
               "field": "allowed_domains",
               "transform": "join_domains"
             }
+          ],
+          "cc": [
+            {
+              "field": "recipient_count",
+              "transform": "length"
+            },
+            {
+              "field": "allowed_recipients",
+              "transform": "join"
+            },
+            {
+              "field": "allowed_domains",
+              "transform": "join_domains"
+            }
           ]
         },
         "staticExecution": {

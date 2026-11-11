@@ -31,6 +31,7 @@ import {
   type ManifestValues,
   type MessageVerb,
   type ReportDeclaration,
+  LIST_TRANSFORMS,
 } from './tool-gating-types';
 import { GATEWAY_OWNED_ARGS } from './sealed-args';
 import { uncoveredReadSwitchReason, type BoundsSchemaLike } from './read-gate';
@@ -860,6 +861,95 @@ export function invalidManifestMessageReason(manifest: Pick<IntegrationManifest,
   const overrides = manifest.toolGating?.overrides ?? {};
   for (const [toolName, entry] of Object.entries(overrides)) {
     const reason = invalidMessageReason(toolName, entry);
+    if (reason) return reason;
+  }
+  return null;
+}
+
+type MappingTarget = { arg: string; transform?: string; divisor?: number };
+
+/** Each execution field of one entry's `executionMapping` -> the arguments (and how) that write it. */
+function mappingTargets(entry: unknown): Map<string, MappingTarget[]> {
+  const targets = new Map<string, MappingTarget[]>();
+  const mapping = (entry as { executionMapping?: unknown } | null)?.executionMapping;
+  if (!mapping || typeof mapping !== 'object') return targets;
+  for (const [arg, value] of Object.entries(mapping as Record<string, unknown>)) {
+    const list = Array.isArray(value) ? value : [value];
+    for (const m of list) {
+      const field = typeof m === 'string' ? m : (m as { field?: unknown } | null)?.field;
+      if (typeof field !== 'string') continue;
+      const t = typeof m === 'string' ? {} : (m as { transform?: string; divisor?: number });
+      targets.set(field, [...(targets.get(field) ?? []), { arg, transform: t.transform, divisor: t.divisor }]);
+    }
+  }
+  return targets;
+}
+
+function executionMappingReasonAt(at: string, entry: unknown): string | null {
+  for (const [field, writers] of mappingTargets(entry)) {
+    if (writers.length < 2) continue;
+    const args = writers.map(w => w.arg);
+    const twice = args.find((a, i) => args.indexOf(a) !== i);
+    if (twice) return `${at}.executionMapping maps "${twice}" to "${field}" twice`;
+    const first = writers[0];
+    const combinable = writers.every(w =>
+      w.divisor === undefined && typeof w.transform === 'string' &&
+      (LIST_TRANSFORMS as readonly string[]).includes(w.transform) && w.transform === first.transform);
+    if (!combinable) {
+      return `${at}.executionMapping maps ${args.map(a => `"${a}"`).join(' and ')} to "${field}"; ` +
+        `several arguments can share a field only through the same list transform (${LIST_TRANSFORMS.join(', ').replace(/, (?=[^,]*$)/, ' or ')})`;
+    }
+  }
+  return null;
+}
+
+/**
+ * `executionMapping` (tool-gating-types.ts `ExecutionMappingValue`): several
+ * arguments may map to one execution field only when all of them use the
+ * same list transform — their items then combine (sum / union). A direct
+ * copy or divisor shared by two arguments would have one silently overwrite
+ * the other (an email's `cc` hiding from the recipient scope), so the whole
+ * manifest is refused.
+ */
+export function invalidExecutionMappingReason(toolName: string, entry: unknown): string | null {
+  return executionMappingReasonAt(`override "${toolName}"`, entry);
+}
+
+/**
+ * A tool's declared message recipients (`message.to`, `message.cc`): when the
+ * `to` argument feeds execution fields (a recipient count, recipient/domain
+ * scope lists), the `cc` argument must feed every one of them with the same
+ * transform — otherwise a recipient in cc is neither counted nor
+ * scope-checked. Generic: the argument names come from the manifest's own
+ * `message` declaration.
+ */
+export function invalidMessageRecipientsReason(toolName: string, entry: unknown): string | null {
+  if (entry === null || typeof entry !== 'object') return null;
+  const message = (entry as { message?: { to?: unknown; cc?: unknown } }).message;
+  const to = message?.to;
+  const cc = message?.cc;
+  if (typeof to !== 'string' || typeof cc !== 'string') return null;
+  const targets = mappingTargets(entry);
+  const missing: string[] = [];
+  for (const [field, writers] of targets) {
+    const fromTo = writers.find(w => w.arg === to);
+    if (!fromTo) continue;
+    const fromCc = writers.find(w => w.arg === cc);
+    if (!fromCc || fromCc.transform !== fromTo.transform || fromCc.divisor !== fromTo.divisor) missing.push(field);
+  }
+  if (missing.length === 0) return null;
+  return `override "${toolName}": the message cc argument "${cc}" must map to every field the to argument "${to}" maps to (missing: ${missing.join(', ')})`;
+}
+
+/** Both executionMapping rules above, over the default entry and every override of one manifest. */
+export function invalidManifestExecutionMappingReason(manifest: Pick<IntegrationManifest, 'toolGating'>): string | null {
+  const def = manifest.toolGating?.default;
+  if (def) {
+    const reason = executionMappingReasonAt('default', def);
+    if (reason) return reason;
+  }
+  for (const [toolName, entry] of Object.entries(manifest.toolGating?.overrides ?? {})) {
+    const reason = invalidExecutionMappingReason(toolName, entry) ?? invalidMessageRecipientsReason(toolName, entry);
     if (reason) return reason;
   }
   return null;
@@ -1924,6 +2014,11 @@ function readManifestDir(dir: string, into: Map<string, IntegrationManifest>): n
       const messageReason = invalidManifestMessageReason(manifest);
       if (messageReason) {
         console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${messageReason}`);
+        continue;
+      }
+      const mappingReason = invalidManifestExecutionMappingReason(manifest);
+      if (mappingReason) {
+        console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${mappingReason}`);
         continue;
       }
       const contextReason = invalidManifestContextReason(manifest);
