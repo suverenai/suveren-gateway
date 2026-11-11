@@ -127,7 +127,7 @@ export function firstMandateText(opts: { card: string }): string {
     'No active mandate exists, so no tool works. An AI can never create the first one: a person signs it. This is the next step, whatever the person opens with. Lead them through it, one step at a time:',
     '1. They open the Suveren Gateway page themselves, in their own browser, outside this chat. In the left menu they choose **Mandates**, then **+ New mandate** (top right).',
     `2. Pick the card **${opts.card}** and press **Give a mandate**. Tell them why: they sign it once, and from then on they manage their mandates from this chat. They say what you should be able to do, you prepare the mandate, and they only approve it. (Instead, they can pick the card of the area they need and sign that mandate themselves.)`,
-    '3. The form has three steps: **Scope & Limits**, **Intent**, **Sign**. In Scope & Limits they name the areas you may prepare mandates for, the modes you may propose (review = they approve every action; automatic = it runs within the limits) and how many proposals a day. In Intent they write, in their own words, why. In Sign they give it a **Title** (required), choose how it runs and for how long, then press **Sign mandate**. Ask them first whether it should run automatically or ask each time.',
+    '3. The form has three steps: **Scope & Limits**, **Intent**, **Sign**. In Scope & Limits they name the areas you may prepare mandates for, the modes you may propose (review = they approve every action; automatic = it runs within the limits) and how many proposals a day. The **Intent** is already filled in; they leave it as it is. In Sign they give it a **Title** (required), choose how it runs and for how long, then press **Sign mandate**. Ask them first whether it should run automatically or ask each time.',
     'Afterwards call list-authorizations(): it says what is still missing and what to do next.',
   ].join('\n');
 }
@@ -577,14 +577,25 @@ function joinAreas(names: string[]): string {
   return names.length > MAX_AREAS_IN_ONE_LINE ? `${shown} and ${names.length - MAX_AREAS_IN_ONE_LINE} more` : shown;
 }
 
+/**
+ * What is connected and what not, by the connector's own name, so the AI can say it briefly. A connector is set
+ * up on the Connectors page, only when a task needs it. Says nothing about the gateway's mode.
+ */
+export function connectedLine(connected: string[], notConnected: string[]): string {
+  const yes = connected.length > 0 ? `Connected: ${joinAreas(connected)}.` : 'Nothing is connected yet.';
+  const no = notConnected.length > 0 ? ` Not connected yet: ${joinAreas(notConnected)}. The person sets one up under **Connectors** when a task needs it; mention this briefly.` : '';
+  return yes + no;
+}
+
 /** The facts the AI draws on, stated as facts: it finds the words. Identical in every mode. */
-export function factsLines(opts: { card: string; areas: string[]; port?: string }): string[] {
+export function factsLines(opts: { card: string; areas: string[]; port?: string; connected?: string[]; notConnected?: string[] }): string[] {
   return [
     `The Suveren Gateway page is opened by the person, in their own browser, outside this chat. You never write its address.${opts.port ? ` Only if they cannot find it, say in words that it runs on this computer on port ${opts.port}.` : ''}`,
     'A mandate is a permission the person gives their AI, with limits they choose. For example: "Send up to 5 emails a day, and show me each one first." It says what the AI may do, how much, for how long, and whether each action needs their approval or runs by itself within the limits. The AI needs a mandate for each kind of work. They can change or revoke it at any time.',
     `The ${opts.card} mandate is how the person manages their mandates from this chat. They sign it once. After that they just say here what the AI should be able to do; the AI prepares the mandate with its limits and duration, and they only approve it. Without it they fill in a form themselves for every mandate.`,
     `The ${opts.card} mandate allows no work. None of the mandates the AI prepares exists until the person approves it. It is the easiest start. An AI can never create the first mandate: a person signs it.`,
     ...(opts.areas.length > 0 ? [`Possible on this gateway: ${joinAreas(opts.areas)}.`] : []),
+    ...(opts.connected || opts.notConnected ? [connectedLine(opts.connected ?? [], opts.notConnected ?? [])] : []),
   ];
 }
 
@@ -600,8 +611,11 @@ function possibleLine(input: ShortAnswerInput): string | undefined {
   const nameOf = (list: string[]) => [...new Set(list.map(input.areaName))];
   const covered = areas.filter(a => covering(input.auths, a).length > 0);
   const open = areas.filter(a => covering(input.auths, a).length === 0);
-  if (covered.length === 0) return `Possible here: ${joinAreas(nameOf(open))}.`;
-  return `Possible here. With a mandate: ${joinAreas(nameOf(covered))}.${open.length > 0 ? ` No mandate yet: ${joinAreas(nameOf(open))}.` : ''}`;
+  const names = [...new Set(input.manifests.filter(m => manifestAreas(m).length > 0).map(m => m.name))];
+  const running = names.filter(n => input.manifests.some(m => m.name === n && input.facts(m.id).running));
+  const conn = ` ${connectedLine(running, names.filter(n => !running.includes(n)))}`;
+  if (covered.length === 0) return `Possible here: ${joinAreas(nameOf(open))}.${conn}`;
+  return `Possible here. With a mandate: ${joinAreas(nameOf(covered))}.${open.length > 0 ? ` No mandate yet: ${joinAreas(nameOf(open))}.` : ''}${conn}`;
 }
 
 /** What the current state requires, as ONE step. The steps of one area come from list-authorizations(domain). */
@@ -662,7 +676,7 @@ export function shortAnswer(input: ShortAnswerInput): string {
 /** What the AI does before it proposes a mandate. */
 /** The intent says why; the numbers live in the mandate's own fields, so a change never has to touch both. */
 export const INTENT_HAS_NO_LIMITS =
-  'Write the intent as why and what for. Never put limits, amounts, durations, recipients or modes in it: those have their own fields, and the person would have to change them twice.';
+  'You write the intent of a mandate you propose, in plain words: why and what for; the person can change it. Never put limits, amounts, durations, recipients or modes in it: those have their own fields, and the person would have to change them twice.';
 
 export const BEFORE_PROPOSING =
   'Before you propose a mandate, ask everything you need in one message, as a short bullet list: should it run by itself or ask them each time, how much may it do, how long should it last. After each answer, ask again only the points still open, as a shorter list, until none is left. If this connector offers suggested settings, offer those; otherwise suggest what fits the work and say why. They decide. Never set a one-day duration unless they asked for it. Tell them in plain words what the mandate really allows (what, how much, to whom, for how long).' + ' ' + INTENT_HAS_NO_LIMITS;

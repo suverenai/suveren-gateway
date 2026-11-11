@@ -80,3 +80,23 @@ describe('what a chat trusts, and what an intent holds', () => {
     for (const t of [BEFORE_PROPOSING, WHEN_TO_SUGGEST_A_CHANGE]) expect(t).toContain('Never put limits, amounts, durations, recipients or modes in it');
   });
 });
+
+describe('the intent of the first mandate, and what is connected', () => {
+  it('the Setup intent is pre-filled: the person is not asked to write one', async () => {
+    const t = firstMandateText({ card: 'Setup' });
+    expect(t).toContain('The **Intent** is already filled in; they leave it as it is.');
+    expect(t).not.toMatch(/in their own words/);
+  });
+
+  it('the AI writes the intent of a mandate it proposes', async () => {
+    const { BEFORE_PROPOSING } = await import('../src/lib/guidance');
+    expect(BEFORE_PROPOSING).toContain('You write the intent of a mandate you propose, in plain words');
+  });
+
+  it('says briefly what is connected, and where the rest is set up', async () => {
+    const { connectedLine } = await import('../src/lib/guidance');
+    expect(connectedLine(['Email'], ['CRM', 'ERP'])).toBe('Connected: Email. Not connected yet: CRM, ERP. The person sets one up under **Connectors** when a task needs it; mention this briefly.');
+    expect(connectedLine([], ['Email'])).toMatch(/^Nothing is connected yet\. Not connected yet: Email\./);
+    expect(factsLines({ card: 'Setup', areas: ['Email'], connected: ['Email'], notConnected: [] }).join('\n')).toContain('Connected: Email.');
+  });
+});

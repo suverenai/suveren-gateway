@@ -754,7 +754,7 @@ describe('through the gateway\'s own entry points', () => {
       expect(text).toContain('list-authorizations(domain: "<area>")');
       expect(text).toContain('Email');
       expect(text).not.toContain('Connectors, in the order');
-      expect(text).not.toContain('**Connectors**');
+      expect(text).toContain('The person sets one up under **Connectors** when a task needs it; mention this briefly.');
       expect(text).not.toContain('Save & Encrypt');
     });
 
@@ -785,7 +785,7 @@ describe('through the gateway\'s own entry points', () => {
       expect(text).toContain('propose new mandates with setup__create_mandate');
       expect(text).toContain('Possible here:');
       expect(text).not.toContain('Connectors, in the order');
-      expect(text).not.toContain('**Connectors**');
+      expect(text).toContain('under **Connectors** when a task needs it');
     });
 
     it('with a work mandate: asks and does, and says what to call when no mandate covers it', () => {

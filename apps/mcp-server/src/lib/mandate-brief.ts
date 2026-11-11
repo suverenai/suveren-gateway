@@ -18,7 +18,9 @@ import { agentVisibleAuthorizations } from './agent-visibility';
 import { isSimulationMode } from './simulation-mode';
 import { uiPort } from './locked-notice';
 import { AGENT_RULES } from './agent-rules';
-import { firstMandateText, LEAD_THE_PERSON_RULE, roleText, factsLines, possibleAreas } from './guidance';
+import { firstMandateText, LEAD_THE_PERSON_RULE, roleText, factsLines, possibleAreas, manifestAreas, type GuideManifest } from './guidance';
+
+const connectorNames = (ms: GuideManifest[]): string[] => [...new Set(ms.filter(m => manifestAreas(m).length > 0).map(m => m.name))];
 import { setupCardName, guideManifests } from './guidance-runtime';
 import { areaName } from './tool-proxy';
 
@@ -228,7 +230,7 @@ export function buildMandateBrief(opts: MandateBriefOptions): string {
   lines.push('');
   lines.push('=== FACTS YOU CAN DRAW ON ===');
   lines.push('');
-  for (const f of factsLines({ port: uiPort(), card: setupCardName(integrationManager), areas: possibleAreas(manifests, areaName) })) lines.push(`- ${f}`);
+  for (const f of factsLines({ port: uiPort(), card: setupCardName(integrationManager), areas: possibleAreas(manifests, areaName), connected: connectorNames(manifests).filter(n => manifests.some(m => m.name === n && integrationManager?.isRunning?.(m.id))), notConnected: connectorNames(manifests).filter(n => !manifests.some(m => m.name === n && integrationManager?.isRunning?.(m.id))) })) lines.push(`- ${f}`);
   lines.push('');
 
   // Instruction to use list-authorizations for detail
