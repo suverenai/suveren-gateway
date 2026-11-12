@@ -21,7 +21,7 @@ import { DEFAULT_AS_URL, readConfig, writeConfig, validateAsUrl, validateCaFile,
 import { createInterface } from 'node:readline/promises';
 import { readPairing as readAsPairing, recordTlsPin, formatFingerprint, normalizeFingerprint } from '../lib/as-pairing.mjs';
 import { unsupportedNodeReason } from '../lib/node-version.mjs';
-import { readPolicy, isPolicyLocked } from '../lib/policy.mjs';
+import { readPolicy, isPolicyLocked, policyFilePath, registryKeyPath } from '../lib/policy.mjs';
 import { resolveInstallSettings, describeSource, installSettingsLocation, validatePort, validateDataDir, writeInstallSettings } from '../lib/install-settings.mjs';
 
 // Before any command: on an unsupported Node the connectors cannot run (see
@@ -40,9 +40,10 @@ const SERVER_ENTRY = join(PKG_ROOT, 'server.js');
 // (lib/install-settings.mjs — the same resolver server.js uses, so the CLI
 // and the running gateway always agree). An invalid value stops every
 // command except `config` and `help`, which stay usable so the person can
-// see and fix it.
+// see and fix it — and `check`, which reports a setting it cannot read as
+// "cannot tell" instead of refusing to look at the rest.
 const COMMAND = process.argv[2] ?? 'help';
-const TOLERANT = ['config', 'help', '--help', '-h'].includes(COMMAND);
+const TOLERANT = ['config', 'help', '--help', '-h', 'check'].includes(COMMAND);
 let INSTALL;
 try {
   INSTALL = resolveInstallSettings({ tolerant: TOLERANT });
@@ -51,7 +52,9 @@ try {
   console.error('Fix it with `suveren-gateway config set …` — see `suveren-gateway config help`.');
   process.exit(1);
 }
-for (const warning of INSTALL.errors) console.error(`Warning: ${warning}`);
+// `check` reports these as its own "cannot tell" line, without the text
+// (an invalid policy value, e.g. a proxy URL, could carry a password).
+if (COMMAND !== 'check') for (const warning of INSTALL.errors) console.error(`Warning: ${warning}`);
 
 const DATA_DIR = INSTALL.dataDir;
 const PID_FILE = join(DATA_DIR, 'gateway.pid');
@@ -1580,6 +1583,44 @@ async function verifyReport(args) {
 }
 
 /**
+ * `suveren-gateway check` — the Setup check (lib/setup-check/). Read-only:
+ * reports whether an AI app on this computer has a way into the company's
+ * systems other than this gateway. Everything it needs to know about THIS
+ * gateway is collected here, with the same resolvers every other command
+ * uses, and handed over; the check itself makes no network request — not
+ * even to the local gateway.
+ */
+async function check(args) {
+  const { runSetupCheckCli } = await import('../lib/setup-check/index.mjs');
+  const os = platform();
+  let policy;
+  const registry = os === 'win32' ? `${registryKeyPath('HKLM')}; ${registryKeyPath('HKCU')}` : null;
+  const machineRegistryKey = os === 'win32' ? registryKeyPath('HKLM') : null;
+  const userRegistryKey = os === 'win32' ? registryKeyPath('HKCU') : null;
+  try {
+    const file = policyFilePath();
+    const { locked, sources } = readPolicy();
+    policy = { locked: [...locked], sources, file, fileExists: existsSync(file), registry, machineRegistryKey, userRegistryKey };
+  } catch {
+    policy = { error: true, file: policyFilePath(), registry, machineRegistryKey, userRegistryKey };
+  }
+  let simulation = null;
+  try { simulation = resolveSimulation(DATA_DIR); } catch { /* reported as unknown */ }
+  const servicePath = os === 'darwin' ? launchAgentPath() : os === 'linux' ? systemdUnitPath() : null;
+  process.exitCode = runSetupCheckCli(args, {
+    version: CLI_VERSION,
+    simulation,
+    dataDir: DATA_DIR,
+    programDir: PKG_ROOT,
+    policy,
+    serviceDefinitionText: serviceDefinitionText(),
+    serviceDefinitionPath: servicePath,
+    settingsErrors: INSTALL.errors.length,
+    installSettingsLocation: installSettingsLocation(),
+  }, { mcpPort: INSTALL.mcpPort });
+}
+
+/**
  * `suveren-gateway open` — open the UI in the default browser, on whatever
  * port is configured. The Windows Start Menu entry and the installer's
  * Finish checkbox use this (via launcher.cmd) instead of a hard-coded port.
@@ -1638,6 +1679,9 @@ Usage:
                                               Verify an "Export with proof" report file offline —
                                               every signature and every value the page shows
                                               (see \`suveren-gateway verify-report --help\`)
+  suveren-gateway check [--json]              Setup check for IT: does an AI app on this computer
+                                              have a way in other than the gateway? Read-only,
+                                              no network (see \`suveren-gateway check --help\`)
   suveren-gateway help                        Print this help
 
 Environment:
@@ -1682,6 +1726,7 @@ async function main() {
     case 'config':  await config(argv.slice(1)); break;
     case 'simulation': await simulation(argv.slice(1)); break;
     case 'verify-report': await verifyReport(argv.slice(1)); break;
+    case 'check':   await check(argv.slice(1)); break;
     case 'help':
     case '--help':
     case '-h':

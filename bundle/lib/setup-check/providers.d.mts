@@ -1,0 +1,23 @@
+/** Types for the Setup check's read-only providers (plain ESM; see providers.mjs). */
+import type { DataResult, ProcessList, ReadResult, RunResult } from './engine.mjs';
+export type Runner = (bin: string, args: string[], timeoutMs?: number, extraEnv?: Record<string, string> | null) => RunResult;
+export declare function run(bin: string, args: string[], timeoutMs?: number, extraEnv?: Record<string, string> | null): RunResult;
+export declare const WINDOWS_OWNER_SCRIPT: string;
+export declare const WINDOWS_POWERSHELL_TIMEOUT_MS: number;
+export declare function windowsOwnerSid(path: string, runner?: Runner): string | null;
+export declare function readText(path: string): ReadResult;
+export declare function exists(path: string): boolean;
+export declare function isDir(path: string): boolean;
+export declare function list(dir: string): string[] | null;
+export declare function ownerUid(path: string): number | null;
+export declare function writable(path: string, platform?: string, runner?: Runner): boolean | null;
+export declare function nearestCreatable(path: string, platform?: string, runner?: Runner): { ancestor: string | null; writable: boolean | null };
+export declare function windowsIdentityOf(runner?: Runner): unknown;
+export declare const WINDOWS_PROCESS_COMMAND: [string, string[]];
+export declare function psList(platform: string): RunResult;
+export declare function procCommands(procDir: string): ProcessList;
+export declare function parseProcessList(platform: string, stdout: string): ProcessList;
+export declare function groups(platform: string): RunResult;
+export declare function readPlist(path: string): DataResult;
+export declare function parseRegValues(stdout: string): Record<string, string | number>;
+export declare function readRegistry(key: string, platform: string): DataResult;
