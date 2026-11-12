@@ -2,73 +2,101 @@
  * The Setup check engine (bundle/lib/setup-check/ — plain JS, imported
  * across the package boundary like gateway-policy.test.ts does).
  *
- * Every test builds its own fixture home folder and fixture system root in a
- * temp directory and hands them to the engine; nothing here reads this
- * computer's real home, real system folders, real process list or real
- * group list. Files are read through the REAL read-only providers; only
- * `ps`, the group list, plist and registry reads are replaced, because those
- * read machine-wide state.
+ * The injected platform is 'darwin' (POSIX paths) on EVERY host, so the
+ * fixtures are a virtual POSIX file tree (/home/person, /sys, …). Its files
+ * are stored under a temp folder of the host and read through the REAL
+ * read-only providers (readText, exists, isDir, list); only the mapping from
+ * virtual to host path is the test's. This keeps the results identical on a
+ * macOS, Linux and Windows host — the engine must behave the same for an
+ * injected platform regardless of the host it runs on.
  *
- * The CLI wiring (exit codes, --json through the real binary, a real `ps`)
- * is in gateway-cli-check.test.ts.
+ * Writability is a property of the host's file system (POSIX permissions vs
+ * Windows access lists), so here it is an explicit model with the same rule
+ * as providers.writable on POSIX: a path counts as writable unless both it
+ * and its folder are marked read-only. The real providers' writability is
+ * tested against the host itself at the end of this file, and on Windows
+ * access lists in setup-check-windows.test.ts.
+ *
+ * Machine-wide state (process list, group list, plist, registry) is
+ * injected. The CLI wiring (exit codes, --json through the real binary, a
+ * real process list) is in gateway-cli-check.test.ts.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join as hostJoin, posix } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { runSetupCheck, resolveAppLocations, programLabel, type CheckContext, type CheckIo, type Finding } from '../../../../bundle/lib/setup-check/engine.mjs';
 import { renderText, renderJson } from '../../../../bundle/lib/setup-check/report.mjs';
 import { parseTomlLite, TomlLiteError } from '../../../../bundle/lib/setup-check/toml-lite.mjs';
 import { APPS } from '../../../../bundle/lib/setup-check/apps/index.mjs';
 import * as real from '../../../../bundle/lib/setup-check/providers.mjs';
 
+// Virtual (injected-platform) paths are POSIX on every host.
+const { join, dirname } = posix;
+
 const MCP_PORT = 3941;
 const GW_URL = `http://127.0.0.1:${MCP_PORT}/mcp`;
+const TEST_UID = 1000;
 
 const dirs: string[] = [];
-const lockedPaths: string[] = [];
 afterEach(() => {
-  for (const p of lockedPaths.splice(0)) {
-    try { chmodSync(p, 0o755); } catch { /* ignore */ }
-  }
   for (const d of dirs.splice(0)) {
     try { rmSync(d, { recursive: true, force: true }); } catch { /* ignore */ }
   }
 });
 
-interface World { base: string; home: string; root: string; data: string }
+interface World { base: string; home: string; root: string; data: string; readOnly: Set<string> }
+
+/** The world of the running test (one per test). */
+let W: World;
+
+/** Virtual POSIX path → where it is stored on the host. */
+function host(v: string): string {
+  return hostJoin(W.base, 'fs', ...v.split('/').filter(Boolean));
+}
+
+function mkdir(v: string): void {
+  mkdirSync(host(v), { recursive: true });
+}
 
 function world(): World {
-  const base = mkdtempSync(join(tmpdir(), 'setup-check-'));
+  const base = mkdtempSync(hostJoin(tmpdir(), 'setup-check-'));
   dirs.push(base);
-  const w = { base, home: join(base, 'home'), root: join(base, 'root'), data: join(base, 'home', '.suveren') };
-  mkdirSync(w.home, { recursive: true });
-  mkdirSync(w.root, { recursive: true });
-  mkdirSync(w.data, { recursive: true });
-  return w;
+  W = { base, home: '/home/person', root: '/sys', data: '/home/person/.suveren', readOnly: new Set() };
+  for (const d of [W.home, W.root, W.data]) mkdir(d);
+  return W;
 }
 
 function put(path: string, content: string | object): void {
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, typeof content === 'string' ? content : JSON.stringify(content), 'utf8');
+  mkdir(dirname(path));
+  writeFileSync(host(path), typeof content === 'string' ? content : JSON.stringify(content), 'utf8');
 }
 
-/** Make a file and its folder read-only for this user (restored afterEach). */
+/** Mark a path and its folder read-only for this user (writability model). */
 function readOnly(path: string): void {
-  chmodSync(path, 0o444);
-  chmodSync(dirname(path), 0o555);
-  lockedPaths.push(dirname(path), path);
+  W.readOnly.add(path);
+  W.readOnly.add(dirname(path));
+}
+
+/** Same rule as providers.writable on POSIX: the path or its folder. */
+function modelWritable(v: string): boolean {
+  return !(W.readOnly.has(v) && W.readOnly.has(dirname(v)));
 }
 
 function io(overrides: Partial<CheckIo> = {}): CheckIo {
   return {
-    readText: real.readText,
-    exists: real.exists,
-    isDir: real.isDir,
-    list: real.list,
-    writable: (p) => real.writable(p, 'darwin'),
-    nearestCreatable: (p) => real.nearestCreatable(p, 'darwin'),
-    ownerUid: real.ownerUid,
+    readText: (v) => real.readText(host(v)),
+    exists: (v) => real.exists(host(v)),
+    isDir: (v) => real.isDir(host(v)),
+    list: (v) => real.list(host(v)),
+    writable: (v) => modelWritable(v),
+    nearestCreatable: (v) => {
+      let d = dirname(v);
+      while (d !== '/' && !real.exists(host(d))) d = dirname(d);
+      return { ancestor: d, writable: !W.readOnly.has(d) };
+    },
+    ownerUid: (v) => (real.exists(host(v)) ? TEST_UID : null),
     ps: () => ({ ok: true, commands: [] }),
     groups: () => ({ ok: true, stdout: 'staff everyone' }),
     plist: () => ({ missing: true }),
@@ -84,14 +112,14 @@ function ctx(w: World, extra: Partial<CheckContext> = {}): CheckContext {
     env: { PATH: '' },
     root: w.root,
     now: new Date(2026, 10, 12),
-    uid: process.getuid ? process.getuid() : 501,
+    uid: TEST_UID,
     mcpPort: MCP_PORT,
     io: io(),
     gateway: {
       version: '0.44.1',
       simulation: false,
       dataDir: w.data,
-      programDir: join(w.base, 'program'),
+      programDir: '/opt/suveren-gateway',
       policy: { locked: [], file: join(w.root, 'policy.json'), fileExists: false, registry: null },
       serviceDefinitionText: null,
       serviceDefinitionPath: null,
@@ -398,7 +426,7 @@ describe('GitHub Copilot in VS Code', () => {
 
   it('is found from the Copilot extension folder alone', () => {
     const w = world();
-    mkdirSync(join(w.home, '.vscode', 'extensions', 'github.copilot-chat-0.30.0'), { recursive: true });
+    mkdir(join(w.home, '.vscode', 'extensions', 'github.copilot-chat-0.30.0'));
     const r = runSetupCheck(ctx(w));
     expect(r.aiAppsFound.map((a) => a.name)).toEqual(['GitHub Copilot in VS Code']);
   });
@@ -477,7 +505,7 @@ describe('No passwords within reach', () => {
     put(join(w.home, '.npmrc'), '//registry.npmjs.org/:_authToken=npm_NOLEAKNOLEAK\n');
     put(join(w.home, '.aws', 'credentials'), '[default]\naws_access_key_id = AKIA\naws_secret_access_key = NOLEAK2\n');
     put(join(w.home, '.config', 'gh', 'hosts.yml'), 'github.com:\n  user: x\n'); // token in keychain: not flagged
-    mkdirSync(join(w.home, '.config', 'gcloud'), { recursive: true });
+    mkdir(join(w.home, '.config', 'gcloud'));
     put(join(w.home, '.config', 'gcloud', 'application_default_credentials.json'), '{}');
     const r = runSetupCheck(ctx(w));
     const lines = r.findings.filter((f) => f.group === 'secrets' && /Key file/.test(f.detail)).map((f) => f.detail);
@@ -538,13 +566,12 @@ describe('No hand on the gateway', () => {
 
   it('program files: writable = open, read-only = closed', () => {
     const w = world();
-    const program = join(w.base, 'pkgparent', 'program');
-    mkdirSync(program, { recursive: true });
+    const program = join(w.root, 'pkgparent', 'program');
+    mkdir(program);
     const c = ctx(w);
     c.gateway.programDir = program;
     expect(runSetupCheck(c).findings.find((f) => /program files/.test(f.detail))?.result).toBe('open');
-    chmodSync(program, 0o555); chmodSync(dirname(program), 0o555);
-    lockedPaths.push(program, dirname(program));
+    readOnly(program);
     expect(runSetupCheck(c).findings.find((f) => /program files/.test(f.detail))?.result).toBe('closed');
   });
 
@@ -575,7 +602,7 @@ describe('IT settings: the Authority Server address', () => {
 
   it('1. address fixed in a settings file this user cannot write → closed (team not fixed: a note, not an open line)', () => {
     const w = world();
-    const file = join(w.base, 'it', 'gateway-policy.json');
+    const file = join(w.root, 'it', 'gateway-policy.json');
     put(file, { AsUrl: 'https://as.example.com', Simulation: true });
     readOnly(file);
     const lines = settingsLines(withPolicy(w, { locked: ['asUrl', 'simulation'], sources: { asUrl: 'file', simulation: 'file' }, file, fileExists: true }));
@@ -597,7 +624,7 @@ describe('IT settings: the Authority Server address', () => {
   it('4. address fixed only in the user\'s own hive (HKCU) → open, with the reason', () => {
     const w = world();
     const lines = settingsLines(withPolicy(w, {
-      locked: ['asUrl'], sources: { asUrl: 'HKCU' }, file: join(w.base, 'none.json'), fileExists: false,
+      locked: ['asUrl'], sources: { asUrl: 'HKCU' }, file: join(w.root, 'none.json'), fileExists: false,
       userRegistryKey: 'HKCU\\SOFTWARE\\Policies\\Suveren\\Gateway',
     }));
     expect(lines.map((l) => [l.result, l.detail])).toEqual([[
@@ -608,7 +635,7 @@ describe('IT settings: the Authority Server address', () => {
 
   it('4. address fixed in a settings file this user can write → open', () => {
     const w = world();
-    const file = join(w.base, 'it', 'gateway-policy.json');
+    const file = join(w.root, 'it', 'gateway-policy.json');
     put(file, { AsUrl: 'https://as.example.com' });
     const lines = settingsLines(withPolicy(w, { locked: ['asUrl'], sources: { asUrl: 'file' }, file, fileExists: true }));
     expect(lines.map((l) => [l.result, l.detail])).toEqual([['open', `IT has fixed the Authority Server address, but this user can change the settings file (${file})`]]);
@@ -616,7 +643,7 @@ describe('IT settings: the Authority Server address', () => {
 
   it('4. writability of the settings file unknown → cannot tell', () => {
     const w = world();
-    const file = join(w.base, 'it', 'gateway-policy.json');
+    const file = join(w.root, 'it', 'gateway-policy.json');
     put(file, { AsUrl: 'https://as.example.com' });
     const lines = settingsLines(withPolicy(w, { locked: ['asUrl'], sources: { asUrl: 'file' }, file, fileExists: true }, { io: io({ writable: () => null }) }));
     expect(lines.map((l) => [l.result, l.detail])).toEqual([['cannot tell', `IT has fixed the Authority Server address, but whether this user can change the settings file could not be read (${file})`]]);
@@ -624,7 +651,7 @@ describe('IT settings: the Authority Server address', () => {
 
   it('3. settings exist but do not fix the address → open, listing what they fix by plain labels', () => {
     const w = world();
-    const file = join(w.base, 'it', 'gateway-policy.json');
+    const file = join(w.root, 'it', 'gateway-policy.json');
     put(file, { Simulation: true, Proxy: 'http://proxy:8080' });
     readOnly(file);
     const lines = settingsLines(withPolicy(w, { locked: ['proxy', 'simulation'], sources: { proxy: 'file', simulation: 'file' }, file, fileExists: true }));
@@ -633,7 +660,7 @@ describe('IT settings: the Authority Server address', () => {
 
   it('2+6. no settings at all → ONE open line, with "could create that file" folded in', () => {
     const w = world();
-    const file = join(w.base, 'missing-dir', 'gateway-policy.json'); // nearest existing parent is writable
+    const file = join(w.root, 'missing-dir', 'gateway-policy.json'); // nearest existing parent is writable
     const r = withPolicy(w, { locked: [], file, fileExists: false });
     const lines = settingsLines(r);
     expect(lines.map((l) => [l.result, l.detail])).toEqual([[
@@ -656,7 +683,7 @@ describe('IT settings: the Authority Server address', () => {
 
   it('settings that cannot be read → cannot tell; no "IT policy" wording anywhere', () => {
     const w = world();
-    const r = withPolicy(w, { error: true, file: join(w.base, 'p.json') });
+    const r = withPolicy(w, { error: true, file: join(w.root, 'p.json') });
     expect(settingsLines(r).map((l) => [l.result, l.detail])).toEqual([['cannot tell', 'The IT settings for the gateway could not be read']]);
     expect(renderText(r) + renderJson(r)).not.toMatch(/IT policy/);
   });
@@ -736,6 +763,77 @@ describe('toml-lite', () => {
       expect(err).toBeInstanceOf(TomlLiteError);
       expect(String((err as Error).message)).not.toContain('SECRETVALUE');
       expect(String((err as Error).message)).not.toContain('2026');
+    }
+  });
+});
+
+describe('providers.writable / nearestCreatable against the host running the tests', () => {
+  // The answer comes from the host's own file system, so the way to make a
+  // file non-writable differs per host; what is asserted does not.
+  const isWindows = process.platform === 'win32';
+
+  /** TEMP DIAGNOSTIC (remove once the Windows CI run is green): what the
+   *  real tools printed, attached to the failure message only. Account
+   *  names and SIDs of the CI runner, no secret. */
+  function windowsDiagnostic(path: string): string {
+    if (!isWindows) return '';
+    const out = (bin: string, args: string[]) => {
+      const r = spawnSync(bin, args, { encoding: 'utf8', windowsHide: true });
+      return `$ ${bin} ${args.join(' ')} → status ${r.status}\n${r.stdout ?? ''}${r.stderr ?? ''}`;
+    };
+    return `\n[TEMP DIAGNOSTIC]\n${out('icacls', [path])}\n${out('whoami', ['/user', '/fo', 'csv', '/nh'])}\n${out('whoami', ['/groups', '/fo', 'csv', '/nh'])}`;
+  }
+
+  it('a file this user created is writable; a missing file in a folder this user created can be created', () => {
+    const base = mkdtempSync(hostJoin(tmpdir(), 'setup-check-host-'));
+    dirs.push(base);
+    const file = hostJoin(base, 'mine.json');
+    writeFileSync(file, '{}');
+    expect(real.writable(file), windowsDiagnostic(file)).toBe(true);
+    expect(real.writable(base), windowsDiagnostic(base)).toBe(true);
+    const c = real.nearestCreatable(hostJoin(base, 'a', 'b', 'gateway-policy.json'));
+    expect(c.ancestor).toBe(base);
+    expect(c.writable, windowsDiagnostic(base)).toBe(true);
+  });
+
+  it('a file and folder this user may not write → not writable, and nothing can be created inside', () => {
+    const base = mkdtempSync(hostJoin(tmpdir(), 'setup-check-host-'));
+    dirs.push(base);
+    const dir = hostJoin(base, 'locked');
+    mkdirSync(dir);
+    const file = hostJoin(dir, 'lock.json');
+    writeFileSync(file, '{}');
+    // Host mechanism: POSIX mode bits, or a Windows deny entry for Everyone
+    // (SID form, so it works on any language of Windows). Only the test's
+    // own temp files are changed, and they are restored below.
+    const icacls = (args: string[]) => spawnSync('icacls', args, { encoding: 'utf8', windowsHide: true });
+    if (isWindows) {
+      icacls([file, '/deny', '*S-1-1-0:(F)']);
+      icacls([dir, '/deny', '*S-1-1-0:(F)']);
+    } else {
+      chmodSync(file, 0o444);
+      chmodSync(dir, 0o555);
+    }
+    try {
+      if (!isWindows && process.getuid?.() === 0) return; // root may write anything on POSIX: nothing to assert
+      expect(real.writable(file), windowsDiagnostic(file)).toBe(false);
+      const inside = real.nearestCreatable(hostJoin(dir, 'x', 'y.json'));
+      // TEMP DIAGNOSTIC in the message: can a folder that denies Everyone
+      // still be found (stat) on Windows?
+      expect(inside.ancestor, `${windowsDiagnostic(dir)}\nexists(dir)=${real.exists(dir)}`).toBe(dir);
+      expect(inside.writable, windowsDiagnostic(dir)).toBe(false);
+      // POSIX only, by design: there a folder counts as changeable when its
+      // parent is writable (it can be replaced); on Windows only the
+      // object's own access list is evaluated.
+      if (!isWindows) expect(real.writable(dir)).toBe(true);
+    } finally {
+      if (isWindows) {
+        icacls([dir, '/remove:d', '*S-1-1-0']);
+        icacls([file, '/remove:d', '*S-1-1-0']);
+      } else {
+        chmodSync(dir, 0o755);
+        chmodSync(file, 0o644);
+      }
     }
   });
 });

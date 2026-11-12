@@ -14,7 +14,7 @@
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -22,39 +22,17 @@ import { parseIcacls, parseWhoami, evaluateWrite, type WindowsIdentity } from '.
 import * as real from '../../../../bundle/lib/setup-check/providers.mjs';
 import { runSetupCheck, type CheckIo } from '../../../../bundle/lib/setup-check/engine.mjs';
 import { renderJson, renderText } from '../../../../bundle/lib/setup-check/report.mjs';
+import { CAPTURED, ENABLED, STANDARD_USER_CSV, csv, hostIsolatedEnv, icaclsBlock, icaclsBlockFor, standardGroupsCsv } from './setup-check-host.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const CAPTURE = readFileSync(join(__dirname, 'fixtures', 'icacls-windows11-2026-11-12.txt'), 'utf8');
 const CLI = resolve(__dirname, '../../../../bundle/bin/suveren-gateway.js');
 
-const PATHS = {
-  lockFile: 'C:\\Program Files\\ClaudeCode\\managed-mcp.json',
-  lockDir: 'C:\\Program Files\\ClaudeCode',
-  rootDir: 'C:\\suveren-check-test',
-  rootFile: 'C:\\suveren-check-test\\bin\\suveren-gateway.js',
-  userPrograms: 'C:\\Users\\Owner\\AppData\\Local\\Programs\\Suveren',
-  programData: 'C:\\ProgramData',
-};
-
-/** The block `icacls <path>` printed for one path, as it printed it. */
-function icaclsFor(path: string): string {
-  const blocks = CAPTURE.split(/^Successfully processed.*$/m).map((b) => b.replace(/^\n/, ''));
-  const block = blocks.find((b) => b.startsWith(`${path} `));
-  if (!block) throw new Error(`no capture for ${path}`);
-  return `${block}Successfully processed 1 files; Failed processing 0 files\n`;
-}
-
-const ENABLED = 'Mandatory group, Enabled by default, Enabled group';
-const csv = (...f: string[]) => f.map((x) => `"${x}"`).join(',');
-const groupsCsv = (extra: string[] = []) => [
-  csv('Everyone', 'Well-known group', 'S-1-1-0', ENABLED),
-  csv('NT AUTHORITY\\Local account and member of Administrators group', 'Well-known group', 'S-1-5-114', 'Group used for deny only'),
-  ...extra,
-  csv('BUILTIN\\Users', 'Alias', 'S-1-5-32-545', ENABLED),
-  csv('NT AUTHORITY\\INTERACTIVE', 'Well-known group', 'S-1-5-4', ENABLED),
-  csv('NT AUTHORITY\\Authenticated Users', 'Well-known group', 'S-1-5-11', ENABLED),
-  csv('Mandatory Label\\Medium Mandatory Level', 'Label', 'S-1-16-8192', ''),
-].join('\r\n');
+const PATHS = CAPTURED;
+/** The block `icacls <path>` printed for one captured path. Built from the
+ *  capture with LF line endings whatever git checked out (CRLF on Windows);
+ *  CRLF, as icacls itself prints it, is tested separately below. */
+const icaclsFor = icaclsBlock;
+const groupsCsv = standardGroupsCsv;
 
 function identity(userCsv: string, groups: string): WindowsIdentity {
   const id = parseWhoami(userCsv, groups);
@@ -79,8 +57,16 @@ function canWrite(path: string, id: WindowsIdentity): boolean | null {
 }
 
 describe('win-acl — real icacls output from the Windows 11 VM', () => {
-  it('parses all six captured paths', () => {
-    for (const p of Object.values(PATHS)) expect(parseIcacls(icaclsFor(p), p).ok).toBe(true);
+  it('parses all six captured paths, with LF and with CRLF line endings (icacls prints CRLF)', () => {
+    for (const p of Object.values(PATHS)) {
+      const lf = icaclsFor(p);
+      const crlf = lf.replace(/\n/g, '\r\n');
+      const a = parseIcacls(lf, p);
+      const b = parseIcacls(crlf, p);
+      expect(a.ok, p).toBe(true);
+      expect(b.ok, p).toBe(true);
+      expect(JSON.stringify(b, (_k, v) => (v instanceof Set ? [...v] : v))).toBe(JSON.stringify(a, (_k, v) => (v instanceof Set ? [...v] : v)));
+    }
     const dir = parseIcacls(icaclsFor(PATHS.lockDir), PATHS.lockDir);
     expect(dir.ok && dir.entries.length).toBe(13);
   });
@@ -113,6 +99,46 @@ describe('win-acl — real icacls output from the Windows 11 VM', () => {
       csv('Mandatory Label\\System Mandatory Level', 'Label', 'S-1-16-16384', ''),
     ].join('\r\n'));
     for (const p of Object.values(PATHS)) expect(canWrite(p, system)).toBe(true);
+  });
+});
+
+describe('re-labelled captures (used as fixtures on a Windows host)', () => {
+  it('keep the entries and evaluate the same for any path', () => {
+    for (const target of ['C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\cli-check-x\\install\\gateway', '/tmp/cli-check-x/policy/gateway-policy.json']) {
+      for (const [captured, expected] of [[CAPTURED.lockDir, false], [CAPTURED.lockFile, false], [CAPTURED.rootDir, true]] as const) {
+        const parsed = parseIcacls(icaclsBlockFor(captured, target), target);
+        const original = parseIcacls(icaclsFor(captured), captured);
+        expect(parsed.ok && original.ok && parsed.entries.length === original.entries.length, `${captured} → ${target}`).toBe(true);
+        expect(parsed.ok && evaluateWrite(parsed.entries, STANDARD)).toBe(expected);
+      }
+    }
+  });
+
+  it('through the real CLI (platform win32): the program folder answered from the fixture → closed', () => {
+    const base = mkdtempSync(join(tmpdir(), 'cli-check-win-acl-'));
+    try {
+      const home = join(base, 'home');
+      const data = join(base, 'data');
+      mkdirSync(home, { recursive: true });
+      mkdirSync(data, { recursive: true });
+      // The folder the CLI runs from (its PKG_ROOT), as the CLI itself spells it.
+      const programDir = resolve(dirname(CLI), '..');
+      const fixture = join(base, 'fixture.json');
+      writeFileSync(fixture, JSON.stringify({
+        platform: 'win32', root: join(base, 'root'), psOutput: '[]', groupsOutput: groupsCsv(),
+        whoamiUser: STANDARD_USER_CSV, whoamiGroups: groupsCsv(),
+        icacls: { [programDir]: icaclsBlockFor(CAPTURED.lockDir, programDir) },
+      }));
+      const env = {
+        ...hostIsolatedEnv(home, base), SUVEREN_DATA_DIR: data, SUVEREN_CP_PORT: '19870', SUVEREN_MCP_PORT: '19871',
+        SUVEREN_INSTALL_SETTINGS_FILE: join(base, 'is.json'), SUVEREN_POLICY_FILE: join(base, 'no-policy.json'),
+        SUVEREN_POLICY_REGISTRY: 'off', SUVEREN_CHECK_FIXTURE: fixture,
+      };
+      const r = spawnSync(process.execPath, ['--no-warnings', CLI, 'check'], { env, encoding: 'utf-8' });
+      expect(r.stdout).toContain("  closed       This user cannot change the gateway's program files");
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
   });
 });
 
@@ -237,7 +263,7 @@ describe('Windows process list (PowerShell Get-CimInstance JSON)', () => {
         groupsOutput: groupsCsv(), whoamiUser: csv('win-vm\\worker', 'S-1-5-21-1-2-3-1002'), whoamiGroups: groupsCsv(), icacls: {},
       }));
       const env = {
-        PATH: '/usr/bin:/bin', HOME: home, SUVEREN_DATA_DIR: data, SUVEREN_CP_PORT: '19850', SUVEREN_MCP_PORT: '19851',
+        ...hostIsolatedEnv(home, base), SUVEREN_DATA_DIR: data, SUVEREN_CP_PORT: '19850', SUVEREN_MCP_PORT: '19851',
         SUVEREN_INSTALL_SETTINGS_FILE: join(base, 'is.json'), SUVEREN_POLICY_FILE: join(base, 'no-policy.json'),
         SUVEREN_POLICY_REGISTRY: 'off', SUVEREN_CHECK_FIXTURE: fixture,
       };
@@ -319,7 +345,7 @@ describe('Linux without `ps`: /proc fallback', () => {
       const fixture = join(base, 'fixture.json');
       writeFileSync(fixture, JSON.stringify({ platform: 'linux', root: join(base, 'root'), psOutput: null, groupsOutput: 'w' }));
       const env = {
-        PATH: '/usr/bin:/bin', HOME: home, SUVEREN_DATA_DIR: data, SUVEREN_CP_PORT: '19860', SUVEREN_MCP_PORT: '19861',
+        ...hostIsolatedEnv(home, base), SUVEREN_DATA_DIR: data, SUVEREN_CP_PORT: '19860', SUVEREN_MCP_PORT: '19861',
         SUVEREN_INSTALL_SETTINGS_FILE: join(base, 'is.json'), SUVEREN_POLICY_FILE: join(base, 'no-policy.json'),
         SUVEREN_POLICY_REGISTRY: 'off', SUVEREN_CHECK_FIXTURE: fixture,
       };
