@@ -28,6 +28,10 @@
  *   - No allow entry grants write → false, unless such an unevaluated entry
  *     grants write → null.
  *   - Any line that does not parse, or icacls / whoami failing → null.
+ *
+ * The provider (providers.mjs) adds one rule on top: "cannot write" holds
+ * only when this user is not the owner (an owner may always change the
+ * access list), unless an OWNER RIGHTS entry is present.
  */
 
 const FLAG_TOKENS = new Set(['I', 'OI', 'CI', 'IO', 'NP', 'DENY']);
@@ -184,4 +188,18 @@ export function evaluateWrite(entries, identity) {
   if (allowWrite) return unevaluatedPresent ? null : true;
   if (allowViaUnknownGroup || unevaluatedWrite) return null;
   return false;
+}
+
+/** An OWNER RIGHTS entry (applying to the object) replaces the owner's
+ *  implicit right to change the access list. */
+export function hasOwnerRightsEntry(entries) {
+  return entries.some((e) => !e.flags.has('IO') && ['OWNER RIGHTS', 'S-1-3-4'].includes(norm(e.principal)));
+}
+
+/** Is `ownerSid` this user, or an ENABLED group of this user (a group "used
+ *  for deny only" gives no owner rights)? */
+export function isOwnedBy(ownerSid, identity) {
+  const o = norm(ownerSid);
+  if (o === norm(identity.user.sid)) return true;
+  return identity.groups.some((g) => g.state === 'enabled' && norm(g.sid) === o);
 }

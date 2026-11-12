@@ -12,7 +12,7 @@
 import { accessSync, constants, readFileSync, readdirSync, statSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { dirname, join, posix as posixPath, win32 as winPath } from 'node:path';
-import { evaluateWrite, parseIcacls, parseWhoami } from './win-acl.mjs';
+import { evaluateWrite, hasOwnerRightsEntry, isOwnedBy, parseIcacls, parseWhoami } from './win-acl.mjs';
 
 /** `{ ok: true, text }` | `{ missing: true }` | `{ error: 'unreadable' }`. */
 export function readText(path) {
@@ -46,34 +46,49 @@ export function ownerUid(path) {
  * Can the current user change this file or folder? true | false | null
  * (cannot tell).
  *
+ * The owner of a file can always give themselves write access again (POSIX:
+ * `chmod`; Windows: the owner may always change the access list). So a file
+ * or folder this user owns counts as changeable, whatever its current
+ * permissions say.
+ *
  * macOS / Linux: `access(2)` with W_OK asks the OS without opening anything
- * for writing, and it does evaluate the permissions there. True when the
- * path itself is writable, or when its folder is (then it can be replaced) —
- * except in a folder with the sticky bit (like /tmp), where only the owner
- * may replace it.
+ * for writing. True when the path is writable or owned by this user, or
+ * when its folder is (then it can be replaced) — except in a folder with the
+ * sticky bit (like /tmp), where only the owner may replace it.
  *
  * Windows: access(W_OK) only looks at the read-only attribute, so the answer
- * comes from the access list instead (win-acl.mjs). Only the object's own
- * list is evaluated: replacing a file through its folder needs rights on
- * both that this check does not combine.
+ * comes from the access list instead (win-acl.mjs), and — only when that
+ * says "cannot write" — from the owner. Only the object's own list is
+ * evaluated: replacing a file through its folder needs rights on both that
+ * this check does not combine.
  */
 export function writable(path, platform = process.platform, runner = run) {
   if (platform === 'win32') return windowsWritable(path, runner);
-  try { accessSync(path, constants.W_OK); return true; } catch { /* next */ }
+  if (posixChangeable(path)) return true;
   const dir = dirname(path);
+  if (!posixChangeable(dir)) return false;
+  // Sticky folder: only the owner of the entry (or of the folder) may replace it.
   try {
-    accessSync(dir, constants.W_OK);
     const d = statSync(dir);
-    // Sticky folder: only the owner of the entry (or of the folder) may replace it.
     if (d.mode & 0o1000) {
-      const uid = typeof process.getuid === 'function' ? process.getuid() : null;
-      const owner = ownerUid(path);
-      return uid !== null && (owner === uid || d.uid === uid);
+      const uid = currentUid();
+      return uid !== null && (ownerUid(path) === uid || d.uid === uid);
     }
-    return true;
   } catch {
-    return false;
+    return null;
   }
+  return true;
+}
+
+function currentUid() {
+  return typeof process.getuid === 'function' ? process.getuid() : null;
+}
+
+/** POSIX: writable now, or owned by this user (who may chmod it). */
+function posixChangeable(path) {
+  try { accessSync(path, constants.W_OK); return true; } catch { /* next */ }
+  const uid = currentUid();
+  return uid !== null && exists(path) && ownerUid(path) === uid;
 }
 
 /**
@@ -90,7 +105,27 @@ export function nearestCreatable(path, platform = process.platform, runner = run
     dir = up;
   }
   if (platform === 'win32') return { ancestor: dir, writable: windowsWritable(dir, runner) };
-  try { accessSync(dir, constants.W_OK); return { ancestor: dir, writable: true }; } catch { return { ancestor: dir, writable: false }; }
+  return { ancestor: dir, writable: posixChangeable(dir) };
+}
+
+/**
+ * Windows: the owner SID of a file or folder, read with .NET from a
+ * PowerShell that loads no module (so no command lookup and no module
+ * cache): GetAccessControl with only the Owner section, read-only. The path
+ * goes in through an environment variable, never into the script text.
+ */
+export const WINDOWS_OWNER_SCRIPT =
+  '$p = $env:SUVEREN_CHECK_PATH; ' +
+  '$s = [System.Security.AccessControl.AccessControlSections]::Owner; ' +
+  'if ([System.IO.Directory]::Exists($p)) { $a = [System.IO.Directory]::GetAccessControl($p, $s) } ' +
+  'else { $a = [System.IO.File]::GetAccessControl($p, $s) }; ' +
+  '[Console]::Out.Write($a.GetOwner([System.Security.Principal.SecurityIdentifier]).Value)';
+
+export function windowsOwnerSid(path, runner = run) {
+  const r = runner('powershell.exe', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command', WINDOWS_OWNER_SCRIPT], 30_000, { SUVEREN_CHECK_PATH: path });
+  if (!r.ok) return null;
+  const sid = String(r.stdout).trim();
+  return /^S-1-\d+(-\d+)+$/.test(sid) ? sid : null;
 }
 
 let windowsIdentity;
@@ -112,28 +147,54 @@ function windowsWritable(path, runner) {
   if (!r.ok) return null;
   const parsed = parseIcacls(r.stdout, path);
   if (!parsed.ok) return null;
-  return evaluateWrite(parsed.entries, identity);
+  const answer = evaluateWrite(parsed.entries, identity);
+  if (answer !== false) return answer;
+  // "Cannot write" holds only if this user is not the owner: an owner may
+  // always change the access list — unless an OWNER RIGHTS entry replaces
+  // those implicit rights (then the list above already decided).
+  if (hasOwnerRightsEntry(parsed.entries)) return false;
+  const owner = windowsOwnerSid(path, runner);
+  if (!owner) return null;
+  return isOwnedBy(owner, identity) ? true : false;
 }
 
-export function run(bin, args, timeoutMs = 10_000) {
+/**
+ * Run a read-only system tool. On failure, `reason` says why in plain words
+ * (not found / timed out / ended with status N) — never the tool's output,
+ * which may hold command lines with secrets.
+ */
+export function run(bin, args, timeoutMs = 10_000, extraEnv = null) {
   try {
-    const r = spawnSync(bin, args, { encoding: 'utf8', windowsHide: true, timeout: timeoutMs, maxBuffer: 32 * 1024 * 1024 });
-    if (r.error || r.status !== 0 || typeof r.stdout !== 'string') return { error: 'failed', status: r.status ?? null };
+    const r = spawnSync(bin, args, {
+      encoding: 'utf8', windowsHide: true, timeout: timeoutMs, maxBuffer: 32 * 1024 * 1024,
+      ...(extraEnv ? { env: { ...process.env, ...extraEnv } } : {}),
+    });
+    if (r.error) {
+      const code = r.error.code;
+      const reason = code === 'ENOENT' ? 'was not found' : code === 'ETIMEDOUT' ? `did not finish within ${Math.round(timeoutMs / 1000)} s` : 'could not be started';
+      return { error: 'failed', reason, status: null };
+    }
+    if (r.status !== 0) return { error: 'failed', reason: r.status === null ? 'was stopped' : `ended with status ${r.status}`, status: r.status };
+    if (typeof r.stdout !== 'string') return { error: 'failed', reason: 'gave no output', status: r.status };
     return { ok: true, stdout: r.stdout };
   } catch {
-    return { error: 'failed' };
+    return { error: 'failed', reason: 'could not be started' };
   }
 }
 
 /**
  * Windows: process names and command lines as JSON, from PowerShell's
  * Get-CimInstance (wmic is gone from current Windows 11). No profile, no
- * prompt, hidden window, time limit (in run()). Output is forced to UTF-8.
+ * prompt, hidden window, time limit (in run()). Output is UTF-8 where a
+ * console allows it. PowerShell itself may keep a small cache in the user's
+ * local app data folder (see docs/setup-check.md).
  */
 export const WINDOWS_PROCESS_COMMAND = [
   'powershell.exe',
   ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command',
-    '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ' +
+    // Without a console (e.g. started by a deployment tool) setting the
+    // output encoding can throw; then the default encoding is used.
+    'try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }; ' +
     'Get-CimInstance -ClassName Win32_Process | Select-Object Name, CommandLine | ConvertTo-Json -Compress'],
 ];
 
@@ -176,9 +237,11 @@ export function psList(platform) {
 export function parseProcessList(platform, stdout) {
   if (platform === 'win32') {
     const text = String(stdout).replace(/^\uFEFF/, '').trim();
-    if (!text) return { ok: true, commands: [] };
+    // A real process list is never empty (PowerShell itself is in it): no
+    // output means the call failed, not "no programs" — never a "closed".
+    if (!text) return { error: 'unreadable', reason: 'gave no output' };
     let data;
-    try { data = JSON.parse(text); } catch { return { error: 'unreadable' }; }
+    try { data = JSON.parse(text); } catch { return { error: 'unreadable', reason: 'gave output that could not be read' }; }
     const list = Array.isArray(data) ? data : [data];
     const commands = [];
     for (const p of list) {

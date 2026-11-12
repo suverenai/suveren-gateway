@@ -13,10 +13,12 @@
  * SUVEREN_CHECK_FIXTURE replaces the POSIX system root, the group list and
  * (unless a test wants the real one) the process list.
  *
- * Where a test needs a file this user cannot write, the host decides how:
- * mode bits on POSIX; on Windows the fixture gives `icacls` the real output
- * captured in a Windows 11 VM for a Program Files path, re-labelled. The
- * assertion is the same on every host.
+ * A test cannot create a file it does not own, and the owner may always
+ * change its own files (chmod / access list). Where a test needs "this user
+ * cannot change it", the fixture's `writable` answers for that path; the real
+ * answers per host are tested against system files in
+ * setup-check-engine.test.ts. Tests that need "can change" use the real
+ * providers on the host.
  *
  * One test deliberately uses the REAL process list: it starts a process with
  * a fake Mollie-style token in its arguments and checks the token is
@@ -26,13 +28,12 @@
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { chmodSync, cpSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import {
-  CAPTURED, IS_WINDOWS_HOST, STANDARD_USER_CSV, hostIsolatedEnv, icaclsBlockFor, standardGroupsCsv,
-} from './setup-check-host.js';
+import { IS_WINDOWS_HOST, hostIsolatedEnv } from './setup-check-host.js';
+import { WINDOWS_PROCESS_COMMAND } from '../../../../bundle/lib/setup-check/providers.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const BUNDLE = resolve(__dirname, '../../../../bundle');
@@ -41,6 +42,15 @@ const CLI = join(BUNDLE, 'bin', 'suveren-gateway.js');
 const MCP_PORT = '19841';
 const CP_PORT = '19840';
 const GW_URL = `http://127.0.0.1:${MCP_PORT}/mcp`;
+
+/** A process list with nothing in it, in the host's format (`ps` text, or
+ *  PowerShell JSON — where empty OUTPUT counts as a failure). */
+const EMPTY_PROCESS_LIST = IS_WINDOWS_HOST ? '[]' : '';
+
+/** Evaluate a diagnostic only when the check fails (it spawns tools). */
+function expectOr<T>(value: T, diagnostic: () => string) {
+  return { toBe: (expected: T) => { if (value !== expected) expect(value, diagnostic()).toBe(expected); } };
+}
 
 /** TEMP DIAGNOSTIC (remove once the Windows CI run is green): what the real
  *  Windows tools print for a path, attached to a failure message only.
@@ -55,11 +65,9 @@ function windowsDiagnostic(path: string): string {
 }
 
 const dirs: string[] = [];
-const locked: string[] = [];
 const children: ChildProcess[] = [];
 afterEach(() => {
   for (const c of children.splice(0)) { try { c.kill('SIGKILL'); } catch { /* ignore */ } }
-  for (const p of locked.splice(0)) { try { chmodSync(p, 0o755); } catch { /* ignore */ } }
   for (const d of dirs.splice(0)) { try { rmSync(d, { recursive: true, force: true }); } catch { /* ignore */ } }
 });
 
@@ -70,7 +78,7 @@ function world(fixture: Record<string, unknown> = {}): World {
   dirs.push(base);
   const w = { base, home: join(base, 'home'), root: join(base, 'root'), data: join(base, 'data'), fixture: join(base, 'fixture.json') };
   for (const d of [w.home, w.root, w.data]) mkdirSync(d, { recursive: true });
-  writeFileSync(w.fixture, JSON.stringify({ root: w.root, psOutput: '', groupsOutput: 'staff everyone', ...fixture }));
+  writeFileSync(w.fixture, JSON.stringify({ root: w.root, psOutput: EMPTY_PROCESS_LIST, groupsOutput: 'staff everyone', ...fixture }));
   return w;
 }
 
@@ -79,17 +87,19 @@ function put(path: string, content: string | object): void {
   writeFileSync(path, typeof content === 'string' ? content : JSON.stringify(content), 'utf8');
 }
 
-function readOnlyTree(dir: string): void {
-  const walk = (p: string) => {
-    if (statSync(p).isDirectory()) {
-      for (const n of readdirSync(p)) walk(join(p, n));
-      chmodSync(p, 0o555);
-    } else {
-      chmodSync(p, 0o444);
-    }
-    locked.unshift(p);
-  };
-  walk(dir);
+/** TEMP DIAGNOSTIC (remove once the Windows CI run is green): runs the
+ *  check's own PowerShell process-list command with the test's environment
+ *  and reports how it ended — status, error code, time, stderr. NEVER its
+ *  output, which holds the command lines of the runner's processes. */
+function processListDiagnostic(w: World): string {
+  if (!IS_WINDOWS_HOST) return '';
+  const [bin, args] = WINDOWS_PROCESS_COMMAND;
+  const started = Date.now();
+  const r = spawnSync(bin, args, { env: hostIsolatedEnv(w.home, w.base), encoding: 'utf8', windowsHide: true, timeout: 60_000, maxBuffer: 32 * 1024 * 1024 });
+  let parsed = 'n/a';
+  try { const d = JSON.parse(String(r.stdout ?? '').trim()); parsed = `JSON ok, ${Array.isArray(d) ? d.length : 1} entries`; } catch { parsed = 'not JSON'; }
+  return `\n[TEMP DIAGNOSTIC] ${bin}: status ${r.status}, signal ${r.signal}, error ${r.error ? (r.error as NodeJS.ErrnoException).code : 'none'}, ` +
+    `${Date.now() - started} ms, stdout ${String(r.stdout ?? '').length} chars (${parsed})\nstderr: ${String(r.stderr ?? '').slice(0, 3000)}`;
 }
 
 function run(w: World, args: string[], opts: { cli?: string; fixture?: boolean; env?: Record<string, string>; timeoutMs?: number } = {}) {
@@ -175,28 +185,25 @@ describe('suveren-gateway check — results and exit codes', () => {
     const w = world();
     const program = join(w.base, 'install', 'gateway');
     const policy = join(w.base, 'policy', 'gateway-policy.json');
-    // On Windows, `icacls` answers from the fixture with the real capture of
-    // a Program Files folder / file (a standard user may only read); on
-    // POSIX the mode bits below decide and the fixture is not consulted.
-    writeFileSync(w.fixture, JSON.stringify({
-      root: w.root, psOutput: '', groupsOutput: 'staff everyone',
-      icacls: {
-        [program]: icaclsBlockFor(CAPTURED.lockDir, program),
-        [policy]: icaclsBlockFor(CAPTURED.lockFile, policy),
-      },
-      whoamiUser: STANDARD_USER_CSV,
-      whoamiGroups: standardGroupsCsv(),
-    }));
-    // A read-only copy of the CLI, so "who can change the program files" is closed.
+    // A copy of the CLI with a known version, run from its own folder.
     mkdirSync(program, { recursive: true });
     cpSync(join(BUNDLE, 'bin'), join(program, 'bin'), { recursive: true });
     cpSync(join(BUNDLE, 'lib'), join(program, 'lib'), { recursive: true });
     put(join(program, 'package.json'), { name: '@suveren/gateway', version: '0.0.0-test', type: 'module' });
-    readOnlyTree(join(w.base, 'install'));
-    // A read-only IT settings file that fixes the Authority Server address
-    // (and the team), through the real policy.mjs.
+    // An IT settings file that fixes the Authority Server address (and the
+    // team), read through the real policy.mjs.
     put(policy, { AsUrl: 'https://as.example.com', Team: 'grp_test', Simulation: true });
-    readOnlyTree(join(w.base, 'policy'));
+    // "This user cannot change them" comes from the fixture: a test cannot
+    // create files it does not own, and the owner may always change its own
+    // files (chmod / access list). The real answers on each host are tested
+    // against system files in setup-check-engine.test.ts, and the Windows
+    // access-list path in setup-check-windows.test.ts. Keyed as the CLI
+    // spells its own folder: Node resolves the main script with realpath
+    // (e.g. /var → /private/var on macOS).
+    writeFileSync(w.fixture, JSON.stringify({
+      root: w.root, psOutput: EMPTY_PROCESS_LIST, groupsOutput: 'staff everyone',
+      writable: { [realpathSync(program)]: false, [policy]: false },
+    }));
 
     const r = run(w, [], { cli: join(program, 'bin', 'suveren-gateway.js'), env: { SUVEREN_POLICY_FILE: policy } });
     expect(r.stdout).toContain('AI apps found: none recognised');
@@ -214,11 +221,15 @@ describe('suveren-gateway check — results and exit codes', () => {
     put(policy, { AsUrl: 'https://as.example.com' });
     // The real host decides: this user created the file, so it can change it.
     const writableRun = run(w, [], { env: { SUVEREN_POLICY_FILE: policy } });
-    expect(writableRun.stdout, windowsDiagnostic(policy)).toContain(`  open         IT has fixed the Authority Server address, but this user can change the settings file (${policy})`);
+    const expectedWritable = `  open         IT has fixed the Authority Server address, but this user can change the settings file (${policy})`;
+    expectOr(writableRun.stdout.includes(expectedWritable), () => `${writableRun.stdout}${windowsDiagnostic(policy)}`).toBe(true);
     const none = run(w, []);
     const lines = none.stdout.split('\n').filter((l) => /IT settings|create that file/.test(l));
-    expect(lines, windowsDiagnostic(w.base)).toEqual([
-      `  open         No IT settings file: this user can point the gateway at another Authority Server. IT closes this by fixing the address in the settings file (${join(w.base, 'no-policy.json')}); this user could also create that file themselves`,
+    // On a Windows host the check also names the machine registry key, where
+    // IT can fix the address instead of the file.
+    const alsoRegistry = IS_WINDOWS_HOST ? ', or the registry key HKLM\\SOFTWARE\\Policies\\Suveren\\Gateway' : '';
+    expect(lines).toEqual([
+      `  open         No IT settings file: this user can point the gateway at another Authority Server. IT closes this by fixing the address in the settings file (${join(w.base, 'no-policy.json')}${alsoRegistry}); this user could also create that file themselves`,
     ]);
   });
 
@@ -234,7 +245,8 @@ describe('suveren-gateway check — results and exit codes', () => {
         : join(w.root, 'etc', 'claude-code', 'managed-mcp.json');
     put(lock, { mcpServers: { suveren: { url: GW_URL } } });
     const r = run(w, []);
-    expect(r.stdout, windowsDiagnostic(lock)).toMatch(/open {9}Claude Code: IT allows only the gateway as connector, but this user can change the lock/);
+    const expected = /open {9}Claude Code: IT allows only the gateway as connector, but this user can change the lock/;
+    expectOr(expected.test(r.stdout), () => `${r.stdout}${windowsDiagnostic(lock)}`).toBe(true);
     expect(r.status).toBe(1);
   });
 });
@@ -256,7 +268,8 @@ describe('suveren-gateway check — real process list', () => {
 
     const text = run(w, [], { timeoutMs: 80_000 });
     const json = run(w, ['--json'], { timeoutMs: 80_000 });
-    expect(text.stdout, `status ${text.status}; stderr: ${text.stderr.slice(0, 2000)}`).toMatch(/open {9}mcp-remote: a sign-in token \(Authorization: Bearer\) in its start command/);
+    expectOr(/open {9}mcp-remote: a sign-in token/.test(text.stdout), () => `${text.stdout}\nstatus ${text.status}; stderr: ${text.stderr.slice(0, 2000)}${processListDiagnostic(w)}`).toBe(true);
+    expect(text.stdout).toMatch(/open {9}mcp-remote: a sign-in token \(Authorization: Bearer\) in its start command/);
     expect(text.stdout + text.stderr).not.toContain(token);
     expect(json.stdout + json.stderr).not.toContain(token);
     expect(JSON.parse(json.stdout).findings.some((f: { subject: string; result: string }) => f.subject === 'mcp-remote' && f.result === 'open')).toBe(true);

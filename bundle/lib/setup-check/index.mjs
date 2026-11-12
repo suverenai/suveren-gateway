@@ -11,7 +11,8 @@
  *
  * Test hook: SUVEREN_CHECK_FIXTURE=<json file> replaces the system folders'
  * root, the platform, the process list, the group list, registry reads and
- * the Windows access-list tools (`icacls`, `whoami`) with fixture values, so the real CLI can be tested without reading this
+ * the Windows access-list tools (`icacls`, `whoami`, the owner lookup) and
+ * chosen writability answers with fixture values, so the real CLI can be tested without reading this
  * computer's system state. Whenever it is set, the report says so.
  */
 
@@ -52,25 +53,32 @@ function loadFixture(env) {
 function buildIo(platform, fixture, root = '') {
   const f = fixture?.data ?? {};
   // Fixture runner for the Windows access-list tools: `icacls` answers from
-  // `f.icacls[path]`, `whoami` from `f.whoamiUser` / `f.whoamiGroups`.
+  // `f.icacls[path]`, `whoami` from `f.whoamiUser` / `f.whoamiGroups`, the
+  // owner lookup from `f.owners[path]` (a SID).
   const hasAclFixture = 'icacls' in f || 'whoamiUser' in f;
   const runner = hasAclFixture
-    ? (bin, args) => {
-      if (bin === 'icacls') return args[0] in (f.icacls ?? {}) ? { ok: true, stdout: f.icacls[args[0]] } : { error: 'failed' };
+    ? (bin, args, _timeoutMs, extraEnv) => {
+      if (bin === 'icacls') return args[0] in (f.icacls ?? {}) ? { ok: true, stdout: f.icacls[args[0]] } : { error: 'failed', reason: 'had no fixture answer' };
       if (bin === 'whoami') {
         const v = args[0] === '/user' ? f.whoamiUser : f.whoamiGroups;
-        return typeof v === 'string' ? { ok: true, stdout: v } : { error: 'failed' };
+        return typeof v === 'string' ? { ok: true, stdout: v } : { error: 'failed', reason: 'had no fixture answer' };
       }
-      return { error: 'failed' };
+      if (args[args.length - 1] === real.WINDOWS_OWNER_SCRIPT) {
+        const path = extraEnv?.SUVEREN_CHECK_PATH;
+        return path && f.owners && path in f.owners ? { ok: true, stdout: f.owners[path] } : { error: 'failed', reason: 'had no fixture answer' };
+      }
+      return { error: 'failed', reason: 'had no fixture answer' };
     }
     : real.run;
-  const fixed = (v) => (v === null ? { error: 'failed' } : { ok: true, stdout: v });
+  const fixed = (v) => (v === null ? { error: 'failed', reason: 'was not found' } : { ok: true, stdout: v });
   return {
     readText: real.readText,
     exists: real.exists,
     isDir: real.isDir,
     list: real.list,
-    writable: (path) => real.writable(path, platform, runner),
+    // Fixture `writable: { [path]: true|false|null }` answers for those paths
+    // (a test cannot make a file it does not own on POSIX).
+    writable: (path) => (f.writable && path in f.writable ? f.writable[path] : real.writable(path, platform, runner)),
     nearestCreatable: (path) => real.nearestCreatable(path, platform, runner),
     ownerUid: real.ownerUid,
     ps: () => {
@@ -79,7 +87,7 @@ function buildIo(platform, fixture, root = '') {
       if (raw.ok) return real.parseProcessList(platform, raw.stdout);
       // Linux without `ps` (minimal images): read /proc directly.
       if (platform === 'linux') return real.procCommands(join(root || '/', 'proc'));
-      return { error: 'failed' };
+      return { error: 'failed', reason: raw.reason };
     },
     groups: () => ('groupsOutput' in f ? fixed(f.groupsOutput) : real.groups(platform)),
     plist: (path) => real.readPlist(path),

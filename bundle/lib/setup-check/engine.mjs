@@ -731,7 +731,10 @@ function processFindings(ctx) {
   // command lines of its own account's programs.
   const scope = ctx.platform === 'win32' ? '; on Windows, without administrator rights this check sees only this user\'s programs' : '';
   if (!r.ok) {
-    return [{ group: 'secrets', result: RESULTS.CANNOT_TELL, subject: '', detail: 'Process list: could not be read', source, verified: true }];
+    // The reason is a fixed phrase from the provider (never tool output).
+    const tool = ctx.platform === 'win32' ? 'PowerShell' : 'ps';
+    const why = r.reason ? ` (${tool} ${r.reason})` : '';
+    return [{ group: 'secrets', result: RESULTS.CANNOT_TELL, subject: '', detail: `Process list: could not be read${why}`, source, verified: true }];
   }
   const readers = ctx.platform === 'win32'
     ? 'readable by programs of this user and by administrators'

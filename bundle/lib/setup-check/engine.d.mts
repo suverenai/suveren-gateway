@@ -14,8 +14,8 @@ export interface Finding {
 }
 
 export type ReadResult = { ok: true; text: string } | { missing: true; ok?: undefined } | { error: string; ok?: undefined };
-export type RunResult = { ok: true; stdout: string } | { error: string; ok?: undefined; status?: number | null };
-export type ProcessList = { ok: true; commands: string[]; source?: string } | { error: string; ok?: undefined };
+export type RunResult = { ok: true; stdout: string } | { error: string; ok?: undefined; status?: number | null; reason?: string };
+export type ProcessList = { ok: true; commands: string[]; source?: string } | { error: string; ok?: undefined; reason?: string };
 export type DataResult = { ok: true; data: unknown } | { missing: true; ok?: undefined } | { error: string; ok?: undefined };
 
 export interface CheckIo {

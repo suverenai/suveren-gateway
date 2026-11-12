@@ -1,7 +1,9 @@
 /** Types for the Setup check's read-only providers (plain ESM; see providers.mjs). */
 import type { DataResult, ProcessList, ReadResult, RunResult } from './engine.mjs';
-export type Runner = (bin: string, args: string[]) => RunResult;
-export declare function run(bin: string, args: string[], timeoutMs?: number): RunResult;
+export type Runner = (bin: string, args: string[], timeoutMs?: number, extraEnv?: Record<string, string> | null) => RunResult;
+export declare function run(bin: string, args: string[], timeoutMs?: number, extraEnv?: Record<string, string> | null): RunResult;
+export declare const WINDOWS_OWNER_SCRIPT: string;
+export declare function windowsOwnerSid(path: string, runner?: Runner): string | null;
 export declare function readText(path: string): ReadResult;
 export declare function exists(path: string): boolean;
 export declare function isDir(path: string): boolean;

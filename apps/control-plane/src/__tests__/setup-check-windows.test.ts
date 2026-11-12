@@ -128,6 +128,7 @@ describe('re-labelled captures (used as fixtures on a Windows host)', () => {
         platform: 'win32', root: join(base, 'root'), psOutput: '[]', groupsOutput: groupsCsv(),
         whoamiUser: STANDARD_USER_CSV, whoamiGroups: groupsCsv(),
         icacls: { [programDir]: icaclsBlockFor(CAPTURED.lockDir, programDir) },
+        owners: { [programDir]: TRUSTED_INSTALLER },
       }));
       const env = {
         ...hostIsolatedEnv(home, base), SUVEREN_DATA_DIR: data, SUVEREN_CP_PORT: '19870', SUVEREN_MCP_PORT: '19871',
@@ -191,35 +192,78 @@ describe('win-acl — what gives "cannot tell"', () => {
   });
 });
 
-describe('providers.writable on Windows — read-only, via icacls + whoami', () => {
-  const runnerFor = (map: Record<string, string>, userCsv: string, groups: string) => {
-    const calls: string[][] = [];
-    const runner = (bin: string, args: string[]) => {
-      calls.push([bin, ...args]);
+const TRUSTED_INSTALLER = 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464';
+const WORKER_SID = 'S-1-5-21-1-2-3-1002';
+
+describe('providers.writable on Windows — read-only, via icacls + whoami (+ owner when "cannot write")', () => {
+  const runnerFor = (map: Record<string, string>, userCsv: string, groups: string, owners: Record<string, string> = {}) => {
+    const calls: { bin: string; args: string[]; env: Record<string, string> | null | undefined }[] = [];
+    const runner = (bin: string, args: string[], _t?: number, env?: Record<string, string> | null) => {
+      calls.push({ bin, args, env });
       if (bin === 'whoami') return { ok: true as const, stdout: args[0] === '/user' ? userCsv : groups };
       if (bin === 'icacls' && args.length === 1 && args[0] in map) return { ok: true as const, stdout: map[args[0]] };
+      if (bin === 'powershell.exe' && args[args.length - 1] === real.WINDOWS_OWNER_SCRIPT && env?.SUVEREN_CHECK_PATH && env.SUVEREN_CHECK_PATH in owners) {
+        return { ok: true as const, stdout: owners[env.SUVEREN_CHECK_PATH] };
+      }
       return { error: 'failed' };
     };
     return { runner, calls };
   };
+  const worker = () => csv('win-vm\\worker', WORKER_SID);
 
-  it('answers true / false from the access list and runs only `whoami` and `icacls <path>`', () => {
+  it('answers true / false from the access list; runs only whoami, `icacls <path>` and the read-only owner lookup', () => {
     const map = { [PATHS.lockFile]: icaclsFor(PATHS.lockFile), [PATHS.rootDir]: icaclsFor(PATHS.rootDir) };
-    const { runner, calls } = runnerFor(map, csv('win-vm\\worker', 'S-1-5-21-1-2-3-1002'), groupsCsv());
+    const { runner, calls } = runnerFor(map, worker(), groupsCsv(), { [PATHS.lockFile]: TRUSTED_INSTALLER });
     expect(real.writable(PATHS.lockFile, 'win32', runner)).toBe(false);
     expect(real.writable(PATHS.rootDir, 'win32', runner)).toBe(true);
-    // No /save, /grant, /reset … — only the plain read form.
     for (const c of calls) {
-      expect(['whoami', 'icacls']).toContain(c[0]);
-      if (c[0] === 'icacls') expect(c.length).toBe(2);
+      expect(['whoami', 'icacls', 'powershell.exe']).toContain(c.bin);
+      // No /save, /grant, /reset … — only the plain read form.
+      if (c.bin === 'icacls') expect(c.args.length).toBe(1);
+      // The path reaches PowerShell only as an environment variable, never in the script.
+      if (c.bin === 'powershell.exe') {
+        expect(c.args[c.args.length - 1]).toBe(real.WINDOWS_OWNER_SCRIPT);
+        expect(c.env?.SUVEREN_CHECK_PATH).toBe(PATHS.lockFile);
+      }
     }
+    // The owner is asked only when the list says "cannot write".
+    expect(calls.filter((c) => c.bin === 'powershell.exe')).toHaveLength(1);
+  });
+
+  it('the owner can always give themselves write access again: "cannot write" becomes "can change"', () => {
+    const map = { [PATHS.lockFile]: icaclsFor(PATHS.lockFile) };
+    // Owned by this user.
+    expect(real.writable(PATHS.lockFile, 'win32', runnerFor(map, worker(), groupsCsv(), { [PATHS.lockFile]: WORKER_SID }).runner)).toBe(true);
+    // Owned by Administrators: counts only for an ELEVATED administrator.
+    const admins = 'S-1-5-32-544';
+    const elevated = groupsCsv([csv('BUILTIN\\Administrators', 'Alias', admins, `${ENABLED}, Group owner`)]);
+    const denyOnly = groupsCsv([csv('BUILTIN\\Administrators', 'Alias', admins, 'Group used for deny only')]);
+    expect(real.writable(PATHS.lockFile, 'win32', runnerFor(map, worker(), denyOnly, { [PATHS.lockFile]: admins }).runner)).toBe(false);
+    // (Elevated admins are allowed by the list itself already.)
+    expect(real.writable(PATHS.lockFile, 'win32', runnerFor(map, worker(), elevated, { [PATHS.lockFile]: admins }).runner)).toBe(true);
+  });
+
+  it('owner unknown → cannot tell; an OWNER RIGHTS entry takes the owner\'s implicit rights away', () => {
+    const map = { [PATHS.lockFile]: icaclsFor(PATHS.lockFile) };
+    expect(real.writable(PATHS.lockFile, 'win32', runnerFor(map, worker(), groupsCsv(), {}).runner)).toBe(null);
+    const p = 'C:\\IT\\lock.json';
+    const withOwnerRights = `${p} OWNER RIGHTS:(RX)\n    BUILTIN\\Users:(RX)\n\nSuccessfully processed 1 files; Failed processing 0 files\n`;
+    const { runner, calls } = runnerFor({ [p]: withOwnerRights }, worker(), groupsCsv(), { [p]: WORKER_SID });
+    expect(real.writable(p, 'win32', runner)).toBe(false);
+    expect(calls.some((c) => c.bin === 'powershell.exe')).toBe(false);
   });
 
   it('icacls or whoami failing → null (cannot tell), never "writable"', () => {
-    const { runner } = runnerFor({}, csv('win-vm\\worker', 'S-1-5-21-1-2-3-1002'), groupsCsv());
+    const { runner } = runnerFor({}, worker(), groupsCsv());
     expect(real.writable('C:\\Nope', 'win32', runner)).toBe(null);
     const broken = (bin: string) => (bin === 'whoami' ? { error: 'failed' } : { ok: true as const, stdout: icaclsFor(PATHS.rootDir) });
     expect(real.writable(PATHS.rootDir, 'win32', broken)).toBe(null);
+  });
+
+  it('the owner lookup script loads no module (no cmdlet), so it needs no command lookup', () => {
+    // Only .NET types and $env — no `Verb-Noun` cmdlet names.
+    expect(real.WINDOWS_OWNER_SCRIPT).not.toMatch(/\b[A-Z][a-z]+-[A-Z][A-Za-z]+\b/);
+    expect(real.WINDOWS_OWNER_SCRIPT).toContain('$env:SUVEREN_CHECK_PATH');
   });
 });
 
@@ -237,7 +281,9 @@ describe('Windows process list (PowerShell Get-CimInstance JSON)', () => {
     expect(real.parseProcessList('win32', JSON.stringify([{ Name: 'a', CommandLine: 'a.exe x' }, { Name: 'b', CommandLine: null }])))
       .toEqual({ ok: true, commands: ['a.exe x'] });
     expect(real.parseProcessList('win32', JSON.stringify({ Name: 'a', CommandLine: 'a.exe' }))).toEqual({ ok: true, commands: ['a.exe'] });
-    expect(real.parseProcessList('win32', '')).toEqual({ ok: true, commands: [] });
+    // A real list is never empty: no output is a failure, never "no programs".
+    expect(real.parseProcessList('win32', '')).toEqual({ error: 'unreadable', reason: 'gave no output' });
+    expect(real.parseProcessList('win32', '[]')).toEqual({ ok: true, commands: [] });
   });
 
   it('unparseable output → error without the text in it', () => {

@@ -8,3 +8,5 @@ export interface WindowsIdentity {
 export declare function parseIcacls(stdout: string, path: string): { ok: true; entries: AclEntry[] } | { ok: false };
 export declare function parseWhoami(userCsv: string, groupsCsv: string): WindowsIdentity | { ok: false };
 export declare function evaluateWrite(entries: AclEntry[], identity: WindowsIdentity): boolean | null;
+export declare function hasOwnerRightsEntry(entries: AclEntry[]): boolean;
+export declare function isOwnedBy(ownerSid: string, identity: WindowsIdentity): boolean;

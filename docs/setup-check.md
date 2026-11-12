@@ -13,7 +13,9 @@ It reports. It does not fix anything. It is a check, not a guarantee.
 
 ## What it does not do
 
-- It changes nothing on disk and starts no service.
+- It changes nothing on disk and starts no service. On Windows it starts
+  PowerShell to read the process list and file owners; PowerShell itself may
+  keep a small cache file in the user's local app data folder.
 - It makes no network request, not even to the gateway on this computer.
 - It never prints a password, token or key. For a secret it names the file,
   the program and the kind of argument, or the variable name.
@@ -111,18 +113,27 @@ not a fault of the installation.
 
 ## How it decides whether the user can change a file
 
+The owner of a file can always give themselves write access again. So a
+file or folder this user owns counts as changeable, whatever its current
+permissions say.
+
 - macOS and Linux: the operating system's own permission check
-  (`access(2)`), without opening anything for writing. A file also counts as
-  changeable when its folder is writable, except in a folder with the sticky
-  bit (like `/tmp`).
+  (`access(2)`), without opening anything for writing, plus the owner. A
+  file also counts as changeable when its folder is, except in a folder with
+  the sticky bit (like `/tmp`).
 - Windows: Node's permission check only looks at the read-only attribute,
   so the check reads the access list with `icacls <path>` and compares it with
   the user's account and groups from `whoami /user` and `whoami /groups`. It
   never creates or opens a file to find out.
   - `open` when an allow entry for the user or one of its groups grants
     F, M, W, WD, AD, GA, GW, WDAC or WO, and no deny entry applies.
-  - `closed` when no such allow entry applies, or a deny entry with F does.
-  - `cannot tell` when icacls or whoami fail or print something it does not
+  - `closed` when no such allow entry applies, or a deny entry with F does,
+    and this user is not the owner (the owner is read with .NET, read-only).
+    An `OWNER RIGHTS` entry replaces the owner's rights, so then the access
+    list alone decides.
+  - `cannot tell` when the owner cannot be read, when icacls or whoami
+    fail (for example when this user may not even read the access list) or
+    print something it does not
     parse, when a deny entry denies only part of the write rights, when an
     entry depends on the owner (CREATOR OWNER, OWNER RIGHTS) or is an
     integrity label, when an account name may be garbled, or when whoami

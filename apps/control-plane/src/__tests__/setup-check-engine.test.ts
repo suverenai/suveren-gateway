@@ -490,6 +490,14 @@ describe('No passwords within reach', () => {
     expect(all).not.toContain('NOLEAK');
   });
 
+  it('a process list that cannot be read says why (fixed phrase, never tool output) and is "cannot tell"', () => {
+    const w = world();
+    const r = runSetupCheck(ctx(w, { io: io({ ps: () => ({ error: 'failed', reason: 'did not finish within 30 s' }) }) }));
+    const line = r.findings.find((f) => /^Process list/.test(f.detail));
+    expect(line?.result).toBe('cannot tell');
+    expect(line?.detail).toBe('Process list: could not be read (ps did not finish within 30 s)');
+  });
+
   it('program names never carry a value', () => {
     expect(programLabel('node --token abcdef123456 server.js', ['abcdef123456'])).toBe('node');
     expect(programLabel('npx -y mcp-remote@0.14.3 https://x --header Authorization: Bearer abc', ['abc'])).toBe('mcp-remote');
@@ -768,72 +776,79 @@ describe('toml-lite', () => {
 });
 
 describe('providers.writable / nearestCreatable against the host running the tests', () => {
-  // The answer comes from the host's own file system, so the way to make a
-  // file non-writable differs per host; what is asserted does not.
+  // The answers come from the host's own file system and tools (POSIX
+  // permissions; on Windows real icacls, whoami and the owner lookup), so
+  // these tests spawn real processes: on a busy CI runner that needs more
+  // than vitest's default 5 s.
   const isWindows = process.platform === 'win32';
+  const HOST_TIMEOUT = 120_000;
 
   /** TEMP DIAGNOSTIC (remove once the Windows CI run is green): what the
-   *  real tools printed, attached to the failure message only. Account
-   *  names and SIDs of the CI runner, no secret. */
+   *  real tools printed, built ONLY when an assertion fails (it spawns
+   *  tools). Account names and SIDs of the CI runner, no secret. */
   function windowsDiagnostic(path: string): string {
     if (!isWindows) return '';
-    const out = (bin: string, args: string[]) => {
-      const r = spawnSync(bin, args, { encoding: 'utf8', windowsHide: true });
-      return `$ ${bin} ${args.join(' ')} → status ${r.status}\n${r.stdout ?? ''}${r.stderr ?? ''}`;
+    const out = (bin: string, args: string[], env?: Record<string, string>) => {
+      const r = spawnSync(bin, args, { encoding: 'utf8', windowsHide: true, env: env ? { ...process.env, ...env } : undefined });
+      return `$ ${bin} ${args[0] === '-NoProfile' ? '(owner lookup)' : args.join(' ')} → status ${r.status}\n${r.stdout ?? ''}${r.stderr ?? ''}`;
     };
-    return `\n[TEMP DIAGNOSTIC]\n${out('icacls', [path])}\n${out('whoami', ['/user', '/fo', 'csv', '/nh'])}\n${out('whoami', ['/groups', '/fo', 'csv', '/nh'])}`;
+    return `\n[TEMP DIAGNOSTIC]\n${out('icacls', [path])}\n${out('whoami', ['/user', '/fo', 'csv', '/nh'])}\n${out('whoami', ['/groups', '/fo', 'csv', '/nh'])}\n` +
+      out('powershell.exe', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command', real.WINDOWS_OWNER_SCRIPT], { SUVEREN_CHECK_PATH: path });
+  }
+  function expectHost<T>(value: T, expected: T, path: string) {
+    if (value !== expected) expect(value, `${windowsDiagnostic(path)}\nexists=${real.exists(path)}`).toBe(expected);
   }
 
-  it('a file this user created is writable; a missing file in a folder this user created can be created', () => {
+  it('a file and folder this user created can be changed; a missing file there can be created', { timeout: HOST_TIMEOUT }, () => {
     const base = mkdtempSync(hostJoin(tmpdir(), 'setup-check-host-'));
     dirs.push(base);
     const file = hostJoin(base, 'mine.json');
     writeFileSync(file, '{}');
-    expect(real.writable(file), windowsDiagnostic(file)).toBe(true);
-    expect(real.writable(base), windowsDiagnostic(base)).toBe(true);
+    expectHost(real.writable(file), true, file);
+    expectHost(real.writable(base), true, base);
     const c = real.nearestCreatable(hostJoin(base, 'a', 'b', 'gateway-policy.json'));
     expect(c.ancestor).toBe(base);
-    expect(c.writable, windowsDiagnostic(base)).toBe(true);
+    expectHost(c.writable, true, base);
   });
 
-  it('a file and folder this user may not write → not writable, and nothing can be created inside', () => {
+  it('the owner can change its own file even without write permission (POSIX chmod / Windows access list)', { timeout: HOST_TIMEOUT }, () => {
     const base = mkdtempSync(hostJoin(tmpdir(), 'setup-check-host-'));
     dirs.push(base);
     const dir = hostJoin(base, 'locked');
     mkdirSync(dir);
     const file = hostJoin(dir, 'lock.json');
     writeFileSync(file, '{}');
-    // Host mechanism: POSIX mode bits, or a Windows deny entry for Everyone
-    // (SID form, so it works on any language of Windows). Only the test's
-    // own temp files are changed, and they are restored below.
+    // Host mechanism to take this user's write permission away: mode bits,
+    // or an access list that only lets Everyone read (inheritance removed).
     const icacls = (args: string[]) => spawnSync('icacls', args, { encoding: 'utf8', windowsHide: true });
     if (isWindows) {
-      icacls([file, '/deny', '*S-1-1-0:(F)']);
-      icacls([dir, '/deny', '*S-1-1-0:(F)']);
+      icacls([file, '/inheritance:r', '/grant:r', '*S-1-1-0:(R)']);
     } else {
       chmodSync(file, 0o444);
       chmodSync(dir, 0o555);
     }
     try {
-      if (!isWindows && process.getuid?.() === 0) return; // root may write anything on POSIX: nothing to assert
-      expect(real.writable(file), windowsDiagnostic(file)).toBe(false);
-      const inside = real.nearestCreatable(hostJoin(dir, 'x', 'y.json'));
-      // TEMP DIAGNOSTIC in the message: can a folder that denies Everyone
-      // still be found (stat) on Windows?
-      expect(inside.ancestor, `${windowsDiagnostic(dir)}\nexists(dir)=${real.exists(dir)}`).toBe(dir);
-      expect(inside.writable, windowsDiagnostic(dir)).toBe(false);
-      // POSIX only, by design: there a folder counts as changeable when its
-      // parent is writable (it can be replaced); on Windows only the
-      // object's own access list is evaluated.
-      if (!isWindows) expect(real.writable(dir)).toBe(true);
+      // The user still owns the file, so it may give itself write access again.
+      expectHost(real.writable(file), true, file);
     } finally {
-      if (isWindows) {
-        icacls([dir, '/remove:d', '*S-1-1-0']);
-        icacls([file, '/remove:d', '*S-1-1-0']);
-      } else {
-        chmodSync(dir, 0o755);
-        chmodSync(file, 0o644);
-      }
+      if (isWindows) icacls([file, '/reset']);
+      else { chmodSync(dir, 0o755); chmodSync(file, 0o644); }
     }
+  });
+
+  it('a system file and folder this user does not own → cannot change, nothing can be created inside', { timeout: HOST_TIMEOUT }, () => {
+    // Real system objects whose access is set by the operating system;
+    // nothing is changed. POSIX: root-owned /etc. Windows: owned by
+    // TrustedInstaller, administrators may only read (the CI runner is an
+    // elevated administrator; its admin rights to take ownership are what
+    // the separate "administrator" line reports).
+    if (!isWindows && process.getuid?.() === 0) return; // root may write anything on POSIX: nothing to assert
+    const systemRoot = process.env.SystemRoot ?? 'C:\\Windows';
+    const file = isWindows ? hostJoin(systemRoot, 'System32', 'kernel32.dll') : '/etc/hosts';
+    const folder = isWindows ? hostJoin(systemRoot, 'WinSxS') : '/etc';
+    expectHost(real.writable(file), false, file);
+    const inside = real.nearestCreatable(hostJoin(folder, 'suveren-check-test-missing', 'x.json'));
+    expect(inside.ancestor).toBe(folder);
+    expectHost(inside.writable, false, folder);
   });
 });
