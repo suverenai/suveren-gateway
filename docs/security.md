@@ -115,6 +115,8 @@ Your AI never sees a credential. Each connector receives only the credential for
 
 A connector starts with a minimal environment: what the operating system needs to run a program, the proxy and company-certificate settings, variables its manifest names in `mcp.passEnv`, and its own credentials. It does not receive the gateway's own secrets or anything else from the environment the gateway was started in.
 
+A credential is never placed in a connector's command-line arguments, which other programs on the computer can read. The gateway refuses to start a connector whose arguments would carry one (see `docs/development.md`, "no credential in the arguments").
+
 ## Authentication
 
 The gateway does not authenticate agents directly (beyond the agent port rules above). Authentication flows through the SP:

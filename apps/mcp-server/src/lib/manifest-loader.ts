@@ -127,6 +127,15 @@ export interface IntegrationManifest {
      *  seed file the operator sets). Everything else is withheld — see
      *  connector-env.ts. */
     passEnv?: string[];
+    /**
+     * The connector program itself replaces `${VAR}` in its arguments with the
+     * value from its own environment (mcp-remote does this for `--header`).
+     * The gateway then leaves `${VAR}` in the arguments and passes the value
+     * in the environment only. Without it, an argument that names a
+     * credential variable refuses the start: arguments are readable by other
+     * programs on the computer. See connector-args.ts.
+     */
+    expandsEnvInArgs?: boolean;
   };
   credentials: {
     fields: ManifestCredentialField[];
@@ -1462,6 +1471,12 @@ export function invalidLimitWordsReason(manifest: Pick<IntegrationManifest, 'lim
   return null;
 }
 
+export function invalidExpandsEnvInArgsReason(manifest: Pick<IntegrationManifest, 'mcp'>): string | null {
+  const v = (manifest.mcp as { expandsEnvInArgs?: unknown } | undefined)?.expandsEnvInArgs;
+  if (v === undefined || typeof v === 'boolean') return null;
+  return 'mcp.expandsEnvInArgs must be true or false';
+}
+
 export function invalidNetworkReason(manifest: Pick<IntegrationManifest, 'network'>): string | null {
   const network = (manifest as { network?: unknown }).network;
   if (network === undefined) return null;
@@ -1837,6 +1852,11 @@ export function loadManifests(integrationsDir?: string): number {
       const limitWordsReason = invalidLimitWordsReason(manifest);
       if (limitWordsReason) {
         console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${limitWordsReason}`);
+        continue;
+      }
+      const expandsEnvReason = invalidExpandsEnvInArgsReason(manifest);
+      if (expandsEnvReason) {
+        console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${expandsEnvReason}`);
         continue;
       }
       const networkReason = invalidNetworkReason(manifest);

@@ -17,6 +17,7 @@ import { getManifest, isExactSemver } from './manifest-loader';
 import { remotePreflightTarget, preflightRemoteAuth } from './remote-auth-preflight';
 import { isSimulationMode, connectorCurrentlySimulated, SIMULATION_BLOCK_REASON, PRODUCTION_BLOCK_REASON } from './simulation-mode';
 import { inheritedConnectorEnv } from './connector-env';
+import { buildSpawnArgs, redactSecrets } from './connector-args';
 import { withSourceLink } from './request-context';
 import { withAttachmentAndInsertSchema } from './attachment-reference';
 import { CONNECTOR_STDIO_MAX_BUFFER_BYTES } from './attachment-limits';
@@ -714,8 +715,8 @@ export class IntegrationManager {
     // one shape the old `npx -y pkg@latest` pattern used, and it is safe to
     // replace wholesale with the manifest's own command/args. Anything else
     // (e.g. mollie's `mcp-remote` with manifest-declared args containing a
-    // `${MOLLIE_ACCESS_TOKEN}` template, interpolated from vault credentials
-    // at spawn time) is already the manifest's own shape — not a leftover
+    // `${MOLLIE_ACCESS_TOKEN}` template, which mcp-remote expands from its
+    // environment — see connector-args.ts) is already the manifest's own shape — not a leftover
     // `npx` invocation — and must be left alone.
     const pinnedVersion = this.pinnedVersionFor(config);
     if (pinnedVersion && config.command === 'npx') {
@@ -774,27 +775,42 @@ export class IntegrationManager {
       }
     }
 
-    // Interpolate ${VAR} references in args from the resolved env. This lets a
-    // manifest bake a credential into an argument (e.g. mcp-remote's
-    // "Authorization: Bearer ${MOLLIE_ACCESS_TOKEN}" header) WITHOUT a shell —
-    // the old approach spawned `sh -c "... $VAR"`, which doesn't exist on
-    // Windows and left Mollie unstartable there. We spawn the binary directly
-    // and do the substitution ourselves so it works on every platform.
-    // Falls back only to the connector's inherited allowlist, never the full
-    // process env — a manifest arg must not be able to name a gateway secret.
-    const inherited = inheritedConnectorEnv(process.env, getManifest(config.id)?.mcp.passEnv);
-    const interpolate = (s: string): string =>
-      s.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_m, name) => env[name] ?? inherited[name] ?? '');
-    const args = config.args.map(interpolate);
+    // A credential never goes into the spawned program's arguments: those are
+    // readable by other programs (and, on macOS/Linux, other users) on this
+    // computer — see connector-args.ts. The program gets it in its
+    // environment. A program that needs it inside an argument (mcp-remote's
+    // "Authorization: Bearer ${MOLLIE_ACCESS_TOKEN}" header) expands the
+    // `${VAR}` itself; its manifest declares `mcp.expandsEnvInArgs`. Any other
+    // placeholder naming a vault variable, or a secret's value in the final
+    // arguments, refuses the start. No shell either way (the old
+    // `sh -c "... $VAR"` approach doesn't exist on Windows). Non-vault
+    // placeholders still fall back only to the connector's inherited
+    // allowlist, never the full process env.
+    const manifestForSpawn = getManifest(config.id);
+    const inherited = inheritedConnectorEnv(process.env, manifestForSpawn?.mcp.passEnv);
+    const { vaultVarNames, secretVarNames } = this.credentialVarNames(config);
+    const secretValues = [...secretVarNames].map(n => env[n]).filter((v): v is string => !!v);
+    const { spawnArgs, resolvedArgs } = buildSpawnArgs({
+      connectorId: config.id,
+      args: config.args,
+      vaultEnv: env,
+      vaultVarNames,
+      secretVarNames,
+      inherited,
+      connectorExpandsEnv: manifestForSpawn?.mcp.expandsEnvInArgs === true,
+    });
 
     // A remote connector whose credential the remote rejects must not be
     // spawned: mcp-remote answers a 401 by opening the system browser on the
     // remote's login page (see remote-auth-preflight.ts). Fail here, named.
-    const remote = remotePreflightTarget(config.command, args);
+    // The preflight sends the real header itself, so it reads the in-memory
+    // `resolvedArgs` — never spawned, never logged.
+    const remote = remotePreflightTarget(config.command, resolvedArgs);
     if (remote) {
       const verdict = await preflightRemoteAuth(remote);
-      if (!verdict.ok) throw new Error(`${config.id}: ${verdict.reason}`);
+      if (!verdict.ok) throw new Error(`${config.id}: ${redactSecrets(verdict.reason, secretValues)}`);
     }
+    const args = spawnArgs;
 
     // Create stdio transport (spawns child process)
     // PATH includes ~/.suveren/integrations/node_modules/.bin for on-demand installed packages.
@@ -836,7 +852,15 @@ export class IntegrationManager {
     // after it — the user sees the first stuck on "Starting" and the rest
     // permanently "Not running". Reject on transport error or timeout so the
     // loop can move on and report a real failure.
-    await this.connectWithGuard(client, transport, config);
+    try {
+      await this.connectWithGuard(client, transport, config);
+    } catch (err) {
+      // A start error may quote what the connector said; a credential value
+      // must never reach a log line or the gateway's page.
+      throw new Error(redactSecrets(err instanceof Error ? err.message : String(err), secretValues));
+    }
+    // `config.args` is the template (`${VAR}` left in) — never log spawn or
+    // resolved arguments, or the connector's environment.
     console.error(`[IntegrationManager] Connected to ${config.id} (${config.command} ${config.args.join(' ')})`);
 
     // Discover tools and resolve gating. The manifest's own `toolGating` is
@@ -1368,6 +1392,36 @@ export class IntegrationManager {
   }
 
   // ─── Private ──────────────────────────────────────────────────────────────
+
+  /**
+   * Which environment variables the vault supplies to this connector
+   * (`vaultVarNames`, resolved or not), and which of those hold secrets
+   * (`secretVarNames`): a manifest field of type `password`, or a variable
+   * with no declared field at all (an OAuth token slot, a connector without a
+   * manifest) — unknown counts as secret. Same sources as `resolveEnvKeys`.
+   */
+  private credentialVarNames(config: IntegrationConfig): {
+    vaultVarNames: Set<string>;
+    secretVarNames: Set<string>;
+  } {
+    const manifest = getManifest(config.id);
+    const fieldType = new Map((manifest?.credentials?.fields ?? []).map(f => [f.key, f.type]));
+    const keyOf = new Map<string, string>();
+    for (const [envVar, vaultRef] of [
+      ...Object.entries(config.envKeys ?? {}),
+      ...Object.entries(config.optionalEnvKeys ?? {}),
+    ]) {
+      keyOf.set(envVar, vaultRef.split('.', 2)[1] ?? '');
+    }
+    for (const [envVar, credKey] of Object.entries(manifest?.credentials?.envMapping ?? {})) {
+      if (!keyOf.has(envVar)) keyOf.set(envVar, credKey);
+    }
+    const vaultVarNames = new Set(keyOf.keys());
+    const secretVarNames = new Set(
+      [...keyOf].filter(([, key]) => fieldType.get(key) !== 'text').map(([envVar]) => envVar),
+    );
+    return { vaultVarNames, secretVarNames };
+  }
 
   /**
    * Resolve envKeys from serviceCredentials.

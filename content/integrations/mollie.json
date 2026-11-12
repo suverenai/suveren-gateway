@@ -13,7 +13,8 @@
       "https://mcp.mollie.com/mcp",
       "--header",
       "Authorization: Bearer ${MOLLIE_ACCESS_TOKEN}"
-    ]
+    ],
+    "expandsEnvInArgs": true
   },
   "credentials": {
     "fields": [

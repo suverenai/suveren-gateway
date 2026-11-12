@@ -152,6 +152,26 @@ Every manifest under `content/integrations/` that installs a connector via npm (
 
 On start, `IntegrationManager.ensureInstalled` (`apps/mcp-server/src/lib/integration-manager.ts`) reads the pin from the **current** loaded manifest (never a persisted copy in `integrations.json`) and brings the installed package to exactly that version — older or newer — before the connector runs, logging the change (e.g. `erp-mcp 0.3.0 → 0.3.3 (pinned by manifest)`). If that install fails, the connector does **not** start: a gateway release ships a tested set of connector versions, the same way it ships a tested set of bundled profiles, and running whatever happens to already be on disk when the pinned install fails would defeat that. An integration with no `npmPackage` pin at all (one added manually, outside any manifest) keeps the original install-once-and-never-touch-it behaviour.
 
+## Connector manifests — no credential in the arguments
+
+A connector's credentials reach it in its environment, never in its command-line arguments: other programs on the computer can read a program's arguments (`ps`; on macOS and Linux every user can), but only the same user can read its environment.
+
+A program that needs a credential inside an argument must expand `${VAR}` itself, from its own environment. Its manifest says so:
+
+```json
+"mcp": {
+  "command": "mcp-remote",
+  "args": ["https://mcp.mollie.com/mcp", "--header", "Authorization: Bearer ${MOLLIE_ACCESS_TOKEN}"],
+  "expandsEnvInArgs": true
+}
+```
+
+With `mcp.expandsEnvInArgs: true` the gateway leaves every `${VAR}` in the arguments unchanged and passes the values in the environment. Declare it only after checking the pinned program's source: a program that does not expand the placeholder sends the literal text `${VAR}`. (mcp-remote 0.14.3 expands `${VAR}` in every `--header` value; a variable that is not set stays as literal text.)
+
+Without the flag, `${VAR}` naming an inherited, non-vault variable (e.g. `${HOME}`) is still replaced by the gateway; one naming any variable the vault supplies (the manifest's `credentials.envMapping`, the config's `envKeys`/`optionalEnvKeys`) refuses the start, naming the connector and the variable. Independently, a start is refused when the value of a secret (a `password` field, or a variable with no declared field such as an OAuth token) appears anywhere in the final arguments — e.g. a token pasted into a saved config. `apps/mcp-server/src/lib/connector-args.ts` holds the rule; `connector-args.test.ts` runs every shipped manifest through it, and `mcp-remote-token-not-in-args.test.ts` proves it with the real pinned mcp-remote and the operating system's process list.
+
+The remote-auth preflight (`remote-auth-preflight.ts`) still sends the real header: it reads the arguments resolved in memory, which are never spawned and never logged.
+
 ## Testing
 
 ```bash
