@@ -1678,6 +1678,8 @@ export class IntegrationManager {
         contentField?: string;
         blockedArgs?: string[];
         nonContentArgs?: string[];
+        sealedOnlyArgs?: string[];
+        argDefaults?: Record<string, unknown>;
         argEncoding?: Record<string, string>;
         argNormalization?: Record<string, string>;
         hideUnlessAuthorized?: boolean;
@@ -1731,6 +1733,8 @@ export class IntegrationManager {
         contentField: ext.contentField,
         blockedArgs: ext.blockedArgs,
         nonContentArgs: ext.nonContentArgs,
+        sealedOnlyArgs: ext.sealedOnlyArgs,
+        argDefaults: ext.argDefaults,
         argEncoding: ext.argEncoding,
         argNormalization: ext.argNormalization,
         hideUnlessAuthorized: ext.hideUnlessAuthorized,

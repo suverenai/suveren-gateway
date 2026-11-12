@@ -126,6 +126,7 @@
       "create_event": {
         "message": { "text": "description", "verb": "Sent" },
         "summary": "New event: {summary|short}[ on {start.dateTime,start.date|date}]",
+        "argDefaults": {"calendarId": "primary", "attendees": []},
         "executionMapping": {
           "duration_minutes": "duration",
           "lookahead_days": "lookahead",
@@ -133,12 +134,14 @@
             {
               "field": "allowed_attendees",
               "transform": "join",
-              "item": "email"
+              "item": "email",
+              "format": "email"
             },
             {
               "field": "allowed_domains",
               "transform": "join_domains",
-              "item": "email"
+              "item": "email",
+              "format": "email"
             }
           ],
           "calendarId": "allowed_calendars"
@@ -151,17 +154,20 @@
       "update_event": {
         "message": { "text": "description", "verb": "Sent" },
         "summary": "Change event[: {summary|short}]",
+        "argDefaults": {"calendarId": "primary"},
         "executionMapping": {
           "attendees": [
             {
               "field": "allowed_attendees",
               "transform": "join",
-              "item": "email"
+              "item": "email",
+              "format": "email"
             },
             {
               "field": "allowed_domains",
               "transform": "join_domains",
-              "item": "email"
+              "item": "email",
+              "format": "email"
             }
           ],
           "calendarId": "allowed_calendars"
@@ -175,6 +181,7 @@
       },
       "delete_event": {
         "summary": "Delete an event",
+        "argDefaults": {"calendarId": "primary"},
         "executionMapping": {
           "calendarId": "allowed_calendars"
         },

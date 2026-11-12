@@ -12,9 +12,10 @@
  *    straight from that declaration (`message.text`/`message.verb`) —
  *    nothing guessed from a fixed prose vocabulary, nothing hardcoded per
  *    connector/profile in this file.
- *  - Strip-and-replace: any existing Suveren footer is removed before appending,
- *    so it's idempotent AND an authorized edit regenerates the footer with its
- *    new receipt (live content ↔ current receipt).
+ *  - The gateway's own trailing footer is removed when a call ARRIVES (an
+ *    edit carrying the old one, e.g. a calendar description), before the
+ *    card and the content hash; at send the footer is only appended. Any
+ *    other line that looks like the mark is refused (markLikeLine).
  */
 
 import { deriveIdentityLine, type Subject } from '@hap/core';
@@ -50,16 +51,56 @@ export function setAsBaseUrl(url: string): void {
 const OPERATOR_NAME = process.env.SUVEREN_OPERATOR_NAME ?? 'Suveren';
 
 /**
- * Strip anchor — matches an already-appended Suveren footer through the end of
- * the content, regardless of identity variant, verb (Sent/Published), or
- * separator (legacy em-dash "—" or the current ASCII "--"). Used to remove a
- * prior footer before appending a fresh one (idempotent + regenerates on edit).
+ * The gateway's OWN footer, exactly as it writes it (and has written it), at
+ * the very end of a text — nothing else. Line-anchored: it starts on a line
+ * of its own, after the text.
+ *
+ *   now:        "\n\n-- <identity>. Ticket: <AS>/t/<id>"
+ *   before:     the same with "Receipt:" and /r/<id>, followed by a second
+ *               line "\n\n-- <operator> … Human Agency Protocol …" (two
+ *               wordings of that line were shipped)
+ *   first:      "\n\n— Sent by an AI agent via <operator>. Verify: <AS>/r/<id>"
+ *
+ * <identity> is hap-core's deriveIdentityLine ("Sent by an AI agent via X",
+ * "Sent by N's AI agent, verified by X", older "…an AI agent of N…") with the
+ * verb swapped to "Published" on publishing tools — always one line. Group 1
+ * is the ticket id the footer names.
+ *
+ * Replaces the earlier greedy anchor that removed everything from the first
+ * footer-like text to the end, including approved text after it.
  */
-// Matches BOTH footer wordings so verification/strip works across versions
-// forever: v1 "…by an AI agent of «name»" (and the no-name "…by an AI agent
-// via …"), and v1.1 "…by «name»'s AI agent". Already-sent content keeps its
-// original footer; never retro-change it.
-const FOOTER_RE = /\n*(?:—|--) (?:Sent|Published) by (?:an AI agent|[^\n]+?'s AI agent)[\s\S]*$/;
+const OWN_TRAILING_FOOTER_RE =
+  /(?:^|\n+)(?:—|--) (?:Sent|Published) by [^\n]+?\. (?:Ticket|Receipt|Verify): https?:\/\/[^\s]+?\/[rt]\/([A-Za-z0-9_-]+)(?:\n+-- [^\n]*Human Agency Protocol[^\n]*)?[ \t]*\n*$/;
+
+/**
+ * A line that starts like the gateway's mark ("-- Sent by …", "— Published by
+ * …"), at the start of a line. A quoted line ("> -- Sent by …") does not.
+ */
+const MARK_LIKE_LINE_RE = /^[ \t]*(?:—|--) (?:Sent|Published) by\b.*$/m;
+
+/**
+ * Remove the gateway's own trailing footer (see OWN_TRAILING_FOOTER_RE) and
+ * the blank lines before it. Text with no such footer is returned unchanged.
+ * Applied when a call ARRIVES, before the card and the content hash — never
+ * at send — so the text approved, hashed and sent is one text.
+ */
+export function stripOwnTrailingFooter(value: string): string {
+  return OWN_TRAILING_FOOTER_RE.test(value) ? value.replace(OWN_TRAILING_FOOTER_RE, '') : value;
+}
+
+/** The first line of `value` that starts like the gateway's mark, or null. */
+export function markLikeLine(value: string): string | null {
+  const m = MARK_LIKE_LINE_RE.exec(value);
+  return m ? m[0].trim() : null;
+}
+
+/** The AI-facing refusal for a text that carries a mark-like line of its own. */
+export function markLikeLineRefusalText(toolName: string, field: string, line: string): string {
+  const shown = line.length > 120 ? `${line.slice(0, 117)}...` : line;
+  return `Refused: the "${field}" of ${toolName} contains a line that looks like the gateway's AI mark: "${shown}". ` +
+    `Remove that line from the text. The gateway adds the mark itself, once, at the end; the AI adds no mark or footer of its own. ` +
+    `Nothing ran and no ticket was requested.`;
+}
 
 /** v1: footer on for everyone (free-tier behavior). Hook for paid opt-out later. */
 export function shouldAttachFooter(): boolean {
@@ -90,11 +131,6 @@ export function detectContentField(tool: DiscoveredTool): string | null {
   return tool.gating?.message?.text ?? null;
 }
 
-/** Remove a previously-appended Suveren footer (back through preceding blank lines). */
-function stripFooter(value: string): string {
-  return value.replace(FOOTER_RE, '').replace(/\n+$/, '');
-}
-
 /**
  * Return a copy of `args` with the verification footer appended to the
  * declared content field. Returns `args` unchanged when no footer applies:
@@ -112,5 +148,7 @@ export function appendVerificationFooter(
 
   const field = message.text;
   const current = typeof args[field] === 'string' ? (args[field] as string) : '';
-  return { ...args, [field]: stripFooter(current) + footerText(receiptId, message.verb, subject) };
+  // Append only. Any earlier footer of the gateway's own was removed when the
+  // call arrived (stripOwnTrailingFooter), before the card and the hash.
+  return { ...args, [field]: current + footerText(receiptId, message.verb, subject) };
 }

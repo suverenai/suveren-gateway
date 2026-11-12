@@ -141,6 +141,13 @@ describe('inTicket — mapping kinds', () => {
   it('join: the list itself is in the ticket', () => {
     expect(inTicket(['a@x', 'b@y'], { field: 'recipients', transform: 'join' }, { recipients: 'a@x,b@y' })).toBe(true);
   });
+  it('join shared by several arguments (to + cc): each one is in the ticket, an outside value is not', () => {
+    const signed = { recipients: 'a@x,b@y,c@z' };
+    expect(inTicket(['a@x'], { field: 'recipients', transform: 'join' }, signed)).toBe(true);
+    expect(inTicket(['b@y', 'c@z'], { field: 'recipients', transform: 'join' }, signed)).toBe(true);
+    expect(inTicket(['a@x', 'd@w'], { field: 'recipients', transform: 'join' }, signed)).toBe(false);
+    expect(inTicket([], { field: 'recipients', transform: 'join' }, signed)).toBe(false);
+  });
   it('length / join_domains carry a derivative, not the value — no tag', () => {
     expect(inTicket(['a@x'], { field: 'recipient_count', transform: 'length' }, { recipient_count: 1 })).toBe(false);
     expect(inTicket(['a@x'], { field: 'domains', transform: 'join_domains' }, { domains: 'x' })).toBe(false);

@@ -4,7 +4,9 @@
  * Pins the behavior that's easy to get subtly wrong: the footer applies only
  * to a tool whose manifest declares `message` (never by profile name), goes
  * into the DECLARED text field with the DECLARED verb (Sent/Published),
- * strip-and-replace idempotency (so edits regenerate cleanly), the Gmail
+ * strip-on-arrival + append-at-send (so edits regenerate cleanly; decided
+ * 2026-11-12: the strip moved to when the call arrives, before the card and the
+ * hash — appendVerificationFooter itself only appends), the Gmail
  * `raw` skip, and the one-line footer (ticket link only).
  *
  * NOTE: the assurance wording ("of «name», verified by …") comes from hap-core
@@ -13,7 +15,7 @@
  * decoupled from hap-core's exact separator punctuation.
  */
 import { describe, it, expect } from 'vitest';
-import { appendVerificationFooter, shouldAttachFooter } from '../src/lib/receipt-footer';
+import { appendVerificationFooter, shouldAttachFooter, stripOwnTrailingFooter } from '../src/lib/receipt-footer';
 import type { MessageGatingDeclaration } from '../src/lib/tool-gating-types';
 import type { DiscoveredTool } from '../src/lib/integration-manager';
 
@@ -84,18 +86,18 @@ describe('appendVerificationFooter', () => {
     expect(out.body).not.toContain('<a '); // no HTML
   });
 
-  it('is idempotent — re-applying does not stack footers', () => {
+  it('arrival strip + append is idempotent — re-applying does not stack footers', () => {
     const t = tool(BODY, { body: STRING }, 'send_message');
     const once = appendVerificationFooter(t, { body: 'Hi' }, 'r5');
-    const twice = appendVerificationFooter(t, once, 'r5');
+    const twice = appendVerificationFooter(t, { body: stripOwnTrailingFooter(once.body as string) }, 'r5');
     expect(footerCount(twice.body as string)).toBe(1);
     expect(twice.body).toBe(once.body);
   });
 
-  it('strip-and-replace — an edit swaps the old receipt for the new one', () => {
+  it('arrival strip + append — an edit swaps the old receipt for the new one', () => {
     const t = tool(BODY, { body: STRING });
     const first = appendVerificationFooter(t, { body: 'Draft' }, 'old-id');
-    const edited = appendVerificationFooter(t, { ...first }, 'new-id');
+    const edited = appendVerificationFooter(t, { body: stripOwnTrailingFooter(first.body as string) }, 'new-id');
     expect(footerCount(edited.body as string)).toBe(1);
     expect(edited.body).toContain('/t/new-id');
     expect(edited.body).not.toContain('old-id');
@@ -105,7 +107,7 @@ describe('appendVerificationFooter', () => {
   it('strips a legacy em-dash footer too (back-compat)', () => {
     const t = tool(BODY, { body: STRING });
     const legacy = 'Draft\n\n— Sent by an AI agent via Suveren. Verify: https://www.suveren.ai/r/old';
-    const out = appendVerificationFooter(t, { body: legacy }, 'new-id');
+    const out = appendVerificationFooter(t, { body: stripOwnTrailingFooter(legacy) }, 'new-id');
     expect(footerCount(out.body as string)).toBe(1);
     expect(out.body).toContain('Draft');
     expect(out.body).not.toContain('old');
@@ -171,10 +173,10 @@ describe('appendVerificationFooter — identity (v0.6)', () => {
     expect(out.body).not.toContain('agent of'); // no name disclosed
   });
 
-  it('strip-and-replace works on a high footer too (no stacking)', () => {
+  it('arrival strip + append works on a high footer too (no stacking)', () => {
     const t = tool(BODY, { body: STRING });
     const once = appendVerificationFooter(t, { body: 'Hi' }, 'r1', asVouched);
-    const twice = appendVerificationFooter(t, once, 'r2', asVouched);
+    const twice = appendVerificationFooter(t, { body: stripOwnTrailingFooter(once.body as string) }, 'r2', asVouched);
     expect(footerCount(twice.body as string)).toBe(1);
   });
 });

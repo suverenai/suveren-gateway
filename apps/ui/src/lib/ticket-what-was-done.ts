@@ -152,7 +152,8 @@ function sameValue(a: unknown, b: unknown): boolean {
 /**
  * True only when the signed ticket verifiably carries THIS value: a direct
  * mapping with an equal value ("0.10" ≡ 0.1), a divisor mapping that divides
- * to it, or a `join` of it. A field derived from the value without being it
+ * to it, or a `join` that lists every item of it (alone, or with the items of
+ * other arguments sharing that field). A field derived from the value without being it
  * (`length` → a count, `join_domains` → domains only) is not tagged — the
  * ticket does not carry the value itself.
  */
@@ -171,7 +172,12 @@ export function inTicket(
       // An object item is read by the property the manifest's mapping names (`item`), as the gateway does.
       const arr = Array.isArray(value) ? value : [value];
       const read = (x: unknown) => (m.item && x && typeof x === 'object' && m.item in x ? String((x as Record<string, unknown>)[m.item]) : String(x));
-      return arr.map(read).join(',') === String(signed);
+      // Several arguments may share one joined field (an email's to + cc —
+      // their items combine, tool-gating-types.ts): the value is in the
+      // ticket when every one of its items is in the signed list.
+      const signedItems = String(signed).split(',');
+      const items = arr.map(read);
+      return items.length > 0 && items.every((i) => signedItems.includes(i));
     }
     if (m.transform) return false;
     return sameValue(value, signed);

@@ -220,6 +220,12 @@ export interface ToolGatingConfig {
   /** Arguments declared "not content" — see tool-gating-types.ts `nonContentArgs`; enforced by sealed-args.ts. */
   nonContentArgs?: string[];
 
+  /** Arguments accepted only where the mandate's profile seals them — see tool-gating-types.ts `sealedOnlyArgs`. */
+  sealedOnlyArgs?: string[];
+
+  /** The connector's own default for an omitted write argument — see tool-gating-types.ts `argDefaults`. */
+  argDefaults?: Record<string, unknown>;
+
   /**
    * Transport encoding to apply to an outgoing argument, per field.
    *

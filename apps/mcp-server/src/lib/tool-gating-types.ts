@@ -16,6 +16,9 @@
 /** How to transform an array-valued tool argument into one execution field. */
 export type ExecutionMappingTransform = 'join' | 'join_domains' | 'length';
 
+/** The list transforms — the only ones several arguments may share a field through. */
+export const LIST_TRANSFORMS: readonly ExecutionMappingTransform[] = ['length', 'join', 'join_domains'];
+
 /**
  * Execution mapping value — how a tool argument maps to execution context field(s).
  * - string: direct copy (argName -> fieldName)
@@ -23,16 +26,41 @@ export type ExecutionMappingTransform = 'join' | 'join_domains' | 'length';
  * - { field, transform }: array transform (e.g., join_domains)
  * - Array form: one argument maps to multiple execution fields
  *
+ * Several arguments, one field: when two or more arguments map to the same
+ * execution field, their items COMBINE before the transform runs — `length`
+ * counts the items of all of them (the sum), `join` lists all of them (the
+ * union, in mapping order), `join_domains` the distinct domains of all of
+ * them. An email's `to` and `cc` both map to the recipient count and the
+ * recipient/domain lists this way, so every recipient is counted and
+ * scope-checked. Allowed only when every argument on that field uses the
+ * SAME list transform; a direct copy or divisor shared by two arguments
+ * would have one overwrite the other, so the manifest loader refuses it
+ * (manifest-loader.ts `invalidExecutionMappingReason`).
+ *
  * `item` (with a transform): the property to read from each item when the
  * argument's items are objects — e.g. calendar attendees `{ email, … }` →
  * `"item": "email"`. Declared by the manifest, never assumed: an object item
  * without it does not become a value the scope check could accept.
+ *
+ * `format: "email"` (with a transform): every item of the argument must be
+ * exactly ONE plain email address — no comma, semicolon, whitespace, angle
+ * brackets, quotes, parentheses, a second `@`, an empty local part or domain.
+ * Otherwise the call is refused at the gate, before any proposal or ticket:
+ * `join` separates items with commas and `join_domains` reads the text after
+ * the last `@`, so "x@evil.com,a@customer.com" or "x@evil.com
+ * <a@customer.com>" would count as one recipient in customer.com. Required on
+ * every `join_domains` entry (the manifest loader refuses one without it);
+ * declare it on every entry of a recipient argument. Checked on the item as
+ * read (after `item`).
  */
+export type MappingItemFormat = 'email';
+export const MAPPING_ITEM_FORMATS: readonly MappingItemFormat[] = ['email'];
+
 export type ExecutionMappingValue =
   | string
   | { field: string; divisor: number }
-  | { field: string; transform: ExecutionMappingTransform; item?: string }
-  | Array<{ field: string; divisor?: number; transform?: ExecutionMappingTransform; item?: string }>;
+  | { field: string; transform: ExecutionMappingTransform; item?: string; format?: MappingItemFormat }
+  | Array<{ field: string; divisor?: number; transform?: ExecutionMappingTransform; item?: string; format?: MappingItemFormat }>;
 
 /**
  * Preview declaration (AU3) — a manifest's description of how an action
@@ -393,6 +421,29 @@ export interface ProfileToolGatingEntry {
    * insert, source link, execution mapping, content field).
    */
   nonContentArgs?: string[];
+  /**
+   * Arguments accepted only under a mandate whose profile version SEALS them
+   * (lists them in its content_binding). An `executionMapping` entry normally
+   * makes an argument a declared reference (sealed-args.ts) — for these it
+   * does not: the mapping adds its checks (count, scope) and never lifts the
+   * unsealed-argument refusal under an older version that does not bind them.
+   * Email: `cc` is mapped like `to` but refused under email@0.4, which seals
+   * only the body. Refused at load on a read tool and on an argument also
+   * blocked or declared not-content.
+   */
+  sealedOnlyArgs?: string[];
+  /**
+   * The connector's OWN default for a write argument the AI may omit, e.g.
+   * linkedin `visibility` -> "PUBLIC", calendar `calendarId` -> "primary".
+   * When the call omits it (absent or null), the gateway fills it in when the
+   * call arrives — before the scope check, the card and the content hash — and
+   * sends it explicitly, so the value checked and shown is the value used,
+   * whatever the connector's default later becomes. Must match the connector's
+   * source; declare it only where omitting the argument means exactly this
+   * value. Write tools only; refused at load on an argument that is blocked,
+   * gateway-owned, or not a plain JSON value.
+   */
+  argDefaults?: Record<string, unknown>;
   /** D1 — see {@link CheckDeclaration}. Evaluated by checks.ts for the card. */
   checks?: CheckDeclaration[];
 }

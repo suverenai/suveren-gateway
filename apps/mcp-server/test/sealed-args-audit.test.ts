@@ -100,7 +100,7 @@ describe('shipped manifests: every argument of a sealed tool is classified', () 
     'linkedin.create_image_post[altText]',        // publish@0.4-0.7 only
     'linkedin.create_image_post[imagePath]',      // publish@0.4-0.7 only; the file NAME is bound from 0.8, not its bytes
     'linkedin.create_image_post[imageUrl]',       // publish@0.4-0.7 only; the URL is bound from 0.8, not the image bytes
-    'mail.send_message[cc]',                      // email@0.4 only
+    'mail.send_message[cc]',                      // email@0.4 only — mapped for count/scope, but sealedOnlyArgs keeps the refusal
     'mail.send_message[subject]',                 // email@0.4 only
   ];
 

@@ -1,0 +1,301 @@
+{
+  "integration": "calendar",
+  "npmPackage": "@humanagencyp/google-calendar-mcp",
+  "npmVersion": "0.1.2",
+  "tools": {
+    "create_event": {
+      "type": "object",
+      "properties": {
+        "calendarId": {
+          "type": "string",
+          "description": "Calendar ID (default: \"primary\")"
+        },
+        "summary": {
+          "type": "string",
+          "description": "Event title"
+        },
+        "description": {
+          "type": "string"
+        },
+        "location": {
+          "type": "string"
+        },
+        "start": {
+          "type": "object",
+          "properties": {
+            "dateTime": {
+              "type": "string",
+              "description": "RFC3339 timestamp for timed events"
+            },
+            "date": {
+              "type": "string",
+              "description": "YYYY-MM-DD for all-day events"
+            },
+            "timeZone": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "description": "Event start (exactly one of dateTime or date)"
+        },
+        "end": {
+          "type": "object",
+          "properties": {
+            "dateTime": {
+              "type": "string"
+            },
+            "date": {
+              "type": "string"
+            },
+            "timeZone": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "description": "Event end (exactly one of dateTime or date)"
+        },
+        "duration_minutes": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "description": "Event duration in minutes. Agent must compute this from start/end — it is checked against the HAP booking_duration_max bound."
+        },
+        "lookahead_days": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of days from today until the event starts (0 = today). Checked against the HAP lookahead_days_max bound."
+        },
+        "attendees": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "email": {
+                "type": "string",
+                "format": "email"
+              }
+            },
+            "required": [
+              "email"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "sendUpdates": {
+          "type": "string",
+          "enum": [
+            "all",
+            "externalOnly",
+            "none"
+          ],
+          "description": "Who to notify (default: none)"
+        }
+      },
+      "required": [
+        "summary",
+        "start",
+        "end",
+        "duration_minutes",
+        "lookahead_days"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "delete_event": {
+      "type": "object",
+      "properties": {
+        "calendarId": {
+          "type": "string",
+          "description": "Calendar ID (default: \"primary\")"
+        },
+        "eventId": {
+          "type": "string",
+          "description": "Event ID to delete"
+        },
+        "sendUpdates": {
+          "type": "string",
+          "enum": [
+            "all",
+            "externalOnly",
+            "none"
+          ],
+          "description": "Who to notify (default: none)"
+        }
+      },
+      "required": [
+        "eventId"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "free_busy": {
+      "type": "object",
+      "properties": {
+        "timeMin": {
+          "type": "string",
+          "description": "Lower bound (RFC3339)"
+        },
+        "timeMax": {
+          "type": "string",
+          "description": "Upper bound (RFC3339)"
+        },
+        "calendarIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Calendar IDs to query (default: [\"primary\"])"
+        }
+      },
+      "required": [
+        "timeMin",
+        "timeMax"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "get_event": {
+      "type": "object",
+      "properties": {
+        "calendarId": {
+          "type": "string",
+          "description": "Calendar ID (default: \"primary\")"
+        },
+        "eventId": {
+          "type": "string",
+          "description": "Event ID"
+        }
+      },
+      "required": [
+        "eventId"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "list_calendars": {
+      "type": "object",
+      "properties": {},
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "list_events": {
+      "type": "object",
+      "properties": {
+        "calendarId": {
+          "type": "string",
+          "description": "Calendar ID (default: \"primary\")"
+        },
+        "timeMin": {
+          "type": "string",
+          "description": "Lower bound (RFC3339, e.g. 2026-04-22T00:00:00Z)"
+        },
+        "timeMax": {
+          "type": "string",
+          "description": "Upper bound (RFC3339)"
+        },
+        "q": {
+          "type": "string",
+          "description": "Free-text search"
+        },
+        "maxResults": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 250,
+          "description": "Max events to return (default: 25)"
+        },
+        "singleEvents": {
+          "type": "boolean",
+          "description": "Expand recurring events into instances (default: true)"
+        },
+        "orderBy": {
+          "type": "string",
+          "enum": [
+            "startTime",
+            "updated"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "update_event": {
+      "type": "object",
+      "properties": {
+        "calendarId": {
+          "type": "string",
+          "description": "Calendar ID (default: \"primary\")"
+        },
+        "eventId": {
+          "type": "string",
+          "description": "Event ID to update"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "location": {
+          "type": "string"
+        },
+        "start": {
+          "type": "object",
+          "properties": {
+            "dateTime": {
+              "type": "string"
+            },
+            "date": {
+              "type": "string"
+            },
+            "timeZone": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "end": {
+          "type": "object",
+          "properties": {
+            "dateTime": {
+              "type": "string"
+            },
+            "date": {
+              "type": "string"
+            },
+            "timeZone": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "attendees": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "email": {
+                "type": "string",
+                "format": "email"
+              }
+            },
+            "required": [
+              "email"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "sendUpdates": {
+          "type": "string",
+          "enum": [
+            "all",
+            "externalOnly",
+            "none"
+          ]
+        }
+      },
+      "required": [
+        "eventId"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  }
+}
