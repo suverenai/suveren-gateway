@@ -50,6 +50,26 @@ function loadFixture(env) {
   return { path, data: JSON.parse(readFileSync(path, 'utf8')) };
 }
 
+/** Says exactly which parts of the report come from the test fixture, so a
+ *  part read from this computer is never labelled as fixture data. */
+export function fixtureNote(fixture) {
+  const f = fixture.data ?? {};
+  const parts = [
+    ['platform', 'the platform'],
+    ['root', 'system folders'],
+    ['psOutput', 'the process list'],
+    ['groupsOutput', 'the group list'],
+    ['registry', 'registry values'],
+    ['icacls', 'access lists'],
+    ['whoamiUser', 'the user identity'],
+    ['owners', 'file owners'],
+    ['writable', 'chosen write permissions'],
+    ['uid', 'the user id'],
+  ].filter(([key]) => key in f).map(([, label]) => label);
+  const list = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : (parts[0] ?? 'nothing');
+  return `Test fixture in use (${fixture.path}): ${list} in this report ${parts.length === 1 ? 'is' : 'are'} not this computer's.`;
+}
+
 function buildIo(platform, fixture, root = '') {
   const f = fixture?.data ?? {};
   // Fixture runner for the Windows access-list tools: `icacls` answers from
@@ -135,7 +155,7 @@ export function runSetupCheckCli(args, gateway, opts) {
     const platform = fixture?.data.platform ?? process.platform;
     const root = fixture?.data.root ?? '';
     const uid = fixture?.data.uid !== undefined ? fixture.data.uid : (typeof process.getuid === 'function' ? process.getuid() : null);
-    const notes = fixture ? [`Test fixture in use (${fixture.path}): system folders, process list and group list in this report are not this computer's.`] : [];
+    const notes = fixture ? [fixtureNote(fixture)] : [];
     const report = runSetupCheck({
       platform,
       home: homedir(),

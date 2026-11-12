@@ -90,6 +90,20 @@ function processListDiagnostic(w: World): string {
     `${Date.now() - started} ms, stdout ${String(r.stdout ?? '').length} chars (${parsed})\nstderr: ${String(r.stderr ?? '').slice(0, 3000)}`;
 }
 
+/** TEMP DIAGNOSTIC (remove once the Windows CI run is green): is the
+ *  test's OWN child in the Windows process list now, and with which command
+ *  line? Only that one process is queried, and its token is replaced by a
+ *  fixed marker before it is printed (it is fake, but still never shown). */
+function childDiagnostic(w: World, pid: number | undefined, token: string): string {
+  if (!IS_WINDOWS_HOST || !pid) return '';
+  const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command',
+    `Get-CimInstance -ClassName Win32_Process -Filter "ProcessId=${Number(pid)}" | Select-Object ProcessId, Name, CommandLine | ConvertTo-Json -Compress`],
+  { env: hostIsolatedEnv(w.home, w.base), encoding: 'utf8', windowsHide: true, timeout: WINDOWS_POWERSHELL_TIMEOUT_MS });
+  const out = String(r.stdout ?? '').split(token).join('<TOKEN>');
+  return `\n[TEMP DIAGNOSTIC] child in list: status ${r.status}, ${out.trim() ? `entry ${out.trim().slice(0, 1500)}` : 'NOT FOUND'}` +
+    `${r.stderr ? `\nstderr: ${String(r.stderr).split(token).join('<TOKEN>').slice(0, 1500)}` : ''}`;
+}
+
 function run(w: World, args: string[], opts: { cli?: string; fixture?: boolean; env?: Record<string, string>; timeoutMs?: number } = {}) {
   const env: Record<string, string> = {
     ...hostIsolatedEnv(w.home, w.base),
@@ -147,7 +161,8 @@ describe('suveren-gateway check — results and exit codes', () => {
     const idx = order.map((s) => r.stdout.indexOf(s));
     expect(idx.every((n) => n > 0)).toBe(true);
     expect([...idx].sort((a, b) => a - b)).toEqual(idx);
-    expect(r.stdout).toContain('Test fixture in use');
+    // The note names exactly what the fixture replaces.
+    expect(r.stdout).toContain(`Test fixture in use (${w.fixture}): system folders, the process list and the group list in this report are not this computer's.`);
     expect(r.stdout + r.stderr).not.toContain('NOLEAK');
     expect(readdirSync(w.data)).toEqual(before);
   });
@@ -248,16 +263,28 @@ describe('suveren-gateway check — real process list', () => {
     // A stand-in for the gateway's Mollie connector: `mcp-remote <url> --header "Authorization: Bearer <token>"`.
     const token = `access_TESTONLY${Date.now()}x9`;
     const script = join(w.base, 'node_modules', 'mcp-remote', 'dist', 'proxy.js');
-    put(script, 'setTimeout(() => {}, 60_000);');
+    // Lives until the test kills it (afterEach): the check may need a minute
+    // before it reads the list on a slow runner, so a fixed lifetime (60 s
+    // before) could end the child first.
+    put(script, 'setInterval(() => {}, 60_000);');
     const child = spawn(process.execPath, [script, 'https://mcp.mollie.com/mcp', '--header', `Authorization: Bearer ${token}`], { stdio: 'ignore' });
     children.push(child);
+    const started = Date.now();
     await new Promise((r) => setTimeout(r, 1000));
-    // No psOutput in the fixture: the CLI runs the real `ps`.
+    // No psOutput in the fixture: the CLI reads the real process list.
     writeFileSync(w.fixture, JSON.stringify({ root: w.root, groupsOutput: 'staff' }));
 
+    const t0 = Date.now();
     const text = run(w, [], { timeoutMs: cliLimit });
+    const t1 = Date.now();
     const json = run(w, ['--json'], { timeoutMs: cliLimit });
-    expectOr(/open {9}mcp-remote: a sign-in token/.test(text.stdout), () => `${text.stdout}\nstatus ${text.status}; stderr: ${text.stderr.slice(0, 2000)}${processListDiagnostic(w)}`).toBe(true);
+    const t2 = Date.now();
+    expect(text.stdout).toContain(`Test fixture in use (${w.fixture}): system folders and the group list in this report are not this computer's.`);
+    expectOr(/open {9}mcp-remote: a sign-in token/.test(text.stdout), () =>
+      `${text.stdout}\nstatus ${text.status}; stderr: ${text.stderr.slice(0, 2000)}` +
+      `\n[TEMP DIAGNOSTIC] child pid ${child.pid}, exitCode ${child.exitCode}, signal ${child.signalCode}; ` +
+      `CLI runs took ${t1 - t0} ms and ${t2 - t1} ms; child started ${t0 - started} ms before the first run` +
+      `${processListDiagnostic(w)}${childDiagnostic(w, child.pid, token)}`).toBe(true);
     expect(text.stdout).toMatch(/open {9}mcp-remote: a sign-in token \(Authorization: Bearer\) in its start command/);
     expect(text.stdout + text.stderr).not.toContain(token);
     expect(json.stdout + json.stderr).not.toContain(token);
