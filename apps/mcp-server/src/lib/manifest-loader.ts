@@ -953,6 +953,49 @@ export function invalidMessageRecipientsReason(toolName: string, entry: unknown)
   return `override "${toolName}": the message cc argument "${cc}" must map to every field the to argument "${to}" maps to (missing: ${missing.join(', ')})`;
 }
 
+/**
+ * `sealedOnlyArgs` and `argDefaults` (tool-gating-types.ts): shape checks.
+ * Both are write-tool declarations. A sealed-only argument cannot also be
+ * blocked or declared not-content. A default must be a plain JSON value
+ * (string, number, boolean, or a list of them) and may not name an argument
+ * that is blocked or owned by the gateway.
+ */
+export function invalidArgDeclarationsReason(toolName: string, entry: unknown): string | null {
+  if (entry === null || typeof entry !== 'object') return null;
+  const e = entry as Record<string, unknown>;
+  const at = `override "${toolName}"`;
+  const isRead = e.category === 'read' || e.category === 'disabled';
+  const blocked = new Set(Array.isArray(e.blockedArgs) ? e.blockedArgs as string[] : []);
+  const nonContent = new Set(Array.isArray(e.nonContentArgs) ? e.nonContentArgs as string[] : []);
+  if (e.sealedOnlyArgs !== undefined) {
+    const list = e.sealedOnlyArgs;
+    if (!Array.isArray(list) || list.length === 0 || !list.every(a => typeof a === 'string' && a.length > 0)) {
+      return `${at}.sealedOnlyArgs must be a non-empty list of argument names`;
+    }
+    if (isRead) return `${at}.sealedOnlyArgs is allowed on write tools only`;
+    for (const a of list as string[]) {
+      if (blocked.has(a)) return `${at}.sealedOnlyArgs lists "${a}", which is blocked (blockedArgs)`;
+      if (nonContent.has(a)) return `${at}.sealedOnlyArgs lists "${a}", which is declared not content (nonContentArgs)`;
+    }
+  }
+  if (e.argDefaults !== undefined) {
+    const d = e.argDefaults;
+    if (d === null || typeof d !== 'object' || Array.isArray(d) || Object.keys(d).length === 0) {
+      return `${at}.argDefaults must be a non-empty object mapping argument names to values`;
+    }
+    if (isRead) return `${at}.argDefaults is allowed on write tools only`;
+    const plain = (v: unknown) => typeof v === 'string' || typeof v === 'boolean' || (typeof v === 'number' && Number.isFinite(v));
+    for (const [a, v] of Object.entries(d as Record<string, unknown>)) {
+      if (blocked.has(a)) return `${at}.argDefaults names "${a}", which is blocked (blockedArgs)`;
+      if (GATEWAY_OWNED_ARGS.includes(a)) return `${at}.argDefaults names "${a}", which is owned by the gateway`;
+      if (!(plain(v) || (Array.isArray(v) && v.every(plain)))) {
+        return `${at}.argDefaults."${a}" must be a string, number, boolean or a list of them`;
+      }
+    }
+  }
+  return null;
+}
+
 /** Both executionMapping rules above, over the default entry and every override of one manifest. */
 export function invalidManifestExecutionMappingReason(manifest: Pick<IntegrationManifest, 'toolGating'>): string | null {
   const def = manifest.toolGating?.default;
@@ -961,7 +1004,8 @@ export function invalidManifestExecutionMappingReason(manifest: Pick<Integration
     if (reason) return reason;
   }
   for (const [toolName, entry] of Object.entries(manifest.toolGating?.overrides ?? {})) {
-    const reason = invalidExecutionMappingReason(toolName, entry) ?? invalidMessageRecipientsReason(toolName, entry);
+    const reason = invalidExecutionMappingReason(toolName, entry) ?? invalidMessageRecipientsReason(toolName, entry)
+      ?? invalidArgDeclarationsReason(toolName, entry);
     if (reason) return reason;
   }
   return null;

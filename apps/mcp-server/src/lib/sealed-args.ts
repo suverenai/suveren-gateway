@@ -52,6 +52,7 @@ export interface SealedArgsGating {
   sourceFromArg?: { arg: string };
   blockedArgs?: string[];
   nonContentArgs?: string[];
+  sealedOnlyArgs?: string[];
 }
 
 export type ArgClass = 'bound' | 'reference' | 'not-content';
@@ -98,7 +99,10 @@ export function classifySealedArgs(
   ref(gating.attachmentsArg);
   ref(gating.sourceFromArg?.arg);
   if (gating.insertFields?.length) ref(INSERT_ARG);
-  for (const name of Object.keys(gating.executionMapping ?? {})) ref(name);
+  // A mapped argument is a reference — unless the manifest declares it
+  // sealed-only: then only the binding itself makes it allowed.
+  const sealedOnly = new Set(gating.sealedOnlyArgs ?? []);
+  for (const name of Object.keys(gating.executionMapping ?? {})) if (!sealedOnly.has(name)) ref(name);
   for (const name of GATEWAY_OWNED_ARGS) ref(name);
   for (const name of gating.nonContentArgs ?? []) if (!classes.has(name)) classes.set(name, 'not-content');
   return { sealed: true, classes };

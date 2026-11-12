@@ -218,6 +218,7 @@
         "staticExecution": {
           "action_type": "send"
         },
+        "sealedOnlyArgs": ["cc"],
         "actionLabel": "Email sent",
         "sourceFromArg": {
           "kind": "message",

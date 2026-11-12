@@ -126,6 +126,7 @@
       "create_event": {
         "message": { "text": "description", "verb": "Sent" },
         "summary": "New event: {summary|short}[ on {start.dateTime,start.date|date}]",
+        "argDefaults": {"calendarId": "primary", "attendees": []},
         "executionMapping": {
           "duration_minutes": "duration",
           "lookahead_days": "lookahead",
@@ -153,6 +154,7 @@
       "update_event": {
         "message": { "text": "description", "verb": "Sent" },
         "summary": "Change event[: {summary|short}]",
+        "argDefaults": {"calendarId": "primary"},
         "executionMapping": {
           "attendees": [
             {
@@ -179,6 +181,7 @@
       },
       "delete_event": {
         "summary": "Delete an event",
+        "argDefaults": {"calendarId": "primary"},
         "executionMapping": {
           "calendarId": "allowed_calendars"
         },

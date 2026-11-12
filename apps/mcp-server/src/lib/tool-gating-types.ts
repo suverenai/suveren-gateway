@@ -421,6 +421,29 @@ export interface ProfileToolGatingEntry {
    * insert, source link, execution mapping, content field).
    */
   nonContentArgs?: string[];
+  /**
+   * Arguments accepted only under a mandate whose profile version SEALS them
+   * (lists them in its content_binding). An `executionMapping` entry normally
+   * makes an argument a declared reference (sealed-args.ts) — for these it
+   * does not: the mapping adds its checks (count, scope) and never lifts the
+   * unsealed-argument refusal under an older version that does not bind them.
+   * Email: `cc` is mapped like `to` but refused under email@0.4, which seals
+   * only the body. Refused at load on a read tool and on an argument also
+   * blocked or declared not-content.
+   */
+  sealedOnlyArgs?: string[];
+  /**
+   * The connector's OWN default for a write argument the AI may omit, e.g.
+   * linkedin `visibility` -> "PUBLIC", calendar `calendarId` -> "primary".
+   * When the call omits it (absent or null), the gateway fills it in when the
+   * call arrives — before the scope check, the card and the content hash — and
+   * sends it explicitly, so the value checked and shown is the value used,
+   * whatever the connector's default later becomes. Must match the connector's
+   * source; declare it only where omitting the argument means exactly this
+   * value. Write tools only; refused at load on an argument that is blocked,
+   * gateway-owned, or not a plain JSON value.
+   */
+  argDefaults?: Record<string, unknown>;
   /** D1 — see {@link CheckDeclaration}. Evaluated by checks.ts for the card. */
   checks?: CheckDeclaration[];
 }
