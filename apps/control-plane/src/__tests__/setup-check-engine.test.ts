@@ -490,6 +490,15 @@ describe('No passwords within reach', () => {
     expect(all).not.toContain('NOLEAK');
   });
 
+  it('a tool that passes its time limit is stopped and named, the check does not hang (real process)', { timeout: 30_000 }, () => {
+    const started = Date.now();
+    const r = real.run(process.execPath, ['-e', 'setTimeout(() => {}, 20000)'], 1000);
+    expect(Date.now() - started).toBeLessThan(15_000);
+    expect(r).toMatchObject({ error: 'failed', reason: 'did not finish within 1 s' });
+    // The Windows PowerShell calls use a limit with margin for slow machines.
+    expect(real.WINDOWS_POWERSHELL_TIMEOUT_MS).toBe(120_000);
+  });
+
   it('a process list that cannot be read says why (fixed phrase, never tool output) and is "cannot tell"', () => {
     const w = world();
     const r = runSetupCheck(ctx(w, { io: io({ ps: () => ({ error: 'failed', reason: 'did not finish within 30 s' }) }) }));
@@ -777,38 +786,22 @@ describe('toml-lite', () => {
 
 describe('providers.writable / nearestCreatable against the host running the tests', () => {
   // The answers come from the host's own file system and tools (POSIX
-  // permissions; on Windows real icacls, whoami and the owner lookup), so
-  // these tests spawn real processes: on a busy CI runner that needs more
-  // than vitest's default 5 s.
+  // permissions; on Windows real icacls, whoami and the owner lookup, which
+  // starts PowerShell), so these tests spawn real processes: on a slow CI
+  // runner that needs far more than vitest's default 5 s.
   const isWindows = process.platform === 'win32';
-  const HOST_TIMEOUT = 120_000;
-
-  /** TEMP DIAGNOSTIC (remove once the Windows CI run is green): what the
-   *  real tools printed, built ONLY when an assertion fails (it spawns
-   *  tools). Account names and SIDs of the CI runner, no secret. */
-  function windowsDiagnostic(path: string): string {
-    if (!isWindows) return '';
-    const out = (bin: string, args: string[], env?: Record<string, string>) => {
-      const r = spawnSync(bin, args, { encoding: 'utf8', windowsHide: true, env: env ? { ...process.env, ...env } : undefined });
-      return `$ ${bin} ${args[0] === '-NoProfile' ? '(owner lookup)' : args.join(' ')} → status ${r.status}\n${r.stdout ?? ''}${r.stderr ?? ''}`;
-    };
-    return `\n[TEMP DIAGNOSTIC]\n${out('icacls', [path])}\n${out('whoami', ['/user', '/fo', 'csv', '/nh'])}\n${out('whoami', ['/groups', '/fo', 'csv', '/nh'])}\n` +
-      out('powershell.exe', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command', real.WINDOWS_OWNER_SCRIPT], { SUVEREN_CHECK_PATH: path });
-  }
-  function expectHost<T>(value: T, expected: T, path: string) {
-    if (value !== expected) expect(value, `${windowsDiagnostic(path)}\nexists=${real.exists(path)}`).toBe(expected);
-  }
+  const HOST_TIMEOUT = 2 * real.WINDOWS_POWERSHELL_TIMEOUT_MS + 60_000;
 
   it('a file and folder this user created can be changed; a missing file there can be created', { timeout: HOST_TIMEOUT }, () => {
     const base = mkdtempSync(hostJoin(tmpdir(), 'setup-check-host-'));
     dirs.push(base);
     const file = hostJoin(base, 'mine.json');
     writeFileSync(file, '{}');
-    expectHost(real.writable(file), true, file);
-    expectHost(real.writable(base), true, base);
+    expect(real.writable(file)).toBe(true);
+    expect(real.writable(base)).toBe(true);
     const c = real.nearestCreatable(hostJoin(base, 'a', 'b', 'gateway-policy.json'));
     expect(c.ancestor).toBe(base);
-    expectHost(c.writable, true, base);
+    expect(c.writable).toBe(true);
   });
 
   it('the owner can change its own file even without write permission (POSIX chmod / Windows access list)', { timeout: HOST_TIMEOUT }, () => {
@@ -829,7 +822,7 @@ describe('providers.writable / nearestCreatable against the host running the tes
     }
     try {
       // The user still owns the file, so it may give itself write access again.
-      expectHost(real.writable(file), true, file);
+      expect(real.writable(file)).toBe(true);
     } finally {
       if (isWindows) icacls([file, '/reset']);
       else { chmodSync(dir, 0o755); chmodSync(file, 0o644); }
@@ -846,9 +839,9 @@ describe('providers.writable / nearestCreatable against the host running the tes
     const systemRoot = process.env.SystemRoot ?? 'C:\\Windows';
     const file = isWindows ? hostJoin(systemRoot, 'System32', 'kernel32.dll') : '/etc/hosts';
     const folder = isWindows ? hostJoin(systemRoot, 'WinSxS') : '/etc';
-    expectHost(real.writable(file), false, file);
+    expect(real.writable(file)).toBe(false);
     const inside = real.nearestCreatable(hostJoin(folder, 'suveren-check-test-missing', 'x.json'));
     expect(inside.ancestor).toBe(folder);
-    expectHost(inside.writable, false, folder);
+    expect(inside.writable).toBe(false);
   });
 });

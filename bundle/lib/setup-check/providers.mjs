@@ -114,6 +114,14 @@ export function nearestCreatable(path, platform = process.platform, runner = run
  * cache): GetAccessControl with only the Owner section, read-only. The path
  * goes in through an environment variable, never into the script text.
  */
+/**
+ * Time limit for a PowerShell call. Its first start can be slow: a GitHub
+ * Windows runner needed 50 s for the process list (2026-11-12). When the
+ * limit is passed, spawnSync stops PowerShell and the line reads "could not
+ * be read (PowerShell did not finish within 120 s)" — the check never hangs.
+ */
+export const WINDOWS_POWERSHELL_TIMEOUT_MS = 120_000;
+
 export const WINDOWS_OWNER_SCRIPT =
   '$p = $env:SUVEREN_CHECK_PATH; ' +
   '$s = [System.Security.AccessControl.AccessControlSections]::Owner; ' +
@@ -122,7 +130,7 @@ export const WINDOWS_OWNER_SCRIPT =
   '[Console]::Out.Write($a.GetOwner([System.Security.Principal.SecurityIdentifier]).Value)';
 
 export function windowsOwnerSid(path, runner = run) {
-  const r = runner('powershell.exe', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command', WINDOWS_OWNER_SCRIPT], 30_000, { SUVEREN_CHECK_PATH: path });
+  const r = runner('powershell.exe', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command', WINDOWS_OWNER_SCRIPT], WINDOWS_POWERSHELL_TIMEOUT_MS, { SUVEREN_CHECK_PATH: path });
   if (!r.ok) return null;
   const sid = String(r.stdout).trim();
   return /^S-1-\d+(-\d+)+$/.test(sid) ? sid : null;
@@ -221,8 +229,8 @@ export function procCommands(procDir) {
 
 /** Raw process-list output: `ps` text (macOS/Linux) or JSON (Windows). */
 export function psList(platform) {
-  // PowerShell's first start on a machine can take several seconds.
-  if (platform === 'win32') return run(WINDOWS_PROCESS_COMMAND[0], WINDOWS_PROCESS_COMMAND[1], 30_000);
+  // PowerShell's first start can be slow — see WINDOWS_POWERSHELL_TIMEOUT_MS.
+  if (platform === 'win32') return run(WINDOWS_PROCESS_COMMAND[0], WINDOWS_PROCESS_COMMAND[1], WINDOWS_POWERSHELL_TIMEOUT_MS);
   return run('ps', ['axww', '-o', 'user=,command=']);
 }
 

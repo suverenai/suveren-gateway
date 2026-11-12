@@ -33,7 +33,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { IS_WINDOWS_HOST, hostIsolatedEnv } from './setup-check-host.js';
-import { WINDOWS_PROCESS_COMMAND } from '../../../../bundle/lib/setup-check/providers.mjs';
+import { WINDOWS_POWERSHELL_TIMEOUT_MS, WINDOWS_PROCESS_COMMAND } from '../../../../bundle/lib/setup-check/providers.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const BUNDLE = resolve(__dirname, '../../../../bundle');
@@ -50,18 +50,6 @@ const EMPTY_PROCESS_LIST = IS_WINDOWS_HOST ? '[]' : '';
 /** Evaluate a diagnostic only when the check fails (it spawns tools). */
 function expectOr<T>(value: T, diagnostic: () => string) {
   return { toBe: (expected: T) => { if (value !== expected) expect(value, diagnostic()).toBe(expected); } };
-}
-
-/** TEMP DIAGNOSTIC (remove once the Windows CI run is green): what the real
- *  Windows tools print for a path, attached to a failure message only.
- *  Account names and SIDs of the CI runner, no secret. */
-function windowsDiagnostic(path: string): string {
-  if (!IS_WINDOWS_HOST) return '';
-  const out = (bin: string, args: string[]) => {
-    const r = spawnSync(bin, args, { encoding: 'utf8', windowsHide: true });
-    return `$ ${bin} ${args.join(' ')} → status ${r.status}\n${r.stdout ?? ''}${r.stderr ?? ''}`;
-  };
-  return `\n[TEMP DIAGNOSTIC]\n${out('icacls', [path])}\n${out('whoami', ['/user', '/fo', 'csv', '/nh'])}\n${out('whoami', ['/groups', '/fo', 'csv', '/nh'])}`;
 }
 
 const dirs: string[] = [];
@@ -95,7 +83,7 @@ function processListDiagnostic(w: World): string {
   if (!IS_WINDOWS_HOST) return '';
   const [bin, args] = WINDOWS_PROCESS_COMMAND;
   const started = Date.now();
-  const r = spawnSync(bin, args, { env: hostIsolatedEnv(w.home, w.base), encoding: 'utf8', windowsHide: true, timeout: 60_000, maxBuffer: 32 * 1024 * 1024 });
+  const r = spawnSync(bin, args, { env: hostIsolatedEnv(w.home, w.base), encoding: 'utf8', windowsHide: true, timeout: WINDOWS_POWERSHELL_TIMEOUT_MS, maxBuffer: 32 * 1024 * 1024 });
   let parsed = 'n/a';
   try { const d = JSON.parse(String(r.stdout ?? '').trim()); parsed = `JSON ok, ${Array.isArray(d) ? d.length : 1} entries`; } catch { parsed = 'not JSON'; }
   return `\n[TEMP DIAGNOSTIC] ${bin}: status ${r.status}, signal ${r.signal}, error ${r.error ? (r.error as NodeJS.ErrnoException).code : 'none'}, ` +
@@ -222,7 +210,7 @@ describe('suveren-gateway check — results and exit codes', () => {
     // The real host decides: this user created the file, so it can change it.
     const writableRun = run(w, [], { env: { SUVEREN_POLICY_FILE: policy } });
     const expectedWritable = `  open         IT has fixed the Authority Server address, but this user can change the settings file (${policy})`;
-    expectOr(writableRun.stdout.includes(expectedWritable), () => `${writableRun.stdout}${windowsDiagnostic(policy)}`).toBe(true);
+    expect(writableRun.stdout).toContain(expectedWritable);
     const none = run(w, []);
     const lines = none.stdout.split('\n').filter((l) => /IT settings|create that file/.test(l));
     // On a Windows host the check also names the machine registry key, where
@@ -245,16 +233,17 @@ describe('suveren-gateway check — results and exit codes', () => {
         : join(w.root, 'etc', 'claude-code', 'managed-mcp.json');
     put(lock, { mcpServers: { suveren: { url: GW_URL } } });
     const r = run(w, []);
-    const expected = /open {9}Claude Code: IT allows only the gateway as connector, but this user can change the lock/;
-    expectOr(expected.test(r.stdout), () => `${r.stdout}${windowsDiagnostic(lock)}`).toBe(true);
+    expect(r.stdout).toMatch(/open {9}Claude Code: IT allows only the gateway as connector, but this user can change the lock/);
     expect(r.status).toBe(1);
   });
 });
 
 describe('suveren-gateway check — real process list', () => {
-  // Every host: `ps` on macOS/Linux, PowerShell Get-CimInstance on Windows
-  // (whose first start can be slow, hence the longer limits).
-  it('flags a Bearer token in a running process, prints the program name only', { timeout: 180_000 }, async () => {
+  // Every host: `ps` on macOS/Linux, PowerShell Get-CimInstance on Windows,
+  // whose first start can be slow (a CI runner needed 50 s): each CLI run may
+  // take up to the check's own PowerShell limit, plus the diagnostic below.
+  const cliLimit = WINDOWS_POWERSHELL_TIMEOUT_MS + 30_000;
+  it('flags a Bearer token in a running process, prints the program name only', { timeout: 3 * cliLimit + 30_000 }, async () => {
     const w = world();
     // A stand-in for the gateway's Mollie connector: `mcp-remote <url> --header "Authorization: Bearer <token>"`.
     const token = `access_TESTONLY${Date.now()}x9`;
@@ -266,8 +255,8 @@ describe('suveren-gateway check — real process list', () => {
     // No psOutput in the fixture: the CLI runs the real `ps`.
     writeFileSync(w.fixture, JSON.stringify({ root: w.root, groupsOutput: 'staff' }));
 
-    const text = run(w, [], { timeoutMs: 80_000 });
-    const json = run(w, ['--json'], { timeoutMs: 80_000 });
+    const text = run(w, [], { timeoutMs: cliLimit });
+    const json = run(w, ['--json'], { timeoutMs: cliLimit });
     expectOr(/open {9}mcp-remote: a sign-in token/.test(text.stdout), () => `${text.stdout}\nstatus ${text.status}; stderr: ${text.stderr.slice(0, 2000)}${processListDiagnostic(w)}`).toBe(true);
     expect(text.stdout).toMatch(/open {9}mcp-remote: a sign-in token \(Authorization: Bearer\) in its start command/);
     expect(text.stdout + text.stderr).not.toContain(token);

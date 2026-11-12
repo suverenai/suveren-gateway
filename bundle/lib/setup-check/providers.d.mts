@@ -3,6 +3,7 @@ import type { DataResult, ProcessList, ReadResult, RunResult } from './engine.mj
 export type Runner = (bin: string, args: string[], timeoutMs?: number, extraEnv?: Record<string, string> | null) => RunResult;
 export declare function run(bin: string, args: string[], timeoutMs?: number, extraEnv?: Record<string, string> | null): RunResult;
 export declare const WINDOWS_OWNER_SCRIPT: string;
+export declare const WINDOWS_POWERSHELL_TIMEOUT_MS: number;
 export declare function windowsOwnerSid(path: string, runner?: Runner): string | null;
 export declare function readText(path: string): ReadResult;
 export declare function exists(path: string): boolean;

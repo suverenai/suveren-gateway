@@ -16,6 +16,9 @@ It reports. It does not fix anything. It is a check, not a guarantee.
 - It changes nothing on disk and starts no service. On Windows it starts
   PowerShell to read the process list and file owners; PowerShell itself may
   keep a small cache file in the user's local app data folder.
+- On Windows it can take a minute or more on a slow computer, because it
+  starts PowerShell. If PowerShell does not finish within 120 seconds, the
+  line says so ("did not finish within 120 s") instead of waiting longer.
 - It makes no network request, not even to the gateway on this computer.
 - It never prints a password, token or key. For a secret it names the file,
   the program and the kind of argument, or the variable name.
