@@ -18,7 +18,7 @@ import { agentVisibleAuthorizations } from './agent-visibility';
 import { isSimulationMode } from './simulation-mode';
 import { uiPort } from './locked-notice';
 import { AGENT_RULES } from './agent-rules';
-import { firstMandateText, LEAD_THE_PERSON_RULE, FIRST_LINE, REPLY_RULE, roleText, factsLines, possibleAreas, manifestAreas, type GuideManifest } from './guidance';
+import { firstMandateText, LEAD_THE_PERSON_RULE, REFUSAL_RULE, FIRST_LINE, REPLY_RULE, roleText, factsLines, possibleAreas, manifestAreas, type GuideManifest } from './guidance';
 
 const connectorNames = (ms: GuideManifest[]): string[] => [...new Set(ms.filter(m => manifestAreas(m).length > 0).map(m => m.name))];
 import { setupCardName, setupMandateFacts, guideManifests } from './guidance-runtime';
@@ -87,12 +87,15 @@ export function buildMandateBrief(opts: MandateBriefOptions): string {
 
   // The first line alone must work: some apps show the AI nothing else until it loads the tools.
   // Claude Code keeps only the first 4096 characters, so what every AI needs comes first: the reply
-  // rule, the rules (golden rule first), the state; the agent brief, the facts and the role after.
+  // rule, the rules (golden rule first), the role; the state, the agent brief and the facts after.
   const lines: string[] = [
     FIRST_LINE,
     REPLY_RULE,
     LEAD_THE_PERSON_RULE,
-    'Tools are listed even where no mandate covers them yet. If a call is refused, tell the person what it says; do not retry it or work around it with another tool.',
+    // Refusal rule (Andreas, 2026-11-12): a mandate/limit refusal is final; an
+    // argument refusal says how to fix it and may be fixed once. Codex read the
+    // old "do not retry" literally and stopped on a wrong-type refusal.
+    'Tools are listed even where no mandate covers them yet. ' + REFUSAL_RULE,
   ];
 
   // V7 — fail closed, up front: if the paired Authority Server does not
@@ -111,6 +114,15 @@ export function buildMandateBrief(opts: MandateBriefOptions): string {
   lines.push('=== RULES ===');
   lines.push('');
   for (const r of AGENT_RULES) lines.push(`- ${r}`);
+  lines.push('');
+
+  // The role, right after the rules (Andreas, 2026-11-12): the fixed text every AI needs comes first,
+  // so what Claude Code cuts after 4096 characters is the variable part (mandates, the agent brief,
+  // the facts), never the role. Word for word the same in every mode; it must never say which mode.
+  const card = setupCardName(integrationManager);
+  lines.push('=== YOUR ROLE ===');
+  lines.push('');
+  lines.push(roleText(card));
   lines.push('');
 
   const active = authorizations.filter(a => a.complete);
@@ -225,20 +237,13 @@ export function buildMandateBrief(opts: MandateBriefOptions): string {
     lines.push('');
   }
 
-  // Always, in every mode, after the rules so the golden rule stays first of all: the facts the AI
-  // draws on, its role, then what this gateway offers. The words are the AI's own to find, so they
-  // must never say which mode this is. In this order because Claude Code cuts after 4096 characters:
-  // the plain meaning of "mandate" comes before the role, and the area list (also in
-  // list-authorizations()) is what may fall off.
+  // Always, in every mode: the facts the AI draws on, then what this gateway offers. The words are
+  // the AI's own to find, so they must never say which mode this is. Claude Code cuts after 4096
+  // characters: the area list (also in list-authorizations()) is what falls off first.
   const manifests = guideManifests(integrationManager);
-  const card = setupCardName(integrationManager);
   lines.push('=== FACTS YOU CAN DRAW ON ===');
   lines.push('');
   for (const f of factsLines({ port: uiPort(), card, areas: [] })) lines.push(`- ${f}`);
-  lines.push('');
-  lines.push('=== YOUR ROLE ===');
-  lines.push('');
-  lines.push(roleText(card));
   lines.push('');
   const running = (n: string) => manifests.some(m => m.name === n && integrationManager?.isRunning?.(m.id));
   const onThisGateway = factsLines({

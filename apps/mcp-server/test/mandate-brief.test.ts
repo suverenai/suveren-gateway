@@ -65,10 +65,19 @@ describe('buildMandateBrief', () => {
     expect(buildMandateBrief({ authorizations: [] })).toContain('do not add a sign-off or footer of your own');
   });
 
+  // Codex stopped on a wrong-type refusal ("instructions prohibit retrying"): the reason decides.
+  it('the refusal rule: a mandate or limit refusal is final; wrong arguments are fixed once', () => {
+    const brief = buildMandateBrief({ authorizations: [] });
+    expect(brief).toContain(
+      'A mandate or limit refusal is final: tell the person, never work around it. If arguments are wrong, fix them once.',
+    );
+    expect(brief).not.toContain('If a call is refused, tell the person what it says; do not retry it');
+  });
+
   it('includes Suveren preamble', () => {
     const brief = buildMandateBrief({ authorizations: [] });
     expect(brief).toContain('Suveren lets this person have you, their AI, do their work within limits they set');
-    expect(brief).toContain('If a call is refused, tell the person what it says; do not retry it');
+    expect(brief).toContain('A mandate or limit refusal is final: tell the person, never work around it.');
   });
 
   // Codex lists the server as a tool namespace described by the first line only, and loads the tools

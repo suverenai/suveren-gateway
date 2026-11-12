@@ -590,6 +590,14 @@ export const CALL_TOOL = 'call-tool';
 export const CALL_THROUGH_RULE =
   `If a tool named here is not in your tool list, call it through ${CALL_TOOL}(tool: "<exact name>", arguments: {...}).`;
 
+/**
+ * What a refusal means for the AI (Andreas, 2026-11-12): a mandate or limit refusal is final; wrong
+ * arguments are fixed once. Codex read the old "do not retry" literally and stopped on a wrong-type
+ * refusal. Short form (approved) because Claude Code keeps only the first 4096 characters.
+ */
+export const REFUSAL_RULE =
+  'A mandate or limit refusal is final: tell the person, never work around it. If arguments are wrong, fix them once.';
+
 /** Short pointer for the session instructions: where the AI finds the steps. */
 export const LEAD_THE_PERSON_RULE =
   'When you receive a task, call list-authorizations(domain: "<area>"): it gives the details, what is missing and the exact steps the person takes. Name the buttons as it does.';

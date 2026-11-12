@@ -562,6 +562,27 @@ describe('through the gateway\'s own entry points', () => {
     expect(kept).toContain('They are the final authority, not Suveren and not you.');
   });
 
+  // The fixed start (first lines, rules, role) is the same for every gateway; mandates, the agent
+  // brief and the facts follow and are what Claude Code cuts. A budget with a margin, so the next
+  // added sentence fails here instead of silently pushing the role past the cut (2026-11-12).
+  const FIXED_START_BUDGET = 4096 - 300;
+  it.each([
+    ['no mandate', () => [] as EnrichedAuthorization[]],
+    ['a mandate', () => [mandate(EMAIL_PROFILE.id)]],
+  ])('%s: the fixed start ends with the role and stays within its budget', (_label, auths) => {
+    const brief = buildMandateBrief({ authorizations: auths() as never, integrationManager: im({ running: [] }) });
+    const role = brief.indexOf('=== YOUR ROLE ===');
+    const end = brief.indexOf('They are the final authority, not Suveren and not you.');
+    expect(role).toBeGreaterThan(brief.indexOf('=== RULES ==='));
+    for (const later of ['=== ACTIVE AUTHORITIES ===', '=== FIRST STEP ===', '=== CONTEXT ===', '=== FACTS YOU CAN DRAW ON ===']) {
+      const at = brief.indexOf(later);
+      if (at >= 0) expect(at, later).toBeGreaterThan(role);
+    }
+    const fixedEnd = brief.indexOf('\n=== ', role + 1);
+    expect(fixedEnd, 'fixed start over budget').toBeLessThanOrEqual(FIXED_START_BUDGET);
+    expect(end).toBeLessThan(fixedEnd);
+  });
+
   it('a gateway that has a mandate does not repeat the first step', () => {
     const brief = buildMandateBrief({ authorizations: [mandate(EMAIL_PROFILE.id)] as never });
     expect(brief).not.toContain('=== FIRST STEP ===');
