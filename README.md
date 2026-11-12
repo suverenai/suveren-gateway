@@ -291,6 +291,7 @@ for the full command reference.
 | [Architecture](docs/architecture.md) | System overview, services, data storage, project structure |
 | [Authorization Flow](docs/authorization-flow.md) | Data flow, gate wizard, tool execution, agent context |
 | [Security Model](docs/security.md) | Enforcement layers, verification, encryption, fail-closed design |
+| [Give the AI its own place](docs/sandbox.md) | A container with one door: an AI with a terminal reaches the gateway and its AI provider, nothing else |
 | [Development](docs/development.md) | Local setup, env vars, Docker, testing |
 | [Windows IT guide](docs/windows-it-guide.md) | Verify, sign and distribute the Windows installer; network and updates |
 | [Managed settings](docs/managed-settings.md) | Settings IT presets and locks (registry or policy file) |
