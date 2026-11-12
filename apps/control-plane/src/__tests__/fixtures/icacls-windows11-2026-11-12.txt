@@ -1,0 +1,47 @@
+C:\Program Files\ClaudeCode\managed-mcp.json NT AUTHORITY\SYSTEM:(I)(F)
+                                             BUILTIN\Administrators:(I)(F)
+                                             BUILTIN\Users:(I)(RX)
+                                             APPLICATION PACKAGE AUTHORITY\ALL APPLICATION PACKAGES:(I)(RX)
+                                             APPLICATION PACKAGE AUTHORITY\ALL RESTRICTED APPLICATION PACKAGES:(I)(RX)
+
+Successfully processed 1 files; Failed processing 0 files
+C:\Program Files\ClaudeCode NT SERVICE\TrustedInstaller:(I)(F)
+                            NT SERVICE\TrustedInstaller:(I)(CI)(IO)(F)
+                            NT AUTHORITY\SYSTEM:(I)(F)
+                            NT AUTHORITY\SYSTEM:(I)(OI)(CI)(IO)(F)
+                            BUILTIN\Administrators:(I)(F)
+                            BUILTIN\Administrators:(I)(OI)(CI)(IO)(F)
+                            BUILTIN\Users:(I)(RX)
+                            BUILTIN\Users:(I)(OI)(CI)(IO)(GR,GE)
+                            CREATOR OWNER:(I)(OI)(CI)(IO)(F)
+                            APPLICATION PACKAGE AUTHORITY\ALL APPLICATION PACKAGES:(I)(RX)
+                            APPLICATION PACKAGE AUTHORITY\ALL APPLICATION PACKAGES:(I)(OI)(CI)(IO)(GR,GE)
+                            APPLICATION PACKAGE AUTHORITY\ALL RESTRICTED APPLICATION PACKAGES:(I)(RX)
+                            APPLICATION PACKAGE AUTHORITY\ALL RESTRICTED APPLICATION PACKAGES:(I)(OI)(CI)(IO)(GR,GE)
+
+Successfully processed 1 files; Failed processing 0 files
+C:\suveren-check-test BUILTIN\Administrators:(I)(OI)(CI)(F)
+                      NT AUTHORITY\SYSTEM:(I)(OI)(CI)(F)
+                      BUILTIN\Users:(I)(OI)(CI)(RX)
+                      NT AUTHORITY\Authenticated Users:(I)(M)
+                      NT AUTHORITY\Authenticated Users:(I)(OI)(CI)(IO)(M)
+
+Successfully processed 1 files; Failed processing 0 files
+C:\suveren-check-test\bin\suveren-gateway.js BUILTIN\Administrators:(I)(F)
+                                             NT AUTHORITY\SYSTEM:(I)(F)
+                                             BUILTIN\Users:(I)(RX)
+                                             NT AUTHORITY\Authenticated Users:(I)(M)
+
+Successfully processed 1 files; Failed processing 0 files
+C:\Users\Owner\AppData\Local\Programs\Suveren NT AUTHORITY\SYSTEM:(I)(OI)(CI)(F)
+                                                BUILTIN\Administrators:(I)(OI)(CI)(F)
+                                                TESTPC\Owner:(I)(OI)(CI)(F)
+
+Successfully processed 1 files; Failed processing 0 files
+C:\ProgramData NT AUTHORITY\SYSTEM:(OI)(CI)(F)
+               BUILTIN\Administrators:(OI)(CI)(F)
+               CREATOR OWNER:(OI)(CI)(IO)(F)
+               BUILTIN\Users:(OI)(CI)(RX)
+               BUILTIN\Users:(CI)(WD,AD,WEA,WA)
+
+Successfully processed 1 files; Failed processing 0 files

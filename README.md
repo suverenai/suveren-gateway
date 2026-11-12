@@ -294,6 +294,7 @@ for the full command reference.
 | [Development](docs/development.md) | Local setup, env vars, Docker, testing |
 | [Windows IT guide](docs/windows-it-guide.md) | Verify, sign and distribute the Windows installer; network and updates |
 | [Managed settings](docs/managed-settings.md) | Settings IT presets and locks (registry or policy file) |
+| [Setup check](docs/setup-check.md) | `suveren-gateway check`: does an AI app on this computer have a way in other than the gateway? |
 
 ---
 

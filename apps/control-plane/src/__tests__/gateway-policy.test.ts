@@ -51,6 +51,22 @@ describe('policy.mjs — no policy configured', () => {
   });
 });
 
+describe('policy.mjs — sources (additive, read by `check`)', () => {
+  it('names the source of each locked key; unlocked keys have none', () => {
+    process.env.SUVEREN_POLICY_FILE = tmpPolicyFile({ AsUrl: 'https://as.company.internal', Simulation: false });
+    const r = readPolicy();
+    expect(r.sources).toEqual({ asUrl: 'file', simulation: 'file' });
+    // The existing fields are unchanged.
+    expect(r.policy).toEqual({ asUrl: 'https://as.company.internal', simulation: false });
+    expect([...r.locked].sort()).toEqual(['asUrl', 'simulation']);
+  });
+
+  it('no policy: no sources', () => {
+    process.env.SUVEREN_POLICY_FILE = join(mkdtempSync(join(tmpdir(), 'gateway-policy-')), 'absent.json');
+    expect(readPolicy().sources).toEqual({});
+  });
+});
+
 describe('policy.mjs — policy file', () => {
   it('locks AsUrl and Simulation when set', () => {
     process.env.SUVEREN_POLICY_FILE = tmpPolicyFile({ AsUrl: 'https://as.company.internal', Simulation: true });
