@@ -33,6 +33,11 @@ import {
 } from './tool-gating-types';
 import { GATEWAY_OWNED_ARGS } from './sealed-args';
 import { uncoveredReadSwitchReason, type BoundsSchemaLike } from './read-gate';
+import {
+  invalidExpandsEnvInArgsShapeReason,
+  vaultPlaceholderOutsideReason,
+  type ExpandsEnvInArgs,
+} from './connector-args';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -127,6 +132,16 @@ export interface IntegrationManifest {
      *  seed file the operator sets). Everything else is withheld — see
      *  connector-env.ts. */
     passEnv?: string[];
+    /**
+     * Which arguments the connector program fills `${VAR}` into itself, from
+     * its own environment: the argument right after each option in
+     * `afterOption` (mcp-remote: `{ "afterOption": ["--header"] }`). There the
+     * gateway leaves `${VAR}` in place and passes the value in the environment
+     * only. A credential placeholder anywhere else refuses the manifest (and
+     * the start): arguments are readable by other programs on the computer.
+     * See connector-args.ts.
+     */
+    expandsEnvInArgs?: ExpandsEnvInArgs;
   };
   credentials: {
     fields: ManifestCredentialField[];
@@ -1462,6 +1477,23 @@ export function invalidLimitWordsReason(manifest: Pick<IntegrationManifest, 'lim
   return null;
 }
 
+/**
+ * `mcp.expandsEnvInArgs` has the right shape, and no credential placeholder
+ * (a `credentials.envMapping` variable) sits in an argument the program does
+ * not fill in itself.
+ */
+export function invalidExpandsEnvInArgsReason(manifest: Pick<IntegrationManifest, 'mcp' | 'credentials'>): string | null {
+  const raw = (manifest.mcp as { expandsEnvInArgs?: unknown } | undefined)?.expandsEnvInArgs;
+  const shapeReason = invalidExpandsEnvInArgsShapeReason(raw);
+  if (shapeReason) return shapeReason;
+  const args = Array.isArray(manifest.mcp?.args) ? manifest.mcp.args : [];
+  return vaultPlaceholderOutsideReason(
+    args,
+    new Set(Object.keys(manifest.credentials?.envMapping ?? {})),
+    raw as ExpandsEnvInArgs | undefined,
+  );
+}
+
 export function invalidNetworkReason(manifest: Pick<IntegrationManifest, 'network'>): string | null {
   const network = (manifest as { network?: unknown }).network;
   if (network === undefined) return null;
@@ -1837,6 +1869,11 @@ export function loadManifests(integrationsDir?: string): number {
       const limitWordsReason = invalidLimitWordsReason(manifest);
       if (limitWordsReason) {
         console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${limitWordsReason}`);
+        continue;
+      }
+      const expandsEnvReason = invalidExpandsEnvInArgsReason(manifest);
+      if (expandsEnvReason) {
+        console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${expandsEnvReason}`);
         continue;
       }
       const networkReason = invalidNetworkReason(manifest);
