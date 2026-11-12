@@ -16,10 +16,23 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join, win32 } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { WINDOWS_POWERSHELL_TIMEOUT_MS } from '../../../../bundle/lib/setup-check/providers.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export const IS_WINDOWS_HOST = process.platform === 'win32';
+
+/**
+ * Time limits for tests that run the REAL CLI or tools on the host, derived
+ * from the check's own limit: one CLI run on a slow Windows host may start
+ * PowerShell (process list, owner lookup) and wait up to its limit, plus
+ * Node's own start and the other read-only tools.
+ */
+export const CLI_RUN_LIMIT_MS = WINDOWS_POWERSHELL_TIMEOUT_MS + 30_000;
+/** A test doing `runs` CLI runs (or other real-tool spawns of that size). */
+export function cliTestTimeout(runs: number): number {
+  return runs * CLI_RUN_LIMIT_MS + 30_000;
+}
 
 /** Environment for a spawned CLI with `home` as its home folder and `base`
  *  as the fixture folder for system locations. */

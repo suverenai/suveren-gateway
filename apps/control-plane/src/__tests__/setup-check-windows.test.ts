@@ -22,7 +22,7 @@ import { parseIcacls, parseWhoami, evaluateWrite, type WindowsIdentity } from '.
 import * as real from '../../../../bundle/lib/setup-check/providers.mjs';
 import { runSetupCheck, type CheckIo } from '../../../../bundle/lib/setup-check/engine.mjs';
 import { renderJson, renderText } from '../../../../bundle/lib/setup-check/report.mjs';
-import { CAPTURED, ENABLED, STANDARD_USER_CSV, csv, hostIsolatedEnv, icaclsBlock, icaclsBlockFor, standardGroupsCsv } from './setup-check-host.js';
+import { CAPTURED, CLI_RUN_LIMIT_MS, ENABLED, STANDARD_USER_CSV, cliTestTimeout, csv, hostIsolatedEnv, icaclsBlock, icaclsBlockFor, standardGroupsCsv } from './setup-check-host.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CLI = resolve(__dirname, '../../../../bundle/bin/suveren-gateway.js');
@@ -114,7 +114,7 @@ describe('re-labelled captures (used as fixtures on a Windows host)', () => {
     }
   });
 
-  it('through the real CLI (platform win32): the program folder answered from the fixture → closed', () => {
+  it('through the real CLI (platform win32): the program folder answered from the fixture → closed', { timeout: cliTestTimeout(1) }, () => {
     const base = mkdtempSync(join(tmpdir(), 'cli-check-win-acl-'));
     try {
       const home = join(base, 'home');
@@ -135,7 +135,7 @@ describe('re-labelled captures (used as fixtures on a Windows host)', () => {
         SUVEREN_INSTALL_SETTINGS_FILE: join(base, 'is.json'), SUVEREN_POLICY_FILE: join(base, 'no-policy.json'),
         SUVEREN_POLICY_REGISTRY: 'off', SUVEREN_CHECK_FIXTURE: fixture,
       };
-      const r = spawnSync(process.execPath, ['--no-warnings', CLI, 'check'], { env, encoding: 'utf-8' });
+      const r = spawnSync(process.execPath, ['--no-warnings', CLI, 'check'], { env, encoding: 'utf-8', timeout: CLI_RUN_LIMIT_MS });
       expect(r.stdout).toContain("  closed       This user cannot change the gateway's program files");
     } finally {
       rmSync(base, { recursive: true, force: true });
@@ -292,7 +292,7 @@ describe('Windows process list (PowerShell Get-CimInstance JSON)', () => {
     expect(JSON.stringify(r)).not.toContain(TOKEN);
   });
 
-  it('through the real CLI with platform win32: flagged, scoped wording, token nowhere', () => {
+  it('through the real CLI with platform win32: flagged, scoped wording, token nowhere', { timeout: cliTestTimeout(2) }, () => {
     const base = mkdtempSync(join(tmpdir(), 'cli-check-win-'));
     try {
       const home = join(base, 'home');
@@ -313,8 +313,8 @@ describe('Windows process list (PowerShell Get-CimInstance JSON)', () => {
         SUVEREN_INSTALL_SETTINGS_FILE: join(base, 'is.json'), SUVEREN_POLICY_FILE: join(base, 'no-policy.json'),
         SUVEREN_POLICY_REGISTRY: 'off', SUVEREN_CHECK_FIXTURE: fixture,
       };
-      const text = spawnSync(process.execPath, ['--no-warnings', CLI, 'check'], { env, encoding: 'utf-8' });
-      const json = spawnSync(process.execPath, ['--no-warnings', CLI, 'check', '--json'], { env, encoding: 'utf-8' });
+      const text = spawnSync(process.execPath, ['--no-warnings', CLI, 'check'], { env, encoding: 'utf-8', timeout: CLI_RUN_LIMIT_MS });
+      const json = spawnSync(process.execPath, ['--no-warnings', CLI, 'check', '--json'], { env, encoding: 'utf-8', timeout: CLI_RUN_LIMIT_MS });
       expect(text.stdout).toMatch(/open {9}mcp-remote: a sign-in token \(Authorization: Bearer\) in its start command, readable by programs of this user and by administrators; on Windows, without administrator rights this check sees only this user's programs/);
       // No icacls answer for the program folder → cannot tell, never "open".
       expect(text.stdout).toMatch(/cannot tell {2}Whether this user can change the gateway's program files could not be read/);
@@ -380,7 +380,7 @@ describe('Linux without `ps`: /proc fallback', () => {
     }
   });
 
-  it('through the real CLI (platform linux, ps missing): flagged from /proc, token nowhere', () => {
+  it('through the real CLI (platform linux, ps missing): flagged from /proc, token nowhere', { timeout: cliTestTimeout(2) }, () => {
     const base = mkdtempSync(join(tmpdir(), 'cli-check-proc-'));
     try {
       const proc = procTree(base);
@@ -395,8 +395,8 @@ describe('Linux without `ps`: /proc fallback', () => {
         SUVEREN_INSTALL_SETTINGS_FILE: join(base, 'is.json'), SUVEREN_POLICY_FILE: join(base, 'no-policy.json'),
         SUVEREN_POLICY_REGISTRY: 'off', SUVEREN_CHECK_FIXTURE: fixture,
       };
-      const text = spawnSync(process.execPath, ['--no-warnings', CLI, 'check'], { env, encoding: 'utf-8' });
-      const json = spawnSync(process.execPath, ['--no-warnings', CLI, 'check', '--json'], { env, encoding: 'utf-8' });
+      const text = spawnSync(process.execPath, ['--no-warnings', CLI, 'check'], { env, encoding: 'utf-8', timeout: CLI_RUN_LIMIT_MS });
+      const json = spawnSync(process.execPath, ['--no-warnings', CLI, 'check', '--json'], { env, encoding: 'utf-8', timeout: CLI_RUN_LIMIT_MS });
       expect(text.stdout).toMatch(/open {9}mcp-remote: a sign-in token \(Authorization: Bearer\) in its start command, readable by every user of this computer/);
       for (const out of [text.stdout, text.stderr, json.stdout, json.stderr]) expect(out).not.toContain(TOKEN);
       expect(JSON.parse(json.stdout).findings.find((f: { subject: string }) => f.subject === 'mcp-remote').source).toBe(`process list (${proc})`);

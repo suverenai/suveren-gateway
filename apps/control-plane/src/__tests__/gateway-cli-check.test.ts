@@ -32,8 +32,7 @@ import { cpSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writ
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { IS_WINDOWS_HOST, hostIsolatedEnv } from './setup-check-host.js';
-import { WINDOWS_POWERSHELL_TIMEOUT_MS, WINDOWS_PROCESS_COMMAND } from '../../../../bundle/lib/setup-check/providers.mjs';
+import { CLI_RUN_LIMIT_MS, IS_WINDOWS_HOST, cliTestTimeout, hostIsolatedEnv } from './setup-check-host.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const BUNDLE = resolve(__dirname, '../../../../bundle');
@@ -46,11 +45,6 @@ const GW_URL = `http://127.0.0.1:${MCP_PORT}/mcp`;
 /** A process list with nothing in it, in the host's format (`ps` text, or
  *  PowerShell JSON — where empty OUTPUT counts as a failure). */
 const EMPTY_PROCESS_LIST = IS_WINDOWS_HOST ? '[]' : '';
-
-/** Evaluate a diagnostic only when the check fails (it spawns tools). */
-function expectOr<T>(value: T, diagnostic: () => string) {
-  return { toBe: (expected: T) => { if (value !== expected) expect(value, diagnostic()).toBe(expected); } };
-}
 
 const dirs: string[] = [];
 const children: ChildProcess[] = [];
@@ -75,35 +69,6 @@ function put(path: string, content: string | object): void {
   writeFileSync(path, typeof content === 'string' ? content : JSON.stringify(content), 'utf8');
 }
 
-/** TEMP DIAGNOSTIC (remove once the Windows CI run is green): runs the
- *  check's own PowerShell process-list command with the test's environment
- *  and reports how it ended — status, error code, time, stderr. NEVER its
- *  output, which holds the command lines of the runner's processes. */
-function processListDiagnostic(w: World): string {
-  if (!IS_WINDOWS_HOST) return '';
-  const [bin, args] = WINDOWS_PROCESS_COMMAND;
-  const started = Date.now();
-  const r = spawnSync(bin, args, { env: hostIsolatedEnv(w.home, w.base), encoding: 'utf8', windowsHide: true, timeout: WINDOWS_POWERSHELL_TIMEOUT_MS, maxBuffer: 32 * 1024 * 1024 });
-  let parsed = 'n/a';
-  try { const d = JSON.parse(String(r.stdout ?? '').trim()); parsed = `JSON ok, ${Array.isArray(d) ? d.length : 1} entries`; } catch { parsed = 'not JSON'; }
-  return `\n[TEMP DIAGNOSTIC] ${bin}: status ${r.status}, signal ${r.signal}, error ${r.error ? (r.error as NodeJS.ErrnoException).code : 'none'}, ` +
-    `${Date.now() - started} ms, stdout ${String(r.stdout ?? '').length} chars (${parsed})\nstderr: ${String(r.stderr ?? '').slice(0, 3000)}`;
-}
-
-/** TEMP DIAGNOSTIC (remove once the Windows CI run is green): is the
- *  test's OWN child in the Windows process list now, and with which command
- *  line? Only that one process is queried, and its token is replaced by a
- *  fixed marker before it is printed (it is fake, but still never shown). */
-function childDiagnostic(w: World, pid: number | undefined, token: string): string {
-  if (!IS_WINDOWS_HOST || !pid) return '';
-  const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command',
-    `Get-CimInstance -ClassName Win32_Process -Filter "ProcessId=${Number(pid)}" | Select-Object ProcessId, Name, CommandLine | ConvertTo-Json -Compress`],
-  { env: hostIsolatedEnv(w.home, w.base), encoding: 'utf8', windowsHide: true, timeout: WINDOWS_POWERSHELL_TIMEOUT_MS });
-  const out = String(r.stdout ?? '').split(token).join('<TOKEN>');
-  return `\n[TEMP DIAGNOSTIC] child in list: status ${r.status}, ${out.trim() ? `entry ${out.trim().slice(0, 1500)}` : 'NOT FOUND'}` +
-    `${r.stderr ? `\nstderr: ${String(r.stderr).split(token).join('<TOKEN>').slice(0, 1500)}` : ''}`;
-}
-
 function run(w: World, args: string[], opts: { cli?: string; fixture?: boolean; env?: Record<string, string>; timeoutMs?: number } = {}) {
   const env: Record<string, string> = {
     ...hostIsolatedEnv(w.home, w.base),
@@ -116,12 +81,12 @@ function run(w: World, args: string[], opts: { cli?: string; fixture?: boolean; 
     ...(opts.fixture === false ? {} : { SUVEREN_CHECK_FIXTURE: w.fixture }),
     ...opts.env,
   };
-  const res = spawnSync(process.execPath, ['--no-warnings', opts.cli ?? CLI, 'check', ...args], { env, encoding: 'utf-8', timeout: opts.timeoutMs ?? 30_000 });
+  const res = spawnSync(process.execPath, ['--no-warnings', opts.cli ?? CLI, 'check', ...args], { env, encoding: 'utf-8', timeout: opts.timeoutMs ?? CLI_RUN_LIMIT_MS });
   return { status: res.status ?? -1, stdout: res.stdout ?? '', stderr: res.stderr ?? '' };
 }
 
 describe('suveren-gateway check — usage', () => {
-  it('unknown option: exit 2 with the help', () => {
+  it('unknown option: exit 2 with the help', { timeout: cliTestTimeout(1) }, () => {
     const w = world();
     const r = run(w, ['--fix']);
     expect(r.status).toBe(2);
@@ -129,7 +94,7 @@ describe('suveren-gateway check — usage', () => {
     expect(r.stderr).toContain('suveren-gateway check [--json]');
   });
 
-  it('--help: exit 0, explains the three results, no promise words', () => {
+  it('--help: exit 0, explains the three results, no promise words', { timeout: cliTestTimeout(1) }, () => {
     const w = world();
     const r = run(w, ['--help']);
     expect(r.status).toBe(0);
@@ -137,14 +102,14 @@ describe('suveren-gateway check — usage', () => {
     expect(r.stdout).not.toMatch(/\b(secure|safe|certified|proven)\b/i);
   });
 
-  it('is listed in the main help', () => {
-    const res = spawnSync(process.execPath, ['--no-warnings', CLI, 'help'], { encoding: 'utf-8', env: { ...process.env, SUVEREN_CP_PORT: CP_PORT, SUVEREN_MCP_PORT: MCP_PORT } });
+  it('is listed in the main help', { timeout: cliTestTimeout(1) }, () => {
+    const res = spawnSync(process.execPath, ['--no-warnings', CLI, 'help'], { encoding: 'utf-8', timeout: CLI_RUN_LIMIT_MS, env: { ...process.env, SUVEREN_CP_PORT: CP_PORT, SUVEREN_MCP_PORT: MCP_PORT } });
     expect(res.stdout).toContain('suveren-gateway check [--json]');
   });
 });
 
 describe('suveren-gateway check — results and exit codes', () => {
-  it('another connector: exit 1; text sections in order; nothing written to disk', () => {
+  it('another connector: exit 1; text sections in order; nothing written to disk', { timeout: cliTestTimeout(1) }, () => {
     const w = world();
     put(join(w.home, '.claude.json'), {
       mcpServers: {
@@ -167,7 +132,7 @@ describe('suveren-gateway check — results and exit codes', () => {
     expect(readdirSync(w.data)).toEqual(before);
   });
 
-  it('--json: same findings with group/result/subject/detail/source, exit code inside and outside', () => {
+  it('--json: same findings with group/result/subject/detail/source, exit code inside and outside', { timeout: cliTestTimeout(1) }, () => {
     const w = world();
     put(join(w.home, '.codex', 'config.toml'), `[mcp_servers.suveren]\nurl = "${GW_URL}"\n`);
     const r = run(w, ['--json']);
@@ -184,7 +149,7 @@ describe('suveren-gateway check — results and exit codes', () => {
     expect(j.confirmByHand.length).toBeGreaterThanOrEqual(3);
   });
 
-  it('nothing open: exit 0 ("cannot tell" alone does not make it 1)', () => {
+  it('nothing open: exit 0 ("cannot tell" alone does not make it 1)', { timeout: cliTestTimeout(1) }, () => {
     const w = world();
     const program = join(w.base, 'install', 'gateway');
     const policy = join(w.base, 'policy', 'gateway-policy.json');
@@ -218,7 +183,7 @@ describe('suveren-gateway check — results and exit codes', () => {
     expect(r.status).toBe(0);
   });
 
-  it('IT settings through the real policy.mjs: a writable file → open; no file → one open line', () => {
+  it('IT settings through the real policy.mjs: a writable file → open; no file → one open line', { timeout: cliTestTimeout(2) }, () => {
     const w = world();
     const policy = join(w.base, 'policy', 'gateway-policy.json');
     put(policy, { AsUrl: 'https://as.example.com' });
@@ -236,7 +201,7 @@ describe('suveren-gateway check — results and exit codes', () => {
     ]);
   });
 
-  it('a user-writable lock file: open, exit 1', () => {
+  it('a user-writable lock file: open, exit 1', { timeout: cliTestTimeout(1) }, () => {
     const w = world();
     put(join(w.home, '.claude.json'), { mcpServers: {} });
     // Where Claude Code's lock lives on the host platform (fixture root on
@@ -256,9 +221,8 @@ describe('suveren-gateway check — results and exit codes', () => {
 describe('suveren-gateway check — real process list', () => {
   // Every host: `ps` on macOS/Linux, PowerShell Get-CimInstance on Windows,
   // whose first start can be slow (a CI runner needed 50 s): each CLI run may
-  // take up to the check's own PowerShell limit, plus the diagnostic below.
-  const cliLimit = WINDOWS_POWERSHELL_TIMEOUT_MS + 30_000;
-  it('flags a Bearer token in a running process, prints the program name only', { timeout: 3 * cliLimit + 30_000 }, async () => {
+  // take up to the check's own PowerShell limit (see cliTestTimeout).
+  it('flags a Bearer token in a running process, prints the program name only', { timeout: cliTestTimeout(2) }, async () => {
     const w = world();
     // A stand-in for the gateway's Mollie connector: `mcp-remote <url> --header "Authorization: Bearer <token>"`.
     const token = `access_TESTONLY${Date.now()}x9`;
@@ -269,22 +233,13 @@ describe('suveren-gateway check — real process list', () => {
     put(script, 'setInterval(() => {}, 60_000);');
     const child = spawn(process.execPath, [script, 'https://mcp.mollie.com/mcp', '--header', `Authorization: Bearer ${token}`], { stdio: 'ignore' });
     children.push(child);
-    const started = Date.now();
     await new Promise((r) => setTimeout(r, 1000));
     // No psOutput in the fixture: the CLI reads the real process list.
     writeFileSync(w.fixture, JSON.stringify({ root: w.root, groupsOutput: 'staff' }));
 
-    const t0 = Date.now();
-    const text = run(w, [], { timeoutMs: cliLimit });
-    const t1 = Date.now();
-    const json = run(w, ['--json'], { timeoutMs: cliLimit });
-    const t2 = Date.now();
+    const text = run(w, []);
+    const json = run(w, ['--json']);
     expect(text.stdout).toContain(`Test fixture in use (${w.fixture}): system folders and the group list in this report are not this computer's.`);
-    expectOr(/open {9}mcp-remote: a sign-in token/.test(text.stdout), () =>
-      `${text.stdout}\nstatus ${text.status}; stderr: ${text.stderr.slice(0, 2000)}` +
-      `\n[TEMP DIAGNOSTIC] child pid ${child.pid}, exitCode ${child.exitCode}, signal ${child.signalCode}; ` +
-      `CLI runs took ${t1 - t0} ms and ${t2 - t1} ms; child started ${t0 - started} ms before the first run` +
-      `${processListDiagnostic(w)}${childDiagnostic(w, child.pid, token)}`).toBe(true);
     expect(text.stdout).toMatch(/open {9}mcp-remote: a sign-in token \(Authorization: Bearer\) in its start command/);
     expect(text.stdout + text.stderr).not.toContain(token);
     expect(json.stdout + json.stderr).not.toContain(token);
