@@ -126,7 +126,7 @@ describe('A3a + A3b — sign-in on a locked gateway that holds another account\'
     stubAs(url, USERS);
     const res = await login(url, 'key_mallory');
     expect(res.status).toBe(409);
-    expect((await res.json()).error).toBe('different_account');
+    expect((await res.json() as { error?: string }).error).toBe('different_account');
     expect(vault.isUnlocked()).toBe(false);
     expect(JSON.parse(readFileSync(join(dir, 'vault.enc.json'), 'utf-8')).verifier).toBeUndefined();
   });
