@@ -14,5 +14,9 @@ services:
       # The host port AI assistants use (the container itself binds 3030) —
       # shown in the UI's "connect your assistant" snippet.
       - SUVEREN_MCP_PUBLIC_PORT=${SUVEREN_MCP_PORT:-7430}
+      # The UI answers only to localhost and IP addresses (DNS-rebinding
+      # guard). Reaching it under a name (a reverse proxy, mybox.local)?
+      # List that name here, comma-separated, without port.
+      # - SUVEREN_ALLOWED_HOSTS=mybox.local
     network_mode: bridge
     restart: unless-stopped

@@ -97,7 +97,7 @@ Requires [Docker](https://docs.docker.com/get-docker/).
 
 ```bash
 docker run -d --name suveren-gateway \
-  -p 7400:3000 -p 7430:3030 \
+  -p 127.0.0.1:7400:3000 -p 127.0.0.1:7430:3030 \
   -v $HOME/.suveren:/app/data \
   ghcr.io/suverenai/suveren-gateway
 ```

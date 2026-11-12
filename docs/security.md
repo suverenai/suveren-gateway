@@ -109,6 +109,16 @@ Whoever connects to the MCP port (`/sse`, `/messages`, `/mcp`) acts as the signe
 - **Host check.** Without a token, a session is only opened when the `Host` header names this machine or an IP address. That stops DNS rebinding — a web page whose domain points at `127.0.0.1`.
 - No CORS headers: no web page can read the MCP server's responses.
 
+## UI and API Port
+
+The control plane (UI, `/auth`, `/api`, `/mcp`, `/internal`, `/events`) checks every request before any route sees it:
+
+- **Host check.** The `Host` header must name this machine (`localhost`, `*.localhost`) or be an IP address; otherwise the answer is `403 Forbidden host`. That stops DNS rebinding on every route, not only on `/events`. A gateway reached under a real name — a reverse proxy, a Docker service name, `mybox.local` — needs that name in `SUVEREN_ALLOWED_HOSTS` (comma-separated hostnames, no port), for example `SUVEREN_ALLOWED_HOSTS=gateway.example.internal`. The host of `SUVEREN_CP_INTERNAL_URL` is allowed automatically.
+- **One path, read one way.** A path that contains a backslash (`\` or `%5C`), or that a URL parser would rewrite (`//api/x`, `..` segments), is refused with `400`. Without that, Express and the `/api` proxy read `/api\as\pubkey` differently: the API-key check skipped it while the proxy forwarded it to the Authority Server with the signed-in session.
+- **`/api` is guarded where it is proxied.** The proxy only forwards `/api` and paths below it (`/apix` is not one), and only after the API-key check passed.
+- **OAuth sign-in carries `state`.** `/auth/oauth/<id>/start` issues a random value, valid once, for ten minutes, for that connector only; the callback refuses any other. A page cannot hand the browser a code for someone else's account.
+- **No free-form connector start.** `POST /mcp/integrations` is refused (`405`); a connector starts only from its shipped manifest (`POST /mcp/integrations/<id>/activate`).
+
 ## Connector Credentials
 
 Your AI never sees a credential. Each connector receives only the credential for its own system, and holds it while it runs. A compromised connector could misuse that one system's credential — not others. That is why connectors are pinned to exact versions and should come from sources you trust.
