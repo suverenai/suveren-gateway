@@ -780,8 +780,9 @@ export class IntegrationManager {
     // computer — see connector-args.ts. The program gets it in its
     // environment. A program that needs it inside an argument (mcp-remote's
     // "Authorization: Bearer ${MOLLIE_ACCESS_TOKEN}" header) expands the
-    // `${VAR}` itself; its manifest declares `mcp.expandsEnvInArgs`. Any other
-    // placeholder naming a vault variable, or a secret's value in the final
+    // `${VAR}` itself; its manifest names those arguments in
+    // `mcp.expandsEnvInArgs.afterOption`. A placeholder naming a vault
+    // variable anywhere else, or a secret's value in the final
     // arguments, refuses the start. No shell either way (the old
     // `sh -c "... $VAR"` approach doesn't exist on Windows). Non-vault
     // placeholders still fall back only to the connector's inherited
@@ -797,7 +798,7 @@ export class IntegrationManager {
       vaultVarNames,
       secretVarNames,
       inherited,
-      connectorExpandsEnv: manifestForSpawn?.mcp.expandsEnvInArgs === true,
+      expandsEnvInArgs: manifestForSpawn?.mcp.expandsEnvInArgs,
     });
 
     // A remote connector whose credential the remote rejects must not be

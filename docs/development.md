@@ -156,19 +156,25 @@ On start, `IntegrationManager.ensureInstalled` (`apps/mcp-server/src/lib/integra
 
 A connector's credentials reach it in its environment, never in its command-line arguments: other programs on the computer can read a program's arguments (`ps`; on macOS and Linux every user can), but only the same user can read its environment.
 
-A program that needs a credential inside an argument must expand `${VAR}` itself, from its own environment. Its manifest says so:
+A program that needs a credential inside an argument must fill in `${VAR}` itself, from its own environment. Its manifest names the arguments it fills in — the one right after each listed option:
 
 ```json
 "mcp": {
   "command": "mcp-remote",
   "args": ["https://mcp.mollie.com/mcp", "--header", "Authorization: Bearer ${MOLLIE_ACCESS_TOKEN}"],
-  "expandsEnvInArgs": true
+  "expandsEnvInArgs": { "afterOption": ["--header"] }
 }
 ```
 
-With `mcp.expandsEnvInArgs: true` the gateway leaves every `${VAR}` in the arguments unchanged and passes the values in the environment. Declare it only after checking the pinned program's source: a program that does not expand the placeholder sends the literal text `${VAR}`. (mcp-remote 0.14.3 expands `${VAR}` in every `--header` value; a variable that is not set stays as literal text.)
+In those arguments the gateway leaves every `${VAR}` unchanged and passes the values in the environment. List an option only after checking the pinned program's source: a program that does not fill in the placeholder sends the literal text `${VAR}`. (mcp-remote 0.14.3 fills in `${VAR}` in the value after every `--header` and inside `--static-oauth-client-info`, nowhere else; a variable that is not set stays as literal text.) `afterOption` is a non-empty list of option names; `true`, an empty list or any other key refuses the manifest.
 
-Without the flag, `${VAR}` naming an inherited, non-vault variable (e.g. `${HOME}`) is still replaced by the gateway; one naming any variable the vault supplies (the manifest's `credentials.envMapping`, the config's `envKeys`/`optionalEnvKeys`) refuses the start, naming the connector and the variable. Independently, a start is refused when the value of a secret (a `password` field, or a variable with no declared field such as an OAuth token) appears anywhere in the final arguments — e.g. a token pasted into a saved config. `apps/mcp-server/src/lib/connector-args.ts` holds the rule; `connector-args.test.ts` runs every shipped manifest through it, and `mcp-remote-token-not-in-args.test.ts` proves it with the real pinned mcp-remote and the operating system's process list.
+Everywhere else — every argument of a manifest without the field, and every argument of one with it that does not follow a listed option:
+- `${VAR}` naming a variable the vault supplies (the manifest's `credentials.envMapping`, the config's `envKeys`/`optionalEnvKeys`) is refused: `manifest-loader.ts` refuses the manifest, and a start is refused, naming the connector and the variable;
+- `${VAR}` naming an inherited, non-vault variable (e.g. `${HOME}`) is filled in by the gateway, as always.
+
+Independently, a start is refused when the value of a secret (a `password` field, or a variable with no declared field such as an OAuth token) appears anywhere in the final arguments — e.g. a token pasted into a saved config. There is no minimum length: a short secret in the arguments would still be readable, and a refusal is visible while a skipped check is silent. The error says the match may be a coincidence when the value is very short, and never shows the value or its length.
+
+`apps/mcp-server/src/lib/connector-args.ts` holds the rule; `connector-args.test.ts` runs every shipped manifest through it, and `mcp-remote-token-not-in-args.test.ts` proves it with the real pinned mcp-remote and the operating system's process list.
 
 The remote-auth preflight (`remote-auth-preflight.ts`) still sends the real header: it reads the arguments resolved in memory, which are never spawned and never logged.
 

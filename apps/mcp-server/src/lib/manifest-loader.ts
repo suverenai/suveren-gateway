@@ -33,6 +33,11 @@ import {
 } from './tool-gating-types';
 import { GATEWAY_OWNED_ARGS } from './sealed-args';
 import { uncoveredReadSwitchReason, type BoundsSchemaLike } from './read-gate';
+import {
+  invalidExpandsEnvInArgsShapeReason,
+  vaultPlaceholderOutsideReason,
+  type ExpandsEnvInArgs,
+} from './connector-args';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -128,14 +133,15 @@ export interface IntegrationManifest {
      *  connector-env.ts. */
     passEnv?: string[];
     /**
-     * The connector program itself replaces `${VAR}` in its arguments with the
-     * value from its own environment (mcp-remote does this for `--header`).
-     * The gateway then leaves `${VAR}` in the arguments and passes the value
-     * in the environment only. Without it, an argument that names a
-     * credential variable refuses the start: arguments are readable by other
-     * programs on the computer. See connector-args.ts.
+     * Which arguments the connector program fills `${VAR}` into itself, from
+     * its own environment: the argument right after each option in
+     * `afterOption` (mcp-remote: `{ "afterOption": ["--header"] }`). There the
+     * gateway leaves `${VAR}` in place and passes the value in the environment
+     * only. A credential placeholder anywhere else refuses the manifest (and
+     * the start): arguments are readable by other programs on the computer.
+     * See connector-args.ts.
      */
-    expandsEnvInArgs?: boolean;
+    expandsEnvInArgs?: ExpandsEnvInArgs;
   };
   credentials: {
     fields: ManifestCredentialField[];
@@ -1471,10 +1477,21 @@ export function invalidLimitWordsReason(manifest: Pick<IntegrationManifest, 'lim
   return null;
 }
 
-export function invalidExpandsEnvInArgsReason(manifest: Pick<IntegrationManifest, 'mcp'>): string | null {
-  const v = (manifest.mcp as { expandsEnvInArgs?: unknown } | undefined)?.expandsEnvInArgs;
-  if (v === undefined || typeof v === 'boolean') return null;
-  return 'mcp.expandsEnvInArgs must be true or false';
+/**
+ * `mcp.expandsEnvInArgs` has the right shape, and no credential placeholder
+ * (a `credentials.envMapping` variable) sits in an argument the program does
+ * not fill in itself.
+ */
+export function invalidExpandsEnvInArgsReason(manifest: Pick<IntegrationManifest, 'mcp' | 'credentials'>): string | null {
+  const raw = (manifest.mcp as { expandsEnvInArgs?: unknown } | undefined)?.expandsEnvInArgs;
+  const shapeReason = invalidExpandsEnvInArgsShapeReason(raw);
+  if (shapeReason) return shapeReason;
+  const args = Array.isArray(manifest.mcp?.args) ? manifest.mcp.args : [];
+  return vaultPlaceholderOutsideReason(
+    args,
+    new Set(Object.keys(manifest.credentials?.envMapping ?? {})),
+    raw as ExpandsEnvInArgs | undefined,
+  );
 }
 
 export function invalidNetworkReason(manifest: Pick<IntegrationManifest, 'network'>): string | null {

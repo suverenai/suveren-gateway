@@ -7,7 +7,8 @@
  * gateway replaced the placeholder with the real token before spawning
  * mcp-remote. Now the placeholder stays, the token travels in the
  * environment, and mcp-remote (which expands `${VAR}` in `--header` itself —
- * manifest flag `mcp.expandsEnvInArgs`) builds the header. A manifest that
+ * manifest field `mcp.expandsEnvInArgs: { afterOption: ["--header"] }`)
+ * builds the header. A manifest that
  * would still put a credential into the arguments is refused.
  *
  * Covered here (real spawns of a fixture connector that reports its own argv
@@ -25,11 +26,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildSpawnArgs, redactSecrets, CredentialInArgsError } from '../src/lib/connector-args';
 import { remotePreflightTarget } from '../src/lib/remote-auth-preflight';
+import { invalidExpandsEnvInArgsReason } from '../src/lib/manifest-loader';
 
 const FIXTURE = join(import.meta.dirname, 'fixtures', 'argv-env-mcp-server.mjs');
 const SHIPPED_MANIFESTS = join(import.meta.dirname, '..', '..', '..', 'content', 'integrations');
 const FAKE_TOKEN = 'access_org_FAKE_test_token_9f3c1e';
 
+const HEADER = { afterOption: ['--header'] };
 const MOLLIE_ARGS = ['https://mcp.mollie.com/mcp', '--header', 'Authorization: Bearer ${MOLLIE_ACCESS_TOKEN}'];
 
 function input(overrides: Partial<Parameters<typeof buildSpawnArgs>[0]> = {}): Parameters<typeof buildSpawnArgs>[0] {
@@ -40,7 +43,7 @@ function input(overrides: Partial<Parameters<typeof buildSpawnArgs>[0]> = {}): P
     vaultVarNames: new Set(['MOLLIE_ACCESS_TOKEN']),
     secretVarNames: new Set(['MOLLIE_ACCESS_TOKEN']),
     inherited: { HOME: '/home/someone' },
-    connectorExpandsEnv: true,
+    expandsEnvInArgs: HEADER,
     ...overrides,
   };
 }
@@ -68,7 +71,7 @@ describe('buildSpawnArgs', () => {
   it('without the manifest flag, a placeholder naming a vault variable is refused — naming the variable, never the value', () => {
     let caught: unknown;
     try {
-      buildSpawnArgs(input({ connectorExpandsEnv: false }));
+      buildSpawnArgs(input({ expandsEnvInArgs: undefined }));
     } catch (err) {
       caught = err;
     }
@@ -76,12 +79,12 @@ describe('buildSpawnArgs', () => {
     const msg = (caught as Error).message;
     expect(msg).toMatch(/^mollie: not started/);
     expect(msg).toContain('${MOLLIE_ACCESS_TOKEN}');
-    expect(msg).toContain('mcp.expandsEnvInArgs');
+    expect(msg).toContain('mcp.expandsEnvInArgs.afterOption');
     expect(msg).not.toContain(FAKE_TOKEN);
   });
 
   it('refused even when the credential is not set yet (a leak must not depend on the vault being empty)', () => {
-    expect(() => buildSpawnArgs(input({ connectorExpandsEnv: false, vaultEnv: {} }))).toThrow(CredentialInArgsError);
+    expect(() => buildSpawnArgs(input({ expandsEnvInArgs: undefined, vaultEnv: {} }))).toThrow(CredentialInArgsError);
   });
 
   it('a non-secret vault setting in a placeholder is refused too — nothing from the vault goes into args', () => {
@@ -91,7 +94,7 @@ describe('buildSpawnArgs', () => {
         vaultEnv: { MODE: 'live' },
         vaultVarNames: new Set(['MODE']),
         secretVarNames: new Set(),
-        connectorExpandsEnv: false,
+        expandsEnvInArgs: undefined,
       })),
     ).toThrow(/credential \$\{MODE\}/);
   });
@@ -99,18 +102,18 @@ describe('buildSpawnArgs', () => {
   it('a placeholder naming only an inherited (non-vault) variable is interpolated as before', () => {
     const { spawnArgs } = buildSpawnArgs(input({
       args: ['--home', '${HOME}', '--none', '${NOT_SET}'],
-      connectorExpandsEnv: false,
+      expandsEnvInArgs: undefined,
     }));
     expect(spawnArgs).toEqual(['--home', '/home/someone', '--none', '']);
   });
 
   it('a secret VALUE in the args (e.g. a saved config with a pasted token) is refused, whatever the flag', () => {
-    for (const connectorExpandsEnv of [true, false]) {
+    for (const expandsEnvInArgs of [HEADER, undefined]) {
       let caught: unknown;
       try {
         buildSpawnArgs(input({
           args: ['https://mcp.mollie.com/mcp', '--header', `Authorization: Bearer ${FAKE_TOKEN}`],
-          connectorExpandsEnv,
+          expandsEnvInArgs,
         }));
       } catch (err) {
         caught = err;
@@ -122,8 +125,82 @@ describe('buildSpawnArgs', () => {
   });
 
   it('args without placeholders and without secrets pass unchanged', () => {
-    expect(buildSpawnArgs(input({ args: [], connectorExpandsEnv: false })).spawnArgs).toEqual([]);
-    expect(buildSpawnArgs(input({ args: ['--port', '1'], connectorExpandsEnv: false })).spawnArgs).toEqual(['--port', '1']);
+    expect(buildSpawnArgs(input({ args: [], expandsEnvInArgs: undefined })).spawnArgs).toEqual([]);
+    expect(buildSpawnArgs(input({ args: ['--port', '1'], expandsEnvInArgs: undefined })).spawnArgs).toEqual(['--port', '1']);
+  });
+});
+
+describe('buildSpawnArgs — only the declared positions are left to the program', () => {
+  it('a vault placeholder in an argument that does NOT follow a declared option is refused', () => {
+    expect(() =>
+      buildSpawnArgs(input({ args: ['https://x/mcp', '--token', '${MOLLIE_ACCESS_TOKEN}'] })),
+    ).toThrow(/credential \$\{MOLLIE_ACCESS_TOKEN\}/);
+    // The option itself carrying it (no `--header` before it) is outside too.
+    expect(() =>
+      buildSpawnArgs(input({ args: ['--header=Authorization: Bearer ${MOLLIE_ACCESS_TOKEN}'] })),
+    ).toThrow(CredentialInArgsError);
+  });
+
+  it('non-vault placeholders: left to the program after a declared option, filled in by the gateway elsewhere (as before)', () => {
+    const { spawnArgs } = buildSpawnArgs(input({
+      args: ['--header', 'X-Home: ${HOME}', '--home', '${HOME}'],
+    }));
+    expect(spawnArgs).toEqual(['--header', 'X-Home: ${HOME}', '--home', '/home/someone']);
+  });
+});
+
+describe('the value check: refuses, and says a very short value may be a coincidence', () => {
+  it('a short secret that happens to occur in the URL refuses the start, with the coincidence explained and no value or length', () => {
+    let caught: unknown;
+    try {
+      buildSpawnArgs(input({ vaultEnv: { MOLLIE_ACCESS_TOKEN: 'mcp' } }));
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(CredentialInArgsError);
+    const msg = (caught as Error).message;
+    expect(msg).toBe(
+      'mollie: not started — the value of the credential MOLLIE_ACCESS_TOKEN appears in its arguments, ' +
+        'where other programs on this computer can read it. If that value is very short, this may be a ' +
+        'coincidence (it happens to occur in an address or option). Either way, remove it from the arguments ' +
+        '(the connector receives MOLLIE_ACCESS_TOKEN in its environment), or use a longer MOLLIE_ACCESS_TOKEN.',
+    );
+    expect(msg).not.toMatch(/\b3\b/); // no length
+  });
+});
+
+describe('manifest loader: expandsEnvInArgs shape and placement', () => {
+  const base = {
+    mcp: { command: 'x', args: ['https://x/mcp', '--header', 'Authorization: Bearer ${TOKEN}'] },
+    credentials: { fields: [], envMapping: { TOKEN: 'token' } },
+  };
+  const withFlag = (expandsEnvInArgs: unknown, args = base.mcp.args) =>
+    ({ ...base, mcp: { ...base.mcp, args, expandsEnvInArgs } }) as unknown as Parameters<typeof invalidExpandsEnvInArgsReason>[0];
+
+  it('accepts the declared shape with the credential after a listed option', () => {
+    expect(invalidExpandsEnvInArgsReason(withFlag({ afterOption: ['--header'] }))).toBeNull();
+  });
+
+  it.each([
+    ['true', true],
+    ['false', false],
+    ['an array', ['--header']],
+    ['an empty list', { afterOption: [] }],
+    ['an unknown key', { afterOption: ['--header'], everywhere: true }],
+    ['a non-option', { afterOption: ['header'] }],
+  ])('refuses %s', (_label, value) => {
+    expect(invalidExpandsEnvInArgsReason(withFlag(value))).toMatch(/^mcp\.expandsEnvInArgs must be/);
+  });
+
+  it('refuses a credential placeholder outside the declared positions, or with no declaration at all', () => {
+    expect(invalidExpandsEnvInArgsReason(withFlag({ afterOption: ['--header'] }, ['--token', '${TOKEN}'])))
+      .toMatch(/mcp\.args\[1\] names the credential \$\{TOKEN\}/);
+    expect(invalidExpandsEnvInArgsReason(withFlag(undefined)))
+      .toMatch(/mcp\.args\[2\] names the credential \$\{TOKEN\}/);
+  });
+
+  it('a non-credential placeholder anywhere is fine', () => {
+    expect(invalidExpandsEnvInArgsReason(withFlag(undefined, ['--home', '${HOME}']))).toBeNull();
   });
 });
 
@@ -140,7 +217,7 @@ describe('every shipped manifest keeps credentials out of the args', () => {
 
   it.each(files)('%s', (file) => {
     const m = JSON.parse(readFileSync(join(SHIPPED_MANIFESTS, file), 'utf8')) as {
-      mcp: { args: string[]; expandsEnvInArgs?: boolean };
+      mcp: { args: string[]; expandsEnvInArgs?: { afterOption: string[] } };
       credentials: { fields: Array<{ key: string; type: string }>; envMapping: Record<string, string> };
     };
     const types = new Map(m.credentials.fields.map(f => [f.key, f.type]));
@@ -157,14 +234,14 @@ describe('every shipped manifest keeps credentials out of the args', () => {
       vaultVarNames: new Set(Object.keys(vaultEnv)),
       secretVarNames: secret,
       inherited: {},
-      connectorExpandsEnv: m.mcp.expandsEnvInArgs === true,
+      expandsEnvInArgs: m.mcp.expandsEnvInArgs,
     });
     for (const v of Object.values(vaultEnv)) expect(spawnArgs.join('\n')).not.toContain(v);
   });
 
   it('mollie.json declares that mcp-remote expands ${VAR} itself', () => {
     const m = JSON.parse(readFileSync(join(SHIPPED_MANIFESTS, 'mollie.json'), 'utf8'));
-    expect(m.mcp.expandsEnvInArgs).toBe(true);
+    expect(m.mcp.expandsEnvInArgs).toEqual({ afterOption: ['--header'] });
     expect(m.mcp.command).toBe('mcp-remote');
   });
 });
@@ -176,8 +253,9 @@ let manifestsDir: string;
 let originalIntegrationsDir: string | undefined;
 let IntegrationManager: typeof import('../src/lib/integration-manager').IntegrationManager;
 let loadManifests: typeof import('../src/lib/manifest-loader').loadManifests;
+let getManifest: typeof import('../src/lib/manifest-loader').getManifest;
 
-function manifest(id: string, args: string[], expandsEnvInArgs?: boolean): Record<string, unknown> {
+function manifest(id: string, args: string[], expandsEnvInArgs?: unknown): Record<string, unknown> {
   return {
     id,
     name: id,
@@ -207,9 +285,13 @@ beforeAll(async () => {
 
   const entries: Record<string, Record<string, unknown>> = {
     // mollie's shape: the program expands ${VAR} itself.
-    'expands-itself': manifest('expands-itself', [FIXTURE, '--header', 'Authorization: Bearer ${FAKE_ACCESS_TOKEN}'], true),
+    'expands-itself': manifest('expands-itself', [FIXTURE, '--header', 'Authorization: Bearer ${FAKE_ACCESS_TOKEN}'], HEADER),
     // The same args WITHOUT the declaration: the old leak — must be refused.
     'would-leak': manifest('would-leak', [FIXTURE, '--header', 'Authorization: Bearer ${FAKE_ACCESS_TOKEN}']),
+    // Declared for --header, but the credential sits after another option.
+    'expands-elsewhere': manifest('expands-elsewhere', [FIXTURE, '--token', '${FAKE_ACCESS_TOKEN}'], HEADER),
+    // The old boolean shape: no longer valid.
+    'bool-flag': manifest('bool-flag', [FIXTURE, '--header', 'Authorization: Bearer ${FAKE_ACCESS_TOKEN}'], true),
     // A plain connector: no placeholders at all (every other shipped one).
     'plain': manifest('plain', [FIXTURE]),
   };
@@ -221,7 +303,7 @@ beforeAll(async () => {
   writeFileSync(join(manifestsDir, 'index.json'), JSON.stringify({ integrations: index }));
 
   ({ IntegrationManager } = await import('../src/lib/integration-manager'));
-  ({ loadManifests } = await import('../src/lib/manifest-loader'));
+  ({ loadManifests, getManifest } = await import('../src/lib/manifest-loader'));
   loadManifests(manifestsDir);
 });
 
@@ -272,6 +354,25 @@ describe('IntegrationManager spawns a connector without its credential in the ar
     expect(err!.message).toContain('FAKE_ACCESS_TOKEN');
     expect(err!.message).not.toContain(FAKE_TOKEN);
     expect(im.isRunning('would-leak')).toBe(false);
+  });
+
+  it('the loader refuses manifests that would put a credential into the args, and the old boolean shape', () => {
+    expect(getManifest('expands-itself')).toBeDefined();
+    expect(getManifest('plain')).toBeDefined();
+    expect(getManifest('would-leak')).toBeUndefined();
+    expect(getManifest('expands-elsewhere')).toBeUndefined();
+    expect(getManifest('bool-flag')).toBeUndefined();
+  });
+
+  it('a credential after an undeclared option is refused at start too (a saved config, whatever the manifest says)', async () => {
+    im = new IntegrationManager(new Map([['expands-itself', { accessToken: FAKE_TOKEN }]]));
+    const err = await im
+      .startIntegration(configFor('expands-itself', [FIXTURE, '--token', '${FAKE_ACCESS_TOKEN}']))
+      .then(() => null, (e: unknown) => e as Error);
+    expect(err).toBeInstanceOf(CredentialInArgsError);
+    expect(err!.message).toMatch(/^expands-itself: not started/);
+    expect(err!.message).not.toContain(FAKE_TOKEN);
+    expect(im.isRunning('expands-itself')).toBe(false);
   });
 
   it('a saved config with the token pasted literally into its args is refused', async () => {

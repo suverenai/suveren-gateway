@@ -14,7 +14,7 @@
       "--header",
       "Authorization: Bearer ${MOLLIE_ACCESS_TOKEN}"
     ],
-    "expandsEnvInArgs": true
+    "expandsEnvInArgs": { "afterOption": ["--header"] }
   },
   "credentials": {
     "fields": [
