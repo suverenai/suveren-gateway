@@ -68,24 +68,89 @@ const OPERATOR_NAME = process.env.SUVEREN_OPERATOR_NAME ?? 'Suveren';
  *
  * Replaces the earlier greedy anchor that removed everything from the first
  * footer-like text to the end, including approved text after it.
+ *
+ * Linear by construction: the text is never scanned by a regex. The end is
+ * walked back by hand (trailing whitespace, then at most two LINES), and each
+ * line is matched alone, bounded in length. (A leading `(?:^|\n+)` in a regex
+ * over the whole text was quadratic on a long run of newlines.)
  */
-const OWN_TRAILING_FOOTER_RE =
-  /(?:^|\n+)(?:—|--) (?:Sent|Published) by [^\n]+?\. (?:Ticket|Receipt|Verify): https?:\/\/[^\s]+?\/[rt]\/([A-Za-z0-9_-]+)(?:\n+-- [^\n]*Human Agency Protocol[^\n]*)?[ \t]*\n*$/;
+const FOOTER_LINE_RE =
+  /^(?:—|--) (?:Sent|Published) by [^\n]+?\. (?:Ticket|Receipt|Verify): https?:\/\/[^\s]{1,2048}?\/[rt]\/([A-Za-z0-9_-]{1,128})[ \t]*$/;
+/** The second line of the pre-one-line footer ("-- <operator> implements HAP …"). */
+const HAP_LINE_RE = /^-- [^\n]*Human Agency Protocol[^\n]*$/;
+/** A footer line is one short line; anything longer is not the gateway's. */
+const MAX_FOOTER_LINE = 4096;
+
+function isSpace(c: string): boolean {
+  return c === ' ' || c === '\t' || c === '\n' || c === '\r';
+}
+
+/** End of `value` with trailing spaces, tabs and newlines walked back. */
+function endWithoutTrailingSpace(value: string, end = value.length): number {
+  while (end > 0 && isSpace(value[end - 1])) end--;
+  return end;
+}
+
+/** End of `value` with trailing newlines walked back (the blank lines before a footer). */
+function endWithoutTrailingNewlines(value: string, end: number): number {
+  while (end > 0 && (value[end - 1] === '\n' || value[end - 1] === '\r')) end--;
+  return end;
+}
+
+/** The last line of value[0..end): its start index and text, or null when too long to be a footer. */
+function lastLine(value: string, end: number): { start: number; text: string } | null {
+  const start = value.lastIndexOf('\n', end - 1) + 1;
+  if (end - start > MAX_FOOTER_LINE) return null;
+  return { start, text: value.slice(start, end) };
+}
 
 /**
- * A line that starts like the gateway's mark ("-- Sent by …", "— Published by
- * …"), at the start of a line. A quoted line ("> -- Sent by …") does not.
+ * Where the gateway's own trailing footer starts in `value` (the index of its
+ * first footer line) and the ticket id it names — or null when the text does
+ * not end with one.
  */
-const MARK_LIKE_LINE_RE = /^[ \t]*(?:—|--) (?:Sent|Published) by\b.*$/m;
+export function findOwnTrailingFooter(value: string): { start: number; ticketId: string } | null {
+  let end = endWithoutTrailingSpace(value);
+  if (end === 0) return null;
+  let line = lastLine(value, end);
+  if (!line) return null;
+  if (HAP_LINE_RE.test(line.text)) {
+    end = endWithoutTrailingNewlines(value, line.start);
+    if (end === 0 || end === line.start) return null; // the HAP line follows a footer line after a line break
+    line = lastLine(value, end);
+    if (!line) return null;
+  }
+  const m = FOOTER_LINE_RE.exec(line.text);
+  return m ? { start: line.start, ticketId: m[1] } : null;
+}
 
 /**
- * Remove the gateway's own trailing footer (see OWN_TRAILING_FOOTER_RE) and
- * the blank lines before it. Text with no such footer is returned unchanged.
+ * A line that starts like the gateway's mark, at the start of a line:
+ * optionally any whitespace or invisible format characters (NBSP, ZWSP, BOM,
+ * …), then a run of any dash (-, --, ---, hyphen, figure/en/em dash,
+ * horizontal bar, minus sign, small and full-width forms), then "Sent by" or
+ * "Published by" and, later on that line, "AI agent" — case-insensitive. A
+ * quoted line ("> -- Sent by …") does not match. Ordinary text with a dash
+ * ("-- see below", "— Anna") does not either.
+ *
+ * The leading class excludes the line break, so one line is examined at a
+ * time (no scan across a run of blank lines).
+ */
+const MARK_LIKE_LINE_RE =
+  /^[\p{Z}\p{Cf}\t\v\f\r]*[-\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]+[\p{Z}\p{Cf}\t\v\f\r]*(?:sent|published)[\p{Z}\p{Cf}\t\v\f\r]+by\b[^\n]*?\bAI[\p{Z}\p{Cf}\t\v\f\r]+agent[^\n]*$/imu;
+
+/**
+ * Remove the gateway's own trailing footer (findOwnTrailingFooter) and the
+ * blank lines before it. Text with no such footer is returned unchanged.
  * Applied when a call ARRIVES, before the card and the content hash — never
  * at send — so the text approved, hashed and sent is one text.
  */
 export function stripOwnTrailingFooter(value: string): string {
-  return OWN_TRAILING_FOOTER_RE.test(value) ? value.replace(OWN_TRAILING_FOOTER_RE, '') : value;
+  const found = findOwnTrailingFooter(value);
+  if (!found) return value;
+  if (found.start === 0) return '';
+  // The footer starts a line: the character before it is a line break.
+  return value.slice(0, endWithoutTrailingNewlines(value, found.start));
 }
 
 /** The first line of `value` that starts like the gateway's mark, or null. */

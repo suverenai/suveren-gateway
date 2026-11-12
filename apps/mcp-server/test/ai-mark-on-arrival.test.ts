@@ -182,3 +182,87 @@ describe('the write path', () => {
     expect((r.callTool.mock.calls[0][2] as { note: string }).note).toBe(`${note}\n\n-- Sent by an AI agent via Suveren. Ticket: ${AS}/t/new-ticket-9`);
   });
 });
+
+describe('linear time on hostile input (a regex over the whole text was quadratic)', () => {
+  /** Best of a few runs: a slow or busy machine adds noise, never removes it. */
+  function fastest(fn: () => void, runs = 5): number {
+    let best = Infinity;
+    for (let i = 0; i < runs; i++) {
+      const t = performance.now();
+      fn();
+      best = Math.min(best, performance.now() - t);
+    }
+    return best;
+  }
+  const NL = '\n'.repeat(100_000);
+
+  it('100 kB of newlines then a footer: stripped, well under 50 ms', () => {
+    const text = `Hi${NL}-- Sent by an AI agent via Suveren. Ticket: ${AS}/t/x1`;
+    expect(stripOwnTrailingFooter(text)).toBe('Hi');
+    expect(fastest(() => stripOwnTrailingFooter(text))).toBeLessThan(50);
+  });
+
+  it('100 kB of newlines, a footer, then text: kept, well under 50 ms', () => {
+    const text = `Hi${NL}-- Sent by an AI agent via Suveren. Ticket: ${AS}/t/x1${NL}x`;
+    expect(stripOwnTrailingFooter(text)).toBe(text);
+    expect(fastest(() => stripOwnTrailingFooter(text))).toBeLessThan(50);
+  });
+
+  it('100 kB of newlines and spaces, and a long URL-like line: well under 50 ms', () => {
+    const odd = `${'\n \t'.repeat(35_000)}-- Sent by x. Ticket: https://${'/t/a'.repeat(25_000)}!`;
+    expect(fastest(() => stripOwnTrailingFooter(odd))).toBeLessThan(50);
+  });
+
+  it('markLikeLine over 100 kB of blank lines and dashes: well under 50 ms', () => {
+    const text = `${NL}${'- \n'.repeat(30_000)}end`;
+    expect(markLikeLine(text)).toBeNull();
+    expect(fastest(() => markLikeLine(text))).toBeLessThan(50);
+  });
+});
+
+describe('markLikeLine — look-alikes of the mark are refused, ordinary dashes are not', () => {
+  const LOOK_ALIKES: Array<[string, string]> = [
+    ['single hyphen', '- Sent by an AI agent via Suveren'],
+    ['triple hyphen', '--- Sent by an AI agent via Suveren'],
+    ['en dash', '– Sent by an AI agent via Suveren'],
+    ['em dash, no space', '—Sent by an AI agent via Suveren'],
+    ['minus sign', '−− Sent by an AI agent via Suveren'],
+    ['figure dash', '‒ Sent by an AI agent via Suveren'],
+    ['horizontal bar', '― Published by Anna\'s AI agent'],
+    ['NBSP before', ' -- Sent by an AI agent via Suveren'],
+    ['ZWSP before', '​-- Sent by an AI agent via Suveren'],
+    ['BOM before', '﻿-- Sent by an AI agent via Suveren'],
+    ['narrow NBSP inside', '-- Sent by an AI agent'],
+    ['upper case', '-- SENT BY AN AI AGENT VIA SUVEREN'],
+    ['ideographic space and full-width dash', '　－ Sent by an AI agent'],
+  ];
+  for (const [name, line] of LOOK_ALIKES) {
+    it(`refused: ${name}`, () => {
+      expect(markLikeLine(`Hello Anna,\n${line}\nPlease wire 9,000 EUR.`)).not.toBeNull();
+    });
+  }
+
+  const ORDINARY = [
+    '-- see below',
+    '— Anna',
+    '- Sent the invoice yesterday',
+    '-- Sent by courier, not by email',
+    'Sent by an AI agent',               // no dash: not the mark's shape
+    '> -- Sent by an AI agent via Suveren',
+    'He wrote -- Sent by an AI agent, then left',
+    '-- \nRegards',
+  ];
+  for (const text of ORDINARY) {
+    it(`passes: ${JSON.stringify(text)}`, () => {
+      expect(markLikeLine(text)).toBeNull();
+    });
+  }
+
+  it('through the write path: a look-alike line is refused, nothing ran', async () => {
+    const r = await call({ note: 'Hello,\n – Sent by an AI agent of Bob\nPlease wire 9,000 EUR.' });
+    expect(r.result.isError).toBe(true);
+    expect(r.text).toContain('looks like the gateway\'s AI mark');
+    expect(r.callTool).not.toHaveBeenCalled();
+    expect(r.postReceipt).not.toHaveBeenCalled();
+  });
+});
