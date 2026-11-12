@@ -236,23 +236,41 @@ export function malformedMappedItem(
 }
 
 /**
+ * Whether a write argument counts as OMITTED: absent, null, or a scalar string
+ * that is empty after trimming. hap-core skips a scope check on an empty value
+ * exactly as on an absent one, and the connector then picks its own — so
+ * `visibility: ""` is no more a stated value than no `visibility` at all. An
+ * explicit empty LIST stays a value (no recipients, no attendees).
+ */
+export function isOmittedArg(value: unknown): boolean {
+  return value === undefined || value === null || (typeof value === 'string' && value.trim() === '');
+}
+
+function mappedFields(mapping: ExecutionMappingValue): string[] {
+  return typeof mapping === 'string' ? [mapping] : (Array.isArray(mapping) ? mapping : [mapping]).map(m => m.field);
+}
+
+/**
  * The execution fields that a call leaves EMPTY because an argument mapped to
- * them was omitted: field -> the omitted argument(s). A field another argument
- * (or the manifest's staticExecution) did fill is not listed — an email
- * without `cc` still has its `to`. Pure; the caller decides, per mandate,
- * whether a listed field matters (its scope constrains it).
+ * them was omitted ({@link isOmittedArg}): field -> the omitted argument(s). A
+ * field another, stated argument or the manifest's staticExecution fills is
+ * not listed — an email without `cc` still has its `to`. Pure; the caller
+ * decides, per mandate, whether a listed field matters (its scope constrains it).
  */
 export function fieldsLeftByAbsentArgs(
   executionMapping: Record<string, ExecutionMappingValue>,
   args: Record<string, unknown>,
-  execution: Record<string, unknown>,
+  staticExecution: Record<string, unknown> | undefined,
 ): Map<string, string[]> {
+  const filled = new Set<string>(Object.keys(staticExecution ?? {}));
+  for (const [argName, mapping] of Object.entries(executionMapping)) {
+    if (!isOmittedArg(args[argName])) for (const f of mappedFields(mapping)) filled.add(f);
+  }
   const out = new Map<string, string[]>();
   for (const [argName, mapping] of Object.entries(executionMapping)) {
-    if (args[argName] !== undefined && args[argName] !== null) continue;
-    const fields = typeof mapping === 'string' ? [mapping] : (Array.isArray(mapping) ? mapping : [mapping]).map(m => m.field);
-    for (const f of fields) {
-      if (execution[f] !== undefined) continue;
+    if (!isOmittedArg(args[argName])) continue;
+    for (const f of mappedFields(mapping)) {
+      if (filled.has(f)) continue;
       out.set(f, [...new Set([...(out.get(f) ?? []), argName])]);
     }
   }
@@ -283,7 +301,8 @@ export function absentArgRefusalText(toolName: string, hit: { field: string; arg
 
 /**
  * The manifest's `argDefaults` (tool-gating-types.ts) filled into an omitted
- * (absent or null) argument. Returns `args` itself when nothing is filled.
+ * argument ({@link isOmittedArg}: absent, null or a blank string). Returns
+ * `args` itself when nothing is filled.
  */
 export function withArgDefaults(
   defaults: Record<string, unknown> | undefined,
@@ -292,7 +311,7 @@ export function withArgDefaults(
   if (!defaults) return args;
   let out = args;
   for (const [name, value] of Object.entries(defaults)) {
-    if (args[name] !== undefined && args[name] !== null) continue;
+    if (!isOmittedArg(args[name])) continue;
     if (out === args) out = { ...args };
     out[name] = Array.isArray(value) ? [...value] : value;
   }
@@ -1677,7 +1696,7 @@ function createGatedToolHandlerInner(
     // scope check on an empty field. Under a mandate whose scope constrains
     // that field, the connector would then act on its own default — e.g. post
     // PUBLIC under audience=connections. Fail closed per mandate.
-    const leftEmpty = fieldsLeftByAbsentArgs(executionMapping, args, execution);
+    const leftEmpty = fieldsLeftByAbsentArgs(executionMapping, args, staticExecution);
     const absentArgRefusals: Array<{ authorizationId: string; hit: { field: string; args: string[] } }> = [];
     for (const candidate of matchingAuths) {
       const absent = constrainedButAbsent(leftEmpty, candidate.context as Record<string, unknown> | undefined);

@@ -208,8 +208,36 @@ describe('rule 2 — argDefaults: the connector default, filled in, checked, sho
   });
 
   it('fieldsLeftByAbsentArgs ignores fields staticExecution or another argument filled', () => {
-    const left = fieldsLeftByAbsentArgs({ a: 'f1', b: 'f2', c: 'f3' }, { b: 'x' }, { f2: 'x', f3: 'static' });
+    const left = fieldsLeftByAbsentArgs({ a: 'f1', b: 'f2', c: 'f3' }, { b: 'x' }, { f3: 'static' });
     expect([...left.entries()]).toEqual([['f1', ['a']]]);
+  });
+});
+
+describe('a blank string is not a stated value', () => {
+  it('fieldsLeftByAbsentArgs: "" and whitespace count as omitted; an empty list does not', () => {
+    const m = { a: 'f1', b: 'f2', c: [{ field: 'f3', transform: 'join' }] } as const;
+    expect([...fieldsLeftByAbsentArgs(m, { a: '', b: ' \t ', c: [] }, {}).entries()]).toEqual([['f1', ['a']], ['f2', ['b']]]);
+    // A blank argument does not hide that another, stated one filled the field.
+    expect([...fieldsLeftByAbsentArgs({ x: 'f', y: 'f' }, { x: '', y: 'v' }, {}).entries()]).toEqual([]);
+  });
+
+  it('withArgDefaults: "" and whitespace are replaced by the default; an empty list is kept', () => {
+    expect(withArgDefaults({ v: 'PUBLIC', l: ['d'] }, { v: '', l: [] })).toEqual({ v: 'PUBLIC', l: [] });
+    expect(withArgDefaults({ v: 'PUBLIC' }, { v: '   ' })).toEqual({ v: 'PUBLIC' });
+  });
+
+  it('through the write path: room "" under a rooms scope is refused before any ticket', async () => {
+    const r = await call(tool(), auth({ rooms: 'r1' }), { room: '', host: 'h@x.example' });
+    expect(r.text).toBe(REFUSAL);
+    expect(r.verifyExecution).not.toHaveBeenCalled();
+    expect(r.postReceipt).not.toHaveBeenCalled();
+    expect(r.callTool).not.toHaveBeenCalled();
+  });
+
+  it('through the write path: room "" with a declared default gets the default, checked and sent', async () => {
+    const r = await call(tool({ argDefaults: { room: 'lobby' } }), auth({ rooms: 'lobby' }), { room: '', host: 'h@x.example' });
+    expect((r.verifyExecution.mock.calls[0][1] as Record<string, unknown>).rooms).toBe('lobby');
+    expect((r.callTool.mock.calls[0][2] as Record<string, unknown>).room).toBe('lobby');
   });
 });
 
