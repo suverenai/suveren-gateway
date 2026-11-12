@@ -1118,14 +1118,14 @@ class SPClient {
       headers: { 'X-API-Key': apiKey, 'Content-Type': 'application/json' },
       body: JSON.stringify({ confirmWipe: opts.confirmWipe === true }),
     });
-    if (res.status === 409) {
-      const data = await res.json().catch(() => ({}));
-      if (data?.wouldWipe) {
-        throw new DifferentAccountError(data.summary ?? { credentialCount: 0, serviceCount: 0, credentialIds: [] });
-      }
-    }
     if (!res.ok) {
+      // Read the body ONCE: a 409 is either the wipe question or a refusal whose
+      // `message` the person must see as written (e.g. "This gateway is signed in
+      // to another account. …"). A second read fails and showed "Invalid API key".
       const err = await res.json().catch(() => ({ error: 'Invalid API key' }));
+      if (res.status === 409 && err?.wouldWipe) {
+        throw new DifferentAccountError(err.summary ?? { credentialCount: 0, serviceCount: 0, credentialIds: [] });
+      }
       throw new Error(asErrorMessage(err, `Login failed: ${res.status}`));
     }
     const data = await res.json();
