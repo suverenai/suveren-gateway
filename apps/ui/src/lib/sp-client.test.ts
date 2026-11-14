@@ -375,3 +375,28 @@ describe('spClient.getProposalsCreatedByMe / withdrawProposal — real suveren-a
     await expect(spClient.withdrawProposal('p1')).rejects.toThrow(/Only the proposal's own creator may withdraw it/);
   });
 });
+
+describe('spClient.login() shows the gateway refusal as written', () => {
+  const originalFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+  const json409 = (body: unknown) =>
+    new Response(JSON.stringify(body), { status: 409, headers: { 'Content-Type': 'application/json' } });
+
+  it('another account while signed in: the approved sentence, not "Invalid API key"', async () => {
+    const sentence = 'This gateway is signed in to another account. Sign out first, then sign in with the new one.';
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      json409({ error: 'signed_in_to_another_account', message: sentence }),
+    ) as unknown as typeof fetch;
+    await expect(spClient.login('k')).rejects.toThrow(sentence);
+  });
+
+  it('the wipe question still raises the confirmation (DifferentAccountError)', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      json409({ error: 'different_account', wouldWipe: true, summary: { credentialCount: 1, serviceCount: 0, credentialIds: ['x'] } }),
+    ) as unknown as typeof fetch;
+    await expect(spClient.login('k')).rejects.toMatchObject({ name: expect.stringMatching(/DifferentAccount/) });
+  });
+});

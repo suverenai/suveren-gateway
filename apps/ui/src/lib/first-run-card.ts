@@ -76,3 +76,11 @@ export function deriveFirstRunCard(input: FirstRunCardInput, chosen: number | nu
     step3: stepAt(2),
   };
 }
+
+/**
+ * The dashboard's "paused" notices are about systems a person has already set up; while the
+ * first-run card leads a new person, they are noise ahead of its one action.
+ */
+export function pausedSummariesToShow<T>(summaries: T[], firstRunVisible: boolean): T[] {
+  return firstRunVisible ? [] : summaries;
+}

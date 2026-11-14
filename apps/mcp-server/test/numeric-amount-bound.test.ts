@@ -43,15 +43,22 @@ const PROFILE: AgentProfile = {
   description: 'test — mirrors charge@0.6\'s amount shape',
   // Only what wireExecutionContext (tool-proxy.ts, Item 7) needs to allow
   // "amount" onto the wire to the Authority Server — the real charge@0.6
-  // profile's amount_max bound, trimmed to its boundType.
+  // profile's amount_max bound, trimmed to its boundType — plus its daily
+  // sum bound: the ticket request's top-level `amount` is the field the
+  // profile's cumulative_sum bound reads (tool-proxy.ts cumulativeSumValue).
   boundsSchema: {
-    keyOrder: ['profile', 'amount_max'],
+    keyOrder: ['profile', 'amount_max', 'amount_daily_max'],
     fields: {
       profile: { type: 'string', required: true },
       amount_max: {
         type: 'number',
         required: true,
         boundType: { kind: 'per_transaction', of: 'amount' },
+      },
+      amount_daily_max: {
+        type: 'number',
+        required: false,
+        boundType: { kind: 'cumulative_sum', of: 'amount', window: 'daily' },
       },
     },
   },
@@ -199,9 +206,10 @@ describe('Mollie amount: a numeric STRING argument', () => {
     const sent = postReceipt.mock.calls[0][0] as { executionContext: Record<string, unknown>; amount?: number };
     expect(sent.executionContext.amount).toBe(0.10);
     expect(typeof sent.executionContext.amount).toBe('number');
-    // Item 7's `amount` top-level field (tool-proxy.ts) is only ever sent
-    // when `execution.amount` is already a number — before this fix a
-    // string amount silently sent `undefined` here.
+    // The top-level `amount` (the field the profile's sum bound reads,
+    // tool-proxy.ts cumulativeSumValue) is only ever sent when that value is
+    // already a number — before this fix a string amount silently sent
+    // `undefined` here.
     expect(sent.amount).toBe(0.10);
   });
 

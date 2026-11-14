@@ -15,7 +15,7 @@
  */
 import { Fragment } from 'react';
 import type { AttachedIdentity, CreationView } from '../lib/preview-render';
-import { PreviewFieldRows } from './RenderedPreviewView';
+import { PreviewFieldRows, RenderedPreviewView } from './RenderedPreviewView';
 import { PreviewTableView } from './PreviewTableView';
 import { DocumentPreviewBox } from './DocumentPreviewBox';
 
@@ -27,6 +27,9 @@ function Identity({ identity }: { identity: AttachedIdentity }) {
         <span style={{ color: 'var(--text-tertiary)' }}>— {identity.unresolved}</span>
       </span>
     );
+  }
+  if (identity.nameOnly && identity.name) {
+    return <span className="src-tag-value src-tag-system-cell" title={identity.rawId}>{identity.name}</span>;
   }
   return (
     <span>
@@ -47,37 +50,50 @@ function Identity({ identity }: { identity: AttachedIdentity }) {
 }
 
 export function RenderedCreationView({ view, systemName }: { view: CreationView; systemName?: string }) {
+  // Rows in their order: runs of one-line rows as a list, a Now / New table
+  // full width where it stands (after the record's name on a change card).
+  const blocks: Array<{ kind: 'dl'; rows: CreationView['rows'] } | { kind: 'compare'; row: Extract<CreationView['rows'][number], { kind: 'compare' }> }> = [];
+  for (const row of view.rows) {
+    if (row.kind === 'table') continue; // full width, below — see the passes after
+    if (row.kind === 'compare') { blocks.push({ kind: 'compare', row }); continue; }
+    const last = blocks[blocks.length - 1];
+    if (last && last.kind === 'dl') last.rows.push(row); else blocks.push({ kind: 'dl', rows: [row] });
+  }
   return (
     <>
-      <dl style={{ display: 'grid', gridTemplateColumns: 'max-content 1fr', gap: '0.3rem 0.75rem', fontSize: '0.85rem', margin: '0.4rem 0' }}>
-        {view.rows.map((row) => {
-          if (row.kind === 'table' || row.kind === 'compare') return null; // full-width, below the dl — see second pass
-          return (
+      {blocks.map((b, i) => b.kind === 'dl' ? (
+        <dl key={`dl-${i}`} style={{ display: 'grid', gridTemplateColumns: 'max-content 1fr', gap: '0.3rem 0.75rem', fontSize: '0.85rem', margin: '0.4rem 0' }}>
+          {b.rows.map((row) => (
             <Fragment key={row.key}>
               <dt style={{ color: 'var(--text-tertiary)', whiteSpace: 'nowrap', alignSelf: 'start' }}>{row.label}</dt>
               <dd style={{ margin: 0, wordBreak: 'break-word' }}>
                 {row.kind === 'identity'
                   ? <Identity identity={row.identity} />
-                  : <span className="src-tag-value src-tag-sealed-cell" title={row.valueTitle}>{row.value}</span>}
+                  : row.kind === 'scalar' ? <span className="src-tag-value src-tag-sealed-cell" title={row.valueTitle}>{row.value}</span> : null}
               </dd>
             </Fragment>
-          );
-        })}
-      </dl>
-      {view.rows.map((row) => row.kind === 'compare' && (
-        <table key={row.key} className="compare-table" data-testid="compare-table">
+          ))}
+        </dl>
+      ) : (
+        <table key={b.row.key} className="compare-table" data-testid="compare-table">
           <thead><tr><th /><th>Now (from {systemName ?? 'the system'})</th><th>New</th></tr></thead>
           <tbody>
-            {row.lines.map((l) => (
+            {b.row.lines.map((l) => (
               <tr key={l.key}>
                 <td className="compare-label">{l.label}</td>
-                <td className="compare-now">{l.now}</td>
+                <td className={l.now !== l.next ? 'compare-now compare-replaced' : 'compare-now'}>{l.now}</td>
                 <td className="compare-new">{l.next}</td>
               </tr>
             ))}
           </tbody>
         </table>
       ))}
+      {view.unchanged && view.unchanged.totalFields > 0 && (
+        <details className="change-unchanged" data-testid="change-unchanged">
+          <summary>Unchanged in {systemName ?? 'the system'} ({view.unchanged.totalFields}) <span className="src-tag src-tag-system">from the system</span></summary>
+          <RenderedPreviewView rendered={view.unchanged} />
+        </details>
+      )}
       {/* A linked record's own list (e.g. a quote's lines) as a table, not a run-on line. */}
       {view.rows.flatMap((row) => (row.kind === 'identity' ? row.identity.context.filter((c) => c.table).map((c) => (
         <div key={`${row.key}.${c.key}`} style={{ margin: '0.5rem 0' }}>

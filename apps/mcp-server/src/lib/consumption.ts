@@ -118,6 +118,13 @@ export function getConsumptionState(
 }
 
 /**
+ * A limit of 0 means the mandate does not allow that action at all (e.g. an Email mandate's
+ * "Test-data loads per day: 0"). As usage it only adds text and reads like headroom ("0/0"); the
+ * mandate's bounds already say it, and a call is refused with its own reason. Not shown to the AI.
+ */
+const shown = (entries: ConsumptionEntry[]): ConsumptionEntry[] => entries.filter(e => e.limit !== 0);
+
+/**
  * A summed value as text: money to two decimals with its currency code
  * ("0.30 EUR"), anything else without float noise (0.1 + 0.2 summed in the
  * log reads "0.3", never "0.30000000000000004"). No currency is guessed: an
@@ -139,7 +146,7 @@ export function formatConsumptionCompact(entries: ConsumptionEntry[]): string {
   if (entries.length === 0) return '';
 
   const parts: string[] = [];
-  for (const entry of entries) {
+  for (const entry of shown(entries)) {
     if (entry.limit === null) continue;
 
     if (entry.kind === 'sum') {
@@ -160,7 +167,7 @@ export function formatConsumptionFull(entries: ConsumptionEntry[]): string {
   if (entries.length === 0) return '';
 
   const lines: string[] = [];
-  for (const entry of entries) {
+  for (const entry of shown(entries)) {
     const limitStr = entry.limit !== null
       ? (entry.kind === 'sum' ? formatSum(entry.limit, entry.currency) : String(entry.limit))
       : 'unlimited';

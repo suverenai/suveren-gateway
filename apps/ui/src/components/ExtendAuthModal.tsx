@@ -1,8 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { spClient, type PendingItem, type GateContentEntry, SUPPORTED_PROTOCOL_VERSIONS } from '../lib/sp-client';
-import { computeBoundsHashBrowser, computeScopeHashBrowser, computeProfileHashBrowser, computeExecutionContextHashBrowser, hashGateContent } from '../lib/frame';
-import { buildGateForwardArgs } from '../lib/gate-forward';
+import { spClient, type PendingItem, type GateContentEntry } from '../lib/sp-client';
 import { profileDisplayName } from '../lib/profile-display';
 import type { AgentProfile } from '@hap/core';
 
@@ -91,68 +89,23 @@ export function ExtendAuthModal({ item, onClose, onSuccess }: Props) {
         throw new Error('Gate content not found locally. The MCP server may have restarted. Please re-authorize through the full wizard instead.');
       }
 
-      // 2. Fetch profile schema
-      const profile: AgentProfile = await spClient.getProfile(item.profile_id);
-
-      // 3. Recompute hashes
-      const bounds = item.frame;
-      const context = gateEntry.context ?? {};
-      const domain = item.attested_domains[0] || activeDomain || 'owner';
-
-      const boundsHash = await computeBoundsHashBrowser(bounds, profile);
-      const contextHash = await computeScopeHashBrowser(context, profile);
-
-      const [intentHash, ecHash] = await Promise.all([
-        hashGateContent(gateEntry.gateContent.intent),
-        // v0.8: the hash of the profile's executionContextSchema, not of per-call values.
-        computeExecutionContextHashBrowser(profile),
-      ]);
-
-      // 4. Re-attest with new TTL.
-      // v0.4: every attestation requires group_id and commitment_mode in
-      // the signed payload. Preserve the original commitment mode by
-      // checking deferred_commitment_domains — the original was 'review'
-      // iff that array is non-empty.
+      // 2. Renew through the control plane: the same steps as signing a mandate.
+      // Grants keep their commitment mode — renewing moves only the expiry.
       if (!groupId) {
         throw new Error('No active group; cannot extend mandate.');
       }
-      const originalMode: 'automatic' | 'review' =
-        (item.deferred_commitment_domains?.length ?? 0) > 0 ? 'review' : 'automatic';
-
-      // Extend = RENEW: the SAME per-ceremony id with renew:true. The AS locks
-      // the content (bounds/context/intent hashes must match) and only the
-      // expiry moves — changing anything else requires a new ceremony.
-      const profileHash = await computeProfileHashBrowser(profile);
-      const result = await spClient.attest({
-        authorization_id: item.authorization_id,
-        renew: true,
-        profile_id: item.profile_id,
-        profile_hash: profileHash,
-        supported_versions: [...SUPPORTED_PROTOCOL_VERSIONS],
-        bounds,
-        bounds_hash: boundsHash,
-        scope_hash: contextHash,
-        domain,
-        did: user.did,
-        mandate_owners: [{ did: user.did }],
-        gate_content_hashes: { intent: intentHash },
-        execution_context_hash: ecHash,
-        group_id: groupId,
-        commitment_mode: originalMode,
-        ttl: selectedTTL,
+      await spClient.renewMandate({
+        authorizationId: item.authorization_id,
+        profileId: item.profile_id,
+        groupId,
+        bounds: item.frame,
+        context: gateEntry.context ?? {},
+        intent: gateEntry.gateContent.intent,
+        mode: (item.deferred_commitment_domains?.length ?? 0) > 0 ? 'review' : 'automatic',
+        domain: item.attested_domains[0] || activeDomain || 'owner',
+        ttlSeconds: selectedTTL,
+        path: item.path,
       });
-
-      // 5. Push gate content to MCP, keyed by the per-ceremony id. Shared with
-      // the create flow so the two cannot diverge.
-      await spClient.pushGateContent(
-        buildGateForwardArgs(result, {
-          boundsHash,
-          contextHash,
-          context,
-          path: item.path,
-          gateContent: gateEntry.gateContent,
-        }),
-      );
 
       onSuccess();
     } catch (e) {

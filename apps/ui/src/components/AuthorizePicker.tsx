@@ -15,6 +15,7 @@ import { mandateRight } from '../lib/mandate-rights';
 import { profileDisplayName } from '../lib/profile-display';
 import { profileIdentity } from '../lib/profile-identity';
 import { ProfileIcon } from './ProfileIcon';
+import { useAreaCatalog } from '../lib/area-catalog';
 
 interface Props {
   onDismiss?: () => void;
@@ -37,6 +38,8 @@ interface Props {
  * two halves of managing agent authority.
  */
 export function AuthorizePicker({ onDismiss, preselectProfileId }: Props) {
+  // Loads the connector manifests' area icons (lib/area.ts) and re-renders once they are known.
+  useAreaCatalog();
   const navigate = useNavigate();
   const { group, groupId, domain, user } = useAuth();
   const [profiles, setProfiles] = useState<ProfileSummary[]>([]);
@@ -111,7 +114,6 @@ export function AuthorizePicker({ onDismiss, preselectProfileId }: Props) {
       groupId,
       groupName: group?.name ?? null,
       domain,
-      isTeam,
       // The AS's own discriminator (attest gates approvers on !group.isPersonal).
       // groupId is NOT a team signal — the personal workspace has one too.
       isPersonal: !!group?.isPersonal,

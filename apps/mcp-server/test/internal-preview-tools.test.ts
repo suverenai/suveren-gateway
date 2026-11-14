@@ -33,6 +33,10 @@ const { IntegrationManager } = await import('../src/lib/integration-manager');
 const { registerBuiltins } = await import('../src/lib/builtins');
 const { createGatedToolHandler } = await import('../src/lib/tool-proxy');
 const { createMcpServer } = await import('../src/index');
+const { loadProfiles } = await import('../src/lib/profile-loader');
+// The built-ins read their read gate from their own profile when they are built
+// (builtins/read-switch.ts), as at real start-up: load the profile catalog first.
+loadProfiles();
 import type { SharedState } from '../src/lib/shared-state';
 import type { ReportSources } from '../src/lib/report';
 
@@ -42,7 +46,7 @@ function buildManager() {
   return im;
 }
 
-const INTERNAL_TOOLS = ['setup__describe_mandate_proposal', 'setup__describe_brief_proposal'];
+const INTERNAL_TOOLS = ['setup__describe_mandate_proposal', 'setup__describe_brief_proposal', 'setup__describe_mandate_change'];
 
 describe('internal builtin tools (DL1) — never listed, never callable by an agent', () => {
   it('A. DiscoveredTool.internal is set for the two preview tools, and ONLY for them', () => {

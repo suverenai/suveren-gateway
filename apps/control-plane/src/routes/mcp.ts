@@ -5,7 +5,6 @@
 import { Router, type Request, type Response } from 'express';
 import {
   getIntegrations,
-  addIntegration,
   activateIntegration,
   getManifests,
   removeIntegration,
@@ -43,14 +42,16 @@ export function createMCPRouter(): Router {
     }
   });
 
-  router.post('/integrations', async (req: Request, res: Response) => {
-    try {
-      const data = await addIntegration(req.body);
-      eventBus.emit('integration-changed');
-      res.json(data);
-    } catch (err) {
-      res.status(500).json({ error: err instanceof Error ? err.message : 'Failed to add integration' });
-    }
+  // There is deliberately no POST /integrations. It used to forward any
+  // {command, args} from the request to the MCP server, which spawned it: an
+  // API key was enough to run an arbitrary program on this machine (security
+  // review 2026-11, finding A4). Nothing called it — the UI and every harness
+  // start a connector with POST /integrations/:id/activate, which takes the
+  // command from the shipped manifest and nothing from the request.
+  router.post('/integrations', (_req: Request, res: Response) => {
+    res.status(405).json({
+      error: 'Connectors are started from their manifest: POST /mcp/integrations/<id>/activate',
+    });
   });
 
   /**

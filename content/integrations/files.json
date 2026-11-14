@@ -6,7 +6,7 @@
   "icon": "file-text",
   "profile": "files",
   "npmPackage": "@humanagencyp/files-mcp",
-  "npmVersion": "0.1.1",
+  "npmVersion": "0.1.2",
   "personalDefault": true,
   "localOnly": true,
   "mcp": {
@@ -19,7 +19,7 @@
         "key": "sharedFolder",
         "label": "Shared folder",
         "type": "text",
-        "placeholder": "Full path, for example /Users/anna/Documents/suveren-files"
+        "placeholder": "Full path, for example /Users/anna/suveren-files"
       }
     ],
     "envMapping": {
@@ -27,6 +27,9 @@
     }
   },
   "oauth": null,
+  "status": {
+    "tool": "get_status"
+  },
   "documents": {
     "file": {
       "tool": "get_file",
@@ -56,6 +59,10 @@
         "category": "read",
         "internal": true
       },
+      "get_status": {
+        "category": "read",
+        "internal": true
+      },
       "save_file": {
         "summary": "Save a file",
         "executionMapping": {},
@@ -70,7 +77,7 @@
   "setupGuide": [
     {
       "title": "Choose the shared folder",
-      "description": "Create or pick one folder on this computer, for example a new folder called suveren-files in Documents. Enter its full path under \"Shared folder\" and press \"Save & Encrypt\"; the connector then starts. Your AI can suggest a folder and tell you the exact path to type. Later you change it under \"Edit credentials\". Your AI writes files into the folder, then names a file to the connector. The AI is told the path in its tools, so it never has to ask you. The connector never reads outside this folder and refuses links to other places."
+      "description": "Create one folder directly in your home folder, for example /Users/anna/suveren-files. Not in Documents, Desktop or Downloads: a Mac does not let the connector read there. Enter its full path under \"Shared folder\" and press \"Save & Encrypt\"; the connector then starts. Your AI can suggest a folder and tell you the exact path to type. Later you change it under \"Edit credentials\". Your AI writes files into the folder, then names a file to the connector. The AI is told the path in its tools, so it never has to ask you. The connector never reads outside this folder and refuses links to other places."
     },
     {
       "title": "Your AI must work on this computer",

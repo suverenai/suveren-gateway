@@ -9,6 +9,11 @@ import { reportBuiltin } from '../src/lib/builtins/report';
 import { setupBuiltin } from '../src/lib/builtins/setup';
 import type { SharedState } from '../src/lib/shared-state';
 import type { ReportSources } from '../src/lib/report';
+import { loadProfiles } from '../src/lib/profile-loader';
+
+// The built-ins read their read gate from their own profile when they are built
+// (builtins/read-switch.ts), as at real start-up: load the profile catalog first.
+loadProfiles();
 
 describe('getBuiltinLabels', () => {
   it('names and action labels only — never tools, profiles or gating', () => {

@@ -116,7 +116,7 @@
         "allowed_workflows": "",
         "allowed_branches": ""
       },
-      "intent": "Let the agent see what has been built and whether it succeeded. It may not make anything live: a daily maximum of zero is a real limit, not an unset one. Fill in allowed_repos with the repositories it may look at.",
+      "intent": "Let the agent see what has been built and whether it succeeded, so I know what is ready to go live. It may not make anything live.",
       "ttl": 2592000,
       "tags": [
         "read-only",

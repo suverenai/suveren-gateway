@@ -64,6 +64,7 @@
       "create_post": {
         "message": { "text": "text", "verb": "Published" },
         "summary": "LinkedIn post: {text|short}",
+        "argDefaults": {"visibility": "PUBLIC"},
         "executionMapping": {
           "visibility": "audience"
         },
@@ -77,6 +78,7 @@
       "create_image_post": {
         "message": { "text": "text", "verb": "Published" },
         "summary": "LinkedIn image post: {text|short}",
+        "argDefaults": {"visibility": "PUBLIC"},
         "executionMapping": {
           "visibility": "audience"
         },
@@ -95,6 +97,7 @@
       "create_article_post": {
         "message": { "text": "text", "verb": "Published" },
         "summary": "LinkedIn article: {title,articleUrl|short}",
+        "argDefaults": {"visibility": "PUBLIC"},
         "executionMapping": {
           "visibility": "audience"
         },

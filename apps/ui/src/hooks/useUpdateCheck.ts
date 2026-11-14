@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 
 const SLOW_INTERVAL = 5 * 60 * 1000; // 5 minutes — background "is an update out?"
 const FAST_INTERVAL = 2000;          // 2 seconds — while waiting for a restart
+const SIGNED_OUT_INTERVAL = 5000;    // 5 seconds — signed out: an update has just signed this tab out, so notice it at once
 
 // 'managed' = an IT-provisioned install (control-plane's /health reports it
 // when SUVEREN_INSTALL_METHOD=managed or IT policy sets InstallMethod —
@@ -17,7 +18,7 @@ export type InstallMethod = 'docker' | 'npm' | 'dev' | 'managed' | 'msi';
  * a baked-in build version — is the reload trigger, so it works the same under
  * npm (semver), Docker (git SHA), and dev ('dev', which never changes).
  */
-export function useUpdateCheck() {
+export function useUpdateCheck({ signedOut = false }: { signedOut?: boolean } = {}) {
   const [updateAvailable, setUpdateAvailable] = useState(false);
   const [installMethod, setInstallMethod] = useState<InstallMethod>('docker');
   const [version, setVersion] = useState<string>('');
@@ -56,7 +57,7 @@ export function useUpdateCheck() {
     };
 
     check(true);
-    const id = setInterval(() => check(false), fast ? FAST_INTERVAL : SLOW_INTERVAL);
+    const id = setInterval(() => check(false), fast ? FAST_INTERVAL : signedOut ? SIGNED_OUT_INTERVAL : SLOW_INTERVAL);
 
     // Re-check the instant the user returns to the tab (e.g. after running the
     // upgrade command in their terminal), so detection isn't gated on the timer.
@@ -70,7 +71,7 @@ export function useUpdateCheck() {
       document.removeEventListener('visibilitychange', onVisible);
       window.removeEventListener('focus', onVisible);
     };
-  }, [fast]);
+  }, [fast, signedOut]);
 
   return {
     updateAvailable: updateAvailable && !dismissed,

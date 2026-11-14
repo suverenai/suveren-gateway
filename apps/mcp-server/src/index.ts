@@ -9,7 +9,9 @@
  * Tool descriptions are updated dynamically to reflect current authorization bounds.
  */
 
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { McpServer, type RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { normalizeObjectSchema, safeParseAsync, getParseErrorMessage } from '@modelcontextprotocol/sdk/server/zod-compat.js';
+import { toJsonSchemaCompat } from '@modelcontextprotocol/sdk/server/zod-json-schema-compat.js';
 import { z } from 'zod';
 import { SharedState } from './lib/shared-state';
 import { attachmentLine, attachmentSources, type GuideManifest } from './lib/guidance';
@@ -25,6 +27,8 @@ import type { IntegrationManager, DiscoveredTool } from './lib/integration-manag
 import { recordBlocked, createGatedToolHandler, buildProxiedToolDescription, profileMatches, toolIsAuthorizedForDisplay, toolAlwaysListed } from './lib/tool-proxy';
 import { jsonSchemaToZodShape } from './lib/json-schema-to-zod';
 import { wrapWithOutcomeOutbox } from './lib/outcome-outbox';
+import { SessionChangeNotice, currentTold, compactSignature, CALL_TOOL } from './lib/change-notice';
+import { getContextForBrief } from './lib/context-loader';
 
 // ─── JSON Schema → Zod conversion ──────────────────────────────────────────
 
@@ -36,6 +40,35 @@ export function createMcpServer(
   integrationManager?: IntegrationManager,
 ) {
   const { cache } = state;
+
+  // Taken right where the instructions are built: this is what the AI will have been told.
+  const changeNotice = new SessionChangeNotice({
+    now: () => currentTold(state.getEnrichedAuthorizations(), integrationManager),
+    currentBrief: () => getContextForBrief().brief,
+    ledger: state.changeLedger,
+    appName: () => server.server.getClientVersion()?.name,
+    listed: () => [...callable.entries()].filter(([, t]) => t.enabled).map(([name]) => name).sort(),
+    signature: (name: string) => signatureOf(name),
+  });
+
+  /**
+   * `name(arg, opt?)` from the tool's own input schema: a connector's (or built-in's) schema as
+   * discovered, else the JSON schema `tools/list` sends for it.
+   */
+  function signatureOf(name: string): string {
+    const proxied = proxiedTools.get(name);
+    if (proxied) return compactSignature(name, proxied.tool.inputSchema);
+    const t = callable.get(name);
+    const obj = t?.inputSchema ? normalizeObjectSchema(t.inputSchema) : undefined;
+    return compactSignature(name, obj ? toJsonSchemaCompat(obj, { strictUnions: true, pipeStrategy: 'input' }) : {});
+  }
+
+  /**
+   * Every tool this session registered, by the name the AI calls — what `call-tool` may reach.
+   * Exactly what a direct `tools/call` can reach: internal tools are never registered, a removed
+   * tool is deleted here, and `call-tool` itself is not in it.
+   */
+  const callable = new Map<string, RegisteredTool>();
 
   // Build mandate brief from current enriched authorizations
   const enriched = state.getEnrichedAuthorizations();
@@ -60,9 +93,19 @@ export function createMcpServer(
   const withOutcomeOutbox = <T>(handler: T): T =>
     wrapWithOutcomeOutbox(state.outcomeOutbox, handler as Parameters<typeof wrapWithOutcomeOutbox>[1]) as T;
 
+  // Every tool answer also tells a running chat what changed since it was told (change-notice.ts).
+  const withNotes = <T>(handler: T): T =>
+    changeNotice.wrap(withOutcomeOutbox(handler) as (...args: unknown[]) => unknown) as T;
+
+  const register = ((name: string, config: unknown, handler: unknown) => {
+    const t = (server.registerTool as (n: string, c: unknown, h: unknown) => RegisteredTool)(name, config, handler);
+    callable.set(name, t);
+    return t;
+  });
+
   // ─── list-authorizations ─────────────────────────────────────────────────
 
-  server.registerTool(
+  register(
     'list-authorizations',
     {
       description: 'Where things stand. With no argument: a short answer with what is possible here, the one next step and what you can do yourself. With a domain (the area of the task, e.g. "charge"): the exact steps the person takes for that area, and the full details of its mandates, including consumption, bounds and capability map.',
@@ -70,12 +113,12 @@ export function createMcpServer(
         domain: z.string().optional().describe('The area of the task (e.g., "charge", "deploy"), by its short name or the name the person sees. Omit for the short answer.'),
       },
     },
-    withOutcomeOutbox(listAuthorizationsHandler(state, integrationManager))
+    withNotes(listAuthorizationsHandler(state, integrationManager))
   );
 
   // ─── check-pending-mandates (v0.7; was check-pending-attestations) ───────
 
-  server.registerTool(
+  register(
     'check-pending-mandates',
     {
       description: 'Check if any mandates are waiting for your owner\'s approval.',
@@ -83,23 +126,23 @@ export function createMcpServer(
         domain: z.string().describe('The owner\'s domain (e.g., "compliance")'),
       },
     },
-    withOutcomeOutbox(checkPendingHandler(cache))
+    withNotes(checkPendingHandler(cache))
   );
 
   // ─── list-integrations ─────────────────────────────────────────────────
 
-  server.registerTool(
+  register(
     'list-integrations',
     {
       description: 'List all running integrations and their authorization status. Returns a compact overview — use list-authorizations(domain) for full details on a specific profile.',
       inputSchema: {},
     },
-    withOutcomeOutbox(listIntegrationsHandler(state, integrationManager))
+    withNotes(listIntegrationsHandler(state, integrationManager))
   );
 
   // ─── check-pending-commitments ─────────────────────────────────────────
 
-  server.registerTool(
+  register(
     'check-pending-commitments',
     {
       description: 'Check status of pending proposals awaiting domain owner commitment. Call with a proposal_id to check a specific proposal, or without to see all. ' +
@@ -111,7 +154,49 @@ export function createMcpServer(
           .describe('Only with proposal_id: wait up to this many seconds (max 50) while the proposal is still pending; answers as soon as the person decides. Omit or 0 to answer at once.'),
       },
     },
-    withOutcomeOutbox(checkPendingCommitmentsHandler(state, integrationManager))
+    withNotes(checkPendingCommitmentsHandler(state, integrationManager))
+  );
+
+  // ─── call-tool: any tool above, by name ───────────────────────────────────
+  //
+  // Many AI apps (ChatGPT Desktop among them) load the tool list once, when the chat starts, and
+  // ignore `tools/list_changed`: a connector that starts later, or the Setup tools once Setup is
+  // signed, stay out of reach until the app restarts (Andreas, 2026-11-10). This one tool is
+  // listed from the start and runs the named tool exactly as a direct `tools/call` would: the
+  // same lookup (unknown or internal = not found), the same "disabled" refusal (Setup without a
+  // Setup mandate), the same validation against that tool's own input schema, then that tool's
+  // own registered handler — gate, mandate, limits, proposal, ticket, `_source`, refusals, the
+  // Blocked log, the outcome line and the change note all come from it. It adds no permission.
+
+  const refuse = withNotes(async (text: string) => ({ content: [{ type: 'text' as const, text }], isError: true }));
+
+  server.registerTool(
+    CALL_TOOL,
+    {
+      description: 'Calls a Suveren tool by its exact name, with the same checks as calling it directly (mandate, limits, approval). ' +
+        'Use it when the gateway names a tool that is not in your tool list: your app may have loaded the list before that tool was added.',
+      inputSchema: {
+        tool: z.string().describe('The exact tool name, as the gateway names it (for example "mail__send_message").'),
+        arguments: z.record(z.string(), z.unknown()).optional().describe('That tool\'s own arguments, exactly as you would pass them to it directly.'),
+      },
+    },
+    (async (args: { tool: string; arguments?: Record<string, unknown> }, extra: unknown) => {
+      const target = callable.get(args.tool);
+      if (!target) {
+        return refuse(`Refused: there is no tool "${args.tool}" here. Nothing was done and no ticket was requested. Use a tool name exactly as the gateway names it; list-authorizations(domain) names the tools of an area.`);
+      }
+      if (!target.enabled) {
+        return refuse(`Refused: "${args.tool}" cannot be used now. Nothing was done and no ticket was requested. Call list-authorizations(domain) with the area of the task: it says what is missing.`);
+      }
+      // As the SDK does: a tool without an input schema is called with the request's extra alone.
+      if (!target.inputSchema) return (target.handler as (e: unknown) => unknown)(extra);
+      const schema = normalizeObjectSchema(target.inputSchema) ?? target.inputSchema;
+      const parsed = await safeParseAsync(schema, args.arguments ?? {});
+      if (!parsed.success) {
+        return refuse(`Refused: the arguments do not fit "${args.tool}": ${getParseErrorMessage(parsed.error)}. Nothing was done and no ticket was requested. Call it again with the arguments that tool takes: ${signatureOf(args.tool)}.`);
+      }
+      return (target.handler as (a: unknown, e: unknown) => unknown)(parsed.data, extra);
+    }) as Parameters<typeof server.registerTool>[2],
   );
 
   // ─── Proxied tools from downstream integrations ──────────────────────────
@@ -142,6 +227,7 @@ export function createMcpServer(
         const entry = proxiedTools.get(name);
         entry?.registered.remove();
         proxiedTools.delete(name);
+        callable.delete(name);
       }
     }
 
@@ -171,6 +257,7 @@ export function createMcpServer(
         }
         existing.registered.remove();
         proxiedTools.delete(tool.namespacedName);
+        callable.delete(tool.namespacedName);
       }
 
       const gatedHandler = createGatedToolHandler(tool, integrationManager, state);
@@ -224,9 +311,15 @@ export function createMcpServer(
           // Built-in tools (reports, setup) never carry the outcome line: a
           // report's output is evidence and must not mix in a notice (nor the
           // decider's identity); setup tools are not the working agent's.
-          (integrationManager?.isBuiltin?.(tool.integrationId) ? handler : withOutcomeOutbox(handler)) as Parameters<typeof server.registerTool>[2],
+          // A built-in that declares evidenceOnly carries no change note either.
+          (integrationManager?.builtinEvidenceOnly?.(tool.integrationId)
+            ? handler
+            : integrationManager?.isBuiltin?.(tool.integrationId)
+              ? changeNotice.wrap(handler as (...args: unknown[]) => unknown)
+              : withNotes(handler)) as Parameters<typeof server.registerTool>[2],
         );
         proxiedTools.set(tool.namespacedName, { tool, registered, description });
+        callable.set(tool.namespacedName, registered);
       } catch (err) {
         console.error(`[MCP] Failed to register tool ${tool.namespacedName}:`, err);
       }
@@ -270,6 +363,8 @@ export function createMcpServer(
   // Register any existing proxied tools and set initial visibility
   registerProxiedTools();
   refreshTools();
+  // What the AI is offered as the chat starts; tools enabled later are new to it.
+  changeNotice.startListing();
 
   return { server, gatekeeper: state.gatekeeper, refreshTools, registerProxiedTools };
 }

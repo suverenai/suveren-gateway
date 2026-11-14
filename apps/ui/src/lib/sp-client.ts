@@ -6,6 +6,7 @@
  * No cookies are used — the API key is stored in React state only.
  */
 
+import { readRefusal } from '@hap/core/refusal';
 import { isRetriableRead, unreachableRetry } from './unreachable-retry';
 import { queueDomains, mergeProposals } from './my-queue';
 import type { AttachmentPreviewResult } from './attachment-sealed';
@@ -297,6 +298,10 @@ export interface PreviewReadSection {
   as?: string;
   /** The source a display-only read names ("EU VIES"). */
   label?: string;
+  /** The read is the record the action changes (manifest declares `version` on it). */
+  target?: true;
+  /** With `target`: the action argument that carries the record's version (the manifest's `version.arg`). */
+  versionArg?: string;
 }
 
 /** `GET /proposal-status/:id/preview` — always 200 unless auth/proposal fetch fails. */
@@ -315,6 +320,16 @@ export type PreviewResponse = (
       /** Manifest-declared `preview.fields` — the top-level fields to show
        *  first, in that order (see tool-gating-types.ts ToolPreviewConfig). */
       fields?: string[];
+      /** The read is the very record the action changes (the manifest declares
+       *  a `version` for it): the card shows the bound arguments as changes to
+       *  it, old → new. Absent: the read is context only. */
+      target?: true;
+      /** With `target`: the action argument that carries the record's version (the manifest's `version.arg`). */
+      versionArg?: string;
+      /** The read is the gateway's own description of the proposal (a
+       *  builtin's describe_* read: what the person signs), not a record read
+       *  from a connected system. */
+      describesProposal?: true;
     }
   /** AU8 — several reads (manifest `preview` is a list). Distinguished from
    *  the single-read "ok" above by `reads` (never both on the same object). */
@@ -491,6 +506,8 @@ export interface IntegrationManifest {
   limitWords?: Record<string, { noun: string; pastParticiple: string }> | null;
   /** Declares a simulation mode: the credential field holding it and its default. Drives the "Simulation" badge. */
   simulation?: { field: string; default: string } | null;
+  /** Touches only this computer (e.g. Files): runs in simulation mode too, so it is never paused by it. */
+  localOnly?: boolean;
   /** Display labels for this connector's CURRENT mode — "<name> · <label>" on
    *  the Integrations card (e.g. "ERP · Built-in", "ERP · Test data"). Keyed
    *  by the `simulation.field` value; an object entry is keyed by the
@@ -534,6 +551,14 @@ export interface McpIntegrationStatus {
    *  block — see `paused`, which is structural, not an error. */
   error?: string;
   /**
+   * The connector's OWN words for why it cannot do its work (never the
+   * gateway's, never the AI's): its status check's answer while running, or
+   * its last error output when it stopped while starting. Shown as
+   * "<connector> says", apart from `error`. Also set on a RUNNING connector —
+   * running is not the same as working.
+   */
+  problem?: string;
+  /**
    * Set instead of `error` when this connector is not running SOLELY because
    * simulation mode is on and its manifest declares no `simulation` marker.
    * Paused-by-design, not broken — drives the neutral "Paused" chip and keeps
@@ -569,6 +594,9 @@ export interface EnrichedAuthorizationEntry {
   context: Record<string, string | number>;
   intent: string | null;
   deferredCommitmentDomains: string[];
+  /** Seconds since the epoch: when this mandate ends. */
+  expiresAt?: number | null;
+  title?: string | null;
   /** v0.7 item 9 — the AS no longer verifies this mandate's protocol
    *  version (a VERSION_UNSUPPORTED ticket refusal). Learned lazily by the
    *  gateway, only once an execution was actually attempted under it. */
@@ -1013,15 +1041,8 @@ export interface BuiltinStatus {
  * envelope per method, which is exactly how this bug happened).
  */
 export function asErrorMessage(body: unknown, fallback: string): string {
-  const b = (body ?? {}) as {
-    errors?: Array<{ code?: string; message?: string }>;
-    error?: string;
-    detail?: string;
-  };
-  const first = Array.isArray(b.errors) ? b.errors[0] : undefined;
-  if (first?.message) return first.code ? `${first.message} (${first.code})` : first.message;
-  if (first?.code) return first.code;
-  return b.error || b.detail || fallback;
+  const r = readRefusal(body, fallback);
+  return r.code && r.message !== r.code ? `${r.message} (${r.code})` : r.message;
 }
 
 export function parseApproverPubkeys(data: unknown): Array<{ userId: string; publicKey: string }> {
@@ -1097,14 +1118,14 @@ class SPClient {
       headers: { 'X-API-Key': apiKey, 'Content-Type': 'application/json' },
       body: JSON.stringify({ confirmWipe: opts.confirmWipe === true }),
     });
-    if (res.status === 409) {
-      const data = await res.json().catch(() => ({}));
-      if (data?.wouldWipe) {
-        throw new DifferentAccountError(data.summary ?? { credentialCount: 0, serviceCount: 0, credentialIds: [] });
-      }
-    }
     if (!res.ok) {
+      // Read the body ONCE: a 409 is either the wipe question or a refusal whose
+      // `message` the person must see as written (e.g. "This gateway is signed in
+      // to another account. …"). A second read fails and showed "Invalid API key".
       const err = await res.json().catch(() => ({ error: 'Invalid API key' }));
+      if (res.status === 409 && err?.wouldWipe) {
+        throw new DifferentAccountError(err.summary ?? { credentialCount: 0, serviceCount: 0, credentialIds: [] });
+      }
       throw new Error(asErrorMessage(err, `Login failed: ${res.status}`));
     }
     const data = await res.json();
@@ -2593,6 +2614,43 @@ class SPClient {
     if (!res.ok) throw new Error(`Failed to fetch authorizations: ${res.status}`);
     const data = await res.json();
     return data.authorizations ?? [];
+  }
+
+  /** Sign a mandate through the control plane: the same steps as the AI path. */
+  async signMandate(request: {
+    team: string;
+    profile: string;
+    limits: Record<string, string | number>;
+    scope: Record<string, string | number>;
+    contextLabels?: Record<string, Record<string, string>>;
+    intent: string;
+    mode: 'review' | 'automatic';
+    ttlSeconds: number;
+    title: string;
+    discloseIdentity: boolean;
+    replaces?: string;
+  }): Promise<{ authorizationId: string; revokeError?: string }> {
+    const res = await this.fetch('/api/mandate/sign', { method: 'POST', body: JSON.stringify(request) });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(asErrorMessage(body, `Signing failed: ${res.status}`));
+    return body as { authorizationId: string; revokeError?: string };
+  }
+
+  /** Extend a mandate: only its expiry moves. */
+  async renewMandate(request: {
+    authorizationId: string;
+    profileId: string;
+    groupId: string;
+    bounds: Record<string, string | number>;
+    context: Record<string, string | number>;
+    intent: string;
+    mode: 'review' | 'automatic';
+    domain: string;
+    ttlSeconds: number;
+    path?: string;
+  }): Promise<void> {
+    const res = await this.fetch('/api/mandate/renew', { method: 'POST', body: JSON.stringify(request) });
+    if (!res.ok) throw new Error(asErrorMessage(await res.json().catch(() => ({})), `Extending failed: ${res.status}`));
   }
 
   async pushGateContent(data: {

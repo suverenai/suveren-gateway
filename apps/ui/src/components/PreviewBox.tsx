@@ -15,11 +15,49 @@
  * §8.4) can render the SAME markup from a stored snapshot instead of
  * reimplementing it — "so it can't drift" (doc §8.4).
  */
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { spClient, type PreviewResponse } from '../lib/sp-client';
 import { previewBoxView } from '../lib/approval-preview-view';
 import { RenderedPreviewView as RenderedBody } from './RenderedPreviewView';
 import { RenderedCreationView, SystemBoxes } from './RenderedCreationView';
+import type { RecordChange } from '../lib/record-change';
+
+/** An update shown as its change: the changed fields old → new, what else is
+ *  sent, and the record's unchanged fields folded (never as if they changed). */
+function RecordChangeView({ change, systemName }: { change: RecordChange; systemName: string }) {
+  return (
+    <>
+      <table className="compare-table" data-testid="change-table">
+        <thead><tr><th /><th>Now (from {systemName})</th><th>New</th></tr></thead>
+        <tbody>
+          {change.lines.map((l) => (
+            <tr key={l.key} data-testid="change-row">
+              <td className="compare-label">{l.label}</td>
+              <td className={l.now !== l.next ? 'compare-now compare-replaced' : 'compare-now'}>{l.now}</td>
+              <td className="compare-new">{l.next}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {change.also.length > 0 && (
+        <dl style={{ display: 'grid', gridTemplateColumns: 'max-content 1fr', gap: '0.3rem 0.75rem', fontSize: '0.85rem', margin: '0.4rem 0' }} data-testid="change-also">
+          {change.also.map((a) => (
+            <Fragment key={a.key}>
+              <dt style={{ color: 'var(--text-tertiary)' }}>{a.label}</dt>
+              <dd style={{ margin: 0, wordBreak: 'break-word' }}><span className="src-tag-value src-tag-sealed-cell">{a.value}</span></dd>
+            </Fragment>
+          ))}
+        </dl>
+      )}
+      {change.unchanged.totalFields > 0 && (
+        <details className="change-unchanged" data-testid="change-unchanged">
+          <summary>Unchanged in {systemName} ({change.unchanged.fields.length + change.unchanged.moreFields.length}) <span className="src-tag src-tag-system">from the system</span></summary>
+          <RenderedBody rendered={change.unchanged} />
+        </details>
+      )}
+    </>
+  );
+}
 
 export interface PreviewBoxBodyProps {
   resp: PreviewResponse;
@@ -69,13 +107,14 @@ export function PreviewBoxBody({ resp: rawResp, systemName, toolArgs, sealed, sy
     <div className={`preview-box preview-box-${tone}`} data-testid="approval-preview" data-preview-status={tone}>
       <h4>
         {view.heading}
-        {view.creation && (
+        {(view.creation || view.change) && (
           sealed
             ? <><span className="src-tag src-tag-sealed">sealed</span></>
             : <span className="src-tag src-tag-sealed">sealed</span>
         )}
       </h4>
       {view.creation && <RenderedCreationView view={view.creation} systemName={systemName} />}
+      {view.change && <RecordChangeView change={view.change} systemName={systemName} />}
       {view.rendered && <RenderedBody rendered={view.rendered} />}
       {view.note && !hideNote && <p className="preview-note">{view.note}</p>}
       {view.versionNote && !view.stale && <p className="preview-note">{view.versionNote}</p>}
@@ -119,7 +158,18 @@ interface Props {
   onData?: (resp: PreviewResponse | null) => void;
 }
 
-export function PreviewBox({ proposalId, systemName, toolArgs, sealed, systemBoxes, omitKeys, hideNote, onTone, onData }: Props) {
+/** The live preview fetch for one proposal, and the tone/data it reports to
+ *  the card. Separate from the render so the card can place the box where its
+ *  content belongs (inside the sealed tile, or after it) without a refetch. */
+export function useProposalPreview(
+  proposalId: string,
+  systemName: string,
+  toolArgs: Record<string, unknown> | null | undefined,
+  onTone?: (tone: string) => void,
+  onData?: (resp: PreviewResponse | null) => void,
+  /** False while the card cannot read the proposal yet: nothing is fetched. */
+  enabled = true,
+): PreviewState {
   const [resp, setResp] = useState<PreviewResponse | null>(null);
   const [failed, setFailed] = useState(false);
 
@@ -127,11 +177,12 @@ export function PreviewBox({ proposalId, systemName, toolArgs, sealed, systemBox
     let live = true;
     setResp(null);
     setFailed(false);
+    if (!enabled) return;
     spClient.getProposalPreview(proposalId)
       .then((r) => { if (live) setResp(r); })
       .catch(() => { if (live) setFailed(true); });
     return () => { live = false; };
-  }, [proposalId]);
+  }, [proposalId, enabled]);
 
   // The preview fetch itself failed (network/auth, not a connector answer).
   // Decision 2: the bound values are shown elsewhere on the card regardless —
@@ -140,15 +191,25 @@ export function PreviewBox({ proposalId, systemName, toolArgs, sealed, systemBox
   // what it can act on (none/unavailable/not_found/ok/stale), not WHY the
   // fetch itself never answered.
   useEffect(() => {
+    if (!enabled) return;
     if (failed) { onTone?.('unavailable'); onData?.({ status: 'unavailable', reason: 'connector_error' }); return; }
     if (!resp) { onData?.(null); return; }
     const v = previewBoxView(resp, systemName, toolArgs ?? undefined);
     onTone?.(resp.status === 'ok' ? (v.stale ? 'stale' : 'ok') : resp.status);
     onData?.(resp);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resp, failed, systemName, onTone, onData]);
+  }, [resp, failed, systemName, onTone, onData, enabled]);
 
-  if (failed) {
+  return { resp, failed };
+}
+
+export interface PreviewState { resp: PreviewResponse | null; failed: boolean }
+
+type ShowProps = Omit<PreviewBoxBodyProps, 'resp'> & { state: PreviewState };
+
+/** Loading / failed / resolved — the box for a {@link useProposalPreview} state. */
+export function PreviewBoxShow({ state, ...rest }: ShowProps) {
+  if (state.failed) {
     return (
       <div className="preview-box preview-box-unavailable" data-testid="approval-preview" data-preview-status="unavailable">
         <h4>Preview not available</h4>
@@ -156,14 +217,17 @@ export function PreviewBox({ proposalId, systemName, toolArgs, sealed, systemBox
       </div>
     );
   }
-
-  if (!resp) {
+  if (!state.resp) {
     return (
       <div className="preview-box preview-box-loading" data-testid="approval-preview" data-preview-status="loading" aria-busy="true">
-        Reading from {systemName}…
+        Reading from {rest.systemName}…
       </div>
     );
   }
+  return <PreviewBoxBody resp={state.resp} {...rest} />;
+}
 
-  return <PreviewBoxBody resp={resp} systemName={systemName} toolArgs={toolArgs} sealed={sealed} systemBoxes={systemBoxes} omitKeys={omitKeys} hideNote={hideNote} />;
+export function PreviewBox({ proposalId, systemName, toolArgs, sealed, systemBoxes, omitKeys, hideNote, onTone, onData }: Props) {
+  const state = useProposalPreview(proposalId, systemName, toolArgs, onTone, onData);
+  return <PreviewBoxShow state={state} systemName={systemName} toolArgs={toolArgs} sealed={sealed} systemBoxes={systemBoxes} omitKeys={omitKeys} hideNote={hideNote} />;
 }

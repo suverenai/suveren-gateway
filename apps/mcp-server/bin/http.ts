@@ -245,6 +245,7 @@ app.post('/internal/configure', internalOnly, (req: Request, res: Response) => {
     state.receiptArchive.setVaultKey(key);
     state.reportStore.setVaultKey(key);
     state.outcomeOutbox.setVaultKey(key);
+    state.changeLedger.setVaultKey(key);
     state.executionResults.setVaultKey(key);
     console.error('[Suveren MCP] Vault key configured — gate store + denial log + receipt archive + report store + outcome outbox + execution results encryption active');
   }
@@ -828,7 +829,12 @@ app.all('/mcp', guardAgent, async (req: Request, res: Response) => {
 // every gated action with "Unknown profile" — surfaced here for observability.
 let profilesLoaded = 0;
 
-app.get('/health', (_req: Request, res: Response) => {
+app.get('/health', async (req: Request, res: Response) => {
+  // The UI's status read (control plane, `?check=connectors`) first asks every
+  // connector that declares a status check whether it can work, so a card
+  // shows the connector's own current words. Other callers (the bundle's
+  // readiness probe, with a 3 s timeout) never wait on a connector.
+  if (req.query.check === 'connectors') await integrationManager.refreshStatusChecks();
   res.json({
     status: 'ok',
     transports: ['sse', 'streamable-http'],
@@ -883,6 +889,9 @@ app.get('/internal/authorizations', internalOnly, (_req: Request, res: Response)
     context: a.context ?? {},
     intent: a.gateContent?.intent ?? null,
     deferredCommitmentDomains: a.deferredCommitmentDomains ?? [],
+    // The change card's "Lasts until" and the edit diff need the signed end.
+    expiresAt: a.attestations.length > 0 ? Math.max(...a.attestations.map(x => x.expiresAt)) : null,
+    title: a.title ?? null,
     // Item 9 (re-approval UX) — the AS told us, via a VERSION_UNSUPPORTED
     // ticket refusal, that this authorization's mandate blob is pre-0.7.
     needsReapproval: a.needsReapproval ?? false,

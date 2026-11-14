@@ -15,8 +15,8 @@ import { getConsumptionState, formatConsumptionCompact, formatConsumptionFull } 
 import { readContextFile } from '../lib/context-loader';
 import { profileMatches, toolAlwaysListed, areaName } from '../lib/tool-proxy';
 import { isSimulationMode } from '../lib/simulation-mode';
-import { firstMandateText, connectorOverview, manifestAreas, shortAnswer, possibleAreas, type GuideManifest } from '../lib/guidance';
-import { overviewInput, guideManifests, setupCardName, setupMandateFacts } from '../lib/guidance-runtime';
+import { firstMandateText, connectorOverview, manifestAreas, shortAnswer, possibleAreas, CALL_THROUGH_RULE, type GuideManifest } from '../lib/guidance';
+import { overviewInput, guideManifests, setupMandateFacts } from '../lib/guidance-runtime';
 import { agentVisibleAuthorizations } from '../lib/agent-visibility';
 
 /** Extract short profile name from full ID */
@@ -67,13 +67,13 @@ function buildCapabilityMap(
     const gating = tool.gating;
 
     if (gating.category === 'read') {
-      readOnly.push(tool.originalName);
+      readOnly.push(tool.namespacedName);
     } else if (gating.category === 'disabled') {
       // Either explicitly disabled, or (disabledReason set) not described by
       // any manifest entry — either way the gate refuses it; no permissive
       // default exists to fall back on. Listing it as gated would tell the
       // agent it may call something every call of which is refused.
-      undescribed.push(tool.originalName);
+      undescribed.push(tool.namespacedName);
     } else {
       const mappingDesc = Object.entries(gating.executionMapping ?? {})
         .map(([arg, mapping]) => {
@@ -84,7 +84,7 @@ function buildCapabilityMap(
         })
         .join(', ');
       const actionType = gating.staticExecution?.action_type ?? 'unknown';
-      gated.push(`      - ${tool.originalName}: ${actionType}${mappingDesc ? `, ${mappingDesc}` : ''}`);
+      gated.push(`      - ${tool.namespacedName}: ${actionType}${mappingDesc ? `, ${mappingDesc}` : ''}`);
     }
   }
 
@@ -167,14 +167,16 @@ async function connectorsSection(
   domain?: string,
 ): Promise<string> {
   try {
-    let manifests: GuideManifest[] = guideManifests(integrationManager);
+    const everyManifest: GuideManifest[] = guideManifests(integrationManager);
+    let manifests = everyManifest;
     if (domain) {
       const d = domain.toLowerCase();
       manifests = manifests.filter(m => m.id.toLowerCase() === d || manifestAreas(m).some(a => profileMatches(a, domain) || a.toLowerCase() === d));
     }
     if (manifests.length === 0) return '';
     const input = await overviewInput(state, integrationManager, authorizations, { onlyManifests: manifests });
-    return connectorOverview({ ...input, detail: !!domain });
+    // The documents another connector holds can be attached here too: an area's answer names them all.
+    return connectorOverview({ ...input, detail: !!domain, sourceManifests: everyManifest });
   } catch (err) {
     // A guidance failure must never hide the mandates themselves.
     console.error('[Suveren MCP] connector overview failed:', err);
@@ -232,6 +234,21 @@ export function listAuthorizationsHandler(
   integrationManager?: IntegrationManager,
   contextDir?: string,
 ) {
+  const answer = listAuthorizations(state, integrationManager, contextDir);
+  return async (args?: { domain?: string }) => {
+    const result = await answer(args);
+    // An answer for one area names tools by the exact name; the AI's app may not list a tool added since the chat started.
+    if (!args?.domain || !state.spClient.isUnlocked()) return result;
+    const [first, ...rest] = result.content;
+    return { ...result, content: [{ ...first, text: `${first.text}\n\n${CALL_THROUGH_RULE}` }, ...rest] };
+  };
+}
+
+function listAuthorizations(
+  state: SharedState,
+  integrationManager?: IntegrationManager,
+  contextDir?: string,
+) {
   return async (args?: { domain?: string }) => {
     // Running but locked reads as "no authorizations" unless we say so.
     if (!state.spClient.isUnlocked()) {
@@ -252,9 +269,14 @@ export function listAuthorizationsHandler(
       if (!domain) {
         const short = await shortAnswerPart(state, integrationManager, authorizations);
         if (short) text.push('', short);
+        // The change note sends the AI here for the current brief, also before any mandate exists.
+        const brief = readContextFile(contextDir);
+        if (brief) text.push('', '=== CONTEXT ===', brief);
         return { content: [{ type: 'text' as const, text: text.join('\n') }] };
       }
-      text.push('', firstMandateText({ card: setupCardName(integrationManager) }));
+      // The form's steps only when the Setup mandate itself is asked for; any other area gets the one step.
+      const setup = setupMandateFacts(integrationManager, authorizations);
+      text.push('', firstMandateText({ card: setup.card, area: setup.area, form: !!setup.area && domain === setup.area }));
       const rows = rowsForDomain(notYet, domain, integrationManager);
       if (rows.length > 0) text.push('', LISTED_WITHOUT_MANDATE_HEADING, ...rows);
       for (const h of hints) text.push('', h);
@@ -302,6 +324,7 @@ export function listAuthorizationsHandler(
         // the clear action named below rather than silently vanishing.
         const statusLabel = !auth.complete ? ' (PENDING)' : auth.needsReapproval ? ' (MUST BE SIGNED AGAIN)' : '';
         output.push(`[${auth.path}] ${auth.profileId} (${remainingMin} min remaining)${statusLabel}`);
+        if (auth.complete) output.push(`  Mandate id: ${auth.authorizationId}`);
         if (auth.needsReapproval) {
           output.push('  The Authority Server no longer accepts this mandate\'s protocol version. Ask the mandate owner to sign it again (Mandates page → Sign again).');
         }
@@ -401,6 +424,7 @@ export function listAuthorizationsHandler(
       if (auth.complete) {
         const statusLabel = auth.needsReapproval ? ' (MUST BE SIGNED AGAIN)' : '';
         const lines = [`  [${auth.path}] ${auth.profileId} — ${remainingMin} min remaining${statusLabel}`];
+        lines.push(`    Mandate id: ${auth.authorizationId}`);
         lines.push(`    Bounds: ${boundsDesc}`);
 
         // Item 9 (re-approval UX): generic, not per-profile.

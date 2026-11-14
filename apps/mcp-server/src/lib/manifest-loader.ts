@@ -30,6 +30,9 @@ import {
   type AttachmentTransportConfig,
   type ManifestValues,
   type MessageVerb,
+  type ReportDeclaration,
+  LIST_TRANSFORMS,
+  MAPPING_ITEM_FORMATS,
 } from './tool-gating-types';
 import { GATEWAY_OWNED_ARGS } from './sealed-args';
 import { uncoveredReadSwitchReason, type BoundsSchemaLike } from './read-gate';
@@ -221,6 +224,20 @@ export interface IntegrationManifest {
    */
   documents?: ManifestDocuments;
   /**
+   * The connector's own status check: a tool the gateway calls (no
+   * arguments) to learn whether the connector can do its work right now —
+   * e.g. Files reporting that the computer does not let it use its shared
+   * folder. The answer's `structuredContent.problem` is a sentence for a
+   * person, in the connector's own words, or absent/empty when all is well.
+   * The connector card and the dashboard show that sentence as the
+   * connector's words, never as AI text. Called after the connector starts
+   * and when the UI asks for status (IntegrationManager.refreshStatusChecks).
+   * The named tool must be `internal: true` on this SAME manifest's
+   * `toolGating`, so the AI never sees or calls it (checked at load time —
+   * `invalidManifestStatusReason`).
+   */
+  status?: { tool: string };
+  /**
    * True for a connector that touches only this computer: its own store and a
    * local folder, no outside system. It is not a "real system", so it runs in
    * simulation mode too (IntegrationManager.isSimulationSafe) and has no
@@ -255,6 +272,12 @@ export interface IntegrationManifest {
    * The daily limit is used up: 5 of 5 emails today." Absent → plainer words.
    */
   limitWords?: Record<string, { noun: string; pastParticiple: string }>;
+  /**
+   * This connector's records can be shown and checked in a report — see
+   * tool-gating-types.ts `ReportDeclaration`. Checked at load time
+   * (`invalidManifestReportReason`, and unique `system` / one `cases`).
+   */
+  report?: ReportDeclaration;
 }
 
 interface ManifestIndex {
@@ -844,6 +867,150 @@ export function invalidManifestMessageReason(manifest: Pick<IntegrationManifest,
   return null;
 }
 
+type MappingTarget = { arg: string; transform?: string; divisor?: number; format?: unknown };
+
+/** Each execution field of one entry's `executionMapping` -> the arguments (and how) that write it. */
+function mappingTargets(entry: unknown): Map<string, MappingTarget[]> {
+  const targets = new Map<string, MappingTarget[]>();
+  const mapping = (entry as { executionMapping?: unknown } | null)?.executionMapping;
+  if (!mapping || typeof mapping !== 'object') return targets;
+  for (const [arg, value] of Object.entries(mapping as Record<string, unknown>)) {
+    const list = Array.isArray(value) ? value : [value];
+    for (const m of list) {
+      const field = typeof m === 'string' ? m : (m as { field?: unknown } | null)?.field;
+      if (typeof field !== 'string') continue;
+      const t = typeof m === 'string' ? {} : (m as { transform?: string; divisor?: number; format?: unknown });
+      targets.set(field, [...(targets.get(field) ?? []), { arg, transform: t.transform, divisor: t.divisor, format: t.format }]);
+    }
+  }
+  return targets;
+}
+
+function executionMappingReasonAt(at: string, entry: unknown): string | null {
+  for (const [field, writers] of mappingTargets(entry)) {
+    for (const w of writers) {
+      if (w.format !== undefined && !(MAPPING_ITEM_FORMATS as readonly unknown[]).includes(w.format)) {
+        return `${at}.executionMapping "${w.arg}" -> "${field}" has an unknown format ${JSON.stringify(w.format)} (known: ${MAPPING_ITEM_FORMATS.join(', ')})`;
+      }
+      // join_domains reads the text after the last "@": only safe on items
+      // checked to be exactly one address (tool-gating-types.ts `format`).
+      if (w.transform === 'join_domains' && w.format !== 'email') {
+        return `${at}.executionMapping "${w.arg}" -> "${field}" uses join_domains and must declare "format": "email"`;
+      }
+    }
+    if (writers.length < 2) continue;
+    const args = writers.map(w => w.arg);
+    const twice = args.find((a, i) => args.indexOf(a) !== i);
+    if (twice) return `${at}.executionMapping maps "${twice}" to "${field}" twice`;
+    const first = writers[0];
+    const combinable = writers.every(w =>
+      w.divisor === undefined && typeof w.transform === 'string' &&
+      (LIST_TRANSFORMS as readonly string[]).includes(w.transform) && w.transform === first.transform &&
+      w.format === first.format);
+    if (!combinable) {
+      return `${at}.executionMapping maps ${args.map(a => `"${a}"`).join(' and ')} to "${field}"; ` +
+        `several arguments can share a field only through the same list transform (${LIST_TRANSFORMS.join(', ').replace(/, (?=[^,]*$)/, ' or ')}) and the same format`;
+    }
+  }
+  return null;
+}
+
+/**
+ * `executionMapping` (tool-gating-types.ts `ExecutionMappingValue`): several
+ * arguments may map to one execution field only when all of them use the
+ * same list transform — their items then combine (sum / union). A direct
+ * copy or divisor shared by two arguments would have one silently overwrite
+ * the other (an email's `cc` hiding from the recipient scope), so the whole
+ * manifest is refused.
+ */
+export function invalidExecutionMappingReason(toolName: string, entry: unknown): string | null {
+  return executionMappingReasonAt(`override "${toolName}"`, entry);
+}
+
+/**
+ * A tool's declared message recipients (`message.to`, `message.cc`): when the
+ * `to` argument feeds execution fields (a recipient count, recipient/domain
+ * scope lists), the `cc` argument must feed every one of them with the same
+ * transform and format — otherwise a recipient in cc is neither counted nor
+ * scope-checked. Generic: the argument names come from the manifest's own
+ * `message` declaration.
+ */
+export function invalidMessageRecipientsReason(toolName: string, entry: unknown): string | null {
+  if (entry === null || typeof entry !== 'object') return null;
+  const message = (entry as { message?: { to?: unknown; cc?: unknown } }).message;
+  const to = message?.to;
+  const cc = message?.cc;
+  if (typeof to !== 'string' || typeof cc !== 'string') return null;
+  const targets = mappingTargets(entry);
+  const missing: string[] = [];
+  for (const [field, writers] of targets) {
+    const fromTo = writers.find(w => w.arg === to);
+    if (!fromTo) continue;
+    const fromCc = writers.find(w => w.arg === cc);
+    if (!fromCc || fromCc.transform !== fromTo.transform || fromCc.divisor !== fromTo.divisor || fromCc.format !== fromTo.format) missing.push(field);
+  }
+  if (missing.length === 0) return null;
+  return `override "${toolName}": the message cc argument "${cc}" must map to every field the to argument "${to}" maps to (missing: ${missing.join(', ')})`;
+}
+
+/**
+ * `sealedOnlyArgs` and `argDefaults` (tool-gating-types.ts): shape checks.
+ * Both are write-tool declarations. A sealed-only argument cannot also be
+ * blocked or declared not-content. A default must be a plain JSON value
+ * (string, number, boolean, or a list of them) and may not name an argument
+ * that is blocked or owned by the gateway.
+ */
+export function invalidArgDeclarationsReason(toolName: string, entry: unknown): string | null {
+  if (entry === null || typeof entry !== 'object') return null;
+  const e = entry as Record<string, unknown>;
+  const at = `override "${toolName}"`;
+  const isRead = e.category === 'read' || e.category === 'disabled';
+  const blocked = new Set(Array.isArray(e.blockedArgs) ? e.blockedArgs as string[] : []);
+  const nonContent = new Set(Array.isArray(e.nonContentArgs) ? e.nonContentArgs as string[] : []);
+  if (e.sealedOnlyArgs !== undefined) {
+    const list = e.sealedOnlyArgs;
+    if (!Array.isArray(list) || list.length === 0 || !list.every(a => typeof a === 'string' && a.length > 0)) {
+      return `${at}.sealedOnlyArgs must be a non-empty list of argument names`;
+    }
+    if (isRead) return `${at}.sealedOnlyArgs is allowed on write tools only`;
+    for (const a of list as string[]) {
+      if (blocked.has(a)) return `${at}.sealedOnlyArgs lists "${a}", which is blocked (blockedArgs)`;
+      if (nonContent.has(a)) return `${at}.sealedOnlyArgs lists "${a}", which is declared not content (nonContentArgs)`;
+    }
+  }
+  if (e.argDefaults !== undefined) {
+    const d = e.argDefaults;
+    if (d === null || typeof d !== 'object' || Array.isArray(d) || Object.keys(d).length === 0) {
+      return `${at}.argDefaults must be a non-empty object mapping argument names to values`;
+    }
+    if (isRead) return `${at}.argDefaults is allowed on write tools only`;
+    const plain = (v: unknown) => typeof v === 'string' || typeof v === 'boolean' || (typeof v === 'number' && Number.isFinite(v));
+    for (const [a, v] of Object.entries(d as Record<string, unknown>)) {
+      if (blocked.has(a)) return `${at}.argDefaults names "${a}", which is blocked (blockedArgs)`;
+      if (GATEWAY_OWNED_ARGS.includes(a)) return `${at}.argDefaults names "${a}", which is owned by the gateway`;
+      if (!(plain(v) || (Array.isArray(v) && v.every(plain)))) {
+        return `${at}.argDefaults."${a}" must be a string, number, boolean or a list of them`;
+      }
+    }
+  }
+  return null;
+}
+
+/** Both executionMapping rules above, over the default entry and every override of one manifest. */
+export function invalidManifestExecutionMappingReason(manifest: Pick<IntegrationManifest, 'toolGating'>): string | null {
+  const def = manifest.toolGating?.default;
+  if (def) {
+    const reason = executionMappingReasonAt('default', def);
+    if (reason) return reason;
+  }
+  for (const [toolName, entry] of Object.entries(manifest.toolGating?.overrides ?? {})) {
+    const reason = invalidExecutionMappingReason(toolName, entry) ?? invalidMessageRecipientsReason(toolName, entry)
+      ?? invalidArgDeclarationsReason(toolName, entry);
+    if (reason) return reason;
+  }
+  return null;
+}
+
 /** Shared control type, exported so callers can narrow a validated entry. */
 export type ValidatedPreviewConfig = ToolPreviewConfig;
 
@@ -1237,6 +1404,27 @@ export function invalidManifestDocumentsReason(
   for (const [kind, entry] of Object.entries(manifest.documents)) {
     const reason = invalidDocumentSourceReason(kind, entry, overrides);
     if (reason) return reason;
+  }
+  return null;
+}
+
+/**
+ * Returns a refusal reason if `manifest.status` (if any) is malformed: it must
+ * name a tool, and that tool must be `internal: true` in this manifest's
+ * `toolGating.overrides` — the status check is the gateway's, never the AI's.
+ */
+export function invalidManifestStatusReason(
+  manifest: Pick<IntegrationManifest, 'status' | 'toolGating'>,
+): string | null {
+  const status = (manifest as { status?: unknown }).status;
+  if (status === undefined) return null;
+  const tool = (status as { tool?: unknown } | null)?.tool;
+  if (status === null || typeof status !== 'object' || typeof tool !== 'string' || tool.length === 0) {
+    return 'status must be an object with a non-empty "tool"';
+  }
+  const override = (manifest.toolGating?.overrides ?? {})[tool] as { internal?: unknown } | null | undefined;
+  if (!override || override.internal !== true) {
+    return `status.tool "${tool}" must be declared in toolGating.overrides with "internal": true`;
   }
   return null;
 }
@@ -1724,9 +1912,82 @@ export function computeSignInGroups(list: Array<Pick<IntegrationManifest, 'id' |
   return Array.from(groups.values());
 }
 
+// ─── report declaration ─────────────────────────────────────────────────────
+
+const REPORT_KEYS = new Set(['system', 'label', 'cases', 'tables']);
+const REPORT_TABLE_KEYS = new Set(['name', 'required', 'record', 'matchBy', 'causingTicket', 'refusalTime', 'time']);
+const REPORT_TIME_KEYS = new Set(['column', 'ticket']);
+const REPORT_SYSTEM_RE = /^[a-z][a-z0-9-]*$/;
+
+const isText = (v: unknown): v is string => typeof v === 'string' && v.length > 0;
+
+/**
+ * Returns a refusal reason if `manifest.report` (if any) is malformed, or null
+ * if absent/well-formed. The export is run as `<mcp.command> export`, so a
+ * report connector must declare its command.
+ */
+export function invalidManifestReportReason(manifest: Pick<IntegrationManifest, 'report' | 'mcp'>): string | null {
+  const r = manifest.report as unknown;
+  if (r === undefined) return null;
+  if (!r || typeof r !== 'object' || Array.isArray(r)) return 'report must be an object';
+  const o = r as Record<string, unknown>;
+  const extra = Object.keys(o).find(k => !REPORT_KEYS.has(k));
+  if (extra) return `report has unknown key "${extra}"`;
+  if (!isText(o.system) || !REPORT_SYSTEM_RE.test(o.system)) return 'report.system must be a lowercase name (a-z, 0-9, -)';
+  if (!isText(o.label)) return 'report.label must be a non-empty string';
+  if (o.cases !== undefined && typeof o.cases !== 'boolean') return 'report.cases must be a boolean';
+  if (!isText(manifest.mcp?.command)) return 'report needs mcp.command: the export runs as "<mcp.command> export"';
+  if (!Array.isArray(o.tables) || o.tables.length === 0) return 'report.tables must be a non-empty array';
+  const names = new Set<string>();
+  for (const [i, t] of o.tables.entries()) {
+    const at = `report.tables[${i}]`;
+    if (!t || typeof t !== 'object' || Array.isArray(t)) return `${at} must be an object`;
+    const tt = t as Record<string, unknown>;
+    const extraKey = Object.keys(tt).find(k => !REPORT_TABLE_KEYS.has(k));
+    if (extraKey) return `${at} has unknown key "${extraKey}"`;
+    if (!isText(tt.name)) return `${at}.name must be a non-empty string`;
+    if (names.has(tt.name)) return `${at}.name "${tt.name}" is declared twice`;
+    names.add(tt.name);
+    if (tt.required !== undefined && typeof tt.required !== 'boolean') return `${at}.required must be a boolean`;
+    const rec = tt.record;
+    if (!rec || typeof rec !== 'object' || Array.isArray(rec)) return `${at}.record must be an object`;
+    if (!isText((rec as Record<string, unknown>).kind)) return `${at}.record.kind must be a non-empty string`;
+    if (Object.values(rec).some(v => typeof v !== 'string')) return `${at}.record values must be strings`;
+    if (tt.matchBy !== undefined && (!Array.isArray(tt.matchBy) || tt.matchBy.length === 0 || !tt.matchBy.every(isText))) {
+      return `${at}.matchBy must be a non-empty array of column names`;
+    }
+    if (tt.causingTicket !== undefined && !isText(tt.causingTicket)) return `${at}.causingTicket must be a column name`;
+    if (tt.refusalTime !== undefined && !isText(tt.refusalTime)) return `${at}.refusalTime must be a column name`;
+    // The reporting window dates every row by it: without it the table would be invisible in every report.
+    const time = tt.time as Record<string, unknown> | undefined;
+    if (!time || typeof time !== 'object' || Array.isArray(time)) return `${at}.time must say when a row came into being: { "column": ..., "ticket"?: ... }`;
+    const extraTimeKey = Object.keys(time).find(k => !REPORT_TIME_KEYS.has(k));
+    if (extraTimeKey) return `${at}.time has unknown key "${extraTimeKey}"`;
+    if (!isText(time.column)) return `${at}.time.column must be a column name`;
+    if (time.ticket !== undefined && !isText(time.ticket)) return `${at}.time.ticket must be a column name`;
+  }
+  return null;
+}
+
+/** Why `manifest.report` cannot join the already loaded ones: the same system twice, or a second case source. */
+export function reportConflictReason(
+  manifest: Pick<IntegrationManifest, 'report'>,
+  loaded: Array<Pick<IntegrationManifest, 'id' | 'report'>>,
+): string | null {
+  const r = manifest.report;
+  if (!r) return null;
+  const same = loaded.find(m => m.report?.system === r.system);
+  if (same) return `report.system "${r.system}" is already declared by ${same.id}`;
+  const cases = r.cases ? loaded.find(m => m.report?.cases) : undefined;
+  if (cases) return `report.cases is already declared by ${cases.id}`;
+  return null;
+}
+
 // ─── Module state ───────────────────────────────────────────────────────────
 
 const manifests = new Map<string, IntegrationManifest>();
+/** Set once loadManifests() ran in this process, whatever it found. */
+let manifestsLoaded = false;
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
@@ -1735,12 +1996,27 @@ const manifests = new Map<string, IntegrationManifest>();
  * Returns the number of manifests loaded.
  */
 export function loadManifests(integrationsDir?: string): number {
+  manifestsLoaded = true;
+  return readManifestDir(manifestDir(integrationsDir), manifests);
+}
+
+/** The directory loadManifests() reads: the argument, else SUVEREN_MANIFESTS_DIR, else the gateway's own. */
+function manifestDir(integrationsDir?: string): string {
   // Default: ../../../../content/integrations relative to this file (src/lib/ → apps/mcp-server → suveren-gateway/content/integrations)
-  const dir = resolve(
+  return resolve(
     integrationsDir ??
     process.env.SUVEREN_MANIFESTS_DIR ??
     join(import.meta.dirname ?? __dirname, '..', '..', '..', '..', 'content', 'integrations'),
   );
+}
+
+/**
+ * Reads and checks every manifest `dir`'s index names into `into` — the
+ * registry for loadManifests(), a private map otherwise. Checks that compare
+ * manifests (a shared sign-in group, a report system) see what `into` holds.
+ */
+function readManifestDir(dir: string, into: Map<string, IntegrationManifest>): number {
+  const manifests = into;
   const indexPath = join(dir, 'index.json');
 
   if (!existsSync(indexPath)) {
@@ -1796,6 +2072,11 @@ export function loadManifests(integrationsDir?: string): number {
         console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${messageReason}`);
         continue;
       }
+      const mappingReason = invalidManifestExecutionMappingReason(manifest);
+      if (mappingReason) {
+        console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${mappingReason}`);
+        continue;
+      }
       const contextReason = invalidManifestContextReason(manifest);
       if (contextReason) {
         console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${contextReason}`);
@@ -1822,6 +2103,11 @@ export function loadManifests(integrationsDir?: string): number {
       const documentsReason = invalidManifestDocumentsReason(manifest);
       if (documentsReason) {
         console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${documentsReason}`);
+        continue;
+      }
+      const statusReason = invalidManifestStatusReason(manifest);
+      if (statusReason) {
+        console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${statusReason}`);
         continue;
       }
       const attachmentsReason = invalidManifestAttachmentsReason(manifest);
@@ -1868,6 +2154,12 @@ export function loadManifests(integrationsDir?: string): number {
         console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${groupReason}`);
         continue;
       }
+      const reportReason = invalidManifestReportReason(manifest)
+        ?? reportConflictReason(manifest, Array.from(manifests.values()).filter(m => m.id !== manifest.id));
+      if (reportReason) {
+        console.error(`[ManifestLoader] Refusing manifest ${id} (${manifestPath}): ${reportReason}`);
+        continue;
+      }
       const groupId = manifest.oauth?.signInGroup?.id;
       if (groupId) {
         const first = Array.from(manifests.values()).find(m => m.oauth?.signInGroup?.id === groupId);
@@ -1900,6 +2192,27 @@ export function getManifest(id: string): IntegrationManifest | undefined {
  */
 export function getAllManifests(): IntegrationManifest[] {
   return Array.from(manifests.values());
+}
+
+/** The gateway's own manifests, read once, never registered — see getManifestsOrOwn(). */
+let ownManifests: IntegrationManifest[] | undefined;
+
+/**
+ * The loaded manifests; before loadManifests() has run in this process, the
+ * gateway's own (what loadManifests() would load), read once and NOT
+ * registered — so a module used outside the gateway's startup too (the report
+ * verifier in a test or a CLI) sees the shipped declarations without changing
+ * what getManifest() answers for anyone else. The running gateway always
+ * loads at startup, so it always gets the loaded set.
+ */
+export function getManifestsOrOwn(): IntegrationManifest[] {
+  if (manifestsLoaded) return getAllManifests();
+  if (!ownManifests) {
+    const own = new Map<string, IntegrationManifest>();
+    readManifestDir(manifestDir(), own);
+    ownManifests = Array.from(own.values());
+  }
+  return ownManifests;
 }
 
 /** Declared shared sign-in groups across all loaded manifests. */

@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { AgentProfile } from '@hap/core';
 import { argRows, profileFieldLines, humanizeKey, toolHeadline, systemDisplayName, aiTextValue, fieldNotes } from './approval-view';
 import type { IntegrationManifest } from './sp-client';
@@ -191,5 +193,34 @@ describe('argRows — nonContentArgs and notes', () => {
     expect(fieldNotes(args, display)).toEqual(['Preview note']);
     expect(fieldNotes(args, display, ['imagePath'])).toEqual([]);
     expect(fieldNotes({ commit: 'abc' }, display)).toEqual([]);
+  });
+});
+
+describe('email: cc recipients are sealed rows on the card, like to', () => {
+  // The shipped mail manifest and the email connector's own tool schema (the
+  // gateway test fixture captured from @humanagencyp/email-mcp) — the same
+  // display the gateway builds (integration-manager.ts getToolDisplay).
+  const root = join(import.meta.dirname, '..', '..', '..', '..');
+  const mail = JSON.parse(readFileSync(join(root, 'content', 'integrations', 'mail.json'), 'utf8'));
+  const schemas = JSON.parse(readFileSync(join(root, 'apps', 'mcp-server', 'test', 'fixtures', 'connector-schemas', 'mail.json'), 'utf8'));
+  const gating = mail.toolGating.overrides.send_message;
+  const display = {
+    inputSchema: schemas.tools.send_message,
+    ...(gating.approvalView ? { approvalView: gating.approvalView } : {}),
+    ...(gating.nonContentArgs ? { nonContentArgs: gating.nonContentArgs } : {}),
+    executionMapping: gating.executionMapping,
+    aiTextArg: gating.display?.aiText,
+  };
+  const args = { to: ['in@example.com'], cc: ['out@elsewhere.example'], subject: 'Hi', body: 'Text' };
+
+  it('shows every cc address among the sealed rows the person approves', () => {
+    const sealed = argRows(args, display, { part: 'sealed' });
+    expect(sealed.find(r => r.key === 'cc')).toMatchObject({ value: ['out@elsewhere.example'] });
+    expect(sealed.find(r => r.key === 'to')).toMatchObject({ value: ['in@example.com'] });
+    expect(argRows(args, display, { part: 'unsealed' }).map(r => r.key)).not.toContain('cc');
+  });
+
+  it('the email connector offers no bcc argument, so there is no hidden recipient to show', () => {
+    expect(Object.keys(display.inputSchema.properties)).not.toContain('bcc');
   });
 });

@@ -16,6 +16,7 @@
  * transition is atomic with receipt issuance, not a separate step.
  */
 
+import { readRefusal } from '@hap/core/refusal';
 import type { SharedState } from '../lib/shared-state';
 import { lockedNotice } from '../lib/locked-notice';
 import { endedFromRefusal, mandateEndedProposalText } from '../lib/guidance';
@@ -29,7 +30,8 @@ import { previewChangedSinceSubmission } from '../lib/preview';
 import { stripSourceLink } from '../lib/request-context';
 import { finalizeAttachmentsForExecution, stripAttachmentsSealedMeta } from '../lib/attachment-resolution';
 import type { CommittedExecutor, ExecutionResult } from '../lib/committed-executor';
-import { ContentBindingError } from '@hap/core';
+import { ContentBindingError, getProfile } from '@hap/core';
+import { cumulativeSumValue } from '../lib/tool-proxy';
 import { AsKeyMismatchError } from '../lib/attestation-cache';
 import { ArchiveWriteError } from '../lib/receipt-archive';
 import { verifyTicket, TicketBindingMismatchError, mandateForTicket } from '../lib/ticket-verify';
@@ -303,9 +305,7 @@ export async function executeCommitted(
       action: proposal.tool,
       actionType: proposalActionType,
       executionContext: proposal.executionContext,
-      amount: typeof proposal.executionContext.amount === 'number'
-        ? proposal.executionContext.amount
-        : undefined,
+      amount: cumulativeSumValue(getProfile(proposal.profileId), proposal.executionContext),
       proposalId: proposal.id,
       // v0.8 (Ticket Request Schema; Proposals, rule 1): the content itself
       // never travels on the ticket request — only its fingerprint below.
@@ -345,7 +345,7 @@ export async function executeCommitted(
       };
     }
     if (err instanceof SPReceiptError) {
-      const code = (err.body.errors as Array<{ code?: string }> | undefined)?.[0]?.code;
+      const code = readRefusal(err.body).code;
       if (code === 'PROPOSAL_ALREADY_EXECUTED') {
         const local = localOutcomeOfExecuted(proposal, state);
         if (local) return local;
@@ -692,10 +692,15 @@ export async function executeCommitted(
     logExecutionOutcome(proposal.id, true);
     // Record locally for cumulative tracking (parity with the automatic path).
     // Reached once per ticket, by construction of the journal above.
+    // v0.8: the wire context no longer carries `action_type` (it travels as the proposal's own
+    // `actionType`). Without it here the entry counted against every limit of the mandate, so one
+    // approved send read "1/0" on its test-data loads (sumByWindow counts an untyped entry everywhere).
     state.executionLog.record({
       profileId: proposal.profileId,
       path: proposal.path,
-      execution: proposal.executionContext,
+      execution: proposalActionType
+        ? { ...proposal.executionContext, action_type: proposalActionType }
+        : proposal.executionContext,
       timestamp: Math.floor(Date.now() / 1000),
     });
     return { text: `Proposal ${proposal.id} committed and executed.\nResult: ${resultText}` };

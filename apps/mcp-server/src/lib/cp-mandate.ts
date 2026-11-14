@@ -18,6 +18,10 @@ export interface MandateResult {
   groupName?: string;
   mode?: string;
   ttlSeconds?: number;
+  /** A change's differences, computed from the signed old mandate. */
+  diff?: unknown;
+  /** The new mandate is live but the old one could not be revoked. */
+  revokeError?: string;
 }
 
 export async function controlPlaneMandate(dryRun: boolean, request: Record<string, unknown>): Promise<MandateResult> {

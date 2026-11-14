@@ -13,7 +13,7 @@
  *    doesn't is a FACTUAL error in the report, not a soft link, so it fails
  *    the whole case closed (`unverifiable`), unlike the goal-link check.
  */
-import type { EmailExport, EmailMessage } from './types';
+import type { CaseSourceExport, EmailMessage } from './types';
 import type { ReceiptArchiveReader } from './types';
 import { checkTicket, resolveApprovalElement } from './ticket-resolvers';
 import { parseTimestampSeconds } from './time';
@@ -127,7 +127,8 @@ export interface CaseResolution {
 
 export async function resolveCaseElement(
   archive: ReceiptArchiveReader,
-  emailExport: EmailExport,
+  /** The case source's export (systems.ts `caseSystem`; the email simulator's today). */
+  emailExport: CaseSourceExport,
   attrs: { start?: string; goal?: string; steps?: string },
 ): Promise<CaseResolution> {
   const start = parseRef(attrs.start);

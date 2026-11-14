@@ -213,6 +213,9 @@ async function checkAsKeyBeforeLogin(asUrl: string, dataDir: string): Promise<As
   };
 }
 
+/** Shown to the person exactly as written (approved by Andreas, 2026-11-12). */
+export const SIGNED_IN_ELSEWHERE = 'This gateway is signed in to another account. Sign out first, then sign in with the new one.';
+
 export function createAuthRouter(
   vault: Vault,
   logoutAuth: Middleware,
@@ -418,24 +421,42 @@ export function createAuthRouter(
         }
       }
 
-      vault.setSpCookie(sessionCookie);
+      // Nothing below touches the running session until the new key is
+      // accepted: derive into a candidate, check it, swap only on success.
+      // It used to set the cookie and the key first and check afterwards —
+      // and the "different account" refusal then cleared the key, so a
+      // foreign key signed the current person out (security review 2026-11,
+      // finding A3).
+      //
+      // While a session is unlocked, another account is refused outright:
+      // switching needs a sign-out first, and sign-out needs the current
+      // key. The same account signing in again (same key) goes on as before.
+      const sessionUser = (data as { user?: { id?: unknown; did?: unknown } }).user;
+      if (vault.isUnlocked() && !vault.isCurrentApiKey(apiKey)) {
+        const current = vault.getSessionUser();
+        const sameAccount = Boolean(current && typeof sessionUser?.id === 'string' && sessionUser.id === current.id);
+        if (!sameAccount) {
+          res.status(409).json({ error: 'signed_in_to_another_account', message: SIGNED_IN_ELSEWHERE });
+          return;
+        }
+      }
 
-      // Derive vault encryption key from API key
-      await vault.deriveAndSetKey(apiKey);
+      const candidate = await vault.deriveCandidateFromApiKey(apiKey);
 
       // Vault encryption key is derived from the API key. Logging in with a
       // different API key on the same gateway means the existing vault
       // contents (service credentials, integrations, E2EE keypair, gates)
       // become unreadable and must be wiped. This is destructive — block on
-      // it until the UI has explicitly confirmed.
-      if (vault.isVaultFromDifferentKey()) {
+      // it until the UI has explicitly confirmed. keyMatch looks at the
+      // vault's verifier, or — for a vault from before it — at every
+      // encrypted store, so mandates and tickets count even without a
+      // connector credential.
+      if (vault.keyMatch(candidate) === 'conflict') {
         if (!confirmWipe) {
           // Build a summary of what would be lost so the UI can warn clearly.
           const credentialIds = vault.listCredentials();
           const services = vault.listServices();
-          // Drop the just-derived (wrong) key so subsequent calls don't
-          // accidentally encrypt anything against the new salt.
-          vault.clearKey();
+          // The vault is untouched: whoever is signed in stays signed in.
           res.status(409).json({
             error: 'different_account',
             wouldWipe: true,
@@ -456,23 +477,14 @@ export function createAuthRouter(
         } catch (err) {
           console.error('[Control Plane] Failed to remove integrations:', err);
         }
+        // wipe() also clears the salt, so the candidate derived above no
+        // longer fits: derive again against the fresh salt.
         vault.wipe();
-        // Real-gateway e2e (2026-10-15): `wipe()` calls `clearKey()`, which
-        // also nulls `spSessionCookie` (and `sessionUser`) — the SAME cookie
-        // `vault.setSpCookie(sessionCookie)` just set above, now gone again.
-        // `sessionUser` gets explicitly re-set below (line ~470), unconditionally,
-        // so it was never actually missing by the time this request answers —
-        // but nothing re-set the cookie, so every`vault.getSpCookie()` read for
-        // the rest of this session (e.g. internal-content-crypto.ts's encrypt/
-        // decrypt routes, read by an AI tool call made right after an account
-        // switch) returned null, and every one of those calls failed with "no
-        // Authority Server session" — reproduced live: "Different user
-        // confirmed — wiping vault…" immediately followed by "Failed to submit
-        // approval proposal: no Authority Server session". Re-derive the key
-        // (wipe cleared the salt) AND restore the cookie the wipe just erased.
-        await vault.deriveAndSetKey(apiKey);
-        vault.setSpCookie(sessionCookie);
+        vault.adopt(await vault.deriveCandidateFromApiKey(apiKey));
+      } else {
+        vault.adopt(candidate);
       }
+      vault.setSpCookie(sessionCookie);
 
       // Session length: the AS reports when THIS session ends (30 days, given
       // the version header above; older/unpatched AS deployments may omit
@@ -481,7 +493,6 @@ export function createAuthRouter(
       vault.setSessionExpiresAt(sessionExpiresAt);
       // Who this session belongs to — needed to create a mandate from the
       // gateway itself (lib/mandate-ceremony.ts), the way the sign page does.
-      const sessionUser = (data as { user?: { id?: unknown; did?: unknown } }).user;
       vault.setSessionUser(
         typeof sessionUser?.id === 'string' && typeof sessionUser?.did === 'string'
           ? { id: sessionUser.id, did: sessionUser.did }

@@ -17,16 +17,25 @@ import { resolveRecord } from './record-resolvers';
 import { resolveCaseElement, parseCaseAttrs, CASE_TIME_UNKNOWN_REASON, type CaseResolution } from './case-resolvers';
 import { computeMetric, START_TIME_METRICS, type CaseMetricInput } from './metric-resolvers';
 import { parseTimestampSeconds } from './time';
-import { isEmailExport } from './types';
+import { isCaseSourceExport } from './types';
+import { reportSystem, reportSystems, caseSystem, capitalLabel, isSystemExport, refusalTimesOf, type ReportSystem } from './systems';
 import { checkedValueLine } from './render-report';
 import type {
-  ExportSystem, ReportSources, VerifiedElement, VerifyReportResult,
+  CaseSourceExport, ExportSystem, ReportSources, VerifiedElement, VerifyReportResult,
   ProofSummary, CoverageSummary,
 } from './types';
 
 const KNOWN_KINDS = new Set<string>(REPORT_ELEMENTS);
 
 type ExportOutcome = { ok: true; data: unknown } | { ok: false; reason: string };
+
+/** Shown when no connector's manifest declares the system that holds the loaded cases. */
+const NO_CASE_SOURCE = 'No connected system holds the loaded cases (no connector declares report.cases).';
+
+/** The case source's export as the case logic reads it: its declared tables, and `inbox`/`sent`. */
+function isCaseExport(cases: ReportSystem, data: unknown): data is CaseSourceExport {
+  return isSystemExport(cases, data) && isCaseSourceExport(data);
+}
 
 export async function verifyReport(html: string, sources: ReportSources): Promise<VerifyReportResult> {
   const { html: sanitized, notes: sanitizeNotes } = sanitizeReport(html);
@@ -78,7 +87,7 @@ export async function verifyReport(html: string, sources: ReportSources): Promis
         }
         case 'sv-record': {
           const system = p.attrs.system;
-          if (system !== 'email' && system !== 'crm' && system !== 'erp') {
+          if (!reportSystem(system)) {
             return { id: p.id, kind: p.kind, attrs: p.attrs, status: 'unverifiable', reason: `Unknown system "${p.attrs.system ?? ''}".` };
           }
           const exp = await getExport(system);
@@ -89,11 +98,15 @@ export async function verifyReport(html: string, sources: ReportSources): Promis
           return { id: p.id, kind: p.kind, attrs: p.attrs, ...r };
         }
         case 'sv-case': {
-          const exp = await getExport('email');
-          if (!exp.ok || !isEmailExport(exp.data)) {
+          const cases = caseSystem();
+          if (!cases) {
+            return { id: p.id, kind: p.kind, attrs: p.attrs, status: 'unverifiable', reason: NO_CASE_SOURCE };
+          }
+          const exp = await getExport(cases.system);
+          if (!exp.ok || !isCaseExport(cases, exp.data)) {
             return {
               id: p.id, kind: p.kind, attrs: p.attrs, status: 'unverifiable',
-              reason: `Could not read the email simulator export: ${!exp.ok ? exp.reason : 'unexpected shape'}`,
+              reason: `Could not read the ${cases.label} simulator export: ${!exp.ok ? exp.reason : 'unexpected shape'}`,
             };
           }
           const resolution = await resolveCaseElement(sources.archive, exp.data, p.attrs);
@@ -208,12 +221,11 @@ export async function verifyReport(html: string, sources: ReportSources): Promis
  *  the WHOLE `refusals` metric unverifiable instead (caller catches). */
 async function collectRefusalTimes(getExport: (s: ExportSystem) => Promise<ExportOutcome>): Promise<number[]> {
   const times: number[] = [];
-  for (const system of ['email', 'crm', 'erp'] as const) {
-    const exp = await getExport(system);
-    if (!exp.ok) throw new Error(`Could not read the ${system} simulator export: ${exp.reason}`);
-    const refusals = (exp.data as { refusals?: Array<{ at: unknown }> }).refusals ?? [];
-    for (const r of refusals) {
-      const t = parseTimestampSeconds(r.at);
+  for (const system of reportSystems()) {
+    const exp = await getExport(system.system);
+    if (!exp.ok) throw new Error(`Could not read the ${system.system} simulator export: ${exp.reason}`);
+    for (const at of refusalTimesOf(system, exp.data)) {
+      const t = parseTimestampSeconds(at);
       if (t !== undefined) times.push(t);
     }
   }
@@ -284,14 +296,16 @@ async function buildCoverage(
   referenced: string[],
   window?: ReportSources['window'],
 ): Promise<CoverageSummary> {
-  const exp = await getExport('email');
+  const cases = caseSystem();
+  const exp: ExportOutcome = cases ? await getExport(cases.system) : { ok: false, reason: NO_CASE_SOURCE };
+  const caseExport = cases && exp.ok && isCaseExport(cases, exp.data) ? exp.data : undefined;
   const emailExportError = !exp.ok
     ? exp.reason
-    : !isEmailExport(exp.data)
-      ? 'Email simulator export had an unexpected shape.'
+    : !caseExport
+      ? `${capitalLabel(cases!)} simulator export had an unexpected shape.`
       : undefined;
-  const loadedCases = exp.ok && isEmailExport(exp.data)
-    ? [...new Set(exp.data.inbox.map(m => m.case_id).filter((c): c is string => !!c))]
+  const loadedCases = caseExport
+    ? [...new Set(caseExport.inbox.map(m => m.case_id).filter((c): c is string => !!c))]
     : [];
 
   const covered = new Set(
@@ -305,7 +319,7 @@ async function buildCoverage(
   // With scoped sources (window.ts) the archive already holds only tickets
   // inside the reporting window, and the window's start is the period start —
   // in simulation mode it is never earlier than the load time.
-  const loadedAt = exp.ok && isEmailExport(exp.data) ? exp.data.simulation_load?.loaded_at : undefined;
+  const loadedAt = caseExport ? caseExport.simulation_load?.loaded_at : undefined;
   const loadedAtSeconds = loadedAt !== undefined ? (parseTimestampSeconds(loadedAt) ?? null) : null;
   const periodStart = window
     ? (loadedAtSeconds !== null ? Math.max(window.start, loadedAtSeconds) : window.start)

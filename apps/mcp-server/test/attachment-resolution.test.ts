@@ -18,7 +18,8 @@ import {
   stripAttachmentsSealedMeta,
   ATTACHMENTS_SEALED_META_KEY,
 } from '../src/lib/attachment-resolution';
-import { ATTACHMENT_SOURCES_FIELD } from '../src/lib/attachment-policy';
+/** email@0.9's attachment-source field; the gateway finds it by its format, `connector:kind`. */
+const ATTACHMENT_SOURCES_FIELD = 'allowed_attachment_sources';
 import type { IntegrationManager, DiscoveredTool } from '../src/lib/integration-manager';
 
 const HYPOTHETICAL_PROFILE = 'email-attachments-test';
@@ -38,7 +39,7 @@ beforeAll(() => {
     id: HYPOTHETICAL_PROFILE,
     version: '0.9',
     description: 'test — email profile with the allowed-attachment-sources field declared',
-    scopeSchema: { keyOrder: [ATTACHMENT_SOURCES_FIELD], fields: { [ATTACHMENT_SOURCES_FIELD]: { type: 'string', required: false } } },
+    scopeSchema: { keyOrder: [ATTACHMENT_SOURCES_FIELD], fields: { [ATTACHMENT_SOURCES_FIELD]: { type: 'string', required: false, format: 'connector:kind' } } },
     executionContextSchema: { fields: {} },
     requiredGates: [],
     ttl: { default: 1, max: 1 },

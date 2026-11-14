@@ -52,6 +52,8 @@ export interface CachedAuthorization {
   // Per-ceremony identity — THE key for every SP lookup (receipt, proposals,
   // intent, revoke) and for joining local gate content.
   authorizationId: string;
+  /** The title the person gave this mandate, as the AI may name it to them. Undefined when it has none. */
+  title?: string;
   // Content fingerprint. May collide across grants with identical bounds.
   // Use only for hash-equality checks (e.g. the receipt cross-check).
   boundsHash?: string;
@@ -409,6 +411,7 @@ export class AttestationCache {
 
     const auth: CachedAuthorization = {
       authorizationId: result.authorization_id,
+      title: typeof result.title === 'string' && result.title.trim() ? result.title.trim() : undefined,
       boundsHash: result.bounds_hash,  // content fingerprint (undefined for pre-v0.4 records)
       contextHash: result.scope_hash,  // v0.7: wire field renamed context_hash -> scope_hash
       profileId: result.profile_id,

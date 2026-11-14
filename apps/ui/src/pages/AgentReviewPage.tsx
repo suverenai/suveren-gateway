@@ -2,9 +2,8 @@ import { useState, useEffect } from 'react';
 import { COMMITMENT_LABEL, COMMITMENT_REVIEW, COMMITMENT_AUTOMATIC } from '../lib/commitment-words';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { spClient, SUPPORTED_PROTOCOL_VERSIONS } from '../lib/sp-client';
-import { computeBoundsHashBrowser, computeScopeHashBrowser, computeProfileHashBrowser, computeExecutionContextHashBrowser, hashGateContent } from '../lib/frame';
-import { buildGateForwardArgs } from '../lib/gate-forward';
+import { spClient } from '../lib/sp-client';
+import { computeBoundsHashBrowser } from '../lib/frame';
 import { StepIndicator } from '../components/StepIndicator';
 import { DomainBadge } from '../components/DomainBadge';
 import { profileDisplayName } from '../lib/profile-display';
@@ -12,8 +11,14 @@ import { offeredCommitModes, settleCommitMode, toProtocolMode } from '../lib/com
 import { scopesOverlap } from '../lib/scope-overlap';
 import { formatScopeFieldValue } from '../lib/scope-labels';
 import { useSourceManifests } from '../lib/source-manifests';
+import { useSimulationMode } from '../hooks/useSimulationMode';
+import { hiddenLimitKeys, type ManifestGatingLike } from '../lib/simulation-only-limits';
 import { mandateRight } from '../lib/mandate-rights';
+import { replacedRevokeProblem } from '../lib/mandate-replace';
 import { replacedOutcomeArgs, replacedWithdrawRoute } from '../lib/reject-outcome';
+import { computeMandateDiff, type MandateDiff } from '@hap/core/mandate-change';
+import { unmetForMandate, atLeastOneSignHint } from '@hap/core/scope-rules';
+import { MandateChangeDiff } from '../components/MandateChangeCard';
 import type { AgentProfile, AgentBoundsParams, AgentScopeParams } from '@hap/core';
 import { effectiveGrantors, type ProfileConfig } from '../lib/sp-client';
 
@@ -41,7 +46,6 @@ interface AuthData {
   groupId: string;
   groupName?: string;
   domain: string;
-  isTeam?: boolean;
   /** True when groupId is the auto-provisioned personal workspace — the same
    *  flag the AS uses to skip the approver requirement. Absent in snapshots
    *  written before this flag existed; treated as "team" (the safe side —
@@ -57,11 +61,12 @@ interface AuthData {
 
 export function AgentReviewPage() {
   const navigate = useNavigate();
-  const { user, mode, domain: authDomain } = useAuth();
+  const { user } = useAuth();
   const [authData, setAuthData] = useState<AuthData | null>(null);
   const [gateData, setGateData] = useState<GateData | null>(null);
   const [profile, setProfile] = useState<AgentProfile | null>(null);
   const sourceManifests = useSourceManifests();
+  const simulation = useSimulationMode();
   // Review is the DEFAULT commitment mode: the agent proposes, the human
   // approves. Automatic is the deliberate opt-in (or a template's choice).
   const [commitMode, setCommitMode] = useState<'immediate' | 'per-action'>('per-action');
@@ -243,6 +248,31 @@ export function AgentReviewPage() {
       .catch(() => setExistingSameProfile([]));
   }, [authData?.profileId]);
 
+  // Edit / "Change it myself": the differences, recomputed against the signed
+  // mandate on every change of the form — what the person is about to sign.
+  const [editDiff, setEditDiff] = useState<MandateDiff | null>(null);
+  useEffect(() => {
+    const replacesId = sessionStorage.getItem('agentEditReplaces');
+    if (!replacesId || !profile || !gateData) { setEditDiff(null); return; }
+    let cancelled = false;
+    spClient.getEnrichedAuthorizations()
+      .then(async (auths) => {
+        const old = auths.find((a) => a.authorizationId === replacesId);
+        if (!old || !old.expiresAt) return;
+        const oldProfile = old.profileId === profile.id ? profile : await spClient.getProfile(old.profileId);
+        if (cancelled) return;
+        const mode = (domains: string[]) => (domains.length > 0 ? 'review' : 'automatic');
+        const nowSec = Math.floor(Date.now() / 1000);
+        setEditDiff(computeMandateDiff({
+          before: { profile: oldProfile, bounds: old.bounds, scope: old.context, intent: old.intent ?? '', mode: mode(old.deferredCommitmentDomains), expiresAt: old.expiresAt },
+          after: { profile, bounds: gateData.bounds, scope: gateData.context, intent: gateData.gateContent.intent, mode: toProtocolMode(commitMode), expiresAt: ttlSeconds > 0 ? nowSec + ttlSeconds : old.expiresAt },
+        }));
+      })
+      .catch(() => { if (!cancelled) setEditDiff(null); });
+    return () => { cancelled = true; };
+  }, [profile, gateData, commitMode, ttlSeconds]);
+  const aiIntent = typeof window !== 'undefined' ? sessionStorage.getItem('agentChangeAiIntent') : null;
+
   // Duplicate-bounds detection: hash the ceremony's bounds and each existing
   // same-profile grant's bounds with the same canonicalization the attest
   // flow uses, then count exact matches. Purely advisory — per-ceremony
@@ -280,50 +310,6 @@ export function AgentReviewPage() {
     setSubmitting(true);
     setError('');
     try {
-      // P4.6: domains are no longer a per-member primitive. Personal groups
-      // sign with 'owner'; team groups sign with the caller's userId. Trust
-      // the live AuthContext value over a possibly-stale sessionStorage one.
-      const domain = authDomain || authData.domain || 'owner';
-
-      const boundsHash = await computeBoundsHashBrowser(gateData.bounds, profile);
-      const contextHash = await computeScopeHashBrowser(gateData.context, profile);
-
-      const [intentHashValue, ecHash] = await Promise.all([
-        hashGateContent(gateData.gateContent.intent),
-        // v0.8: the hash of the profile's executionContextSchema, not of per-call values.
-        computeExecutionContextHashBrowser(profile),
-      ]);
-
-      // Phase 5 — Eager intent encryption.
-      // Fetch approver pubkeys eagerly (encrypt even
-      // within-cap when the profile has approvers, to handle "cap tightened later").
-      // If empty array returned, skip encryption.
-      let intentCiphertext: string | undefined;
-      let encryptedKeys: Record<string, { ct: string; enc: string }> | undefined;
-      let approversFrozen: string[] | undefined;
-      let intentDisclosureHash: string | undefined;
-
-      if (authData.isTeam) {
-        const approverPubkeys = await spClient.getApproversPubkeys(
-          authData.groupId,
-          authData.profileId,
-        );
-        if (approverPubkeys.length > 0) {
-          const encData = await spClient.encryptIntent(
-            gateData.gateContent.intent,
-            approverPubkeys,
-          );
-          intentCiphertext = encData.intentCiphertext;
-          encryptedKeys = encData.encryptedKeys;
-          approversFrozen = encData.approversFrozen;
-          intentDisclosureHash = encData.intentDisclosureHash;
-        }
-      }
-
-      // Attest (creates the attestation on SP).
-      // Every ceremony mints its own per-ceremony identity — the AS enforces
-      // uniqueness (NX) and content-hash idempotency on it.
-      const authorizationId = `authz_${crypto.randomUUID()}`;
       // Edit flow: this ceremony supersedes an existing grant. Grants are
       // content-immutable (the attestation signature freezes bounds/scope/
       // intent), so "edit" = sign a NEW grant, then revoke the old one below.
@@ -333,75 +319,26 @@ export function AgentReviewPage() {
       // (rejected) below only once this signing fully succeeds, never before
       // (decision 6: "nothing is created until the person signs there").
       const replacesProposalId = sessionStorage.getItem('agentReplacesProposal') || undefined;
-      // v0.4: commitment_mode is part of the signed payload. 'review' means
-      // each action requires per-action human approval via a proposal;
-      // 'automatic' lets the agent act within bounds without per-action review.
-      const profileHash = await computeProfileHashBrowser(profile);
-      const result = await spClient.attest({
-        authorization_id: authorizationId,
-        replaces: replacesId,
-        profile_id: authData.profileId,
-        profile_hash: profileHash,
-        supported_versions: [...SUPPORTED_PROTOCOL_VERSIONS],
-        bounds: gateData.bounds,
-        bounds_hash: boundsHash,
-        scope_hash: contextHash,
-        domain,
-        did: user.did,
-        mandate_owners: [{ did: user.did }],
-        gate_content_hashes: { intent: intentHashValue },
-        execution_context_hash: ecHash,
-        group_id: authData.groupId,
-        ttl: ttlSeconds,
-        commitment_mode: toProtocolMode(commitMode),
+      // The control plane runs the signing steps (hash, encrypt for the team's
+      // approvers, Authority Server, deliver the intent) — the same code as the
+      // AI path. A refusal arrives as an error with the reason.
+      const { authorizationId, revokeError } = await spClient.signMandate({
+        team: authData.isPersonal ? 'personal' : authData.groupId,
+        profile: authData.profileId,
+        limits: gateData.bounds as Record<string, string | number>,
+        scope: gateData.context as Record<string, string | number>,
+        contextLabels: gateData.contextLabels,
+        intent: gateData.gateContent.intent,
+        mode: toProtocolMode(commitMode),
+        ttlSeconds,
         title: authTitle.trim(),
-        // Phase 5 — E2EE intent fields (undefined when no approvers)
-        intent_ciphertext: intentCiphertext,
-        encrypted_keys: encryptedKeys,
-        approvers_frozen: approversFrozen,
-        // v0.5 — disclosure cross-check (AS recomputes and rejects mismatch)
-        intent_disclosure_hash: intentDisclosureHash,
-        // v0.6 — disclose the owner's verified name (only stamped if high-verified)
-        disclose_identity: discloseIdentity,
+        discloseIdentity,
+        replaces: replacesId,
       });
 
-      // Push gate content + context to MCP server (after attestation exists on SP).
-      // All downstream references use the per-ceremony id.
-
-      try {
-        await spClient.pushGateContent(
-          buildGateForwardArgs(result, {
-            boundsHash,
-            contextHash,
-            context: gateData.context,
-            contextLabels: gateData.contextLabels,
-            gateContent: gateData.gateContent,
-          }),
-        );
-      } catch (pushErr) {
-        // Gate content push failed — revoke the attestation so it doesn't orphan
-        try {
-          await spClient.revokeAttestation(authorizationId, 'Auto-revoked: gate content push failed');
-        } catch { /* best effort */ }
-        throw new Error(`Mandate signed but gate content delivery failed. The mandate was revoked. Please try again. (${pushErr instanceof Error ? pushErr.message : 'Unknown error'})`);
-      }
-
-      // Edit flow: the new grant is signed AND delivered — retire the one it
-      // replaces. Order matters: revoke only after the replacement is fully
-      // live, so there is never a coverage gap (a brief twin overlap is safe —
-      // per-ceremony identity keeps them independent). The resync drops the
-      // revoked grant from the MCP cache immediately; enforcement doesn't
-      // depend on it (receipts for revoked grants are refused server-side).
-      if (replacesId) {
-        try {
-          await spClient.revokeAttestation(replacesId, `Replaced by ${authorizationId} (edit)`);
-          spClient.resyncGates().catch(() => {});
-        } catch {
-          // Old grant may already be revoked/expired — the new one is live
-          // either way; the Authorizations page still shows the old row for
-          // manual cleanup if this ever fails.
-        }
-      }
+      // A failed revoke of the old mandate must be told, never swallowed
+      // (lib/mandate-ceremony.ts retires it only after the new one is delivered).
+      const revokeProblem = replacedRevokeProblem(revokeError);
 
       // DL6 "Edit before signing": the mandate is signed AND delivered —
       // withdraw the proposal it was opened from, so the two can never both
@@ -438,6 +375,12 @@ export function AgentReviewPage() {
       sessionStorage.removeItem('agentGate');
       sessionStorage.removeItem('agentEditReplaces');
       sessionStorage.removeItem('agentReplacesProposal');
+      sessionStorage.removeItem('agentChangeAiIntent');
+      if (revokeProblem) {
+        // Stay on the page: a mandate the person believes is replaced is still live.
+        setError(revokeProblem);
+        return;
+      }
       if (withdrawProblem) {
         // The mandate is live; only the AI's proposal is still open. Stay on
         // the page and say what to do instead of hiding it.
@@ -456,7 +399,9 @@ export function AgentReviewPage() {
     return <p style={{ color: 'var(--text-tertiary)' }}>Loading...</p>;
   }
 
-  const boundsEntries = Object.entries(gateData.bounds).filter(([k]) => k !== 'profile' && k !== 'path');
+  // Outside simulation, a limit only test-data tools use is not listed; it is still signed.
+  const hiddenLimits = hiddenLimitKeys(profile, sourceManifests as ManifestGatingLike[] | undefined, simulation);
+  const boundsEntries = Object.entries(gateData.bounds).filter(([k]) => k !== 'profile' && k !== 'path' && !hiddenLimits.has(k));
   const contextEntries = Object.entries(gateData.context);
 
   // Pre-compute display strings — keeps all string interpolation out of JSX
@@ -490,6 +435,9 @@ export function AgentReviewPage() {
   // those — the AS refuses any other (commitment_mode_not_allowed).
   const offeredModes = offeredCommitModes(profile);
   const noModeAllowed = offeredModes.length === 0;
+  // The profile's `scopeSchema.atLeastOne`: while the limits allow a listed action,
+  // one of the group's fields must be filled — the gateway refuses to sign otherwise.
+  const atLeastOneUnmet = profile ? unmetForMandate(profile, gateData.context, gateData.bounds) : [];
   const ttlExceedsMax = ttlSeconds > ttlMax;
   const commitStyleImmediate = {
     flex: 1,
@@ -568,6 +516,13 @@ export function AgentReviewPage() {
         )}
 
         {error && <div className="error-message">{error}</div>}
+
+        {/* Replacing a signed mandate: the differences, as on the change card. */}
+        {editDiff && (
+          <div className="info-block" data-testid="edit-diff">
+            <MandateChangeDiff diff={editDiff} intentByAi={!!aiIntent && aiIntent === gateData.gateContent.intent} />
+          </div>
+        )}
 
         {/* Title — first: it names the decision everything below describes. */}
         <div className="field-editable">
@@ -843,13 +798,19 @@ export function AgentReviewPage() {
           </div>
         ) : null}
 
+        {atLeastOneUnmet.length > 0 && profile && (
+          <p className="cta-helper" data-testid="at-least-one-needed" style={{ marginBottom: '0.5rem' }}>
+            {atLeastOneSignHint(profile, atLeastOneUnmet[0])}
+          </p>
+        )}
+
         <div style={{ display: 'flex', gap: '0.5rem' }}>
           <button className="btn btn-ghost" onClick={() => navigate('/mandates/new/intent')}>Back</button>
           <button
             className="btn btn-primary btn-lg"
             style={{ flex: 1 }}
             onClick={handleCommit}
-            disabled={submitting || !authTitle.trim() || blockedByTeamGate || noModeAllowed || ttlSeconds <= 0}
+            disabled={submitting || !authTitle.trim() || blockedByTeamGate || noModeAllowed || ttlSeconds <= 0 || atLeastOneUnmet.length > 0}
           >
             {submitting ? 'Signing...' : commitMode === 'immediate' ? 'Sign mandate' : 'Sign mandate (asks first)'}
           </button>

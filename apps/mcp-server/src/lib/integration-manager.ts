@@ -11,6 +11,7 @@ import { existsSync, writeFileSync, mkdirSync, readFileSync, rmSync } from 'node
 import { execFile } from 'node:child_process';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import type { ProfileToolGating } from './tool-gating-types';
 import type { IntegrationConfig, ToolGatingConfig } from './integration-registry';
 import { getManifest, isExactSemver } from './manifest-loader';
@@ -166,6 +167,17 @@ export interface IntegrationStatus {
    */
   error?: string;
   /**
+   * The connector's OWN words for why it cannot do its work — never the
+   * gateway's and never the AI's. Two sources, both the connector's:
+   *  - running: the answer of its manifest-declared status check
+   *    (`status.tool`, e.g. Files: "The Files connector cannot use …");
+   *  - not running: the last line it wrote to its error output before it
+   *    stopped while starting or crashed (see `connectorLastWords`).
+   * Absent when the connector reported nothing. The UI shows it as
+   * "<connector> says", apart from `error` (the gateway's own sentence).
+   */
+  problem?: string;
+  /**
    * Set instead of `error` when this connector is not running SOLELY because
    * simulation mode is on and its manifest carries no `simulation` marker —
    * the exact condition `startIntegrationLocked` refuses under. Structured
@@ -229,7 +241,100 @@ interface RunningIntegration {
   respawnAttempts: number;
   /** The vault-resolved env this process was started with (see `credentialsChangedSinceStart`). */
   credentialEnv: string;
+  /** The tail of the connector's error output, for its last words if it stops. */
+  stderrTail?: StderrTail;
+  /** Last answer of the manifest-declared status check (see `IntegrationStatus.problem`). */
+  problem?: string;
+  /** The gateway's sentence when the status check itself got no usable answer. */
+  statusError?: string;
+  /** When the status check last ran (ms since epoch); 0 = never. */
+  statusCheckedAt?: number;
 }
+
+/** A start or crash that left a connector not running, as the person sees it. */
+interface ConnectorFailure {
+  /** The gateway's sentence. */
+  error: string;
+  /** The connector's own last words, when it wrote any. */
+  problem?: string;
+}
+
+/** A start failure that carries the connector's own last words apart from the gateway's sentence. */
+export class ConnectorStartError extends Error {
+  constructor(readonly sentence: string, readonly connectorSays?: string) {
+    super(connectorSays ? `${sentence} It said: ${connectorSays}` : sentence);
+    this.name = 'ConnectorStartError';
+  }
+}
+
+/** Longest connector sentence the card shows; longer text is cut with an ellipsis. */
+export const CONNECTOR_TEXT_MAX = 500;
+
+/**
+ * A connector's sentence as the person may see it: control characters and
+ * terminal colour codes removed, whitespace collapsed, at most
+ * {@link CONNECTOR_TEXT_MAX} characters. Empty → undefined.
+ */
+export function plainConnectorText(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const text = raw
+    .replace(/\u001b\[[0-9;]*[A-Za-z]/g, '')
+    .replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!text) return undefined;
+  return text.length > CONNECTOR_TEXT_MAX ? `${text.slice(0, CONNECTOR_TEXT_MAX - 1)}…` : text;
+}
+
+/**
+ * The connector's last words from its error output: the last line that is a
+ * message, skipping what Node prints around an uncaught error (stack frames
+ * "    at …", the "Node.js v22…" footer, the "^" marker and bare braces).
+ * Undefined when it wrote nothing usable.
+ */
+export function connectorLastWords(stderr: string): string | undefined {
+  const lines = stderr.split(/\r?\n/).map(l => l.replace(/\u001b\[[0-9;]*[A-Za-z]/g, '').trimEnd());
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    if (!line.trim()) continue;
+    if (/^\s+at\s/.test(line)) continue;
+    if (/^Node\.js v\d/.test(line.trim())) continue;
+    if (/^\s*[\^~]+\s*$/.test(line)) continue;
+    if (/^\s*[{}\[\]],?\s*$/.test(line)) continue;
+    return plainConnectorText(line);
+  }
+  return undefined;
+}
+
+/** The last 16 KB a connector wrote to its error output. */
+class StderrTail {
+  private text = '';
+  private ended = false;
+  private waiters: Array<() => void> = [];
+  push(chunk: Buffer | string): void {
+    this.text = (this.text + chunk.toString()).slice(-16_384);
+  }
+  end(): void {
+    this.ended = true;
+    for (const w of this.waiters.splice(0)) w();
+  }
+  /** The connector's last words, after its error output closed (or `waitMs` passed). */
+  async lastWords(waitMs = 500): Promise<string | undefined> {
+    if (!this.ended) {
+      await new Promise<void>(resolve => {
+        const t = setTimeout(resolve, waitMs);
+        this.waiters.push(() => { clearTimeout(t); resolve(); });
+      });
+    }
+    return connectorLastWords(this.text);
+  }
+  lastWordsNow(): string | undefined {
+    return connectorLastWords(this.text);
+  }
+}
+
+/** How long the gateway waits for a connector's status check. */
+const STATUS_CHECK_TIMEOUT_MS = 3_000;
 
 /** Order-independent fingerprint of a resolved env, for change detection only. */
 function stableEnvKey(env: Record<string, string>): string {
@@ -285,6 +390,8 @@ export class IntegrationManager {
    * read-gate value-mismatch flake).
    */
   private opQueues = new Map<string, Promise<unknown>>();
+  /** Why a connector that should run is not running: its last failed start or final crash. */
+  private failures = new Map<string, ConnectorFailure>();
 
   /** The ids listed in the registry (http.ts owns it; this class has no handle, as with the other setters). */
   private registeredIds: (() => string[]) | null = null;
@@ -659,7 +766,21 @@ export class IntegrationManager {
     config: IntegrationConfig,
     opts: StartIntegrationOptions = {},
   ): Promise<DiscoveredTool[]> {
-    return this.runExclusive(config.id, () => this.startIntegrationLocked(config, opts));
+    return this.runExclusive(config.id, async () => {
+      try {
+        const tools = await this.startIntegrationLocked(config, opts);
+        this.failures.delete(config.id);
+        return tools;
+      } catch (err) {
+        // Held back by the mode is `paused`, not a failure (see IntegrationStatus.paused).
+        if (!this.modeBlock(config.id)) {
+          this.failures.set(config.id, err instanceof ConnectorStartError
+            ? { error: err.sentence, ...(err.connectorSays ? { problem: err.connectorSays } : {}) }
+            : { error: err instanceof Error ? err.message : String(err) });
+        }
+        throw err;
+      }
+    });
   }
 
   private async startIntegrationLocked(
@@ -809,6 +930,10 @@ export class IntegrationManager {
       // The SDK default (10 MiB) closes the connection on a document reply of
       // about 5 MiB or more — see attachment-limits.ts.
       maxBufferSize: CONNECTOR_STDIO_MAX_BUFFER_BYTES,
+      // Piped, not inherited: the gateway keeps the tail to show the
+      // connector's own last words if it stops (forwarded to the gateway's
+      // error output unchanged below, so the logs read as before).
+      stderr: 'pipe',
       // Only an allowlist of the gateway's environment — never its own
       // secrets (connector-env.ts). The allowlist includes
       // NODE_EXTRA_CA_CERTS, which is how a saved `--ca-file` reaches an
@@ -823,6 +948,19 @@ export class IntegrationManager {
       } as Record<string, string>,
     });
 
+    const stderrTail = new StderrTail();
+    const stderr = transport.stderr;
+    if (stderr) {
+      stderr.on('data', (chunk: Buffer | string) => {
+        process.stderr.write(chunk);
+        stderrTail.push(chunk);
+      });
+      stderr.on('end', () => stderrTail.end());
+      stderr.on('close', () => stderrTail.end());
+    } else {
+      stderrTail.end();
+    }
+
     // Create MCP client
     const client = new Client(
       { name: 'suveren-gateway', version: '0.1.0' },
@@ -836,7 +974,17 @@ export class IntegrationManager {
     // after it — the user sees the first stuck on "Starting" and the rest
     // permanently "Not running". Reject on transport error or timeout so the
     // loop can move on and report a real failure.
-    await this.connectWithGuard(client, transport, config);
+    try {
+      await this.connectWithGuard(client, transport, config);
+    } catch (err) {
+      const said = await stderrTail.lastWords();
+      // The process ended before the handshake finished: say so plainly instead
+      // of the SDK's "MCP error -32000: Connection closed".
+      if (err instanceof McpError && err.code === ErrorCode.ConnectionClosed) {
+        throw new ConnectorStartError(`${config.name} stopped while starting.`, said);
+      }
+      throw new ConnectorStartError(err instanceof Error ? err.message : String(err), said);
+    }
     console.error(`[IntegrationManager] Connected to ${config.id} (${config.command} ${config.args.join(' ')})`);
 
     // Discover tools and resolve gating. The manifest's own `toolGating` is
@@ -846,6 +994,7 @@ export class IntegrationManager {
     // anyway — only superseded 0.3 profile files did.
     const toolsResult = await client.listTools();
     const profileGating = config.toolGating ?? null;
+    const statusTool = getManifest(config.id)?.status?.tool;
 
     const tools: DiscoveredTool[] = (toolsResult.tools ?? []).map(tool => {
       const gating = this.resolveToolGating(config.profile, profileGating, tool.name);
@@ -884,7 +1033,10 @@ export class IntegrationManager {
         // with the MCP server (index.ts), never callable directly
         // (tool-proxy.ts); only the gateway's own code (e.g. a document
         // preview read — preview.ts) calls it, via `callTool` directly.
-        ...(gating?.internal ? { internal: true } : {}),
+        // The manifest's status check is the gateway's own call, never the
+        // AI's — internal even if a manifest forgot to say so (the loader
+        // refuses such a manifest; this is the second, independent guard).
+        ...(gating?.internal || tool.name === statusTool ? { internal: true } : {}),
         gating,
       };
     });
@@ -898,8 +1050,13 @@ export class IntegrationManager {
       tools,
       respawnAttempts: 0,
       credentialEnv,
+      stderrTail,
+      statusCheckedAt: 0,
     };
     this.running.set(config.id, entry);
+    // Ask the connector at once whether it can work, so the card never shows
+    // a plain "Running" for a connector that already knows it cannot.
+    await this.checkStatus(entry);
 
     // Watch for crashes. Guard on transport identity: only the CURRENT
     // entry's transport may trigger crash handling — a replaced or stopped
@@ -927,6 +1084,8 @@ export class IntegrationManager {
   }
 
   private async stopIntegrationLocked(id: string): Promise<void> {
+    // A deliberate stop (or a removal) ends whatever failure was showing.
+    this.failures.delete(id);
     const entry = this.running.get(id);
     if (!entry) return;
 
@@ -1048,6 +1207,11 @@ export class IntegrationManager {
     return this.builtins.get(id)?.def.alwaysListed === true;
   }
 
+  /** A built-in whose answers are evidence: no gateway note may be appended to them. */
+  builtinEvidenceOnly(id: string): boolean {
+    return this.builtins.get(id)?.def.evidenceOnly === true;
+  }
+
   /**
    * Whether `id` may run while simulation mode is on: a built-in that
    * declares `simulation: true`, or a connector whose CURRENT setting (the
@@ -1102,6 +1266,16 @@ export class IntegrationManager {
     // A connector that touches only this computer is no real system.
     if (getManifest(id)?.localOnly === true) return true;
     return connectorCurrentlySimulated(getManifest(id), this.serviceCredentials.get(id));
+  }
+
+  /**
+   * A built-in's own argument preparation (`BuiltinTool.prepare`), run before validation and
+   * the gate. Returns the arguments to continue with, or a refusal.
+   */
+  async prepareBuiltin(tool: DiscoveredTool, args: Record<string, unknown>): Promise<{ args: Record<string, unknown> } | { refusal: string; code: string }> {
+    const builtin = this.builtins.get(tool.integrationId);
+    const def = builtin?.def.tools.find(t => t.name === tool.originalName);
+    return def?.prepare ? def.prepare(args) : { args };
   }
 
   /**
@@ -1281,6 +1455,8 @@ export class IntegrationManager {
         running: true,
         toolCount: entry.tools.length,
         readAgeDays: readAgeOf(entry.config),
+        ...(entry.problem ? { problem: entry.problem } : {}),
+        ...(entry.statusError ? { error: entry.statusError } : {}),
       });
     }
 
@@ -1288,6 +1464,8 @@ export class IntegrationManager {
     if (allConfigs) {
       for (const config of allConfigs) {
         if (!this.running.has(config.id)) {
+          const paused = this.modeBlock(config.id);
+          const failure = paused ? undefined : this.failures.get(config.id);
           statuses.push({
             id: config.id,
             name: config.name,
@@ -1305,13 +1483,65 @@ export class IntegrationManager {
             // working as designed (see IntegrationStatus.paused). Genuine
             // start failures still surface via the one-shot `warning` string
             // returned by /internal/add-integration — they never land here.
-            paused: this.modeBlock(config.id),
+            paused,
+            // Why it is not running: the gateway's sentence (`error`) and the
+            // connector's own last words (`problem`), from its last failed start
+            // or final crash. Never alongside `paused` — held back is not broken.
+            ...(failure ? { error: failure.error } : {}),
+            ...(failure?.problem ? { problem: failure.problem } : {}),
           });
         }
       }
     }
 
     return statuses;
+  }
+
+  /**
+   * Ask one running connector its manifest-declared status check
+   * (`status.tool`) and keep the answer for `getStatus`. Never throws: no
+   * usable answer replaces the last one with the gateway's own sentence, so
+   * an old "all is well" (or an old problem) is never shown as current.
+   */
+  private async checkStatus(entry: RunningIntegration): Promise<void> {
+    const tool = getManifest(entry.config.id)?.status?.tool;
+    if (!tool) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const result = await Promise.race([
+        entry.client.callTool({ name: tool, arguments: {} }),
+        new Promise<never>((_r, reject) => {
+          timer = setTimeout(() => reject(new Error(`no answer within ${STATUS_CHECK_TIMEOUT_MS} ms`)), STATUS_CHECK_TIMEOUT_MS);
+        }),
+      ]);
+      const structured = result.structuredContent as { problem?: unknown } | undefined;
+      if (result.isError || !structured || typeof structured !== 'object') {
+        throw new Error(result.isError ? 'the check answered with an error' : 'the check answered without structuredContent');
+      }
+      entry.problem = plainConnectorText(structured.problem);
+      entry.statusError = undefined;
+    } catch (err) {
+      console.error(`[IntegrationManager] Status check of ${entry.config.id} failed:`, err instanceof Error ? err.message : err);
+      entry.problem = undefined;
+      entry.statusError = `${entry.config.name} did not answer when the gateway checked whether it works.`;
+    } finally {
+      if (timer) clearTimeout(timer);
+      entry.statusCheckedAt = Date.now();
+    }
+  }
+
+  /**
+   * Run the status check of every running connector that declares one and
+   * was last checked more than `maxAgeMs` ago, in parallel. Called before the
+   * UI's status read (http.ts `/health?check=connectors`), so the card shows
+   * what the connector says now — e.g. that a folder became usable.
+   */
+  async refreshStatusChecks(maxAgeMs = 10_000): Promise<void> {
+    const now = Date.now();
+    const due = Array.from(this.running.values()).filter(
+      e => e.client && getManifest(e.config.id)?.status?.tool && now - (e.statusCheckedAt ?? 0) >= maxAgeMs,
+    );
+    await Promise.all(due.map(e => this.checkStatus(e)));
   }
 
   /**
@@ -1448,6 +1678,8 @@ export class IntegrationManager {
         contentField?: string;
         blockedArgs?: string[];
         nonContentArgs?: string[];
+        sealedOnlyArgs?: string[];
+        argDefaults?: Record<string, unknown>;
         argEncoding?: Record<string, string>;
         argNormalization?: Record<string, string>;
         hideUnlessAuthorized?: boolean;
@@ -1501,6 +1733,8 @@ export class IntegrationManager {
         contentField: ext.contentField,
         blockedArgs: ext.blockedArgs,
         nonContentArgs: ext.nonContentArgs,
+        sealedOnlyArgs: ext.sealedOnlyArgs,
+        argDefaults: ext.argDefaults,
         argEncoding: ext.argEncoding,
         argNormalization: ext.argNormalization,
         hideUnlessAuthorized: ext.hideUnlessAuthorized,
@@ -1563,6 +1797,14 @@ export class IntegrationManager {
 
     if (attempts >= MAX_RESPAWN_ATTEMPTS) {
       console.error(`[IntegrationManager] ${id} crashed ${MAX_RESPAWN_ATTEMPTS} times, giving up`);
+      // A failed restart already recorded why; otherwise the crash itself is the reason.
+      if (!this.failures.has(id)) {
+        const said = entry.stderrTail?.lastWordsNow();
+        this.failures.set(id, {
+          error: `${entry.config.name} stopped unexpectedly and was not restarted.`,
+          ...(said ? { problem: said } : {}),
+        });
+      }
       return;
     }
 

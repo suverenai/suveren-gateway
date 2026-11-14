@@ -1,5 +1,7 @@
 /**
- * Runs a simulator connector's own `export` CLI and returns its parsed JSON.
+ * Runs a report system's own `export` CLI and returns its parsed JSON. Which
+ * command that is comes from the connector's manifest: the system's
+ * `report.system` names it, `mcp.command` is the bin (systems.ts).
  *
  * Deliberately NOT a database read: the gateway has no SQLite client and must
  * not grow one just to read a report (work-plan "evidence-backed reports",
@@ -20,12 +22,7 @@
 import { execFile } from 'node:child_process';
 import { delimiter } from 'node:path';
 import type { ExportSystem, RunConnectorExport } from './types';
-
-const DEFAULT_BIN_NAMES: Record<ExportSystem, string> = {
-  email: 'email-mcp',
-  crm: 'crm-mcp',
-  erp: 'erp-mcp',
-};
+import { reportSystem } from './systems';
 
 export interface ConnectorExportConfig {
   /** `SUVEREN_INTEGRATIONS_DIR/node_modules/.bin` — where the connector's
@@ -36,8 +33,8 @@ export interface ConnectorExportConfig {
    *  servers, so `<bin> export` reads the SAME SQLite file the live
    *  connector writes to. */
   dataDir: string;
-  /** Override a system's bin name — tests only; production uses each
-   *  connector's real published bin name. */
+  /** Override a system's bin name — tests only; production uses the bin
+   *  its connector's manifest declares (`mcp.command`). */
   binNames?: Partial<Record<ExportSystem, string>>;
   timeoutMs?: number;
 }
@@ -69,7 +66,10 @@ function execFileAsync(
  */
 export function createConnectorExportRunner(config: ConnectorExportConfig): RunConnectorExport {
   return async (system: ExportSystem): Promise<unknown> => {
-    const bin = config.binNames?.[system] ?? DEFAULT_BIN_NAMES[system];
+    const bin = config.binNames?.[system] ?? reportSystem(system)?.command;
+    if (!bin) {
+      throw new ConnectorExportError(`no connector declares the report system "${system}"`, system);
+    }
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       PATH: [config.integrationsBinDir, process.env.PATH ?? ''].join(delimiter),
@@ -80,8 +80,9 @@ export function createConnectorExportRunner(config: ConnectorExportConfig): RunC
     try {
       // `shell: true` only on Windows, where the installed shim is a `.cmd`
       // file node's `execFile` cannot exec directly. Safe here specifically
-      // because `bin` comes from the closed, fixed `DEFAULT_BIN_NAMES` set
-      // (or an equally fixed test override) and the only argument is the
+      // because `bin` comes from a loaded manifest's `mcp.command` — the same
+      // command integration-manager.ts spawns as the MCP server — (or a fixed
+      // test override), looked up by a DECLARED system only, and the only argument is the
       // literal string "export" — neither is ever user- or AI-controlled, so
       // there is nothing for shell interpolation to exploit (contrast
       // integration-manager.ts's CVE-2024-27980 note, which is about NOT

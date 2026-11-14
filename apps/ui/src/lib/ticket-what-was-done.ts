@@ -152,7 +152,8 @@ function sameValue(a: unknown, b: unknown): boolean {
 /**
  * True only when the signed ticket verifiably carries THIS value: a direct
  * mapping with an equal value ("0.10" ≡ 0.1), a divisor mapping that divides
- * to it, or a `join` of it. A field derived from the value without being it
+ * to it, or a `join` that lists every item of it (alone, or with the items of
+ * other arguments sharing that field). A field derived from the value without being it
  * (`length` → a count, `join_domains` → domains only) is not tagged — the
  * ticket does not carry the value itself.
  */
@@ -163,13 +164,20 @@ export function inTicket(
 ): boolean {
   if (!mapping || !executionContext || value === undefined || value === null) return false;
   const entries = typeof mapping === 'string' ? [{ field: mapping }] : Array.isArray(mapping) ? mapping : [mapping];
-  return entries.some((m: { field: string; divisor?: number; transform?: string }) => {
+  return entries.some((m: { field: string; divisor?: number; transform?: string; item?: string }) => {
     if (!(m.field in executionContext)) return false;
     const signed = executionContext[m.field];
     if (m.divisor) return Number.isFinite(Number(value)) && Number(value) / m.divisor === Number(signed);
     if (m.transform === 'join') {
+      // An object item is read by the property the manifest's mapping names (`item`), as the gateway does.
       const arr = Array.isArray(value) ? value : [value];
-      return arr.map((x) => (x && typeof x === 'object' && 'email' in x ? String((x as { email: unknown }).email) : String(x))).join(',') === String(signed);
+      const read = (x: unknown) => (m.item && x && typeof x === 'object' && m.item in x ? String((x as Record<string, unknown>)[m.item]) : String(x));
+      // Several arguments may share one joined field (an email's to + cc —
+      // their items combine, tool-gating-types.ts): the value is in the
+      // ticket when every one of its items is in the signed list.
+      const signedItems = String(signed).split(',');
+      const items = arr.map(read);
+      return items.length > 0 && items.every((i) => signedItems.includes(i));
     }
     if (m.transform) return false;
     return sameValue(value, signed);

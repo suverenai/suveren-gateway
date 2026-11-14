@@ -16,14 +16,14 @@ import type { DenialReason, DenialKind } from './denial-log';
 import { SPReceiptError, SPProposalError } from './sp-client';
 import { isCommitmentDowngrade, AsKeyMismatchError } from './attestation-cache';
 import { ArchiveWriteError } from './receipt-archive';
-import { appendVerificationFooter, shouldAttachFooter } from './receipt-footer';
+import { appendVerificationFooter, shouldAttachFooter, stripOwnTrailingFooter, markLikeLine, markLikeLineRefusalText } from './receipt-footer';
 import { computeContentBinding, attachTicketId } from './content-binding';
 import { unclassifiedArgs, sealedArgsRefusalText } from './sealed-args';
 import { hashToolArgs } from './execution-journal';
 import { computeSubmissionPreviewHash, failedBlockingChecks } from './preview';
 import { blockingRefusalReason } from './checks';
 import { stripSourceLink } from './request-context';
-import { candidatesAllowingAttachments } from './attachment-policy';
+import { candidatesAllowingAttachments, isAttachmentSourceAllowed, attachmentSourcesField, attachmentSourcesValue } from './attachment-policy';
 import {
   resolveAttachmentsAndInserts,
   finalizeAttachmentsForExecution,
@@ -31,8 +31,8 @@ import {
   stripAttachmentsSealedMeta,
 } from './attachment-resolution';
 import { validateDocumentReferences, validateInsertReferences } from './attachment-reference';
-import { ATTACHMENT_SOURCES_FIELD } from './attachment-policy';
-import { attachmentNotAllowedText, refusalNextStep, pickerCard } from './guidance';
+import { attachmentNotAllowedText, refusalNextStep, pickerCard, howToGetMandate } from './guidance';
+import { setupMandateFacts, newestProfileOf } from './guidance-runtime';
 import { verifyTicket, TicketBindingMismatchError, mandateForTicket } from './ticket-verify';
 import { wireExecutionContext as hapWireExecutionContext, checkExecutionValues, missingSumFields } from '@hap/core';
 import { notifyControlPlane } from './cp-notify';
@@ -41,6 +41,7 @@ import { encodeOutgoingArgs } from './arg-encoding';
 import { normalizeIncomingArgs } from './arg-normalization';
 import { selectAuthorization } from './scope-specificity';
 import { coerceDeclaredNumericFields } from './numeric-execution';
+import { LIST_TRANSFORMS, type ExecutionMappingValue } from './tool-gating-types';
 import {
   boundsSatisfyReadGate,
   resolveAgeBoundField,
@@ -61,6 +62,8 @@ import {
   type BoundsSchemaLike,
 } from './read-gate';
 import { getProfile, listProfiles, ContentBindingError, boundActionTypes } from '@hap/core';
+import { readRefusal } from '@hap/core/refusal';
+import { unmetForAction, atLeastOneExecutionRefusal } from '@hap/core/scope-rules';
 import { readFile } from 'node:fs/promises';
 import { extname } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -133,11 +136,35 @@ async function unreadableForNote(unreadableFor: string[], state: SharedState): P
 }
 
 /**
+ * The ticket request's `amount`: the value of the execution field the
+ * profile's `cumulative_sum` bound reads (`boundType.of`; with several, the
+ * first in `keyOrder`) — the field the Authority Server sums and the spec
+ * names for the ticket's cumulative `amount` (protocol.md, Ticket Payload).
+ * Read from the profile, never from a field called "amount" (charge sums
+ * `amount`, purchase `spend`). Undefined when the profile sums nothing or the
+ * value is not a number.
+ */
+export function cumulativeSumValue(
+  profile: { boundsSchema?: { keyOrder?: string[]; fields?: Record<string, unknown> } } | undefined,
+  execution: Record<string, unknown>,
+): number | undefined {
+  const fields = profile?.boundsSchema?.fields ?? {};
+  const order = [...new Set([...(profile?.boundsSchema?.keyOrder ?? []), ...Object.keys(fields)])];
+  for (const key of order) {
+    const bt = (fields[key] as { boundType?: { kind?: string; of?: string } } | undefined)?.boundType;
+    if (bt?.kind !== 'cumulative_sum' || !bt.of) continue;
+    const v = execution[bt.of];
+    return typeof v === 'number' ? v : undefined;
+  }
+  return undefined;
+}
+
+/**
  * Apply a single mapping entry to produce an execution context field.
  * Handles divisor, transform, and direct copy.
  */
-function applyMapping(
-  m: { field: string; divisor?: number; transform?: string },
+export function applyMapping(
+  m: { field: string; divisor?: number; transform?: string; item?: string },
   value: unknown,
   execution: Record<string, string | number>,
 ): void {
@@ -146,18 +173,12 @@ function applyMapping(
     execution[m.field] = numValue / m.divisor;
     return;
   }
-  // Extract .email when the item is an attendee object — Google Calendar
-  // accepts attendees as `{ email, displayName?, ... }` objects, but the
-  // join / join_domains transforms only know how to read flat strings.
-  // Without this, an object stringifies to "[object Object]" and the
-  // gatekeeper rejects with "[object object] not in authorized set".
-  const coerce = (v: unknown): string => {
-    if (typeof v === 'object' && v !== null && 'email' in v) {
-      return String((v as { email: unknown }).email);
-    }
-    return String(v);
-  };
-  const arr = Array.isArray(value) ? value.map(coerce) : [coerce(value)];
+  // An item that is an object (Google Calendar attendees are `{ email,
+  // displayName?, ... }`) is read by the property the manifest names in
+  // `item` — the join / join_domains transforms only know flat strings. An
+  // object without a declared `item` stringifies to "[object Object]", which
+  // no scope accepts: fail-closed, never a guessed property.
+  const arr = listItems(m, value);
   switch (m.transform) {
     case 'length':
       execution[m.field] = arr.length;
@@ -176,6 +197,186 @@ function applyMapping(
     default:
       execution[m.field] = typeof value === 'number' ? value : String(value);
   }
+}
+
+type MappingEntry = { field: string; divisor?: number; transform?: string; item?: string; format?: string };
+
+/**
+ * Exactly one plain email address: one `@`, a non-empty local part and domain,
+ * and none of the characters that let one entry carry a second recipient or a
+ * display name (comma, semicolon, whitespace, angle brackets, quotes,
+ * parentheses, backslash).
+ */
+const ONE_PLAIN_ADDRESS = /^[^@\s,;<>"'()\\]+@[^@\s,;<>"'()\\]+$/;
+
+/**
+ * The first item of a call that breaks its mapping's declared `format`
+ * (tool-gating-types.ts `MappingItemFormat`), or null when every item is
+ * well-formed. Run before the execution context is built: an item such as
+ * "x@evil.com,a@customer.com" would otherwise be joined, counted and
+ * domain-checked as one recipient in customer.com. Generic — the argument
+ * names and the format come from the manifest.
+ */
+export function malformedMappedItem(
+  executionMapping: Record<string, ExecutionMappingValue>,
+  args: Record<string, unknown>,
+): { arg: string; item: string; format: string } | null {
+  for (const [argName, mapping] of Object.entries(executionMapping)) {
+    const value = args[argName];
+    if (value === undefined || value === null || typeof mapping === 'string') continue;
+    const entries: MappingEntry[] = Array.isArray(mapping) ? mapping : [mapping];
+    for (const m of entries) {
+      if (m.format !== 'email') continue;
+      for (const item of listItems(m, value)) {
+        if (!ONE_PLAIN_ADDRESS.test(item)) return { arg: argName, item, format: m.format };
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Whether a write argument counts as OMITTED: absent, null, or a scalar string
+ * that is empty after trimming. hap-core skips a scope check on an empty value
+ * exactly as on an absent one, and the connector then picks its own — so
+ * `visibility: ""` is no more a stated value than no `visibility` at all. An
+ * explicit empty LIST stays a value (no recipients, no attendees).
+ */
+export function isOmittedArg(value: unknown): boolean {
+  return value === undefined || value === null || (typeof value === 'string' && value.trim() === '');
+}
+
+function mappedFields(mapping: ExecutionMappingValue): string[] {
+  return typeof mapping === 'string' ? [mapping] : (Array.isArray(mapping) ? mapping : [mapping]).map(m => m.field);
+}
+
+/**
+ * The execution fields that a call leaves EMPTY because an argument mapped to
+ * them was omitted ({@link isOmittedArg}): field -> the omitted argument(s). A
+ * field another, stated argument or the manifest's staticExecution fills is
+ * not listed — an email without `cc` still has its `to`. Pure; the caller
+ * decides, per mandate, whether a listed field matters (its scope constrains it).
+ */
+export function fieldsLeftByAbsentArgs(
+  executionMapping: Record<string, ExecutionMappingValue>,
+  args: Record<string, unknown>,
+  staticExecution: Record<string, unknown> | undefined,
+): Map<string, string[]> {
+  const filled = new Set<string>(Object.keys(staticExecution ?? {}));
+  for (const [argName, mapping] of Object.entries(executionMapping)) {
+    if (!isOmittedArg(args[argName])) for (const f of mappedFields(mapping)) filled.add(f);
+  }
+  const out = new Map<string, string[]>();
+  for (const [argName, mapping] of Object.entries(executionMapping)) {
+    if (!isOmittedArg(args[argName])) continue;
+    for (const f of mappedFields(mapping)) {
+      if (filled.has(f)) continue;
+      out.set(f, [...new Set([...(out.get(f) ?? []), argName])]);
+    }
+  }
+  return out;
+}
+
+/** The scope fields of `context` (a mandate's scope) that constrain one of `left`'s fields. */
+export function constrainedButAbsent(
+  left: Map<string, string[]>,
+  context: Record<string, unknown> | undefined,
+): Array<{ field: string; args: string[] }> {
+  const hits: Array<{ field: string; args: string[] }> = [];
+  for (const [field, args] of left) {
+    const v = context?.[field];
+    if (v === undefined || v === null || String(v).trim() === '') continue;
+    hits.push({ field, args });
+  }
+  return hits;
+}
+
+/** The AI-facing refusal when an omitted argument would leave a scoped field unchecked. */
+export function absentArgRefusalText(toolName: string, hit: { field: string; args: string[] }, fieldLabel: string): string {
+  const names = hit.args.map(a => `"${a}"`).join(' or ');
+  return `Refused: ${toolName} was called without ${names}, but the mandate limits ${fieldLabel}. ` +
+    `Without it the connector would pick a value of its own that nobody checked. ` +
+    `Call it again and state ${names} explicitly. Nothing ran and no ticket was requested.`;
+}
+
+/**
+ * The manifest's `argDefaults` (tool-gating-types.ts) filled into an omitted
+ * argument ({@link isOmittedArg}: absent, null or a blank string). Returns
+ * `args` itself when nothing is filled.
+ */
+export function withArgDefaults(
+  defaults: Record<string, unknown> | undefined,
+  args: Record<string, unknown>,
+): Record<string, unknown> {
+  if (!defaults) return args;
+  let out = args;
+  for (const [name, value] of Object.entries(defaults)) {
+    if (!isOmittedArg(args[name])) continue;
+    if (out === args) out = { ...args };
+    out[name] = Array.isArray(value) ? [...value] : value;
+  }
+  return out;
+}
+
+/** The AI-facing refusal for {@link malformedMappedItem}. Names the entry, says what to do. */
+export function malformedItemRefusalText(toolName: string, bad: { arg: string; item: string }): string {
+  return `Refused: ${toolName}'s "${bad.arg}" entry ${JSON.stringify(bad.item)} is not one email address. ` +
+    `Give one plain address per entry, e.g. ["anna@example.com", "ben@example.com"]. Nothing was sent and no ticket was requested.`;
+}
+
+/**
+ * The execution-context fields a tool call's arguments produce under the
+ * manifest's `executionMapping` (tool-gating-types.ts `ExecutionMappingValue`).
+ * An absent or null argument produces nothing.
+ *
+ * Several arguments that map to the same field through a list transform
+ * (`length`, `join`, `join_domains`) COMBINE: their items are gathered first,
+ * in mapping order, and the transform runs once over all of them — the count
+ * is the sum, the lists the union. So an email's `cc` is counted and
+ * scope-checked together with its `to`, instead of one overwriting the other.
+ * Every other mapping (direct copy, divisor) applies as before; the manifest
+ * loader refuses one of those shared by two arguments.
+ */
+export function mapExecutionArgs(
+  executionMapping: Record<string, ExecutionMappingValue>,
+  args: Record<string, unknown>,
+): Record<string, string | number> {
+  const out: Record<string, string | number> = {};
+  const lists = new Map<string, { transform: string; items: string[] }>();
+  for (const [argName, mapping] of Object.entries(executionMapping)) {
+    const value = args[argName];
+    if (value === undefined || value === null) continue;
+    if (typeof mapping === 'string') {
+      // Direct mapping: argName → contextField
+      out[mapping] = typeof value === 'number' ? value : String(value);
+      continue;
+    }
+    const entries: MappingEntry[] = Array.isArray(mapping) ? mapping : [mapping];
+    for (const m of entries) {
+      if (m.transform && (LIST_TRANSFORMS as readonly string[]).includes(m.transform) && !m.divisor) {
+        // Gather this argument's items (read by its own declared `item`);
+        // the transform runs once below, over every argument on this field.
+        const acc = lists.get(m.field) ?? { transform: m.transform, items: [] };
+        acc.items.push(...listItems(m, value));
+        lists.set(m.field, acc);
+      } else {
+        applyMapping(m, value, out);
+      }
+    }
+  }
+  for (const [field, { transform, items }] of lists) applyMapping({ field, transform }, items, out);
+  return out;
+}
+
+/** An argument's items as strings, read by the mapping's declared `item` — the same reading `applyMapping` does. */
+function listItems(m: MappingEntry, value: unknown): string[] {
+  const coerce = (v: unknown): string => {
+    if (m.item && typeof v === 'object' && v !== null && m.item in v) {
+      return String((v as Record<string, unknown>)[m.item]);
+    }
+    return String(v);
+  };
+  return Array.isArray(value) ? value.map(coerce) : [coerce(value)];
 }
 
 /** Match a short profile name (e.g. "charge") against a full qualified ID (e.g. "github.com/.../charge@0.3") */
@@ -461,6 +662,41 @@ function recordGatekeeperRefusal(
 }
 
 /**
+ * Record an attachment the mandates do not allow (attachment-policy.ts) for the
+ * "Blocked" view and the mandate change card: which sources were refused, as
+ * `connector:kind` identifiers — never a file name or content. The mandate is
+ * named only when exactly one could have carried the call.
+ */
+function recordAttachmentRefusal(
+  state: SharedState,
+  tool: DiscoveredTool,
+  candidates: EnrichedAuthorization[],
+  refs: Array<{ connector: string; kind: string }>,
+): void {
+  const valueOf = (c: EnrichedAuthorization) => attachmentSourcesValue(getProfile(c.profileId) as never, c.context);
+  const refused = [...new Set(refs
+    .filter(ref => !candidates.some(c => isAttachmentSourceAllowed(c.profileId, getProfile(c.profileId) as never, valueOf(c), ref).allowed))
+    .map(ref => `${ref.connector}:${ref.kind}`))];
+  if (refused.length === 0) return;
+  const only = candidates.length === 1 ? candidates[0] : undefined;
+  // The field is the one the profile declares with format `connector:kind`:
+  // a candidate's own, else the area's newest profile (a mandate on an older
+  // version that has no such field is refused under the field it lacks).
+  const field = [...candidates.map(c => c.profileId), tool.gating?.profile ?? '']
+    .map(id => attachmentSourcesField(getProfile(id) as never))
+    .find((f): f is string => !!f);
+  recordBlocked(state, tool, {
+    kind: 'scope',
+    detail: 'Refused locally: the mandate does not allow this attachment source.',
+    ...(field ? { field } : {}),
+    value: refused.join(','),
+    ...(only ? { mandateId: only.authorizationId, limit: valueOf(only) ?? '' } : {}),
+    who: 'gateway',
+    code: 'BOUND_EXCEEDED',
+  });
+}
+
+/**
  * Record a refusal the Authority Server made at ticket time, by its canonical
  * `errors[0].code` only — never by free-text message. One call per AS-refusal
  * branch, so a later rewrite of the AI-facing text does not need to change it.
@@ -635,8 +871,14 @@ export function createGatedToolHandler(
   // that refusal must not depend on — or touch — the manager.
   const gateable = !!tool.gating?.profile && tool.gating.category !== 'disabled';
   const inner = async (args: Record<string, unknown>) => {
-    const normalized = normalizeIncomingArgs(tool, args);
-    // Optional call: test doubles of the manager predate built-ins.
+    let normalized = normalizeIncomingArgs(tool, args);
+    // Optional calls: test doubles of the manager predate built-ins.
+    const prepared = gateable ? await integrationManager.prepareBuiltin?.(tool, normalized) : undefined;
+    if (prepared && 'refusal' in prepared) {
+      recordBlocked(state, tool, { kind: 'bound', detail: prepared.refusal, who: 'gateway', code: prepared.code });
+      return { content: [{ type: 'text', text: `Refused: ${prepared.refusal}` }], isError: true };
+    }
+    if (prepared) normalized = prepared.args;
     const refusal = gateable ? await integrationManager.precheckBuiltin?.(tool, normalized) : null;
     if (refusal) return { content: [{ type: 'text', text: refusal }], isError: true };
     return gated(normalized);
@@ -696,8 +938,7 @@ export function createGatedToolHandler(
  * a superseded mandate surfaces as one of these two codes, not a third.
  */
 function isStaleMandateRefusal(err: Pick<SPReceiptError, 'statusCode' | 'body'>): boolean {
-  const errors = err.body?.errors as Array<{ code?: unknown }> | undefined;
-  const code = errors?.[0]?.code;
+  const code = readRefusal(err.body).code;
   if (err.statusCode === 403 && (code === 'MANDATE_REVOKED' || code === 'MANDATE_EXPIRED')) {
     return true;
   }
@@ -723,10 +964,9 @@ function isStaleMandateRefusal(err: Pick<SPReceiptError, 'statusCode' | 'body'>)
  * disappearing it would hide exactly the authorization that needs action.
  */
 function isVersionUnsupportedRefusal(err: SPReceiptError): boolean {
-  const errors = err.body?.errors as Array<{ code?: unknown }> | undefined;
   // The canonical code decides, not the status: today's AS answers 409 for a
   // pre-0.7 mandate, a v0.8 AS may answer another 4xx for a v0.7 one.
-  return errors?.[0]?.code === 'VERSION_UNSUPPORTED';
+  return readRefusal(err.body).code === 'VERSION_UNSUPPORTED';
 }
 
 function createGatedToolHandlerInner(
@@ -772,6 +1012,12 @@ function createGatedToolHandlerInner(
       });
     return { matching, refusals };
   };
+  // With a Setup mandate the AI prepares the missing mandate itself, from the chat: the refusal says so.
+  const setupWay = (): string | undefined => {
+    const setup = setupMandateFacts(integrationManager, state.getEnrichedAuthorizations());
+    if (!setup.tool) return undefined;
+    return howToGetMandate(profile!, cardNameOf(tool) ?? areaName(profile!), { setup, areaName, profileOf: newestProfileOf });
+  };
   const noEligibleMandate = (refusals: string[]): ToolResult => {
     const reasons = [...new Set(refusals)].join(' ');
     recordBlocked(state, tool, {
@@ -788,7 +1034,7 @@ function createGatedToolHandlerInner(
         type: 'text',
         text: refusals.length > 0
           ? `Refused: ${reasons.charAt(0).toUpperCase() + reasons.slice(1)} No ticket was requested.`
-          : noMandateRefusal(tool.namespacedName, profile!, integrationManager.noMandateText?.(tool.integrationId), cardNameOf(tool)),
+          : noMandateRefusal(tool.namespacedName, profile!, integrationManager.noMandateText?.(tool.integrationId), cardNameOf(tool), profile!, setupWay()),
       }],
       isError: true,
     };
@@ -1134,7 +1380,35 @@ function createGatedToolHandlerInner(
   }
 
   // Write tools: full execution context verification
-  return lockedGuard(async (args: Record<string, unknown>) => {
+  return lockedGuard(async (incomingArgs: Record<string, unknown>) => {
+    // The connector's own default for an omitted argument (manifest
+    // `argDefaults`), filled in FIRST: the scope check, the card, the content
+    // hash and the downstream call all see the value that is really used.
+    const defaulted = withArgDefaults(tool.gating?.argDefaults, incomingArgs);
+    // The AI mark (receipt-footer.ts): the gateway's own trailing footer on
+    // the message text (an edit carrying the old one) is removed NOW, before
+    // the card and the content hash — at send it is only appended, so the
+    // text approved, hashed and sent is one text. Any other line that looks
+    // like the mark is refused: the AI writes no mark of its own.
+    const markField = tool.gating?.message?.text;
+    const markText = markField ? defaulted[markField] : undefined;
+    const cleanedText = typeof markText === 'string' ? stripOwnTrailingFooter(markText) : undefined;
+    if (markField && cleanedText !== undefined) {
+      const line = markLikeLine(cleanedText);
+      if (line) {
+        recordBlocked(state, tool, {
+          kind: 'check',
+          detail: `The ${markField} contains a line that looks like the AI mark.`,
+          field: markField,
+          who: 'gateway',
+          code: 'AI_MARK_IN_TEXT',
+        });
+        return { content: [{ type: 'text', text: markLikeLineRefusalText(tool.namespacedName, markField, line) }], isError: true };
+      }
+    }
+    const args = markField && cleanedText !== undefined && cleanedText !== markText
+      ? { ...defaulted, [markField]: cleanedText }
+      : defaulted;
     // Documents/inserts by reference (suveren-invoicing-plan.md §6/§7) —
     // shape-validate the `attachments`/`insert` arguments EARLY, before any
     // mandate is selected (pure, no I/O — never fetches a document; refuses
@@ -1165,29 +1439,30 @@ function createGatedToolHandlerInner(
     // Start with static values (e.g., scope: "external")
     const execution: Record<string, string | number> = { ...staticExecution };
 
-    // Build execution context from tool args using the mapping
-    for (const [argName, mapping] of Object.entries(executionMapping)) {
-      const value = args[argName];
-      if (value !== undefined && value !== null) {
-        if (typeof mapping === 'string') {
-          // Direct mapping: argName → contextField
-          execution[mapping] = typeof value === 'number' ? value : String(value);
-        } else if (Array.isArray(mapping)) {
-          // Array mapping: one arg → multiple execution fields
-          for (const m of mapping) applyMapping(m, value, execution);
-        } else if ('divisor' in mapping) {
-          // Divisor mapping: convert units (e.g., cents ÷ 100 → EUR)
-          const numValue = typeof value === 'number' ? value : Number(value);
-          execution[mapping.field] = numValue / mapping.divisor;
-        } else if ('transform' in mapping) {
-          // Transform mapping: array-aware transforms
-          applyMapping(mapping, value, execution);
-        }
+    // One plain address per entry, where the manifest declares it — before
+    // anything is joined, counted or scope-checked (malformedMappedItem).
+    {
+      const bad = malformedMappedItem(executionMapping, args);
+      if (bad) {
+        recordBlocked(state, tool, {
+          kind: 'scope',
+          detail: `"${bad.arg}" entry is not one ${bad.format} address.`,
+          field: bad.arg,
+          value: bad.item,
+          who: 'gateway',
+          code: 'SCOPE_INVALID_VALUE',
+        });
+        return { content: [{ type: 'text', text: malformedItemRefusalText(tool.namespacedName, bad) }], isError: true };
       }
     }
 
+    // Build execution context from tool args using the mapping. Several
+    // arguments on one field combine (an email's to + cc): mapExecutionArgs.
+    Object.assign(execution, mapExecutionArgs(executionMapping, args));
+
     // Documents by reference, continued — the call's OWN attachment
-    // sources, as an execution-context field (email/0.9's
+    // sources, as an execution-context field named like the profile's
+    // `connector:kind` scope field (email/0.9's
     // executionContextSchema.allowed_attachment_sources: "checked against
     // scope; absent when the email has none"). This lets hap-core's generic
     // scope `subset` check (gatekeeper.ts's checkScopeConstraints) run
@@ -1197,7 +1472,13 @@ function createGatedToolHandlerInner(
     // since the generic check skips enforcement when a mandate's scope
     // value is absent.
     if (attachmentSourcesForExecution) {
-      execution[ATTACHMENT_SOURCES_FIELD] = attachmentSourcesForExecution;
+      // Named by every profile in play — the area's and each held mandate's
+      // version — so the subset check runs whichever mandate is picked.
+      const ids = [profile!, ...eligibleMandates().matching.map(a => a.profileId)];
+      for (const id of new Set(ids)) {
+        const field = attachmentSourcesField(getProfile(id) as never);
+        if (field) execution[field] = attachmentSourcesForExecution;
+      }
     }
 
     // A connector's OWN tool schema may require the same value as a STRING
@@ -1407,7 +1688,30 @@ function createGatedToolHandlerInner(
     // alongside the strings above — for the "Blocked" record only, never for
     // the agent-facing message built from `errors`.
     const structuredRefusals: Array<{ authorizationId: string; profileId: string; code: string; field?: string; bound?: unknown; actual?: unknown }> = [];
+    // The profile's `scopeSchema.atLeastOne` (scope-rules.ts): a mandate whose scope
+    // sets none of a group's fields cannot do the group's action types. Scope never
+    // reaches the Authority Server, so this gateway is the only place that can refuse it.
+    const atLeastOneRefusals: Array<{ authorizationId: string; field: string; sentence: string }> = [];
+    // An omitted mapped argument leaves its field empty, and hap-core skips a
+    // scope check on an empty field. Under a mandate whose scope constrains
+    // that field, the connector would then act on its own default — e.g. post
+    // PUBLIC under audience=connections. Fail closed per mandate.
+    const leftEmpty = fieldsLeftByAbsentArgs(executionMapping, args, staticExecution);
+    const absentArgRefusals: Array<{ authorizationId: string; hit: { field: string; args: string[] } }> = [];
     for (const candidate of matchingAuths) {
+      const absent = constrainedButAbsent(leftEmpty, candidate.context as Record<string, unknown> | undefined);
+      if (absent.length > 0) {
+        const hit = absent[0];
+        absentArgRefusals.push({ authorizationId: candidate.authorizationId, hit });
+        errors.push(`${candidate.path}: the call omits ${hit.args.map(a => `"${a}"`).join(' or ')}, which this mandate's ${hit.field} constrains`);
+        structuredRefusals.push({
+          authorizationId: candidate.authorizationId,
+          profileId: candidate.profileId,
+          code: 'SCOPE_INVALID_VALUE',
+          field: hit.field,
+        });
+        continue;
+      }
       // Capability gate (enum boundType, e.g. records.json's archive_access/
       // delete_access on archive_record/delete_record): checked BEFORE the
       // Gatekeeper, same mechanism as the read branch's static read gate
@@ -1461,7 +1765,20 @@ function createGatedToolHandlerInner(
           bound: 0,
         });
       } else if (result.approved) {
-        passers.push(candidate);
+        const unmet = unmetForAction(getProfile(candidate.profileId) as never, candidate.context, typeof execution.action_type === 'string' ? execution.action_type : undefined);
+        if (unmet) {
+          const sentence = atLeastOneExecutionRefusal(getProfile(candidate.profileId) as never, unmet);
+          errors.push(`${candidate.path}: ${sentence}`);
+          atLeastOneRefusals.push({ authorizationId: candidate.authorizationId, field: unmet.group.fields[0], sentence });
+          structuredRefusals.push({
+            authorizationId: candidate.authorizationId,
+            profileId: candidate.profileId,
+            code: 'SCOPE_INVALID_VALUE',
+            field: unmet.group.fields[0],
+          });
+        } else {
+          passers.push(candidate);
+        }
       } else {
         const reasons = result.errors.map(e => {
           if (e.code === 'BOUND_EXCEEDED') {
@@ -1481,6 +1798,43 @@ function createGatedToolHandlerInner(
           });
         }
       }
+    }
+
+    if (passers.length === 0 && absentArgRefusals.length > 0 && absentArgRefusals.length === matchingAuths.length) {
+      // Every mandate that could carry the call constrains a field the call
+      // left empty: name the argument, nothing run, no ticket or proposal.
+      const { hit } = absentArgRefusals[0];
+      const only = absentArgRefusals.length === 1 ? absentArgRefusals[0] : undefined;
+      const def = getProfile(matchingAuths[0].profileId)?.scopeSchema?.fields?.[hit.field] as { displayName?: string } | undefined;
+      const label = def?.displayName ? `"${def.displayName}" (${hit.field})` : hit.field;
+      const text = absentArgRefusalText(tool.namespacedName, hit, label);
+      recordBlocked(state, tool, {
+        kind: 'scope',
+        detail: `The call omits ${hit.args.join(', ')}; the mandate constrains ${hit.field}.`,
+        field: hit.field,
+        ...(only ? { mandateId: only.authorizationId } : {}),
+        who: 'gateway',
+        code: 'SCOPE_INVALID_VALUE',
+      });
+      return { content: [{ type: 'text', text }], isError: true };
+    }
+
+    if (passers.length === 0 && atLeastOneRefusals.length > 0 && atLeastOneRefusals.length === matchingAuths.length) {
+      // Every mandate that could carry the call names none of a required group:
+      // the one sentence, nothing run, no ticket or proposal requested.
+      const only = atLeastOneRefusals.length === 1 ? atLeastOneRefusals[0] : undefined;
+      recordBlocked(state, tool, {
+        kind: 'scope',
+        detail: atLeastOneRefusals[0].sentence,
+        field: atLeastOneRefusals[0].field,
+        ...(only ? { mandateId: only.authorizationId } : {}),
+        who: 'gateway',
+        code: 'SCOPE_INVALID_VALUE',
+      });
+      return {
+        content: [{ type: 'text', text: `${atLeastOneRefusals[0].sentence} Nothing ran.` }],
+        isError: true,
+      };
     }
 
     if (passers.length === 0) {
@@ -1521,6 +1875,7 @@ function createGatedToolHandlerInner(
         : [];
       const narrowed = candidatesAllowingAttachments(passers, refs, (id) => getProfile(id) as never);
       if (narrowed.allowed.length === 0) {
+        recordAttachmentRefusal(state, tool, passers, refs);
         return {
           content: [{ type: 'text', text: attachmentNotAllowedText({
             tool: tool.namespacedName,
@@ -1607,7 +1962,7 @@ function createGatedToolHandlerInner(
 
         // Documents/inserts by reference (item 1 of "emails carry documents
         // by reference") — resolve for display now that a SPECIFIC mandate
-        // is selected, against ITS OWN allowed_attachment_sources scope
+        // is selected, against ITS OWN attachment-source scope
         // value (never resolved before a mandate is chosen). "Resolve for
         // display" only: fetches each document to seal its fingerprint and
         // substitutes any inserted value into the text (so content binding
@@ -1617,9 +1972,7 @@ function createGatedToolHandlerInner(
         // re-resolves from the original, untouched `args`.
         let callArgs = args;
         if (tool.gating?.attachmentsArg || tool.gating?.insertFields?.length) {
-          const allowedSourcesValue = typeof auth.context?.[ATTACHMENT_SOURCES_FIELD] === 'string'
-            ? (auth.context[ATTACHMENT_SOURCES_FIELD] as string)
-            : undefined;
+          const allowedSourcesValue = attachmentSourcesValue(getProfile(auth.profileId) as never, auth.context);
           const resolved = await resolveAttachmentsAndInserts(integrationManager, tool, auth.profileId, args, allowedSourcesValue);
           if (!resolved.ok) {
             return { content: [{ type: 'text', text: resolved.message }], isError: true };
@@ -1847,7 +2200,7 @@ function createGatedToolHandlerInner(
             action: tool.namespacedName,
             actionType,
             executionContext: wireExecCtx,
-            amount: typeof execution.amount === 'number' ? execution.amount : undefined,
+            amount: cumulativeSumValue(getProfile(auth.profileId), execution),
             idempotencyKey,
             // Privacy: send the hash and how to reproduce it — never the
             // preimage. `binding` also carries `boundContent`, the plaintext
@@ -1915,7 +2268,7 @@ function createGatedToolHandlerInner(
           // `requested` journal row: nothing ran, and the row says so.
           if (autoRequestKey && !receiptId) {
             const refusalCode = err instanceof SPReceiptError
-              ? ((err.body?.errors as Array<{ code?: string }> | undefined)?.[0]?.code ?? 'TICKET_REFUSED')
+              ? (readRefusal(err.body).code ?? 'TICKET_REFUSED')
               : 'REQUEST_FAILED';
             state.executionJournal?.refusedBeforeTicket?.(autoRequestKey, 'as_refused', refusalCode);
           }
@@ -1997,7 +2350,7 @@ function createGatedToolHandlerInner(
           // no candidate left, the refusal below stands, with the server's
           // own reason.
           if (err instanceof SPReceiptError && err.statusCode === 403
-              && (err.body?.errors as Array<{ code?: unknown }> | undefined)?.[0]?.code === 'CUMULATIVE_LIMIT_EXCEEDED') {
+              && readRefusal(err.body).code === 'CUMULATIVE_LIMIT_EXCEEDED') {
             const remaining = candidates.filter(c => c.authorizationId !== auth.authorizationId);
             if (remaining.length > 0) {
               console.error(
@@ -2355,9 +2708,10 @@ export function v08ProposalReaders(
  * as the person sees it — the profile's `name` ("Email", "Setup"), falling back
  * to its short id only when the profile is not in the local catalog.
  */
-export function noMandateRefusal(toolName: string, profile: string, builtinText?: string, card?: string, stepsArea: string = profile): string {
+export function noMandateRefusal(toolName: string, profile: string, builtinText?: string, card?: string, stepsArea: string = profile, setupWay?: string): string {
   if (builtinText) return `Refused: ${builtinText} No ticket was requested.`;
   const area = areaName(profile);
+  if (setupWay) return `Refused: no mandate covers ${toolName} (${area}). Nothing was done. ${setupWay} Then try again. No ticket was requested.`;
   const where = card
     ? `**Mandates → + New mandate →** card **${card}** → **Give a mandate**`
     : '**Mandates → + New mandate**';

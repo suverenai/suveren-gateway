@@ -16,6 +16,7 @@ import { ExecutionResultStore } from './execution-result-store';
 import { ProposalSubmissionStore } from './proposal-submission-store';
 import { PreviewLog } from './preview-log';
 import { OutcomeOutbox } from './outcome-outbox';
+import { ChangeLedger } from './change-notice';
 import { MCPGatekeeper } from './gatekeeper';
 import { ReportStore } from './report/report-store';
 import { SUPPORTED_VERSIONS } from '@hap/core';
@@ -51,6 +52,8 @@ export class SharedState {
   /** RJ4 — rejection/change-needed/replaced outcomes awaiting one-time
    *  delivery to the AI on its next tool call. See outcome-outbox.ts. */
   readonly outcomeOutbox: OutcomeOutbox;
+  /** What each app was last told about the brief and mandates — see change-notice.ts. */
+  readonly changeLedger: ChangeLedger;
   readonly gatekeeper: MCPGatekeeper;
 
   /**
@@ -99,6 +102,7 @@ export class SharedState {
     this.proposalSubmissions = new ProposalSubmissionStore(gateStorePath);
     this.previewLog = new PreviewLog(gateStorePath);
     this.outcomeOutbox = new OutcomeOutbox(gateStorePath);
+    this.changeLedger = new ChangeLedger(gateStorePath);
     // The execution log is deliberately NOT handed to the Gatekeeper: it is a
     // display-only record (see gatekeeper.ts), and the AS is the sole
     // cumulative enforcer.

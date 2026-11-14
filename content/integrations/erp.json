@@ -136,6 +136,16 @@
       }
     }
   },
+  "report": {
+    "system": "erp",
+    "label": "ERP",
+    "tables": [
+      { "name": "quotes", "required": true, "record": { "kind": "quote" }, "matchBy": ["id", "number"], "time": { "column": "created_at", "ticket": "receipt_id" } },
+      { "name": "orders", "required": true, "record": { "kind": "order" }, "matchBy": ["id", "number"], "time": { "column": "created_at", "ticket": "receipt_id" } },
+      { "name": "changes", "required": true, "record": { "kind": "change" }, "causingTicket": "receipt_id", "time": { "column": "at", "ticket": "receipt_id" } },
+      { "name": "refusals", "required": true, "record": { "kind": "refusal" }, "refusalTime": "at", "time": { "column": "at", "ticket": "receipt_id" } }
+    ]
+  },
   "toolGating": {
     "default": {
       "executionMapping": {},
@@ -253,7 +263,7 @@
         }
       },
       "update_quote": {
-        "summary": "Update quote to {value|money} net[ — {discount_pct|percent} discount]",
+        "summary": "Change quote: {value|money} net[ — {discount_pct|percent} discount]",
         "executionMapping": {
           "value": "value",
           "discount_pct": "discount_pct",
@@ -566,7 +576,7 @@
       },
       "update_customer": {
         "profile": "master-data",
-        "summary": "Change contact data of customer {id|ref}",
+        "summary": "Change customer {id|ref}: contact data",
         "executionMapping": {},
         "staticExecution": { "action_type": "customer_update" },
         "actionLabel": "Customer updated",
@@ -588,14 +598,14 @@
           "verb": "changed",
           "order": ["id", "email", "crm_contact_id"],
           "labels": {
-            "id": "Customer", "email": "Email (new)", "crm_contact_id": "CRM contact (new)",
+            "id": "Customer", "email": "Email", "crm_contact_id": "CRM contact",
             "id.email": "Email (now)", "id.crm_contact_id": "CRM contact (now)"
           }
         }
       },
       "update_customer_tax_data": {
         "profile": "master-data",
-        "summary": "Change tax data of customer {id|ref}: {name}, {country}[ — VAT ID {uid}]",
+        "summary": "Change customer {id|ref}: tax data",
         "executionMapping": {},
         "staticExecution": { "action_type": "customer_tax" },
         "actionLabel": "Customer tax data changed",
@@ -673,7 +683,7 @@
       },
       "update_item_price": {
         "profile": "master-data",
-        "summary": "Price of item {id|ref}: {list_price|money}, VAT {vat_rate|percent}",
+        "summary": "Change price of {id|ref}: {list_price|money}, VAT {vat_rate|percent}",
         "executionMapping": { "list_price": "list_price" },
         "staticExecution": { "action_type": "item_price" },
         "actionLabel": "Item price changed",
@@ -684,13 +694,7 @@
         "checks": [
           { "key": "revision", "label": "Request is for the record's current version", "blocking": true, "showOnly": "fail",
             "path": "id.$version.approved", "compare": { "op": "eq", "to": "id.$version.current" },
-            "detail": "request for version {id.$version.approved}, record at version {id.$version.current}" },
-          { "key": "price-change", "label": "List price", "path": "list_price",
-            "compare": { "op": "eq", "to": "id.list_price" }, "onTrue": "pass", "onFalse": "notice",
-            "detail": "{id.list_price|money} → {list_price|money}" },
-          { "key": "vat-change", "label": "VAT rate", "path": "vat_rate",
-            "compare": { "op": "eq", "to": "id.vat_rate" }, "onTrue": "pass", "onFalse": "notice",
-            "detail": "{id.vat_rate|percent} → {vat_rate|percent}" }
+            "detail": "request for version {id.$version.approved}, record at version {id.$version.current}" }
         ],
         "display": {
           "verb": "changed",
@@ -698,8 +702,8 @@
           "percent": ["vat_rate", "id.vat_rate"],
           "currencyField": "id.currency",
           "labels": {
-            "id": "Item", "list_price": "List price (new)", "id.list_price": "List price (now)",
-            "vat_rate": "VAT rate (new)", "id.vat_rate": "VAT rate (now)"
+            "id": "Item", "list_price": "List price", "id.list_price": "List price (now)",
+            "vat_rate": "VAT rate", "id.vat_rate": "VAT rate (now)"
           }
         }
       },

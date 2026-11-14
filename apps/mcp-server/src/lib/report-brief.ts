@@ -23,7 +23,36 @@ export const REPORT_ELEMENTS = [
 /** The report format's structural blocks (not verified, not elements). */
 export const REPORT_BLOCKS = ['sv-ai', 'sv-row', 'sv-glossary', 'sv-term'] as const;
 
-export const REPORT_BRIEF = `How to write a report
+/** What the brief needs from the systems the connectors' manifests declare (report/systems.ts). */
+export interface BriefSystem {
+  system: string;
+  label: string;
+  cases?: boolean;
+}
+
+/** "a, b or c" */
+function orList(items: string[]): string {
+  return items.length <= 1 ? items.join('') : `${items.slice(0, -1).join(', ')} or ${items[items.length - 1]}`;
+}
+
+/**
+ * The brief for the systems the manifests declare: the `sv-record` system names
+ * and the `sv-case` start prefix come from their `report` declarations, never
+ * from a list here.
+ */
+export function reportBrief(systems: BriefSystem[]): string {
+  const names = systems.map(s => s.system);
+  const recordSystems = names.length > 0 ? names.join('|') : 'SYSTEM';
+  const recordWhat = systems.length > 0 ? `a record from ${orList(systems.map(s => s.label))}` : 'a record from a connected system';
+  const caseSource = systems.find(s => s.cases);
+  const caseStart = caseSource ? `${caseSource.system}:MESSAGE_ID` : 'MESSAGE_ID';
+  return BRIEF_TEMPLATE
+    .replace('{{recordSystems}}', recordSystems)
+    .replace('{{recordWhat}}', recordWhat)
+    .replace('{{caseStart}}', caseStart);
+}
+
+const BRIEF_TEMPLATE = `How to write a report
 
 Purpose: regular reports on what you did in your reporting window — this week, this test, this month — for managers who are not technical. Plain words, short sentences, the result first. Each write replaces the previous report.
 
@@ -36,8 +65,8 @@ The format — only these blocks, one after another. Anything else is dropped (w
    - <sv-ticket ref="TICKET_ID" variant="compact"></sv-ticket> — one action: action + time. variant="full" shows every signed field (incl. its mandate and approval) and the public check link.
    - <sv-approval ticket="TICKET_ID"></sv-approval> — when the approval was asked and decided, and by whom.
    - <sv-mandate ticket="TICKET_ID"></sv-mandate> — the authority the action ran under: limits, mode, intent.
-   - <sv-record system="email|crm|erp" ref="RECORD_ID"></sv-record> — an email, CRM entry, quote or order.
-   - <sv-case start="email:MESSAGE_ID" goal="ticket:TICKET_ID" steps="TICKET_ID TICKET_ID"></sv-case> — one business case from its start email to the ticket that completed it.
+   - <sv-record system="{{recordSystems}}" ref="RECORD_ID"></sv-record> — {{recordWhat}}.
+   - <sv-case start="{{caseStart}}" goal="ticket:TICKET_ID" steps="TICKET_ID TICKET_ID"></sv-case> — one business case from its start email to the ticket that completed it.
    - <sv-metric kind="KIND" cases="all"></sv-metric> — a number the gateway computes over your cases. KIND: completed, median-time, average-time, without-approval, approvals, median-approval-wait, tickets, refusals. cases is "all" or case ids, e.g. cases="C1 C3".
 3. <sv-row>…</sv-row> — puts verified elements side by side (they stack on a phone). Only verified elements inside.
 4. <sv-glossary lang="de"><sv-term key="erp__create_quote">Angebot erstellt</sv-term></sv-glossary> — optional, once per report. Translates field names and fixed words that appear in the verified boxes (action names, profile, mode, field names such as value_max). Words only: never numbers, amounts, times or ids; plain text, at most 60 characters. The reader sees it small above the raw value, only when they switch translation on. Unknown keys are ignored.

@@ -125,18 +125,23 @@
       },
       "create_event": {
         "message": { "text": "description", "verb": "Sent" },
-        "summary": "Event: {summary|short}[ on {start.dateTime,start.date|date}]",
+        "summary": "New event: {summary|short}[ on {start.dateTime,start.date|date}]",
+        "argDefaults": {"calendarId": "primary", "attendees": []},
         "executionMapping": {
           "duration_minutes": "duration",
           "lookahead_days": "lookahead",
           "attendees": [
             {
               "field": "allowed_attendees",
-              "transform": "join"
+              "transform": "join",
+              "item": "email",
+              "format": "email"
             },
             {
               "field": "allowed_domains",
-              "transform": "join_domains"
+              "transform": "join_domains",
+              "item": "email",
+              "format": "email"
             }
           ],
           "calendarId": "allowed_calendars"
@@ -148,16 +153,21 @@
       },
       "update_event": {
         "message": { "text": "description", "verb": "Sent" },
-        "summary": "Update event[: {summary|short}]",
+        "summary": "Change event[: {summary|short}]",
+        "argDefaults": {"calendarId": "primary"},
         "executionMapping": {
           "attendees": [
             {
               "field": "allowed_attendees",
-              "transform": "join"
+              "transform": "join",
+              "item": "email",
+              "format": "email"
             },
             {
               "field": "allowed_domains",
-              "transform": "join_domains"
+              "transform": "join_domains",
+              "item": "email",
+              "format": "email"
             }
           ],
           "calendarId": "allowed_calendars"
@@ -171,6 +181,7 @@
       },
       "delete_event": {
         "summary": "Delete an event",
+        "argDefaults": {"calendarId": "primary"},
         "executionMapping": {
           "calendarId": "allowed_calendars"
         },
@@ -199,7 +210,7 @@
         "allowed_attendees": "",
         "allowed_domains": ""
       },
-      "intent": "Allow the agent to read the primary calendar (only) to help with scheduling suggestions. No create or modify. To read other calendars, add them to allowed_calendars.",
+      "intent": "Allow the agent to read my calendar to help with scheduling suggestions. It creates and changes nothing.",
       "ttl": 2592000,
       "tags": [
         "read-only",

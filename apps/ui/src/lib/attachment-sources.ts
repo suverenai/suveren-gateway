@@ -1,6 +1,6 @@
 /**
  * Attachment sources on a mandate: the scope field whose profile `format` is
- * "connector:kind" (email@0.9+ `allowed_attachment_sources`) holds a
+ * "connector:kind" (for example email@0.9's `allowed_attachment_sources`) holds a
  * comma-separated list of `connector:kind` pairs. This module turns the
  * connectors' own `documents` declarations into checkbox choices and readable
  * labels. Nothing here names a connector, a kind or a field: the field is
@@ -10,11 +10,16 @@
  * No React/DOM import (same split as document-preview.ts).
  */
 
-/** The profile field `format` that marks an attachment-source list. */
-export const ATTACHMENT_SOURCE_FORMAT = 'connector:kind';
+import { DOCUMENT_SOURCES_FORMAT, isDocumentSourcesField } from '@hap/core/scope-rules';
+
+/** The profile field `format` that marks an attachment-source list — the gateway's own rule (@hap/core/scope-rules). */
+export const ATTACHMENT_SOURCE_FORMAT = DOCUMENT_SOURCES_FORMAT;
+
+/** The mandate form's heading for such a list; every surface that names the field uses it. */
+export const ATTACHMENT_SOURCE_HEADING = 'What the AI may attach';
 
 export function isAttachmentSourceField(field: { format?: string } | null | undefined): boolean {
-  return field?.format === ATTACHMENT_SOURCE_FORMAT;
+  return isDocumentSourcesField(field);
 }
 
 /** The part of a manifest this module reads. */

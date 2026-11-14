@@ -84,6 +84,18 @@
       }
     }
   },
+  "report": {
+    "system": "crm",
+    "label": "CRM",
+    "tables": [
+      { "name": "contacts", "required": true, "record": { "kind": "contact" }, "time": { "column": "created_at", "ticket": "receipt_id" } },
+      { "name": "deals", "required": true, "record": { "kind": "deal" }, "time": { "column": "created_at", "ticket": "receipt_id" } },
+      { "name": "tasks", "record": { "kind": "task" }, "time": { "column": "created_at", "ticket": "receipt_id" } },
+      { "name": "activities", "record": { "kind": "activity" }, "time": { "column": "date", "ticket": "receipt_id" } },
+      { "name": "changes", "required": true, "record": { "kind": "change" }, "causingTicket": "receipt_id", "time": { "column": "at", "ticket": "receipt_id" } },
+      { "name": "refusals", "required": true, "record": { "kind": "refusal" }, "refusalTime": "at", "time": { "column": "at", "ticket": "receipt_id" } }
+    ]
+  },
   "toolGating": {
     "default": {
       "executionMapping": {
@@ -93,7 +105,7 @@
     },
     "overrides": {
       "create_contact": {
-        "summary": "Create contact {name}[ ({company})]",
+        "summary": "New contact {name}[ ({company})]",
         "executionMapping": {
           "type": "contact_type"
         },
@@ -114,7 +126,7 @@
         }
       },
       "update_contact": {
-        "summary": "Update contact {name,id}",
+        "summary": "Change contact {name,id}",
         "executionMapping": {
           "contact_type": "contact_type"
         },
@@ -255,7 +267,7 @@
         }
       },
       "create_deal": {
-        "summary": "Create deal: {title|short}[ — {value|money}]",
+        "summary": "New deal: {title|short}[ — {value|money}]",
         "actionLabel": "Deal created",
         "executionMapping": {
           "contact_type": "contact_type"
@@ -276,7 +288,7 @@
         }
       },
       "update_deal": {
-        "summary": "Update deal[: {title|short}][ — {value|money}]",
+        "summary": "Change deal[: {title|short}][ — {value|money}]",
         "actionLabel": "Deal updated",
         "executionMapping": {
           "contact_type": "contact_type"
@@ -306,7 +318,7 @@
         }
       },
       "create_task": {
-        "summary": "Create task: {title|short}[ (due {due_date|date})]",
+        "summary": "New task: {title|short}[ (due {due_date|date})]",
         "actionLabel": "Task created",
         "executionMapping": {
           "contact_type": "contact_type"

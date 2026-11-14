@@ -8,7 +8,7 @@
  *   1. type line ("Action · Invoicing · 12 min"), title (manifest sentence)
  *   2. failed check, over-limit block (only when present)
  *   3. notice / "not checked" lines
- *   4. the sealed tile — "Runs exactly as shown" / "You sign these limits"
+ *   4. the sealed tile — "Runs exactly as shown" / "You approve this change" / "You sign this"
  *   5. folded rows: Covered by · ✓ N checks passed · Request · History ·
  *      Technical details (mandate: Intent stays open above the rows,
  *      "Proposed through" is a row)
@@ -17,7 +17,9 @@
 import { approvalSummary } from '../lib/approval-summary';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { CREATE_MANDATE_TOOL, MANDATE_TILE_OMIT, mandatePreviewParts, mandateTechnicalLine, mandateTitleParts, mandateTargetProfile, modeView } from '../lib/mandate-proposal';
+import { useSimulationMode } from '../hooks/useSimulationMode';
+import { hiddenLimitKeys, type ManifestGatingLike } from '../lib/simulation-only-limits';
+import { CREATE_MANDATE_TOOL, MANDATE_TILE_OMIT, omitLimitLabels, mandatePreviewParts, mandateTechnicalLine, mandateTitleParts, mandateTargetProfile, modeView } from '../lib/mandate-proposal';
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { resolveProposalLinks, type ProposalLink } from '../lib/proposal-links';
@@ -30,14 +32,15 @@ import {
   type ShownSnapshotPayload,
 } from '../lib/sp-client';
 import { ProposalArgs, NotSealedArgs, localPreviewIsUnsealed } from './ProposalArgs';
-import { PreviewBox } from './PreviewBox';
+import { PreviewBoxShow, useProposalPreview } from './PreviewBox';
 import { RequestContextBox } from './RequestContextBox';
 import { useAreaCatalog } from '../lib/area-catalog';
 import { areaName, ageLabel, deadlineLabel } from '../lib/core-objects';
 import { areaIcon } from '../lib/area';
 import { AreaIcon } from './AreaIcon';
 import { useMandateUsage } from '../lib/mandate-usage';
-import { previewBoxView } from '../lib/approval-preview-view';
+import { limitWordsForTool } from '../lib/limit-words';
+import { previewBoxView, sealedTileHeading } from '../lib/approval-preview-view';
 import { SystemBoxes } from './RenderedCreationView';
 import { isTestSetupAction, profileIdentity, shortProfileId } from '../lib/profile-identity';
 import { AttachmentsSealedBox } from './AttachmentsSealedBox';
@@ -53,11 +56,14 @@ import { useProposalContent, missingRecipients } from '../lib/use-proposal-conte
 import { limitChecks } from '../lib/receipt-summary';
 import { checkLines } from '../lib/checks-view';
 import { ChecksLines } from './ChecksLines';
-import { refNameFrom, setProposalPreview } from '../lib/preview-store';
+import { summaryPreviewFrom, setProposalPreview } from '../lib/preview-store';
 import { profileDisplayName } from '../lib/profile-display';
 import { useAuth } from '../contexts/AuthContext';
 import { newestProfileOf, carryBoundsForward, carryContextForward } from '../lib/profile-upgrade';
 import { mandatePrefillGate, type CreateMandateProposalArgs } from '../lib/create-mandate-prefill';
+import { CHANGE_MANDATE_TOOL, type ChangeArgs } from '../lib/mandate-change-view';
+import { MandateChangeBody } from './MandateChangeCard';
+import { applyChangeForEdit } from '../lib/mandate-change-edit';
 
 // NEVER truncate: approvers commit to exactly what they can read here, so
 // the full content must be visible at once (an email body cut at 200 chars
@@ -219,12 +225,41 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
     }
   };
 
+  // "Change it myself": the form opens pre-filled with what the AI proposed, computed
+  // from the signed mandate; the diff is recomputed on the form's review step.
+  const handleChangeMyself = async () => {
+    if (!groupId) { setEditError('No active workspace; cannot open the mandate screen.'); return; }
+    setEditingBeforeSigning(true);
+    setEditError(null);
+    try {
+      const args = content.toolArgs as ChangeArgs | null;
+      if (!args?.mandate_id || !args.change) { setEditError('This content is not readable on this device yet.'); return; }
+      const old = (await spClient.getEnrichedAuthorizations()).find((a) => a.authorizationId === args.mandate_id);
+      if (!old) { setEditError('The mandate is no longer active.'); return; }
+      const catalog = await spClient.listProfiles();
+      const newest = newestProfileOf(old.profileId, catalog);
+      if (!newest) { setEditError('Unknown area.'); return; }
+      const prefill = applyChangeForEdit(old, args);
+      sessionStorage.setItem('agentAuth', JSON.stringify({
+        profileId: newest.id, groupId, groupName: group?.name ?? null, domain, isPersonal: !!group?.isPersonal,
+      }));
+      sessionStorage.setItem('agentGate', JSON.stringify(prefill));
+      sessionStorage.setItem('agentEditReplaces', args.mandate_id);
+      sessionStorage.setItem('agentReplacesProposal', proposal.id);
+      sessionStorage.setItem('agentChangeAiIntent', typeof args.intent === 'string' ? args.intent : '');
+      navigate('/mandates/new/intent');
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : 'Could not open the mandate screen.');
+    } finally {
+      setEditingBeforeSigning(false);
+    }
+  };
+
   // The bound values — the content the person approves. Shown OPEN as "What
   // will be sent" when there is no working preview (lib/approval-preview-view.ts
   // boundValuesOpen); folded under Details only when a preview already shows the
   // record from the system.
   const [previewTone, setPreviewTone] = useState<string | null>(null);
-  const boundOpen = boundValuesOpen(previewTone);
 
   // AU10 §8.4 — the raw AU8/AU10 data, as it is CURRENTLY rendered (set via
   // PreviewBox/RequestContextBox's own `onData`), combined into one snapshot
@@ -233,6 +268,13 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
   // when it has one, else the moment this box last combined the two (a
   // preview-less tool still has a request-context read worth timestamping).
   const [previewData, setPreviewData] = useState<PreviewResponse | null>(null);
+  // One fetch for the card; where the box sits depends on what it shows.
+  const previewState = useProposalPreview(proposal.id, systemName, content.toolArgs, setPreviewTone, setPreviewData, readable);
+  const previewView = previewData ? previewBoxView(previewData, systemName, content.toolArgs ?? undefined) : undefined;
+  // A record read from the system that is NOT shown as a change is context,
+  // not what runs: it sits after the sealed tile, and the bound values are open.
+  const recordOutside = !!previewView?.context;
+  const boundOpen = boundValuesOpen(previewTone, previewView);
   // UI spec §4.2.2 — one line per check: limits + attachments, then the
   // manifest checks the gateway evaluated with this card's own reads.
   const lines = checkLines(checks, previewData?.checks);
@@ -288,8 +330,17 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
   const isMandate = proposal.tool === CREATE_MANDATE_TOOL;
   const mandateArgs = isMandate ? (content.toolArgs as CreateMandateProposalArgs | null) : null;
   // A mandate proposal is about the area it names, not the Delegation it rides on.
-  const typeProfile = isMandate ? mandateTargetProfile(mandateArgs, proposal.profileId) : proposal.profileId;
+  const typeProfile = (isMandate || proposal.tool === CHANGE_MANDATE_TOOL) ? mandateTargetProfile(content.toolArgs, proposal.profileId) : proposal.profileId;
   const typeArea = areaName(typeProfile, catalog);
+  // Outside simulation, a limit only test-data tools use is not shown (it stays signed):
+  // in a mandate proposal's limits, and in the shared limits of an action.
+  const simulation = useSimulationMode();
+  const targetProfile = useProfile(isMandate ? typeProfile : undefined);
+  const hiddenTarget = hiddenLimitKeys(targetProfile, manifests as ManifestGatingLike[] | undefined, simulation);
+  const hiddenTargetLabels = new Set([...hiddenTarget].map((k) => (targetProfile?.boundsSchema?.fields as Record<string, { displayName?: string }> | undefined)?.[k]?.displayName ?? k));
+  const shownPreview = isMandate ? { ...previewState, resp: omitLimitLabels(previewState.resp, hiddenTargetLabels) } : previewState;
+  const hiddenOwn = hiddenLimitKeys(profile, manifests as ManifestGatingLike[] | undefined, simulation);
+  const shownBounds = mandateBounds ? Object.fromEntries(Object.entries(mandateBounds).filter(([k]) => !hiddenOwn.has(k))) : mandateBounds;
   // A mandate proposal is test setup when the profile it creates a mandate for is (§17.3).
   const testSetup = isMandate
     ? profileIdentity(mandateTargetProfile(mandateArgs, proposal.profileId)).testSetup
@@ -316,8 +367,24 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
   const lowerTool = proposal.tool.toLowerCase();
   const destructive = ['delete', 'refund', 'cancel', 'revoke'].some((w) => lowerTool.includes(w));
   const imagePreview = typeof content.toolArgs?._imagePreview === 'string' ? (content.toolArgs._imagePreview as string) : null;
-  const sealedHeading = isMandate ? 'You sign this' : 'Runs exactly as shown';
+  const sealedHeading = sealedTileHeading(previewView, isMandate);
   const technicalOne = isMandate ? mandateTechnicalLine(parts) : `${headline} · ${shortProfileId(proposal.profileId)}${proposal.profileId.includes('@') ? `@${proposal.profileId.split('@')[1]}` : ''}`;
+
+  if (proposal.tool === CHANGE_MANDATE_TOOL) {
+    if (content.loading || !readable || !content.toolArgs) {
+      return <div className="av3-note" style={{ order: 5 }} data-testid="proposal-decrypting">{content.loading ? 'Decrypting…' : 'This content is not readable on this device yet.'}</div>;
+    }
+    return (
+      <MandateChangeBody
+        proposalId={proposal.id}
+        args={content.toolArgs as ChangeArgs}
+        areaTitle={typeArea}
+        onChangeMyself={() => void handleChangeMyself()}
+        editBusy={editingBeforeSigning}
+        editError={editError}
+      />
+    );
+  }
 
   return (
     <>
@@ -330,7 +397,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
       </div>
       {/* §4.2.1 — one sentence from the manifest's summary template and the
           sealed values (never AI text). */}
-      <h2 className="av3-title" style={{ order: 1 }} data-testid="approval-summary">{isMandate ? <>{typeArea} · {mandateTitleParts(typeArea, mandateArgs).name ?? 'new mandate'}</> : approvalSummary(proposal.tool, content.toolArgs, manifests, undefined, refNameFrom(previewData ?? undefined, content.toolArgs))}</h2>
+      <h2 className="av3-title" style={{ order: 1 }} data-testid="approval-summary">{isMandate ? <>{typeArea} · {mandateTitleParts(typeArea, mandateArgs).name ?? 'new mandate'}</> : approvalSummary(proposal.tool, content.toolArgs, manifests, undefined, summaryPreviewFrom(previewData ?? undefined, content.toolArgs))}</h2>
       {due && <p className="av3-quiet av3-due" style={{ order: 1 }} data-testid="approval-deadline">{due}</p>}
       {/* §4.2.2 — a failed check is the one red line, right under the title. */}
       <ChecksLines lines={lines} placement="top" />
@@ -428,17 +495,15 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
             onChecks={setAttachmentChecks}
           />
         )}
-        {readable && (
-          <PreviewBox
-            proposalId={proposal.id}
+        {readable && !recordOutside && (
+          <PreviewBoxShow
+            state={shownPreview}
             systemName={systemName}
             toolArgs={content.toolArgs}
             sealed={content.sealed}
             systemBoxes={false}
             omitKeys={isMandate ? MANDATE_TILE_OMIT : undefined}
             hideNote
-            onTone={setPreviewTone}
-            onData={setPreviewData}
           />
         )}
         {isMandate && (parts.workspace || parts.title) && (
@@ -450,6 +515,20 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
       </section>
       {readable && content.toolArgs && (
         <div style={{ order: 6 }}><NotSealedArgs args={content.toolArgs} display={toolDisplay} /></div>
+      )}
+      {/* The record as the system holds it — read by the gateway, not what runs. */}
+      {readable && recordOutside && (
+        <div style={{ order: 6 }} data-testid="record-from-system">
+          <PreviewBoxShow
+              state={shownPreview}
+              systemName={systemName}
+              toolArgs={content.toolArgs}
+              sealed={content.sealed}
+              systemBoxes={false}
+              omitKeys={isMandate ? MANDATE_TILE_OMIT : undefined}
+              hideNote
+            />
+        </div>
       )}
       {systemView && systemView.systemBoxes.length > 0 && (
         <div style={{ order: 7 }}><SystemBoxes view={systemView} /></div>
@@ -465,9 +544,10 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
       {!isMandate && (
         <SharedLimitRows
           authorizationId={proposal.authorizationId}
-          bounds={mandateBounds}
+          bounds={shownBounds}
           profile={profile}
           actionType={typeof proposal.executionContext?.action_type === 'string' ? proposal.executionContext.action_type : undefined}
+          words={limitWordsForTool(manifests, proposal.tool)}
           style={{ order: 8 }}
         />
       )}

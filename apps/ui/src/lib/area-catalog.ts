@@ -9,7 +9,7 @@
  */
 import { useEffect, useState } from 'react';
 import { spClient, type ProfileSummary } from './sp-client';
-import { resolveAreaName, type AreaCatalogEntry } from './area';
+import { resolveAreaName, registerConnectorAreaIcons, type AreaCatalogEntry } from './area';
 
 let cache: Promise<ProfileSummary[]> | null = null;
 
@@ -18,7 +18,17 @@ let cache: Promise<ProfileSummary[]> | null = null;
  *  no-catalog behaviour (today's capitalised-short-id display). */
 export function loadAreaCatalog(): Promise<ProfileSummary[]> {
   if (!cache) {
-    cache = spClient.listProfiles().catch(() => []);
+    // The connector manifests come with it: each area's icon is the one its
+    // connector declares (lib/area.ts `registerConnectorAreaIcons`). They are
+    // registered BEFORE the catalog resolves, so every surface that re-renders
+    // on the catalog draws the connector's icon. A failed manifest fetch
+    // leaves the fallback icons; it never fails the catalog.
+    cache = Promise.all([
+      spClient.listProfiles().catch(() => [] as ProfileSummary[]),
+      spClient.getIntegrationManifests()
+        .then(r => registerConnectorAreaIcons(r.manifests))
+        .catch(() => undefined),
+    ]).then(([profiles]) => profiles);
   }
   return cache;
 }

@@ -16,18 +16,51 @@
 /** How to transform an array-valued tool argument into one execution field. */
 export type ExecutionMappingTransform = 'join' | 'join_domains' | 'length';
 
+/** The list transforms — the only ones several arguments may share a field through. */
+export const LIST_TRANSFORMS: readonly ExecutionMappingTransform[] = ['length', 'join', 'join_domains'];
+
 /**
  * Execution mapping value — how a tool argument maps to execution context field(s).
  * - string: direct copy (argName -> fieldName)
  * - { field, divisor }: numeric division (e.g., cents / 100 -> EUR)
  * - { field, transform }: array transform (e.g., join_domains)
  * - Array form: one argument maps to multiple execution fields
+ *
+ * Several arguments, one field: when two or more arguments map to the same
+ * execution field, their items COMBINE before the transform runs — `length`
+ * counts the items of all of them (the sum), `join` lists all of them (the
+ * union, in mapping order), `join_domains` the distinct domains of all of
+ * them. An email's `to` and `cc` both map to the recipient count and the
+ * recipient/domain lists this way, so every recipient is counted and
+ * scope-checked. Allowed only when every argument on that field uses the
+ * SAME list transform; a direct copy or divisor shared by two arguments
+ * would have one overwrite the other, so the manifest loader refuses it
+ * (manifest-loader.ts `invalidExecutionMappingReason`).
+ *
+ * `item` (with a transform): the property to read from each item when the
+ * argument's items are objects — e.g. calendar attendees `{ email, … }` →
+ * `"item": "email"`. Declared by the manifest, never assumed: an object item
+ * without it does not become a value the scope check could accept.
+ *
+ * `format: "email"` (with a transform): every item of the argument must be
+ * exactly ONE plain email address — no comma, semicolon, whitespace, angle
+ * brackets, quotes, parentheses, a second `@`, an empty local part or domain.
+ * Otherwise the call is refused at the gate, before any proposal or ticket:
+ * `join` separates items with commas and `join_domains` reads the text after
+ * the last `@`, so "x@evil.com,a@customer.com" or "x@evil.com
+ * <a@customer.com>" would count as one recipient in customer.com. Required on
+ * every `join_domains` entry (the manifest loader refuses one without it);
+ * declare it on every entry of a recipient argument. Checked on the item as
+ * read (after `item`).
  */
+export type MappingItemFormat = 'email';
+export const MAPPING_ITEM_FORMATS: readonly MappingItemFormat[] = ['email'];
+
 export type ExecutionMappingValue =
   | string
   | { field: string; divisor: number }
-  | { field: string; transform: ExecutionMappingTransform }
-  | Array<{ field: string; divisor?: number; transform?: ExecutionMappingTransform }>;
+  | { field: string; transform: ExecutionMappingTransform; item?: string; format?: MappingItemFormat }
+  | Array<{ field: string; divisor?: number; transform?: ExecutionMappingTransform; item?: string; format?: MappingItemFormat }>;
 
 /**
  * Preview declaration (AU3) — a manifest's description of how an action
@@ -388,6 +421,29 @@ export interface ProfileToolGatingEntry {
    * insert, source link, execution mapping, content field).
    */
   nonContentArgs?: string[];
+  /**
+   * Arguments accepted only under a mandate whose profile version SEALS them
+   * (lists them in its content_binding). An `executionMapping` entry normally
+   * makes an argument a declared reference (sealed-args.ts) — for these it
+   * does not: the mapping adds its checks (count, scope) and never lifts the
+   * unsealed-argument refusal under an older version that does not bind them.
+   * Email: `cc` is mapped like `to` but refused under email@0.4, which seals
+   * only the body. Refused at load on a read tool and on an argument also
+   * blocked or declared not-content.
+   */
+  sealedOnlyArgs?: string[];
+  /**
+   * The connector's OWN default for a write argument the AI may omit, e.g.
+   * linkedin `visibility` -> "PUBLIC", calendar `calendarId` -> "primary".
+   * When the call omits it (absent or null), the gateway fills it in when the
+   * call arrives — before the scope check, the card and the content hash — and
+   * sends it explicitly, so the value checked and shown is the value used,
+   * whatever the connector's default later becomes. Must match the connector's
+   * source; declare it only where omitting the argument means exactly this
+   * value. Write tools only; refused at load on an argument that is blocked,
+   * gateway-owned, or not a plain JSON value.
+   */
+  argDefaults?: Record<string, unknown>;
   /** D1 — see {@link CheckDeclaration}. Evaluated by checks.ts for the card. */
   checks?: CheckDeclaration[];
 }
@@ -786,4 +842,54 @@ export interface ManifestContext {
 export interface ProfileToolGating {
   default: ProfileToolGatingEntry;
   overrides?: Record<string, ProfileToolGatingEntry | null>;
+}
+
+/**
+ * Manifest top-level `report` — this connector's records can be shown and
+ * checked in an evidence-backed report (report/*). The gateway runs the
+ * connector's own operator command `<mcp.command> export` (never an MCP tool,
+ * so the AI cannot reach it), which prints the connector's records as one JSON
+ * object of tables (arrays of rows), and reads it only through this
+ * declaration: which tables a report may show, which of them the export must
+ * have, and how an `sv-record` reference resolves to a row. A connector takes
+ * part in reports by declaring this; the gateway names no connector.
+ */
+export interface ReportDeclaration {
+  /** The name a report uses for this system: `sv-record system="…"`, `get_records`'s `system`. Unique across manifests. */
+  system: string;
+  /** How a sentence names it: `No ${label} record "…" in the simulator export.` */
+  label: string;
+  /**
+   * This export holds the loaded business cases: `sv-case`, `list_cases`,
+   * coverage and the test-data load time read it. Its export has the case
+   * shape (`inbox` and `sent` message rows, `simulation_load`; report/types.ts
+   * `CaseSourceExport`). At most one manifest declares it.
+   */
+  cases?: boolean;
+  /** The tables a report may show and reference, in order. Any other table of the export is never shown. */
+  tables: ReportTableDeclaration[];
+}
+
+export interface ReportTableDeclaration {
+  /** The export's top-level array. */
+  name: string;
+  /** The export is malformed without this array (checked before any row is shown). */
+  required?: boolean;
+  /** Facts every row of this table resolves to, before the row's own columns: `kind` names the record ("quote"); more (e.g. `folder`) may follow. */
+  record: { kind: string } & Record<string, string>;
+  /** The columns an `sv-record ref` may match, each tried over all rows in turn. Default `["id"]`. */
+  matchBy?: string[];
+  /** The column naming the ticket that produced the row; resolves as `causingReceiptId`. */
+  causingTicket?: string;
+  /** This table lists the system's refusals; the column holding each refusal's time (the `refusals` figure). */
+  refusalTime?: string;
+  /**
+   * When a row came into being, for the reporting window (report/window.ts).
+   * Required: a table the window cannot date would be invisible in every report.
+   *  - `column`: the row's own date column;
+   *  - `ticket` (optional): the column naming the ticket that produced or last
+   *    changed the row — when the gateway holds that ticket, the row is as old
+   *    as the ticket's signed time, which wins over `column`.
+   */
+  time: { column: string; ticket?: string };
 }

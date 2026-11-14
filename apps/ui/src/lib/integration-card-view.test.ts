@@ -10,6 +10,9 @@ const base: OneLineInput = {
 describe('statusWord', () => {
   it('running is bold, never a coloured pill', () => {
     expect(statusWord('running', { t: 'Stopped' })).toEqual({ text: 'Running', tone: 'bold' });
+    // Running is not the same as working: the connector said it cannot.
+    expect(statusWord('running', { t: 'Stopped' }, true)).toEqual({ text: 'Needs attention', tone: 'bold' });
+    expect(statusWord('ready', { t: 'Crashed' }, true)).toEqual({ text: 'Crashed', tone: 'bold' });
   });
   it('not set up covers both setup steps and is muted', () => {
     expect(statusWord('unconfigured', { t: 'Stopped' })).toEqual({ text: 'Not set up', tone: 'muted' });

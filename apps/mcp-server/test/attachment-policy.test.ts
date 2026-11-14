@@ -12,8 +12,10 @@ import { getProfile } from '@hap/core';
 import {
   isAttachmentSourceAllowed,
   attachmentSourcesFieldDeclared,
-  ATTACHMENT_SOURCES_FIELD,
 } from '../src/lib/attachment-policy';
+
+/** email@0.9's attachment-source field; the gateway finds it by its format, `connector:kind`. */
+const ATTACHMENT_SOURCES_FIELD = 'allowed_attachment_sources';
 
 describe('attachmentSourcesFieldDeclared', () => {
   it('is false for the real, shipped email profile (checked against hap-profiles)', () => {
@@ -26,7 +28,7 @@ describe('attachmentSourcesFieldDeclared', () => {
   });
 
   it('is true for a hypothetical profile that declares the field', () => {
-    const hypothetical = { scopeSchema: { fields: { [ATTACHMENT_SOURCES_FIELD]: { type: 'string' } } } };
+    const hypothetical = { scopeSchema: { fields: { [ATTACHMENT_SOURCES_FIELD]: { type: 'string', format: 'connector:kind' } } } };
     expect(attachmentSourcesFieldDeclared(hypothetical)).toBe(true);
   });
 });
@@ -36,17 +38,17 @@ describe('isAttachmentSourceAllowed', () => {
     const profile = getProfile('email');
     const result = isAttachmentSourceAllowed('email', profile as unknown as { scopeSchema?: { fields?: Record<string, unknown> } }, 'erp:invoice-pdf', { connector: 'erp', kind: 'invoice-pdf' });
     expect(result.allowed).toBe(false);
-    expect(result.reason).toContain(ATTACHMENT_SOURCES_FIELD);
+    expect(result.reason).toContain('connector:kind');
   });
 
   it('refuses when the profile declares the field but the mandate value does not list the source', () => {
-    const hypothetical = { scopeSchema: { fields: { [ATTACHMENT_SOURCES_FIELD]: { type: 'string' } } } };
+    const hypothetical = { scopeSchema: { fields: { [ATTACHMENT_SOURCES_FIELD]: { type: 'string', format: 'connector:kind' } } } };
     const result = isAttachmentSourceAllowed('email', hypothetical, 'erp:credit-note-pdf', { connector: 'erp', kind: 'invoice-pdf' });
     expect(result.allowed).toBe(false);
   });
 
   it('allows when the profile declares the field and the mandate value lists exactly this source', () => {
-    const hypothetical = { scopeSchema: { fields: { [ATTACHMENT_SOURCES_FIELD]: { type: 'string' } } } };
+    const hypothetical = { scopeSchema: { fields: { [ATTACHMENT_SOURCES_FIELD]: { type: 'string', format: 'connector:kind' } } } };
     const result = isAttachmentSourceAllowed('email', hypothetical, 'erp:invoice-pdf, erp:credit-note-pdf', { connector: 'erp', kind: 'invoice-pdf' });
     expect(result.allowed).toBe(true);
   });

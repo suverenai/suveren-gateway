@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { deriveFirstRunCard, type FirstRunCardInput } from './first-run-card';
+import { deriveFirstRunCard, pausedSummariesToShow, type FirstRunCardInput } from './first-run-card';
 
 const base: FirstRunCardInput = {
   hasContact: false,
@@ -107,5 +107,14 @@ describe('deriveFirstRunCard', () => {
       expect(s.step1.status).toBe('open');
       expect(s.step2.status).toBe('done');
     });
+  });
+});
+
+describe('pausedSummariesToShow', () => {
+  it('hides the paused notice while the first-run card shows', () => {
+    expect(pausedSummariesToShow([{ reason: 'simulation' }], true)).toEqual([]);
+  });
+  it('shows it once the first-run card is gone', () => {
+    expect(pausedSummariesToShow([{ reason: 'simulation' }], false)).toEqual([{ reason: 'simulation' }]);
   });
 });

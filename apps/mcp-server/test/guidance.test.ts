@@ -104,21 +104,27 @@ describe('manifestAreas / sourceTitle', () => {
 });
 
 describe('1. the first mandate', () => {
-  it('names the page, the buttons and the card, in order, and the follow-up call', () => {
-    const t = firstMandateText({ url: 'http://localhost:3400', card: 'Setup' });
+  // Real-AI release check 2026-11-11: handed three numbered steps and the form, Claude relayed all of
+  // it and answered "hi" in 250 words. The AI is handed ONE step; the form only when it is asked for.
+  it('names the page, the buttons and the card as one step, and the follow-up call; no form', () => {
+    const t = firstMandateText({ url: 'http://localhost:3400', card: 'Setup', area: 'delegation' } as never);
     expect(t).toContain('An AI can never create the first one');
     expect(t).toContain('the Suveren Gateway page'); expect(t).not.toMatch(/localhost/);
-    expect(t).toMatch(/\*\*Mandates\*\*, then \*\*\+ New mandate\*\*/);
-    expect(t).toContain('card **Setup**');
-    expect(t).toContain('**Give a mandate**');
-    expect(t).toContain('Scope & Limits');
-    expect(t).toMatch(/In Sign they give it a \*\*Title\*\* \(required\), choose how it runs and for how long, then press \*\*Sign mandate\*\*/);
-    expect(t).toContain('Ask them first whether it should run automatically or ask each time.');
+    expect(t).toContain('**Mandates → + New mandate**, card **Setup**, **Give a mandate**');
+    expect(t).toContain('Say it as one step');
+    expect(t).toContain('Only if they ask how to fill in the form: list-authorizations(domain: "delegation").');
+    expect(t).not.toContain('Scope & Limits');
+    expect(t).not.toMatch(/^\d\./m);
     expect(t).toContain('No active mandate exists');
     expect(t).not.toContain('yet');
     expect(t).toContain('list-authorizations()');
-    expect(t.indexOf('1.')).toBeLessThan(t.indexOf('2.'));
-    expect(t.indexOf('2.')).toBeLessThan(t.indexOf('3.'));
+  });
+  it('the form, when the Setup mandate itself is asked for', () => {
+    const t = firstMandateText({ card: 'Setup', area: 'delegation', form: true });
+    expect(t).toContain('Scope & Limits');
+    expect(t).toMatch(/\*\*Sign\*\*: a \*\*Title\*\* \(required\), how it runs and for how long, then \*\*Sign mandate\*\*/);
+    expect(t).toContain('Ask them first whether it should run automatically or ask each time.');
+    expect(t).not.toContain('Only if they ask how to fill in the form');
   });
   it('uses the card name it is given, whatever it is', () => {
     expect(firstMandateText({ url: 'u', card: 'Delegation' })).toContain('card **Delegation**');
@@ -144,7 +150,7 @@ describe('4. attachments, built from the manifests', () => {
   });
 
   describe('the refusal names the mandate and the source to tick', () => {
-    const emailProfile = { scopeSchema: { fields: { allowed_attachment_sources: {} } } };
+    const emailProfile = { scopeSchema: { fields: { allowed_attachment_sources: { format: 'connector:kind' } } } };
     const oldProfile = { scopeSchema: { fields: {} } };
     const refs = [{ connector: 'files', kind: 'file' }];
     const base = { tool: 'post__send', area: 'Email', refs, titleOf: (c: string, k: string) => (c === 'files' && k === 'file' ? 'Saved files' : k) };
@@ -230,6 +236,7 @@ describe('2. what is needed for a goal — the connector overview', () => {
     const t = connectorOverview(input({
       running: ['files', 'ledger', 'post'],
       auths: [auth('email@0.9', { context: { allowed_attachment_sources: 'files:file' } }), auth('files@0.1'), auth('invoicing@0.4'), auth('sales@0.4')],
+      mandateProfileOf: (id) => (id === 'email@0.9' ? { scopeSchema: { fields: { allowed_attachment_sources: { format: 'connector:kind' } } } } : undefined),
     }));
     expect(t).toContain('its documents (Saved files) can be attached to messages if the sending mandate ticks them under **What the AI may attach**');
     expect(t).toMatch(/may attach: Saved files \(save the file first with files__save_file\) — allowed; Issued invoice — not ticked in the mandate; Quote — not ticked in the mandate/);
@@ -389,14 +396,38 @@ describe('7 more cases from the real-AI test', () => {
       const t = proposalFields('setup__create_mandate', 'github.com/x/email@0.9', profile, ['review', 'automatic']);
       expect(t).toContain('Fields for setup__create_mandate(profile: "email", ...), * = required; any other field name is refused:');
       expect(t).toContain('read_access* (Read) = unlimited|none');
+      expect(t).not.toContain('check your own results');
       expect(t).toContain('send_daily_max* = number [default 5]');
       expect(t).toContain('spend_max = number [EUR, at most 1000]'.replace('EUR,', 'currency:EUR,'));
       expect(t).not.toContain('profile* ');
-      expect(t).toContain('allowed_attachment_sources = comma-separated connector:kind sources, for example files:file');
+      // No connector name of its own: with no source offered, it says so.
+      expect(t).toContain('allowed_attachment_sources = comma-separated connector:kind sources; no connector here offers one');
+      expect(t).not.toContain('files:file');
       expect(t).toContain('allowed_profiles* = comma-separated names from the profiles available');
       expect(t).toContain('kind = a|b');
       expect(t).toContain('mode = review|automatic (ask the person)');
       expect(t).toContain('duration_hours = number, at most 720, default 24');
+    });
+    it('a declared scopeSchema.atLeastOne group is said before the AI proposes (made-up names)', () => {
+      const withGroup = { ...profile, scopeSchema: { ...profile.scopeSchema, atLeastOne: [{ fields: ['rooms', 'buildings'], requiredFor: ['book'], ask: 'where the AI may book' }] } };
+      expect(proposalFields('t', 'x', withGroup, ['review'])).toContain(
+        'scope rule: when the limits allow book, set at least one of rooms, buildings (ask the person where the AI may book); otherwise the proposal is refused');
+      expect(proposalFields('t', 'x', profile, ['review'])).not.toContain('scope rule');
+    });
+    it('the attachment-source field lists the sources the manifests offer, by title and what they hold', () => {
+      const sources = attachmentSources([FILES, LEDGER, { ...NOTES, documents: { memo: { title: 'Memos', description: 'Notes with pictures' } } }], (c, t) => `${c}__${t}`);
+      const t = proposalFields('setup__create_mandate', 'email', profile, ['review'], sources);
+      expect(t).toContain('allowed_attachment_sources = comma-separated, from Saved files (files:file), Issued invoice (ledger:invoice-pdf), Quote (ledger:quote-pdf), Memos (notes:memo: Notes with pictures); when the work attaches files, include the source they come from, or every attachment is refused');
+    });
+    // Walkthrough 2026-11-11: ChatGPT proposed a CRM mandate with read access none, and could not check its own update.
+    it('a read switch (an enum of exactly unlimited|none) keeps its declared default, and says why; other enums do not', () => {
+      const withDefaults = { ...profile, boundsSchema: { fields: {
+        may_look: { required: true, default: 'unlimited', boundType: { kind: 'enum', values: ['unlimited', 'none'] } },
+        may_dump: { required: true, default: 'none', boundType: { kind: 'enum', values: ['allowed', 'none'] } },
+      } } };
+      const t = proposalFields('t', 'x', withDefaults, ['review']);
+      expect(t).toContain('may_look* = unlimited|none [default unlimited: keep it unless the person says otherwise; you need it to check your own results]');
+      expect(t).toContain('may_dump* = allowed|none [default none]');
     });
     it('a profile that allows only review says only review', () => {
       expect(proposalFields('t', 'x', profile, ['review'])).toContain('mode = review (ask the person)');
@@ -513,16 +544,49 @@ describe('through the gateway\'s own entry points', () => {
     expect(brief).toContain('=== FIRST STEP ===');
     expect(brief).toContain('An AI can never create the first one');
     expect(brief).toContain('card **Setup**');
-    expect(brief.indexOf('=== FIRST STEP ===')).toBeLessThan(brief.indexOf('=== RULES ==='));
+    // Claude Code keeps only the first 4096 characters: the rules come before the state.
+    expect(brief.indexOf('=== RULES ===')).toBeLessThan(brief.indexOf('=== FIRST STEP ==='));
     const rules = brief.slice(brief.indexOf('=== RULES ==='));
     expect(rules.indexOf('never write as if you were that person')).toBeLessThan(rules.indexOf('Never open or operate'));
-    expect(rules).toContain('call list-authorizations(domain) with the area of the task');
+    expect(brief).toContain('When you receive a task, call list-authorizations(domain: "<area>")');
+  });
+
+  // Claude Code keeps only the first 4096 characters of the instructions. With every shipped
+  // connector, an empty gateway's instructions put the reply rule past that cut before 2026-11-11.
+  it('an empty gateway with every shipped connector: what Claude Code keeps has the reply rule, the one step, what a mandate is, the role', () => {
+    const kept = buildMandateBrief({ authorizations: [], integrationManager: im({ running: [] }) }).slice(0, 4096);
+    expect(kept).toContain('at most 4 short sentences');
+    expect(kept).toContain('never write as if you were that person');
+    expect(kept).toContain('card **Setup**, **Give a mandate**');
+    expect(kept).toContain('A mandate is a permission the person gives their AI');
+    expect(kept).toContain('They are the final authority, not Suveren and not you.');
+  });
+
+  // The fixed start (first lines, rules, role) is the same for every gateway; mandates, the agent
+  // brief and the facts follow and are what Claude Code cuts. A budget with a margin, so the next
+  // added sentence fails here instead of silently pushing the role past the cut (2026-11-12).
+  const FIXED_START_BUDGET = 4096 - 300;
+  it.each([
+    ['no mandate', () => [] as EnrichedAuthorization[]],
+    ['a mandate', () => [mandate(EMAIL_PROFILE.id)]],
+  ])('%s: the fixed start ends with the role and stays within its budget', (_label, auths) => {
+    const brief = buildMandateBrief({ authorizations: auths() as never, integrationManager: im({ running: [] }) });
+    const role = brief.indexOf('=== YOUR ROLE ===');
+    const end = brief.indexOf('They are the final authority, not Suveren and not you.');
+    expect(role).toBeGreaterThan(brief.indexOf('=== RULES ==='));
+    for (const later of ['=== ACTIVE AUTHORITIES ===', '=== FIRST STEP ===', '=== CONTEXT ===', '=== FACTS YOU CAN DRAW ON ===']) {
+      const at = brief.indexOf(later);
+      if (at >= 0) expect(at, later).toBeGreaterThan(role);
+    }
+    const fixedEnd = brief.indexOf('\n=== ', role + 1);
+    expect(fixedEnd, 'fixed start over budget').toBeLessThanOrEqual(FIXED_START_BUDGET);
+    expect(end).toBeLessThan(fixedEnd);
   });
 
   it('a gateway that has a mandate does not repeat the first step', () => {
     const brief = buildMandateBrief({ authorizations: [mandate(EMAIL_PROFILE.id)] as never });
     expect(brief).not.toContain('=== FIRST STEP ===');
-    expect(brief).toContain('call list-authorizations(domain) with the area of the task');
+    expect(brief).toContain('When you receive a task, call list-authorizations(domain: "<area>")');
   });
 
   it('no mandate reads the same in test mode: the first step, no block of its own', () => {
@@ -557,6 +621,20 @@ describe('through the gateway\'s own entry points', () => {
     const text = (await listAuthorizationsHandler(state([setup]), im({ running: ['files'] }))({ domain: 'files' })).content[0].text;
     expect(text).toContain('Propose it with setup__create_mandate(profile: "files", ...)');
     expect(text).toContain('should it run by itself or ask them each time');
+  });
+
+  // Walkthrough 2026-11-11: asked to set up email with images, ChatGPT proposed an Email mandate without the
+  // saved-files source. The Email answer listed no source at all: it showed only the Email connector's documents.
+  it('2. the Email answer names every attachable source by title, what it holds, and to include the one the work needs', async () => {
+    const setup = mandate(SETUP_PROFILE.id, { allowed_profiles: 'files,email', allowed_modes: 'review' });
+    const text = (await listAuthorizationsHandler(state([setup]), im({ running: ['files', 'mail'] }))({ domain: 'email' })).content[0].text;
+    expect(text).toContain('Propose it with setup__create_mandate(profile: "email", ...)');
+    expect(text).toContain('allowed_attachment_sources (Allowed attachment sources) = comma-separated, from ');
+    expect(text).toContain('Saved files (files:file: Files your AI saved, such as PDFs, images, video and text)');
+    expect(text).toContain('when the work attaches files, include the source they come from, or every attachment is refused');
+    expect(text).toMatch(/may attach: .*Saved files \(save the file first with files__save_file\)/);
+    // The Email answer still shows only the Email connector's own steps.
+    expect(text).not.toContain('- Files');
   });
 
   it('2. asked for one connector, the whole setup guide comes with its mandate state', async () => {
@@ -695,11 +773,10 @@ describe('through the gateway\'s own entry points', () => {
     it('the facts say what a mandate and the Setup mandate are, in plain words', () => {
       const { live } = everyMode([]);
       const facts = sectionOf(live, 'FACTS YOU CAN DRAW ON');
-      expect(facts).toContain('A mandate is a permission the person gives their AI, with limits they choose.');
+      expect(facts).toContain('A mandate is a permission the person gives their AI, with limits they choose, for one kind of work');
       expect(facts).toContain('They can change or revoke it at any time.');
-      expect(facts).toContain('The Setup mandate allows no work.');
-      expect(facts).toContain('None of the mandates the AI prepares exists until the person approves it');
-      expect(facts).toContain('An AI can never create the first mandate');
+      expect(facts).toContain('The Setup mandate allows no work itself.');
+      expect(facts).toContain('it exists only once they approve it');
     });
 
     it('no line depends on how the person opens', () => {
@@ -720,7 +797,7 @@ describe('through the gateway\'s own entry points', () => {
     });
 
     it('the real manifests give the line in the instructions, one short line', () => {
-      const facts = sectionOf(buildMandateBrief({ authorizations: [], integrationManager: im({ running: [] }) }), 'FACTS YOU CAN DRAW ON');
+      const facts = sectionOf(buildMandateBrief({ authorizations: [], integrationManager: im({ running: [] }) }), 'ON THIS GATEWAY');
       const line = facts.split('\n').find(l => l.includes('Possible on this gateway:'))!;
       expect(line).toContain('Email');
       expect(line).toContain('Files');
@@ -728,7 +805,7 @@ describe('through the gateway\'s own entry points', () => {
     });
 
     it('with a card name from the built-in, not a word in the code', () => {
-      expect(factsLines({ card: 'Vollmacht', areas: [] }).join('\n')).toContain('The Vollmacht mandate allows no work.');
+      expect(factsLines({ card: 'Vollmacht', areas: [] }).join('\n')).toContain('The Vollmacht mandate allows no work itself.');
       expect(factsLines({ card: 'Setup', areas: [] }).join('\n')).toContain('The Setup mandate');
     });
   });
@@ -748,13 +825,16 @@ describe('through the gateway\'s own entry points', () => {
       expect(text.length).toBeLessThanOrEqual(SHORT_ANSWER_LIMIT);
       expect(text.match(/The one next step:/g)).toHaveLength(1);
       expect(text).toContain('**Setup**');
-      expect(text).toContain('**+ New mandate**');
+      expect(text).toContain('**Mandates → + New mandate**');
       expect(text).toContain('**Give a mandate**');
+      // One step, not the form: the form is one call away, asked for only when the person asks.
+      expect(text).not.toContain('Scope & Limits');
+      expect(text).toContain('list-authorizations(domain: "delegation")');
       expect(text).toContain('You can do yourself:');
       expect(text).toContain('list-authorizations(domain: "<area>")');
       expect(text).toContain('Email');
       expect(text).not.toContain('Connectors, in the order');
-      expect(text).not.toContain('**Connectors**');
+      expect(text).toContain('The person sets one up under **Connectors** when a task needs it.');
       expect(text).not.toContain('Save & Encrypt');
     });
 
@@ -785,7 +865,7 @@ describe('through the gateway\'s own entry points', () => {
       expect(text).toContain('propose new mandates with setup__create_mandate');
       expect(text).toContain('Possible here:');
       expect(text).not.toContain('Connectors, in the order');
-      expect(text).not.toContain('**Connectors**');
+      expect(text).toContain('under **Connectors** when a task needs it');
     });
 
     it('with a work mandate: asks and does, and says what to call when no mandate covers it', () => {
@@ -842,7 +922,9 @@ describe('through the gateway\'s own entry points', () => {
       const text = (await listAuthorizationsHandler(state([]), im({ running: [] }))({ domain: 'files' })).content[0].text;
       expect(text).toContain('enters **Shared folder**');
       expect(text).toContain('presses **Save & Encrypt** (the connector then starts by itself)');
-      expect(text).toContain('Scope & Limits');
+      // Another area gets the first step as one step; the form comes with the Setup area only.
+      expect(text).toContain('card **Setup**, **Give a mandate**');
+      expect(text).not.toContain('Scope & Limits');
     });
 
     it('accepts the name the person sees, not only the short id', async () => {

@@ -12,7 +12,7 @@ import { ObTypeLine, ObFold, ObLock, useFoldAccordion } from '../components/Obje
 import { COMMITMENT_REVIEW, COMMITMENT_AUTOMATIC } from '../lib/commitment-words';
 import { useMandateReceipts, usedTodayNumbers, ticketsUnder } from '../lib/mandate-card-usage';
 import { useCumulativeUsage, usageEntryFor } from '../lib/cumulative-usage';
-import { cumulativeBound, sharedLimitLabel } from '../lib/limit-words';
+import { cumulativeBound, sharedLimitLabel, limitWordsForProfile } from '../lib/limit-words';
 import { actionLabel } from '../lib/receipt-summary';
 import { isToday, ticketTime } from '../lib/core-objects';
 import { EmptyState } from '../components/EmptyState';
@@ -20,10 +20,13 @@ import { ExtendAuthModal } from '../components/ExtendAuthModal';
 import { formatScopeFieldValue } from '../lib/scope-labels';
 import { useVisiblePolling } from '../hooks/useVisiblePolling';
 import { useSSEEvent } from '../contexts/EventSourceContext';
+import { useSimulationMode } from '../hooks/useSimulationMode';
+import { hiddenLimitKeys, type ManifestGatingLike } from '../lib/simulation-only-limits';
 import { getAuthStatus, getAuthView, isArchivable, isArchived, statusTimestamp, type AuthStatusOptions, type AuthView } from '../lib/auth-status';
 import { newestProfileOf, carryBoundsForward, carryContextForward } from '../lib/profile-upgrade';
 import { profileFieldLines } from '../lib/approval-view';
 import { useProfile } from '../lib/profile-cache';
+import { useAreaCatalog } from '../lib/area-catalog';
 
 type StatusFilter = AuthView;
 type ViewTab = 'mine' | 'team';
@@ -105,8 +108,11 @@ interface AuthCardProps {
    *  mandate's protocol version. Learned lazily (only once an execution
    *  was actually attempted), so absence does not mean "confirmed fine". */
   needsReapprovalSet?: Set<string>;
-  /** Connector manifests — only to name the tickets under a mandate. */
+  /** Connector manifests — to name the tickets under a mandate, and to tell
+   *  which limits only simulation-only tools use. */
   manifests?: IntegrationManifest[];
+  /** Whether the gateway is in simulation (null while not known). */
+  simulation?: boolean | null;
 }
 
 function AuthCard({
@@ -136,6 +142,7 @@ function AuthCard({
   highlightHash,
   needsReapprovalSet,
   manifests = [],
+  simulation = null,
 }: AuthCardProps) {
   const status = getAuthStatus(item, { revokedSet });
   const needsReapproval = status === 'active' && (needsReapprovalSet?.has(item.authorization_id) ?? false);
@@ -144,11 +151,13 @@ function AuthCard({
   const isExpanded = expandedHash === item.authorization_id;
   const gateEntry = gateCache[item.authorization_id];
   const showExtend = status === 'active' || status === 'pending' || status === 'expired';
-  const boundsEntries = Object.entries(item.frame)
-    .filter(([k]) => k !== 'profile' && k !== 'path');
   // Limits read through the area definition — its own labels and units,
   // never the machine key (`write_daily_max=20` → "Writes per day: 20").
   const profile = useProfile(item.profile_id);
+  // Outside simulation, a limit only test-data tools use is not shown (it stays signed).
+  const hiddenLimits = hiddenLimitKeys(profile, manifests as ManifestGatingLike[], simulation);
+  const boundsEntries = Object.entries(item.frame)
+    .filter(([k]) => k !== 'profile' && k !== 'path' && !hiddenLimits.has(k));
   const limitLines = new Map(profileFieldLines(item.frame, profile, 'limits').map(l => [l.key, l]));
   const limitLabel = (k: string) => limitLines.get(k)?.label ?? k;
   const limitValue = (k: string, v: unknown) => limitLines.get(k)?.value ?? String(v);
@@ -317,6 +326,7 @@ function AuthCard({
                   <dd>
                     <MandateLimits
                       item={item}
+                      manifests={manifests}
                       boundsEntries={boundsEntries}
                       limitLines={limitLines}
                       limitLabel={limitLabel}
@@ -440,8 +450,9 @@ function AuthCard({
 }
 
 /** The signed limits, one row each, with "N used today" where the tickets prove it (§18.2). */
-function MandateLimits({ item, boundsEntries, limitLines, limitLabel, limitValue, aboveCapByKey, hasApprovers, profile }: {
+function MandateLimits({ item, manifests, boundsEntries, limitLines, limitLabel, limitValue, aboveCapByKey, hasApprovers, profile }: {
   item: PendingItem;
+  manifests: IntegrationManifest[];
   boundsEntries: Array<[string, unknown]>;
   limitLines: Map<string, { hint?: string }>;
   limitLabel: (k: string) => string;
@@ -467,13 +478,14 @@ function MandateLimits({ item, boundsEntries, limitLines, limitLabel, limitValue
     <dl className="ob-kv ob-sub" data-testid="mandate-limits">
       {boundsEntries.map(([k, v]) => {
         const r = aboveCapByKey.get(k);
-        // Any cumulative limit reads as the shared one: "Team limit per day", figures from the system.
+        // Any cumulative limit reads by its own name ("Daily write limit (team)"), figures from the system.
         const shared = cumulativeBound(profile, k)
           ? (() => {
               // The server's team-wide count wins; without it a team shows no figure.
               const entry = usageEntryFor(server, k);
               return sharedLimitLabel({
                 profile, key: k, team: mode === 'team',
+                words: limitWordsForProfile(manifests, item.profile_id),
                 limit: entry?.limit ?? (v as number | string),
                 used: entry ? entry.used : used[k],
                 usedIsTeamWide: !!entry,
@@ -532,6 +544,9 @@ function MandateTickets({ item, manifests }: { item: PendingItem; manifests: Int
 }
 
 export function AuthorizationsPage() {
+  // Loads the connector manifests' area icons (lib/area.ts) and re-renders once they are known.
+  useAreaCatalog();
+  const simulation = useSimulationMode();
   // Mine tab state
   const [items, setItems] = useState<PendingItem[]>([]);
   const [mineLoading, setMineLoading] = useState(true);
@@ -974,6 +989,7 @@ export function AuthorizationsPage() {
   );
 
   const sharedCardProps = {
+    simulation,
     revokedSet,
     expandedHash,
     gateCache,

@@ -14,7 +14,9 @@
  * tool-proxy.ts) hand in facts; tests hand in several different manifests.
  */
 
-import { ATTACHMENT_SOURCES_FIELD, attachmentSourcesFieldDeclared, isAttachmentSourceAllowed } from './attachment-policy';
+import { attachmentSourcesFieldDeclared, attachmentSourcesValue, isAttachmentSourceAllowed, type AttachmentPolicyProfileLike } from './attachment-policy';
+import { isDocumentSourcesField, atLeastOneGroups } from '@hap/core/scope-rules';
+import { classifyEnumSwitches } from './read-gate';
 
 // ─── Inputs (narrow views, so tests and callers need no full types) ─────────
 
@@ -53,7 +55,7 @@ export interface GuideAuth {
 /** The slice of a profile the field list needs. */
 export interface ProfileFieldsLike {
   boundsSchema?: { fields?: Record<string, FieldLike> };
-  scopeSchema?: { fields?: Record<string, FieldLike> };
+  scopeSchema?: { fields?: Record<string, FieldLike>; atLeastOne?: unknown };
   ttl?: { default?: number; max?: number };
   commitment_modes?: unknown;
 }
@@ -118,19 +120,36 @@ function csv(value: unknown): string[] {
 // ─── 1. The first mandate ───────────────────────────────────────────────────
 
 /**
+ * The one step that starts everything, as ONE step: the AI passes on what it is handed, so it is
+ * handed one step, not the form (real-AI release check 2026-11-11: given three numbered steps and the
+ * form, Claude relayed all of it and answered "hi" in 250 words). `area` is the Setup mandate's own
+ * area: list-authorizations(domain) on it gives the form, for when the person asks.
+ */
+function firstStepWords(card: string, area?: string): string {
+  return 'They open the Suveren Gateway page themselves, in their own browser, outside this chat, then ' +
+    `**Mandates → + New mandate**, card **${card}**, **Give a mandate**. Say it as one step, with one sentence on why: ` +
+    'after that they just say here what you should do, you prepare each mandate, and they only approve it.' +
+    (area ? ` Only if they ask how to fill in the form: list-authorizations(domain: "${area}").` : '');
+}
+
+/**
  * What to tell a person when nothing is set up. The first mandate can only be
  * signed by a person on the page: an AI cannot propose it. `card` is the name
- * the page shows on the mandate that lets the AI prepare other mandates.
+ * the page shows on the mandate that lets the AI prepare other mandates; `form`
+ * adds the form's steps (asked for by the Setup mandate's own area).
  */
-export function firstMandateText(opts: { card: string }): string {
+export function firstMandateText(opts: { card: string; area?: string; form?: boolean }): string {
   return [
-    'No active mandate exists, so no tool works. An AI can never create the first one: a person signs it. This is the next step, whatever the person opens with. Lead them through it, one step at a time:',
-    '1. They open the Suveren Gateway page themselves, in their own browser, outside this chat. In the left menu they choose **Mandates**, then **+ New mandate** (top right).',
-    `2. Pick the card **${opts.card}** and press **Give a mandate**. Tell them why: they sign it once, and from then on they manage their mandates from this chat. They say what you should be able to do, you prepare the mandate, and they only approve it. (Instead, they can pick the card of the area they need and sign that mandate themselves.)`,
-    '3. The form has three steps: **Scope & Limits**, **Intent**, **Sign**. In Scope & Limits they name the areas you may prepare mandates for, the modes you may propose (review = they approve every action; automatic = it runs within the limits) and how many proposals a day. In Intent they write, in their own words, why. In Sign they give it a **Title** (required), choose how it runs and for how long, then press **Sign mandate**. Ask them first whether it should run automatically or ask each time.',
-    'Afterwards call list-authorizations(): it says what is still missing and what to do next.',
+    'No active mandate exists, so no tool works. An AI can never create the first one: a person signs it. This is the next step, whatever the person opens with.',
+    firstStepWords(opts.card, opts.form ? undefined : opts.area),
+    ...(opts.form ? [SETUP_FORM] : []),
+    'Once they have signed, call list-authorizations() for what comes next.',
   ].join('\n');
 }
+
+/** The Setup mandate's form, given only when the person asks how to fill it in. */
+const SETUP_FORM =
+  'The form, if they ask: **Scope & Limits**: the areas you may prepare mandates for, the modes you may propose (review = they approve every action; automatic = it runs within the limits) and how many proposals a day. **Intent** is already filled in; they leave it as it is. **Sign**: a **Title** (required), how it runs and for how long, then **Sign mandate**. Ask them first whether it should run automatically or ask each time.';
 
 /** The Sign step, as the AI tells it whenever a person signs a mandate themselves. */
 export const SIGN_STEP =
@@ -235,33 +254,55 @@ export function productionBlockedSteps(m: GuideManifest, facts: Pick<ConnectorFa
   return cardSteps(m, false);
 }
 
+/**
+ * What an attachment-source field takes: the sources this gateway's connectors offer, by the title the
+ * mandate form shows, with what each holds (the manifest's own description says "images" is a saved file).
+ */
+function sourcesWords(sources: readonly AttachSource[]): string {
+  if (sources.length === 0) return 'comma-separated connector:kind sources; no connector here offers one';
+  const list = sources.map(s => `${s.title} (${s.key}${s.description ? `: ${s.description}` : ''})`).join(', ');
+  return `comma-separated, from ${list}; when the work attaches files, include the source they come from, or every attachment is refused`;
+}
+
 /** The fields to give `create_mandate` for one profile, from its own schema: required, allowed values, units. */
 export function proposalFields(
   tool: string,
   area: string,
   p: ProfileFieldsLike,
   modes: readonly string[],
+  sources: readonly AttachSource[] = [],
 ): string {
+  // The read switch (an enum bound of exactly unlimited|none): its declared default stands unless the
+  // person says otherwise — without reading, the AI cannot check what it just did.
+  const readSwitches = new Set(classifyEnumSwitches(p.boundsSchema as never).readSide);
   const one = (key: string, f: FieldLike): string => {
     const bits: string[] = [];
     const values = f.boundType?.kind === 'enum' ? f.boundType.values : f.enum;
     if (values && values.length) bits.push(values.join('|'));
-    else if (f.format === 'connector:kind') bits.push('comma-separated connector:kind sources, for example files:file');
+    else if (isDocumentSourcesField(f)) bits.push(sourcesWords(sources));
     else if (f.valuesFrom) bits.push(`comma-separated names from the ${f.valuesFrom} available`);
     else bits.push(f.boundType ? 'number' : 'text');
     const extra: string[] = [];
     if (f.unit && f.unit !== 'count') extra.push(f.unit);
     if (f.maximum !== undefined) extra.push(`at most ${f.maximum}`);
-    if (f.default !== undefined) extra.push(`default ${String(f.default)}`);
+    if (f.default !== undefined) {
+      extra.push(readSwitches.has(key)
+        ? `default ${String(f.default)}: keep it unless the person says otherwise${f.default !== 'none' ? '; you need it to check your own results' : ''}`
+        : `default ${String(f.default)}`);
+    }
     return `${key}${f.required ? '*' : ''}${f.displayName ? ` (${f.displayName})` : ''} = ${bits.join('')}${extra.length ? ` [${extra.join(', ')}]` : ''}`;
   };
   const list = (fields: Record<string, FieldLike> | undefined) =>
     Object.entries(fields ?? {}).filter(([k]) => k !== 'profile').map(([k, f]) => one(k, f)).join('; ') || 'none';
   const hours = p.ttl?.max ? `, at most ${Math.floor(p.ttl.max / 3600)}` : '';
+  // The profile's `scopeSchema.atLeastOne`: said before the AI proposes, so it asks the person first.
+  const atLeastOne = atLeastOneGroups(p).map(g =>
+    `      scope rule: when the limits allow ${g.requiredFor.join(' or ')}, set at least one of ${g.fields.join(', ')}${g.ask ? ` (ask the person ${g.ask})` : ''}; otherwise the proposal is refused`);
   return [
     `Fields for ${tool}(profile: "${shortOf(area)}", ...), * = required; any other field name is refused:`,
     `      limits {name: value}: ${list(p.boundsSchema?.fields)}`,
     `      scope {name: value}: ${list(p.scopeSchema?.fields)}`,
+    ...atLeastOne,
     `      mode = ${modes.join('|') || 'none allowed'} (ask the person); intent = text, at most 2000 characters; title = short name; duration_hours = number${hours}${p.ttl?.default ? `, default ${Math.floor(p.ttl.default / 3600)}` : ''}`,
   ].join('\n');
 }
@@ -289,6 +330,8 @@ export interface MissingMandateFacts {
 
 export interface OverviewInput {
   manifests: GuideManifest[];
+  /** Where the attachable documents come from when `manifests` is narrowed to one area; default `manifests`. */
+  sourceManifests?: GuideManifest[];
   facts: (id: string) => ConnectorFacts;
   auths: GuideAuth[];
   /** The area's name as the person sees it ("Email"). */
@@ -308,6 +351,8 @@ export interface OverviewInput {
   endedMandate?: (area: string) => MandateEnded | undefined;
   /** The newest known profile of an area, and the modes it may be signed with — for the field list. */
   profileOf?: (area: string) => { profile: ProfileFieldsLike; modes: readonly string[] } | undefined;
+  /** The profile a held mandate is signed on (by its profile id) — where its attachment-source field is declared. */
+  mandateProfileOf?: (profileId: string) => AttachmentPolicyProfileLike | undefined;
 }
 
 /** Which of `areas` a held mandate covers. */
@@ -320,6 +365,8 @@ export function howToGetMandate(
   area: string,
   card: string,
   input: Pick<OverviewInput, 'areaName' | 'setup' | 'team' | 'detail' | 'profileOf'>,
+  /** The attachment sources this gateway offers, for an area whose profile has an attachment-source field. */
+  sources: readonly AttachSource[] = [],
 ): string {
   const name = input.areaName(area);
   const t = input.team?.get(shortOf(area));
@@ -344,9 +391,9 @@ export function howToGetMandate(
     const modeNote = modes.length > 0 ? ` (modes you may propose: ${modes.join(', ')})` : '';
     const known = input.profileOf?.(area);
     const fields = input.detail && known
-      ? `\n      ${proposalFields(setup.tool, area, known.profile, known.modes)}`
+      ? `\n      ${proposalFields(setup.tool, area, known.profile, known.modes, sources)}`
       : known ? ` Its fields: list-authorizations(domain: "${shortOf(area)}").` : '';
-    return `Propose it with ${setup.tool}(profile: "${shortOf(area)}", ...)${modeNote}. ${BEFORE_PROPOSING} The person approves it in the gateway.${fields}`;
+    return `You can prepare this mandate yourself, so do not send the person to the form. Propose it with ${setup.tool}(profile: "${shortOf(area)}", ...)${modeNote}. ${BEFORE_PROPOSING} The person approves it in the gateway.${fields}`;
   }
   return `A person signs it: **Mandates → + New mandate**, card **${card}**, **Give a mandate**. ${SIGN_STEP} (With a ${setup.card} mandate you could prepare it for them.)`;
 }
@@ -357,7 +404,7 @@ interface ConnectorLine {
 }
 
 /** One connector: is it running, set up, covered by a mandate; and the next step for each gap. */
-function connectorLine(m: GuideManifest, input: OverviewInput, sourcesByConsumer: Map<string, AttachSource[]>): ConnectorLine {
+function connectorLine(m: GuideManifest, input: OverviewInput, sourcesByConsumer: Map<string, AttachSource[]>, all: AttachSource[]): ConnectorLine {
   const f = input.facts(m.id);
   const areas = manifestAreas(m);
   const lines: string[] = [];
@@ -398,7 +445,7 @@ function connectorLine(m: GuideManifest, input: OverviewInput, sourcesByConsumer
       const before = ended === 'revoked' ? ' The last one was revoked.'
         : ended === 'expired' ? ' The last one has expired.'
         : input.hadMandate?.(area) ? ' An earlier one has ended (revoked or expired).' : '';
-      lines.push(`    mandate for ${input.areaName(area)}: none.${before} ${howToGetMandate(area, pickerCard(m, area, input.areaName), input)}`);
+      lines.push(`    mandate for ${input.areaName(area)}: none.${before} ${howToGetMandate(area, pickerCard(m, area, input.areaName), input, all)}`);
     }
   }
 
@@ -411,7 +458,7 @@ function connectorLine(m: GuideManifest, input: OverviewInput, sourcesByConsumer
   const wanted = sourcesByConsumer.get(m.id) ?? [];
   if (wanted.length > 0) {
     const consumerAreas = areas.filter(a => covering(input.auths, a).length > 0);
-    const ticked = new Set(consumerAreas.flatMap(a => covering(input.auths, a).flatMap(h => csv(h.context?.[ATTACHMENT_SOURCES_FIELD]))));
+    const ticked = new Set(consumerAreas.flatMap(a => covering(input.auths, a).flatMap(h => csv(attachmentSourcesValue(input.mandateProfileOf?.(h.profileId), h.context)))));
     const parts = wanted.map(s => {
       const how = s.savedBy ? ` (save the file first with ${s.savedBy})` : '';
       const state = consumerAreas.length === 0 ? '' : ticked.has(s.key) ? ' — allowed' : ' — not ticked in the mandate';
@@ -444,6 +491,8 @@ export interface AttachSource {
   title: string;
   /** The tool that brings this kind in, as the AI calls it. */
   savedBy?: string;
+  /** What it holds, as the manifest says ("Files your AI saved, such as PDFs, images, video and text"). */
+  description?: string;
 }
 
 /** All attachable document kinds across `manifests`, each with the tool that saves it (if declared). */
@@ -460,6 +509,7 @@ export function attachmentSources(
         kind,
         title: sourceTitle(kind, doc),
         ...(doc.savedBy ? { savedBy: toolName(m.id, doc.savedBy) } : {}),
+        ...(doc.description?.trim() ? { description: doc.description.trim() } : {}),
       });
     }
   }
@@ -490,8 +540,8 @@ export function attachmentNotAllowedText(opts: {
   titleOf: (connector: string, kind: string) => string;
 }): string {
   const missing = opts.refs.filter(ref => !opts.candidates.some(c => {
-    const v = typeof c.context?.[ATTACHMENT_SOURCES_FIELD] === 'string' ? (c.context[ATTACHMENT_SOURCES_FIELD] as string) : undefined;
-    return isAttachmentSourceAllowed(c.profileId, opts.profileOf(c.profileId), v, ref).allowed;
+    const profile = opts.profileOf(c.profileId);
+    return isAttachmentSourceAllowed(c.profileId, profile, attachmentSourcesValue(profile, c.context), ref).allowed;
   }));
   const named = (missing.length > 0 ? missing : opts.refs).map(r => `${opts.titleOf(r.connector, r.kind)} (${r.connector}:${r.kind})`);
   const titles = [...new Set(named)].join(', ');
@@ -519,12 +569,13 @@ export function withoutGatewayAddress(text: string): string {
 
 export function connectorOverview(input: OverviewInput): string {
   const consumers = new Map<string, AttachSource[]>();
-  const all = attachmentSources(input.manifests, input.toolName);
+  // Every connector's documents, also when the answer shows only one area: the Email answer must name Saved files.
+  const all = attachmentSources(input.sourceManifests ?? input.manifests, input.toolName);
   for (const m of input.manifests) {
     const takes = Object.values(m.toolGating?.overrides ?? {}).some(o => !!o?.attachmentsArg);
     if (takes) consumers.set(m.id, all);
   }
-  const lines = input.manifests.map(m => connectorLine(m, input, consumers));
+  const lines = input.manifests.map(m => connectorLine(m, input, consumers, all));
   lines.sort((a, b) => a.rank - b.rank);
   const head = [
     'Connectors, in the order to act (a connector must run before its mandate does anything):',
@@ -532,9 +583,40 @@ export function connectorOverview(input: OverviewInput): string {
   return [...head, ...lines.map(l => l.text)].join('\n');
 }
 
+/** The tool that calls any other tool by name, for an app that keeps the tool list it loaded when the chat started. */
+export const CALL_TOOL = 'call-tool';
+
+/** Said wherever the gateway names tools: the AI's app may not list a tool added after the chat started. */
+export const CALL_THROUGH_RULE =
+  `If a tool named here is not in your tool list, call it through ${CALL_TOOL}(tool: "<exact name>", arguments: {...}).`;
+
+/**
+ * What a refusal means for the AI (Andreas, 2026-11-12): a mandate or limit refusal is final; wrong
+ * arguments are fixed once. Codex read the old "do not retry" literally and stopped on a wrong-type
+ * refusal. Short form (approved) because Claude Code keeps only the first 4096 characters.
+ */
+export const REFUSAL_RULE =
+  'A mandate or limit refusal is final: tell the person, never work around it. If arguments are wrong, fix them once.';
+
 /** Short pointer for the session instructions: where the AI finds the steps. */
 export const LEAD_THE_PERSON_RULE =
-  'When the person wants something done and a tool is refused or not set up, call list-authorizations(domain) with the area of the task: it gives what is missing and the exact steps the person takes. Name the buttons exactly as it does and wait; never work around a refusal. list-authorizations() with no argument gives only where things stand and the one next step.';
+  'When you receive a task, call list-authorizations(domain: "<area>"): it gives the details, what is missing and the exact steps the person takes. Name the buttons as it does.';
+
+/**
+ * How long a reply is, said concretely and at the top of the instructions (Andreas, 2026-11-11):
+ * "a few sentences" was read as 250–320 words. Claude Code cuts a server's instructions after
+ * 4096 characters, so this must sit near the start, not inside the role further down.
+ */
+export const REPLY_RULE =
+  'How you reply: at most 4 short sentences in plain words, unless the person asks for detail; a Suveren word only with a few words that explain it. Give one next step at a time; never pass on a list of steps or a tool answer in full.';
+
+/**
+ * The first line of the instructions. Some apps show the AI only this line until it loads the tools
+ * (Codex lists the server as a tool namespace described by its first line), so it alone must say
+ * what Suveren is for and the one call that tells the AI the rest. The same in every state and mode.
+ */
+export const FIRST_LINE =
+  'Suveren lets this person have you, their AI, do their work within limits they set; before your first reply in a chat, call list-authorizations() and follow the one next step it gives.';
 
 // ─── 3. Who the AI is for the person, and the facts it draws on ─────────────
 
@@ -545,16 +627,15 @@ export const LEAD_THE_PERSON_RULE =
  * holds whatever the person opens with. No sentence here may differ by mode: the working
  * AI reads it too and must not be able to tell a test gateway from a real one.
  */
-export const ROLE_TEXT =
-  'Your person probably knows nothing about Suveren, and may expect to learn a tool and click through it. They do not have to. ' +
-  'Meet them wherever they start: a greeting, a question, a task, a complaint. ' +
-  'Lead them to the new way of working: they say what they want done, you do the work, they set the limits and decide. ' +
-  'Do not teach the tool; find the result they want. If they ask where to click or describe steps, ask what they want to end up with and take it from there. ' +
-  'If work repeats, offer to take it over. Get their task done in the fewest steps. Use short, plain words. ' +
-  'Explain a Suveren word only when it is needed, in one sentence. If they do not know what they want, say what is possible here and suggest one thing. ' +
-  'Give one next step at a time. Do everything you can yourself and leave them only what only they can do: sign, approve, decide. ' +
-  'Recommend safe limits and say why. They decide; you never decide for them and never press them. ' +
-  'They are the final authority, not Suveren and not you.';
+export const roleText = (card: string): string =>
+  'Your person probably knows nothing about Suveren and does not have to learn it. ' +
+  'Meet them wherever they start; they say what they want done, you do the work, they set the limits and decide. ' +
+  'Recommend safe limits and say why; never decide for them and never press them. ' +
+  'They are the final authority, not Suveren and not you. ' +
+  'Leave them only what only they can do: sign, approve, decide. ' +
+  `When a task needs a mandate and they have no ${card} mandate yet, offer that one first. ` +
+  'If they ask where to click, ask what they want to end up with. ' +
+  'If work repeats, offer to take it over; if they do not know what they want, suggest one thing.';
 
 /** How many area names one line may carry. Above this the line says how many more there are. */
 const MAX_AREAS_IN_ONE_LINE = 20;
@@ -569,14 +650,25 @@ function joinAreas(names: string[]): string {
   return names.length > MAX_AREAS_IN_ONE_LINE ? `${shown} and ${names.length - MAX_AREAS_IN_ONE_LINE} more` : shown;
 }
 
+/**
+ * What is connected and what not, by the connector's own name, so the AI can say it briefly. A connector is set
+ * up on the Connectors page, only when a task needs it. Says nothing about the gateway's mode.
+ */
+export function connectedLine(connected: string[], notConnected: string[]): string {
+  const yes = connected.length > 0 ? `Connected: ${joinAreas(connected)}.` : 'Nothing is connected yet.';
+  const no = notConnected.length > 0 ? ` Not connected yet: ${joinAreas(notConnected)}. The person sets one up under **Connectors** when a task needs it.` : '';
+  return yes + no;
+}
+
 /** The facts the AI draws on, stated as facts: it finds the words. Identical in every mode. */
-export function factsLines(opts: { card: string; areas: string[]; port?: string }): string[] {
+export function factsLines(opts: { card: string; areas: string[]; port?: string; connected?: string[]; notConnected?: string[]; gateway?: boolean }): string[] {
   return [
-    `The Suveren Gateway page is opened by the person, in their own browser, outside this chat. You never write its address.${opts.port ? ` Only if they cannot find it, say in words that it runs on this computer on port ${opts.port}.` : ''}`,
-    'A mandate is a permission the person gives their AI, with limits they choose. For example: "Send up to 5 emails a day, and show me each one first." It says what the AI may do, how much, for how long, and whether each action needs their approval or runs by itself within the limits. The AI needs a mandate for each kind of work. They can change or revoke it at any time.',
-    `The ${opts.card} mandate is how the person manages their mandates from this chat. They sign it once. After that they just say here what the AI should be able to do; the AI prepares the mandate with its limits and duration, and they only approve it. Without it they fill in a form themselves for every mandate.`,
-    `The ${opts.card} mandate allows no work. None of the mandates the AI prepares exists until the person approves it. It is the easiest start. An AI can never create the first mandate: a person signs it.`,
+    ...(opts.port ? [`Only if the person cannot find the Suveren Gateway page, say in words that it runs on this computer on port ${opts.port}.`] : []),
+    'A mandate is a permission the person gives their AI, with limits they choose, for one kind of work: for example "send up to 5 emails a day, and show me each one first". They can change or revoke it at any time.',
+    `The ${opts.card} mandate lets the person manage mandates from this chat: they say what the AI should do, the AI prepares the mandate, and it exists only once they approve it. The ${opts.card} mandate allows no work itself. Without it they fill in a form for every mandate.`,
+    ...(opts.gateway ? ['Suveren is built on the open-source Human Agency Protocol (HAP).'] : []),
     ...(opts.areas.length > 0 ? [`Possible on this gateway: ${joinAreas(opts.areas)}.`] : []),
+    ...(opts.connected || opts.notConnected ? [connectedLine(opts.connected ?? [], opts.notConnected ?? [])] : []),
   ];
 }
 
@@ -592,8 +684,11 @@ function possibleLine(input: ShortAnswerInput): string | undefined {
   const nameOf = (list: string[]) => [...new Set(list.map(input.areaName))];
   const covered = areas.filter(a => covering(input.auths, a).length > 0);
   const open = areas.filter(a => covering(input.auths, a).length === 0);
-  if (covered.length === 0) return `Possible here: ${joinAreas(nameOf(open))}.`;
-  return `Possible here. With a mandate: ${joinAreas(nameOf(covered))}.${open.length > 0 ? ` No mandate yet: ${joinAreas(nameOf(open))}.` : ''}`;
+  const names = [...new Set(input.manifests.filter(m => manifestAreas(m).length > 0).map(m => m.name))];
+  const running = names.filter(n => input.manifests.some(m => m.name === n && input.facts(m.id).running));
+  const conn = ` ${connectedLine(running, names.filter(n => !running.includes(n)))}`;
+  if (covered.length === 0) return `Possible here: ${joinAreas(nameOf(open))}.${conn}`;
+  return `Possible here. With a mandate: ${joinAreas(nameOf(covered))}.${open.length > 0 ? ` No mandate yet: ${joinAreas(nameOf(open))}.` : ''}${conn}`;
 }
 
 /** What the current state requires, as ONE step. The steps of one area come from list-authorizations(domain). */
@@ -607,8 +702,7 @@ function oneNextStep(input: ShortAnswerInput): string {
   if (complete.length === 0) {
     if (auths.length > 0) return 'Wait for the other owners above to sign. Ask the person to remind them.';
     if (setup.area && input.team?.get(setup.area)?.teamCode) return howToGetMandate(setup.area, setup.card, input);
-    const fields = setup.area ? ` The form, step by step: list-authorizations(domain: "${setup.area}").` : '';
-    return `A person signs the first mandate: an AI can never create it. On the Suveren Gateway page, which they open themselves in their own browser, outside this chat, they open **Mandates**, then **+ New mandate**, pick the card **${setup.card}** and press **Give a mandate**. Tell them why: they sign it once, and from then on they manage their mandates from this chat. They say what you should be able to do, you prepare the mandate, and they only approve it. It allows no work itself. They can sign the mandate of one area themselves instead, by filling in its form.${fields}`;
+    return `A person signs the first mandate: an AI can never create it. ${firstStepWords(setup.card, setup.area)}`;
   }
   const askAndDo = 'Ask what the person wants done';
   if (setup.tool && complete.length === setup.held.length) {
@@ -631,7 +725,7 @@ function whatYouCanDo(input: ShortAnswerInput): string {
   const parts: string[] = [];
   if (works) parts.push('do the work the active mandates allow (under a review mandate you create a proposal and the person approves it)');
   if (input.setup.tool) parts.push(`propose new mandates with ${input.setup.tool}, for the person to approve`);
-  if (parts.length === 0) parts.push('find out what the person wants done, say which area it belongs to and recommend safe limits. Only a person can sign');
+  if (parts.length === 0) parts.push('find out what the person wants done and recommend safe limits. Only a person can sign');
   return `You can do yourself: ${parts.join('; and ')}.`;
 }
 
@@ -647,12 +741,21 @@ export function shortAnswer(input: ShortAnswerInput): string {
   lines.push(`The one next step: ${oneNextStep(input)}`);
   lines.push(whatYouCanDo(input));
   lines.push('For the exact steps of one area: list-authorizations(domain: "<area>"), with the area of the task.');
+  if (input.setup.tool) lines.push(CALL_THROUGH_RULE);
   return lines.join('\n');
 }
 
 /** What the AI does before it proposes a mandate. */
+/** The intent says why; the numbers live in the mandate's own fields, so a change never has to touch both. */
+export const INTENT_HAS_NO_LIMITS =
+  'You write the intent of a mandate you propose, in plain words: why and what for; the person can change it. Never put limits, amounts, durations, recipients or modes in it: those have their own fields, and the person would have to change them twice.';
+
 export const BEFORE_PROPOSING =
-  'Before you propose a mandate, ask everything you need in one message, as a short bullet list: should it run by itself or ask them each time, how much may it do, how long should it last. After each answer, ask again only the points still open, as a shorter list, until none is left. If this connector offers suggested settings, offer those; otherwise suggest what fits the work and say why. They decide. Never set a one-day duration unless they asked for it. Tell them in plain words what the mandate really allows (what, how much, to whom, for how long).';
+  'Before you propose a mandate, ask everything you need in one message, as a short bullet list: should it run by itself or ask them each time, how much may it do, how long should it last. After each answer, ask again only the points still open, as a shorter list, until none is left. If this connector offers suggested settings, offer those; otherwise suggest what fits the work and say why. They decide. Never set a one-day duration unless they asked for it. Tell them in plain words what the mandate really allows (what, how much, to whom, for how long).' + ' ' + INTENT_HAS_NO_LIMITS;
+
+/** How the AI brings up a change to a mandate: only with a reason, once, one list. */
+export const WHEN_TO_SUGGEST_A_CHANGE =
+  'Suggest a change only when there is a reason: a limit was reached, the mandate is about to end, or the same refusal keeps coming back. Say the reason once and do not press. Ask for everything you need in one short bullet list, including any new limit the area asks for, and ask again only what is still open. Tell them in plain words what the change really allows.' + ' ' + INTENT_HAS_NO_LIMITS;
 
 /**
  * The step for the person after the Authority Server (or the gate's own check) refused a call,

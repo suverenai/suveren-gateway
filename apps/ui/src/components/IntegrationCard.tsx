@@ -400,7 +400,10 @@ export function IntegrationCard({ manifest, areas, integration, state, onStatusC
 
   const stoppedKind: 'paused' | 'crashed' | 'stopped' =
     stoppedDisplay.chip.t === 'Paused' ? 'paused' : stoppedDisplay.chip.t === 'Crashed' ? 'crashed' : 'stopped';
-  const status = statusWord(cardState, stoppedDisplay.chip);
+  // Running is not the same as working: the connector's own status check said it cannot (`problem`), or the
+  // gateway got no answer from that check (`error` on a running connector).
+  const trouble = cardState === 'running' && !!(integration?.problem || integration?.error);
+  const status = statusWord(cardState, stoppedDisplay.chip, trouble);
   const auth = authWord({ needsAuth, authFailed: !!authFailed, authConnected });
   const mode = modeLabel(manifest, existingCreds);
   const note = modeNote(manifest, existingCreds);
@@ -419,13 +422,13 @@ export function IntegrationCard({ manifest, areas, integration, state, onStatusC
   });
   // Closed by default only when it is healthy; a card that needs something opens (until the person chooses).
   const activatableNow = authSatisfied && !oauth && manifest.credentials.fields.every(f => f.optional);
-  const open = userOpen ?? (credsLoaded && startsOpen(cardState, !!authFailed, activatableNow));
+  const open = userOpen ?? (credsLoaded && startsOpen(cardState, !!authFailed || trouble, activatableNow));
 
   const isPath = (v: string) => v.includes('/') || v.includes('\\');
   const canEditCreds = manifest.credentials.fields.length > 0 || !!oauth;
   // A step marked simulationOnly (e.g. the practice inbox) is shown only while the gateway is in simulation mode.
   const guideSteps = (manifest.setupGuide ?? []).filter(g => !g.simulationOnly || gatewaySimulation === true);
-  const guide = guideSteps.length > 0 && (cardState !== 'running' || authFailed)
+  const guide = guideSteps.length > 0 && (cardState !== 'running' || authFailed || trouble)
     ? guideSteps : null;
   const needsSetup = cardState === 'unconfigured' || cardState === 'needs-oauth';
 
@@ -555,6 +558,13 @@ export function IntegrationCard({ manifest, areas, integration, state, onStatusC
           <dl className="ob-kv">
             {cardState === 'running' && integration ? (
               <>
+                {/* The connector's own words (its status check), shown as its words — never AI text. */}
+                {integration.problem && (
+                  <><dt>{manifest.name} says</dt><dd className="ob-plain" data-testid="connector-problem">{integration.problem}</dd></>
+                )}
+                {integration.error && (
+                  <><dt>Error</dt><dd className="ob-plain" data-testid="connector-error">{integration.error}</dd></>
+                )}
                 {note && (<><dt>Runs on</dt><dd className="ob-plain">{note}</dd></>)}
                 <dt>Access</dt>
                 <dd>
@@ -610,7 +620,11 @@ export function IntegrationCard({ manifest, areas, integration, state, onStatusC
                   <><dt>Credentials</dt><dd className="ob-plain">{'✓'} {oauth ? `${manifest.name} account connected` : 'Credentials configured'}</dd></>
                 )}
                 {cardState === 'ready' && integration && !integration.running && integration.error && (
-                  <><dt>Error</dt><dd className="ob-plain">{integration.error}</dd></>
+                  <><dt>Error</dt><dd className="ob-plain" data-testid="connector-error">{integration.error}</dd></>
+                )}
+                {/* Its last words before it stopped, as its words. */}
+                {cardState === 'ready' && integration && !integration.running && integration.problem && (
+                  <><dt>{manifest.name} says</dt><dd className="ob-plain" data-testid="connector-problem">{integration.problem}</dd></>
                 )}
               </>
             )}
@@ -817,12 +831,14 @@ export function IntegrationCard({ manifest, areas, integration, state, onStatusC
         })()}
 
         {/* Needs OAuth — step 2 */}
-        {cardState === 'needs-oauth' && (
+        {cardState === 'needs-oauth' && !editingCreds && (
           <div className="ob-btns is-inline">
             <button className="ob-btn is-solid" onClick={startOAuth}>
               Connect {manifest.name} Account
             </button>
-            <button className="ob-btn" onClick={() => setCredConfigured(false)}>
+            {/* Opens the same edit panel as a running connector: the saved choice and fields, not the
+                first-time form (which, for a connector with a data choice, showed its default option). */}
+            <button className="ob-btn" onClick={() => { setCredValues({ ...existingCreds }); setEditingCreds(true); }}>
               Change Credentials
             </button>
           </div>

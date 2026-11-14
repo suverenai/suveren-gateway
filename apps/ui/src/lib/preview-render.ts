@@ -642,6 +642,8 @@ export interface AttachedIdentity {
   context: PreviewFieldRow[];
   /** Present only when the read did not resolve (no `name`). */
   unresolved?: string;
+  /** Show the record by its name alone (the change card: its fields are folded elsewhere). */
+  nameOnly?: boolean;
 }
 
 /**
@@ -719,7 +721,7 @@ function resolveLabel(hints: ToolDisplayHints | undefined, path: string, fallbac
   return hints?.labels?.[path] ?? fallback;
 }
 
-function formatMoney(value: unknown, currency: string | undefined): { value: string; valueTitle?: string } {
+export function formatMoney(value: unknown, currency: string | undefined): { value: string; valueTitle?: string } {
   const n = typeof value === 'number' ? value : Number(value);
   if (!Number.isFinite(n)) return cellFor(value);
   // Fixed 'en-US' grouping (not the runtime's locale) so "10,000.00 EUR"
@@ -730,7 +732,7 @@ function formatMoney(value: unknown, currency: string | undefined): { value: str
   return { value: display };
 }
 
-function formatPercent(value: unknown): { value: string; valueTitle?: string } {
+export function formatPercent(value: unknown): { value: string; valueTitle?: string } {
   if (typeof value !== 'number' && typeof value !== 'string') return cellFor(value);
   return { value: `${value} %` };
 }
@@ -763,8 +765,8 @@ function isHidden(hints: ToolDisplayHints | undefined, path: string): boolean {
  * Undefined (money still shows, just with no currency suffix) rather than
  * guessing when the field is absent or not a string.
  */
-function resolveCurrency(
-  hints: ToolDisplayHints | undefined,
+export function resolveCurrency(
+  hints: Pick<ToolDisplayHints, 'currencyField'> | undefined,
   toolArgs: Record<string, unknown>,
   attachedBody: (topKey: string) => Record<string, unknown> | undefined,
 ): string | undefined {
@@ -949,6 +951,13 @@ export interface CreationView {
   sections: PreviewOwnSection[];
   /** Display-only reads — each its own "From <label> — checked <time>" box (creation-extras.ts). */
   systemBoxes: SystemBox[];
+  /** A Now / New view of the record the action changes: the record's fields
+   *  the action leaves as they are (incl. bound values equal to them), for a
+   *  folded "Unchanged" row. Absent without such a change. */
+  unchanged?: RenderedPreview;
+  /** That record's version, when the read declares one and it is current —
+   *  for the "You approve revision N" sentence. */
+  version?: { field: string; approved: string | number };
 }
 
 /**
@@ -985,11 +994,30 @@ export function buildCreationView(
   const order = displayHints?.order ?? [];
   const allKeys = [...new Set([...order, ...Object.keys(toolArgs)])];
 
+  // The record this action changes (a read the manifest gave a `version`): each
+  // bound argument that changes one of its fields shows as Now / New. A
+  // manifest that declares `display.compare` has chosen its own Now / New rows,
+  // and that declaration wins — the change is never shown twice.
+  const changes = Object.keys(displayHints?.compare ?? {}).length === 0
+    ? targetChanges(toolArgs, sections, displayHints, currencyStr)
+    : null;
+  const changed = new Set(changes?.lines.map((l) => l.key) ?? []);
+  // With a change shown, a bound value equal to the record's own is not a row
+  // (it is listed under Unchanged), nor is the version argument (it becomes the
+  // "You approve revision N" sentence).
+  const versionArg = changes ? (changes.section.versionArg ?? changes.section.version?.field) : undefined;
+  const quiet = new Set([...(changes?.same ?? []), ...(versionArg ? [versionArg] : [])]);
+
   const rows: CreationRow[] = [];
   const compared = new Set(Object.keys(displayHints?.compare ?? {}));
   for (const key of allKeys) {
     if (!(key in toolArgs)) continue;
+    if (quiet.has(key)) continue;
     if (HIDDEN_ARG_KEYS.has(key) || isHidden(displayHints, key)) continue;
+    if (changed.has(key)) {
+      if (!rows.some((r) => r.kind === 'compare')) rows.push({ kind: 'compare', key: 'compare', label: '', lines: changes!.lines });
+      continue;
+    }
     if (compared.has(key)) {
       // All compared args as ONE Now / New table, at the first one's place.
       if (!rows.some((r) => r.kind === 'compare')) {
@@ -1009,6 +1037,11 @@ export function buildCreationView(
     const attachSection = byAttachKey.get(key);
     if (attachSection) {
       const identity = resolveAttachedIdentity(attachSection.result, toolArgs[key], { pathPrefix: key, displayHints, currency: currencyStr, fields: attachSection.fields });
+      if (attachSection === changes?.section) {
+        // The record the change is to: by its name only. Its fields are under Unchanged.
+        identity.context = [];
+        if (identity.name) identity.nameOnly = true;
+      }
       rows.push({ kind: 'identity', key, label, identity });
       continue;
     }
@@ -1037,7 +1070,72 @@ export function buildCreationView(
   }
 
   const builtSections = ownSections.map(buildOwnSection).filter((s): s is PreviewOwnSection => s !== null);
-  return { rows, sections: builtSections, systemBoxes };
+  if (!changes) return { rows, sections: builtSections, systemBoxes };
+
+  // The change table right after the record's name; what else is sent follows it.
+  const at = rows.findIndex((r) => r.kind === 'compare');
+  const [compareRow] = rows.splice(at, 1);
+  const nameAt = rows.findIndex((r) => r.kind === 'identity' && r.key === changes.section.attach);
+  rows.splice(nameAt + 1, 0, compareRow);
+
+  const v = changes.section.version;
+  return {
+    rows, sections: builtSections, systemBoxes,
+    unchanged: changes.unchanged,
+    ...(v && !v.stale ? { version: { field: v.field, approved: v.approved } } : {}),
+  };
+}
+
+/** A value the Now / New table can show on one line: a scalar, or a list of scalars.
+ *  Records and lists of records keep their own rendering (a table). */
+function isLineValue(v: unknown): boolean {
+  if (Array.isArray(v)) return v.every((x) => x === null || typeof x !== 'object');
+  return v === null || typeof v !== 'object';
+}
+
+/** The record (a `target` read with an `attach`) and each bound argument that
+ *  changes one of its fields — matched by name, nothing named in code. */
+function targetChanges(
+  toolArgs: Record<string, unknown>,
+  sections: PreviewReadSection[],
+  hints: ToolDisplayHints | undefined,
+  currency: string | undefined,
+): { section: PreviewReadSection; lines: CompareLine[]; same: string[]; unchanged: RenderedPreview } | null {
+  const section = sections.find((s) => s.target && s.attach && !s.forEach && s.result?.status === 'ok');
+  if (!section || section.result?.status !== 'ok') return null;
+  const resolved = resolveBodyObject(section.result.body);
+  if (!resolved) return null;
+  const record = resolved.obj;
+  const props = resolved.schema?.properties ?? {};
+  const lines: CompareLine[] = [];
+  const same: string[] = [];
+  const versionArg = section.versionArg ?? section.version?.field;
+  for (const [key, value] of Object.entries(toolArgs)) {
+    if (key === section.attach || key === versionArg || HIDDEN_ARG_KEYS.has(key) || key.startsWith('_') || isHidden(hints, key)) continue;
+    if (!(key in record) || !isLineValue(value) || !isLineValue(record[key])) continue;
+    // 5 and "5" are the same to a person; null and "" both empty.
+    const equal = Array.isArray(value) || Array.isArray(record[key])
+      ? JSON.stringify(record[key] ?? []) === JSON.stringify(value ?? [])
+      : String(record[key] ?? '') === String(value ?? '');
+    if (equal) { same.push(key); continue; }
+    lines.push({
+      key,
+      // The manifest's label for the bound argument, as on every other row.
+      label: resolveLabel(hints, key, props[key]?.title ?? humanizeKey(key)),
+      now: Array.isArray(record[key]) ? (record[key] as unknown[]).map((x) => formatScalar(x)).join(', ') || '—' : formatHinted(record[key], hints, `${section.attach}.${key}`, currency).value || '—',
+      next: Array.isArray(value) ? value.map((x) => formatScalar(x)).join(', ') || '—' : formatHinted(value, hints, key, currency).value || '—',
+    });
+  }
+  if (lines.length === 0) return null;
+  // Everything else the record holds, folded: its own fields minus the changed
+  // ones and those the manifest hides, under the manifest's labels.
+  const changedKeys = new Set(lines.map((l) => l.key));
+  const all = renderPreviewBody(section.result.body, { fields: section.fields });
+  const keep = (r: PreviewFieldRow) => !changedKeys.has(r.key) && !isHidden(hints, `${section.attach}.${r.key}`);
+  const relabel = (r: PreviewFieldRow) => ({ ...r, label: resolveLabel(hints, `${section.attach}.${r.key}`, r.label) });
+  const fields = all.fields.filter(keep).map(relabel);
+  const moreFields = all.moreFields.filter(keep).map(relabel);
+  return { section, lines, same, unchanged: { ...all, fields, moreFields, totalFields: fields.length + moreFields.length } };
 }
 
 function capRefusal(message: string): string {

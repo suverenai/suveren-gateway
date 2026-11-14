@@ -18,8 +18,10 @@ import { agentVisibleAuthorizations } from './agent-visibility';
 import { isSimulationMode } from './simulation-mode';
 import { uiPort } from './locked-notice';
 import { AGENT_RULES } from './agent-rules';
-import { firstMandateText, LEAD_THE_PERSON_RULE, ROLE_TEXT, factsLines, possibleAreas } from './guidance';
-import { setupCardName, guideManifests } from './guidance-runtime';
+import { firstMandateText, LEAD_THE_PERSON_RULE, REFUSAL_RULE, FIRST_LINE, REPLY_RULE, roleText, factsLines, possibleAreas, manifestAreas, type GuideManifest } from './guidance';
+
+const connectorNames = (ms: GuideManifest[]): string[] => [...new Set(ms.filter(m => manifestAreas(m).length > 0).map(m => m.name))];
+import { setupCardName, setupMandateFacts, guideManifests } from './guidance-runtime';
 import { areaName } from './tool-proxy';
 
 /** Extract short profile name from full ID (e.g., "github.com/.../charge@0.3" → "charge") */
@@ -83,13 +85,17 @@ export function buildMandateBrief(opts: MandateBriefOptions): string {
   // integration — see agent-visibility.ts. A no-op outside simulation.
   const authorizations = agentVisibleAuthorizations(opts.authorizations, integrationManager);
 
+  // The first line alone must work: some apps show the AI nothing else until it loads the tools.
+  // Claude Code keeps only the first 4096 characters, so what every AI needs comes first: the reply
+  // rule, the rules (golden rule first), the role; the state, the agent brief and the facts after.
   const lines: string[] = [
-    'You are connected to Suveren — the gateway that gates every privileged tool call you make.',
-    'Suveren implements the bounded-authority model from the open Human Agency Protocol (HAP).',
-    'You have bounded authorities granted by human decision owners.',
-    'You MUST stay within these bounds — the Gatekeeper will reject actions that exceed them.',
-    'Tools are listed even where no mandate covers them yet. If a call is refused because no mandate covers it, ' +
-      'tell the person and ask them to grant one — do not retry it or work around it with another tool.',
+    FIRST_LINE,
+    REPLY_RULE,
+    LEAD_THE_PERSON_RULE,
+    // Refusal rule (Andreas, 2026-11-12): a mandate/limit refusal is final; an
+    // argument refusal says how to fix it and may be fixed once. Codex read the
+    // old "do not retry" literally and stopped on a wrong-type refusal.
+    'Tools are listed even where no mandate covers them yet. ' + REFUSAL_RULE,
   ];
 
   // V7 — fail closed, up front: if the paired Authority Server does not
@@ -103,14 +109,21 @@ export function buildMandateBrief(opts: MandateBriefOptions): string {
     lines.push(opts.asVersionRefusal);
   }
 
-  // === CONTEXT === (from user-maintained context.md)
-  const { brief: contextBrief } = getContextForBrief(contextDir);
-  if (contextBrief) {
-    lines.push('');
-    lines.push('=== CONTEXT ===');
-    lines.push('');
-    lines.push(contextBrief);
-  }
+  // Always, in every mode: what an agent must never do with this gateway.
+  lines.push('');
+  lines.push('=== RULES ===');
+  lines.push('');
+  for (const r of AGENT_RULES) lines.push(`- ${r}`);
+  lines.push('');
+
+  // The role, right after the rules (Andreas, 2026-11-12): the fixed text every AI needs comes first,
+  // so what Claude Code cuts after 4096 characters is the variable part (mandates, the agent brief,
+  // the facts), never the role. Word for word the same in every mode; it must never say which mode.
+  const card = setupCardName(integrationManager);
+  lines.push('=== YOUR ROLE ===');
+  lines.push('');
+  lines.push(roleText(card));
+  lines.push('');
 
   const active = authorizations.filter(a => a.complete);
   const pending = authorizations.filter(a => !a.complete);
@@ -196,14 +209,16 @@ export function buildMandateBrief(opts: MandateBriefOptions): string {
   if (active.length === 0) {
     lines.push('=== FIRST STEP ===');
     lines.push('');
-    lines.push(firstMandateText({ card: setupCardName(integrationManager) }));
+    const setup = setupMandateFacts(integrationManager, []);
+    lines.push(firstMandateText({ card: setup.card, area: setup.area }));
     lines.push('');
   }
 
   // Test mode, with a mandate in place: lead into the setup guide, or name the one step a person takes
   // (the Setup mandate). Neutral words — no "simulation" or "test" — because the working AI reads them too.
   if (isSimulationMode() && active.length > 0) {
-    const canSetUp = active.some(a => shortProfileName(a.profileId) === 'delegation');
+    // The built-in that carries the `mandate` action type, found as setupMandateFacts finds it: no area name in code.
+    const canSetUp = setupMandateFacts(integrationManager, active).held.length > 0;
     lines.push('=== GETTING STARTED ===');
     lines.push('');
     lines.push(canSetUp
@@ -212,27 +227,37 @@ export function buildMandateBrief(opts: MandateBriefOptions): string {
     lines.push('');
   }
 
-  // Always, in every mode: what an agent must never do with this gateway.
-  lines.push('=== RULES ===');
-  lines.push('');
-  for (const r of AGENT_RULES) lines.push(`- ${r}`);
-  lines.push('');
+  // === CONTEXT === (from user-maintained context.md). The AI also gets it in full from
+  // list-authorizations(), which the first line sends it to.
+  const { brief: contextBrief } = getContextForBrief(contextDir);
+  if (contextBrief) {
+    lines.push('=== CONTEXT ===');
+    lines.push('');
+    lines.push(contextBrief);
+    lines.push('');
+  }
 
-  // Always, in every mode, and after the rules so the golden rule stays first of all: the AI's role
-  // and the facts it draws on. The words are the AI's own to find, so they must never say which
-  // mode this is; the area line differs only by what the connectors offer here.
+  // Always, in every mode: the facts the AI draws on, then what this gateway offers. The words are
+  // the AI's own to find, so they must never say which mode this is. Claude Code cuts after 4096
+  // characters: the area list (also in list-authorizations()) is what falls off first.
   const manifests = guideManifests(integrationManager);
-  lines.push('=== YOUR ROLE ===');
-  lines.push('');
-  lines.push(ROLE_TEXT);
-  lines.push('');
   lines.push('=== FACTS YOU CAN DRAW ON ===');
   lines.push('');
-  for (const f of factsLines({ port: uiPort(), card: setupCardName(integrationManager), areas: possibleAreas(manifests, areaName) })) lines.push(`- ${f}`);
+  for (const f of factsLines({ port: uiPort(), card, areas: [] })) lines.push(`- ${f}`);
   lines.push('');
-
-  // Instruction to use list-authorizations for detail
-  lines.push('When you receive a task, call list-authorizations(domain) to load full details for the relevant domain. ' + LEAD_THE_PERSON_RULE);
+  const running = (n: string) => manifests.some(m => m.name === n && integrationManager?.isRunning?.(m.id));
+  const onThisGateway = factsLines({
+    card,
+    gateway: true,
+    areas: possibleAreas(manifests, areaName),
+    connected: connectorNames(manifests).filter(running),
+    notConnected: connectorNames(manifests).filter(n => !running(n)),
+  }).slice(factsLines({ card, areas: [] }).length);
+  if (onThisGateway.length > 0) {
+    lines.push('=== ON THIS GATEWAY ===');
+    lines.push('');
+    for (const f of onThisGateway) lines.push(`- ${f}`);
+  }
 
   return lines.join('\n');
 }

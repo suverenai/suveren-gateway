@@ -6,7 +6,7 @@
  */
 
 import { createHash, pbkdf2Sync, randomBytes, createCipheriv, createDecipheriv, timingSafeEqual } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync, existsSync, chmodSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync, existsSync, chmodSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -30,7 +30,53 @@ export interface ServiceDef {
 interface VaultFile {
   version: 1;
   salt?: string; // hex — random PBKDF2 salt (generated on first login)
+  /**
+   * A fixed text encrypted with the vault key — written at the first unseal
+   * (or the next one, for a vault from before it existed). It answers "is this
+   * the key this vault was sealed with?" on its own, whether or not any
+   * credential, mandate or ticket has been stored yet (see keyMatch).
+   */
+  verifier?: EncryptedBlob;
   credentials: Record<string, EncryptedBlob>;
+}
+
+const VERIFIER_TEXT = 'suveren-vault-verifier-v1';
+
+/** How a candidate key relates to what is already sealed on disk. */
+export type KeyMatch = 'match' | 'empty' | 'conflict';
+
+function isBlob(v: unknown): v is EncryptedBlob {
+  if (!v || typeof v !== 'object') return false;
+  const b = v as Record<string, unknown>;
+  return typeof b.iv === 'string' && typeof b.ciphertext === 'string' && typeof b.tag === 'string';
+}
+
+/** The first encrypted blob anywhere in a parsed store file, depth-first. */
+function firstBlob(v: unknown, depth = 0): EncryptedBlob | null {
+  if (depth > 6 || !v || typeof v !== 'object') return null;
+  if (isBlob(v)) return v;
+  for (const child of Array.isArray(v) ? v : Object.values(v as Record<string, unknown>)) {
+    const found = firstBlob(child, depth + 1);
+    if (found) return found;
+  }
+  return null;
+}
+
+function decryptWith(key: Buffer, blob: EncryptedBlob): string {
+  const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(blob.iv, 'hex'));
+  decipher.setAuthTag(Buffer.from(blob.tag, 'hex'));
+  return Buffer.concat([decipher.update(Buffer.from(blob.ciphertext, 'hex')), decipher.final()]).toString('utf8');
+}
+
+function opens(key: Buffer, blob: EncryptedBlob): boolean {
+  try { decryptWith(key, blob); return true; } catch { return false; }
+}
+
+/** A key derived but not yet in use — see Vault.deriveCandidate / adopt. */
+export interface CandidateKey {
+  readonly key: Buffer;
+  readonly providerId: string;
+  readonly apiKeyHash: string | null;
 }
 
 interface ServicesFile {
@@ -83,6 +129,11 @@ export class ApiKeyUnsealProvider implements UnsealProvider {
 
   deriveKey(salt: Buffer): Buffer {
     return pbkdf2Sync(this.apiKey, salt, KDF_ITERATIONS, KDF_KEY_BYTES, 'sha256');
+  }
+
+  /** The hash validateApiKey compares against — never the key itself. */
+  hash(): string {
+    return createHash('sha256').update(this.apiKey).digest('hex');
   }
 }
 
@@ -151,11 +202,90 @@ export class Vault {
    * requires no change here.
    */
   async unseal(provider: UnsealProvider): Promise<void> {
-    this.vaultKey = await provider.deriveKey(this.ensureSalt());
-    this.unsealedBy = provider.id;
+    this.adopt(await this.deriveCandidate(provider));
+  }
+
+  /**
+   * Derive the key a provider would unlock with, WITHOUT using it: the vault's
+   * current key, cookie and session stay exactly as they are. Sign-in derives
+   * a candidate first, checks it (keyMatch), and only adopts it once it is
+   * accepted — so a foreign or wrong key never ends the running session.
+   */
+  async deriveCandidate(provider: UnsealProvider): Promise<CandidateKey> {
+    const key = await provider.deriveKey(this.ensureSalt());
+    const apiKeyHash = provider instanceof ApiKeyUnsealProvider ? provider.hash() : null;
+    return { key, providerId: provider.id, apiKeyHash };
+  }
+
+  /** Same as deriveCandidate, for the user's API key. */
+  async deriveCandidateFromApiKey(apiKey: string): Promise<CandidateKey> {
+    return this.deriveCandidate(new ApiKeyUnsealProvider(apiKey));
+  }
+
+  /**
+   * Is `candidate` the key this vault's data was sealed with?
+   * - 'match': yes.
+   * - 'empty': nothing sealed yet, any key is fine.
+   * - 'conflict': data exists that this key cannot open — another account's.
+   *
+   * With a verifier, it alone decides. A vault from before the verifier is
+   * judged by EVERY encrypted store in the data folder (`*.enc.json`:
+   * credentials, mandates, ticket archive, change ledger, reports, …), not
+   * only by the first credential: a gateway with mandates and tickets but no
+   * connector credential used to count as empty and switched account
+   * silently, leaving that data unreadable. One store that opens is enough
+   * for 'match' — after an earlier account switch, stores the old account
+   * left behind may still be sealed with its key.
+   */
+  keyMatch(candidate: CandidateKey): KeyMatch {
+    const data = this.readVaultFile();
+    if (data.verifier) return opens(candidate.key, data.verifier) ? 'match' : 'conflict';
+    const blobs = this.sealedSamples();
+    if (blobs.length === 0) return 'empty';
+    return blobs.some(b => opens(candidate.key, b)) ? 'match' : 'conflict';
+  }
+
+  /** One encrypted blob per encrypted store in the data folder. */
+  private sealedSamples(): EncryptedBlob[] {
+    let names: string[];
+    try {
+      names = readdirSync(this.dataDir).filter(n => n.endsWith('.enc.json'));
+    } catch {
+      return [];
+    }
+    const out: EncryptedBlob[] = [];
+    for (const name of names.sort()) {
+      try {
+        const blob = firstBlob(JSON.parse(readFileSync(join(this.dataDir, name), 'utf-8')));
+        if (blob) out.push(blob);
+      } catch { /* unreadable file: not evidence either way */ }
+    }
+    return out;
+  }
+
+  /**
+   * Start using a candidate key: unlock, and seal a verifier with it if the
+   * vault has none yet. Call only after keyMatch said 'match' or 'empty', or
+   * after a confirmed wipe — adopting over a conflict would seal the
+   * verifier under the wrong key.
+   */
+  adopt(candidate: CandidateKey): void {
+    this.vaultKey = candidate.key;
+    this.unsealedBy = candidate.providerId;
+    if (candidate.apiKeyHash) this.apiKeyHash = candidate.apiKeyHash;
     // A fresh unseal (a new login) means whatever locked the vault before —
     // if anything — no longer explains its current state.
     this.lockedReason = null;
+    const data = this.readVaultFile();
+    if (!data.verifier) {
+      data.verifier = this.encrypt(VERIFIER_TEXT);
+      this.writeVaultFile(data);
+    }
+  }
+
+  /** True when this API key is the one that unlocked the current session. */
+  isCurrentApiKey(apiKey: string): boolean {
+    return this.isUnlocked() && this.validateApiKey(apiKey);
   }
 
   /**
@@ -166,7 +296,6 @@ export class Vault {
    */
   async deriveAndSetKey(apiKey: string): Promise<void> {
     await this.unseal(new ApiKeyUnsealProvider(apiKey));
-    this.apiKeyHash = createHash('sha256').update(apiKey).digest('hex');
   }
 
   /** Which provider unlocked this vault, for diagnostics. Null while locked. */
@@ -268,20 +397,12 @@ export class Vault {
   }
 
   /**
-   * Check if the vault was created by a different API key.
-   * Tries to decrypt the first credential — if it fails, keys don't match.
-   * Returns true if the vault belongs to a different user (or is empty).
+   * Was this vault sealed by a different key than the one now unlocked?
+   * Same rule as keyMatch (verifier, else every encrypted store).
    */
   isVaultFromDifferentKey(): boolean {
-    const data = this.readVaultFile();
-    const credKeys = Object.keys(data.credentials);
-    if (credKeys.length === 0) return false; // empty vault, no conflict
-    try {
-      this.decrypt(data.credentials[credKeys[0]]);
-      return false; // decryption succeeded, same key
-    } catch {
-      return true; // decryption failed, different key
-    }
+    if (!this.vaultKey) return false;
+    return this.keyMatch({ key: this.vaultKey, providerId: this.unsealedBy ?? '', apiKeyHash: null }) === 'conflict';
   }
 
   /**

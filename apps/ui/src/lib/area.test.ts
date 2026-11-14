@@ -1,5 +1,10 @@
-import { describe, it, expect } from 'vitest';
-import { resolveAreaName, areaIcon, showMandateLine, parseAreaFilter, matchesAreaFilter, type AreaCatalogEntry } from './area';
+import { describe, it, expect, afterEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import {
+  resolveAreaName, areaIcon, showMandateLine, parseAreaFilter, matchesAreaFilter, registerConnectorAreaIcons,
+  AREA_ICON_BY_MANIFEST_ICON, type AreaCatalogEntry, type ManifestIconEntry,
+} from './area';
 
 describe('resolveAreaName — UI spec §13.1', () => {
   it('uses the newest version\'s own name, numeric compare (0.10 > 0.9)', () => {
@@ -87,5 +92,60 @@ describe('area filter param — UI spec §13.3', () => {
     expect(matchesAreaFilter('x/customers@0.10', 'customers')).toBe(true);
     expect(matchesAreaFilter('x/email@0.3', 'customers')).toBe(false);
     expect(matchesAreaFilter('x/email@0.3', null)).toBe(true);
+  });
+});
+
+describe('areaIcon — from the serving connector\'s manifest (Andreas, 2026-11-11)', () => {
+  // The gateway's shipped manifests, as the UI receives them from /mcp/integrations/manifests.
+  const dir = join(import.meta.dirname, '..', '..', '..', '..', 'content', 'integrations');
+  const index = JSON.parse(readFileSync(join(dir, 'index.json'), 'utf8')) as { integrations: Record<string, string> };
+  const shipped = Object.values(index.integrations).map(f => JSON.parse(readFileSync(join(dir, f), 'utf8')) as ManifestIconEntry);
+
+  afterEach(() => registerConnectorAreaIcons([]));
+
+  it('Files has no icon without its manifest (the old fixed map), and its own icon with it', () => {
+    expect(areaIcon('x/files@0.1')).toBe('unknown');
+    registerConnectorAreaIcons(shipped);
+    expect(areaIcon('x/files@0.1')).toBe('files');
+  });
+
+  it('every shipped manifest declares an icon the UI draws', () => {
+    for (const m of shipped) {
+      expect(m.icon, `${m.id} declares no icon`).toBeTruthy();
+      expect(AREA_ICON_BY_MANIFEST_ICON[m.icon!], `${m.id}: manifest icon "${m.icon}" has no UI drawing`).toBeDefined();
+    }
+  });
+
+  it('no area that already had an icon changes look: the connector\'s icon is the one it had', () => {
+    const before = new Map(shipped.map(m => [m.profile!, areaIcon(`x/${m.profile}@1`)]));
+    registerConnectorAreaIcons(shipped);
+    for (const m of shipped) {
+      const was = before.get(m.profile!);
+      if (was !== 'unknown') expect(areaIcon(`x/${m.profile}@1`), m.id).toBe(was);
+    }
+  });
+
+  it('a new connector\'s area takes its declared icon, generic', () => {
+    registerConnectorAreaIcons([{ id: 'acme-mail', profile: 'github.com/acme/hap-profiles/claims@0.1', icon: 'mail' }]);
+    expect(areaIcon('github.com/acme/hap-profiles/claims@0.3')).toBe('email');
+  });
+
+  it('an area no connector declares keeps the fallback: built-ins, per-tool-override areas, unknown icons', () => {
+    registerConnectorAreaIcons([...shipped, { id: 'odd', profile: 'odd', icon: 'rocket' }]);
+    expect(areaIcon('x/reporting@0.1')).toBe('reports');
+    expect(areaIcon('x/delegation@0.2')).toBe('setup');
+    // ERP declares briefcase for sales; its invoicing tools (a per-tool override) keep the invoicing icon.
+    expect(areaIcon('x/invoicing@0.1')).toBe('invoicing');
+    expect(areaIcon('x/master-data@0.1')).toBe('masterData');
+    expect(areaIcon('x/odd@0.1')).toBe('unknown');
+  });
+
+  it('two connectors for one area: the alphabetically first id wins, whatever the order', () => {
+    const a = { id: 'a-mail', profile: 'email', icon: 'mail' };
+    const b = { id: 'b-mail', profile: 'email', icon: 'users' };
+    registerConnectorAreaIcons([b, a]);
+    expect(areaIcon('x/email@0.1')).toBe('email');
+    registerConnectorAreaIcons([a, b]);
+    expect(areaIcon('x/email@0.1')).toBe('email');
   });
 });

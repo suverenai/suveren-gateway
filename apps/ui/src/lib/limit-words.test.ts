@@ -80,44 +80,53 @@ describe('refusalSentence with the facts the server recorded', () => {
 });
 
 describe('sharedLimitLabel (wording B)', () => {
-  it('reads "Team limit per day (3 of 5 used)" in a team', () => {
+  // Andreas 2026-11-11: the limit's own name, never "Team limit per day" three
+  // times; "(team)" when the team shares it; the window said once.
+  it('reads "Daily box limit (team) (3 of 5 used)" in a team', () => {
     const l = sharedLimitLabel({ profile: WITH_WORDS, key: 'box_daily_max', team: true, used: 3, usedIsTeamWide: true, limit: 5 })!;
-    expect(l.text).toBe('Team limit per day (3 of 5 used)');
-    expect(l.name).toBe('Team limit per day');
+    expect(l.text).toBe('Daily box limit (team) (3 of 5 used)');
+    expect(l.name).toBe('Daily box limit (team)');
     expect(l.figures).toBe('3 of 5 used');
   });
-  it('drops "Team" in a personal workspace', () => {
-    expect(sharedLimitLabel({ profile: WITH_WORDS, key: 'box_daily_max', team: false, used: 0, limit: 5 })!.text).toBe('Limit per day (0 of 5 used)');
+  it('a personal workspace has no "(team)"', () => {
+    expect(sharedLimitLabel({ profile: WITH_WORDS, key: 'box_daily_max', team: false, used: 0, limit: 5 })!.text).toBe('Daily box limit (0 of 5 used)');
   });
-  it('follows the window of the bound', () => {
-    expect(sharedLimitLabel({ profile: NO_WORDS, key: 'thing_weekly_max', team: true })!.name).toBe('Team limit per week');
+  it('a name that already says its window is not given it twice', () => {
+    expect(sharedLimitLabel({ profile: NO_WORDS, key: 'thing_weekly_max', team: true })!.name).toBe('Things per week (team)');
+  });
+  it('a name without its window gets it once, in plain words', () => {
+    const p = profile({ x_monthly: { displayName: 'Posts', unit: 'count', boundType: { kind: 'cumulative_count', window: 'monthly' } } });
+    expect(sharedLimitLabel({ profile: p, key: 'x_monthly', team: false })!.name).toBe('Posts per month');
+  });
+  it('the manifest\'s noun names it before the displayName does', () => {
+    expect(sharedLimitLabel({ profile: WITH_WORDS, key: 'box_daily_max', team: true, words: WORDS })!.name).toBe('Emails per day (team)');
   });
   it('in a team, never shows a count that is only this account\'s own', () => {
     const l = sharedLimitLabel({ profile: WITH_WORDS, key: 'box_daily_max', team: true, used: 3, limit: 5 })!;
     expect(l.figures).toBeUndefined();
-    expect(l.text).toBe('Team limit per day');
+    expect(l.text).toBe('Daily box limit (team)');
   });
   it('in a personal workspace the account\'s own count is the whole count', () => {
-    expect(sharedLimitLabel({ profile: WITH_WORDS, key: 'box_daily_max', team: false, used: 3, limit: 5 })!.text).toBe('Limit per day (3 of 5 used)');
+    expect(sharedLimitLabel({ profile: WITH_WORDS, key: 'box_daily_max', team: false, used: 3, limit: 5 })!.text).toBe('Daily box limit (3 of 5 used)');
   });
   it('leaves the brackets out when the figures cannot be proven', () => {
     const l = sharedLimitLabel({ profile: WITH_WORDS, key: 'box_daily_max', team: true, limit: 5 })!;
-    expect(l.text).toBe('Team limit per day');
+    expect(l.text).toBe('Daily box limit (team)');
     expect(l.figures).toBeUndefined();
   });
   it('leaves the brackets out while the form value is empty', () => {
     expect(sharedLimitLabel({ profile: WITH_WORDS, key: 'box_daily_max', team: true, used: 3, usedIsTeamWide: true, limit: '' })!.figures).toBeUndefined();
   });
-  it('shows money with its unit, and keeps the field name when two limits share a window', () => {
+  it('shows money with its unit', () => {
     const l = sharedLimitLabel({ profile: MONEY, key: 'total_monthly_max', team: true, used: 1200, usedIsTeamWide: true, limit: 5000 })!;
-    expect(l.text).toBe('Team limit per month · Billed per month (1,200 EUR of 5,000 EUR used)');
+    expect(l.text).toBe('Billed per month (team) (1,200 EUR of 5,000 EUR used)');
   });
-  it('does not add the field name when the other limit governs a different action', () => {
-    const p = profile({
-      a_daily: { displayName: 'A', unit: 'count', appliesTo: ['send'], boundType: { kind: 'cumulative_count', window: 'daily' } },
-      b_daily: { displayName: 'B', unit: 'count', appliesTo: ['setup'], boundType: { kind: 'cumulative_count', window: 'daily' } },
-    });
-    expect(sharedLimitLabel({ profile: p, key: 'a_daily', team: true })!.name).toBe('Team limit per day');
+  it('two limits in one window each carry their own name', () => {
+    expect(sharedLimitLabel({ profile: MONEY, key: 'bills_monthly_max', team: false })!.name).toBe('Bills per month');
+  });
+  it('a limit of 0 shows its number: "0 of 0 used"', () => {
+    expect(sharedLimitLabel({ profile: WITH_WORDS, key: 'box_daily_max', team: true, used: 0, usedIsTeamWide: true, limit: 0 })!.text)
+      .toBe('Daily box limit (team) (0 of 0 used)');
   });
   it('is null for a bound that is not cumulative', () => {
     expect(sharedLimitLabel({ profile: WITH_WORDS, key: 'per_box_max', team: true })).toBeNull();

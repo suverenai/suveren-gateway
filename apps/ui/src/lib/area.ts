@@ -8,9 +8,14 @@
  *    profile family the gateway knows about, also for a mandate signed
  *    under an older one (§13.1). `resolveAreaName` is the one helper every
  *    surface uses for this.
- *  - its ICON — chosen from the profile's short id (§13.1), never a
- *    declared profile field. `areaIcon` is the one helper for this; the
- *    actual paths live in `components/AreaIcon.tsx`.
+ *  - its ICON — the icon its serving connector's manifest declares (`icon`
+ *    in content/integrations/*.json, for the manifest's own `profile`),
+ *    mapped to the UI's drawn set; an area no connector declares (the
+ *    gateway's built-ins, an area served only by a per-tool override) falls
+ *    back to the fixed map by short id below. Never a profile field.
+ *    `areaIcon` is the one helper for this; the actual paths live in
+ *    `components/AreaIcon.tsx`. (Andreas, 2026-11-11: icon from the
+ *    connector, generic for new connectors.)
  *
  * Pure, dependency-free logic only — no fetching (see lib/area-catalog.ts
  * for the cached catalog fetch + hook that supplies `AreaCatalogEntry[]`).
@@ -36,10 +41,11 @@ export type AreaIconName =
   | 'masterData'
   | 'reports'
   | 'setup'
+  | 'files'
   | 'unknown';
 
-/** Short profile id → area icon (§13.1 — "chosen by the gateway from the
- *  profile id", never a profile-declared field). */
+/** Fallback: short profile id → area icon, for an area no connector
+ *  manifest declares an icon for (§13.1, never a profile-declared field). */
 const AREA_ICON_BY_SHORT_ID: Readonly<Record<string, AreaIconName>> = {
   customers: 'customers',
   email: 'email',
@@ -56,9 +62,58 @@ const AREA_ICON_BY_SHORT_ID: Readonly<Record<string, AreaIconName>> = {
   'master-data': 'masterData',
 };
 
-/** The area icon for a profile id. Unknown short id → `'unknown'`. */
+/**
+ * A connector manifest's `icon` name → the UI's drawn area icon. The names
+ * are the manifests' own; each maps to the drawing that area already had
+ * before icons came from the connector, so no existing area changes look.
+ * A manifest icon not listed here has no UI drawing: its area falls back to
+ * the fixed map, then to `'unknown'` — never guessed.
+ */
+export const AREA_ICON_BY_MANIFEST_ICON: Readonly<Record<string, AreaIconName>> = {
+  users: 'customers',
+  mail: 'email',
+  card: 'payments',
+  calendar: 'calendar',
+  folder: 'records',
+  share: 'publishing',
+  wrench: 'deployments',
+  briefcase: 'sales',
+  'file-text': 'files',
+};
+
+/** Minimal manifest shape for `registerConnectorAreaIcons`. */
+export interface ManifestIconEntry {
+  id: string;
+  profile?: string | null;
+  icon?: string | null;
+}
+
+/** Area short id → the icon its connector declares. Filled from the gateway's manifests. */
+let connectorAreaIcons: ReadonlyMap<string, AreaIconName> = new Map();
+
+/**
+ * Take each area's icon from the connector manifests: the icon a manifest
+ * declares belongs to the manifest's own `profile` (not to areas a per-tool
+ * override adds — those keep their own). Two manifests for one area with
+ * different icons: the one with the alphabetically first id wins, so the
+ * answer never depends on fetch order. Replaces what was registered before.
+ */
+export function registerConnectorAreaIcons(manifests: readonly ManifestIconEntry[]): void {
+  const next = new Map<string, AreaIconName>();
+  for (const m of [...manifests].sort((a, b) => a.id.localeCompare(b.id))) {
+    if (!m.profile || !m.icon) continue;
+    const icon = AREA_ICON_BY_MANIFEST_ICON[m.icon];
+    const area = shortProfileId(m.profile);
+    if (icon && !next.has(area)) next.set(area, icon);
+  }
+  connectorAreaIcons = next;
+}
+
+/** The area icon for a profile id: its connector's declared icon, else the
+ *  fixed fallback by short id, else `'unknown'`. */
 export function areaIcon(profileId: string): AreaIconName {
-  return AREA_ICON_BY_SHORT_ID[shortProfileId(profileId)] ?? 'unknown';
+  const shortId = shortProfileId(profileId);
+  return connectorAreaIcons.get(shortId) ?? AREA_ICON_BY_SHORT_ID[shortId] ?? 'unknown';
 }
 
 /** Minimal shape of a catalog entry — whatever `spClient.listProfiles()`

@@ -10,7 +10,10 @@ it('route round-trip over real HTTP', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'bs-route-'));
   const app = express();
   app.use('/api/report-seen', express.json(), createReportSeenRouter(dir));
-  const srv = app.listen(0);
+  // Bound to 127.0.0.1 like the other route tests: on all interfaces a parallel test's server
+  // can hold the same port on 127.0.0.1 and answer instead (seen: a 401 from auth.ts).
+  const srv = app.listen(0, '127.0.0.1');
+  await new Promise<void>((resolve) => srv.once('listening', () => resolve()));
   const base = `http://127.0.0.1:${(srv.address() as any).port}/api/report-seen`;
   const j = async (u: string, init?: RequestInit): Promise<[number, { lastSeenReportAt: number }]> => {
     const r = await fetch(u, init);
