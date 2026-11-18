@@ -300,7 +300,11 @@ export class SPClient {
     };
 
     if (this.sessionCookie) {
-      headers['Cookie'] = this.sessionCookie;
+      // A gateway that signed in by its device key holds a bearer token
+      // (`Bearer <token>`, pushed by the control plane); every other gateway
+      // holds the AS session cookie, sent exactly as before.
+      if (this.sessionCookie.startsWith('Bearer ')) headers['Authorization'] = this.sessionCookie;
+      else headers['Cookie'] = this.sessionCookie;
     }
 
     if (this.apiKey) {

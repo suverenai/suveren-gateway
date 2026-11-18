@@ -1,0 +1,181 @@
+/**
+ * One "gateway process" for the device-key tests: the REAL routers
+ * (mountDeviceKeyRoutes, createAuthRouter, createPasswordRouter, the page-session
+ * guard), a REAL vault in a temp folder, REAL page sessions. The only stand-ins
+ * are the network to the Authority Server (StubAs) and the MCP server's address
+ * (recorders).
+ */
+
+import express from 'express';
+import http from 'node:http';
+import type { Server } from 'node:http';
+import { mkdtempSync, existsSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { Vault } from '../../lib/vault';
+import { PageSessions, SESSION_COOKIE, SESSION_HEADER } from '../../lib/page-session';
+import { UnlockLimiter } from '../../lib/unlock-limiter';
+import { ChangeConfirmations } from '../../lib/change-confirmation';
+import { requireAuth, type PageSessionDeps } from '../../middleware/auth';
+import { createAuthRouter, checkAsKeyBeforeLogin } from '../../routes/auth';
+import { mountDeviceKeyRoutes } from '../../routes/device-keys-mount';
+import { createEstablish } from '../../lib/device-session-establish';
+import { createAsKeyCheck, asPinning } from '../../lib/device-as-trust';
+import type { StubAs } from './stub-as';
+
+export const FAST = { scrypt: { N: 1024, r: 8, p: 1 } };
+export const PW = 'correct horse battery';
+
+const dirs: string[] = [];
+export const tmpDir = (): string => { const d = mkdtempSync(join(tmpdir(), 'device-setup-')); dirs.push(d); return d; };
+
+export interface Reply { status: number; headers: http.IncomingHttpHeaders; body: Record<string, unknown>; text: string }
+
+export function call(
+  port: number, method: string, path: string,
+  opts: { headers?: Record<string, string>; body?: unknown; host?: string; origin?: string | null; connectTo?: string } = {},
+): Promise<Reply> {
+  const host = opts.host ?? `127.0.0.1:${port}`;
+  const headers: Record<string, string> = { host, ...(opts.headers ?? {}) };
+  if (opts.origin !== null && method !== 'GET') headers.origin = opts.origin ?? `http://${host}`;
+  else if (opts.origin) headers.origin = opts.origin;
+  const payload = opts.body === undefined ? undefined : JSON.stringify(opts.body);
+  if (payload) { headers['content-type'] = 'application/json'; headers['content-length'] = String(Buffer.byteLength(payload)); }
+  return new Promise((resolve, reject) => {
+    const req = http.request({ host: opts.connectTo ?? '127.0.0.1', port, method, path, headers }, res => {
+      let data = '';
+      res.on('data', c => (data += c));
+      res.on('end', () => {
+        let body: Record<string, unknown> = {};
+        try { body = JSON.parse(data); } catch { /* not json */ }
+        resolve({ status: res.statusCode ?? 0, headers: res.headers, body, text: data });
+      });
+    });
+    req.on('error', reject);
+    if (payload) req.write(payload);
+    req.end();
+  });
+}
+
+export const sessionHeaders = (s: { token: string; cookie: string }): Record<string, string> => ({ cookie: `${SESSION_COOKIE}=${s.cookie}`, [SESSION_HEADER]: s.token });
+
+export function sessionOf(r: Reply): { token: string; cookie: string } {
+  const setCookie = String(r.headers['set-cookie']?.[0] ?? '');
+  const cookie = setCookie.match(new RegExp(`${SESSION_COOKIE}=([^;]+)`))?.[1] ?? '';
+  return { token: String(r.body.sessionToken ?? ''), cookie };
+}
+
+export interface FakeTimers {
+  set: (fn: () => void, ms: number) => unknown;
+  clear: (h: unknown) => void;
+  pending: Array<{ id: number; fn: () => void; ms: number; live: boolean }>;
+  /** Run the oldest live timer, then wait until `done` holds (the work behind a timer is several network calls). */
+  fire: (done?: () => boolean) => Promise<void>;
+}
+
+export function fakeTimers(): FakeTimers {
+  const pending: FakeTimers['pending'] = [];
+  let n = 0;
+  return {
+    pending,
+    set: (fn, ms) => { const t = { id: ++n, fn, ms, live: true }; pending.push(t); return t.id; },
+    clear: h => { const t = pending.find(x => x.id === h); if (t) t.live = false; },
+    fire: async done => {
+      const t = pending.find(x => x.live);
+      if (!t) throw new Error('no live timer');
+      t.live = false;
+      t.fn();
+      const end = Date.now() + 5000;
+      while (done && !done() && Date.now() < end) await new Promise(r => setTimeout(r, 10));
+      await new Promise(r => setTimeout(r, 50));
+    },
+  };
+}
+
+export interface GatewayRig {
+  port: number;
+  dir: string;
+  vault: Vault;
+  sessions: PageSessions;
+  deps: PageSessionDeps;
+  configured: Array<{ credential: string; keyHex?: string }>;
+  alarms: string[];
+  discards: { count: number };
+  /** Set `wait` to hold every MCP hand-over until it resolves. */
+  configureGate: { wait: Promise<void> | null };
+  /** The sign-in object, for the 401 path (what the session lock calls). */
+  signin: import('../../lib/device-signin').DeviceSignin | undefined;
+  sweeps: { count: number };
+  timers: FakeTimers;
+  clock: { t: number };
+  /** Unlock with the password and return the page session. */
+  unlock: () => Promise<{ token: string; cookie: string }>;
+  close: () => Promise<void>;
+}
+
+export interface BootOptions {
+  dir?: string;
+  as: StubAs;
+  /** SUVEREN_DEVICE_KEYS. Default on. */
+  enabled?: boolean;
+  /** Epoch seconds, shared with the stub AS where a test moves time. */
+  clock?: { t: number };
+  /** The address the server listens on. Default 127.0.0.1. */
+  listenHost?: string;
+  /** Make the password vault in a fresh folder. Default true; false leaves the folder as it is (a restart). */
+  fresh?: boolean;
+}
+
+export async function bootGateway(o: BootOptions): Promise<GatewayRig> {
+  const dir = o.dir ?? tmpDir();
+  const enabled = o.enabled ?? true;
+  const clock = o.clock ?? { t: Math.floor(Date.now() / 1000) };
+  const vault = new Vault(dir, { ...FAST, deviceKeys: enabled });
+  if (o.fresh !== false && !existsSync(join(dir, 'vault.enc.json'))) await vault.createWithPassword(PW, 'u1');
+  const sessions = new PageSessions();
+  const deps: PageSessionDeps = { sessions, listensOnLoopbackOnly: true };
+  vault.onLocked(() => sessions.endAll());
+  const configured: GatewayRig['configured'] = [];
+  const sweeps = { count: 0 };
+  const alarms: string[] = [];
+  const discards = { count: 0 };
+  const configureGate: { wait: Promise<void> | null } = { wait: null };
+  const timers = fakeTimers();
+  const app = express();
+  const json = express.json();
+  const guard = requireAuth(vault, deps);
+  const { deviceChainState, signin } = mountDeviceKeyRoutes(app, {
+    enabled, vault, pageSession: deps, limiter: new UnlockLimiter(), confirmations: new ChangeConfirmations(),
+    hasCheckKey: () => false, internalSecret: () => 'sekret', jsonParser: json,
+    device: {
+      asUrl: o.as.url,
+      pinning: () => asPinning(o.as.url, dir),
+      checkAs: createAsKeyCheck(o.as.url, dir, checkAsKeyBeforeLogin, () => {}),
+      establish: createEstablish({
+        vault,
+        configure: async (credential, keyHex) => { configured.push({ credential, keyHex }); await configureGate.wait; },
+        sweep: async () => { sweeps.count++; },
+        log: () => {},
+      }),
+      now: () => clock.t,
+      timers,
+      onAlarm: c => { alarms.push(c); },
+      discard: () => { vault.clearSpCookie(); discards.count++; },
+    },
+  });
+  app.use('/auth', json, createAuthRouter(
+    vault, guard, (_q, _s, n) => n(), undefined, { asUrl: o.as.url, dataDir: dir }, undefined, undefined, deps, deviceChainState,
+  ));
+  app.get('/api/x', guard, (_q, s) => { s.json({ ok: true }); });
+  const server: Server = await new Promise(r => { const sv = app.listen(0, o.listenHost ?? '127.0.0.1', () => r(sv)); });
+  const port = (server.address() as { port: number }).port;
+  return {
+    port, dir, vault, sessions, deps, configured, alarms, discards, configureGate, signin, sweeps, timers, clock,
+    unlock: async () => {
+      const r = await call(port, 'POST', '/auth/unlock', { body: { password: PW }, connectTo: o.listenHost });
+      if (r.status !== 200) throw new Error(`unlock failed: ${r.status} ${r.text}`);
+      return sessionOf(r);
+    },
+    close: () => new Promise<void>(r => { server.closeAllConnections?.(); server.close(() => r()); }),
+  };
+}

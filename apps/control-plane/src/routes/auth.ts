@@ -21,6 +21,7 @@ import { fetchAs, type AsFetchPinning } from '../lib/as-tls-pin';
 import { activeTeamId } from '../lib/managed-team';
 import { managedWrongTeamMessage } from '../lib/session-lock';
 import { pageSessionVerdict, type PageSessionDeps } from '../middleware/auth';
+import { isBearerCredential } from '../lib/as-credential';
 
 const DEFAULT_SP_URL = process.env.SUVEREN_AS_URL ?? 'https://www.suveren.ai';
 
@@ -33,7 +34,7 @@ export interface AuthRouterPairingOptions {
   dataDir: string;
 }
 
-interface AsKeyCheckResult {
+export interface AsKeyCheckResult {
   ok: boolean;
   publicKeyHex?: string;
   /**
@@ -133,7 +134,7 @@ async function fetchAsPublicKey(
  * it to `/api/auth/session`, so a server that fails this check never
  * receives credentials.
  */
-async function checkAsKeyBeforeLogin(asUrl: string, dataDir: string): Promise<AsKeyCheckResult> {
+export async function checkAsKeyBeforeLogin(asUrl: string, dataDir: string): Promise<AsKeyCheckResult> {
   const existing = readPairing(dataDir);
   const pinnedKey = existing && existing.asUrl === asUrl ? existing.publicKeyHex : undefined;
   // A real, already-captured pin wins; otherwise fall back to a fingerprint
@@ -253,6 +254,13 @@ export function createAuthRouter(
    * has an unlock password; a gateway without one never reads it.
    */
   pageSession?: PageSessionDeps,
+  /**
+   * Has this gateway set up device keys (a stored chain)? Only wired where
+   * SUVEREN_DEVICE_KEYS=on. When it has, the account key is no longer how this
+   * gateway signs in: it signs in by its device key (lib/device-signin.ts).
+   * Unset everywhere else, and then /login is exactly what it was.
+   */
+  deviceChainState?: () => 'none' | 'present' | 'unreadable',
 ): Router {
   const router = Router();
   const SP_URL = pairing?.asUrl ?? DEFAULT_SP_URL;
@@ -273,6 +281,18 @@ export function createAuthRouter(
     const confirmWipe = (req.body as { confirmWipe?: boolean })?.confirmWipe === true;
     if (!apiKey) {
       res.status(400).json({ error: 'Missing API key (X-API-Key header or body.apiKey)' });
+      return;
+    }
+
+    // A gateway with a device chain signs in by its device key, never by the account key.
+    const chainState = deviceChainState?.();
+    if (chainState === 'present') {
+      res.status(409).json({ error: 'use_device_signin', code: 'use_device_signin', message: 'Refused.' });
+      return;
+    }
+    // A vault that cannot be read is neither "set up" nor "not set up": say so, and sign nothing in.
+    if (chainState === 'unreadable') {
+      res.status(409).json({ error: 'vault_unreadable', code: 'vault_unreadable', message: 'Refused.' });
       return;
     }
 
@@ -719,10 +739,11 @@ export function createAuthRouter(
       unconfigureSession(),
       cookie
         ? fetchAs(
-            `${SP_URL}/api/auth/logout`,
+            // A device session ends where it was opened; a cookie session ends at /api/auth/logout, as before.
+            isBearerCredential(cookie) ? `${SP_URL}/api/devices/session` : `${SP_URL}/api/auth/logout`,
             {
-              method: 'POST',
-              headers: { cookie, ...clientVersionHeaders() },
+              method: isBearerCredential(cookie) ? 'DELETE' : 'POST',
+              headers: isBearerCredential(cookie) ? { Authorization: cookie, ...clientVersionHeaders() } : { cookie, ...clientVersionHeaders() },
               redirect: 'manual',
               // Same reasoning as the session call above — this sat with no
               // timeout of its own before, which would have hung the

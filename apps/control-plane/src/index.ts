@@ -40,7 +40,7 @@ import {
 } from './lib/sign-in-group';
 import { ShownSnapshotStore } from './lib/shown-snapshot';
 import { detectInstallMethod as detectInstallMethodFrom } from './lib/install-method';
-import { createAuthRouter } from './routes/auth';
+import { createAuthRouter, checkAsKeyBeforeLogin } from './routes/auth';
 import { createVaultRouter } from './routes/vault';
 import { createAIRouter } from './routes/ai';
 import { createAIPromptsRouter } from './routes/ai-prompts';
@@ -57,7 +57,10 @@ import { requireAllowedHost } from './middleware/host-guard';
 import { refuseAmbiguousPath, isApiPath } from './middleware/request-path';
 import { OAuthStateStore } from './lib/oauth-state';
 import { mcpPublicPort } from './lib/mcp-public-port';
-import { getToolDisplay, mcpRekeyClient, pushGateContent, pushServiceCredentials, setInternalSecret, getManifests, getGateContent, getEnrichedAuthorizations, getSkippedCommitments, getMyPendingProposals, MCP_BASE, runCommittedProposals, resyncGates, setReadPolicy } from './lib/mcp-bridge';
+import { getToolDisplay, mcpRekeyClient, pushGateContent, pushServiceCredentials, setInternalSecret, getManifests, getGateContent, getEnrichedAuthorizations, getSkippedCommitments, getMyPendingProposals, MCP_BASE, runCommittedProposals, resyncGates, setReadPolicy, configure as configureMcp, unconfigureSession, replaceIntegration, startPendingIntegrations } from './lib/mcp-bridge';
+import { createEstablish } from './lib/device-session-establish';
+import { createSignInSweep } from './lib/device-signin-sweep';
+import { createAsKeyCheck, asPinning } from './lib/device-as-trust';
 import { backfillReadPolicyDefaults } from './lib/read-policy-defaults';
 import { createMCPRouter } from './routes/mcp';
 import { createAutostartRouter } from './routes/autostart';
@@ -98,6 +101,7 @@ import { isSimulationMode } from './lib/simulation-mode';
 import { readPolicy } from './lib/policy';
 import { readPairing, clearPairing, fingerprintOf } from './lib/as-pairing';
 import { formatPinFingerprint, buildPinnedHttpsAgent, isPinCheckError, type AsFetchPinning } from './lib/as-tls-pin';
+import { asAuthHeaders } from './lib/as-credential';
 
 // Same default every stateful module in this codebase uses (Vault, GateStore,
 // …) — see as-config.ts's doc comment on why `resolveAsUrl` takes it
@@ -227,7 +231,9 @@ function loginRateLimit(req: Request, res: Response, next: NextFunction): void {
 // suspension/deletion/key change), not just when nobody ever logged in.
 // See lib/session-lock.ts and lib/session-expiry-scheduler.ts. ────────────
 
-const lockExpiredSession = createSessionLock({ vault, port });
+// A device session's end (a bearer token) is answered by a new sign-in, never a lock: bound after the device routes exist.
+let deviceSessionEnded: () => void = () => {};
+const lockExpiredSession = createSessionLock({ vault, port, onDeviceSessionEnded: () => deviceSessionEnded() });
 const lockAsKeyMismatch = createAsKeyMismatchLock({ vault, port });
 const lockAsTlsMismatch = createAsTlsMismatchLock({ vault, port });
 const lockManagedWrongTeam = createManagedWrongTeamLock({ vault, port });
@@ -238,7 +244,7 @@ const sessionExpiryScheduler = new SessionExpiryScheduler(
 
 // ─── Auth routes (/auth/*) ──────────────────────────────────────────────
 
-const { loginChangeGate } = mountDeviceKeyRoutes(app, {
+const { loginChangeGate, deviceChainState, signin: deviceSignin } = mountDeviceKeyRoutes(app, {
   enabled: deviceKeys,
   vault,
   pageSession: pageSessionDeps,
@@ -249,7 +255,23 @@ const { loginChangeGate } = mountDeviceKeyRoutes(app, {
   mcp: mcpRekeyClient,
   internalSecret: () => internalSecret,
   jsonParser,
+  // Device-key set-up and sign-in (step 6): the same Authority Server, pin and key check the login uses.
+  device: deviceKeys ? {
+    asUrl: SP_URL,
+    pinning: () => asPinning(SP_URL, DATA_DIR),
+    checkAs: createAsKeyCheck(SP_URL, DATA_DIR, checkAsKeyBeforeLogin),
+    establish: createEstablish({
+      vault,
+      mcpRekey: mcpRekeyClient,
+      configure: configureMcp,
+      onSessionEstablished: () => sessionExpiryScheduler.reschedule(),
+      sweep: createSignInSweep(vault, { getManifests, replaceIntegration, pushServiceCredentials, startPendingIntegrations, resyncGates }),
+    }),
+    onTlsMismatch: lockAsTlsMismatch,
+    discard: () => { vault.clearSpCookie(); return unconfigureSession(); },
+  } : undefined,
 });
+if (deviceSignin) deviceSessionEnded = () => deviceSignin.sessionLost();
 // An unfinished move to a fresh vault key is retried in the background, with backoff.
 if (deviceKeys) new RekeyRetrier(vault, mcpRekeyClient).start();
 app.use('/auth', jsonParser, createAuthRouter(
@@ -261,6 +283,7 @@ app.use('/auth', jsonParser, createAuthRouter(
   lockAsTlsMismatch,
   POLICY_LOCKED_TEAM,
   pageSessionDeps,
+  deviceChainState,
 ));
 
 // ─── WS4: periodic check for a managed gateway's signed-in account
@@ -511,7 +534,7 @@ const mandateCeremonyDeps = (): Omit<CeremonyDeps, 'newAuthorizationId'> => ({
         `${SP_URL}${path}`,
         {
           method,
-          headers: { Cookie: cookie, ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) },
+          headers: { ...asAuthHeaders(cookie), ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) },
           body: body !== undefined ? JSON.stringify(body) : undefined,
           signal: AbortSignal.timeout(15_000),
         },

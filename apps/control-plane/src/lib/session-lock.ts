@@ -21,6 +21,7 @@ import type { Vault } from './vault';
 import { eventBus } from './event-bus';
 import { notify, sessionExpiredNotification } from './desktop-notify';
 import { unconfigureSession } from './mcp-bridge';
+import { isBearerCredential } from './as-credential';
 
 export interface SessionLockDeps {
   vault: Vault;
@@ -29,6 +30,12 @@ export interface SessionLockDeps {
   notifyFn?: typeof notify;
   unconfigureSessionFn?: typeof unconfigureSession;
   emit?: typeof eventBus.emit;
+  /**
+   * The Authority Server session that ended is a DEVICE session (a bearer token,
+   * lib/as-credential.ts): that only means "sign in again", never a lock. Called
+   * instead of locking; the device sign-in drops the credential and renews it.
+   */
+  onDeviceSessionEnded?: () => void;
 }
 
 /** The one-line reason relayed to the browser over SSE (payload, not the event name). */
@@ -62,6 +69,9 @@ export function createSessionLock(deps: SessionLockDeps): () => void {
 
   return function lockExpiredSession(): void {
     if (!vault.isUnlocked()) return; // already locked — nothing to do (single-flight)
+    // A device session's end (an outage around the renewal, a long sleep, a 401) is
+    // never a reason to ask for the password: the gateway signs in again by its key.
+    if (isBearerCredential(vault.getSpCookie()) && deps.onDeviceSessionEnded) { deps.onDeviceSessionEnded(); return; }
     vault.lockExpired();
 
     console.error('[Control Plane] Authority Server session ended — gateway LOCKED');

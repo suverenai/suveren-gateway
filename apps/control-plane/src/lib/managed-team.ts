@@ -18,6 +18,7 @@
  * no normalization.
  */
 import { fetchAs, type AsFetchPinning } from './as-tls-pin';
+import { asAuthHeaders } from './as-credential';
 
 /**
  * The account's active TEAM id (never Personal) — null when it has none.
@@ -33,7 +34,7 @@ export async function activeTeamId(
 ): Promise<string | null> {
   const { res } = await fetchAs(
     `${asUrl}/api/groups/me`,
-    { headers: { Cookie: cookie }, signal: AbortSignal.timeout(10_000) },
+    { headers: asAuthHeaders(cookie), signal: AbortSignal.timeout(10_000) },
     pinning,
   );
   if (!res.ok) throw new Error(`GET /api/groups/me answered ${res.status}`);

@@ -11,6 +11,8 @@
 
 import type { Vault } from './vault';
 import { generateKeyPair, type KeyPair } from './e2e-crypto';
+import { randomBytes } from 'node:crypto';
+import { deviceKeys } from './device-keys-lazy';
 
 const VAULT_SLOT = 'e2eKey';
 
@@ -73,4 +75,66 @@ export async function rotateKeyPair(vault: Vault): Promise<KeyPair> {
   };
   vault.setCredential(VAULT_SLOT, toStore as unknown as Record<string, string>);
   return kp;
+}
+
+// ─── Device signing key (device-keys plan 2.2, step 6) ──────────────────────
+//
+// The gateway's Ed25519 signing key. It sits BESIDE the reading key above: the
+// reading key (X25519, slot 'e2eKey') stays exactly as it is, so open proposals
+// stay readable. The signing key lives in a secret slot of the vault
+// (Vault.getSecretSlot), not among the credentials, so nothing that lists,
+// pushes or edits credentials can reach it.
+//
+// What this does and does not promise: this process's own code never writes the
+// key to a file in the clear and never sends it to the Authority Server or the
+// MCP server. It is sealed with the vault key, and the vault key IS handed to the
+// MCP server (/internal/configure), so another process of the gateway can open
+// the sealed slot. The protection is "no code path sends it", not "no other
+// process can read it".
+
+const SIGNING_SLOT = 'deviceSigningKey';
+
+interface StoredSigningKey {
+  privateKey: string; // base64url, the 32-byte Ed25519 seed
+  publicKey: string;  // base64url, 32 bytes
+}
+
+export interface DeviceSigningKey {
+  /** The 32-byte Ed25519 private seed. Handle like a secret: never log, never send. */
+  privateSeed: Uint8Array;
+  publicKey: Uint8Array;
+}
+
+/** The signing key if the vault has one, else null. Never makes one. */
+export function loadDeviceSigningKey(vault: Vault): DeviceSigningKey | null {
+  const stored = vault.getSecretSlot<StoredSigningKey>(SIGNING_SLOT);
+  if (!stored?.privateKey || !stored?.publicKey) return null;
+  return {
+    privateSeed: new Uint8Array(Buffer.from(stored.privateKey, 'base64url')),
+    publicKey: new Uint8Array(Buffer.from(stored.publicKey, 'base64url')),
+  };
+}
+
+/**
+ * The device signing key of this vault, made on first use. Concurrent calls end
+ * with ONE key: the slot is read again after the (async) key derivation, and
+ * nothing awaits between that read and the write.
+ */
+export async function loadOrGenerateDeviceSigningKey(vault: Vault): Promise<DeviceSigningKey> {
+  const existing = loadDeviceSigningKey(vault);
+  if (existing) return existing;
+  const privateSeed = new Uint8Array(randomBytes(32));
+  const publicKey = await (await deviceKeys()).ed25519PublicKey(privateSeed);
+  const raced = loadDeviceSigningKey(vault);
+  if (raced) return raced;
+  vault.setSecretSlot(SIGNING_SLOT, {
+    privateKey: Buffer.from(privateSeed).toString('base64url'),
+    publicKey: Buffer.from(publicKey).toString('base64url'),
+  } satisfies StoredSigningKey);
+  return { privateSeed, publicKey };
+}
+
+/** The signing public key, or null when none was made yet. Never generates one. */
+export function getDeviceSigningPublicKey(vault: Vault): Uint8Array | null {
+  return loadDeviceSigningKey(vault)?.publicKey ?? null;
 }
