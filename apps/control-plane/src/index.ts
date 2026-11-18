@@ -35,8 +35,8 @@ import express, { type Request, type Response, type NextFunction } from 'express
 import { createProxyMiddleware } from 'http-proxy-middleware';
 import { Vault } from './lib/vault';
 import {
-  groupOfMember, unionScopes, oauthApplies, effectiveCredentials, withoutSignIn, resolveGroupClient,
-  groupCredentialName, credentialsToPush, missingScopes, retireMemberSignIns, revokeTokens, type OAuthLike,
+  groupOfMember, oauthApplies, effectiveCredentials, resolveGroupClient,
+  groupCredentialName, credentialsToPush, missingScopes,
 } from './lib/sign-in-group';
 import { ShownSnapshotStore } from './lib/shown-snapshot';
 import { detectInstallMethod as detectInstallMethodFrom } from './lib/install-method';
@@ -44,13 +44,20 @@ import { createAuthRouter } from './routes/auth';
 import { createVaultRouter } from './routes/vault';
 import { createAIRouter } from './routes/ai';
 import { createAIPromptsRouter } from './routes/ai-prompts';
-import { requireAuth, requireAuthQueryOrHeader } from './middleware/auth';
+import { requireAuth, requireAuthQueryOrHeader, closeStreamWhenSessionEnds, type PageSessionDeps } from './middleware/auth';
+import { PageSessions } from './lib/page-session';
+import { UnlockLimiter } from './lib/unlock-limiter';
+import { ChangeConfirmations } from './lib/change-confirmation';
+import { scrubProxyRequest } from './lib/proxy-headers';
+import { OAuthStartTickets } from './lib/oauth-start-ticket';
+import { RekeyRetrier } from './lib/rekey-retry';
+import { mountDeviceKeyRoutes } from './routes/device-keys-mount';
+import { createOAuthFlowRouter, type OAuthManifestEntry } from './routes/oauth-flow';
 import { requireAllowedHost } from './middleware/host-guard';
 import { refuseAmbiguousPath, isApiPath } from './middleware/request-path';
-import { oauthResultPage } from './lib/html-escape';
 import { OAuthStateStore } from './lib/oauth-state';
 import { mcpPublicPort } from './lib/mcp-public-port';
-import { getToolDisplay, pushGateContent, pushServiceCredentials, setInternalSecret, getManifests, getGateContent, getEnrichedAuthorizations, getSkippedCommitments, getMyPendingProposals, MCP_BASE, runCommittedProposals, resyncGates, setReadPolicy } from './lib/mcp-bridge';
+import { getToolDisplay, mcpRekeyClient, pushGateContent, pushServiceCredentials, setInternalSecret, getManifests, getGateContent, getEnrichedAuthorizations, getSkippedCommitments, getMyPendingProposals, MCP_BASE, runCommittedProposals, resyncGates, setReadPolicy } from './lib/mcp-bridge';
 import { backfillReadPolicyDefaults } from './lib/read-policy-defaults';
 import { createMCPRouter } from './routes/mcp';
 import { createAutostartRouter } from './routes/autostart';
@@ -123,7 +130,23 @@ const UI_DIST = process.env.HAP_UI_DIST ?? join(import.meta.dirname ?? __dirname
 
 // ─── Shared vault instance ───────────────────────────────────────────────
 
-const vault = new Vault(DATA_DIR);
+// Device keys (the unlock password and what follows) exist only where switched
+// on, the same name the Authority Server uses. Off: none of the routes below
+// are mounted and every path is the one the last release has.
+const deviceKeys = process.env.SUVEREN_DEVICE_KEYS === 'on';
+const vault = new Vault(DATA_DIR, { deviceKeys });
+
+// ─── Unlock password: page session, attempt limit, change confirmations ──
+// All in memory: a restart ends every page session. None of it is consulted
+// on a gateway whose vault has no password (middleware/auth.ts).
+const bindHost = process.env.SUVEREN_BIND_HOST?.trim() || '127.0.0.1';
+const pageSessionDeps: PageSessionDeps = {
+  sessions: new PageSessions(),
+  listensOnLoopbackOnly: bindHost === '127.0.0.1' || bindHost === 'localhost' || bindHost === '::1',
+};
+vault.onLocked(() => pageSessionDeps.sessions.endAll());
+const unlockLimiter = new UnlockLimiter();
+const loginChangeConfirmations = new ChangeConfirmations();
 
 // AU10 §8.4 — "what you saw" snapshots, encrypted at rest with the same
 // vault key as the credential store (shown-snapshot.ts).
@@ -215,14 +238,29 @@ const sessionExpiryScheduler = new SessionExpiryScheduler(
 
 // ─── Auth routes (/auth/*) ──────────────────────────────────────────────
 
+const { loginChangeGate } = mountDeviceKeyRoutes(app, {
+  enabled: deviceKeys,
+  vault,
+  pageSession: pageSessionDeps,
+  limiter: unlockLimiter,
+  confirmations: loginChangeConfirmations,
+  // No computer has a check key until the native helper (step 5a) exists.
+  hasCheckKey: () => false,
+  mcp: mcpRekeyClient,
+  internalSecret: () => internalSecret,
+  jsonParser,
+});
+// An unfinished move to a fresh vault key is retried in the background, with backoff.
+if (deviceKeys) new RekeyRetrier(vault, mcpRekeyClient).start();
 app.use('/auth', jsonParser, createAuthRouter(
   vault,
-  requireAuth(vault),
+  requireAuth(vault, pageSessionDeps),
   loginRateLimit,
   () => sessionExpiryScheduler.reschedule(),
   { asUrl: SP_URL, dataDir: DATA_DIR },
   lockAsTlsMismatch,
   POLICY_LOCKED_TEAM,
+  pageSessionDeps,
 ));
 
 // ─── WS4: periodic check for a managed gateway's signed-in account
@@ -278,34 +316,7 @@ const oauthStates = new OAuthStateStore();
 // ─── Generic OAuth flow (driven by integration manifests) ───────────────
 
 // Cache manifests in memory (refreshed on first OAuth request)
-let manifestCache: Array<{
-  id: string;
-  simulation?: { field: string; default: string } | null;
-  adapterField?: string;
-  oauth: {
-    authUrl: string;
-    tokenUrl: string;
-    revokeUrl?: string;
-    scopes: string[];
-    credentialKeys: Record<string, string>;
-    tokenStorage: string;
-    extraParams?: Record<string, string>;
-    // Shared sign-in (see lib/sign-in-group.ts): connectors declaring the same
-    // group id are signed in once, with the union of their scopes.
-    signInGroup?: { id: string; name: string };
-    // The sign-in applies only while this data-source option is chosen.
-    forOption?: { mode: string; adapter?: string };
-    // Optional liveness probe for access-token integrations that have no
-    // refresh grant (e.g. LinkedIn). A lightweight authenticated GET whose
-    // 200/401 tells us whether the stored token still works. accountFields
-    // (dot-paths into the JSON response, space-joined) name the display
-    // identity — e.g. LinkedIn's /v2/me → ["localizedFirstName","localizedLastName"].
-    healthCheck?: {
-      url: string;
-      accountFields?: string[];
-    };
-  } | null;
-}> | null = null;
+let manifestCache: OAuthManifestEntry[] | null = null;
 
 /** Resolve a dot-path (e.g. "name.givenName") from a JSON object. */
 function resolvePath(obj: unknown, path: string): string | undefined {
@@ -313,20 +324,6 @@ function resolvePath(obj: unknown, path: string): string | undefined {
     return acc && typeof acc === 'object' ? (acc as Record<string, unknown>)[key] : undefined;
   }, obj);
   return v == null ? undefined : String(v);
-}
-
-/** Extract the `email` claim from an OIDC id_token (unverified — display only). */
-function decodeJwtEmail(idToken?: string): string | undefined {
-  if (!idToken) return undefined;
-  try {
-    const payload = idToken.split('.')[1];
-    if (!payload) return undefined;
-    const json = Buffer.from(payload.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
-    const claims = JSON.parse(json) as { email?: string };
-    return typeof claims.email === 'string' ? claims.email : undefined;
-  } catch {
-    return undefined;
-  }
 }
 
 async function loadManifestCache() {
@@ -367,163 +364,6 @@ async function pushEffective(name: string, list: unknown) {
   }
 }
 
-app.get('/auth/oauth/:integrationId/start', async (req: Request, res: Response) => {
-  const { integrationId } = req.params;
-  const manifest = await getOAuthManifest(integrationId);
-  if (!manifest?.oauth) {
-    res.status(404).json({ error: `No OAuth config found for integration "${integrationId}"` });
-    return;
-  }
-  const oauth = manifest.oauth;
-  // A sign-in scoped to one data-source option (oauth.forOption) is refused while another option is saved.
-  if (!oauthApplies(manifest, vault.getCredential(integrationId))) {
-    res.status(409).json({ error: `Sign-in is not used by the data source chosen for ${integrationId}` });
-    return;
-  }
-  // A member of a shared sign-in group signs the WHOLE group in: the union of
-  // the members' scopes, one token. The redirect URI stays this connector's own
-  // (/auth/oauth/<id>/callback) so no URI has to be added at the provider.
-  const group = groupOfMember(manifestCache, integrationId);
-  const clientIdKey = oauth.credentialKeys.clientId ?? 'clientId';
-  const clientSecretKey = oauth.credentialKeys.clientSecret ?? 'clientSecret';
-  let clientId: string | undefined;
-  if (group) {
-    clientId = resolveGroupClient(group, integrationId, vault.getCredential(groupCredentialName(group.id)), id => vault.getCredential(id))?.clientId;
-  } else {
-    const creds = vault.getCredential(integrationId);
-    clientId = creds?.[clientIdKey] && creds?.[clientSecretKey] ? creds[clientIdKey] : undefined;
-  }
-  if (!clientId) {
-    res.status(400).json({ error: `${integrationId} OAuth credentials must be configured first` });
-    return;
-  }
-  const redirectUri = `${resolveOrigin(req)}/auth/oauth/${integrationId}/callback`;
-  // The callback is accepted only with this state, once, for this connector.
-  const state = oauthStates.issue({ integrationId, redirectUri });
-  const params = new URLSearchParams({
-    client_id: clientId,
-    redirect_uri: redirectUri,
-    response_type: 'code',
-    scope: (group ? unionScopes(group, id => vault.getCredential(id)) : oauth.scopes).join(' '),
-    ...oauth.extraParams,
-    // After extraParams: a manifest cannot replace it.
-    state,
-  });
-  res.redirect(`${oauth.authUrl}?${params.toString()}`);
-});
-
-app.get('/auth/oauth/:integrationId/callback', async (req: Request, res: Response) => {
-  const { integrationId } = req.params;
-  const { code, error, state } = req.query;
-  // First: was this sign-in started here, for this connector, moments ago?
-  // Without that, any page could hand the browser a code for the ATTACKER's
-  // account and the gateway would store its token. The state is spent now,
-  // whatever happens next.
-  const started = oauthStates.consume(state, integrationId);
-  if (!started) {
-    res.status(400).send(oauthResultPage(
-      'Sign-in not accepted',
-      'This sign-in was not started from this gateway, or it took too long. Start it again from the Integrations page.',
-    ));
-    return;
-  }
-  if (error || !code) {
-    res.status(400).send(oauthResultPage('Authorization failed', String(error || 'No authorization code received'), 3000));
-    return;
-  }
-  const manifest = await getOAuthManifest(integrationId);
-  if (!manifest?.oauth) {
-    res.status(404).send(oauthResultPage('OAuth config not found'));
-    return;
-  }
-  const oauth = manifest.oauth;
-  const clientIdKey = oauth.credentialKeys.clientId ?? 'clientId';
-  const clientSecretKey = oauth.credentialKeys.clientSecret ?? 'clientSecret';
-  const group = groupOfMember(manifestCache, integrationId);
-  // Group: the client that /start used (group entry, else a member's own).
-  // Single connector: its own entry, as before.
-  let creds: Record<string, string> | null = vault.getCredential(integrationId);
-  if (group) {
-    const c = resolveGroupClient(group, integrationId, vault.getCredential(groupCredentialName(group.id)), id => vault.getCredential(id));
-    creds = c ? { [clientIdKey]: c.clientId, [clientSecretKey]: c.clientSecret } : null;
-  }
-  if (!creds?.[clientIdKey] || !creds?.[clientSecretKey]) {
-    res.status(400).send(oauthResultPage('Credentials missing'));
-    return;
-  }
-  // The redirect URI /start sent: the token exchange must repeat it exactly.
-  const redirectUri = started.redirectUri;
-  try {
-    const tokenRes = await fetch(oauth.tokenUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        code: code as string,
-        client_id: creds[clientIdKey],
-        client_secret: creds[clientSecretKey],
-        redirect_uri: redirectUri,
-        grant_type: 'authorization_code',
-      }),
-    });
-    const tokens = await tokenRes.json() as { refresh_token?: string; access_token?: string; id_token?: string; scope?: string; error?: string };
-    const tokenValue = tokens.refresh_token ?? tokens.access_token;
-    if (tokens.error || !tokenValue) {
-      res.status(400).send(oauthResultPage('Token exchange failed', String(tokens.error || 'No token received'), 3000));
-      return;
-    }
-    // Capture the connected account (email from the OIDC id_token) + timestamp so
-    // the Integrations UI can show *which* account is connected. Stored under
-    // reserved `_oauth*` keys; the vault route exposes them as `meta`.
-    const account = decodeJwtEmail(tokens.id_token);
-    if (group) {
-      // ONE token for the group, written once. Members' own entries are left
-      // untouched (their old tokens stay valid until sign-out); the group entry
-      // is laid over them when pushed.
-      const groupName = groupCredentialName(group.id);
-      const groupCreds: Record<string, string> = {
-        ...(vault.getCredential(groupName) ?? {}),
-        [clientIdKey]: creds[clientIdKey],
-        [clientSecretKey]: creds[clientSecretKey],
-        [oauth.tokenStorage]: tokenValue,
-        _oauthConnectedAt: new Date().toISOString(),
-      };
-      if (account) groupCreds._oauthAccount = account;
-      // What the provider actually granted (it may be fewer than requested).
-      if (tokens.scope) groupCreds._oauthScopes = tokens.scope;
-      vault.setCredential(groupName, groupCreds);
-      console.log(`[Control Plane] sign-in group ${group.id} OAuth tokens stored in vault`);
-      // Only now, with the group token safely stored: the members' old
-      // per-connector tokens are retired (a failed sign-in never gets here).
-      const retired = retireMemberSignIns(group, n => vault.getCredential(n), (n, c) => vault.setCredential(n, c));
-      if (retired.length) console.log(`[Control Plane] retired own sign-in of: ${retired.join(', ')}`);
-      await pushEffective(groupName, manifestCache);
-    } else {
-      // Store token alongside existing credentials (refresh_token for Gmail, access_token for LinkedIn, etc.)
-      const updatedCreds: Record<string, string> = {
-        ...creds,
-        [oauth.tokenStorage]: tokenValue,
-        _oauthConnectedAt: new Date().toISOString(),
-      };
-      if (account) updatedCreds._oauthAccount = account;
-      vault.setCredential(integrationId, updatedCreds);
-      console.log(`[Control Plane] ${integrationId} OAuth tokens stored in vault`);
-
-      // Push updated credentials to MCP server so integration can start
-      try {
-        await pushServiceCredentials(integrationId, updatedCreds);
-        console.log(`[Control Plane] ${integrationId} credentials pushed to MCP`);
-      } catch (err) {
-        console.error(`[Control Plane] Failed to push ${integrationId} credentials to MCP:`, err);
-      }
-    }
-
-    res.send(oauthResultPage(`${group ? group.name : manifest.id} connected successfully`, 'You can close this window.', 2000));
-  } catch (err) {
-    console.error(`[Control Plane] ${integrationId} OAuth error:`, err);
-    res.status(500).send(oauthResultPage('OAuth error', 'See server logs'));
-  }
-});
-
 // Backward compatibility: redirect old Gmail OAuth URLs to new generic handler
 app.get('/auth/gmail/start', (_req: Request, res: Response) => {
   res.redirect('/auth/oauth/mail/start');
@@ -535,61 +375,23 @@ app.get('/auth/gmail/callback', (req: Request, res: Response) => {
 
 // ─── Protected routes — require X-API-Key ────────────────────────────────
 
-const authGuard = requireAuth(vault);
+const authGuard = requireAuth(vault, pageSessionDeps);
 
-/**
- * Sign out of a connector's OAuth account. For a member of a shared sign-in
- * group it signs out the WHOLE group: the group's token and metadata are
- * removed, and so is every member's own legacy token - otherwise the old
- * per-connector tokens (kept valid for migration) would silently take over
- * again. OAuth client settings (id + secret) are kept so signing in again needs
- * no re-entry. The running connector(s) lose their token and stop.
- * Not revoked at the provider (no revocation URL is declared in manifests).
- */
-app.post('/auth/oauth/:integrationId/disconnect', authGuard, async (req: Request, res: Response) => {
-  const integrationId = String(req.params.integrationId);
-  const manifest = await getOAuthManifest(integrationId);
-  if (!manifest?.oauth) { res.status(404).json({ error: `No OAuth config found for integration "${integrationId}"` }); return; }
-  const group = groupOfMember(manifestCache, integrationId);
-  const targets = group ? group.members : [manifest as { id: string; oauth: OAuthLike }];
-  try {
-    // Revoke at the provider FIRST (needs the tokens), best-effort: a refusal is
-    // reported in the response, and the local sign-out happens regardless.
-    const tokens: Array<{ target: string; token: string }> = [];
-    if (group) {
-      const g = vault.getCredential(groupCredentialName(group.id));
-      if (g?.[manifest.oauth.tokenStorage]) tokens.push({ target: `group:${group.id}`, token: g[manifest.oauth.tokenStorage] });
-    }
-    for (const t of targets) {
-      const own = vault.getCredential(t.id);
-      if (own?.[t.oauth!.tokenStorage]) tokens.push({ target: t.id, token: own[t.oauth!.tokenStorage] });
-    }
-    const revocation = await revokeTokens(manifest.oauth.revokeUrl, tokens);
-    if (group) {
-      const gname = groupCredentialName(group.id);
-      const gcred = vault.getCredential(gname);
-      if (gcred) vault.setCredential(gname, withoutSignIn(gcred, manifest.oauth));
-    }
-    for (const t of targets) {
-      const own = vault.getCredential(t.id);
-      if (own) vault.setCredential(t.id, withoutSignIn(own, t.oauth!));
-    }
-    // Push explicitly (even an empty set): a member with no entry of its own
-    // would otherwise keep running on the credentials pushed before sign-out.
-    for (const t of targets) await pushServiceCredentials(t.id, vault.getCredential(t.id) ?? {});
-    res.json({
-      ok: true,
-      signedOut: targets.map(t => t.id),
-      // revoked: every distinct token was revoked at the provider. Local
-      // sign-out is done either way; `revocation` names what was refused.
-      revoked: revocation.length > 0 && revocation.every(r => r.ok),
-      revocation,
-    });
-  } catch (err) {
-    res.status(500).json({ error: err instanceof Error ? err.message : 'Sign-out failed' });
-  }
-});
-
+// OAuth sign-in: start, callback, sign-out (routes/oauth-flow.ts). On a vault
+// with an unlock password /start needs the page session and replacing or
+// removing a stored sign-in needs a confirmation; otherwise as before.
+app.use(createOAuthFlowRouter({
+  vault,
+  oauthStates,
+  getOAuthManifest,
+  manifestCache: () => manifestCache,
+  resolveOrigin,
+  pushEffective,
+  authGuard,
+  gate: loginChangeGate,
+  pageSession: pageSessionDeps,
+  tickets: new OAuthStartTickets(),
+}));
 
 /**
  * Auth-health probe — the truthful "can this integration actually authenticate"
@@ -688,7 +490,7 @@ app.get('/auth/oauth/:integrationId/health', authGuard, async (req: Request, res
 // The host guard runs FIRST: a DNS-rebinding attempt should be refused before
 // the API key in ?key= is even looked at.
 // Host guard: app-wide, at the top (requireAllowedHost).
-app.get('/events', requireAuthQueryOrHeader(vault), createEventsHandler());
+app.get('/events', requireAuthQueryOrHeader(vault, pageSessionDeps), closeStreamWhenSessionEnds(vault, pageSessionDeps), createEventsHandler());
 
 // Sibling-process events (MCP server → control plane). Authenticated by the
 // shared internal secret, NOT by a user session: the MCP server has none.
@@ -734,7 +536,7 @@ app.use('/internal', jsonParser, createInternalMandateRouter(() => internalSecre
 app.use('/internal', jsonParser, createInternalContentCryptoRouter(() => internalSecret, vault, SP_URL, DATA_DIR));
 
 // Vault routes
-app.use('/vault', jsonParser, authGuard, createVaultRouter(vault));
+app.use('/vault', jsonParser, authGuard, createVaultRouter(vault, loginChangeGate));
 
 // AI routes
 app.use('/ai', jsonParser, authGuard, createAIRouter(vault));
@@ -1200,11 +1002,9 @@ const asProxy = createProxyMiddleware({
         proxyReq.setTimeout(AS_PROXY_TIMEOUT_MS, () => {
           proxyReq.destroy(Object.assign(new Error('Authority Server did not answer'), { code: 'ETIMEDOUT' }));
         });
-        // Inject server-side SP session cookie instead of forwarding browser cookies
-        const cookie = vault.getSpCookie();
-        if (cookie) {
-          proxyReq.setHeader('Cookie', cookie);
-        }
+        // The server-side AS session cookie replaces whatever the browser sent; the
+        // page session's secrets never leave this process (lib/proxy-headers.ts).
+        scrubProxyRequest(proxyReq, vault.getSpCookie());
       },
       // A pin check failure means the connection never completed its TLS
       // handshake — nothing (not even this call's own cookie) reached the
@@ -1458,8 +1258,6 @@ if (existsSync(UI_DIST)) {
 // Default: this machine only. The Docker image sets SUVEREN_BIND_HOST=0.0.0.0
 // (a container must listen on its own interface). Same variable as the MCP
 // server's — see apps/mcp-server/src/lib/agent-access.ts.
-const bindHost = process.env.SUVEREN_BIND_HOST?.trim() || '127.0.0.1';
-
 app.listen(port, bindHost, () => {
   console.error(`[Control Plane] Listening on http://${bindHost}:${port}`);
 

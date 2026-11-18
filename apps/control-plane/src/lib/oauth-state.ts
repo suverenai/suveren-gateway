@@ -24,6 +24,13 @@ import { randomBytes } from 'node:crypto';
 export interface OAuthStart {
   integrationId: string;
   redirectUri: string;
+  /**
+   * Vault with a password: when the person's confirmation was used at /start (ms),
+   * and the vault entries it covered. The callback is accepted only soon after,
+   * and only if nothing else has a stored sign-in by then.
+   */
+  confirmedAt?: number;
+  replaces?: string[];
 }
 
 interface Entry extends OAuthStart {
@@ -66,7 +73,7 @@ export class OAuthStateStore {
     this.open.delete(state);
     if (entry.expiresAt <= this.now()) return null;
     if (entry.integrationId !== integrationId) return null;
-    return { integrationId: entry.integrationId, redirectUri: entry.redirectUri };
+    return { integrationId: entry.integrationId, redirectUri: entry.redirectUri, ...(entry.confirmedAt !== undefined ? { confirmedAt: entry.confirmedAt, replaces: entry.replaces ?? [] } : {}) };
   }
 
   private prune(): void {

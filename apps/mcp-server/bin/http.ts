@@ -55,6 +55,7 @@ import { join } from 'node:path';
 import { resolveAsUrl, resolvePinTls, validatePinTlsForUrl } from '../src/lib/as-config';
 import { readMcpPairedAsUrl, writeMcpPairedAsUrl } from '../src/lib/mcp-as-tracker';
 import { setAsBaseUrl } from '../src/lib/receipt-footer';
+import { VaultKeyControl } from '../src/lib/vault-key-control';
 
 // Same default every stateful module in this codebase uses (GateStore,
 // ReceiptArchive, …) — see as-config.ts's doc comment.
@@ -225,6 +226,11 @@ function internalOnly(req: Request, res: Response, next: NextFunction): void {
 
 // ─── Internal endpoints (control-plane → MCP) ─────────────────────────────
 
+const keyControl = new VaultKeyControl(dataDir, [
+  state.gateStore, state.denialLog, state.receiptArchive, state.reportStore,
+  state.outcomeOutbox, state.changeLedger, state.executionResults,
+]);
+
 app.post('/internal/configure', internalOnly, (req: Request, res: Response) => {
   const { sessionCookie, vaultKeyHex, apiKey } = req.body as {
     sessionCookie?: string;
@@ -239,14 +245,7 @@ app.post('/internal/configure', internalOnly, (req: Request, res: Response) => {
   console.error('[Suveren MCP] Session cookie configured by control-plane');
 
   if (vaultKeyHex) {
-    const key = Buffer.from(vaultKeyHex, 'hex');
-    state.gateStore.setVaultKey(key);
-    state.denialLog.setVaultKey(key);
-    state.receiptArchive.setVaultKey(key);
-    state.reportStore.setVaultKey(key);
-    state.outcomeOutbox.setVaultKey(key);
-    state.changeLedger.setVaultKey(key);
-    state.executionResults.setVaultKey(key);
+    keyControl.setKey(Buffer.from(vaultKeyHex, 'hex'));
     console.error('[Suveren MCP] Vault key configured — gate store + denial log + receipt archive + report store + outcome outbox + execution results encryption active');
   }
 
@@ -256,6 +255,24 @@ app.post('/internal/configure', internalOnly, (req: Request, res: Response) => {
   }
 
   res.json({ ok: true });
+});
+
+/**
+ * The vault key changed (the control plane moved the vault to an unlock
+ * password). Everything this process sealed with the old key is re-sealed with
+ * the new one, and the stores switch to it, in one synchronous step: nothing
+ * of ours can write between the two with the old key. Idempotent (lib/rekey.ts).
+ */
+app.post('/internal/rekey', internalOnly, (req: Request, res: Response) => {
+  const r = keyControl.rekey(req.body ?? {});
+  if (r.status === 200) console.error(`[Suveren MCP] Vault key replaced — ${r.body.reSealed} blob(s) re-sealed, ${r.body.unreadable} unreadable`);
+  res.status(r.status).json(r.body);
+});
+
+/** Which of two keys this server's stores are sealed with (never the key). The control plane asks before it ever configures. */
+app.post('/internal/key-state', internalOnly, (req: Request, res: Response) => {
+  const r = keyControl.state(req.body ?? {});
+  res.status(r.status).json(r.body);
 });
 
 /**
