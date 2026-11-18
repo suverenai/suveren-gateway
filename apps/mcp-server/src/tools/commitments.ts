@@ -38,6 +38,7 @@ import { verifyTicket, TicketBindingMismatchError, mandateForTicket } from '../l
 import { notifyControlPlane } from '../lib/cp-notify';
 import { resolveWhoLabel } from '../lib/who-label';
 import { resolveProposalToolArgs, decryptRejectionNote, computeProposalContentHash, ProposalContentError } from '../lib/proposal-content';
+import { checkDeviceDecisions, controlPlaneDevice } from '../lib/device-decisions';
 
 /**
  * Retain what a committed proposal's execution actually produced — the
@@ -265,6 +266,26 @@ export async function executeCommitted(
         isError: true,
       };
     }
+  }
+
+  // Device keys (plan 4.2, step 12): a gateway with a device chain runs a committed proposal only
+  // on device decisions it verified itself. BEFORE the ticket request: asking for the ticket is what
+  // marks the proposal executed on the Authority Server. With the switch off, or without a chain,
+  // this answers `skipped` at once and nothing else changes.
+  const deviceCheck = await checkDeviceDecisions({
+    sp: state.spClient,
+    cp: controlPlaneDevice,
+    auth: cachedAuth,
+    loadAuth: () => state.cache.syncAuthorization(proposal.authorizationId),
+    proposal,
+    actionType: proposalActionType,
+    proposalContentHash: computeProposalContentHash(toolArgs),
+  });
+  if (!deviceCheck.ok) {
+    return {
+      text: `Proposal ${proposal.id}: blocked — ${deviceCheck.text} The action was not executed.`,
+      isError: true,
+    };
   }
 
   // Receipt id captured here so the verification footer (Category-A profiles)

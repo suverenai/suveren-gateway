@@ -400,3 +400,55 @@ describe('spClient.login() shows the gateway refusal as written', () => {
     await expect(spClient.login('k')).rejects.toMatchObject({ name: expect.stringMatching(/DifferentAccount/) });
   });
 });
+
+/**
+ * Device keys (plan 6.3, step 12): on a gateway with a device chain the four decision routes go to the
+ * control plane's `/device-decision/:id/:route` (it signs with this computer's key and forwards), with
+ * the same body the page always sent. Off by default: the legacy path is untouched (tests above).
+ */
+describe('decisions on a gateway with a device chain', () => {
+  const originalFetch = globalThis.fetch;
+  afterEach(() => {
+    spClient.setDeviceDecisions(false);
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+  const ok = (body: Record<string, unknown> = { status: 'ok' }) => new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+
+  it('sends each of the four decisions to the local route with the body unchanged', async () => {
+    const fetchSpy = vi.fn().mockImplementation(() => Promise.resolve(ok({ receipt: {}, status: 'x', proposalId: 'p1', withdrawnBy: {} })));
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    spClient.setDeviceDecisions(true);
+    await spClient.resolveProposal('p1', 'commit', 'owner', { contentHash: 'sha256:a', shownHash: 'sha256:b' });
+    await spClient.approveProposal('p1', 'sha256:a');
+    await spClient.rejectProposal('p1', { outcome: 'change_needed' }, 'sha256:a');
+    await spClient.withdrawProposal('p1', { note: 'n' });
+    expect(fetchSpy.mock.calls.map(c => c[0])).toEqual([
+      '/device-decision/p1/resolve', '/device-decision/p1/approve', '/device-decision/p1/reject', '/device-decision/p1/withdraw',
+    ]);
+    expect(JSON.parse((fetchSpy.mock.calls[0][1] as RequestInit).body as string)).toEqual({
+      action: 'commit', domain: 'owner', content_hash: 'sha256:a', proposalContentHash: 'sha256:a', shown_hash: 'sha256:b',
+    });
+  });
+
+  it('shows the gateway\'s own refusal as written', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: 'content_unreadable', code: 'content_unreadable', message: 'This computer cannot show the content.' }), { status: 409 })) as unknown as typeof fetch;
+    spClient.setDeviceDecisions(true);
+    await expect(spClient.approveProposal('p1')).rejects.toThrow(/cannot show the content/);
+  });
+
+  it('is off until the gateway says yes: only an explicit deviceKeys:true switches the path', async () => {
+    const answer = (res: Response | Error) => { globalThis.fetch = (res instanceof Error ? vi.fn().mockRejectedValue(res) : vi.fn().mockResolvedValue(res)) as unknown as typeof fetch; };
+    answer(ok({ ok: true, deviceKeys: true }));
+    expect(await spClient.detectDeviceDecisions()).toBe(true);
+    for (const res of [ok({ ok: true, deviceKeys: false }), new Response('<html></html>', { status: 200 }), new Response('{}', { status: 404 }), new Response('{}', { status: 401 }), new Response('{}', { status: 409 }), new Error('network')]) {
+      answer(res);
+      expect(await spClient.detectDeviceDecisions()).toBe(false);
+    }
+    // and with the legacy path on, a decision still goes to /api exactly as before
+    const fetchSpy = vi.fn().mockResolvedValue(ok());
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    await spClient.approveProposal('p1');
+    expect(fetchSpy.mock.calls[0][0]).toBe('/api/proposals/p1/approve');
+  });
+});

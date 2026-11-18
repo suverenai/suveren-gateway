@@ -25,6 +25,10 @@ import type { AsFetchPinning } from '../lib/as-tls-pin';
 import { PlatformHelper, unlockKeyService } from '../lib/platform-helper';
 import { CheckKeyStore, PlatformChecks, platformGate } from '../lib/platform-checks';
 import { createPlatformRouter } from './platform';
+import { DeviceDecisions, type DecisionRoute, type DecisionKind, type ProposalFacts } from '../lib/device-decision';
+import { createDeviceDecisionRouter } from './device-decision';
+import { DevicePinStore } from '../lib/device-pin-store';
+import { createInternalDeviceRouter } from './internal-device';
 
 export function deviceKeysEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.SUVEREN_DEVICE_KEYS === 'on';
@@ -44,6 +48,15 @@ export interface DeviceSetupOptions {
   discard?: () => void | Promise<void>;
   now?: () => number;
   timers?: { set: (fn: () => void, ms: number) => unknown; clear: (h: unknown) => void };
+  /**
+   * Decisions on the gateway page, signed with this computer's device key (step 12).
+   * `facts` asks the MCP server for what only the gateway knows about a proposal (its signed mandate id, its
+   * action type); `onDecided` is told after the Authority Server accepted one (events, the executor nudge).
+   */
+  decision?: {
+    facts: (p: { proposalId: string; authorizationId: string; tool: string }) => Promise<ProposalFacts>;
+    onDecided?: (route: DecisionRoute, kind: DecisionKind) => void;
+  };
 }
 
 export interface DeviceKeyMountOptions {
@@ -79,7 +92,7 @@ export function mountDeviceKeyRoutes(app: Express, o: DeviceKeyMountOptions): {
 } {
   if (!o.enabled) return { loginChangeGate: refusingGate };
   const json = o.jsonParser ?? express.json();
-  let device: { signin: DeviceSignin; setup: DeviceSetup; store: DeviceChainStore } | undefined;
+  let device: { signin: DeviceSignin; setup: DeviceSetup; store: DeviceChainStore; client: DeviceAsClient } | undefined;
   // One PlatformChecks for set-up, the confirmation route and the turn-on/off gate: they share what the helper last said about the key.
   const checks = o.platform ? new PlatformChecks(o.platform.host) : undefined;
   if (o.device) {
@@ -94,7 +107,7 @@ export function mountDeviceKeyRoutes(app: Express, o: DeviceKeyMountOptions): {
       now: o.device.now ? () => o.device!.now!() * 1000 : undefined,
       ...(o.platform && checks ? { checks, checkStore: o.platform.checkStore } : {}),
     });
-    device = { signin, setup, store };
+    device = { signin, setup, store, client };
   }
   app.use('/auth', json, createPasswordRouter({
     vault: o.vault,
@@ -126,6 +139,20 @@ export function mountDeviceKeyRoutes(app: Express, o: DeviceKeyMountOptions): {
   if (device) {
     app.use('/auth', json, createDeviceSetupRouter({ vault: o.vault, pageSession: o.pageSession, setup: device.setup, signin: device.signin }));
     app.use('/connect', createConnectCallbackRouter({ pageSession: o.pageSession, setup: device.setup }));
+    // The MCP server's questions about device keys (its own chain, the heads it has verified), by internal secret.
+    app.use('/internal', json, createInternalDeviceRouter(o.internalSecret, device.store, new DevicePinStore(o.vault, device.store)));
+    if (o.device?.decision) {
+      app.use('/device-decision', json, createDeviceDecisionRouter({
+        vault: o.vault,
+        pageSession: o.pageSession,
+        store: device.store,
+        decisions: new DeviceDecisions({
+          vault: o.vault, store: device.store, client: device.client,
+          facts: o.device.decision.facts, onDecided: o.device.decision.onDecided,
+          now: o.device.now,
+        }),
+      }));
+    }
   }
   app.use('/internal', json, createInternalOsSignalRouter(o.internalSecret, createOsSignalHook(o.pageSession.sessions)));
   return {

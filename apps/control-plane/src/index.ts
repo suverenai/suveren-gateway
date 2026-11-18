@@ -60,7 +60,7 @@ import { requireAllowedHost } from './middleware/host-guard';
 import { refuseAmbiguousPath, isApiPath } from './middleware/request-path';
 import { OAuthStateStore } from './lib/oauth-state';
 import { mcpPublicPort } from './lib/mcp-public-port';
-import { getToolDisplay, mcpRekeyClient, pushGateContent, pushServiceCredentials, setInternalSecret, getManifests, getGateContent, getEnrichedAuthorizations, getSkippedCommitments, getMyPendingProposals, MCP_BASE, runCommittedProposals, resyncGates, setReadPolicy, configure as configureMcp, unconfigureSession, replaceIntegration, startPendingIntegrations } from './lib/mcp-bridge';
+import { getToolDisplay, mcpRekeyClient, pushGateContent, pushServiceCredentials, setInternalSecret, getManifests, getGateContent, getEnrichedAuthorizations, getSkippedCommitments, getMyPendingProposals, MCP_BASE, runCommittedProposals, resyncGates, setReadPolicy, configure as configureMcp, unconfigureSession, replaceIntegration, startPendingIntegrations, getProposalFacts } from './lib/mcp-bridge';
 import { createEstablish } from './lib/device-session-establish';
 import { createSignInSweep } from './lib/device-signin-sweep';
 import { createAsKeyCheck, asPinning } from './lib/device-as-trust';
@@ -278,6 +278,16 @@ const { loginChangeGate, deviceChainState, signin: deviceSignin } = mountDeviceK
     }),
     onTlsMismatch: lockAsTlsMismatch,
     discard: () => { vault.clearSpCookie(); return unconfigureSession(); },
+    // A decision on the gateway page is signed with this computer's device key (step 12). After the Authority
+    // Server accepted it the same events and the same executor nudge follow as for a decision through the /api proxy below.
+    decision: {
+      facts: getProposalFacts,
+      onDecided: (route) => {
+        if (route === 'resolve') { eventBus.emit('proposal-resolved'); void runCommittedProposals().catch(() => {}); }
+        else if (route === 'approve') { eventBus.emit('proposal-approved'); void runCommittedProposals().catch(() => {}); }
+        else if (route === 'reject') eventBus.emit('proposal-rejected');
+      },
+    },
   } : undefined,
 });
 if (deviceSignin) deviceSessionEnded = () => deviceSignin.sessionLost();

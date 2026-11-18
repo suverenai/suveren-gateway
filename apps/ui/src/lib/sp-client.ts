@@ -536,6 +536,38 @@ export interface GatewaySettings {
 
 class SPClient {
   private apiKey: string | null = null;
+  /**
+   * Device keys (plan 6.3, step 12): on a gateway with a device chain a decision is signed with this
+   * computer's key by the control plane (`/device-decision/:id/:route`), which then forwards it to the
+   * Authority Server. Off (the default) every decision goes the legacy way, byte for byte as before.
+   * Set by {@link detectDeviceDecisions} once the page has its session (the unlock screens, O19), never guessed.
+   */
+  private deviceDecisions = false;
+
+  setDeviceDecisions(on: boolean): void {
+    this.deviceDecisions = on;
+  }
+
+  /**
+   * Ask the gateway whether it has a device chain. Only an explicit yes switches the path; 404 (switch
+   * off), 401, 409 or anything unreadable keeps the legacy path, whose refusal by a chain account's
+   * Authority Server (DEVICE_DECISION_REQUIRED) is then what the person sees: never a silent fallback to unsigned.
+   */
+  async detectDeviceDecisions(): Promise<boolean> {
+    try {
+      const res = await this.fetch('/device-decision/status');
+      const body = res.ok ? await res.json().catch(() => null) : null;
+      this.deviceDecisions = (body as { deviceKeys?: unknown } | null)?.deviceKeys === true;
+    } catch {
+      this.deviceDecisions = false;
+    }
+    return this.deviceDecisions;
+  }
+
+  /** Where a decision on `id` goes: the same four route names, locally signed on a gateway with a device chain. */
+  private decisionPath(id: string, route: 'approve' | 'reject' | 'resolve' | 'withdraw'): string {
+    return `${this.deviceDecisions ? '/device-decision' : '/api/proposals'}/${encodeURIComponent(id)}/${route}`;
+  }
 
   setApiKey(key: string): void {
     this.apiKey = key;
@@ -1499,7 +1531,7 @@ class SPClient {
     },
   ): Promise<{ status: string; receipt?: unknown }> {
     const { noteEncrypted, contentHash, shownHash, note, ...rest } = opts ?? {};
-    const res = await this.fetch(`/api/proposals/${encodeURIComponent(id)}/resolve`, {
+    const res = await this.fetch(this.decisionPath(id, 'resolve'), {
       method: 'POST',
       body: JSON.stringify({
         action,
@@ -1574,7 +1606,7 @@ class SPClient {
     // PE1 — the fingerprint of the toolArgs THIS device decrypted and showed.
     if (contentHash) { body.content_hash = contentHash; body.proposalContentHash = contentHash; } // v0.8 wire name beside the legacy one
     if (shownHash) body.shown_hash = shownHash;
-    const res = await this.fetch(`/api/proposals/${encodeURIComponent(id)}/approve`, {
+    const res = await this.fetch(this.decisionPath(id, 'approve'), {
       method: 'POST',
       body: Object.keys(body).length > 0 ? JSON.stringify(body) : undefined,
     });
@@ -1618,7 +1650,7 @@ class SPClient {
     }
     if (contentHash) { body.content_hash = contentHash; body.proposalContentHash = contentHash; } // v0.8 wire name beside the legacy one
     if (shownHash) body.shown_hash = shownHash;
-    const res = await this.fetch(`/api/proposals/${encodeURIComponent(id)}/reject`, {
+    const res = await this.fetch(this.decisionPath(id, 'reject'), {
       method: 'POST',
       body: JSON.stringify(body),
     });
@@ -1669,7 +1701,7 @@ class SPClient {
     };
     if (contentHash) { body.content_hash = contentHash; body.proposalContentHash = contentHash; } // v0.8 wire name beside the legacy one
     if (shownHash) body.shown_hash = shownHash;
-    const res = await this.fetch(`/api/proposals/${encodeURIComponent(id)}/withdraw`, {
+    const res = await this.fetch(this.decisionPath(id, 'withdraw'), {
       method: 'POST',
       body: JSON.stringify(body),
     });
