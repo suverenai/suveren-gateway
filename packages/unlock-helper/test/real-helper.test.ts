@@ -73,13 +73,14 @@ run('real helper, software keys: same code path as the Secure Enclave, no touch'
       const entry = (op: string, check: unknown = null) => Buffer.from(JSON.stringify({ typ: 'suveren-chain-entry', op, seq: 2, device: { label: 'Work Mac' }, check }));
       const change = (kind: string, name = 'gmail') => Buffer.from(JSON.stringify({ request_id: 'r', kind, name, change_hash: 'h', gateway_key_id: null, expires_at: 1 }));
       const unlock = (action: string) => Buffer.from(JSON.stringify({ typ: 'suveren-platform-unlock', v: 1, action, nonce: 'n', issued_at: 1 }));
+      const cancel = (extra: object = {}) => Buffer.from(JSON.stringify({ typ: 'suveren-identity-cancel', v: 1, aud: 'a', root_did: 'd', key_id: 'k', request_id: 'r', chain_seq: 1, chain_head: 'h', issued_at: 1, ...extra }));
       const quoteEntry = Buffer.from(JSON.stringify({ typ: 'suveren-chain-entry', op: 'add', device: { label: 'x" and approve "y' }, check: null }));
-      const objects = [entry('genesis'), entry('add'), entry('reset'), entry('remove'), entry('set'), entry('set', { type: 'platform', pub: 'x' }), entry('rotate-root'), change('replace'), change('remove'), change('replace', 'a"b\\c'), unlock('enable'), unlock('disable'), quoteEntry];
+      const objects = [entry('genesis'), entry('add'), entry('reset'), entry('remove'), entry('set'), entry('set', { type: 'platform', pub: 'x' }), entry('rotate-root'), change('replace'), change('remove'), change('replace', 'a"b\\c'), unlock('enable'), unlock('disable'), cancel(), quoteEntry];
       for (const object of objects) {
         const s = await c.signCheck({ keyBlob: k.keyBlob, digest: sha256Hash(object), object });
         expect(s.reason).toBe(reasonFor(object));
       }
-      for (const bad of [Buffer.from('{}'), change('delete'), change('remove', ''), unlock('toggle'), Buffer.from(JSON.stringify({ request_id: 'r', kind: 'remove', change_hash: 'h', gateway_key_id: null, expires_at: 1 })), entry('launch'), Buffer.from('{"typ":"suveren-chain-entry","op":"add","device":{"label":"a\\nb"}}')]) {
+      for (const bad of [Buffer.from('{}'), change('delete'), change('remove', ''), unlock('toggle'), Buffer.from(JSON.stringify({ request_id: 'r', kind: 'remove', change_hash: 'h', gateway_key_id: null, expires_at: 1 })), entry('launch'), cancel({ note: 'x' }), Buffer.from('{"typ":"suveren-identity-cancel","v":1}'), Buffer.from('{"typ":"suveren-chain-entry","op":"add","device":{"label":"a\\nb"}}')]) {
         await expect(c.signCheck({ keyBlob: k.keyBlob, digest: sha256Hash(bad), object: bad })).rejects.toMatchObject({ code: 'bad_request' });
         expect(() => reasonFor(bad)).toThrow();
       }

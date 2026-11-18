@@ -16,6 +16,8 @@ import Foundation
 ///     (plan section 7; `name` is added so the prompt can say which login)
 ///   - a Touch ID unlock switch: exactly typ "suveren-platform-unlock", v, action ("enable" | "disable"),
 ///     nonce, issued_at
+///   - the cancel of a request for a new identity: exactly typ "suveren-identity-cancel", v, aud, root_did,
+///     key_id, request_id, chain_seq, chain_head, issued_at (hap-core 0.15.0, plan 6.2)
 public enum ReasonText {
     /// A name from the object goes between quotes with `\` and `"` escaped, so no name can end the quote and add words.
     public static func quoted(_ s: String) -> String {
@@ -32,9 +34,11 @@ public enum ReasonText {
     public static let setCheck = "give a device a check key"
     public static let clearCheck = "remove the check key of a device"
     public static let rotateRoot = "replace the recovery code"
+    public static let cancelIdentityReset = "cancel the request for a new identity"
 
     static let changeRequestMembers: Set<String> = ["request_id", "kind", "name", "change_hash", "gateway_key_id", "expires_at"]
     static let unlockSwitchMembers: Set<String> = ["typ", "v", "action", "nonce", "issued_at"]
+    static let identityCancelMembers: Set<String> = ["typ", "v", "aud", "root_did", "key_id", "request_id", "chain_seq", "chain_head", "issued_at"]
 
     public static func forObject(_ bytes: Data) throws -> String {
         guard let any = try? JSONSerialization.jsonObject(with: bytes), let o = any as? [String: Any] else {
@@ -54,6 +58,9 @@ public enum ReasonText {
             case "disable": return disableUnlock
             default: break
             }
+        }
+        if o["typ"] as? String == "suveren-identity-cancel", Set(o.keys) == identityCancelMembers {
+            return cancelIdentityReset
         }
         throw HelperError("bad_request", "object is of a kind this helper has no prompt text for.")
     }

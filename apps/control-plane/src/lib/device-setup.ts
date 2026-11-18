@@ -93,6 +93,8 @@ export interface DeviceSetupDeps {
   /** The computer's check key through the native helper. Unset: a set-up cannot ask for one. */
   checks?: PlatformChecks;
   checkStore?: CheckKeyStore;
+  /** Is a recovery with the recovery code started and not finished (lib/device-recovery.ts)? A set-up and a recovery never run together. */
+  otherFlowPending?: () => boolean;
 }
 
 function isStoredCheckKey(v: unknown): v is StoredCheckKey {
@@ -182,6 +184,7 @@ export class DeviceSetup {
     this.requireVault();
     if (this.busy) throw new SetupRefusal(409, 'setup_busy');
     if (this.live()) throw new SetupRefusal(409, 'setup_pending');
+    if (this.d.otherFlowPending?.()) throw new SetupRefusal(409, 'recovery_pending');
     this.busy = true;
     let rootSeed: Uint8Array | null = null;
     try {
