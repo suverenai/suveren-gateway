@@ -1,1 +1,8 @@
-[]
+[
+  {
+    "ghsa": "GHSA-fc5q-39xc-vjpf",
+    "package": "picomatch",
+    "reason": "No fixed version exists (advisory covers <= 4.0.7, the newest release). Not reachable: the only production path is control-plane -> http-proxy-middleware 3.0.7 -> micromatch 4.0.8 -> picomatch 2.3.2, and the ReDoS needs an attacker-supplied glob PATTERN. The control plane's single proxy (apps/control-plane/src/index.ts:1191-1194) passes a function as pathFilter; http-proxy-middleware's dist/path-filter.js calls a function filter directly and runs micromatch only for string/glob filters. Remove when a patched picomatch ships (the check then prints 'no longer needed').",
+    "reviewBy": "2026-12-18"
+  }
+]
