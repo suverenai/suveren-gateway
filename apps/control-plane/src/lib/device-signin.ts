@@ -19,7 +19,7 @@
  *    same number a fork; either refuses the session;
  *  - that this computer is still active in that chain.
  *
- * Codes are neutral; the words the person reads are Andreas's (O19).
+ * Codes are neutral; the words the person reads are the maintainer's (O19).
  */
 
 import type { ChainState } from '@hap/core/device-keys';
