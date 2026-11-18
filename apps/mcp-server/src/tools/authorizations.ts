@@ -18,6 +18,7 @@ import { isSimulationMode } from '../lib/simulation-mode';
 import { firstMandateText, connectorOverview, manifestAreas, shortAnswer, possibleAreas, CALL_THROUGH_RULE, type GuideManifest } from '../lib/guidance';
 import { overviewInput, guideManifests, setupMandateFacts } from '../lib/guidance-runtime';
 import { agentVisibleAuthorizations } from '../lib/agent-visibility';
+import { AGENT_RULES } from '../lib/agent-rules';
 
 /** Extract short profile name from full ID */
 function shortProfileName(profileId: string): string {
@@ -226,6 +227,14 @@ function rowsForDomain(
   return rows.filter(r => profileMatches(r.profile, domain) || areas.some(a => profileMatches(r.profile, a))).map(r => r.line);
 }
 
+/**
+ * The rules (golden rule first) at the top of the short answer, the one every AI is sent to before
+ * its first reply. The start message alone is not enough: Claude Code keeps only its first 4096
+ * characters, and a chat keeps the start message it got when it connected — before 0.45.0 the rules
+ * came after a long agent brief and were cut off (Andreas, 2026-11-16).
+ */
+const RULES_SECTION = ['=== RULES ===', ...AGENT_RULES.map(r => `- ${r}`), ''];
+
 const LISTED_WITHOUT_MANDATE_HEADING =
   'Listed but not usable yet — no mandate covers these; every call is refused until the person grants one:';
 
@@ -267,6 +276,7 @@ function listAuthorizations(
       // No mandate at all reads the same in every mode: the words must not tell a working AI which mode it is in.
       const text = ['No active authorizations — no tool is usable yet.'];
       if (!domain) {
+        text.unshift(...RULES_SECTION);
         const short = await shortAnswerPart(state, integrationManager, authorizations);
         if (short) text.push('', short);
         // The change note sends the AI here for the current brief, also before any mandate exists.
@@ -458,7 +468,7 @@ function listAuthorizations(
       }
     }
 
-    const output: string[] = [];
+    const output: string[] = [...RULES_SECTION];
 
     if (context) {
       output.push('=== CONTEXT ===');

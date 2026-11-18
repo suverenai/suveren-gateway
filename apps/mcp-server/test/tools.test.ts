@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { registerProfile, clearProfiles } from '@hap/core';
 import { listAuthorizationsHandler } from '../src/tools/authorizations';
+import { AGENT_RULES, NO_IMPERSONATION_RULE } from '../src/lib/agent-rules';
 import { checkPendingHandler } from '../src/tools/pending';
 import { createGatedToolHandler, buildProxiedToolDescription } from '../src/lib/tool-proxy';
 import { SPReceiptError } from '../src/lib/sp-client';
@@ -93,6 +94,16 @@ describe('list-authorizations', () => {
     expect(text).toContain('charge-routine');
     expect(text).toContain('amount_max: 80');
     expect(text).toContain('currency: EUR');
+    // The rules lead the short answer, golden rule first (a chat's start message may be cut or old).
+    expect(text.startsWith(`=== RULES ===\n- ${NO_IMPERSONATION_RULE}\n`)).toBe(true);
+    // Only the short answer: an area's answer stays about that area.
+    expect((await handler({ domain: 'charge' })).content[0].text).not.toContain('=== RULES ===');
+  });
+
+  it('leads with the rules also when no mandate exists yet', async () => {
+    const text = (await listAuthorizationsHandler(mockState())()).content[0].text;
+    expect(text.startsWith(`=== RULES ===\n- ${NO_IMPERSONATION_RULE}\n`)).toBe(true);
+    for (const r of AGENT_RULES) expect(text).toContain(r);
   });
 
   it('lists pending authorizations with missing domains', async () => {
