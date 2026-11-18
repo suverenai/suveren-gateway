@@ -1,0 +1,151 @@
+name: Approve app - compare live site
+
+# Every few hours: fetch the live phone app and compare every served file with
+# the published manifest of the release that is live. Any difference turns this
+# workflow red, and the result is public:
+#   - the run status of this workflow in the public repository, and its badge
+#       https://github.com/<repo>/actions/workflows/approve-compare.yml/badge.svg
+#   - the run summary, which lists each changed, missing or unlisted file
+#
+# PLACEHOLDER, Andreas decides: a JSON result in a place outside GitHub (the
+# security page, a file next to the site). See the last step.
+#
+# This finds code that is changed for everyone. It cannot find code served to
+# one person only (docs/approve-release.md).
+#
+# GitHub switches scheduled workflows off after 60 days without repository
+# activity. A badge that stops updating is the sign; the doc says what to do.
+
+on:
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      site_url:
+        description: Dry run - compare this address instead of the live site (https only)
+        required: false
+      tag:
+        description: Dry run - compare against this release tag instead of the live one
+        required: false
+      build_run_id:
+        description: Dry run - take the manifest from the artifact of this approve-build run (a dry-run build creates no release)
+        required: false
+
+permissions: {}
+
+concurrency:
+  group: approve-compare
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '22.14.0'
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      attestations: read
+      actions: read         # only to download a dry-run build's artifact
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Which release is live
+        id: live
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_RUN: ${{ inputs.build_run_id }}
+        run: |
+          set -euo pipefail
+          tag=""
+          if [ -n "$INPUT_RUN" ]; then
+            if ! echo "$INPUT_RUN" | grep -Eq '^[0-9]+$'; then echo "::error::build_run_id must be a number"; exit 1; fi
+            tag="approve-dry-run"
+          elif [ -n "$INPUT_TAG" ]; then
+            tag="$INPUT_TAG"
+          else
+            # Newest release that the gated publish recorded as deployed.
+            for t in $(gh release list --repo "$GITHUB_REPOSITORY" --limit 50 --json tagName,isDraft \
+                         --jq '.[] | select(.isDraft | not) | .tagName | select(startswith("approve-v"))'); do
+              if gh release view "$t" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | grep -qx deployed.json; then
+                tag="$t"; break
+              fi
+            done
+          fi
+          if ! echo "$tag" | grep -Eq '^(approve-dry-run|approve-v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?)?$'; then
+            echo "::error::'$tag' is not a release tag"; exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if [ -z "$tag" ]; then
+            echo "No release has been published yet. Nothing to compare."
+            echo "### Phone app: nothing published yet, nothing to compare" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Comparing against $tag"
+          fi
+
+      - name: Download and verify the manifest
+        if: steps.live.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.live.outputs.tag }}
+          INPUT_RUN: ${{ inputs.build_run_id }}
+        run: |
+          set -euo pipefail
+          if [ -n "$INPUT_RUN" ]; then
+            # Dry run: the manifest of a branch build. Signed by the same workflow, but not from a tag.
+            gh run download "$INPUT_RUN" --repo "$GITHUB_REPOSITORY" --name approve-build --dir dry
+            mv dry/manifest.json manifest.json
+            ref_args=()
+          else
+            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern manifest.json
+            ref_args=(--source-ref "refs/tags/$TAG")
+          fi
+          # The manifest is the reference. It must be the one the build workflow signed.
+          gh attestation verify manifest.json \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/approve-build.yml" \
+            "${ref_args[@]}" > /dev/null
+
+      - name: Fetch the live site and compare every file
+        if: steps.live.outputs.tag != ''
+        env:
+          SITE_URL: ${{ inputs.site_url || vars.APPROVE_SITE_URL || 'https://approve.suveren.ai' }}
+          TAG: ${{ steps.live.outputs.tag }}
+        run: |
+          set -euo pipefail
+          set +e
+          node scripts/approve-release.mjs compare --manifest manifest.json --url "$SITE_URL" --out result.json
+          code=$?
+          set -e
+          if [ -f result.json ]; then
+            {
+              echo "### Phone app vs release $TAG: $(jq -r '.status | ascii_upcase' result.json)"
+              echo ""
+              echo "Site: $SITE_URL. Checked: $(jq -r .checked result.json) files, at $(jq -r .checked_at result.json)."
+              jq -r '(.changed[] | "- changed: \(.path)"), (.missing[] | "- missing: \(.path) (\(.reason))"), (.extra[] | "- not in the release: \(.)")' result.json
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit $code
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always() && hashFiles('result.json') != ''
+        with:
+          name: approve-compare-result
+          path: result.json
+          retention-days: 30
+
+      # PLACEHOLDER (Andreas decides where the public JSON result lives).
+      # Candidates: a file served next to the security page, or a file on a
+      # public branch/Pages site of this repository. Credentials, if any, go in
+      # secrets, never in the repository. Disabled until then; the workflow
+      # status and the badge are already public.
+      - name: Publish result.json (PLACEHOLDER - disabled)
+        if: ${{ false }}
+        run: echo "publish result.json to the chosen public place"

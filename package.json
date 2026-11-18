@@ -17,7 +17,8 @@
     "dev:ui": "pnpm --filter @suveren/ui dev",
     "dev:mcp": "pnpm --filter @suveren/mcp-server dev",
     "dev:control": "pnpm --filter @suveren/control-plane dev",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:approve-release": "node --test scripts/approve-release.test.mjs"
   },
   "dependencies": {
     "react-router-dom": "^7.18.4"
