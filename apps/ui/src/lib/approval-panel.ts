@@ -9,7 +9,7 @@
  *     the moment they are done.
  */
 import type { GatewaySettings } from './sp-client';
-import { nextAfter } from './approval-flow';
+import { nextAfter } from '@suveren/approval-card/lib/approval-flow';
 
 // ─── Setting: "Open approvals by themselves" (stored in the gateway, never the browser) ───
 

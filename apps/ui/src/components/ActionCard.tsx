@@ -1,22 +1,22 @@
-import { resolveProposalLinks, type ProposalLink } from '../lib/proposal-links';
+import { resolveProposalLinks, type ProposalLink } from '@suveren/approval-card/lib/proposal-links';
 import type { ThreadItem } from '../lib/thread-aggregator';
 import { formatTimeLeft } from '../lib/time-left';
-import { ProposalArgs, NotSealedArgs, localPreviewIsUnsealed } from './ProposalArgs';
+import { ProposalArgs, NotSealedArgs, localPreviewIsUnsealed } from '@suveren/approval-card/components/ProposalArgs';
 import { ProfileRail } from './ProfileRail';
-import { RefusalResult } from './RefusalResult';
+import { RefusalResult } from '@suveren/approval-card/components/RefusalResult';
 import { OutcomeBox } from './OutcomeBox';
-import { ApprovalCard } from './ApprovalCard';
+import { ApprovalCard } from '@suveren/approval-card/components/ApprovalCard';
 import { useAuth } from '../contexts/AuthContext';
 import { decideInQueue } from '../lib/approval-decision';
-import type { DecisionKind, DecisionResult } from '../lib/approval-flow';
-import type { ApprovalOutcome } from '../lib/approval-outcome';
+import type { DecisionKind, DecisionResult } from '@suveren/approval-card/lib/approval-flow';
+import type { ApprovalOutcome } from '@suveren/approval-card/lib/approval-outcome';
 import { TicketWhatWasDone } from './TicketWhatWasDone';
 import { TicketWhatYouSaw } from './TicketWhatYouSaw';
-import { isTestSetupAction, profileIdentity } from '../lib/profile-identity';
-import { splitTool, systemDisplayName, type ToolDisplay } from '../lib/approval-view';
+import { isTestSetupAction, profileIdentity } from '@suveren/approval-card/lib/profile-identity';
+import { splitTool, systemDisplayName, type ToolDisplay } from '@suveren/approval-card/lib/approval-view';
 import type { IntegrationManifest, Proposal } from '../lib/sp-client';
-import { outcomeAfterView, refusedAfterView, type OutcomeKindLabel } from '../lib/reject-outcome';
-import { useProposalContent, useDecryptedNote } from '../lib/use-proposal-content';
+import { outcomeAfterView, refusedAfterView, type OutcomeKindLabel } from '@suveren/approval-card/lib/reject-outcome';
+import { useProposalContent, useDecryptedNote } from '@suveren/approval-card/lib/use-proposal-content';
 
 type CardStatus = 'pending' | 'committed' | 'executed' | 'rejected' | 'expired' | 'refused';
 

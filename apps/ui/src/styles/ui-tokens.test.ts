@@ -17,6 +17,11 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 
 const SRC = join(__dirname, '..');
+// The approval card lives in a shared package; its code is held to the same rules.
+const CARD_SRC = join(__dirname, '..', '..', '..', '..', 'packages', 'approval-card', 'src');
+const ROOTS = [SRC, CARD_SRC];
+const walkAll = (): string[] => ROOTS.flatMap((r) => walk(r));
+const relOf = (f: string): string => (f.startsWith(CARD_SRC) ? `approval-card/${relative(CARD_SRC, f)}` : relative(SRC, f));
 const TOKENS = join(__dirname, 'tokens.css');
 
 /** file (relative to src) → literal snippets that may appear there, and why. */
@@ -55,7 +60,7 @@ function definedNames(): Set<string> {
     for (const m of text.matchAll(/(--[a-z0-9-]+)\s*:/g)) names.add(m[1]);
   };
   collect(readFileSync(TOKENS, 'utf8'));
-  for (const f of walk(SRC)) {
+  for (const f of walkAll()) {
     const text = readFileSync(f, 'utf8');
     if (f.endsWith('.css')) collect(stripComments(text, true));
     for (const m of text.matchAll(/setProperty\(\s*['"`](--[a-z0-9-]+)/g)) names.add(m[1]);
@@ -73,10 +78,10 @@ describe('UI spec tokens (UI1)', () => {
   it('every var(--…) used is defined', () => {
     const defined = definedNames();
     const missing: string[] = [];
-    for (const f of [...walk(SRC), TOKENS]) {
+    for (const f of [...walkAll(), TOKENS]) {
       const text = stripComments(readFileSync(f, 'utf8'), f.endsWith('.css'));
       for (const m of text.matchAll(/var\(\s*(--[a-z0-9-]+)/g)) {
-        if (!defined.has(m[1])) missing.push(`${relative(SRC, f)}: ${m[1]}`);
+        if (!defined.has(m[1])) missing.push(`${relOf(f)}: ${m[1]}`);
       }
     }
     const unique = [...new Set(missing)];
@@ -85,10 +90,10 @@ describe('UI spec tokens (UI1)', () => {
 
   it('no literal colour outside tokens.css', () => {
     const found: string[] = [];
-    for (const f of walk(SRC)) {
+    for (const f of walkAll()) {
       if (f === TOKENS) continue;
       // Always '/' — the allow-list is written that way (Windows uses '\\').
-      const rel = relative(SRC, f).split(sep).join('/');
+      const rel = relOf(f).split(sep).join('/');
       const allowed = ALLOWED[rel] ?? [];
       const lines = stripComments(readFileSync(f, 'utf8'), f.endsWith('.css')).split('\n');
       lines.forEach((line, i) => {

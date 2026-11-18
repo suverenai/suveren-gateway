@@ -12,10 +12,10 @@ import {
 } from '../lib/sp-client';
 import { pickerEntries, findPreselectedEntry } from '../lib/picker-entries';
 import { mandateRight } from '../lib/mandate-rights';
-import { profileDisplayName } from '../lib/profile-display';
-import { profileIdentity } from '../lib/profile-identity';
+import { profileDisplayName } from '@suveren/approval-card/lib/profile-display';
+import { profileIdentity } from '@suveren/approval-card/lib/profile-identity';
 import { ProfileIcon } from './ProfileIcon';
-import { useAreaCatalog } from '../lib/area-catalog';
+import { useAreaCatalog } from '@suveren/approval-card/lib/area-catalog';
 
 interface Props {
   onDismiss?: () => void;

@@ -8,21 +8,21 @@ import {
   type LocalAuthorization,
   type SignatureStatus,
 } from '../lib/sp-client';
-import { actionLabel, scopeSummary, wasReviewed, profileVersionLabel } from '../lib/receipt-summary';
+import { actionLabel, scopeSummary, wasReviewed, profileVersionLabel } from '@suveren/approval-card/lib/receipt-summary';
 import { ProfileBadge } from '../components/ProfileBadge';
 import { ReceiptCard } from '../components/ReceiptCard';
 import { NoTicketRow } from '../components/NoTicketRow';
 import { ReceiptCompleteDialog } from '../components/ReceiptCompleteDialog';
 import { EmptyState } from '../components/EmptyState';
 import { AreaFilterPills, type AreaFilterOption } from '../components/AreaFilterPills';
-import { useVisiblePolling } from '../hooks/useVisiblePolling';
+import { useVisiblePolling } from '@suveren/approval-card/hooks/useVisiblePolling';
 import { useAuth } from '../contexts/AuthContext';
 import { useSSEEvent } from '../contexts/EventSourceContext';
-import { parseTicketFilter, matchesTicketFilter, isNewTicket, groupTicketsByDay, TICKET_FILTERS, type TicketFilter } from '../lib/core-objects';
-import { useAreaCatalog } from '../lib/area-catalog';
-import { resolveAreaName, areaIcon, parseAreaFilter, matchesAreaFilter } from '../lib/area';
-import { shortProfileId } from '../lib/profile-identity';
-import { systemDisplayName, splitTool } from '../lib/approval-view';
+import { parseTicketFilter, matchesTicketFilter, isNewTicket, groupTicketsByDay, TICKET_FILTERS, type TicketFilter } from '@suveren/approval-card/lib/core-objects';
+import { useAreaCatalog } from '@suveren/approval-card/lib/area-catalog';
+import { resolveAreaName, areaIcon, parseAreaFilter, matchesAreaFilter } from '@suveren/approval-card/lib/area';
+import { shortProfileId } from '@suveren/approval-card/lib/profile-identity';
+import { systemDisplayName, splitTool } from '@suveren/approval-card/lib/approval-view';
 
 type TimeRange = '1d' | '7d' | '30d' | 'all';
 

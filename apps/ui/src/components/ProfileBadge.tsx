@@ -1,4 +1,4 @@
-import { profileDisplayName } from '../lib/profile-display';
+import { profileDisplayName } from '@suveren/approval-card/lib/profile-display';
 
 interface Props {
   profileId: string;

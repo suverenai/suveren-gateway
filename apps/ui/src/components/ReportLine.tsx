@@ -7,7 +7,7 @@
 import { useCallback, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { spClient, type ReportModel } from '../lib/sp-client';
-import { useVisiblePolling } from '../hooks/useVisiblePolling';
+import { useVisiblePolling } from '@suveren/approval-card/hooks/useVisiblePolling';
 import { useSSEEvent } from '../contexts/EventSourceContext';
 import { isNewReport, reportTitle, reportCheckCounts, reportPeriod, writtenLabel } from '../lib/report-news';
 

@@ -20,19 +20,19 @@ import {
   type IntegrationManifest,
   type LocalAuthorization,
 } from '../lib/sp-client';
-import { useVisiblePolling } from '../hooks/useVisiblePolling';
+import { useVisiblePolling } from '@suveren/approval-card/hooks/useVisiblePolling';
 import { useSSEEvent } from '../contexts/EventSourceContext';
-import { loadProfile } from '../lib/profile-cache';
-import { useAreaCatalog } from '../lib/area-catalog';
+import { loadProfile } from '@suveren/approval-card/lib/profile-cache';
+import { useAreaCatalog } from '@suveren/approval-card/lib/area-catalog';
 
 import {
   areaName, systemName, isToday, isNewTicket, ticketTime,
   groupAutomatic, mandatesAtWork, nearLimit, matchesTicketFilter, shortTicketId,
-} from '../lib/core-objects';
-import { actionLabel } from '../lib/receipt-summary';
+} from '@suveren/approval-card/lib/core-objects';
+import { actionLabel } from '@suveren/approval-card/lib/receipt-summary';
 import { ObTypeLine } from './ObjectCard';
 import { ApprovalRow } from './ApprovalRow';
-import { showMandateLine } from '../lib/area';
+import { showMandateLine } from '@suveren/approval-card/lib/area';
 import { Skeleton } from './Skeleton';
 
 const MAX_ITEMS = 5;

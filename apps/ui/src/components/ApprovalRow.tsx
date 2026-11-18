@@ -1,13 +1,13 @@
 import type { IntegrationManifest, Proposal } from '../lib/sp-client';
-import { areaName, ageLabel, deadlineLabel } from '../lib/core-objects';
-import { useAreaCatalog } from '../lib/area-catalog';
-import { useProposalPreview } from '../lib/preview-store';
+import { areaName, ageLabel, deadlineLabel } from '@suveren/approval-card/lib/core-objects';
+import { useAreaCatalog } from '@suveren/approval-card/lib/area-catalog';
+import { useProposalPreview } from '@suveren/approval-card/lib/preview-store';
 import { standOut } from '../lib/approval-row';
-import { showMandateLine, areaIcon } from '../lib/area';
-import { AreaIcon } from './AreaIcon';
+import { showMandateLine, areaIcon } from '@suveren/approval-card/lib/area';
+import { AreaIcon } from '@suveren/approval-card/components/AreaIcon';
 import { ApprovalSummary } from './ApprovalSummary';
-import { useProposalContent } from '../lib/use-proposal-content';
-import { mandateTargetProfile } from '../lib/mandate-proposal';
+import { useProposalContent } from '@suveren/approval-card/lib/use-proposal-content';
+import { mandateTargetProfile } from '@suveren/approval-card/lib/mandate-proposal';
 
 interface Props {
   proposal: Proposal;
