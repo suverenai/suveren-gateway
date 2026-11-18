@@ -1,0 +1,424 @@
+/**
+ * Device decisions, checked by the gateway BEFORE a committed proposal runs
+ * (device-keys plan 4.2, section 7 row `committed-executor.ts, ticket-verify.ts`;
+ * build step 12, computer part).
+ *
+ * A proposal that the Authority Server calls "committed" runs only if every decision
+ * it rests on is on file as a device decision that this gateway has verified itself:
+ *
+ *   - WHO may decide comes from the SIGNED mandate: the owner (`mandate_owners[0].did`)
+ *     and the signed `above_cap_approvers`. Never from an account id, a user table or any
+ *     other word of the Authority Server. A decision by any other DID counts for nothing.
+ *   - WHICH KEYS may sign for them comes from that person's device chain, fetched from the
+ *     Authority Server but verified here from the genesis on with hap-core (`verifyChain`),
+ *     against the root DID the mandate names and against the head this gateway pinned the
+ *     last time. A shorter chain (rollback) or another hash at the same number (fork)
+ *     is refused; a key is never taken from the Authority Server's word.
+ *   - WHAT was decided is rebuilt by this gateway from its own data: the proposal id, the
+ *     tool and the fingerprint of the content it resolved and is about to run, the signed
+ *     `mandate_id`, and the action type of its own submission (`verifyDecision` requires all
+ *     five to be equal). A decision for another proposal, another content or another
+ *     action is refused; so is a `reject` or `withdraw` where a `commit` is needed.
+ *   - HOW MANY is the mandate's own rule (the same one hap-core's `approvalsSufficient` applies
+ *     to approval signatures): the owner for a `review` mandate, and for an above-cap
+ *     proposal as many distinct signed approvers as `above_cap_approvals` says.
+ *
+ * A "committed" state with no device decision does NOT run. This gateway has a device chain
+ * (asked of the control plane) or it does not: without one, and with SUVEREN_DEVICE_KEYS off,
+ * nothing here runs and the executor behaves exactly as before.
+ *
+ * Refusals are neutral codes plus a short text that names the reason. They never carry a
+ * signature, a nonce, a key or content.
+ */
+
+import { decodeMandateBlob } from '@hap/core';
+import type { ChainState, Decision } from '@hap/core/device-keys';
+import type { CachedAuthorization } from './attestation-cache';
+import type { SPProposal } from './sp-client';
+
+export type DeviceKeys = typeof import('@hap/core/device-keys');
+let loaded: Promise<DeviceKeys> | null = null;
+/** hap-core's device-keys module, loaded on first use: a gateway that never reaches this code never needs it. */
+export function deviceKeys(): Promise<DeviceKeys> {
+  return (loaded ??= import('@hap/core/device-keys'));
+}
+function isDeviceKeysError(e: unknown): e is Error & { code: string } {
+  return e instanceof Error && e.name === 'DeviceKeysError' && typeof (e as { code?: unknown }).code === 'string';
+}
+
+export function deviceKeysEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.SUVEREN_DEVICE_KEYS === 'on';
+}
+
+// ─── The signed mandate ─────────────────────────────────────────────────
+
+export interface SignedMandateFacts {
+  mandateId: string;
+  version: string;
+  commitmentMode: string | undefined;
+  ownerDid: string;
+  /** The signed `above_cap_approvers`. */
+  deciders: string[];
+  /** The signed `above_cap_approvals` (v0.8); undefined when the mandate does not say. */
+  aboveCapApprovals: number | undefined;
+}
+
+/**
+ * The facts of the most recently issued decodable mandate of a grant: the one the
+ * Authority Server checks a proposal against (`latestMandatePayloadFor`). Only the
+ * SIGNED payload is read.
+ */
+export function signedMandateFacts(attestations: ReadonlyArray<{ blob: string }> | undefined): SignedMandateFacts | undefined {
+  let best: SignedMandateFacts | undefined;
+  let bestAt = -Infinity;
+  for (const a of attestations ?? []) {
+    if (!a?.blob) continue;
+    try {
+      const p = decodeMandateBlob(a.blob).payload;
+      const ownerDid = p.mandate_owners?.[0]?.did;
+      if (typeof p.mandate_id !== 'string' || !p.mandate_id || typeof p.version !== 'string' || typeof ownerDid !== 'string') continue;
+      const at = typeof p.issued_at === 'number' ? p.issued_at : 0;
+      if (at < bestAt) continue;
+      bestAt = at;
+      best = {
+        mandateId: p.mandate_id,
+        version: p.version,
+        commitmentMode: typeof p.commitment_mode === 'string' ? p.commitment_mode : undefined,
+        ownerDid,
+        deciders: Array.isArray(p.above_cap_approvers) ? p.above_cap_approvers.filter((d): d is string => typeof d === 'string') : [],
+        aboveCapApprovals: typeof p.above_cap_approvals === 'number' ? p.above_cap_approvals : undefined,
+      };
+    } catch {
+      // undecodable: names nobody
+    }
+  }
+  return best;
+}
+
+// ─── What the control plane holds ───────────────────────────────────────
+
+export interface Head { seq: number; hash: string }
+
+export class PinRefused extends Error {
+  constructor(readonly reason: 'rollback' | 'fork' | 'own_chain' | 'full' | 'proposal_id_reused' | 'nonce_reused') {
+    super(reason);
+    this.name = 'PinRefused';
+  }
+}
+
+/** The control plane's answers about device keys (control-plane routes/internal-device.ts). It holds the memory, not the checking. */
+export interface DeviceCpClient {
+  chainState(): Promise<{ state: 'none' | 'present' | 'unreadable'; rootDid?: string }>;
+  getPin(did: string): Promise<Head | null>;
+  /** `keep`: signed identities of the mandates cached now; their pins are never the ones dropped when the table is full. */
+  advancePin(did: string, head: Head, keep?: string[]): Promise<void>;
+  /** This proposal runs on these decisions (their nonces): refused for a reused proposal id or nonce. */
+  consume(proposalId: string, nonces: string[]): Promise<void>;
+}
+
+function cpBase(): string {
+  return process.env.SUVEREN_CP_INTERNAL_URL ?? `http://127.0.0.1:${process.env.SUVEREN_CP_PORT ?? '3402'}`;
+}
+
+/** The control plane over loopback with the shared internal secret. Env is read per call. */
+export const controlPlaneDevice: DeviceCpClient = {
+  async chainState() {
+    const body = await cpCall('GET', '/internal/device-chain');
+    const state = (body as { state?: unknown }).state;
+    if (state !== 'none' && state !== 'present' && state !== 'unreadable') throw new Error('unreadable answer');
+    const rootDid = (body as { rootDid?: unknown }).rootDid;
+    return { state, ...(typeof rootDid === 'string' ? { rootDid } : {}) };
+  },
+  async getPin(did) {
+    const body = await cpCall('POST', '/internal/device-pin/get', { did });
+    const h = (body as { head?: { seq?: unknown; hash?: unknown } | null }).head;
+    if (h === null) return null;
+    if (!h || typeof h.seq !== 'number' || typeof h.hash !== 'string') throw new Error('unreadable answer');
+    return { seq: h.seq, hash: h.hash };
+  },
+  async advancePin(did, head, keep) {
+    await cpCall('POST', '/internal/device-pin/advance', { did, head, ...(keep?.length ? { keep } : {}) });
+  },
+  async consume(proposalId, nonces) {
+    await cpCall('POST', '/internal/device-ledger/consume', { proposalId, nonces });
+  },
+};
+
+async function cpCall(method: 'GET' | 'POST', path: string, body?: unknown): Promise<unknown> {
+  const secret = process.env.SUVEREN_INTERNAL_SECRET ?? '';
+  if (!secret) throw new Error('no control plane connection');
+  const res = await fetch(`${cpBase()}${path}`, {
+    method,
+    headers: { 'X-Internal-Secret': secret, ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) },
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    redirect: 'manual',
+    signal: AbortSignal.timeout(10_000),
+  });
+  const parsed = (await res.json().catch(() => ({}))) as { code?: unknown };
+  if (res.status === 409 && (parsed.code === 'rollback' || parsed.code === 'fork' || parsed.code === 'own_chain' || parsed.code === 'full'
+    || parsed.code === 'proposal_id_reused' || parsed.code === 'nonce_reused')) throw new PinRefused(parsed.code);
+  if (!res.ok) throw new Error(`control plane answered ${res.status}`);
+  return parsed;
+}
+
+// ─── The check ──────────────────────────────────────────────────────────
+
+export type DeviceCheck =
+  | { ok: true; skipped?: true }
+  | { ok: false; code: string; text: string };
+
+const refuse = (code: string, text: string): DeviceCheck => ({ ok: false, code, text });
+
+export interface DeviceCheckInput {
+  /** The Authority Server client: this gateway's own device session. */
+  sp: {
+    getProposalById(id: string): Promise<SPProposal | null>;
+    getDeviceChain(did: string): Promise<{ entries: unknown[]; head: Head | null } | null>;
+  };
+  cp: DeviceCpClient;
+  /** The grant this proposal runs under, as the attestation cache holds it. */
+  auth: Pick<CachedAuthorization, 'attestations'> | undefined;
+  /** Where the grant is fetched again when the cache no longer holds it. */
+  loadAuth?: () => Promise<Pick<CachedAuthorization, 'attestations'> | null | undefined>;
+  proposal: Pick<SPProposal, 'id' | 'tool' | 'pendingApprovers' | 'approvedBy'>;
+  /** This gateway's own record of the action type (never the Authority Server's). */
+  actionType: string | undefined;
+  /** The fingerprint of the content THIS gateway resolved and is about to run. */
+  proposalContentHash: string;
+  /** Signed identities (owner and approvers) of every mandate cached now: their pins are never evicted. */
+  protectedDids?: string[];
+  env?: NodeJS.ProcessEnv;
+}
+
+/**
+ * Is every decision this proposal rests on a device decision this gateway verified?
+ * `{ ok: true, skipped: true }` when this gateway has no device chain (or the switch is off).
+ */
+export async function checkDeviceDecisions(i: DeviceCheckInput): Promise<DeviceCheck> {
+  if (!deviceKeysEnabled(i.env)) return { ok: true, skipped: true };
+
+  let own: Awaited<ReturnType<DeviceCpClient['chainState']>>;
+  try {
+    own = await i.cp.chainState();
+  } catch {
+    // Switch on and the control plane silent: it is not known whether this gateway has a chain. Fail closed.
+    return refuse('device_state_unavailable', 'the control plane did not say whether this gateway has a device chain.');
+  }
+  if (own.state === 'none') return { ok: true, skipped: true };
+  if (own.state !== 'present') return refuse('device_chain_unreadable', 'this gateway\'s stored device chain cannot be read.');
+
+  let auth: Pick<CachedAuthorization, 'attestations'> | null | undefined = i.auth;
+  if (!auth && i.loadAuth) { try { auth = await i.loadAuth(); } catch { auth = undefined; } }
+  const facts = signedMandateFacts(auth?.attestations);
+  if (!facts) return refuse('mandate_unavailable', 'the signed mandate this proposal runs under is not available, so who may decide it is not known.');
+  if (!i.actionType) return refuse('action_type_unknown', 'this gateway has no action type for the proposal, so a decision on it cannot be checked.');
+
+  // The AS's copy of the decisions on file. Only `{ decision, sig }` is read.
+  let fresh: SPProposal | null;
+  try {
+    fresh = await i.sp.getProposalById(i.proposal.id);
+  } catch {
+    return refuse('proposal_unavailable', 'the Authority Server did not give the decisions on file for this proposal.');
+  }
+  if (!fresh || fresh.id !== i.proposal.id) return refuse('proposal_unavailable', 'the Authority Server did not give the decisions on file for this proposal.');
+  const stored = Array.isArray(fresh.deviceDecisions) ? fresh.deviceDecisions : [];
+
+  // Who may decide: the signed identities, nobody else.
+  const signedDids = new Set<string>([facts.ownerDid, ...facts.deciders]);
+  // KNOWN GAP (step 13 follow-up): whether the proposal is above the cap is read from the Authority Server's
+  // unsigned fields (`pendingApprovers`, `approvedBy`) beside the signed mode. Step 13 derives it from the signed
+  // bounds; until then an AS that hides the flag can waive the above-cap approvers, though never the owner of a
+  // `review` mandate and never an approver once any of them decided.
+  const aboveCap = facts.commitmentMode === 'review_above_cap'
+    || (i.proposal.pendingApprovers?.length ?? 0) > 0
+    || Object.keys(i.proposal.approvedBy ?? {}).length > 0
+    || Object.keys(fresh.approvedBy ?? {}).length > 0
+    || (fresh.pendingApprovers?.length ?? 0) > 0;
+  const needOwner = facts.commitmentMode !== 'review_above_cap';
+  const requiredApprovers = aboveCap
+    ? (facts.version === '0.7' ? facts.deciders.length : (facts.aboveCapApprovals ?? 1))
+    : 0;
+
+  const dk = await deviceKeys();
+  const chains = new Map<string, { ok: true; state: ChainState } | { ok: false; check: DeviceCheck }>();
+  const chainOf = async (did: string) => {
+    let c = chains.get(did);
+    if (!c) { c = await verifiedChain(i, dk, did); chains.set(did, c); }
+    return c;
+  };
+
+  const goodBy = new Set<string>();
+  const nonceBy = new Map<string, string>();
+  const reasons = new Map<string, string>();
+  for (const entry of stored) {
+    const env = entry as { decision?: unknown; sig?: unknown };
+    const did = (env.decision as { approver_did?: unknown } | null)?.approver_did;
+    if (typeof did !== 'string' || !signedDids.has(did)) continue;
+    if (goodBy.has(did)) continue;
+    const chain = await chainOf(did);
+    if (!chain.ok) { reasons.set(did, chain.check.ok ? 'chain' : chain.check.code); continue; }
+    try {
+      const d: Decision = await dk.verifyDecision(
+        { decision: env.decision, sig: env.sig },
+        {
+          chain: chain.state,
+          expect: {
+            proposal_id: i.proposal.id,
+            mandate_id: facts.mandateId,
+            action: i.proposal.tool,
+            action_type: i.actionType,
+            proposal_content_hash: i.proposalContentHash,
+          },
+        },
+      );
+      if (d.decision !== 'commit') { reasons.set(did, 'not_a_commit'); continue; }
+      goodBy.add(did);
+      nonceBy.set(did, d.nonce);
+    } catch (e) {
+      reasons.set(did, isDeviceKeysError(e) ? e.code : 'invalid');
+    }
+  }
+
+  const why = (did: string): string => {
+    const r = reasons.get(did);
+    return r ? `its device decision was refused (${r})` : 'no device decision of theirs is on file';
+  };
+
+  if (needOwner && !goodBy.has(facts.ownerDid)) {
+    const chain = chains.get(facts.ownerDid);
+    if (chain && !chain.ok && !chain.check.ok) return chain.check;
+    return refuse('decision_missing_owner', `the Mandate Owner has no verified device decision for this proposal: ${why(facts.ownerDid)}.`);
+  }
+  if (requiredApprovers > 0) {
+    const approversGood = facts.deciders.filter(d => d !== facts.ownerDid && goodBy.has(d)).length;
+    if (approversGood < requiredApprovers) {
+      // A broken chain of a signed approver is named as that, not as "missing".
+      for (const d of facts.deciders) {
+        const chain = chains.get(d);
+        if (chain && !chain.ok && !chain.check.ok) return chain.check;
+      }
+      return refuse('decision_missing_approvers', `${approversGood} of ${requiredApprovers} required above-cap approvers have a verified device decision for this proposal.`);
+    }
+  }
+  if (!needOwner && requiredApprovers === 0) return refuse('decision_missing_owner', 'nobody is named to have decided this proposal.');
+  // Replay: the proposal id and each decision's nonce are recorded (sealed, in the control plane) before anything runs.
+  try {
+    await i.cp.consume(i.proposal.id, [...nonceBy.values()]);
+  } catch (e) {
+    if (e instanceof PinRefused && e.reason === 'proposal_id_reused') return refuse('proposal_id_reused', 'this proposal id was already used with other decisions.');
+    if (e instanceof PinRefused && e.reason === 'nonce_reused') return refuse('decision_replayed', 'a decision of this proposal was already used for another proposal.');
+    return refuse('device_state_unavailable', 'the control plane could not record the decisions this proposal runs on.');
+  }
+  return { ok: true };
+}
+
+/** The person's chain, verified here from the genesis on against the root DID the mandate names and the head pinned before. */
+async function verifiedChain(i: DeviceCheckInput, dk: DeviceKeys, did: string): Promise<{ ok: true; state: ChainState } | { ok: false; check: DeviceCheck }> {
+  let pin: Head | null;
+  try {
+    pin = await i.cp.getPin(did);
+  } catch {
+    return { ok: false, check: refuse('device_state_unavailable', 'the control plane did not give the chain head it pinned for an approver.') };
+  }
+  let got;
+  try {
+    got = await i.sp.getDeviceChain(did);
+  } catch {
+    return { ok: false, check: refuse('chain_unavailable', 'the Authority Server did not give an approver\'s device chain.') };
+  }
+  // DEC-52: an account is never on both. A gateway with a chain accepts a decision only from a chain.
+  if (!got) return { ok: false, check: refuse('approver_has_no_chain', 'an approver the mandate names has no device chain, so no device decision of theirs can be checked.') };
+  let state: ChainState;
+  try {
+    state = await dk.verifyChain({ expectedRootDid: did, entries: got.entries, storedHead: pin });
+  } catch (e) {
+    if (isDeviceKeysError(e)) {
+      if (e.code === 'ROLLBACK') return { ok: false, check: refuse('chain_rollback', 'an approver\'s device chain is shorter than the one this gateway verified before.') };
+      if (e.code === 'FORK') return { ok: false, check: refuse('chain_fork', 'an approver\'s device chain differs from the one this gateway verified before.') };
+      return { ok: false, check: refuse('chain_invalid', `an approver's device chain does not verify (${e.code}).`) };
+    }
+    throw e;
+  }
+  // The head the Authority Server names must be the head the verified entries end in.
+  if (!got.head || got.head.seq !== state.head.seq || got.head.hash !== state.head.hash) {
+    return { ok: false, check: refuse('chain_head_mismatch', 'the Authority Server named another chain head than its entries end in.') };
+  }
+  try {
+    await i.cp.advancePin(did, state.head, i.protectedDids);
+  } catch (e) {
+    // This computer's own head is moved by sign-in only; the chain was verified against it above.
+    if (e instanceof PinRefused && e.reason === 'own_chain') return { ok: true, state };
+    if (e instanceof PinRefused && (e.reason === 'rollback' || e.reason === 'fork')) return { ok: false, check: refuse(e.reason === 'rollback' ? 'chain_rollback' : 'chain_fork', 'an approver\'s device chain moved against the head this gateway pinned.') };
+    return { ok: false, check: refuse('device_state_unavailable', 'the control plane could not pin an approver\'s chain head.') };
+  }
+  return { ok: true, state };
+}
+
+// ─── What a device-signed decision must name (asked by the control plane) ──
+
+export interface ProposalFactsDeps {
+  /** The grant as this gateway's attestation cache holds it, fetched again when it does not. */
+  auth: (authorizationId: string) => Promise<Pick<CachedAuthorization, 'attestations'> | null | undefined>;
+  /** This gateway's own record of a proposal it submitted. */
+  submission: (proposalId: string) => { actionType?: string; tool?: string; authorizationId?: string } | undefined;
+  /**
+   * Read-only fetch of a grant's signed mandates from the Authority Server, for ONE proposal this gateway
+   * does not hold the grant for (an approver's gateway never holds the owner's mandate). Never stored in the
+   * tool-use cache. The caller checks the answer names the grant asked for.
+   */
+  fetchAuth?: (authorizationId: string) => Promise<Pick<CachedAuthorization, 'attestations'> | null | undefined>;
+  /** The action type a connector's manifest declares for a namespaced tool. */
+  manifestActionType: (tool: string) => string | undefined;
+}
+
+/**
+ * The two facts of a decision that the Authority Server's proposal read does not carry
+ * (`mandate_id`, `action_type`), from this gateway's own data: the signed mandate, its own
+ * submission record, the manifest. Never from the page and never from the AS's word.
+ */
+export async function resolveProposalFacts(
+  d: ProposalFactsDeps,
+  q: {
+    proposalId: string; authorizationId: string; tool: string;
+    /** The action type stored with the proposal at the Authority Server (validated there against the profile). */
+    reportedActionType?: string;
+    /** The person's root DID: a decision is signed only by the owner or a signed approver of the mandate. */
+    approverDid?: string;
+  },
+): Promise<{ ok: true; mandateId: string; actionType: string } | { ok: false; code: 'mandate_unavailable' | 'action_type_unknown' | 'action_type_mismatch' | 'proposal_mismatch' | 'not_a_signed_decider' }> {
+  // What the Authority Server reports about a proposal this gateway submitted must be what it submitted.
+  const sub = d.submission(q.proposalId);
+  if (sub && ((sub.tool !== undefined && sub.tool !== q.tool) || (sub.authorizationId !== undefined && sub.authorizationId !== q.authorizationId))) {
+    return { ok: false, code: 'proposal_mismatch' };
+  }
+  let auth;
+  try { auth = await d.auth(q.authorizationId); } catch { auth = undefined; }
+  if (!auth && d.fetchAuth) { try { auth = await d.fetchAuth(q.authorizationId); } catch { auth = undefined; } }
+  // Read from the signed payload only, exactly as the executor reads it.
+  const facts = signedMandateFacts(auth?.attestations);
+  if (!facts) return { ok: false, code: 'mandate_unavailable' };
+  if (q.approverDid !== undefined && q.approverDid !== facts.ownerDid && !facts.deciders.includes(q.approverDid)) {
+    return { ok: false, code: 'not_a_signed_decider' };
+  }
+  // Own submission record first, then what the proposal stores, then a manifest this gateway happens to have.
+  // Any two that are present must agree; the signature binds the result and the owner's executor checks it
+  // against its own record.
+  const known = [sub?.actionType, q.reportedActionType, d.manifestActionType(q.tool)].filter((a): a is string => typeof a === 'string' && a.length > 0);
+  if (new Set(known).size > 1) return { ok: false, code: 'action_type_mismatch' };
+  const actionType = known[0];
+  if (typeof actionType !== 'string' || !actionType) return { ok: false, code: 'action_type_unknown' };
+  return { ok: true, mandateId: facts.mandateId, actionType };
+}
+
+/** The owner and signed approvers of every mandate in the attestation cache: whose pins must survive an eviction. */
+export function signedDidsOfCache(cache: { getAllAuthorizations?: () => Array<{ attestations?: ReadonlyArray<{ blob: string }> }> } | undefined): string[] {
+  if (!deviceKeysEnabled()) return [];
+  const out = new Set<string>();
+  try {
+    for (const a of cache?.getAllAuthorizations?.() ?? []) {
+      const f = signedMandateFacts(a.attestations);
+      if (f) { out.add(f.ownerDid); for (const d of f.deciders) out.add(d); }
+    }
+  } catch { /* the pins just are not protected */ }
+  return [...out].slice(0, 256);
+}

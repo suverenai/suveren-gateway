@@ -183,6 +183,28 @@ export async function runCommittedProposals(): Promise<void> {
   });
 }
 
+/**
+ * What only this gateway knows about a proposal, for a device-signed decision
+ * (device-keys plan 4.2): the signed `mandate_id` of the mandate the proposal is
+ * checked against and the action type the connector's manifest declares. Asked of the
+ * MCP server (its verified mandate, its manifests, its own submission record), never of
+ * the page. Throws when it cannot say.
+ */
+export async function getProposalFacts(p: { proposalId: string; authorizationId: string; tool: string; reportedActionType?: string; approverDid?: string }): Promise<{ mandateId: string; actionType: string }> {
+  const res = await fetch(`${MCP_BASE}/internal/proposal-facts`, {
+    method: 'POST',
+    headers: internalHeaders(),
+    body: JSON.stringify(p),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!res.ok) throw new Error(`MCP proposal-facts failed: ${res.status}`);
+  const body = await res.json() as { mandateId?: unknown; actionType?: unknown };
+  if (typeof body.mandateId !== 'string' || !body.mandateId || typeof body.actionType !== 'string' || !body.actionType) {
+    throw new Error('MCP proposal-facts: unreadable answer');
+  }
+  return { mandateId: body.mandateId, actionType: body.actionType };
+}
+
 // ─── Integration management ──────────────────────────────────────────────
 
 /** Argument schemas + approvalView hints per tool, for the approval screen. */

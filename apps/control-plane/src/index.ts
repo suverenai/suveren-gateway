@@ -51,7 +51,7 @@ import { ChangeConfirmations } from './lib/change-confirmation';
 import { scrubProxyRequest } from './lib/proxy-headers';
 import { OAuthStartTickets } from './lib/oauth-start-ticket';
 import { RekeyRetrier } from './lib/rekey-retry';
-import { mountDeviceKeyRoutes } from './routes/device-keys-mount';
+import { mountDeviceKeyRoutes, deviceKeysHealth } from './routes/device-keys-mount';
 import { PlatformHelper, locateHelper } from './lib/platform-helper';
 import { CheckKeyStore } from './lib/platform-checks';
 import { DeviceChainStore } from './lib/device-chain-store';
@@ -60,7 +60,7 @@ import { requireAllowedHost } from './middleware/host-guard';
 import { refuseAmbiguousPath, isApiPath } from './middleware/request-path';
 import { OAuthStateStore } from './lib/oauth-state';
 import { mcpPublicPort } from './lib/mcp-public-port';
-import { getToolDisplay, mcpRekeyClient, pushGateContent, pushServiceCredentials, setInternalSecret, getManifests, getGateContent, getEnrichedAuthorizations, getSkippedCommitments, getMyPendingProposals, MCP_BASE, runCommittedProposals, resyncGates, setReadPolicy, configure as configureMcp, unconfigureSession, replaceIntegration, startPendingIntegrations } from './lib/mcp-bridge';
+import { getToolDisplay, mcpRekeyClient, pushGateContent, pushServiceCredentials, setInternalSecret, getManifests, getGateContent, getEnrichedAuthorizations, getSkippedCommitments, getMyPendingProposals, MCP_BASE, runCommittedProposals, resyncGates, setReadPolicy, configure as configureMcp, unconfigureSession, replaceIntegration, startPendingIntegrations, getProposalFacts } from './lib/mcp-bridge';
 import { createEstablish } from './lib/device-session-establish';
 import { createSignInSweep } from './lib/device-signin-sweep';
 import { createAsKeyCheck, asPinning } from './lib/device-as-trust';
@@ -278,6 +278,16 @@ const { loginChangeGate, deviceChainState, signin: deviceSignin } = mountDeviceK
     }),
     onTlsMismatch: lockAsTlsMismatch,
     discard: () => { vault.clearSpCookie(); return unconfigureSession(); },
+    // A decision on the gateway page is signed with this computer's device key (step 12). After the Authority
+    // Server accepted it the same events and the same executor nudge follow as for a decision through the /api proxy below.
+    decision: {
+      facts: getProposalFacts,
+      onDecided: (route) => {
+        if (route === 'resolve') { eventBus.emit('proposal-resolved'); void runCommittedProposals().catch(() => {}); }
+        else if (route === 'approve') { eventBus.emit('proposal-approved'); void runCommittedProposals().catch(() => {}); }
+        else if (route === 'reject') eventBus.emit('proposal-rejected');
+      },
+    },
   } : undefined,
 });
 if (deviceSignin) deviceSessionEnded = () => deviceSignin.sessionLost();
@@ -1242,6 +1252,8 @@ app.get('/health', async (req: Request, res: Response) => {
     // Purely local — the Authority Server never learns this. UI reads it to
     // show a gateway-wide banner ("real systems are blocked").
     simulation: isSimulationMode(),
+    // Only a gateway that set up device keys says so; absent otherwise, so every other gateway answers exactly as before.
+    ...deviceKeysHealth(deviceChainState),
     // Settings IT has locked centrally (Windows registry policy, or a
     // policy file — see lib/policy.ts). Read-only here: there is no API
     // route that lets the UI change any of these (as-url/ca-file/pin-tls

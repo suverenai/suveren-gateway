@@ -16,7 +16,7 @@
  * Every /auth/device route sits behind the page session (cookie AND header token,
  * Origin and Host), checked by the router itself: a path that reaches a handler
  * has passed it, however the path was written. Every code is neutral; the
- * messages are placeholders. The words the person reads are Andreas's (O19, O26).
+ * messages are placeholders. The words the person reads are the maintainer's (O19, O26).
  */
 
 import { Router, type Request, type Response, type NextFunction } from 'express';
@@ -26,7 +26,7 @@ import { pageSessionVerdict, type PageSessionDeps } from '../middleware/auth';
 import { DeviceSetup, SetupRefusal } from '../lib/device-setup';
 import type { DeviceSignin } from '../lib/device-signin';
 
-/** Placeholder messages, by code. Wording is Andreas's (O19, O26). */
+/** Placeholder messages, by code. Wording is the maintainer's (O19, O26). */
 export const DEVICE_MESSAGES: Record<string, string> = {
   // the page session (middleware/auth.ts)
   unauthorized: 'Unauthorized.',

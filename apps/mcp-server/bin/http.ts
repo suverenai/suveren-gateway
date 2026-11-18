@@ -49,6 +49,7 @@ import type { SPProposal } from '../src/lib/sp-client';
 import { resolveWhoLabel } from '../src/lib/who-label';
 import { outcomeEntryFor } from '../src/lib/outcome-outbox';
 import { decryptRejectionNote } from '../src/lib/proposal-content';
+import { resolveProposalFacts } from '../src/lib/device-decisions';
 import { checkSentArgs, resultView, headlineArgs } from '../src/lib/ticket-content';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -512,6 +513,43 @@ app.post('/internal/preview', internalOnly, async (req: Request, res: Response) 
     status: result.status,
   });
   res.json(result);
+});
+
+/**
+ * Device keys (plan 4.2, step 12): what a device-signed decision must name that the Authority
+ * Server's proposal read does not carry — the signed `mandate_id` and the action type — from
+ * THIS gateway's own data (its verified mandate, its submission record, its manifests).
+ * Asked by the control plane only; never reaches an MCP client.
+ */
+app.post('/internal/proposal-facts', internalOnly, async (req: Request, res: Response) => {
+  const { proposalId, authorizationId, tool, reportedActionType, approverDid } = (req.body ?? {}) as { proposalId?: unknown; authorizationId?: unknown; tool?: unknown; reportedActionType?: unknown; approverDid?: unknown };
+  if (typeof proposalId !== 'string' || !proposalId || typeof authorizationId !== 'string' || !authorizationId || typeof tool !== 'string' || !tool) {
+    res.status(400).json({ error: 'Missing proposalId, authorizationId, or tool' });
+    return;
+  }
+  const out = await resolveProposalFacts({
+    // read-only: a grant this gateway does not hold is not fetched into its cache on a request from outside
+    auth: async (id) => state.cache.getAllAuthorizations().find(a => a.authorizationId === id),
+    // An approver's gateway never holds the owner's grant: its mandates are read for this one proposal, not cached.
+    fetchAuth: async (id) => {
+      const r = await state.spClient.getAttestations(id);
+      return r.authorization_id === id ? { attestations: r.attestations.map(a => ({ blob: a.blob, domain: a.domain, expiresAt: a.expires_at })) } : undefined;
+    },
+    submission: (id) => state.proposalSubmissions.get(id),
+    manifestActionType: (t) => {
+      const a = integrationManager.getAllTools().find(x => x.namespacedName === t)?.gating?.staticExecution?.action_type;
+      return typeof a === 'string' ? a : undefined;
+    },
+  }, {
+    proposalId, authorizationId, tool,
+    ...(typeof reportedActionType === 'string' && reportedActionType ? { reportedActionType } : {}),
+    ...(typeof approverDid === 'string' && approverDid ? { approverDid } : {}),
+  });
+  if (!out.ok) {
+    res.status(409).json({ error: out.code });
+    return;
+  }
+  res.json({ mandateId: out.mandateId, actionType: out.actionType });
 });
 
 /**
