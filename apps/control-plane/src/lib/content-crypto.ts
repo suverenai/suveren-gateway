@@ -24,6 +24,7 @@ import { encryptForRecipients, decryptIntent, type RecipientWrap } from './e2e-c
 import { fetchAs, type AsFetchPinning } from './as-tls-pin';
 import { readPairing } from './as-pairing';
 import { resolvePinTls } from './as-config';
+import { asAuthHeaders } from './as-credential';
 
 /** Wire `alg` value — see the PE1 brief's wire contract. */
 export const CONTENT_ALG = 'HPKE-X25519-HKDF-SHA256-AES256GCM' as const;
@@ -108,7 +109,7 @@ async function fetchUserPubkeyEntry(userIdOrDid: string, deps: ContentCryptoDeps
   try {
     const { res } = await fetchAs(
       `${deps.spUrl}/api/users/${encodeURIComponent(userIdOrDid)}/pubkey`,
-      { headers: { Cookie: deps.cookie }, signal: AbortSignal.timeout(5_000) },
+      { headers: asAuthHeaders(deps.cookie), signal: AbortSignal.timeout(5_000) },
       pinning,
     );
     if (!res.ok) return null;

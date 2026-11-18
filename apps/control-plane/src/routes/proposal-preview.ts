@@ -32,6 +32,7 @@ import { findLatestByProposal } from '../lib/execution-journal-reader';
 import type { PreviewResponse, ProposalOutcome } from '../lib/preview-types';
 import type { RequestContextResult } from '../lib/request-context-types';
 import { computeShownHash, type ShownSnapshotStore } from '../lib/shown-snapshot';
+import { asAuthHeaders } from '../lib/as-credential';
 
 const AS_FETCH_TIMEOUT_MS = 10_000;
 
@@ -71,7 +72,7 @@ async function resolveProposalToolArgsForRoute(
     try {
       const { res: asRes } = await fetchAs(
         `${spUrl}/api/proposals/${encodeURIComponent(proposalId)}`,
-        { headers: { Cookie: cookie }, signal: controller.signal },
+        { headers: asAuthHeaders(cookie), signal: controller.signal },
         {
           enforce: resolvePinTls(dataDir),
           pinnedSpkiHex: pin && pin.asUrl === spUrl ? pin.tlsSpkiPinHex : undefined,

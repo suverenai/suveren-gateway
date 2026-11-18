@@ -51,6 +51,12 @@ export interface PasswordRouterDeps {
   hasCheckKey: () => boolean;
   /** The MCP server, for the move to a fresh vault key. */
   mcp?: McpRekeyClient;
+  /**
+   * Called after a successful unlock, once the answer is sent: a gateway that
+   * set up device keys signs in to the Authority Server by its device key
+   * (lib/device-signin.ts). Unset where device keys are not set up.
+   */
+  afterUnlock?: () => void;
 }
 
 function fail(res: Response, status: number, code: string, extra: Record<string, unknown> = {}): void {
@@ -63,7 +69,7 @@ function passwordIn(body: unknown, field: string): string | null {
 }
 
 export function createPasswordRouter(deps: PasswordRouterDeps): Router {
-  const { vault, pageSession, limiter, confirmations, hasCheckKey, mcp } = deps;
+  const { vault, pageSession, limiter, confirmations, hasCheckKey, mcp, afterUnlock } = deps;
   const { sessions } = pageSession;
   const router = Router();
 
@@ -140,6 +146,7 @@ export function createPasswordRouter(deps: PasswordRouterDeps): Router {
       rekeyPending = moved.outcome === 'pending';
     }
     res.json({ ok: true, ...(rekeyPending ? { rekeyPending } : {}), ...startSession(res) });
+    afterUnlock?.();
   });
 
   router.post('/password/change', sameOrigin, withSession, async (req, res) => {

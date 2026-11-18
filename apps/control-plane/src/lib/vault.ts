@@ -46,6 +46,14 @@ interface VaultFile {
    */
   password?: PasswordHeader;
   credentials: Record<string, EncryptedBlob>;
+  /**
+   * Sealed values the gateway keeps for itself (the device signing key, the
+   * device chain head; device-keys step 6). Kept apart from `credentials` on
+   * purpose: nothing that lists, pushes or edits credentials can see, send or
+   * overwrite them. Sealed with the vault key like a credential, so a move to a
+   * fresh key re-seals them (lib/rekey.ts walks every blob).
+   */
+  slots?: Record<string, EncryptedBlob>;
 }
 
 /** The unlock-password header in vault.enc.json. Nothing in it is secret. */
@@ -796,6 +804,11 @@ export class Vault {
     this.spSessionCookie = cookie;
   }
 
+  /** Drop the Authority Server credential and nothing else: the vault stays unlocked (a device session ended). */
+  clearSpCookie(): void {
+    this.spSessionCookie = null;
+  }
+
   getSpCookie(): string | null {
     return this.spSessionCookie;
   }
@@ -859,6 +872,40 @@ export class Vault {
   listCredentials(): string[] {
     const data = this.readVaultFile();
     return Object.keys(data.credentials);
+  }
+
+  // ─── Secret slots (vault.enc.json `slots`; device-keys step 6) ──────────
+
+  /**
+   * The vault file for a slot read or write. Unlike `readVaultFile` it never
+   * turns a file it cannot read into an empty vault: a write after that would
+   * drop the password header and every credential.
+   */
+  private readVaultFileStrict(): VaultFile {
+    if (!existsSync(this.vaultFilePath)) return { version: 1, credentials: {} };
+    const parsed = JSON.parse(readFileSync(this.vaultFilePath, 'utf-8')) as VaultFile;
+    if (!parsed || typeof parsed !== 'object' || typeof parsed.credentials !== 'object') throw new Error('The vault file cannot be read');
+    return parsed;
+  }
+
+  /** Is a slot there (sealed or not openable)? Reads the file only; throws when the file cannot be read. */
+  hasSecretSlot(name: string): boolean {
+    const blob = this.readVaultFileStrict().slots?.[name];
+    return blob !== undefined && blob !== null;
+  }
+
+  /** A sealed slot, or null when none was ever written. Throws while locked or when the slot cannot be opened. */
+  getSecretSlot<T>(name: string): T | null {
+    const blob = this.readVaultFileStrict().slots?.[name];
+    if (!blob) return null;
+    return JSON.parse(this.decrypt(blob)) as T;
+  }
+
+  /** Seal `value` into a slot (atomic write-then-rename). Not listed by `listCredentials`, not pushed anywhere. */
+  setSecretSlot(name: string, value: unknown): void {
+    const data = this.readVaultFileStrict();
+    data.slots = { ...(data.slots ?? {}), [name]: this.encrypt(JSON.stringify(value)) };
+    this.writeVaultFile(data);
   }
 
   // ─── Service CRUD (services.enc.json) ───────────────────────────────────

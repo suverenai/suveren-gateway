@@ -7,6 +7,8 @@
  * it, or there is no Cookie at all.
  */
 
+import { isBearerCredential } from './as-credential';
+
 export const NEVER_FORWARD_HEADERS = ['x-suveren-session', 'x-suveren-confirmation'] as const;
 
 interface HeaderSetter {
@@ -16,6 +18,10 @@ interface HeaderSetter {
 
 export function scrubProxyRequest(proxyReq: HeaderSetter, asSessionCookie: string | null): void {
   for (const h of NEVER_FORWARD_HEADERS) proxyReq.removeHeader(h);
-  if (asSessionCookie) proxyReq.setHeader('Cookie', asSessionCookie);
+  if (isBearerCredential(asSessionCookie)) {
+    // A device session: the token goes as `Authorization`, never as a cookie.
+    proxyReq.removeHeader('Cookie');
+    proxyReq.setHeader('Authorization', asSessionCookie);
+  } else if (asSessionCookie) proxyReq.setHeader('Cookie', asSessionCookie);
   else proxyReq.removeHeader('Cookie');
 }
