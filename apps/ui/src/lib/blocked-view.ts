@@ -29,8 +29,8 @@
 import type { AgentProfile } from '@hap/core';
 import type { DenialRecord, DenialKind } from './sp-client';
 import { sourceName } from '../components/RecentBlocks';
-import { humanizeKey, splitTool } from './approval-view';
-import { scopeValueNames, type NameSources } from './display-names';
+import { humanizeKey, splitTool } from '@suveren/approval-card/lib/approval-view';
+import { scopeValueNames, type NameSources } from '@suveren/approval-card/lib/display-names';
 
 /** A denial with `kind` resolved — absent on disk ⇒ 'read' (every record
  * written before AU2 was a read block). */

@@ -1,5 +1,5 @@
-import type { AreaIconName } from '../lib/area';
-import { AreaIcon } from './AreaIcon';
+import type { AreaIconName } from '@suveren/approval-card/lib/area';
+import { AreaIcon } from '@suveren/approval-card/components/AreaIcon';
 
 /**
  * A profile's icon on cards, rails and pickers — the same area icon every

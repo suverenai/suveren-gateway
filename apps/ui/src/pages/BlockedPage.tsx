@@ -7,14 +7,14 @@ import { EmptyState } from '../components/EmptyState';
 import { Link } from 'react-router-dom';
 import { ObTypeLine, ObFold, useFoldAccordion } from '../components/ObjectCard';
 import { AreaFilterPills, type AreaFilterOption } from '../components/AreaFilterPills';
-import { useAreaCatalog } from '../lib/area-catalog';
-import { loadProfile } from '../lib/profile-cache';
-import { resolveAreaName, areaIcon, parseAreaFilter, matchesAreaFilter } from '../lib/area';
-import { shortProfileId } from '../lib/profile-identity';
+import { useAreaCatalog } from '@suveren/approval-card/lib/area-catalog';
+import { loadProfile } from '@suveren/approval-card/lib/profile-cache';
+import { resolveAreaName, areaIcon, parseAreaFilter, matchesAreaFilter } from '@suveren/approval-card/lib/area';
+import { shortProfileId } from '@suveren/approval-card/lib/profile-identity';
 import { sourceName } from '../components/RecentBlocks';
-import { useLabelManifests } from '../lib/display-names';
-import type { SourceManifestLike } from '../lib/attachment-sources';
-import { useVisiblePolling } from '../hooks/useVisiblePolling';
+import { useLabelManifests } from '@suveren/approval-card/lib/display-names';
+import type { SourceManifestLike } from '@suveren/approval-card/lib/attachment-sources';
+import { useVisiblePolling } from '@suveren/approval-card/hooks/useVisiblePolling';
 import { useSSEEvent } from '../contexts/EventSourceContext';
 
 /**

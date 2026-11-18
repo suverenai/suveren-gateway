@@ -6,7 +6,7 @@ import { ContextStrip } from '../components/ContextStrip';
 import { BoundsEditor } from '../components/BoundsEditor';
 import { AssistantChatPanel } from '../components/AssistantChatPanel';
 import { BottomSheet } from '../components/BottomSheet';
-import { profileDisplayName } from '../lib/profile-display';
+import { profileDisplayName } from '@suveren/approval-card/lib/profile-display';
 import { resolveAdvisoryLinks, type AdvisoryGrant } from '../lib/advisory-links';
 import type { AgentProfile, AgentBoundsParams, AgentScopeParams } from '@hap/core';
 

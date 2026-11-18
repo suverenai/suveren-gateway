@@ -16,11 +16,11 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { useAuth } from './AuthContext';
 import { useSSEEvent } from './EventSourceContext';
 import { spClient, type Proposal, type IntegrationManifest } from '../lib/sp-client';
-import { useVisiblePolling } from '../hooks/useVisiblePolling';
-import { APPROVALS_CHANGED_EVENT } from '../lib/approval-flow';
+import { useVisiblePolling } from '@suveren/approval-card/hooks/useVisiblePolling';
+import { APPROVALS_CHANGED_EVENT } from '@suveren/approval-card/lib/approval-flow';
 import { buildMyQueue, pruneDecided, type QueueEntry } from '../lib/approval-queue';
 import { loadAutoOpen, saveAutoOpen } from '../lib/approval-panel';
-import type { ToolDisplay } from '../lib/approval-view';
+import type { ToolDisplay } from '@suveren/approval-card/lib/approval-view';
 
 interface ApprovalQueue {
   entries: QueueEntry[];

@@ -11,7 +11,7 @@
  */
 import { useState } from 'react';
 import { spClient } from '../lib/sp-client';
-import { useVisiblePolling } from '../hooks/useVisiblePolling';
+import { useVisiblePolling } from '@suveren/approval-card/hooks/useVisiblePolling';
 
 interface SkippedCommitment {
   id: string;

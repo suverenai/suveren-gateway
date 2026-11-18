@@ -1,15 +1,15 @@
-import { isNewTicket } from '../lib/core-objects';
+import { isNewTicket } from '@suveren/approval-card/lib/core-objects';
 import { NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { spClient } from '../lib/sp-client';
 import { bucketAuths } from '../lib/auth-status';
-import { useVisiblePolling } from '../hooks/useVisiblePolling';
+import { useVisiblePolling } from '@suveren/approval-card/hooks/useVisiblePolling';
 import { useSSEEvent } from '../contexts/EventSourceContext';
 import { useIntegrationStatus } from '../contexts/IntegrationStatusContext';
 import { unseenCount } from '../lib/blocked-view';
 import { isNewReport } from '../lib/report-news';
-import { APPROVALS_CHANGED_EVENT } from '../lib/approval-flow';
+import { APPROVALS_CHANGED_EVENT } from '@suveren/approval-card/lib/approval-flow';
 import { NavIcon, type NavIconName } from './NavIcon';
 
 export interface NavItem {

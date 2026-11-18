@@ -4,7 +4,7 @@ import { TopNav } from '../components/TopNav';
 import { UpdateBanner } from '../components/UpdateBanner';
 import { SimulationBanner } from '../components/SimulationBanner';
 import { HumanOnlyNote } from '../components/HumanOnlyNote';
-import { isAutomatedBrowser, AUTOMATION_REFUSAL } from '../lib/automation';
+import { isAutomatedBrowser, AUTOMATION_REFUSAL } from '@suveren/approval-card/lib/automation';
 import { DifferentAccountError, type DifferentAccountSummary } from '../lib/sp-client';
 
 export function LoginPage() {

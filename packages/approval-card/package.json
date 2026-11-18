@@ -1,0 +1,41 @@
+{
+  "name": "@suveren/approval-card",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The approval card and the browser-side code that decrypts proposal content. Shared by the gateway page (apps/ui) and the phone app (apps/approve). Source-only: the host app's bundler compiles it.",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./types": "./src/types.ts",
+    "./host": "./src/host.ts",
+    "./lib/*": "./src/lib/*.ts",
+    "./hooks/*": "./src/hooks/*.ts",
+    "./components/*": "./src/components/*.tsx",
+    "./fixture/*": "./src/fixture/*"
+  },
+  "scripts": {
+    "build": "tsc --noEmit -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "fixture": "vite --config fixture/vite.config.ts",
+    "fixture:build": "vite build --config fixture/vite.config.ts"
+  },
+  "dependencies": {
+    "@hap/core": "workspace:*"
+  },
+  "peerDependencies": {
+    "react": "^18.2.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "@vitejs/plugin-react": "^4.7.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "typescript": "^5.3.0",
+    "vite": "^6.4.4",
+    "vitest": "^3.2.7"
+  }
+}

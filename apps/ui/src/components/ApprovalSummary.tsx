@@ -1,10 +1,10 @@
 import type { IntegrationManifest, Proposal } from '../lib/sp-client';
-import { useProposalContent } from '../lib/use-proposal-content';
-import { approvalSummary } from '../lib/approval-summary';
-import { summaryPreviewFrom, useProposalPreview } from '../lib/preview-store';
-import { useAreaCatalog } from '../lib/area-catalog';
-import { areaName } from '../lib/core-objects';
-import { CREATE_MANDATE_TOOL, mandateTitleParts, mandateTargetProfile } from '../lib/mandate-proposal';
+import { useProposalContent } from '@suveren/approval-card/lib/use-proposal-content';
+import { approvalSummary } from '@suveren/approval-card/lib/approval-summary';
+import { summaryPreviewFrom, useProposalPreview } from '@suveren/approval-card/lib/preview-store';
+import { useAreaCatalog } from '@suveren/approval-card/lib/area-catalog';
+import { areaName } from '@suveren/approval-card/lib/core-objects';
+import { CREATE_MANDATE_TOOL, mandateTitleParts, mandateTargetProfile } from '@suveren/approval-card/lib/mandate-proposal';
 
 /**
  * The approval's one sentence for list rows (UI spec §12.2): decrypts the
