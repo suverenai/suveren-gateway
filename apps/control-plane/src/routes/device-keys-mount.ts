@@ -29,9 +29,21 @@ import { createDeviceRecoveryRouter, createRecoveryCallbackRouter } from './devi
 import { DeviceRecovery } from '../lib/device-recovery';
 import { IdentityResetAlarm } from '../lib/identity-reset-alarm';
 import { eventBus } from '../lib/event-bus';
+import { DeviceDecisions, type DecisionRoute, type DecisionKind, type ProposalFacts } from '../lib/device-decision';
+import { createDeviceDecisionRouter } from './device-decision';
+import { DevicePinStore } from '../lib/device-pin-store';
+import { createInternalDeviceRouter } from './internal-device';
 
 export function deviceKeysEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.SUVEREN_DEVICE_KEYS === 'on';
+}
+
+/**
+ * The one member `/health` adds on a gateway that set up device keys: the page reads it to send its decisions
+ * through the control plane's signing route (step 12). `{}` for every other gateway, so its answer is unchanged.
+ */
+export function deviceKeysHealth(state: (() => 'none' | 'present' | 'unreadable') | undefined): { deviceKeys?: true } {
+  return state && state() === 'present' ? { deviceKeys: true } : {};
 }
 
 /** What set-up and device sign-in need from the process: where the Authority Server is and how to trust it. */
@@ -50,6 +62,15 @@ export interface DeviceSetupOptions {
   notifyIdentityReset?: (title: string, message: string) => void;
   now?: () => number;
   timers?: { set: (fn: () => void, ms: number) => unknown; clear: (h: unknown) => void };
+  /**
+   * Decisions on the gateway page, signed with this computer's device key (step 12).
+   * `facts` asks the MCP server for what only the gateway knows about a proposal (its signed mandate id, its
+   * action type); `onDecided` is told after the Authority Server accepted one (events, the executor nudge).
+   */
+  decision?: {
+    facts: (p: { proposalId: string; authorizationId: string; tool: string; reportedActionType?: string; approverDid?: string }) => Promise<ProposalFacts>;
+    onDecided?: (route: DecisionRoute, kind: DecisionKind) => void;
+  };
 }
 
 export interface DeviceKeyMountOptions {
@@ -85,7 +106,7 @@ export function mountDeviceKeyRoutes(app: Express, o: DeviceKeyMountOptions): {
 } {
   if (!o.enabled) return { loginChangeGate: refusingGate };
   const json = o.jsonParser ?? express.json();
-  let device: { signin: DeviceSignin; setup: DeviceSetup; store: DeviceChainStore; recovery: DeviceRecovery; alarm: IdentityResetAlarm } | undefined;
+  let device: { signin: DeviceSignin; setup: DeviceSetup; store: DeviceChainStore; client: DeviceAsClient; recovery: DeviceRecovery; alarm: IdentityResetAlarm } | undefined;
   // One PlatformChecks for set-up, the confirmation route and the turn-on/off gate: they share what the helper last said about the key.
   const checks = o.platform ? new PlatformChecks(o.platform.host) : undefined;
   if (o.device) {
@@ -116,7 +137,7 @@ export function mountDeviceKeyRoutes(app: Express, o: DeviceKeyMountOptions): {
       now: o.device.now ? () => o.device!.now!() * 1000 : undefined,
       ...(o.platform && checks ? { checks, checkStore: o.platform.checkStore } : {}),
     });
-    device = { signin, setup, store, recovery, alarm };
+    device = { signin, setup, store, client, recovery, alarm };
   }
   // A body that does not parse is answered here, for EVERY route under /auth (the recovery code and the password
   // are typed into several), with nothing of it in the answer or the log: Express's own handler logs the parser's
@@ -157,6 +178,20 @@ export function mountDeviceKeyRoutes(app: Express, o: DeviceKeyMountOptions): {
     app.use('/auth', json, createDeviceRecoveryRouter({ vault: o.vault, pageSession: o.pageSession, recovery: device.recovery }));
     app.use('/connect', createConnectCallbackRouter({ pageSession: o.pageSession, setup: device.setup }));
     app.use('/recover', createRecoveryCallbackRouter({ pageSession: o.pageSession, recovery: device.recovery }));
+    // The MCP server's questions about device keys (its own chain, the heads it has verified), by internal secret.
+    app.use('/internal', json, createInternalDeviceRouter(o.internalSecret, device.store, new DevicePinStore(o.vault, device.store)));
+    if (o.device?.decision) {
+      app.use('/device-decision', json, createDeviceDecisionRouter({
+        vault: o.vault,
+        pageSession: o.pageSession,
+        store: device.store,
+        decisions: new DeviceDecisions({
+          vault: o.vault, store: device.store, client: device.client,
+          facts: o.device.decision.facts, onDecided: o.device.decision.onDecided,
+          now: o.device.now,
+        }),
+      }));
+    }
   }
   app.use('/internal', json, createInternalOsSignalRouter(o.internalSecret, createOsSignalHook(o.pageSession.sessions)));
   return {

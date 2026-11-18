@@ -134,6 +134,8 @@ export interface BootOptions {
   opensPageSession?: boolean;
   /** Pass the vault the same MCP re-key client the real gateway has. */
   mcp?: import('../../lib/vault').McpRekeyClient;
+  /** Decisions on the gateway page (step 12), wired as index.ts wires them. */
+  decision?: NonNullable<Parameters<typeof mountDeviceKeyRoutes>[1]['device']>['decision'];
   /** Make the password vault in a fresh folder. Default true; false leaves the folder as it is (a restart). */
   fresh?: boolean;
   /** The desktop notification for a pending request for a new root DID (step 7). */
@@ -181,6 +183,7 @@ export async function bootGateway(o: BootOptions): Promise<GatewayRig> {
       onAlarm: c => { alarms.push(c); },
       notifyIdentityReset: o.notifyIdentityReset,
       discard: () => { vault.clearSpCookie(); discards.count++; },
+      decision: o.decision,
     },
   });
   app.use('/auth', json, createAuthRouter(

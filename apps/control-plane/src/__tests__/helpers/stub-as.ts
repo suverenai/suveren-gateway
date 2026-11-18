@@ -25,6 +25,19 @@ export interface Recorded { method: string; path: string; headers: IncomingMessa
 
 interface Code { userId: string; expiresAt: number; used: boolean; boundKeyId: string | null }
 
+/** What a route added with {@link StubAs.extraRoutes} is given. */
+export interface ExtraRouteContext {
+  req: IncomingMessage;
+  res: ServerResponse;
+  method: string;
+  path: string;
+  body: Record<string, unknown>;
+  /** The device session of the call, as the real routes read it (`Authorization: Bearer`). */
+  session: { token: string; keyId: string; userId: string } | null;
+  json: (status: number, body: unknown) => void;
+  refuse: (status: number, code: string, message?: string, extra?: Record<string, unknown>) => void;
+}
+
 export interface StubOptions {
   /** Epoch seconds. Move it to move the Authority Server's clock. */
   now?: () => number;
@@ -79,6 +92,8 @@ export class StubAs {
   cancelAnswer: unknown = undefined;
   /** Every signed cancel the stub accepted. */
   readonly cancelled: Array<{ request_id: string; key_id: string; check: boolean }> = [];
+  /** More routes of the real Authority Server (the proposal routes of step 12 live in helpers/stub-as-proposals.ts). Return true when answered. */
+  extraRoutes: ((c: ExtraRouteContext) => Promise<boolean>) | null = null;
 
   readonly accounts = new Map<string, { id: string; name: string; email: string; rootDid: string | null }>();
   private entries: unknown[] = [];
@@ -342,6 +357,7 @@ export class StubAs {
         if (!this.bearer(req)) return refuse(401, 'UNAUTHENTICATED');
         return json(200, { proposals: [] });
       }
+      if (this.extraRoutes && await this.extraRoutes({ req, res, method: m ?? '', path: p, body, session: this.bearer(req), json, refuse })) return;
       json(404, { error: 'not found' });
     } catch (e) {
       if (e instanceof DeviceKeysError) return refuse(400, e.code, e.message);
