@@ -181,7 +181,7 @@ describe.skipIf(!hasFixture)('ERP live/local mode — real erp-mcp build over st
       // The JSON is in content[0].text (and, from erp-mcp 0.9.0, also in
       // structuredContent) — the text form is what every connector has.
       const body = JSON.parse(result.content[0].text) as Record<string, unknown>;
-      const { isDocumentPreviewBody } = await import('../../ui/src/lib/document-preview');
+      const { isDocumentPreviewBody } = await import('../../../packages/approval-card/src/lib/document-preview');
       expect(isDocumentPreviewBody(body)).toBe(true);
       expect(body.contentType).toBe('application/pdf');
       expect(typeof body.contentBase64).toBe('string');
