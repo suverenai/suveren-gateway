@@ -15,6 +15,8 @@ export type HandoffStatus = 'waiting' | 'authorised' | 'failed';
 
 export class LoopbackHandoff {
   private readonly state = randomBytes(32);
+  /** What the Authority Server keeps of the state: base64url(sha256(utf8(state))), fixed at stage time. */
+  readonly stateHash = createHash('sha256').update(this.state.toString('base64url'), 'utf8').digest('base64url');
   /** The PKCE verifier. Never leaves this process except in the redeem call to the Authority Server. */
   readonly verifier = randomBytes(32).toString('base64url');
   readonly challenge = createHash('sha256').update(this.verifier, 'ascii').digest('base64url');

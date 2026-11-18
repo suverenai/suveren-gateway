@@ -402,6 +402,8 @@ function retryAfter(body: unknown): number | undefined {
 export function readPendingReset(body: unknown): PendingIdentityReset | null | 'invalid' {
   if (!isObj(body) || !('pending_identity_reset' in body)) return null;
   const p = body.pending_identity_reset;
+  // The Authority Server omits it when there is none; a null is read as "none" too, for robustness.
+  if (p === null) return null;
   if (!isObj(p) || typeof p.id !== 'string' || !/^[A-Za-z0-9_-]{16,128}$/.test(p.id) || !isInt(p.effective_at)) return 'invalid';
   return { id: p.id, effectiveAt: p.effective_at };
 }

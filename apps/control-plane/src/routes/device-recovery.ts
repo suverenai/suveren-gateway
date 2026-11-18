@@ -47,6 +47,7 @@ export const RECOVERY_MESSAGES: Record<string, string> = {
   handoff_refused: 'The browser step was refused.',
   handoff_failed: 'The browser step failed.',
   handoff_timeout: 'The browser did not come back.',
+  mail_failed: 'The email with the link could not be sent. Try again.',
   rotate_unknown: 'No such new code.',
   rotate_expired: 'The new code was not used in time. Make another.',
   new_code_mismatch: 'The new code typed again is not the one shown.',
@@ -121,9 +122,9 @@ export function createDeviceRecoveryRouter(deps: DeviceRecoveryRouterDeps): Rout
     res.json({ ok: true, ...done });
   }));
 
-  api.post('/recover/cancel', run((_req, res) => {
-    recovery.cancel();
-    res.json({ ok: true });
+  api.post('/recover/cancel', run(async (_req, res) => {
+    const out = await recovery.cancel();
+    res.json({ ok: true, ...out });
   }));
 
   api.post('/rotate-root/start', run(async (_req, res) => {

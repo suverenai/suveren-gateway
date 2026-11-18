@@ -14,45 +14,57 @@
  * and the gateway is built against it. NOTHING IN THIS FILE EXISTS ON THE AUTHORITY SERVER
  * YET; until it does, only the test stand-in (`__tests__/helpers/stub-as.ts`) answers it.
  *
- * The flow, end to end:
+ * The flow, end to end (as the Authority Server was built from it, 2026-11-18):
  *
  *   1. LOOKUP (fresh gateway only). The gateway derives the root key from the typed code and
  *      asks for the chain with a request signed by that root key: possession of the code is
- *      the authorisation, the code itself never travels. No session. Answer: the chain.
- *      The gateway verifies it with hap-core from the genesis on and refuses it unless the
- *      root key in force at its head is the key the code derives.
+ *      the authorisation, the code itself never travels. The signed object has EXACTLY the
+ *      members of {@link RecoveryLookup}. A signed request is answered ONCE: the same signed
+ *      bytes again give the same `404 NO_CHAIN` as an unknown key, so the gateway builds a
+ *      fresh lookup for every call (its `issued_at` strictly rises) and never retries a body.
+ *      Rate limits: 30 per minute per address, 10 per minute per root key. No session.
+ *      The gateway verifies the chain with hap-core from the genesis on and refuses it unless
+ *      the root key in force at its head is the key the code derives.
  *   2. STAGE. The gateway builds the entry, signs it (root key, this computer's key, this
- *      computer's check where it has one) and posts it with the PKCE challenge. No session:
- *      the entry carries its own proof, and the Authority Server verifies it exactly as it
- *      would on `POST /api/devices/chain`, against the current head, but appends nothing.
- *      Answer: a handoff id.
- *   3. AUTHORISE (browser). The gateway opens the person's SYSTEM BROWSER on
- *      `{AS}/recover?handoff=<id>&port=<n>&state=<s>`. suveren.ai shows what the entry will
- *      do (taken from the staged entry, never from the URL) and the confirmation code
- *      (below). With the browser's own email-link session, a form POST with a CSRF token,
- *      same-origin only, a GET never authorises, the Authority Server appends the staged
- *      entry as `appendEntry(entry, { emailLink: { userId } })` and redirects (plain 302)
- *      to `http://127.0.0.1:<port>/recover/callback?code=<one-time>&state=<s>`. The redirect is
- *      built from a port number only. The cookie never leaves the browser.
+ *      computer's check where it has one) and posts `{entry, code_challenge, port,
+ *      state_hash}`: port 1024 to 65535, `state_hash` = base64url(sha256(utf8(state))); both
+ *      are fixed here like an OAuth redirect_uri, and the redirect uses the stored port.
+ *      No session: the entry carries its own proof. The AS verifies it as `POST
+ *      /api/devices/chain` would, appends nothing, EMAILS the account a single-use 10-minute
+ *      link `{AS}/recover/link?token=...`, and tells every device of the old chain. ONE open
+ *      hand-off per account: a new stage marks the old one replaced. Rate limits: 30 per
+ *      minute per address, 5 per minute per account. Answer `201 {handoff_id, expires_at}`.
+ *      A staged entry is SPENT by any refused append: stage again.
+ *   3. AUTHORISE (browser). The gateway answers "check your email" and an address
+ *      `{AS}/recover?handoff&port&state`. The person MUST open the emailed link in the SAME
+ *      browser, press its button (POST /api/devices/recovery/link sets the HttpOnly cookie
+ *      `hap-recovery`, bound to that one handoff), and come back to the tab the address
+ *      opened (it reloads itself every 15 seconds). Only that cookie authorises: no
+ *      hap-session, API key or device token does. The page then shows the effect (the devices
+ *      that will be removed, or "the recovery code is replaced") and the confirmation code. The
+ *      button POSTs `/api/devices/recovery/authorize` (form: handoff, port, state, csrf).
+ *      Refusals the person can fix are HTML pages and are not redirected (401
+ *      EMAIL_LINK_SESSION_REQUIRED, 403 HANDOFF_OTHER_ACCOUNT); CSRF_INVALID, CROSS_SITE and a
+ *      port or state that is not the staged one are JSON. Later refusals redirect with
+ *      `?error=<CODE>&state=<s>`: HANDOFF_EXPIRED, HANDOFF_USED, CHAIN_HEAD_MOVED and hap-core
+ *      codes such as NOT_AUTHORISED. Success is a plain 302 to
+ *      `http://127.0.0.1:<stored port>/recover/callback?code=<one-time>&state=<s>`. The append
+ *      also closes an open request for a new identity of the account.
  *   4. REDEEM. The gateway sends the one-time code and its PKCE verifier over its own HTTPS
- *      connection, no cookie. Answer: the head the append made.
+ *      connection, no cookie. Answer: the head the append made and the entry hash. Any attempt
+ *      uses the code up; it lives 60 seconds after the append.
  *   5. VERIFY. The gateway signs in and fetches the chain by device session, verifies it with
  *      hap-core, checks that its own entry is in it at that place, and only then stores it.
  *      It believes neither the redirect nor the redeem answer on their own.
  *
- * What the Authority Server must refuse in 3, each with its own code:
- *   - no email-link session of the account the entry belongs to       401 EMAIL_LINK_SESSION_REQUIRED
- *   - a session of another account than the staged entry's            403 HANDOFF_OTHER_ACCOUNT
- *   - a cross-site post (Origin / Sec-Fetch-Site)                      403 CROSS_SITE
- *   - a missing or wrong CSRF token                                    403 CSRF_INVALID
- *   - an expired, used or unknown handoff                              409/410 HANDOFF_EXPIRED | HANDOFF_USED | HANDOFF_UNKNOWN
- *   - the chain moved since the entry was built                        409 CHAIN_HEAD_MOVED (and the entry's own refusals)
- * A refusal that the browser can redirect (it has a valid `port` and `state`) is redirected
- * with `?error=<CODE>&state=<s>` instead of `code`, so the gateway can say what happened.
+ * The 6-digit confirmation code is a CONSISTENCY CHECK, NOT A SECURITY CONTROL: whoever builds an
+ * entry can grind six digits. The single-use emailed link, the notices to every device and the
+ * email, and the root key itself are what protect the account.
  *
- * Open on the Authority Server side, for its owner to decide (not decided here): whether
- * the staged entry may be used once only (this contract says once), and how long a handoff
- * lives (this contract says 10 minutes, the code of step 3 lives 60 seconds).
+ * Refusal codes beyond the ones above: LINK_INVALID 410 (link used, expired or replaced), MAIL_FAILED
+ * 502 (stage: the email could not be sent), BAD_OP 400, PASSKEY_REQUIRED 400, NO_CHAIN 404 (stage:
+ * unknown root DID or a suspended account), HANDOFF_UNKNOWN 404 / HANDOFF_USED 409 / HANDOFF_EXPIRED
+ * 410 / PKCE_MISMATCH 403 (redeem).
  */
 
 import { createHash } from 'node:crypto';
@@ -66,8 +78,10 @@ export const RECOVERY_PATHS = {
   stage: '/api/devices/recovery/handoffs',
   /** POST, no session. Body {@link RedeemRequest}. */
   redeem: '/api/devices/recovery/redeem',
-  /** The page on suveren.ai the system browser opens. GET shows, never changes anything. */
+  /** The page the gateway's address opens: `/recover?handoff&port&state`. GET shows, never changes anything. */
   page: '/recover',
+  /** The emailed link: `{AS}/recover/link?token=<single use>`; its button POSTs `/api/devices/recovery/link`. Not built by the gateway. */
+  link: '/recover/link',
   /** The form post of that page (browser, email-link cookie, CSRF). Not called by the gateway. */
   authorize: '/api/devices/recovery/authorize',
   /** On the gateway: the loopback redirect. */
@@ -113,10 +127,12 @@ export interface RecoveryLookupResponse {
 /**
  * `entry`: a chain entry, `signer: "root"`, `op` `reset` or `rotate-root` (the only two the
  * gateway makes). `code_challenge`: base64url SHA-256 of the PKCE verifier (S256 only).
+ * `port`: the gateway's loopback port (1024 to 65535). `state_hash`: base64url SHA-256 of the
+ * 32-byte state the gateway keeps. Both are fixed here; the redirect uses the stored port.
  */
-export interface StageRequest { entry: unknown; code_challenge: string }
+export interface StageRequest { entry: unknown; code_challenge: string; port: number; state_hash: string }
 
-/** `201`. `expires_at`: epoch seconds, at most {@link HANDOFF_TTL_SECONDS} ahead. */
+/** `201`, after the email was sent. `expires_at`: epoch seconds, at most {@link HANDOFF_TTL_SECONDS} ahead. */
 export interface StageResponse { handoff_id: string; expires_at: number }
 
 // ─── 4. redeem ───────────────────────────────────────────────────────────────
@@ -130,19 +146,16 @@ export interface RedeemResponse { head: { seq: number; hash: string }; entry_has
 export const RECOVERY_AS_CODES = [
   'NO_CHAIN', 'HANDOFF_EXPIRED', 'HANDOFF_USED', 'HANDOFF_UNKNOWN', 'HANDOFF_OTHER_ACCOUNT',
   'EMAIL_LINK_SESSION_REQUIRED', 'CROSS_SITE', 'CSRF_INVALID', 'CHAIN_HEAD_MOVED',
-  'PKCE_MISMATCH', 'RATE_LIMITED',
+  'PKCE_MISMATCH', 'RATE_LIMITED', 'LINK_INVALID', 'MAIL_FAILED', 'BAD_OP', 'PASSKEY_REQUIRED',
 ] as const;
 
 // ─── the confirmation code ───────────────────────────────────────────────────
 
 /**
  * A six-digit code, computed from the entry hash by BOTH sides: the gateway page shows it,
- * and suveren.ai shows the one it computes from the staged entry. The person compares them
- * before pressing the button on suveren.ai. It stops the one thing the hand-off could
- * otherwise be used for: someone who holds the recovery code (but not the email account)
- * sends the person a link to a staged entry of their own, and the person presses the
- * button with an email-link session of their own browser. That person's gateway shows no
- * matching code, because it staged nothing.
+ * and suveren.ai shows the one it computes from the staged entry. A CONSISTENCY CHECK, NOT A
+ * SECURITY CONTROL: whoever builds an entry can grind the code in about a million tries. The
+ * single-use emailed link, the notices and the root key are what protect the account.
  */
 export function confirmCodeOf(entryHash: string): string {
   const d = createHash('sha256').update('suveren-recovery-confirm-v1\u0000', 'utf8').update(entryHash, 'ascii').digest();
@@ -152,9 +165,9 @@ export function confirmCodeOf(entryHash: string): string {
 
 // ─── the browser address ─────────────────────────────────────────────────────
 
-export function authorizeUrl(asUrl: string, p: { handoffId: string; port: number; state: string }): string {
-  const q = new URLSearchParams({ handoff: p.handoffId, port: String(p.port), state: p.state });
-  return `${asUrl}${RECOVERY_PATHS.page}?${q.toString()}`;
+/** The address the person opens in the browser that will also open the emailed link. */
+export function pageUrl(asUrl: string, p: { handoffId: string; port: number; state: string }): string {
+  return `${asUrl}${RECOVERY_PATHS.page}?${new URLSearchParams({ handoff: p.handoffId, port: String(p.port), state: p.state }).toString()}`;
 }
 
 // ─── reading the Authority Server's answers (never believed unread) ─────────

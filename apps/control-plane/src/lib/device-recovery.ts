@@ -49,7 +49,7 @@ import { SetupRefusal } from './device-setup';
 import { LoopbackHandoff } from './loopback-handoff';
 import type { IdentityResetAlarm } from './identity-reset-alarm';
 import {
-  RECOVERY_PATHS, LOOKUP_TYP, HANDOFF_TTL_SECONDS, authorizeUrl, confirmCodeOf,
+  RECOVERY_PATHS, LOOKUP_TYP, HANDOFF_TTL_SECONDS, pageUrl, confirmCodeOf,
   readLookupResponse, readRedeemResponse, readStageResponse,
   type RecoveryLookup, type RecoveryLookupRequest, type StageRequest, type RedeemRequest,
 } from './device-recovery-contract';
@@ -75,6 +75,8 @@ interface Flow {
   /** Memory only: the verifier and the state are never kept across a lock. */
   handoff: LoopbackHandoff | null;
   confirmCode: string;
+  /** Epoch ms: when the staged hand-off ends. Kept in the sealed slot. */
+  expiresAt: number;
 }
 
 interface Prepared { id: string; newPub: string; expiresAt: number }
@@ -92,6 +94,10 @@ export interface DeviceRecoveryDeps {
   now?: () => number;
   checks?: PlatformChecks;
   checkStore?: CheckKeyStore;
+}
+
+interface Completed {
+  rootDid: string; deviceKeyId: string; head: { seq: number; hash: string }; signedIn: boolean; signinCode?: string;
 }
 
 const b64uEq = (a: string, b: string): boolean => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
@@ -140,34 +146,36 @@ export class DeviceRecovery {
   /** What the page needs; never a code, never a key. */
   status(): { recoveryPending: boolean; kind?: 'reset' | 'rotate'; handoff?: 'waiting' | 'authorised' | 'failed' | 'expired'; confirmCode?: string } {
     const f = this.live();
-    if (!f) return { recoveryPending: false };
+    // A step that is running counts as pending: a set-up must not start under it.
+    if (!f) return { recoveryPending: this.busy };
     const h = f.handoff;
     const handoff = !h ? undefined : h.expired(this.now()) ? 'expired' : h.status;
     return { recoveryPending: true, kind: f.kind, ...(handoff ? { handoff } : {}), confirmCode: f.confirmCode };
   }
 
   private persist(f: Flow | null): void {
-    this.d.vault.setSecretSlot(PENDING_SLOT, f && f.kind === 'reset'
-      ? { v: 1, id: f.id, entry: f.entry, entryHash: f.entryHash, rootDid: f.rootDid, keyId: f.keyId, label: f.label, confirmCode: f.confirmCode, ...(f.checkKey ? { checkKey: f.checkKey } : {}) }
+    // The signed entry is public once staged; no code, no key, no verifier, no state is in the slot.
+    this.d.vault.setSecretSlot(PENDING_SLOT, f
+      ? { v: 1, kind: f.kind, id: f.id, entry: f.entry, entryHash: f.entryHash, rootDid: f.rootDid, keyId: f.keyId, label: f.label, confirmCode: f.confirmCode, expiresAt: f.expiresAt, ...(f.checkKey ? { checkKey: f.checkKey } : {}) }
       : null);
   }
 
   /** The flow in memory, or a `reset` that survived a lock or a restart in its sealed slot. */
   private live(): Flow | null {
-    // A rotation whose browser step was never taken is over when its time is: nothing of it was kept, and nothing
-    // may be wedged behind it. (If the person did press the button late, the next sign-in moves the stored head.)
-    if (this.flow?.kind === 'rotate' && this.flow.handoff?.expired(this.now())) this.flow = null;
     if (this.flow || !this.d.vault.isUnlocked()) return this.flow;
     let raw: Record<string, unknown> | null = null;
     try { raw = this.d.vault.getSecretSlot<Record<string, unknown>>(PENDING_SLOT); } catch { return null; }
     if (!raw || raw.v !== 1) return null;
-    // A chain is stored: whatever this slot says is a leftover (a crash between storing the chain and clearing the slot).
-    if (this.d.store.exists()) return null;
-    const { id, entry, entryHash, rootDid, keyId, label, checkKey, confirmCode } = raw;
+    const { id, entry, entryHash, rootDid, keyId, label, checkKey, confirmCode, kind, expiresAt } = raw;
+    if (kind !== 'reset' && kind !== 'rotate') return null;
+    // A chain is stored: a `reset` slot is a leftover (a crash between storing the chain and clearing the slot).
+    // A `rotate` slot belongs to a chain that is stored; it stays until finished, cancelled or dropped.
+    if (kind === 'reset' && this.d.store.exists()) return null;
+    if (typeof expiresAt !== 'number') return null;
     if (typeof id !== 'string' || typeof entryHash !== 'string' || typeof rootDid !== 'string' || typeof keyId !== 'string' || typeof label !== 'string' || typeof confirmCode !== 'string' || !entry || typeof entry !== 'object') return null;
     // A check key that is there but is not one this code wrote makes the whole pending recovery unusable: never "no check key".
     if (checkKey !== undefined && !isStoredCheckKey(checkKey)) return null;
-    this.flow = { id, kind: 'reset', entry: entry as ChainEntry, entryHash, rootDid, keyId, label, confirmCode, handoff: null, ...(checkKey ? { checkKey } : {}) };
+    this.flow = { id, kind, entry: entry as ChainEntry, entryHash, rootDid, keyId, label, confirmCode, expiresAt, handoff: null, ...(checkKey ? { checkKey } : {}) };
     return this.flow;
   }
 
@@ -186,11 +194,12 @@ export class DeviceRecovery {
   // ─── 1. recover: a `reset` from a fresh gateway ──────────────────────────
 
   async recoverStart(input: { code: unknown; label?: unknown; checkKey?: unknown; port: number; sessionId: string; localAddress?: string }): Promise<{
-    recoveryId: string; authorizeUrl: string; confirmCode: string; expiresAt: number; rootDid: string;
+    recoveryId: string; pageUrl: string; checkEmail: true; sameBrowser: true; confirmCode: string; expiresAt: number; rootDid: string;
     /** The devices this will remove, from the VERIFIED chain, as plain text. */
     removes: Array<{ label: string; kind: string }>;
-  }> {
+  } | ({ adopted: true } & Completed)> {
     this.requireUnlocked();
+    this.dropExpiredRotate();
     if (this.d.store.exists()) throw new SetupRefusal(409, 'already_set_up');
     if (this.d.setupPending()) throw new SetupRefusal(409, 'setup_pending');
     if (this.busy) throw new SetupRefusal(409, 'setup_busy');
@@ -212,7 +221,7 @@ export class DeviceRecovery {
       if (!key.ok) throw new SetupRefusal(key.code === 'as_key_mismatch' || key.code === 'as_tls_mismatch' ? 409 : 502, key.code);
 
       // 1. lookup: possession of the code is shown by a signature, the code is not sent.
-      const lookup: RecoveryLookup = { typ: LOOKUP_TYP, v: 1, aud: key.publicKeyHex, root_pub: dk.b64uEncode(root.publicKey), issued_at: Math.floor(this.now() / 1000) };
+      const lookup: RecoveryLookup = { typ: LOOKUP_TYP, v: 1, aud: key.publicKeyHex, root_pub: dk.b64uEncode(root.publicKey), issued_at: this.nextLookupTime() };
       const body: RecoveryLookupRequest = { lookup, sig: await dk.signObject(lookup, root.privateSeed) };
       const reply = await this.asCall('POST', RECOVERY_PATHS.lookup, { body });
       if (reply.status === 404) throw new SetupRefusal(404, 'recovery_code_unknown');
@@ -235,6 +244,13 @@ export class DeviceRecovery {
       const reading = await loadOrGenerateKeyPair(this.d.vault);
       const signPub = dk.b64uEncode(signing.publicKey);
       const readPub = dk.b64uEncode(reading.publicKey);
+      // This computer is ALREADY the active device of this chain (a recovery whose answer was lost, a cancelled
+      // one the Authority Server had already appended): there is nothing to append, the chain is taken over. The
+      // chain was verified against the typed code above, so the Authority Server cannot make this up.
+      const mine = Object.values(state.devices).find(x => x.sign_pub === signPub && x.read_pub === readPub);
+      if (mine && mine.removed_seq === null) {
+        return { adopted: true, ...await this.adopt(dk, state, found.root_did, mine) };
+      }
       // A key that ever appeared in this chain cannot be admitted again (KEY_REUSED): say so before anything is signed.
       if (Object.values(state.devices).some(x => x.sign_pub === signPub || x.read_pub === readPub)) throw new SetupRefusal(409, 'device_key_in_chain');
 
@@ -271,10 +287,12 @@ export class DeviceRecovery {
       const hash = await dk.entryHash(entry);
       const f: Flow = {
         id: randomBytes(16).toString('base64url'), kind: 'reset', entry, entryHash: hash, rootDid: found.root_did,
-        keyId: device.key_id, label, handoff: null, confirmCode: confirmCodeOf(hash), ...(checkKey ? { checkKey } : {}),
+        keyId: device.key_id, label, handoff: null, confirmCode: confirmCodeOf(hash), expiresAt: 0, ...(checkKey ? { checkKey } : {}),
       };
       this.requireUnlocked();
       if (this.d.store.exists()) throw new SetupRefusal(409, 'already_set_up'); // the state may have changed while the keys were made
+      // The touch and the Authority Server took time: a set-up may have been started meanwhile.
+      if (this.d.setupPending()) throw new SetupRefusal(409, 'setup_pending');
       const handed = await this.stage(f, input.port, input.sessionId);
       this.persist(f);
       this.flow = f;
@@ -310,10 +328,32 @@ export class DeviceRecovery {
     if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new SetupRefusal(409, 'connect_port_unsupported');
   }
 
-  /** Post the signed entry to the Authority Server and make the address the browser opens. */
-  private async stage(f: Flow, port: number, sessionId: string): Promise<{ authorizeUrl: string; confirmCode: string; expiresAt: number }> {
+  /**
+   * This computer is the active device of the verified chain: take it over (store the head, sign in). A check key
+   * the chain names for this computer must be the one in this vault, or it is refused (never a chain that says
+   * "check key" on a computer that has none to show).
+   */
+  private async adopt(dk: Awaited<ReturnType<typeof deviceKeys>>, state: ChainState, rootDid: string, mine: ChainState['devices'][string]): Promise<Completed> {
+    if (mine.check) {
+      let held: StoredCheckKey | null = null;
+      try { held = this.d.vault.getSecretSlot<StoredCheckKey>('deviceCheckKey'); } catch { held = null; }
+      if (!held || !isStoredCheckKey(held) || mine.check.type !== 'platform' || mine.check.pub !== held.publicKey) throw new SetupRefusal(409, 'check_unavailable');
+    }
+    this.d.store.create({
+      v: 1, rootDid, keyId: mine.key_id, head: { seq: state.head.seq, hash: state.head.hash },
+      asUrl: this.d.client.asUrl, label: mine.label, setUpAt: Math.floor(this.now() / 1000),
+    });
+    try { this.persist(null); } catch { /* nothing kept */ }
+    this.flow = null;
+    void dk;
+    const r = await this.d.signin.signIn();
+    return { rootDid, deviceKeyId: mine.key_id, head: { seq: state.head.seq, hash: state.head.hash }, signedIn: r.ok, ...(r.ok ? {} : { signinCode: r.code }) };
+  }
+
+  /** Post the signed entry to the Authority Server (which emails the person a single-use link) and say where to look. */
+  private async stage(f: Flow, port: number, sessionId: string): Promise<{ pageUrl: string; checkEmail: true; sameBrowser: true; confirmCode: string; expiresAt: number }> {
     const h = new LoopbackHandoff(port, sessionId, this.now() + HANDOFF_TTL_SECONDS * 1000);
-    const body: StageRequest = { entry: f.entry, code_challenge: h.challenge };
+    const body: StageRequest = { entry: f.entry, code_challenge: h.challenge, port, state_hash: h.stateHash };
     const reply = await this.asCall('POST', RECOVERY_PATHS.stage, { body });
     this.refuseOnStatus(reply, 201, 'recovery_refused');
     const staged = readStageResponse(reply.body, Math.floor(this.now() / 1000));
@@ -321,8 +361,11 @@ export class DeviceRecovery {
     h.handoffId = staged.handoff_id;
     h.expiresAt = Math.min(h.expiresAt, staged.expires_at * 1000);
     f.handoff = h;
+    f.expiresAt = h.expiresAt;
     return {
-      authorizeUrl: authorizeUrl(this.d.client.asUrl, { handoffId: staged.handoff_id, port, state: h.stateText }),
+      pageUrl: pageUrl(this.d.client.asUrl, { handoffId: staged.handoff_id, port, state: h.stateText }),
+      checkEmail: true,
+      sameBrowser: true,
       confirmCode: f.confirmCode,
       expiresAt: h.expiresAt,
     };
@@ -333,6 +376,7 @@ export class DeviceRecovery {
   /** Make a new recovery code and show it once. Only its PUBLIC key is kept (in memory), to check the copy. */
   async rotateStart(): Promise<{ rotateId: string; recoveryCode: string; expiresAt: number }> {
     this.requireUnlocked();
+    this.dropExpiredRotate();
     if (!this.d.store.exists()) throw new SetupRefusal(409, 'not_set_up');
     if (this.busy) throw new SetupRefusal(409, 'setup_busy');
     if (this.live()) throw new SetupRefusal(409, 'recovery_pending');
@@ -356,10 +400,11 @@ export class DeviceRecovery {
   }
 
   async rotateSubmit(input: { rotateId: unknown; oldCode: unknown; newCode: unknown; port: number; sessionId: string; localAddress?: string }): Promise<{
-    recoveryId: string; authorizeUrl: string; confirmCode: string; expiresAt: number;
+    recoveryId: string; pageUrl: string; checkEmail: true; sameBrowser: true; confirmCode: string; expiresAt: number;
   }> {
     this.requireUnlocked();
     const stored = this.storedChain();
+    this.dropExpiredRotate();
     if (this.busy) throw new SetupRefusal(409, 'setup_busy');
     if (this.live()) throw new SetupRefusal(409, 'recovery_pending');
     const prep = this.prepared;
@@ -409,10 +454,13 @@ export class DeviceRecovery {
       const hash = await dk.entryHash(entry);
       const f: Flow = {
         id: randomBytes(16).toString('base64url'), kind: 'rotate', entry, entryHash: hash, rootDid: stored.rootDid,
-        keyId: stored.keyId, label: stored.label, handoff: null, confirmCode: confirmCodeOf(hash),
+        keyId: stored.keyId, label: stored.label, handoff: null, confirmCode: confirmCodeOf(hash), expiresAt: 0,
       };
       this.requireUnlocked();
       const handed = await this.stage(f, input.port, input.sessionId);
+      // The Authority Server took time: a lock in between ends it. Nothing is kept of a flow that cannot be sealed.
+      this.requireUnlocked();
+      this.persist(f);
       this.flow = f;
       this.prepared = null; // the new code is spent: a second submit needs a new code
       return { recoveryId: f.id, ...handed };
@@ -420,6 +468,16 @@ export class DeviceRecovery {
       oldSeed?.fill(0);
       this.busy = false;
     }
+  }
+
+  private lastLookupAt = 0;
+  /**
+   * `issued_at` of a lookup, in epoch seconds. The Authority Server answers a signed request once (the same
+   * bytes again are an unknown key), and the clock has one-second steps: so it only ever rises.
+   */
+  private nextLookupTime(): number {
+    this.lastLookupAt = Math.max(Math.floor(this.now() / 1000), this.lastLookupAt + 1);
+    return this.lastLookupAt;
   }
 
   /** The stored check key, and only if it is the one the chain names for this computer. */
@@ -551,6 +609,8 @@ export class DeviceRecovery {
     if (f.kind !== 'rotate') throw new SetupRefusal(404, 'recovery_unknown');
     this.busy = true;
     try {
+      // After a restart the sign-in may not be through yet: this step is the person's own, so it asks for one.
+      if (!isBearerCredential(this.d.vault.getSpCookie())) await this.d.signin.signIn();
       const { state } = await this.ownChain(stored);
       // Exactly the entry this computer built, at the place it built it for. A longer chain is fine (others may follow).
       if (state.hashes[f.entry.seq] !== f.entryHash) {
@@ -564,21 +624,53 @@ export class DeviceRecovery {
         throw e;
       }
       this.flow = null;
+      try { this.persist(null); } catch { /* locked: the slot is dropped at the next finish or cancel */ }
       return { rootDid: stored.rootDid, head: state.head };
     } finally {
       this.busy = false;
     }
   }
 
-  /** Drop a started recovery or rotation, and a prepared new code. A recovery code that was shown with it is dead. */
-  cancel(): void {
+  /** A rotation whose time is over is dropped (and its sealed slot with it): nothing may stay wedged behind it. */
+  private dropExpiredRotate(): void {
+    const f = this.live();
+    if (f?.kind === 'rotate' && f.expiresAt <= this.now() && f.handoff?.status !== 'authorised') {
+      this.flow = null;
+      try { this.persist(null); } catch { /* locked */ }
+    }
+  }
+
+  /**
+   * Drop a started recovery or rotation, and a prepared new code. A `reset` is NOT dropped blindly: if the Authority
+   * Server already holds the entry (the person pressed the button and the answer was lost), this computer is a device
+   * of that chain and dropping would strand it (its check key gone, its entry in a chain it cannot sign in to). So the
+   * chain is asked first, with the same sign-in `finish` uses, and the recovery is completed instead. When the
+   * Authority Server cannot be asked, nothing is dropped.
+   */
+  async cancel(): Promise<{ cancelled: true } | { completed: Completed }> {
     if (this.busy) throw new SetupRefusal(409, 'setup_busy');
-    this.live(); // load a kept one, so there is nothing left in the slot either
+    const f = this.live(); // load a kept one, so there is nothing left in the slot either
+    if (f?.kind === 'reset' && !this.d.store.exists()) {
+      this.busy = true;
+      try {
+        const key = await this.d.checkAs();
+        if (!key.ok) throw new SetupRefusal(key.code === 'as_key_mismatch' || key.code === 'as_tls_mismatch' ? 409 : 502, key.code);
+        const probe = await this.d.signin.performSignIn({ rootDid: f.rootDid, keyId: f.keyId, head: { seq: f.entry.seq, hash: f.entryHash } }, { storeHead: false, probe: true });
+        if (probe.ok) return { completed: await this.completeReset(f) };
+        if (probe.code === 'as_unreachable' || probe.code === 'as_error' || probe.code === 'rate_limited' || probe.code === 'as_tls_mismatch') {
+          throw new SetupRefusal(probe.code === 'rate_limited' ? 429 : probe.code === 'as_tls_mismatch' ? 409 : 502, probe.code);
+        }
+        // The Authority Server does not hold the entry: nothing was done, and nothing is lost by dropping it.
+      } finally {
+        this.busy = false;
+      }
+    }
     this.flow = null;
     this.prepared = null;
     try { this.persist(null); } catch { /* locked: nothing to clear */ }
     // A check-key slot with no chain behind it is an orphan: clear it.
     try { if (this.d.checkStore && !this.d.store.exists()) this.d.checkStore.write(null); } catch { /* locked */ }
+    return { cancelled: true };
   }
 
   // ─── cancel a request for a new identity ─────────────────────────────────
@@ -685,6 +777,7 @@ export class DeviceRecovery {
     if (reply.status === ok) return;
     const asCode = asErrorCode(reply.body);
     if (reply.status === 429) throw new SetupRefusal(429, 'rate_limited', asCode ? { asCode } : {});
+    if (asCode === 'MAIL_FAILED') throw new SetupRefusal(502, 'mail_failed', { asCode });
     if (reply.status >= 500) throw new SetupRefusal(502, 'as_error');
     if (asCode === 'CHAIN_HEAD_MOVED') throw new SetupRefusal(409, 'chain_moved', { asCode });
     throw new SetupRefusal(409, code, asCode ? { asCode } : {});

@@ -15,6 +15,7 @@
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import http from 'node:http';
+import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -29,7 +30,7 @@ import { bootGateway, call, sessionHeaders, type GatewayRig, type Reply } from '
 import { PlatformHelper, type HelperSpec } from '../../lib/platform-helper';
 import { DeviceChainStore } from '../../lib/device-chain-store';
 import { eventBus, type BusEvent } from '../../lib/event-bus';
-import { confirmCodeOf, readStageResponse, readRedeemResponse, readLookupResponse, authorizeUrl } from '../../lib/device-recovery-contract';
+import { confirmCodeOf, readStageResponse, readRedeemResponse, readLookupResponse, pageUrl } from '../../lib/device-recovery-contract';
 import { readPendingReset } from '../../lib/device-signin';
 import { LoopbackHandoff } from '../../lib/loopback-handoff';
 import { IdentityResetAlarm } from '../../lib/identity-reset-alarm';
@@ -65,6 +66,8 @@ const host = (spec: HelperSpec): PlatformHelper => {
 const fakeHost = (env: Record<string, string> = {}) => host({ command: process.execPath, args: [FAKE], env: { ...process.env, ...env }, files: [] });
 const softHost = () => host({ command: SOFT, args: ['serve', '--backend', 'software', '--allow-any-caller'], files: [] });
 
+let bootCount = 0;
+
 interface Gw {
   gw: GatewayRig;
   h: Record<string, string>;
@@ -78,6 +81,9 @@ async function boot(as: StubAs, o: { platform?: PlatformHelper; dir?: string; fr
     ...(o.notes ? { notifyIdentityReset: (t: string, m: string) => { o.notes!.push([t, m]); } } : {}),
   });
   open.push(gw);
+  // Two gateways that sign a lookup in the same second with the same key would send the same bytes, and the
+  // Authority Server answers a signed request once: each gets a clock of its own, a second apart.
+  gw.clock.t += ++bootCount;
   const session = await gw.unlock();
   const h = sessionHeaders(session);
   return {
@@ -103,16 +109,87 @@ async function setUp(as: StubAs, w: Gw, o: { checkKey?: boolean; label?: string 
   return { code: String(start.body.recoveryCode), rootDid: String(start.body.rootDid), keyId: String(start.body.deviceKeyId) };
 }
 
-/** The browser's part: open the address, press the button with an email-link session, follow the redirect to the gateway. */
-async function browser(as: StubAs, w: Gw, started: Reply, o: Parameters<StubAs['authorizeHandoff']>[1] = {}): Promise<{ refused: string } | { redirect: string; callback: Reply }> {
-  const u = new URL(String(started.body.authorizeUrl));
-  expect(u.origin).toBe(as.url);
-  expect(u.pathname).toBe('/recover');
-  const r = await as.authorizeHandoff({ handoff: u.searchParams.get('handoff')!, port: u.searchParams.get('port')!, state: u.searchParams.get('state')! }, o);
+interface BrowserOpts {
+  /** Press the button without having used the emailed link (no cookie at all). */
+  noLink?: boolean;
+  /** Send this cookie value as `hap-recovery` (the session of ANOTHER recovery). */
+  cookie?: string;
+  /** Send a dashboard session, an API key and a device token instead of the recovery cookie. */
+  otherCredentials?: boolean;
+  crossSite?: boolean;
+  wrongCsrf?: boolean;
+  /** The email whose link is used. Default: the newest. */
+  email?: number;
+}
+
+type Pressed = { refused: string; status: number } | { redirect: string; cookie: string };
+
+const formBody = (o: Record<string, string>): string => new URLSearchParams(o).toString();
+const codeOf = async (r: Response): Promise<string> => {
+  const hdr = r.headers.get('x-code');
+  if (hdr) return hdr;
+  return String(((await r.json()) as { errors: Array<{ code: string }> }).errors[0].code);
+};
+
+/**
+ * The browser's part, over real HTTP against the stand-in Authority Server, in the order the real one needs: open the
+ * address the gateway gave (it says "check your email"), open the EMAILED link in the same browser and press its button
+ * (sets the `hap-recovery` cookie, bound to that one handoff), reload the address (now it shows the form), press Confirm.
+ * The gateway sees none of this.
+ */
+async function pressButton(as: StubAs, started: Reply | string, o: BrowserOpts = {}): Promise<Pressed> {
+  const pageAddress = typeof started === 'string' ? started : String(started.body.pageUrl);
+  const mail = as.emails[o.email ?? as.emails.length - 1];
+  expect(mail, 'the Authority Server emailed a link').toBeTruthy();
+  const pu = new URL(pageAddress);
+  expect(pu.origin).toBe(as.url);
+  expect([...pu.searchParams.keys()].sort()).toEqual(['handoff', 'port', 'state']);
+  // 1. before the link: the page shows nothing of the entry
+  const before = await fetch(pageAddress, { redirect: 'manual' });
+  expect([401, 410]).toContain(before.status); // 410: this recovery was replaced
+  expect(before.headers.get('referrer-policy')).toBe('no-referrer');
+  expect(await before.text()).not.toContain('class="code"');
+
+  let cookie = o.cookie ?? '';
+  if (!o.noLink && !o.cookie && !o.otherCredentials) {
+    // 2. the link: a GET shows a button and uses nothing up; the POST uses it up and sets the cookie
+    const look = await fetch(mail.link, { redirect: 'manual' });
+    expect(look.status).toBe(200);
+    const token = new URL(mail.link).searchParams.get('token')!;
+    const post = await fetch(`${as.url}/api/devices/recovery/link`, { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: formBody({ token }) });
+    if (post.status !== 200) return { refused: await codeOf(post), status: post.status };
+    cookie = /hap-recovery=([^;]+)/.exec(post.headers.get('set-cookie') ?? '')![1];
+  }
+  // 3. reload the address: now it shows the form (with the CSRF token) in this browser
+  let csrf = 'x';
+  if (cookie) {
+    const page = await fetch(pageAddress, { redirect: 'manual', headers: { cookie: `hap-recovery=${cookie}` } });
+    if (page.status === 200) csrf = /name="csrf" value="([^"]+)"/.exec(await page.text())![1];
+  }
+  const res = await fetch(`${as.url}/api/devices/recovery/authorize`, {
+    method: 'POST', redirect: 'manual',
+    headers: {
+      'content-type': 'application/x-www-form-urlencoded',
+      ...(cookie ? { cookie: `hap-recovery=${cookie}` } : {}),
+      ...(o.otherCredentials ? { cookie: 'hap-session=abc', authorization: 'Bearer abc', 'x-api-key': 'hap_abc' } : {}),
+      ...(o.crossSite ? { 'sec-fetch-site': 'cross-site' } : {}),
+    },
+    body: formBody({ handoff: mail.handoff, port: pu.searchParams.get('port')!, state: pu.searchParams.get('state')!, csrf: o.wrongCsrf ? 'nope' : csrf }),
+  });
+  if (res.status === 302) return { redirect: res.headers.get('location')!, cookie };
+  return { refused: await codeOf(res), status: res.status };
+}
+
+/** `pressButton`, then the redirect is followed to the gateway's loopback address. */
+async function browser(as: StubAs, w: Gw, started: Reply, o: BrowserOpts = {}): Promise<{ refused: string } | { redirect: string; callback: Reply }> {
+  const r = await pressButton(as, started, o);
   if ('refused' in r) return r;
   const cb = new URL(r.redirect);
   expect(cb.hostname).toBe('127.0.0.1');
   expect(Number(cb.port)).toBe(w.gw.port);
+  const keys = [...cb.searchParams.keys()].sort();
+  expect(keys[1]).toBe('state');
+  expect(['code', 'error']).toContain(keys[0]); // no port and no handoff id in the redirect
   return { redirect: r.redirect, callback: await call(w.gw.port, 'GET', cb.pathname + cb.search) };
 }
 
@@ -124,6 +201,24 @@ function allFiles(dir: string): Array<{ path: string; text: string }> {
     else out.push({ path: p, text: readFileSync(p).toString('latin1') });
   }
   return out;
+}
+
+/** The same data folder after a restart: a new process (new Vault, new sessions), signed in to the page again. */
+async function restart(as: StubAs, w: Gw, o: { platform?: PlatformHelper } = {}): Promise<Gw> {
+  const dir = w.gw.dir;
+  await w.gw.close();
+  open.splice(open.findIndex(x => x === w.gw), 1);
+  return boot(as, { dir, fresh: false, ...o });
+}
+
+/** A POST with a body exactly as given (not JSON.stringify'd), for the malformed-body cases. */
+function rawPost(w: Gw, path: string, payload: string): Promise<{ status: number; text: string }> {
+  return new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port: w.gw.port, method: 'POST', path, headers: { ...w.h, host: `127.0.0.1:${w.gw.port}`, origin: `http://127.0.0.1:${w.gw.port}`, 'content-type': 'application/json', 'content-length': String(Buffer.byteLength(payload)) } }, res => {
+      let d = ''; res.on('data', c => (d += c)); res.on('end', () => resolve({ status: res.statusCode ?? 0, text: d }));
+    });
+    req.on('error', reject); req.write(payload); req.end();
+  });
 }
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
@@ -187,14 +282,22 @@ describe('recovery on a fresh gateway: a reset with the recovery code', () => {
     const start = await fresh.post('/auth/device/recover/start', { code: acct.code });
     await browser(as, fresh, start);
     await fresh.post('/auth/device/recover/finish', { recoveryId: start.body.recoveryId });
+    // the only requests that carry the recovery cookie are the browser's own (the page and the form post), never the gateway's
     for (const r of as.requests) {
-      expect(r.headers.cookie).toBeUndefined();
+      if (!['/api/devices/recovery/authorize', '/recover'].includes(r.path.split('?')[0])) expect(r.headers.cookie, r.path).toBeUndefined();
       expect(r.headers['x-api-key']).toBeUndefined();
     }
-    // the hand-off posts carry no credential at all: the entry and the challenge are the whole of them
+    // the answer tells the person what to do, without a way round the mailed link
+    expect(start.body).toMatchObject({ checkEmail: true, sameBrowser: true });
+    expect([...new URL(String(start.body.pageUrl)).searchParams.keys()].sort()).toEqual(['handoff', 'port', 'state']);
+    expect(as.emails).toHaveLength(1);
+    // the hand-off posts carry no credential at all: the entry, the challenge, the port and the state's hash are the whole of them
+    const stageBody = JSON.parse(as.requests.find(r => r.path === '/api/devices/recovery/handoffs')!.body);
+    expect(Object.keys(stageBody).sort()).toEqual(['code_challenge', 'entry', 'port', 'state_hash']);
+    expect(stageBody.port).toBe(fresh.gw.port);
     for (const r of recoveryRequests(as)) expect(r.headers.authorization).toBeUndefined();
     // the redirect the browser follows carries `code` and `state`, nothing of the account
-    expect(recoveryRequests(as).map(r => r.path)).toEqual(['/api/devices/recovery/chain', '/api/devices/recovery/handoffs', '/api/devices/recovery/redeem']);
+    expect(recoveryRequests(as).map(r => r.path)).toEqual(['/api/devices/recovery/chain', '/api/devices/recovery/handoffs', '/api/devices/recovery/link', '/api/devices/recovery/authorize', '/api/devices/recovery/redeem']);
   });
 
   it('the recovery code and the root key are in no request, no answer, no log line and no file; the seeds are zeroed', async () => {
@@ -239,7 +342,7 @@ describe('recovery on a fresh gateway: a reset with the recovery code', () => {
     expect(zeroed).toContain(recoverySeedHex);
   });
 
-  it('a body that is not JSON is refused with nothing of it in the answer or the log', async () => {
+  it('a body that is not JSON is refused with nothing of it in the answer or the log, on EVERY /auth route that takes a secret', async () => {
     const logs: string[] = [];
     for (const m of ['log', 'error', 'warn', 'info', 'debug'] as const) {
       vi.spyOn(console, m).mockImplementation((...a: unknown[]) => { logs.push(a.map(x => (x instanceof Error ? `${x.name}: ${x.message}\n${x.stack}` : typeof x === 'string' ? x : JSON.stringify(x))).join(' ')); });
@@ -247,22 +350,19 @@ describe('recovery on a fresh gateway: a reset with the recovery code', () => {
     const as = await newAs();
     const old = await boot(as);
     const acct = await setUp(as, old);
-    const fresh = await boot(as);
+    const fresh = await boot(as, { platform: fakeHost() });
     const compact = acct.code.replace(/-/g, '');
-    for (const path of ['/auth/device/recover/start', '/auth/device/rotate-root/submit']) {
-      const raw = await new Promise<{ status: number; text: string }>((resolve, reject) => {
-        const payload = `{"code": ${acct.code} "oldCode": ${acct.code}`; // not JSON
-        const req = http.request({ host: '127.0.0.1', port: fresh.gw.port, method: 'POST', path, headers: { ...fresh.h, host: `127.0.0.1:${fresh.gw.port}`, origin: `http://127.0.0.1:${fresh.gw.port}`, 'content-type': 'application/json', 'content-length': String(Buffer.byteLength(payload)) } }, res => {
-          let d = ''; res.on('data', c => (d += c)); res.on('end', () => resolve({ status: res.statusCode ?? 0, text: d }));
-        });
-        req.on('error', reject); req.write(payload); req.end();
-      });
+    const paths = ['/auth/device/recover/start', '/auth/device/rotate-root/submit', '/auth/platform/check-key/reset', '/auth/platform/enable', '/auth/unlock', '/auth/device/setup/finish'];
+    for (const path of paths) {
+      const raw = await rawPost(fresh, path, `{"password": "hunter2-secret", "recoveryCode": ${acct.code} "code": ${acct.code}`); // not JSON
       expect(raw.status, path).toBe(400);
       expect(raw.text.includes(compact.slice(4, 16)), path).toBe(false);
-      expect(raw.text.includes('SV1')).toBe(false);
+      expect(raw.text.includes('SV1'), path).toBe(false);
+      expect(raw.text.includes('hunter2'), path).toBe(false);
     }
     expect(logs.join('\n').includes(compact.slice(4, 16))).toBe(false);
     expect(logs.join('\n').includes('SV1-')).toBe(false);
+    expect(logs.join('\n').includes('hunter2')).toBe(false);
     expect(as.requests.filter(x => x.path.startsWith('/api/devices/recovery/'))).toHaveLength(0);
   });
 
@@ -371,6 +471,28 @@ describe('recovery on a fresh gateway: a reset with the recovery code', () => {
     expect(again.body.code).toBe('recovery_pending');
   });
 
+  it('a recovery start that is still running counts as pending: a set-up cannot start under it, and the other way round', async () => {
+    const as = await newAs();
+    const old = await boot(as);
+    const acct = await setUp(as, old);
+    const f = await boot(as, { platform: fakeHost({ FAKE_TOUCH: 'slow' }) });
+    const rec = f.post('/auth/device/recover/start', { code: acct.code, checkKey: true });
+    await sleep(120);
+    expect((await f.get('/auth/device/status')).body.recovery).toMatchObject({ recoveryPending: true });
+    const setup = await f.post('/auth/device/setup/start');
+    expect(setup.status).toBe(409);
+    expect(setup.body.code).toBe('recovery_pending');
+    expect((await rec).status).toBe(200);
+
+    const g = await boot(as, { platform: fakeHost({ FAKE_TOUCH: 'slow' }) });
+    const su = g.post('/auth/device/setup/start', { checkKey: true });
+    await sleep(120);
+    const blocked = await g.post('/auth/device/recover/start', { code: acct.code });
+    expect(blocked.status).toBe(409);
+    expect(blocked.body.code).toBe('setup_pending');
+    expect((await su).status).toBe(200);
+  });
+
   it('two starts at once: one runs, the other is refused', async () => {
     const as = await newAs();
     const old = await boot(as);
@@ -393,30 +515,34 @@ describe('the browser hand-off', () => {
     return { as, old, acct, fresh, start };
   }
 
-  it('the callback needs the right state, once: a guessed, a replayed and an expired state change nothing', async () => {
+  it('the callback needs the state this gateway made, once: a guessed and a replayed one change nothing', async () => {
     const { as, fresh, start } = await started();
-    const u = new URL(String(start.body.authorizeUrl));
-    const state = u.searchParams.get('state')!;
-    const r = await as.authorizeHandoff({ handoff: u.searchParams.get('handoff')!, port: u.searchParams.get('port')!, state });
+    const r = await pressButton(as, start);
     const cb = new URL((r as { redirect: string }).redirect);
     const code = cb.searchParams.get('code')!;
+    const state = cb.searchParams.get('state')!;
 
     const wrong = await call(fresh.gw.port, 'GET', `/recover/callback?code=${code}&state=${b64uEncode(new Uint8Array(32))}`);
     expect(wrong.status).toBe(400);
     expect(as.requests.filter(x => x.path.endsWith('/redeem'))).toHaveLength(0);
     for (const bad of ['', 'x', 'a'.repeat(200)]) expect((await call(fresh.gw.port, 'GET', `/recover/callback?code=${code}&state=${bad}`)).status).toBe(400);
     expect((await call(fresh.gw.port, 'GET', `/recover/callback?code=${code}`)).status).toBe(400);
+    expect((await call(fresh.gw.port, 'GET', `/recover/callback?code=${code}&handoff=${state}`)).status).toBe(400);
 
     expect((await call(fresh.gw.port, 'GET', cb.pathname + cb.search)).status).toBe(200);
-    // the same callback again: the state is spent
-    expect((await call(fresh.gw.port, 'GET', cb.pathname + cb.search)).status).toBe(400);
+    expect((await call(fresh.gw.port, 'GET', cb.pathname + cb.search)).status).toBe(400); // spent
     expect(as.requests.filter(x => x.path.endsWith('/redeem'))).toHaveLength(1);
+    // the redeem carries the code and the verifier; the state went only to the page and the stage (as a hash)
+    const redeem = JSON.parse(as.requests.find(x => x.path.endsWith('/redeem'))!.body);
+    expect(Object.keys(redeem).sort()).toEqual(['code', 'code_verifier']);
+    const stage = JSON.parse(as.requests.find(x => x.path.endsWith('/handoffs'))!.body);
+    expect(stage.state_hash).toBe(createHash('sha256').update(state, 'utf8').digest('base64url'));
+    expect(JSON.stringify(as.requests.filter(x => x.method === 'POST' && !x.path.endsWith('/authorize')).map(x => x.body)).includes(state)).toBe(false);
   });
 
-  it('a state that waited past its time is refused', async () => {
+  it('a hand-off that waited past its time is refused', async () => {
     const { as, fresh, start } = await started();
-    const u = new URL(String(start.body.authorizeUrl));
-    const r = await as.authorizeHandoff({ handoff: u.searchParams.get('handoff')!, port: u.searchParams.get('port')!, state: u.searchParams.get('state')! });
+    const r = await pressButton(as, start);
     const cb = new URL((r as { redirect: string }).redirect);
     fresh.gw.clock.t += 11 * 60;
     expect((await call(fresh.gw.port, 'GET', cb.pathname + cb.search)).status).toBe(400);
@@ -446,15 +572,97 @@ describe('the browser hand-off', () => {
     expect(fresh.gw.vault.getSpCookie()).toBeNull();
   });
 
-  it('a browser without an email-link session, a cross-site post, or a missing CSRF token appends nothing (the contract, as the stub models it)', async () => {
-    const { as, fresh, start } = await started();
-    for (const o of [{ emailLinkSession: false }, { crossSite: true }, { csrf: false }, { userId: 'someone-else' }]) {
+  it('only the mailed link\'s cookie authorises: no link, another recovery\'s cookie, a dashboard session, an API key, a device token, a cross-site post or a missing CSRF token append nothing', async () => {
+    for (const [name, o, code] of [
+      ['no link', { noLink: true }, 'EMAIL_LINK_SESSION_REQUIRED'],
+      ['other credentials', { otherCredentials: true }, 'EMAIL_LINK_SESSION_REQUIRED'],
+      ['another recovery\'s cookie', { cookie: 'AAAA' }, 'EMAIL_LINK_SESSION_REQUIRED'],
+      ['cross-site', { crossSite: true }, 'CROSS_SITE'],
+      ['wrong csrf', { wrongCsrf: true }, 'CSRF_INVALID'],
+    ] as Array<[string, BrowserOpts, string]>) {
+      const { as, fresh, start } = await started();
       const b = await browser(as, fresh, start, o);
-      expect('refused' in b).toBe(true);
+      expect(b, name).toMatchObject({ refused: code });
+      expect(as.chainEntries(), name).toHaveLength(1);
+      expect((await fresh.post('/auth/device/recover/finish', { recoveryId: start.body.recoveryId })).body.code, name).toBe('recovery_not_done');
     }
+  });
+
+  it('the cookie of an OLDER recovery is refused for the newer one (HANDOFF_OTHER_ACCOUNT, a page, not a redirect)', async () => {
+    const { as, acct, fresh, start } = await started();
+    const token = new URL(as.emails[0].link).searchParams.get('token')!;
+    const post = await fetch(`${as.url}/api/devices/recovery/link`, { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: formBody({ token }) });
+    const oldCookie = /hap-recovery=([^;]+)/.exec(post.headers.get('set-cookie') ?? '')![1];
+    as.expireHandoffs();
+    const other = await boot(as);
+    const s2 = await other.post('/auth/device/recover/start', { code: acct.code });
+    expect(s2.status).toBe(200);
+    expect(await browser(as, other, s2, { cookie: oldCookie, email: 1 })).toMatchObject({ refused: 'HANDOFF_OTHER_ACCOUNT' });
     expect(as.chainEntries()).toHaveLength(1);
-    const fin = await fresh.post('/auth/device/recover/finish', { recoveryId: start.body.recoveryId });
-    expect(fin.body.code).toBe('recovery_not_done');
+    void fresh; void start;
+  });
+
+  it('the emailed link: a GET shows a button and spends nothing, the POST works once, and a refusal there is its own code', async () => {
+    const { as } = await started();
+    const mail = as.emails[0];
+    for (let i = 0; i < 3; i++) expect((await fetch(mail.link, { redirect: 'manual' })).status).toBe(200); // a mail scanner opening it
+    const token = new URL(mail.link).searchParams.get('token')!;
+    const post = () => fetch(`${as.url}/api/devices/recovery/link`, { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: formBody({ token }) });
+    expect((await post()).status).toBe(200);
+    const again = await post();
+    expect(again.status).toBe(410);
+    expect(await codeOf(again)).toBe('LINK_INVALID');
+  });
+
+  it('one open hand-off per account: a new start replaces the old, whose link then no longer works', async () => {
+    const { as, acct, fresh, start } = await started();
+    const other = await boot(as);
+    const s2 = await other.post('/auth/device/recover/start', { code: acct.code });
+    expect(s2.status).toBe(200);
+    const stale = await browser(as, fresh, start, { email: 0 });
+    // the old link no longer works at all
+    expect(stale).toMatchObject({ refused: 'LINK_INVALID' });
+    expect(as.chainEntries()).toHaveLength(1);
+    expect((await browser(as, other, s2, { email: 1 }))).toHaveProperty('callback');
+    expect((await other.post('/auth/device/recover/finish', { recoveryId: s2.body.recoveryId })).status).toBe(200);
+  });
+
+  it('an unsendable email is its own refusal and nothing is kept', async () => {
+    const as = await newAs();
+    const old = await boot(as);
+    const acct = await setUp(as, old);
+    as.mailFails = true;
+    const fresh = await boot(as);
+    const r = await fresh.post('/auth/device/recover/start', { code: acct.code });
+    expect(r.status).toBe(502);
+    expect(r.body.code).toBe('mail_failed');
+    expect(fresh.gw.vault.hasSecretSlot('deviceRecoveryPending')).toBe(false);
+  });
+
+  it('a lookup is answered once: every call builds a fresh one (its time only rises), and a recorded one replayed gets NO_CHAIN', async () => {
+    const { as, acct, fresh } = await started();
+    await fresh.post('/auth/device/recover/cancel');
+    expect((await fresh.post('/auth/device/recover/start', { code: acct.code })).status).toBe(200); // same second, same key
+    await fresh.post('/auth/device/recover/cancel');
+    expect((await fresh.post('/auth/device/recover/start', { code: acct.code })).status).toBe(200);
+    const lookups = as.requests.filter(r => r.path === '/api/devices/recovery/chain').map(r => JSON.parse(r.body));
+    expect(lookups).toHaveLength(3);
+    for (const l of lookups) expect(Object.keys(l.lookup).sort()).toEqual(['aud', 'issued_at', 'root_pub', 'typ', 'v']);
+    expect(lookups[1].lookup.issued_at).toBeGreaterThan(lookups[0].lookup.issued_at);
+    expect(lookups[2].lookup.issued_at).toBeGreaterThan(lookups[1].lookup.issued_at);
+    const replay = await fetch(`${as.url}/api/devices/recovery/chain`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(lookups[0]) });
+    expect(replay.status).toBe(404);
+  });
+
+  it('a reset closes an open request for a new identity: the next sign-in says so and the alarm ends', async () => {
+    const { as, old, fresh, start } = await started();
+    as.openReset();
+    await old.post('/auth/device/signin');
+    expect((await old.get('/auth/device/status')).body.pendingIdentityReset).toBeTruthy();
+    await browser(as, fresh, start);
+    expect((await fresh.post('/auth/device/recover/finish', { recoveryId: start.body.recoveryId })).status).toBe(200);
+    expect((await fresh.get('/auth/device/status')).body.pendingIdentityReset).toBeNull();
+    expect(as.pendingReset).toBeNull();
   });
 
   it('an Authority Server that names another entry at redeem is not believed; the chain decides', async () => {
@@ -470,19 +678,37 @@ describe('the browser hand-off', () => {
     expect(fin.body.signedIn).toBe(true);
   });
 
-  it('the chain moved after the entry was built: the append is refused, the gateway says so and keeps nothing', async () => {
-    const { as, old, acct, fresh, start } = await started();
-    // another fresh gateway recovers first
+  it('the chain moved after the entry was built: the append is refused, the redirect says why, the gateway keeps nothing', async () => {
+    const { as, acct, fresh, start } = await started();
+    const other = await boot(as);
+    const s2 = await other.post('/auth/device/recover/start', { code: acct.code }); // replaces the first hand-off
+    expect((await browser(as, other, s2, { email: 1 }))).toHaveProperty('callback');
+    expect((await other.post('/auth/device/recover/finish', { recoveryId: s2.body.recoveryId })).status).toBe(200);
+    // the first person's link was replaced: it does not even open
+    expect(await browser(as, fresh, start, { email: 0 })).toMatchObject({ refused: 'LINK_INVALID' });
+    const st = await fresh.get(`/auth/device/recover/status?recoveryId=${start.body.recoveryId}`);
+    expect(st.body).toMatchObject({ state: 'waiting' });
+    const fin = await fresh.post('/auth/device/recover/finish', { recoveryId: start.body.recoveryId });
+    expect(fin.status).toBe(409);
+    expect(new DeviceChainStore(fresh.gw.vault).read()).toBeNull();
+  });
+
+  it('a refused append comes back as ?error=<code>: the gateway reports it, and nothing is stored', async () => {
+    const { as, acct, fresh, start } = await started();
+    // the first person has used the link and has the page open
+    const token = new URL(as.emails[0].link).searchParams.get('token')!;
+    const post = await fetch(`${as.url}/api/devices/recovery/link`, { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: formBody({ token }) });
+    const cookie1 = /hap-recovery=([^;]+)/.exec(post.headers.get('set-cookie') ?? '')![1];
+    // another recovery moves the chain meanwhile
     const other = await boot(as);
     const s2 = await other.post('/auth/device/recover/start', { code: acct.code });
-    expect((await browser(as, other, s2))).toHaveProperty('callback');
+    expect((await browser(as, other, s2, { email: 1 }))).toHaveProperty('callback');
     expect((await other.post('/auth/device/recover/finish', { recoveryId: s2.body.recoveryId })).status).toBe(200);
-    void old;
-    // now the first one's entry no longer extends the chain
-    const b = await browser(as, fresh, start);
+    as.revive(as.emails[0].handoff);
+    const b = await browser(as, fresh, start, { cookie: cookie1, email: 0 });
     expect('callback' in b && b.callback.status).toBe(200);
     const st = await fresh.get(`/auth/device/recover/status?recoveryId=${start.body.recoveryId}`);
-    expect(st.body).toMatchObject({ state: 'failed', code: 'handoff_refused' });
+    expect(st.body).toMatchObject({ state: 'failed', code: 'handoff_refused', asCode: 'CHAIN_HEAD_MOVED' });
     const fin = await fresh.post('/auth/device/recover/finish', { recoveryId: start.body.recoveryId });
     expect(fin.status).toBe(409);
     expect(new DeviceChainStore(fresh.gw.vault).read()).toBeNull();
@@ -523,7 +749,7 @@ describe('the browser hand-off', () => {
     expect((await again.get('/auth/device/status')).body).toMatchObject({ setUp: false });
     // the slot holds the signed entry and ids, no secret
     const slot = again.gw.vault.getSecretSlot<Record<string, unknown>>('deviceRecoveryPending')!;
-    expect(Object.keys(slot).sort()).toEqual(['confirmCode', 'entry', 'entryHash', 'id', 'keyId', 'label', 'rootDid', 'v']);
+    expect(Object.keys(slot).sort()).toEqual(['confirmCode', 'entry', 'entryHash', 'expiresAt', 'id', 'keyId', 'kind', 'label', 'rootDid', 'v']);
     const fin = await again.post('/auth/device/recover/finish', { recoveryId: start.body.recoveryId });
     expect(fin.status).toBe(200);
     expect(fin.body).toMatchObject({ signedIn: true, head: { seq: 1 } });
@@ -544,12 +770,71 @@ describe('the browser hand-off', () => {
     expect((await fresh.post('/auth/device/recover/finish', { recoveryId: start.body.recoveryId })).status).toBe(404);
   });
 
-  it('cancel drops a started recovery and its sealed slot; the same code can start again', async () => {
-    const { acct, fresh, start } = await started();
-    expect((await fresh.post('/auth/device/recover/cancel')).status).toBe(200);
+  it('cancel drops a started recovery that the Authority Server does not hold, and its sealed slot; the same code can start again', async () => {
+    const { as, acct, fresh, start } = await started();
+    const c = await fresh.post('/auth/device/recover/cancel');
+    expect(c.status).toBe(200);
+    expect(c.body).toMatchObject({ cancelled: true });
     expect(fresh.gw.vault.getSecretSlot('deviceRecoveryPending')).toBeNull();
     expect((await fresh.post('/auth/device/recover/finish', { recoveryId: start.body.recoveryId })).status).toBe(404);
+    as.expireHandoffs();
     expect((await fresh.post('/auth/device/recover/start', { code: acct.code })).status).toBe(200);
+  });
+
+  it('cancel AFTER the person pressed the button completes the recovery instead of stranding this computer (check key kept)', async () => {
+    const as = await newAs();
+    const old = await boot(as);
+    const acct = await setUp(as, old);
+    const fresh = await boot(as, { platform: fakeHost() });
+    const start = await fresh.post('/auth/device/recover/start', { code: acct.code, checkKey: true });
+    expect(start.status).toBe(200);
+    expect('callback' in await browser(as, fresh, start)).toBe(true);
+    expect((await fresh.get(`/auth/device/recover/status?recoveryId=${start.body.recoveryId}`)).body.state).toBe('authorised');
+    const c = await fresh.post('/auth/device/recover/cancel');
+    expect(c.status).toBe(200);
+    expect(c.body).toMatchObject({ completed: { rootDid: acct.rootDid, signedIn: true, head: { seq: 1 } } });
+    expect(new DeviceChainStore(fresh.gw.vault).exists()).toBe(true);
+    expect(fresh.gw.checkStore.has()).toBe(true);
+    expect(fresh.gw.vault.getSecretSlot('deviceRecoveryPending')).toBeNull();
+  });
+
+  it('cancel does not drop what it cannot check: an Authority Server that is down leaves the recovery as it was', async () => {
+    const { as, fresh, start } = await started();
+    await browser(as, fresh, start);
+    await as.close();
+    open.splice(open.findIndex(x => x === as), 1);
+    const c = await fresh.post('/auth/device/recover/cancel');
+    expect(c.status).toBe(502);
+    expect(['as_unreachable', 'as_unverified']).toContain(c.body.code);
+    expect(fresh.gw.vault.getSecretSlot('deviceRecoveryPending')).not.toBeNull();
+  });
+
+  it('a computer that is already the active device of the chain takes it over instead of being refused (a cancel that dropped an appended entry)', async () => {
+    const { as, acct, fresh, start } = await started();
+    await browser(as, fresh, start);
+    // the pending state is gone (it was dropped, or the vault slot was lost), the Authority Server holds our entry
+    fresh.gw.vault.setSecretSlot('deviceRecoveryPending', null);
+    const gw2 = await restart(as, fresh);
+    const again = await gw2.post('/auth/device/recover/start', { code: acct.code });
+    expect(again.status).toBe(200);
+    expect(again.body).toMatchObject({ adopted: true, rootDid: acct.rootDid, signedIn: true, head: { seq: 1 } });
+    expect(new DeviceChainStore(gw2.gw.vault).read()).toMatchObject({ rootDid: acct.rootDid, head: { seq: 1 } });
+    expect(as.chainEntries()).toHaveLength(2); // nothing appended a second time
+  });
+
+  it('a takeover is refused where the chain names a check key this computer cannot show', async () => {
+    const as = await newAs();
+    const old = await boot(as);
+    const acct = await setUp(as, old);
+    const fresh = await boot(as, { platform: fakeHost() });
+    const start = await fresh.post('/auth/device/recover/start', { code: acct.code, checkKey: true });
+    await browser(as, fresh, start);
+    fresh.gw.vault.setSecretSlot('deviceRecoveryPending', null); // the key blob was only in that slot
+    const gw2 = await restart(as, fresh, { platform: fakeHost() });
+    const again = await gw2.post('/auth/device/recover/start', { code: acct.code });
+    expect(again.status).toBe(409);
+    expect(again.body.code).toBe('check_unavailable');
+    expect(new DeviceChainStore(gw2.gw.vault).exists()).toBe(false);
   });
 
   it('finish with an id that is not the started one is refused', async () => {
@@ -749,6 +1034,51 @@ describe('replacing the recovery code (rotate-root)', () => {
     expect(r.status).toBe(410);
   });
 
+  it('a rotation survives a restart in its sealed slot (no secret in it) and finish reports done from the chain', async () => {
+    const { as, w, acct } = await granting();
+    const { newCode, sub } = await submit(w, acct.code);
+    await pressButton(as, sub); // the Authority Server appended; the redirect never reached this gateway
+    const slot = w.gw.vault.getSecretSlot<Record<string, unknown>>('deviceRecoveryPending')!;
+    expect(slot).toMatchObject({ kind: 'rotate', id: sub.body.recoveryId });
+    expect(JSON.stringify(slot).includes(newCode.replace(/-/g, '').slice(4, 16))).toBe(false);
+    expect(JSON.stringify(slot).includes(acct.code.replace(/-/g, '').slice(4, 16))).toBe(false);
+    const w2 = await restart(as, w, { platform: fakeHost() });
+    expect((await w2.get('/auth/device/status')).body.recovery).toMatchObject({ recoveryPending: true, kind: 'rotate' });
+    expect((await w2.post('/auth/device/rotate-root/start')).body.code).toBe('recovery_pending');
+    const fin = await w2.post('/auth/device/rotate-root/finish', { recoveryId: sub.body.recoveryId });
+    expect(fin.status).toBe(200);
+    expect((fin.body.head as { seq: number }).seq).toBe(1);
+    expect(new DeviceChainStore(w2.gw.vault).read()!.head.seq).toBe(1);
+    expect(w2.gw.vault.getSecretSlot('deviceRecoveryPending')).toBeNull();
+  });
+
+  it('a rotation that the Authority Server does not hold is reported as not done after a restart, and cancel drops it', async () => {
+    const { as, w, acct } = await granting();
+    const { sub } = await submit(w, acct.code);
+    const w2 = await restart(as, w, { platform: fakeHost() });
+    const fin = await w2.post('/auth/device/rotate-root/finish', { recoveryId: sub.body.recoveryId });
+    expect(fin.status).toBe(409);
+    expect(fin.body.code).toBe('recovery_not_done');
+    expect(new DeviceChainStore(w2.gw.vault).read()!.head.seq).toBe(0);
+    expect((await w2.post('/auth/device/recover/cancel')).body).toMatchObject({ cancelled: true });
+    expect(w2.gw.vault.getSecretSlot('deviceRecoveryPending')).toBeNull();
+  });
+
+  it('a lock while the Authority Server is answering the stage ends the rotation cleanly: nothing is kept', async () => {
+    const { as, w, acct } = await granting();
+    const prep = await w.post('/auth/device/rotate-root/start');
+    as.stageDelayMs = 400;
+    const pending = w.post('/auth/device/rotate-root/submit', { rotateId: prep.body.rotateId, oldCode: acct.code, newCode: prep.body.recoveryCode });
+    await sleep(200);
+    w.gw.vault.clearKey();
+    const r = await pending;
+    expect(r.status).toBe(401);
+    expect(r.body.code).toBe('locked');
+    const w2 = await restart(as, w, { platform: fakeHost() });
+    expect(w2.gw.vault.getSecretSlot('deviceRecoveryPending')).toBeNull();
+    expect((await w2.get('/auth/device/status')).body.recovery).toMatchObject({ recoveryPending: false });
+  });
+
   it('a rotation whose browser step was never taken does not block anything once its time is over', async () => {
     const { w, acct } = await granting();
     const { sub } = await submit(w, acct.code);
@@ -858,7 +1188,7 @@ describe('the alarm for a pending request for a new identity', () => {
     const as = await newAs();
     const w = await boot(as);
     await setUp(as, w);
-    for (const raw of [null, 'yes', {}, { id: 'x', effective_at: 1 }, { id: 'AAAAAAAAAAAAAAAAAAAAAA', effective_at: 'soon' }, []]) {
+    for (const raw of ['yes', {}, { id: 'x', effective_at: 1 }, { id: 'AAAAAAAAAAAAAAAAAAAAAA', effective_at: 'soon' }, []]) {
       as.pendingRaw = raw;
       const r = await w.post('/auth/device/signin');
       expect(r.status).toBe(502);
@@ -1106,8 +1436,8 @@ describe('the contract module and its readers', () => {
     expect(confirmCodeOf(h)).not.toBe(confirmCodeOf(`sha256:${'ac'.repeat(32)}`));
   });
 
-  it('the address names a handoff, a port and a state and nothing else, on the configured Authority Server', () => {
-    const u = new URL(authorizeUrl('https://as.example', { handoffId: 'h'.repeat(20), port: 3401, state: 's'.repeat(43) }));
+  it('the address names the handoff, the port and the state and nothing else, on the configured Authority Server', () => {
+    const u = new URL(pageUrl('https://as.example', { handoffId: 'h'.repeat(20), port: 3401, state: 's'.repeat(43) }));
     expect(u.origin).toBe('https://as.example');
     expect([...u.searchParams.keys()].sort()).toEqual(['handoff', 'port', 'state']);
   });
@@ -1127,8 +1457,9 @@ describe('the contract module and its readers', () => {
 
   it('pending_identity_reset: absent is none, a well-formed member is the request, anything else is invalid', () => {
     expect(readPendingReset({})).toBeNull();
+    expect(readPendingReset({ pending_identity_reset: null })).toBeNull(); // omitted is the contract; null is read as none too
     expect(readPendingReset({ pending_identity_reset: { id: 'A'.repeat(22), effective_at: 5 } })).toEqual({ id: 'A'.repeat(22), effectiveAt: 5 });
-    for (const bad of [null, undefined, 1, {}, { id: 1, effective_at: 1 }, { id: 'A'.repeat(22), effective_at: -1 }, { id: 'A'.repeat(22), effective_at: 1.5 }, { id: 'A'.repeat(22) + '!', effective_at: 1 }]) {
+    for (const bad of [undefined, 1, {}, { id: 1, effective_at: 1 }, { id: 'A'.repeat(22), effective_at: -1 }, { id: 'A'.repeat(22), effective_at: 1.5 }, { id: 'A'.repeat(22) + '!', effective_at: 1 }]) {
       expect(readPendingReset({ pending_identity_reset: bad })).toBe('invalid');
     }
     expect(readPendingReset(null)).toBeNull();
@@ -1137,10 +1468,13 @@ describe('the contract module and its readers', () => {
   it('a hand-off state works once, only for the right text, and only before its end', () => {
     const h = new LoopbackHandoff(3401, 's', 1000);
     expect(h.take('nope', 0)).toBe(false);
+    expect(h.take('A'.repeat(43), 0)).toBe(false);
     expect(h.take(h.stateText, 1000)).toBe(false); // at its end
     expect(h.take(h.stateText, 999)).toBe(true);
     expect(h.take(h.stateText, 999)).toBe(false); // spent
     expect(h.challenge).toHaveLength(43);
+    // what the Authority Server keeps: base64url(sha256(utf8(state text)))
+    expect(h.stateHash).toBe(createHash('sha256').update(h.stateText, 'utf8').digest('base64url'));
   });
 
   it('the alarm raises once per request and never throws out of a failing notification', () => {

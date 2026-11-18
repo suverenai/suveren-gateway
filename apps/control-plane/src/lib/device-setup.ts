@@ -170,6 +170,9 @@ export class DeviceSetup {
     if (this.d.store.exists()) throw new SetupRefusal(409, 'already_set_up');
   }
 
+  /** A step of set-up is running right now (between its first await and its end). */
+  isBusy(): boolean { return this.busy; }
+
   /** What the page needs to show; never the recovery code. */
   status(): { setUp: boolean; setupPending: boolean; connect?: 'waiting' | 'ready' | 'failed' } {
     const p = this.live();

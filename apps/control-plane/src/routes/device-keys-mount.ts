@@ -112,20 +112,19 @@ export function mountDeviceKeyRoutes(app: Express, o: DeviceKeyMountOptions): {
     });
     recovery = new DeviceRecovery({
       vault: o.vault, store, client, signin, checkAs: o.device.checkAs, alarm,
-      setupPending: () => setup.status().setupPending,
+      setupPending: () => setup.status().setupPending || setup.isBusy(),
       now: o.device.now ? () => o.device!.now!() * 1000 : undefined,
       ...(o.platform && checks ? { checks, checkStore: o.platform.checkStore } : {}),
     });
     device = { signin, setup, store, recovery, alarm };
   }
-  if (device) {
-    // A body that does not parse is answered here, with nothing of it in the answer or the log: Express's own
-    // handler logs the parser's message, and for a body that holds a recovery code that message holds a piece of it.
-    app.use(['/auth/device/recover', '/auth/device/rotate-root'], json, (err: unknown, _req: Request, res: Response, next: NextFunction) => {
-      if (!err) { next(); return; }
-      res.status(400).json({ error: 'bad_request', code: 'bad_request', message: 'Bad request.' });
-    });
-  }
+  // A body that does not parse is answered here, for EVERY route under /auth (the recovery code and the password
+  // are typed into several), with nothing of it in the answer or the log: Express's own handler logs the parser's
+  // message, and for a body that holds a secret that message holds a piece of it. Only with the switch on.
+  app.use('/auth', json, (err: unknown, _req: Request, res: Response, next: NextFunction) => {
+    if (!err) { next(); return; }
+    res.status(400).json({ error: 'bad_request', code: 'bad_request', message: 'Bad request.' });
+  });
   app.use('/auth', json, createPasswordRouter({
     vault: o.vault,
     pageSession: o.pageSession,
