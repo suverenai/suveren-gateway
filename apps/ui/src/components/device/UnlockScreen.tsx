@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { T } from '../../lib/device-texts';
 import { DeviceClient, deviceClient } from '../../lib/device-client';
 import { UnlockDriver, type UnlockState } from '../../lib/unlock-driver';
@@ -63,20 +63,26 @@ export function UnlockScreen({ state, onPassword, onTouch, onRetry }: UnlockScre
  * device key, or (no device key on this computer yet) by the account key inside the page session.
  */
 export function UnlockPage({ client = deviceClient }: { client?: DeviceClient }) {
-  const { openPageSession, adoptSessionUser, sessionEnd, clearSessionEnd, pageSessionOpen } = useAuth();
+  const auth = useAuth();
   const [accountKey, setAccountKey] = useState(false);
-  const driver = useMemo(() => new UnlockDriver({
-    client,
-    onSession: openPageSession,
-    onIn: adoptSessionUser,
-    onAccountKey: () => setAccountKey(true),
-  }, sessionEndText(sessionEnd) ?? undefined), [client, openPageSession, adoptSessionUser, sessionEnd]);
+  // Built ONCE per screen: opening the session changes the auth context, and a driver rebuilt then would start the
+  // sign-in a second time. The callbacks are read at call time.
+  const latest = useRef(auth);
+  latest.current = auth;
+  const driverRef = useRef<UnlockDriver | null>(null);
+  if (!driverRef.current) {
+    driverRef.current = new UnlockDriver({
+      client,
+      onSession: token => latest.current.openPageSession(token),
+      onIn: () => latest.current.adoptSessionUser(),
+      onAccountKey: () => setAccountKey(true),
+    }, sessionEndText(auth.sessionEnd) ?? undefined);
+  }
+  const driver = driverRef.current;
   const state = useDriver(driver);
 
   useEffect(() => { void driver.init(); }, [driver]);
-  useEffect(() => { if (state.phase === 'done') clearSessionEnd(); }, [state.phase, clearSessionEnd]);
-  // A page session that is still open (a reload cannot keep it, but a sign-in that failed can): offer the sign-in again.
-  useEffect(() => { if (pageSessionOpen && state.phase === 'form') void driver.afterSession(); }, [pageSessionOpen, driver, state.phase]);
+  useEffect(() => { if (state.phase === 'done') latest.current.clearSessionEnd(); }, [state.phase]);
 
   if (accountKey) return <NotSetUpScreen />;
   return <UnlockScreen state={state} onPassword={p => void driver.withPassword(p)} onTouch={() => void driver.withTouch()} onRetry={() => void driver.retry()} />;

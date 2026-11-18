@@ -42,7 +42,7 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-function AppRoutes() {
+export function AppRoutes() {
   const { user, access, deviceKeysSwitch, passwordSet, handleSessionLocked, refreshGroups } = useAuth();
   const navigate = useNavigate();
 

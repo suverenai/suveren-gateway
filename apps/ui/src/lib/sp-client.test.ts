@@ -437,10 +437,10 @@ describe('decisions on a gateway with a device chain', () => {
     await expect(spClient.approveProposal('p1')).rejects.toThrow('This computer cannot show the details, so it cannot approve. Nothing changed.');
   });
 
-  it('a refusal with a code the page has no words for is shown as the gateway wrote it', async () => {
+  it('a refusal with a code outside the gateway\'s own decision codes reads as the generic text, never the server\'s message', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: 'something_new', code: 'something_new', message: 'The gateway says this.' }), { status: 409 })) as unknown as typeof fetch;
     spClient.setDeviceDecisions(true);
-    await expect(spClient.approveProposal('p1')).rejects.toThrow(/The gateway says this/);
+    await expect(spClient.approveProposal('p1')).rejects.toThrow('This did not work. Nothing was changed. Try again.');
   });
 
   it('is off until the gateway says yes: only an explicit deviceKeys:true switches the path', async () => {

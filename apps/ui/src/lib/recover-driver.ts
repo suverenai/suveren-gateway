@@ -15,7 +15,8 @@ export type RecoverState =
   | { kind: 'reset'; step: 'finishing' }
   | { kind: 'reset'; step: 'done'; signedIn: boolean; error?: string }
   | { kind: 'rotate'; step: 'intro'; busy: boolean; error?: string }
-  | { kind: 'rotate'; step: 'show'; rotateId: string; busy: boolean; error?: string }
+  | { kind: 'rotate'; step: 'show'; rotateId: string; checked: boolean; error?: string }
+  | { kind: 'rotate'; step: 'enter'; rotateId: string; busy: boolean; error?: string }
   | { kind: 'rotate'; step: 'waiting'; recoveryId: string; confirmCode: string; error?: string }
   | { kind: 'rotate'; step: 'finishing' }
   | { kind: 'rotate'; step: 'done' };
@@ -36,7 +37,8 @@ export class RecoverDriver extends Driver<RecoverState> {
     super(kind === 'reset' ? { kind: 'reset', step: 'form', busy: false } : { kind: 'rotate', step: 'intro', busy: false });
   }
 
-  newRecoveryCode(): string | null { return this.newCode; }
+  /** The new code, only while the screen that shows it is up: it is hidden before the person is asked to type it again. */
+  newRecoveryCode(): string | null { return this.state.kind === 'rotate' && this.state.step === 'show' ? this.newCode : null; }
   dispose(): void { this.newCode = null; }
 
   private text(r: Result<unknown>): string {
@@ -65,10 +67,23 @@ export class RecoverDriver extends Driver<RecoverState> {
   }
 
   async cancel(): Promise<void> {
-    await this.d.client.recoverCancel();
+    // The one cancel route drops a started recovery and a prepared replacement alike. Cancelled only once the gateway says so.
+    const r = await this.d.client.recoverCancel();
+    const st = this.state;
+    if (!r.ok) {
+      if ('error' in st || st.step === 'waiting' || st.step === 'show' || st.step === 'enter') this.set({ ...st, error: this.text(r) } as RecoverState);
+      return;
+    }
+    const completed = (r.data as { completed?: { signedIn?: boolean } }).completed;
+    if (completed && st.kind === 'reset') {
+      // The Authority Server already held the entry: the recovery is completed instead of dropped.
+      let signedIn = completed.signedIn === true;
+      if (signedIn && this.d.onSignedIn) signedIn = await this.d.onSignedIn();
+      this.set({ kind: 'reset', step: 'done', signedIn, ...(signedIn ? {} : { error: DRAFT.recoverDoneNoSignin }) });
+      return;
+    }
     this.newCode = null;
-    const k = this.state.kind;
-    this.set(k === 'reset' ? { kind: 'reset', step: 'form', busy: false } : { kind: 'rotate', step: 'intro', busy: false });
+    this.set(st.kind === 'reset' ? { kind: 'reset', step: 'form', busy: false } : { kind: 'rotate', step: 'intro', busy: false });
   }
 
   async poll(): Promise<void> {
@@ -112,12 +127,25 @@ export class RecoverDriver extends Driver<RecoverState> {
     const r = await this.d.client.rotateStart();
     if (!r.ok) { this.set({ kind: 'rotate', step: 'intro', busy: false, error: this.text(r) }); return; }
     this.newCode = r.data.recoveryCode;
-    this.set({ kind: 'rotate', step: 'show', rotateId: r.data.rotateId, busy: false });
+    this.set({ kind: 'rotate', step: 'show', rotateId: r.data.rotateId, checked: false });
+  }
+
+  toggleWritten(checked: boolean): void {
+    const st = this.state;
+    if (st.kind === 'rotate' && st.step === 'show') this.set({ ...st, checked });
+  }
+
+  /** "I wrote it down": the code is hidden, then the person is asked to type it again. */
+  writtenDown(): void {
+    const st = this.state;
+    if (st.kind !== 'rotate' || st.step !== 'show' || !st.checked) return;
+    this.newCode = null;
+    this.set({ kind: 'rotate', step: 'enter', rotateId: st.rotateId, busy: false });
   }
 
   async rotateSubmit(oldCode: string, newCodeTyped: string): Promise<void> {
     const st = this.state;
-    if (st.kind !== 'rotate' || st.step !== 'show' || st.busy || !oldCode.trim() || !newCodeTyped.trim()) return;
+    if (st.kind !== 'rotate' || st.step !== 'enter' || st.busy || !oldCode.trim() || !newCodeTyped.trim()) return;
     this.set({ ...st, busy: true, error: undefined });
     const r = await this.d.client.rotateSubmit(st.rotateId, oldCode.trim(), newCodeTyped.trim());
     if (!r.ok) {

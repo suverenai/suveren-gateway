@@ -179,8 +179,15 @@ describe('recovery and replacing the recovery code', () => {
   });
   it('rotate: the new code once, old and new typed, waiting, done', () => {
     expect(text(render({ kind: 'rotate', step: 'intro', busy: false }))).toContain(DRAFT.rotateStart);
-    const s = render({ kind: 'rotate', step: 'show', rotateId: 'n', busy: false }, 'SV1-NEW-CODE');
-    expect(s).toContain('SV1-NEW-CODE'); expect(text(s)).toContain(DRAFT.rotateOldLabel); expect(text(s)).toContain(DRAFT.rotateNewLabel);
+    const s = render({ kind: 'rotate', step: 'show', rotateId: 'n', checked: false }, 'SV1-NEW-CODE');
+    expect(s).toContain('SV1-NEW-CODE'); expect(text(s)).toContain(T.codeKeptBox);
+    // the code is hidden before the person is asked to type it again
+    expect(text(s)).not.toContain(DRAFT.rotateOldLabel); expect(s).not.toContain('type="password"');
+    expect(s).toMatch(/<button[^>]*disabled=""[^>]*>Continue/);
+    const e = render({ kind: 'rotate', step: 'enter', rotateId: 'n', busy: false }, 'SV1-NEW-CODE');
+    expect(e).not.toContain('SV1-NEW-CODE'); expect(text(e)).toContain(DRAFT.rotateOldLabel); expect(text(e)).toContain(DRAFT.rotateNewLabel);
+    // recovery codes are plain text fields that password managers are told to leave alone
+    expect(e).not.toContain('type="password"'); expect(e).toContain('data-1p-ignore'); expect(e).toContain('data-lpignore'); expect(e).toContain('spellCheck="false"'.replace('C','c'));
     expect(text(render({ kind: 'rotate', step: 'waiting', recoveryId: 'r', confirmCode: '77' }))).toContain('77');
     expect(text(render({ kind: 'rotate', step: 'done' }))).toContain(DRAFT.rotateDone);
     expect(render({ kind: 'rotate', step: 'waiting', recoveryId: 'r', confirmCode: '77' })).not.toContain('SV1-');

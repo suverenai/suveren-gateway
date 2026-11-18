@@ -27,7 +27,10 @@ export const LEGACY: AccessState = { access: 'legacy', switchOn: false, password
 /** A 404 (switch off), a network failure or an unreadable answer all mean today's page: never a guess towards a password. */
 export function accessFromProbe(probe: Result<PasswordStatus>): AccessState {
   if (!probe.ok) return LEGACY;
-  const passwordSet = (probe.data as { passwordSet?: unknown })?.passwordSet === true;
+  // With the switch off the gateway's single-page fallback answers 200 with index.html for this path: the switch is
+  // on only when the answer is JSON with a boolean `passwordSet`. Anything else is today's page.
+  const passwordSet = (probe.data as { passwordSet?: unknown } | null)?.passwordSet;
+  if (typeof passwordSet !== 'boolean') return LEGACY;
   return { access: passwordSet ? 'password' : 'legacy', switchOn: true, passwordSet };
 }
 

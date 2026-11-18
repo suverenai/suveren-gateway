@@ -8,7 +8,7 @@
 
 import { readRefusal } from '@hap/core/refusal';
 import { isRetriableRead, unreachableRetry } from './unreachable-retry';
-import { textForCode, isDecisionCode } from './device-texts';
+import { T, textForCode, isDecisionCode } from './device-texts';
 import { queueDomains, mergeProposals } from './my-queue';
 import type { AttachmentPreviewResult } from '@suveren/approval-card/lib/attachment-sealed';
 import type { ProfileSummary, PreviewBody, PreviewVersionInfo, PreviewReadOutcome, ToolDisplayHints, CheckStatus, CheckResult, PreviewReadSection, PreviewResponse, OutcomeResponse, RequestChainItem, RequestResult, HistoryItem, ConnectorHistoryMatch, HistoryResult, RequestContextResponse, ShownSnapshotPayload, ShownHashEntry, ShownHashes, AuthTemplate, ModeOptionDecl, SignInGroup, IntegrationManifest, GateContentEntry, EnrichedAuthorizationEntry, ProposalOutcome, ProposalContentWire, NoteEncryptedWire, Proposal, CumulativeUsageEntry, ExecutionReceipt, ReceiptPage, CapKind, ProfileConfig } from '@suveren/approval-card/types';
@@ -599,7 +599,11 @@ class SPClient {
    */
   private decisionError(body: unknown, fallback: string): string {
     const code = (body as { code?: unknown } | null)?.code;
-    if (this.deviceDecisions && typeof code === 'string' && isDecisionCode(code)) return textForCode(code, { screen: 'general' });
+    if (this.deviceDecisions) {
+      // On the device path only the gateway's own codes have words; anything else (a refusal of the Authority Server
+      // passed through, an unknown code) reads as the generic text, never as the server's message.
+      return typeof code === 'string' && isDecisionCode(code) ? textForCode(code, { screen: 'general' }) : T.generic;
+    }
     return asErrorMessage(body, fallback);
   }
 

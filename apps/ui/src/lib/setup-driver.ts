@@ -17,9 +17,9 @@ export type SetupState =
   /** A set-up was started earlier and its recovery code is gone (shown once): it can only be cancelled. */
   | { step: 'stuck'; busy: boolean; error?: string }
   | { step: 'connect'; busy: boolean; error?: string; setupId: string }
-  | { step: 'waiting'; setupId: string; error?: undefined }
-  | { step: 'code'; setupId: string; account?: ConnectAccount }
-  | { step: 'kept'; setupId: string; account?: ConnectAccount; checked: boolean }
+  | { step: 'waiting'; setupId: string; error?: string }
+  | { step: 'code'; setupId: string; account?: ConnectAccount; error?: string }
+  | { step: 'kept'; setupId: string; account?: ConnectAccount; checked: boolean; error?: string }
   | { step: 'condition'; setupId: string; account?: ConnectAccount; busy: boolean; error?: string }
   | { step: 'connected'; account?: ConnectAccount; signedIn: boolean; error?: string; busy: boolean };
 
@@ -27,8 +27,8 @@ export interface SetupDeps {
   client: DeviceClient;
   /** Opens suveren.ai in the person's browser. */
   open: (url: string) => void;
-  /** Whether this computer can make a check key (Touch ID). Asked of the gateway, never guessed. */
-  wantCheckKey?: boolean;
+  /** Whether this computer can make a check key (Touch ID). Asked of the gateway, never guessed; read when Continue is pressed. */
+  wantCheckKey?: () => boolean;
 }
 
 export class SetupDriver extends Driver<SetupState> {
@@ -62,7 +62,7 @@ export class SetupDriver extends Driver<SetupState> {
     const st = this.state;
     if (st.step !== 'name' || st.busy) return;
     this.set({ step: 'name', busy: true });
-    const r = await this.d.client.setupStart(label.trim(), this.d.wantCheckKey ? true : undefined);
+    const r = await this.d.client.setupStart(label.trim(), this.d.wantCheckKey?.() ? true : undefined);
     if (!r.ok) {
       this.set({ step: 'name', busy: false, error: this.fail(r, 'setup') });
       return;
@@ -113,9 +113,10 @@ export class SetupDriver extends Driver<SetupState> {
   async cancel(): Promise<void> {
     const r = await this.d.client.setupCancel();
     if (!r.ok) {
+      // Cancelled only once the gateway says so: otherwise the person stays where they are, with the reason.
       const st = this.state;
-      if (st.step === 'stuck' || st.step === 'name') this.set({ ...st, busy: false, error: this.fail(r, 'setup') });
-      else if (st.step === 'connect') this.set({ ...st, error: this.fail(r, 'setup') });
+      if (st.step === 'connected') return;
+      this.set({ ...st, error: this.fail(r, 'setup') } as SetupState);
       return;
     }
     this.code = null;

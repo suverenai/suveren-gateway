@@ -174,6 +174,7 @@ export const DRAFT = {
   rotateNewLabel: 'New recovery code, typed again', // DRAFT
   rotateSubmit: 'Replace code', // DRAFT
   rotateDone: 'Done. Your new recovery code works. The old one does not.', // DRAFT
+  oauthContinue: 'Continue to sign in', // DRAFT
   // Pending identity reset (item 99/100), cancelling
   cancelling: 'Cancelling...', // DRAFT
   // Settings entry

@@ -171,7 +171,22 @@ describe('a gateway with a page session', () => {
   });
 });
 
+describe('a switch-off gateway behind the single-page fallback', () => {
+  it('a 200 index.html for /auth/password/status is today\'s page: not switch on, no password offer', async () => {
+    const { DeviceClient } = await import('./device-client');
+    const c = new DeviceClient(async () => new Response('<!doctype html><html></html>', { status: 200, headers: { 'Content-Type': 'text/html' } }));
+    const s = accessFromProbe(await c.passwordStatus());
+    expect(s).toEqual(LEGACY);
+    expect(offerSetUp(s, true)).toBe(false);
+  });
+});
+
 describe('SseParser', () => {
+  it('a "\\r\\n" split across two chunks is one line break', () => {
+    const p = new SseParser();
+    expect(p.push('event: x\r')).toEqual([]);
+    expect(p.push('\ndata: 1\r\n\r\n')).toEqual([{ event: 'x', data: '1' }]);
+  });
   it('reads named events across chunks, ignores comments', () => {
     const p = new SseParser();
     expect(p.push(': ping\n\nevent: proposal-add')).toEqual([]);
@@ -189,7 +204,8 @@ describe('access: which way in', () => {
   it('switch off (404), network failure or an unreadable answer: today\'s page', () => {
     expect(accessFromProbe({ ok: false, code: 'bad_request', status: 404, extra: {} })).toEqual(LEGACY);
     expect(accessFromProbe({ ok: false, code: 'gateway_unreachable', status: 0, extra: {} })).toEqual(LEGACY);
-    expect(accessFromProbe({ ok: true, status: 200, data: {} as never })).toMatchObject({ access: 'legacy', passwordSet: false });
+    expect(accessFromProbe({ ok: true, status: 200, data: {} as never })).toEqual(LEGACY);
+    expect(accessFromProbe({ ok: true, status: 200, data: { passwordSet: 'yes' } as never })).toEqual(LEGACY);
   });
   it('switch on without a password: still the account key, and the password is offered once after the sign-in', () => {
     const s = accessFromProbe({ ok: true, status: 200, data: { passwordSet: false } });

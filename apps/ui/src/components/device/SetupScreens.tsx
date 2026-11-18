@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { T, DRAFT } from '../../lib/device-texts';
 import { DeviceClient, deviceClient } from '../../lib/device-client';
@@ -6,7 +6,7 @@ import { SetupDriver, type SetupState } from '../../lib/setup-driver';
 import { spClient } from '../../lib/sp-client';
 import { useAuth } from '../../contexts/AuthContext';
 import { LoginPage } from '../../pages/LoginPage';
-import { DeviceScreen, Notice, useDriver } from './DeviceScreen';
+import { DeviceScreen, Notice, PrintScope, useDriver } from './DeviceScreen';
 import { RecoverPage } from './RecoverScreens';
 
 export interface SetupScreenProps {
@@ -66,12 +66,15 @@ export function SetupScreen(p: SetupScreenProps) {
       return (
         <DeviceScreen title={T.connectTitle}>
           <Notice kind="info">{T.connectWaiting}</Notice>
+          {st.error && <Notice kind="error">{st.error}</Notice>}
           <button className="btn btn-ghost btn-full" onClick={p.onCancel}>{T.connectCancel}</button>
         </DeviceScreen>
       );
     case 'code':
       return (
         <DeviceScreen title={T.codeTitle}>
+          <PrintScope />
+          {st.error && <Notice kind="error">{st.error}</Notice>}
           <p>{T.codeWhy}</p>
           <div className="recovery-code-print"><div className="recovery-code" data-testid="recovery-code">{p.code ?? ''}</div></div>
           <p><strong>{T.codeOnce}</strong></p>
@@ -85,6 +88,7 @@ export function SetupScreen(p: SetupScreenProps) {
     case 'kept':
       return (
         <DeviceScreen title={T.codeKeptTitle}>
+          {st.error && <Notice kind="error">{st.error}</Notice>}
           <label className="device-check">
             <input type="checkbox" checked={st.checked} onChange={e => p.onKept(e.target.checked)} />
             <span>{T.codeKeptBox}</span>
@@ -118,15 +122,16 @@ export function SetupPage({ client = deviceClient }: { client?: DeviceClient }) 
   const { adoptSessionUser, pageSessionOpen } = useAuth();
   const navigate = useNavigate();
   const [recover, setRecover] = useState(false);
-  const [wantCheckKey, setWantCheckKey] = useState(false);
-  const driver = useMemo(() => new SetupDriver({ client, open: url => { window.open(url, '_blank', 'noopener'); }, wantCheckKey }), [client, wantCheckKey]);
+  // Read when Continue is pressed: the driver is built once, so a started set-up is never dropped when this resolves.
+  const wantCheckKey = useRef(false);
+  const driver = useMemo(() => new SetupDriver({ client, open: url => { window.open(url, '_blank', 'noopener'); }, wantCheckKey: () => wantCheckKey.current }), [client]);
   const state = useDriver(driver);
 
   useEffect(() => { void driver.resume(); return () => driver.dispose(); }, [driver]);
   // This computer makes a check key (one touch) only where it can: the gateway says so, we never guess.
   useEffect(() => {
     if (!pageSessionOpen) return;
-    void client.platformCapabilities().then(r => setWantCheckKey(r.ok && (r.data as { available?: boolean }).available === true));
+    void client.platformCapabilities().then(r => { wantCheckKey.current = r.ok && (r.data as { available?: boolean }).available === true; });
   }, [client, pageSessionOpen]);
   // While the browser step is open, look at it every two seconds.
   useEffect(() => {

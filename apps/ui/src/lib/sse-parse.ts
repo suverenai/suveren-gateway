@@ -9,7 +9,11 @@ export class SseParser {
   private buffer = '';
 
   push(chunk: string): SseMessage[] {
-    this.buffer += chunk.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    // A "\r" at the end of a chunk may be the first half of "\r\n": hold it until the next chunk says.
+    this.buffer += chunk;
+    let held = '';
+    if (this.buffer.endsWith('\r')) { held = '\r'; this.buffer = this.buffer.slice(0, -1); }
+    this.buffer = this.buffer.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
     const out: SseMessage[] = [];
     let i: number;
     while ((i = this.buffer.indexOf('\n\n')) !== -1) {
@@ -28,6 +32,7 @@ export class SseParser {
       }
       if (data.length > 0) out.push({ event, data: data.join('\n') });
     }
+    this.buffer += held;
     return out;
   }
 }

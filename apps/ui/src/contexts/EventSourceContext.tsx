@@ -25,7 +25,7 @@ import {
   type ReactNode,
 } from 'react';
 import { useAuth } from './AuthContext';
-import { spClient } from '../lib/sp-client';
+import { spClient, sessionEvents, SESSION_GONE_EVENT, type SessionGoneDetail } from '../lib/sp-client';
 import { SseParser } from '../lib/sse-parse';
 
 // ─── Event types (must mirror apps/control-plane/src/lib/event-bus.ts) ───────
@@ -150,7 +150,12 @@ export function EventSourceProvider({ children }: { children: ReactNode }) {
         while (!stopped) {
           try {
             const res = await spClient.openEventStream(abort.signal);
-            if (res.status === 401 || res.status === 403) return; // the session is gone: the sign-in screen takes over
+            if (res.status === 401 || res.status === 403) {
+              // The gateway no longer accepts this page: say so (the sign-in screen takes over) and stop.
+              setConnected(false);
+              sessionEvents.dispatchEvent(new CustomEvent<SessionGoneDetail>(SESSION_GONE_EVENT, { detail: { code: 'session_missing' } }));
+              return;
+            }
             if (res.ok && res.body) {
               setConnected(true);
               const reader = res.body.getReader();

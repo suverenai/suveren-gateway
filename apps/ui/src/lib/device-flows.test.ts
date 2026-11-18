@@ -344,9 +344,15 @@ describe('recovery with the recovery code and replacing it', () => {
     });
     const d = new RecoverDriver({ client, open: vi.fn() }, 'rotate');
     await d.rotateStart();
-    expect(d.get()).toMatchObject({ step: 'show', rotateId: 'n1' });
+    expect(d.get()).toMatchObject({ step: 'show', rotateId: 'n1', checked: false });
     expect(d.newRecoveryCode()).toBe('SV1-NEW');
     expect(JSON.stringify(d.get())).not.toContain('SV1-NEW');
+    d.writtenDown(); // not ticked: no way on
+    expect(d.get().step).toBe('show');
+    d.toggleWritten(true);
+    d.writtenDown();
+    expect(d.get()).toMatchObject({ step: 'enter' });
+    expect(d.newRecoveryCode()).toBeNull(); // hidden before it is asked for again
     await d.rotateSubmit('SV1-OLD', 'SV1-NEW');
     expect(JSON.parse(calls.find(c => c.path.endsWith('submit'))!.init!.body as string)).toEqual({ rotateId: 'n1', oldCode: 'SV1-OLD', newCode: 'SV1-NEW' });
     expect(d.newRecoveryCode()).toBeNull();
@@ -357,11 +363,11 @@ describe('recovery with the recovery code and replacing it', () => {
   it('rotate refusals: wrong typed code stays, an expired new code goes back to the start', async () => {
     let { client } = fakeClient({ '/auth/device/rotate-root/start': { body: { rotateId: 'n1', recoveryCode: 'N', expiresAt: 1 } }, '/auth/device/rotate-root/submit': refuse(400, 'new_code_mismatch') });
     let d = new RecoverDriver({ client, open: vi.fn() }, 'rotate');
-    await d.rotateStart(); await d.rotateSubmit('o', 'n');
-    expect(d.get()).toMatchObject({ step: 'show', error: 'The new code you typed is not the one shown. Check it and try again.' });
+    await d.rotateStart(); d.toggleWritten(true); d.writtenDown(); await d.rotateSubmit('o', 'n');
+    expect(d.get()).toMatchObject({ step: 'enter', error: 'The new code you typed is not the one shown. Check it and try again.' });
     ({ client } = fakeClient({ '/auth/device/rotate-root/start': { body: { rotateId: 'n1', recoveryCode: 'N', expiresAt: 1 } }, '/auth/device/rotate-root/submit': refuse(410, 'rotate_expired') }));
     d = new RecoverDriver({ client, open: vi.fn() }, 'rotate');
-    await d.rotateStart(); await d.rotateSubmit('o', 'n');
+    await d.rotateStart(); d.toggleWritten(true); d.writtenDown(); await d.rotateSubmit('o', 'n');
     expect(d.get()).toMatchObject({ step: 'intro', error: 'The new code was not used in time. Make another.' });
     expect(d.newRecoveryCode()).toBeNull();
   });
@@ -409,5 +415,58 @@ describe('the gateway does not answer', () => {
   });
   it('DRAFT is a flat table of strings', () => {
     expect(Object.values(DRAFT).every(v => typeof v === 'string')).toBe(true);
+  });
+});
+
+describe('fix round: cancel, check key, unlock once', () => {
+  it('cancel is shown only after the gateway confirms; a refused cancel keeps the person where they are, with the reason', async () => {
+    const { client } = fakeClient({
+      '/auth/device/setup/start': { body: { setupId: 's1', recoveryCode: 'C' } },
+      '/auth/device/setup/connect': { body: { authorizeUrl: 'u', expiresAt: 1 } },
+      '/auth/device/setup/cancel': refuse(502, 'as_unreachable'),
+    });
+    const d = new SetupDriver({ client, open: vi.fn() });
+    await d.continueWithName('x'); await d.connect();
+    expect(d.get().step).toBe('waiting');
+    await d.cancel();
+    expect(d.get()).toMatchObject({ step: 'waiting', error: T.asUnreachable });
+    expect(d.recoveryCode()).toBe('C'); // not dropped: the gateway did not confirm
+  });
+
+  it('recover and replace cancel only after the gateway says so; a recovery the server already holds is completed instead', async () => {
+    let r = fakeClient({ '/auth/device/rotate-root/start': { body: { rotateId: 'n', recoveryCode: 'N', expiresAt: 1 } }, '/auth/device/recover/cancel': refuse(409, 'setup_busy') });
+    let d = new RecoverDriver({ client: r.client, open: vi.fn() }, 'rotate');
+    await d.rotateStart(); await d.cancel();
+    expect(d.get()).toMatchObject({ step: 'show', error: T.setupBusy });
+    r = fakeClient({ '/auth/device/rotate-root/start': { body: { rotateId: 'n', recoveryCode: 'N', expiresAt: 1 } }, '/auth/device/recover/cancel': { body: { cancelled: true } } });
+    d = new RecoverDriver({ client: r.client, open: vi.fn() }, 'rotate');
+    await d.rotateStart(); await d.cancel();
+    expect(d.get().step).toBe('intro');
+    expect(r.calls.some(c => c.path === '/auth/device/recover/cancel')).toBe(true);
+    r = fakeClient({
+      '/auth/device/recover/start': { body: { recoveryId: 'r', pageUrl: 'u', confirmCode: '1', expiresAt: 1, removes: [] } },
+      '/auth/device/recover/cancel': { body: { completed: { signedIn: true } } },
+    });
+    d = new RecoverDriver({ client: r.client, open: vi.fn(), onSignedIn: async () => true }, 'reset');
+    await d.start('x'); await d.cancel();
+    expect(d.get()).toMatchObject({ step: 'done', signedIn: true });
+  });
+
+  it('the check key is asked at Continue, from a getter: it can change after the driver is built without dropping a started set-up', async () => {
+    let want = false;
+    const { client, calls } = fakeClient({ '/auth/device/setup/start': { body: { setupId: 's', recoveryCode: 'C' } } });
+    const d = new SetupDriver({ client, open: vi.fn(), wantCheckKey: () => want });
+    want = true; // the capabilities answer arrives after the driver exists
+    await d.continueWithName('Mac');
+    expect(JSON.parse(calls[0].init!.body as string)).toEqual({ label: 'Mac', checkKey: true });
+    expect(d.get().step).toBe('connect');
+  });
+
+  it('one unlock signs in once: the status is read once and the sign-in is called once', async () => {
+    const { client, calls } = fakeClient({ '/auth/unlock': { body: { sessionToken: 'T' } }, '/auth/device/status': { body: { setUp: true, setupPending: false, signedIn: false } }, '/auth/device/signin': { body: { ok: true, expiresAt: 1 } } });
+    const u = new UnlockDriver({ client, onSession: vi.fn(), onIn: async () => true, onAccountKey: vi.fn() });
+    await u.withPassword('x'.repeat(10));
+    expect(calls.filter(c => c.path === '/auth/device/status')).toHaveLength(1);
+    expect(calls.filter(c => c.path === '/auth/device/signin')).toHaveLength(1);
   });
 });

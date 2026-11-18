@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { DRAFT, T } from '../../lib/device-texts';
 import { DeviceClient, deviceClient } from '../../lib/device-client';
 import { RecoverDriver, type RecoverState } from '../../lib/recover-driver';
 import { useAuth } from '../../contexts/AuthContext';
-import { DeviceScreen, Notice, useDriver } from './DeviceScreen';
+import { CodeInput, DeviceScreen, Notice, PrintScope, useDriver } from './DeviceScreen';
 
 export interface RecoverScreenProps {
   state: RecoverState;
@@ -12,6 +13,8 @@ export interface RecoverScreenProps {
   onStart: (code: string) => void;
   onCancel: () => void;
   onRotateStart: () => void;
+  onWritten?: (checked: boolean) => void;
+  onWrittenContinue?: () => void;
   onRotateSubmit: (oldCode: string, newCode: string) => void;
   onBack?: () => void;
   onDone: () => void;
@@ -32,8 +35,7 @@ export function RecoverScreen(p: RecoverScreenProps) {
             {st.error && <Notice kind="error">{st.error}</Notice>}
             <div className="form-group" style={{ marginBottom: '1.5rem' }}>
               <label className="form-label" htmlFor="recover-code">{DRAFT.recoverCodeLabel}</label>
-              <input id="recover-code" className="form-input" type="password" autoComplete="off" spellCheck={false}
-                value={code} onChange={e => setCode(e.target.value)} disabled={st.busy} style={{ padding: '0.75rem' }} />
+              <CodeInput id="recover-code" value={code} onChange={setCode} disabled={st.busy} />
               <div className="form-hint">{T.codeNever}</div>
             </div>
             <button className="btn btn-primary btn-full btn-lg" onClick={() => p.onStart(code)} disabled={st.busy || !code.trim()}>{DRAFT.recoverButton}</button>
@@ -82,19 +84,33 @@ export function RecoverScreen(p: RecoverScreenProps) {
     case 'show':
       return (
         <DeviceScreen title={DRAFT.rotateNewTitle}>
+          <PrintScope />
           <p>{T.codeWhy}</p>
           <div className="recovery-code-print"><div className="recovery-code" data-testid="new-recovery-code">{p.newCode ?? ''}</div></div>
           <p><strong>{T.codeOnce}</strong></p>
           <p>{T.codePaper}</p>
+          <p style={{ fontSize: '0.875rem' }}>{T.codeNever}</p>
           <button className="btn btn-secondary btn-full" onClick={() => window.print()}>{T.codePrint}</button>
+          {st.error && <Notice kind="error">{st.error}</Notice>}
+          <label className="device-check">
+            <input type="checkbox" checked={st.checked} onChange={e => p.onWritten?.(e.target.checked)} />
+            <span>{T.codeKeptBox}</span>
+          </label>
+          <button className="btn btn-primary btn-full btn-lg" onClick={p.onWrittenContinue} disabled={!st.checked}>{T.codeKeptButton}</button>
+          <button className="btn btn-ghost btn-full" onClick={p.onCancel}>{T.connectCancel}</button>
+        </DeviceScreen>
+      );
+    case 'enter':
+      return (
+        <DeviceScreen title={DRAFT.rotateTitle}>
           {st.error && <Notice kind="error">{st.error}</Notice>}
           <div className="form-group">
             <label className="form-label" htmlFor="rotate-old">{DRAFT.rotateOldLabel}</label>
-            <input id="rotate-old" className="form-input" type="password" autoComplete="off" spellCheck={false} value={code} onChange={e => setCode(e.target.value)} disabled={st.busy} style={{ padding: '0.75rem' }} />
+            <CodeInput id="rotate-old" value={code} onChange={setCode} disabled={st.busy} />
           </div>
           <div className="form-group" style={{ marginBottom: '1.5rem' }}>
             <label className="form-label" htmlFor="rotate-new">{DRAFT.rotateNewLabel}</label>
-            <input id="rotate-new" className="form-input" type="password" autoComplete="off" spellCheck={false} value={typed} onChange={e => setTyped(e.target.value)} disabled={st.busy} style={{ padding: '0.75rem' }} />
+            <CodeInput id="rotate-new" value={typed} onChange={setTyped} disabled={st.busy} />
           </div>
           <button className="btn btn-primary btn-full btn-lg" onClick={() => p.onRotateSubmit(code, typed)} disabled={st.busy || !code.trim() || !typed.trim()}>{DRAFT.rotateSubmit}</button>
           <button className="btn btn-ghost btn-full" onClick={p.onCancel}>{T.connectCancel}</button>
@@ -124,6 +140,7 @@ export function RecoverScreen(p: RecoverScreenProps) {
 
 export function RecoverPage({ kind, onBack, client = deviceClient }: { kind: 'reset' | 'rotate'; onBack?: () => void; client?: DeviceClient }) {
   const { adoptSessionUser } = useAuth();
+  const navigate = useNavigate();
   const driver = useMemo(() => new RecoverDriver({
     client,
     open: url => { window.open(url, '_blank', 'noopener'); },
@@ -146,8 +163,11 @@ export function RecoverPage({ kind, onBack, client = deviceClient }: { kind: 're
       onCancel={() => void driver.cancel()}
       onRotateStart={() => void driver.rotateStart()}
       onRotateSubmit={(o, n) => void driver.rotateSubmit(o, n)}
+      onWritten={c => driver.toggleWritten(c)}
+      onWrittenContinue={() => driver.writtenDown()}
       onBack={onBack}
-      onDone={() => { window.location.assign('/'); }}
+      // In the app, not a page load: a load would drop the page session held in memory and sign the person out.
+      onDone={() => navigate('/', { replace: true })}
     />
   );
 }

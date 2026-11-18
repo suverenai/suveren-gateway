@@ -1,4 +1,4 @@
-import { useSyncExternalStore, type ReactNode } from 'react';
+import { useEffect, useSyncExternalStore, type ReactNode } from 'react';
 import type { Driver } from '../../lib/driver';
 import { TopNav } from '../TopNav';
 import { UpdateBanner } from '../UpdateBanner';
@@ -19,6 +19,27 @@ export function DeviceScreen({ title, children }: { title?: string; children: Re
         {children}
       </div>
     </>
+  );
+}
+
+/**
+ * While a recovery code is on screen, printing prints only the code. The class sits on `body` only for that time,
+ * so printing any other page is untouched.
+ */
+export function PrintScope() {
+  useEffect(() => {
+    document.body.classList.add('print-recovery-code');
+    return () => document.body.classList.remove('print-recovery-code');
+  }, []);
+  return null;
+}
+
+/** An input for a recovery code: a plain text field that password managers are asked to leave alone. */
+export function CodeInput(props: { id: string; value: string; onChange: (v: string) => void; disabled?: boolean }) {
+  return (
+    <input id={props.id} className="form-input" type="text" autoComplete="off" spellCheck={false} autoCapitalize="off" autoCorrect="off"
+      data-1p-ignore="true" data-lpignore="true" data-form-type="other"
+      value={props.value} onChange={e => props.onChange(e.target.value)} disabled={props.disabled} style={{ padding: '0.75rem' }} />
   );
 }
 
