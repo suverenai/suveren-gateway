@@ -6,7 +6,7 @@
 import type { IntegrationEntry } from '../contexts/IntegrationStatusContext';
 import { declaresSimulation } from './simulation';
 import { blockedBySimulation } from './integration-attention';
-import { resolveAreaName, areaIcon, type AreaIconName, type AreaCatalogEntry } from './area';
+import { resolveAreaName, areaIcon, type AreaIconName, type AreaCatalogEntry } from '@suveren/approval-card/lib/area';
 
 /**
  * Every area a connector's tools serve: the manifest's own `profile`, plus

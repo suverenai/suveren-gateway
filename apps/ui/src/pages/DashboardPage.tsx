@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { spClient, type PendingItem, type Proposal, type AgentContact } from '../lib/sp-client';
 import { FirstRunCard } from '../components/FirstRunCard';
-import { useVisiblePolling } from '../hooks/useVisiblePolling';
+import { useVisiblePolling } from '@suveren/approval-card/hooks/useVisiblePolling';
 import { useMcpEndpoint } from '../hooks/useMcpEndpoint';
 import { useSSEEvent } from '../contexts/EventSourceContext';
 import { useSimulationPolicy } from '../hooks/useSimulationPolicy';

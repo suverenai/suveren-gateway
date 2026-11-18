@@ -14,7 +14,7 @@ import {
   type CardState,
 } from '../lib/integration-card-view';
 import { areasOf as areaProfilesOf, type ConnectorArea } from '../lib/integration-grouping';
-import { AreaIcon } from './AreaIcon';
+import { AreaIcon } from '@suveren/approval-card/components/AreaIcon';
 
 /**
  * Does this integration read anything with an age dimension?

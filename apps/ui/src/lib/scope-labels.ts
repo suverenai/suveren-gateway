@@ -10,7 +10,7 @@
  * raw value.
  */
 
-import { isAttachmentSourceField, formatAttachmentSources, type SourceManifestLike } from './attachment-sources';
+import { isAttachmentSourceField, formatAttachmentSources, type SourceManifestLike } from '@suveren/approval-card/lib/attachment-sources';
 
 export type ContextLabels = Record<string, Record<string, string>>;
 

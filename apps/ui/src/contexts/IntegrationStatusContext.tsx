@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react';
 import { spClient, type IntegrationManifest, type McpIntegrationStatus } from '../lib/sp-client';
-import { useVisiblePolling } from '../hooks/useVisiblePolling';
+import { useVisiblePolling } from '@suveren/approval-card/hooks/useVisiblePolling';
 import { useSSEEvent } from './EventSourceContext';
 import { useSimulationMode } from '../hooks/useSimulationMode';
 import { blockedBySimulation } from '../lib/integration-attention';

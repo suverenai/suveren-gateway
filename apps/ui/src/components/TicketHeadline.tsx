@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { spClient, type IntegrationManifest, type Proposal } from '../lib/sp-client';
-import { useProposalContent } from '../lib/use-proposal-content';
+import { useProposalContent } from '@suveren/approval-card/lib/use-proposal-content';
 import { ticketHeadline } from '../lib/ticket-what-was-done';
 
 /** One proposal fetch per page load, shared by every ticket that came from it. */

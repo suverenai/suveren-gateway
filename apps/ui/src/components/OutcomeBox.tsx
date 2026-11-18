@@ -11,7 +11,7 @@
  */
 import { useEffect, useState } from 'react';
 import { spClient, type OutcomeResponse } from '../lib/sp-client';
-import { outcomeBoxView } from '../lib/approval-preview-view';
+import { outcomeBoxView } from '@suveren/approval-card/lib/approval-preview-view';
 
 interface Props {
   proposalId: string;

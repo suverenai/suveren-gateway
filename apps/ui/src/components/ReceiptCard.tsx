@@ -23,14 +23,14 @@ import {
   profileVersionLabel,
   allowedSummary,
   usageSummary,
-} from '../lib/receipt-summary';
-import { profileIdentity, isTestSetupAction } from '../lib/profile-identity';
-import { useProfile } from '../lib/profile-cache';
-import { useSourceManifests } from '../lib/source-manifests';
-import { useAreaCatalog } from '../lib/area-catalog';
+} from '@suveren/approval-card/lib/receipt-summary';
+import { profileIdentity, isTestSetupAction } from '@suveren/approval-card/lib/profile-identity';
+import { useProfile } from '@suveren/approval-card/lib/profile-cache';
+import { useSourceManifests } from '@suveren/approval-card/lib/source-manifests';
+import { useAreaCatalog } from '@suveren/approval-card/lib/area-catalog';
 import { ObTypeLine, ObFold, useFoldAccordion } from './ObjectCard';
 import { TicketHeadline } from './TicketHeadline';
-import { areaName, systemName, shortTicketId, ticketTime } from '../lib/core-objects';
+import { areaName, systemName, shortTicketId, ticketTime } from '@suveren/approval-card/lib/core-objects';
 import { TicketWhatWasDone } from './TicketWhatWasDone';
 import { TicketWhatYouSaw } from './TicketWhatYouSaw';
 import type {

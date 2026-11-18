@@ -7,9 +7,9 @@
  */
 import type { IntegrationManifest, Proposal } from '../lib/sp-client';
 import { ApprovalSummary } from './ApprovalSummary';
-import { useRefusalSentence } from './RefusalResult';
-import { useAreaCatalog } from '../lib/area-catalog';
-import { resolveAreaName } from '../lib/area';
+import { useRefusalSentence } from '@suveren/approval-card/components/RefusalResult';
+import { useAreaCatalog } from '@suveren/approval-card/lib/area-catalog';
+import { resolveAreaName } from '@suveren/approval-card/lib/area';
 
 export function NoTicketRow({ proposal, manifests }: { proposal: Proposal; manifests: IntegrationManifest[] }) {
   const catalog = useAreaCatalog();

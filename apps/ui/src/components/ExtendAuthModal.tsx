@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { spClient, type PendingItem, type GateContentEntry } from '../lib/sp-client';
-import { profileDisplayName } from '../lib/profile-display';
+import { profileDisplayName } from '@suveren/approval-card/lib/profile-display';
 import type { AgentProfile } from '@hap/core';
 
 function formatRemaining(seconds: number): string {

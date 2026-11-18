@@ -4,7 +4,7 @@ import { useIntegrationStatus, type IntegrationEntry } from '../contexts/Integra
 import { useSimulationMode } from '../hooks/useSimulationMode';
 import { groupIntegrationsForDisplay, connectorAreas, sortConnectors, splitByUse } from '../lib/integration-grouping';
 import { integrationIcon } from '../lib/integration-icon';
-import { useAreaCatalog } from '../lib/area-catalog';
+import { useAreaCatalog } from '@suveren/approval-card/lib/area-catalog';
 
 /**
  * One card per connector (UI spec §13.3 revised): the connector's areas, taken from its manifest, are
