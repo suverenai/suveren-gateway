@@ -16,7 +16,7 @@
  * Every /auth/device route sits behind the page session (cookie AND header token,
  * Origin and Host), checked by the router itself: a path that reaches a handler
  * has passed it, however the path was written. Every code is neutral; the
- * messages are placeholders. The words the person reads are Andreas's (O19, O26).
+ * messages are placeholders. The words the person reads are the maintainer's (O19, O26).
  */
 
 import { Router, type Request, type Response, type NextFunction } from 'express';
@@ -25,8 +25,10 @@ import { parseCookie, SESSION_COOKIE, checkOriginAndHost } from '../lib/page-ses
 import { pageSessionVerdict, type PageSessionDeps } from '../middleware/auth';
 import { DeviceSetup, SetupRefusal } from '../lib/device-setup';
 import type { DeviceSignin } from '../lib/device-signin';
+import type { IdentityResetAlarm } from '../lib/identity-reset-alarm';
+import type { DeviceRecovery } from '../lib/device-recovery';
 
-/** Placeholder messages, by code. Wording is Andreas's (O19, O26). */
+/** Placeholder messages, by code. Wording is the maintainer's (O19, O26). */
 export const DEVICE_MESSAGES: Record<string, string> = {
   // the page session (middleware/auth.ts)
   unauthorized: 'Unauthorized.',
@@ -108,10 +110,14 @@ export interface DeviceSetupRouterDeps {
   pageSession: PageSessionDeps;
   setup: DeviceSetup;
   signin: DeviceSignin;
+  /** The alarm for a pending request for a new root DID (step 7): shown at `/status` as a banner state. */
+  alarm?: IdentityResetAlarm;
+  /** A recovery with the recovery code in progress (step 7): shown at `/status`, no secret in it. */
+  recovery?: DeviceRecovery;
 }
 
 export function createDeviceSetupRouter(deps: DeviceSetupRouterDeps): Router {
-  const { vault, pageSession, setup, signin } = deps;
+  const { vault, pageSession, setup, signin, alarm, recovery } = deps;
   const router = Router();
   const api = Router();
 
@@ -140,7 +146,7 @@ export function createDeviceSetupRouter(deps: DeviceSetupRouterDeps): Router {
   api.get('/status', run((_req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     const s = setup.status();
-    res.json({ ok: true, ...s, ...signin.status() });
+    res.json({ ok: true, ...s, ...signin.status(), ...(alarm ? { pendingIdentityReset: alarm.get() } : {}), ...(recovery ? { recovery: recovery.status() } : {}) });
   }));
 
   api.post('/setup/start', run(async (req, res) => {

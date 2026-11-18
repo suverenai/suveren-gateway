@@ -40,7 +40,7 @@ export const DEFAULT_DEVICE_LABEL = 'This computer';
 /** How long a started Connect waits. Proposed number. */
 export const CONNECT_TTL_MS = 10 * 60_000;
 
-/** A refusal with a neutral code. The page's wording for each code is Andreas's (O19). */
+/** A refusal with a neutral code. The page's wording for each code is the maintainer's (O19). */
 export class SetupRefusal extends Error {
   constructor(readonly status: number, readonly code: string, readonly extra: Record<string, unknown> = {}) {
     super(code);
@@ -93,6 +93,8 @@ export interface DeviceSetupDeps {
   /** The computer's check key through the native helper. Unset: a set-up cannot ask for one. */
   checks?: PlatformChecks;
   checkStore?: CheckKeyStore;
+  /** Is a recovery with the recovery code started and not finished (lib/device-recovery.ts)? A set-up and a recovery never run together. */
+  otherFlowPending?: () => boolean;
 }
 
 function isStoredCheckKey(v: unknown): v is StoredCheckKey {
@@ -168,6 +170,9 @@ export class DeviceSetup {
     if (this.d.store.exists()) throw new SetupRefusal(409, 'already_set_up');
   }
 
+  /** A step of set-up is running right now (between its first await and its end). */
+  isBusy(): boolean { return this.busy; }
+
   /** What the page needs to show; never the recovery code. */
   status(): { setUp: boolean; setupPending: boolean; connect?: 'waiting' | 'ready' | 'failed' } {
     const p = this.live();
@@ -182,6 +187,7 @@ export class DeviceSetup {
     this.requireVault();
     if (this.busy) throw new SetupRefusal(409, 'setup_busy');
     if (this.live()) throw new SetupRefusal(409, 'setup_pending');
+    if (this.d.otherFlowPending?.()) throw new SetupRefusal(409, 'recovery_pending');
     this.busy = true;
     let rootSeed: Uint8Array | null = null;
     try {

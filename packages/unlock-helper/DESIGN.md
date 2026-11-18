@@ -162,6 +162,7 @@ from the object (at most 64 characters, so the whole text stays within 120):
 | change request, `kind` remove | `remove the login of "<name>"` |
 | Touch ID unlock switch, `action` enable | `turn on Touch ID unlock for Suveren` |
 | Touch ID unlock switch, `action` disable | `turn off Touch ID unlock for Suveren` |
+| cancel of a request for a new identity (`suveren-identity-cancel`) | `cancel the request for a new identity` |
 
 A `<label>` or `<name>` comes from the object and is put between double quotes with `\` and `"` escaped, so no
 name can end the quote and add words ("x\" and approve \"y" stays one quoted name); control, bidi and
@@ -170,7 +171,8 @@ line characters are refused as before; a text over 120 characters is refused, no
 The change request carries the connector's name (`name`), added to plan section 7's five members
 (`request_id`, `kind`, `change_hash`, `gateway_key_id`, `expires_at`) so the prompt can say which login; the
 helper accepts exactly these six members. The Touch ID switch object is exactly `typ` `suveren-platform-unlock`, `v`,
-`action`, `nonce`, `issued_at`.
+`action`, `nonce`, `issued_at`. The cancel object (hap-core 0.15.0, plan 6.2) is exactly `typ`, `v`, `aud`, `root_did`,
+`key_id`, `request_id`, `chain_seq`, `chain_head`, `issued_at`. All texts are placeholders for the maintainer's wording (O19).
 
 Mandate grants (steps 13 and 14) are not in the table: their object format is not frozen.
 

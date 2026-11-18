@@ -278,6 +278,8 @@ const { loginChangeGate, deviceChainState, signin: deviceSignin } = mountDeviceK
     }),
     onTlsMismatch: lockAsTlsMismatch,
     discard: () => { vault.clearSpCookie(); return unconfigureSession(); },
+    // A request for a new root DID is open (plan 10): tell the person once, the page shows the banner.
+    notifyIdentityReset: (title, message) => notify(title, message, process.platform, `http://localhost:${port}`),
   } : undefined,
 });
 if (deviceSignin) deviceSessionEnded = () => deviceSignin.sessionLost();

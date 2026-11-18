@@ -153,6 +153,8 @@ func sha256hex(_ d: Data) -> String { SHA256.hash(data: d).map { String(format: 
         }
         #expect(reason(unlock("enable")) == "turn on Touch ID unlock for Suveren")
         #expect(reason(unlock("disable")) == "turn off Touch ID unlock for Suveren")
+        let cancel = "{\"typ\":\"suveren-identity-cancel\",\"v\":1,\"aud\":\"a\",\"root_did\":\"d\",\"key_id\":\"k\",\"request_id\":\"r\",\"chain_seq\":1,\"chain_head\":\"h\",\"issued_at\":1}"
+        #expect(reason(Data(cancel.utf8)) == "cancel the request for a new identity")
     }
 
     @Test func objectsWithNoTextAreRefusedBeforeAnyPrompt() {
@@ -168,6 +170,9 @@ func sha256hex(_ d: Data) -> String { SHA256.hash(data: d).map { String(format: 
                     "{\"request_id\":\"a\",\"kind\":\"remove\",\"name\":\"\",\"change_hash\":\"b\",\"gateway_key_id\":null,\"expires_at\":1}",
                     "{\"typ\":\"suveren-platform-unlock\",\"v\":1,\"action\":\"toggle\",\"nonce\":\"n\",\"issued_at\":1}",
                     "{\"typ\":\"suveren-platform-unlock\",\"v\":1,\"action\":\"enable\",\"nonce\":\"n\",\"issued_at\":1,\"note\":\"x\"}",
+                    // a cancel with a member too many or too few has no text
+                    "{\"typ\":\"suveren-identity-cancel\",\"v\":1,\"aud\":\"a\",\"root_did\":\"d\",\"key_id\":\"k\",\"request_id\":\"r\",\"chain_seq\":1,\"chain_head\":\"h\",\"issued_at\":1,\"note\":\"x\"}",
+                    "{\"typ\":\"suveren-identity-cancel\",\"v\":1,\"aud\":\"a\",\"root_did\":\"d\",\"key_id\":\"k\",\"request_id\":\"r\",\"chain_seq\":1,\"chain_head\":\"h\"}",
                     "{\"request_id\":\"a\",\"kind\":\"remove\",\"name\":\"g\",\"change_hash\":\"b\",\"gateway_key_id\":null,\"expires_at\":1,\"note\":\"x\"}"] {
             #expect(code(sign(k, Data(bad.utf8))) == "bad_request", "\(bad)")
         }
