@@ -26,6 +26,7 @@ import {
 } from 'react';
 import { useAuth } from './AuthContext';
 import { spClient } from '../lib/sp-client';
+import { SseParser } from '../lib/sse-parse';
 
 // ─── Event types (must mirror apps/control-plane/src/lib/event-bus.ts) ───────
 
@@ -43,7 +44,9 @@ export type SSEEventType =
   | 'execution-failed'
   | 'denial-recorded'
   | 'ticket-recorded'
-  | 'report-written';
+  | 'report-written'
+  | 'identity-reset-pending'
+  | 'identity-reset-cleared';
 
 /**
  * Every type the EventSource registers a browser listener for — built from a
@@ -67,6 +70,8 @@ const SSE_EVENT_TYPE_SET: Record<SSEEventType, true> = {
   'denial-recorded': true,
   'ticket-recorded': true,
   'report-written': true,
+  'identity-reset-pending': true,
+  'identity-reset-cleared': true,
 };
 
 /** Exported so a test can assert against it directly (see EventSourceContext.test.ts). */
@@ -90,7 +95,7 @@ const EventSourceContext = createContext<EventSourceContextValue | null>(null);
 // ─── Provider ─────────────────────────────────────────────────────────────────
 
 export function EventSourceProvider({ children }: { children: ReactNode }) {
-  const { user } = useAuth();
+  const { user, pageSessionOpen } = useAuth();
   const esRef = useRef<EventSource | null>(null);
   const [connected, setConnected] = useState(false);
 
@@ -124,6 +129,57 @@ export function EventSourceProvider({ children }: { children: ReactNode }) {
     // Already open — nothing to do.
     if (esRef.current) return;
 
+    const dispatch = (type: string, raw: string) => {
+      if (!(type in SSE_EVENT_TYPE_SET)) return;
+      let payload: unknown;
+      try { payload = JSON.parse(raw); } catch { payload = null; }
+      const handlers = listenersRef.current.get(type as SSEEventType);
+      if (handlers) {
+        for (const handler of handlers) {
+          try { handler(payload); } catch (err) { console.error(`[EventSource] handler for "${type}" threw:`, err); }
+        }
+      }
+    };
+
+    // A gateway with an unlock password needs the page session's header on the stream, which EventSource cannot
+    // send: the stream is read with fetch. Reconnects by itself, like EventSource, but never after the session ended.
+    if (spClient.hasPageSession()) {
+      const abort = new AbortController();
+      let stopped = false;
+      const run = async () => {
+        while (!stopped) {
+          try {
+            const res = await spClient.openEventStream(abort.signal);
+            if (res.status === 401 || res.status === 403) return; // the session is gone: the sign-in screen takes over
+            if (res.ok && res.body) {
+              setConnected(true);
+              const reader = res.body.getReader();
+              const decoder = new TextDecoder();
+              const parser = new SseParser();
+              for (;;) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                for (const m of parser.push(decoder.decode(value, { stream: true }))) dispatch(m.event, m.data);
+              }
+            }
+          } catch { /* dropped or aborted */ }
+          setConnected(false);
+          if (stopped) return;
+          // The stream ends when the page session ends (idle, 12 hours, lock): ask once, so the reason shows.
+          if (!(await spClient.sessionStillOpen())) return;
+          await new Promise(r => setTimeout(r, 3000));
+        }
+      };
+      void run();
+      esRef.current = { close: () => { stopped = true; abort.abort(); } } as unknown as EventSource;
+      return () => {
+        stopped = true;
+        abort.abort();
+        esRef.current = null;
+        setConnected(false);
+      };
+    }
+
     // Native EventSource cannot send custom headers, so the API key has to
     // ride in the URL. The control plane's /events route accepts ?key= as an
     // alternative to the X-API-Key header (only on this route).
@@ -137,24 +193,7 @@ export function EventSourceProvider({ children }: { children: ReactNode }) {
 
     // Register a listener for each known event type.
     for (const type of SSE_EVENT_TYPES) {
-      es.addEventListener(type, (e: MessageEvent) => {
-        let payload: unknown;
-        try {
-          payload = JSON.parse((e as MessageEvent).data);
-        } catch {
-          payload = null;
-        }
-        const handlers = listenersRef.current.get(type);
-        if (handlers) {
-          for (const handler of handlers) {
-            try {
-              handler(payload);
-            } catch (err) {
-              console.error(`[EventSource] handler for "${type}" threw:`, err);
-            }
-          }
-        }
-      });
+      es.addEventListener(type, (e: MessageEvent) => dispatch(type, (e as MessageEvent).data));
     }
 
     return () => {
@@ -162,7 +201,7 @@ export function EventSourceProvider({ children }: { children: ReactNode }) {
       esRef.current = null;
       setConnected(false);
     };
-  }, [user]);
+  }, [user, pageSessionOpen]);
 
   return (
     <EventSourceContext.Provider value={{ connected, addListener }}>

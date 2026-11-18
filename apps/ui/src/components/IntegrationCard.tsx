@@ -1,6 +1,7 @@
 import { useState, useEffect, Fragment } from 'react';
 import { Link } from 'react-router-dom';
-import { spClient, type IntegrationManifest, type McpIntegrationStatus } from '../lib/sp-client';
+import { spClient, ConfirmationCancelled, type IntegrationManifest, type McpIntegrationStatus } from '../lib/sp-client';
+import { textForCode } from '../lib/device-texts';
 import type { IntegrationState } from '../contexts/IntegrationStatusContext';
 import { isSimulated, modeLabel, modeNote } from '../lib/simulation';
 import { useSimulationMode } from '../hooks/useSimulationMode';
@@ -338,8 +339,23 @@ export function IntegrationCard({ manifest, areas, integration, state, onStatusC
     }
   };
 
-  const startOAuth = () => {
-    window.open(`/auth/oauth/${manifest.id}/start`, '_blank', 'width=600,height=700');
+  const startOAuth = async () => {
+    if (spClient.hasPageSession()) {
+      // A gateway with an unlock password: the new window cannot send the session header, so it carries a one-time
+      // start ticket (over a stored sign-in the person confirms that change first). The window opens now, in the
+      // click, and goes to the ticket's address when it is there.
+      const win = window.open('', '_blank', 'width=600,height=700');
+      try {
+        const url = await spClient.oauthStartUrl(manifest.id);
+        if (win) win.location.href = url; else window.open(url, '_blank', 'width=600,height=700');
+      } catch (e) {
+        win?.close();
+        if (!(e instanceof ConfirmationCancelled)) onSuccess(textForCode(e instanceof Error ? e.message : undefined, { screen: 'general' }));
+        return;
+      }
+    } else {
+      window.open(`/auth/oauth/${manifest.id}/start`, '_blank', 'width=600,height=700');
+    }
     const poll = setInterval(async () => {
       try {
         const cred = await spClient.getCredential(manifest.id);

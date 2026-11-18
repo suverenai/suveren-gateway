@@ -431,10 +431,16 @@ describe('decisions on a gateway with a device chain', () => {
     });
   });
 
-  it('shows the gateway\'s own refusal as written', async () => {
+  it('shows a refusal of the gateway in the page\'s words (the control plane\'s message is a placeholder)', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: 'content_unreadable', code: 'content_unreadable', message: 'This computer cannot show the content.' }), { status: 409 })) as unknown as typeof fetch;
     spClient.setDeviceDecisions(true);
-    await expect(spClient.approveProposal('p1')).rejects.toThrow(/cannot show the content/);
+    await expect(spClient.approveProposal('p1')).rejects.toThrow('This computer cannot show the details, so it cannot approve. Nothing changed.');
+  });
+
+  it('a refusal with a code the page has no words for is shown as the gateway wrote it', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: 'something_new', code: 'something_new', message: 'The gateway says this.' }), { status: 409 })) as unknown as typeof fetch;
+    spClient.setDeviceDecisions(true);
+    await expect(spClient.approveProposal('p1')).rejects.toThrow(/The gateway says this/);
   });
 
   it('is off until the gateway says yes: only an explicit deviceKeys:true switches the path', async () => {
