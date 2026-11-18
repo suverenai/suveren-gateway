@@ -287,6 +287,16 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
+/** Like expectRefused, for a proposal whose earlier run already asked for its ticket. */
+async function expectRefusedAfterTicket(w: World, reason: RegExp): Promise<string> {
+  const before = ticketCalls(w);
+  const r = await w.run();
+  expect(r.isError, r.text).toBe(true);
+  expect(r.text).toMatch(reason);
+  expect(ticketCalls(w)).toBe(before);
+  return r.text;
+}
+
 /** The refusal must name its reason, ask for no ticket and run nothing. */
 async function expectRefused(w: World, reason: RegExp): Promise<string> {
   const r = await w.run();
@@ -505,25 +515,24 @@ describe('an Authority Server that lies about the chain', () => {
     await expectRefused(w, /named another chain head/);
   });
 
-  it('a rollback (the chain served shorter than the head pinned before) is refused and pins stay', async () => {
-    const w = await world();
-    const second = await addDevice(w.owner, 'Laptop');
-    await w.as.setChain(w.owner);
-    setDecisions(w, [await w.decisionFor(w.owner, second)]);
-    // the gateway's own chain record is at the genesis head; first accept the longer chain...
-    expect((await w.run()).isError).toBeUndefined();
-    // ...a second proposal, with the AS now serving only the genesis entry again
+  it('a rollback (an approver\'s chain served shorter than the head pinned before) is refused', async () => {
+    const a = await person('A');
+    const w = await world({ deciders: [a], mandateExtra: { commitment_mode: 'review_above_cap' }, proposalExtra: { pendingApprovers: ['u-a'] } });
+    const second = await addDevice(a, 'Laptop');
+    await w.as.setChain(a);
+    setDecisions(w, [await w.decisionFor(a, second)]);
+    expect((await w.run()).isError).toBeUndefined(); // pins A at seq 1
     const p2: SPProposal = { ...w.proposal, id: 'prop-2' };
-    const d2 = await w.decisionFor(w.owner, w.owner.dev, { proposal_id: 'prop-2', chain_seq: 0, chain_head: await dk.entryHash(w.owner.entries[0]) });
+    const d2 = await w.decisionFor(a, a.dev, { proposal_id: 'prop-2', chain_seq: 0, chain_head: await dk.entryHash(a.entries[0]) });
     w.as.proposals.set('prop-2', { ...p2, deviceDecisions: [{ decision: d2.decision, sig: d2.sig }] });
-    await w.as.setChain(w.owner, { entries: w.owner.entries.slice(0, 1), head: { seq: 0, hash: await dk.entryHash(w.owner.entries[0]) } });
+    await w.as.setChain(a, { entries: a.entries.slice(0, 1), head: { seq: 0, hash: await dk.entryHash(a.entries[0]) } });
     (w.state.proposalSubmissions as unknown as { get: () => unknown }).get = () => ({
       proposalId: 'prop-2', tool: TOOL_NAME, toolArgsHash: hashToolArgs(TOOL_ARGS), executionContextHash: hashToolArgs({}),
       authorizationId: AUTHZ, profileId: 'test-deploy@1', actionType: 'send', submittedAt: now(),
     });
     const r = await w.run(p2);
     expect(r.isError).toBe(true);
-    expect(r.text).toMatch(/shorter than the one this gateway verified|moved against the head/);
+    expect(r.text).toMatch(/shorter than the one this gateway verified/);
     expect(ticketCalls(w)).toBe(1); // only the first proposal asked for a ticket
   });
 
@@ -531,6 +540,55 @@ describe('an Authority Server that lies about the chain', () => {
     const w = await world({ pinnedOwnHead: { seq: 0, hash: `sha256:${'7'.repeat(64)}` } });
     setDecisions(w, [await w.decisionFor(w.owner, w.owner.dev)]);
     await expectRefused(w, /differs from the one this gateway verified before/);
+  });
+});
+
+// ─── replay ──────────────────────────────────────────────────────────────
+
+describe('replay: a reused proposal id or decision nonce', () => {
+  const asProposal = (w: World, id: string, d: { decision: dk.Decision; sig: string }) => {
+    w.as.proposals.set(id, { ...w.proposal, id, deviceDecisions: [{ decision: d.decision, sig: d.sig }] });
+    (w.state.proposalSubmissions as unknown as { get: () => unknown }).get = () => ({
+      proposalId: id, tool: TOOL_NAME, toolArgsHash: hashToolArgs(TOOL_ARGS), executionContextHash: hashToolArgs({}),
+      authorizationId: AUTHZ, profileId: 'test-deploy@1', actionType: 'send', submittedAt: now(),
+    });
+    return { ...w.proposal, id };
+  };
+
+  it('the same proposal id with other decisions is refused; the same decisions again (a retry) are not', async () => {
+    const w = await world();
+    setDecisions(w, [await w.decisionFor(w.owner, w.owner.dev)]);
+    expect((await w.run()).isError).toBeUndefined();
+    await w.run(); // same decisions again: the ledger lets it by; the execution journal decides what runs
+    const second = await addDevice(w.owner, 'Laptop');
+    await w.as.setChain(w.owner);
+    setDecisions(w, [await w.decisionFor(w.owner, second)]); // a NEW decision for the same proposal id
+    const text = await expectRefusedAfterTicket(w, /already used with other decisions/);
+    expect(text).toBeTruthy();
+  });
+
+  it('a nonce used for another proposal is refused', async () => {
+    const w = await world();
+    const nonce = randomBytes(16).toString('base64url');
+    const d1 = await w.decisionFor(w.owner, w.owner.dev, { nonce });
+    setDecisions(w, [d1]);
+    expect((await w.run()).isError).toBeUndefined();
+    const d2 = await w.decisionFor(w.owner, w.owner.dev, { nonce, proposal_id: 'prop-2' });
+    const p2 = asProposal(w, 'prop-2', d2);
+    const r = await w.run(p2);
+    expect(r.isError).toBe(true);
+    expect(r.text).toMatch(/already used for another proposal/);
+    expect(ticketCalls(w)).toBe(1);
+  });
+});
+
+describe('proposal facts compared with this gateway\'s own submission record', () => {
+  const att = { blob: blob({ version: '0.7', mandate_id: 'm1', commitment_mode: 'review', issued_at: 1, mandate_owners: [{ did: 'did:key:z6MkO' }] }) };
+  it('refuses early when the Authority Server reports another tool or grant than this gateway submitted', async () => {
+    const d = { auth: async () => ({ attestations: [att] }), manifestActionType: () => 'send', submission: () => ({ tool: 't__x', authorizationId: 'a', actionType: 'send' }) };
+    expect(await resolveProposalFacts(d, { proposalId: 'p', authorizationId: 'a', tool: 't__other' })).toEqual({ ok: false, code: 'proposal_mismatch' });
+    expect(await resolveProposalFacts(d, { proposalId: 'p', authorizationId: 'b', tool: 't__x' })).toEqual({ ok: false, code: 'proposal_mismatch' });
+    expect((await resolveProposalFacts(d, { proposalId: 'p', authorizationId: 'a', tool: 't__x' })).ok).toBe(true);
   });
 });
 

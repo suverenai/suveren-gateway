@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { asErrorMessage, spClient } from './sp-client';
+import { asErrorMessage, spClient, deviceDecisionsFromHealth } from './sp-client';
 
 /**
  * Bug: a v0.7 Authority Server refusal answers the spec envelope
@@ -450,5 +450,12 @@ describe('decisions on a gateway with a device chain', () => {
     globalThis.fetch = fetchSpy as unknown as typeof fetch;
     await spClient.approveProposal('p1');
     expect(fetchSpy.mock.calls[0][0]).toBe('/api/proposals/p1/approve');
+  });
+});
+
+describe('the page learns from /health whether this gateway has device keys', () => {
+  it('only an explicit deviceKeys:true sends decisions to the signing route; a gateway without the member keeps the legacy path', () => {
+    expect(deviceDecisionsFromHealth({ status: 'ok', deviceKeys: true })).toBe(true);
+    for (const h of [{ status: 'ok' }, { deviceKeys: false }, { deviceKeys: 'yes' }, null, undefined, 'x']) expect(deviceDecisionsFromHealth(h)).toBe(false);
   });
 });

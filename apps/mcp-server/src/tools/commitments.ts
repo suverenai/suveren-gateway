@@ -38,7 +38,7 @@ import { verifyTicket, TicketBindingMismatchError, mandateForTicket } from '../l
 import { notifyControlPlane } from '../lib/cp-notify';
 import { resolveWhoLabel } from '../lib/who-label';
 import { resolveProposalToolArgs, decryptRejectionNote, computeProposalContentHash, ProposalContentError } from '../lib/proposal-content';
-import { checkDeviceDecisions, controlPlaneDevice } from '../lib/device-decisions';
+import { checkDeviceDecisions, controlPlaneDevice, signedDidsOfCache } from '../lib/device-decisions';
 
 /**
  * Retain what a committed proposal's execution actually produced — the
@@ -280,6 +280,7 @@ export async function executeCommitted(
     proposal,
     actionType: proposalActionType,
     proposalContentHash: computeProposalContentHash(toolArgs),
+    protectedDids: signedDidsOfCache(state.cache),
   });
   if (!deviceCheck.ok) {
     return {

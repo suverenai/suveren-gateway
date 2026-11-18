@@ -528,7 +528,8 @@ app.post('/internal/proposal-facts', internalOnly, async (req: Request, res: Res
     return;
   }
   const out = await resolveProposalFacts({
-    auth: async (id) => state.cache.getAllAuthorizations().find(a => a.authorizationId === id) ?? await state.cache.syncAuthorization(id),
+    // read-only: a grant this gateway does not hold is not fetched into its cache on a request from outside
+    auth: async (id) => state.cache.getAllAuthorizations().find(a => a.authorizationId === id),
     submission: (id) => state.proposalSubmissions.get(id),
     manifestActionType: (t) => {
       const a = integrationManager.getAllTools().find(x => x.namespacedName === t)?.gating?.staticExecution?.action_type;

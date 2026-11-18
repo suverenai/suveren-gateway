@@ -124,6 +124,13 @@ export class DeviceDecisions {
 
     // 2. the fingerprint of what this computer can show
     const contentHash = await this.fingerprint(proposal, kind);
+    // 2b. what the PERSON saw is what is signed. The page sends the hash of the content it decrypted and
+    //     showed; a commit requires it and it must be the hash computed here from the proposal this call
+    //     read. An Authority Server that shows the page content A and this call content B is caught here.
+    //     A reject or withdrawal compares it when the page sent one.
+    const shown = body.proposalContentHash ?? body.content_hash;
+    if (shown !== undefined && shown !== null && (typeof shown !== 'string' || shown !== contentHash)) throw new DecisionRefusal(409, 'content_mismatch');
+    if (kind === 'commit' && typeof shown !== 'string') throw new DecisionRefusal(409, 'content_not_shown');
 
     // 3. what only this gateway can say about the proposal
     let facts: ProposalFacts;
@@ -153,8 +160,8 @@ export class DeviceDecisions {
     });
     const sig = await dk.signObject(decision, key.privateSeed);
 
-    // 5. the same fields the legacy call sends, plus the decision. The page's own copy of the
-    //    fingerprint, and any decision it sent, are never forwarded.
+    // 5. the same fields the legacy call sends, plus the decision. The page's copy of the
+    //    fingerprint was compared above and is replaced by the signed one; any decision it sent is never forwarded.
     const out: Record<string, unknown> = {};
     for (const k of PASS_THROUGH) if (body[k] !== undefined) out[k] = body[k];
     if (route === 'resolve') out.action = kind === 'commit' ? 'commit' : 'reject';

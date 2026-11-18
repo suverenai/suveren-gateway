@@ -534,6 +534,14 @@ export interface GatewaySettings {
   openApprovalsAutomatically: boolean;
 }
 
+/**
+ * Does `/health` say this gateway has device keys? Only an explicit `deviceKeys: true` does; a gateway without
+ * them does not send the member at all, so its decisions keep the legacy path.
+ */
+export function deviceDecisionsFromHealth(health: unknown): boolean {
+  return (health as { deviceKeys?: unknown } | null | undefined)?.deviceKeys === true;
+}
+
 class SPClient {
   private apiKey: string | null = null;
   /**

@@ -51,7 +51,7 @@ import { ChangeConfirmations } from './lib/change-confirmation';
 import { scrubProxyRequest } from './lib/proxy-headers';
 import { OAuthStartTickets } from './lib/oauth-start-ticket';
 import { RekeyRetrier } from './lib/rekey-retry';
-import { mountDeviceKeyRoutes } from './routes/device-keys-mount';
+import { mountDeviceKeyRoutes, deviceKeysHealth } from './routes/device-keys-mount';
 import { PlatformHelper, locateHelper } from './lib/platform-helper';
 import { CheckKeyStore } from './lib/platform-checks';
 import { DeviceChainStore } from './lib/device-chain-store';
@@ -1252,6 +1252,8 @@ app.get('/health', async (req: Request, res: Response) => {
     // Purely local — the Authority Server never learns this. UI reads it to
     // show a gateway-wide banner ("real systems are blocked").
     simulation: isSimulationMode(),
+    // Only a gateway that set up device keys says so; absent otherwise, so every other gateway answers exactly as before.
+    ...deviceKeysHealth(deviceChainState),
     // Settings IT has locked centrally (Windows registry policy, or a
     // policy file — see lib/policy.ts). Read-only here: there is no API
     // route that lets the UI change any of these (as-url/ca-file/pin-tls

@@ -7,7 +7,9 @@
  *   GET  /internal/device-chain          { state: 'none' | 'present' | 'unreadable', rootDid? }
  *                                        does this gateway have a device chain, and whose
  *   POST /internal/device-pin/get        { did }        -> { head: { seq, hash } | null }
- *   POST /internal/device-pin/advance    { did, head }  -> { head } | 409 { code: 'rollback' | 'fork' }
+ *   POST /internal/device-pin/advance    { did, head, keep? } -> { head } | 409 { code: 'rollback' | 'fork' | 'own_chain' | 'full' }
+ *                                        never moves THIS computer's own head (only sign-in does)
+ *   POST /internal/device-ledger/consume { proposalId, nonces } -> 409 { code: 'proposal_id_reused' | 'nonce_reused' }
  *
  * The control plane only remembers heads (lib/device-pin-store.ts). It checks nothing
  * about chains: the MCP server verifies them with hap-core before it asks to advance.
@@ -62,8 +64,16 @@ export function createInternalDeviceRouter(getSecret: () => string, store: Devic
   }));
 
   router.post('/device-pin/advance', guarded((req, res) => {
-    const { did, head } = (req.body ?? {}) as { did?: unknown; head?: { seq?: unknown; hash?: unknown } };
-    res.json({ head: pins.advance(did as string, head as { seq: number; hash: string }) });
+    const { did, head, keep } = (req.body ?? {}) as { did?: unknown; head?: { seq?: unknown; hash?: unknown }; keep?: unknown };
+    const protect = Array.isArray(keep) ? keep.filter((k): k is string => typeof k === 'string').slice(0, 256) : [];
+    res.json({ head: pins.advance(did as string, head as { seq: number; hash: string }, protect) });
+  }));
+
+  // The proposal is about to run on these decisions: a reused proposal id or nonce is refused.
+  router.post('/device-ledger/consume', guarded((req, res) => {
+    const { proposalId, nonces } = (req.body ?? {}) as { proposalId?: unknown; nonces?: unknown };
+    pins.consume(proposalId as string, Array.isArray(nonces) ? (nonces as string[]) : []);
+    res.json({ ok: true });
   }));
 
   return router;

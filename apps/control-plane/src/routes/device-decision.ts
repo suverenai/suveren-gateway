@@ -34,6 +34,7 @@ export const DECISION_MESSAGES: Record<string, string> = {
   proposal_unknown: 'No such proposal.',
   proposal_not_pending: 'This proposal is not waiting for a decision.',
   content_mismatch: 'The content does not match its fingerprint.',
+  content_not_shown: 'A decision must carry the fingerprint of the content that was shown.',
   content_unreadable: 'This computer cannot show the content, so it cannot approve it.',
   facts_unavailable: 'The gateway could not tell which mandate and action type this decision names.',
   as_unreachable: 'The Authority Server could not be reached.',

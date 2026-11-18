@@ -15,6 +15,7 @@ import { computeProposalContentHash } from '../../lib/content-crypto';
 import { loadOrGenerateKeyPair } from '../../lib/e2e-key-manager';
 import { DeviceChainStore } from '../../lib/device-chain-store';
 import { DevicePinStore } from '../../lib/device-pin-store';
+import { deviceKeysHealth } from '../device-keys-mount';
 import type { DecisionRoute, DecisionKind } from '../../lib/device-decision';
 
 const open: Array<{ close: () => Promise<void> }> = [];
@@ -43,7 +44,9 @@ async function world(opts: { facts?: () => Promise<{ mandateId: string; actionTy
   const start = await post('/auth/device/setup/start');
   const fin = await post('/auth/device/setup/finish', { setupId: start.body.setupId, enrolmentCode: as.issueEnrolmentCode() });
   expect(fin.status).toBe(200);
-  const decide = (id: string, route: string, body: unknown = {}) => post(`/device-decision/${id}/${route}`, body);
+  // The page sends the fingerprint of what it showed (UI: contentHashForDecision); a test that wants none says `content_hash: undefined`.
+  const decide = (id: string, route: string, body: Record<string, unknown> = {}) =>
+    post(`/device-decision/${id}/${route}`, 'content_hash' in body || 'proposalContentHash' in body ? body : { ...body, content_hash: HASH, proposalContentHash: HASH });
   return { as, props, gw, h, post, decide, decided, factsAsked, rootDid: String(start.body.rootDid), keyId: String(start.body.deviceKeyId) };
 }
 
@@ -94,7 +97,7 @@ describe('a decision on the gateway page of a gateway with a device chain', () =
   it('what is signed comes from the gateway\'s own copy: a request body that names other fields changes nothing signed and is not forwarded', async () => {
     const w = await world();
     w.props.add({ id: 'p1', tool: 'email__send', toolArgs: ARGS, contentHash: HASH });
-    const forged = { decision: 'reject', proposal_id: 'other', mandate_id: 'm-evil', action: 'commit', action_type: 'delete', tool: 'files__delete', content_hash: `sha256:${'f'.repeat(64)}`, proposalContentHash: `sha256:${'e'.repeat(64)}`, device_decision: { decision: { typ: 'x' }, sig: 'AAAA' }, key_id: 'k', approver_did: 'did:key:z6MkEvil', chain_seq: 99, chain_head: `sha256:${'1'.repeat(64)}`, nonce: 'AAAAAAAAAAAAAAAAAAAAAA' };
+    const forged = { decision: 'reject', proposal_id: 'other', mandate_id: 'm-evil', action: 'commit', action_type: 'delete', tool: 'files__delete', device_decision: { decision: { typ: 'x' }, sig: 'AAAA' }, key_id: 'k', approver_did: 'did:key:z6MkEvil', chain_seq: 99, chain_head: `sha256:${'1'.repeat(64)}`, nonce: 'AAAAAAAAAAAAAAAAAAAAAA' };
     const r = await w.decide('p1', 'approve', forged);
     expect(r.status).toBe(200);
     const sent = w.props.posts.at(-1)!.body;
@@ -292,6 +295,42 @@ describe('what stays out of logs and answers', () => {
   });
 });
 
+describe('what the person saw is what is signed', () => {
+  it('an AS that shows the page content A and serves this call content B is caught: nothing is signed', async () => {
+    const w = await world();
+    const B = { ...ARGS, subject: 'Something else' };
+    // the page decrypted and showed ARGS (hash HASH); the AS now serves B, consistent with its own fingerprint
+    w.props.add({ id: 'p1', tool: 'email__send', toolArgs: B, contentHash: computeProposalContentHash(B) });
+    const r = await w.decide('p1', 'approve', { content_hash: HASH });
+    expect(r.status).toBe(409);
+    expect(r.body.code).toBe('content_mismatch');
+    expect(w.props.posts).toEqual([]);
+  });
+
+  it('a commit without the fingerprint of what was shown is refused; the wire name works too', async () => {
+    const w = await world();
+    w.props.add({ id: 'p1', tool: 'email__send', toolArgs: ARGS, contentHash: HASH });
+    for (const route of ['approve', 'resolve']) {
+      const r = await w.decide('p1', route, { content_hash: undefined, action: 'commit', domain: 'u1' });
+      expect(r.status).toBe(409);
+      expect(r.body.code).toBe('content_not_shown');
+    }
+    expect(w.props.posts).toEqual([]);
+    expect((await w.decide('p1', 'approve', { proposalContentHash: HASH })).status).toBe(200);
+  });
+
+  it('a reject or withdrawal may omit it, but a fingerprint it does send must match', async () => {
+    const w = await world();
+    w.props.add({ id: 'p1', tool: 'email__send', toolArgs: ARGS, contentHash: HASH });
+    w.props.add({ id: 'p2', tool: 'email__send', toolArgs: ARGS, contentHash: HASH });
+    const wrong = `sha256:${'a'.repeat(64)}`;
+    expect((await w.decide('p1', 'reject', { content_hash: wrong })).body.code).toBe('content_mismatch');
+    expect((await w.decide('p1', 'withdraw', { proposalContentHash: wrong })).body.code).toBe('content_mismatch');
+    expect((await w.decide('p1', 'reject', { content_hash: undefined })).status).toBe(200);
+    expect((await w.decide('p2', 'withdraw', { content_hash: undefined })).status).toBe(200);
+  });
+});
+
 describe('the control plane\'s answers for the MCP server (/internal/device-*)', () => {
   const SECRET = { 'x-internal-secret': 'sekret' };
 
@@ -322,8 +361,12 @@ describe('the control plane\'s answers for the MCP server (/internal/device-*)',
     // the owner's own pin is the head of its own chain record, not a second copy
     const own = new DeviceChainStore(w.gw.vault).read()!;
     expect((await call(w.gw.port, 'POST', '/internal/device-pin/get', { headers: SECRET, body: { did: w.rootDid } })).body).toEqual({ head: own.head });
-    const ownLower = await call(w.gw.port, 'POST', '/internal/device-pin/advance', { headers: SECRET, body: { did: w.rootDid, head: { seq: 0, hash: `sha256:${'5'.repeat(64)}` } } });
-    expect(ownLower.status).toBe(409); expect(ownLower.body.code).toBe('fork');
+    // ...and this route never moves it, not even forward to a value nobody verified: only sign-in does
+    for (const head of [{ seq: 0, hash: `sha256:${'5'.repeat(64)}` }, { seq: 9, hash: `sha256:${'6'.repeat(64)}` }]) {
+      const r = await call(w.gw.port, 'POST', '/internal/device-pin/advance', { headers: SECRET, body: { did: w.rootDid, head } });
+      expect(r.status).toBe(409); expect(r.body.code).toBe('own_chain');
+    }
+    expect(new DeviceChainStore(w.gw.vault).read()!.head).toEqual(own.head);
   });
 
   it('refuses a malformed did or head, and answers 423 while the vault is locked', async () => {
@@ -335,6 +378,54 @@ describe('the control plane\'s answers for the MCP server (/internal/device-*)',
     expect(locked.status).toBe(423);
     // a locked vault with a chain still says "present", never "none"
     const st = await call(w.gw.port, 'GET', '/internal/device-chain', { headers: SECRET }); expect(st.body.rootDid).toBeUndefined(); expect(st.body.state).toBe('present');
+  });
+});
+
+describe('pins and the replay ledger', () => {
+  const SECRET = { 'x-internal-secret': 'sekret' };
+  const did = (n: number) => `did:key:z6Mk${String(n).padStart(8, '0')}`;
+  const head = (n: number) => ({ seq: 1, hash: `sha256:${String(n % 10).repeat(64)}` });
+
+  it('a full table drops the oldest pin, never one the cached mandates name; with nothing left to drop it says so', async () => {
+    const w = await world();
+    const pins = new DevicePinStore(w.gw.vault, new DeviceChainStore(w.gw.vault));
+    for (let i = 0; i < 256; i++) pins.advance(did(i), head(i));
+    pins.advance(did(1000), head(1));
+    expect(pins.get(did(0))).toBeNull();
+    expect(pins.get(did(1))).not.toBeNull();
+    pins.advance(did(1001), head(2), [did(1)]);
+    expect(pins.get(did(1))).not.toBeNull();
+    expect(pins.get(did(2))).toBeNull();
+    const everyone = [did(1), ...Array.from({ length: 253 }, (_, i) => did(i + 3)), did(1000), did(1001)];
+    let refused = '';
+    try { pins.advance(did(5000), head(3), everyone); } catch (e) { refused = (e as { reason?: string }).reason ?? ''; }
+    expect(refused).toBe('full');
+  });
+
+  it('a proposal id reused with other decisions, and a nonce used for another proposal, are refused; a retry of the same is not', async () => {
+    const w = await world();
+    const consume = (proposalId: string, nonces: string[]) => call(w.gw.port, 'POST', '/internal/device-ledger/consume', { headers: SECRET, body: { proposalId, nonces } });
+    expect((await consume('p1', ['n1', 'n2'])).status).toBe(200);
+    expect((await consume('p1', ['n2', 'n1'])).status).toBe(200);
+    const reused = await consume('p1', ['n3']);
+    expect(reused.status).toBe(409); expect(reused.body.code).toBe('proposal_id_reused');
+    const replay = await consume('p2', ['n1']);
+    expect(replay.status).toBe(409); expect(replay.body.code).toBe('nonce_reused');
+    expect((await consume('p2', ['n9'])).status).toBe(200);
+    expect((await consume('p3', [])).status).toBe(400);
+    expect((await call(w.gw.port, 'POST', '/internal/device-ledger/consume', { body: { proposalId: 'p9', nonces: ['x'] } })).status).toBe(401);
+  });
+
+  it('the ledger is sealed in the vault and survives a new store over it', async () => {
+    const w = await world();
+    new DevicePinStore(w.gw.vault, new DeviceChainStore(w.gw.vault)).consume('p1', ['n1']);
+    expect(() => new DevicePinStore(w.gw.vault, new DeviceChainStore(w.gw.vault)).consume('p1', ['n2'])).toThrow();
+  });
+
+  it('/health says deviceKeys only on a gateway that set up device keys', () => {
+    expect(deviceKeysHealth(() => 'present')).toEqual({ deviceKeys: true });
+    for (const st of ['none', 'unreadable'] as const) expect(deviceKeysHealth(() => st)).toEqual({});
+    expect(deviceKeysHealth(undefined)).toEqual({});
   });
 });
 

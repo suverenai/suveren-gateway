@@ -34,6 +34,14 @@ export function deviceKeysEnabled(env: NodeJS.ProcessEnv = process.env): boolean
   return env.SUVEREN_DEVICE_KEYS === 'on';
 }
 
+/**
+ * The one member `/health` adds on a gateway that set up device keys: the page reads it to send its decisions
+ * through the control plane's signing route (step 12). `{}` for every other gateway, so its answer is unchanged.
+ */
+export function deviceKeysHealth(state: (() => 'none' | 'present' | 'unreadable') | undefined): { deviceKeys?: true } {
+  return state && state() === 'present' ? { deviceKeys: true } : {};
+}
+
 /** What set-up and device sign-in need from the process: where the Authority Server is and how to trust it. */
 export interface DeviceSetupOptions {
   asUrl: string;

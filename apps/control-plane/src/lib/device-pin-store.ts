@@ -23,14 +23,19 @@ const SLOT = 'devicePins';
 /** More than this many people is not a mandate; the store refuses to grow without bound. */
 const MAX_PINS = 256;
 
-interface PinFile { v: 1; pins: Record<string, ChainHeadRef> }
+interface PinFile { v: 1; pins: Record<string, ChainHeadRef & { at?: number }> }
+
+const LEDGER_SLOT = 'deviceLedger';
+/** Executed proposals and consumed decision nonces kept; the oldest go first. */
+const MAX_LEDGER = 2000;
+interface LedgerFile { v: 1; proposals: Array<{ id: string; nonces: string[] }>; nonces: string[] }
 
 const isInt = (n: unknown): n is number => typeof n === 'number' && Number.isSafeInteger(n) && n >= 0;
 const isHash = (h: unknown): h is string => typeof h === 'string' && /^sha256:[0-9a-f]{64}$/.test(h);
 const isDid = (d: unknown): d is string => typeof d === 'string' && d.startsWith('did:key:') && d.length <= 128;
 
 export class PinRefusedError extends Error {
-  constructor(readonly reason: 'rollback' | 'fork' | 'bad_request' | 'full') {
+  constructor(readonly reason: 'rollback' | 'fork' | 'bad_request' | 'full' | 'own_chain' | 'proposal_id_reused' | 'nonce_reused') {
     super(reason);
     this.name = 'PinRefusedError';
   }
@@ -55,32 +60,71 @@ export class DevicePinStore {
     if (!isDid(did)) throw new PinRefusedError('bad_request');
     const mine = this.own.read();
     if (mine && mine.rootDid === did) return { ...mine.head };
-    return this.read().pins[did] ?? null;
+    const p = this.read().pins[did];
+    return p ? { seq: p.seq, hash: p.hash } : null;
   }
 
-  /** Move the pin forward after the whole chain was verified. Same head: nothing. Lower: rollback. Same number, other hash: fork. */
-  advance(did: string, head: ChainHeadRef): ChainHeadRef {
+  /**
+   * Move the pin forward after the whole chain was verified. Same head: nothing. Lower: rollback. Same number,
+   * other hash: fork. This computer's OWN chain head is never moved here: only sign-in, which verifies the chain
+   * against the Authority Server's session, moves it ('own_chain').
+   * When the table is full the oldest pin goes, but never one of `keep` (the signed identities of the mandates
+   * currently cached); with nothing left to drop it is 'full'.
+   */
+  advance(did: string, head: ChainHeadRef, keep: readonly string[] = []): ChainHeadRef {
     if (!isDid(did) || !isInt(head?.seq) || !isHash(head?.hash)) throw new PinRefusedError('bad_request');
     const mine = this.own.read();
-    try {
-      if (mine && mine.rootDid === did) return this.own.advance(head).head;
-    } catch (e) {
-      if (e instanceof ChainHeadRefusedError) throw new PinRefusedError(e.reason);
-      throw e;
-    }
+    if (mine && mine.rootDid === did) throw new PinRefusedError('own_chain');
     const file = this.read();
     const cur = file.pins[did];
     if (cur) {
       if (head.seq < cur.seq) throw new PinRefusedError('rollback');
       if (head.seq === cur.seq) {
         if (head.hash !== cur.hash) throw new PinRefusedError('fork');
-        return cur;
+        return { seq: cur.seq, hash: cur.hash };
       }
     } else if (Object.keys(file.pins).length >= MAX_PINS) {
-      throw new PinRefusedError('full');
+      const protectedDids = new Set(keep.filter(isDid));
+      const victim = Object.entries(file.pins)
+        .filter(([d]) => !protectedDids.has(d))
+        .sort((x, y) => (x[1].at ?? 0) - (y[1].at ?? 0))[0];
+      if (!victim) throw new PinRefusedError('full');
+      delete file.pins[victim[0]];
     }
-    file.pins[did] = { seq: head.seq, hash: head.hash };
+    file.pins[did] = { seq: head.seq, hash: head.hash, at: Math.floor(Date.now() / 1000) };
     this.vault.setSecretSlot(SLOT, file);
-    return file.pins[did];
+    return { seq: head.seq, hash: head.hash };
+  }
+
+  /**
+   * Record that this proposal is about to run on these decisions (their nonces), sealed and bounded.
+   * The same proposal with the same decisions again is fine (a retry; the execution journal decides what runs).
+   * The same proposal id with OTHER decisions, or a nonce already used for another proposal, is refused.
+   */
+  consume(proposalId: string, nonces: readonly string[]): void {
+    if (typeof proposalId !== 'string' || !proposalId || proposalId.length > 128
+      || nonces.length === 0 || nonces.length > 32 || !nonces.every(n => typeof n === 'string' && n.length > 0 && n.length <= 64)) {
+      throw new PinRefusedError('bad_request');
+    }
+    const raw = this.vault.getSecretSlot<unknown>(LEDGER_SLOT);
+    let f: LedgerFile = { v: 1, proposals: [], nonces: [] };
+    if (raw !== null) {
+      const r = raw as Partial<LedgerFile>;
+      if (r?.v !== 1 || !Array.isArray(r.proposals) || !Array.isArray(r.nonces)) throw new Error('The stored ledger cannot be read');
+      f = r as LedgerFile;
+    }
+    const mine = [...new Set(nonces)].sort();
+    const prior = f.proposals.find(p => p.id === proposalId);
+    if (prior) {
+      if (JSON.stringify([...prior.nonces].sort()) === JSON.stringify(mine)) return;
+      throw new PinRefusedError('proposal_id_reused');
+    }
+    const seen = new Set(f.nonces);
+    if (mine.some(n => seen.has(n))) throw new PinRefusedError('nonce_reused');
+    f.proposals.push({ id: proposalId, nonces: mine });
+    f.nonces.push(...mine);
+    if (f.proposals.length > MAX_LEDGER) f.proposals = f.proposals.slice(-MAX_LEDGER);
+    if (f.nonces.length > MAX_LEDGER * 8) f.nonces = f.nonces.slice(-MAX_LEDGER * 8);
+    this.vault.setSecretSlot(LEDGER_SLOT, f);
   }
 }

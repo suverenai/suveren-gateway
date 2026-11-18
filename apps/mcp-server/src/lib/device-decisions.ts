@@ -100,7 +100,7 @@ export function signedMandateFacts(attestations: ReadonlyArray<{ blob: string }>
 export interface Head { seq: number; hash: string }
 
 export class PinRefused extends Error {
-  constructor(readonly reason: 'rollback' | 'fork') {
+  constructor(readonly reason: 'rollback' | 'fork' | 'own_chain' | 'full' | 'proposal_id_reused' | 'nonce_reused') {
     super(reason);
     this.name = 'PinRefused';
   }
@@ -110,7 +110,10 @@ export class PinRefused extends Error {
 export interface DeviceCpClient {
   chainState(): Promise<{ state: 'none' | 'present' | 'unreadable'; rootDid?: string }>;
   getPin(did: string): Promise<Head | null>;
-  advancePin(did: string, head: Head): Promise<void>;
+  /** `keep`: signed identities of the mandates cached now; their pins are never the ones dropped when the table is full. */
+  advancePin(did: string, head: Head, keep?: string[]): Promise<void>;
+  /** This proposal runs on these decisions (their nonces): refused for a reused proposal id or nonce. */
+  consume(proposalId: string, nonces: string[]): Promise<void>;
 }
 
 function cpBase(): string {
@@ -133,8 +136,11 @@ export const controlPlaneDevice: DeviceCpClient = {
     if (!h || typeof h.seq !== 'number' || typeof h.hash !== 'string') throw new Error('unreadable answer');
     return { seq: h.seq, hash: h.hash };
   },
-  async advancePin(did, head) {
-    await cpCall('POST', '/internal/device-pin/advance', { did, head });
+  async advancePin(did, head, keep) {
+    await cpCall('POST', '/internal/device-pin/advance', { did, head, ...(keep?.length ? { keep } : {}) });
+  },
+  async consume(proposalId, nonces) {
+    await cpCall('POST', '/internal/device-ledger/consume', { proposalId, nonces });
   },
 };
 
@@ -149,7 +155,8 @@ async function cpCall(method: 'GET' | 'POST', path: string, body?: unknown): Pro
     signal: AbortSignal.timeout(10_000),
   });
   const parsed = (await res.json().catch(() => ({}))) as { code?: unknown };
-  if (res.status === 409 && (parsed.code === 'rollback' || parsed.code === 'fork')) throw new PinRefused(parsed.code);
+  if (res.status === 409 && (parsed.code === 'rollback' || parsed.code === 'fork' || parsed.code === 'own_chain' || parsed.code === 'full'
+    || parsed.code === 'proposal_id_reused' || parsed.code === 'nonce_reused')) throw new PinRefused(parsed.code);
   if (!res.ok) throw new Error(`control plane answered ${res.status}`);
   return parsed;
 }
@@ -178,6 +185,8 @@ export interface DeviceCheckInput {
   actionType: string | undefined;
   /** The fingerprint of the content THIS gateway resolved and is about to run. */
   proposalContentHash: string;
+  /** Signed identities (owner and approvers) of every mandate cached now: their pins are never evicted. */
+  protectedDids?: string[];
   env?: NodeJS.ProcessEnv;
 }
 
@@ -216,6 +225,10 @@ export async function checkDeviceDecisions(i: DeviceCheckInput): Promise<DeviceC
 
   // Who may decide: the signed identities, nobody else.
   const signedDids = new Set<string>([facts.ownerDid, ...facts.deciders]);
+  // KNOWN GAP (step 13 follow-up): whether the proposal is above the cap is read from the Authority Server's
+  // unsigned fields (`pendingApprovers`, `approvedBy`) beside the signed mode. Step 13 derives it from the signed
+  // bounds; until then an AS that hides the flag can waive the above-cap approvers, though never the owner of a
+  // `review` mandate and never an approver once any of them decided.
   const aboveCap = facts.commitmentMode === 'review_above_cap'
     || (i.proposal.pendingApprovers?.length ?? 0) > 0
     || Object.keys(i.proposal.approvedBy ?? {}).length > 0
@@ -235,6 +248,7 @@ export async function checkDeviceDecisions(i: DeviceCheckInput): Promise<DeviceC
   };
 
   const goodBy = new Set<string>();
+  const nonceBy = new Map<string, string>();
   const reasons = new Map<string, string>();
   for (const entry of stored) {
     const env = entry as { decision?: unknown; sig?: unknown };
@@ -259,6 +273,7 @@ export async function checkDeviceDecisions(i: DeviceCheckInput): Promise<DeviceC
       );
       if (d.decision !== 'commit') { reasons.set(did, 'not_a_commit'); continue; }
       goodBy.add(did);
+      nonceBy.set(did, d.nonce);
     } catch (e) {
       reasons.set(did, isDeviceKeysError(e) ? e.code : 'invalid');
     }
@@ -286,6 +301,14 @@ export async function checkDeviceDecisions(i: DeviceCheckInput): Promise<DeviceC
     }
   }
   if (!needOwner && requiredApprovers === 0) return refuse('decision_missing_owner', 'nobody is named to have decided this proposal.');
+  // Replay: the proposal id and each decision's nonce are recorded (sealed, in the control plane) before anything runs.
+  try {
+    await i.cp.consume(i.proposal.id, [...nonceBy.values()]);
+  } catch (e) {
+    if (e instanceof PinRefused && e.reason === 'proposal_id_reused') return refuse('proposal_id_reused', 'this proposal id was already used with other decisions.');
+    if (e instanceof PinRefused && e.reason === 'nonce_reused') return refuse('decision_replayed', 'a decision of this proposal was already used for another proposal.');
+    return refuse('device_state_unavailable', 'the control plane could not record the decisions this proposal runs on.');
+  }
   return { ok: true };
 }
 
@@ -321,9 +344,11 @@ async function verifiedChain(i: DeviceCheckInput, dk: DeviceKeys, did: string): 
     return { ok: false, check: refuse('chain_head_mismatch', 'the Authority Server named another chain head than its entries end in.') };
   }
   try {
-    await i.cp.advancePin(did, state.head);
+    await i.cp.advancePin(did, state.head, i.protectedDids);
   } catch (e) {
-    if (e instanceof PinRefused) return { ok: false, check: refuse(e.reason === 'rollback' ? 'chain_rollback' : 'chain_fork', 'an approver\'s device chain moved against the head this gateway pinned.') };
+    // This computer's own head is moved by sign-in only; the chain was verified against it above.
+    if (e instanceof PinRefused && e.reason === 'own_chain') return { ok: true, state };
+    if (e instanceof PinRefused && (e.reason === 'rollback' || e.reason === 'fork')) return { ok: false, check: refuse(e.reason === 'rollback' ? 'chain_rollback' : 'chain_fork', 'an approver\'s device chain moved against the head this gateway pinned.') };
     return { ok: false, check: refuse('device_state_unavailable', 'the control plane could not pin an approver\'s chain head.') };
   }
   return { ok: true, state };
@@ -335,7 +360,7 @@ export interface ProposalFactsDeps {
   /** The grant as this gateway's attestation cache holds it, fetched again when it does not. */
   auth: (authorizationId: string) => Promise<Pick<CachedAuthorization, 'attestations'> | null | undefined>;
   /** This gateway's own record of a proposal it submitted. */
-  submission: (proposalId: string) => { actionType?: string } | undefined;
+  submission: (proposalId: string) => { actionType?: string; tool?: string; authorizationId?: string } | undefined;
   /** The action type a connector's manifest declares for a namespaced tool. */
   manifestActionType: (tool: string) => string | undefined;
 }
@@ -348,12 +373,30 @@ export interface ProposalFactsDeps {
 export async function resolveProposalFacts(
   d: ProposalFactsDeps,
   q: { proposalId: string; authorizationId: string; tool: string },
-): Promise<{ ok: true; mandateId: string; actionType: string } | { ok: false; code: 'mandate_unavailable' | 'action_type_unknown' }> {
+): Promise<{ ok: true; mandateId: string; actionType: string } | { ok: false; code: 'mandate_unavailable' | 'action_type_unknown' | 'proposal_mismatch' }> {
+  // What the Authority Server reports about a proposal this gateway submitted must be what it submitted.
+  const sub = d.submission(q.proposalId);
+  if (sub && ((sub.tool !== undefined && sub.tool !== q.tool) || (sub.authorizationId !== undefined && sub.authorizationId !== q.authorizationId))) {
+    return { ok: false, code: 'proposal_mismatch' };
+  }
   let auth;
   try { auth = await d.auth(q.authorizationId); } catch { auth = undefined; }
   const facts = signedMandateFacts(auth?.attestations);
   if (!facts) return { ok: false, code: 'mandate_unavailable' };
-  const actionType = d.submission(q.proposalId)?.actionType ?? d.manifestActionType(q.tool);
+  const actionType = sub?.actionType ?? d.manifestActionType(q.tool);
   if (typeof actionType !== 'string' || !actionType) return { ok: false, code: 'action_type_unknown' };
   return { ok: true, mandateId: facts.mandateId, actionType };
+}
+
+/** The owner and signed approvers of every mandate in the attestation cache: whose pins must survive an eviction. */
+export function signedDidsOfCache(cache: { getAllAuthorizations?: () => Array<{ attestations?: ReadonlyArray<{ blob: string }> }> } | undefined): string[] {
+  if (!deviceKeysEnabled()) return [];
+  const out = new Set<string>();
+  try {
+    for (const a of cache?.getAllAuthorizations?.() ?? []) {
+      const f = signedMandateFacts(a.attestations);
+      if (f) { out.add(f.ownerDid); for (const d of f.deciders) out.add(d); }
+    }
+  } catch { /* the pins just are not protected */ }
+  return [...out].slice(0, 256);
 }
