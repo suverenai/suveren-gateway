@@ -45,6 +45,24 @@ export const NAV_ITEMS: NavItem[] = [
 ];
 
 /**
+ * Run `load` on every call, but `apply` only the result of the NEWEST call started.
+ * Every event that changes a count (a block, a proposal, a ticket) starts a refresh; two events
+ * close together start two, and the older one can finish last. Without this, its stale counts
+ * overwrote the newer ones — the Blocked badge stayed at 1 after two blocks until the next event or
+ * the 5-minute fallback poll (suveren-e2e blocked-seen, 2026-11-18). A failed load applies nothing.
+ */
+export function newestWins<T>(load: () => Promise<T>, apply: (value: T) => void): () => Promise<void> {
+  let started = 0;
+  return async () => {
+    const mine = ++started;
+    let value: T;
+    try { value = await load(); } catch { return; }
+    if (mine !== started) return; // a newer refresh started meanwhile: its answer is the one that counts
+    apply(value);
+  };
+}
+
+/**
  * Non-integration badge counts (AI config, authorizations, proposals).
  * Integration counts come from the shared IntegrationStatusContext below
  * so Sidebar / Dashboard / IntegrationsPage can't disagree.
@@ -53,60 +71,62 @@ function useOtherNavStatus() {
   const { activeDomain } = useAuth();
   const [counts, setCounts] = useState<Record<string, number>>({});
 
-  const poll = useCallback(async () => {
-    try {
-      const [aiStatus, authData, proposalData, approverProposals, briefText, archivedIds, denials, lastSeenBlockedAt, reportData, lastSeenReportAt, ticketPage, lastSeenTicketsAt] = await Promise.all([
-        spClient.getCredential('ai-config').catch(() => null),
-        spClient.getMyAttestations().catch(() => null),
-        spClient.getMyProposals(activeDomain).catch(() => null),
-        spClient.getProposalsForApprover().catch(() => null),
-        spClient.getAgentContext().catch(() => ''),
-        spClient.getArchivedMandates().catch(() => [] as string[]),
-        spClient.getDenials({ limit: 200 }).catch(() => null),
-        spClient.getLastSeenBlockedAt().catch(() => 0),
-        spClient.getReport().catch(() => null),
-        spClient.getLastSeenReportAt().catch(() => Number.POSITIVE_INFINITY),
-        spClient.getMyReceiptsPage({ limit: 200 }).catch(() => null),
-        spClient.getLastSeenTicketsAt().catch(() => Number.POSITIVE_INFINITY),
-      ]);
+  // One sequence for this hook's lifetime: a poll from before a domain switch is older too.
+  const loadRef = useRef<() => Promise<Record<string, number>>>(async () => ({}));
+  const pollRef = useRef(newestWins(() => loadRef.current(), (next: Record<string, number>) => setCounts(next)));
 
-      const next: Record<string, number> = {};
-      if (aiStatus && !aiStatus.configured) next.assistant = 1;
-      if (authData) {
-        // Bucket through the shared helper so this badge, the Dashboard
-        // counts, and the Authorizations page never disagree.
-        // Archived mandates are out of the badge: they are finished and the
-        // owner has seen them. A failed archive load counts them (safe side).
-        const expired = bucketAuths(authData, { archivedSet: new Set(archivedIds) }).expired.length;
-        if (expired > 0) next.authorizations = expired;
-      }
-      // Combine domain proposals (legacy) + above-cap approver proposals (Phase 6).
-      const domainPending = (proposalData?.length ?? 0);
-      const approverPending = (approverProposals?.length ?? 0);
-      const totalPending = domainPending + approverPending;
-      if (totalPending > 0) {
-        next.proposals = totalPending;
-      }
-      // Empty agent brief → badge nudges the owner to author one.
-      if (!briefText || !briefText.trim()) next.brief = 1;
-      // AU2 — blocked actions arrived since the owner last opened the
-      // Blocked page (not "today's total" — that's the page's own header
-      // line). No notification (decided); this static nav count is the
-      // only surfacing.
-      if (denials) {
-        const unseen = unseenCount(denials.records, lastSeenBlockedAt);
-        if (unseen > 0) next.blocked = unseen;
-      }
-      // The one report: new since the Reports page was last opened.
-      if (isNewReport(reportData?.report, lastSeenReportAt)) next.report = 1;
-      // Tickets issued since the Tickets page was last opened.
-      const newTickets = ticketPage ? ticketPage.receipts.filter(r => isNewTicket(r, lastSeenTicketsAt)).length : 0;
-      if (newTickets > 0) next.tickets = newTickets;
-      setCounts(next);
-    } catch {
-      // ignore
+  const load = useCallback(async (): Promise<Record<string, number>> => {
+    const [aiStatus, authData, proposalData, approverProposals, briefText, archivedIds, denials, lastSeenBlockedAt, reportData, lastSeenReportAt, ticketPage, lastSeenTicketsAt] = await Promise.all([
+      spClient.getCredential('ai-config').catch(() => null),
+      spClient.getMyAttestations().catch(() => null),
+      spClient.getMyProposals(activeDomain).catch(() => null),
+      spClient.getProposalsForApprover().catch(() => null),
+      spClient.getAgentContext().catch(() => ''),
+      spClient.getArchivedMandates().catch(() => [] as string[]),
+      spClient.getDenials({ limit: 200 }).catch(() => null),
+      spClient.getLastSeenBlockedAt().catch(() => 0),
+      spClient.getReport().catch(() => null),
+      spClient.getLastSeenReportAt().catch(() => Number.POSITIVE_INFINITY),
+      spClient.getMyReceiptsPage({ limit: 200 }).catch(() => null),
+      spClient.getLastSeenTicketsAt().catch(() => Number.POSITIVE_INFINITY),
+    ]);
+
+    const next: Record<string, number> = {};
+    if (aiStatus && !aiStatus.configured) next.assistant = 1;
+    if (authData) {
+      // Bucket through the shared helper so this badge, the Dashboard
+      // counts, and the Authorizations page never disagree.
+      // Archived mandates are out of the badge: they are finished and the
+      // owner has seen them. A failed archive load counts them (safe side).
+      const expired = bucketAuths(authData, { archivedSet: new Set(archivedIds) }).expired.length;
+      if (expired > 0) next.authorizations = expired;
     }
+    // Combine domain proposals (legacy) + above-cap approver proposals (Phase 6).
+    const domainPending = (proposalData?.length ?? 0);
+    const approverPending = (approverProposals?.length ?? 0);
+    const totalPending = domainPending + approverPending;
+    if (totalPending > 0) {
+      next.proposals = totalPending;
+    }
+    // Empty agent brief → badge nudges the owner to author one.
+    if (!briefText || !briefText.trim()) next.brief = 1;
+    // AU2 — blocked actions arrived since the owner last opened the
+    // Blocked page (not "today's total" — that's the page's own header
+    // line). No notification (decided); this static nav count is the
+    // only surfacing.
+    if (denials) {
+      const unseen = unseenCount(denials.records, lastSeenBlockedAt);
+      if (unseen > 0) next.blocked = unseen;
+    }
+    // The one report: new since the Reports page was last opened.
+    if (isNewReport(reportData?.report, lastSeenReportAt)) next.report = 1;
+    // Tickets issued since the Tickets page was last opened.
+    const newTickets = ticketPage ? ticketPage.receipts.filter(r => isNewTicket(r, lastSeenTicketsAt)).length : 0;
+    if (newTickets > 0) next.tickets = newTickets;
+    return next;
   }, [activeDomain]);
+  loadRef.current = load;
+  const poll = useCallback(() => pollRef.current(), []);
 
   // SSE-driven refresh: fire immediately on events that change badge counts.
   useSSEEvent('attestation-changed', poll);
