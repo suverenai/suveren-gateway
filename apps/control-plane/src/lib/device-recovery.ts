@@ -197,6 +197,8 @@ export class DeviceRecovery {
     recoveryId: string; pageUrl: string; checkEmail: true; sameBrowser: true; confirmCode: string; expiresAt: number; rootDid: string;
     /** The devices this will remove, from the VERIFIED chain, as plain text. */
     removes: Array<{ label: string; kind: string }>;
+    /** A request for a new identity is open on the account (the Authority Server said so at the lookup); this recovery closes it. */
+    pendingIdentityReset?: { id: string; effectiveAt: number };
   } | ({ adopted: true } & Completed)> {
     this.requireUnlocked();
     this.dropExpiredRotate();
@@ -296,7 +298,10 @@ export class DeviceRecovery {
       const handed = await this.stage(f, input.port, input.sessionId);
       this.persist(f);
       this.flow = f;
-      return { recoveryId: f.id, ...handed, rootDid: f.rootDid, removes };
+      return {
+        recoveryId: f.id, ...handed, rootDid: f.rootDid, removes,
+        ...(found.pending_identity_reset ? { pendingIdentityReset: { id: found.pending_identity_reset.id, effectiveAt: found.pending_identity_reset.effective_at } } : {}),
+      };
     } finally {
       // The root key signed one entry and is not needed again, whatever happened.
       rootSeed?.fill(0);
@@ -778,6 +783,8 @@ export class DeviceRecovery {
     const asCode = asErrorCode(reply.body);
     if (reply.status === 429) throw new SetupRefusal(429, 'rate_limited', asCode ? { asCode } : {});
     if (asCode === 'MAIL_FAILED') throw new SetupRefusal(502, 'mail_failed', { asCode });
+    if (asCode === 'ROOT_KEY_TAKEN') throw new SetupRefusal(409, 'root_key_taken', { asCode });
+    if (reply.status === 404 && asCode === 'NO_CHAIN') throw new SetupRefusal(404, 'recovery_code_unknown', { asCode });
     if (reply.status >= 500) throw new SetupRefusal(502, 'as_error');
     if (asCode === 'CHAIN_HEAD_MOVED') throw new SetupRefusal(409, 'chain_moved', { asCode });
     throw new SetupRefusal(409, code, asCode ? { asCode } : {});

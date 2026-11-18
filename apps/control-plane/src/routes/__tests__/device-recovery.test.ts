@@ -158,7 +158,7 @@ async function pressButton(as: StubAs, started: Reply | string, o: BrowserOpts =
     const token = new URL(mail.link).searchParams.get('token')!;
     const post = await fetch(`${as.url}/api/devices/recovery/link`, { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: formBody({ token }) });
     if (post.status !== 200) return { refused: await codeOf(post), status: post.status };
-    cookie = /hap-recovery=([^;]+)/.exec(post.headers.get('set-cookie') ?? '')![1];
+    cookie = /(?:__Host-)?hap-recovery=([^;]+)/.exec(post.headers.get('set-cookie') ?? '')![1];
   }
   // 3. reload the address: now it shows the form (with the CSRF token) in this browser
   let csrf = 'x';
@@ -477,7 +477,8 @@ describe('recovery on a fresh gateway: a reset with the recovery code', () => {
     const acct = await setUp(as, old);
     const f = await boot(as, { platform: fakeHost({ FAKE_TOUCH: 'slow' }) });
     const rec = f.post('/auth/device/recover/start', { code: acct.code, checkKey: true });
-    await sleep(120);
+    // wait until the start is running (not for a fixed time: a loaded machine is slower)
+    for (let i = 0; i < 100 && !((await f.get('/auth/device/status')).body.recovery as { recoveryPending?: boolean } | undefined)?.recoveryPending; i++) await sleep(20);
     expect((await f.get('/auth/device/status')).body.recovery).toMatchObject({ recoveryPending: true });
     const setup = await f.post('/auth/device/setup/start');
     expect(setup.status).toBe(409);
@@ -486,7 +487,7 @@ describe('recovery on a fresh gateway: a reset with the recovery code', () => {
 
     const g = await boot(as, { platform: fakeHost({ FAKE_TOUCH: 'slow' }) });
     const su = g.post('/auth/device/setup/start', { checkKey: true });
-    await sleep(120);
+    await sleep(250);
     const blocked = await g.post('/auth/device/recover/start', { code: acct.code });
     expect(blocked.status).toBe(409);
     expect(blocked.body.code).toBe('setup_pending');
@@ -588,16 +589,16 @@ describe('the browser hand-off', () => {
     }
   });
 
-  it('the cookie of an OLDER recovery is refused for the newer one (HANDOFF_OTHER_ACCOUNT, a page, not a redirect)', async () => {
+  it('the cookie of an OLDER recovery is refused for the newer one (HANDOFF_OTHER, a page, not a redirect)', async () => {
     const { as, acct, fresh, start } = await started();
     const token = new URL(as.emails[0].link).searchParams.get('token')!;
     const post = await fetch(`${as.url}/api/devices/recovery/link`, { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: formBody({ token }) });
-    const oldCookie = /hap-recovery=([^;]+)/.exec(post.headers.get('set-cookie') ?? '')![1];
+    const oldCookie = /(?:__Host-)?hap-recovery=([^;]+)/.exec(post.headers.get('set-cookie') ?? '')![1];
     as.expireHandoffs();
     const other = await boot(as);
     const s2 = await other.post('/auth/device/recover/start', { code: acct.code });
     expect(s2.status).toBe(200);
-    expect(await browser(as, other, s2, { cookie: oldCookie, email: 1 })).toMatchObject({ refused: 'HANDOFF_OTHER_ACCOUNT' });
+    expect(await browser(as, other, s2, { cookie: oldCookie, email: 1 })).toMatchObject({ refused: 'HANDOFF_OTHER' });
     expect(as.chainEntries()).toHaveLength(1);
     void fresh; void start;
   });
@@ -698,7 +699,7 @@ describe('the browser hand-off', () => {
     // the first person has used the link and has the page open
     const token = new URL(as.emails[0].link).searchParams.get('token')!;
     const post = await fetch(`${as.url}/api/devices/recovery/link`, { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: formBody({ token }) });
-    const cookie1 = /hap-recovery=([^;]+)/.exec(post.headers.get('set-cookie') ?? '')![1];
+    const cookie1 = /(?:__Host-)?hap-recovery=([^;]+)/.exec(post.headers.get('set-cookie') ?? '')![1];
     // another recovery moves the chain meanwhile
     const other = await boot(as);
     const s2 = await other.post('/auth/device/recover/start', { code: acct.code });
@@ -712,6 +713,57 @@ describe('the browser hand-off', () => {
     const fin = await fresh.post('/auth/device/recover/finish', { recoveryId: start.body.recoveryId });
     expect(fin.status).toBe(409);
     expect(new DeviceChainStore(fresh.gw.vault).read()).toBeNull();
+  });
+
+  it('a suspended account or an unknown root DID at stage is the one 404 NO_CHAIN; the gateway keeps nothing', async () => {
+    const as = await newAs();
+    const old = await boot(as);
+    const acct = await setUp(as, old);
+    as.suspended = true;
+    const fresh = await boot(as);
+    const r = await fresh.post('/auth/device/recover/start', { code: acct.code });
+    expect(r.status).toBe(404);
+    expect(r.body.code).toBe('recovery_code_unknown');
+    expect(fresh.gw.vault.hasSecretSlot('deviceRecoveryPending')).toBe(false);
+  });
+
+  it('an account suspended after the stage comes back as ?error=ACCOUNT_SUSPENDED: reported, nothing stored', async () => {
+    const { as, fresh, start } = await started();
+    as.suspended = true;
+    const b = await browser(as, fresh, start);
+    expect('callback' in b && b.callback.status).toBe(200);
+    expect((await fresh.get(`/auth/device/recover/status?recoveryId=${start.body.recoveryId}`)).body).toMatchObject({ state: 'failed', asCode: 'ACCOUNT_SUSPENDED' });
+    expect(new DeviceChainStore(fresh.gw.vault).read()).toBeNull();
+  });
+
+  it('an open request for a new identity is shown at the start (the lookup says so), and a lookup that sends it as null is refused', async () => {
+    const as = await newAs();
+    const old = await boot(as);
+    const acct = await setUp(as, old);
+    const o = as.openReset();
+    const fresh = await boot(as);
+    const r = await fresh.post('/auth/device/recover/start', { code: acct.code });
+    expect(r.status).toBe(200);
+    expect(r.body.pendingIdentityReset).toEqual({ id: o.id, effectiveAt: o.effective_at });
+    await fresh.post('/auth/device/recover/cancel');
+    as.lookupMutate = x => ({ ...x, pending_identity_reset: null });
+    const g = await boot(as);
+    const bad = await g.post('/auth/device/recover/start', { code: acct.code });
+    expect(bad.status).toBe(502);
+    expect(bad.body.code).toBe('as_answer_invalid');
+  });
+
+  it('the gateway never posts a root-signed entry to /api/devices/chain, and the Authority Server refuses one that is sent there', async () => {
+    const { as, acct, fresh, start } = await started();
+    await browser(as, fresh, start);
+    await fresh.post('/auth/device/recover/finish', { recoveryId: start.body.recoveryId });
+    const posts = as.requests.filter(r => r.method === 'POST' && r.path === '/api/devices/chain').map(r => JSON.parse(r.body).entry.op);
+    expect(posts).toEqual(['genesis']); // the old computer's set-up, nothing of recovery
+    const rootSigned = (as.chainEntries() as ChainEntry[])[1];
+    const r = await fetch(`${as.url}/api/devices/chain`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ entry: rootSigned }) });
+    expect(r.status).toBe(403);
+    expect(((await r.json()) as { errors: Array<{ code: string }> }).errors[0].code).toBe('ROOT_ENTRY_VIA_HANDOFF');
+    void acct;
   });
 
   it('a stage answer that is not the contract is refused and nothing is kept', async () => {
@@ -968,7 +1020,8 @@ describe('replacing the recovery code (rotate-root)', () => {
     await w.gw.close();
     open.splice(open.findIndex(x => x === w.gw), 1);
     const again = await boot(as, { dir, fresh: false }); // no platform helper this time
-    expect((await again.post('/auth/device/signin')).status).toBe(200);
+    const si = await again.post('/auth/device/signin');
+    expect(si.status, JSON.stringify(si.body)).toBe(200);
     const { sub } = await submit(again, acct.code);
     expect(sub.status).toBe(409);
     expect(sub.body.code).toBe('helper_unavailable');
@@ -1010,6 +1063,19 @@ describe('replacing the recovery code (rotate-root)', () => {
     expect(signedOut.sub.status).toBe(409);
     expect(signedOut.sub.body.code).toBe('not_signed_in');
     expect(recoveryRequests(as)).toHaveLength(0);
+  });
+
+  it('a new code whose key another account holds is refused at stage with its own code, and a second new code works', async () => {
+    const { as, w, acct } = await granting();
+    const prep = await w.post('/auth/device/rotate-root/start');
+    const taken = Buffer.from((await rootKeyFromRecoveryCode(String(prep.body.recoveryCode))).publicKey).toString('base64url');
+    as.takenRootKeys.add(taken);
+    const r = await w.post('/auth/device/rotate-root/submit', { rotateId: prep.body.rotateId, oldCode: acct.code, newCode: prep.body.recoveryCode });
+    expect(r.status).toBe(409);
+    expect(r.body.code).toBe('root_key_taken');
+    expect(w.gw.vault.getSecretSlot('deviceRecoveryPending')).toBeNull();
+    const { sub } = await submit(w, acct.code);
+    expect(sub.status).toBe(200);
   });
 
   it('a new code that was not shown by this gateway, or is submitted twice, is refused', async () => {

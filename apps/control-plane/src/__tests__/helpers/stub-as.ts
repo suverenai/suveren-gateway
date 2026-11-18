@@ -174,6 +174,10 @@ export class StubAs {
   revive(handoffId: string): void { const h = this.handoffs.get(handoffId)!; h.replaced = false; h.used = false; h.expiresAt = this.now() + 600; }
   /** Hold the answer to a stage this long (a slow Authority Server). */
   stageDelayMs = 0;
+  /** The account is suspended: stage answers 404 NO_CHAIN, and an append that was staged earlier is refused ?error=ACCOUNT_SUSPENDED. */
+  suspended = false;
+  /** Root keys another account holds: a rotate-root to one is refused 409 ROOT_KEY_TAKEN. */
+  readonly takenRootKeys = new Set<string>();
   /** The email cannot be sent (stage answers 502 MAIL_FAILED). */
   mailFails = false;
 
@@ -188,12 +192,12 @@ export class StubAs {
     const h = this.handoffs.get(id);
     if (!h) return html(404, 'This link does not work');
     if (String(h.port) !== url.searchParams.get('port') || sha256B64(url.searchParams.get('state') ?? '') !== h.stateHash) return html(400, 'This link does not work');
-    const cookie = /(?:^|;\s*)hap-recovery=([^;]+)/.exec(String(req.headers.cookie ?? ''))?.[1];
+    const cookie = /(?:^|;\s*)(?:__Host-)?hap-recovery=([^;]+)/.exec(String(req.headers.cookie ?? ''))?.[1];
     const bound = cookie ? this.recoverySessions.get(cookie) : undefined;
     if (h.replaced) return html(410, 'Replaced');
     if (h.used) return html(409, 'Already used');
     if (h.expiresAt <= this.now()) return html(410, 'Expired');
-    if (bound && bound !== id) return html(403, 'Wrong recovery (HANDOFF_OTHER_ACCOUNT)');
+    if (bound && bound !== id) return html(403, 'Wrong recovery (HANDOFF_OTHER)');
     if (!bound) return html(401, 'Check your email (EMAIL_LINK_SESSION_REQUIRED) <meta http-equiv="refresh" content="15">');
     const before = await verifyChain({ expectedRootDid: this.accounts.get(h.userId)!.rootDid!, entries: this.entries });
     const removes = h.entry.op === 'reset' ? Object.values(before.devices).filter(d => d.removed_seq === null).map(d => `<li>${d.label} (${d.kind})</li>`).join('') : '';
@@ -222,7 +226,8 @@ export class StubAs {
     h.session = session;
     this.recoverySessions.set(session, t.handoff);
     res.setHeader('Referrer-Policy', 'no-referrer');
-    res.setHeader('Set-Cookie', `hap-recovery=${session}; HttpOnly; SameSite=Lax; Path=/`);
+    // `__Host-` over https (Secure, no Domain, Path=/), plain over http
+    res.setHeader('Set-Cookie', this.url.startsWith('https:') ? `__Host-hap-recovery=${session}; HttpOnly; Secure; SameSite=Lax; Path=/` : `hap-recovery=${session}; HttpOnly; SameSite=Lax; Path=/`);
     res.writeHead(200, { 'Content-Type': 'text/html' });
     res.end('Go back to the tab your computer opened and reload it.');
   }
@@ -231,11 +236,11 @@ export class StubAs {
   private async authorizeRecovery(req: IncomingMessage, res: ServerResponse, form: Record<string, unknown>, refuse: Refuse): Promise<void> {
     res.setHeader('Referrer-Policy', 'no-referrer');
     const page = (status: number, code: string): void => { res.writeHead(status, { 'Content-Type': 'text/html', 'x-code': code }); res.end(code); };
-    const cookie = /(?:^|;\s*)hap-recovery=([^;]+)/.exec(String(req.headers.cookie ?? ''))?.[1];
+    const cookie = /(?:^|;\s*)(?:__Host-)?hap-recovery=([^;]+)/.exec(String(req.headers.cookie ?? ''))?.[1];
     const bound = cookie ? this.recoverySessions.get(cookie) : undefined;
     // 1. only the session a mailed link minted for exactly this handoff (a hap-session, an API key, a device token: none counts)
     if (!bound) return page(401, 'EMAIL_LINK_SESSION_REQUIRED');
-    if (bound !== form.handoff) return page(403, 'HANDOFF_OTHER_ACCOUNT');
+    if (bound !== form.handoff) return page(403, 'HANDOFF_OTHER');
     // 2. same origin, 3. csrf, 4. port and state as staged
     const site = req.headers['sec-fetch-site'];
     if (site && site !== 'same-origin') return refuse(403, 'CROSS_SITE', 'this must be sent from suveren.ai itself');
@@ -252,6 +257,7 @@ export class StubAs {
     if (h.replaced || h.expiresAt <= this.now()) return back({ error: 'HANDOFF_EXPIRED' });
     if (h.used) return back({ error: 'HANDOFF_USED' });
     h.used = true; // a staged entry is spent by any refused append
+    if (this.suspended) return back({ error: 'ACCOUNT_SUSPENDED' });
     const before = await verifyChain({ expectedRootDid: this.accounts.get(h.userId)!.rootDid!, entries: this.entries });
     try {
       await this.appendEntry(h.entry);
@@ -395,6 +401,7 @@ export class StubAs {
 
   private async genesis(body: Record<string, unknown>, res: ServerResponse, json: Json, refuse: Refuse): Promise<void> {
     const entry = validateEntryShape(body.entry);
+    if (entry.signer === 'root' && entry.op !== 'genesis') return refuse(403, 'ROOT_ENTRY_VIA_HANDOFF', 'a root-signed entry is appended through the recovery hand-off only');
     if (entry.op !== 'genesis') return refuse(400, 'BAD_OP', 'only a genesis entry is stored with an enrolment code');
     if (typeof body.enrolment_code !== 'string' || !body.enrolment_code || body.enrolment_code.length > 128) return refuse(403, 'ENROLMENT_CODE_INVALID', 'enrolment code missing or malformed');
     const code = this.codes.get(body.enrolment_code);
@@ -427,7 +434,7 @@ export class StubAs {
     const rootDid = this.accounts.get(this.chainUser)!.rootDid!;
     const state = await verifyChain({ expectedRootDid: rootDid, entries: this.entries });
     if (state.root_pub !== l.root_pub && !this.lookupIgnoresRoot) return none();
-    const answer = { root_did: rootDid, entries: this.entries, head: state.head };
+    const answer = { root_did: rootDid, entries: this.entries, head: state.head, ...(this.pendingReset ? { pending_identity_reset: this.pendingReset } : {}) };
     json(200, this.lookupMutate ? this.lookupMutate(answer) : answer);
   }
 
@@ -435,11 +442,15 @@ export class StubAs {
     if (typeof body.code_challenge !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(body.code_challenge)) return refuse(400, 'MALFORMED', 'code_challenge must be a base64url SHA-256');
     const entry = validateEntryShape(body.entry);
     if (entry.signer !== 'root' || (entry.op !== 'reset' && entry.op !== 'rotate-root')) return refuse(400, 'BAD_OP', 'only a root-signed reset or rotate-root is staged');
-    if (!this.chainUser) return refuse(404, 'NO_CHAIN', 'no device chain');
+    // an unknown root DID, a suspended account: the same 404 as no chain at all
+    if (!this.chainUser || this.suspended || entry.root_did !== this.accounts.get(this.chainUser)!.rootDid) return refuse(404, 'NO_CHAIN', 'no device chain');
     const rootDid = this.accounts.get(this.chainUser)!.rootDid!;
+    if (entry.op === 'rotate-root' && entry.new_root && this.takenRootKeys.has(entry.new_root)) return refuse(409, 'ROOT_KEY_TAKEN', 'this recovery code is already in use; make another');
     try {
       await verifyChain({ expectedRootDid: rootDid, entries: [...this.entries, entry] }); // a dry run: nothing is appended
     } catch (e) {
+      // a bad signature is not told apart from an unknown chain, and no head is returned before it verifies
+      if (e instanceof DeviceKeysError && ['NOT_AUTHORISED', 'NO_POSSESSION', 'CHECK_REQUIRED', 'WRONG_ROOT'].includes(e.code)) return refuse(404, 'NO_CHAIN', 'no device chain');
       if (e instanceof DeviceKeysError) return refuse(409, e.code, e.message);
       throw e;
     }

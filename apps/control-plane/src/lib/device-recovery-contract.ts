@@ -38,16 +38,16 @@
  *   3. AUTHORISE (browser). The gateway answers "check your email" and an address
  *      `{AS}/recover?handoff&port&state`. The person MUST open the emailed link in the SAME
  *      browser, press its button (POST /api/devices/recovery/link sets the HttpOnly cookie
- *      `hap-recovery`, bound to that one handoff), and come back to the tab the address
+ *      `hap-recovery` (`__Host-hap-recovery` over https; the gateway never handles it), bound to that one handoff), and come back to the tab the address
  *      opened (it reloads itself every 15 seconds). Only that cookie authorises: no
  *      hap-session, API key or device token does. The page then shows the effect (the devices
  *      that will be removed, or "the recovery code is replaced") and the confirmation code. The
  *      button POSTs `/api/devices/recovery/authorize` (form: handoff, port, state, csrf).
  *      Refusals the person can fix are HTML pages and are not redirected (401
- *      EMAIL_LINK_SESSION_REQUIRED, 403 HANDOFF_OTHER_ACCOUNT); CSRF_INVALID, CROSS_SITE and a
+ *      EMAIL_LINK_SESSION_REQUIRED, 403 HANDOFF_OTHER); CSRF_INVALID, CROSS_SITE and a
  *      port or state that is not the staged one are JSON. Later refusals redirect with
  *      `?error=<CODE>&state=<s>`: HANDOFF_EXPIRED, HANDOFF_USED, CHAIN_HEAD_MOVED and hap-core
- *      codes such as NOT_AUTHORISED. Success is a plain 302 to
+ *      codes such as NOT_AUTHORISED, plus ACCOUNT_SUSPENDED. Success is a plain 302 to
  *      `http://127.0.0.1:<stored port>/recover/callback?code=<one-time>&state=<s>`. The append
  *      also closes an open request for a new identity of the account.
  *   4. REDEEM. The gateway sends the one-time code and its PKCE verifier over its own HTTPS
@@ -60,6 +60,11 @@
  * The 6-digit confirmation code is a CONSISTENCY CHECK, NOT A SECURITY CONTROL: whoever builds an
  * entry can grind six digits. The single-use emailed link, the notices to every device and the
  * email, and the root key itself are what protect the account.
+ *
+ * Stage: a bad signature or an unknown root DID answers 404 NO_CHAIN, and no head is returned before the signature
+ * verifies. ROOT_KEY_TAKEN (409, stage and chain): "this recovery code is already in use; make another" (a
+ * rotate-root to a root key another account holds). ROOT_ENTRY_VIA_HANDOFF: `POST /api/devices/chain` refuses
+ * EVERY root-signed entry; the gateway never sends one there (its only POST to that route is a first-device `genesis`).
  *
  * Refusal codes beyond the ones above: LINK_INVALID 410 (link used, expired or replaced), MAIL_FAILED
  * 502 (stage: the email could not be sent), BAD_OP 400, PASSKEY_REQUIRED 400, NO_CHAIN 404 (stage:
@@ -120,6 +125,8 @@ export interface RecoveryLookupResponse {
   root_did: string;
   entries: unknown[];
   head: { seq: number; hash: string };
+  /** Present only while a request for a new identity is open; never null. A reset or rotation closes it. */
+  pending_identity_reset?: { id: string; effective_at: number };
 }
 
 // ─── 2. stage ────────────────────────────────────────────────────────────────
@@ -144,9 +151,10 @@ export interface RedeemResponse { head: { seq: number; hash: string }; entry_has
 
 /** The refusal codes the gateway knows by name. Any other code is passed on as it is when it is code-shaped. */
 export const RECOVERY_AS_CODES = [
-  'NO_CHAIN', 'HANDOFF_EXPIRED', 'HANDOFF_USED', 'HANDOFF_UNKNOWN', 'HANDOFF_OTHER_ACCOUNT',
+  'NO_CHAIN', 'HANDOFF_EXPIRED', 'HANDOFF_USED', 'HANDOFF_UNKNOWN', 'HANDOFF_OTHER',
   'EMAIL_LINK_SESSION_REQUIRED', 'CROSS_SITE', 'CSRF_INVALID', 'CHAIN_HEAD_MOVED',
   'PKCE_MISMATCH', 'RATE_LIMITED', 'LINK_INVALID', 'MAIL_FAILED', 'BAD_OP', 'PASSKEY_REQUIRED',
+  'ROOT_KEY_TAKEN', 'ROOT_ENTRY_VIA_HANDOFF', 'ACCOUNT_SUSPENDED',
 ] as const;
 
 // ─── the confirmation code ───────────────────────────────────────────────────
@@ -193,5 +201,12 @@ export function readRedeemResponse(body: unknown): RedeemResponse | null {
 export function readLookupResponse(body: unknown): RecoveryLookupResponse | null {
   if (!isObj(body) || typeof body.root_did !== 'string' || !body.root_did.startsWith('did:key:') || !Array.isArray(body.entries) || body.entries.length === 0) return null;
   if (!isObj(body.head) || !isInt(body.head.seq) || typeof body.head.hash !== 'string' || !HASH.test(body.head.hash)) return null;
-  return { root_did: body.root_did, entries: body.entries, head: { seq: body.head.seq, hash: body.head.hash } };
+  let pending: RecoveryLookupResponse['pending_identity_reset'];
+  if ('pending_identity_reset' in body) {
+    const p = body.pending_identity_reset;
+    // never null: a null or a member of another shape is not this contract's answer
+    if (!isObj(p) || typeof p.id !== 'string' || !/^[A-Za-z0-9_-]{16,128}$/.test(p.id) || !isInt(p.effective_at)) return null;
+    pending = { id: p.id, effective_at: p.effective_at };
+  }
+  return { root_did: body.root_did, entries: body.entries, head: { seq: body.head.seq, hash: body.head.hash }, ...(pending ? { pending_identity_reset: pending } : {}) };
 }

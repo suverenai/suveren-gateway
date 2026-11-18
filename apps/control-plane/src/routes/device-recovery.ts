@@ -47,6 +47,7 @@ export const RECOVERY_MESSAGES: Record<string, string> = {
   handoff_refused: 'The browser step was refused.',
   handoff_failed: 'The browser step failed.',
   handoff_timeout: 'The browser did not come back.',
+  root_key_taken: 'This recovery code is already in use. Make another.',
   mail_failed: 'The email with the link could not be sent. Try again.',
   rotate_unknown: 'No such new code.',
   rotate_expired: 'The new code was not used in time. Make another.',
