@@ -38,6 +38,9 @@ importers:
         specifier: ^7.30.1
         version: 7.30.1
     devDependencies:
+      '@suveren/unlock-helper':
+        specifier: workspace:*
+        version: link:../../packages/unlock-helper
       '@types/express':
         specifier: ^4.17.21
         version: 4.17.25

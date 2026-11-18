@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterAll, describe, expect, it } from 'vitest';
 import { HelperError, UnlockHelperClient, sha256Hash, platformCheckKey, platformCheckProof } from '../src/index.js';
-import { unwrapKey, wrapKey } from './fake-helper.mjs';
+import { reasonFor, unwrapKey, wrapKey } from './fake-helper.mjs';
 
 // The REAL macOS helper, debug build (`pnpm build:helper` makes release; `cd macos && swift build`
 // makes debug). Skipped when the binary is not there.
@@ -31,18 +31,22 @@ function pubKey(b64: string) {
 }
 
 run('real helper, software keys: same code path as the Secure Enclave, no touch', () => {
-  it('the wrap format matches the Node reference in both directions', async () => {
+  it('the helper opens what Node wraps (src/wrap.ts and the reference in fake-helper.mjs), and it has no wrap operation', async () => {
     const c = await software();
     try {
       const k = await c.createWrapKey('user-presence');
       const vk = randomBytes(32);
-      // Swift wraps, Node unwraps
+      // Node (the gateway's code) wraps, Swift unwraps; Node's reference implementation does too
       const w = await c.wrap({ publicKey: k.publicKey, vaultKey: vk, aad: 'acct-1' });
-      expect(unwrapKey(k.keyBlob, Buffer.from(w, 'base64url'), 'acct-1').equals(vk)).toBe(true);
-      // Node wraps, Swift unwraps
+      expect(Buffer.from(w, 'base64url')).toHaveLength(126);
+      expect((await c.unwrap({ keyBlob: k.keyBlob, wrapped: w, aad: 'acct-1' })).equals(vk)).toBe(true);
       const w2 = wrapKey(Buffer.from(k.publicKey, 'base64url'), vk, 'acct-1').toString('base64url');
       expect((await c.unwrap({ keyBlob: k.keyBlob, wrapped: w2, aad: 'acct-1' })).equals(vk)).toBe(true);
+      expect(unwrapKey(k.keyBlob, Buffer.from(w, 'base64url'), 'acct-1').equals(vk)).toBe(true);
       await expect(c.unwrap({ keyBlob: k.keyBlob, wrapped: w2, aad: 'acct-2' })).rejects.toMatchObject({ code: 'unwrap_failed' });
+      // the plaintext vault key is not something the helper can be sent
+      const raw = (c as unknown as { call(op: string, f: object): Promise<unknown> }).call('wrap', { publicKey: k.publicKey, vaultKey: vk.toString('base64url'), aad: 'a' });
+      await expect(raw).rejects.toMatchObject({ code: 'unsupported' });
     } finally { c.close(); }
   });
 
@@ -50,14 +54,35 @@ run('real helper, software keys: same code path as the Secure Enclave, no touch'
     const c = await software();
     try {
       const k = await c.createCheckKey('biometry-current-set');
-      const object = Buffer.from('{"typ":"suveren-chain-entry","seq":4}');
+      const object = Buffer.from('{"typ":"suveren-chain-entry","op":"add","seq":4,"device":{"label":"iPhone"}}');
       const digest = sha256Hash(object);
-      const s = await c.signCheck({ keyBlob: k.keyBlob, digest, reason: 'add the device "iPhone"', object });
+      const s = await c.signCheck({ keyBlob: k.keyBlob, digest, object });
+      expect(s.reason).toBe('add the device "iPhone"');
       const der = Buffer.from(s.signature, 'base64url');
       expect(der[0]).toBe(0x30);
       const key = pubKey(k.publicKey);
       expect(verify('sha256', Buffer.from(digest.slice(7), 'hex'), { key, dsaEncoding: 'der' }, der)).toBe(true);
       expect(verify('sha256', createHash('sha256').update('x').digest(), { key, dsaEncoding: 'der' }, der)).toBe(false);
+    } finally { c.close(); }
+  });
+
+  it('the helper builds the same prompt text as the Node reference, and refuses what has none', async () => {
+    const c = await software();
+    try {
+      const k = await c.createCheckKey('user-presence');
+      const entry = (op: string, check: unknown = null) => Buffer.from(JSON.stringify({ typ: 'suveren-chain-entry', op, seq: 2, device: { label: 'Work Mac' }, check }));
+      const change = (kind: string, name = 'gmail') => Buffer.from(JSON.stringify({ request_id: 'r', kind, name, change_hash: 'h', gateway_key_id: null, expires_at: 1 }));
+      const unlock = (action: string) => Buffer.from(JSON.stringify({ typ: 'suveren-platform-unlock', v: 1, action, nonce: 'n', issued_at: 1 }));
+      const quoteEntry = Buffer.from(JSON.stringify({ typ: 'suveren-chain-entry', op: 'add', device: { label: 'x" and approve "y' }, check: null }));
+      const objects = [entry('genesis'), entry('add'), entry('reset'), entry('remove'), entry('set'), entry('set', { type: 'platform', pub: 'x' }), entry('rotate-root'), change('replace'), change('remove'), change('replace', 'a"b\\c'), unlock('enable'), unlock('disable'), quoteEntry];
+      for (const object of objects) {
+        const s = await c.signCheck({ keyBlob: k.keyBlob, digest: sha256Hash(object), object });
+        expect(s.reason).toBe(reasonFor(object));
+      }
+      for (const bad of [Buffer.from('{}'), change('delete'), change('remove', ''), unlock('toggle'), Buffer.from(JSON.stringify({ request_id: 'r', kind: 'remove', change_hash: 'h', gateway_key_id: null, expires_at: 1 })), entry('launch'), Buffer.from('{"typ":"suveren-chain-entry","op":"add","device":{"label":"a\\nb"}}')]) {
+        await expect(c.signCheck({ keyBlob: k.keyBlob, digest: sha256Hash(bad), object: bad })).rejects.toMatchObject({ code: 'bad_request' });
+        expect(() => reasonFor(bad)).toThrow();
+      }
     } finally { c.close(); }
   });
 
@@ -67,7 +92,7 @@ run('real helper, software keys: same code path as the Secure Enclave, no touch'
       const k = await c.createCheckKey('user-presence');
       // bypass the client's own check to hit the helper's
       const raw = (c as unknown as { call(op: string, f: object): Promise<unknown> }).call('check.sign', {
-        keyBlob: k.keyBlob, digest: sha256Hash(Buffer.from('a')), reason: 'x', object: Buffer.from('b').toString('base64url'),
+        keyBlob: k.keyBlob, digest: sha256Hash(Buffer.from('a')), object: Buffer.from('b').toString('base64url'),
       });
       await expect(raw).rejects.toMatchObject({ code: 'digest_mismatch' });
     } finally { c.close(); }
@@ -84,8 +109,9 @@ run('real helper, software keys: same code path as the Secure Enclave, no touch'
     const c = await software();
     try {
       const k = await c.createCheckKey('biometry-current-set');
-      const hash = sha256Hash(Buffer.from('entry bytes'));
-      const s = await c.signCheck({ keyBlob: k.keyBlob, digest: hash, reason: 'add the device "iPhone"' });
+      const object = Buffer.from('{"typ":"suveren-chain-entry","op":"remove","seq":2}');
+      const hash = sha256Hash(object);
+      const s = await c.signCheck({ keyBlob: k.keyBlob, digest: hash, object });
       expect(await core.verifyCheck(platformCheckKey(k.publicKey), hash, platformCheckProof(s.signature))).toBe(true);
       expect(await core.verifyCheck(platformCheckKey(k.publicKey), sha256Hash(Buffer.from('other entry')), platformCheckProof(s.signature))).toBe(false);
       const other = await c.createCheckKey('user-presence');
@@ -107,7 +133,8 @@ run('real helper, Secure Enclave, prompts switched off', () => {
       const wrapped = await c.wrap({ publicKey: w.publicKey, vaultKey: randomBytes(32), aad: 'acct-1' });
       await expect(c.unwrap({ keyBlob: w.keyBlob, wrapped, aad: 'acct-1' })).rejects.toMatchObject({ code: 'interaction_required' });
       const ck = await c.createCheckKey(policy);
-      await expect(c.signCheck({ keyBlob: ck.keyBlob, digest: sha256Hash(Buffer.from('x')), reason: 'test' })).rejects.toMatchObject({ code: 'interaction_required' });
+      const obj = Buffer.from('{"typ":"suveren-chain-entry","op":"remove"}');
+      await expect(c.signCheck({ keyBlob: ck.keyBlob, digest: sha256Hash(obj), object: obj })).rejects.toMatchObject({ code: 'interaction_required' });
       await expect(c.unwrap({ keyBlob: 'AAAA', wrapped, aad: 'acct-1' })).rejects.toMatchObject({ code: 'key_invalid' });
     } finally { c.close(); }
   });

@@ -4,7 +4,8 @@
  * unlock password:
  *
  *   GET  /auth/device/status                 set up? signed in? (no secrets)
- *   POST /auth/device/setup/start            { label? } -> the recovery code, ONCE, and the setup id
+ *   POST /auth/device/setup/start            { label?, checkKey? } -> the recovery code, ONCE, and the setup id
+ *                                            (checkKey: true makes this computer's check key in the native helper; one touch)
  *   POST /auth/device/setup/cancel           drop a started set-up
  *   POST /auth/device/setup/connect          { setupId } -> the address to open in the system browser (Connect)
  *   GET  /auth/device/setup/connect/status   ?setupId -> waiting | ready | failed | expired
@@ -79,6 +80,16 @@ export const DEVICE_MESSAGES: Record<string, string> = {
   rekey_incomplete: 'Not finished.',
   signin_failed: 'The sign-in failed.',
   use_device_signin: 'This gateway signs in with its device key.',
+  // this computer's check key (step 5a)
+  helper_unavailable: 'No Touch ID helper is available here.',
+  helper_failed: 'The helper did not work.',
+  cancelled: 'Cancelled.',
+  not_recognised: 'Not recognised.',
+  biometry_locked: 'Touch ID is locked. Use the Mac password or the unlock password.',
+  no_biometry: 'This computer has no Touch ID.',
+  key_invalid: 'The key does not work here.',
+  interaction_required: 'A touch is needed.',
+  check_invalid: 'The helper answered with something that is not a valid check.',
 };
 
 const SIGNIN_STATUS: Record<string, number> = {
@@ -133,8 +144,8 @@ export function createDeviceSetupRouter(deps: DeviceSetupRouterDeps): Router {
   }));
 
   api.post('/setup/start', run(async (req, res) => {
-    const label = (req.body as { label?: unknown } | undefined)?.label;
-    const started = await setup.start({ label });
+    const { label, checkKey } = (req.body ?? {}) as { label?: unknown; checkKey?: unknown };
+    const started = await setup.start({ label, checkKey });
     // The one place the recovery code is ever sent. It must not be cached or kept by anything between.
     res.setHeader('Cache-Control', 'no-store');
     res.json({ ok: true, ...started });

@@ -38,6 +38,12 @@ var allowed: [AllowedCaller] = []
 if !allowAny {
     let me = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
     var file = me.deletingLastPathComponent().appendingPathComponent("allowed-callers.json")
+    // Inside a bundle (Suveren.app/Contents/MacOS/<exe>) the list sits BESIDE the .app: a file added inside
+    // the bundle breaks its code-signature seal (measured: `codesign --verify --strict` fails).
+    let macOS = me.deletingLastPathComponent(), contents = macOS.deletingLastPathComponent(), app = contents.deletingLastPathComponent()
+    if macOS.lastPathComponent == "MacOS", contents.lastPathComponent == "Contents", app.pathExtension == "app" {
+        file = app.deletingLastPathComponent().appendingPathComponent("allowed-callers.json")
+    }
     #if DEBUG
     if let f = option("--allowed-callers") { file = URL(fileURLWithPath: f) }   // never in release: it would let a caller name itself
     #endif

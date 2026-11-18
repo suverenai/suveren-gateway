@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Manual check of the REAL Secure Enclave helper. It asks for Touch ID, so it never runs in tests.
 //   node manual-check.mjs unlock [--policy user-presence|biometry-current-set|biometry-any]
-//   node manual-check.mjs check  [--policy …] [--reason "grant the mandate: offers by email"] [--hap-core <path to hap-core dist/device-keys/index.mjs>]
+//   node manual-check.mjs check  [--policy …] [--label "<device name>"] [--hap-core <path to hap-core dist/device-keys/index.mjs>]
 // Uses the debug build (`swift build`) with --allow-any-caller, or the helper named in UNLOCK_HELPER. Prints PASS / FAIL lines only;
 // never prints a key. Keys exist in memory for this run only; nothing is stored anywhere.
 import { spawn } from 'node:child_process';
@@ -45,13 +45,15 @@ if (cmd === 'unlock') {
   const x = await call('unwrap', { keyBlob: k.keyBlob, wrapped: w.wrapped, aad: 'another account' });
   report(code(x) === 'unwrap_failed' && !x.vaultKey, `a wrap for another account does not open (${code(x)})`);
 } else {
-  const reason = opt('--reason', 'grant the mandate: offers by email, up to 3 per day');
+  // The helper builds the prompt text from this object; there is no way to pass text. A longer
+  // --label shows how macOS cuts a long prompt (the label is at most 64 characters in a chain).
+  const label = opt('--label', 'This computer');
   const k = await call('check.create', { policy });
   report(k.ok, `make a check key in the Secure Enclave (${policy})`);
-  const object = Buffer.from(JSON.stringify({ typ: 'suveren-chain-entry', note: 'manual check', nonce: randomBytes(8).toString('hex') }));
+  const object = Buffer.from(JSON.stringify({ typ: 'suveren-chain-entry', op: 'add', seq: 1, device: { label }, check: null, nonce: randomBytes(8).toString('hex') }));
   const digest = 'sha256:' + createHash('sha256').update(object).digest('hex');
-  console.log(`\n>>> TOUCH: the prompt should say "… is trying to ${reason}". Read it fully (is it cut off?), then touch.`);
-  const s = await call('check.sign', { keyBlob: k.keyBlob, digest, reason, object: object.toString('base64url') });
+  console.log(`\n>>> TOUCH: the prompt should say "… is trying to add the device "${label}"". Read it fully (is it cut off?), then touch.`);
+  const s = await call('check.sign', { keyBlob: k.keyBlob, digest, object: object.toString('base64url') });
   report(s.ok, `sign after the touch (${code(s)})`);
   if (s.ok) {
     const pub = Buffer.from(k.publicKey, 'base64url');
@@ -66,7 +68,7 @@ if (cmd === 'unlock') {
       report(await verifyCheck({ type: 'platform', pub: k.publicKey }, digest, { signature: s.signature }), 'hap-core verifyCheck accepts it');
     }
   }
-  console.log('\n>>> Optional (a second touch): run again with --reason "<your own text, 120 characters>" to see how long text is shown.');
+  if (s.ok) console.log(`\nThe helper reports it showed: "${s.reason}"`);
 }
 child.stdin.end();
 process.exit(failed ? 1 : 0);

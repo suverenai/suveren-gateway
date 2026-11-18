@@ -50,10 +50,9 @@ public final class Handler {
             let (blob, key) = try backend.createAgreementKey(policy: try policy(r))
             return ["keyBlob": Base64URL.encode(blob), "publicKey": Base64URL.encode(key.publicKeyX963), "policy": try policy(r).rawValue]
 
-        case "wrap":      // no touch: a public-key operation
-            let pub = try b64(r, "publicKey"), vk = try b64(r, "vaultKey")
-            let wrapped = try Wrap.wrap(vaultKey: vk, wrapPublicKeyX963: pub, aad: try str(r, "aad"))
-            return ["wrapped": Base64URL.encode(wrapped)]
+        case "wrap":
+            // Not offered: the gateway wraps in Node (DESIGN.md 3.2), so the plaintext vault key never reaches this process.
+            throw HelperError("unsupported", "Unknown op wrap.")
 
         case "unwrap":    // one touch
             let blob = try b64(r, "keyBlob"), wrapped = try b64(r, "wrapped")
@@ -68,15 +67,15 @@ public final class Handler {
 
         case "check.sign":   // one touch
             let digest = try digestBytes(r)
-            let reason = try validReason(try str(r, "reason"))
-            if let o = r["object"] {
-                guard let s = o as? String, let obj = Base64URL.decode(s) else { throw HelperError("bad_request", "object must be base64url.") }
-                guard Data(SHA256.hash(data: obj)) == digest else { throw HelperError("digest_mismatch", "digest is not the SHA-256 of object.") }
-            }
+            // The prompt text comes from the object, never from the caller (DESIGN.md section 5).
+            if r["reason"] != nil { throw HelperError("bad_request", "reason is not accepted: the helper builds it from the object.") }
+            guard let o = r["object"] as? String, let obj = Base64URL.decode(o) else { throw HelperError("bad_request", "object must be base64url.") }
+            guard Data(SHA256.hash(data: obj)) == digest else { throw HelperError("digest_mismatch", "digest is not the SHA-256 of object.") }
+            let reason = try validReason(try ReasonText.forObject(obj))
             let blob = try b64(r, "keyBlob")
             let key = try backend.openSigningKey(blob: blob, prompt: Prompt(reason: reason, interactionAllowed: interactionAllowed))
             let sig = try key.sign(digest)           // ECDSA over SHA-256(digest bytes); touch happens here
-            return ["signature": Base64URL.encode(sig.derRepresentation), "publicKey": Base64URL.encode(key.publicKeyX963)]
+            return ["signature": Base64URL.encode(sig.derRepresentation), "publicKey": Base64URL.encode(key.publicKeyX963), "reason": reason]
 
         case "shutdown":
             return [:]

@@ -70,14 +70,17 @@ describe('wrap and unwrap', () => {
   });
 });
 
+const entryObject = (op = 'add', label = 'iPhone') => Buffer.from(JSON.stringify({ typ: 'suveren-chain-entry', op, seq: 1, device: { label }, check: null }));
+
 describe('check key', () => {
   it('signs the digest and the signature verifies over the 32 digest bytes', async () => {
     const c = await start();
     const k = await c.createCheckKey('biometry-current-set');
-    const object = Buffer.from('{"typ":"suveren-chain-entry","seq":1}');
+    const object = entryObject();
     const digest = sha256Hash(object);
-    const s = await c.signCheck({ keyBlob: k.keyBlob, digest, reason: 'add the device "iPhone"', object });
+    const s = await c.signCheck({ keyBlob: k.keyBlob, digest, object });
     expect(s.publicKey).toBe(k.publicKey);
+    expect(s.reason).toBe('add the device "iPhone"');
     const { createPublicKey, verify } = await import('node:crypto');
     const pub = Buffer.from(k.publicKey, 'base64url');
     const key = createPublicKey({ format: 'jwk', key: { kty: 'EC', crv: 'P-256', x: pub.subarray(1, 33).toString('base64url'), y: pub.subarray(33).toString('base64url') } });
@@ -88,22 +91,30 @@ describe('check key', () => {
   it('refuses a digest that is not the object hash, before any touch', async () => {
     const c = await start({ FAKE_TOUCH: 'never' });
     const k = await c.createCheckKey('user-presence');
-    await expect(c.signCheck({ keyBlob: k.keyBlob, digest: digestOf('a'), reason: 'x', object: Buffer.from('b') })).rejects.toMatchObject({ code: 'digest_mismatch' });
+    await expect(c.signCheck({ keyBlob: k.keyBlob, digest: digestOf('a'), object: entryObject() })).rejects.toMatchObject({ code: 'digest_mismatch' });
   });
-  it('refuses malformed digests and reasons without calling the helper', async () => {
+  it('refuses malformed digests without calling the helper', async () => {
     const c = await start({ FAKE_TOUCH: 'never' });
     const k = await c.createCheckKey('user-presence');
-    const base = { keyBlob: k.keyBlob, digest: digestOf('a'), reason: 'ok' };
     for (const digest of ['', 'sha256:abc', digestOf('a').toUpperCase(), digestOf('a').slice(7)]) {
-      await expect(c.signCheck({ ...base, digest })).rejects.toMatchObject({ code: 'bad_request' });
+      await expect(c.signCheck({ keyBlob: k.keyBlob, digest, object: entryObject() })).rejects.toMatchObject({ code: 'bad_request' });
     }
-    for (const reason of ['', 'a'.repeat(121), 'two\nlines', 'bidi‮override']) {
-      await expect(c.signCheck({ ...base, reason })).rejects.toMatchObject({ code: 'bad_request' });
+  });
+  it('has no way to pass prompt text: the helper refuses a request that carries a reason', async () => {
+    const c = await start({ FAKE_TOUCH: 'never' });
+    const k = await c.createCheckKey('user-presence');
+    const object = entryObject();
+    const raw = (c as unknown as { call(op: string, f: object): Promise<unknown> }).call('check.sign', {
+      keyBlob: k.keyBlob, digest: sha256Hash(object), object: object.toString('base64url'), reason: 'grant the mandate: anything',
+    });
+    await expect(raw).rejects.toMatchObject({ code: 'bad_request' });
+  });
+  it('refuses an object it has no prompt text for', async () => {
+    const c = await start({ FAKE_TOUCH: 'never' });
+    const k = await c.createCheckKey('user-presence');
+    for (const object of [Buffer.from('{}'), Buffer.from('not json'), Buffer.from('{"typ":"suveren-chain-entry","op":"launch"}')]) {
+      await expect(c.signCheck({ keyBlob: k.keyBlob, digest: sha256Hash(object), object })).rejects.toMatchObject({ code: 'bad_request' });
     }
-    // exactly 120 characters is accepted (a helper that signs at once)
-    const ok = await start();
-    const k2 = await ok.createCheckKey('user-presence');
-    await expect(ok.signCheck({ keyBlob: k2.keyBlob, digest: digestOf('a'), reason: 'a'.repeat(120) })).resolves.toHaveProperty('signature');
   });
 });
 
@@ -128,7 +139,7 @@ describe('process behaviour', () => {
     const k = await c.createCheckKey('user-presence');
     process.kill((c as unknown as { child: { pid: number } }).child.pid, 'SIGKILL');
     await expect(c.createWrapKey('user-presence')).rejects.toMatchObject({ code: 'helper_exited' });
-    await expect(c.signCheck({ keyBlob: k.keyBlob, digest: digestOf('a'), reason: 'x' })).rejects.toMatchObject({ code: 'helper_exited' });
+    await expect(c.signCheck({ keyBlob: k.keyBlob, digest: sha256Hash(entryObject()), object: entryObject() })).rejects.toMatchObject({ code: 'helper_exited' });
   });
   it('rejects an answer that is not valid', async () => {
     const c = await UnlockHelperClient.start({ command: process.execPath, args: ['-e', `

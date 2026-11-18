@@ -3,6 +3,7 @@
 // Swift helper and a future Windows helper must match.
 // Behaviour switches (environment): FAKE_TOUCH = ok | cancel | slow | locked | never
 //                                   FAKE_REFUSE = 1 (answer caller_refused and exit)
+//                                   FAKE_WRONG_SIGNATURE = 1 (sign another digest than asked: a lying helper)
 import crypto from 'node:crypto';
 
 const INFO = Buffer.from('suveren-unlock-wrap-v1');
@@ -51,6 +52,37 @@ export function signDigest(blob, digestBytes) {
   return { signature: crypto.sign('sha256', digestBytes, { key, dsaEncoding: 'der' }), pub };
 }
 
+// The prompt text, built from the object being signed (mirror of macos/Sources/UnlockCore/Reason.swift;
+// a test compares it with the real helper's on the same objects). PLACEHOLDER wording (O19).
+const CHANGE_MEMBERS = ['request_id', 'kind', 'name', 'change_hash', 'gateway_key_id', 'expires_at'].sort().join(',');
+const SWITCH_MEMBERS = ['typ', 'v', 'action', 'nonce', 'issued_at'].sort().join(',');
+const quoted = (x) => `"${x.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`;
+export function reasonFor(bytes) {
+  let o;
+  try { o = JSON.parse(bytes.toString('utf8')); } catch { throw err('bad_request', 'object is not a JSON object.'); }
+  if (!o || typeof o !== 'object' || Array.isArray(o)) throw err('bad_request', 'object is not a JSON object.');
+  const label = () => { const l = o.device && o.device.label; if (typeof l !== 'string') throw err('bad_request', 'chain entry has no device label.'); return l; };
+  let text;
+  if (o.typ === 'suveren-chain-entry') {
+    switch (o.op) {
+      case 'genesis': text = `set up the device ${quoted(label())} with its own key`; break;
+      case 'add': text = `add the device ${quoted(label())}`; break;
+      case 'reset': text = `replace every device with ${quoted(label())}`; break;
+      case 'remove': text = 'remove a device'; break;
+      case 'set': text = o.check == null ? 'remove the check key of a device' : 'give a device a check key'; break;
+      case 'rotate-root': text = 'replace the recovery code'; break;
+      default: throw err('bad_request', 'chain entry has an unknown op.');
+    }
+  } else if (Object.keys(o).sort().join(',') === CHANGE_MEMBERS && (o.kind === 'replace' || o.kind === 'remove') && typeof o.name === 'string' && o.name) {
+    text = `${o.kind === 'replace' ? 'replace' : 'remove'} the login of ${quoted(o.name)}`;
+  } else if (o.typ === 'suveren-platform-unlock' && Object.keys(o).sort().join(',') === SWITCH_MEMBERS && (o.action === 'enable' || o.action === 'disable')) {
+    text = o.action === 'enable' ? 'turn on Touch ID unlock for Suveren' : 'turn off Touch ID unlock for Suveren';
+  } else throw err('bad_request', 'object is of a kind this helper has no prompt text for.');
+  const n = Array.from(text).length;
+  if (n < 1 || n > 120 || text.normalize('NFC') !== text || /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(text)) throw err('bad_request', 'prompt text is not acceptable.');
+  return text;
+}
+
 function err(code, message) { return Object.assign(new Error(message), { code }); }
 
 async function touch() {
@@ -72,23 +104,22 @@ async function run(r) {
       const k = newKey();
       return { keyBlob: k.blob, publicKey: k.pub.toString('base64url'), policy: r.policy };
     }
-    case 'wrap': {
-      const vk = b(r, 'vaultKey');
-      if (vk.length !== 32) throw err('bad_request', 'vaultKey must be 32 bytes.');
-      return { wrapped: wrapKey(b(r, 'publicKey'), vk, String(r.aad)).toString('base64url') };
-    }
     case 'unwrap': {
       await touch();
       return { vaultKey: unwrapKey(r.keyBlob, b(r, 'wrapped'), String(r.aad)).toString('base64url') };
     }
     case 'check.sign': {
       if (!/^sha256:[0-9a-f]{64}$/.test(r.digest)) throw err('bad_request', 'digest');
+      if (r.reason !== undefined) throw err('bad_request', 'reason is not accepted: the helper builds it from the object.');
       const digest = Buffer.from(r.digest.slice(7), 'hex');
-      if (r.object !== undefined && !crypto.createHash('sha256').update(b(r, 'object')).digest().equals(digest)) throw err('digest_mismatch', 'digest is not the SHA-256 of object.');
-      process.stderr.write(`fake prompt: "${r.reason}"\n`);
+      if (typeof r.object !== 'string') throw err('bad_request', 'object must be base64url.');
+      const object = b(r, 'object');
+      if (!crypto.createHash('sha256').update(object).digest().equals(digest)) throw err('digest_mismatch', 'digest is not the SHA-256 of object.');
+      const reason = reasonFor(object);
+      process.stderr.write(`fake prompt: "${reason}"\n`);
       await touch();
-      const s = signDigest(r.keyBlob, digest);
-      return { signature: s.signature.toString('base64url'), publicKey: s.pub.toString('base64url') };
+      const s = signDigest(r.keyBlob, process.env.FAKE_WRONG_SIGNATURE === '1' ? crypto.createHash('sha256').update('other').digest() : digest);
+      return { signature: s.signature.toString('base64url'), publicKey: s.pub.toString('base64url'), reason };
     }
     case 'shutdown': return {};
     default: throw err('unsupported', `Unknown op ${r.op}.`);

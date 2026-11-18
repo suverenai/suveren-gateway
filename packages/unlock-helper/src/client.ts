@@ -1,7 +1,8 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { wrapVaultKey } from './wrap.js';
 import {
-  DIGEST_RE, isValidReason, PROTOCOL_VERSION,
+  DIGEST_RE, PROTOCOL_VERSION,
   type ErrorCode, type HelloInfo, type KeyInfo, type Policy, type SignResult,
 } from './protocol.js';
 
@@ -57,7 +58,10 @@ export class UnlockHelperClient {
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', (d: string) => { this.stderrTail = (this.stderrTail + d).slice(-500); });
     child.on('error', (e) => this.fail(new HelperError('helper_missing', `Cannot start the helper: ${e.message}`)));
-    child.on('exit', (code, sig) => this.fail(new HelperError('helper_exited', `The helper stopped (${sig ?? code}). ${this.stderrTail.trim()}`.trim())));
+    // Exit code 77 is the helper's refusal of a caller. At start it refuses before it reads anything, so no message comes first.
+    child.on('exit', (code, sig) => this.fail(code === 77
+      ? new HelperError('caller_refused', 'The helper refused this caller.')
+      : new HelperError('helper_exited', `The helper stopped (${sig ?? code}). ${this.stderrTail.trim()}`.trim())));
     child.stdin.on('error', () => { /* the exit handler reports it */ });
   }
 
@@ -91,10 +95,12 @@ export class UnlockHelperClient {
     return keyInfo(await this.call('wrap.create', { policy }));
   }
 
-  /** Wraps the 32-byte vault key to the wrap key's public half. No touch. `aad` binds the wrap (account id). */
+  /**
+   * Wraps the 32-byte vault key to the wrap key's public half. Done in Node, no helper call: the helper never
+   * receives the plaintext vault key (DESIGN.md 3.2). `aad` binds the wrap (account id and purpose).
+   */
   async wrap(a: { publicKey: string; vaultKey: Buffer; aad: string }): Promise<string> {
-    if (a.vaultKey.length !== 32) throw new HelperError('bad_request', 'vaultKey must be 32 bytes.');
-    return str(await this.call('wrap', { publicKey: a.publicKey, vaultKey: b64u(a.vaultKey), aad: a.aad }), 'wrapped');
+    return wrapVaultKey(a);
   }
 
   /** One touch. Returns the vault key; the caller zeroes the buffer when done. */
@@ -112,16 +118,15 @@ export class UnlockHelperClient {
 
   /**
    * One touch. Signs the 32 digest bytes (ECDSA P-256, SHA-256 inside, DER out).
-   * With `object` the helper checks that `digest` is its SHA-256 before it asks for a touch.
+   * `object` is the exact bytes whose SHA-256 is `digest`; the helper checks that before it asks for a
+   * touch and builds the prompt text from the object itself (DESIGN.md section 5). There is no way to
+   * pass text: a caller cannot choose what the person reads. `reason` in the answer is what was shown.
    */
-  async signCheck(a: { keyBlob: string; digest: string; reason: string; object?: Uint8Array }): Promise<SignResult> {
+  async signCheck(a: { keyBlob: string; digest: string; object: Uint8Array }): Promise<SignResult> {
     if (!DIGEST_RE.test(a.digest)) throw new HelperError('bad_request', 'digest must be "sha256:" and 64 lower-case hex digits.');
-    if (!isValidReason(a.reason)) throw new HelperError('bad_request', 'reason must be 1 to 120 characters without control characters.');
-    if (a.object && sha256Hash(a.object) !== a.digest) throw new HelperError('digest_mismatch', 'digest is not the SHA-256 of object.');
-    const req: Record<string, unknown> = { keyBlob: a.keyBlob, digest: a.digest, reason: a.reason };
-    if (a.object) req.object = b64u(a.object);
-    const r = await this.call('check.sign', req, this.touchMs);
-    return { signature: str(r, 'signature'), publicKey: str(r, 'publicKey') };
+    if (sha256Hash(a.object) !== a.digest) throw new HelperError('digest_mismatch', 'digest is not the SHA-256 of object.');
+    const r = await this.call('check.sign', { keyBlob: a.keyBlob, digest: a.digest, object: b64u(a.object) }, this.touchMs);
+    return { signature: str(r, 'signature'), publicKey: str(r, 'publicKey'), reason: str(r, 'reason') };
   }
 
   close(): void {

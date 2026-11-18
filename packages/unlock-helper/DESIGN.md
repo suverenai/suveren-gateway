@@ -1,6 +1,7 @@
 # Native unlock helper — design (step 5a, DEC-38 and DEC-47)
 
-Status: design plus a working macOS prototype. Windows is designed, not built.
+Status: design, a working macOS helper, and its integration into the gateway's control plane (step 5a, behind
+`SUVEREN_DEVICE_KEYS=on`). Windows is designed, not built.
 Measured on a MacBook Air M5, macOS 26.6.2, Swift 6.3.3, command-line tools only (no Xcode).
 
 The helper does two things for the Suveren gateway:
@@ -28,8 +29,10 @@ What the person needs to know: they touch the sensor, and the system says what f
 | Node client (`src/`) and protocol types | built, tested against a fake and against the real helper |
 | Touch prompts (unwrap, sign) on the real Secure Enclave | **not run**: they need a touch. Manual checks for the maintainer: section 9 |
 | Windows helper | designed (section 8), not built, not measured |
-| The provider in `vault.ts` that calls the helper | another stream (G1). This package defines the helper side and the protocol |
-| Signing and notarisation of the helper, the installer | open points, section 10 |
+| The prompt text built by the helper from the object | built (section 5, 3.3) |
+| The provider in `vault.ts` (third way to the vault key), the computer's check key, the per-change confirmation | built in `apps/control-plane` (section 12), tested with the helper's software backend and a fake |
+| The helper as an ad-hoc signed `Suveren.app` inside the npm package, hashes checked before every start | built (`macos/build-app.sh`, `bundle/build.mjs --with-helper`, section 12) |
+| Apple Developer ID signing and notarisation, the Windows installer | open points, section 10 |
 
 ---
 
@@ -87,7 +90,7 @@ All binary fields are base64url without padding. A request line is at most 16 Ki
 | `wrap` | `publicKey`, `vaultKey` (32 bytes), `aad` (string) | `wrapped` | no (public-key operation) |
 | `unwrap` | `keyBlob`, `wrapped`, `aad` | `vaultKey` | **yes** |
 | `check.create` | `policy` | `keyBlob`, `publicKey`, `policy` | no |
-| `check.sign` | `keyBlob`, `digest`, `reason`, optional `object` | `signature`, `publicKey` | **yes** |
+| `check.sign` | `keyBlob`, `digest`, `object` (no text of any kind) | `signature`, `publicKey`, `reason` (the text the prompt showed) | **yes** |
 | `shutdown` | — | — | no |
 
 `policy` is `user-presence`, `biometry-current-set` or `biometry-any` (section 6.1). `publicKey` is the
@@ -108,9 +111,10 @@ ECDSA P-256; the SHA-256 inside ECDSA runs over those 32 bytes. This is exactly 
 accepts). The chain entry then holds `device.check = { type: "platform", pub: <publicKey> }` and
 `checks[i].check = { signature: <signature> }` (client helpers `platformCheckKey`, `platformCheckProof`).
 
-With `object` (the exact bytes that were hashed), the helper first checks `SHA-256(object) == digest` and
-refuses with `digest_mismatch`, before any prompt. This is the hook for helper-derived reason text
-(section 5): recommended, not built.
+`object` is required: the exact bytes that were hashed. The helper first checks `SHA-256(object) == digest` and
+refuses with `digest_mismatch`, before any prompt, then builds the prompt text from the object (3.3, section 5).
+For a chain entry the object is hap-core's `entrySignedBytes(entry)` (the digest is `entryHash(entry)`); for a
+connector-login change it is the canonical JSON of the change request (plan section 7).
 
 **Wrap.** 126 bytes, base64url:
 
@@ -122,18 +126,53 @@ key     = HKDF-SHA256( ECDH(ephemeralPrivate, wrapPublicKey),
 AES-256-GCM, plaintext = the 32-byte vault key, authenticated data = UTF-8 of `aad`
 ```
 
-`aad` is the account id, as in the password wrap of `vault.ts` (`wrapKey(kek, key, accountId)`), so a
-wrap cannot be moved to another account. Why ECIES and not "encrypt with the Secure Enclave":
+`aad` is a string the caller chooses. The gateway uses `"suveren-vault-key-platform-wrap-v1|" + accountId` (the
+password wrap's own string, `suveren-vault-key-wrap-v1|` + account id, is another), so a wrap cannot be moved
+to another account or used for another purpose. Why ECIES and not "encrypt with the Secure Enclave":
 the Secure Enclave only holds EC keys for signing and key agreement. With key agreement, **wrapping
-needs no touch** (only the public key), so a vault-key rotation or a new account binding re-wraps
-silently, and only **unwrapping** asks the person. The Node reference for this format is in
-`test/fake-helper.mjs`; a test proves the Swift helper and the Node code unwrap each other's wraps.
+needs no touch** (only the public key) and **no helper**: Node does the ECIES wrap itself (`wrapVaultKey` in
+`src/wrap.ts`), so a vault-key rotation or a new account binding re-wraps silently, and the plaintext vault key is
+never sent to the helper (the helper has no `wrap` operation). Only **unwrapping** asks the person. A second
+Node reference for the format is in `test/fake-helper.mjs`; a test proves the Swift helper opens what both make.
 
 ### 3.3 The reason text
 
-`check.sign` takes `reason`: 1 to 120 characters, NFC, no control, format (bidi), line or paragraph
-separator characters (the rule of hap-core's device label). `unwrap` takes **no** reason from the caller;
-the helper says "unlock the Suveren vault" itself.
+`check.sign` takes **no text**. A request that carries a `reason` is refused (`bad_request`). The helper builds
+the text of the system prompt from the object it signs: `ReasonText.forObject` in `macos/Sources/UnlockCore/Reason.swift`
+(and `reasonFor` in `test/fake-helper.mjs`, which a test compares on the same objects). The text is 1 to 120
+characters, NFC, with no control, format, line or paragraph separator characters (the rule of hap-core's device
+label), starts with a verb in lower case (macOS puts "<program> is trying to" before it), and is returned as
+`reason` so the gateway and the tests can see what was shown. An object the helper has no text for is refused
+before any prompt (`bad_request`). `unwrap` takes no text either; the helper says "unlock the Suveren vault".
+
+**All texts are PLACEHOLDERS for the maintainer's wording (O19).** Where `<label>` appears it is the device label
+from the object (at most 64 characters, so the whole text stays within 120):
+
+| Object | Text shown after "Suveren is trying to " |
+|---|---|
+| unlock (`unwrap`, fixed) | `unlock the Suveren vault` |
+| chain entry `genesis` | `set up the device "<label>" with its own key` |
+| chain entry `add` | `add the device "<label>"` |
+| chain entry `reset` | `replace every device with "<label>"` |
+| chain entry `remove` | `remove a device` |
+| chain entry `set` with a check key | `give a device a check key` |
+| chain entry `set` removing the check key | `remove the check key of a device` |
+| chain entry `rotate-root` | `replace the recovery code` |
+| change request, `kind` replace | `replace the login of "<name>"` |
+| change request, `kind` remove | `remove the login of "<name>"` |
+| Touch ID unlock switch, `action` enable | `turn on Touch ID unlock for Suveren` |
+| Touch ID unlock switch, `action` disable | `turn off Touch ID unlock for Suveren` |
+
+A `<label>` or `<name>` comes from the object and is put between double quotes with `\` and `"` escaped, so no
+name can end the quote and add words ("x\" and approve \"y" stays one quoted name); control, bidi and
+line characters are refused as before; a text over 120 characters is refused, not cut.
+
+The change request carries the connector's name (`name`), added to plan section 7's five members
+(`request_id`, `kind`, `change_hash`, `gateway_key_id`, `expires_at`) so the prompt can say which login; the
+helper accepts exactly these six members. The Touch ID switch object is exactly `typ` `suveren-platform-unlock`, `v`,
+`action`, `nonce`, `issued_at`.
+
+Mandate grants (steps 13 and 14) are not in the table: their object format is not frozen.
 
 ### 3.4 Error codes
 
@@ -166,8 +205,9 @@ Three layers, all in `CallerPolicy.swift`:
 1. **No address to connect to** (section 2). The only program that can write to the helper's stdin is the
    program that started it.
 2. **The helper checks its parent at start and before every request.** It reads
-   `allowed-callers.json` from the folder of its own executable (not from an argument; in a release build
-   no flag can change the file) and requires:
+   `allowed-callers.json` from the folder of its own executable, or, inside `Suveren.app/Contents/MacOS`, from
+   the folder that holds the `.app` (a file added inside a signed bundle breaks its seal: measured, `codesign
+   --verify --strict` fails). Not from an argument: in a release build no flag can change the file. It requires:
    - the parent is still the process that started it (`getppid` unchanged);
    - stdin is a pipe or a socket, not a terminal or a file;
    - the parent's executable (resolved path, `proc_pidpath`) is one listed, e.g. the Node binary the
@@ -187,6 +227,26 @@ parent started with `--no-warnings`, for a parent with `NODE_OPTIONS`, for a mis
 test process itself. Release build: `--backend software`, `--allow-any-caller` and `--allowed-callers`
 are compiled out (checked by running the release build).
 
+**What the caller check is worth: nothing against a program of the same user.** The list is written by the
+gateway's control plane before every start of the helper (`lib/platform-helper.ts`): this Node program and the
+folder its entry script lies in. The file sits in the package folder, which the person's own user can write, and
+the gateway itself rewrites it. So any other program of that user writes itself into the list and is served
+(confirmed by an attacker script in the review of this step). The check stops accidents and programs of other
+users, nothing more; it is kept because it costs nothing. NODE_OPTIONS (the helper refuses a *parent* that has it,
+but the attacker is not that parent), DYLD_INSERT_LIBRARIES into the gateway, and an inspector signal into the
+running gateway are further ways past it. **The real fix is a list written at install time into a folder the user
+cannot write, and the gateway as its own OS user** (plan section 21, S1 to S3, O29). Until then the protection of
+the vault key and of the check key is the touch and nothing else: see "Honest limits" and `PLATFORM_UNLOCK_OPENS_PAGE_SESSION`
+(section 12.1). Where the package folder is not writable by the person at all (a root-owned global install) the list
+cannot be written and the helper is reported unavailable (`helper_failed`).
+
+**Hashes.** Before every start of the helper process the control plane hashes every file of `Suveren.app` against a
+list it carries (`dist/control-plane/helper-manifest.json`, written by `bundle/build.mjs --with-helper`), and hashes
+them again after the helper answered `hello`. That list sits in the same writable install, so it too adds nothing
+against a same-user program (which rewrites binary and list together); it catches a damaged or half-updated install and a
+swap that leaves the list alone. `bundle/build.mjs --with-helper` refuses a DEBUG helper (a binary that contains
+`software-test`, `--backend`, `--allow-any-caller` or `--allowed-callers`) and any file that does not match its list.
+
 ### Honest limits
 
 - **A program of the same user can ask for the prompt.** It can start `node <gateway>/entry.js` as its
@@ -199,15 +259,16 @@ are compiled out (checked by running the release build).
 - **The same applies to key blobs.** The blob is not bound to the helper binary: a blob made by one
   ad-hoc signed binary opened in another binary with another signing identity (measured, section 7).
   Any program of this user can load a blob it can read and ask for a touch. The blob is bound to this
-  computer's Secure Enclave and to the person's touch, not to the program.
+  computer's Secure Enclave and to the person's touch, not to the program. The blobs are in the vault file
+  (the wrap key's) and in a sealed vault slot (the check key's), next to the files the same program could read.
 - **What does protect:** the vault key and the check key are never usable without a touch, and an AI
   cannot supply a fingerprint. Under `user-presence` an AI that has the login password and sees the
   screen could type it; that is why the check key should use biometry (6.1).
 - **If the AI can run the helper and the person touches without reading,** the AI gets the vault key
   (unlock) or a signature (check). The only help is that the prompt says what it is for, and that the
   reason is derived from the signed object, not chosen by the caller (section 5).
-- The helper sees the vault key in plain text while it wraps it, and sends it back in plain text over the
-  pipe when it unwraps. Only the parent can read that pipe. Swift cannot guarantee that memory is wiped;
+- The helper never receives the vault key (Node wraps). When it unwraps, it sends the key back in plain text over the
+  pipe. Only the parent can read that pipe. Swift cannot guarantee that memory is wiped;
   the process is short-lived.
 - Windows: not built; the same model applies (section 8).
 
@@ -228,15 +289,10 @@ control and bidi characters so a reason cannot reshape the prompt. Not measured:
 reason of 120 characters (manual check 2), what the prompt looks like over remote desktop, and whether
 the login-password fallback of `user-presence` shows the reason too.
 
-**Who writes the reason.** For `unwrap` the helper does (fixed text). For `check.sign` the caller does
-today. A caller that lies shows the person "add the device 'iPhone'" while the signed object adds
-something else; the check proves a touch, not a reading. **Recommended (not built):** the gateway always
-sends `object`, and the helper builds the reason from the object's own fields by a template per `typ`
-(chain entry: op and device label; mandate grant: the offer names and the limits it can fit). The
-helper already hashes `object` and refuses a wrong digest; the template is a small JSON read in Swift
-(no canonicalisation needed, because the bytes are already canonical). What the person reads is then
-what the signature covers, as long as the template is faithful. This needs the object formats of steps
-13 and 14 to be frozen and costs about two days on each platform. Decision for the maintainer (section 10).
+**Who writes the reason.** The helper, from the object (3.3). A caller cannot supply text. A caller that
+gives a different object than the one it hashes is refused (`digest_mismatch`); a caller that gives a true object
+gets a true text. What the person reads is what the signature covers, as long as the template is faithful.
+Templates for the mandate grant (steps 13 and 14) come when their object format is frozen.
 
 A touch to open a session and a touch for a change look different because the reasons differ.
 (Under DEC-47 an approval needs no check; only the unlock and *grant* touch.)
@@ -294,16 +350,16 @@ documented behaviour; the helper reports a blob that no longer loads as `key_inv
 4. The gateway writes `platform: { v:1, backend, policy, keyBlob, publicKey, wrapped }` into
    `vault.enc.json` in one atomic write, beside the password header. Nothing in it is secret: the blob
    needs this computer's Secure Enclave and a touch.
-5. Check key: `check.create` when the person adds a granting device or asks for the computer to grant.
-   The gateway stores `keyBlob`; `publicKey` goes into the chain entry (`device.check`). One check key
-   per gateway.
+5. Check key: `check.create` at set-up, when the person asks for it (section 12.3). The gateway keeps `keyBlob`
+   in a sealed vault slot; `publicKey` goes into the first chain entry (`device.check`). One check key per gateway.
 
 ### 6.3 Use
 
 - After a restart: `unwrap` → vault key → the gateway adopts it (one touch). Wrong touch, cancel or any
   error: the password dialog remains.
 - A change that needs a check: the gateway builds the object, hashes it, calls `check.sign` with
-  `digest`, `object`, `reason` (one touch), puts `signature` into `checks`.
+  `digest` and `object` (one touch), checks the signature itself with hap-core `verifyCheck` against the key's
+  public half, and puts `signature` into `checks` (a chain entry) or counts it as the confirmation (a change request).
 
 ### 6.4 Rotation and re-wrap
 
@@ -373,9 +429,11 @@ a bare binary shipped inside an npm package is not quarantined and Gatekeeper do
 an `.app` bundle inside the package can be stapled and also gives the prompt a name and an icon.
 
 **What the prompt calls the program.** Plan 12.3 shows the program's name and icon for a plain binary.
-Proposal: ship the helper as a minimal bundle `Suveren.app` (`Contents/MacOS/suveren-unlock-helper`,
-`Info.plist` with `CFBundleName` "Suveren", `LSUIElement` so it has no Dock icon), so the prompt reads
-"Suveren is trying to unlock the Suveren vault". Not run at the prompt: manual check 3.
+The helper ships as a minimal bundle `Suveren.app` (`Contents/MacOS/suveren-unlock-helper`, `Info.plist` with
+`CFBundleName` "Suveren", `LSUIElement` so it has no Dock icon), made by `macos/build-app.sh`, so the prompt
+should read "Suveren is trying to unlock the Suveren vault". Not run at the prompt: manual check 3 (section 9).
+Measured on 2026-11-18: the ad-hoc signed bundle passes `codesign --verify --strict --deep`; a file added
+inside it afterwards does not (this is why the list of callers sits beside the `.app`, section 4).
 
 **Intel Macs.** Secure Enclave exists on T2 Macs. A universal build was not tried. Open point.
 
@@ -444,63 +502,63 @@ desktop. A machine with Hello but without a TPM 2.0. Behaviour when the PIN is u
 
 ## 9. Manual checks for the maintainer (each shows a touch prompt; none runs by itself)
 
-Prepare once (builds the debug helper; about 30 seconds):
+Run everything from the root of the repository. Prepare once (about two minutes; builds the control plane, the
+debug helper and the release helper `Suveren.app`):
 
 ```
-cd packages/unlock-helper/macos && swift build
+pnpm -r build
+cd packages/unlock-helper/macos && swift build && ./build-app.sh && cd ../../..
 ```
 
-The script prints PASS and FAIL lines and never a key. Keys exist only in memory during the run; nothing
-is stored and nothing needs deleting.
+The scripts print PASS and FAIL lines and never a key. Nothing here touches a real gateway's data folder; the
+keys of checks 1 to 3 exist only in memory during the run. Each `>>> TOUCH` line below is one Touch ID prompt.
+The screen must be unlocked: the Secure Enclave refuses to make a key with a touch policy while the Mac is locked.
 
-**Check 1: unlock** (3 touches: the first succeeds, the second you cancel, the third succeeds but the
-answer must be a refusal).
+**Check 0 (the gateway's own code, four touches, start here).** Starts the release helper the way the gateway does
+(hashes, list of callers, no password typed), turns unlock on in a throw-away vault, opens it again after a
+"restart" with a touch, and signs a connector-login change and a set-up entry with the check key:
+```
+node packages/unlock-helper/macos/manual-check-gateway.mjs
+```
+Expect: PASS on every line and these prompt texts (placeholders, section 3.3): touch 1 and 2 "Suveren is trying to
+unlock the Suveren vault"; touch 3 `… replace the login of "gmail"`; touch 4 "… set up the device "This
+computer" with its own key". Touches 1 and 2 accept the Mac password under "Use Password…"; touches 3 and 4 are
+Touch ID only. Write down: the name and icon in the prompt (an `.app` bundle: check 3), and whether the prompt
+for touch 3 is clear to a person who does not know what a connector is.
+
+**Check 1: unlock, the helper alone** (3 touches: the first succeeds, the second you cancel, the third succeeds
+but the answer must be a refusal). Uses the debug build.
 ```
 node packages/unlock-helper/macos/manual-check.mjs unlock --policy user-presence
 ```
-Expect: prompt names the program and says "… is trying to unlock the Suveren vault"; PASS on all four
-lines. Look at: does it ask Touch ID first and the password only after a failure? Write down how the prompt
-looks (screenshot).
+Expect: PASS on all four lines. Look at: does it ask Touch ID first and the password only after a failure?
 
-**Check 2: check key and reason length** (1 touch each).
+**Check 2: check key and text length** (1 touch each). The prompt text comes from the object; the only thing you
+can vary is the device label, at most 64 characters in a real chain.
 ```
 node packages/unlock-helper/macos/manual-check.mjs check --policy biometry-current-set
-node packages/unlock-helper/macos/manual-check.mjs check --policy biometry-current-set --reason "grant the mandate: offers by email, up to 3 per day, only to customers in the CRM, valid until the end of March 2027"
+node packages/unlock-helper/macos/manual-check.mjs check --policy biometry-current-set --label "Work Mac in the office on the second floor, next to the printer room"
 ```
-(the second reason is 116 characters; the limit is 120. Use the second one to see whether macOS cuts long text.) Expect
-PASS including "Node verifies the DER signature". Write down: is the long reason cut off, and where?
-To also run hap-core 0.14.0's `verifyCheck` on that signature, add
-`--hap-core <path to hap-core 0.14.0>/dist/device-keys/index.mjs`.
+Expect PASS including "Node verifies the DER signature" and a printed line with the text the helper says it
+showed. Write down: is the long text (the second command, 100 characters in the prompt) cut off, and where?
+To also run hap-core's `verifyCheck` on that signature, add
+`--hap-core node_modules/.pnpm/@humanagencyp+hap-core@0.14.0/node_modules/@humanagencyp/hap-core/dist/device-keys/index.mjs`.
 
-**Check 3: the name and icon in the prompt** (an app bundle; 1 touch). Makes `Suveren.app` in the scratch
-folder, ad-hoc signed, and runs check 2 through it:
+**Check 3: the name and icon in the prompt** (the debug helper inside the same ad-hoc signed `Suveren.app`; 1 touch).
+The release helper serves only the gateway, so the hand script uses a debug build in the same kind of bundle:
 ```
-B=/tmp/unlock-helper-bundle && rm -rf $B && mkdir -p $B/Suveren.app/Contents/MacOS && cp packages/unlock-helper/macos/.build/debug/suveren-unlock-helper $B/Suveren.app/Contents/MacOS/ && cat > $B/Suveren.app/Contents/Info.plist <<'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-<key>CFBundleIdentifier</key><string>ai.suveren.unlock-helper</string>
-<key>CFBundleName</key><string>Suveren</string>
-<key>CFBundleExecutable</key><string>suveren-unlock-helper</string>
-<key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleVersion</key><string>0.1.0</string>
-<key>LSUIElement</key><true/>
-</dict></plist>
-EOF
-codesign --force -s - $B/Suveren.app && UNLOCK_HELPER=$B/Suveren.app/Contents/MacOS/suveren-unlock-helper node packages/unlock-helper/macos/manual-check.mjs check --policy user-presence; rm -rf $B
+CONFIG=debug packages/unlock-helper/macos/build-app.sh packages/unlock-helper/macos/dist-debug
+UNLOCK_HELPER=packages/unlock-helper/macos/dist-debug/Suveren.app/Contents/MacOS/suveren-unlock-helper node packages/unlock-helper/macos/manual-check.mjs check --policy user-presence
 ```
-Expect: the prompt reads "Suveren is trying to grant the mandate: …" (with or without an icon: write it
-down). With `user-presence`, press **Use Password…** on one run and see whether the reason is also shown on
-the password dialog.
+Expect: the prompt reads "Suveren is trying to add the device "This computer"" with or without an icon: write it down.
+With `user-presence`, press **Use Password…** on one run and see whether the text is also shown on the password dialog.
 
-**Check 4 (not scripted): fingerprint change.** After check 2 with `biometry-current-set` the key lives
-only in that run, so this cannot be tested before the gateway stores a blob. Test it with the real gateway
-in the integration round: enrol a test finger, expect `key_invalid`, expect the password to work.
+**Check 4 (needs the whole gateway; the integration round): fingerprint change.** After a check key was made with
+`biometry-current-set` (set-up with `checkKey: true`, section 12.3), enrol a test finger: expect `key_invalid` on the
+next change and unlock by the password; the person then needs another granting device or the recovery code.
 
-**Check 5 (not scripted): remote desktop and a second Mac.** Copy a stored blob and `vault.enc.json` to a
-second Mac: expect `key_invalid`, not a prompt. Needs the integration round.
-
----
+**Check 5 (needs the whole gateway): remote desktop and a second Mac.** Copy `vault.enc.json` of a throw-away
+gateway to a second Mac: expect `key_invalid` on the unlock, not a prompt, and the password working.
 
 ## 10. Open points for the maintainer
 
@@ -510,23 +568,25 @@ second Mac: expect `key_invalid`, not a prompt. Needs the integration round.
    Who holds the account and where the certificate lives is yours to decide. Until then the helper is
    ad-hoc signed. It works on this Mac (measured); on other Macs it should, because npm does not
    quarantine the files it writes, but that was not run.
-2. **Bare binary or `Suveren.app` bundle.** The bundle can be notarised and stapled and shows a name
-   and icon in the prompt. Recommended; manual check 3 shows what the prompt does.
+2. **Bare binary or `Suveren.app` bundle.** Decided for the bundle (ad hoc signed, no Developer ID, never offered
+   as a download; the gateway hashes its files before every start). The bundle can be notarised and stapled later
+   and shows a name and icon in the prompt; manual check 3 shows what the prompt does.
 3. **`.userPresence` or biometry.** Recommendation in 6.1: wrap key `user-presence`, check key
    `biometry-current-set`. The cost of `biometry-current-set` is the recovery after a fingerprint change.
    Alternative for the check key: `biometry-any`.
-4. **Helper-derived reason text** (section 5): require `object` for every `check.sign` and build the
-   reason in the helper? Recommended yes; it needs steps 13 and 14's object formats first.
-5. **Intel Macs:** support, or password only?
+4. **Helper-derived reason text** (section 5): built (3.3) for chain entries and connector-login changes. Still to
+   do: the mandate grant's text when steps 13 and 14 freeze its object; and your wording for every text in 3.3 (O19).
+5. **Intel Macs:** password only for now (the control plane reports `unsupported_arch`); a universal build was not tried.
 6. **Windows:** a Windows machine with Hello to measure the routes in section 8; the language
    (C++ or Rust); an Authenticode certificate (the MSI is signed by IT today; the helper `.exe` inside
    needs its own signature or the same signing step) and SmartScreen reputation.
 7. **Where `allowed-callers.json` is written and who can change it.** In the user's own folder it is only
    a guard against another program, not against the user's AI (section 4). A system-wide install with
    a root-owned list is the S1/S2 answer (O29).
-8. **How the binary reaches the person:** inside the npm package per platform (CI builds and signs it),
-   or downloaded at first use with a checksum the gateway verifies. The gateway should verify the
-   helper's signature or hash before it starts it.
+8. **How the binary reaches the person:** inside the npm package (built on a macOS arm64 machine with
+   `macos/build-app.sh`, then `node bundle/build.mjs --with-helper`); the gateway verifies the hashes of the
+   bundle's files before every start. Open: the release script and CI do not run these two steps yet; a package
+   built on Linux has no helper (and says so).
 9. **Which release carries 5a** (the plan lists it as open) and the wording of the screens when the helper
    is missing, refuses, or the key is invalid (O19).
 
@@ -536,18 +596,145 @@ second Mac: expect `key_invalid`, not a prompt. Needs the integration round.
 
 | Where | Count | Covers |
 |---|---|---|
-| `macos` `swift test` (`./macos/test.sh`) | 17 | wrap/unwrap, wrong account, wrong key, tampering, digest and reason rules, DER signature verified by CryptoKit, `interaction_required`, error codes, caller policy (pure), Secure Enclave keys made and refused without a touch |
-| `test/client.test.ts` | 15 | Node client against a **fake** helper (the real one needs a touch): framing, order, timeouts, helper death, bad answers |
-| `test/real-helper.test.ts` | 10 (one needs `HAP_CORE_DEVICE_KEYS`) | the real helper binary: software keys through the same code path (Swift and Node unwrap each other's wraps; the signature verifies in Node and in hap-core 0.14.0 `verifyCheck`, and is refused for another object or key); Secure Enclave with prompts off; the caller refusal with real processes |
+| `macos` `swift test` (`./macos/test.sh`) | 20 | wrap/unwrap, wrong account, wrong key, tampering, digest rules, prompt text from the object (every template, a caller's `reason` refused, objects with no text refused, a label that cannot reshape the prompt), DER signature verified by CryptoKit, `interaction_required`, error codes, caller policy (pure), Secure Enclave keys made and refused without a touch (needs an unlocked screen) |
+| `test/client.test.ts` | 17 | Node client against a **fake** helper (the real one needs a touch): framing, order, timeouts, helper death, bad answers, no way to pass prompt text |
+| `test/real-helper.test.ts` | 11 (one needs `HAP_CORE_DEVICE_KEYS`) | the real helper binary (debug): software keys through the same code path (Swift and Node unwrap each other's wraps; the signature verifies in Node and in hap-core `verifyCheck`; the prompt text equals the Node reference on every template); Secure Enclave with prompts off; the caller refusal with real processes |
+| `apps/control-plane` `platform.test.ts` | 38 | section 12, through the real routers, vault and page sessions. **SOFT** = the real Swift helper, debug build, `--backend software` (real process and protocol, no hardware, never a touch); **FAKE** = `test/fake-helper.mjs`, only where a touch must be cancelled, slow or lying |
+| `apps/control-plane` `platform-release-helper.test.ts` | 3 (runs only with `SUVEREN_HELPER_BUILD`) | the RELEASE helper from `build-app.sh` started by the control plane's own code in a plain node process: hashes, list of callers, `hello`; a swapped binary; another program refused (exit 77). No touch |
 
 Limits of this evidence, in plain words:
 
 - **No touch was made.** Every test that signs or unwraps with real hardware stops at "a touch is needed".
   The signature format was checked with a P-256 software key through the same Handler code
-  (`SoftwareBackend` replaces only the key; the signing, DER and verification code is the same). A
-  Secure Enclave signature has the same type and encoding (CryptoKit's `ECDSASignature.derRepresentation`)
-  and plan 12.1 line 26 verified one with Node; not repeated here.
-- The software backend exists only in debug builds and in tests; a release build has no such flag.
-- hap-core's `verifyCheck` ran against 0.14.0 copied from another worktree through `HAP_CORE_DEVICE_KEYS`;
-  the gateway's own dependency is still 0.13.0, which has no device-keys module.
-- Windows, Intel Macs, remote desktop, long reason text, fingerprint change: not run.
+  (`SoftwareBackend` replaces only the key and says it has secure hardware, Touch ID and presence; the signing, DER
+  and verification code is the same). A Secure Enclave signature has the same type and encoding (CryptoKit's
+  `ECDSASignature.derRepresentation`) and plan 12.1 line 26 verified one with Node.
+- The software backend exists only in debug builds and in tests; a release build has no such flag (checked: the release
+  binary contains neither `software-test` nor `--allow-any-caller`).
+- The Authority Server is a stand-in over HTTP (`StubAs`, port 0) that checks what it is sent with hap-core `verifyChain`;
+  the real Authority Server was not run here.
+- Windows, Intel Macs, remote desktop, long prompt text, fingerprint change, a root-owned install folder: not run.
+
+---
+
+## 12. In the gateway (step 5a, behind `SUVEREN_DEVICE_KEYS=on`)
+
+Files: `apps/control-plane/src/lib/{vault,platform-helper,platform-checks,change-confirmation,device-setup}.ts`,
+`routes/{platform,device-setup,device-keys-mount}.ts`. With the switch off, or with no helper, nothing of this
+runs and every path is the one of steps 5 and 6 (tests: `platform.test.ts`, "a vault that never turned it on",
+"with the switch off none of it exists", "a computer with no usable helper").
+
+### 12.1 Unlock by Touch ID: a third way to the vault key
+
+`Vault` gets a third unseal provider (`PlatformUnsealProvider`, id `platform`) beside the account key and the
+password, and a `platform` header in `vault.enc.json` (`PlatformHeader`: backend, policy, key blob, public key,
+wrapped key, account id; nothing secret). The password header is never touched by it.
+
+- `POST /auth/platform/enable` `{ password }` (page session, vault unlocked): needs the **unlock password** and,
+  where this computer has a check key, a **fresh check** over an object whose prompt text the helper builds
+  ("turn on Touch ID unlock for Suveren"); both are asked inside `Vault.enablePlatformUnlock`, where the write
+  happens, not in the route. Then it opens the wrap once (the test unwrap of 6.2 step 3: a second touch) and only
+  then writes the header in one atomic rename. Refused while a re-key is unfinished, while another step runs
+  (`busy`), and when the vault key, the account or the header changed during the touches (`vault_changed`): the
+  check and the write are one synchronous step after the last `await`. A computer without a check key has the
+  password only (plan 7: the password stands in only there).
+- `POST /auth/unlock/platform` (no session; the vault is locked): one touch, then the key must open the vault's
+  verifier (`wrap_mismatch` otherwise: a stale wrap, another vault), the header must be unchanged, and the vault
+  must still be locked; only then it is adopted. **It opens the vault, not a page session**
+  (`PLATFORM_UNLOCK_OPENS_PAGE_SESSION = false`, `routes/platform.ts`): after a restart the agents continue, and the
+  page needs the unlock password. Why: a session is what an AI that drives the page uses, and "unlock the Suveren
+  vault" is a prompt a person confirms without reading what the page does next; until the gateway runs apart from the
+  AI's OS user (S1 to S3, O29) the session stays with the password. the maintainer decides; flip the constant only on that
+  answer. On an already unlocked vault the route answers `already_unlocked` while the constant is false (with
+  `true`, a touch there verifies the key and opens a session, like the password does). Its own attempt limiter, so
+  spamming the prompt cannot lock the password out.
+- `POST /auth/platform/disable` `{ password }`: the same password and fresh check ("turn off Touch ID unlock for
+  Suveren"), then it **revokes by re-keying**: a fresh vault key, the password wrap of it (the old key kept as
+  `pending`), no platform header, in one atomic write, then the control plane's files and the MCP server's stores are
+  re-sealed exactly as the move to a password does (`/internal/rekey`, with the server's own report of which key its
+  stores are sealed with; an interrupted run answers 202 and is finished at the next unlock). What this gives: no
+  credential entered later, and nothing the MCP server holds, opens with the old key. What it does **not** give: a
+  copy of `vault.enc.json` made while Touch ID unlock was on still holds its own key blob and opens *what was in it
+  then*, with a touch on this computer; no re-key can change that, the old data was always sealed with the old key.
+- `GET /auth/platform/status` (no session, starts nothing), `GET /auth/platform/capabilities` (session; starts the
+  helper, no touch).
+- A re-key of the vault key (`setPassword`) wraps the new key for the helper without a touch (6.4), in the same
+  atomic write as the password wrap; with no helper to wrap with, the stale wrap is dropped. With a password
+  already set the re-key cannot happen again, so this is for a damaged or hand-edited vault and for a later key
+  rotation; it is tested by building that state.
+- Unlock policy `user-presence` (Touch ID or the Mac password); a Mac without Touch ID still works.
+- Any error but `user_cancelled` and `not_recognised` leaves the password path open (it always is).
+
+### 12.1a Fingerprint change and orphans (the way out)
+
+`key_invalid` on a check (a fingerprint change under `biometry-current-set`, or a blob that no longer loads) leaves the
+person unable to confirm a connector-login change: the password is refused where a check key exists. **On this
+computer** `POST /auth/platform/check-key/reset` `{ password, recoveryCode }` clears the stale check-key slot, only when
+the helper has reported the key invalid since the last clear (a working key is never dropped this way), the password
+is right and the recovery code derives the stored chain's root DID (hap-core `rootKeyFromRecoveryCode`). It is logged
+(`[Control Plane] The check key of this computer was cleared …`, no secret), and connector-login changes then take the
+password again (plan 7). **What it does not do:** the device chain still names the old check key, so this computer cannot
+grant until a root-signed `set` replaces it. That entry needs the email-link session at the Authority Server (plan
+3.2, DEC-15), which a program on 127.0.0.1 cannot present, so it is **not built**, not even as far as the boundary:
+nothing could be tested against the real route, and a signed entry handed to a page that cannot submit it helps no one.
+Chosen because it is the least that gets the person back to a working computer without lowering anything the plan
+protects (clearing needs the password and the recovery code and a real `key_invalid`).
+
+**Orphans.** The check-key slot is written before the chain in `complete`. A check key counts only while this computer's
+chain is stored (`CheckKeyStore` is given the chain store): a slot without a chain, left by a crash between the two
+writes or by a cancelled set-up, counts for nothing, so it can never lock the password out; a failed chain write takes
+the slot back, and `cancel` clears it.
+
+### 12.2 The helper process
+
+`lib/platform-helper.ts`: found next to the package (`helper/Suveren.app`, hashes in `dist/control-plane/helper-manifest.json`;
+`SUVEREN_HELPER_APP` names another build for the dev lane and a hand test, with its list beside it, which is weaker),
+started on demand with an empty environment, kept for 60 s, ended when it dies or times out. Not available, with a
+neutral reason, on: other platforms (`unsupported_platform`), Intel (`unsupported_arch`), a package with no helper
+(`helper_not_installed`), a file that is not the one in the list (`helper_modified`), a start that fails or is
+refused (`helper_failed`, `caller_refused`), no secure hardware (`no_secure_hardware`). The routes then answer
+`helper_unavailable` with the reason and nothing else changes. If `NODE_OPTIONS` is set where the gateway runs,
+the helper refuses it (section 4): the same answer.
+
+### 12.3 This computer's check key
+
+`device.check` of type `platform` (plan 3.1). Policy `biometry-current-set` (Touch ID only). It is made **at set-up**:
+`POST /auth/device/setup/start` with `{ "checkKey": true }` makes the key in the helper, puts it into the `genesis`
+entry (`device.check`) and adds the device's check over the entry hash (one touch; the prompt says "set up the
+device …"). The entry is verified with hap-core before the recovery code is handed out; a cancelled or lying touch ends
+the set-up with nothing kept or sent. The key blob is kept with the started set-up, sealed, and moves into the
+vault slot `deviceCheckKey` in the same step that stores the chain (a lock or restart in between is survived).
+
+**Why in `genesis` and not in a later `set` entry (read this).** Plan 3.2: a `set` that gives a device its first
+check key is signed by a granting device or by the root key, and "a device cannot give itself a check key with its
+own signature alone". Until stage B no device has a check key (plan 23.3), so the first `set` is root-signed:
+the recovery code **and** an email-link session of the account at the Authority Server (`POST /api/devices/chain`
+answers `EMAIL_LINK_REQUIRED` otherwise; DEC-15). The email-link session is a browser cookie at suveren.ai. The
+plan does not say how a gateway (a program on 127.0.0.1) presents it, so a gateway-side root-signed `set` is **not
+built**. Plan 23.3 settles the case another way: stage-B accounts are "set up fresh", "so no chain needs a check key
+added afterwards", and 3.2 allows a check key in `genesis` ("plus `device`'s check if `device.check` is set"). An
+account set up by step 6 without a check key therefore has none and cannot get one from the gateway; replacing a
+check key later (fingerprint change, `key_invalid`) needs another granting device or the recovery code, which are
+stage C and D or the open question above.
+
+### 12.4 The per-change confirmation, computer path
+
+A computer with a check key (the slot exists; an unreadable slot counts as yes) no longer accepts the password for a
+connector-login replace or remove (`POST /auth/confirm` answers `check_key_required`). `POST /auth/confirm/request`
+builds the change request as before; `POST /auth/confirm/check` (page session, one prompt at a time) has the helper
+sign the SHA-256 of the canonical JSON of that request (the object, which the helper reads to build `replace the
+login of "<name>"` or `remove the login of "<name>"`; the request has a sixth member, `name`, inside the signed
+object and bound again in `change_hash`), verifies the signature with hap-core against the
+stored public key, and only then confirms the request. The gate that carries the change out
+(`ChangeConfirmations.consume`) also refuses a confirmation made by the password while a check key exists, so a
+password confirmation given before the key existed cannot carry a change out afterwards. One change, one request id,
+once, from the page session that asked, within 300 seconds, as for the password path.
+
+### 12.5 What is not built
+
+- A root-signed `set` from the gateway (12.3), and replacing the check key in the chain after `key_invalid` (12.1a: only clearing it on this computer).
+- The caller check and the hash list as protection against a program of the same user (they add nothing there; section 4).
+- The check on mandate grants, `add`, `remove`, passkey registration (steps 13, 14): the helper can sign any chain
+  entry (the texts exist), but no route asks it to.
+- Windows; Intel Macs; notarisation; a release script that runs `build-app.sh` and `--with-helper`.
+- Nothing in the UI (no screens; wording is O19).

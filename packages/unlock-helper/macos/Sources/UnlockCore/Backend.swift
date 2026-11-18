@@ -185,7 +185,9 @@ public func mapError(_ error: Error, whileOpening: Bool) -> HelperError {
 public struct SoftwareBackend: KeyBackend {
     public init() {}
     public func capabilities() -> Capabilities {
-        Capabilities(backend: "software-test", secureHardware: false, biometry: false, userPresence: false)
+        // A test double says it can do everything, so the code above it (the gateway's) runs its real paths.
+        // The name says what it is; it exists in debug builds only.
+        Capabilities(backend: "software-test", secureHardware: true, biometry: true, userPresence: true)
     }
     public func createAgreementKey(policy: Policy) throws -> (blob: Data, key: AgreementKey) {
         let k = P256.KeyAgreement.PrivateKey()

@@ -27,12 +27,14 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { ChainEntry } from '@hap/core/device-keys';
 import { deviceKeys } from './device-keys-lazy';
+import { platformCheckKey, platformCheckProof } from '@suveren/unlock-helper';
 import type { Vault } from './vault';
 import { loadOrGenerateKeyPair, loadOrGenerateDeviceSigningKey } from './e2e-key-manager';
 import type { DeviceChainStore } from './device-chain-store';
 import { DeviceAsClient, AsUnreachableError, asErrorCode } from './device-as-client';
 import { AsTlsMismatchError } from './as-tls-pin';
 import type { DeviceSignin, AsKeyCheck } from './device-signin';
+import { CheckKeyStore, CheckError, type PlatformChecks, type StoredCheckKey } from './platform-checks';
 
 export const DEFAULT_DEVICE_LABEL = 'This computer';
 /** How long a started Connect waits. Proposed number. */
@@ -72,6 +74,12 @@ interface Pending {
   keyId: string;
   label: string;
   connect: Connect | null;
+  /**
+   * This computer's check key, made at `start` when the person asked for one (plan 23.3: a stage-B
+   * account is set up fresh with it, so the first chain entry already carries it and no root-signed
+   * `set` is ever needed). Only moved into the check-key slot when the chain is stored.
+   */
+  checkKey?: StoredCheckKey;
 }
 
 export interface DeviceSetupDeps {
@@ -82,6 +90,34 @@ export interface DeviceSetupDeps {
   checkAs: () => Promise<AsKeyCheck>;
   /** Epoch ms. */
   now?: () => number;
+  /** The computer's check key through the native helper. Unset: a set-up cannot ask for one. */
+  checks?: PlatformChecks;
+  checkStore?: CheckKeyStore;
+}
+
+function isStoredCheckKey(v: unknown): v is StoredCheckKey {
+  const o = v as Record<string, unknown> | null;
+  return !!o && typeof o === 'object' && o.v === 1 && typeof o.backend === 'string' && typeof o.policy === 'string'
+    && typeof o.keyBlob === 'string' && typeof o.publicKey === 'string';
+}
+
+/** A failure of the check key, as a refusal with a neutral code. Never the helper's own message. */
+function checkRefusal(err: unknown): SetupRefusal {
+  if (err instanceof SetupRefusal) return err;
+  if (err instanceof CheckError) {
+    const h = err.helperCode;
+    if (err.code === 'helper_failed') {
+      if (h && ['unsupported_platform', 'unsupported_arch', 'helper_not_installed', 'helper_modified', 'caller_refused'].includes(h)) return new SetupRefusal(409, 'helper_unavailable', { reason: h });
+      if (h === 'user_cancelled') return new SetupRefusal(409, 'cancelled');
+      if (h === 'auth_failed') return new SetupRefusal(401, 'not_recognised');
+      if (h === 'biometry_locked' || h === 'no_biometry' || h === 'key_invalid' || h === 'interaction_required') return new SetupRefusal(409, h);
+      return new SetupRefusal(502, 'helper_failed', h ? { helperCode: h } : {});
+    }
+    if (err.code === 'no_biometry') return new SetupRefusal(409, 'no_biometry');
+    if (err.code === 'check_invalid') return new SetupRefusal(502, 'check_invalid');
+    return new SetupRefusal(409, 'helper_unavailable', { reason: err.code });
+  }
+  return new SetupRefusal(502, 'helper_failed');
 }
 
 const sha256Ascii = (s: string): Buffer => createHash('sha256').update(s, 'ascii').digest();
@@ -109,7 +145,7 @@ export class DeviceSetup {
    * otherwise leave an account with a chain this computer cannot adopt.
    */
   private persist(p: Pending | null): void {
-    this.d.vault.setSecretSlot(PENDING_SLOT, p && { v: 1, id: p.id, entry: p.entry, entryHash: p.entryHash, rootDid: p.rootDid, keyId: p.keyId, label: p.label });
+    this.d.vault.setSecretSlot(PENDING_SLOT, p && { v: 1, id: p.id, entry: p.entry, entryHash: p.entryHash, rootDid: p.rootDid, keyId: p.keyId, label: p.label, ...(p.checkKey ? { checkKey: p.checkKey } : {}) });
   }
 
   private live(): Pending | null {
@@ -117,9 +153,11 @@ export class DeviceSetup {
     let raw: Record<string, unknown> | null = null;
     try { raw = this.d.vault.getSecretSlot<Record<string, unknown>>(PENDING_SLOT); } catch { return null; }
     if (!raw || raw.v !== 1) return null;
-    const { id, entry, entryHash: h, rootDid, keyId, label } = raw as Record<string, unknown>;
+    const { id, entry, entryHash: h, rootDid, keyId, label, checkKey } = raw as Record<string, unknown>;
     if (typeof id !== 'string' || typeof h !== 'string' || typeof rootDid !== 'string' || typeof keyId !== 'string' || typeof label !== 'string' || !entry || typeof entry !== 'object') return null;
-    this.pending = { id, entry: entry as ChainEntry, entryHash: h, rootDid, keyId, label, connect: null };
+    // A check key that is there but is not one this code wrote makes the whole pending set-up unusable: never "no check key".
+    if (checkKey !== undefined && !isStoredCheckKey(checkKey)) return null;
+    this.pending = { id, entry: entry as ChainEntry, entryHash: h, rootDid, keyId, label, connect: null, ...(checkKey ? { checkKey } : {}) };
     return this.pending;
   }
 
@@ -140,7 +178,7 @@ export class DeviceSetup {
    * Make the recovery code and the `genesis` entry. The code is in the return value
    * and nowhere else: not in the vault, not in a file, not in a log, not in a request.
    */
-  async start(input: { label?: unknown }): Promise<{ setupId: string; recoveryCode: string; rootDid: string; deviceKeyId: string; label: string }> {
+  async start(input: { label?: unknown; checkKey?: unknown }): Promise<{ setupId: string; recoveryCode: string; rootDid: string; deviceKeyId: string; label: string }> {
     this.requireVault();
     if (this.busy) throw new SetupRefusal(409, 'setup_busy');
     if (this.live()) throw new SetupRefusal(409, 'setup_pending');
@@ -150,6 +188,13 @@ export class DeviceSetup {
       const dk = await deviceKeys();
       const label = input.label === undefined ? DEFAULT_DEVICE_LABEL : input.label;
       if (!dk.isValidLabel(label)) throw new SetupRefusal(400, 'label_invalid');
+      if (input.checkKey !== undefined && typeof input.checkKey !== 'boolean') throw new SetupRefusal(400, 'bad_request');
+      // The computer's check key: only on request, never silently, and only where the helper can make one.
+      let checkKey: StoredCheckKey | undefined;
+      if (input.checkKey === true) {
+        if (!this.d.checks) throw new SetupRefusal(409, 'helper_unavailable');
+        try { checkKey = await this.d.checks.createKey(); } catch (err) { throw checkRefusal(err); }
+      }
       const { seed, code } = await dk.generateRecoveryCode();
       const root = await dk.deriveRootKey(seed);
       rootSeed = root.privateSeed;
@@ -162,6 +207,7 @@ export class DeviceSetup {
         kind: 'gateway',
         label,
         keystore: 'software',
+        ...(checkKey ? { check: platformCheckKey(checkKey.publicKey) } : {}),
       }, signing.publicKey);
       const entry = dk.buildEntry({
         root_did: root.did, seq: 0, prev: null, op: 'genesis',
@@ -169,6 +215,12 @@ export class DeviceSetup {
       });
       entry.sigs.push(await dk.signEntry(entry, 'root', root.privateSeed));
       entry.sigs.push(await dk.signEntry(entry, device.key_id, signing.privateSeed));
+      if (checkKey) {
+        // The device proves it holds its check key: its check over the same entry (3.2, genesis). One touch.
+        let signed;
+        try { signed = await this.d.checks!.sign(checkKey, dk.entrySignedBytes(entry)); } catch (err) { throw checkRefusal(err); }
+        entry.checks.push({ by: device.key_id, check: platformCheckProof(signed.signature) });
+      }
       // Our own check: an entry the Authority Server would refuse is never offered to the person.
       await dk.verifyChain({ expectedRootDid: root.did, entries: [entry] });
       // The state may have changed while the keys were made.
@@ -176,7 +228,7 @@ export class DeviceSetup {
       const id = randomBytes(16).toString('base64url');
       const p: Pending = {
         id, entry, entryHash: await dk.entryHash(entry), rootDid: root.did, keyId: device.key_id,
-        label, connect: null,
+        label, connect: null, ...(checkKey ? { checkKey } : {}),
       };
       this.persist(p);
       this.pending = p;
@@ -194,6 +246,8 @@ export class DeviceSetup {
     this.live(); // load a kept one, so there is nothing left in the slot either
     this.pending = null;
     try { this.persist(null); } catch { /* locked: nothing to clear */ }
+    // A check-key slot with no chain behind it is an orphan (the crash window of `complete`): clear it.
+    try { if (this.d.checkStore && !this.d.store.exists()) this.d.checkStore.write(null); } catch { /* locked */ }
   }
 
   private pendingFor(setupId: unknown): Pending {
@@ -373,10 +427,21 @@ export class DeviceSetup {
   /** The Authority Server holds our genesis: store the chain, then sign in. */
   private async complete(p: Pending, account: ConnectAccount | undefined): Promise<Awaited<ReturnType<DeviceSetup['finish']>>> {
     const asUrl = this.d.client.asUrl;
-    this.d.store.create({
-      v: 1, rootDid: p.rootDid, keyId: p.keyId, head: { seq: 0, hash: p.entryHash },
-      asUrl, label: p.label, setUpAt: p.entry.created_at,
-    });
+    // The check key's slot first: from the moment the chain says this computer has a check key, the
+    // password is no longer a confirmation here. If the chain cannot be stored the slot is emptied again.
+    if (p.checkKey) {
+      if (!this.d.checkStore) throw new SetupRefusal(500, 'bad_request');
+      this.d.checkStore.write(p.checkKey);
+    }
+    try {
+      this.d.store.create({
+        v: 1, rootDid: p.rootDid, keyId: p.keyId, head: { seq: 0, hash: p.entryHash },
+        asUrl, label: p.label, setUpAt: p.entry.created_at,
+      });
+    } catch (err) {
+      if (p.checkKey) { try { this.d.checkStore!.write(null); } catch { /* the original error is the one to report */ } }
+      throw err;
+    }
     this.pending = null;
     try { this.persist(null); } catch { /* the chain is stored; an unreadable leftover is ignored once a chain exists */ }
     const r = await this.d.signin.signIn();

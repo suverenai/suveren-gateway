@@ -21,6 +21,10 @@ import { createAuthRouter, checkAsKeyBeforeLogin } from '../../routes/auth';
 import { mountDeviceKeyRoutes } from '../../routes/device-keys-mount';
 import { createEstablish } from '../../lib/device-session-establish';
 import { createAsKeyCheck, asPinning } from '../../lib/device-as-trust';
+import { createVaultRouter } from '../../routes/vault';
+import { CheckKeyStore } from '../../lib/platform-checks';
+import { DeviceChainStore } from '../../lib/device-chain-store';
+import type { PlatformHelper } from '../../lib/platform-helper';
 import type { StubAs } from './stub-as';
 
 export const FAST = { scrypt: { N: 1024, r: 8, p: 1 } };
@@ -108,6 +112,8 @@ export interface GatewayRig {
   sweeps: { count: number };
   timers: FakeTimers;
   clock: { t: number };
+  confirmations: ChangeConfirmations;
+  checkStore: CheckKeyStore;
   /** Unlock with the password and return the page session. */
   unlock: () => Promise<{ token: string; cookie: string }>;
   close: () => Promise<void>;
@@ -122,6 +128,12 @@ export interface BootOptions {
   clock?: { t: number };
   /** The address the server listens on. Default 127.0.0.1. */
   listenHost?: string;
+  /** The native helper (step 5a), as the control plane's index.ts wires it. Unset: none of 5a is mounted. */
+  platform?: PlatformHelper;
+  /** Tests only: the other branch of PLATFORM_UNLOCK_OPENS_PAGE_SESSION. */
+  opensPageSession?: boolean;
+  /** Pass the vault the same MCP re-key client the real gateway has. */
+  mcp?: import('../../lib/vault').McpRekeyClient;
   /** Make the password vault in a fresh folder. Default true; false leaves the folder as it is (a restart). */
   fresh?: boolean;
 }
@@ -144,9 +156,14 @@ export async function bootGateway(o: BootOptions): Promise<GatewayRig> {
   const app = express();
   const json = express.json();
   const guard = requireAuth(vault, deps);
-  const { deviceChainState, signin } = mountDeviceKeyRoutes(app, {
-    enabled, vault, pageSession: deps, limiter: new UnlockLimiter(), confirmations: new ChangeConfirmations(),
-    hasCheckKey: () => false, internalSecret: () => 'sekret', jsonParser: json,
+  // Wired like index.ts: with the helper, the check key's slot decides whether the password still confirms.
+  const checkStore = new CheckKeyStore(vault, new DeviceChainStore(vault));
+  const confirmations = new ChangeConfirmations(o.platform ? { checkRequired: () => checkStore.has() } : {});
+  const { deviceChainState, signin, loginChangeGate } = mountDeviceKeyRoutes(app, {
+    enabled, vault, pageSession: deps, limiter: new UnlockLimiter(), confirmations,
+    hasCheckKey: o.platform ? () => checkStore.has() : () => false, internalSecret: () => 'sekret', jsonParser: json,
+    platform: o.platform ? { host: o.platform, checkStore, opensPageSession: o.opensPageSession } : undefined,
+    mcp: o.mcp,
     device: {
       asUrl: o.as.url,
       pinning: () => asPinning(o.as.url, dir),
@@ -166,11 +183,12 @@ export async function bootGateway(o: BootOptions): Promise<GatewayRig> {
   app.use('/auth', json, createAuthRouter(
     vault, guard, (_q, _s, n) => n(), undefined, { asUrl: o.as.url, dataDir: dir }, undefined, undefined, deps, deviceChainState,
   ));
+  app.use('/vault', json, guard, createVaultRouter(vault, loginChangeGate));
   app.get('/api/x', guard, (_q, s) => { s.json({ ok: true }); });
   const server: Server = await new Promise(r => { const sv = app.listen(0, o.listenHost ?? '127.0.0.1', () => r(sv)); });
   const port = (server.address() as { port: number }).port;
   return {
-    port, dir, vault, sessions, deps, configured, alarms, discards, configureGate, signin, sweeps, timers, clock,
+    port, dir, vault, sessions, deps, configured, alarms, discards, configureGate, signin, sweeps, timers, clock, confirmations, checkStore,
     unlock: async () => {
       const r = await call(port, 'POST', '/auth/unlock', { body: { password: PW }, connectTo: o.listenHost });
       if (r.status !== 200) throw new Error(`unlock failed: ${r.status} ${r.text}`);

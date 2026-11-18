@@ -11,6 +11,10 @@ func call(_ h: Handler, _ req: [String: Any]) -> [String: Any] { h.handle(req) }
 func code(_ r: [String: Any]) -> String? { (r["error"] as? [String: Any])?["code"] as? String }
 let vaultKey = Data((0..<32).map { UInt8($0) })
 let software = Handler(backend: SoftwareBackend())
+/// The gateway wraps in Node; the helper has no `wrap` op. Tests wrap with the library function (same bytes).
+func wrapFor(_ pub: String, _ aad: String, key: Data = vaultKey) -> String {
+    Base64URL.encode(try! Wrap.wrap(vaultKey: key, wrapPublicKeyX963: Base64URL.decode(pub)!, aad: aad))
+}
 func sha256hex(_ d: Data) -> String { SHA256.hash(data: d).map { String(format: "%02x", $0) }.joined() }
 
 @Suite struct Encoding {
@@ -34,8 +38,7 @@ func sha256hex(_ d: Data) -> String { SHA256.hash(data: d).map { String(format: 
 
     @Test func wrapThenUnwrap() throws {
         let k = try make()
-        let w = call(software, ["op": "wrap", "publicKey": k.pub, "vaultKey": Base64URL.encode(vaultKey), "aad": "acct-1"])
-        let wrapped = w["wrapped"] as! String
+        let wrapped = wrapFor(k.pub, "acct-1")
         #expect(Base64URL.decode(wrapped)!.count == 126)
         let u = call(software, ["op": "unwrap", "keyBlob": k.blob, "wrapped": wrapped, "aad": "acct-1"])
         #expect(u["ok"] as? Bool == true)
@@ -44,14 +47,14 @@ func sha256hex(_ d: Data) -> String { SHA256.hash(data: d).map { String(format: 
 
     @Test func twoWrapsOfOneKeyDiffer() throws {
         let k = try make()
-        let a = call(software, ["op": "wrap", "publicKey": k.pub, "vaultKey": Base64URL.encode(vaultKey), "aad": "x"])["wrapped"] as! String
-        let b = call(software, ["op": "wrap", "publicKey": k.pub, "vaultKey": Base64URL.encode(vaultKey), "aad": "x"])["wrapped"] as! String
+        let a = wrapFor(k.pub, "x")
+        let b = wrapFor(k.pub, "x")
         #expect(a != b)
     }
 
     @Test func wrongAccountOtherKeyAndTamperingAllFail() throws {
         let k = try make(), other = try make()
-        let wrapped = call(software, ["op": "wrap", "publicKey": k.pub, "vaultKey": Base64URL.encode(vaultKey), "aad": "acct-1"])["wrapped"] as! String
+        let wrapped = wrapFor(k.pub, "acct-1")
         #expect(code(call(software, ["op": "unwrap", "keyBlob": k.blob, "wrapped": wrapped, "aad": "acct-2"])) == "unwrap_failed")
         #expect(code(call(software, ["op": "unwrap", "keyBlob": other.blob, "wrapped": wrapped, "aad": "acct-1"])) == "unwrap_failed")
         var bytes = Base64URL.decode(wrapped)!
@@ -62,8 +65,8 @@ func sha256hex(_ d: Data) -> String { SHA256.hash(data: d).map { String(format: 
 
     @Test func badInputs() throws {
         let k = try make()
-        #expect(code(call(software, ["op": "wrap", "publicKey": k.pub, "vaultKey": Base64URL.encode(Data(count: 31)), "aad": "a"])) == "bad_request")
-        #expect(code(call(software, ["op": "wrap", "publicKey": "AAAA", "vaultKey": Base64URL.encode(vaultKey), "aad": "a"])) == "bad_request")
+        // the helper never wraps: the plaintext vault key is not something it is sent
+        #expect(code(call(software, ["op": "wrap", "publicKey": k.pub, "vaultKey": Base64URL.encode(vaultKey), "aad": "a"])) == "unsupported")
         #expect(code(call(software, ["op": "wrap.create", "policy": "anything"])) == "bad_request")
         #expect(code(call(software, ["op": "nope"])) == "unsupported")
         #expect(code(call(software, [:])) == "bad_request")
@@ -71,7 +74,7 @@ func sha256hex(_ d: Data) -> String { SHA256.hash(data: d).map { String(format: 
 
     @Test func noPromptAllowedMeansInteractionRequired() throws {
         let k = try make()
-        let wrapped = call(software, ["op": "wrap", "publicKey": k.pub, "vaultKey": Base64URL.encode(vaultKey), "aad": "a"])["wrapped"] as! String
+        let wrapped = wrapFor(k.pub, "a")
         let quiet = Handler(backend: SoftwareBackend(), interactionAllowed: false)
         #expect(code(call(quiet, ["op": "unwrap", "keyBlob": k.blob, "wrapped": wrapped, "aad": "a"])) == "interaction_required")
     }
@@ -87,14 +90,23 @@ func sha256hex(_ d: Data) -> String { SHA256.hash(data: d).map { String(format: 
         let r = call(software, ["op": "check.create", "policy": "biometry-current-set"])
         return (r["keyBlob"] as! String, r["publicKey"] as! String)
     }
-    let object = Data("{\"typ\":\"suveren-chain-entry\",\"seq\":3}".utf8)
+    func entry(_ op: String, label: String? = "iPhone", check: String = "null") -> Data {
+        let device = label.map { "{\"label\":\"\($0)\"}" } ?? "null"
+        return Data("{\"typ\":\"suveren-chain-entry\",\"op\":\"\(op)\",\"seq\":3,\"device\":\(device),\"check\":\(check)}".utf8)
+    }
+    let object = Data("{\"typ\":\"suveren-chain-entry\",\"op\":\"add\",\"seq\":3,\"device\":{\"label\":\"iPhone\"}}".utf8)
+    func sign(_ k: (blob: String, pub: String), _ obj: Data, extra: [String: Any] = [:]) -> [String: Any] {
+        var req: [String: Any] = ["op": "check.sign", "keyBlob": k.blob, "digest": "sha256:" + sha256hex(obj), "object": Base64URL.encode(obj)]
+        for (a, b) in extra { req[a] = b }
+        return call(software, req)
+    }
 
     @Test func signatureIsDerOverTheDigestBytesAndVerifies() throws {
         let k = make()
         let digest = Data(SHA256.hash(data: object))
-        let r = call(software, ["op": "check.sign", "keyBlob": k.blob, "digest": "sha256:" + sha256hex(object),
-                                "reason": "add the device \"iPhone\"", "object": Base64URL.encode(object)])
+        let r = sign(k, object)
         #expect(r["ok"] as? Bool == true)
+        #expect(r["reason"] as? String == "add the device \"iPhone\"")   // what the prompt showed
         let der = Base64URL.decode(r["signature"] as! String)!
         #expect(der[0] == 0x30)
         let pub = try P256.Signing.PublicKey(x963Representation: Base64URL.decode(k.pub)!)
@@ -107,29 +119,80 @@ func sha256hex(_ d: Data) -> String { SHA256.hash(data: d).map { String(format: 
     @Test func digestMustMatchObjectAndBeWellFormed() {
         let k = make()
         let wrongDigest = "sha256:" + sha256hex(Data("other".utf8))
-        #expect(code(call(software, ["op": "check.sign", "keyBlob": k.blob, "digest": wrongDigest, "reason": "x", "object": Base64URL.encode(object)])) == "digest_mismatch")
+        #expect(code(call(software, ["op": "check.sign", "keyBlob": k.blob, "digest": wrongDigest, "object": Base64URL.encode(object)])) == "digest_mismatch")
         for bad in ["", "sha256:abc", "SHA256:" + sha256hex(object), "sha256:" + sha256hex(object).uppercased(), sha256hex(object)] {
-            #expect(code(call(software, ["op": "check.sign", "keyBlob": k.blob, "digest": bad, "reason": "x"])) == "bad_request")
+            #expect(code(call(software, ["op": "check.sign", "keyBlob": k.blob, "digest": bad, "object": Base64URL.encode(object)])) == "bad_request")
+        }
+        // no object: nothing to build the prompt text from
+        #expect(code(call(software, ["op": "check.sign", "keyBlob": k.blob, "digest": "sha256:" + sha256hex(object)])) == "bad_request")
+    }
+
+    @Test func theCallerCannotSupplyPromptText() {
+        let k = make()
+        #expect(code(sign(k, object, extra: ["reason": "grant the mandate: anything at all"])) == "bad_request")
+        #expect(code(sign(k, object, extra: ["reason": ""])) == "bad_request")
+    }
+
+    @Test func textComesFromTheObject() {
+        let k = make()
+        func reason(_ obj: Data) -> String? { sign(k, obj)["reason"] as? String }
+        #expect(reason(entry("genesis", label: "This computer")) == "set up the device \"This computer\" with its own key")
+        #expect(reason(entry("add", label: "Work Mac")) == "add the device \"Work Mac\"")
+        #expect(reason(entry("reset", label: "New Mac")) == "replace every device with \"New Mac\"")
+        #expect(reason(entry("remove", label: nil)) == "remove a device")
+        #expect(reason(entry("set", label: nil, check: "{\"type\":\"platform\",\"pub\":\"x\"}")) == "give a device a check key")
+        #expect(reason(entry("set", label: nil)) == "remove the check key of a device")
+        #expect(reason(entry("rotate-root", label: nil)) == "replace the recovery code")
+        func change(_ kind: String) -> Data {
+            Data("{\"request_id\":\"a\",\"kind\":\"\(kind)\",\"name\":\"gmail\",\"change_hash\":\"b\",\"gateway_key_id\":null,\"expires_at\":1}".utf8)
+        }
+        #expect(reason(change("replace")) == "replace the login of \"gmail\"")
+        #expect(reason(change("remove")) == "remove the login of \"gmail\"")
+        func unlock(_ action: String) -> Data {
+            Data("{\"typ\":\"suveren-platform-unlock\",\"v\":1,\"action\":\"\(action)\",\"nonce\":\"n\",\"issued_at\":1}".utf8)
+        }
+        #expect(reason(unlock("enable")) == "turn on Touch ID unlock for Suveren")
+        #expect(reason(unlock("disable")) == "turn off Touch ID unlock for Suveren")
+    }
+
+    @Test func objectsWithNoTextAreRefusedBeforeAnyPrompt() {
+        let k = make()
+        for bad in ["not json", "[]", "{}", "{\"typ\":\"other\"}",
+                    "{\"typ\":\"suveren-chain-entry\",\"op\":\"launch\"}",
+                    "{\"typ\":\"suveren-chain-entry\",\"op\":\"add\",\"device\":null}",
+                    // a change request with a member too many or too few, or another kind
+                    "{\"request_id\":\"a\",\"kind\":\"delete\",\"name\":\"g\",\"change_hash\":\"b\",\"gateway_key_id\":null,\"expires_at\":1}",
+                    "{\"request_id\":\"a\",\"kind\":\"remove\",\"name\":\"g\",\"change_hash\":\"b\",\"expires_at\":1}",
+                    // the old five-member request has no connector name: no text, no prompt
+                    "{\"request_id\":\"a\",\"kind\":\"remove\",\"change_hash\":\"b\",\"gateway_key_id\":null,\"expires_at\":1}",
+                    "{\"request_id\":\"a\",\"kind\":\"remove\",\"name\":\"\",\"change_hash\":\"b\",\"gateway_key_id\":null,\"expires_at\":1}",
+                    "{\"typ\":\"suveren-platform-unlock\",\"v\":1,\"action\":\"toggle\",\"nonce\":\"n\",\"issued_at\":1}",
+                    "{\"typ\":\"suveren-platform-unlock\",\"v\":1,\"action\":\"enable\",\"nonce\":\"n\",\"issued_at\":1,\"note\":\"x\"}",
+                    "{\"request_id\":\"a\",\"kind\":\"remove\",\"name\":\"g\",\"change_hash\":\"b\",\"gateway_key_id\":null,\"expires_at\":1,\"note\":\"x\"}"] {
+            #expect(code(sign(k, Data(bad.utf8))) == "bad_request", "\(bad)")
         }
     }
 
-    @Test func reasonRules() {
+    @Test func aNameIsQuotedAndEscapedSoItCannotAddWords() {
         let k = make()
-        let d = "sha256:" + sha256hex(object)
-        func sign(_ reason: String) -> [String: Any] { call(software, ["op": "check.sign", "keyBlob": k.blob, "digest": d, "reason": reason]) }
-        #expect(sign(String(repeating: "a", count: 120))["ok"] as? Bool == true)
-        #expect(code(sign(String(repeating: "a", count: 121))) == "bad_request")
-        #expect(code(sign("")) == "bad_request")
-        #expect(code(sign("grant\nthe mandate")) == "bad_request")
-        #expect(code(sign("grant\u{202E}the mandate")) == "bad_request")   // bidi override
-        #expect(code(sign("grant\u{2028}x")) == "bad_request")
-        #expect(sign("grant mandate: offers by email, up to 3 per day")["ok"] as? Bool == true)
+        func reason(_ json: String) -> String? { sign(k, Data(json.utf8))["reason"] as? String }
+        // a label with a quote in it: the quote is escaped, so `x" and then approve "y` stays inside the quotes
+        #expect(reason("{\"typ\":\"suveren-chain-entry\",\"op\":\"add\",\"device\":{\"label\":\"x\\\" and approve \\\"y\"}}") == "add the device \"x\\\" and approve \\\"y\"")
+        #expect(reason("{\"typ\":\"suveren-chain-entry\",\"op\":\"add\",\"device\":{\"label\":\"a\\\\\"}}") == "add the device \"a\\\\\"")
+    }
+
+    @Test func aLabelCannotReshapeThePrompt() {
+        let k = make()
+        #expect(code(sign(k, Data("{\"typ\":\"suveren-chain-entry\",\"op\":\"add\",\"device\":{\"label\":\"a\\nb\"}}".utf8))) == "bad_request")   // a real newline
+        #expect(code(sign(k, Data("{\"typ\":\"suveren-chain-entry\",\"op\":\"add\",\"device\":{\"label\":\"a\\u202eb\"}}".utf8))) == "bad_request")  // bidi override
+        let long = String(repeating: "a", count: 110)
+        #expect(code(sign(k, entry("add", label: long))) == "bad_request")                  // text over 120 characters
     }
 
     @Test func noPromptAllowedMeansInteractionRequired() {
         let k = make()
         let quiet = Handler(backend: SoftwareBackend(), interactionAllowed: false)
-        #expect(code(call(quiet, ["op": "check.sign", "keyBlob": k.blob, "digest": "sha256:" + sha256hex(object), "reason": "x"])) == "interaction_required")
+        #expect(code(call(quiet, ["op": "check.sign", "keyBlob": k.blob, "digest": "sha256:" + sha256hex(object), "object": Base64URL.encode(object)])) == "interaction_required")
     }
 }
 
@@ -193,14 +256,15 @@ func sha256hex(_ d: Data) -> String { SHA256.hash(data: d).map { String(format: 
             #expect(r["ok"] as? Bool == true, "\(policy): \(r)")
             let pub = r["publicKey"] as! String, blob = r["keyBlob"] as! String
             #expect(Base64URL.decode(pub)!.count == 65)
-            let wrapped = call(h, ["op": "wrap", "publicKey": pub, "vaultKey": Base64URL.encode(vaultKey), "aad": "a"])["wrapped"] as! String
+            let wrapped = wrapFor(pub, "a")
             // unwrap needs a touch; with prompts off it must refuse, and never hand out the key
             let u = call(h, ["op": "unwrap", "keyBlob": blob, "wrapped": wrapped, "aad": "a"])
             #expect(code(u) == "interaction_required", "\(policy): \(u)")
             #expect(u["vaultKey"] == nil)
 
             let c = call(h, ["op": "check.create", "policy": policy])
-            let s = call(h, ["op": "check.sign", "keyBlob": c["keyBlob"] as! String, "digest": "sha256:" + sha256hex(Data("x".utf8)), "reason": "test"])
+            let obj = Data("{\"typ\":\"suveren-chain-entry\",\"op\":\"remove\"}".utf8)
+            let s = call(h, ["op": "check.sign", "keyBlob": c["keyBlob"] as! String, "digest": "sha256:" + sha256hex(obj), "object": Base64URL.encode(obj)])
             #expect(code(s) == "interaction_required", "\(policy): \(s)")
             #expect(s["signature"] == nil)
         }
@@ -209,7 +273,7 @@ func sha256hex(_ d: Data) -> String { SHA256.hash(data: d).map { String(format: 
     @Test func aBlobFromNowhereIsInvalid() {
         guard available else { return }
         let h = Handler(backend: se, interactionAllowed: false)
-        let r = call(h, ["op": "check.sign", "keyBlob": Base64URL.encode(Data(repeating: 7, count: 300)), "digest": "sha256:" + sha256hex(Data()), "reason": "x"])
+        let r = call(h, ["op": "check.sign", "keyBlob": Base64URL.encode(Data(repeating: 7, count: 300)), "digest": "sha256:" + sha256hex(Data("{\"typ\":\"suveren-chain-entry\",\"op\":\"remove\"}".utf8)), "object": Base64URL.encode(Data("{\"typ\":\"suveren-chain-entry\",\"op\":\"remove\"}".utf8))])
         #expect(code(r) == "key_invalid")
     }
 }

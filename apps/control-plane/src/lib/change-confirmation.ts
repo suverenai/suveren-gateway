@@ -4,7 +4,7 @@
  * needs none.
  *
  * The gateway builds a change request
- *   { request_id, kind, change_hash, gateway_key_id, expires_at }
+ *   { request_id, kind, name, change_hash, gateway_key_id, expires_at }
  * where request_id is 16 random bytes, change_hash the SHA-256 of the JCS of
  * the exact change, and expires_at 300 seconds ahead. The person confirms THAT
  * request (password path: only on a computer with no check key). The change
@@ -40,19 +40,33 @@ export function changeHash(kind: ChangeKind, name: string, change: unknown): str
 export interface ChangeRequest {
   request_id: string;
   kind: ChangeKind;
+  /**
+   * The connector login the change is for. Inside the signed object so the check key's prompt can say which
+   * login ("replace the login of "gmail""), and bound again in `change_hash`. Added to plan section 7's five
+   * members for that reason.
+   */
+  name: string;
   change_hash: string;
   gateway_key_id: string | null;
   expires_at: number; // ms, this gateway's clock
 }
 
-interface Pending extends ChangeRequest { sessionId: string; confirmed: boolean }
+interface Pending extends ChangeRequest { sessionId: string; confirmed: boolean; via: 'password' | 'check' | null }
 
 export class ChangeConfirmations {
   private pending = new Map<string, Pending>();
   private readonly now: () => number;
+  private readonly checkRequired: () => boolean;
 
-  constructor(opts: { now?: () => number } = {}) {
+  /**
+   * `checkRequired`: does this computer have a check key (lib/platform-checks.ts)? Asked when a
+   * confirmation is USED, not only when it is given: a password confirmation made before a check
+   * key came to exist never carries a change out afterwards (DEC-47: the password stands in only
+   * where there is no check key).
+   */
+  constructor(opts: { now?: () => number; checkRequired?: () => boolean } = {}) {
     this.now = opts.now ?? Date.now;
+    this.checkRequired = opts.checkRequired ?? (() => false);
   }
 
   /** The gateway builds the request for one exact change, for one page session. */
@@ -62,22 +76,33 @@ export class ChangeConfirmations {
     const req: Pending = {
       request_id: randomBytes(16).toString('base64url'),
       kind,
+      name,
       change_hash: changeHash(kind, name, change),
       gateway_key_id: null, // the gateway signs requests once it has a key (plan 20.4)
       expires_at: t + CONFIRMATION_TTL_MS,
       sessionId,
       confirmed: false,
+      via: null,
     };
     this.pending.set(req.request_id, req);
-    const { sessionId: _s, confirmed: _c, ...pub } = req;
+    const { sessionId: _s, confirmed: _c, via: _v, ...pub } = req;
     return pub;
   }
 
-  /** The person confirmed this request (after the password, in the route). False if unknown, expired or not theirs. */
-  confirm(sessionId: string, requestId: string): boolean {
+  /** The request as it was built, for the session that asked, while it is open. What the check key signs. */
+  openRequest(sessionId: string, requestId: string): ChangeRequest | null {
+    const p = this.pending.get(requestId);
+    if (!p || p.sessionId !== sessionId || p.confirmed || this.now() >= p.expires_at) return null;
+    const { sessionId: _s, confirmed: _c, via: _v, ...pub } = p;
+    return pub;
+  }
+
+  /** The person confirmed this request (after the password, or after the check key, in the route). False if unknown, expired or not theirs. */
+  confirm(sessionId: string, requestId: string, via: 'password' | 'check' = 'password'): boolean {
     const p = this.pending.get(requestId);
     if (!p || p.sessionId !== sessionId || this.now() >= p.expires_at) return false;
     p.confirmed = true;
+    p.via = via;
     return true;
   }
 
@@ -91,7 +116,8 @@ export class ChangeConfirmations {
     if (!p) return false;
     this.pending.delete(requestId);
     return Boolean(sessionId) && p.confirmed && p.sessionId === sessionId && p.kind === kind
-      && p.change_hash === changeHash(kind, name, change) && this.now() < p.expires_at;
+      && p.change_hash === changeHash(kind, name, change) && this.now() < p.expires_at
+      && (p.via === 'check' || !this.checkRequired());
   }
 
   clear(): void {

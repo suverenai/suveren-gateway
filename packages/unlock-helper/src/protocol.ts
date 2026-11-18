@@ -49,15 +49,8 @@ export interface SignResult {
   /** ASN.1 DER ECDSA signature, the `signature` of hap-core's platform check proof. */
   signature: string;
   publicKey: string;
+  /** The text the system prompt showed, built by the helper from the object. */
+  reason: string;
 }
 
-export const MAX_REASON_CHARS = 120;
 export const DIGEST_RE = /^sha256:[0-9a-f]{64}$/;
-
-/** Same rule as the helper: 1..120 characters, NFC, no control / format / line / paragraph separators. */
-export function isValidReason(s: string): boolean {
-  const n = Array.from(s).length;
-  if (n < 1 || n > MAX_REASON_CHARS) return false;
-  if (s.normalize('NFC') !== s) return false;
-  return !/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(s);
-}
