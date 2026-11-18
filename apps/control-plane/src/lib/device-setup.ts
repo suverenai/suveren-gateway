@@ -40,7 +40,7 @@ export const DEFAULT_DEVICE_LABEL = 'This computer';
 /** How long a started Connect waits. Proposed number. */
 export const CONNECT_TTL_MS = 10 * 60_000;
 
-/** A refusal with a neutral code. The page's wording for each code is Andreas's (O19). */
+/** A refusal with a neutral code. The page's wording for each code is the maintainer's (O19). */
 export class SetupRefusal extends Error {
   constructor(readonly status: number, readonly code: string, readonly extra: Record<string, unknown> = {}) {
     super(code);
