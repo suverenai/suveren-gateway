@@ -2,13 +2,13 @@ import { useState, useCallback, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useSSEEvent } from '../contexts/EventSourceContext';
 import { spClient, type DenialRecord, type DenialReason } from '../lib/sp-client';
-import { useVisiblePolling } from '../hooks/useVisiblePolling';
-import { useAreaCatalog } from '../lib/area-catalog';
-import { resolveAreaName } from '../lib/area';
+import { useVisiblePolling } from '@suveren/approval-card/hooks/useVisiblePolling';
+import { useAreaCatalog } from '@suveren/approval-card/lib/area-catalog';
+import { resolveAreaName } from '@suveren/approval-card/lib/area';
 import { blockedView, formatBlockedWhen, plainTitle, reasonLead } from '../lib/blocked-view';
 import { ObTypeLine } from './ObjectCard';
-import { connectorName, useLabelManifests } from '../lib/display-names';
-import type { SourceManifestLike } from '../lib/attachment-sources';
+import { connectorName, useLabelManifests } from '@suveren/approval-card/lib/display-names';
+import type { SourceManifestLike } from '@suveren/approval-card/lib/attachment-sources';
 
 /**
  * Recent blocks — read denials the Gatekeeper made, so the owner can tell a

@@ -6,7 +6,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import type { IntegrationManifest } from './sp-client';
-import type { ToolDisplay } from './approval-view';
+import type { ToolDisplay } from '@suveren/approval-card/lib/approval-view';
 import { ticketHeadline, sentView, unsealedExtras, sentRows, inTicket, resultBody } from './ticket-what-was-done';
 
 const manifests = [

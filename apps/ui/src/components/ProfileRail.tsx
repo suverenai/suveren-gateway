@@ -1,6 +1,6 @@
 import { ProfileIcon } from './ProfileIcon';
-import { profileIdentity } from '../lib/profile-identity';
-import { useAreaName } from '../lib/area-catalog';
+import { profileIdentity } from '@suveren/approval-card/lib/profile-identity';
+import { useAreaName } from '@suveren/approval-card/lib/area-catalog';
 
 interface Props {
   profileId: string;

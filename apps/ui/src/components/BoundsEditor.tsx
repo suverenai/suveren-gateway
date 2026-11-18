@@ -3,18 +3,18 @@ import { Link } from 'react-router-dom';
 import type { AgentProfile, AgentBoundsParams, AgentScopeParams, ProfileBoundsField, ProfileScopeField } from '@hap/core';
 import { DiscoveredScopeField } from './DiscoveredScopeField';
 import { AttachmentSourcePicker } from './AttachmentSourcePicker';
-import { isAttachmentSourceField } from '../lib/attachment-sources';
+import { isAttachmentSourceField } from '@suveren/approval-card/lib/attachment-sources';
 import { atLeastOneGroups, boundsAllowAction, atLeastOneFormHint, type UnmetGroup } from '@hap/core/scope-rules';
 import { spClient, type IntegrationManifest, type ProfileConfig, type CapKind } from '../lib/sp-client';
 import { useSimulationMode } from '../hooks/useSimulationMode';
-import { hiddenLimitKeys, type ManifestGatingLike } from '../lib/simulation-only-limits';
+import { hiddenLimitKeys, type ManifestGatingLike } from '@suveren/approval-card/lib/simulation-only-limits';
 import { minForBound, maxForBound, seedForBound, numericBoundValue } from '../lib/bound-defaults';
-import { formatUnit } from '../lib/bound-format';
+import { formatUnit } from '@suveren/approval-card/lib/bound-format';
 import { effectiveCapKind, enumExceedsCap, isCapped, type CapFieldShape } from '../lib/team-caps';
-import { useProfileValuedOptions, type Workspace } from '../lib/profile-valued-options';
+import { useProfileValuedOptions, type Workspace } from '@suveren/approval-card/lib/profile-valued-options';
 import { useAuth } from '../contexts/AuthContext';
-import { useMandateReceipts, usedTodayForBound } from '../lib/mandate-card-usage';
-import { cumulativeBound, sharedLimitHelper, sharedLimitLabel, limitWordsForProfile, type LimitWords } from '../lib/limit-words';
+import { useMandateReceipts, usedTodayForBound } from '@suveren/approval-card/lib/mandate-card-usage';
+import { cumulativeBound, sharedLimitHelper, sharedLimitLabel, limitWordsForProfile, type LimitWords } from '@suveren/approval-card/lib/limit-words';
 
 interface Props {
   profile: AgentProfile;

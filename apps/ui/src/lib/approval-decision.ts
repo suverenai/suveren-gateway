@@ -6,9 +6,9 @@
  */
 import { spClient, type Proposal } from './sp-client';
 import { resolveDomainFor } from './my-queue';
-import { rejectOutcomeArgs } from './reject-outcome';
-import { contentHashForDecision, noteRecipients } from './use-proposal-content';
-import { ticketIdOf, type DecisionKind, type DecisionResult } from './approval-flow';
+import { rejectOutcomeArgs } from '@suveren/approval-card/lib/reject-outcome';
+import { contentHashForDecision, noteRecipients } from '@suveren/approval-card/lib/use-proposal-content';
+import { ticketIdOf, type DecisionKind, type DecisionResult } from '@suveren/approval-card/lib/approval-flow';
 
 interface Args {
   kind: DecisionKind;

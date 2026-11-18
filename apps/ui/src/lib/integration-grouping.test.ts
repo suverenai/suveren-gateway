@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { groupIntegrationsForDisplay, connectorAreas, sortConnectors, splitByUse } from './integration-grouping';
 import type { IntegrationEntry } from '../contexts/IntegrationStatusContext';
-import type { AreaCatalogEntry } from './area';
+import type { AreaCatalogEntry } from '@suveren/approval-card/lib/area';
 
 function entry(o: {
   name: string;

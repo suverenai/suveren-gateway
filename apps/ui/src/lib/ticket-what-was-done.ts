@@ -21,9 +21,9 @@
  * every value is the ticket's own, or this device's evidence of it, labelled
  * from the connector manifest (approval view), never from the AI.
  */
-import { compactValue } from './preview-render';
-import { argRows, humanizeKey, type ArgRow, type ExecutionMappingValue, type ToolDisplay } from './approval-view';
-import { sealedSummary } from './approval-summary';
+import { compactValue } from '@suveren/approval-card/lib/preview-render';
+import { argRows, humanizeKey, type ArgRow, type ExecutionMappingValue, type ToolDisplay } from '@suveren/approval-card/lib/approval-view';
+import { sealedSummary } from '@suveren/approval-card/lib/approval-summary';
 import type { IntegrationManifest, SentArgsCheck, TicketResult } from './sp-client';
 
 // ─── Headline (§13.4) ────────────────────────────────────────────────────────

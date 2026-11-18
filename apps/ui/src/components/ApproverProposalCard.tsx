@@ -10,13 +10,13 @@
  *  2. the mandate's intent is fetched, decrypted and stored locally as an
  *     accountability record (best-effort)
  */
-import type { ProposalLink } from '../lib/proposal-links';
+import type { ProposalLink } from '@suveren/approval-card/lib/proposal-links';
 import type { IntegrationManifest, Proposal } from '../lib/sp-client';
-import type { ToolDisplay } from '../lib/approval-view';
-import { ApprovalCard } from './ApprovalCard';
+import type { ToolDisplay } from '@suveren/approval-card/lib/approval-view';
+import { ApprovalCard } from '@suveren/approval-card/components/ApprovalCard';
 import { decideAsApprover } from '../lib/approval-decision';
-import type { DecisionKind, DecisionResult } from '../lib/approval-flow';
-import type { ApprovalOutcome } from '../lib/approval-outcome';
+import type { DecisionKind, DecisionResult } from '@suveren/approval-card/lib/approval-flow';
+import type { ApprovalOutcome } from '@suveren/approval-card/lib/approval-outcome';
 import { useApprovalTeamInfo } from '../lib/approval-team-info';
 import { isProposer as isProposerOf, visibleApprovers } from '../lib/proposal-proposer';
 

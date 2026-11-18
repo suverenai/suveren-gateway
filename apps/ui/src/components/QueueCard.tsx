@@ -8,8 +8,8 @@ import { ReviewApprovalCard } from './ActionCard';
 import { ApproverProposalCard } from './ApproverProposalCard';
 import { useApprovalQueue } from '../contexts/ApprovalQueueContext';
 import type { QueueEntry } from '../lib/approval-queue';
-import type { DecisionKind, DecisionResult } from '../lib/approval-flow';
-import type { ApprovalOutcome } from '../lib/approval-outcome';
+import type { DecisionKind, DecisionResult } from '@suveren/approval-card/lib/approval-flow';
+import type { ApprovalOutcome } from '@suveren/approval-card/lib/approval-outcome';
 
 interface Props {
   entry: QueueEntry;

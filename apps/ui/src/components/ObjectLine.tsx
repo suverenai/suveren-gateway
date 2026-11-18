@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
-import { AreaIcon } from './AreaIcon';
-import { areaIcon, showMandateLine } from '../lib/area';
+import { AreaIcon } from '@suveren/approval-card/components/AreaIcon';
+import { areaIcon, showMandateLine } from '@suveren/approval-card/lib/area';
 
 interface Props {
   profileId: string;

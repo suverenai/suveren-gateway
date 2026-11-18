@@ -31,3 +31,14 @@ process.env.SUVEREN_POLICY_REGISTRY = 'off';
 import { tmpdir as __tmpdir } from 'node:os';
 import { join as __join } from 'node:path';
 process.env.SUVEREN_INSTALL_SETTINGS_FILE ??= __join(__tmpdir(), `suveren-test-install-settings-${process.pid}.json`);
+
+/**
+ * Tests must never reach a running gateway. MCP_BASE (lib/mcp-bridge.ts) defaults to
+ * 127.0.0.1:3430 — on a developer's Mac the LIVE gateway — and some tests call the bridge
+ * without a stub. Port 9 (discard) refuses at once. A test that needs a bridge sets its own URL.
+ */
+process.env.SUVEREN_MCP_INTERNAL_URL ??= 'http://127.0.0.1:9';
+
+/** Same for the data folder: the stores here fall back to ~/.suveren, the live gateway's data. */
+import { mkdtempSync as __mkdtemp } from 'node:fs';
+process.env.SUVEREN_DATA_DIR ??= __mkdtemp(__join(__tmpdir(), 'suveren-test-data-'));

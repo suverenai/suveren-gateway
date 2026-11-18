@@ -19,13 +19,13 @@
  */
 import { Fragment, useCallback, useEffect, useState } from 'react';
 import { spClient, type ExecutionReceipt, type IntegrationManifest, type LocalReceiptEntry } from '../lib/sp-client';
-import { computeContentHashBrowser } from '../lib/content-hash';
+import { computeContentHashBrowser } from '@suveren/approval-card/lib/content-hash';
 import { sentView, sentRows, resultBody, type SentView } from '../lib/ticket-what-was-done';
-import { splitTool, systemDisplayName, type ToolDisplay } from '../lib/approval-view';
-import { ArgValue } from './ProposalArgs';
+import { splitTool, systemDisplayName, type ToolDisplay } from '@suveren/approval-card/lib/approval-view';
+import { ArgValue } from '@suveren/approval-card/components/ProposalArgs';
 import { ObFold, ObLock } from './ObjectCard';
-import { AttachmentsSealedBox } from './AttachmentsSealedBox';
-import { extractAttachmentsSealed } from '../lib/attachment-sealed';
+import { AttachmentsSealedBox } from '@suveren/approval-card/components/AttachmentsSealedBox';
+import { extractAttachmentsSealed } from '@suveren/approval-card/lib/attachment-sealed';
 
 interface Props {
   receipt: ExecutionReceipt;
