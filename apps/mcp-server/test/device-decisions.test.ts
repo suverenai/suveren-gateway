@@ -592,6 +592,38 @@ describe('proposal facts compared with this gateway\'s own submission record', (
   });
 });
 
+describe('an approver\'s gateway: no grant cached, no connector installed', () => {
+  const owner = 'did:key:z6MkOwner';
+  const approver = 'did:key:z6MkApprover';
+  const mandate = { blob: blob({ version: '0.7', mandate_id: 'm1', commitment_mode: 'review_above_cap', issued_at: 5, mandate_owners: [{ did: owner }], above_cap_approvers: [approver] }) };
+  const q = { proposalId: 'p', authorizationId: 'a', tool: 'files__x', reportedActionType: 'send', approverDid: approver };
+  const base = { auth: async () => undefined, submission: () => undefined, manifestActionType: () => undefined, fetchAuth: async () => ({ attestations: [mandate] }) };
+
+  it('reads the mandate for this one proposal from the AS and takes the action type the proposal stores', async () => {
+    const fetched: string[] = [];
+    const out = await resolveProposalFacts({ ...base, fetchAuth: async id => { fetched.push(id); return { attestations: [mandate] }; } }, q);
+    expect(out).toEqual({ ok: true, mandateId: 'm1', actionType: 'send' });
+    expect(fetched).toEqual(['a']);
+  });
+
+  it('does not fetch when the grant is already held, and checks the person is the owner or a signed approver', async () => {
+    const fetched: string[] = [];
+    const held = { ...base, auth: async () => ({ attestations: [mandate] }), fetchAuth: async (id: string) => { fetched.push(id); return undefined; } };
+    expect((await resolveProposalFacts(held, q)).ok).toBe(true);
+    expect(fetched).toEqual([]);
+    expect(await resolveProposalFacts(base, { ...q, approverDid: owner }).then(r => r.ok)).toBe(true);
+    expect(await resolveProposalFacts(base, { ...q, approverDid: 'did:key:z6MkStranger' })).toEqual({ ok: false, code: 'not_a_signed_decider' });
+  });
+
+  it('refuses clearly when neither the mandate nor the action type can be had, or when two sources disagree', async () => {
+    expect(await resolveProposalFacts({ ...base, fetchAuth: async () => undefined }, q)).toEqual({ ok: false, code: 'mandate_unavailable' });
+    expect(await resolveProposalFacts({ ...base, fetchAuth: async () => { throw new Error('down'); } }, q)).toEqual({ ok: false, code: 'mandate_unavailable' });
+    expect(await resolveProposalFacts(base, { ...q, reportedActionType: undefined })).toEqual({ ok: false, code: 'action_type_unknown' });
+    expect(await resolveProposalFacts({ ...base, manifestActionType: () => 'delete' }, q)).toEqual({ ok: false, code: 'action_type_mismatch' });
+    expect(await resolveProposalFacts({ ...base, submission: () => ({ actionType: 'delete' }) }, q)).toEqual({ ok: false, code: 'action_type_mismatch' });
+  });
+});
+
 // ─── above-cap approvers ─────────────────────────────────────────────────
 
 describe('above-cap proposals: the signed approvers, as many as the mandate says', () => {
@@ -682,7 +714,7 @@ describe('resolveProposalFacts: the mandate id and the action type of a decision
   it('takes the most recently issued signed mandate and the submission record before the manifest', async () => {
     const out = await resolveProposalFacts({
       auth: async () => ({ attestations: [att({}, 'old', 10), att({}, 'new', 20)] }),
-      submission: () => ({ actionType: 'send' }), manifestActionType: () => 'delete',
+      submission: () => ({ actionType: 'send' }), manifestActionType: () => 'send',
     }, { proposalId: 'p', authorizationId: 'a', tool: 't__x' });
     expect(out).toEqual({ ok: true, mandateId: 'new', actionType: 'send' });
   });

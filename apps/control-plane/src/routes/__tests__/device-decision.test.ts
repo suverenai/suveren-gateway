@@ -29,7 +29,7 @@ async function world(opts: { facts?: () => Promise<{ mandateId: string; actionTy
   open.push(as);
   const props = new StubProposals(as);
   const decided: Array<[DecisionRoute, DecisionKind]> = [];
-  const factsAsked: Array<{ proposalId: string; authorizationId: string; tool: string }> = [];
+  const factsAsked: Array<{ proposalId: string; authorizationId: string; tool: string; reportedActionType?: string; approverDid?: string }> = [];
   const gw = await bootGateway({
     as,
     decision: {
@@ -142,6 +142,18 @@ describe('a decision on the gateway page of a gateway with a device chain', () =
     expect(JSON.stringify(r.body)).toContain('PROPOSAL_MISMATCH');
     expect(w.props.proposals.get('p1')!.status).toBe('pending');
     expect(w.decided).toEqual([]);
+  });
+});
+
+describe('the facts a decision names', () => {
+  it('asks with the action type the proposal stores and the person\'s own DID, so an approver\'s gateway needs no grant or connector of its own', async () => {
+    const w = await world();
+    w.props.add({ id: 'p1', tool: 'email__send', toolArgs: ARGS, contentHash: HASH, actionType: 'send' });
+    expect((await w.decide('p1', 'approve')).status).toBe(200);
+    expect(w.factsAsked.at(-1)).toMatchObject({ proposalId: 'p1', tool: 'email__send', reportedActionType: 'send', approverDid: w.rootDid });
+    w.props.add({ id: 'p2', tool: 'email__send', toolArgs: ARGS, contentHash: HASH });
+    await w.decide('p2', 'reject');
+    expect(w.factsAsked.at(-1)!.reportedActionType).toBeUndefined();
   });
 });
 

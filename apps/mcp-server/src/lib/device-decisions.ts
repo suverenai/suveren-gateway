@@ -361,6 +361,12 @@ export interface ProposalFactsDeps {
   auth: (authorizationId: string) => Promise<Pick<CachedAuthorization, 'attestations'> | null | undefined>;
   /** This gateway's own record of a proposal it submitted. */
   submission: (proposalId: string) => { actionType?: string; tool?: string; authorizationId?: string } | undefined;
+  /**
+   * Read-only fetch of a grant's signed mandates from the Authority Server, for ONE proposal this gateway
+   * does not hold the grant for (an approver's gateway never holds the owner's mandate). Never stored in the
+   * tool-use cache. The caller checks the answer names the grant asked for.
+   */
+  fetchAuth?: (authorizationId: string) => Promise<Pick<CachedAuthorization, 'attestations'> | null | undefined>;
   /** The action type a connector's manifest declares for a namespaced tool. */
   manifestActionType: (tool: string) => string | undefined;
 }
@@ -372,8 +378,14 @@ export interface ProposalFactsDeps {
  */
 export async function resolveProposalFacts(
   d: ProposalFactsDeps,
-  q: { proposalId: string; authorizationId: string; tool: string },
-): Promise<{ ok: true; mandateId: string; actionType: string } | { ok: false; code: 'mandate_unavailable' | 'action_type_unknown' | 'proposal_mismatch' }> {
+  q: {
+    proposalId: string; authorizationId: string; tool: string;
+    /** The action type stored with the proposal at the Authority Server (validated there against the profile). */
+    reportedActionType?: string;
+    /** The person's root DID: a decision is signed only by the owner or a signed approver of the mandate. */
+    approverDid?: string;
+  },
+): Promise<{ ok: true; mandateId: string; actionType: string } | { ok: false; code: 'mandate_unavailable' | 'action_type_unknown' | 'action_type_mismatch' | 'proposal_mismatch' | 'not_a_signed_decider' }> {
   // What the Authority Server reports about a proposal this gateway submitted must be what it submitted.
   const sub = d.submission(q.proposalId);
   if (sub && ((sub.tool !== undefined && sub.tool !== q.tool) || (sub.authorizationId !== undefined && sub.authorizationId !== q.authorizationId))) {
@@ -381,9 +393,19 @@ export async function resolveProposalFacts(
   }
   let auth;
   try { auth = await d.auth(q.authorizationId); } catch { auth = undefined; }
+  if (!auth && d.fetchAuth) { try { auth = await d.fetchAuth(q.authorizationId); } catch { auth = undefined; } }
+  // Read from the signed payload only, exactly as the executor reads it.
   const facts = signedMandateFacts(auth?.attestations);
   if (!facts) return { ok: false, code: 'mandate_unavailable' };
-  const actionType = sub?.actionType ?? d.manifestActionType(q.tool);
+  if (q.approverDid !== undefined && q.approverDid !== facts.ownerDid && !facts.deciders.includes(q.approverDid)) {
+    return { ok: false, code: 'not_a_signed_decider' };
+  }
+  // Own submission record first, then what the proposal stores, then a manifest this gateway happens to have.
+  // Any two that are present must agree; the signature binds the result and the owner's executor checks it
+  // against its own record.
+  const known = [sub?.actionType, q.reportedActionType, d.manifestActionType(q.tool)].filter((a): a is string => typeof a === 'string' && a.length > 0);
+  if (new Set(known).size > 1) return { ok: false, code: 'action_type_mismatch' };
+  const actionType = known[0];
   if (typeof actionType !== 'string' || !actionType) return { ok: false, code: 'action_type_unknown' };
   return { ok: true, mandateId: facts.mandateId, actionType };
 }

@@ -522,7 +522,7 @@ app.post('/internal/preview', internalOnly, async (req: Request, res: Response) 
  * Asked by the control plane only; never reaches an MCP client.
  */
 app.post('/internal/proposal-facts', internalOnly, async (req: Request, res: Response) => {
-  const { proposalId, authorizationId, tool } = (req.body ?? {}) as { proposalId?: unknown; authorizationId?: unknown; tool?: unknown };
+  const { proposalId, authorizationId, tool, reportedActionType, approverDid } = (req.body ?? {}) as { proposalId?: unknown; authorizationId?: unknown; tool?: unknown; reportedActionType?: unknown; approverDid?: unknown };
   if (typeof proposalId !== 'string' || !proposalId || typeof authorizationId !== 'string' || !authorizationId || typeof tool !== 'string' || !tool) {
     res.status(400).json({ error: 'Missing proposalId, authorizationId, or tool' });
     return;
@@ -530,12 +530,21 @@ app.post('/internal/proposal-facts', internalOnly, async (req: Request, res: Res
   const out = await resolveProposalFacts({
     // read-only: a grant this gateway does not hold is not fetched into its cache on a request from outside
     auth: async (id) => state.cache.getAllAuthorizations().find(a => a.authorizationId === id),
+    // An approver's gateway never holds the owner's grant: its mandates are read for this one proposal, not cached.
+    fetchAuth: async (id) => {
+      const r = await state.spClient.getAttestations(id);
+      return r.authorization_id === id ? { attestations: r.attestations.map(a => ({ blob: a.blob, domain: a.domain, expiresAt: a.expires_at })) } : undefined;
+    },
     submission: (id) => state.proposalSubmissions.get(id),
     manifestActionType: (t) => {
       const a = integrationManager.getAllTools().find(x => x.namespacedName === t)?.gating?.staticExecution?.action_type;
       return typeof a === 'string' ? a : undefined;
     },
-  }, { proposalId, authorizationId, tool });
+  }, {
+    proposalId, authorizationId, tool,
+    ...(typeof reportedActionType === 'string' && reportedActionType ? { reportedActionType } : {}),
+    ...(typeof approverDid === 'string' && approverDid ? { approverDid } : {}),
+  });
   if (!out.ok) {
     res.status(409).json({ error: out.code });
     return;

@@ -190,7 +190,7 @@ export async function runCommittedProposals(): Promise<void> {
  * MCP server (its verified mandate, its manifests, its own submission record), never of
  * the page. Throws when it cannot say.
  */
-export async function getProposalFacts(p: { proposalId: string; authorizationId: string; tool: string }): Promise<{ mandateId: string; actionType: string }> {
+export async function getProposalFacts(p: { proposalId: string; authorizationId: string; tool: string; reportedActionType?: string; approverDid?: string }): Promise<{ mandateId: string; actionType: string }> {
   const res = await fetch(`${MCP_BASE}/internal/proposal-facts`, {
     method: 'POST',
     headers: internalHeaders(),

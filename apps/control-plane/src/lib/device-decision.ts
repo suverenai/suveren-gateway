@@ -59,7 +59,7 @@ export interface DeviceDecisionDeps {
   store: DeviceChainStore;
   client: DeviceAsClient;
   /** Ask the MCP server (its signed mandate, its manifests). Throws when it cannot say. */
-  facts: (p: { proposalId: string; authorizationId: string; tool: string }) => Promise<ProposalFacts>;
+  facts: (p: { proposalId: string; authorizationId: string; tool: string; reportedActionType?: string; approverDid?: string }) => Promise<ProposalFacts>;
   /** Told after the Authority Server accepted a decision (events, the executor nudge). */
   onDecided?: (route: DecisionRoute, kind: DecisionKind) => void;
   /** Epoch seconds. */
@@ -75,6 +75,8 @@ interface ProposalRead {
   tool: string;
   status: string;
   contentHash: string;
+  actionType?: unknown;
+  action_type?: unknown;
   toolArgs?: Record<string, unknown> | null;
   content?: ProposalContentWire | null;
 }
@@ -135,7 +137,12 @@ export class DeviceDecisions {
     // 3. what only this gateway can say about the proposal
     let facts: ProposalFacts;
     try {
-      facts = await d.facts({ proposalId: proposal.id, authorizationId: proposal.authorizationId, tool: proposal.tool });
+      facts = await d.facts({
+        proposalId: proposal.id, authorizationId: proposal.authorizationId, tool: proposal.tool,
+        // what the AS stored with the proposal (validated there against the profile) and who is signing
+        ...(str(proposal.actionType) ? { reportedActionType: proposal.actionType } : str(proposal.action_type) ? { reportedActionType: proposal.action_type } : {}),
+        approverDid: stored.rootDid,
+      });
     } catch {
       throw new DecisionRefusal(502, 'facts_unavailable');
     }

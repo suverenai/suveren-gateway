@@ -22,6 +22,8 @@ export interface StubProposal {
   authorizationId: string;
   profileId: string;
   tool: string;
+  /** What the AS stored with the proposal (validated against the profile there). */
+  actionType?: string;
   toolArgs: Record<string, unknown> | null;
   content: Record<string, unknown> | null;
   contentHash: string;

@@ -62,7 +62,7 @@ export interface DeviceSetupOptions {
    * action type); `onDecided` is told after the Authority Server accepted one (events, the executor nudge).
    */
   decision?: {
-    facts: (p: { proposalId: string; authorizationId: string; tool: string }) => Promise<ProposalFacts>;
+    facts: (p: { proposalId: string; authorizationId: string; tool: string; reportedActionType?: string; approverDid?: string }) => Promise<ProposalFacts>;
     onDecided?: (route: DecisionRoute, kind: DecisionKind) => void;
   };
 }
