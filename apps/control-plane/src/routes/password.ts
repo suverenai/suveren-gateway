@@ -9,7 +9,7 @@
  *   POST /auth/confirm           the person confirms that request (password path)
  *
  * Errors carry a neutral `code` and a short placeholder `message`; the words
- * the person reads are Andreas's (O19).
+ * the person reads are the maintainer's (O19).
  */
 
 import { Router, type Request, type Response, type NextFunction } from 'express';
@@ -22,7 +22,7 @@ import { pageSessionVerdict, type PageSessionDeps } from '../middleware/auth';
 export const MIN_PASSWORD_LENGTH = 10;
 export const MAX_PASSWORD_LENGTH = 256;
 
-/** Placeholder messages, by code. Wording is Andreas's (O19). */
+/** Placeholder messages, by code. Wording is the maintainer's (O19). */
 export const PASSWORD_MESSAGES: Record<string, string> = {
   origin_refused: 'Request refused.',
   not_local: 'A password needs the gateway to listen on this computer only.',
