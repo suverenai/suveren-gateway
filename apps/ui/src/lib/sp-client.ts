@@ -8,6 +8,7 @@
 
 import { readRefusal } from '@hap/core/refusal';
 import { isRetriableRead, unreachableRetry } from './unreachable-retry';
+import { T, textForCode, isDecisionCode } from './device-texts';
 import { queueDomains, mergeProposals } from './my-queue';
 import type { AttachmentPreviewResult } from '@suveren/approval-card/lib/attachment-sealed';
 import type { ProfileSummary, PreviewBody, PreviewVersionInfo, PreviewReadOutcome, ToolDisplayHints, CheckStatus, CheckResult, PreviewReadSection, PreviewResponse, OutcomeResponse, RequestChainItem, RequestResult, HistoryItem, ConnectorHistoryMatch, HistoryResult, RequestContextResponse, ShownSnapshotPayload, ShownHashEntry, ShownHashes, AuthTemplate, ModeOptionDecl, SignInGroup, IntegrationManifest, GateContentEntry, EnrichedAuthorizationEntry, ProposalOutcome, ProposalContentWire, NoteEncryptedWire, Proposal, CumulativeUsageEntry, ExecutionReceipt, ReceiptPage, CapKind, ProfileConfig } from '@suveren/approval-card/types';
@@ -432,6 +433,20 @@ export const SESSION_GONE_EVENT = 'suveren:session-gone';
 /** Where the client announces a lost session; the auth context listens. */
 export const sessionEvents = new EventTarget();
 
+/** What a 401 of a password gateway says about the page session (control plane: lib/page-session.ts). */
+export const SESSION_CODES: ReadonlySet<string> = new Set(['session_missing', 'session_invalid', 'session_idle', 'session_expired', 'locked']);
+
+/** Detail of {@link SESSION_GONE_EVENT} on a gateway with a page session: why the session ended. */
+export interface SessionGoneDetail { code: string }
+
+/** Asked when a change to a stored connector login needs the person's confirmation; resolves the confirmed request id, or null when the person cancelled. */
+export type ChangeConfirmer = (ask: { kind: 'replace' | 'remove'; name: string; change: unknown }) => Promise<string | null>;
+
+/** The person cancelled a confirmation: nothing was sent. */
+export class ConfirmationCancelled extends Error {
+  constructor() { super('confirmation_cancelled'); this.name = 'ConfirmationCancelled'; }
+}
+
 /** Requests whose 401 means "wrong credentials", not "session gone". */
 export function isAuthPath(path: string): boolean {
   return /^\/(api\/)?auth\//.test(path);
@@ -545,6 +560,12 @@ export function deviceDecisionsFromHealth(health: unknown): boolean {
 class SPClient {
   private apiKey: string | null = null;
   /**
+   * The page session's header token (device-keys plan 7). Kept in memory only, sent as `X-Suveren-Session` on every
+   * request. Null on a gateway without an unlock password: every request is then exactly what it was before.
+   */
+  private sessionToken: string | null = null;
+  private confirmer: ChangeConfirmer | null = null;
+  /**
    * Device keys (plan 6.3, step 12): on a gateway with a device chain a decision is signed with this
    * computer's key by the control plane (`/device-decision/:id/:route`), which then forwards it to the
    * Authority Server. Off (the default) every decision goes the legacy way, byte for byte as before.
@@ -572,6 +593,20 @@ class SPClient {
     return this.deviceDecisions;
   }
 
+  /**
+   * The words for a refused decision. On the device path the control plane's neutral code gets its text
+   * (lib/device-texts.ts); anything else, and every gateway without device keys, reads as it always did.
+   */
+  private decisionError(body: unknown, fallback: string): string {
+    const code = (body as { code?: unknown } | null)?.code;
+    if (this.deviceDecisions) {
+      // On the device path only the gateway's own codes have words; anything else (a refusal of the Authority Server
+      // passed through, an unknown code) reads as the generic text, never as the server's message.
+      return typeof code === 'string' && isDecisionCode(code) ? textForCode(code, { screen: 'general' }) : T.generic;
+    }
+    return asErrorMessage(body, fallback);
+  }
+
   /** Where a decision on `id` goes: the same four route names, locally signed on a gateway with a device chain. */
   private decisionPath(id: string, route: 'approve' | 'reject' | 'resolve' | 'withdraw'): string {
     return `${this.deviceDecisions ? '/device-decision' : '/api/proposals'}/${encodeURIComponent(id)}/${route}`;
@@ -579,6 +614,95 @@ class SPClient {
 
   setApiKey(key: string): void {
     this.apiKey = key;
+  }
+
+  setSessionToken(token: string | null): void {
+    this.sessionToken = token;
+    if (!token) unreachableRetry.cancelAll();
+  }
+
+  hasPageSession(): boolean {
+    return this.sessionToken !== null;
+  }
+
+  /** The screen that asks the person to confirm a change to a stored login (screen 5). */
+  setConfirmer(fn: ChangeConfirmer | null): void {
+    this.confirmer = fn;
+  }
+
+  /** Any call of the control plane with the page's credentials (device screens use this; nothing is retried). */
+  async request(path: string, init?: RequestInit): Promise<Response> {
+    return this.fetch(path, init ?? {});
+  }
+
+  /**
+   * Is the page session still accepted? One cheap call; a 401 announces why (SESSION_GONE_EVENT). Used when the event
+   * stream ended, which is how a session's end shows.
+   */
+  async sessionStillOpen(): Promise<boolean> {
+    try {
+      const res = await this.fetch('/auth/device/status', {});
+      // 404: no device routes (the unlock password alone): the stream ended for another reason.
+      return res.status !== 401;
+    } catch { return true; }
+  }
+
+  /** The event stream, read with fetch because EventSource cannot send the session header. */
+  async openEventStream(signal: AbortSignal): Promise<Response> {
+    return this.fetch('/events', { signal, headers: { Accept: 'text/event-stream' } });
+  }
+
+  /**
+   * Send a change to a stored login. When the gateway asks for the person's confirmation of exactly this change
+   * (403 `confirmation_required`), the confirmer is asked and the same call is sent again with the confirmed request.
+   * `change` is what the control plane hashes for this route (routes/vault.ts, routes/oauth-flow.ts).
+   */
+  private async sendConfirmed(path: string, init: RequestInit, change: unknown): Promise<Response> {
+    const res = await this.fetch(path, init);
+    if (res.status !== 403 || !this.sessionToken) return res;
+    const body = await res.clone().json().catch(() => null) as { code?: string; kind?: string; name?: string } | null;
+    if (body?.code !== 'confirmation_required' || (body.kind !== 'replace' && body.kind !== 'remove') || !body.name) return res;
+    if (!this.confirmer) return res;
+    const id = await this.confirmer({ kind: body.kind, name: body.name, change });
+    if (!id) throw new ConfirmationCancelled();
+    return this.fetch(path, { ...init, headers: { ...init.headers, 'X-Suveren-Confirmation': id } });
+  }
+
+  /**
+   * Where the page opens an OAuth sign-in. Without a page session: the plain start address, as before. With one: a
+   * one-time start ticket (the new window cannot send the header); over a stored sign-in it needs the person's
+   * confirmation of that exact change first.
+   */
+  async oauthStartUrl(integrationId: string): Promise<string> {
+    const plain = `/auth/oauth/${encodeURIComponent(integrationId)}/start`;
+    if (!this.sessionToken) return plain;
+    const res = await this.sendOAuthChange(integrationId, `/auth/oauth/${encodeURIComponent(integrationId)}/start-ticket`, 'sign-in');
+    if (!res.ok) {
+      const err = await res.json().catch(() => null);
+      throw new Error((err as { code?: string } | null)?.code ?? `start-ticket ${res.status}`);
+    }
+    const body = await res.json() as { url?: string };
+    if (!body.url) throw new Error('start_ticket_invalid');
+    return body.url;
+  }
+
+  /** Sign out of an OAuth connector (a removal of a login: confirmed on a password gateway). */
+  async oauthDisconnect(integrationId: string): Promise<Response> {
+    return this.sendOAuthChange(integrationId, `/auth/oauth/${encodeURIComponent(integrationId)}/disconnect`, 'disconnect');
+  }
+
+  private async sendOAuthChange(integrationId: string, path: string, op: 'sign-in' | 'disconnect'): Promise<Response> {
+    const init: RequestInit = { method: 'POST' };
+    const res = await this.fetch(path, init);
+    if (res.status !== 403 || !this.sessionToken || !this.confirmer) return res;
+    const body = await res.clone().json().catch(() => null) as { code?: string; kind?: string; name?: string } | null;
+    if (body?.code !== 'confirmation_required' || (body.kind !== 'replace' && body.kind !== 'remove') || !body.name) return res;
+    // The exact change the control plane will hash: it names it itself.
+    const ch = await this.fetch(`/auth/oauth/${encodeURIComponent(integrationId)}/change?op=${op}`);
+    const change = ch.ok ? ((await ch.json().catch(() => null)) as { change?: unknown } | null)?.change ?? null : null;
+    const id = await this.confirmer({ kind: body.kind, name: body.name, change });
+    if (!id) throw new ConfirmationCancelled();
+    return this.fetch(path, { ...init, headers: { 'X-Suveren-Confirmation': id } });
   }
 
   clearApiKey(): void {
@@ -601,6 +725,7 @@ class SPClient {
       headers: {
         'Content-Type': 'application/json',
         ...(this.apiKey ? { 'X-API-Key': this.apiKey } : {}),
+        ...(this.sessionToken ? { 'X-Suveren-Session': this.sessionToken } : {}),
         ...init?.headers,
       },
     });
@@ -611,7 +736,17 @@ class SPClient {
     // event. Without this every page shows its own wrong error (Integrations
     // said "MCP server is not reachable"). Sign-in calls are excluded: a
     // wrong key there is the login form's own error, not a lost session.
-    if (res.status === 401 && this.apiKey && !isAuthPath(path)) {
+    if (this.sessionToken) {
+      // A page session: the 401 says why it ended (idle, 12 hours, locked, closed). Sign-in calls count too, but only
+      // for the session codes: a wrong password is the unlock screen's own error.
+      if (res.status === 401) {
+        const body = await res.clone().json().catch(() => null) as { code?: string; reason?: string } | null;
+        const code = body?.reason ?? body?.code ?? 'session_missing';
+        if (SESSION_CODES.has(code)) {
+          sessionEvents.dispatchEvent(new CustomEvent<SessionGoneDetail>(SESSION_GONE_EVENT, { detail: { code } }));
+        }
+      }
+    } else if (res.status === 401 && this.apiKey && !isAuthPath(path)) {
       sessionEvents.dispatchEvent(new Event(SESSION_GONE_EVENT));
     }
     return res;
@@ -644,6 +779,23 @@ class SPClient {
     }
     const data = await res.json();
     return data.user;
+  }
+
+  /**
+   * Who is signed in, on a gateway whose page signed in by device key (no account key was typed, so `login()`
+   * never returned the person). The control plane has no route for it, so it is read from the person's own
+   * Personal workspace, which has exactly one member: the person. Null when it cannot be read.
+   */
+  async loadSessionUser(): Promise<SPUser | null> {
+    try {
+      const groups = await this.getGroups();
+      const personal = groups.find(g => g.isPersonal) ?? groups[0];
+      if (!personal) return null;
+      const detail = await this.getGroupById(personal.id);
+      const me = detail.members?.[0];
+      if (!me?.id) return null;
+      return { id: me.id, name: me.name ?? '', email: me.email ?? '', did: '' };
+    } catch { return null; }
   }
 
   async logout(): Promise<void> {
@@ -1197,10 +1349,10 @@ class SPClient {
   }
 
   async setCredential(name: string, fields: Record<string, string>): Promise<void> {
-    const res = await this.fetch(`/vault/credentials/${encodeURIComponent(name)}`, {
+    const res = await this.sendConfirmed(`/vault/credentials/${encodeURIComponent(name)}`, {
       method: 'PUT',
       body: JSON.stringify(fields),
-    });
+    }, { route: 'credentials', op: 'put-merge', fields });
     if (!res.ok) throw new Error(`Failed to save credential: ${res.status}`);
   }
 
@@ -1556,7 +1708,7 @@ class SPClient {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Failed' }));
-      throw new Error(asErrorMessage(err, `Failed: ${res.status}`));
+      throw new Error(this.decisionError(err, `Failed: ${res.status}`));
     }
     return res.json();
   }
@@ -1620,7 +1772,7 @@ class SPClient {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Failed' }));
-      throw new Error(asErrorMessage(err, `approveProposal failed: ${res.status}`));
+      throw new Error(this.decisionError(err, `approveProposal failed: ${res.status}`));
     }
     return res.json();
   }
@@ -1664,7 +1816,7 @@ class SPClient {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Failed' }));
-      throw new Error(asErrorMessage(err, `rejectProposal failed: ${res.status}`));
+      throw new Error(this.decisionError(err, `rejectProposal failed: ${res.status}`));
     }
     return res.json();
   }
@@ -1715,7 +1867,7 @@ class SPClient {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Failed' }));
-      throw new Error(asErrorMessage(err, `withdrawProposal failed: ${res.status}`));
+      throw new Error(this.decisionError(err, `withdrawProposal failed: ${res.status}`));
     }
     return res.json();
   }

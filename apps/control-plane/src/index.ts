@@ -278,6 +278,8 @@ const { loginChangeGate, deviceChainState, signin: deviceSignin } = mountDeviceK
     }),
     onTlsMismatch: lockAsTlsMismatch,
     discard: () => { vault.clearSpCookie(); return unconfigureSession(); },
+    // A request for a new root DID is open (plan 10): tell the person once, the page shows the banner.
+    notifyIdentityReset: (title, message) => notify(title, message, process.platform, `http://localhost:${port}`),
     // A decision on the gateway page is signed with this computer's device key (step 12). After the Authority
     // Server accepted it the same events and the same executor nudge follow as for a decision through the /api proxy below.
     decision: {

@@ -1,6 +1,7 @@
 import { useState, useEffect, Fragment } from 'react';
 import { Link } from 'react-router-dom';
-import { spClient, type IntegrationManifest, type McpIntegrationStatus } from '../lib/sp-client';
+import { spClient, ConfirmationCancelled, type IntegrationManifest, type McpIntegrationStatus } from '../lib/sp-client';
+import { T, DRAFT, textForCode } from '../lib/device-texts';
 import type { IntegrationState } from '../contexts/IntegrationStatusContext';
 import { isSimulated, modeLabel, modeNote } from '../lib/simulation';
 import { useSimulationMode } from '../hooks/useSimulationMode';
@@ -111,6 +112,8 @@ export function IntegrationCard({ manifest, areas, integration, state, onStatusC
   const [secretHints, setSecretHints] = useState<Record<string, { preview: string | null }>>({});
   const [credUpdatedAt, setCredUpdatedAt] = useState<string | undefined>(undefined);
   const [oauthConnected, setOauthConnected] = useState(false);
+  // A gateway with a page session: the ticket address of a confirmed OAuth sign-in, waiting for a fresh click.
+  const [oauthUrl, setOauthUrl] = useState<string | null>(null);
   const [authHealth, setAuthHealth] = useState<{ status: string; error?: string; account?: string } | null>(null);
   const [saving, setSaving] = useState(false);
   // Whether the vault lookup has answered — a card opens or stays closed only once we know what it needs.
@@ -331,15 +334,38 @@ export function IntegrationCard({ manifest, areas, integration, state, onStatusC
         onSuccess(`${manifest.name} credentials updated — restarting...`);
         await activate();
       }
-    } catch {
-      onSuccess(`Failed to update ${manifest.name} credentials`);
+    } catch (e) {
+      onSuccess(e instanceof ConfirmationCancelled ? T.confirmCancelled : `Failed to update ${manifest.name} credentials`);
     } finally {
       setSaving(false);
     }
   };
 
-  const startOAuth = () => {
+  const startOAuth = async () => {
+    if (spClient.hasPageSession()) {
+      // A gateway with an unlock password: the new window cannot send the session header, so it carries a one-time
+      // start ticket (over a stored sign-in the person confirms that change first, with Touch ID or the password).
+      // The pop-up is NOT opened before that: it opens in a fresh click on "Continue to sign in".
+      try {
+        setOauthUrl(await spClient.oauthStartUrl(manifest.id));
+      } catch (e) {
+        onSuccess(e instanceof ConfirmationCancelled ? T.confirmCancelled : textForCode(e instanceof Error ? e.message : undefined, { screen: 'general' }));
+      }
+      return;
+    }
     window.open(`/auth/oauth/${manifest.id}/start`, '_blank', 'width=600,height=700');
+    beginOAuthPolling();
+  };
+
+  const openOAuthWindow = () => {
+    const url = oauthUrl;
+    setOauthUrl(null);
+    if (!url) return;
+    window.open(url, '_blank', 'noopener,width=600,height=700');
+    beginOAuthPolling();
+  };
+
+  const beginOAuthPolling = () => {
     const poll = setInterval(async () => {
       try {
         const cred = await spClient.getCredential(manifest.id);
@@ -756,6 +782,13 @@ export function IntegrationCard({ manifest, areas, integration, state, onStatusC
             <div className="ob-btns is-inline is-tight">
               <button className="ob-btn" onClick={() => setEditingReadAge(false)}>Done</button>
             </div>
+          </div>
+        )}
+
+        {oauthUrl && (
+          <div className="ob-btns is-inline">
+            <button className="ob-btn is-solid" onClick={openOAuthWindow}>{DRAFT.oauthContinue}</button>
+            <button className="ob-btn" onClick={() => setOauthUrl(null)}>{T.connectCancel}</button>
           </div>
         )}
 

@@ -6,6 +6,7 @@ import { NotificationsToggle } from '../components/NotificationsToggle';
 import { OpenApprovalsToggle } from '../components/OpenApprovalsToggle';
 import { IdentityDisclosureToggle } from '../components/IdentityDisclosureToggle';
 import { VersionCard } from '../components/VersionCard';
+import { DeviceKeysCard } from '../components/device/DeviceKeysCard';
 import { AuthorityServerCard } from '../components/AuthorityServerCard';
 import { SimulationLockCard } from '../components/SimulationLockCard';
 import { ObTypeLine, ObFold, ObLock } from '../components/ObjectCard';
@@ -199,6 +200,7 @@ export function SettingsServicesPage() {
       <h2 className="su-sec">{SETTINGS_SECTIONS[1]}</h2>
       {/* Autostart — the CLI's `service` command as a switch */}
       <AutostartToggle />
+      <DeviceKeysCard />
       <NotificationsToggle />
       <OpenApprovalsToggle />
       <DataFolderLine />

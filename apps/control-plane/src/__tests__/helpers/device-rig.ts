@@ -138,6 +138,8 @@ export interface BootOptions {
   decision?: NonNullable<Parameters<typeof mountDeviceKeyRoutes>[1]['device']>['decision'];
   /** Make the password vault in a fresh folder. Default true; false leaves the folder as it is (a restart). */
   fresh?: boolean;
+  /** The desktop notification for a pending request for a new root DID (step 7). */
+  notifyIdentityReset?: (title: string, message: string) => void;
 }
 
 export async function bootGateway(o: BootOptions): Promise<GatewayRig> {
@@ -179,6 +181,7 @@ export async function bootGateway(o: BootOptions): Promise<GatewayRig> {
       now: () => clock.t,
       timers,
       onAlarm: c => { alarms.push(c); },
+      notifyIdentityReset: o.notifyIdentityReset,
       discard: () => { vault.clearSpCookie(); discards.count++; },
       decision: o.decision,
     },

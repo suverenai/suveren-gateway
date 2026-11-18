@@ -12,6 +12,8 @@ import { ApprovalQueueProvider } from '../contexts/ApprovalQueueContext';
 import { ApprovalPanelHost } from './ApprovalPanelHost';
 import { ConnectionNotice } from './ConnectionNotice';
 
+import { IdentityResetBanner } from './device/IdentityResetBanner';
+
 export function AppShell() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -27,6 +29,7 @@ export function AppShell() {
         <MobileMenu open={mobileMenuOpen} onClose={() => setMobileMenuOpen(false)} />
         <div className="main-content">
           <div className="page-inner">
+            <IdentityResetBanner />
             <DockBadgePrompt />
             <Outlet />
           </div>

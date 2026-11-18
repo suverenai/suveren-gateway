@@ -30,6 +30,7 @@ import { type DeviceChainStore, type ChainHeadRef, ChainHeadRefusedError } from 
 import { type DeviceAsClient, AsUnreachableError, asErrorCode } from './device-as-client';
 import { AsTlsMismatchError } from './as-tls-pin';
 import { bearerCredential } from './as-credential';
+import type { PendingIdentityReset } from './identity-reset-alarm';
 
 /** What the gateway learned about the Authority Server before it signs anything for it. */
 export type AsKeyCheck =
@@ -75,6 +76,12 @@ export interface DeviceSigninDeps {
   discard?: () => void | Promise<void>;
   /** A chain alarm (rollback, fork, device removed): the seam for session-lock reasons of step 14. */
   onAlarm?: (code: 'chain_rollback' | 'chain_fork' | 'device_removed') => void;
+  /**
+   * What the Authority Server said about a request for a new root DID at a sign-in whose chain this
+   * gateway verified: the open request, or null (plan 6.2: `pending_identity_reset` in the sign-in
+   * answer and in the chain answer). Not called for a probe, a failed sign-in or a locked gateway.
+   */
+  onPendingReset?: (p: PendingIdentityReset | null) => void;
   /** Epoch seconds. */
   now?: () => number;
   timers?: { set: (fn: () => void, ms: number) => unknown; clear: (h: unknown) => void };
@@ -280,6 +287,12 @@ export class DeviceSignin {
         await this.endQuietly(session.token);
         return { ok: false, code: 'as_answer_invalid', transient: false };
       }
+      // A request for a new root DID is said in the session answer; one that is there but unreadable is no answer at all.
+      const pendingSession = readPendingReset(ses.body);
+      if (pendingSession === 'invalid') {
+        await this.endQuietly(session.token);
+        return { ok: false, code: 'as_answer_invalid', transient: false };
+      }
 
       // 3. the chain, verified from the genesis on
       const verified = await this.verifyChainOf(dk, ref, session);
@@ -300,6 +313,10 @@ export class DeviceSignin {
 
       // 4. hand the session over
       session.head = verified.state.head;
+      if (!o.probe) {
+        // Either answer may carry it (they are two reads); one is enough to raise the alarm.
+        try { d.onPendingReset?.(pendingSession ?? verified.pending); } catch { /* an alarm that fails to show never fails a sign-in */ }
+      }
       if (o.probe) {
         // Set-up only asks "does the Authority Server hold my genesis?": the session is not kept.
         await this.endQuietly(session.token);
@@ -330,7 +347,7 @@ export class DeviceSignin {
     }
   }
 
-  private async verifyChainOf(dk: Awaited<ReturnType<typeof deviceKeys>>, ref: ChainRef, session: DeviceSession): Promise<{ ok: true; state: ChainState } | { ok: false; result: SignInResult }> {
+  private async verifyChainOf(dk: Awaited<ReturnType<typeof deviceKeys>>, ref: ChainRef, session: DeviceSession): Promise<{ ok: true; state: ChainState; pending: PendingIdentityReset | null } | { ok: false; result: SignInResult }> {
     const got = await this.d.client.call('GET', `/api/devices/chain?did=${encodeURIComponent(ref.rootDid)}`, { bearer: bearerCredential(session.token) });
     if (got.status >= 500) return { ok: false, result: { ok: false, code: 'as_error', transient: true } };
     if (got.status !== 200 || !isObj(got.body) || !Array.isArray(got.body.entries)) {
@@ -354,7 +371,9 @@ export class DeviceSignin {
       return { ok: false, result: { ok: false, code: 'head_mismatch', transient: false } };
     }
     if (!dk.isActive(state, ref.keyId)) return { ok: false, result: this.alarm('device_removed') };
-    return { ok: true, state };
+    const pending = readPendingReset(got.body);
+    if (pending === 'invalid') return { ok: false, result: { ok: false, code: 'as_answer_invalid', transient: false } };
+    return { ok: true, state, pending };
   }
 
   private alarm(code: 'chain_rollback' | 'chain_fork' | 'device_removed', asCode?: string): SignInResult {
@@ -374,6 +393,19 @@ function retryAfter(body: unknown): number | undefined {
   const e = (body as { errors?: unknown })?.errors;
   const v = Array.isArray(e) ? (e[0] as { retry_after?: unknown } | undefined)?.retry_after : undefined;
   return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.ceil(v) : undefined;
+}
+
+/**
+ * `pending_identity_reset: { id, effective_at }` of a sign-in or chain answer: absent means none, a
+ * well-formed member is the open request, anything else is `'invalid'` (never silently "none").
+ */
+export function readPendingReset(body: unknown): PendingIdentityReset | null | 'invalid' {
+  if (!isObj(body) || !('pending_identity_reset' in body)) return null;
+  const p = body.pending_identity_reset;
+  // The Authority Server omits it when there is none; a null is read as "none" too, for robustness.
+  if (p === null) return null;
+  if (!isObj(p) || typeof p.id !== 'string' || !/^[A-Za-z0-9_-]{16,128}$/.test(p.id) || !isInt(p.effective_at)) return 'invalid';
+  return { id: p.id, effectiveAt: p.effective_at };
 }
 
 /** The AS's `{ token, expires_at, user, head }`, or null when any member is not what the plan says. */

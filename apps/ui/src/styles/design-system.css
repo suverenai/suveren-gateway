@@ -1996,7 +1996,6 @@ code {
   border-radius: 0.375rem;
   font-family: var(--font-mono);
   color: var(--text-primary);
-  user-select: all;
 }
 
 .update-banner-hint {
@@ -5156,3 +5155,22 @@ body.apr-has-strip .main-content { margin-right: 2.75rem; }
 .mc-details ul { margin: var(--space-2) 0 0; padding-left: var(--space-4); }
 .mc-edit { margin-top: var(--space-4); }
 @media (max-width: 520px) { .mc-tag { justify-self: start; } .mc-row { grid-template-columns: 1fr auto; } .mc-row .mc-val { grid-column: 1 / -1; white-space: normal; } }
+
+/* ─── Device-key screens (unlock password, Connect, recovery code, confirm) ───────────────────────── */
+.device-screen { width: 100%; max-width: 28rem; margin: 0 auto; padding: 3rem 1rem 4rem; }
+.device-screen h1 { font-size: 1.5rem; letter-spacing: -0.02em; margin-bottom: 1rem; }
+.device-screen p { color: var(--text-secondary); line-height: 1.6; margin-bottom: 1rem; }
+.device-screen .btn + .btn { margin-top: 0.75rem; }
+.recovery-code {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 1.125rem; letter-spacing: 0.04em; line-height: 1.6; text-align: center;
+  padding: 1rem; margin: 1rem 0; border: 2px solid var(--border-strong); border-radius: 6px; word-break: break-all;
+}
+.device-check { display: flex; gap: 0.625rem; align-items: flex-start; margin: 1rem 0 1.5rem; line-height: 1.5; }
+.device-check input { margin-top: 0.25rem; }
+.identity-reset-banner { display: flex; gap: 1rem; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+@media print {
+  body.print-recovery-code * { visibility: hidden; }
+  body.print-recovery-code .recovery-code-print, body.print-recovery-code .recovery-code-print * { visibility: visible; }
+  body.print-recovery-code .recovery-code-print { position: absolute; left: 0; top: 0; width: 100%; }
+}

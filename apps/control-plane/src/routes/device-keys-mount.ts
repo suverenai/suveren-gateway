@@ -8,7 +8,7 @@
  * asked on a vault that already has a password header.
  */
 
-import express, { type Express, type RequestHandler } from 'express';
+import express, { type Express, type RequestHandler, type Request, type Response, type NextFunction } from 'express';
 import type { Vault, McpRekeyClient } from '../lib/vault';
 import type { PageSessionDeps } from '../middleware/auth';
 import { createOsSignalHook } from '../lib/page-session';
@@ -25,6 +25,10 @@ import type { AsFetchPinning } from '../lib/as-tls-pin';
 import { PlatformHelper, unlockKeyService } from '../lib/platform-helper';
 import { CheckKeyStore, PlatformChecks, platformGate } from '../lib/platform-checks';
 import { createPlatformRouter } from './platform';
+import { createDeviceRecoveryRouter, createRecoveryCallbackRouter } from './device-recovery';
+import { DeviceRecovery } from '../lib/device-recovery';
+import { IdentityResetAlarm } from '../lib/identity-reset-alarm';
+import { eventBus } from '../lib/event-bus';
 import { DeviceDecisions, type DecisionRoute, type DecisionKind, type ProposalFacts } from '../lib/device-decision';
 import { createDeviceDecisionRouter } from './device-decision';
 import { DevicePinStore } from '../lib/device-pin-store';
@@ -54,6 +58,8 @@ export interface DeviceSetupOptions {
   onAlarm?: (code: 'chain_rollback' | 'chain_fork' | 'device_removed') => void;
   /** Drop the Authority Server credential (vault and MCP server) without locking: see DeviceSigninDeps.discard. */
   discard?: () => void | Promise<void>;
+  /** A desktop notification for a pending request for a new root DID (once per request). Unset: none. */
+  notifyIdentityReset?: (title: string, message: string) => void;
   now?: () => number;
   timers?: { set: (fn: () => void, ms: number) => unknown; clear: (h: unknown) => void };
   /**
@@ -100,23 +106,46 @@ export function mountDeviceKeyRoutes(app: Express, o: DeviceKeyMountOptions): {
 } {
   if (!o.enabled) return { loginChangeGate: refusingGate };
   const json = o.jsonParser ?? express.json();
-  let device: { signin: DeviceSignin; setup: DeviceSetup; store: DeviceChainStore; client: DeviceAsClient } | undefined;
+  let device: { signin: DeviceSignin; setup: DeviceSetup; store: DeviceChainStore; client: DeviceAsClient; recovery: DeviceRecovery; alarm: IdentityResetAlarm } | undefined;
   // One PlatformChecks for set-up, the confirmation route and the turn-on/off gate: they share what the helper last said about the key.
   const checks = o.platform ? new PlatformChecks(o.platform.host) : undefined;
   if (o.device) {
     const store = new DeviceChainStore(o.vault);
     const client = new DeviceAsClient({ asUrl: o.device.asUrl, pinning: o.device.pinning, onTlsMismatch: o.device.onTlsMismatch });
+    // The alarm for a pending request for a new root DID: what a sign-in learns, shown as a banner state and a doorbell event.
+    const alarm = new IdentityResetAlarm({
+      emit: (type, payload) => eventBus.emit(type, payload),
+      notify: o.device.notifyIdentityReset,
+      now: o.device.now,
+    });
+    o.vault.onLocked(() => alarm.forget());
     const signin = new DeviceSignin({
       vault: o.vault, store, client, checkAs: o.device.checkAs, establish: o.device.establish,
-      onAlarm: o.device.onAlarm, discard: o.device.discard, now: o.device.now, timers: o.device.timers,
+      onAlarm: o.device.onAlarm, onPendingReset: p => alarm.observe(p), discard: o.device.discard, now: o.device.now, timers: o.device.timers,
     });
+    // `setup` and `recovery` refuse to start while the other is running; each asks the other through a late-bound closure.
+    let recovery!: DeviceRecovery;
     const setup = new DeviceSetup({
       vault: o.vault, store, client, signin, checkAs: o.device.checkAs,
       now: o.device.now ? () => o.device!.now!() * 1000 : undefined,
       ...(o.platform && checks ? { checks, checkStore: o.platform.checkStore } : {}),
+      otherFlowPending: () => recovery.status().recoveryPending,
     });
-    device = { signin, setup, store, client };
+    recovery = new DeviceRecovery({
+      vault: o.vault, store, client, signin, checkAs: o.device.checkAs, alarm,
+      setupPending: () => setup.status().setupPending || setup.isBusy(),
+      now: o.device.now ? () => o.device!.now!() * 1000 : undefined,
+      ...(o.platform && checks ? { checks, checkStore: o.platform.checkStore } : {}),
+    });
+    device = { signin, setup, store, client, recovery, alarm };
   }
+  // A body that does not parse is answered here, for EVERY route under /auth (the recovery code and the password
+  // are typed into several), with nothing of it in the answer or the log: Express's own handler logs the parser's
+  // message, and for a body that holds a secret that message holds a piece of it. Only with the switch on.
+  app.use('/auth', json, (err: unknown, _req: Request, res: Response, next: NextFunction) => {
+    if (!err) { next(); return; }
+    res.status(400).json({ error: 'bad_request', code: 'bad_request', message: 'Bad request.' });
+  });
   app.use('/auth', json, createPasswordRouter({
     vault: o.vault,
     pageSession: o.pageSession,
@@ -145,8 +174,10 @@ export function mountDeviceKeyRoutes(app: Express, o: DeviceKeyMountOptions): {
     }));
   }
   if (device) {
-    app.use('/auth', json, createDeviceSetupRouter({ vault: o.vault, pageSession: o.pageSession, setup: device.setup, signin: device.signin }));
+    app.use('/auth', json, createDeviceSetupRouter({ vault: o.vault, pageSession: o.pageSession, setup: device.setup, signin: device.signin, alarm: device.alarm, recovery: device.recovery }));
+    app.use('/auth', json, createDeviceRecoveryRouter({ vault: o.vault, pageSession: o.pageSession, recovery: device.recovery }));
     app.use('/connect', createConnectCallbackRouter({ pageSession: o.pageSession, setup: device.setup }));
+    app.use('/recover', createRecoveryCallbackRouter({ pageSession: o.pageSession, recovery: device.recovery }));
     // The MCP server's questions about device keys (its own chain, the heads it has verified), by internal secret.
     app.use('/internal', json, createInternalDeviceRouter(o.internalSecret, device.store, new DevicePinStore(o.vault, device.store)));
     if (o.device?.decision) {

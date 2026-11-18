@@ -23,7 +23,9 @@ export type EventType =
   | 'execution-failed'        // An approved proposal's downstream tool call failed after the AS issued the ticket
   | 'denial-recorded'         // AU2 — a refusal of a gated call was appended to the MCP server's denial log
   | 'ticket-recorded'         // UI spec §12 — a ticket was archived (moves "new since your last visit"); never a doorbell event
-  | 'report-written';         // a report was saved — moves the "New" label on Reports; never a doorbell event
+  | 'report-written'          // a report was saved — moves the "New" label on Reports; never a doorbell event
+  | 'identity-reset-pending'  // device keys: a request for a new root DID is open — doorbell; the page reads /auth/device/status
+  | 'identity-reset-cleared'; // device keys: that request ended (cancelled or gone)
 
 export interface BusEvent {
   type: EventType;

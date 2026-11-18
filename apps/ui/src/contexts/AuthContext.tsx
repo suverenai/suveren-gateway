@@ -1,10 +1,32 @@
 import { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from 'react';
-import { spClient, deviceDecisionsFromHealth, SESSION_GONE_EVENT, sessionEvents, type SPUser, type SPGroup, type GroupMember, type PendingJoinRequest } from '../lib/sp-client';
+import { spClient, deviceDecisionsFromHealth, SESSION_GONE_EVENT, sessionEvents, type SessionGoneDetail, type SPUser, type SPGroup, type GroupMember, type PendingJoinRequest } from '../lib/sp-client';
+import { deviceClient } from '../lib/device-client';
+import { accessFromProbe, LEGACY, type Access, type AccessState } from '../lib/access';
 
 export type GatewayMode = 'personal' | 'team';
 
-interface AuthContextValue {
+export interface AuthContextValue {
   user: SPUser | null;
+  /**
+   * How this page gets in (lib/access.ts). `legacy` is the account-key sign-in of every gateway without an unlock
+   * password; `password` is the unlock password or Touch ID and a page session. `null` until the gateway answered.
+   */
+  access: Access | null;
+  /** The control plane runs with device keys on (its password routes answer). */
+  deviceKeysSwitch: boolean;
+  passwordSet: boolean;
+  /** The page holds a page session (password gateways only). */
+  pageSessionOpen: boolean;
+  /** Why the last page session ended (a session code), for the unlock screen. */
+  sessionEnd: string | null;
+  /** Ask the gateway again how the page gets in (after a password was set). */
+  refreshAccess: () => Promise<AccessState>;
+  /** The page has a session: keep its token in memory and send it on every request. `token` is absent when only the vault opened. */
+  openPageSession: (token?: string) => void;
+  /** Sign in by what the gateway already holds (device key): reads the person and the workspace. False if it cannot. */
+  adoptSessionUser: () => Promise<boolean>;
+  /** After the account-key sign-in inside a page session, nothing more to do here; kept for symmetry. */
+  clearSessionEnd: () => void;
   mode: GatewayMode;
   /** In team mode: the user's team. In personal mode: the auto-provisioned
    *  personal workspace (`isPersonal: true`) — never null once logged in. */
@@ -61,10 +83,13 @@ interface AuthContextValue {
   refreshGroups: () => Promise<void>;
 }
 
-const AuthContext = createContext<AuthContextValue | null>(null);
+export const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<SPUser | null>(null);
+  const [accessState, setAccessState] = useState<AccessState | null>(null);
+  const [pageSessionOpen, setPageSessionOpen] = useState(false);
+  const [sessionEnd, setSessionEnd] = useState<string | null>(null);
   const [mode, setMode] = useState<GatewayMode>('personal');
   const [group, setGroup] = useState<SPGroup | null>(null);
   const [domain, setDomain] = useState('');
@@ -151,6 +176,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // How does this page get in? An unauthenticated probe of the password routes: switch off answers 404, which is
+  // today's page; a gateway without a password also keeps the account-key sign-in.
+  const refreshAccess = useCallback(async (): Promise<AccessState> => {
+    const next = accessFromProbe(await deviceClient.passwordStatus());
+    setAccessState(next);
+    return next;
+  }, []);
+  useEffect(() => { void refreshAccess(); }, [refreshAccess]);
+
+  const clearSessionEnd = useCallback(() => setSessionEnd(null), []);
+
+  const openPageSession = useCallback((token?: string) => {
+    if (token) {
+      spClient.setSessionToken(token);
+      setPageSessionOpen(true);
+      setSessionEnd(null);
+    }
+  }, []);
+
+  const adoptSessionUser = useCallback(async (): Promise<boolean> => {
+    const u = await spClient.loadSessionUser();
+    if (!u) return false;
+    hasApiKey.current = true;
+    userIdRef.current = u.id;
+    setUser(u);
+    const allGroups = await spClient.getGroups().catch(() => [] as SPGroup[]);
+    setGroup(allGroups.find(g => g.isPersonal) ?? allGroups[0] ?? null);
+    setDomain('owner');
+    await refreshGroups();
+    // Signed approvals: only now that the page has its session does the gateway answer whether decisions are signed here.
+    await spClient.detectDeviceDecisions();
+    return true;
+  }, [refreshGroups]);
+
   const login = useCallback(async (apiKey: string, opts: { confirmWipe?: boolean } = {}) => {
     setIsLoading(true);
     setError('');
@@ -173,6 +232,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       // Derive mode from real membership — replaces the old HAP_MODE env branch
       await refreshGroups();
+      // A password gateway's page has its session by now: ask whether decisions are signed with this computer's key.
+      if (spClient.hasPageSession()) await spClient.detectDeviceDecisions();
     } catch (e) {
       spClient.clearApiKey();
       hasApiKey.current = false;
@@ -186,6 +247,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = useCallback(async () => {
     await spClient.logout();
     spClient.clearApiKey();
+    spClient.setSessionToken(null);
+    setPageSessionOpen(false);
     hasApiKey.current = false;
     userIdRef.current = null;
     setUser(null);
@@ -200,6 +263,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const handleSessionLocked = useCallback((message?: string) => {
     spClient.clearApiKey();
+    spClient.setSessionToken(null);
+    setPageSessionOpen(false);
     hasApiKey.current = false;
     userIdRef.current = null;
     setUser(null);
@@ -216,7 +281,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // or the session ended without an SSE event reaching us): go to sign-in with
   // the reason, exactly like 'session-locked'.
   useEffect(() => {
-    const onGone = () => {
+    const onGone = (e: Event) => {
+      // A gateway with a page session says why it ended (idle, 12 hours, closed, locked): the unlock screen shows it.
+      if (spClient.hasPageSession()) {
+        const code = (e as CustomEvent<SessionGoneDetail>).detail?.code ?? 'session_missing';
+        spClient.setSessionToken(null);
+        spClient.clearApiKey();
+        setPageSessionOpen(false);
+        hasApiKey.current = false;
+        userIdRef.current = null;
+        setUser(null);
+        setGroup(null);
+        setDomain('');
+        setActiveTeam(null);
+        setActiveMembership(null);
+        setPendingRequest(null);
+        setMode('personal');
+        setError('');
+        setSessionEnd(code);
+        return;
+      }
       if (!hasApiKey.current) return;
       handleSessionLocked('The gateway restarted or your sign-in ended. Sign in to unlock it.');
     };
@@ -235,6 +319,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   return (
     <AuthContext.Provider value={{
       user, mode, group, domain,
+      access: accessState ? accessState.access : null,
+      deviceKeysSwitch: accessState?.switchOn ?? LEGACY.switchOn,
+      passwordSet: accessState?.passwordSet ?? false,
+      pageSessionOpen, sessionEnd, refreshAccess, openPageSession, adoptSessionUser, clearSessionEnd,
       groupId: group?.id ?? null,
       activeTeam,
       activeMembership,
