@@ -28,7 +28,7 @@ export type SessionVerdict = { ok: true } | { ok: false; status: number; code: s
 
 /**
  * Is this request inside a valid page session? Neutral codes only; what the
- * person reads for each is Andreas's to decide (O19).
+ * person reads for each is the maintainer's to decide (O19).
  */
 export function pageSessionVerdict(vault: Vault, deps: PageSessionDeps | undefined, req: Request): SessionVerdict {
   if (!deps) return { ok: false, status: 401, code: 'session_missing' }; // fail closed

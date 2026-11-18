@@ -28,7 +28,7 @@ export const SESSION_HEADER = 'x-suveren-session';
 export const IDLE_LIMIT_MS = 60 * 60 * 1000;
 export const MAX_LIFETIME_MS = 12 * 60 * 60 * 1000;
 
-/** Why a session is not valid. Neutral codes — wording is Andreas's. */
+/** Why a session is not valid. Neutral codes — wording is the maintainer's. */
 export type SessionRefusal = 'session_missing' | 'session_invalid' | 'session_idle' | 'session_expired';
 
 export type OsSessionSignal = 'screen-lock' | 'sleep' | 'user-switch';
