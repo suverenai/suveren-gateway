@@ -5,9 +5,10 @@
  * via PBKDF2. The vault key is held in memory only while the session is active.
  */
 
-import { createHash, pbkdf2Sync, randomBytes, createCipheriv, createDecipheriv, timingSafeEqual } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync, existsSync, chmodSync, readdirSync } from 'node:fs';
+import { createHash, pbkdf2Sync, scrypt, randomBytes, createCipheriv, createDecipheriv, timingSafeEqual } from 'node:crypto';
+import { mkdirSync, readFileSync, writeFileSync, existsSync, chmodSync, readdirSync, renameSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
+import { rekeyDirectory, CONTROL_PLANE_FILES } from './rekey';
 import { dirname, join } from 'node:path';
 
 export interface EncryptedBlob {
@@ -37,7 +38,96 @@ interface VaultFile {
    * credential, mandate or ticket has been stored yet (see keyMatch).
    */
   verifier?: EncryptedBlob;
+  /**
+   * Present once the person has set an unlock password. The vault key is not
+   * derived from the password: it is wrapped (AES-256-GCM) by a key scrypt
+   * derives from the password, so changing the password re-wraps one key and
+   * leaves every credential and every other store sealed as it was.
+   */
+  password?: PasswordHeader;
   credentials: Record<string, EncryptedBlob>;
+}
+
+/** The unlock-password header in vault.enc.json. Nothing in it is secret. */
+export interface PasswordHeader {
+  v: 1;
+  kdf: 'scrypt';
+  N: number;
+  r: number;
+  p: number;
+  salt: string;       // hex, random per wrap
+  wrapped: EncryptedBlob; // the vault key (base64), sealed under the password key
+  /**
+   * The AS account this vault belongs to. It is part of the wrap's
+   * authenticated data: removing or changing it breaks the unwrap.
+   */
+  accountId: string;
+  /**
+   * Present only while the move to a fresh vault key is not finished: the OLD
+   * key, wrapped under the same password key, so a crash halfway can be
+   * completed at the next unlock (lib/rekey.ts is idempotent).
+   */
+  pending?: EncryptedBlob;
+}
+
+/** What the control plane asks of the MCP server while the vault moves to a fresh key. */
+export interface McpRekeyClient {
+  /** Which key the server's stores are sealed with, as the SERVER reports it. */
+  state(oldKeyHex: string, newKeyHex: string): Promise<{ sealedWith: 'old' | 'new' | 'mixed' | 'empty' }>;
+  /** Re-seal and switch, in one step. Idempotent. */
+  rekey(oldKeyHex: string, newKeyHex: string): Promise<void>;
+}
+
+/** The outcome of trying to finish the move, and the key (if any) the MCP server may be configured with. */
+export interface RekeyOutcome {
+  outcome: 'done' | 'pending' | 'locked';
+  /** Null: do not configure the MCP server at all (what its stores are sealed with is not known). */
+  mcpKeyHex: string | null;
+}
+
+export interface ScryptParams { N: number; r: number; p: number }
+
+/** ~0.3 s and 128 MiB on a laptop: costly for a guesser, fine for one unlock. */
+export const DEFAULT_SCRYPT_PARAMS: ScryptParams = { N: 1 << 17, r: 8, p: 1 };
+const SCRYPT_MAXMEM = 256 * 1024 * 1024;
+const WRAP_AAD_PREFIX = 'suveren-vault-key-wrap-v1|';
+const wrapAad = (accountId: string): Buffer => Buffer.from(WRAP_AAD_PREFIX + accountId);
+
+/** Parameters come from a file; refuse any that are nonsense or would exhaust memory. */
+function scryptParamsOk(p: ScryptParams): boolean {
+  const { N, r, p: par } = p;
+  if (![N, r, par].every(Number.isInteger)) return false;
+  if (N < 16 || N > 1 << 20 || (N & (N - 1)) !== 0) return false;
+  if (r < 1 || r > 16 || par < 1 || par > 4) return false;
+  return 128 * N * r <= SCRYPT_MAXMEM;
+}
+
+function scryptAsync(password: string, salt: Buffer, params: ScryptParams): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    scrypt(password.normalize('NFKC'), salt, 32, { N: params.N, r: params.r, p: params.p, maxmem: SCRYPT_MAXMEM }, (err, key) => {
+      if (err) reject(err); else resolve(key);
+    });
+  });
+}
+
+function wrapKey(kek: Buffer, vaultKey: Buffer, accountId: string): EncryptedBlob {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', kek, iv);
+  cipher.setAAD(wrapAad(accountId));
+  const ct = Buffer.concat([cipher.update(vaultKey), cipher.final()]);
+  return { iv: iv.toString('hex'), ciphertext: ct.toString('hex'), tag: cipher.getAuthTag().toString('hex') };
+}
+
+function unwrapKey(kek: Buffer, blob: EncryptedBlob, accountId: string): Buffer | null {
+  try {
+    const d = createDecipheriv('aes-256-gcm', kek, Buffer.from(blob.iv, 'hex'));
+    d.setAAD(wrapAad(accountId));
+    d.setAuthTag(Buffer.from(blob.tag, 'hex'));
+    const key = Buffer.concat([d.update(Buffer.from(blob.ciphertext, 'hex')), d.final()]);
+    return key.length === 32 ? key : null;
+  } catch {
+    return null;
+  }
 }
 
 const VERIFIER_TEXT = 'suveren-vault-verifier-v1';
@@ -155,7 +245,10 @@ export class ApiKeyUnsealProvider implements UnsealProvider {
  *    workspace is no longer that team — either it never was (refused at
  *    sign-in, see routes/auth.ts) or the account left/was removed while
  *    signed in (caught by lib/managed-team.ts's periodic check). */
-export type VaultLockReason = 'expired' | 'as-key-mismatch' | 'as-tls-mismatch' | 'as-url-changed' | 'managed-wrong-team';
+export type VaultLockReason = 'expired' | 'as-key-mismatch' | 'as-tls-mismatch' | 'as-url-changed' | 'managed-wrong-team' | 'rekey-incomplete';
+
+/** Failed attempts to finish the move to a fresh vault key before the vault locks and says so. */
+export const REKEY_ATTEMPTS = 3;
 
 export class Vault {
   private vaultKey: Buffer | null = null;
@@ -163,6 +256,13 @@ export class Vault {
   private spSessionCookie: string | null = null;
   private unsealedBy: string | null = null;
   private dataDir: string;
+  private readonly scryptParams: ScryptParams;
+  private readonly deviceKeys: boolean;
+  private pendingOldKey: Buffer | null = null;
+  private chain: Promise<void> = Promise.resolve();
+  private rekeyFailures = 0;
+  private lockListeners: Array<() => void> = [];
+  private passwordCache: { stamp: string; has: boolean } | null = null;
   /**
    * When the AS session (captured at login into `spSessionCookie`) is due to
    * end — unix seconds, from the login response's `sessionExpiresAt`. Held in
@@ -175,8 +275,269 @@ export class Vault {
   /** Set by lockExpired(); cleared by any fresh unseal (a new login). */
   private lockedReason: VaultLockReason | null = null;
 
-  constructor(dataDir?: string) {
+  constructor(dataDir?: string, options?: { scrypt?: ScryptParams; deviceKeys?: boolean }) {
     this.dataDir = dataDir ?? process.env.SUVEREN_DATA_DIR ?? join(homedir(), '.suveren');
+    this.scryptParams = options?.scrypt ?? DEFAULT_SCRYPT_PARAMS;
+    this.deviceKeys = options?.deviceKeys ?? false;
+  }
+
+  // ─── Unlock password (PasswordUnsealProvider) ───────────────────────────
+  //
+  // The password never derives the vault key. A random 32-byte vault key is
+  // wrapped by a scrypt key; the wrap, its parameters and the account it
+  // belongs to sit in the vault header (the account id is inside the wrap's
+  // authenticated data).
+  //
+  // Moving a vault made before passwords existed switches it to a FRESH random
+  // key and re-seals everything the old key sealed (lib/rekey.ts), so the
+  // account key, which still derives the old key, no longer opens anything.
+
+  /**
+   * Does this vault have an unlock password? Read from the vault file, so it
+   * holds while locked. Fails CLOSED once device keys are on: a `password`
+   * header that is present but invalid, or a vault file that cannot be read,
+   * counts as a password vault that cannot be opened, never as "no password"
+   * (which would hand the vault to the account-key and wipe-and-claim path).
+   */
+  hasPassword(): boolean {
+    // Called on every request, so the file is only re-read when it changed.
+    let stamp = '';
+    try {
+      const st = statSync(this.vaultFilePath);
+      stamp = `${st.mtimeMs}:${st.size}`;
+    } catch { /* no file: no password */ }
+    if (this.passwordCache?.stamp !== stamp) {
+      this.passwordCache = { stamp, has: this.passwordPresent() };
+    }
+    return this.passwordCache.has;
+  }
+
+  private passwordPresent(): boolean {
+    if (!existsSync(this.vaultFilePath)) return false;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(readFileSync(this.vaultFilePath, 'utf-8'));
+    } catch {
+      return this.deviceKeys; // unreadable: refuse, but only where this feature is on
+    }
+    if (!parsed || typeof parsed !== 'object') return this.deviceKeys;
+    return 'password' in (parsed as Record<string, unknown>);
+  }
+
+  /** The account the password is bound to. Null when there is no valid header. */
+  getPasswordAccountId(): string | null {
+    return this.readPasswordHeader()?.accountId ?? null;
+  }
+
+  /** The header, or null when absent or not valid. A valid header has every field the unwrap needs. */
+  private readPasswordHeader(): PasswordHeader | null {
+    const h = this.readVaultFile().password;
+    if (!h || h.v !== 1 || h.kdf !== 'scrypt' || !isBlob(h.wrapped) || typeof h.salt !== 'string'
+      || typeof h.accountId !== 'string' || !h.accountId || (h.pending !== undefined && !isBlob(h.pending))) return null;
+    return h;
+  }
+
+  /** Is the move to a fresh vault key still to be finished (after a crash or an unreachable MCP server)? */
+  hasPendingRekey(): boolean {
+    return this.pendingOldKey !== null;
+  }
+
+  /**
+   * Run `fn` with nothing else that decides who owns the vault running: the
+   * move to a password and the login's wipe-and-claim take turns.
+   */
+  exclusive<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.chain.then(fn, fn);
+    this.chain = run.then(() => undefined, () => undefined);
+    return run;
+  }
+
+  /**
+   * Move an unlocked vault to a password. A fresh random vault key is wrapped
+   * under the password; our own files are re-sealed with it; the MCP server is
+   * moved after (`reconcileRekey`). Needs the account the vault belongs to.
+   * Serialised with the login's wipe-and-claim.
+   */
+  setPassword(password: string, accountId: string | null | undefined, mcp?: McpRekeyClient): Promise<RekeyOutcome> {
+    if (!this.vaultKey) return Promise.reject(new Error('Vault is locked'));
+    if (!accountId) return Promise.reject(new Error('Account unknown'));
+    return this.exclusive(async () => {
+      if (!this.vaultKey) throw new Error('Vault is locked');
+      if (this.hasPassword()) throw new Error('A password is already set');
+      const oldKey = this.vaultKey;
+      const newKey = randomBytes(32);
+      await this.writePasswordWrap(password, newKey, accountId, oldKey);
+      this.pendingOldKey = oldKey;
+      this.vaultKey = newKey;
+      this.unsealedBy = 'password';
+      this.apiKeyHash = null; // nothing in this process treats the account key as a credential any more
+      return this.reconcileRekey(mcp, { countFailure: false });
+    });
+  }
+
+  /**
+   * Finish the move, deciding what to do from what the MCP server REPORTS about
+   * its stores, never from our own record of what we asked it:
+   *  - sealed with the new key (an earlier request was applied, its reply lost):
+   *    done; configure with the new key.
+   *  - sealed with the old key: ask it to re-seal (idempotent). If that fails it
+   *    still holds the old key, so the old key is the one to configure.
+   *  - mixed (a run that stopped halfway): ask it to resume. If that fails,
+   *    neither key reads everything: configure nothing.
+   *  - cannot be determined: configure nothing.
+   * Repeated failure (login and unlock count; the background retry does not)
+   * locks the vault with a visible reason.
+   */
+  async reconcileRekey(mcp?: McpRekeyClient, opts: { countFailure?: boolean } = {}): Promise<RekeyOutcome> {
+    const old = this.pendingOldKey;
+    if (!this.vaultKey) return { outcome: 'pending', mcpKeyHex: null };
+    if (!old) return { outcome: 'done', mcpKeyHex: this.vaultKey.toString('hex') };
+    const oldHex = old.toString('hex');
+    const newHex = this.vaultKey.toString('hex');
+    // Our own files first: nothing of the MCP server's is touched before it confirms.
+    rekeyDirectory(this.dataDir, old, this.vaultKey, { only: CONTROL_PLANE_FILES });
+
+    let mcpKeyHex: string | null = null;
+    let finished = false;
+    if (!mcp) {
+      finished = true;
+      mcpKeyHex = newHex;
+    } else {
+      try {
+        let st = (await mcp.state(oldHex, newHex)).sealedWith;
+        if (st === 'old' || st === 'mixed' || st === 'empty') {
+          try { await mcp.rekey(oldHex, newHex); } catch { /* the state below says what happened */ }
+          st = (await mcp.state(oldHex, newHex)).sealedWith;
+        }
+        if (st === 'new' || st === 'empty') { finished = true; mcpKeyHex = newHex; }
+        else if (st === 'old') mcpKeyHex = oldHex;   // still entirely on the old key: that one fits
+        // 'mixed': neither key reads everything; mcpKeyHex stays null
+      } catch {
+        mcpKeyHex = null; // cannot be determined
+      }
+    }
+
+    if (finished) {
+      this.finishMarker(old);
+      this.rekeyFailures = 0;
+      return { outcome: 'done', mcpKeyHex };
+    }
+    console.error('[Vault] Moving the MCP server to the new vault key did not finish.');
+    if ((opts.countFailure ?? true) && ++this.rekeyFailures >= REKEY_ATTEMPTS) {
+      this.clearKey();
+      this.lockedReason = 'rekey-incomplete';
+      return { outcome: 'locked', mcpKeyHex: null };
+    }
+    return { outcome: 'pending', mcpKeyHex };
+  }
+
+  /** The move is complete: drop the marker and everything the account key could still reach. */
+  private finishMarker(old: Buffer): void {
+    const data = this.readVaultFile();
+    if (data.password) delete data.password.pending;
+    // The PBKDF2 salt only ever fed the account-key derivation, which opens nothing now.
+    delete data.salt;
+    this.writeVaultFile(data);
+    old.fill(0);
+    this.pendingOldKey = null;
+  }
+
+  /**
+   * A new vault with a password from the start: a random key, wrapped. Only for
+   * a vault with nothing sealed in it, otherwise the data would be unreadable.
+   */
+  async createWithPassword(password: string, accountId: string | null | undefined): Promise<void> {
+    if (!accountId) throw new Error('Account unknown');
+    if (this.hasPassword()) throw new Error('A password is already set');
+    const data = this.readVaultFile();
+    if (data.verifier || Object.keys(data.credentials).length > 0 || this.sealedSamples().length > 0) {
+      throw new Error('Vault already holds data');
+    }
+    const key = randomBytes(32);
+    await this.writePasswordWrap(password, key, accountId);
+    this.adopt({ key, providerId: 'password', apiKeyHash: null });
+  }
+
+  /** Unlock with the password. False for a wrong password; the vault stays as it was. */
+  async unlockWithPassword(password: string): Promise<boolean> {
+    const opened = await this.unwrapWithPassword(password);
+    if (!opened) return false;
+    this.adopt({ key: opened.key, providerId: 'password', apiKeyHash: null });
+    this.pendingOldKey = opened.pendingOld;
+    return true;
+  }
+
+  /** Is this the password? Does not change the lock state. */
+  async verifyPassword(password: string): Promise<boolean> {
+    const opened = await this.unwrapWithPassword(password);
+    if (!opened) return false;
+    opened.key.fill(0);
+    opened.pendingOld?.fill(0);
+    return true;
+  }
+
+  /** Re-wrap the one vault key under a new password. Every credential stays. */
+  async changePassword(currentPassword: string, newPassword: string): Promise<boolean> {
+    const header = this.readPasswordHeader();
+    if (!header) throw new Error('No password is set');
+    const opened = await this.unwrapWithPassword(currentPassword);
+    if (!opened) return false;
+    try {
+      await this.writePasswordWrap(newPassword, opened.key, header.accountId, opened.pendingOld ?? undefined);
+    } finally {
+      opened.key.fill(0);
+      if (opened.pendingOld && opened.pendingOld !== this.pendingOldKey) opened.pendingOld.fill(0);
+    }
+    return true;
+  }
+
+  private async unwrapWithPassword(password: string): Promise<{ key: Buffer; pendingOld: Buffer | null } | null> {
+    const header = this.readPasswordHeader();
+    if (!header) return null;
+    const params = { N: header.N, r: header.r, p: header.p };
+    if (!scryptParamsOk(params)) return null;
+    const kek = await scryptAsync(password, Buffer.from(header.salt, 'hex'), params);
+    try {
+      const key = unwrapKey(kek, header.wrapped, header.accountId);
+      if (!key) return null;
+      const pendingOld = header.pending ? unwrapKey(kek, header.pending, header.accountId) : null;
+      return { key, pendingOld };
+    } finally {
+      kek.fill(0);
+    }
+  }
+
+  private async writePasswordWrap(password: string, vaultKey: Buffer, accountId: string, pendingOld?: Buffer): Promise<void> {
+    const salt = randomBytes(32);
+    const kek = await scryptAsync(password, salt, this.scryptParams);
+    try {
+      const data = this.readVaultFile();
+      data.password = {
+        v: 1,
+        kdf: 'scrypt',
+        ...this.scryptParams,
+        salt: salt.toString('hex'),
+        wrapped: wrapKey(kek, vaultKey, accountId),
+        accountId,
+        ...(pendingOld ? { pending: wrapKey(kek, pendingOld, accountId) } : {}),
+      };
+      this.writeVaultFileAtomic(data);
+    } finally {
+      kek.fill(0);
+    }
+  }
+
+  /** Write-then-rename: a crash must never leave a half-written header. */
+  private writeVaultFileAtomic(data: VaultFile): void {
+    const tmp = `${this.vaultFilePath}.tmp`;
+    mkdirSync(dirname(this.vaultFilePath), { recursive: true, mode: 0o700 });
+    writeFileSync(tmp, JSON.stringify(data, null, 2), { encoding: 'utf-8', mode: 0o600 });
+    renameSync(tmp, this.vaultFilePath);
+  }
+
+  /** Called whenever the vault locks (any reason). The page session ends with it. */
+  onLocked(listener: () => void): void {
+    this.lockListeners.push(listener);
   }
 
   // ─── Key management ─────────────────────────────────────────────────────
@@ -313,6 +674,8 @@ export class Vault {
   }
 
   clearKey(): void {
+    this.pendingOldKey?.fill(0);
+    this.pendingOldKey = null;
     this.vaultKey = null;
     this.apiKeyHash = null;
     this.spSessionCookie = null;
@@ -320,6 +683,9 @@ export class Vault {
     this.spSessionExpiresAt = null;
     this.sessionUser = null;
     this.lockedReason = null;
+    for (const l of this.lockListeners) {
+      try { l(); } catch { /* a listener must never keep the vault open */ }
+    }
   }
 
   /**
@@ -451,6 +817,11 @@ export class Vault {
 
   decrypt(blob: EncryptedBlob): string {
     if (!this.vaultKey) throw new Error('Vault is locked');
+    // While a move to a fresh key is unfinished, what the MCP server still seals
+    // with the old key (the denial log the control plane reads) must read, not vanish.
+    if (this.pendingOldKey) {
+      try { return decryptWith(this.vaultKey, blob); } catch { return decryptWith(this.pendingOldKey, blob); }
+    }
     const decipher = createDecipheriv(
       'aes-256-gcm',
       this.vaultKey,
@@ -535,9 +906,9 @@ export class Vault {
     }
   }
 
+  /** Write-then-rename, always: a crash must never leave a half-written vault file. */
   private writeVaultFile(data: VaultFile): void {
-    mkdirSync(dirname(this.vaultFilePath), { recursive: true, mode: 0o700 });
-    writeFileSync(this.vaultFilePath, JSON.stringify(data, null, 2), { encoding: 'utf-8', mode: 0o600 });
+    this.writeVaultFileAtomic(data);
   }
 
   private readServicesFile(): ServicesFile {

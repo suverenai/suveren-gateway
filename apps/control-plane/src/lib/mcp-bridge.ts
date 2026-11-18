@@ -60,6 +60,39 @@ export async function configure(sessionCookie: string, vaultKeyHex?: string): Pr
  *   an agent is told, see locked-notice.ts) says why, instead of always
  *   defaulting to "your sign-in ended" regardless of the actual cause.
  */
+/**
+ * The vault key changed (the move to an unlock password): the MCP server
+ * re-seals the stores it holds under the new key and switches to it, in one
+ * step; safe to repeat. Throws unless it answered 200.
+ */
+export async function rekeyMcp(oldKeyHex: string, newKeyHex: string): Promise<void> {
+  const res = await fetch(`${MCP_BASE}/internal/rekey`, {
+    method: 'POST',
+    headers: internalHeaders(),
+    body: JSON.stringify({ oldKeyHex, newKeyHex }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!res.ok) throw new Error(`MCP rekey failed: ${res.status}`);
+}
+
+/** Which of the two keys the MCP server's stores are sealed with, as the server itself reports it. */
+export async function mcpKeyState(oldKeyHex: string, newKeyHex: string): Promise<{ sealedWith: 'old' | 'new' | 'mixed' | 'empty' }> {
+  const res = await fetch(`${MCP_BASE}/internal/key-state`, {
+    method: 'POST',
+    headers: internalHeaders(),
+    body: JSON.stringify({ oldKeyHex, newKeyHex }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!res.ok) throw new Error(`MCP key-state failed: ${res.status}`);
+  const body = await res.json() as { sealedWith?: unknown };
+  if (body.sealedWith !== 'old' && body.sealedWith !== 'new' && body.sealedWith !== 'mixed' && body.sealedWith !== 'empty') {
+    throw new Error('MCP key-state: unreadable answer');
+  }
+  return { sealedWith: body.sealedWith };
+}
+
+export const mcpRekeyClient = { state: mcpKeyState, rekey: rekeyMcp };
+
 export async function unconfigureSession(reason?: 'as-key-mismatch' | 'as-tls-mismatch' | 'as-url-changed' | 'managed-wrong-team'): Promise<void> {
   const res = await fetch(`${MCP_BASE}/internal/clear-session`, {
     method: 'POST',
