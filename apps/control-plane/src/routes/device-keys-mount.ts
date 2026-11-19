@@ -33,6 +33,10 @@ import { DeviceDecisions, type DecisionRoute, type DecisionKind, type ProposalFa
 import { createDeviceDecisionRouter } from './device-decision';
 import { DevicePinStore } from '../lib/device-pin-store';
 import { createInternalDeviceRouter } from './internal-device';
+import { isBearerCredential } from '../lib/as-credential';
+import { MandateGrantStore } from '../lib/mandate-grant-store';
+import { MandateGrants } from '../lib/mandate-grants';
+import { MandateApprovals } from '../lib/mandate-approvals';
 
 export function deviceKeysEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.SUVEREN_DEVICE_KEYS === 'on';
@@ -103,12 +107,17 @@ export function mountDeviceKeyRoutes(app: Express, o: DeviceKeyMountOptions): {
   /** What the account-key login asks: 'present' refuses it, 'unreadable' refuses it with its own code. */
   deviceChainState?: () => 'none' | 'present' | 'unreadable';
   signin?: DeviceSignin;
+  /** Grants mandates on this computer with its check (step 13): only with device set-up. */
+  grants?: MandateGrants;
+  /** What the person approved for the Setup tools; `/internal/mandate` runs only for these. */
+  approvals?: MandateApprovals;
 } {
   if (!o.enabled) return { loginChangeGate: refusingGate };
   const json = o.jsonParser ?? express.json();
-  let device: { signin: DeviceSignin; setup: DeviceSetup; store: DeviceChainStore; client: DeviceAsClient; recovery: DeviceRecovery; alarm: IdentityResetAlarm } | undefined;
+  let device: { signin: DeviceSignin; setup: DeviceSetup; store: DeviceChainStore; client: DeviceAsClient; recovery: DeviceRecovery; alarm: IdentityResetAlarm; pins: DevicePinStore; grantStore: MandateGrantStore; grants: MandateGrants } | undefined;
   // One PlatformChecks for set-up, the confirmation route and the turn-on/off gate: they share what the helper last said about the key.
   const checks = o.platform ? new PlatformChecks(o.platform.host) : undefined;
+  const approvals = new MandateApprovals();
   if (o.device) {
     const store = new DeviceChainStore(o.vault);
     const client = new DeviceAsClient({ asUrl: o.device.asUrl, pinning: o.device.pinning, onTlsMismatch: o.device.onTlsMismatch });
@@ -137,7 +146,14 @@ export function mountDeviceKeyRoutes(app: Express, o: DeviceKeyMountOptions): {
       now: o.device.now ? () => o.device!.now!() * 1000 : undefined,
       ...(o.platform && checks ? { checks, checkStore: o.platform.checkStore } : {}),
     });
-    device = { signin, setup, store, client, recovery, alarm };
+    const pins = new DevicePinStore(o.vault, store);
+    const grantStore = new MandateGrantStore(o.vault);
+    const grants = new MandateGrants({
+      vault: o.vault, store, client, pins, grants: grantStore,
+      ...(o.platform && checks ? { checks, checkStore: o.platform.checkStore } : {}),
+      now: o.device.now,
+    });
+    device = { signin, setup, store, client, recovery, alarm, pins, grantStore, grants };
   }
   // A body that does not parse is answered here, for EVERY route under /auth (the recovery code and the password
   // are typed into several), with nothing of it in the answer or the log: Express's own handler logs the parser's
@@ -179,7 +195,15 @@ export function mountDeviceKeyRoutes(app: Express, o: DeviceKeyMountOptions): {
     app.use('/connect', createConnectCallbackRouter({ pageSession: o.pageSession, setup: device.setup }));
     app.use('/recover', createRecoveryCallbackRouter({ pageSession: o.pageSession, recovery: device.recovery }));
     // The MCP server's questions about device keys (its own chain, the heads it has verified), by internal secret.
-    app.use('/internal', json, createInternalDeviceRouter(o.internalSecret, device.store, new DevicePinStore(o.vault, device.store)));
+    app.use('/internal', json, createInternalDeviceRouter(o.internalSecret, device.store, device.pins, {
+      store: device.grantStore, grants: device.grants,
+      // A Bearer credential is a device session (a chain exists then); the account's DID is known here from the API-key sign-in only.
+      account: () => {
+        const cookie = o.vault.getSpCookie();
+        const user = o.vault.getSessionUser();
+        return { signedIn: !!cookie && !(isBearerCredential(cookie) && !user), did: user?.did ?? null };
+      },
+    }));
     if (o.device?.decision) {
       app.use('/device-decision', json, createDeviceDecisionRouter({
         vault: o.vault,
@@ -187,7 +211,7 @@ export function mountDeviceKeyRoutes(app: Express, o: DeviceKeyMountOptions): {
         store: device.store,
         decisions: new DeviceDecisions({
           vault: o.vault, store: device.store, client: device.client,
-          facts: o.device.decision.facts, onDecided: o.device.decision.onDecided,
+          facts: o.device.decision.facts, onDecided: o.device.decision.onDecided, approvals,
           now: o.device.now,
         }),
       }));
@@ -196,6 +220,6 @@ export function mountDeviceKeyRoutes(app: Express, o: DeviceKeyMountOptions): {
   app.use('/internal', json, createInternalOsSignalRouter(o.internalSecret, createOsSignalHook(o.pageSession.sessions)));
   return {
     loginChangeGate: createLoginChangeGate(o.vault, o.pageSession.sessions, o.confirmations),
-    ...(device ? { hasDeviceChain: () => device!.store.exists(), deviceChainState: () => device!.store.state(), signin: device.signin } : {}),
+    ...(device ? { hasDeviceChain: () => device!.store.exists(), deviceChainState: () => device!.store.state(), signin: device.signin, grants: device.grants, approvals } : {}),
   };
 }

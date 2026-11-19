@@ -252,7 +252,7 @@ const sessionExpiryScheduler = new SessionExpiryScheduler(
 
 // ─── Auth routes (/auth/*) ──────────────────────────────────────────────
 
-const { loginChangeGate, deviceChainState, signin: deviceSignin } = mountDeviceKeyRoutes(app, {
+const { loginChangeGate, deviceChainState, signin: deviceSignin, grants: deviceGrants, approvals: deviceApprovals } = mountDeviceKeyRoutes(app, {
   enabled: deviceKeys,
   vault,
   pageSession: pageSessionDeps,
@@ -571,8 +571,10 @@ const mandateCeremonyDeps = (): Omit<CeremonyDeps, 'newAuthorizationId'> => ({
   encrypt: encryptIntentForRecipients,
   deliverGateContent: (args) => pushGateContent(args),
   resyncGates: () => resyncGates(),
+  // A gateway with a device chain grants the mandate on this computer first (step 13); undefined with the switch off.
+  ...(deviceGrants ? { grants: deviceGrants } : {}),
 });
-app.use('/internal', jsonParser, createInternalMandateRouter(() => internalSecret, mandateCeremonyDeps));
+app.use('/internal', jsonParser, createInternalMandateRouter(() => internalSecret, mandateCeremonyDeps, deviceApprovals));
 
 // PE1 — the MCP server sealing/opening proposal content (toolArgs, change-
 // needed notes) for recipients it does not itself have key material for.

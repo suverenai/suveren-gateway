@@ -15,7 +15,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 import { createServer, type Server, type IncomingMessage } from 'node:http';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID, generateKeyPairSync, sign as cryptoSign, type KeyObject } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -26,12 +26,15 @@ import { CommittedExecutor } from '../src/lib/committed-executor';
 import { computeProposalContentHash } from '../src/lib/proposal-content';
 import { SPClient, type SPProposal } from '../src/lib/sp-client';
 import { resolveProposalFacts, signedMandateFacts } from '../src/lib/device-decisions';
+import type { GrantCheck } from '../src/lib/mandate-grants';
 import type { SharedState } from '../src/lib/shared-state';
 import type { IntegrationManager, DiscoveredTool } from '../src/lib/integration-manager';
 import { testReceiptKeypair, makeSignedReceipt, echoTicketRequest } from './helpers/real-receipt';
 import { createInternalDeviceRouter } from '../../control-plane/src/routes/internal-device';
 import { DeviceChainStore } from '../../control-plane/src/lib/device-chain-store';
 import { DevicePinStore } from '../../control-plane/src/lib/device-pin-store';
+import { pinChainStub } from './helpers/cp-pin-stub';
+import { MandateGrantStore } from '../../control-plane/src/lib/mandate-grant-store';
 
 // ─── people with real device chains ──────────────────────────────────────
 
@@ -41,25 +44,41 @@ interface Person {
   entries: dk.ChainEntry[];
   /** The first device. */
   dev: { keyId: string; priv: Uint8Array };
+  /** The first device's check key (a P-256 key standing for the Secure Enclave one), when it has one. */
+  check?: KeyObject;
+}
+
+/** A platform check: ECDSA P-256 over the 32 digest bytes of a `sha256:` hash, DER (what the helper's Secure Enclave key gives). */
+function checkSignature(priv: KeyObject, hash: string): { signature: string } {
+  const digest = Buffer.from(hash.slice('sha256:'.length), 'hex');
+  return { signature: cryptoSign('sha256', digest, { key: priv, dsaEncoding: 'der' }).toString('base64url') };
+}
+function newCheckKey(): { priv: KeyObject; key: { type: 'platform'; pub: string } } {
+  const { publicKey, privateKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const jwk = publicKey.export({ format: 'jwk' }) as { x: string; y: string };
+  const pub = Buffer.concat([Buffer.from([4]), Buffer.from(jwk.x, 'base64url'), Buffer.from(jwk.y, 'base64url')]);
+  return { priv: privateKey, key: { type: 'platform', pub: pub.toString('base64url') } };
 }
 
 const now = () => Math.floor(Date.now() / 1000);
 
-async function newDevice(label: string) {
+async function newDevice(label: string, check?: ReturnType<typeof newCheckKey>) {
   const priv = randomBytes(32);
   const pub = await dk.ed25519PublicKey(priv);
-  const record = await dk.buildDeviceRecord({ sign_pub: dk.b64uEncode(pub), read_pub: dk.b64uEncode(randomBytes(32)), kind: 'gateway', label, keystore: 'software' }, pub);
+  const record = await dk.buildDeviceRecord({ sign_pub: dk.b64uEncode(pub), read_pub: dk.b64uEncode(randomBytes(32)), kind: 'gateway', label, keystore: 'software', ...(check ? { check: check.key } : {}) }, pub);
   return { priv: new Uint8Array(priv), record };
 }
 
-async function person(label = 'Computer'): Promise<Person> {
+async function person(label = 'Computer', o: { check?: boolean } = {}): Promise<Person> {
   const { seed } = await dk.generateRecoveryCode();
   const root = await dk.deriveRootKey(seed);
-  const d = await newDevice(label);
+  const check = o.check ? newCheckKey() : undefined;
+  const d = await newDevice(label, check);
   const e0 = dk.buildEntry({ root_did: root.did, seq: 0, prev: null, op: 'genesis', created_at: now(), signer: 'root', device: d.record });
   e0.sigs.push(await dk.signEntry(e0, 'root', root.privateSeed), await dk.signEntry(e0, d.record.key_id, d.priv));
+  if (check) e0.checks.push({ by: d.record.key_id, check: checkSignature(check.priv, await dk.entryHash(e0)) });
   await dk.verifyChain({ expectedRootDid: root.did, entries: [e0] });
-  return { did: root.did, rootSeed: root.privateSeed, entries: [e0], dev: { keyId: d.record.key_id, priv: d.priv } };
+  return { did: root.did, rootSeed: root.privateSeed, entries: [e0], dev: { keyId: d.record.key_id, priv: d.priv }, ...(check ? { check: check.priv } : {}) };
 }
 
 async function addDevice(p: Person, label: string): Promise<{ keyId: string; priv: Uint8Array }> {
@@ -92,12 +111,43 @@ function blob(payload: Record<string, unknown>): string {
   return Buffer.from(JSON.stringify({ payload, signature: 'sig' })).toString('base64url');
 }
 
-function mandateBlob(owner: Person, extra: Record<string, unknown> = {}): string {
-  return blob({
-    version: '0.7', mandate_id: MANDATE_ID, profile_id: 'test-deploy@1', commitment_mode: 'review', issuer: 'did:key:as',
-    issued_at: now(), bounds_hash: 'sha256:b', mandate_owners: [{ did: owner.did }], ...extra,
-  });
+/** A v0.8 mandate payload as the Authority Server would sign it (a chain account is granted 0.8 mandates only). */
+function mandatePayload(owner: Person, extra: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    version: '0.8', mandate_id: MANDATE_ID, profile_id: 'test-deploy@1', profile_hash: `sha256:${'1'.repeat(64)}`, commitment_mode: 'review', issuer: 'did:key:as',
+    issued_at: now(), bounds_hash: `sha256:${'2'.repeat(64)}`, scope_hash: `sha256:${'3'.repeat(64)}`, execution_context_hash: `sha256:${'4'.repeat(64)}`,
+    gate_content_hashes: { intent: `sha256:${'5'.repeat(64)}` }, expires_at: now() + 3600, mandate_owners: [{ did: owner.did }], ...extra,
+  };
 }
+function mandateBlob(owner: Person, extra: Record<string, unknown> = {}): string {
+  return blob(mandatePayload(owner, extra));
+}
+
+/**
+ * The owner's grant for a mandate payload, its members written out by hand (the Authority Server's list), signed with the
+ * owner's first device and its check key. `override` changes a member AFTER the mandate was fixed (a grant that says something
+ * else), `op`/`version` name another version, `check` 'none' or 'other' takes the check away or signs another object.
+ */
+async function grantFor(owner: Person, payload: Record<string, unknown>, o: { op?: 'grant' | 'change'; version?: number; override?: Record<string, unknown>; check?: 'own' | 'none' | 'other'; authorization?: string; mandateId?: string } = {}) {
+  const head = await headOf(owner);
+  const approvers = (payload.above_cap_approvers as string[] | undefined) ?? null;
+  const members = {
+    version: payload.version, profile_id: payload.profile_id, profile_hash: payload.profile_hash, bounds_hash: payload.bounds_hash, scope_hash: payload.scope_hash,
+    execution_context_hash: payload.execution_context_hash, gate_content_hashes: payload.gate_content_hashes, commitment_mode: payload.commitment_mode,
+    expires_at: payload.expires_at, intent_disclosure_hash: payload.intent_disclosure_hash ?? null, above_cap_caps: payload.above_cap_caps ?? null,
+    above_cap_approvers: approvers, above_cap_approvals: payload.above_cap_approvals ?? null, disclose_fields: null, subjects_disclosed: false,
+    authorization_id: o.authorization ?? AUTHZ, group_id: 'g1', replaces: null, chain_dids: [owner.did, ...(approvers ?? [])].sort(), ...o.override,
+  };
+  const grant = dk.buildGrant({
+    op: o.op ?? 'grant', owner_did: owner.did, key_id: owner.dev.keyId, chain_seq: head.seq, chain_head: head.hash,
+    mandate_id: o.mandateId ?? (payload.mandate_id as string), mandate_version: o.version ?? 1, granted_at: now(), nonce: dk.b64uEncode(randomBytes(16)),
+  }, members);
+  const sig = await dk.signObject(grant, owner.dev.priv);
+  const mode = o.check ?? 'own';
+  const check = mode === 'none' ? undefined : checkSignature(owner.check!, mode === 'own' ? await dk.objectHash(grant) : `sha256:${'0'.repeat(64)}`);
+  return { mandate_version: grant.mandate_version, op: grant.op, grant, sig, check: check ?? null };
+}
+type GrantRow = Awaited<ReturnType<typeof grantFor>>;
 
 interface World {
   as: FakeAs;
@@ -118,6 +168,8 @@ class FakeAs {
   readonly requests: Array<{ method: string; path: string }> = [];
   readonly chains = new Map<string, { entries: unknown[]; head?: { seq: number; hash: string } | null }>();
   proposals = new Map<string, Record<string, unknown>>();
+  /** The grants this Authority Server carries, by mandate id (PR #141's `GET /api/mandates/:id/grants`). */
+  grants = new Map<string, GrantRow[]>();
   tickets = 0;
   failDecisionsRead = false;
   private server!: Server;
@@ -149,11 +201,15 @@ class FakeAs {
       const { deviceDecisions, ...rest } = p;
       return json(200, { proposal: this.failDecisionsRead ? rest : p, ...(deviceDecisions === undefined ? {} : {}) });
     }
+    if (req.method === 'GET' && (m = /^\/api\/authorizations\/([^/]+)$/.exec(url.pathname))) return json(200, { authorization_id: decodeURIComponent(m[1]), profile_id: 'test-pay@1', group_id: 'g1' });
     if (req.method === 'GET' && url.pathname === '/api/devices/chain') {
       const did = url.searchParams.get('did') ?? '';
       const c = this.chains.get(did);
       if (!c) return json(404, { approved: false, errors: [{ code: 'NO_CHAIN', message: 'no device chain for this DID' }] });
       return json(200, { root_did: did, entries: c.entries, head: c.head });
+    }
+    if (req.method === 'GET' && (m = /^\/api\/mandates\/([^/]+)\/grants$/.exec(url.pathname))) {
+      return json(200, { grants: (this.grants.get(decodeURIComponent(m[1])) ?? []).map(g => ({ ...g, mandate_id: (g.grant as { mandate_id: string }).mandate_id })) });
     }
     if (req.method === 'POST' && url.pathname === '/api/as/ticket') {
       this.tickets++;
@@ -179,12 +235,14 @@ async function world(o: {
   decisions?: Array<{ decision: dk.Decision; sig: string }>;
   /** The head this gateway pinned for the owner before (its own chain record). */
   pinnedOwnHead?: { seq: number; hash: string };
+  /** The Authority Server carries no grant for the mandate (it signed a mandate its owner's device never granted). */
+  noGrant?: boolean;
 } = {}): Promise<World> {
   const dir = mkdtempSync(join(tmpdir(), 'hap-devdec-'));
-  const owner = await person('Owner computer');
+  const owner = await person('Owner computer', { check: true });
   const as = await new FakeAs(body => makeSignedReceipt(kp, {
     id: `ticket-${randomUUID()}`, action: TOOL_NAME, actionType: 'send', executionContext: {}, authorizationId: AUTHZ,
-    profileId: 'test-deploy@1', proposalId: body.proposalId, mandateId: MANDATE_ID, ...echoTicketRequest(body),
+    profileId: 'test-deploy@1', proposalId: body.proposalId, mandateId: MANDATE_ID, version: '0.8', ...(body.proposalContentHash ? { proposalContentHash: body.proposalContentHash } : {}), ...echoTicketRequest(body),
   })).listen();
   toClose.push(() => as.close());
 
@@ -206,7 +264,13 @@ async function world(o: {
   app.use((req, _res, next) => { cpHits.push(`${req.method} ${req.path}`); next(); });
   const realStateFn = store.state.bind(store);
   store.state = () => (own.state === 'present' ? realStateFn() : own.state);
-  app.use('/internal', createInternalDeviceRouter(() => 'sekret', store, new DevicePinStore(vault as never, store)));
+  // the grant memory is the real one too; the receipt signer is the real route's job (tested in the control plane), a recorder here
+  const receipts: Array<{ mandateId: string; version: number }> = [];
+  const grantStore = new MandateGrantStore(vault as never);
+  const pinStore = new DevicePinStore(vault as never, store);
+  app.use('/internal', createInternalDeviceRouter(() => 'sekret', store, pinStore, {
+    store: grantStore, grants: { receipt: async (r: { mandateId: string; version: number }) => { receipts.push(r); return { sent: true }; }, ownerKnown: (d: string) => d === owner.did, verifyHeld: async () => ({}), pinChain: pinChainStub(as.chains, pinStore, owner.did) } as never,
+  }));
   const cp: Server = await new Promise(r => { const s = app.listen(0, '127.0.0.1', () => r(s)); });
   toClose.push(() => new Promise<void>(r => cp.close(() => r())));
   const cpUrl = `http://127.0.0.1:${(cp.address() as { port: number }).port}`;
@@ -217,10 +281,12 @@ async function world(o: {
   await as.setChain(owner);
   for (const d of o.deciders ?? []) await as.setChain(d);
 
-  const mandate = mandateBlob(owner, {
-    ...(o.deciders ? { above_cap_approvers: o.deciders.map(d => d.did) } : {}),
+  const payload = mandatePayload(owner, {
+    ...(o.deciders ? { above_cap_approvers: o.deciders.map(d => d.did), above_cap_approvals: o.deciders.length, above_cap_caps: {} } : {}),
     ...o.mandateExtra,
   });
+  const mandate = blob(payload);
+  if (!o.noGrant) as.grants.set(MANDATE_ID, [await grantFor(owner, payload)]);
   const auth = {
     authorizationId: AUTHZ, profileId: 'test-deploy@1', mandateId: MANDATE_ID, mandateIds: [MANDATE_ID],
     attestations: [{ domain: 'owner', blob: mandate, expiresAt: now() + 3600 }],
@@ -582,13 +648,22 @@ describe('replay: a reused proposal id or decision nonce', () => {
   });
 });
 
+/**
+ * These tests are about WHICH facts a decision names (the signed mandate id, the action type, who may decide). The mandate
+ * grant check has its own tests (test/mandate-grants.test.ts) and is the only thing skipped here; the end-to-end tests above
+ * run with the real gate.
+ */
+const skipGate: GrantCheckFn = async () => ({ ok: true, skipped: true });
+type GrantCheckFn = (i: { authorizationId: string; attestations: ReadonlyArray<{ blob: string }> }) => Promise<GrantCheck>;
+const facts = (d: Omit<Parameters<typeof resolveProposalFacts>[0], 'grants'> & { grants?: GrantCheckFn }, q: Parameters<typeof resolveProposalFacts>[1]) => resolveProposalFacts({ grants: skipGate, ...d }, q);
+
 describe('proposal facts compared with this gateway\'s own submission record', () => {
   const att = { blob: blob({ version: '0.7', mandate_id: 'm1', commitment_mode: 'review', issued_at: 1, mandate_owners: [{ did: 'did:key:z6MkO' }] }) };
   it('refuses early when the Authority Server reports another tool or grant than this gateway submitted', async () => {
     const d = { auth: async () => ({ attestations: [att] }), manifestActionType: () => 'send', submission: () => ({ tool: 't__x', authorizationId: 'a', actionType: 'send' }) };
-    expect(await resolveProposalFacts(d, { proposalId: 'p', authorizationId: 'a', tool: 't__other' })).toEqual({ ok: false, code: 'proposal_mismatch' });
-    expect(await resolveProposalFacts(d, { proposalId: 'p', authorizationId: 'b', tool: 't__x' })).toEqual({ ok: false, code: 'proposal_mismatch' });
-    expect((await resolveProposalFacts(d, { proposalId: 'p', authorizationId: 'a', tool: 't__x' })).ok).toBe(true);
+    expect(await facts(d, { proposalId: 'p', authorizationId: 'a', tool: 't__other' })).toEqual({ ok: false, code: 'proposal_mismatch' });
+    expect(await facts(d, { proposalId: 'p', authorizationId: 'b', tool: 't__x' })).toEqual({ ok: false, code: 'proposal_mismatch' });
+    expect((await facts(d, { proposalId: 'p', authorizationId: 'a', tool: 't__x' })).ok).toBe(true);
   });
 });
 
@@ -601,7 +676,7 @@ describe('an approver\'s gateway: no grant cached, no connector installed', () =
 
   it('reads the mandate for this one proposal from the AS and takes the action type the proposal stores', async () => {
     const fetched: string[] = [];
-    const out = await resolveProposalFacts({ ...base, fetchAuth: async id => { fetched.push(id); return { attestations: [mandate] }; } }, q);
+    const out = await facts({ ...base, fetchAuth: async id => { fetched.push(id); return { attestations: [mandate] }; } }, q);
     expect(out).toEqual({ ok: true, mandateId: 'm1', actionType: 'send' });
     expect(fetched).toEqual(['a']);
   });
@@ -609,18 +684,18 @@ describe('an approver\'s gateway: no grant cached, no connector installed', () =
   it('does not fetch when the grant is already held, and checks the person is the owner or a signed approver', async () => {
     const fetched: string[] = [];
     const held = { ...base, auth: async () => ({ attestations: [mandate] }), fetchAuth: async (id: string) => { fetched.push(id); return undefined; } };
-    expect((await resolveProposalFacts(held, q)).ok).toBe(true);
+    expect((await facts(held, q)).ok).toBe(true);
     expect(fetched).toEqual([]);
-    expect(await resolveProposalFacts(base, { ...q, approverDid: owner }).then(r => r.ok)).toBe(true);
-    expect(await resolveProposalFacts(base, { ...q, approverDid: 'did:key:z6MkStranger' })).toEqual({ ok: false, code: 'not_a_signed_decider' });
+    expect(await facts(base, { ...q, approverDid: owner }).then(r => r.ok)).toBe(true);
+    expect(await facts(base, { ...q, approverDid: 'did:key:z6MkStranger' })).toEqual({ ok: false, code: 'not_a_signed_decider' });
   });
 
   it('refuses clearly when neither the mandate nor the action type can be had, or when two sources disagree', async () => {
-    expect(await resolveProposalFacts({ ...base, fetchAuth: async () => undefined }, q)).toEqual({ ok: false, code: 'mandate_unavailable' });
-    expect(await resolveProposalFacts({ ...base, fetchAuth: async () => { throw new Error('down'); } }, q)).toEqual({ ok: false, code: 'mandate_unavailable' });
-    expect(await resolveProposalFacts(base, { ...q, reportedActionType: undefined })).toEqual({ ok: false, code: 'action_type_unknown' });
-    expect(await resolveProposalFacts({ ...base, manifestActionType: () => 'delete' }, q)).toEqual({ ok: false, code: 'action_type_mismatch' });
-    expect(await resolveProposalFacts({ ...base, submission: () => ({ actionType: 'delete' }) }, q)).toEqual({ ok: false, code: 'action_type_mismatch' });
+    expect(await facts({ ...base, fetchAuth: async () => undefined }, q)).toEqual({ ok: false, code: 'mandate_unavailable' });
+    expect(await facts({ ...base, fetchAuth: async () => { throw new Error('down'); } }, q)).toEqual({ ok: false, code: 'mandate_unavailable' });
+    expect(await facts(base, { ...q, reportedActionType: undefined })).toEqual({ ok: false, code: 'action_type_unknown' });
+    expect(await facts({ ...base, manifestActionType: () => 'delete' }, q)).toEqual({ ok: false, code: 'action_type_mismatch' });
+    expect(await facts({ ...base, submission: () => ({ actionType: 'delete' }) }, q)).toEqual({ ok: false, code: 'action_type_mismatch' });
   });
 });
 
@@ -712,7 +787,7 @@ describe('resolveProposalFacts: the mandate id and the action type of a decision
   });
 
   it('takes the most recently issued signed mandate and the submission record before the manifest', async () => {
-    const out = await resolveProposalFacts({
+    const out = await facts({
       auth: async () => ({ attestations: [att({}, 'old', 10), att({}, 'new', 20)] }),
       submission: () => ({ actionType: 'send' }), manifestActionType: () => 'send',
     }, { proposalId: 'p', authorizationId: 'a', tool: 't__x' });
@@ -720,18 +795,18 @@ describe('resolveProposalFacts: the mandate id and the action type of a decision
   });
 
   it('falls back to the manifest for a proposal another gateway of the same person submitted', async () => {
-    const out = await resolveProposalFacts({
+    const out = await facts({
       auth: async () => ({ attestations: [att()] }), submission: () => undefined, manifestActionType: t => (t === 't__x' ? 'send' : undefined),
     }, { proposalId: 'p', authorizationId: 'a', tool: 't__x' });
     expect(out).toEqual({ ok: true, mandateId: 'm1', actionType: 'send' });
   });
 
   it('says so when it has no signed mandate or no action type, instead of guessing', async () => {
-    const none = await resolveProposalFacts({ auth: async () => null, submission: () => undefined, manifestActionType: () => 'send' }, { proposalId: 'p', authorizationId: 'a', tool: 't' });
+    const none = await facts({ auth: async () => null, submission: () => undefined, manifestActionType: () => 'send' }, { proposalId: 'p', authorizationId: 'a', tool: 't' });
     expect(none).toEqual({ ok: false, code: 'mandate_unavailable' });
-    const broken = await resolveProposalFacts({ auth: async () => ({ attestations: [{ blob: 'not-a-blob' }] }), submission: () => undefined, manifestActionType: () => 'send' }, { proposalId: 'p', authorizationId: 'a', tool: 't' });
+    const broken = await facts({ auth: async () => ({ attestations: [{ blob: 'not-a-blob' }] }), submission: () => undefined, manifestActionType: () => 'send' }, { proposalId: 'p', authorizationId: 'a', tool: 't' });
     expect(broken).toEqual({ ok: false, code: 'mandate_unavailable' });
-    const noType = await resolveProposalFacts({ auth: async () => ({ attestations: [att()] }), submission: () => undefined, manifestActionType: () => undefined }, { proposalId: 'p', authorizationId: 'a', tool: 't' });
+    const noType = await facts({ auth: async () => ({ attestations: [att()] }), submission: () => undefined, manifestActionType: () => undefined }, { proposalId: 'p', authorizationId: 'a', tool: 't' });
     expect(noType).toEqual({ ok: false, code: 'action_type_unknown' });
   });
 

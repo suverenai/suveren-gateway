@@ -354,22 +354,39 @@ describe('the control plane\'s answers for the MCP server (/internal/device-*)',
     const chain = await call(w.gw.port, 'GET', '/internal/device-chain', { headers: SECRET });
     expect(chain.body).toEqual({ state: 'present', rootDid: w.rootDid });
 
-    const other = 'did:key:z6MkSomeoneElse';
-    const h1 = { seq: 2, hash: `sha256:${'1'.repeat(64)}` };
+    // The control plane verifies the chain ITSELF before it moves a pin: the caller names a DID, never a head. (hap-core people, served as
+    // another person's chain by the Authority Server stand-in.)
+    const dk = await import('@hap/core/device-keys');
+    const { randomBytes } = await import('node:crypto');
+    const { seed } = await dk.generateRecoveryCode();
+    const root = await dk.deriveRootKey(seed);
+    const priv = new Uint8Array(randomBytes(32));
+    const pub = await dk.ed25519PublicKey(priv);
+    const rec = await dk.buildDeviceRecord({ sign_pub: dk.b64uEncode(pub), read_pub: dk.b64uEncode(new Uint8Array(32).fill(3)), kind: 'gateway', label: 'X', keystore: 'software' }, pub);
+    const e0 = dk.buildEntry({ root_did: root.did, seq: 0, prev: null, op: 'genesis', created_at: Math.floor(Date.now() / 1000), signer: 'root', device: rec });
+    e0.sigs.push(await dk.signEntry(e0, 'root', root.privateSeed), await dk.signEntry(e0, rec.key_id, priv));
+    const other = root.did;
+    const claimed = { seq: 7, hash: `sha256:${'1'.repeat(64)}` };
     expect((await call(w.gw.port, 'POST', '/internal/device-pin/get', { headers: SECRET, body: { did: other } })).body).toEqual({ head: null });
-    expect((await call(w.gw.port, 'POST', '/internal/device-pin/advance', { headers: SECRET, body: { did: other, head: h1 } })).status).toBe(200);
-    expect((await call(w.gw.port, 'POST', '/internal/device-pin/get', { headers: SECRET, body: { did: other } })).body).toEqual({ head: h1 });
-    // a shorter chain is a rollback, another hash at the same number a fork; neither moves the pin
-    const lower = await call(w.gw.port, 'POST', '/internal/device-pin/advance', { headers: SECRET, body: { did: other, head: { seq: 1, hash: `sha256:${'2'.repeat(64)}` } } });
+    // nothing served for this DID: nothing pinned, whatever the caller claims
+    expect((await call(w.gw.port, 'POST', '/internal/device-pin/advance', { headers: SECRET, body: { did: other, head: claimed } })).status).toBeGreaterThanOrEqual(400);
+    expect((await call(w.gw.port, 'POST', '/internal/device-pin/get', { headers: SECRET, body: { did: other } })).body).toEqual({ head: null });
+    w.as.otherChains.set(other, [e0]);
+    const verified = (await dk.verifyChain({ expectedRootDid: other, entries: [e0] })).head;
+    expect((await call(w.gw.port, 'POST', '/internal/device-pin/advance', { headers: SECRET, body: { did: other, head: claimed } })).status).toBe(200);
+    expect((await call(w.gw.port, 'POST', '/internal/device-pin/get', { headers: SECRET, body: { did: other } })).body).toEqual({ head: verified });
+    // a pin ahead of the chain served is a rollback, another hash at the same number a fork; neither moves the pin
+    const pins = new DevicePinStore(w.gw.vault, new DeviceChainStore(w.gw.vault));
+    const other2 = 'did:key:z6MkSomeoneElse';
+    void other2;
+    const store = new DevicePinStore(w.gw.vault, new DeviceChainStore(w.gw.vault));
+    store.advance(other, { seq: 5, hash: `sha256:${'2'.repeat(64)}` });
+    const lower = await call(w.gw.port, 'POST', '/internal/device-pin/advance', { headers: SECRET, body: { did: other } });
     expect(lower.status).toBe(409); expect(lower.body.code).toBe('rollback');
-    const fork = await call(w.gw.port, 'POST', '/internal/device-pin/advance', { headers: SECRET, body: { did: other, head: { seq: 2, hash: `sha256:${'3'.repeat(64)}` } } });
-    expect(fork.status).toBe(409); expect(fork.body.code).toBe('fork');
-    expect((await call(w.gw.port, 'POST', '/internal/device-pin/get', { headers: SECRET, body: { did: other } })).body).toEqual({ head: h1 });
-    // forward is fine
-    const h3 = { seq: 3, hash: `sha256:${'4'.repeat(64)}` };
-    expect((await call(w.gw.port, 'POST', '/internal/device-pin/advance', { headers: SECRET, body: { did: other, head: h3 } })).status).toBe(200);
+    expect((await call(w.gw.port, 'POST', '/internal/device-pin/get', { headers: SECRET, body: { did: other } })).body).toEqual({ head: { seq: 5, hash: `sha256:${'2'.repeat(64)}` } });
+    void pins;
     // the pins are sealed in the vault, readable again by a new store over the same vault
-    expect(new DevicePinStore(w.gw.vault, new DeviceChainStore(w.gw.vault)).get(other)).toEqual(h3);
+    expect(new DevicePinStore(w.gw.vault, new DeviceChainStore(w.gw.vault)).get(other)).toEqual({ seq: 5, hash: `sha256:${'2'.repeat(64)}` });
     // the owner's own pin is the head of its own chain record, not a second copy
     const own = new DeviceChainStore(w.gw.vault).read()!;
     expect((await call(w.gw.port, 'POST', '/internal/device-pin/get', { headers: SECRET, body: { did: w.rootDid } })).body).toEqual({ head: own.head });
@@ -384,7 +401,7 @@ describe('the control plane\'s answers for the MCP server (/internal/device-*)',
   it('refuses a malformed did or head, and answers 423 while the vault is locked', async () => {
     const w = await world();
     expect((await call(w.gw.port, 'POST', '/internal/device-pin/get', { headers: SECRET, body: { did: 'not-a-did' } })).status).toBe(400);
-    expect((await call(w.gw.port, 'POST', '/internal/device-pin/advance', { headers: SECRET, body: { did: 'did:key:z6MkX', head: { seq: -1, hash: 'x' } } })).status).toBe(400);
+    expect((await call(w.gw.port, 'POST', '/internal/device-pin/advance', { headers: SECRET, body: { did: 'not-a-did' } })).status).toBe(400);
     w.gw.vault.lockExpired();
     const locked = await call(w.gw.port, 'POST', '/internal/device-pin/get', { headers: SECRET, body: { did: 'did:key:z6MkX' } });
     expect(locked.status).toBe(423);

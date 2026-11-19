@@ -18,6 +18,8 @@ import Foundation
 ///     nonce, issued_at
 ///   - the cancel of a request for a new identity: exactly typ "suveren-identity-cancel", v, aud, root_did,
 ///     key_id, request_id, chain_seq, chain_head, issued_at (hap-core 0.15.0, plan 6.2)
+///   - a mandate grant or change (`typ` "suveren-mandate-grant", `op` "grant" or "change", the fixed members of
+///     hap-core's grant and a `profile_id`; plan 4.4). A revoke needs no check, so it has no text.
 public enum ReasonText {
     /// A name from the object goes between quotes with `\` and `"` escaped, so no name can end the quote and add words.
     public static func quoted(_ s: String) -> String {
@@ -35,9 +37,12 @@ public enum ReasonText {
     public static let clearCheck = "remove the check key of a device"
     public static let rotateRoot = "replace the recovery code"
     public static let cancelIdentityReset = "cancel the request for a new identity"
+    public static func grantMandate(_ profile: String) -> String { "grant the mandate for \(quoted(profile))" }
+    public static func changeMandate(_ profile: String) -> String { "change the mandate for \(quoted(profile))" }
 
     static let changeRequestMembers: Set<String> = ["request_id", "kind", "name", "change_hash", "gateway_key_id", "expires_at"]
     static let unlockSwitchMembers: Set<String> = ["typ", "v", "action", "nonce", "issued_at"]
+    static let grantFixedMembers: Set<String> = ["typ", "v", "op", "owner_did", "key_id", "chain_seq", "chain_head", "mandate_id", "mandate_version", "granted_at", "nonce"]
     static let identityCancelMembers: Set<String> = ["typ", "v", "aud", "root_did", "key_id", "request_id", "chain_seq", "chain_head", "issued_at"]
 
     public static func forObject(_ bytes: Data) throws -> String {
@@ -61,6 +66,14 @@ public enum ReasonText {
         }
         if o["typ"] as? String == "suveren-identity-cancel", Set(o.keys) == identityCancelMembers {
             return cancelIdentityReset
+        }
+        if o["typ"] as? String == "suveren-mandate-grant", grantFixedMembers.isSubset(of: Set(o.keys)),
+           let profile = o["profile_id"] as? String, !profile.isEmpty {
+            switch o["op"] as? String {
+            case "grant": return grantMandate(profile)
+            case "change": return changeMandate(profile)
+            default: break   // a revoke is signed without a check: no text, no prompt
+            }
         }
         throw HelperError("bad_request", "object is of a kind this helper has no prompt text for.")
     }

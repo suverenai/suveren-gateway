@@ -13,7 +13,7 @@
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { createHash, generateKeyPairSync, randomBytes, randomUUID, sign as cryptoSign, type KeyObject } from 'node:crypto';
-import { canonicalize } from '@hap/core';
+import { canonicalize, encodeDidKey } from '@hap/core';
 import { confirmCodeOf } from '../../lib/device-recovery-contract';
 import {
   verifyChain, verifySignin, validateSignin, validateEntryShape, b64uBytes, b64uEncode, keyIdOf, DeviceKeysError,
@@ -51,6 +51,11 @@ export class StubAs {
   url = '';
   port = 0;
   readonly pubkeyHex: string;
+  /** The Authority Server's signing key as hap-core takes it (raw seed), and its `did:key` (what a mandate names as `issuer`). */
+  readonly signingSeed: Uint8Array;
+  readonly issuerDid: string;
+  /** Chains of OTHER people (an approver's), served by `GET /api/devices/chain?did=` like the account's own. */
+  readonly otherChains = new Map<string, unknown[]>();
   private readonly priv: KeyObject;
   private readonly now: () => number;
 
@@ -125,6 +130,8 @@ export class StubAs {
     const { publicKey, privateKey } = generateKeyPairSync('ed25519');
     this.priv = privateKey;
     this.pubkeyHex = hex(Buffer.from((publicKey.export({ format: 'jwk' }) as { x: string }).x, 'base64url'));
+    this.signingSeed = new Uint8Array(Buffer.from((privateKey.export({ format: 'jwk' }) as { d: string }).d, 'base64url'));
+    this.issuerDid = encodeDidKey(Buffer.from((publicKey.export({ format: 'jwk' }) as { x: string }).x, 'base64url'));
     this.now = opts.now ?? (() => Math.floor(Date.now() / 1000));
     this.accounts.set('u1', { id: 'u1', name: 'Test Person', email: 'person@example.test', rootDid: null });
   }
@@ -332,6 +339,11 @@ export class StubAs {
         if (!this.bearer(req)) return refuse(401, 'UNAUTHENTICATED', 'Authentication required');
         if (this.redirectChainTo) { res.writeHead(302, { Location: this.redirectChainTo }); res.end(); return; }
         if (this.failChainGets > 0) { this.failChainGets--; return json(500, { error: 'boom' }); }
+        const other = this.otherChains.get(url.searchParams.get('did') ?? '');
+        if (other) {
+          const head = (await verifyChain({ expectedRootDid: url.searchParams.get('did')!, entries: other })).head;
+          return json(200, { root_did: url.searchParams.get('did'), entries: other, head });
+        }
         if (!this.chainUser || url.searchParams.get('did') !== this.accounts.get(this.chainUser)?.rootDid) return refuse(404, 'NO_CHAIN', 'no device chain for this DID');
         const entries = this.entries.slice(0, Math.max(0, this.entries.length - this.truncateStateBy - this.truncateServedBy));
         if (entries.length === 0) return json(200, { root_did: url.searchParams.get('did'), entries, head: null });

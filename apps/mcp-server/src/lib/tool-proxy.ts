@@ -2044,6 +2044,7 @@ function createGatedToolHandlerInner(
               profileId: auth.profileId,
               previewHash,
               actionType: declaredActionType,
+              mandateId: auth.mandateId,
             });
             return {
               content: [{
@@ -2523,6 +2524,7 @@ function createGatedToolHandlerInner(
                 profileId: auth.profileId,
                 previewHash,
                 actionType: declaredActionType,
+                mandateId: auth.mandateId,
               });
               return {
                 content: [{

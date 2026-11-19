@@ -155,6 +155,13 @@ func sha256hex(_ d: Data) -> String { SHA256.hash(data: d).map { String(format: 
         #expect(reason(unlock("disable")) == "turn off Touch ID unlock for Suveren")
         let cancel = "{\"typ\":\"suveren-identity-cancel\",\"v\":1,\"aud\":\"a\",\"root_did\":\"d\",\"key_id\":\"k\",\"request_id\":\"r\",\"chain_seq\":1,\"chain_head\":\"h\",\"issued_at\":1}"
         #expect(reason(Data(cancel.utf8)) == "cancel the request for a new identity")
+        func grant(_ op: String, _ profile: String = "email@0.9") -> Data {
+            Data("{\"typ\":\"suveren-mandate-grant\",\"v\":1,\"op\":\"\(op)\",\"owner_did\":\"d\",\"key_id\":\"k\",\"chain_seq\":1,\"chain_head\":\"h\",\"mandate_id\":\"m\",\"mandate_version\":1,\"granted_at\":1,\"nonce\":\"n\",\"profile_id\":\"\(profile)\",\"bounds_hash\":\"x\"}".utf8)
+        }
+        #expect(reason(grant("grant")) == "grant the mandate for \"email@0.9\"")
+        #expect(reason(grant("change")) == "change the mandate for \"email@0.9\"")
+        // a revoke is signed without a check: it has no text, so no prompt can be raised for it
+        #expect(code(sign(k, grant("revoke"))) == "bad_request")
     }
 
     @Test func objectsWithNoTextAreRefusedBeforeAnyPrompt() {
