@@ -18,11 +18,17 @@ export interface HeldBackMandate {
   adminName: string | null;
 }
 
-/** Gateway code -> reason. `no_grant` is the gateway's "nothing received yet"; any other grant code means a mismatch. */
+/**
+ * Gateway code (the MCP server's verdict, GET /api/mandate/held-back) -> reason. The codes are the gateway's own:
+ * `mandate_body_not_received` and `mandate_not_granted` (nothing, or no grant, has reached this computer yet), `grant_check_required`
+ * (the grant has no check), `owner_unknown` / `owner_not_this_person` (the owner is not someone this person confirmed), `mandate_revoked`.
+ * Any other grant or body code means what arrived does not match what the owner granted. (`no_grant`, `CHECK_REQUIRED`, `check_required`
+ * are older spellings, kept.)
+ */
 export function heldReason(code: string): HeldReason {
-  if (code === 'no_grant') return 'not_received';
-  if (code === 'CHECK_REQUIRED' || code === 'check_required') return 'check_required';
-  if (code === 'owner_unknown') return 'owner_unknown';
+  if (code === 'mandate_body_not_received' || code === 'mandate_not_granted' || code === 'no_grant') return 'not_received';
+  if (code === 'grant_check_required' || code === 'CHECK_REQUIRED' || code === 'check_required') return 'check_required';
+  if (code === 'owner_unknown' || code === 'owner_not_this_person') return 'owner_unknown';
   if (code === 'mandate_revoked') return 'revoked';
   return 'changed';
 }

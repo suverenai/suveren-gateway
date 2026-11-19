@@ -149,7 +149,7 @@ export class AttestationCache {
    */
   private grantGate: GrantGate | null = null;
   /** Authorizations the gate refused, with the reason: shown to the person, never honoured. In memory, like the cache. */
-  private withheld = new Map<string, { code: string; text: string }>();
+  private withheld = new Map<string, { code: string; text: string; profileId?: string; ownerDid?: string; mandateId?: string }>();
 
   /**
    * With a gate set, an entry is only as old as its last successful check. Rechecked every GRANT_RECHECK_MS (the owner's revoke,
@@ -194,6 +194,11 @@ export class AttestationCache {
   /** Why an authorization is not honoured on this gateway (the last check refused it), or undefined. */
   withheldReason(authorizationId: string): { code: string; text: string } | undefined {
     return this.withheld.get(authorizationId);
+  }
+
+  /** Every mandate this gateway holds back, with the gateway's own verdict (for the page's "held back" list; read-only). */
+  withheldList(): Array<{ authorizationId: string; code: string; profileId?: string; ownerDid?: string; mandateId?: string }> {
+    return [...this.withheld.entries()].map(([authorizationId, w]) => ({ authorizationId, code: w.code, profileId: w.profileId, ownerDid: w.ownerDid, mandateId: w.mandateId }));
   }
 
   /**
@@ -424,7 +429,12 @@ export class AttestationCache {
         // moment ago: the entry stays until it is stale (GRANT_MAX_AGE_MS). Every other refusal drops it at once.
         const transient = ['grants_unavailable', 'chain_unavailable', 'device_state_unavailable', 'body_unavailable'].includes(g.code);
         if (!transient) this.authorizations.delete(result.authorization_id);
-        this.withheld.set(result.authorization_id, { code: g.code, text: g.text });
+        let ownerDid: string | undefined;
+        let mandateId: string | undefined;
+        for (const a of attestations) {
+          try { const p = decodeMandateBlob(a.blob).payload; ownerDid = p.mandate_owners?.[0]?.did; mandateId = p.mandate_id; if (ownerDid) break; } catch { /* names nobody */ }
+        }
+        this.withheld.set(result.authorization_id, { code: g.code, text: g.text, profileId: result.profile_id, ownerDid, mandateId });
         return null;
       }
       this.withheld.delete(result.authorization_id);

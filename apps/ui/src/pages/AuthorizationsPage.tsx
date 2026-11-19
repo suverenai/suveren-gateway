@@ -8,6 +8,8 @@ import { AuthorizePicker } from '../components/AuthorizePicker';
 import { useSearchParams, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { EndMandateHost } from '../components/device/EndMandateHost';
+import { ChangeMandateHost } from '../components/device/ChangeMandateHost';
+import { HeldBackHost } from '../components/device/HeldBackHost';
 import { endIsDeviceSigned } from '../lib/end-mandate';
 import { deviceClient } from '../lib/device-client';
 import { DomainBadge } from '../components/DomainBadge';
@@ -609,6 +611,7 @@ export function AuthorizationsPage() {
   const isAdmin = activeTeam?.isAdmin === true;
   const { deviceKeysSwitch, access } = useAuth();
   const [deviceEnd, setDeviceEnd] = useState(false);
+  const [changeTarget, setChangeTarget] = useState<{ id: string; changes: Record<string, unknown> } | null>(null);
   const [endTarget, setEndTarget] = useState<{ id: string; name: string; until: string | null } | null>(null);
   // Only a gateway with the switch on, a password session and a set-up device ends mandates by device key; every other gateway keeps today's Revoke.
   useEffect(() => {
@@ -1211,6 +1214,17 @@ export function AuthorizationsPage() {
         </div>
       )}
 
+      {/* Step 13, same chain check as End: what this gateway holds back, and the Change screen (Touch ID). */}
+      {deviceEnd && <HeldBackHost />}
+      {changeTarget && (
+        <ChangeMandateHost
+          authorizationId={changeTarget.id}
+          changes={changeTarget.changes}
+          onChanged={() => { spClient.resyncGates().catch(() => {}); fetchMineItems(); }}
+          onClose={() => setChangeTarget(null)}
+        />
+      )}
+
       {endTarget && (
         <EndMandateHost
           authorizationId={endTarget.id}
@@ -1226,6 +1240,7 @@ export function AuthorizationsPage() {
         <ExtendAuthModal
           item={extendItem}
           onClose={() => setExtendItem(null)}
+          {...(deviceEnd ? { onPickDuration: (ttl: number) => { setChangeTarget({ id: extendItem.authorization_id, changes: { durationHours: ttl / 3600 } }); setExtendItem(null); } } : {})}
           onSuccess={() => {
             setExtendItem(null);
             fetchMineItems();

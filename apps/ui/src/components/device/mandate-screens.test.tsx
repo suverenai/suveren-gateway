@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { MandateDiff } from '@hap/core/mandate-change';
 import {
@@ -37,6 +37,8 @@ describe('screen 3: held back', () => {
   });
   it('gateway codes map to reasons', () => {
     expect(heldReason('no_grant')).toBe('not_received'); expect(heldReason('CHECK_REQUIRED')).toBe('check_required');
+    // the gateway's own codes (apps/mcp-server mandate-grants.ts)
+    expect(heldReason('mandate_body_not_received')).toBe('not_received'); expect(heldReason('mandate_not_granted')).toBe('not_received'); expect(heldReason('grant_check_required')).toBe('check_required'); expect(heldReason('owner_not_this_person')).toBe('owner_unknown'); expect(heldReason('mandate_body_mismatch')).toBe('changed'); expect(heldReason('grant_mismatch')).toBe('changed');
     expect(heldReason('owner_unknown')).toBe('owner_unknown'); expect(heldReason('mandate_revoked')).toBe('revoked'); expect(heldReason('grant_member_differs')).toBe('changed');
   });
 });
@@ -144,5 +146,43 @@ describe('screen 2: codes at the join (interface only)', () => {
   it('colleagues list', () => {
     const s = text(<ColleagueList adminName="Anna Muster" colleagues={[{ name: 'Ben Huber', confirmedBy: 'Anna Muster' }, { name: 'Anna Muster', confirmedBy: 'you' }]} />);
     for (const x of [S13.colleaguesTitle, 'confirmed by Anna Muster', S13.confirmedByYou, S13.colleaguesWhy('Anna Muster')]) expect(s).toContain(x);
+  });
+});
+
+describe('the held-back, preview and change routes (step 13 wiring)', () => {
+  const answer = (status: number, body: unknown) => vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } }));
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it('held-back: reads the gateway\'s verdicts; null when it cannot say (no chain, error); the call is a plain GET', async () => {
+    const spy = answer(200, { held: [{ authorizationId: 'a', mandateId: 'm', code: 'mandate_body_not_received', profileName: 'Sales', ownerIsYou: true, ownerName: null, adminName: null }] });
+    const r = await spClient.getHeldBack();
+    expect(r?.[0]).toMatchObject({ code: 'mandate_body_not_received', profileName: 'Sales' });
+    expect(String(spy.mock.calls[0][0])).toContain('/api/mandate/held-back');
+    expect(spy.mock.calls[0][1]?.method ?? 'GET').toBe('GET');
+    answer(409, { code: 'not_set_up' });
+    expect(await spClient.getHeldBack()).toBeNull();
+  });
+
+  it('preview: the diff and team terms from the gateway; its refusals become codes', async () => {
+    const spy = answer(200, { profileName: 'Sales', diff: baseDiff, before: null, after: null });
+    const r = await spClient.previewMandateChange('authz_x', { durationHours: 5 });
+    expect(r).toMatchObject({ ok: true, profileName: 'Sales' });
+    expect(String(spy.mock.calls[0][0])).toContain('/api/mandate/change-preview?authorizationId=authz_x&changes=');
+    answer(422, { code: 'no_change' });
+    expect(await spClient.previewMandateChange('authz_x', {})).toEqual({ ok: false, code: 'no_change' });
+    answer(500, {});
+    expect(await spClient.previewMandateChange('authz_x', {})).toEqual({ ok: false, code: 'other' });
+  });
+
+  it('change: posts the diff that was shown; a cancelled touch, a changed mandate and others map to the screen\'s codes', async () => {
+    const spy = answer(200, { ok: true });
+    expect(await spClient.changeMandate('authz_x', { durationHours: 5 }, baseDiff)).toEqual({ ok: true });
+    expect(JSON.parse(String(spy.mock.calls[0][1]?.body))).toEqual({ authorizationId: 'authz_x', changes: { durationHours: 5 }, sealedDiff: baseDiff });
+    answer(422, { code: 'grant_refused', grantCode: 'check_failed' });
+    expect(await spClient.changeMandate('authz_x', {}, baseDiff)).toEqual({ ok: false, code: 'cancelled' });
+    answer(422, { code: 'changed_since_proposal' });
+    expect(await spClient.changeMandate('authz_x', {}, baseDiff)).toEqual({ ok: false, code: 'changed_since_proposal' });
+    answer(500, {});
+    expect(await spClient.changeMandate('authz_x', {}, baseDiff)).toEqual({ ok: false, code: 'other' });
   });
 });

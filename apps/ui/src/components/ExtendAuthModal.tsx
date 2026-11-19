@@ -29,9 +29,11 @@ interface Props {
   item: PendingItem;
   onClose: () => void;
   onSuccess: () => void;
+  /** A gateway with a device chain: the chosen duration goes to the Change screen (Touch ID), not straight to renew. */
+  onPickDuration?: (ttlSeconds: number) => void;
 }
 
-export function ExtendAuthModal({ item, onClose, onSuccess }: Props) {
+export function ExtendAuthModal({ item, onClose, onSuccess, onPickDuration }: Props) {
   const { user, activeDomain, groupId } = useAuth();
 
   // The profile's max TTL caps what the AS will sign — it now REJECTS (not
@@ -78,6 +80,7 @@ export function ExtendAuthModal({ item, onClose, onSuccess }: Props) {
 
   const handleExtend = async () => {
     if (!user) return;
+    if (onPickDuration) { onPickDuration(selectedTTL); return; }
     setSubmitting(true);
     setError('');
 

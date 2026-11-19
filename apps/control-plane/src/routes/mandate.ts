@@ -6,7 +6,8 @@
  */
 import { Router, type Response } from 'express';
 import { randomUUID } from 'node:crypto';
-import { createMandate, renewMandate, MandateRefused, type CeremonyDeps, type MandateRequest, type RenewRequest } from '../lib/mandate-ceremony';
+import { createMandate, renewMandate, planMandateChange, changeMandate, MandateRefused, type CeremonyDeps, type MandateRequest, type RenewRequest, type SignedMandate } from '../lib/mandate-ceremony';
+import { approvalCapsOf, limitsOf, memberLabel, type TeamTerms } from '../lib/mandate-change-view';
 import { GrantRefusal } from '../lib/mandate-grants';
 
 function answerRefusal(res: Response, err: unknown): void {
@@ -22,8 +23,99 @@ function answerRefusal(res: Response, err: unknown): void {
   res.status(500).json({ error: 'internal', message: err instanceof Error ? err.message : String(err) });
 }
 
-export function createMandateRouter(deps: () => Omit<CeremonyDeps, 'newAuthorizationId'>): Router {
+/** What the page's read-only routes ask of the MCP server (it owns the verdicts and the signed copies). */
+export interface MandateReads {
+  heldBack(): Promise<Array<{ authorizationId: string; code: string; profileId?: string; ownerDid?: string; mandateId?: string }>>;
+  signedMandate(id: string): Promise<{ old: SignedMandate; team: { approverDids: string[]; approvals: number | null; caps: Record<string, number> } } | { refusal: string; code: string }>;
+}
+
+const NOT_SET_UP = { error: 'not_set_up', message: 'Device keys are not set up.', code: 'not_set_up' };
+
+export function createMandateRouter(deps: () => Omit<CeremonyDeps, 'newAuthorizationId'>, reads?: MandateReads): Router {
   const router = Router();
+  // ── Step 13 screens (page session only: this router sits behind it; a gateway with a device chain only) ──
+
+  // The mandates this gateway holds back, with its own verdict code. Read-only: nothing is changed, signed or fetched for the AI.
+  router.get('/held-back', async (_req, res) => {
+    try {
+      const d = deps();
+      if (!d.grants?.active() || !reads) { res.status(409).json(NOT_SET_UP); return; }
+      const held = await reads.heldBack();
+      const names = new Map<string, string>();
+      for (const id of new Set(held.map(h => h.profileId).filter((x): x is string => !!x))) {
+        const r = await d.as('GET', `/api/profiles/${encodeURIComponent(id)}`);
+        const n = r.status === 200 && typeof r.body?.name === 'string' && r.body.name ? r.body.name : id.replace(/@.*$/, '').split('/').pop() ?? id;
+        names.set(id, n);
+      }
+      res.json({ held: held.map(h => ({
+        authorizationId: h.authorizationId, mandateId: h.mandateId ?? h.authorizationId, code: h.code,
+        profileName: h.profileId ? names.get(h.profileId) ?? h.profileId : 'a mandate',
+        ownerIsYou: !!h.ownerDid && h.ownerDid === d.user?.did,
+        // the member list does not name an owner by DID: not known here (the screen then says so)
+        ownerName: null, adminName: null,
+      })) });
+    } catch (err) { answerRefusal(res, err); }
+  });
+
+  // The change the person prepares for a mandate: the hap-core diff and the team's terms before (signed) and after (settings now).
+  // Computed here from the signed mandate; creates and signs nothing.
+  const parseChanges = (raw: unknown): Record<string, unknown> | null => {
+    try { const v = typeof raw === 'string' ? JSON.parse(raw) : raw; return v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : null; } catch { return null; }
+  };
+  const readOld = async (id: unknown) => {
+    if (typeof id !== 'string' || !/^authz_[0-9a-f-]{36}$/.test(id)) return { bad: true as const };
+    const r = await reads!.signedMandate(id);
+    return 'refusal' in r ? { refusal: r as { refusal: string; code: string } } : { ok: r };
+  };
+  router.get('/change-preview', async (req, res) => {
+    try {
+      const d = deps();
+      if (!d.grants?.active() || !reads) { res.status(409).json(NOT_SET_UP); return; }
+      const changes = parseChanges(req.query.changes ?? '{}');
+      const got = await readOld(req.query.authorizationId);
+      if (!changes || 'bad' in got) { res.status(400).json({ error: 'bad_request', code: 'bad_request', message: 'Bad request.' }); return; }
+      if ('refusal' in got) { res.status(422).json({ error: 'mandate_refused', code: 'mandate_not_active', message: got.refusal?.refusal }); return; }
+      const full: CeremonyDeps = { ...d, newAuthorizationId: () => `authz_${randomUUID()}` };
+      const { plan, diff } = await planMandateChange({ old: got.ok.old, changes: changes as never }, full);
+      let before: TeamTerms | null = null;
+      let after: TeamTerms | null = null;
+      if (!plan.isPersonal && plan.team) {
+        // labels: the team's member list; a DID is read through the settings' eligible approvers (user id, DID)
+        const g = await d.as('GET', `/api/groups/${encodeURIComponent(plan.groupId)}`);
+        const members = (g.status === 200 ? g.body?.members ?? [] : []) as Array<{ id: string; name?: string; email?: string }>;
+        const labelOfUser = (id: string) => { const m = members.find(x => x.id === id); return m ? memberLabel(m) : id; };
+        const userOfDid = new Map((plan.team.eligible ?? []).filter(e => e.did).map(e => [e.did as string, e.user_id]));
+        const labelOfDid = (did: string) => (userOfDid.has(did) ? labelOfUser(userOfDid.get(did)!) : 'someone no longer an approver');
+        const newCaps = approvalCapsOf(plan.team, plan.profile);
+        before = { approvers: got.ok.team.approverDids.map(labelOfDid), approvals: got.ok.team.approvals ?? 0, limits: limitsOf(got.ok.team.caps, plan.profile) };
+        after = {
+          approvers: (plan.team.eligible ?? []).filter(e => e.did).map(e => labelOfUser(e.user_id)),
+          approvals: Object.keys(newCaps).length > 0 ? (plan.team.approvals ?? 1) : 0,
+          limits: limitsOf(newCaps, plan.profile),
+        };
+      }
+      res.json({ profileName: plan.profile.name ?? plan.profile.id.replace(/@.*$/, ''), diff, before, after });
+    } catch (err) { answerRefusal(res, err); }
+  });
+
+  // The Touch ID change call of the Change screen: signs a new version with this computer's check. `sealedDiff` is the diff the person
+  // was shown: a change that would differ from it is refused (changed_since_proposal), never signed.
+  router.post('/change', async (req, res) => {
+    try {
+      const d = deps();
+      if (!d.grants?.active() || !reads) { res.status(409).json(NOT_SET_UP); return; }
+      const b = (req.body ?? {}) as { authorizationId?: unknown; changes?: unknown; sealedDiff?: unknown };
+      const changes = parseChanges(b.changes ?? {});
+      const got = await readOld(b.authorizationId);
+      if (!changes || 'bad' in got || !b.sealedDiff || typeof b.sealedDiff !== 'object') { res.status(400).json({ error: 'bad_request', code: 'bad_request', message: 'Bad request.' }); return; }
+      if ('refusal' in got) { res.status(422).json({ error: 'mandate_refused', code: 'mandate_not_active', message: got.refusal?.refusal }); return; }
+      const full: CeremonyDeps = { ...d, newAuthorizationId: () => `authz_${randomUUID()}` };
+      const r = await changeMandate({ old: got.ok.old, changes: changes as never, sealedDiff: b.sealedDiff as never }, full);
+      void d.resyncGates?.().catch(() => {});
+      res.json({ ok: true, authorizationId: r.authorizationId });
+    } catch (err) { answerRefusal(res, err); }
+  });
+
   router.post('/sign', async (req, res) => {
     const request = (req.body ?? {}) as MandateRequest;
     try {

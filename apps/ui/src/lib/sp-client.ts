@@ -1070,6 +1070,41 @@ class SPClient {
     return { ok: false, code: 'other' };
   }
 
+  /** Mandates this gateway holds back, with its own verdict code (step 13, screen 3). `null` when it cannot say (no chain, offline). Read-only. */
+  async getHeldBack(): Promise<Array<{ authorizationId: string; mandateId: string; code: string; profileName: string; ownerIsYou: boolean; ownerName: string | null; adminName: string | null }> | null> {
+    try {
+      const res = await this.fetch('/api/mandate/held-back');
+      if (!res.ok) return null;
+      const body = await res.json() as { held?: unknown };
+      return Array.isArray(body.held) ? body.held as never : null;
+    } catch { return null; }
+  }
+
+  /** The prepared change for a mandate: the gateway's diff and the team's terms before (signed) and after (settings now). Signs nothing. */
+  async previewMandateChange(authorizationId: string, changes: Record<string, unknown>): Promise<
+    | { ok: true; profileName: string; diff: import('@hap/core/mandate-change').MandateDiff; before: import('@suveren/approval-card/mandate-screens').TeamTerms | null; after: import('@suveren/approval-card/mandate-screens').TeamTerms | null }
+    | { ok: false; code: 'no_change' | 'not_your_mandate' | 'mandate_not_active' | 'other' }
+  > {
+    try {
+      const res = await this.fetch(`/api/mandate/change-preview?authorizationId=${encodeURIComponent(authorizationId)}&changes=${encodeURIComponent(JSON.stringify(changes))}`);
+      const body = await res.json().catch(() => ({})) as Record<string, unknown>;
+      if (res.ok) return { ok: true as const, ...(body as { profileName: string; diff: never; before: null; after: null }) };
+      const code = body.code as string | undefined;
+      return { ok: false, code: code === 'no_change' || code === 'not_your_mandate' || code === 'mandate_not_active' ? code : 'other' };
+    } catch { return { ok: false, code: 'other' }; }
+  }
+
+  /** Sign the change with this computer's check (Touch ID). `sealedDiff` is the diff that was shown: a different change is refused. */
+  async changeMandate(authorizationId: string, changes: Record<string, unknown>, sealedDiff: unknown): Promise<{ ok: true } | { ok: false; code: 'changed_since_proposal' | 'no_change' | 'not_your_mandate' | 'mandate_not_active' | 'cancelled' | 'other' }> {
+    let res: Response;
+    try { res = await this.fetch('/api/mandate/change', { method: 'POST', body: JSON.stringify({ authorizationId, changes, sealedDiff }) }); } catch { return { ok: false, code: 'other' }; }
+    if (res.ok) return { ok: true };
+    const body = await res.json().catch(() => ({})) as { code?: string; grantCode?: string };
+    if (body.grantCode === 'check_failed') return { ok: false, code: 'cancelled' };
+    const c = body.code;
+    return { ok: false, code: c === 'changed_since_proposal' || c === 'no_change' || c === 'not_your_mandate' || c === 'mandate_not_active' ? c : 'other' };
+  }
+
   async getAttestations(authorizationId: string): Promise<AttestationsResult> {
     const res = await this.fetch(`/api/mandates?authorization_id=${encodeURIComponent(authorizationId)}`);
     if (!res.ok) throw new Error(`Failed to fetch attestations: ${res.status}`);
