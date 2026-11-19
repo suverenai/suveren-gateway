@@ -115,6 +115,8 @@ export interface CeremonyDeps {
    * the steps below are exactly the ones of every earlier release.
    */
   grants?: MandateGrants;
+  /** Told the moment the Authority Server ACCEPTED a mandate request of a device-chain ceremony: from here a retry would make a second live mandate. */
+  onIssued?: () => void;
 }
 
 /** Everything `create` needs, resolved and checked. */
@@ -514,6 +516,7 @@ async function createGranted(req: MandateRequest, plan: MandatePlan, deps: Cerem
   if (res.status >= 300) {
     refuse(`The Authority Server refused the mandate: ${readRefusal(res.body, `status ${res.status}`).message}`);
   }
+  deps.onIssued?.();
   try {
     await deps.deliverGateContent({
       authorizationId, boundsHash, contextHash: scopeHash, context: plan.context,

@@ -21,6 +21,14 @@ import { DevicePinStore, PinRefusedError } from '../lib/device-pin-store';
 import { MandateGrantStore, GrantStoreRefused } from '../lib/mandate-grant-store';
 import type { MandateGrants } from '../lib/mandate-grants';
 
+/**
+ * Codes that mean "could not ask / could not be checked now" (the Authority Server unreachable or its pin not matching, this gateway locked or
+ * not signed in, an answer that makes no sense). The MCP server must keep what it honoured through these: they are answered 502 with NO code,
+ * like a failure. Everything else a refusal carries (chain_fork, grant_invalid, owner_unknown, ...) stays a 4xx with its code.
+ */
+const TRANSIENT_CODES = new Set(['as_unreachable', 'as_tls_mismatch', 'not_signed_in', 'locked', 'as_answer_invalid', 'chain_unreadable', 'not_set_up', 'head_mismatch']);
+export const isTransientGrantCode = (code: string): boolean => TRANSIENT_CODES.has(code);
+
 function secretMatches(provided: string | undefined, expected: string): boolean {
   if (!expected || !provided) return false;
   const a = Buffer.from(provided);
@@ -76,7 +84,7 @@ export function createInternalDeviceRouter(getSecret: () => string, store: Devic
       res.json({ head });
     } catch (err) {
       if (err instanceof PinRefusedError) { res.status(err.reason === 'bad_request' ? 400 : 409).json({ error: 'pin_refused', code: err.reason }); return; }
-      if ((err as { name?: string })?.name === 'GrantRefusal') { res.status(403).json({ error: 'pin_refused', code: (err as { code: string }).code }); return; }
+      if ((err as { name?: string })?.name === 'GrantRefusal') { const code = (err as { code: string }).code; if (isTransientGrantCode(code)) { res.status(502).json({ error: 'unavailable' }); return; } res.status(403).json({ error: 'pin_refused', code }); return; }
       res.status(423).json({ error: 'unavailable', code: 'unavailable' });
     }
   });
@@ -93,7 +101,12 @@ export function createInternalDeviceRouter(getSecret: () => string, store: Devic
   // This router decides nothing about the grant: it refuses a lower version and holds the signing key.
   if (mandates) {
     router.get('/mandate-grant/chain-seen', guarded((_req, res) => { res.json({ seen: mandates.store.chainSeen() }); }));
-    router.post('/mandate-grant/chain-seen', guarded((_req, res) => { mandates.store.markChainSeen(); res.json({ ok: true }); }));
+    // Only a gateway that has a chain sets it (turning device keys off clears it through the page session, never from here).
+    router.post('/mandate-grant/chain-seen', guarded((_req, res) => {
+      if (!store.exists()) { res.status(409).json({ error: 'not_set_up', code: 'not_set_up' }); return; }
+      mandates.store.markChainSeen();
+      res.json({ ok: true });
+    }));
 
     router.post('/mandate-grant/owner-known', guarded((req, res) => {
       const { did } = (req.body ?? {}) as { did?: unknown };
@@ -113,7 +126,7 @@ export function createInternalDeviceRouter(getSecret: () => string, store: Devic
         res.json({ ok: true, receiptNeeded: out.receiptNeeded });
       } catch (err) {
         if (err instanceof GrantStoreRefused) { res.status(err.reason === 'bad_request' ? 400 : 409).json({ error: 'grant_refused', code: err.reason }); return; }
-        if ((err as { name?: string })?.name === 'GrantRefusal') { const code = (err as { code: string }).code; res.status(code === 'bad_request' ? 400 : 403).json({ error: 'grant_refused', code }); return; }
+        if ((err as { name?: string })?.name === 'GrantRefusal') { const code = (err as { code: string }).code; if (isTransientGrantCode(code)) { res.status(502).json({ error: 'unavailable' }); return; } res.status(code === 'bad_request' ? 400 : 403).json({ error: 'grant_refused', code }); return; }
         res.status(423).json({ error: 'unavailable', code: 'unavailable' });
       }
     });
@@ -126,7 +139,7 @@ export function createInternalDeviceRouter(getSecret: () => string, store: Devic
         const out = await mandates.grants.receipt({ mandateId: mandateId as string, version: version as number, grantHash: grantHash as string });
         res.json({ ok: true, sent: out.sent });
       } catch (err) {
-        if ((err as { name?: string })?.name === 'GrantRefusal') { const code = (err as { code: string }).code; res.status(code === 'bad_request' ? 400 : 502).json({ error: 'receipt_refused', code }); return; }
+        if ((err as { name?: string })?.name === 'GrantRefusal') { const code = (err as { code: string }).code; res.status(code === 'bad_request' ? 400 : 502).json(code === 'bad_request' ? { error: 'receipt_refused', code } : { error: 'receipt_refused' }); return; }
         res.status(423).json({ error: 'unavailable', code: 'unavailable' });
       }
     });

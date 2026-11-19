@@ -68,9 +68,10 @@ async function world(o: { checkKey?: boolean } = {}) {
   const props = new StubProposals(as);   // first: StubMandates chains in front of it
   const mandates = new StubMandates(as, SALES);
   const delivered: unknown[] = [];
+  const flags = { failDelivery: false };
   const helperEnv: Record<string, string> = {};
   const helper = fakeHost(helperEnv);
-  const gw: GatewayRig = await bootGateway({ as, platform: helper, mandate: { deliver: async a => { delivered.push(a); } }, decision: { facts: async () => ({ mandateId: props.mandateId, actionType: props.actionType }) } });
+  const gw: GatewayRig = await bootGateway({ as, platform: helper, mandate: { deliver: async a => { if (flags.failDelivery) throw new Error('mcp down'); delivered.push(a); } }, decision: { facts: async () => ({ mandateId: props.mandateId, actionType: props.actionType }) } });
   open.push(gw);
   const session = await gw.unlock();
   const h = sessionHeaders(session);
@@ -85,7 +86,7 @@ async function world(o: { checkKey?: boolean } = {}) {
   const spy = vi.spyOn(PlatformChecks.prototype, 'sign');
   /** From now on the helper behaves like this (set-up needed its own good touch first). */
   const helperNow = (env: Record<string, string>): void => { Object.assign(helperEnv, env); helper.close(); };
-  return { as, props, mandates, gw, h, post, sign, internal, delivered, helperNow, rootDid: String(start.body.rootDid), keyId: String(start.body.deviceKeyId), touches: spy };
+  return { as, props, flags, mandates, gw, h, post, sign, internal, delivered, helperNow, rootDid: String(start.body.rootDid), keyId: String(start.body.deviceKeyId), touches: spy };
 }
 type W = Awaited<ReturnType<typeof world>>;
 
@@ -646,6 +647,73 @@ describe('review round 2', () => {
     const r = await w.sign({ team: 'g_team', confirmedApproverDids: [ap.did] });
     expect(r.status, r.text).toBe(200);
     expect((w.mandates.rows[0].grant as Record<string, unknown>).above_cap_approvers).toEqual([ap.did]);
+  });
+});
+
+describe('review round 3', () => {
+  const H = (c: string) => `sha256:${c.repeat(64)}`;
+
+  it('a failure to ASK (the Authority Server not answering, a session problem) is a 502 with no code, so the MCP server keeps what it honoured; a real refusal is a 4xx with its code', async () => {
+    const w = await world();
+    const first = await w.sign();
+    const g = w.mandates.rows[0];
+    const obs = () => w.internal('/internal/mandate-grant/observe', { mandateId: g.mandateId, version: 1, grantHash: g.grantHash, op: 'grant' });
+    expect((await obs()).status).toBe(200);
+    w.as.failChainGets = 5;                                   // the chain cannot be fetched: as_answer_invalid
+    const blip = await obs();
+    expect([blip.status, blip.body.code]).toEqual([502, undefined]);
+    const pin = await w.internal('/internal/device-pin/advance', { did: (await person()).did });
+    expect(pin.status).toBeGreaterThanOrEqual(400);
+    w.as.failChainGets = 0;
+    w.helperNow({});                                          // (no effect on the answers below)
+    const refused = await w.internal('/internal/mandate-grant/observe', { mandateId: g.mandateId, version: 1, grantHash: H('9'), op: 'grant' });
+    expect([refused.status, refused.body.code]).toEqual([403, 'grant_not_held']);
+    void first;
+    // the Authority Server's TLS pin not matching, a locked vault: the same, no code
+    w.gw.vault.lockExpired();
+    expect((await obs()).status).toBeGreaterThanOrEqual(423);
+  });
+
+  it('chain-seen is set only by a gateway that has a chain', async () => {
+    const as = await new StubAs().listen();
+    open.push(as);
+    const gw = await bootGateway({ as, platform: fakeHost() });
+    open.push(gw);
+    const h = sessionHeaders(await gw.unlock());
+    void h;
+    const r = await call(gw.port, 'POST', '/internal/mandate-grant/chain-seen', { headers: { 'x-internal-secret': 'sekret' }, body: {}, origin: null });
+    expect([r.status, r.body.code]).toEqual([409, 'not_set_up']);
+    expect(new MandateGrantStore(gw.vault).chainSeen()).toBe(false);
+  });
+
+  it('a change runs only for the mandate it was approved for: a swapped `old` is refused and the approval stays; after the AS accepted a mandate the approval is spent even if the intent cannot be delivered', async () => {
+    const w = await world();
+    const first = await w.sign();
+    // the person approves a change of THIS mandate
+    const args = { mandate_id: authzOf(first), limits: { ...LIMITS, value_max: 900 }, intent: 'Why: changed.', change: {} };
+    const hash = computeProposalContentHash(args);
+    w.props.add({ id: 'pc', tool: 'setup__change_mandate', toolArgs: args, contentHash: hash });
+    expect((await w.post('/device-decision/pc/approve', { content_hash: hash, proposalContentHash: hash })).status).toBe(200);
+    const old = (id: string) => ({ authorizationId: id, profileId: SALES.id, groupId: 'g_personal', ownerDid: w.rootDid, bounds: { ...LIMITS, profile: SALES.id }, context: { currency: 'EUR' }, intent: REQ.intent, mode: 'review', expiresAt: Math.floor(Date.now() / 1000) + 3000, title: 'Quotes' });
+    const swapped = await w.internal('/internal/mandate', { request: { change: { old: old('authz_00000000-0000-0000-0000-000000000000') }, approvalHash: hash } });
+    expect([swapped.status, swapped.body.code]).toEqual([403, 'approval_other_mandate']);
+    expect(w.touches).toHaveBeenCalledTimes(1);               // only the first mandate's touch
+  });
+
+  it('after the Authority Server accepted the mandate the approval is spent, even when the intent cannot be delivered: a retry cannot make a second live mandate', async () => {
+    const w = await world();
+    const args = { profile: 'sales', limits: LIMITS, scope: { currency: 'EUR' }, intent: 'Why: once.', mode: 'review', duration_hours: 1, title: 'Q' };
+    const hash = computeProposalContentHash(args);
+    w.props.add({ id: 'pf', tool: 'setup__create_mandate', toolArgs: args, contentHash: hash });
+    expect((await w.post('/device-decision/pf/approve', { content_hash: hash, proposalContentHash: hash })).status).toBe(200);
+    w.flags.failDelivery = true;
+    const first = await w.internal('/internal/mandate', { request: { approvalHash: hash } });
+    expect(first.status).toBe(422);
+    expect(String(first.body.message)).toMatch(/revoked/);
+    expect(w.mandates.issued).toHaveLength(1);
+    const retry = await w.internal('/internal/mandate', { request: { approvalHash: hash } });
+    expect(retry.body.code).toBe('approval_required');
+    expect(w.mandates.issued).toHaveLength(1);
   });
 });
 

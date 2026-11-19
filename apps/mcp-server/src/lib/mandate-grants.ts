@@ -88,8 +88,7 @@ export interface GrantGateInput {
 /** What a caller holds to check a mandate with. Required wherever a mandate is read for gating or for a decision: a missing gate is a compile error, never a skipped check. */
 export type GrantGate = (i: GrantGateInput) => Promise<GrantCheck>;
 
-/** `protectedDids` is read at every check: the signed identities of the mandates cached right now (their pins are never evicted). */
-export function makeGrantGate(deps: Omit<GrantGateDeps, 'protectedDids' | 'localProfileHash' | 'accountHasChain'> & { protectedDids?: () => string[] }): GrantGate {
+export function makeGrantGate(deps: Omit<GrantGateDeps, 'localProfileHash' | 'accountHasChain'>): GrantGate {
   const sp = deps.sp as GrantGateDeps['sp'] & { getSessionDid?: () => Promise<string | null> };
   // A definite NO is remembered for five minutes. An error is not an answer: it is not cached and it refuses (see checkMandateGrant).
   let no: number | null = null;
@@ -102,7 +101,7 @@ export function makeGrantGate(deps: Omit<GrantGateDeps, 'protectedDids' | 'local
     return has;
   };
   const localProfileHash = (id: string): string | undefined => { try { const p = getProfile(id); return p ? computeProfileHash(p) : undefined; } catch { return undefined; } };
-  return i => checkMandateGrant({ ...deps, protectedDids: deps.protectedDids?.(), localProfileHash, accountHasChain }, i);
+  return i => checkMandateGrant({ ...deps, localProfileHash, accountHasChain }, i);
 }
 
 export async function checkMandateGrant(d: GrantGateDeps, i: GrantGateInput): Promise<GrantCheck> {

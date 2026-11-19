@@ -187,7 +187,7 @@ async function world(o: { as?: 'owner' | 'approver'; approvers?: Person[]; extra
   sp.setSessionCookie(`Bearer ${randomUUID()}`);
   if (approver) confirmed.add(owner.did);   // an approver's gateway honours the colleague it confirmed
   // an approver's gateway also decides on a colleague's mandate it confirmed; a gateway gating its OWN person's tools honours its own owner only
-  const gate = makeGrantGate({ sp, cp: controlPlaneDevice, protectedDids: () => [], allowConfirmedOwners: !!approver });
+  const gate = makeGrantGate({ sp, cp: controlPlaneDevice, allowConfirmedOwners: !!approver });
   const cache = new AttestationCache(sp);
   cache.setGrantGate(gate);
   const payload = mandatePayload(owner, {
