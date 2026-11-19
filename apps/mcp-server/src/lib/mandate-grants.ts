@@ -51,6 +51,15 @@ export type GrantCheck =
   | { ok: true; skipped?: false; granted: GrantedBlob[] }
   | { ok: false; code: string; text: string };
 
+/** The owners the signed mandates of this check name (undecodable blobs name nobody). */
+function ownerDidsOf(i: GrantGateInput): string[] {
+  const out = new Set<string>();
+  for (const a of i.attestations ?? []) {
+    try { const did = decodeMandateBlob(a.blob).payload.mandate_owners?.[0]?.did; if (typeof did === 'string' && DID.test(did)) out.add(did); } catch { /* names nobody */ }
+  }
+  return [...out];
+}
+
 const refuse = (code: string, text: string): GrantCheck => ({ ok: false, code, text });
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const AUTHZ = /^authz_[0-9a-f-]{36}$/;
@@ -75,7 +84,7 @@ export interface GrantGateDeps extends ChainReader {
    * Switch on, this gateway has no chain: does the Authority Server know a chain for this account? Its answer can only ADD a
    * refusal (`device_not_set_up_here`); an error or "no" leaves the gateway working as before.
    */
-  accountHasChain?: () => Promise<boolean>;
+  accountHasChain?: (ownerDids: string[]) => Promise<boolean>;
 }
 
 export interface GrantGateInput {
@@ -89,17 +98,23 @@ export interface GrantGateInput {
 export type GrantGate = (i: GrantGateInput) => Promise<GrantCheck>;
 
 export function makeGrantGate(deps: Omit<GrantGateDeps, 'localProfileHash' | 'accountHasChain'>): GrantGate {
-  // A definite NO is remembered for five minutes. An error is not an answer: it is not cached and it refuses (see checkMandateGrant).
-  let no: number | null = null;
-  const accountHasChain = async (): Promise<boolean> => {
-    if (no !== null && Date.now() - no < 5 * 60_000) return false;
-    // The account's DID comes from the control plane (the session answer of the Authority Server at sign-in; there is no GET session
-    // route at the Authority Server). Throws when no session is held; null = the account has no DID at the Authority Server: no chain.
-    const did = await deps.cp.sessionDid();
-    if (!did) { no = Date.now(); return false; }
-    const has = (await deps.sp.getDeviceChain(did)) !== null;   // throws on any failure; null = the Authority Server has none (404)
-    if (!has) no = Date.now();
-    return has;
+  // A definite NO per DID is remembered for five minutes. An error is not an answer: it is not cached and it refuses (see checkMandateGrant).
+  const no = new Map<string, number>();
+  const accountHasChain = async (ownerDids: string[]): Promise<boolean> => {
+    // Whose chain to ask the Authority Server about: the account this gateway is signed in as (the control plane's session answer; there
+    // is no GET session route at the Authority Server). `null` = signed in and the account has no DID: no chain. `undefined` = the control
+    // plane holds no session (locked, signed out, or a gateway configured with an API key only): the owners the signed mandates name
+    // are then all there is to ask about, and none of them = nothing to gate. A control plane that fails to answer throws: refused.
+    const session = await deps.cp.sessionDid();
+    const dids = typeof session === 'string' ? [session] : session === undefined ? ownerDids : [];
+    for (const did of dids) {
+      const at = no.get(did);
+      if (at !== undefined && Date.now() - at < 5 * 60_000) continue;
+      const has = (await deps.sp.getDeviceChain(did)) !== null;   // throws on any failure; null = the Authority Server has none (404)
+      if (has) return true;
+      no.set(did, Date.now());
+    }
+    return false;
   };
   const localProfileHash = (id: string): string | undefined => { try { const p = getProfile(id); return p ? computeProfileHash(p) : undefined; } catch { return undefined; } };
   return i => checkMandateGrant({ ...deps, localProfileHash, accountHasChain }, i);
@@ -123,7 +138,7 @@ export async function checkMandateGrant(d: GrantGateDeps, i: GrantGateInput): Pr
     try { if (await d.cp.chainSeen()) return notHere; } catch { return refuse('device_state_unavailable', 'the control plane did not say whether a device chain was ever set up here.'); }
     if (d.accountHasChain) {
       let has: boolean;
-      try { has = await d.accountHasChain(); } catch { return refuse('device_state_unavailable', 'the Authority Server did not say whether this account has device keys.'); }
+      try { has = await d.accountHasChain(ownerDidsOf(i)); } catch { return refuse('device_state_unavailable', 'the Authority Server did not say whether this account has device keys.'); }
       if (has) { try { await d.cp.markChainSeen(); } catch { /* refused anyway */ } return notHere; }
     }
     return { ok: true, skipped: true };

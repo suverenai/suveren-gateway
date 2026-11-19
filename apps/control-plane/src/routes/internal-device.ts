@@ -101,11 +101,12 @@ export function createInternalDeviceRouter(getSecret: () => string, store: Devic
   // This router decides nothing about the grant: it refuses a lower version and holds the signing key.
   if (mandates) {
     // The DID of the account this gateway is signed in as (the session answer of the Authority Server at sign-in), for the one question
-    // "does the Authority Server know a chain for this account?". 401 when no session is held: that is no answer. `did: null`: signed in,
+    // "does the Authority Server know a chain for this account?". `signedIn: false` when no session is held (locked, signed out): the caller
+    // then asks about the owners the mandates name instead. `did: null`: signed in,
     // and the Authority Server named no DID for the account: it has no chain for it.
     router.get('/mandate-grant/account-did', guarded((_req, res) => {
       const a = mandates.account?.();
-      if (!a || !a.signedIn) { res.status(401).json({ error: 'not_signed_in' }); return; }
+      if (!a || !a.signedIn) { res.json({ signedIn: false }); return; }
       res.json({ did: a.did });
     }));
     router.get('/mandate-grant/chain-seen', guarded((_req, res) => { res.json({ seen: mandates.store.chainSeen() }); }));

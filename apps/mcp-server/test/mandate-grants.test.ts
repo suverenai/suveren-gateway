@@ -558,16 +558,29 @@ describe('a gateway without a chain on an account that has one', () => {
     w2.ownState.state = 'none';
     w2.account.did = 'did:key:z6MkLegacyLegacyLegacyLegacyLegacyLegacy2';   // the Authority Server knows no chain for it: works as before
     expect((await w2.cache.syncAuthorization(AUTHZ))?.authorizationId).toBe(AUTHZ);
-    // an answer that cannot be had (no session, an error) is NOT "no chain": refused, and not remembered as "no"
+    // no session held (locked, signed out, an API-key-only gateway): the owner the mandate names is asked about instead. A chain account's
+    // mandate on a gateway without a chain is refused; a legacy owner (no chain at the Authority Server) works as before.
     const w3 = await world({ noGrant: true });
     w3.ownState.state = 'none';
     w3.account.signedIn = false;
+    // the Authority Server not answering for that owner is NOT "no chain": refused, and not remembered as "no"
+    w3.as.failChain = true;
     await refusedWith(w3, 'device_state_unavailable');
+    w3.as.failChain = false;
     w3.account.signedIn = true;
     w3.account.did = 'did:key:z6MkLegacyLegacyLegacyLegacyLegacyLegacy3';
     expect((await w3.cache.syncAuthorization(AUTHZ))?.authorizationId).toBe(AUTHZ);
     // sticky: once a chain was reported for this account here, "no chain here" never comes back
     await w3.gateOnceSeen();
+    const w5 = await world({ noGrant: true });   // no session, no chain here, the owner has a chain at the Authority Server: refused
+    w5.ownState.state = 'none';
+    w5.account.signedIn = false;
+    await refusedWith(w5, 'device_not_set_up_here');
+    const w4 = await world({ noGrant: true });   // the same without a session, but the owner is a legacy account: works as before
+    w4.ownState.state = 'none';
+    w4.account.signedIn = false;
+    w4.as.chains.delete(w4.owner.did);
+    expect((await w4.cache.syncAuthorization(AUTHZ))?.authorizationId).toBe(AUTHZ);
   });
 
   it('a DEFINITE "no chain" is skipped: the Authority Server answers 404 NO_CHAIN, or names no DID for the account', async () => {
