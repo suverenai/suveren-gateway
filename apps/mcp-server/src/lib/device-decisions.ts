@@ -276,8 +276,6 @@ export interface DeviceCheckInput {
    */
   executionContext?: Record<string, unknown>;
   profile?: AgentProfile;
-  /** Signed identities (owner and approvers) of every mandate cached now: their pins are never evicted. */
-  protectedDids?: string[];
   env?: NodeJS.ProcessEnv;
 }
 
@@ -429,7 +427,6 @@ export async function checkDeviceDecisions(i: DeviceCheckInput): Promise<DeviceC
 export interface ChainReader {
   sp: { getDeviceChain(did: string): Promise<{ entries: unknown[]; head: Head | null } | null> };
   cp: DeviceCpClient;
-  protectedDids?: string[];
 }
 
 /** The person's chain, verified here from the genesis on against the root DID the mandate names and the head pinned before. */
@@ -542,17 +539,4 @@ export async function resolveProposalFacts(
   const actionType = known[0];
   if (typeof actionType !== 'string' || !actionType) return { ok: false, code: 'action_type_unknown' };
   return { ok: true, mandateId: facts.mandateId, actionType };
-}
-
-/** The owner and signed approvers of every mandate in the attestation cache: whose pins must survive an eviction. */
-export function signedDidsOfCache(cache: { getAllAuthorizations?: () => Array<{ attestations?: ReadonlyArray<{ blob: string }> }> } | undefined): string[] {
-  if (!deviceKeysEnabled()) return [];
-  const out = new Set<string>();
-  try {
-    for (const a of cache?.getAllAuthorizations?.() ?? []) {
-      const f = signedMandateFacts(a.attestations);
-      if (f) { out.add(f.ownerDid); for (const d of f.deciders) out.add(d); }
-    }
-  } catch { /* the pins just are not protected */ }
-  return [...out].slice(0, 256);
 }

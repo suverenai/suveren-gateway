@@ -70,11 +70,12 @@ export function createInternalMandateRouter(
     // Whether a person compared an approver's identity code is for the page to say, never for the AI path (nor for a proposal's sealed copy).
     delete (request as { confirmedApproverDids?: unknown }).confirmedApproverDids;
     if ((request as { change?: { confirmedApproverDids?: unknown } }).change) delete (request as { change?: { confirmedApproverDids?: unknown } }).change!.confirmedApproverDids;
-    const d: CeremonyDeps = { ...deps(), newAuthorizationId: () => `authz_${randomUUID()}` };
+    let spend: { done: () => void; release: () => void } | undefined;
+    // Spent as soon as the Authority Server accepted the mandate: a failure AFTER that (the intent not delivered) never lets the same approval run again.
+    const d: CeremonyDeps = { ...deps(), newAuthorizationId: () => `authz_${randomUUID()}`, onIssued: () => spend?.done() };
     // A gateway with a device chain: creating a mandate raises Touch ID. Only the internal secret is not a reason to: the call runs only
     // for exactly what the person approved on the page (lib/mandate-approvals.ts). The request is then built HERE from those approved
     // arguments; nothing of the caller's request content is used. Read-only checks (dry runs) are not affected.
-    let spend: { done: () => void; release: () => void } | undefined;
     let effective: MandateRequest = request;
     if (dryRun !== true && d.grants?.active()) {
       const changing = !!(request as { change?: unknown }).change;
@@ -84,6 +85,12 @@ export function createInternalMandateRouter(
         return;
       }
       spend = taken;
+      // A change is of the mandate the person approved the change OF, not of whichever one the caller names.
+      if (changing && (request as { change?: { old?: { authorizationId?: unknown } } }).change?.old?.authorizationId !== taken.args.mandate_id) {
+        taken.release();
+        res.status(403).json({ error: 'approval_required', code: 'approval_other_mandate', message: 'The change was approved for another mandate than the one named.' });
+        return;
+      }
       effective = (changing ? changeRequestFrom(taken.args, (request as { change?: { old?: unknown } }).change?.old) : createRequestFrom(taken.args)) as MandateRequest;
     }
     try {

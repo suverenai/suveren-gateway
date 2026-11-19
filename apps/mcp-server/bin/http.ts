@@ -49,7 +49,7 @@ import type { SPProposal } from '../src/lib/sp-client';
 import { resolveWhoLabel } from '../src/lib/who-label';
 import { outcomeEntryFor } from '../src/lib/outcome-outbox';
 import { decryptRejectionNote } from '../src/lib/proposal-content';
-import { resolveProposalFacts, controlPlaneDevice, signedDidsOfCache } from '../src/lib/device-decisions';
+import { resolveProposalFacts, controlPlaneDevice } from '../src/lib/device-decisions';
 import { makeGrantGate, resyncVerdict } from '../src/lib/mandate-grants';
 import { checkSentArgs, resultView, headlineArgs } from '../src/lib/ticket-content';
 import { homedir } from 'node:os';
@@ -539,7 +539,7 @@ app.post('/internal/proposal-facts', internalOnly, async (req: Request, res: Res
   const out = await resolveProposalFacts({
     // device keys: a mandate without its owner's grant offers no decision (lib/mandate-grants.ts)
     // the decision path: a colleague's mandate this person confirmed by identity code may be decided on (the cache never holds one)
-    grants: makeGrantGate({ sp: state.spClient, cp: controlPlaneDevice, protectedDids: () => signedDidsOfCache(state.cache), allowConfirmedOwners: true }),
+    grants: makeGrantGate({ sp: state.spClient, cp: controlPlaneDevice, allowConfirmedOwners: true }),
     // read-only: a grant this gateway does not hold is not fetched into its cache on a request from outside
     auth: async (id) => state.cache.getAllAuthorizations().find(a => a.authorizationId === id),
     // An approver's gateway never holds the owner's grant: its mandates are read for this one proposal, not cached.

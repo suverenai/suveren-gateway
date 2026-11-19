@@ -38,7 +38,7 @@ import { verifyTicket, TicketBindingMismatchError, mandateForTicket } from '../l
 import { notifyControlPlane } from '../lib/cp-notify';
 import { resolveWhoLabel } from '../lib/who-label';
 import { resolveProposalToolArgs, decryptRejectionNote, computeProposalContentHash, ProposalContentError } from '../lib/proposal-content';
-import { checkDeviceDecisions, controlPlaneDevice, signedDidsOfCache } from '../lib/device-decisions';
+import { checkDeviceDecisions, controlPlaneDevice } from '../lib/device-decisions';
 import { makeGrantGate } from '../lib/mandate-grants';
 
 /**
@@ -282,13 +282,12 @@ export async function executeCommitted(
     actionType: proposalActionType,
     proposalContentHash: computeProposalContentHash(toolArgs),
     // the mandate must stand on its owner's grant; the above-cap reading comes from its signed caps (plan 4.4, step 13)
-    grantGate: makeGrantGate({ sp: state.spClient, cp: controlPlaneDevice, protectedDids: () => signedDidsOfCache(state.cache) }),
+    grantGate: makeGrantGate({ sp: state.spClient, cp: controlPlaneDevice }),
     // (`?.` only for SharedState test doubles that predate the gate)
     whyMissing: () => state.cache.withheldReason?.(proposal.authorizationId),
     mandateId: submitted.mandateId,
     executionContext: proposal.executionContext,
     profile: getProfile(proposal.profileId),
-    protectedDids: signedDidsOfCache(state.cache),
   });
   if (!deviceCheck.ok) {
     return {

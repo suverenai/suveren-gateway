@@ -217,7 +217,7 @@ async function world(o: { as?: 'owner' | 'approver'; approvers?: Person[]; extra
   sp.setSessionCookie(`Bearer ${randomUUID()}`);
   if (approver) confirmed.add(owner.did);   // an approver's gateway honours the colleague it confirmed
   // an approver's gateway also decides on a colleague's mandate it confirmed; a gateway gating its OWN person's tools honours its own owner only
-  const gate = makeGrantGate({ sp, cp: controlPlaneDevice, protectedDids: () => [], allowConfirmedOwners: !!approver, ...(o.bodies ? { bodies: o.bodies } : {}) });
+  const gate = makeGrantGate({ sp, cp: controlPlaneDevice, allowConfirmedOwners: !!approver, ...(o.bodies ? { bodies: o.bodies } : {}) });
   const cache = new AttestationCache(sp);
   cache.setGrantGate(gate);
   const payload = mandatePayload(owner, {
@@ -477,7 +477,8 @@ describe('the sealed body on a computer that did not create the mandate: opened,
     await seal(good);
     w.as.failBody = true;
     expect(await w.cache.syncAuthorization(AUTHZ)).toBeNull();
-    expect(withheld(w)).toMatchObject({ code: 'mandate_body_refused' });
+    // an outage answers 502 without a code (round 3): transient, so what was honoured stays until it is stale
+    expect(withheld(w)).toMatchObject({ code: 'body_unavailable' });
     expect(store.getAll()).toEqual([]);
     expect(w.as.receipts).toEqual([]);
   });
