@@ -26,6 +26,11 @@ import { CheckKeyStore } from '../../lib/platform-checks';
 import { DeviceChainStore } from '../../lib/device-chain-store';
 import type { PlatformHelper } from '../../lib/platform-helper';
 import type { StubAs } from './stub-as';
+import { createMandateRouter } from '../../routes/mandate';
+import { asAuthHeaders } from '../../lib/as-credential';
+import { computeIntentDisclosureHash } from '@hap/core';
+import type { CeremonyDeps } from '../../lib/mandate-ceremony';
+import type { MandateGrants } from '../../lib/mandate-grants';
 
 export const FAST = { scrypt: { N: 1024, r: 8, p: 1 } };
 export const PW = 'correct horse battery';
@@ -114,6 +119,11 @@ export interface GatewayRig {
   clock: { t: number };
   confirmations: ChangeConfirmations;
   checkStore: CheckKeyStore;
+  /** Grants mandates on this computer (step 13); undefined with the switch off. */
+  grants: MandateGrants | undefined;
+  /** What the mandate router handed to the intent delivery and the gate resync. */
+  delivered: Array<{ authorizationId: string }>;
+  resynced: { count: number };
   /** Unlock with the password and return the page session. */
   unlock: () => Promise<{ token: string; cookie: string }>;
   close: () => Promise<void>;
@@ -140,6 +150,8 @@ export interface BootOptions {
   fresh?: boolean;
   /** The desktop notification for a pending request for a new root DID (step 7). */
   notifyIdentityReset?: (title: string, message: string) => void;
+  /** Mount `/api/mandate` (the sign page's router, step 13) with the real ceremony; only the intent delivery is a recorder. */
+  mandate?: { deliver?: CeremonyDeps['deliverGateContent'] };
 }
 
 export async function bootGateway(o: BootOptions): Promise<GatewayRig> {
@@ -163,7 +175,7 @@ export async function bootGateway(o: BootOptions): Promise<GatewayRig> {
   // Wired like index.ts: with the helper, the check key's slot decides whether the password still confirms.
   const checkStore = new CheckKeyStore(vault, new DeviceChainStore(vault));
   const confirmations = new ChangeConfirmations(o.platform ? { checkRequired: () => checkStore.has() } : {});
-  const { deviceChainState, signin, loginChangeGate } = mountDeviceKeyRoutes(app, {
+  const { deviceChainState, signin, loginChangeGate, grants } = mountDeviceKeyRoutes(app, {
     enabled, vault, pageSession: deps, limiter: new UnlockLimiter(), confirmations,
     hasCheckKey: o.platform ? () => checkStore.has() : () => false, internalSecret: () => 'sekret', jsonParser: json,
     platform: o.platform ? { host: o.platform, checkStore, opensPageSession: o.opensPageSession } : undefined,
@@ -191,10 +203,33 @@ export async function bootGateway(o: BootOptions): Promise<GatewayRig> {
   ));
   app.use('/vault', json, guard, createVaultRouter(vault, loginChangeGate));
   app.get('/api/x', guard, (_q, s) => { s.json({ ok: true }); });
+  const delivered: GatewayRig['delivered'] = [];
+  const resynced = { count: 0 };
+  if (o.mandate) {
+    const as: CeremonyDeps['as'] = async (method, path, body) => {
+      const credential = vault.getSpCookie();
+      if (!credential) return { status: 401, body: { error: 'not signed in' } };
+      const r = await fetch(`${o.as.url}${path}`, {
+        method, headers: { ...asAuthHeaders(credential), ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) },
+        body: body !== undefined ? JSON.stringify(body) : undefined, redirect: 'manual',
+      });
+      return { status: r.status, body: await r.json().catch(() => ({})) };
+    };
+    app.use('/api/mandate', json, guard, createMandateRouter(() => ({
+      user: vault.getSessionUser(), as,
+      encrypt: async (_intent, recipients) => ({
+        intentCiphertext: 'Y2lwaGVy', encryptedKeys: Object.fromEntries(recipients.map(r => [r.userId, { ct: 'a', enc: 'b' }])),
+        approversFrozen: recipients.map(r => r.userId), intentDisclosureHash: computeIntentDisclosureHash('Y2lwaGVy', recipients.map(r => r.userId)),
+      }),
+      deliverGateContent: async a => { delivered.push({ authorizationId: a.authorizationId }); await o.mandate!.deliver?.(a); },
+      resyncGates: async () => { resynced.count++; },
+      ...(grants ? { grants } : {}),
+    })));
+  }
   const server: Server = await new Promise(r => { const sv = app.listen(0, o.listenHost ?? '127.0.0.1', () => r(sv)); });
   const port = (server.address() as { port: number }).port;
   return {
-    port, dir, vault, sessions, deps, configured, alarms, discards, configureGate, signin, sweeps, timers, clock, confirmations, checkStore,
+    port, dir, vault, sessions, deps, configured, alarms, discards, configureGate, signin, sweeps, timers, clock, confirmations, checkStore, grants, delivered, resynced,
     unlock: async () => {
       const r = await call(port, 'POST', '/auth/unlock', { body: { password: PW }, connectTo: o.listenHost });
       if (r.status !== 200) throw new Error(`unlock failed: ${r.status} ${r.text}`);

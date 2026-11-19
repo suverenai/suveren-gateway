@@ -772,6 +772,20 @@ export class SPClient {
     };
   }
 
+  /**
+   * The grants stored for a mandate (device-keys plan 4.4, step 13): `{ grant, sig, check }` as the owner's device signed
+   * them, with the version and op. Everything is carried by the Authority Server and verified by the caller with hap-core;
+   * nothing here is believed. `[]` when the Authority Server holds none (or lets this session read none).
+   */
+  async getMandateGrants(mandateId: string): Promise<Array<{ mandate_version: number; op: string; grant: unknown; sig: unknown; check: unknown }>> {
+    const res = await this.fetch(`/api/mandates/${encodeURIComponent(mandateId)}/grants`);
+    if (!res.ok) throw new Error(`SP mandate grants request failed: ${res.status}`);
+    const data = await res.json() as { grants?: unknown };
+    if (!Array.isArray(data.grants)) throw new Error('SP mandate grants answer is not a list');
+    return data.grants.filter((g): g is { mandate_version: number; op: string; grant: unknown; sig: unknown; check: unknown } =>
+      typeof g === 'object' && g !== null && typeof (g as { mandate_version?: unknown }).mandate_version === 'number' && typeof (g as { op?: unknown }).op === 'string');
+  }
+
   // NOTE: v0.3 used POST /api/proposals/{id}/resolve with action: 'executed'
   // to mark a proposal as executed after the gateway ran the tool. In v0.4
   // the committed→executed transition is atomic with receipt issuance, so

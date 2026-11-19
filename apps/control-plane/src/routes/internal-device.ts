@@ -18,6 +18,8 @@ import { Router, type Request, type Response } from 'express';
 import { timingSafeEqual } from 'node:crypto';
 import type { DeviceChainStore } from '../lib/device-chain-store';
 import { DevicePinStore, PinRefusedError } from '../lib/device-pin-store';
+import { MandateGrantStore, GrantStoreRefused } from '../lib/mandate-grant-store';
+import type { MandateGrants } from '../lib/mandate-grants';
 
 function secretMatches(provided: string | undefined, expected: string): boolean {
   if (!expected || !provided) return false;
@@ -26,7 +28,7 @@ function secretMatches(provided: string | undefined, expected: string): boolean 
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-export function createInternalDeviceRouter(getSecret: () => string, store: DeviceChainStore, pins: DevicePinStore): Router {
+export function createInternalDeviceRouter(getSecret: () => string, store: DeviceChainStore, pins: DevicePinStore, mandates?: { store: MandateGrantStore; grants: MandateGrants }): Router {
   const router = Router();
   const guarded = (handler: (req: Request, res: Response) => void) => (req: Request, res: Response): void => {
     if (!secretMatches(req.header('X-Internal-Secret') ?? undefined, getSecret())) {
@@ -75,6 +77,35 @@ export function createInternalDeviceRouter(getSecret: () => string, store: Devic
     pins.consume(proposalId as string, Array.isArray(nonces) ? (nonces as string[]) : []);
     res.json({ ok: true });
   }));
+
+  // Mandate grants (plan 4.4, step 13). The MCP server verifies a grant with hap-core against the chain it pinned and
+  // asks here to REMEMBER it (the highest version per mandate, a revocation) and to answer it with this computer's receipt.
+  // This router decides nothing about the grant: it refuses a lower version and holds the signing key.
+  if (mandates) {
+    router.post('/mandate-grant/observe', guarded((req, res) => {
+      const { mandateId, version, grantHash, op } = (req.body ?? {}) as { mandateId?: unknown; version?: unknown; grantHash?: unknown; op?: unknown };
+      try {
+        const out = mandates.store.observe(mandateId as string, version as number, grantHash as string, op as 'grant');
+        res.json({ ok: true, receiptNeeded: out.receiptNeeded });
+      } catch (err) {
+        if (err instanceof GrantStoreRefused) { res.status(err.reason === 'bad_request' ? 400 : 409).json({ error: 'grant_refused', code: err.reason }); return; }
+        throw err;
+      }
+    }));
+
+    router.post('/mandate-grant/receipt', async (req: Request, res: Response) => {
+      if (!secretMatches(req.header('X-Internal-Secret') ?? undefined, getSecret())) { res.status(401).json({ error: 'unauthorized' }); return; }
+      res.setHeader('Cache-Control', 'no-store');
+      const { mandateId, version, grantHash } = (req.body ?? {}) as { mandateId?: unknown; version?: unknown; grantHash?: unknown };
+      try {
+        const out = await mandates.grants.receipt({ mandateId: mandateId as string, version: version as number, grantHash: grantHash as string });
+        res.json({ ok: true, sent: out.sent });
+      } catch (err) {
+        if ((err as { name?: string })?.name === 'GrantRefusal') { const code = (err as { code: string }).code; res.status(code === 'bad_request' ? 400 : 502).json({ error: 'receipt_refused', code }); return; }
+        res.status(423).json({ error: 'unavailable', code: 'unavailable' });
+      }
+    });
+  }
 
   return router;
 }

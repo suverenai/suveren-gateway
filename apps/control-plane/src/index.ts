@@ -252,7 +252,7 @@ const sessionExpiryScheduler = new SessionExpiryScheduler(
 
 // ─── Auth routes (/auth/*) ──────────────────────────────────────────────
 
-const { loginChangeGate, deviceChainState, signin: deviceSignin } = mountDeviceKeyRoutes(app, {
+const { loginChangeGate, deviceChainState, signin: deviceSignin, grants: deviceGrants } = mountDeviceKeyRoutes(app, {
   enabled: deviceKeys,
   vault,
   pageSession: pageSessionDeps,
@@ -571,6 +571,8 @@ const mandateCeremonyDeps = (): Omit<CeremonyDeps, 'newAuthorizationId'> => ({
   encrypt: encryptIntentForRecipients,
   deliverGateContent: (args) => pushGateContent(args),
   resyncGates: () => resyncGates(),
+  // A gateway with a device chain grants the mandate on this computer first (step 13); undefined with the switch off.
+  ...(deviceGrants ? { grants: deviceGrants } : {}),
 });
 app.use('/internal', jsonParser, createInternalMandateRouter(() => internalSecret, mandateCeremonyDeps));
 

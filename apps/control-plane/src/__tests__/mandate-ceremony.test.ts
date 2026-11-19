@@ -437,3 +437,35 @@ describe('changing a mandate: built from the signed old one, never from what the
     expect(calls.find((c) => c.path === '/api/as/mandate')!.body).toMatchObject({ replaces: 'authz_old', title: 'Quotes' });
   });
 });
+
+describe('device keys (step 13): a gateway without a device chain creates mandates exactly as before', () => {
+  const inactive = { active: () => false, issue: async () => { throw new Error('must not be asked'); }, revoke: async () => { throw new Error('must not be asked'); } } as unknown as CeremonyDeps['grants'];
+
+  it('with a grants object that has no chain (switch on, not set up) the requests to the Authority Server are identical to those without one', async () => {
+    const a = fakeAs();
+    const b = fakeAs();
+    await createMandate(REQ, deps(a.as).d);
+    await createMandate(REQ, deps(b.as, { grants: inactive }).d);
+    expect(b.calls).toEqual(a.calls);
+    // the request is the legacy one: a ttl, no mandate id, no expiry
+    const attest = b.calls.find((c) => c.path === '/api/as/mandate')!.body;
+    expect(attest.ttl).toBe(24 * 3600);
+    expect(attest.mandate_id).toBeUndefined();
+    expect(attest.expires_at).toBeUndefined();
+  });
+
+  it('a renewal and a replacement without a chain are identical too (the old mandate is revoked through the Authority Server)', async () => {
+    const a = fakeAs();
+    const b = fakeAs();
+    const renew = { authorizationId: 'authz_1', profileId: SALES.id, groupId: 'g_personal', bounds: { ...LIMITS, profile: SALES.id }, context: { currency: 'EUR' }, intent: REQ.intent, mode: 'automatic' as const, domain: 'owner', ttlSeconds: 3600 };
+    await renewMandate(renew, deps(a.as).d);
+    await renewMandate(renew, deps(b.as, { grants: inactive }).d);
+    expect(b.calls).toEqual(a.calls);
+    const c = fakeAs();
+    const e = fakeAs();
+    await createMandate({ ...REQ, replaces: 'authz_old' }, deps(c.as).d);
+    await createMandate({ ...REQ, replaces: 'authz_old' }, deps(e.as, { grants: inactive }).d);
+    expect(e.calls).toEqual(c.calls);
+    expect(e.calls.some((x) => x.path === '/api/authorizations/authz_old/revoke')).toBe(true);
+  });
+});

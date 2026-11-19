@@ -57,6 +57,7 @@ export function signDigest(blob, digestBytes) {
 const CHANGE_MEMBERS = ['request_id', 'kind', 'name', 'change_hash', 'gateway_key_id', 'expires_at'].sort().join(',');
 const SWITCH_MEMBERS = ['typ', 'v', 'action', 'nonce', 'issued_at'].sort().join(',');
 const CANCEL_MEMBERS = ['typ', 'v', 'aud', 'root_did', 'key_id', 'request_id', 'chain_seq', 'chain_head', 'issued_at'].sort().join(',');
+const GRANT_FIXED = ['typ', 'v', 'op', 'owner_did', 'key_id', 'chain_seq', 'chain_head', 'mandate_id', 'mandate_version', 'granted_at', 'nonce'];
 const quoted = (x) => `"${x.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`;
 export function reasonFor(bytes) {
   let o;
@@ -80,6 +81,8 @@ export function reasonFor(bytes) {
     text = o.action === 'enable' ? 'turn on Touch ID unlock for Suveren' : 'turn off Touch ID unlock for Suveren';
   } else if (o.typ === 'suveren-identity-cancel' && Object.keys(o).sort().join(',') === CANCEL_MEMBERS) {
     text = 'cancel the request for a new identity';
+  } else if (o.typ === 'suveren-mandate-grant' && GRANT_FIXED.every(k => k in o) && typeof o.profile_id === 'string' && o.profile_id && (o.op === 'grant' || o.op === 'change')) {
+    text = `${o.op === 'grant' ? 'grant' : 'change'} the mandate for ${quoted(o.profile_id)}`;
   } else throw err('bad_request', 'object is of a kind this helper has no prompt text for.');
   const n = Array.from(text).length;
   if (n < 1 || n > 120 || text.normalize('NFC') !== text || /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(text)) throw err('bad_request', 'prompt text is not acceptable.');

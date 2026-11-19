@@ -158,6 +158,8 @@ from the object (at most 64 characters, so the whole text stays within 120):
 | chain entry `set` with a check key | `give a device a check key` |
 | chain entry `set` removing the check key | `remove the check key of a device` |
 | chain entry `rotate-root` | `replace the recovery code` |
+| mandate grant, `op` `grant` (typ `suveren-mandate-grant`, the fixed members and a `profile_id`) | `grant the mandate for "<profile_id>"` |
+| mandate grant, `op` `change` | `change the mandate for "<profile_id>"` (a `revoke` is signed without a check: no text, no prompt) |
 | change request, `kind` replace | `replace the login of "<name>"` |
 | change request, `kind` remove | `remove the login of "<name>"` |
 | Touch ID unlock switch, `action` enable | `turn on Touch ID unlock for Suveren` |
@@ -294,7 +296,7 @@ the login-password fallback of `user-presence` shows the reason too.
 **Who writes the reason.** The helper, from the object (3.3). A caller cannot supply text. A caller that
 gives a different object than the one it hashes is refused (`digest_mismatch`); a caller that gives a true object
 gets a true text. What the person reads is what the signature covers, as long as the template is faithful.
-Templates for the mandate grant (steps 13 and 14) come when their object format is frozen.
+The template for the mandate grant (step 13) is in 3.3: placeholder wording naming the profile id; the grant has no title, so the text cannot say "offers by email".
 
 A touch to open a session and a touch for a change look different because the reasons differ.
 (Under DEC-47 an approval needs no check; only the unlock and *grant* touch.)

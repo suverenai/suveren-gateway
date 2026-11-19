@@ -33,6 +33,8 @@ import {
 import { readRefusal } from '@hap/core/refusal';
 import { carryValues, computeMandateDiff, diffIsEmpty, type MandateDiff } from '@hap/core/mandate-change';
 import { atLeastOneBuildRefusal, unmetForMandate } from '@hap/core/scope-rules';
+import type { MandateGrants, Issued } from './mandate-grants';
+import { GrantRefusal } from './mandate-grants';
 
 export interface MandateRequest {
   /**
@@ -73,6 +75,11 @@ export interface MandateRequest {
   contextLabels?: Record<string, Record<string, string>>;
   /** Replace this mandate: after the new one is signed and delivered, it is revoked. */
   replaces?: string;
+  /**
+   * A gateway with a device chain only (lib/mandate-grants.ts): the DIDs of approvers whose identity code the person
+   * compared on the screen. An approver not named here and not accepted before makes the grant refuse with their codes.
+   */
+  confirmedApproverDids?: string[];
 }
 
 export interface AsResponse { status: number; body: any }
@@ -102,6 +109,12 @@ export interface CeremonyDeps {
   newAuthorizationId: () => string;
   /** Drop a revoked mandate from the MCP server's list now rather than at next login. */
   resyncGates?: () => Promise<unknown>;
+  /**
+   * Present only on a gateway with SUVEREN_DEVICE_KEYS=on. With a device chain, a mandate is granted on this computer
+   * with its check before the Authority Server is asked to sign it (device-keys plan 4.4). Absent or without a chain:
+   * the steps below are exactly the ones of every earlier release.
+   */
+  grants?: MandateGrants;
 }
 
 /** Everything `create` needs, resolved and checked. */
@@ -119,11 +132,13 @@ export interface MandatePlan {
   title: string;
   /** Approvers whose public keys the intent is encrypted for (team only). */
   approvers: string[];
+  /** The team's settings for this profile as read here (team only); a device-chain gateway puts them into the grant. */
+  team: { approvers: string[]; approvals?: number; caps: Record<string, unknown> } | null;
 }
 
 export class MandateRefused extends Error {
   /** Why, in a form a caller can act on without reading the sentence. */
-  constructor(message: string, readonly code?: 'profile_not_enabled' | 'not_a_grantor' | 'not_your_mandate' | 'mandate_not_active' | 'no_change' | 'changed_since_proposal' | 'scope_at_least_one') { super(message); }
+  constructor(message: string, readonly code?: 'profile_not_enabled' | 'not_a_grantor' | 'not_your_mandate' | 'mandate_not_active' | 'no_change' | 'changed_since_proposal' | 'scope_at_least_one' | 'grant_refused', readonly detail?: Record<string, unknown>) { super(message); }
 }
 
 const INTENT_MAX = 2000; // the mandate screen's limit
@@ -223,10 +238,12 @@ async function resolveWorkspaceAndRight(req: Pick<MandateRequest, 'team' | 'prof
   // Rights — the Authority Server's team authority gate, up front.
   let approvers: string[] = [];
   let teamCaps: Record<string, unknown> = {};
+  let teamApprovals: number | undefined;
   if (!isPersonal) {
     const cfg = await deps.as('GET', `/api/groups/${encodeURIComponent(group.id)}/profile-config/${encodeURIComponent(profile.id)}`);
     approvers = (cfg.status === 200 ? cfg.body?.config?.approvers : undefined) ?? [];
     teamCaps = (cfg.status === 200 ? cfg.body?.config?.caps : undefined) ?? {};
+    teamApprovals = typeof cfg.body?.config?.approvals === 'number' ? cfg.body.config.approvals : undefined;
     // Who may give this mandate is `grantors`; `approvers` only decide above-cap actions, and a team may have none.
     const grantors: string[] | 'all' = (cfg.status === 200 ? cfg.body?.config?.grantors : undefined) ?? approvers;
     // The AS carries a team's settings over from an older version of the same
@@ -235,7 +252,7 @@ async function resolveWorkspaceAndRight(req: Pick<MandateRequest, 'team' | 'prof
     if (grantors !== 'all' && grantors.length === 0) refuse(`${name} ${versionOf(profile.id)} is not enabled in "${group.name}". Ask an admin of "${group.name}" to enable ${name} ${versionOf(profile.id)} and name who may give its mandates.`, 'profile_not_enabled');
     if (grantors !== 'all' && !grantors.includes(user.id)) refuse(`Only ${name}'s approvers in "${group.name}" can give this mandate, and the signed-in person is not one of them.`, 'not_a_grantor');
   }
-  return { user, group, isPersonal, profile, name, approvers, teamCaps };
+  return { user, group, isPersonal, profile, name, approvers, teamCaps, teamApprovals };
 }
 
 /**
@@ -253,7 +270,7 @@ export async function checkMandateRight(
 
 /** Validate the request and resolve everything needed — creates nothing. */
 export async function planMandate(req: MandateRequest, deps: CeremonyDeps): Promise<MandatePlan> {
-  const { user, group, isPersonal, profile, name, approvers, teamCaps } = await resolveWorkspaceAndRight(req, deps);
+  const { user, group, isPersonal, profile, name, approvers, teamCaps, teamApprovals } = await resolveWorkspaceAndRight(req, deps);
 
   // Limits and scope against the profile.
   const bounds = { ...scalarRecord('limits', req.limits), profile: profile.id };
@@ -314,6 +331,7 @@ export async function planMandate(req: MandateRequest, deps: CeremonyDeps): Prom
     ttlSeconds,
     title: (req.title ?? '').trim() || `${name} (proposed by AI)`,
     approvers,
+    team: isPersonal ? null : { approvers, ...(teamApprovals !== undefined ? { approvals: teamApprovals } : {}), caps: teamCaps },
   };
 }
 
@@ -340,6 +358,8 @@ async function retireReplaced(oldId: string, newId: string, deps: CeremonyDeps):
 export async function createMandate(req: MandateRequest, deps: CeremonyDeps): Promise<{ authorizationId: string; plan: MandatePlan; revokeError?: string }> {
   const plan = await planMandate(req, deps);
   const user = deps.user!;
+  // A device chain: the mandate is granted on this computer with its check first, then requested (device-keys plan 4.4).
+  if (deps.grants?.active()) return createGranted(req, plan, deps);
 
   const boundsHash = computeBoundsHash(plan.bounds as never, plan.profile);
   const scopeHash = computeScopeHash(plan.context as never, plan.profile);
@@ -412,6 +432,102 @@ export async function createMandate(req: MandateRequest, deps: CeremonyDeps): Pr
   return { authorizationId, plan, ...retired };
 }
 
+/** A refusal of the grant, in the ceremony's own words: the code and, for an approver's identity code, the people to compare. */
+function grantRefused(err: unknown): never {
+  if (err instanceof GrantRefusal) {
+    throw new MandateRefused(err.message, 'grant_refused', { grantCode: err.code, ...err.extra });
+  }
+  throw err;
+}
+
+/** Will the Authority Server put the owner's verified name on the mandate? It stamps `subjects` for a verified identity the person (or their standing choice) discloses; the grant covers the result. */
+async function subjectsDisclosed(deps: CeremonyDeps, discloseIdentity: boolean | undefined): Promise<boolean> {
+  const r = await deps.as('GET', '/api/users/me/identity-disclosure');
+  if (r.status !== 200) refuse('The Authority Server did not say whether your verified name is shown, so the mandate was not granted.');
+  return r.body?.verified === true && (discloseIdentity === true || r.body?.always === true);
+}
+
+/**
+ * The same ceremony for a gateway with a device chain (device-keys plan 4.4): the mandate is built here with the
+ * team's approvers, caps and count, granted on this computer with its check (a Touch ID touch), its sealed body
+ * stored, and only then requested from the Authority Server, which signs exactly what was granted or refuses.
+ * Nothing falls back to a mandate without a grant. A change of an existing mandate is a new version under the
+ * same mandate id; the Authority Server ends the older authorization when the new one is issued.
+ */
+async function createGranted(req: MandateRequest, plan: MandatePlan, deps: CeremonyDeps): Promise<{ authorizationId: string; plan: MandatePlan; revokeError?: string }> {
+  const grants = deps.grants!;
+  const user = deps.user!;
+  const boundsHash = computeBoundsHash(plan.bounds as never, plan.profile);
+  const scopeHash = computeScopeHash(plan.context as never, plan.profile);
+  const intentHash = computeIntentHash(plan.intent);
+  const ecHash = computeExecutionContextHash(plan.profile);
+  const profileHash = computeProfileHash(plan.profile);
+
+  let enc: EncryptedIntent | undefined;
+  if (!plan.isPersonal) {
+    const keys = await deps.as('GET', `/api/groups/${encodeURIComponent(plan.groupId)}/profile-config/${encodeURIComponent(plan.profile.id)}/approvers/pubkeys`);
+    const recipients = approverPubkeys(keys.body);
+    if (recipients.length > 0) enc = await deps.encrypt(plan.intent, recipients);
+  }
+  const disclosed = await subjectsDisclosed(deps, req.discloseIdentity);
+
+  const authorizationId = deps.newAuthorizationId();
+  let issued: Issued;
+  try {
+    issued = await grants.issue({
+      ownUserId: user.id, ownDid: user.did, groupId: plan.groupId, isPersonal: plan.isPersonal, profile: plan.profile,
+      bounds: plan.bounds as Record<string, string | number>, scope: plan.context, intent: plan.intent, mode: plan.mode, ttlSeconds: plan.ttlSeconds,
+      authorizationId, ...(req.replaces ? { replaces: req.replaces } : {}),
+      hashes: { profile: profileHash, bounds: boundsHash, scope: scopeHash, intent: intentHash, executionContext: ecHash },
+      ...(enc ? { intentDisclosureHash: enc.intentDisclosureHash } : {}),
+      subjectsDisclosed: disclosed, team: plan.team,
+      ...(req.confirmedApproverDids ? { confirmedApproverDids: req.confirmedApproverDids } : {}),
+      as: deps.as,
+    });
+  } catch (err) { return grantRefused(err); }
+
+  const res = await deps.as('POST', '/api/as/mandate', {
+    authorization_id: authorizationId,
+    profile_id: plan.profile.id,
+    profile_hash: profileHash,
+    supported_versions: [...SUPPORTED_VERSIONS],
+    bounds: plan.bounds,
+    bounds_hash: boundsHash,
+    scope_hash: scopeHash,
+    domain: plan.domain,
+    did: user.did,
+    gate_content_hashes: { intent: intentHash },
+    execution_context_hash: ecHash,
+    group_id: plan.groupId,
+    title: plan.title,
+    intent_ciphertext: enc?.intentCiphertext,
+    encrypted_keys: enc?.encryptedKeys,
+    approvers_frozen: enc?.approversFrozen,
+    intent_disclosure_hash: enc?.intentDisclosureHash,
+    ...(req.replaces ? { replaces: req.replaces } : {}),
+    ...(req.discloseIdentity !== undefined ? { disclose_identity: req.discloseIdentity } : {}),
+    // What the grant covers, as the grant names it: the mandate id and version, the expiry (no ttl), mode, caps, approvers, count.
+    ...issued.request,
+  });
+  if (res.status >= 300) {
+    refuse(`The Authority Server refused the mandate: ${readRefusal(res.body, `status ${res.status}`).message}`);
+  }
+  try {
+    await deps.deliverGateContent({
+      authorizationId, boundsHash, contextHash: scopeHash, context: plan.context,
+      ...(req.contextLabels && Object.keys(req.contextLabels).length > 0 ? { contextLabels: req.contextLabels } : {}),
+      gateContent: { intent: plan.intent },
+    });
+  } catch (err) {
+    // A mandate whose intent never reached the gateway must not stay active: ended with a device signature (final).
+    await grants.revoke(authorizationId).catch(() => {});
+    refuse(`The mandate was signed but its intent could not be delivered to the gateway, so it was revoked. (${err instanceof Error ? err.message : String(err)})`);
+  }
+  // The Authority Server ended the authorization this one replaces in the same moment the new version was issued.
+  if (req.replaces) void deps.resyncGates?.().catch(() => {});
+  return { authorizationId, plan };
+}
+
 export interface RenewRequest {
   authorizationId: string;
   profileId: string;
@@ -433,6 +549,7 @@ export async function renewMandate(req: RenewRequest, deps: CeremonyDeps): Promi
   const profile = await resolveProfile(deps.as, req.profileId);
   const boundsHash = computeBoundsHash(req.bounds as never, profile);
   const scopeHash = computeScopeHash(req.context as never, profile);
+  if (deps.grants?.active()) return renewGranted(req, profile, boundsHash, scopeHash, deps);
   const res = await deps.as('POST', '/api/as/mandate', {
     authorization_id: req.authorizationId,
     renew: true,
@@ -463,6 +580,63 @@ export async function renewMandate(req: RenewRequest, deps: CeremonyDeps): Promi
   return { authorizationId: req.authorizationId };
 }
 
+
+/** Extend = a `change` of the same mandate under the same authorization: granted again on this computer, only the expiry moves. */
+async function renewGranted(req: RenewRequest, profile: AgentProfile, boundsHash: string, scopeHash: string, deps: CeremonyDeps): Promise<{ authorizationId: string }> {
+  const user = deps.user!;
+  const grants = deps.grants!;
+  const groups = ((await deps.as('GET', '/api/groups')).body?.groups ?? []) as Array<{ id: string; isPersonal?: boolean }>;
+  const group = groups.find(g => g.id === req.groupId);
+  if (!group) refuse('This mandate belongs to a workspace you are not in.');
+  let team: MandatePlan['team'] = null;
+  if (!group.isPersonal) {
+    const cfg = await deps.as('GET', `/api/groups/${encodeURIComponent(group.id)}/profile-config/${encodeURIComponent(profile.id)}`);
+    if (cfg.status !== 200) refuse('The team settings could not be read, so the mandate was not extended.');
+    team = {
+      approvers: cfg.body?.config?.approvers ?? [],
+      ...(typeof cfg.body?.config?.approvals === 'number' ? { approvals: cfg.body.config.approvals } : {}),
+      caps: cfg.body?.config?.caps ?? {},
+    };
+  }
+  const intentHash = computeIntentHash(req.intent);
+  const ecHash = computeExecutionContextHash(profile);
+  const profileHash = computeProfileHash(profile);
+  let issued: Issued;
+  try {
+    issued = await grants.issue({
+      ownUserId: user.id, ownDid: user.did, groupId: req.groupId, isPersonal: !!group.isPersonal, profile,
+      bounds: req.bounds, scope: req.context, intent: req.intent, mode: req.mode, ttlSeconds: req.ttlSeconds,
+      authorizationId: req.authorizationId, renewal: true,
+      hashes: { profile: profileHash, bounds: boundsHash, scope: scopeHash, intent: intentHash, executionContext: ecHash },
+      subjectsDisclosed: false, team, as: deps.as,
+    });
+  } catch (err) { return grantRefused(err); }
+  const res = await deps.as('POST', '/api/as/mandate', {
+    authorization_id: req.authorizationId,
+    profile_id: profile.id,
+    profile_hash: profileHash,
+    supported_versions: [...SUPPORTED_VERSIONS],
+    bounds: req.bounds,
+    bounds_hash: boundsHash,
+    scope_hash: scopeHash,
+    domain: req.domain,
+    did: user.did,
+    gate_content_hashes: { intent: intentHash },
+    execution_context_hash: ecHash,
+    group_id: req.groupId,
+    ...issued.request,
+  });
+  if (res.status >= 300) refuse(`The Authority Server refused the renewal: ${readRefusal(res.body, `status ${res.status}`).message}`);
+  await deps.deliverGateContent({
+    authorizationId: req.authorizationId,
+    boundsHash: res.body?.bounds_hash ?? boundsHash,
+    contextHash: scopeHash,
+    context: req.context,
+    gateContent: { intent: req.intent },
+    ...(req.path ? { path: req.path } : {}),
+  });
+  return { authorizationId: req.authorizationId };
+}
 
 // ─── Changing a mandate ─────────────────────────────────────────────────────
 

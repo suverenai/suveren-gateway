@@ -76,7 +76,7 @@ export function createInternalMandateRouter(
       res.json({ ok: true, authorizationId, profileId: plan.profile.id, groupName: plan.groupName, mode: plan.mode, ttlSeconds: plan.ttlSeconds });
     } catch (err) {
       if (err instanceof MandateRefused) {
-        res.status(422).json({ error: 'mandate_refused', message: err.message, ...(err.code ? { code: err.code } : {}) });
+        res.status(422).json({ error: 'mandate_refused', message: err.message, ...(err.code ? { code: err.code } : {}), ...(err.detail ?? {}) });
         return;
       }
       console.error('[Control Plane] /internal/mandate failed:', err);

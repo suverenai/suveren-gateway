@@ -8,6 +8,7 @@ import { decodeMandateBlob, type Subject } from '@hap/core';
 import { SPClient, type SPAttestationsResult, type SPPendingItem } from './sp-client';
 import { readPairing, fingerprintOf } from './as-pairing';
 import { issuerFromPublicKeyHex } from './issuer-from-hex';
+import type { GrantGate } from './mandate-grants';
 
 /**
  * Thrown by {@link AttestationCache.getPublicKey} when the Authority Server
@@ -140,6 +141,24 @@ export class AttestationCache {
    * this fact to begin with.
    */
   private reapprovalNeeded = new Set<string>();
+
+  /**
+   * Device keys (plan 4.4, step 13): with a gate set, a mandate enters this cache only when the grant of its owner's device
+   * verified for it (lib/mandate-grants.ts); a blob without one is dropped from what is gated with, and the authorization
+   * is not cached at all when none holds. Unset (switch off, or no chain): nothing changes.
+   */
+  private grantGate: GrantGate | null = null;
+  /** Authorizations the gate refused, with the reason: shown to the person, never honoured. In memory, like the cache. */
+  private withheld = new Map<string, { code: string; text: string }>();
+
+  setGrantGate(gate: GrantGate | null): void {
+    this.grantGate = gate;
+  }
+
+  /** Why an authorization is not honoured on this gateway (the last check refused it), or undefined. */
+  withheldReason(authorizationId: string): { code: string; text: string } | undefined {
+    return this.withheld.get(authorizationId);
+  }
 
   /**
    * WS3 defence-in-depth (work-plan "Added 2026-10-11 — an account is
@@ -353,13 +372,29 @@ export class AttestationCache {
       groupId = undefined;
     }
 
+    // Device keys: only the blobs whose owner-signed grant verifies are used below. None: not honoured, not cached.
+    let attestations = result.attestations;
+    if (this.grantGate) {
+      const g = await this.grantGate({ authorizationId: result.authorization_id, attestations, groupId });
+      if (!g.ok) {
+        this.authorizations.delete(result.authorization_id);
+        this.withheld.set(result.authorization_id, { code: g.code, text: g.text });
+        return null;
+      }
+      this.withheld.delete(result.authorization_id);
+      if (!g.skipped) {
+        const granted = new Set(g.granted.map(x => x.blob));
+        attestations = attestations.filter(a => granted.has(a.blob));
+      }
+    }
+
     // Read the commitment mode from the SIGNED payload (all of an authorization's
     // attestations share it). This — not the AS's unsigned deferred_commitment_domains
     // — is the authoritative review-vs-automatic signal.
     let signedCommitmentMode: CachedAuthorization['signedCommitmentMode'];
     let subjects: CachedAuthorization['subjects'];
     let mandateId: string | undefined;
-    const firstBlob = result.attestations[0]?.blob;
+    const firstBlob = attestations[0]?.blob;
     if (firstBlob) {
       try {
         const payload = decodeMandateBlob(firstBlob).payload;
@@ -375,7 +410,7 @@ export class AttestationCache {
     const mandateIds: string[] = [];
     let mandateVersion: string | undefined;
     const nowSec = Math.floor(Date.now() / 1000);
-    for (const a of result.attestations) {
+    for (const a of attestations) {
       if (!a.blob) continue;
       try {
         const id = decodeMandateBlob(a.blob).payload.mandate_id;
@@ -394,7 +429,7 @@ export class AttestationCache {
 
     let proposalReaders: CachedAuthorization['proposalReaders'];
     let latestIssuedAt = -Infinity;
-    for (const a of result.attestations) {
+    for (const a of attestations) {
       if (!a.blob) continue;
       try {
         const p = decodeMandateBlob(a.blob).payload;
@@ -418,7 +453,7 @@ export class AttestationCache {
       path: result.profile_id,
       frame: bounds,                   // compat alias
       bounds: result.bounds,           // v0.4 (undefined for v0.3)
-      attestations: result.attestations.map(a => ({
+      attestations: attestations.map(a => ({
         domain: a.domain,
         blob: a.blob,
         expiresAt: a.expires_at,

@@ -49,7 +49,8 @@ import type { SPProposal } from '../src/lib/sp-client';
 import { resolveWhoLabel } from '../src/lib/who-label';
 import { outcomeEntryFor } from '../src/lib/outcome-outbox';
 import { decryptRejectionNote } from '../src/lib/proposal-content';
-import { resolveProposalFacts } from '../src/lib/device-decisions';
+import { resolveProposalFacts, controlPlaneDevice, signedDidsOfCache } from '../src/lib/device-decisions';
+import { makeGrantGate, resyncVerdict } from '../src/lib/mandate-grants';
 import { checkSentArgs, resultView, headlineArgs } from '../src/lib/ticket-content';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -325,6 +326,9 @@ app.post('/internal/gate-content', internalOnly, async (req: Request, res: Respo
     // Sync the authorization from the SP so we can verify hashes
     const auth = await state.cache.syncAuthorization(authorizationId);
     if (!auth) {
+      // Device keys: a mandate the gateway does not honour (no grant of its owner's device) says why, and gates nothing.
+      const why = state.cache.withheldReason(authorizationId);
+      if (why) { res.status(409).json({ error: `Not honoured: ${why.text}`, code: why.code }); return; }
       res.status(404).json({ error: `No authorization found for ${authorizationId}` });
       return;
     }
@@ -434,6 +438,7 @@ app.post('/internal/resync-gates', internalOnly, async (_req: Request, res: Resp
       // Re-sync each stored grant by its per-ceremony id.
       const authzId = gate.authorizationId;
       const auth = await state.cache.syncAuthorization(authzId);
+      const verdict = resyncVerdict(state.cache, authzId, !!auth);
       if (auth) {
         state.setGateContent(auth.path, authzId, auth.profileId, gate.gateContent, {
           boundsHash: gate.boundsHash,
@@ -445,6 +450,10 @@ app.post('/internal/resync-gates', internalOnly, async (_req: Request, res: Resp
         });
         synced++;
         console.error(`[Suveren MCP] Re-synced gate: ${gate.path}`);
+      } else if (verdict === 'withheld') {
+        // Device keys: the grant of this mandate does not verify right now. Not an ending: nothing is honoured, and the stored
+        // gate (the intent) is kept, so a grant that arrives or verifies later gates again without the person doing anything.
+        console.error(`[Suveren MCP] Mandate not honoured (${state.cache.withheldReason(authzId)!.code}): ${gate.path}`);
       } else {
         // The AS no longer serves this authorization: hard-deleted, or
         // REVOKED (syncAuthorization drops revoked grants so they are
@@ -528,6 +537,8 @@ app.post('/internal/proposal-facts', internalOnly, async (req: Request, res: Res
     return;
   }
   const out = await resolveProposalFacts({
+    // device keys: a mandate without its owner's grant offers no decision (lib/mandate-grants.ts)
+    grants: makeGrantGate({ sp: state.spClient, cp: controlPlaneDevice, protectedDids: () => signedDidsOfCache(state.cache) }),
     // read-only: a grant this gateway does not hold is not fetched into its cache on a request from outside
     auth: async (id) => state.cache.getAllAuthorizations().find(a => a.authorizationId === id),
     // An approver's gateway never holds the owner's grant: its mandates are read for this one proposal, not cached.

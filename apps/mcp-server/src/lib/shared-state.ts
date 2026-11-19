@@ -6,6 +6,8 @@
 
 import { SPClient } from './sp-client';
 import { AttestationCache, AsKeyMismatchError, type CachedAuthorization } from './attestation-cache';
+import { controlPlaneDevice, deviceKeysEnabled, signedDidsOfCache } from './device-decisions';
+import { makeGrantGate } from './mandate-grants';
 import { GateStore, type GateContent, type GateEntry } from './gate-store';
 import { ExecutionLog } from './execution-log';
 import { DenialLog } from './denial-log';
@@ -92,6 +94,11 @@ export class SharedState {
   constructor(spUrl: string, gateStorePath?: string, dataDir?: string) {
     this.spClient = new SPClient(spUrl, undefined, dataDir);
     this.cache = new AttestationCache(this.spClient, dataDir);
+    // Device keys (step 13): a mandate of a chain account is cached only with the grant of its owner's device. A gateway with the
+    // switch off sets nothing, and the cache is the one of every earlier release.
+    if (deviceKeysEnabled()) {
+      this.cache.setGrantGate(makeGrantGate({ sp: this.spClient, cp: controlPlaneDevice, protectedDids: () => signedDidsOfCache(this.cache) }));
+    }
     this.gateStore = new GateStore(gateStorePath);
     this.executionLog = new ExecutionLog(gateStorePath);
     this.denialLog = new DenialLog(gateStorePath);
