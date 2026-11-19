@@ -124,6 +124,8 @@ export interface DeviceCpClient {
   /** Has a device chain ever been reported for this account on this computer (sticky)? */
   chainSeen(): Promise<boolean>;
   markChainSeen(): Promise<void>;
+  /** The DID of the account this gateway is signed in as, or null when the Authority Server named none. Throws when no session is held. */
+  sessionDid(): Promise<string | null>;
   /** This proposal runs on these decisions (their nonces): refused for a reused proposal id or nonce. */
   consume(proposalId: string, nonces: string[]): Promise<void>;
   /** A mandate grant was verified here: remember its version (a lower one is refused later, a revoke is final). Throws {@link GrantRefused}. */
@@ -189,6 +191,13 @@ export const controlPlaneDevice: DeviceCpClient = {
   async chainSeen() {
     const body = await cpCall('GET', '/internal/mandate-grant/chain-seen');
     return (body as { seen?: unknown }).seen === true;
+  },
+  async sessionDid() {
+    const body = await cpCall('GET', '/internal/mandate-grant/account-did');
+    const did = (body as { did?: unknown }).did;
+    if (did === null) return null;
+    if (typeof did !== 'string' || !did) throw new Error('unreadable answer');
+    return did;
   },
   async markChainSeen() {
     await cpCall('POST', '/internal/mandate-grant/chain-seen', {});
