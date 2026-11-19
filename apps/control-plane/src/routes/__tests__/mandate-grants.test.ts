@@ -489,7 +489,7 @@ describe('what the MCP server asks of the control plane: the highest version, a 
     expect(() => st.observe('m-aaaaaaaa', 3, H('d'), 'change')).toThrow(/revoked/);
   });
 
-  it('the account DID for the MCP server\'s "does the Authority Server know a chain" question: the secret is needed; a Bearer device session with no known user is no answer (401)', async () => {
+  it('the account DID for the MCP server\'s "does the Authority Server know a chain" question: the secret is needed; a session the control plane does not hold, or a Bearer device session with no known user, says `signedIn: false` (the caller asks about the mandates\' owners instead)', async () => {
     const w = await world();
     const ask = (secret: string | null) => call(w.gw.port, 'GET', '/internal/mandate-grant/account-did', { headers: secret ? { 'x-internal-secret': secret } : {}, origin: null });
     expect((await ask(null)).status).toBe(401);
@@ -497,7 +497,7 @@ describe('what the MCP server asks of the control plane: the highest version, a 
     const user = w.gw.vault.getSessionUser();
     const r = await ask('sekret');
     if (user) expect(r.body).toEqual({ did: user.did });
-    else expect(r.status).toBe(401);   // device session, no API-key sign-in answer: not "no chain", simply unknown
+    else expect(r.body).toEqual({ signedIn: false });   // device session, no API-key sign-in answer: not "no chain", simply unknown
   });
 
   it('only this person, or a member of the team\'s VERIFIED list, is an owner: a code compared on this computer no longer makes a colleague', async () => {
