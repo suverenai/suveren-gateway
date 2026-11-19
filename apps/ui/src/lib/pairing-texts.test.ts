@@ -74,3 +74,16 @@ describe('whenText', () => {
     expect(whenText(now - 30 * 86400, now)).toMatch(/\d{4}/);
   });
 });
+
+describe('one string, both apps (item: no duplicates of the shared pairing texts)', () => {
+  it('neither the gateway\'s nor the phone\'s texts module holds a shared sentence as its own literal', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { fileURLToPath } = await import('node:url');
+    const { SP, SHARED_ERRORS } = await import('@suveren/approval-card/lib/pairing-texts');
+    const files = ['./pairing-texts.ts', '../../../approve/src/texts.ts'].map(f => readFileSync(fileURLToPath(new URL(f, import.meta.url)), 'utf8'));
+    const shared: string[] = [...(Object.values(SP) as unknown[]).filter((v): v is string => typeof v === 'string' && v.length > 8), ...Object.values(SHARED_ERRORS)];
+    for (const src of files) for (const sentence of shared) expect(src, sentence).not.toContain(`'${sentence}'`);
+    expect(PT.devicesTitle).toBe(SP.devicesTitle);
+    expect(pairingErrorText('wrong_code')).toBe(SHARED_ERRORS.wrong_code);
+  });
+});

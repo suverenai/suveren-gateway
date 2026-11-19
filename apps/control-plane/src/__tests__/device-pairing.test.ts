@@ -433,6 +433,35 @@ describe('"Add this computer": the phone admits this computer (shown_by: joiner)
     expect(await refusalOf(g2.pairing.joinStart())).toBe('locked');
   });
 
+  it('plan 20.2: a computer signed in to another account refuses this chain; to its own account it joins; a new computer joins any', async () => {
+    // another account: refused before the person sees anything, nothing stored
+    const other = await world();
+    other.g.vault.setSessionUser({ id: 'u9', did: 'did:key:z6MkSomeoneElse' });
+    const v0 = await other.g.pairing.joinStart();
+    if (v0.flow !== 'join' || v0.step !== 'qr') throw new Error('qr');
+    await other.admit.scanned(v0.qr);
+    expect(await until(other.g, v => v.flow === 'join' && v.step === 'failed')).toEqual({ flow: 'join', step: 'failed', code: 'other_account' });
+    expect(other.g.store.exists()).toBe(false);
+    // its own account: joins
+    const own = await world();
+    own.g.vault.setSessionUser({ id: 'u1', did: own.as.rootDid });
+    const { compare } = await toCompare(own);
+    if (compare.flow !== 'join' || compare.step !== 'compare') throw new Error('compare');
+    await own.admit.choose(compare.code);
+    expect(await until(own.g, v => v.flow === 'join' && v.step === 'done')).toMatchObject({ step: 'done', signedIn: true });
+    expect(own.g.store.read()?.rootDid).toBe(own.as.rootDid);
+    // a new computer (no session, no logins) joins: every other test of this block
+  });
+
+  it('plan 20.2: stored connector logins and no signed-in account: sign in first, nothing is shown', async () => {
+    const w = await world();
+    w.g.vault.setCredential('gmail', { token: 'x' });
+    expect(await refusalOf(w.g.pairing.joinStart())).toBe('sign_in_first');
+    expect(w.g.pairing.view()).toEqual({ flow: 'none' });
+    w.g.vault.setSessionUser({ id: 'u1', did: w.as.rootDid });
+    expect((await w.g.pairing.joinStart()).flow).toBe('join');
+  });
+
   it('a lost done: the mailbox runs out after the phone appended; a sign-in that finds this computer\'s entry stores the chain, and one that does not stores nothing', async () => {
     for (const found of [true, false]) {
       const w = await world();

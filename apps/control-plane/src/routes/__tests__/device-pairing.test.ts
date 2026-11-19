@@ -65,7 +65,8 @@ describe('a computer that is not set up: "Add this computer"', () => {
     // a second one is refused until the first is cancelled
     expect((await w.post('/auth/device/pairing/join/start')).body).toMatchObject({ code: 'pairing_pending' });
     expect((await w.post('/auth/device/pairing/cancel')).body).toMatchObject({ view: { flow: 'none' } });
-    expect((await w.post('/auth/device/pairing/join/start')).status).toBe(200);
+    const again = await w.post('/auth/device/pairing/join/start');
+    expect(again.body.code ?? again.status).toBe(200);
   });
 
   it('cannot add a phone or list devices: there is no account on this computer', async () => {

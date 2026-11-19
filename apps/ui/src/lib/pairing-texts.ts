@@ -13,45 +13,49 @@
  * Pure: no React, no network.
  */
 import { textForCode } from './device-texts';
+import { SP, SHARED_ERRORS, whenText } from '@suveren/approval-card/lib/pairing-texts';
+
+export { whenText };
 
 export const PT = {
   // ─── The Devices page ─────────────────────────────────────────────────────────
-  devicesTitle: 'Your devices', // DRAFT (= phone P.devicesTitle)
+  devicesTitle: SP.devicesTitle, // shared (approval-card pairing-texts)
   devicesBack: 'Back to settings', // DRAFT
-  devKindComputer: 'Computer', // DRAFT (= P.devKindComputer)
-  devKindPhone: 'Phone', // DRAFT (= P.devKindPhone)
-  devCanConfirm: 'confirms changes with a touch', // DRAFT (= P.devCanConfirm)
-  devRecent: 'added in the last 14 days', // DRAFT (= P.devRecent)
-  devAdded: (when: string): string => `added ${when}`, // DRAFT (= P.devAdded)
+  devKindComputer: SP.devKindComputer, // shared (approval-card pairing-texts)
+  devKindPhone: SP.devKindPhone, // shared (approval-card pairing-texts)
+  devCanConfirm: SP.devCanConfirm, // shared (approval-card pairing-texts)
+  devRecent: SP.devRecent, // shared (approval-card pairing-texts)
+  devAdded: SP.devAdded, // shared (approval-card pairing-texts)
   devThisComputer: 'This computer', // DRAFT (P.devThisPhone for the phone)
-  devIdentity: 'Your identity code', // DRAFT (= P.devIdentity)
+  devIdentity: SP.devIdentity, // shared (approval-card pairing-texts)
   devAddPhone: 'Add a phone', // DRAFT
-  devRefresh: 'Check the list again', // DRAFT (= P.devRefresh)
+  devRefresh: SP.devRefresh, // shared (approval-card pairing-texts)
   devCannotAdd: 'This computer has no Touch ID key, so it cannot add devices. Add a phone from a device that has one.', // DRAFT
-  devFull: 'Your account already has the most devices it can have. Remove one first.', // DRAFT (= P.too_many_devices)
+  devFull: SHARED_ERRORS.too_many_devices, // shared (approval-card pairing-texts)
   devLoading: 'Loading...', // DRAFT
-  devSettingsLink: 'Your devices', // DRAFT (the link on the Settings card)
+  devSettingsLink: SP.devicesTitle, // shared (approval-card pairing-texts)
   devSettingsBody: 'The computers and phones that belong to your account. Add a phone here.', // DRAFT
-  whenToday: 'today', // DRAFT (= P.whenToday)
-  whenYesterday: 'yesterday', // DRAFT
-  whenDaysAgo: (n: number): string => `${n} days ago`, // DRAFT
+  whenToday: SP.whenToday, // shared (approval-card pairing-texts)
+  whenYesterday: SP.whenYesterday, // shared (approval-card pairing-texts)
+  whenDaysAgo: SP.whenDaysAgo, // shared (approval-card pairing-texts)
 
   // ─── Add a phone (this computer admits) ───────────────────────────────────────
   addPhoneTitle: 'Add a phone', // DRAFT
+  // Changes when D2 ships (the phone approves): today the phone only reads, so "you approve or reject them here" is true; after D2 it is not.
   addPhoneIntro: 'The Suveren app on your phone becomes one of your devices. For now you read requests there. You approve or reject them here.', // DRAFT (= P.joinIntro, from the other side)
   addPhoneShow: 'Show the code', // DRAFT
   addPhoneScan: 'On your phone, open the Suveren app, choose Add this phone to my account, and scan this code.', // DRAFT (= P.welcomeJoin)
   addPhoneQrLabel: 'Code to add a phone', // DRAFT (the picture's text for a screen reader)
   addPhoneQrTime: 'The code works for 10 minutes. Show it to your own phone only.', // DRAFT
   addPhoneConnected: 'Your phone is connecting...', // DRAFT
-  addPhoneChooseTitle: (label: string): string => `Add "${label}"?`, // DRAFT (= P.admitChooseTitle, 20.11)
+  addPhoneChooseTitle: SP.admitChooseTitle, // shared (approval-card pairing-texts)
   addPhoneChooseBody: 'Tap the code your phone shows. A wrong code ends this, and nothing is added.', // DRAFT (= P.admitChooseBody)
-  addPhoneListTitle: 'Your devices after this:', // DRAFT (= P.admitListTitle)
-  addPhoneNew: 'new', // DRAFT (= P.admitNew)
+  addPhoneListTitle: SP.admitListTitle, // shared (approval-card pairing-texts)
+  addPhoneNew: SP.admitNew, // shared (approval-card pairing-texts)
   addPhoneChecking: 'This computer asks for your touch, to add the phone.', // DRAFT
-  addPhoneDoneTitle: (label: string): string => `"${label}" was added`, // DRAFT (= P.admitDoneTitle)
-  addPhoneDone: 'It is now one of your devices.', // DRAFT (= P.setupDoneBody)
-  addPhoneDoneList: 'Your devices now:', // DRAFT (= P.admitDoneList)
+  addPhoneDoneTitle: SP.admitDoneTitle, // shared (approval-card pairing-texts)
+  addPhoneDone: SP.joinedBody, // shared (approval-card pairing-texts)
+  addPhoneDoneList: SP.admitDoneList, // shared (approval-card pairing-texts)
 
   // ─── Add this computer (a computer without the account is admitted by the phone) ──
   addComputerTitle: 'Add this computer to my account', // DRAFT
@@ -63,62 +67,43 @@ export const PT = {
   addComputerQrLabel: 'Code to add this computer', // DRAFT
   addComputerQrTime: 'The code works for 10 minutes. Show it to your own phone only.', // DRAFT
   addComputerNoTouch: 'This computer has no Touch ID key. It will show your AI\'s requests, and it cannot add devices or give mandates.', // DRAFT
-  reviewTitle: 'You are about to join this account', // DRAFT (= P.reviewTitle)
+  reviewTitle: SP.reviewTitle, // shared (approval-card pairing-texts)
   reviewMade: (label: string, when: string): string => `This account already has an identity, created ${when} on ${label}. This computer is being added to it.`, // DRAFT (plan 4.3 step 8, DEC-47)
-  reviewIdentity: 'Identity code', // DRAFT (= P.reviewIdentity)
-  reviewIdentityNote: 'Check that this is the identity code of your account.', // DRAFT (= P.reviewIdentityNote)
-  reviewDevices: 'Devices in this account:', // DRAFT (= P.reviewDevices)
+  reviewIdentity: SP.reviewIdentity, // shared (approval-card pairing-texts)
+  reviewIdentityNote: SP.reviewIdentityNote, // shared (approval-card pairing-texts)
+  reviewDevices: SP.reviewDevices, // shared (approval-card pairing-texts)
   reviewNameLabel: 'Name of this computer', // DRAFT
   reviewNameHint: 'For example: Office Mac. You will see it in your list of devices.', // DRAFT (= T.nameHint)
   reviewButton: 'Add this computer to it', // DRAFT
-  reviewNotMine: 'This is not my account', // DRAFT (= P.reviewNotMine)
+  reviewNotMine: SP.reviewNotMine, // shared (approval-card pairing-texts)
   workCheck: 'This computer asks for your touch, to prove its own Touch ID key.', // DRAFT
-  workSend: 'Sending to suveren.ai...', // DRAFT (= P.doSend)
-  waitingFor: (label: string): string => `Waiting for ${label}...`, // DRAFT (= P.compareWaiting)
-  compareTitle: 'Check the code', // DRAFT (= P.compareTitle)
+  workSend: SP.sending, // shared (approval-card pairing-texts)
+  waitingFor: SP.compareWaiting, // shared (approval-card pairing-texts)
+  compareTitle: SP.compareTitle, // shared (approval-card pairing-texts)
   compareBody: (label: string): string => `${label} shows three codes. Tap the one that matches this code. Then it asks for your touch.`, // DRAFT
   addedComputerTitle: 'This computer was added', // DRAFT
   addedComputerBody: 'It is now one of your devices, and you are signed in.', // DRAFT
   addedComputerNoSignin: 'This computer was added, but signing in did not work. Try again.', // DRAFT (T.connectedSigninFailed)
 
   // ─── Shared buttons ───────────────────────────────────────────────────────────
-  cancel: 'Cancel', // = T.connectCancel (58)
-  continue: 'Continue', // DRAFT
-  back: 'Back', // DRAFT
-  startAgain: 'Start again', // DRAFT (= P.startAgain)
-  tryAgain: 'Try again', // DRAFT (= DRAFT.tryAgain)
+  cancel: SP.cancel, // shared (approval-card pairing-texts)
+  continue: SP.continue, // shared (approval-card pairing-texts)
+  back: SP.back, // shared (approval-card pairing-texts)
+  startAgain: SP.startAgain, // shared (approval-card pairing-texts)
+  tryAgain: SP.tryAgain, // shared (approval-card pairing-texts)
 } as const;
-
-/** Where a line says when a device was added: today, yesterday, n days ago, else the date. */
-export function whenText(epochSeconds: number, nowSeconds: number): string {
-  const days = Math.floor((nowSeconds - epochSeconds) / 86400);
-  if (days <= 0) return PT.whenToday;
-  if (days === 1) return PT.whenYesterday;
-  if (days < 14) return PT.whenDaysAgo(days);
-  return new Date(epochSeconds * 1000).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
-}
 
 /** The sentence for a pairing code. DRAFT, in the style of the phone app's `ERRORS`; a code nobody here knows falls to the device-key texts, then the generic one. */
 const ERRORS: Record<string, string> = {
+  ...SHARED_ERRORS, // the pairing sentences both apps say in the same words
+  other_account: 'This phone belongs to another account than the one this computer is signed in to. Nothing was added.', // DRAFT (plan 20.2)
+  sign_in_first: 'This computer holds logins for connected systems. Sign in to your account first, then add this computer.', // DRAFT (plan 20.2)
   pairing_busy: 'Another step of this is still running. Wait a moment.', // DRAFT
   pairing_pending: 'A pairing is already open. Cancel it, then start again.', // DRAFT
   pairing_unknown: 'This pairing is no longer open. Start again.', // DRAFT
   cannot_grant: 'This computer has no Touch ID key, so it cannot add devices. Nothing changed.', // DRAFT
-  too_many_devices: 'Your account already has the most devices it can have. Remove one first.', // DRAFT (= P.too_many_devices)
-  qr_expired: 'This code has run out. Show a new one and scan it again.', // DRAFT (= P.qr_expired)
-  wrong_code: 'That was not the code. Nothing was added.', // DRAFT (= P.wrong_code)
-  code_mismatch: 'The codes did not match. Nothing was added.', // DRAFT (= P.code_mismatch)
-  label_taken: 'Another device in your account has this name. Use another name.', // DRAFT (= P.label_taken)
-  label_invalid: 'This name does not work. Use another name.', // = T.nameInvalid (32)
-  bad_message: 'Something is wrong with this pairing. Nothing was added. Start again.', // DRAFT (= P.bad_message)
-  commit_mismatch: 'Something is wrong with this pairing. Nothing was added. Start again.', // DRAFT
-  open_invalid: 'Something is wrong with this pairing. Nothing was added. Start again.', // DRAFT
-  mailbox_refused: 'suveren.ai did not take this pairing. Nothing changed. Try again.', // DRAFT (= P.mailbox_refused)
-  mailbox_missing: 'This code is not open any more. Show a new one and scan it again.', // DRAFT
   admitter_cannot_grant: 'The phone that scanned this code cannot add devices. Use another device.', // DRAFT
   as_key_mismatch: 'The phone and this computer do not use the same suveren.ai. Nothing was added. Do not go on, and tell whoever runs your account.', // DRAFT
-  chain_moved: 'Your list of devices changed meanwhile. Nothing was added. Start again.', // DRAFT (= P.chain_moved)
-  chain_head_moved: 'Your list of devices changed meanwhile. Nothing was added. Start again.', // DRAFT
   check_cancelled: 'Cancelled on the phone. Nothing was added.', // DRAFT
   cancelled_by_phone: 'The phone ended this. Nothing was added.', // DRAFT
   store_failed: 'suveren.ai has added this computer, but this computer could not keep the account. Use your recovery code to set it up again.', // DRAFT (= P.store_failed)

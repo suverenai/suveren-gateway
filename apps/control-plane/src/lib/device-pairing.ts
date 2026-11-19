@@ -65,7 +65,7 @@ export const PAIRING_CODES = [
   'locked', 'password_required', 'rekey_pending', 'bad_request',
   // what must hold
   'not_set_up', 'already_set_up', 'not_signed_in', 'device_removed', 'chain_unreadable', 'key_mismatch', 'cannot_grant', 'too_many_devices',
-  'pairing_busy', 'pairing_pending', 'pairing_unknown', 'setup_pending',
+  'other_account', 'sign_in_first', 'pairing_busy', 'pairing_pending', 'pairing_unknown', 'setup_pending',
   // the Authority Server
   'as_unreachable', 'as_tls_mismatch', 'as_answer_invalid', 'as_key_mismatch', 'as_unverified', 'as_error', 'rate_limited', 'head_mismatch', 'mailbox_refused',
   // the chain
@@ -249,6 +249,11 @@ export class DevicePairing {
       postMessage: (id, message) => call('POST', `/api/devices/pairings/${encodeURIComponent(id)}/messages`, message),
       readMailbox: (id) => call('GET', `/api/devices/pairings/${encodeURIComponent(id)}`),
     };
+  }
+
+  /** The DID of the account this computer is signed in to (the Authority Server's sign-in answer, held in the vault), or null. */
+  private accountDid(): string | null {
+    try { return this.d.vault.getSessionUser()?.did ?? null; } catch { return null; }
   }
 
   // ─── what must hold before anything starts ───────────────────────────────────
@@ -553,6 +558,14 @@ export class DevicePairing {
     this.requireVault();
     this.requireFree();
     if (this.d.store.exists()) refuse(409, 'already_set_up');
+    // Plan 20.2: a computer with an account context joins only the chain of its OWN account. Stored connector logins are such a
+    // context, so without a signed-in session there is no account to compare with: sign in first.
+    if (!this.accountDid()) {
+      let logins: string[];
+      try { logins = this.d.vault.listCredentials(); } catch { return refuse(500, 'chain_unreadable'); }
+      // `e2eKey` is this computer's own reading key (made by the first pairing or set-up), not a login to a connected system.
+      if (logins.some(n => n !== 'e2eKey')) refuse(409, 'sign_in_first');
+    }
     this.busy = true;
     try {
       const dk = await deviceKeys();
@@ -628,6 +641,9 @@ export class DevicePairing {
     if (typeof rootDid !== 'string' || !isObj(head) || typeof head.seq !== 'number' || typeof head.hash !== 'string' || typeof keyId !== 'string') { this.fail(h, 'bad_message'); return; }
     // The phone must pin the same Authority Server this computer trusts.
     if (body.as_key !== h.asKey) { this.fail(h, 'as_key_mismatch'); return; }
+    // Plan 20.2: a computer signed in to an account joins only that account's chain (the DID the Authority Server named at sign-in).
+    const own = this.accountDid();
+    if (own && rootDid !== own) { this.fail(h, 'other_account'); return; }
     if (!mailChain || !Array.isArray(mailChain.entries)) { this.fail(h, 'as_answer_invalid'); return; }
     let chain: ChainState;
     try {
