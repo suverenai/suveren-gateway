@@ -371,6 +371,16 @@ describe('freshness: 5 minutes to the next fetch, 15 minutes of grace, then noth
 // ─── the admin's gateway ────────────────────────────────────────────────────
 
 describe('the admin\'s gateway: its own chain is the root, there is no anchor', () => {
+  it('a member who left (own signed leave) is not honoured by the admin\'s gateway either, before the admin signs a new list', async () => {
+    const t = await team();
+    const store = new TeamTrustStore(await vault());
+    const r = rig({ me: t.A, chains: [t.A, t.M], store });
+    r.served.lists = [t.v1, t.v2];
+    r.served.leaves = [await leaveOf(t.M, 2)];
+    expect((await refreshTeamTrust(r.env)).ok).toBe(true);
+    expect(store.colleagues()).toEqual([t.A.did]);
+  });
+
   it('verifies the lists against its own chain and honours the listed members', async () => {
     const t = await team();
     const store = new TeamTrustStore(await vault());

@@ -199,10 +199,34 @@ async function verifyAsMember(env: TeamTrustEnv, dk: DeviceKeys, teamId: string)
   throw new TeamTrustFailure('team_list_history_gap');
 }
 
+/** DIDs whose own verified `leave` applies at `best` (admin-path counterpart of the leave rule in hap-core's verifyTeamTrust). */
+async function appliedLeaves(env: TeamTrustEnv, dk: DeviceKeys, teamId: string, page: Page, lists: MemberList[], best: MemberList): Promise<Set<string>> {
+  const left = new Set<string>();
+  for (const l of await leavesWithChains(env, page)) {
+    try {
+      const x = await dk.verifyLeave(l.env, { chain: l.chain, expect: { team_id: teamId } });
+      if (x.list_version > best.version || x.member_did === best.admin_did) continue;
+      let continuous = true;
+      for (let v = x.list_version; v <= best.version && continuous; v++) {
+        const at = lists.find(m => m.version === v);
+        if (!at) { continuous = false; break; }
+        if (!at.members.some(m => m.did === x.member_did)) continuous = false;
+      }
+      if (continuous) left.add(x.member_did);
+    } catch { /* judged alone: a leave that does not verify or apply is skipped */ }
+  }
+  return left;
+}
+
 /**
  * The admin's check. The admin has no anchor: every version in the walk must name this person as admin and verify against this
- * person's own chain (the pin stands in for the re-sign rule). Leaves are not applied here: the admin's own gateway offers the new
- * list when a member leaves (design 20.21.5), and it is the admin's own signature that removes the member.
+ * person's own chain (the pin stands in for the re-sign rule). The members' own leaves are applied here too, by the rule of hap-core's
+ * `verifyTeamTrust` (a leaver is honoured nowhere, even before the admin signs a new list): each leave verifies against its member's chain
+ * (same 64-chain cap), applies only if its list_version is not above the accepted version and the member stays listed in every window
+ * version from there up; a leave that cannot be judged (history below the window, no chain) is skipped.
+ *
+ * Known limits, refused on the safe side: a history of more than 256 versions between the first list of the anchored admin and the pin
+ * cannot be walked (`team_list_history_gap`), and a `from` the Authority Server does not honour ends in gap, missing or rollback.
  */
 async function verifyAsAdmin(env: TeamTrustEnv, dk: DeviceKeys, teamId: string): Promise<Verified> {
   let pin = toPin(env.store.pin(teamId));
@@ -258,7 +282,8 @@ async function verifyAsAdmin(env: TeamTrustEnv, dk: DeviceKeys, teamId: string):
     let rejected: Verified['rejected'] = null;
     if (accepted < lastOk) rejected = { version: seen[accepted + 1].list.version, code: 'NOT_ACTIVE' };
     else if (lastOk + 1 < seen.length) rejected = { version: seen[lastOk + 1].list.version, code: isDeviceKeysError(walkError) ? walkError.code : walkError instanceof TeamTrustFailure ? walkError.code : 'INVALID' };
-    return { adminDid: best.list.admin_did, version: best.list.version, hash: best.hash, members: best.list.members.map(m => ({ did: m.did, name: m.name })), rejected };
+    const left = await appliedLeaves(env, dk, teamId, page, seen.slice(0, accepted + 1).map(x => x.list), best.list);
+    return { adminDid: best.list.admin_did, version: best.list.version, hash: best.hash, members: best.list.members.filter(m => !left.has(m.did)).map(m => ({ did: m.did, name: m.name })), rejected };
   }
   throw new TeamTrustFailure('team_list_history_gap');
 }
