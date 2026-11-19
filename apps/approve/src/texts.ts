@@ -18,7 +18,7 @@
 export const P = {
   // ─── The phone cannot pair (compat.ts) ───────────────────────────────────────
   needsTitle: 'This phone cannot be set up yet', // DRAFT
-  needsIntro: 'To keep your keys safe, this app needs:', // DRAFT
+  needsIntro: 'To work, this app needs:', // DRAFT
   needsInstall: 'The app opened from its icon. In Safari, tap Share, then Add to Home Screen, then open Suveren from your home screen.', // DRAFT
   needsSystem: 'A newer system. An iPhone needs iOS 18.4 or later (iPhone XS or newer). An Android phone needs Android 10 or later and Chrome 137 or later.', // DRAFT (DEC-19)
   needsPasskey: 'A screen lock (Face ID, Touch ID, a fingerprint or a PIN) and a place that keeps passkeys: iCloud Keychain on an iPhone, a signed-in Google account on Android. Turn them on, then open this page again.', // DRAFT
