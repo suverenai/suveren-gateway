@@ -32,6 +32,8 @@ import { isBearerCredential } from './as-credential';
 import { loadDeviceSigningKey, loadOrGenerateKeyPair } from './e2e-key-manager';
 import { PinRefusedError, type DevicePinStore } from './device-pin-store';
 import { MandateGrantStore } from './mandate-grant-store';
+import type { TeamTrustStore, TeamTrustCode, VerifiedTeam } from './team-trust-store';
+import { ensureTeamTrust, refreshTeamTrust, honouredTeam, teamTrustFresh, type TeamTrustEnv } from './team-trust';
 import { CheckError, type CheckKeyStore, type PlatformChecks } from './platform-checks';
 
 export const { grantFieldKeys, grantMembersOf } = createGrantMembers(buildMandateProjection);
@@ -84,7 +86,10 @@ export interface IssueInput {
   subjectsDisclosed: boolean;
   /** The team's settings for this profile, as the ceremony read them; null in the personal workspace. */
   team: { approvers: string[]; approvals?: number; caps: Record<string, unknown>; eligible?: Array<{ user_id: string; did: string | null }> } | null;
-  /** Approver DIDs the person compared (identity code) in this request. */
+  /**
+   * Approver DIDs the person compared (identity code) in this request. NOT USED any more (DEC-73): who is a colleague comes from the
+   * team's verified member list, and no code is asked at grant time. Kept so that an older page's request still parses.
+   */
   confirmedApproverDids?: readonly string[];
   /** Reads of the Authority Server through the person's session (the ceremony's own `as`). */
   as: (method: 'GET' | 'POST', path: string, body?: unknown) => Promise<{ status: number; body: any }>;
@@ -96,9 +101,10 @@ export interface PreparedGrant {
   expiresAt: number;
   caps: Record<string, number> | null;
   approvals: number | null;
-  approvers: Array<{ userId: string; did: string; identityCode: string; isYou: boolean; confirmed: boolean }>;
+  /** `confirmed`: this approver is in the team's verified member list (or is this person). `name` is the label the admin signed in the list. */
+  approvers: Array<{ userId: string; did: string; identityCode: string; isYou: boolean; confirmed: boolean; name?: string }>;
   chainDids: string[];
-  blocked: { code: string; message: string; approvers?: Array<{ userId: string; did: string; identityCode: string }> } | null;
+  blocked: { code: string; message: string; approvers?: Array<{ userId: string; did: string; identityCode: string; name?: string }> } | null;
 }
 
 export interface Issued {
@@ -117,6 +123,8 @@ export interface GrantDeps {
   client: DeviceAsClient;
   pins: DevicePinStore;
   grants: MandateGrantStore;
+  /** The team's verified member list: who counts as a colleague (DEC-73; replaces the per-computer confirmation). */
+  teamTrust: TeamTrustStore;
   checks?: PlatformChecks;
   checkStore?: CheckKeyStore;
   /** Epoch seconds. */
@@ -335,8 +343,8 @@ export class MandateGrants {
       if (!d.checks || !d.checkStore) return empty({ code: 'no_check_key', message: 'This computer has no check key, so it cannot grant a mandate.' });
       const plan = await this.planGrant(i, s, dk, true);
       let blocked: PreparedGrant['blocked'] = null;
-      if (plan.unconfirmed.length > 0) {
-        blocked = { code: 'approver_identity_unconfirmed', message: 'Compare the identity code of each new approver before granting.', approvers: plan.unconfirmed.map(a => ({ userId: a.userId, did: a.did, identityCode: a.identityCode })) };
+      if (plan.notListed.length > 0) {
+        blocked = { code: plan.listCode, message: plan.listCode === 'team_list_unavailable' ? 'Your team\'s member list could not be checked.' : 'An approver is not in your team\'s member list.', approvers: plan.notListed.map(a => ({ userId: a.userId, did: a.did, identityCode: a.identityCode })) };
       } else {
         let checkKey;
         try { checkKey = d.checkStore.read(); } catch { checkKey = undefined; }
@@ -346,7 +354,7 @@ export class MandateGrants {
       const t = plan.team;
       return {
         mode: t.mode, expiresAt: plan.expiresAt, caps: t.caps ?? null, approvals: t.approvals ?? null, chainDids: t.chainDids,
-        approvers: t.identities.map(a => ({ userId: a.userId, did: a.did, identityCode: a.identityCode, isYou: a.did === s.stored.rootDid, confirmed: a.did === s.stored.rootDid || d.grants.approverConfirmed(a.did) || (i.confirmedApproverDids ?? []).includes(a.did) })),
+        approvers: t.identities.map(a => ({ userId: a.userId, did: a.did, identityCode: a.identityCode, isYou: a.did === s.stored.rootDid, confirmed: a.did === s.stored.rootDid || plan.listed.has(a.did), ...(plan.listed.get(a.did) !== undefined ? { name: plan.listed.get(a.did) } : {}) })),
         blocked,
       };
     } catch (e) {
@@ -357,7 +365,7 @@ export class MandateGrants {
 
   /**
    * Steps 1 to 3 of a give: who the mandate is for, the mandate it continues, the team's part, the members of the grant. Reads only.
-   * `dry`: an unconfirmed approver is not a refusal here (the caller lists it) and nothing is remembered.
+   * `dry`: an approver outside the team's verified list is not a refusal here (the caller lists it).
    */
   private async planGrant(i: IssueInput, s: Session, dk: Awaited<ReturnType<typeof deviceKeys>>, dry: boolean) {
     const { d } = this;
@@ -394,13 +402,19 @@ export class MandateGrants {
 
     // 3. the team's part, and the payload as the Authority Server will sign it
     const team = await this.teamFields(i, s);
-    const unconfirmed = team.identities.filter(a => a.did !== s.stored.rootDid && !d.grants.approverConfirmed(a.did) && !(i.confirmedApproverDids ?? []).includes(a.did));
-    if (unconfirmed.length > 0 && !dry) {
-      throw new GrantRefusal('approver_identity_unconfirmed', 'Compare the identity code of each new approver before granting.', { approvers: unconfirmed.map(a => ({ userId: a.userId, did: a.did, identityCode: a.identityCode })) });
+    // Who counts as a colleague is the team's member list, signed by the admin's device and verified here (DEC-73). No code is asked at
+    // grant time and nothing is remembered per computer. Without a verified list no colleague is named.
+    const verified = team.identities.some(a => a.did !== s.stored.rootDid) ? await this.honouredTeam(s) : null;
+    const listed = new Map<string, string>((verified?.members ?? []).map(m => [m.did, m.name] as [string, string]));
+    const notListed = team.identities.filter(a => a.did !== s.stored.rootDid && !listed.has(a.did));
+    const listCode = verified ? 'approver_not_in_team_list' : 'team_list_unavailable';
+    if (notListed.length > 0 && !dry) {
+      throw new GrantRefusal(
+        listCode,
+        verified ? 'An approver is not in your team\'s member list.' : 'Your team\'s member list could not be checked.',
+        { approvers: notListed.map(a => ({ userId: a.userId, did: a.did, identityCode: a.identityCode })), ...(verified ? {} : { warning: this.teamTrustWarning() }) },
+      );
     }
-    // The person compared these codes: remembered, so each DID is asked about once.
-    const compared = (i.confirmedApproverDids ?? []).filter(x => team.identities.some(a => a.did === x));
-    if (compared.length > 0 && !dry) { try { d.grants.confirmApprovers(compared); } catch { /* asked again next time */ } }
     const now = this.now();
     const expiresAt = now + i.ttlSeconds;
     const carries = team.approvers !== undefined;
@@ -424,7 +438,7 @@ export class MandateGrants {
       }
     }
 
-    return { mandateId, version, op, replaces, authorizationId, team, members, expiresAt, now, carries, unconfirmed };
+    return { mandateId, version, op, replaces, authorizationId, team, members, expiresAt, now, carries, notListed, listCode, listed };
   }
 
   /**
@@ -523,11 +537,81 @@ export class MandateGrants {
     return { mandateId, version };
   }
 
-  /** Pins that are never dropped when the table is full: this person's own chain and every identity they confirmed. */
+  /** Pins that are never dropped when the table is full: this person's own chain and every member of the team's verified list. */
   protectedDids(): string[] {
     let own: string[] = [];
     try { const r = this.d.store.read()?.rootDid; if (r) own = [r]; } catch { /* locked */ }
-    try { return [...own, ...this.d.grants.confirmedList()]; } catch { return own; }
+    try { return [...own, ...(this.d.teamTrust.verified()?.members.map(m => m.did) ?? [])]; } catch { return own; }
+  }
+
+  // ─── who is a colleague: the team's signed member list (DEC-73, design 20.21.6) ───
+
+  private moveAdvance(did: string, head: ChainState['head']): void {
+    try { this.d.pins.advance(did, head, this.protectedDids()); } catch (e) {
+      const reason = (e as { reason?: string })?.reason;
+      if (reason === 'rollback') return refuse('chain_rollback', 'A device chain is shorter than the one verified before.');
+      if (reason === 'fork') return refuse('chain_fork', 'A device chain differs from the one verified before.');
+      throw e;
+    }
+  }
+
+  private teamEnv(s: Session): TeamTrustEnv {
+    return {
+      store: this.d.teamTrust,
+      ownDid: s.stored.rootDid,
+      own: s.own,
+      get: (path) => this.call('GET', path, s.credential),
+      chain: async (did) => {
+        const state = await this.chainOf(did, s.credential, this.d.pins.get(did));
+        this.moveAdvance(did, state.head);
+        return state;
+      },
+      now: this.now,
+    };
+  }
+
+  private teamInflight: Promise<VerifiedTeam | null> | null = null;
+
+  /**
+   * The verified team this gateway honours now. A verification younger than 5 minutes is used as it is; otherwise the list is fetched and
+   * verified (one run at a time). A fetch that fails leaves the last verified state in force for 15 minutes; a blocking warning leaves nothing.
+   * Never throws: no list means no colleague.
+   */
+  private async honouredTeam(s?: Session): Promise<VerifiedTeam | null> {
+    const { teamTrust: store } = this.d;
+    if (teamTrustFresh(store, this.now())) return honouredTeam(store, this.now());
+    if (this.teamInflight) return this.teamInflight;
+    const run = (async () => {
+      let sess = s;
+      try { sess ??= await this.session(); } catch { return honouredTeam(store, this.now()); }
+      return ensureTeamTrust(this.teamEnv(sess));
+    })();
+    this.teamInflight = run;
+    try { return await run; } finally { this.teamInflight = null; }
+  }
+
+  /** The reason no colleague is honoured, if there is one (a code for the page). */
+  teamTrustWarning(): { code: TeamTrustCode; at: number; version?: number } | null {
+    try { const w = this.d.teamTrust.warning(); return w ? { code: w.code, at: w.at, ...(w.version !== undefined ? { version: w.version } : {}) } : null; } catch { return null; }
+  }
+
+  /**
+   * What the page shows about the team: the verified member list (names as the admin signed them), or why there is none.
+   * `refresh`: fetch and verify now instead of using a verification younger than 5 minutes.
+   * state: 'none' (this person is in no team, or the list was never fetched), 'verified', 'warning' (a code; nothing of a colleague is honoured
+   * when the code is a blocking one, see `blocking`).
+   */
+  async teamTrustStatus(refresh = false): Promise<{ state: 'none' | 'verified' | 'warning'; code?: TeamTrustCode; blocking?: boolean; teamId?: string; adminDid?: string; version?: number; members?: Array<{ did: string; name: string }> }> {
+    const { teamTrust: store } = this.d;
+    if (refresh) { try { await refreshTeamTrust(this.teamEnv(await this.session())); } catch { /* shown as the state below */ } }
+    else await this.honouredTeam();
+    let w: ReturnType<TeamTrustStore['warning']> = null;
+    let v: VerifiedTeam | null = null;
+    let teamId: string | null = null;
+    try { w = store.warning(); v = honouredTeam(store, this.now()); teamId = store.currentTeam(); } catch { /* locked */ }
+    if (w) return { state: 'warning', code: w.code, blocking: v === null, ...(teamId ? { teamId } : {}) };
+    if (!v || !teamId) return { state: 'none' };
+    return { state: 'verified', teamId, adminDid: v.adminDid, version: v.version, members: v.members.map(m => ({ did: m.did, name: m.name })) };
   }
 
   /**
@@ -548,7 +632,7 @@ export class MandateGrants {
     return this.d.pins.advance(did, state.head, this.protectedDids());
   }
 
-  /** The person withdraws a confirmation of someone's identity. */
+  /** The person withdraws a confirmation of someone's identity. (Legacy slot: no longer what makes a colleague, see {@link ownerKnown}.) */
   forgetIdentity(did: unknown): void {
     if (typeof did !== 'string' || !DID.test(did)) throw new GrantRefusal('bad_request', 'Bad request.');
     this.d.grants.forgetApprover(did);
@@ -556,14 +640,32 @@ export class MandateGrants {
 
   // ─── what the MCP server asks to have remembered: only what this control plane verified itself ───
 
-  /** Is this DID this person's own, or one whose identity code they compared and accepted? */
+  /**
+   * Is this DID this person's own, or a member of the team's VERIFIED member list (DEC-73)? Reads what was verified last (no fetch):
+   * nothing without a verified list, nothing after a blocking warning, nothing once the last verification is older than 15 minutes.
+   * The per-computer confirmation (`approverConfirmed`) is not consulted: it is legacy and ignored for team DIDs.
+   */
   ownerKnown(did: string): boolean {
     if (typeof did !== 'string' || !DID.test(did)) return false;
     try { if (this.d.store.read()?.rootDid === did) return true; } catch { return false; }
-    return this.d.grants.approverConfirmed(did);
+    return honouredTeam(this.d.teamTrust, this.now())?.members.some(m => m.did === did) === true;
   }
 
-  /** The person compared the identity code of `did` with the one on the other person's own screen. */
+  /** {@link ownerKnown} after the list was brought up to date when it is older than 5 minutes (what the MCP server asks). */
+  async ownerKnownFresh(did: string): Promise<boolean> {
+    if (typeof did !== 'string' || !DID.test(did)) return false;
+    try { if (this.d.store.read()?.rootDid === did) return true; } catch { return false; }
+    // A locked gateway cannot say (the MCP server keeps what it honoured); it is not the same as "no".
+    if (!this.d.vault.isUnlocked()) throw new GrantRefusal('locked', 'The gateway is locked.');
+    await this.honouredTeam();
+    return this.ownerKnown(did);
+  }
+
+  /**
+   * The person compared the identity code of `did` with the one on the other person's own screen. LEGACY (DEC-73): the answer is remembered
+   * in the per-computer slot, which no longer makes anyone a colleague; the later optional self-comparison writes a person-signed
+   * statement instead, so that it holds on every device. The route stays so that an older page does not break.
+   */
   async confirmIdentity(did: unknown, code: unknown): Promise<void> {
     const dk = await deviceKeys();
     if (typeof did !== 'string' || !DID.test(did) || typeof code !== 'string') return refuse('bad_request', 'Bad request.');
@@ -591,7 +693,8 @@ export class MandateGrants {
     if (!row) return refuse('grant_not_held', 'The Authority Server does not hold this grant.');
     const grant = row.grant as MandateGrant;
     const ownerDid = String(grant.owner_did);
-    if (!this.ownerKnown(ownerDid)) return refuse('owner_unknown', 'The owner of this mandate is not this person and has not been confirmed.');
+    if (ownerDid !== s.stored.rootDid) await this.honouredTeam(s);
+    if (!this.ownerKnown(ownerDid)) return refuse('owner_unknown', 'The owner of this mandate is not this person and is not in the verified member list of their team.');
     let chain = s.own;
     if (ownerDid !== s.stored.rootDid) {
       chain = await this.chainOf(ownerDid, s.credential, this.d.pins.get(ownerDid));

@@ -166,6 +166,14 @@ export function createMandateRouter(deps: () => Omit<CeremonyDeps, 'newAuthoriza
     } catch (err) { answerRefusal(res, err); }
   });
   // The person withdraws a confirmation. Page session only (this router sits behind it); never the AI path.
+  // The team's verified member list, or why there is none (a code; the page words it). `?refresh=1` fetches and verifies now. Page session only.
+  router.get('/team-trust', async (req, res) => {
+    try {
+      const d = deps();
+      if (!d.grants?.active()) { res.status(409).json(NOT_SET_UP); return; }
+      res.json(await d.grants.teamTrustStatus(req.query.refresh === '1'));
+    } catch (err) { answerRefusal(res, err); }
+  });
   router.post('/forget-identity', async (req, res) => {
     try {
       const d = deps();

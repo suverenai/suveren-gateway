@@ -78,8 +78,8 @@ export interface MandateRequest {
   /** Replace this mandate: after the new one is signed and delivered, it is revoked. */
   replaces?: string;
   /**
-   * A gateway with a device chain only (lib/mandate-grants.ts): the DIDs of approvers whose identity code the person
-   * compared on the screen. An approver not named here and not accepted before makes the grant refuse with their codes.
+   * NOT USED any more (DEC-73): colleagues come from the team's verified member list (lib/team-trust.ts). Was, on a gateway with a device chain: the DIDs of approvers whose identity code the person
+   * compared on the screen.
    */
   confirmedApproverDids?: string[];
 }
@@ -568,7 +568,7 @@ const rowsOf = (values: Record<string, string | number>, fields: Record<string, 
  * A dry run of a give on a gateway with a device chain: the same validation and the same team computation as the real give, WITHOUT the touch
  * and without any write at the Authority Server or here (nothing is remembered, no grant, no body, no mandate). Refusals of the validation
  * (rights, limits, scope, duration) are thrown as {@link MandateRefused}, as the real give would; those the team part meets before the touch come
- * back as `blocked`, with the approvers that still need their identity code compared.
+ * back as `blocked`, with the approvers the team's verified member list does not hold.
  */
 export async function prepareMandate(req: MandateRequest, deps: CeremonyDeps): Promise<PreparedMandate> {
   const grants = deps.grants;

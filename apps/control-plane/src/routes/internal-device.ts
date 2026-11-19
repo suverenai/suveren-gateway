@@ -109,10 +109,16 @@ export function createInternalDeviceRouter(getSecret: () => string, store: Devic
       res.json({ ok: true });
     }));
 
-    router.post('/mandate-grant/owner-known', guarded((req, res) => {
+    // Who counts as a colleague: this person, or a member of the team's verified member list (DEC-73). The list is brought up to date here
+    // when it is older than 5 minutes; a list that cannot be checked answers `known: false` (nothing honoured), never an error.
+    router.post('/mandate-grant/owner-known', async (req: Request, res: Response) => {
+      if (!secretMatches(req.header('X-Internal-Secret') ?? undefined, getSecret())) { res.status(401).json({ error: 'unauthorized' }); return; }
+      res.setHeader('Cache-Control', 'no-store');
       const { did } = (req.body ?? {}) as { did?: unknown };
-      res.json({ known: mandates.grants.ownerKnown(did as string) });
-    }));
+      try {
+        res.json({ known: await mandates.grants.ownerKnownFresh(did as string) });
+      } catch { res.status(423).json({ error: 'unavailable', code: 'unavailable' }); }
+    });
 
     // Remembered only after THIS control plane verified the grant itself (hap-core, the owner's chain): the MCP server cannot make it
     // record a version, a hash or a revocation it did not see verify.

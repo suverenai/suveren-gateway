@@ -34,6 +34,7 @@ import { createDeviceDecisionRouter } from './device-decision';
 import { DevicePinStore } from '../lib/device-pin-store';
 import { createInternalDeviceRouter } from './internal-device';
 import { MandateGrantStore } from '../lib/mandate-grant-store';
+import { TeamTrustStore } from '../lib/team-trust-store';
 import { MandateGrants } from '../lib/mandate-grants';
 import { DeviceApprovals } from '../lib/device-approvals';
 
@@ -147,7 +148,7 @@ export function mountDeviceKeyRoutes(app: Express, o: DeviceKeyMountOptions): {
     const pins = new DevicePinStore(o.vault, store);
     const grantStore = new MandateGrantStore(o.vault);
     const grants = new MandateGrants({
-      vault: o.vault, store, client, pins, grants: grantStore,
+      vault: o.vault, store, client, pins, grants: grantStore, teamTrust: new TeamTrustStore(o.vault),
       ...(o.platform && checks ? { checks, checkStore: o.platform.checkStore } : {}),
       now: o.device.now,
     });

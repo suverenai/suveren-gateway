@@ -24,6 +24,7 @@ import { PlatformHelper } from '../../lib/platform-helper';
 import { PlatformChecks } from '../../lib/platform-checks';
 import { grantFieldKeys } from '../../lib/mandate-grants';
 import { MandateGrantStore } from '../../lib/mandate-grant-store';
+import { TeamTrustStore } from '../../lib/team-trust-store';
 import { DeviceChainStore } from '../../lib/device-chain-store';
 import { reasonFor } from '../../../../../packages/unlock-helper/test/fake-helper.mjs';
 
@@ -97,6 +98,19 @@ async function world(o: { checkKey?: boolean } = {}) {
   return { as, props, flags, readsState, mandates, gw, h, post, sign, internal, delivered, helperNow, rootDid: String(start.body.rootDid), recoveryCode: String(start.body.recoveryCode), keyId: String(start.body.deviceKeyId), touches: spy };
 }
 type W = Awaited<ReturnType<typeof world>>;
+
+/**
+ * The team's member list as this gateway VERIFIED it (DEC-73): who counts as a colleague is no longer a per-computer confirmation. Here the
+ * verified state is written into the sealed slot the way a successful verification does it (the verification itself, with real chains and
+ * real signed lists, is in lib/__tests__/team-trust.test.ts); a fresh state means no fetch is made.
+ */
+function listTeam(w: W, others: Array<{ did: string }>, version = 1): void {
+  new TeamTrustStore(w.gw.vault).accept('g_team', {
+    adminDid: w.rootDid, version, hash: `sha256:${String(version).repeat(64).slice(0, 64)}`,
+    members: [{ did: w.rootDid, name: 'The admin' }, ...others.map((o, i) => ({ did: o.did, name: `Colleague ${i + 1}` }))],
+    verifiedAt: Math.floor(Date.now() / 1000),
+  });
+}
 
 const authzOf = (r: { body: Record<string, unknown> }) => String(r.body.authorizationId);
 
@@ -238,7 +252,7 @@ describe('before the touch: everything that can be refused is refused without as
 describe('teams: approvers, caps and the count go into the mandate before the owner signs (DEC-61)', () => {
   const CAPS = { value_max: { value: 500, kind: 'approval' as const } };
 
-  async function team(w: W, opts: { approvers?: string[] } = {}) {
+  async function team(w: W, opts: { approvers?: string[]; listed?: boolean } = {}) {
     const ap = await person();
     const ap2 = await person();
     w.as.otherChains.set(ap.did, ap.entries);
@@ -248,29 +262,38 @@ describe('teams: approvers, caps and the count go into the mandate before the ow
     w.mandates.team = { approvers: opts.approvers ?? ['u_ap', 'u_ap2'], approvals: 2, caps: CAPS };
     const dids = (opts.approvers ?? ['u_ap', 'u_ap2']).map(u => w.mandates.users.get(u)!.did);
     w.mandates.expectation = { mode: 'review', caps: { value_max: 500 }, approvers: [...dids].sort(), approvals: 2 };
+    if (opts.listed !== false) listTeam(w, [ap, ap2]);
     return { ap, ap2, dids };
   }
 
-  it('the team\'s approvers (DIDs), caps and count are in the grant, and a new approver\'s code must be compared first', async () => {
+  it('the team\'s approvers (DIDs), caps and count are in the grant; an approver outside the verified member list is refused, and no code is asked', async () => {
     const w = await world();
-    const t = await team(w);
+    const t = await team(w, { listed: false });
+    // no verified list: no colleague is named (the stand-in Authority Server serves none)
     const first = await w.sign({ team: 'g_team' });
     expect(first.status).toBe(422);
-    expect(first.body).toMatchObject({ code: 'grant_refused', grantCode: 'approver_identity_unconfirmed' });
+    expect(first.body).toMatchObject({ code: 'grant_refused', grantCode: 'team_list_unavailable' });
     expect((first.body.approvers as Array<{ did: string; identityCode: string }>).map(a => a.did).sort()).toEqual([...t.dids].sort());
-    expect((first.body.approvers as Array<{ identityCode: string }>)[0].identityCode).toMatch(/^\d{4} \d{4} \d{4} \d{4} \d{4} \d{4}$/);
     expect(w.touches).not.toHaveBeenCalled();
     expect(w.mandates.posts).toEqual([]);
-    // the person compared them: granted, with one touch
-    const r = await w.sign({ team: 'g_team', confirmedApproverDids: t.dids });
+    // a verified list that lacks one of them: refused for that approver
+    listTeam(w, [t.ap]);
+    const partial = await w.sign({ team: 'g_team' });
+    expect(partial.body).toMatchObject({ grantCode: 'approver_not_in_team_list' });
+    expect((partial.body.approvers as Array<{ did: string }>).map(a => a.did)).toEqual([t.ap2.did]);
+    expect(w.touches).not.toHaveBeenCalled();
+    // both listed: granted with one touch, nothing compared, nothing typed
+    listTeam(w, [t.ap, t.ap2], 2);
+    const r = await w.sign({ team: 'g_team' });
     expect(r.status, r.text).toBe(200);
     expect(w.touches).toHaveBeenCalledTimes(1);
     const grant = w.mandates.rows[0].grant as Record<string, unknown>;
     expect(grant).toMatchObject({ commitment_mode: 'review', above_cap_caps: { value_max: 500 }, above_cap_approvers: [...t.dids].sort(), above_cap_approvals: 2, group_id: 'g_team' });
     expect(grant.chain_dids).toEqual([w.rootDid, ...t.dids].sort());
-    // remembered: the next mandate does not ask again
-    w.mandates.expectation = { ...w.mandates.expectation!, approvals: 2 };
-    expect((await w.sign({ team: 'g_team' })).status).toBe(200);
+    // a legacy per-computer confirmation changes nothing
+    new MandateGrantStore(w.gw.vault).confirmApprovers([t.ap.did, t.ap2.did]);
+    listTeam(w, [t.ap], 3);
+    expect((await w.sign({ team: 'g_team' })).body).toMatchObject({ grantCode: 'approver_not_in_team_list' });
   });
 
   it('an approver added in the dashboard changes nothing that was granted: the issued mandate keeps its approvers, a new one needs a new grant', async () => {
@@ -466,18 +489,27 @@ describe('what the MCP server asks of the control plane: the highest version, a 
     expect(() => st.observe('m-aaaaaaaa', 3, H('d'), 'change')).toThrow(/revoked/);
   });
 
-  it('only this person, or someone whose identity code they compared, is an owner: the page confirms by code, the AI path cannot', async () => {
+  it('only this person, or a member of the team\'s VERIFIED list, is an owner: a code compared on this computer no longer makes a colleague', async () => {
     const w = await world();
     const other = await person();
+    const listed = await person();
     const known = (did: string) => w.internal('/internal/mandate-grant/owner-known', { did }).then(r => r.body.known);
     expect(await known(w.rootDid)).toBe(true);
     expect(await known(other.did)).toBe(false);
+    // the legacy page route still answers, and compares the code, but it makes nobody a colleague
     const wrong = await w.post('/api/mandate/confirm-identity', { did: other.did, code: '000000000000000000000000' });
     expect(wrong.body).toMatchObject({ grantCode: 'identity_code_mismatch' });
-    expect(await known(other.did)).toBe(false);
     const code = await dk.identityCode(other.did);
     expect((await w.post('/api/mandate/confirm-identity', { did: other.did, code })).status).toBe(200);
-    expect(await known(other.did)).toBe(true);
+    expect(await known(other.did)).toBe(false);
+    // the verified list does
+    listTeam(w, [listed]);
+    expect(await known(listed.did)).toBe(true);
+    expect(await known(other.did)).toBe(false);
+    // a person with no verified list at all honours no colleague
+    new TeamTrustStore(w.gw.vault).warn('g_team', 'team_list_rollback', Math.floor(Date.now() / 1000));
+    expect(await known(listed.did)).toBe(false);
+    expect(await known(w.rootDid)).toBe(true);
   });
 
   it('the AI path (the internal secret alone) cannot raise Touch ID: a mandate is created only for what the person approved, once, from the approved arguments', async () => {
@@ -700,14 +732,13 @@ describe('review round 2', () => {
     expect((await pin({ did: w.rootDid })).body).toMatchObject({ code: 'own_chain' });
   });
 
-  it('F4: a confirmation can be withdrawn (page session only)', async () => {
+  it('F4: a legacy confirmation can still be withdrawn (page session only); it was never what made a colleague', async () => {
     const w = await world();
     const other = await person();
-    const known = (did: string) => w.internal('/internal/mandate-grant/owner-known', { did }).then(r => r.body.known);
     await w.post('/api/mandate/confirm-identity', { did: other.did, code: await dk.identityCode(other.did) });
-    expect(await known(other.did)).toBe(true);
+    expect(new MandateGrantStore(w.gw.vault).approverConfirmed(other.did)).toBe(true);
     expect((await w.post('/api/mandate/forget-identity', { did: other.did })).status).toBe(200);
-    expect(await known(other.did)).toBe(false);
+    expect(new MandateGrantStore(w.gw.vault).approverConfirmed(other.did)).toBe(false);
     expect((await call(w.gw.port, 'POST', '/api/mandate/forget-identity', { body: { did: other.did } })).status).toBe(401);
   });
 
@@ -744,7 +775,8 @@ describe('review round 2', () => {
     w.mandates.team = { approvers: ['u_ap'], approvals: 1, caps: { value_max: { value: 500, kind: 'approval' } } };
     w.mandates.expectation = { mode: 'review', caps: { value_max: 500 }, approvers: [ap.did], approvals: 1 };
     w.mandates.eligibleOverride = [{ user_id: 'u_ap', did: ap.did }, { user_id: 'u_ap', did: ap.did }];
-    const r = await w.sign({ team: 'g_team', confirmedApproverDids: [ap.did] });
+    listTeam(w, [ap]);
+    const r = await w.sign({ team: 'g_team' });
     expect(r.status, r.text).toBe(200);
     expect((w.mandates.rows[0].grant as Record<string, unknown>).above_cap_approvers).toEqual([ap.did]);
   });
@@ -908,7 +940,7 @@ describe('prepare: what a give would grant, before the touch', () => {
     expect((await call(w.gw.port, 'POST', '/api/mandate/prepare', { body: REQ })).status).toBe(401);
   });
 
-  it('a team: approvers with DIDs, identity codes and confirmation state from the gateway\'s own record; the unconfirmed one blocks, nothing is remembered by asking', async () => {
+  it('a team: approvers with DIDs, identity codes and whether the verified member list holds them; one that is not listed blocks, nothing is remembered by asking', async () => {
     const w = await world();
     const ap = await person();
     const ap2 = await person();
@@ -924,14 +956,16 @@ describe('prepare: what a give would grant, before the touch', () => {
     expect((r.body as any).team.approvals).toBe(2);
     expect(((r.body as any).team.approvers as Array<{ did: string; confirmed: boolean; identityCode: string }>).map(a => [a.did, a.confirmed]).sort()).toEqual([[ap.did, false], [ap2.did, false]].sort());
     expect((r.body as any).team.caps).toEqual([expect.objectContaining({ field: 'value_max', value: 500 })]);
-    expect(r.body).toMatchObject({ blocked: { code: 'approver_identity_unconfirmed' } });
+    expect(r.body).toMatchObject({ blocked: { code: 'team_list_unavailable' } });
     expect((r.body as any).blocked.approvers).toHaveLength(2);
-    // asking again with the codes "compared" in the request shows them confirmed, but REMEMBERS nothing
-    const again = await w.post('/api/mandate/prepare', { ...REQ, team: 'g_team', confirmedApproverDids: [ap.did, ap2.did] });
+    // a verified list with both: shown as listed, with the names the admin signed, nothing blocks
+    listTeam(w, [ap, ap2]);
+    const again = await w.post('/api/mandate/prepare', { ...REQ, team: 'g_team' });
     expect(again.body.blocked).toBeNull();
+    expect(((again.body as any).team.approvers as Array<{ did: string; confirmed: boolean; name?: string }>).map(a => [a.did, a.confirmed, a.name]).sort()).toEqual([[ap.did, true, 'Colleague 1'], [ap2.did, true, 'Colleague 2']].sort());
     expect(store.approverConfirmed(ap.did)).toBe(false);
     expect(w.touches).not.toHaveBeenCalled();
-    // the plan hash does not depend on who was confirmed
+    // the plan hash does not depend on who was listed
     expect(again.body.planHash).toBe(r.body.planHash);
   });
 
