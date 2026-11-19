@@ -60,10 +60,10 @@ export function TeamChangesHost({ teamId, teamName, api = spClient.teamChanges, 
       actions={{
         remove: did => { const n = nameOf(did); void run(() => api.remove(teamId, did), S13.changesRemoveDone(n), n); },
         replaceType: (userId, v) => setTyped(t => ({ ...t, [userId]: v })),
-        replaceCheck: userId => {
+        replaceCheck: (userId, oldDid) => {
           void (async () => {
             setBusy(true); setResult(null);
-            const r: JoinResult<JoinCheck> = await api.replaceCheck(teamId, userId, typed[userId] ?? '');
+            const r: JoinResult<JoinCheck> = await api.replaceCheck(teamId, userId, oldDid, typed[userId] ?? '');
             setBusy(false);
             const name = changes.role === 'admin' ? changes.replace.find(o => o.userId === userId)?.name ?? '' : '';
             if (!r.ok) { setResult({ text: joinErrorText(r.code, name), ok: false }); return; }
@@ -72,7 +72,7 @@ export function TeamChangesHost({ teamId, teamName, api = spClient.teamChanges, 
             await load();
           })();
         },
-        replace: userId => { const n = changes.role === 'admin' ? changes.replace.find(o => o.userId === userId)?.name ?? '' : ''; void run(() => api.replace(teamId, userId), S13.changesNewIdentityDone(n), n); },
+        replace: (userId, oldDid) => { const n = changes.role === 'admin' ? changes.replace.find(o => o.userId === userId)?.name ?? '' : ''; void run(() => api.replace(teamId, userId, oldDid), S13.changesNewIdentityDone(n), n); },
         resign: () => { void run(() => api.resign(teamId), S13.changesResignDone); },
         handoverChoose: setChosen,
         handoverOffer: () => { void run(() => api.handoverOffer(teamId, chosen), S13.changesHandoverWaitingNew); },

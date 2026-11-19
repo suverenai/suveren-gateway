@@ -113,7 +113,7 @@ describe('check key', () => {
     const DID_A = 'did:key:z6MkAdmin1111111111111111111111111111111111';
     const DID_M = 'did:key:z6MkMember111111111111111111111111111111111';
     const anchor = (admin: string | null) => Buffer.from(JSON.stringify({ typ: 'suveren-team-anchor', v: 1, member_did: DID_M, team_id: 't1', admin_did: admin, version: 1, prev: null, key_id: 'k', chain_seq: 0, chain_head: 'h', created_at: 1, nonce: 'n' }));
-    const list = (members: unknown[]) => Buffer.from(JSON.stringify({ typ: 'suveren-team-members', v: 1, team_id: 't1', version: 2, prev: 'h', admin_did: DID_A, members, handover: null, key_id: 'k', chain_seq: 0, chain_head: 'h', created_at: 1, nonce: 'n' }));
+    const list = (members: unknown[], version = 1, prev: string | null = null) => Buffer.from(JSON.stringify({ typ: 'suveren-team-members', v: 1, team_id: 't1', version, prev, admin_did: DID_A, members, handover: null, key_id: 'k', chain_seq: 0, chain_head: 'h', created_at: 1, nonce: 'n' }));
     const members = [{ did: DID_A, name: 'Anna Muster', code: '7314 2208 5561 0942 3375 0001' }, { did: DID_M, name: 'Maria Huber', code: '4721 8830 1169 2284 0937 1250' }];
     it('an anchor prompt names the admin of the team, with no text from the caller', async () => {
       const c = await start();
@@ -127,6 +127,12 @@ describe('check key', () => {
       const o = list(members);
       const r = await c.signCheck({ keyBlob: k.keyBlob, digest: sha256Hash(o), object: o, focus: DID_M });
       expect(r.reason).toBe('add "Maria Huber" to the team, code 4721 8830 1169 2284 0937 1250');
+    });
+    it('a member list after version 1 without previous is refused before any touch', async () => {
+      const c = await start({ FAKE_TOUCH: 'never' });
+      const k = await c.createCheckKey('user-presence');
+      const o = list(members, 2, 'sha256:' + '0'.repeat(64));
+      await expect(c.signCheck({ keyBlob: k.keyBlob, digest: sha256Hash(o), object: o, focus: DID_M })).rejects.toMatchObject({ code: 'bad_request' });
     });
     it('a member list without a focus, or a focus that is not in it, is refused before any touch', async () => {
       const c = await start({ FAKE_TOUCH: 'never' });
@@ -162,10 +168,10 @@ describe('check key', () => {
       return c.signCheck({ keyBlob: k.keyBlob, digest: sha256Hash(o), object: o, ...(previous ? { previous } : {}), ...extra });
     };
     it('removes one member', async () => {
-      expect((await sign(next(A, [ANNA, BOB]), prevList)).reason).toBe('remove "Maria Huber" from the team');
+      expect((await sign(next(A, [ANNA, BOB]), prevList)).reason).toBe('remove "Maria Huber" from the team, code 4721 8830 1169 2284');
     });
     it('replaces one member by another, with the new one\'s code', async () => {
-      expect((await sign(next(A, [ANNA, NEWO, BOB]), prevList)).reason).toBe('replace "Maria Huber" with "Maria Huber", code 1111 2222 3333 4444 5555 6666');
+      expect((await sign(next(A, [ANNA, NEWO, BOB]), prevList)).reason).toBe('new identity for "Maria Huber", code 1111 2222 3333 4444 5555 6666');
     });
     it('signs the same list again', async () => {
       expect((await sign(next(A, [ANNA, MARIA, BOB]), prevList)).reason).toBe('sign the team list again');

@@ -5,8 +5,8 @@
  *
  *   GET  /:teamId                          what is on offer (admin: remove, replace, re-sign, hand-over; member: admin changed / gone)
  *   POST /:teamId/remove        { did }            the touch: list without that person
- *   POST /:teamId/replace/:userId/check { code }   the NEW identity's code, compared here (3 tries)
- *   POST /:teamId/replace/:userId              the touch: list with the old DID replaced by the new one
+ *   POST /:teamId/replace/:userId/check { oldDid, code }  the NEW identity's code, compared here (3 tries), for that old identity
+ *   POST /:teamId/replace/:userId { oldDid }   the touch: list with the old DID replaced by the new one
  *   POST /:teamId/resign                       the touch: the same members again, by a device that stays
  *   POST /:teamId/handover      { did }        the old admin names the new admin and her device (no touch)
  *   POST /:teamId/handover/build               the new admin builds and signs the list (touch)
@@ -34,14 +34,14 @@ export function createTeamChangesRouter(c: TeamListChanges): Router {
     if (!c.active()) { res.status(409).json({ ok: false, error: 'not_set_up', code: 'not_set_up' }); return; }
     next();
   });
-  const b = (req: { body?: unknown }): { code?: unknown; did?: unknown } => (req.body ?? {}) as { code?: unknown; did?: unknown };
+  const b = (req: { body?: unknown }): { code?: unknown; did?: unknown; oldDid?: unknown } => (req.body ?? {}) as { code?: unknown; did?: unknown; oldDid?: unknown };
   const run = (fn: (req: any) => Promise<object>) => async (req: any, res: Response) => {
     try { res.json({ ok: true, ...(await fn(req)) }); } catch (e) { answer(res, e); }
   };
   router.get('/:teamId', run(req => c.status(req.params.teamId)));
   router.post('/:teamId/remove', run(req => c.removeMember(req.params.teamId, b(req).did)));
-  router.post('/:teamId/replace/:userId/check', run(req => c.replaceCheck(req.params.teamId, req.params.userId, b(req).code)));
-  router.post('/:teamId/replace/:userId', run(req => c.replaceMember(req.params.teamId, req.params.userId)));
+  router.post('/:teamId/replace/:userId/check', run(req => c.replaceCheck(req.params.teamId, req.params.userId, b(req).oldDid, b(req).code)));
+  router.post('/:teamId/replace/:userId', run(req => c.replaceMember(req.params.teamId, req.params.userId, b(req).oldDid)));
   router.post('/:teamId/resign', run(req => c.resign(req.params.teamId)));
   router.post('/:teamId/handover', run(req => c.handoverOffer(req.params.teamId, b(req).did)));
   router.post('/:teamId/handover/build', run(req => c.handoverBuild(req.params.teamId)));

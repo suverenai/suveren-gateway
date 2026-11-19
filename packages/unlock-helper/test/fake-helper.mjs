@@ -87,6 +87,7 @@ export function reasonFor(bytes, focus, previous) {
     text = o.admin_did === null ? 'stop trusting the admin of a team' : 'trust the admin of the team you asked to join';
   } else if (o.typ === 'suveren-team-members' && Object.keys(o).sort().join(',') === LIST_MEMBERS) {
     if (previous !== undefined) return finish(memberListChange(bytes, o, previous, focus));
+    if (o.version !== 1 || o.prev !== null) throw err('bad_request', 'a member list after version 1 needs `previous`.');
     const m = typeof focus === 'string' && Array.isArray(o.members) ? o.members.find(x => x && x.did === focus) : undefined;
     if (!m || typeof m.name !== 'string' || !m.name || typeof m.code !== 'string' || !/^[0-9]{4}( [0-9]{4}){5}$/.test(m.code)) throw err('bad_request', 'a member list needs a focus that names one of its members.');
     text = `add ${quoted(m.name)} to the team, code ${m.code}`;
@@ -135,11 +136,11 @@ function memberListChange(bytes, o, previous, focus) {
   if (added.length === 1 && removed.length === 0) return `add ${quoted(added[0].name)} to the team, code ${added[0].code}`;
   if (added.length === 0 && removed.length === 1) {
     if (removed[0].did === p.admin_did) throw err('bad_request', 'the admin cannot be removed.');
-    return `remove ${quoted(removed[0].name)} from the team`;
+    return `remove ${quoted(removed[0].name)} from the team, code ${removed[0].code.split(' ').slice(0, 4).join(' ')}`;
   }
   if (added.length === 1 && removed.length === 1) {
     if (removed[0].did === p.admin_did) throw err('bad_request', 'the admin cannot be replaced.');
-    return `replace ${quoted(removed[0].name)} with ${quoted(added[0].name)}, code ${added[0].code}`;
+    return `new identity for ${quoted(added[0].name)}, code ${added[0].code}`;
   }
   throw err('bad_request', 'this change of the list is not one this helper describes.');
 }

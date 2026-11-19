@@ -5,11 +5,12 @@
  *
  *   admin:   remove someone (they left, were removed) · replace someone who took a new identity (a new join: codes compared again, a new
  *            anchor) · sign the same members again when the device that signed the list is gone (re-sign) · hand over (3 steps).
- *   member:  see that the admin changed (compare the new admin's code and anchor again: step 4's member screen does it). A take-over
- *            when the admin took a new identity is deferred (DEC-82).
+ *   member:  see that the admin changed (compare the new admin's code and anchor again: step 4's member screen does it).
+ *
+ * Deferred (DEC-82): a take-over by a member when the admin took a new identity (needs the two-person support confirmation first; removed).
  *
  * The Authority Server only POINTS (`GET /api/teams/:id/offers`). Everything that is signed is built from the list THIS gateway verified
- * (or, for a take-over after the admin's chain is gone, from the list this gateway's own pin names, by hash) and from the person's own
+ * and from the person's own
  * chain. Nothing is signed before the touch; the helper builds the touch prompt from the object and the list before it (`previous`), so
  * the page and the AI cannot say what the touch is for. Codes only in refusals.
  */
@@ -19,11 +20,34 @@ import { deviceKeys, isDeviceKeysError } from './device-keys-lazy';
 import { asErrorCode } from './device-as-client';
 import { GrantRefusal, type Session, TeamTrustUnavailable } from './mandate-grants';
 import { JoinRefusal, type TeamJoin } from './team-join';
-import type { TeamTrustStore } from './team-trust-store';
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const DID = /^did:key:z[1-9A-HJ-NP-Za-km-z]{20,128}$/;
 const refuse = (code: string, status = 422, extra?: Record<string, unknown>): never => { throw new JoinRefusal(code, status, extra); };
+
+/** A hand-over the old admin started waits this long for the new admin (the Authority Server lets a proposal live 7 days). */
+export const HANDOVER_CHOICE_SECONDS = 7 * 24 * 60 * 60;
+
+/**
+ * One signer of a member list, as hap-core's `verifySigner` checks it (that function is not exported): an ACTIVE device of the chain,
+ * the signature over the list's signed bytes, the named head of the chain, and the device's check over the object hash. Throws a hap-core
+ * error (`isDeviceKeysError`) when anything is wrong. Used to judge the new admin's signature before the old admin spends her touch.
+ */
+async function verifyOneSigner(dk: Awaited<ReturnType<typeof deviceKeys>>, list: MemberList, entry: unknown, chain: Parameters<typeof dk.checkNamedHead>[0]): Promise<void> {
+  if (!isObj(entry) || entry.key_id !== list.key_id || typeof entry.sig !== 'string') return dk.fail('MALFORMED', 'the new admin\'s signature entry');
+  const dev = chain.devices[list.key_id];
+  if (!dev || dev.removed_seq !== null) return dk.fail('NOT_ACTIVE', 'not an active device of the new admin');
+  let ok = false;
+  try { ok = await dk.verifyEd25519(dk.b64uDecode(dev.sign_pub), dk.signedBytes(list), dk.b64uBytes(entry.sig, 64, 'sig')); } catch { ok = false; }
+  if (!ok) return dk.fail('BAD_SIGNATURE');
+  dk.checkNamedHead(chain, list.chain_seq, list.chain_head);
+  if (dev.added_seq > list.chain_seq) return dk.fail('NOT_ACTIVE', 'device was not admitted at the named head');
+  const ck = dk.checkKeyAt(chain, list.key_id, list.chain_seq);
+  if (!ck || entry.check === undefined || entry.check === null) return dk.fail('CHECK_REQUIRED');
+  let proof;
+  try { proof = dk.validateCheckProof(ck.type, entry.check); } catch { return dk.fail('CHECK_REQUIRED', 'malformed check'); }
+  if (!(await dk.verifyCheck(ck, await dk.objectHash(list), proof))) return dk.fail('CHECK_REQUIRED', 'check does not verify');
+}
 
 export type RemoveReason = 'left' | 'removed' | 'not_member';
 
@@ -70,12 +94,13 @@ export type TeamChanges = AdminChanges | MemberChanges;
 
 export interface TeamChangesDeps {
   join: TeamJoin;
-  store: TeamTrustStore;
   now?: () => number;
 }
 
 export class TeamListChanges {
   private readonly now: () => number;
+  /** Whom the old admin chose at step 1 of a hand-over, and when (epoch s), per team. In memory: a restart forgets it and she asks again. */
+  private readonly chosen = new Map<string, { did: string; at: number }>();
   constructor(private readonly d: TeamChangesDeps) {
     this.now = d.now ?? (() => Math.floor(Date.now() / 1000));
   }
@@ -113,7 +138,8 @@ export class TeamListChanges {
     return h;
   }
 
-  private replaceKey(teamId: string, userId: string, newDid: string): string { return `r:${teamId}:${userId}:${newDid}`; }
+  /** The comparison is for ONE replacement: this person, this old identity, this new identity. */
+  private replaceKey(teamId: string, userId: string, oldDid: string, newDid: string): string { return `r:${teamId}:${userId}:${oldDid}:${newDid}`; }
 
   // ─── what is on offer ────────────────────────────────────────────────────
 
@@ -146,7 +172,7 @@ export class TeamListChanges {
     for (const o of Array.isArray(offers.replace) ? offers.replace : []) {
       if (!isObj(o) || typeof o.old_did !== 'string' || typeof o.user_id !== 'string' || !names.has(o.old_did) || o.old_did === s.stored.rootDid) continue;
       const newDid = typeof o.new_did === 'string' && DID.test(o.new_did) ? o.new_did : null;
-      const key = newDid ? this.replaceKey(teamId, o.user_id, newDid) : '';
+      const key = newDid ? this.replaceKey(teamId, o.user_id, o.old_did, newDid) : '';
       replace.push({
         oldDid: o.old_did, newDid, name: names.get(o.old_did)!, userId: o.user_id,
         triesLeft: newDid ? this.join.adminGate.triesLeft(key) : 0, compared: newDid ? this.join.adminGate.matched(key) : false,
@@ -205,38 +231,42 @@ export class TeamListChanges {
   }
 
   /** Step 1 of a new identity: the typed code of the NEW identity, against the DID the Authority Server names for that person. */
-  async replaceCheck(teamIdIn: unknown, userIdIn: unknown, typed: unknown): Promise<{ match: true } | { match: false; triesLeft: number }> {
+  async replaceCheck(teamIdIn: unknown, userIdIn: unknown, oldDidIn: unknown, typed: unknown): Promise<{ match: true } | { match: false; triesLeft: number }> {
     const teamId = this.join.teamId(teamIdIn);
     const userId = this.join.userId(userIdIn);
+    if (typeof oldDidIn !== 'string' || !DID.test(oldDidIn)) return refuse('bad_request', 400);
     if (typeof typed !== 'string' || typed.length > 64) return refuse('bad_request', 400);
     const dk = await deviceKeys();
     const s = await this.join.session();
     const o = (await this.status(teamId));
-    const offer = o.role === 'admin' ? o.replace.find(x => x.userId === userId) : undefined;
+    const offer = o.role === 'admin' ? o.replace.find(x => x.userId === userId && x.oldDid === oldDidIn) : undefined;
     if (!offer) return refuse('no_replacement', 404);
     if (!offer.newDid) return refuse('new_identity_missing', 409);
-    return this.join.adminGate.attempt(this.replaceKey(teamId, userId, offer.newDid), await dk.identityCode(offer.newDid), typed);
+    return this.join.adminGate.attempt(this.replaceKey(teamId, userId, offer.oldDid, offer.newDid), await dk.identityCode(offer.newDid), typed);
   }
 
   /** Step 2: the touch signs the list that replaces the old DID by the new one. Needs the code to have matched AND the person's new anchor to verify. */
-  async replaceMember(teamIdIn: unknown, userIdIn: unknown): Promise<{ version: number }> {
+  async replaceMember(teamIdIn: unknown, userIdIn: unknown, oldDidIn: unknown): Promise<{ version: number }> {
     const teamId = this.join.teamId(teamIdIn);
     const userId = this.join.userId(userIdIn);
+    if (typeof oldDidIn !== 'string' || !DID.test(oldDidIn)) return refuse('bad_request', 400);
     const dk = await deviceKeys();
     const s = await this.join.session();
     const head = await this.adminHead(s, teamId);
     const offers = await this.offersOf(s, teamId);
     const o = (Array.isArray(offers.replace) ? offers.replace : []).find((x: any) => isObj(x) && x.user_id === userId);
     if (!o || typeof o.old_did !== 'string' || typeof o.new_did !== 'string' || !DID.test(o.new_did)) return refuse('no_replacement', 404);
+    // The person the admin compared is the one named in the offer NOW: an offer that changed since (another old identity) starts again.
+    if (o.old_did !== oldDidIn) return refuse('replacement_changed', 409);
     const oldEntry = head.list.members.find(m => m.did === o.old_did);
     if (!oldEntry || o.old_did === s.stored.rootDid) return refuse('no_replacement', 404);
-    if (!this.join.adminGate.matched(this.replaceKey(teamId, userId, o.new_did))) return refuse('not_compared', 409);
+    if (!this.join.adminGate.matched(this.replaceKey(teamId, userId, o.old_did, o.new_did))) return refuse('not_compared', 409);
     if ((await this.join.anchorState(s, teamId, userId, o.new_did)) !== 'ok') return refuse('anchor_required', 409);
     let added: TeamMember;
     try { added = await dk.buildTeamMember(o.new_did, oldEntry.name); } catch { return refuse('list_invalid'); }
     const next = await this.signNext(s, head, [...head.list.members.filter(m => m.did !== o.old_did), added]);
     await this.post(s, this.path(teamId, '/members/replace'), next);
-    this.join.adminGate.forget(this.replaceKey(teamId, userId, o.new_did));
+    this.join.adminGate.forget(this.replaceKey(teamId, userId, o.old_did, o.new_did));
     return { version: next.list.version };
   }
 
@@ -271,6 +301,7 @@ export class TeamListChanges {
     const head = await this.adminHead(s, teamId);
     if (!head.list.members.some(m => m.did === didIn) || didIn === s.stored.rootDid) return refuse('not_a_member', 409);
     await this.post(s, this.path(teamId, '/handover'), { new_admin_did: didIn, handover: { key_id: s.stored.keyId, chain_seq: s.own.head.seq, chain_head: s.own.head.hash } });
+    this.chosen.set(teamId, { did: didIn, at: this.now() });
     return { ok: true };
   }
 
@@ -299,24 +330,32 @@ export class TeamListChanges {
     const head = await this.adminHead(s, teamId);
     const hand = await this.handoverOf(s, teamId);
     if (!hand || hand.you !== 'old_admin' || hand.stage !== 'signed') return refuse('no_handover', 404);
+    // Only the person SHE chose at step 1, on this computer, and only within 7 days: the Authority Server cannot swap the new admin.
+    const choice = this.chosen.get(teamId);
+    if (!choice || this.now() - choice.at > HANDOVER_CHOICE_SECONDS) return refuse('handover_not_chosen', 409);
     let list: MemberList;
     try { list = dk.validateMemberList(hand.raw.list); } catch { return refuse('list_invalid'); }
     const theirs = hand.raw.sigs;
     const h = list.handover;
     const same = list.members.length === head.list.members.length && list.members.every((m, i) => m.did === head.list.members[i].did && m.name === head.list.members[i].name);
     if (list.team_id !== teamId || list.version !== head.list.version + 1 || list.prev !== head.hash || !same
-      || !head.list.members.some(m => m.did === list.admin_did) || list.admin_did === s.stored.rootDid
+      || list.admin_did !== choice.did || !head.list.members.some(m => m.did === list.admin_did) || list.admin_did === s.stored.rootDid
       || !h || h.admin_did !== s.stored.rootDid || h.key_id !== s.stored.keyId) return refuse('handover_mismatch', 409);
     if (!Array.isArray(theirs) || theirs.length !== 1 || !isObj(theirs[0])) return refuse('as_answer_invalid', 502);
-    // the new admin's chain, verified here; both signatures are verified here before the last touch is spent
+    // the new admin's chain, verified here
     let theirChain;
     try { theirChain = await this.join.d.grants.verifiedChainOf(list.admin_did, s); } catch (e) {
       if (e instanceof GrantRefusal) return refuse(e.code, 422);
       throw e;
     }
+    // The new admin's signature (and its check, and the named head of the new admin's chain) is verified BEFORE her touch is spent.
+    try { await verifyOneSigner(dk, list, theirs[0], theirChain); } catch (e) {
+      return refuse(isDeviceKeysError(e) ? 'handover_invalid' : 'handover_mismatch', 409);
+    }
     const { sig, check } = await this.join.signWithCheck(s, list, undefined, head.list);
     const mine = { key_id: s.stored.keyId, sig, check };
     try {
+      // both signatures once more, together, as the Authority Server and every member will
       await dk.verifyMemberList({ list, sigs: [theirs[0], mine] }, { chain: theirChain, oldAdminChain: s.own, prev: head.list });
     } catch (e) {
       return refuse(isDeviceKeysError(e) ? 'handover_invalid' : 'handover_mismatch', 409);
@@ -331,39 +370,5 @@ export class TeamListChanges {
     const r = await this.join.call(s, 'DELETE', this.path(teamId, '/handover'));
     if (r.status !== 200 && r.status !== 404) return refuse(asErrorCode(r.body) ?? 'withdraw_refused', 422);
     return { ok: true };
-  }
-
-  // ─── the admin took a new identity ───────────────────────────────────────
-  // deferred (DEC-82): NOT reachable. No route calls `takeOver`; the AS has no take-over route either (it needs the two-person support
-  // confirmation first). Kept, unmounted, so the logic is not lost.
-
-  /**
-   * A member takes over: the next list is signed by this person alone and drops the old admin's DID. Built on the list THIS gateway's
-   * pin names (found by hash among the lists the Authority Server serves), because the old admin's chain is gone and the normal
-   * verification cannot run. Members trust it only after they re-anchored to this person.
-   */
-  async takeOver(teamIdIn: unknown): Promise<{ version: number }> {
-    const teamId = this.join.teamId(teamIdIn);
-    const dk = await deviceKeys();
-    const s = await this.join.session();
-    const offers = await this.offersOf(s, teamId);
-    if (offers.admin_gone !== true) return refuse('admin_can_sign', 409);
-    const pin = this.d.store.pin(teamId);
-    if (!pin) return refuse('no_pin', 409);
-    const r = await this.join.call(s, 'GET', `${this.path(teamId, '/trust')}?from=${pin.version}&leaves_limit=1`);
-    if (r.status !== 200 || !isObj(r.body) || !Array.isArray(r.body.lists)) return refuse('as_answer_invalid', 502);
-    let prev: MemberList | null = null;
-    for (const e of r.body.lists) {
-      if (!isObj(e)) continue;
-      try {
-        const l = dk.validateMemberList(e.list);
-        if (l.version === pin.version && (await dk.memberListHash(l)) === pin.hash) prev = l;
-      } catch { /* not this one */ }
-    }
-    if (!prev) return refuse('pinned_list_missing', 409);
-    if (prev.admin_did === s.stored.rootDid || !prev.members.some(m => m.did === s.stored.rootDid)) return refuse('not_a_member', 409);
-    const next = await this.signNext(s, { list: prev, hash: pin.hash }, prev.members.filter(m => m.did !== prev!.admin_did));
-    await this.post(s, this.path(teamId, '/admin-takeover'), next);
-    return { version: next.list.version };
   }
 }

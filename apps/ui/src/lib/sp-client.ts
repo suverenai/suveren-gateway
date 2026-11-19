@@ -1135,8 +1135,8 @@ class SPClient {
       return { ok: true, changes: rest as unknown as TeamChangesView };
     },
     remove: (teamId, did) => this.changesCall('POST', `/${encodeURIComponent(teamId)}/remove`, { did }),
-    replaceCheck: (teamId, userId, code) => this.changesCall('POST', `/${encodeURIComponent(teamId)}/replace/${encodeURIComponent(userId)}/check`, { code }),
-    replace: (teamId, userId) => this.changesCall('POST', `/${encodeURIComponent(teamId)}/replace/${encodeURIComponent(userId)}`, {}),
+    replaceCheck: (teamId, userId, oldDid, code) => this.changesCall('POST', `/${encodeURIComponent(teamId)}/replace/${encodeURIComponent(userId)}/check`, { oldDid, code }),
+    replace: (teamId, userId, oldDid) => this.changesCall('POST', `/${encodeURIComponent(teamId)}/replace/${encodeURIComponent(userId)}`, { oldDid }),
     resign: (teamId) => this.changesCall('POST', `/${encodeURIComponent(teamId)}/resign`, {}),
     handoverOffer: (teamId, did) => this.changesCall('POST', `/${encodeURIComponent(teamId)}/handover`, { did }),
     handoverBuild: (teamId) => this.changesCall('POST', `/${encodeURIComponent(teamId)}/handover/build`, {}),

@@ -102,9 +102,9 @@ export interface TeamChangesApi {
   /** The touch: list without that person. */
   remove(teamId: string, did: string): Promise<JoinResult<{ version: number }>>;
   /** The NEW identity's code as typed; compared by the gateway. */
-  replaceCheck(teamId: string, userId: string, code: string): Promise<JoinResult<JoinCheck>>;
+  replaceCheck(teamId: string, userId: string, oldDid: string, code: string): Promise<JoinResult<JoinCheck>>;
   /** The touch: the list with the old DID replaced by the new one. */
-  replace(teamId: string, userId: string): Promise<JoinResult<{ version: number }>>;
+  replace(teamId: string, userId: string, oldDid: string): Promise<JoinResult<{ version: number }>>;
   /** The touch: the same members again, signed by a device that stays. */
   resign(teamId: string): Promise<JoinResult<{ version: number }>>;
   /** The old admin names the new admin (no touch). */

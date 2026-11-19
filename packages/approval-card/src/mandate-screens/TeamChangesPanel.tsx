@@ -13,8 +13,8 @@ import type { AdminChangesView, MemberChangesView, ReplaceOfferView, RemoveOffer
 export interface TeamChangesActions {
   remove(did: string): void;
   replaceType(userId: string, v: string): void;
-  replaceCheck(userId: string): void;
-  replace(userId: string): void;
+  replaceCheck(userId: string, oldDid: string): void;
+  replace(userId: string, oldDid: string): void;
   resign(): void;
   handoverChoose(did: string): void;
   handoverOffer(): void;
@@ -37,6 +37,9 @@ export interface TeamChangesPanelProps {
   actions: TeamChangesActions;
 }
 
+/** The last characters of an identity, enough to tell two of them apart on the screen. */
+const didTail = (did: string): string => `...${did.slice(-8)}`;
+
 const removeIntro = (o: RemoveOfferView): string => (o.reason === 'left' ? S13.changesLeftIntro(o.name) : o.reason === 'removed' ? S13.changesRemovedIntro(o.name) : S13.changesGoneIntro(o.name));
 
 function ReplaceRow({ o, p }: { o: ReplaceOfferView; p: TeamChangesPanelProps }) {
@@ -44,10 +47,11 @@ function ReplaceRow({ o, p }: { o: ReplaceOfferView; p: TeamChangesPanelProps })
   return (
     <div className="card" data-testid="changes-replace">
       <p>{S13.changesNewIdentityIntro(o.name)}</p>
+      <p data-testid="changes-replace-fromto" style={{ fontFamily: 'var(--font-mono, monospace)', overflowWrap: 'anywhere' }}>{S13.changesNewIdentityFromTo(didTail(o.oldDid), o.newDid ? didTail(o.newDid) : null)}</p>
       {!o.newDid ? <p data-testid="changes-replace-notyet">{S13.changesNewIdentityNotYet(o.name)}</p> : (
         <>
           {!o.compared && (
-            <form onSubmit={e => { e.preventDefault(); if (!p.busy && (p.typed[o.userId] ?? '').trim()) p.actions.replaceCheck(o.userId); }}>
+            <form onSubmit={e => { e.preventDefault(); if (!p.busy && (p.typed[o.userId] ?? '').trim()) p.actions.replaceCheck(o.userId, o.oldDid); }}>
               <label className="form-label" htmlFor={`changes-typed-${o.userId}`}>{S13.changesNewIdentityType(o.name)}</label>
               <input id={`changes-typed-${o.userId}`} data-testid="changes-typed" className="form-input" inputMode="numeric" autoComplete="off" autoCorrect="off" spellCheck={false}
                 value={p.typed[o.userId] ?? ''} onChange={e => p.actions.replaceType(o.userId, e.target.value)} disabled={p.busy} style={{ width: '100%', fontFamily: 'var(--font-mono, monospace)' }} />
@@ -61,7 +65,7 @@ function ReplaceRow({ o, p }: { o: ReplaceOfferView; p: TeamChangesPanelProps })
               <p data-testid="changes-anchor" role="status" className={o.anchor === 'invalid' ? 'msg-error' : undefined}>
                 {o.anchor === 'ok' ? S13.joinAnchorThere(o.name) : o.anchor === 'invalid' ? S13.joinAnchorInvalid(o.name) : S13.changesNewIdentityAnchorWaiting(o.name)}
               </p>
-              <button type="button" data-testid="changes-replace-sign" className="btn btn-primary btn-full" disabled={p.busy || !canSign} onClick={() => p.actions.replace(o.userId)}>
+              <button type="button" data-testid="changes-replace-sign" className="btn btn-primary btn-full" disabled={p.busy || !canSign} onClick={() => p.actions.replace(o.userId, o.oldDid)}>
                 {p.busy ? S13.giveBusy : S13.changesNewIdentityButton(o.name)}
               </button>
             </>

@@ -20,9 +20,9 @@ import CryptoKit
 ///   - the cancel of a request for a new identity: exactly typ "suveren-identity-cancel", v, aud, root_did,
 ///     key_id, request_id, chain_seq, chain_head, issued_at (hap-core 0.15.0, plan 6.2)
 ///   - a team anchor (`typ` "suveren-team-anchor", hap-core 0.16.0, DEC-73): "I trust this admin for this team"
-///   - a team member list (`typ` "suveren-team-members"). Without `previous`: the admin adds a member; the caller names WHICH member
-///     with `focus` (a DID, not a text); the name and the identity code come from that member's entry in the object itself.
-///     With `previous` (the signed bytes of the list before; DEC-73 step 5): the helper checks sha256(previous) == the list's `prev`
+///   - a team member list (`typ` "suveren-team-members"). Version 1 (`prev` null) only, without `previous`: the admin alone; the caller names
+///     the member with `focus` (a DID, not a text); name and identity code come from that member's entry. Every later version REQUIRES
+///     `previous` (the signed bytes of the list before; DEC-73 step 5): the helper checks sha256(previous) == the list's `prev`
 ///     (and team, version + 1), diffs the two lists ITSELF and says what the signature does: add one, remove one, replace one by
 ///     another (the new one's code), sign the same list again, or hand the team over to a member. Any other or mixed difference is refused.
 ///   - a mandate grant or change (`typ` "suveren-mandate-grant", `op` "grant" or "change", the fixed members of
@@ -46,8 +46,10 @@ public enum ReasonText {
     public static let cancelIdentityReset = "cancel the request for a new identity"
     public static let trustAdmin = "trust the admin of the team you asked to join"
     public static let clearAnchor = "stop trusting the admin of a team"
-    public static func removeMember(_ name: String) -> String { "remove \(quoted(name)) from the team" }
-    public static func replaceMember(_ old: String, _ new: String, _ code: String) -> String { "replace \(quoted(old)) with \(quoted(new)), code \(code)" }
+    /// The first four groups of the code tell two members of the same name apart; the whole code does not fit next to a 64-character name.
+    public static func removeMember(_ name: String, _ code: String) -> String { "remove \(quoted(name)) from the team, code \(firstGroups(code))" }
+    public static func replaceMember(_ name: String, _ code: String) -> String { "new identity for \(quoted(name)), code \(code)" }
+    static func firstGroups(_ code: String) -> String { code.split(separator: " ").prefix(4).joined(separator: " ") }
     public static let resignList = "sign the team list again"
     public static func handOver(_ name: String) -> String { "hand the team over to \(quoted(name))" }
     public static func addMember(_ name: String, _ code: String) -> String { "add \(quoted(name)) to the team, code \(code)" }
@@ -93,6 +95,9 @@ public enum ReasonText {
         }
         if o["typ"] as? String == "suveren-team-members", Set(o.keys) == memberListMembers {
             if let previous = previous { return try memberListChange(bytes, o, previous: previous, focus: focus) }
+            // Without `previous` only version 1 (the admin alone, no earlier list) is described; every later version needs the list before it,
+            // so a caller cannot get "add" for a list that removes, replaces or hands over.
+            guard o["version"] as? Int == 1, o["prev"] is NSNull else { throw HelperError("bad_request", "a member list after version 1 needs `previous`.") }
             guard let focus = focus, let members = o["members"] as? [[String: Any]],
                   let m = members.first(where: { $0["did"] as? String == focus }),
                   let name = m["name"] as? String, !name.isEmpty, let code = m["code"] as? String, isCode(code) else {
@@ -160,10 +165,10 @@ public enum ReasonText {
         case (1, 0): return addMember(added[0].name, added[0].code)
         case (0, 1):
             guard removed[0].did != padmin else { throw HelperError("bad_request", "the admin cannot be removed.") }
-            return removeMember(removed[0].name)
+            return removeMember(removed[0].name, removed[0].code)
         case (1, 1):
             guard removed[0].did != padmin else { throw HelperError("bad_request", "the admin cannot be replaced.") }
-            return replaceMember(removed[0].name, added[0].name, added[0].code)
+            return replaceMember(added[0].name, added[0].code)
         default: throw HelperError("bad_request", "this change of the list is not one this helper describes.")
         }
     }

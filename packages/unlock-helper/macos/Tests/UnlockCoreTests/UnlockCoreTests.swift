@@ -306,8 +306,8 @@ func sha256hex(_ d: Data) -> String { SHA256.hash(data: d).map { String(format: 
     var hash: String { "sha256:" + sha256hex(before) }
 
     @Test func sayswhatIsSigned() throws {
-        #expect(try ReasonText.forObject(list(3, hash, a, [anna]), previous: before) == "remove \"Maria Huber\" from the team")
-        #expect(try ReasonText.forObject(list(3, hash, a, [anna, newo]), previous: before) == "replace \"Maria Huber\" with \"Maria Huber\", code 1111 2222 3333 4444 5555 6666")
+        #expect(try ReasonText.forObject(list(3, hash, a, [anna]), previous: before) == "remove \"Maria Huber\" from the team, code 4721 8830 1169 2284")
+        #expect(try ReasonText.forObject(list(3, hash, a, [anna, newo]), previous: before) == "new identity for \"Maria Huber\", code 1111 2222 3333 4444 5555 6666")
         #expect(try ReasonText.forObject(list(3, hash, a, [anna, maria]), previous: before) == "sign the team list again")
         let h: [String: Any] = ["admin_did": a, "key_id": "ka", "chain_seq": 1, "chain_head": "x"]
         #expect(try ReasonText.forObject(list(3, hash, m, [anna, maria], handover: h), previous: before) == "hand the team over to \"Maria Huber\"")
@@ -321,6 +321,7 @@ func sha256hex(_ d: Data) -> String { SHA256.hash(data: d).map { String(format: 
         #expect(refused(list(3, hash, a, [maria]), before))                                         // the admin removed
         #expect(refused(list(3, hash, m, [anna, maria]), before))                                   // change of admin without a hand-over
         #expect(refused(list(3, hash, a, [anna, member(m, "Mallory", "4721 8830 1169 2284 0937 1250")]), before))   // a changed entry
+        #expect((try? ReasonText.forObject(list(2, hash, a, [anna, maria]), focus: m)) == nil)                // version 2 without previous
         #expect(refused(list(3, hash, a, [anna]), Data("{}".utf8)))                                  // previous is not a list
     }
 

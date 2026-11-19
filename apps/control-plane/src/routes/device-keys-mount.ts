@@ -181,7 +181,7 @@ export function mountDeviceKeyRoutes(app: Express, o: DeviceKeyMountOptions): {
       vault: o.vault, store, grants, trust: grants.teamTrustPort(), now: o.device.now,
       ...(o.platform && checks ? { checks, checkStore: o.platform.checkStore } : {}),
     });
-    const teamChanges = new TeamListChanges({ join: teamJoin, store: grants.teamTrustStore(), now: o.device.now });
+    const teamChanges = new TeamListChanges({ join: teamJoin, now: o.device.now });
     device = { signin, setup, store, client, recovery, alarm, pins, grantStore, grants, approvals, teamJoin, teamChanges, readers, rewrap };
   }
   // A body that does not parse is answered here, for EVERY route under /auth (the recovery code and the password

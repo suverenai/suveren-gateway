@@ -378,7 +378,7 @@ export class TeamJoin {
       created_at: this.now(), nonce: dk.b64uEncode(randomBytes(16)),
     });
     try { dk.validateMemberList(list); } catch { return refuse('list_invalid'); }
-    const { sig, check } = await this.signWithCheck(s, list, q.memberDid);
+    const { sig, check } = await this.signWithCheck(s, list, q.memberDid, prev.list);
     const body = { list, sigs: [{ key_id: s.stored.keyId, sig, check }], request_user_id: userId };
     let r = await this.call(s, 'POST', `/api/teams/${encodeURIComponent(teamId)}/members`, body);
     if (r.status === 409 && asErrorCode(r.body) === 'CHAIN_HEAD_MOVED') r = await this.call(s, 'POST', `/api/teams/${encodeURIComponent(teamId)}/members`, body);

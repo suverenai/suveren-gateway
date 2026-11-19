@@ -29,7 +29,7 @@ async function rig(o: { admin: boolean; offers?: (w: Who) => Record<string, unkn
   const adminDid = o.admin ? own : other;
   const members = await Promise.all([own, maria, jonas, other].filter((d, i, a) => a.indexOf(d) === i).map(d => dk.buildTeamMember(d, d === own ? 'Me' : d === maria ? 'Maria' : d === jonas ? 'Jonas' : 'Other')));
   members.sort((a, b) => (a.did < b.did ? -1 : 1));
-  const list = dk.buildMemberList({ team_id: TEAM, version: 3, prev: 'sha256:' + 'a'.repeat(64), admin_did: adminDid, members, handover: null, key_id: K_SIGNER, chain_seq: 1, chain_head: 'sha256:' + 'b'.repeat(64), created_at: 1794000000, nonce: 'n' });
+  const list = dk.buildMemberList({ team_id: TEAM, version: 3, prev: 'sha256:' + 'a'.repeat(64), admin_did: adminDid, members, handover: null, key_id: K_SIGNER, chain_seq: 1, chain_head: 'sha256:' + 'b'.repeat(64), created_at: 1794000000, nonce: Buffer.alloc(16, 'n').toString('base64url') });
   const head = { list, hash: await dk.memberListHash(list) };
   const posts: Rig['posts'] = [];
   const people: Who = { own, maria, jonas, other, newMaria };
@@ -40,7 +40,7 @@ async function rig(o: { admin: boolean; offers?: (w: Who) => Record<string, unkn
     if (method === 'GET' && path.endsWith('/offers')) return { status: 200, body: { admin_did: adminDid, admin_gone: false, ...(o.offers ? o.offers(people) : {}) } };
     if (method === 'GET' && path.endsWith('/handover')) return { status: 200, body: { handover: o.handover ? o.handover(head, people) : null } };
     if (method === 'GET' && path.endsWith('/anchor')) return { status: 200, body: { anchor: { anchor: { admin_did: adminDid } } } };
-    if (method === 'GET' && path.includes('/trust')) return { status: 200, body: { lists: (o.asLists ? o.asLists(head) : []).map(l => ({ list: l, sigs: [] })) } };
+    if (method === 'GET' && path.includes('/trust')) return { status: 200, body: { lists: [] } };
     return { status: 201, body: {} };
   };
   const join = {
@@ -52,9 +52,9 @@ async function rig(o: { admin: boolean; offers?: (w: Who) => Record<string, unkn
     signWithCheck: async () => { out.touches++; return { sig: 'sig', check: { signature: 'chk' } }; },
     anchorState: async () => o.anchor ?? 'none',
     adminGate: gate,
-    d: { trust: { head: async () => (o.withHead === false ? (() => { throw new TeamTrustUnavailable('stale'); })() : head) }, grants: { verifiedChainOf: async () => ({}) } },
+    d: { trust: { head: async () => (o.withHead === false ? (() => { throw new TeamTrustUnavailable('stale'); })() : head) }, grants: { verifiedChainOf: async () => ({ devices: {}, root_did: 'x' }) } },
   } as unknown as TeamJoin;
-  out.c = new TeamListChanges({ join, store: { pin: () => (o.pin ? o.pin(head) : null) } as never, now: () => 1794000100 });
+  out.c = new TeamListChanges({ join, now: () => 1794000100 });
   return out;
 }
 
@@ -127,13 +127,13 @@ describe('a new identity of a member is a new join', () => {
 
   it('refuses before the code matched; then replaces the old DID by the new one with one touch', async () => {
     const r = await rig({ admin: true, anchor: 'ok', offers: offerOf });
-    await expect(r.c.replaceMember(TEAM, 'u-maria')).rejects.toMatchObject({ code: 'not_compared' });
+    await expect(r.c.replaceMember(TEAM, 'u-maria', r.people.maria)).rejects.toMatchObject({ code: 'not_compared' });
     expect(r.touches).toBe(0);
     const dk = await deviceKeys();
     // a wrong code counts; the right one (of the NEW DID the Authority Server names) matches
-    expect(await r.c.replaceCheck(TEAM, 'u-maria', '0000')).toMatchObject({ match: false, triesLeft: 2 });
-    expect(await r.c.replaceCheck(TEAM, 'u-maria', await dk.identityCode(r.people.newMaria))).toEqual({ match: true });
-    expect((await r.c.replaceMember(TEAM, 'u-maria')).version).toBe(4);
+    expect(await r.c.replaceCheck(TEAM, 'u-maria', r.people.maria, '0000')).toMatchObject({ match: false, triesLeft: 2 });
+    expect(await r.c.replaceCheck(TEAM, 'u-maria', r.people.maria, await dk.identityCode(r.people.newMaria))).toEqual({ match: true });
+    expect((await r.c.replaceMember(TEAM, 'u-maria', r.people.maria)).version).toBe(4);
     const post = r.posts.filter(p => p.method === 'POST').pop()!;
     expect(post.path).toBe(`/api/teams/${TEAM}/members/replace`);
     const dids = post.body.list.members.map((m: { did: string }) => m.did);
@@ -143,23 +143,32 @@ describe('a new identity of a member is a new join', () => {
     expect(r.touches).toBe(1);
   });
 
+  it('the comparison is for ONE old identity: a different old DID is refused and the match does not carry over', async () => {
+    const r = await rig({ admin: true, anchor: 'ok', offers: offerOf });
+    const dk = await deviceKeys();
+    await r.c.replaceCheck(TEAM, 'u-maria', r.people.maria, await dk.identityCode(r.people.newMaria));
+    await expect(r.c.replaceMember(TEAM, 'u-maria', r.people.jonas)).rejects.toMatchObject({ code: 'replacement_changed' });
+    await expect(r.c.replaceCheck(TEAM, 'u-maria', r.people.jonas, '1')).rejects.toMatchObject({ code: 'no_replacement' });
+    expect(r.touches).toBe(0);
+  });
+
   it('a person whose new anchor is missing or does not verify is not confirmed; no touch is spent', async () => {
     for (const anchor of ['none', 'invalid'] as const) {
       const r = await rig({ admin: true, anchor, offers: offerOf });
       const dk = await deviceKeys();
-      await r.c.replaceCheck(TEAM, 'u-maria', await dk.identityCode(r.people.newMaria));
-      await expect(r.c.replaceMember(TEAM, 'u-maria')).rejects.toMatchObject({ code: 'anchor_required' });
+      await r.c.replaceCheck(TEAM, 'u-maria', r.people.maria, await dk.identityCode(r.people.newMaria));
+      await expect(r.c.replaceMember(TEAM, 'u-maria', r.people.maria)).rejects.toMatchObject({ code: 'anchor_required' });
       expect(r.touches).toBe(0);
     }
   });
 
   it('three wrong codes close this person\'s check; a person with no new identity yet cannot be checked', async () => {
     const r = await rig({ admin: true, anchor: 'ok', offers: offerOf });
-    await r.c.replaceCheck(TEAM, 'u-maria', '1'); await r.c.replaceCheck(TEAM, 'u-maria', '2');
-    expect(await r.c.replaceCheck(TEAM, 'u-maria', '3')).toMatchObject({ match: false, triesLeft: 0 });
-    await expect(r.c.replaceCheck(TEAM, 'u-maria', '4')).rejects.toMatchObject({ code: 'tries_used' });
+    await r.c.replaceCheck(TEAM, 'u-maria', r.people.maria, '1'); await r.c.replaceCheck(TEAM, 'u-maria', r.people.maria, '2');
+    expect(await r.c.replaceCheck(TEAM, 'u-maria', r.people.maria, '3')).toMatchObject({ match: false, triesLeft: 0 });
+    await expect(r.c.replaceCheck(TEAM, 'u-maria', r.people.maria, '4')).rejects.toMatchObject({ code: 'tries_used' });
     const n = await rig({ admin: true, offers: w => ({ replace: [{ old_did: w.maria, new_did: null, user_id: 'u-maria' }] }) });
-    await expect(n.c.replaceCheck(TEAM, 'u-maria', '1')).rejects.toMatchObject({ code: 'new_identity_missing' });
+    await expect(n.c.replaceCheck(TEAM, 'u-maria', n.people.maria, '1')).rejects.toMatchObject({ code: 'new_identity_missing' });
   });
 });
 
@@ -197,16 +206,44 @@ describe('hand-over: the old admin signs last, and only what she expected', () =
     expect(post.body.list).toMatchObject({ admin_did: r.people.own, version: 4, prev: r.head.hash, handover: { admin_did: r.head.list.admin_did, key_id: K_OLD, chain_seq: 9 } });
     expect(post.body.list.members).toEqual(r.head.list.members);
   });
+  const listFor = (dk: Awaited<ReturnType<typeof deviceKeys>>, head: { list: MemberList; hash: string }, admin: string, own: string) =>
+    dk.buildMemberList({ ...head.list, version: head.list.version + 1, prev: head.hash, admin_did: admin, members: head.list.members, handover: { admin_did: own, key_id: K_ME, chain_seq: 5, chain_head: 'sha256:' + 'c'.repeat(64) }, key_id: K_B, nonce: Buffer.alloc(16, 'n').toString('base64url') } as never);
+
+  it('the old admin signs only for the person she chose at step 1, and only if she chose at all; no touch is spent otherwise', async () => {
+    const dk = await deviceKeys();
+    const r = await rig({ admin: true, handover: (head, w) => ({ you: 'old_admin', handover: {}, sigs: [{ key_id: K_B, sig: 's', check: {} }], list: listFor(dk, head, w.maria, w.own) }) });
+    await expect(r.c.handoverSign(TEAM)).rejects.toMatchObject({ code: 'handover_not_chosen' });
+    await r.c.handoverOffer(TEAM, r.people.jonas);       // she chose Jonas; the Authority Server serves a list for Maria
+    await expect(r.c.handoverSign(TEAM)).rejects.toMatchObject({ code: 'handover_mismatch' });
+    expect(r.touches).toBe(0);
+  });
+
+  it('the new admin\'s signature is verified BEFORE her touch: a signature that does not verify spends no touch', async () => {
+    const dk = await deviceKeys();
+    const r = await rig({ admin: true, handover: (head, w) => ({ you: 'old_admin', handover: {}, sigs: [{ key_id: K_B, sig: 's', check: {} }], list: listFor(dk, head, w.maria, w.own) }) });
+    await r.c.handoverOffer(TEAM, r.people.maria);
+    await expect(r.c.handoverSign(TEAM)).rejects.toMatchObject({ code: 'handover_invalid' });
+    expect(r.touches).toBe(0);
+  });
+
+  it('a choice older than 7 days is not honoured', async () => {
+    const dk = await deviceKeys();
+    const r = await rig({ admin: true, handover: (head, w) => ({ you: 'old_admin', handover: {}, sigs: [{ key_id: K_B, sig: 's', check: {} }], list: listFor(dk, head, w.maria, w.own) }) });
+    await r.c.handoverOffer(TEAM, r.people.maria);
+    (r.c as any).now = () => 1794000100 + 7 * 24 * 60 * 60 + 1;
+    await expect(r.c.handoverSign(TEAM)).rejects.toMatchObject({ code: 'handover_not_chosen' });
+  });
+
   it('a list that changes the members or does not name her device is refused and no touch is spent', async () => {
     const dk = await deviceKeys();
     const r = await rig({
       admin: true,
       handover: (head, w) => ({
         you: 'old_admin', handover: {}, sigs: [{ key_id: K_B, sig: 's', check: {} }],
-        list: dk.buildMemberList({ ...head.list, version: 4, prev: head.hash, admin_did: w.maria, members: head.list.members.slice(0, 2), handover: { admin_did: w.own, key_id: K_ME, chain_seq: 5, chain_head: 'sha256:' + 'c'.repeat(64) }, key_id: K_B, nonce: 'm' } as never),
+        list: dk.buildMemberList({ ...head.list, version: 4, prev: head.hash, admin_did: w.maria, members: head.list.members.slice(0, 2), handover: { admin_did: w.own, key_id: K_ME, chain_seq: 5, chain_head: 'sha256:' + 'c'.repeat(64) }, key_id: K_B, nonce: Buffer.alloc(16, 'n').toString('base64url') } as never),
       }),
     });
-    await expect(r.c.handoverSign(TEAM)).rejects.toMatchObject({ code: expect.stringMatching(/handover_mismatch|list_invalid/) });
+    await expect(r.c.handoverSign(TEAM)).rejects.toMatchObject({ code: expect.stringMatching(/handover_not_chosen|handover_mismatch|list_invalid/) });
     expect(r.touches).toBe(0);
   });
 });

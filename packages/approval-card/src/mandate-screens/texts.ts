@@ -197,6 +197,8 @@ export const S13 = {
   changesRemoveDone: (name: string): string => `${name} is removed. Your members no longer trust them.`,
   // a new identity of a member (admin): a new join
   changesNewIdentityIntro: (name: string): string => `${name} took a new identity. Compare identity codes with them again, as when they joined. Until you do, they are not trusted.`,
+  /** DRAFT: which identity is replaced by which (the ends of the two identities), so the admin sees WHAT is confirmed. */
+  changesNewIdentityFromTo: (oldTail: string, newTail: string | null): string => (newTail ? `Old identity ${oldTail}, new identity ${newTail}.` : `Old identity ${oldTail}.`),
   changesNewIdentityNotYet: (name: string): string => `${name} has not set up the new identity yet.`,
   changesNewIdentityType: (name: string): string => `Type ${name}'s new identity code`,
   changesNewIdentityAnchorWaiting: (name: string): string => `${name} has not compared your identity code yet.`,

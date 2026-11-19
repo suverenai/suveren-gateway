@@ -629,9 +629,6 @@ export class MandateGrants {
     try { return await run; } finally { this.teamInflight = null; }
   }
 
-  /** The sealed team-trust slot (pins): the take-over of a team whose admin took a new identity reads its own pin. */
-  teamTrustStore(): TeamTrustStore { return this.d.teamTrust; }
-
   /** The port the join screens take as `teamTrust`. */
   teamTrustPort(): TeamTrustPort {
     return {
