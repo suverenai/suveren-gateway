@@ -31,12 +31,12 @@ importers:
       '@suveren/approval-card':
         specifier: workspace:*
         version: link:../../packages/approval-card
+      '@suveren/pairing':
+        specifier: workspace:*
+        version: link:../../packages/pairing
       jsqr:
         specifier: ^1.4.0
         version: 1.4.0
-      qrcode-generator:
-        specifier: ^1.4.4
-        version: 1.5.2
       react:
         specifier: ^18.2.0
         version: 18.3.1
@@ -84,6 +84,9 @@ importers:
         specifier: ^7.30.1
         version: 7.30.1
     devDependencies:
+      '@suveren/pairing':
+        specifier: workspace:*
+        version: link:../../packages/pairing
       '@suveren/unlock-helper':
         specifier: workspace:*
         version: link:../../packages/unlock-helper
@@ -197,6 +200,9 @@ importers:
       '@hap/core':
         specifier: workspace:*
         version: link:../hap-core
+      qrcode-generator:
+        specifier: ^1.4.4
+        version: 1.5.2
     devDependencies:
       '@types/react':
         specifier: ^18.2.0
@@ -235,6 +241,19 @@ importers:
       typescript:
         specifier: ^5.3.0
         version: 5.9.3
+
+  packages/pairing:
+    dependencies:
+      '@hap/core':
+        specifier: workspace:*
+        version: link:../hap-core
+    devDependencies:
+      typescript:
+        specifier: ^5.3.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.7
+        version: 3.2.7(@types/node@20.19.35)(tsx@4.23.15)
 
   packages/unlock-helper:
     devDependencies:

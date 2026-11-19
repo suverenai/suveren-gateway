@@ -5174,3 +5174,14 @@ body.apr-has-strip .main-content { margin-right: 2.75rem; }
   body.print-recovery-code .recovery-code-print, body.print-recovery-code .recovery-code-print * { visibility: visible; }
   body.print-recovery-code .recovery-code-print { position: absolute; left: 0; top: 0; width: 100%; }
 }
+
+/* A QR code (the shared QrCode component: the pairing QR on the gateway page, the recovery code's QR on the phone). SVG rects, no image,
+   no inline style. A QR is dark on light whatever the theme: `color-scheme: light` makes the system colours Canvas and CanvasText light and dark. */
+.device-qr { display: block; width: 100%; max-width: 16rem; height: auto; margin: var(--space-4) auto; color-scheme: light; background: Canvas; }
+.device-qr rect { fill: CanvasText; }
+
+/* Three comparison codes to tap on one row (the shared CodeChoices component: the phone admits a computer, the gateway page admits a phone). */
+.device-choices { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-3); margin: var(--space-4) 0; }
+.device-choices .btn { font-family: var(--font-mono); font-size: var(--text-lead); padding: var(--space-4) var(--space-2); }
+/* `.device-screen .btn + .btn` (above) puts a gap between stacked buttons; in a row of three it would push buttons two and three down. */
+.device-screen .device-choices .btn + .btn { margin-top: 0; }

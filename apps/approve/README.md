@@ -28,7 +28,7 @@ wording); texts that already exist in the shared package (`S8`, `S13`) are impor
       content.ts          opening sealed content (own wrap, fingerprint check, card context)
       proposals.ts        reading requests       app-host.ts  the host seam of the shared card
       transport.ts        THE one network module (no other file calls fetch)
-      as-api.ts as-key.ts compat.ts chain-view.ts account-store.ts kv.ts idb.ts scan.ts qr-matrix.ts
+      as-api.ts as-key.ts compat.ts chain-view.ts account-store.ts kv.ts idb.ts scan.ts
       test-kit.ts         a fake server, a fake passkey, a fake computer (real keys and signatures)
     src/screens/   one file per screen group, plus `screens.test.tsx`
     public/        manifest, service worker (static shell only), icons, fonts

@@ -21,15 +21,15 @@ describe('the phone app\'s own CSS uses tokens only (the gateway page\'s rule, u
     }
   });
 
-  it('keeps only what is phone-specific: full height with safe areas, the QR, the scan frame, the code grid, the background blank', () => {
-    expect([...code.matchAll(/^\.([a-z-]+)/gm)].map((m) => m[1]).filter((v, i, a) => a.indexOf(v) === i)).toEqual(['ap-shell', 'ap-top', 'ap-qr', 'ap-scan', 'ap-scan-frame', 'ap-scan-line', 'ap-choices']);
+  it('keeps only what is phone-specific: full height with safe areas, the scan frame, the background blank', () => {
+    expect([...code.matchAll(/^\.([a-z-]+)/gm)].map((m) => m[1]).filter((v, i, a) => a.indexOf(v) === i)).toEqual(['ap-shell', 'ap-top', 'ap-scan', 'ap-scan-frame', 'ap-scan-line']);
     expect(code).toMatch(/safe-area-inset-top/);
     expect(code).toMatch(/max-width: 40rem/);
   });
 
-  it('the QR stays dark on light in both themes: it fixes its own colour scheme', () => {
-    expect(code).toMatch(/\.ap-qr \{[^}]*color-scheme: light; background: Canvas/);
-    expect(code).toMatch(/\.ap-qr rect \{ fill: CanvasText; \}/);
+  it('the QR is the shared one (the gateway\'s design system) and stays dark on light in both themes: it fixes its own colour scheme', () => {
+    expect(design).toMatch(/\.device-qr \{[^}]*color-scheme: light; background: Canvas/);
+    expect(design).toMatch(/\.device-qr rect \{ fill: CanvasText; \}/);
   });
 
   it('hides the content when the app goes to the background', () => {

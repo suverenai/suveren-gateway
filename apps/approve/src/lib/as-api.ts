@@ -40,14 +40,9 @@ export interface SessionAnswer {
   head: { seq: number; hash: string };
 }
 
-/** A mailbox message as it is stored: `{ kind, body, mac }` (plan 4.3). */
-export interface MailboxMessage { kind: string; body: Record<string, unknown>; mac: string }
-
-export interface MailboxAnswer {
-  messages: unknown[];
-  /** The chain of the mailbox owner, so the joiner can verify it (plan 6.2, `GET /api/devices/pairings/:id`). */
-  chain?: { root_did: string; entries: unknown[]; head: { seq: number; hash: string } };
-}
+// The mailbox's shapes are the shared package's (the gateway's control plane speaks the same ones).
+import type { MailboxMessage, MailboxAnswer } from '@suveren/pairing';
+export type { MailboxMessage, MailboxAnswer };
 
 export class AsApi {
   constructor(private readonly t: Transport) {}

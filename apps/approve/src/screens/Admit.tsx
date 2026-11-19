@@ -1,6 +1,7 @@
 import type { AdmitState } from '../lib/admit-driver';
 import { P } from '../texts';
 import { DeviceList } from './Devices';
+import { CodeChoices } from '@suveren/approval-card/components/CodeChoices';
 import { Notice, Screen } from './Frame';
 import { ScanView } from './ScanView';
 import { useState } from 'react';
@@ -44,11 +45,7 @@ export function AdmitScreen(p: AdmitScreenProps) {
         <Screen title={P.admitChooseTitle(st.choice.label)}>
           {st.error && <Notice kind="error">{st.error}</Notice>}
           <p>{P.admitChooseBody}</p>
-          <div className="ap-choices" data-testid="code-choices">
-            {st.choice.codes.map((c) => (
-              <button key={c} type="button" className="btn btn-secondary" data-testid="code-choice" onClick={() => p.onChoose(c)}>{c}</button>
-            ))}
-          </div>
+          <CodeChoices codes={st.choice.codes} onChoose={p.onChoose} />
           <p>{P.admitListTitle}</p>
           <DeviceList rows={st.choice.rows} nowSeconds={p.nowSeconds} />
           <button type="button" className="btn btn-ghost btn-full" onClick={p.onCancel}>{P.cancel}</button>

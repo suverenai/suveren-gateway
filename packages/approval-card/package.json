@@ -25,7 +25,8 @@
     "fixture:build": "vite build --config fixture/vite.config.ts"
   },
   "dependencies": {
-    "@hap/core": "workspace:*"
+    "@hap/core": "workspace:*",
+    "qrcode-generator": "^1.4.4"
   },
   "peerDependencies": {
     "react": "^18.2.0"

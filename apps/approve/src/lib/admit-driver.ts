@@ -14,10 +14,11 @@
  * AS and every other device verify the same entry again (3.3).
  */
 import {
-  b64uDecode, b64uEncode, comparisonCode, decodePairingQr, entryHash, entrySignedBytes, keyIdOf, pairingCommitment, randomBytes,
-  validateDevice, validateEntryShape, verifyChain, verifyEd25519, MAX_ACTIVE_DEVICES, activeDevices,
+  b64uEncode, comparisonCode, decodePairingQr, entryHash, entrySignedBytes, randomBytes,
+  verifyChain, MAX_ACTIVE_DEVICES, activeDevices,
   type ChainEntry, type PairingQr,
 } from '@hap/core/device-keys';
+import { checkOpen, codeChoices, OpenCheckError } from '@suveren/pairing';
 import { Driver } from './driver';
 import type { DeviceKeyStore } from './key-store';
 import type { CheckDevice } from './check';
@@ -25,7 +26,7 @@ import { CheckError } from './check';
 import type { AsApi } from './as-api';
 import type { AccountStore, StoredAccount } from './account-store';
 import type { DeviceSession } from './session';
-import { deviceRows, labelTaken, type DeviceRow } from './chain-view';
+import { deviceRows, type DeviceRow } from './chain-view';
 import { Mailbox, pairingKeysOf, type PairingKeys } from './mailbox';
 import { errorText } from '../texts';
 
@@ -69,25 +70,8 @@ interface Held {
   code?: string;
 }
 
-function sixDigits(): string {
-  const n = globalThis.crypto.getRandomValues(new Uint32Array(1))[0];
-  return String(n % 1_000_000).padStart(6, '0');
-}
-
-/** The real code and two others, no two equal, in random order. */
-export function codeChoices(real: string): string[] {
-  const out = [real];
-  while (out.length < 3) {
-    const c = sixDigits();
-    if (!out.includes(c)) out.push(c);
-  }
-  // Fisher-Yates with the platform's random source.
-  for (let i = out.length - 1; i > 0; i--) {
-    const j = globalThis.crypto.getRandomValues(new Uint32Array(1))[0] % (i + 1);
-    [out[i], out[j]] = [out[j], out[i]];
-  }
-  return out;
-}
+// `codeChoices` (the real code and two others) is the shared package's; kept exported here for the phone's tests.
+export { codeChoices };
 
 export class AdmitDriver extends Driver<AdmitState> {
   private h: Held | null = null;
@@ -176,33 +160,18 @@ export class AdmitDriver extends Driver<AdmitState> {
     const session = d.session.current();
     if (!session) { await this.stop('session_ended', false); return; }
     let entry: ChainEntry;
-    let sigBytes: Uint8Array;
     let rJ: Uint8Array;
+    let joinerSig: string;
     try {
-      const raw = body.entry as ChainEntry;
-      // The entry arrives without `sigs`; every other member is checked as a chain entry's.
-      if (!raw || typeof raw !== 'object' || !Array.isArray(raw.sigs) || raw.sigs.length !== 0) throw new Error('sigs');
-      validateEntryShape({ ...raw, sigs: [{ by: raw.signer, sig: b64uEncode(new Uint8Array(64)) }] });
-      entry = raw;
-      sigBytes = b64uDecode(body.sig as string);
-      rJ = b64uDecode(body.r_j as string);
-      if (sigBytes.length !== 64 || rJ.length !== 32) throw new Error('length');
-      const dev = validateDevice(entry.device);
-      const head = session.chain.head;
-      if (entry.op !== 'add' || entry.root_did !== h.account.root_did || entry.seq !== head.seq + 1 || entry.prev !== head.hash
-        || entry.signer !== h.account.key_id || entry.target !== null || entry.check !== null || entry.new_root !== null) throw new Error('entry');
-      if (dev.kind !== 'gateway') throw new Error('kind');
-      if (dev.key_id !== (await keyIdOf(b64uDecode(dev.sign_pub)))) throw new Error('key id');
-      if (!(await verifyEd25519(b64uDecode(dev.sign_pub), entrySignedBytes(entry), sigBytes))) throw new Error('signature');
-      // Message 4 must be the entry message 2 committed to.
-      if ((await pairingCommitment(entry, sigBytes, rJ)) !== h.commit) { await this.stop('commit_mismatch', true); return; }
-      if (labelTaken(session.chain, dev.label)) { await this.stop('label_taken', true); return; }
-    } catch {
-      await this.stop('open_invalid', true);
+      ({ entry, rJ, joinerSig } = await checkOpen(body, {
+        chain: session.chain, rootDid: h.account.root_did, admitterKeyId: h.account.key_id, kind: 'gateway', commit: h.commit as string,
+      }));
+    } catch (e) {
+      await this.stop(e instanceof OpenCheckError ? e.code : 'open_invalid', true);
       return;
     }
     h.entry = entry;
-    h.joinerSig = body.sig as string;
+    h.joinerSig = joinerSig;
     h.code = await comparisonCode(h.pairing.macKey, entry, rJ, h.rA as Uint8Array);
     const dev = entry.device as NonNullable<ChainEntry['device']>;
     const rows: AdmitChoice['rows'] = [
