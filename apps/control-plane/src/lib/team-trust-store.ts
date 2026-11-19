@@ -13,6 +13,7 @@
  * It checks nothing about a list itself: the caller verifies with hap-core first (lib/team-trust.ts) and then records here.
  */
 
+import type { MemberList } from '@hap/core/device-keys';
 import type { Vault } from './vault';
 
 const SLOT = 'teamTrust';
@@ -30,6 +31,8 @@ export interface VerifiedTeam {
   hash: string;
   /** Members at `version`, minus those whose own `leave` was applied; includes the admin. */
   members: TeamMemberRef[];
+  /** The newest verified list itself (as signed, leavers still in it): what the join screens build the next version on. */
+  head?: MemberList;
   /** Epoch seconds of the verification that produced this. */
   verifiedAt: number;
 }
@@ -48,7 +51,7 @@ export const BLOCKING_CODES: ReadonlySet<TeamTrustCode> = new Set<TeamTrustCode>
 
 export interface TeamWarning { code: TeamTrustCode; teamId: string; at: number; version?: number }
 
-interface TeamEntry { pin: TeamPinRef; anchorPin?: TeamPinRef; verified?: VerifiedTeam; at: number }
+interface TeamEntry { pin: TeamPinRef; /** The admin of the pinned version: which side this person is on is decided by it, never by the Authority Server's word. */ adminDid?: string; anchorPin?: TeamPinRef; verified?: VerifiedTeam; at: number }
 interface File { v: 1; teams: Record<string, TeamEntry>; /** The team this person is in now (null: none known). */ current: string | null; warning?: TeamWarning | null }
 
 const isInt = (n: unknown): n is number => typeof n === 'number' && Number.isSafeInteger(n) && n >= 1;
@@ -96,6 +99,29 @@ export class TeamTrustStore {
     this.write(f);
   }
 
+  /** The admin of the pinned version, or null before any list was accepted. */
+  pinnedAdmin(teamId: string): string | null {
+    if (!isTeamId(teamId)) throw new TeamTrustRefused('bad_request');
+    return this.read().teams[teamId]?.adminDid ?? null;
+  }
+
+  /**
+   * A valid hand-over away from this person was verified: the pin moves to the new admin's list (rollback and fork rules as in
+   * {@link accept}) and nothing is honoured from it until this person has an anchor of their own for the new admin.
+   */
+  advancePin(teamId: string, version: number, hash: string, adminDid: string, at: number): void {
+    if (!isTeamId(teamId) || !isInt(version) || !isHash(hash) || !isDid(adminDid)) throw new TeamTrustRefused('bad_request');
+    const f = this.read();
+    const cur = f.teams[teamId];
+    if (cur) {
+      if (version < cur.pin.version) throw new TeamTrustRefused('rollback');
+      if (version === cur.pin.version && hash !== cur.pin.hash) throw new TeamTrustRefused('fork');
+    }
+    f.teams[teamId] = { pin: { version, hash }, adminDid, ...(cur?.anchorPin ? { anchorPin: cur.anchorPin } : {}), at };
+    f.current = teamId;
+    this.write(f);
+  }
+
   pin(teamId: string): TeamPinRef | null {
     if (!isTeamId(teamId)) throw new TeamTrustRefused('bad_request');
     const p = this.read().teams[teamId]?.pin;
@@ -140,7 +166,8 @@ export class TeamTrustStore {
     f.teams[teamId] = {
       pin: { version: v.version, hash: v.hash },
       ...(anchorPin ?? cur?.anchorPin ? { anchorPin: anchorPin ?? cur!.anchorPin } : {}),
-      verified: { adminDid: v.adminDid, version: v.version, hash: v.hash, members: v.members.map(m => ({ did: m.did, name: m.name })), verifiedAt: v.verifiedAt },
+      adminDid: v.adminDid,
+      verified: { adminDid: v.adminDid, version: v.version, hash: v.hash, members: v.members.map(m => ({ did: m.did, name: m.name })), ...(v.head ? { head: v.head } : {}), verifiedAt: v.verifiedAt },
       at: v.verifiedAt,
     };
     f.current = teamId;

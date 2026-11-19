@@ -36,7 +36,7 @@ import { createInternalDeviceRouter } from './internal-device';
 import { isBearerCredential } from '../lib/as-credential';
 import { MandateGrantStore } from '../lib/mandate-grant-store';
 import { TeamTrustStore } from '../lib/team-trust-store';
-import { MandateGrants } from '../lib/mandate-grants';
+import { MandateGrants, type TeamTrustPort } from '../lib/mandate-grants';
 import { DeviceApprovals } from '../lib/device-approvals';
 
 export function deviceKeysEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -112,6 +112,10 @@ export function mountDeviceKeyRoutes(app: Express, o: DeviceKeyMountOptions): {
   grants?: MandateGrants;
   /** Checks what the person approved on ANY of their own devices, for the Setup tools; `/internal/mandate` runs only for these (plan 20.21.6). */
   approvals?: DeviceApprovals;
+  /** The verified head of the team's list for the join screens (pass as `teamTrust`). */
+  teamTrust?: TeamTrustPort;
+  /** The verified member DIDs, null when nothing is honoured (stage C). */
+  teamMembers?: () => Promise<ReadonlySet<string> | null>;
 } {
   if (!o.enabled) return { loginChangeGate: refusingGate };
   const json = o.jsonParser ?? express.json();
@@ -221,6 +225,6 @@ export function mountDeviceKeyRoutes(app: Express, o: DeviceKeyMountOptions): {
   app.use('/internal', json, createInternalOsSignalRouter(o.internalSecret, createOsSignalHook(o.pageSession.sessions)));
   return {
     loginChangeGate: createLoginChangeGate(o.vault, o.pageSession.sessions, o.confirmations),
-    ...(device ? { hasDeviceChain: () => device!.store.exists(), deviceChainState: () => device!.store.state(), signin: device.signin, grants: device.grants, approvals: device.approvals } : {}),
+    ...(device ? { hasDeviceChain: () => device!.store.exists(), deviceChainState: () => device!.store.state(), signin: device.signin, grants: device.grants, approvals: device.approvals, teamTrust: device.grants.teamTrustPort(), teamMembers: () => device!.grants.teamMembers() } : {}),
   };
 }

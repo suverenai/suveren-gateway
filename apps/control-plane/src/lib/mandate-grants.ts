@@ -21,7 +21,7 @@
 import { randomBytes } from 'node:crypto';
 import { buildMandateProjection, checkGroupCeilings, encryptProposalContent, decryptProposalContent, decodeMandateBlob, HapError, type AgentProfile, type MandatePayload } from '@hap/core';
 import { createGrantMembers, GRANT_FIXED_MEMBERS } from '@hap/core/mandate-grant';
-import type { ChainState, MandateGrant } from '@hap/core/device-keys';
+import type { ChainState, MandateGrant, MemberList } from '@hap/core/device-keys';
 import { platformCheckKey, platformCheckProof } from '@suveren/unlock-helper';
 import type { Vault } from './vault';
 import { deviceKeys, isDeviceKeysError } from './device-keys-lazy';
@@ -35,6 +35,20 @@ import { MandateGrantStore } from './mandate-grant-store';
 import type { TeamTrustStore, TeamTrustCode, VerifiedTeam } from './team-trust-store';
 import { ensureTeamTrust, refreshTeamTrust, honouredTeam, teamTrustFresh, type TeamTrustEnv } from './team-trust';
 import { CheckError, type CheckKeyStore, type PlatformChecks } from './platform-checks';
+
+/** Trust in the team's list is refused, blocked, or older than the grace window: the join screens do not build on it. `code` is a TeamTrustCode or 'stale'. */
+export class TeamTrustUnavailable extends Error {
+  constructor(readonly code: TeamTrustCode | 'stale') {
+    super(code);
+    this.name = 'TeamTrustUnavailable';
+  }
+}
+
+/** What the join screens (step 4) ask: the verified head of the team's list, from the slot, brought up to date when older than 5 minutes. */
+export interface TeamTrustPort {
+  /** The newest verified list and its hash; null when this person has no team or no list; throws {@link TeamTrustUnavailable} when trust is refused, blocked, or stale beyond the grace window. */
+  head(teamId: string, session: Session): Promise<{ list: MemberList; hash: string } | null>;
+}
 
 export const { grantFieldKeys, grantMembersOf } = createGrantMembers(buildMandateProjection);
 
@@ -588,6 +602,35 @@ export class MandateGrants {
     })();
     this.teamInflight = run;
     try { return await run; } finally { this.teamInflight = null; }
+  }
+
+  /** The port the join screens take as `teamTrust`. */
+  teamTrustPort(): TeamTrustPort {
+    return {
+      head: async (teamId, session) => {
+        const store = this.d.teamTrust;
+        const v = await ensureTeamTrust(this.teamEnv(session));
+        let cur: string | null;
+        try { cur = store.currentTeam(); } catch { throw new TeamTrustUnavailable('stale'); }
+        if (v && cur === teamId) {
+          if (!v.head) throw new TeamTrustUnavailable('stale');
+          return { list: v.head, hash: v.hash };
+        }
+        const w = this.teamTrustWarning();
+        if (w) throw new TeamTrustUnavailable(w.code);
+        if (cur !== teamId) return null;
+        let had: unknown = null;
+        try { had = store.verified(); } catch { /* locked */ }
+        if (had) throw new TeamTrustUnavailable('stale');
+        return null;
+      },
+    };
+  }
+
+  /** The verified member DIDs (admin included, leavers out), brought up to date when older than 5 minutes; null when nothing is honoured. */
+  async teamMembers(): Promise<ReadonlySet<string> | null> {
+    const v = await this.honouredTeam();
+    return v ? new Set(v.members.map(m => m.did)) : null;
   }
 
   /** The reason no colleague is honoured, if there is one (a code for the page). */

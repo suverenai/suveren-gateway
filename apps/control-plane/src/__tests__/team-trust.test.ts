@@ -392,18 +392,68 @@ describe('the admin\'s gateway: its own chain is the root, there is no anchor', 
     expect(store.pin(TEAM)).toMatchObject({ version: 2 });
   });
 
-  it('a list another person signed as admin is refused (a hacked server cannot make this person a non-admin or add a row)', async () => {
+  it('the server naming someone else as admin does not move an admin to the member path: no hand-over means rejected, blocking', async () => {
     const t = await team();
     const B = await person('Bob');
     const store = new TeamTrustStore(await vault());
     const r = rig({ me: t.A, chains: [t.A, t.M, B], store });
     r.served.lists = [t.v1, t.v2];
     expect((await refreshTeamTrust(r.env)).ok).toBe(true);
+    expect(store.pinnedAdmin(TEAM)).toBe(t.A.did);
     const v3 = await listOf({ version: 3, prev: t.v2.list, members: [B, t.A, t.M], admin: B });
     r.served.lists = [t.v1, t.v2, v3];
-    const out = await refreshTeamTrust(r.env);
-    expect(out.ok).toBe(false);
+    expect(await refreshTeamTrust(r.env)).toEqual({ ok: false, code: 'team_list_rejected' });
     expect(honouredTeam(store, r.clock.now)).toBeNull();
+  });
+
+  it('a valid hand-over from this admin (both signatures) is followed: the pin moves, the former admin needs a fresh anchor and honours nothing until then', async () => {
+    const t = await team();
+    const B = await person('Bob');
+    const store = new TeamTrustStore(await vault());
+    const r = rig({ me: t.A, chains: [t.A, t.M, B], store });
+    r.served.lists = [t.v1, t.v2];
+    expect((await refreshTeamTrust(r.env)).ok).toBe(true);
+    const v3 = await listOf({ version: 3, prev: t.v2.list, members: [B, t.A, t.M], admin: B, handover: t.A });
+    r.served.lists = [t.v1, t.v2, v3];
+    expect(await refreshTeamTrust(r.env)).toEqual({ ok: false, code: 'team_anchor_missing' });
+    expect(store.pin(TEAM)).toMatchObject({ version: 3 });
+    expect(store.pinnedAdmin(TEAM)).toBe(B.did);
+    expect(honouredTeam(store, r.clock.now)).toBeNull();
+    // the next run is a member's: without an anchor for Bob there is still nothing; with one the list is honoured
+    r.clock.now += 60;
+    expect(await refreshTeamTrust(r.env)).toEqual({ ok: false, code: 'team_anchor_missing' });
+    r.served.anchor = await anchorOf(t.A, B);
+    const again = await refreshTeamTrust(r.env);
+    expect(again.ok, JSON.stringify(again)).toBe(true);
+    expect(store.colleagues().sort()).toEqual([B.did, t.A.did, t.M.did].sort());
+  });
+
+  it('a hand-over signed by the new admin alone (no signature of this admin) is not followed', async () => {
+    const t = await team();
+    const B = await person('Bob');
+    const store = new TeamTrustStore(await vault());
+    const r = rig({ me: t.A, chains: [t.A, t.M, B], store });
+    r.served.lists = [t.v1, t.v2];
+    expect((await refreshTeamTrust(r.env)).ok).toBe(true);
+    const v3 = await listOf({ version: 3, prev: t.v2.list, members: [B, t.A, t.M], admin: B, handover: t.A });
+    (v3.sigs as unknown[]).pop();
+    r.served.lists = [t.v1, t.v2, v3];
+    expect(await refreshTeamTrust(r.env)).toEqual({ ok: false, code: 'team_list_rejected' });
+  });
+
+  it('keeps the verified head list itself (as signed) for the join screens, on both paths', async () => {
+    const t = await team();
+    const sa = new TeamTrustStore(await vault());
+    const ra = rig({ me: t.A, chains: [t.A, t.M], store: sa });
+    ra.served.lists = [t.v1, t.v2];
+    await refreshTeamTrust(ra.env);
+    expect(sa.verified()?.head).toMatchObject({ version: 2, admin_did: t.A.did });
+    const sm = new TeamTrustStore(await vault());
+    const rm = rig({ me: t.M, chains: [t.A, t.M], store: sm });
+    rm.served.lists = [t.v1, t.v2];
+    rm.served.anchor = t.anchor;
+    await refreshTeamTrust(rm.env);
+    expect(sm.verified()?.head).toMatchObject({ version: 2, admin_did: t.A.did });
   });
 
   it('an older list after a newer one was seen is a rollback here too', async () => {

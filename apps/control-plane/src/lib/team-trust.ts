@@ -150,7 +150,9 @@ async function leavesWithChains(env: TeamTrustEnv, page: Page): Promise<{ env: {
 
 const toPin = (p: { version: number; hash: string } | null): TeamPin | null => (p ? { version: p.version, hash: p.hash } : null);
 
-interface Verified { adminDid: string; version: number; hash: string; members: { did: string; name: string }[]; rejected: { version: number; code: string } | null; anchorPin?: TeamPin }
+interface Verified { adminDid: string; version: number; hash: string; members: { did: string; name: string }[]; rejected: { version: number; code: string } | null; anchorPin?: TeamPin; head?: MemberList;
+  /** A valid hand-over away from this person was found: they are a member now and need an anchor for the new admin (DEC-73 step 5). */
+  handedOver?: { version: number; hash: string; adminDid: string } }
 
 /** A member's check: the anchor, the admin's chain, the lists from the pin up, the leaves. */
 async function verifyAsMember(env: TeamTrustEnv, dk: DeviceKeys, teamId: string): Promise<Verified> {
@@ -194,6 +196,7 @@ async function verifyAsMember(env: TeamTrustEnv, dk: DeviceKeys, teamId: string)
       adminDid: trust.admin_did, version: trust.version, hash: trust.hash,
       members: trust.members.map(m => ({ did: m.did, name: m.name })),
       rejected: trust.rejected,
+      head: ((): MemberList | undefined => { const e = page.lists.find(l => isObj(l.list) && l.list.version === trust.version); try { return e ? dk.validateMemberList(e.list) : undefined; } catch { return undefined; } })(),
       anchorPin: { version: a2.version, hash: await dk.anchorHash(a2) },
     };
   }
@@ -254,7 +257,19 @@ async function verifyAsAdmin(env: TeamTrustEnv, dk: DeviceKeys, teamId: string):
     let walkError: unknown = null;
     for (let i = 0; i < seen.length; i++) {
       const { list, env: e } = seen[i];
-      if (list.admin_did !== env.ownDid) { walkError = new TeamTrustFailure('team_list_rejected', list.version); break; }
+      if (list.admin_did !== env.ownDid) {
+        // Another admin: only a valid hand-over FROM this person (both signatures, linked to the list this person signed) is followed.
+        if (i > 0 && lastOk === i - 1 && list.handover?.admin_did === env.ownDid && list.prev === seen[i - 1].hash && strict[i - 1]) {
+          try {
+            const next = await env.chain(list.admin_did);
+            await dk.verifyMemberList(e, { chain: next, oldAdminChain: env.own, prev: seen[i - 1].list, pin, linked: false });
+            dk.checkTeamPin(list.version, seen[i].hash, pin);
+            return { adminDid: list.admin_did, version: list.version, hash: seen[i].hash, members: [], rejected: null, handedOver: { version: list.version, hash: seen[i].hash, adminDid: list.admin_did } };
+          } catch (err) { walkError = isDeviceKeysError(err) && (err.code === 'ROLLBACK' || err.code === 'FORK') ? err : new TeamTrustFailure('team_list_rejected', list.version); break; }
+        }
+        walkError = new TeamTrustFailure('team_list_rejected', list.version);
+        break;
+      }
       if (i > 0 && seen[i - 1].list.version !== list.version - 1) { walkError = new TeamTrustFailure('team_list_history_gap'); break; }
       const step = i > 0 ? { prev: seen[i - 1].list } : from === 1 ? { prev: null } : { first: true as const };
       try {
@@ -284,7 +299,7 @@ async function verifyAsAdmin(env: TeamTrustEnv, dk: DeviceKeys, teamId: string):
     if (accepted < lastOk) rejected = { version: seen[accepted + 1].list.version, code: 'NOT_ACTIVE' };
     else if (lastOk + 1 < seen.length) rejected = { version: seen[lastOk + 1].list.version, code: isDeviceKeysError(walkError) ? walkError.code : walkError instanceof TeamTrustFailure ? walkError.code : 'INVALID' };
     const left = await appliedLeaves(env, dk, teamId, page, seen.slice(0, accepted + 1).map(x => x.list), best.list);
-    return { adminDid: best.list.admin_did, version: best.list.version, hash: best.hash, members: best.list.members.filter(m => !left.has(m.did)).map(m => ({ did: m.did, name: m.name })), rejected };
+    return { adminDid: best.list.admin_did, version: best.list.version, hash: best.hash, members: best.list.members.filter(m => !left.has(m.did)).map(m => ({ did: m.did, name: m.name })), rejected, head: best.list };
   }
   throw new TeamTrustFailure('team_list_history_gap');
 }
@@ -342,10 +357,21 @@ export async function refreshTeamTrust(env: TeamTrustEnv): Promise<RefreshResult
     // A requester view (no `lists`): this person is not an active member of the team.
     if (!Array.isArray(head.body.lists)) throw new TeamTrustFailure('team_not_a_member');
     if (head.body.head === null) throw new TeamTrustFailure('team_list_missing');
-    const asAdmin = head.body.admin_did === env.ownDid;
+    // Which side this person is on is decided by the admin of the version it PINNED, not by the Authority Server's word: a server that
+    // names someone else as admin does not move an admin to the member path (the lists must then show a valid hand-over, or are refused).
+    // Before any list was accepted, the server's word only picks the path to try; each path verifies against this person's own keys.
+    const pinned = store.pinnedAdmin(teamId);
+    const asAdmin = pinned !== null ? pinned === env.ownDid : head.body.admin_did === env.ownDid;
     const v = asAdmin ? await verifyAsAdmin(env, dk, teamId) : await verifyAsMember(env, dk, teamId);
+    if (v.handedOver) {
+      try { store.advancePin(teamId, v.handedOver.version, v.handedOver.hash, v.handedOver.adminDid, now); } catch (e) {
+        if (e instanceof TeamTrustRefused && (e.reason === 'rollback' || e.reason === 'fork')) throw new TeamTrustFailure(e.reason === 'rollback' ? 'team_list_rollback' : 'team_list_fork');
+        throw e;
+      }
+      throw new TeamTrustFailure('team_anchor_missing');
+    }
 
-    const team2: VerifiedTeam = { adminDid: v.adminDid, version: v.version, hash: v.hash, members: v.members, verifiedAt: now };
+    const team2: VerifiedTeam = { adminDid: v.adminDid, version: v.version, hash: v.hash, members: v.members, ...(v.head ? { head: v.head } : {}), verifiedAt: now };
     try { store.accept(teamId, team2, v.anchorPin); } catch (e) {
       if (e instanceof TeamTrustRefused && (e.reason === 'rollback' || e.reason === 'fork')) throw new TeamTrustFailure(e.reason === 'rollback' ? 'team_list_rollback' : 'team_list_fork');
       throw e;
