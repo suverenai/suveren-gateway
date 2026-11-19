@@ -67,7 +67,7 @@ function rig(own: string, as: (method: string, path: string) => { status: number
     asCall: async (_s: unknown, method: string, path: string) => { calls.push(`${method} ${path}`); return as(method, path); },
     verifiedChainOf: async () => { throw new Error('not reached in these tests'); },
   } as unknown as MandateGrants;
-  const join = new TeamJoin({ vault: {} as Vault, store: { exists: () => true } as unknown as DeviceChainStore, grants });
+  const join = new TeamJoin({ vault: {} as Vault, store: { exists: () => true } as unknown as DeviceChainStore, grants, trust: { head: async () => null } });
   return { join, calls };
 }
 
