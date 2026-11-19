@@ -7,6 +7,11 @@ import { AreaFilterPills, type AreaFilterOption } from '../components/AreaFilter
 import { AuthorizePicker } from '../components/AuthorizePicker';
 import { useSearchParams, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { EndMandateHost } from '../components/device/EndMandateHost';
+import { ChangeMandateHost } from '../components/device/ChangeMandateHost';
+import { HeldBackHost } from '../components/device/HeldBackHost';
+import { endIsDeviceSigned } from '../lib/end-mandate';
+import { deviceClient } from '../lib/device-client';
 import { DomainBadge } from '../components/DomainBadge';
 import { ObTypeLine, ObFold, ObLock, useFoldAccordion } from '../components/ObjectCard';
 import { COMMITMENT_REVIEW, COMMITMENT_AUTOMATIC } from '@suveren/approval-card/lib/commitment-words';
@@ -79,6 +84,8 @@ interface AuthCardProps {
   gateLoading: string | null;
   copiedHash: string | null;
   revokingHash: string | null;
+  /** Device-keys chain on this gateway: the person's own mandate is ended with the device-signed route (screen 4). */
+  deviceEnd?: boolean;
   copyingHash: string | null;
   profileConfigCache: Map<string, ProfileConfig | null>;
   /** Newest available version for this grant's profile, when it is newer than the pinned one. */
@@ -125,6 +132,7 @@ function AuthCard({
   gateLoading,
   copiedHash,
   revokingHash,
+  deviceEnd,
   copyingHash,
   profileConfigCache,
   mode,
@@ -418,10 +426,10 @@ function AuthCard({
               <button
                 type="button"
                 className="ob-btn"
-                onClick={() => onRevoke(item.authorization_id)}
+                onClick={() => onRevoke(item.authorization_id, undefined, profileShortName)}
                 disabled={revokingHash === item.authorization_id}
               >
-                {revokingHash === item.authorization_id ? 'Revoking…' : 'Revoke'}
+                {deviceEnd ? 'End' : revokingHash === item.authorization_id ? 'Revoking…' : 'Revoke'}
               </button>
             ) : null}
             {/* Archive: a local display flag for finished mandates. Deletes
@@ -601,6 +609,17 @@ export function AuthorizationsPage() {
   const navigate = useNavigate();
   const { group, groupId, domain: activeDomain, mode, activeTeam } = useAuth();
   const isAdmin = activeTeam?.isAdmin === true;
+  const { deviceKeysSwitch, access } = useAuth();
+  const [deviceEnd, setDeviceEnd] = useState(false);
+  const [changeTarget, setChangeTarget] = useState<{ id: string; changes: Record<string, unknown> } | null>(null);
+  const [endTarget, setEndTarget] = useState<{ id: string; name: string; until: string | null } | null>(null);
+  // Only a gateway with the switch on, a password session and a set-up device ends mandates by device key; every other gateway keeps today's Revoke.
+  useEffect(() => {
+    if (!deviceKeysSwitch || access !== 'password') { setDeviceEnd(false); return; }
+    let live = true;
+    void deviceClient.status().then(r => { if (live) setDeviceEnd(r.ok && endIsDeviceSigned({ deviceKeysSwitch, access }, r.data)); });
+    return () => { live = false; };
+  }, [deviceKeysSwitch, access]);
 
   const [profileConfigCache, setProfileConfigCache] = useState<Map<string, ProfileConfig | null>>(
     () => new Map(),
@@ -891,6 +910,11 @@ export function AuthorizationsPage() {
   };
 
   const handleRevoke = async (authorizationId: string, ownerLabel?: string, profileShortName?: string) => {
+    if (deviceEnd && !ownerLabel) {
+      const row = items.find(i => i.authorization_id === authorizationId);
+      setEndTarget({ id: authorizationId, name: row?.title || profileShortName || 'this area', until: row?.earliest_expiry ? new Date(row.earliest_expiry).toLocaleString(undefined, { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : null });
+      return;
+    }
     const confirmMsg = ownerLabel && profileShortName
       ? `Revoke ${ownerLabel}'s ${profileShortName} mandate? This cannot be undone.`
       : 'Revoke this mandate? The agent will no longer be able to execute actions under it.';
@@ -996,6 +1020,7 @@ export function AuthorizationsPage() {
     gateLoading,
     copiedHash,
     revokingHash,
+    deviceEnd,
     copyingHash,
     profileConfigCache,
     mode,
@@ -1189,11 +1214,33 @@ export function AuthorizationsPage() {
         </div>
       )}
 
+      {/* Step 13, same chain check as End: what this gateway holds back, and the Change screen (Touch ID). */}
+      {deviceEnd && <HeldBackHost />}
+      {changeTarget && (
+        <ChangeMandateHost
+          authorizationId={changeTarget.id}
+          changes={changeTarget.changes}
+          onChanged={() => { spClient.resyncGates().catch(() => {}); fetchMineItems(); }}
+          onClose={() => setChangeTarget(null)}
+        />
+      )}
+
+      {endTarget && (
+        <EndMandateHost
+          authorizationId={endTarget.id}
+          profileName={endTarget.name}
+          activeUntil={endTarget.until}
+          onEnded={() => { setRevokedSet(prev => new Set(prev).add(endTarget.id)); spClient.resyncGates().catch(() => {}); }}
+          onClose={() => setEndTarget(null)}
+        />
+      )}
+
       {/* Extend Modal */}
       {extendItem && (
         <ExtendAuthModal
           item={extendItem}
           onClose={() => setExtendItem(null)}
+          {...(deviceEnd ? { onPickDuration: (ttl: number) => { setChangeTarget({ id: extendItem.authorization_id, changes: { durationHours: ttl / 3600 } }); setExtendItem(null); } } : {})}
           onSuccess={() => {
             setExtendItem(null);
             fetchMineItems();

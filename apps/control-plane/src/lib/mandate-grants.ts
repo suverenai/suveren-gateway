@@ -90,6 +90,17 @@ export interface IssueInput {
   as: (method: 'GET' | 'POST', path: string, body?: unknown) => Promise<{ status: number; body: any }>;
 }
 
+export interface PreparedGrant {
+  mode: 'automatic' | 'review' | 'review_above_cap';
+  /** Informational: now + the duration. The binding of a give uses the duration, not this. */
+  expiresAt: number;
+  caps: Record<string, number> | null;
+  approvals: number | null;
+  approvers: Array<{ userId: string; did: string; identityCode: string; isYou: boolean; confirmed: boolean }>;
+  chainDids: string[];
+  blocked: { code: string; message: string; approvers?: Array<{ userId: string; did: string; identityCode: string }> } | null;
+}
+
 export interface Issued {
   mandateId: string;
   mandateVersion: number;
@@ -311,17 +322,47 @@ export class MandateGrants {
   }
 
   /**
-   * Prepare, sign and store the grant for this mandate and store its sealed body. Returns what the ceremony adds
-   * to its own request to the Authority Server. Throws {@link GrantRefusal}.
+   * What a give would grant, WITHOUT the touch and without any write at the Authority Server or here: the team's part as this gateway
+   * computes it, each approver with their DID, identity code and whether this person confirmed them, and the first refusal the real give
+   * would meet before the touch (`blocked`). Reads only (the chain, the approvers' chains, the team settings).
    */
-  async issue(i: IssueInput): Promise<Issued> {
+  async prepare(i: IssueInput): Promise<PreparedGrant> {
     const { d } = this;
     const dk = await deviceKeys();
     const s = await this.session();
-    if (!d.checks || !d.checkStore) return refuse('no_check_key', 'This computer has no check key, so it cannot grant a mandate.');
+    const empty = (blocked: PreparedGrant['blocked']): PreparedGrant => ({ mode: i.mode, expiresAt: this.now() + i.ttlSeconds, caps: null, approvals: null, approvers: [], chainDids: [], blocked });
+    try {
+      if (!d.checks || !d.checkStore) return empty({ code: 'no_check_key', message: 'This computer has no check key, so it cannot grant a mandate.' });
+      const plan = await this.planGrant(i, s, dk, true);
+      let blocked: PreparedGrant['blocked'] = null;
+      if (plan.unconfirmed.length > 0) {
+        blocked = { code: 'approver_identity_unconfirmed', message: 'Compare the identity code of each new approver before granting.', approvers: plan.unconfirmed.map(a => ({ userId: a.userId, did: a.did, identityCode: a.identityCode })) };
+      } else {
+        let checkKey;
+        try { checkKey = d.checkStore.read(); } catch { checkKey = undefined; }
+        const device = s.own.devices[s.stored.keyId];
+        if (!checkKey || !device?.check || !dk.checkKeysEqual(device.check, platformCheckKey(checkKey.publicKey))) blocked = { code: 'no_check_key', message: 'This computer has no check key that its chain names, so it cannot grant a mandate.' };
+      }
+      const t = plan.team;
+      return {
+        mode: t.mode, expiresAt: plan.expiresAt, caps: t.caps ?? null, approvals: t.approvals ?? null, chainDids: t.chainDids,
+        approvers: t.identities.map(a => ({ userId: a.userId, did: a.did, identityCode: a.identityCode, isYou: a.did === s.stored.rootDid, confirmed: a.did === s.stored.rootDid || d.grants.approverConfirmed(a.did) || (i.confirmedApproverDids ?? []).includes(a.did) })),
+        blocked,
+      };
+    } catch (e) {
+      if (e instanceof GrantRefusal) return empty({ code: e.code, message: e.message, ...(Array.isArray(e.extra.approvers) ? { approvers: e.extra.approvers as never } : {}) });
+      throw e;
+    }
+  }
 
+  /**
+   * Steps 1 to 3 of a give: who the mandate is for, the mandate it continues, the team's part, the members of the grant. Reads only.
+   * `dry`: an unconfirmed approver is not a refusal here (the caller lists it) and nothing is remembered.
+   */
+  private async planGrant(i: IssueInput, s: Session, dk: Awaited<ReturnType<typeof deviceKeys>>, dry: boolean) {
+    const { d } = this;
     // 1. who the mandate is for: the signed-in person, and nobody else
-    if (i.ownDid !== s.stored.rootDid) return refuse('wrong_identity', 'The signed-in person is not the owner of this device chain.');
+    if (i.ownDid !== s.stored.rootDid) throw new GrantRefusal('wrong_identity', 'The signed-in person is not the owner of this device chain.');
 
     // 2. the mandate this one continues, if any
     let mandateId: string = typeof i.mandateId === 'string' && MANDATE_ID.test(i.mandateId) ? i.mandateId : randomBytes(18).toString('base64url');
@@ -338,7 +379,7 @@ export class MandateGrants {
       prevGrant = was;
       // The mandate the AS named must be the one the owner granted for THIS authorization.
       if (typeof was.authorization_id !== 'string' || was.authorization_id !== (i.replaces ?? i.authorizationId)) {
-        return refuse('mandate_mismatch', 'The mandate to change was already replaced by another.');
+        throw new GrantRefusal('mandate_mismatch', 'The mandate to change was already replaced by another.');
       }
       mandateId = prev.mandateId;
       version = prev.version + 1;
@@ -354,12 +395,12 @@ export class MandateGrants {
     // 3. the team's part, and the payload as the Authority Server will sign it
     const team = await this.teamFields(i, s);
     const unconfirmed = team.identities.filter(a => a.did !== s.stored.rootDid && !d.grants.approverConfirmed(a.did) && !(i.confirmedApproverDids ?? []).includes(a.did));
-    if (unconfirmed.length > 0) {
-      return refuse('approver_identity_unconfirmed', 'Compare the identity code of each new approver before granting.', { approvers: unconfirmed.map(a => ({ userId: a.userId, did: a.did, identityCode: a.identityCode })) });
+    if (unconfirmed.length > 0 && !dry) {
+      throw new GrantRefusal('approver_identity_unconfirmed', 'Compare the identity code of each new approver before granting.', { approvers: unconfirmed.map(a => ({ userId: a.userId, did: a.did, identityCode: a.identityCode })) });
     }
     // The person compared these codes: remembered, so each DID is asked about once.
     const compared = (i.confirmedApproverDids ?? []).filter(x => team.identities.some(a => a.did === x));
-    if (compared.length > 0) { try { d.grants.confirmApprovers(compared); } catch { /* asked again next time */ } }
+    if (compared.length > 0 && !dry) { try { d.grants.confirmApprovers(compared); } catch { /* asked again next time */ } }
     const now = this.now();
     const expiresAt = now + i.ttlSeconds;
     const carries = team.approvers !== undefined;
@@ -379,9 +420,25 @@ export class MandateGrants {
     if (i.renewal && prevGrant) {
       for (const k of Object.keys(members)) {
         if (k === 'expires_at') continue;
-        if (dk.jcs({ x: members[k] }) !== dk.jcs({ x: prevGrant[k] ?? null })) return refuse('renewal_is_a_change', `Extending only moves the end date; "${k}" differs from what was granted, so this is a change.`, { member: k });
+        if (dk.jcs({ x: members[k] }) !== dk.jcs({ x: prevGrant[k] ?? null })) throw new GrantRefusal('renewal_is_a_change', `Extending only moves the end date; "${k}" differs from what was granted, so this is a change.`, { member: k });
       }
     }
+
+    return { mandateId, version, op, replaces, authorizationId, team, members, expiresAt, now, carries, unconfirmed };
+  }
+
+  /**
+   * Prepare, sign and store the grant for this mandate and store its sealed body. Returns what the ceremony adds
+   * to its own request to the Authority Server. Throws {@link GrantRefusal}.
+   */
+  async issue(i: IssueInput): Promise<Issued> {
+    const { d } = this;
+    const dk = await deviceKeys();
+    const s = await this.session();
+    if (!d.checks || !d.checkStore) return refuse('no_check_key', 'This computer has no check key, so it cannot grant a mandate.');
+
+    const plan = await this.planGrant(i, s, dk, false);
+    const { mandateId, version, op, team, members, expiresAt, now, carries, replaces } = plan;
 
     // 4. this computer's check key must be the one its chain names, BEFORE anything is asked of the person
     let checkKey;

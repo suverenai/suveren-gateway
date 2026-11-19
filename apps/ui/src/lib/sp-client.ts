@@ -529,6 +529,22 @@ export interface BuiltinStatus {
  * below, instead of re-deriving this per method (and re-missing the new
  * envelope per method, which is exactly how this bug happened).
  */
+/** What a give would grant, as the gateway checked it (POST /api/mandate/prepare); the page shows this and echoes `planHash` with the give. */
+export interface PreparedMandate {
+  planHash: string; profileId: string; profileName: string; profileHash: string;
+  mode: 'automatic' | 'review' | 'review_above_cap'; ttlSeconds: number; expiresAt: number;
+  bounds: Array<{ field: string; label: string; value: string | number; unit?: string }>;
+  scope: Array<{ field: string; label: string; value: string | number; unit?: string }>;
+  intent: string;
+  team: { approvers: Array<{ userId: string; did: string; identityCode: string; isYou: boolean; confirmed: boolean }>; approvals: number | null; caps: Array<{ field: string; label: string; value: string | number; unit?: string }> } | null;
+  blocked: { code: string; message: string; approvers?: Array<{ userId: string; did: string; identityCode: string }> } | null;
+}
+
+/** A refused `/api/mandate/sign`: the same message as before, plus the gateway's code (and, for unconfirmed approvers, who). */
+export class MandateSignError extends Error {
+  constructor(message: string, readonly code: string | undefined, readonly status: number, readonly approvers?: Array<{ userId: string; did: string; identityCode: string }>, readonly reason?: string) { super(message); this.name = 'MandateSignError'; }
+}
+
 export function asErrorMessage(body: unknown, fallback: string): string {
   const r = readRefusal(body, fallback);
   return r.code && r.message !== r.code ? `${r.message} (${r.code})` : r.message;
@@ -1050,6 +1066,59 @@ class SPClient {
       const err = await res.json().catch(() => ({ error: 'Failed to revoke' }));
       throw new Error(asErrorMessage(err, `Revoke failed: ${res.status}`));
     }
+  }
+
+  /**
+   * End a mandate on a gateway with a device chain (step 13, screen 4): signed by an active device key, final, no Touch ID.
+   * Answers a code the page maps to its text; never throws for a refusal. A gateway without a chain answers 409 not_set_up.
+   */
+  async endMandate(authorizationId: string): Promise<{ ok: true } | { ok: false; code: 'already_ended' | 'unknown' | 'offline' | 'other' }> {
+    let res: Response;
+    try {
+      res = await this.fetch('/api/mandate/revoke', { method: 'POST', body: JSON.stringify({ authorizationId }) });
+    } catch { return { ok: false, code: 'offline' }; }
+    if (res.ok) return { ok: true };
+    const body = await res.json().catch(() => ({})) as { code?: string; grantCode?: string };
+    const code = body.grantCode ?? body.code;
+    if (code === 'mandate_revoked') return { ok: false, code: 'already_ended' };
+    if (code === 'mandate_unknown') return { ok: false, code: 'unknown' };
+    if (code === 'as_unreachable' || res.status === 502 || res.status === 503) return { ok: false, code: 'offline' };
+    return { ok: false, code: 'other' };
+  }
+
+  /** Mandates this gateway holds back, with its own verdict code (step 13, screen 3). `null` when it cannot say (no chain, offline). Read-only. */
+  async getHeldBack(): Promise<Array<{ authorizationId: string; mandateId: string; code: string; profileName: string; ownerIsYou: boolean; ownerName: string | null; adminName: string | null }> | null> {
+    try {
+      const res = await this.fetch('/api/mandate/held-back');
+      if (!res.ok) return null;
+      const body = await res.json() as { held?: unknown };
+      return Array.isArray(body.held) ? body.held as never : null;
+    } catch { return null; }
+  }
+
+  /** The prepared change for a mandate: the gateway's diff and the team's terms before (signed) and after (settings now). Signs nothing. */
+  async previewMandateChange(authorizationId: string, changes: Record<string, unknown>): Promise<
+    | { ok: true; profileName: string; diff: import('@hap/core/mandate-change').MandateDiff; before: import('@suveren/approval-card/mandate-screens').TeamTerms | null; after: import('@suveren/approval-card/mandate-screens').TeamTerms | null }
+    | { ok: false; code: 'no_change' | 'not_your_mandate' | 'mandate_not_active' | 'other' }
+  > {
+    try {
+      const res = await this.fetch(`/api/mandate/change-preview?authorizationId=${encodeURIComponent(authorizationId)}&changes=${encodeURIComponent(JSON.stringify(changes))}`);
+      const body = await res.json().catch(() => ({})) as Record<string, unknown>;
+      if (res.ok) return { ok: true as const, ...(body as { profileName: string; diff: never; before: null; after: null }) };
+      const code = body.code as string | undefined;
+      return { ok: false, code: code === 'no_change' || code === 'not_your_mandate' || code === 'mandate_not_active' ? code : 'other' };
+    } catch { return { ok: false, code: 'other' }; }
+  }
+
+  /** Sign the change with this computer's check (Touch ID). `sealedDiff` is the diff that was shown: a different change is refused. */
+  async changeMandate(authorizationId: string, changes: Record<string, unknown>, sealedDiff: unknown): Promise<{ ok: true } | { ok: false; code: 'changed_since_proposal' | 'no_change' | 'not_your_mandate' | 'mandate_not_active' | 'cancelled' | 'other' }> {
+    let res: Response;
+    try { res = await this.fetch('/api/mandate/change', { method: 'POST', body: JSON.stringify({ authorizationId, changes, sealedDiff }) }); } catch { return { ok: false, code: 'other' }; }
+    if (res.ok) return { ok: true };
+    const body = await res.json().catch(() => ({})) as { code?: string; grantCode?: string };
+    if (body.grantCode === 'check_failed') return { ok: false, code: 'cancelled' };
+    const c = body.code;
+    return { ok: false, code: c === 'changed_since_proposal' || c === 'no_change' || c === 'not_your_mandate' || c === 'mandate_not_active' ? c : 'other' };
   }
 
   async getAttestations(authorizationId: string): Promise<AttestationsResult> {
@@ -2282,6 +2351,16 @@ class SPClient {
     return data.authorizations ?? [];
   }
 
+  /** A dry run of the give on a chain gateway: what would be granted and what would be refused before the touch. Writes and touches nothing. */
+  async prepareMandate(request: Record<string, unknown>): Promise<{ ok: true; prepared: PreparedMandate } | { ok: false; message: string; code?: string }> {
+    try {
+      const res = await this.fetch('/api/mandate/prepare', { method: 'POST', body: JSON.stringify(request) });
+      const body = await res.json().catch(() => ({})) as Record<string, unknown>;
+      if (res.ok) return { ok: true, prepared: body as unknown as PreparedMandate };
+      return { ok: false, message: asErrorMessage(body, `Preparing failed: ${res.status}`), code: (body.grantCode ?? body.code) as string | undefined };
+    } catch { return { ok: false, message: 'The gateway could not be reached.', code: 'offline' }; }
+  }
+
   /** Sign a mandate through the control plane: the same steps as the AI path. */
   async signMandate(request: {
     team: string;
@@ -2295,10 +2374,15 @@ class SPClient {
     title: string;
     discloseIdentity: boolean;
     replaces?: string;
+    /** A chain gateway: the hash of the plan `prepareMandate` returned for this request. */
+    planHash?: string;
   }): Promise<{ authorizationId: string; revokeError?: string }> {
     const res = await this.fetch('/api/mandate/sign', { method: 'POST', body: JSON.stringify(request) });
     const body = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(asErrorMessage(body, `Signing failed: ${res.status}`));
+    if (!res.ok) {
+      const b = body as { code?: string; grantCode?: string; approvers?: unknown; reason?: string };
+      throw new MandateSignError(asErrorMessage(body, `Signing failed: ${res.status}`), b.grantCode ?? b.code, res.status, Array.isArray(b.approvers) ? b.approvers as MandateSignError['approvers'] : undefined, b.reason);
+    }
     return body as { authorizationId: string; revokeError?: string };
   }
 

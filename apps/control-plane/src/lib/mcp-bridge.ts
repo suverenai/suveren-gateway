@@ -205,6 +205,23 @@ export async function getProposalFacts(p: { proposalId: string; authorizationId:
   return { mandateId: body.mandateId, actionType: body.actionType };
 }
 
+/** The mandates this gateway holds back, with its own verdict code (read-only; the MCP server owns the verdicts). */
+export async function getHeldBack(): Promise<Array<{ authorizationId: string; code: string; profileId?: string; ownerDid?: string; mandateId?: string }>> {
+  const res = await fetch(`${MCP_BASE}/internal/held-back`, { headers: internalHeaders(), signal: AbortSignal.timeout(10_000) });
+  if (!res.ok) throw new Error(`MCP held-back failed: ${res.status}`);
+  const body = await res.json() as { held?: unknown };
+  return Array.isArray(body.held) ? body.held as never : [];
+}
+
+/** The signed mandate as the MCP server read it, plus the team terms the owner signed. A refusal comes back as `{ refusal, code }`. */
+export async function getSignedMandate(authorizationId: string): Promise<{ old: import('./mandate-ceremony').SignedMandate; team: { approverDids: string[]; approvals: number | null; caps: Record<string, number> } } | { refusal: string; code: string }> {
+  const res = await fetch(`${MCP_BASE}/internal/signed-mandate`, { method: 'POST', headers: internalHeaders(), body: JSON.stringify({ authorizationId }), signal: AbortSignal.timeout(10_000) });
+  const body = await res.json().catch(() => ({})) as Record<string, unknown>;
+  if (res.status === 409) return { refusal: String(body.error ?? 'not readable'), code: String(body.code ?? 'MANDATE_NOT_READABLE') };
+  if (!res.ok) throw new Error(`MCP signed-mandate failed: ${res.status}`);
+  return body as never;
+}
+
 // ─── Integration management ──────────────────────────────────────────────
 
 /** Argument schemas + approvalView hints per tool, for the approval screen. */

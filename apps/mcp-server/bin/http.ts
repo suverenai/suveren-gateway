@@ -50,6 +50,7 @@ import { resolveWhoLabel } from '../src/lib/who-label';
 import { outcomeEntryFor } from '../src/lib/outcome-outbox';
 import { decryptRejectionNote } from '../src/lib/proposal-content';
 import { resolveProposalFacts, controlPlaneDevice } from '../src/lib/device-decisions';
+import { readSignedMandate, latestSigned } from '../src/lib/mandate-change';
 import { makeGrantGate, resyncVerdict } from '../src/lib/mandate-grants';
 import { checkSentArgs, resultView, headlineArgs } from '../src/lib/ticket-content';
 import { homedir } from 'node:os';
@@ -299,6 +300,35 @@ app.post('/internal/clear-session', internalOnly, (req: Request, res: Response) 
   state.spClient.clearSession(validReason);
   console.error(`[Suveren MCP] Session cleared by control-plane (${validReason ?? 'expired'})`);
   res.json({ ok: true });
+});
+
+/**
+ * Mandates this gateway holds back, with its own verdict code (the page's "held back" list; control plane only, read-only).
+ * A check that could not be made (the Authority Server or control plane unreachable) is not a verdict and is not listed.
+ */
+const TRANSIENT_VERDICTS = new Set(['grants_unavailable', 'chain_unavailable', 'device_state_unavailable', 'body_unavailable']);
+app.get('/internal/held-back', internalOnly, (_req: Request, res: Response) => {
+  res.json({ held: state.cache.withheldList().filter(h => !TRANSIENT_VERDICTS.has(h.code)) });
+});
+
+/**
+ * The signed mandate as this gateway read it, for a change the person starts on the page: the old mandate as the change flow takes
+ * it, and the team terms the owner SIGNED (approvers as DIDs, the approval count, the caps). Control plane only.
+ */
+app.post('/internal/signed-mandate', internalOnly, (req: Request, res: Response) => {
+  const id = (req.body as { authorizationId?: unknown } | undefined)?.authorizationId;
+  if (typeof id !== 'string' || !id) { res.status(400).json({ error: 'Missing authorizationId' }); return; }
+  const read = readSignedMandate(state, id);
+  if ('refusal' in read) { res.status(409).json({ error: read.refusal, code: read.code }); return; }
+  const p = latestSigned(read.authorization)?.payload;
+  res.json({
+    old: read.old, short: read.short,
+    team: {
+      approverDids: Array.isArray(p?.above_cap_approvers) ? p!.above_cap_approvers : [],
+      approvals: typeof p?.above_cap_approvals === 'number' ? p!.above_cap_approvals : null,
+      caps: p?.above_cap_caps && typeof p.above_cap_caps === 'object' ? p.above_cap_caps : {},
+    },
+  });
 });
 
 app.post('/internal/gate-content', internalOnly, async (req: Request, res: Response) => {

@@ -28,7 +28,7 @@ export type SignedMandateRead = { old: SignedMandate; short: string; authorizati
 const short = (id: string) => id.replace(/@.*$/, '').split('/').pop()?.toLowerCase() ?? id;
 
 /** The newest decodable blob of this mandate: the one the Authority Server treats as current. */
-function latestSigned(auth: EnrichedAuthorization) {
+export function latestSigned(auth: EnrichedAuthorization) {
   let best: ReturnType<typeof decodeMandateBlob> | undefined;
   let at = -Infinity;
   for (const a of auth.attestations) {

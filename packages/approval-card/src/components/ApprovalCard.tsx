@@ -13,6 +13,7 @@
  * ticket line, plain text, never shaped like a button. If the call fails the
  * buttons come back with the error and nothing shows a ✓ (backend truth).
  */
+import { S13 } from '../mandate-screens/texts';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { ProposalLink } from '../lib/proposal-links';
 import type { IntegrationManifest, Proposal, ShownSnapshotPayload } from '../types';
@@ -216,7 +217,11 @@ export function ApprovalCard({
   const dismiss = onDismissResult && dismissLabel ? (
     <button type="button" className="av3-btn av3-btn-primary av3-result-act" data-testid="result-dismiss" onClick={onDismissResult}>{dismissLabel}</button>
   ) : null;
-  const approveWord = isChange ? 'Approve and sign' : isMandate ? 'Sign mandate' : 'Approve';
+  // A chain account gives a mandate with its device touch (DEC-80): same words as the review step, shared text module.
+  const giveWording = (approvalHost().useGiveWording ?? (() => false))();
+  const approveWord = giveWording
+    ? (isChange ? S13.giveCardApprove : isMandate ? S13.giveCardButton : 'Approve')
+    : isChange ? 'Approve and sign' : isMandate ? 'Sign mandate' : 'Approve';
   const describedBy = `human-only-${proposal.id}`;
 
   return (

@@ -153,7 +153,7 @@ export interface BootOptions {
   /** The desktop notification for a pending request for a new root DID (step 7). */
   notifyIdentityReset?: (title: string, message: string) => void;
   /** Mount `/api/mandate` (the sign page's router, step 13) with the real ceremony; only the intent delivery is a recorder. */
-  mandate?: { deliver?: CeremonyDeps['deliverGateContent'] };
+  mandate?: { deliver?: CeremonyDeps['deliverGateContent']; reads?: import('../../routes/mandate').MandateReads };
 }
 
 export async function bootGateway(o: BootOptions): Promise<GatewayRig> {
@@ -227,7 +227,7 @@ export async function bootGateway(o: BootOptions): Promise<GatewayRig> {
       resyncGates: async () => { resynced.count++; },
       ...(grants ? { grants } : {}),
     });
-    app.use('/api/mandate', json, guard, createMandateRouter(ceremonyDeps));
+    app.use('/api/mandate', json, guard, createMandateRouter(ceremonyDeps, o.mandate.reads));
     app.use('/internal', json, createInternalMandateRouter(() => 'sekret', ceremonyDeps, approvals));
   }
   const server: Server = await new Promise(r => { const sv = app.listen(0, o.listenHost ?? '127.0.0.1', () => r(sv)); });

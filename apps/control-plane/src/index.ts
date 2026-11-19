@@ -60,7 +60,7 @@ import { requireAllowedHost } from './middleware/host-guard';
 import { refuseAmbiguousPath, isApiPath } from './middleware/request-path';
 import { OAuthStateStore } from './lib/oauth-state';
 import { mcpPublicPort } from './lib/mcp-public-port';
-import { getToolDisplay, mcpRekeyClient, pushGateContent, pushServiceCredentials, setInternalSecret, getManifests, getGateContent, getEnrichedAuthorizations, getSkippedCommitments, getMyPendingProposals, MCP_BASE, runCommittedProposals, resyncGates, setReadPolicy, configure as configureMcp, unconfigureSession, replaceIntegration, startPendingIntegrations, getProposalFacts } from './lib/mcp-bridge';
+import { getToolDisplay, mcpRekeyClient, pushGateContent, pushServiceCredentials, setInternalSecret, getManifests, getGateContent, getEnrichedAuthorizations, getSkippedCommitments, getMyPendingProposals, MCP_BASE, runCommittedProposals, resyncGates, setReadPolicy, configure as configureMcp, unconfigureSession, replaceIntegration, startPendingIntegrations, getProposalFacts, getHeldBack, getSignedMandate } from './lib/mcp-bridge';
 import { createEstablish } from './lib/device-session-establish';
 import { createSignInSweep } from './lib/device-signin-sweep';
 import { createAsKeyCheck, asPinning } from './lib/device-as-trust';
@@ -600,7 +600,7 @@ app.use('/autostart', jsonParser, authGuard, createAutostartRouter());
 // E2EE intent encryption (P5.5)
 // Local display preferences (desktop notifications). Never holds secrets.
 // The web page signs mandates through the same steps as the AI path (lib/mandate-ceremony.ts).
-app.use('/api/mandate', jsonParser, authGuard, createMandateRouter(mandateCeremonyDeps));
+app.use('/api/mandate', jsonParser, authGuard, createMandateRouter(mandateCeremonyDeps, { heldBack: getHeldBack, signedMandate: getSignedMandate }));
 app.use('/api/gateway-settings', jsonParser, authGuard, createGatewaySettingsRouter(DATA_DIR));
 
 // Archived mandates: a local display flag (hides expired/revoked mandates; deletes nothing)

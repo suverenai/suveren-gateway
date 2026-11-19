@@ -577,6 +577,17 @@ describe('the owner\'s chain is the gateway\'s own verified copy', () => {
   });
 });
 
+describe('the held-back list (GET /internal/held-back reads this)', () => {
+  it('lists what the gateway holds back with its own verdict, the profile and the owner; drops it when honoured again', async () => {
+    const w = await world({ noGrant: true });
+    await w.cache.syncAuthorization(AUTHZ);
+    expect(w.cache.withheldList()).toEqual([{ authorizationId: AUTHZ, code: 'mandate_not_granted', profileId: 'test-pay@1', ownerDid: w.owner.did, mandateId: MANDATE_ID }]);
+    w.as.grants.set(MANDATE_ID, [await grantFor(w.owner, w.payload)]);
+    await w.cache.syncAuthorization(AUTHZ);
+    expect(w.cache.withheldList()).toEqual([]);
+  });
+});
+
 describe('the resync of stored gates (bin/http.ts)', () => {
   it('a mandate whose grant does not verify now is WITHHELD, not an orphan: its stored intent is kept; an ended one is an orphan', async () => {
     const w = await world({ noGrant: true });

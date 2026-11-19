@@ -63,6 +63,7 @@ async function person() {
 }
 
 async function world(o: { checkKey?: boolean } = {}) {
+  const readsState: { held: Array<Record<string, unknown>>; signed: (id: string) => Promise<unknown> } = { held: [], signed: async () => ({ refusal: 'none', code: 'MANDATE_NOT_ACTIVE' }) };
   const as = await new StubAs().listen();
   open.push(as);
   const props = new StubProposals(as);   // first: StubMandates chains in front of it
@@ -72,7 +73,7 @@ async function world(o: { checkKey?: boolean } = {}) {
   const flags = { failDelivery: false };
   const helperEnv: Record<string, string> = {};
   const helper = fakeHost(helperEnv);
-  const gw: GatewayRig = await bootGateway({ as, platform: helper, mandate: { deliver: async a => { if (flags.failDelivery) throw new Error('mcp down'); delivered.push(a); } }, decision: { facts: async () => ({ mandateId: props.mandateId, actionType: props.actionType }) } });
+  const gw: GatewayRig = await bootGateway({ as, platform: helper, mandate: { deliver: async a => { if (flags.failDelivery) throw new Error('mcp down'); delivered.push(a); }, reads: { heldBack: async () => readsState.held as never, signedMandate: id => readsState.signed(id) as never } }, decision: { facts: async () => ({ mandateId: props.mandateId, actionType: props.actionType }) } });
   open.push(gw);
   const session = await gw.unlock();
   const h = sessionHeaders(session);
@@ -82,12 +83,18 @@ async function world(o: { checkKey?: boolean } = {}) {
   const fin = await post('/auth/device/setup/finish', { setupId: start.body.setupId, enrolmentCode: as.issueEnrolmentCode() });
   expect(fin.status).toBe(200);
   mandates.users.set('u1', { did: String(start.body.rootDid) });
-  const sign = (body: Record<string, unknown> = {}) => post('/api/mandate/sign', { ...REQ, ...body });
+  // The page prepares first and echoes the plan's hash with the give (the gateway refuses a give that differs from what was prepared).
+  const sign = async (body: Record<string, unknown> = {}) => {
+    const req = { ...REQ, ...body };
+    const p = await post('/api/mandate/prepare', req);
+    if (p.status !== 200) return p;
+    return post('/api/mandate/sign', { planHash: p.body.planHash, ...req });
+  };
   const internal = (path: string, body: unknown) => call(gw.port, 'POST', path, { headers: { 'x-internal-secret': 'sekret' }, body, origin: null });
   const spy = vi.spyOn(PlatformChecks.prototype, 'sign');
   /** From now on the helper behaves like this (set-up needed its own good touch first). */
   const helperNow = (env: Record<string, string>): void => { Object.assign(helperEnv, env); helper.close(); };
-  return { as, props, flags, mandates, gw, h, post, sign, internal, delivered, helperNow, rootDid: String(start.body.rootDid), recoveryCode: String(start.body.recoveryCode), keyId: String(start.body.deviceKeyId), touches: spy };
+  return { as, props, flags, readsState, mandates, gw, h, post, sign, internal, delivered, helperNow, rootDid: String(start.body.rootDid), recoveryCode: String(start.body.recoveryCode), keyId: String(start.body.deviceKeyId), touches: spy };
 }
 type W = Awaited<ReturnType<typeof world>>;
 
@@ -176,7 +183,7 @@ describe('the grant: what is signed and what is sent', () => {
     const chainState = await dk.verifyChain({ expectedRootDid: w.rootDid, entries: w.as.chainEntries() });
     expect(Object.keys(body.deviceKeys).sort()).toEqual(dk.activeDevices(chainState).map(d => d.key_id).sort());
     // the AS holds ciphertext and wraps only: nothing of scope or intent in the clear
-    expect(JSON.stringify(body)).not.toMatch(/quotes wait|EUR/);
+    expect(JSON.stringify(body)).not.toMatch(/quotes wait|"scope"|"intent"/);   // (random base64 may contain any three letters: the words, not a code)
     // the computer's own reading key opens it
     const { decryptProposalContent } = await import('@hap/core');
     const { loadOrGenerateKeyPair } = await import('../../lib/e2e-key-manager');
@@ -818,6 +825,145 @@ describe('review round 3', () => {
     const retry = await w.internal('/internal/mandate', { request: { approvalHash: hash } });
     expect(retry.body.code).toBe('approval_already_used');
     expect(w.mandates.issued).toHaveLength(1);
+  });
+});
+
+describe('step 13 screens: held back list, change preview, Touch ID change', () => {
+  it('held-back: the gateway\'s verdicts with the profile name and whose mandate, read-only; a gateway without a chain answers 409', async () => {
+    const w = await world();
+    w.readsState.held = [
+      { authorizationId: 'authz_11111111-1111-1111-1111-111111111111', mandateId: 'm1', code: 'mandate_body_not_received', profileId: SALES.id, ownerDid: w.rootDid },
+      { authorizationId: 'authz_22222222-2222-2222-2222-222222222222', code: 'owner_unknown', profileId: SALES.id, ownerDid: 'did:key:z6MkSomeoneElse' },
+    ];
+    const r = await call(w.gw.port, 'GET', '/api/mandate/held-back', { headers: w.h });
+    expect(r.status, r.text).toBe(200);
+    expect(r.body.held).toEqual([
+      expect.objectContaining({ code: 'mandate_body_not_received', ownerIsYou: true, profileName: SALES.name ?? expect.any(String), ownerName: null, adminName: null }),
+      expect.objectContaining({ code: 'owner_unknown', ownerIsYou: false }),
+    ]);
+    expect((await call(w.gw.port, 'GET', '/api/mandate/held-back')).status).toBe(401);
+    const as = await new StubAs().listen();
+    open.push(as);
+    const bare = await bootGateway({ as, platform: fakeHost(), mandate: {} });
+    open.push(bare);
+    const h2 = sessionHeaders(await bare.unlock());
+    expect((await call(bare.port, 'GET', '/api/mandate/held-back', { headers: h2 })).status).toBe(409);
+  });
+
+  it('change-preview computes the diff from the signed mandate and signs nothing; the Touch ID change signs the version the person saw, and a different one is refused', async () => {
+    const w = await world();
+    const first = await w.sign();
+    const id = authzOf(first);
+    const old = { authorizationId: id, profileId: SALES.id, groupId: 'g_personal', ownerDid: w.rootDid, bounds: { ...LIMITS, profile: SALES.id }, context: { currency: 'EUR' }, intent: REQ.intent, mode: 'review', expiresAt: Math.floor(Date.now() / 1000) + 3000, title: 'Quotes' };
+    w.readsState.signed = async () => ({ old, team: { approverDids: [], approvals: null, caps: {} } });
+    const changes = { durationHours: 5 };
+    const touchesBefore = w.touches.mock.calls.length;
+    const prev = await call(w.gw.port, 'GET', `/api/mandate/change-preview?authorizationId=${id}&changes=${encodeURIComponent(JSON.stringify(changes))}`, { headers: w.h });
+    expect(prev.status, prev.text).toBe(200);
+    expect((prev.body as any).diff.lastsUntil).toBeTruthy();
+    expect((prev.body as any).before).toBeNull();
+    expect(w.touches.mock.calls.length).toBe(touchesBefore);       // a preview never touches
+    // a different change than the one shown is refused and signs nothing
+    const other = await w.post('/api/mandate/change', { authorizationId: id, changes: { limits: { value_max: 5 } }, sealedDiff: (prev.body as any).diff });
+    expect([other.status, other.body.code]).toEqual([422, 'changed_since_proposal']);
+    expect(w.touches.mock.calls.length).toBe(touchesBefore);
+    const done = await w.post('/api/mandate/change', { authorizationId: id, changes, sealedDiff: (prev.body as any).diff });
+    expect(done.status, done.text).toBe(200);
+    expect(w.touches).toHaveBeenCalledTimes(touchesBefore + 1);
+    const g = w.mandates.rows.at(-1)!;
+    expect([g.op, g.version]).toEqual(['change', 2]);
+    // not a mandate of this gateway / bad input
+    expect((await call(w.gw.port, 'GET', '/api/mandate/change-preview?authorizationId=nope', { headers: w.h })).status).toBe(400);
+  });
+
+  it('with a team: approvers, approval count and team limits before (signed) and after (settings now), labelled from the member list', async () => {
+    const w = await world();
+    const ap = await person();
+    const ap2 = await person();
+    w.as.otherChains.set(ap.did, ap.entries);
+    w.as.otherChains.set(ap2.did, ap2.entries);
+    w.mandates.users.set('u_ap', { did: ap.did });
+    w.mandates.users.set('u_ap2', { did: ap2.did });
+    w.mandates.team = { approvers: ['u_ap', 'u_ap2'], approvals: 2, caps: { value_max: { value: 500, kind: 'approval' } } };
+    const live = await w.sign();   // an active mandate of this gateway to read
+    const old = { authorizationId: authzOf(live), profileId: SALES.id, groupId: 'g_team', ownerDid: w.rootDid, bounds: { ...LIMITS, profile: SALES.id }, context: { currency: 'EUR' }, intent: REQ.intent, mode: 'review', expiresAt: Math.floor(Date.now() / 1000) + 3000 };
+    w.readsState.signed = async () => ({ old, team: { approverDids: [ap.did], approvals: 1, caps: { value_max: 300 } } });
+    const prev = await call(w.gw.port, 'GET', `/api/mandate/change-preview?authorizationId=${old.authorizationId}&changes=${encodeURIComponent(JSON.stringify({ durationHours: 5 }))}`, { headers: w.h });
+    // (the stub's member list is not served: labels fall back to the id; the point is the shape and the numbers)
+    expect(prev.status, prev.text).toBe(200);
+    expect((prev.body as any).before).toMatchObject({ approvals: 1, limits: [expect.objectContaining({ field: 'value_max', value: 300 })] });
+    expect((prev.body as any).before.approvers).toHaveLength(1);
+    expect((prev.body as any).after).toMatchObject({ approvals: 2, limits: [expect.objectContaining({ field: 'value_max', value: 500 })] });
+    expect((prev.body as any).after.approvers.sort()).toEqual(['u_ap', 'u_ap2']);
+  });
+});
+
+describe('prepare: what a give would grant, before the touch', () => {
+  it('shows the checked plan with the profile\'s own labels, touches nothing, writes nothing at the Authority Server or here', async () => {
+    const w = await world();
+    const before = w.mandates.posts.length;
+    const r = await w.post('/api/mandate/prepare', REQ);
+    expect(r.status, r.text).toBe(200);
+    expect(r.body).toMatchObject({ profileId: SALES.id, profileHash: computeProfileHash(SALES), mode: 'review', ttlSeconds: 3600, team: null, blocked: null, intent: REQ.intent });
+    expect(r.body.planHash).toMatch(/^sha256:[0-9a-f]{64}$/);
+    const value = (r.body.bounds as Array<{ field: string; label: string; value: unknown }>).find(b => b.field === 'value_max')!;
+    expect(value).toMatchObject({ value: 1000, label: SALES.boundsSchema.fields.value_max.displayName ?? 'value_max' });
+    expect((r.body.bounds as Array<{ field: string }>).some(b => b.field === 'profile')).toBe(false);
+    expect(w.touches).not.toHaveBeenCalled();
+    expect(w.mandates.posts.length).toBe(before);           // no grant, no body, no mandate request
+    expect(w.mandates.rows).toEqual([]);
+    // a request the real give would refuse for its content is refused the same way
+    const bad = await w.post('/api/mandate/prepare', { ...REQ, limits: { ...LIMITS, bogus_max: 1 } });
+    expect(bad.status).toBe(422);
+    // not a chain gateway / no session
+    expect((await call(w.gw.port, 'POST', '/api/mandate/prepare', { body: REQ })).status).toBe(401);
+  });
+
+  it('a team: approvers with DIDs, identity codes and confirmation state from the gateway\'s own record; the unconfirmed one blocks, nothing is remembered by asking', async () => {
+    const w = await world();
+    const ap = await person();
+    const ap2 = await person();
+    w.as.otherChains.set(ap.did, ap.entries);
+    w.as.otherChains.set(ap2.did, ap2.entries);
+    w.mandates.users.set('u_ap', { did: ap.did });
+    w.mandates.users.set('u_ap2', { did: ap2.did });
+    w.mandates.team = { approvers: ['u_ap', 'u_ap2'], approvals: 2, caps: { value_max: { value: 500, kind: 'approval' } } };
+    w.mandates.expectation = { mode: 'review', caps: { value_max: 500 }, approvers: [ap.did, ap2.did].sort(), approvals: 2 };
+    const store = new MandateGrantStore(w.gw.vault);
+    const r = await w.post('/api/mandate/prepare', { ...REQ, team: 'g_team' });
+    expect(r.status, r.text).toBe(200);
+    expect((r.body as any).team.approvals).toBe(2);
+    expect(((r.body as any).team.approvers as Array<{ did: string; confirmed: boolean; identityCode: string }>).map(a => [a.did, a.confirmed]).sort()).toEqual([[ap.did, false], [ap2.did, false]].sort());
+    expect((r.body as any).team.caps).toEqual([expect.objectContaining({ field: 'value_max', value: 500 })]);
+    expect(r.body).toMatchObject({ blocked: { code: 'approver_identity_unconfirmed' } });
+    expect((r.body as any).blocked.approvers).toHaveLength(2);
+    // asking again with the codes "compared" in the request shows them confirmed, but REMEMBERS nothing
+    const again = await w.post('/api/mandate/prepare', { ...REQ, team: 'g_team', confirmedApproverDids: [ap.did, ap2.did] });
+    expect(again.body.blocked).toBeNull();
+    expect(store.approverConfirmed(ap.did)).toBe(false);
+    expect(w.touches).not.toHaveBeenCalled();
+    // the plan hash does not depend on who was confirmed
+    expect(again.body.planHash).toBe(r.body.planHash);
+  });
+
+  it('the give is bound to what was prepared: no hash, another hash, or a request that differs refuses with nothing signed', async () => {
+    const w = await world();
+    const p = await w.post('/api/mandate/prepare', REQ);
+    const hash = p.body.planHash as string;
+    const none = await w.post('/api/mandate/sign', REQ);
+    expect([none.status, none.body.code]).toEqual([422, 'prepare_required']);
+    const wrong = await w.post('/api/mandate/sign', { ...REQ, planHash: `sha256:${'a'.repeat(64)}` });
+    expect([wrong.status, wrong.body.code]).toEqual([422, 'changed_since_prepare']);
+    for (const change of [{ limits: { ...LIMITS, value_max: 5000 } }, { intent: 'another why' }, { ttlSeconds: 7200 }, { scope: { currency: 'USD' } }, { mode: 'automatic' }]) {
+      const r = await w.post('/api/mandate/sign', { ...REQ, ...change, planHash: hash });
+      expect([r.status, r.body.code], JSON.stringify(change)).toEqual([422, 'changed_since_prepare']);
+    }
+    expect(w.touches).not.toHaveBeenCalled();
+    expect(w.mandates.rows).toEqual([]);
+    // the request that was prepared is given
+    const ok = await w.post('/api/mandate/sign', { ...REQ, planHash: hash });
+    expect(ok.status, ok.text).toBe(200);
+    expect(w.touches).toHaveBeenCalledTimes(1);
   });
 });
 

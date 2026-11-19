@@ -82,6 +82,8 @@ export interface ApprovalHost {
   useSession(): ApprovalHostSession;
   /** Calls `handler` each time the host's event stream delivers `type`. A host without a stream does nothing. */
   useServerEvent(type: string, handler: (payload: unknown) => void): void;
+  /** True when the mandate is given with a device touch (chain account): the card says "Give this mandate" and "Approve". Absent = today's words. */
+  useGiveWording?(): boolean;
   /** The gateway-wide simulation flag; null until known. */
   useSimulationMode(): boolean | null;
   /**
