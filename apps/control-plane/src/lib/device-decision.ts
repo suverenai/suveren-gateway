@@ -33,6 +33,8 @@ import { AsTlsMismatchError } from './as-tls-pin';
 import { isBearerCredential } from './as-credential';
 import { loadDeviceSigningKey, loadOrGenerateKeyPair } from './e2e-key-manager';
 import { computeProposalContentHash, decryptProposalContent, type ProposalContentWire } from './content-crypto';
+// What is signed, and the request body, are built by ONE implementation shared with the phone approval app.
+import { decisionFields, decisionBody, readProposalHead } from '@hap/core/decision-input';
 
 export type DecisionRoute = 'approve' | 'reject' | 'resolve' | 'withdraw';
 export const DECISION_ROUTES: readonly DecisionRoute[] = ['approve', 'reject', 'resolve', 'withdraw'];
@@ -81,7 +83,6 @@ interface ProposalRead {
   content?: ProposalContentWire | null;
 }
 
-const HASH = /^sha256:[0-9a-f]{64}$/;
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const str = (v: unknown): v is string => typeof v === 'string' && v.length > 0;
 
@@ -150,32 +151,24 @@ export class DeviceDecisions {
     if (!isObj(facts) || !str(facts.mandateId) || !str(facts.actionType)) throw new DecisionRefusal(409, 'facts_unavailable');
 
     // 4. sign
-    const decision = dk.buildDecision({
-      approver_did: stored.rootDid,
-      key_id: stored.keyId,
-      chain_seq: stored.head.seq,
-      chain_head: stored.head.hash,
-      proposal_id: proposal.id,
-      mandate_id: facts.mandateId,
-      action: proposal.tool,
-      action_type: facts.actionType,
-      decision: kind,
+    const decision = dk.buildDecision(decisionFields({
+      signer: { rootDid: stored.rootDid, keyId: stored.keyId, chainSeq: stored.head.seq, chainHead: stored.head.hash },
+      proposal: { id: proposal.id, tool: proposal.tool },
+      facts,
+      kind,
       // The gateway cannot see a content binding here; a decision names the proposal's fingerprint for both.
-      content_hash: contentHash,
-      proposal_content_hash: contentHash,
-      decided_at: this.now(),
+      contentHash,
+      decidedAt: this.now(),
       nonce: randomBytes(16).toString('base64url'),
-    });
+    }));
     const sig = await dk.signObject(decision, key.privateSeed);
 
     // 5. the same fields the legacy call sends, plus the decision. The page's copy of the
     //    fingerprint was compared above and is replaced by the signed one; any decision it sent is never forwarded.
-    const out: Record<string, unknown> = {};
-    for (const k of PASS_THROUGH) if (body[k] !== undefined) out[k] = body[k];
-    if (route === 'resolve') out.action = kind === 'commit' ? 'commit' : 'reject';
-    out.content_hash = contentHash;
-    out.proposalContentHash = contentHash;
-    out.device_decision = { decision, sig };
+    const extras: Record<string, unknown> = {};
+    for (const k of PASS_THROUGH) if (body[k] !== undefined) extras[k] = body[k];
+    if (route === 'resolve') extras.action = kind === 'commit' ? 'commit' : 'reject';
+    const out = decisionBody({ extras, contentHash, decision, sig });
 
     let reply;
     try {
@@ -204,9 +197,8 @@ export class DeviceDecisions {
     if (reply.status !== 200 || !isObj(reply.body) || !isObj(reply.body.proposal)) throw new DecisionRefusal(502, 'as_answer_invalid');
     const p = reply.body.proposal;
     // The proposal read must be the one asked for: a reply for another id signs nothing.
-    if (p.id !== proposalId || !str(p.authorizationId) || !str(p.tool) || !str(p.status) || typeof p.contentHash !== 'string' || !HASH.test(p.contentHash)) {
-      throw new DecisionRefusal(502, 'as_answer_invalid');
-    }
+    const head = readProposalHead(p, proposalId);
+    if (!head.ok && head.code === 'as_answer_invalid') throw new DecisionRefusal(502, 'as_answer_invalid');
     return p as unknown as ProposalRead;
   }
 

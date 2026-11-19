@@ -1,0 +1,212 @@
+/**
+ * The checks before a decision is offered (device-keys plan 8, "What the app verifies before it offers a decision"; build step 12).
+ *
+ * One call per card, run when the person opens a request and run again by the decider just before it signs. Every check is
+ * made on this phone, from the bytes it holds, and the first one that fails names its reason and the card shows NO buttons:
+ *
+ *   1. pending       the request is still waiting
+ *   2. content       the content opens with this phone's own key and hashes to the proposal's fingerprint (rule 8)
+ *   3. context       the card context the gateway sealed opens, and belongs to this very proposal (its fingerprint is in the sealed data)
+ *   4. mandate       the signed mandate of the request's authorization verifies under the Authority Server key this phone PINNED,
+ *                    is not revoked or expired, and is the mandate the request names (profile)
+ *   5. profile       the profile bytes the server gives hash to the mandate's `profile_hash`
+ *   6. owner         the mandate's owner is this person's own identity (a colleague's mandate needs the owner's chain: stage B)
+ *   7. action type   the request carries its action type, and the profile's registry (when it has one) contains it
+ *   8. execution     the execution context rebuilt from the decrypted arguments with the mapping in the sealed context equals what the
+ *                    request carries, for every field a bound reads
+ *
+ * What it does NOT check (hand-over, open questions): the owner's grant of the mandate (needs a browser-safe hap-core; the gateway that
+ * runs the action checks it), a pin of the highest grant version, and the manifest's static execution fields (the sealed context
+ * carries the mapping only).
+ *
+ * Nothing here is stored. Content, context and arguments live in the returned object, which the screen drops with the card.
+ */
+import { jcs, sha256Hash, utf8 } from '@hap/core/device-keys';
+import { mapExecutionArgs, type MappingValue } from '@hap/core/execution-mapping';
+import { readProposalHead } from '@hap/core/decision-input';
+import type { Proposal } from '@suveren/approval-card/types';
+import type { ToolDisplay, ApprovalView } from '@suveren/approval-card/lib/approval-view';
+import type { AsApi } from './as-api';
+import type { AccountStore } from './account-store';
+import type { DeviceKeyStore } from './key-store';
+import type { DeviceSession } from './session';
+import { openContent, openContext, NoWrapError, ContentMismatchError, type CardContext, type ContentWire } from './content';
+import { verifyMandateBlob, profileHashOf, wireFilter, type MandatePayloadView } from './mandate-check';
+
+export type CardReason =
+  | 'not_pending' | 'content_not_here' | 'content_unreadable' | 'content_mismatch'
+  | 'context_missing' | 'context_unreadable' | 'context_mismatch'
+  | 'mandate_unavailable' | 'mandate_invalid' | 'mandate_signature' | 'mandate_expired' | 'mandate_ended'
+  | 'profile_unavailable' | 'profile_mismatch' | 'owner_not_you' | 'action_type_missing' | 'action_type_unknown'
+  | 'session_ended' | 'reads_failed' | 'proposal_invalid';
+
+/** Which of the Authority Server's routes carries this decision. */
+export type DecisionRoute =
+  | { kind: 'approver' }                                // above-cap approver: `approve` / `reject`
+  | { kind: 'domain'; domain: string };                 // the proposal's own queue: `resolve` with `action` and `domain`
+
+export interface ReadyCard {
+  /** The mandate and the action type a decision names. */
+  facts: { mandateId: string; actionType: string };
+  /** The fingerprint of the content this phone opened and hashed itself: what the person sees is what is signed. */
+  contentHash: string;
+  /** The opened arguments, kept in memory for the card's lifetime only. */
+  args: Record<string, unknown>;
+  /** What the card shows the arguments with (labels, order, money), from the gateway's own sealed context. */
+  display: ToolDisplay;
+  route: DecisionRoute;
+}
+
+export type CardCheck = { ok: true; ready: ReadyCard } | { ok: false; reason: CardReason };
+
+export interface CheckDeps {
+  api: AsApi;
+  session: DeviceSession;
+  keys: DeviceKeyStore;
+  accounts: AccountStore;
+  now: () => number;
+}
+
+const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+const no = (reason: CardReason): CardCheck => ({ ok: false, reason });
+
+/** The Authority Server's answer to a read, as a reason when it failed. */
+function readFailure(r: { status: number; code: string }, session: DeviceSession): CardReason {
+  if (r.status === 401 || r.code === 'SESSION_EXPIRED') { session.lost(); return 'session_ended'; }
+  return 'reads_failed';
+}
+
+/** A number compared as a number (`"0.10"` and `0.1` are the same amount); anything else exactly. */
+function sameValue(a: unknown, b: unknown): boolean {
+  if (typeof a === 'number' || typeof b === 'number') {
+    const x = Number(a);
+    const y = Number(b);
+    return Number.isFinite(x) && Number.isFinite(y) && x === y;
+  }
+  return a === b;
+}
+
+/** A mapping value the shared mapper may run on: a field name, an entry, or a list of entries; anything else is not a mapping. */
+function isMapping(v: unknown): v is Record<string, MappingValue> {
+  if (!isObj(v)) return false;
+  const entry = (e: unknown): boolean => isObj(e) && typeof e.field === 'string' && e.field.length > 0;
+  return Object.values(v).every((m) => typeof m === 'string' || entry(m) || (Array.isArray(m) && m.every(entry)));
+}
+
+/**
+ * The card's layout from the display hints the gateway sealed (a connector's `display`, AU8): labels, order and money of top-level
+ * arguments, and the AI-text argument. Hints about the preview's read data (nested paths, attached reads) are ignored: this phone has
+ * no preview (hand-over). A hint never hides an argument: everything the proposal carries is shown.
+ */
+export function toolDisplayOf(display: unknown, executionMapping: Record<string, MappingValue>): ToolDisplay {
+  const out: ToolDisplay = { executionMapping: executionMapping as ToolDisplay['executionMapping'] };
+  if (!isObj(display)) return out;
+  const top = (k: unknown): k is string => typeof k === 'string' && k.length > 0 && !/[.[\]]/.test(k);
+  const labels = isObj(display.labels) ? display.labels : {};
+  const order = Array.isArray(display.order) ? display.order.filter(top) : [];
+  const money = new Set(Array.isArray(display.money) ? display.money.filter(top) : []);
+  const view: ApprovalView = {};
+  for (const k of [...order, ...Object.keys(labels).filter(top), ...money]) {
+    if (k in view) continue;
+    const label = typeof labels[k] === 'string' ? (labels[k] as string) : undefined;
+    view[k] = {
+      ...(label ? { label } : {}),
+      ...(money.has(k) ? { kind: 'money' as const, ...(top(display.currencyField) ? { currencyArg: display.currencyField } : {}) } : {}),
+    };
+  }
+  if (Object.keys(view).length) out.approvalView = view;
+  if (top(display.aiText)) out.aiTextArg = display.aiText;
+  return out;
+}
+
+/** Which route decides this proposal for this person (`pendingApprovers` names them: above-cap; else their own queue). */
+export function routeFor(proposal: Proposal, userId: string): DecisionRoute | null {
+  if ((proposal.pendingApprovers ?? []).includes(userId)) return { kind: 'approver' };
+  const domains = proposal.pendingDomains ?? [];
+  // The Personal domain is the account id or the placeholder `owner` (the AS accepts both for the owner).
+  const domain = domains.includes(userId) ? userId : domains.includes('owner') ? 'owner' : domains[0];
+  return domain ? { kind: 'domain', domain } : null;
+}
+
+export async function checkCard(d: CheckDeps, proposal: Proposal): Promise<CardCheck> {
+  const bearer = d.session.bearer();
+  const open = d.session.current();
+  const account = await d.accounts.read();
+  if (!bearer || !open || !account) return no('session_ended');
+
+  // 1. the request is the one asked for and still waits
+  const head = readProposalHead(proposal, proposal.id);
+  if (!head.ok) return no(head.code === 'proposal_not_pending' ? 'not_pending' : 'proposal_invalid');
+  const route = routeFor(proposal, open.user.id);
+  if (!route) return no('proposal_invalid');
+
+  // 2. the content, opened with this phone's key, must hash to the proposal's fingerprint
+  const wire = proposal.content as unknown as ContentWire | undefined;
+  if (!wire) return no('content_unreadable');
+  let args: Record<string, unknown>;
+  try {
+    const { plaintext } = await openContent(wire, account.key_id, d.keys);
+    args = JSON.parse(plaintext) as Record<string, unknown>;
+    // `openContent` compared with the fingerprint named INSIDE the content; a decision names the PROPOSAL's.
+    if ((await sha256Hash(utf8(jcs(args)))) !== head.head.contentHash) return no('content_mismatch');
+  } catch (e) {
+    return no(e instanceof NoWrapError ? 'content_not_here' : e instanceof ContentMismatchError ? 'content_mismatch' : 'content_unreadable');
+  }
+
+  // 3. the card context
+  const ctx = await openContext(wire, account.key_id, d.keys);
+  if (ctx === null) return no('context_missing');
+  if ('contextError' in ctx) return no('context_unreadable');
+  const context: CardContext = ctx.context;
+  if (!isMapping(context.execution_mapping)) return no('context_unreadable');
+
+  // 4. the signed mandate
+  const mandates = await d.api.mandates(proposal.authorizationId, bearer);
+  if (!mandates.ok) return no(readFailure(mandates, d.session));
+  if (mandates.data.revoked) return no('mandate_ended');
+  const blobs = (Array.isArray(mandates.data.mandates) ? mandates.data.mandates : [])
+    .map((m) => (isObj(m) && typeof m.blob === 'string' ? m.blob : null)).filter((b): b is string => b !== null);
+  if (blobs.length === 0) return no('mandate_unavailable');
+  let payload: MandatePayloadView | null = null;
+  let firstFailure: CardReason = 'mandate_invalid';
+  let failed = false;
+  for (const blob of blobs) {
+    const v = await verifyMandateBlob(blob, account.as_key, d.now());
+    if (!v.ok) { if (!failed) { firstFailure = v.code; failed = true; } continue; }
+    // The AS checks a decision against the most recently issued mandate: so does this phone.
+    if (!payload || v.payload.issued_at > payload.issued_at) payload = v.payload;
+  }
+  if (!payload) return no(firstFailure);
+  if (payload.profile_id !== proposal.profileId) return no('mandate_invalid');
+
+  // 5. the profile bytes
+  const profile = await d.api.profile(payload.profile_id);
+  if (!profile.ok) return no(profile.status === 404 ? 'profile_unavailable' : 'reads_failed');
+  if ((await profileHashOf(profile.data)) !== payload.profile_hash) return no('profile_mismatch');
+
+  // 6. the owner is this person (the decider set: the owner; a colleague's mandate needs the owner's chain, stage B)
+  if (payload.mandate_owners[0].did !== account.root_did) return no('owner_not_you');
+
+  // 7. the action type
+  const actionType = head.head.actionType;
+  if (!actionType) return no('action_type_missing');
+  const registry = (profile.data as { boundsSchema?: { actionTypes?: unknown } } | null)?.boundsSchema?.actionTypes;
+  if (Array.isArray(registry) && registry.length > 0 && !registry.includes(actionType)) return no('action_type_unknown');
+
+  // 8. the execution context, rebuilt
+  let rebuilt: Record<string, unknown>;
+  try {
+    rebuilt = wireFilter(mapExecutionArgs(context.execution_mapping, args), profile.data);
+  } catch {
+    return no('context_unreadable');
+  }
+  const carried = isObj(proposal.executionContext) ? proposal.executionContext : {};
+  for (const [field, value] of Object.entries(rebuilt)) {
+    if (!(field in carried) || !sameValue(carried[field], value)) return no('context_mismatch');
+  }
+
+  return {
+    ok: true,
+    ready: { facts: { mandateId: payload.mandate_id, actionType }, contentHash: head.head.contentHash, args, display: toolDisplayOf(context.display, context.execution_mapping), route },
+  };
+}

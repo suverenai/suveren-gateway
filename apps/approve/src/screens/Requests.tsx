@@ -1,8 +1,9 @@
-import { ApprovalCard } from '@suveren/approval-card';
+import { ApprovalCard, type DecideArgs } from '@suveren/approval-card/components/ApprovalCard';
+import type { DecisionResult } from '@suveren/approval-card/lib/approval-flow';
 import { ApprovalRow } from '@suveren/approval-card/components/ApprovalRow';
 import type { Proposal } from '@suveren/approval-card/types';
-import { S8 } from '@suveren/approval-card/proposal-readers';
-import { P } from '../texts';
+import { P, blockedText } from '../texts';
+import type { CardCheck } from '../lib/card-checks';
 import { Notice } from './Frame';
 
 const NO_MANIFESTS: never[] = [];
@@ -38,29 +39,48 @@ export function RequestsScreen(p: RequestsScreenProps) {
 export interface RequestDetailProps {
   proposal: Proposal;
   userId: string;
-  /** The card context could not be opened: said once, above the card (S8). The arguments are still shown in full. */
-  contextMissing: boolean;
+  /** Null while the checks run. */
+  check: CardCheck | null;
+  /** Sends the decision (the phone's decider). Rejects with a message the person can read; resolves only after the server answered. */
+  decide: (args: DecideArgs) => Promise<DecisionResult>;
   onBack: () => void;
+  /** The check ran again after a decision went through or failed: the list should be read again. */
+  onDecided?: () => void;
 }
 
 /**
- * The shared approval card, read-only (stage D1): no buttons. `alreadyDecided` is the card's own way to hide them and show only the
- * note in `topExtras`; `decide` refuses, so nothing can be sent from here even by a code path the buttons do not reach.
+ * The shared approval card with its buttons (stage D2). The buttons exist only when every check before a decision passed
+ * (card-checks.ts); otherwise the card is drawn without them and says why, in words, above the card: `alreadyDecided` is the card's own
+ * way to hide them. "Ask for changes" is left out: the phone has no key of anyone else's to seal the note for.
  */
-export function RequestDetail({ proposal, userId, contextMissing, onBack }: RequestDetailProps) {
-  const decide = async (): Promise<never> => { throw new Error('read_only'); };
+export function RequestDetail({ proposal, userId, check, decide, onBack, onDecided }: RequestDetailProps) {
+  const blocked = check !== null && !check.ok;
+  const refuse = async (): Promise<never> => { throw new Error(P.cardBlockedNothing); };
   return (
     <div className="device-screen">
       <button type="button" className="av3-back" onClick={onBack}>{P.listBack}</button>
       <ApprovalCard
         proposal={proposal}
         currentUserId={userId}
-        alreadyDecided
-        decide={decide}
+        // Until the checks are done, and when one failed, no buttons.
+        alreadyDecided={check === null || blocked}
+        canAskChanges={false}
+        toolDisplay={check && check.ok ? check.ready.display : undefined}
+        decide={check && check.ok ? decide : refuse}
+        onDecided={() => onDecided?.()}
         topExtras={(
           <>
-            <Notice kind="info">{P.readOnlyNote}</Notice>
-            {contextMissing && <Notice kind="info">{S8.contextMissing}</Notice>}
+            {check === null && <Notice kind="info">{P.cardChecking}</Notice>}
+            {check !== null && !check.ok && (
+              <div data-testid="card-blocked">
+                <Notice kind="error">
+                  <strong>{P.cardBlockedTitle}</strong>
+                  <br />
+                  {blockedText(check.reason)}
+                </Notice>
+              </div>
+            )}
+            {check !== null && check.ok && <p className="av3-quiet" data-testid="changes-elsewhere">{P.decideChangesElsewhere}</p>}
           </>
         )}
       />
