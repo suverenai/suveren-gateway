@@ -77,6 +77,11 @@ export const PAIRING_CODES = [
   'cancelled', 'not_recognised', 'biometry_locked', 'no_biometry', 'key_invalid', 'interaction_required', 'helper_failed', 'helper_unavailable', 'check_invalid',
 ] as const;
 
+/** The vault slot that says a pairing of this computer made its `e2eKey` (so the key alone is no account context). */
+const PAIRING_KEY_FLAG = 'pairingMadeE2eKey';
+/** How long after a QR ran out a computer keeps asking the Authority Server whether its entry was stored (seconds). */
+const PROBE_GRACE_SECONDS = 900;
+
 const refuse = (status: number, code: string, extra?: Record<string, unknown>): never => { throw new PairingRefusal(status, code, extra); };
 
 export type DeviceRowView = DeviceRow & { adding?: boolean };
@@ -212,6 +217,8 @@ export class DevicePairing {
   private h: Held | null = null;
   /** An operation that waits for the person or the helper is running: `poll` answers what it has, a second operation is refused. */
   private busy = false;
+  /** The mailbox look that is running; an operation waits for it, never the other way round. */
+  private pollP: Promise<void> | null = null;
   private readonly now: () => number;
 
   constructor(private readonly d: DevicePairingDeps) {
@@ -251,9 +258,28 @@ export class DevicePairing {
     };
   }
 
-  /** The DID of the account this computer is signed in to (the Authority Server's sign-in answer, held in the vault), or null. */
+  /** The DID of the account this computer is signed in to or was last signed in to (the Authority Server's sign-in answer; sealed in the vault, so a restart keeps it), or null. */
   private accountDid(): string | null {
-    try { return this.d.vault.getSessionUser()?.did ?? null; } catch { return null; }
+    try { return this.d.vault.getKnownAccountDid(); } catch { return null; }
+  }
+
+  /**
+   * Plan 20.2, asked again at every step that matters (start, hello, confirm, before the chain is kept): has this computer an account
+   * context, and does the chain belong to that account? Context is a known account DID, stored connector logins, or an `e2eKey` that was
+   * there before a pairing made one (a legacy gateway). Without a known DID but with such a context there is nothing to compare with:
+   * sign in first. A brand-new computer (none of these) joins any verified chain. Returns the refusal code, or null.
+   */
+  private accountRefusal(rootDid?: string): 'other_account' | 'sign_in_first' | null {
+    const own = this.accountDid();
+    if (own) return rootDid !== undefined && rootDid !== own ? 'other_account' : null;
+    let logins: string[];
+    let madeByPairing: boolean;
+    try {
+      logins = this.d.vault.listCredentials();
+      madeByPairing = this.d.vault.getSecretSlot<unknown>(PAIRING_KEY_FLAG) === true;
+    } catch { return 'sign_in_first'; }   // unreadable: never "no account"
+    // `e2eKey` is this computer's own reading key: a login only if it was there before a pairing of this computer made it.
+    return logins.some(n => n !== 'e2eKey' || !madeByPairing) ? 'sign_in_first' : null;
   }
 
   // ─── what must hold before anything starts ───────────────────────────────────
@@ -387,9 +413,13 @@ export class DevicePairing {
 
   /** Stop and forget. An admitter tells the phone, so it stops too. */
   async cancel(): Promise<PairingView> {
+    // An operation that is signing or appending cannot be taken back: say so instead of forgetting it half way (the page shows what is true).
+    if (this.busy) refuse(409, 'pairing_busy');
+    await this.pollP;
     const h = this.h;
     this.h = null;
     this.reviewFacts = null;
+    if (h && h.role === 'join') h.checkKey = undefined;   // the key blob exists only here: nothing is left in the helper to delete
     if (h && h.role === 'admit' && h.step !== 'done' && h.step !== 'failed') await h.box.send('done', { refused: 'CANCELLED' }).catch(() => {});
     return { flow: 'none' };
   }
@@ -467,7 +497,7 @@ export class DevicePairing {
     let opened: OpenedEntry;
     try {
       opened = await lib.checkOpen(body, {
-        chain: h.loaded.chain, rootDid: h.loaded.stored.rootDid, admitterKeyId: h.loaded.stored.keyId, kind: 'approve-app', commit: h.commit as string,
+        chain: h.loaded.chain, rootDid: h.loaded.stored.rootDid, admitterKeyId: h.loaded.stored.keyId, kind: 'approve-app', commit: h.commit as string, now: this.now(),
       });
     } catch (e) {
       await this.stop(h, e instanceof lib.OpenCheckError ? e.code : 'open_invalid');
@@ -494,11 +524,15 @@ export class DevicePairing {
     if (this.busy) refuse(409, 'pairing_busy');
     if (!h || h.role !== 'admit' || h.step !== 'choose' || !h.opened || !h.code) return refuse(409, 'pairing_unknown');
     if (typeof code !== 'string' || !/^\d{6}$/.test(code)) return refuse(400, 'bad_request');
-    const lib = await pairingLib();
-    if (!lib.sameCode(code, h.code)) { await this.stop(h, 'wrong_code', 'CODE_MISMATCH'); return this.view(); }
-    this.busy = true;
-    h.step = 'checking';
+    this.busy = true;   // before the first await: a second tap or a cancel meets this
     try {
+      await this.pollP;
+      const lib = await pairingLib();
+      if (this.h !== h || h.step !== 'choose') return this.view();
+      // The QR's ten minutes also bind the tap: a code that ran out adds nothing.
+      if (this.now() > h.qr.expires_at) { await this.stop(h, 'qr_expired'); return this.view(); }
+      if (!lib.sameCode(code, h.code as string)) { await this.stop(h, 'wrong_code', 'CODE_MISMATCH'); return this.view(); }
+      h.step = 'checking';
       await this.sealAndAppend(h);
     } catch (e) {
       if (e instanceof CheckError) await this.stop(h, checkCode(e), 'CHECK_CANCELLED');
@@ -558,14 +592,9 @@ export class DevicePairing {
     this.requireVault();
     this.requireFree();
     if (this.d.store.exists()) refuse(409, 'already_set_up');
-    // Plan 20.2: a computer with an account context joins only the chain of its OWN account. Stored connector logins are such a
-    // context, so without a signed-in session there is no account to compare with: sign in first.
-    if (!this.accountDid()) {
-      let logins: string[];
-      try { logins = this.d.vault.listCredentials(); } catch { return refuse(500, 'chain_unreadable'); }
-      // `e2eKey` is this computer's own reading key (made by the first pairing or set-up), not a login to a connected system.
-      if (logins.some(n => n !== 'e2eKey')) refuse(409, 'sign_in_first');
-    }
+    // Plan 20.2: no account to compare with but an account context (logins, an older e2eKey): sign in first.
+    const refusal = this.accountRefusal();
+    if (refusal) refuse(409, refusal);
     this.busy = true;
     try {
       const dk = await deviceKeys();
@@ -574,7 +603,11 @@ export class DevicePairing {
       if (!as.ok) return refuse(as.code === 'as_key_mismatch' || as.code === 'as_tls_mismatch' ? 409 : 502, as.code);
       // The keys of this computer, made now so the vault holds them whatever comes (the same slots set-up uses).
       await loadOrGenerateDeviceSigningKey(this.d.vault);
+      let hadReadingKey: boolean;
+      try { hadReadingKey = this.d.vault.listCredentials().includes('e2eKey'); } catch { return refuse(500, 'chain_unreadable'); }
       await loadOrGenerateKeyPair(this.d.vault);
+      // A reading key that THIS pairing made is no account context on a later try; one that was already there is.
+      if (!hadReadingKey) this.d.vault.setSecretSlot(PAIRING_KEY_FLAG, true);
       // A check key where this computer can have one (Touch ID, no touch to make it): a joiner brings its own (plan 4.3 rules).
       let checkKey: StoredCheckKey | undefined;
       if (this.d.checks && this.d.checkStore) {
@@ -616,7 +649,8 @@ export class DevicePairing {
     if (m.done) {
       const body = m.done.body;
       if (typeof body.refused === 'string') { this.fail(h, refusedCode(body.refused)); return; }
-      await this.finishJoin(h, body.entry_hash);
+      // A `done` that names an entry counts only once this computer sent `open` and the person is at the comparison (compare): earlier it answers nothing.
+      if (h.step === 'compare') await this.finishJoin(h, body.entry_hash, r.chain);
       return;
     }
     // `challenge` only counts after our `commit`; the phone creates it only then.
@@ -642,8 +676,8 @@ export class DevicePairing {
     // The phone must pin the same Authority Server this computer trusts.
     if (body.as_key !== h.asKey) { this.fail(h, 'as_key_mismatch'); return; }
     // Plan 20.2: a computer signed in to an account joins only that account's chain (the DID the Authority Server named at sign-in).
-    const own = this.accountDid();
-    if (own && rootDid !== own) { this.fail(h, 'other_account'); return; }
+    const refusal = this.accountRefusal(rootDid);
+    if (refusal) { this.fail(h, refusal); return; }
     if (!mailChain || !Array.isArray(mailChain.entries)) { this.fail(h, 'as_answer_invalid'); return; }
     let chain: ChainState;
     try {
@@ -678,15 +712,20 @@ export class DevicePairing {
     if (this.busy) refuse(409, 'pairing_busy');
     if (!h || h.role !== 'join' || h.step !== 'review' || !h.chain || !h.admitter || !h.entries) return refuse(409, 'pairing_unknown');
     if (typeof rawLabel !== 'string') return refuse(400, 'bad_request');
-    const dk = await deviceKeys();
-    const lib = await pairingLib();
-    const label = rawLabel.normalize('NFC').trim();
-    h.reviewError = undefined;
-    if (!dk.isValidLabel(label)) { h.reviewError = 'label_invalid'; return this.view(); }
-    if (lib.labelTaken(h.chain, label)) { h.reviewError = 'label_taken'; return this.view(); }
-    if (this.d.store.exists()) return refuse(409, 'already_set_up');
-    this.busy = true;
+    this.busy = true;   // before the first await
     try {
+      await this.pollP;
+      const dk = await deviceKeys();
+      const lib = await pairingLib();
+      if (this.h !== h || h.step !== 'review') return this.view();
+      const label = rawLabel.normalize('NFC').trim();
+      h.reviewError = undefined;
+      if (!dk.isValidLabel(label)) { h.reviewError = 'label_invalid'; return this.view(); }
+      if (lib.labelTaken(h.chain, label)) { h.reviewError = 'label_taken'; return this.view(); }
+      if (this.d.store.exists()) return refuse(409, 'already_set_up');
+      // Plan 20.2: a login stored or an account signed in since the pairing started decides here, before this computer signs anything.
+      const refusal = this.accountRefusal(h.chain.root_did);
+      if (refusal) { this.fail(h, refusal); return this.view(); }
       h.label = label;
       const signing = await loadOrGenerateDeviceSigningKey(this.d.vault);
       const reading = await loadOrGenerateKeyPair(this.d.vault);
@@ -728,27 +767,45 @@ export class DevicePairing {
     return this.view();
   }
 
-  /** `done` named an entry hash: it must be the entry this computer built. Then the chain is stored and this computer signs in. */
-  private async finishJoin(h: JoinHeld, answered: unknown): Promise<void> {
+  /**
+   * `done` named an entry hash. It is the phone's word, not the proof: nothing is kept until the chain shows this computer's entry,
+   * checked by the shared `entryInChain` over the chain the mailbox returned, or else by a probe sign-in (the Authority Server
+   * itself says it holds the entry). A probe that could not be made keeps the pairing open and is tried again on the next look.
+   */
+  private async finishJoin(h: JoinHeld, answered: unknown, mailChain: { root_did: string; entries: unknown[] } | undefined): Promise<void> {
     if (!h.entry || !h.entryHash || !h.label || !h.chain) return;
     if (answered !== h.entryHash) { this.fail(h, 'head_mismatch'); return; }
-    await this.complete(h);
+    const lib = await pairingLib();
+    const keyId = (h.entry.device as NonNullable<ChainEntry['device']>).key_id;
+    if (await lib.entryInChain(mailChain, { rootDid: h.chain.root_did, seq: h.entry.seq, hash: h.entryHash, keyId })) { await this.complete(h); return; }
+    await this.proveByProbe(h, 'head_mismatch');
   }
 
-  /** The mailbox is gone or late and no `done` came. The Authority Server may still hold our entry: a sign-in proves it. */
-  private async reconcile(h: JoinHeld): Promise<void> {
+  /** The Authority Server may still hold our entry (a lost `done`, a mailbox that is gone): a sign-in proves it. Transient failure: try again later. */
+  private async proveByProbe(h: JoinHeld, refusedAs: string): Promise<void> {
     if (!h.entry || !h.entryHash || !h.chain) { this.fail(h, 'qr_expired'); return; }
     const probe = await this.d.signin.performSignIn(
       { rootDid: h.chain.root_did, keyId: h.entry.device!.key_id, head: { seq: h.entry.seq, hash: h.entryHash } },
       { storeHead: false, probe: true },
     );
-    if (!probe.ok) { this.fail(h, 'qr_expired'); return; }
-    await this.complete(h);
+    if (probe.ok) { await this.complete(h); return; }
+    // The Authority Server could not be asked: that is not an answer. Keep the pairing open for a while longer.
+    if (probe.transient && this.now() <= h.qr.expires_at + PROBE_GRACE_SECONDS) return;
+    this.fail(h, probe.transient ? 'as_unreachable' : refusedAs);
+  }
+
+  /** The mailbox is gone or late and no `done` came. */
+  private async reconcile(h: JoinHeld): Promise<void> {
+    if (!h.entry || !h.entryHash || !h.chain) { this.fail(h, 'qr_expired'); return; }
+    await this.proveByProbe(h, 'qr_expired');
   }
 
   private async complete(h: JoinHeld): Promise<void> {
     const entry = h.entry as ChainEntry;
     const chain = h.chain as ChainState;
+    // Plan 20.2 once more, right before anything is kept: a login stored or an account signed in since the start decides here.
+    const refusal = this.accountRefusal(chain.root_did);
+    if (refusal) { this.fail(h, refusal); return; }
     // The check key's slot first: from the moment the chain says this computer has a check key, the password is no longer a
     // confirmation here. If the chain cannot be stored the slot is emptied again.
     if (h.checkKey) {
@@ -776,17 +833,20 @@ export class DevicePairing {
 
   // ─── one look ───────────────────────────────────────────────────────────────
 
-  private async poll(): Promise<void> {
+  private poll(): Promise<void> {
     const h = this.h;
-    if (!h || this.busy) return;
-    this.busy = true;
-    try {
-      if (h.role === 'admit') await this.pollAdmit(h); else await this.pollJoin(h);
-    } catch (e) {
-      if (e instanceof PairingRefusal) this.fail(h, e.code);
-      else { this.fail(h, 'generic'); console.error('[Control Plane] Pairing error:', e instanceof Error ? e.name : 'error'); }
-    } finally {
-      this.busy = false;
-    }
+    if (!h || this.busy || this.pollP) return this.pollP ?? Promise.resolve();
+    const run = (async () => {
+      try {
+        if (h.role === 'admit') await this.pollAdmit(h); else await this.pollJoin(h);
+      } catch (e) {
+        if (e instanceof PairingRefusal) this.fail(h, e.code);
+        else { this.fail(h, 'generic'); console.error('[Control Plane] Pairing error:', e instanceof Error ? e.name : 'error'); }
+      } finally {
+        this.pollP = null;
+      }
+    })();
+    this.pollP = run;
+    return run;
   }
 }

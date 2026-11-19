@@ -41,19 +41,20 @@ const fakeHost = (): PlatformHelper => {
 };
 
 /** A gateway process: a real vault and chain store, the helper's checks, a signin that records, and the pairing under test. */
-async function gateway(as: FakeAs, o: { helper?: boolean } = {}) {
-  const dir = mkdtempSync(join(tmpdir(), 'device-pairing-'));
+async function gateway(as: FakeAs, o: { helper?: boolean; dir?: string } = {}) {
+  const dir = o.dir ?? mkdtempSync(join(tmpdir(), 'device-pairing-'));
   const vault = new Vault(dir, FAST);
-  await vault.createWithPassword(PW, 'u1');
+  // `dir`: the same computer after a restart (a new process, the vault opened again with the password).
+  if (o.dir) { if (!(await vault.unlockWithPassword(PW))) throw new Error('unlock'); } else await vault.createWithPassword(PW, 'u1');
   const store = new DeviceChainStore(vault);
   const host = fakeHost();
   const checks = o.helper === false ? undefined : new PlatformChecks(host);
   const checkStore = new CheckKeyStore(vault, store);
   const signIns: Array<{ probe: boolean }> = [];
-  const probe = { ok: false };
+  const probe = { ok: false, transient: false };
   const signin = {
     signIn: async () => { signIns.push({ probe: false }); return { ok: true as const, session: { expiresAt: 0, user: { id: 'u', did: store.read()!.rootDid }, head: store.read()!.head } }; },
-    performSignIn: async () => { signIns.push({ probe: true }); return probe.ok ? { ok: true as const, session: { expiresAt: 0, user: { id: 'u', did: '' }, head: { seq: 0, hash: '' } } } : { ok: false as const, code: 'signin_refused', transient: false }; },
+    performSignIn: async () => { signIns.push({ probe: true }); return probe.ok ? { ok: true as const, session: { expiresAt: 0, user: { id: 'u', did: '' }, head: { seq: 0, hash: '' } } } : { ok: false as const, code: probe.transient ? 'as_unreachable' : 'signin_refused', transient: probe.transient }; },
   };
   const pairing = new DevicePairing({
     vault, store, client: { asUrl: AS_URL, call: (m, p, opts) => as.call(m as never, p, opts as never) }, signin: signin as never,
@@ -512,5 +513,174 @@ describe('the codes', () => {
     for (const m of src.matchAll(/\? '([a-z_]+)' :/g)) said.add(m[1]);
     for (const code of said) expect(PAIRING_CODES as readonly string[], code).toContain(code);
     expect(said.size).toBeGreaterThan(25);
+  });
+});
+
+describe('review round: the join side proves before it keeps, and the account rule holds at every step', () => {
+  async function world() {
+    const as = await FakeAs.create();
+    const rt = testRuntime(as);
+    await registerPhone(rt, as, 'My iPhone');
+    const opened = await rt.session.open();
+    if (!opened.ok) throw new Error('session');
+    const admit = new AdmitDriver({ keys: rt.keys, check: rt.check, api: rt.api, accounts: rt.accounts, session: rt.session, now: rt.now });
+    const g = await gateway(as);
+    return { as, rt, admit, g };
+  }
+  const toReview = async (w: Awaited<ReturnType<typeof world>>) => {
+    const v0 = await w.g.pairing.joinStart();
+    if (v0.flow !== 'join' || v0.step !== 'qr') throw new Error('qr');
+    await w.admit.scanned(v0.qr);
+    await until(w.g, v => v.flow === 'join' && v.step === 'review');
+    return dk.decodePairingQr(v0.qr, { now: w.as.now() });
+  };
+  const toCompare = async (w: Awaited<ReturnType<typeof world>>) => {
+    const qr = await toReview(w);
+    await w.g.pairing.joinConfirm('Office Mac');
+    await w.admit.poll();
+    const c = await until(w.g, v => v.flow === 'join' && v.step === 'compare');
+    await w.admit.poll();
+    return { qr, compare: c };
+  };
+  const doneFor = async (w: Awaited<ReturnType<typeof world>>, qr: dk.PairingQr, hash?: string) => {
+    const keys = await pairingKeysOf(qr);
+    const open = w.as.mailboxes.get(keys.pairingId)!.messages.find(m => m.kind === 'open')!.body.entry;
+    await new Mailbox(new AsApi(w.as), keys).send('done', { entry_hash: hash ?? await dk.entryHash(open) });
+  };
+
+  it('M1: a done for the right entry is only the phone\'s word: the server\'s chain lacks it and the sign-in refuses, so nothing is stored or shown as added', async () => {
+    const w = await world();
+    const { qr } = await toCompare(w);
+    await doneFor(w, qr);                        // the phone never appended
+    expect(await w.g.pairing.status()).toEqual({ flow: 'join', step: 'failed', code: 'head_mismatch' });
+    expect(w.g.store.exists()).toBe(false);
+    expect(w.g.checkStore.has()).toBe(false);
+    expect(w.g.signIns.every(s => s.probe)).toBe(true);   // the only sign-in made was the probe
+  });
+
+  it('M1: a done before this computer sent open answers nothing', async () => {
+    const w = await world();
+    const qr = await toReview(w);
+    await w.g.pairing.joinConfirm('Office Mac');            // commit sent: waiting
+    const keys = await pairingKeysOf(qr);
+    await new Mailbox(new AsApi(w.as), keys).send('done', { entry_hash: 'sha256:' + 'a'.repeat(64) });
+    expect(await w.g.pairing.status()).toMatchObject({ flow: 'join', step: 'waiting' });
+    expect(w.g.store.exists()).toBe(false);
+  });
+
+  it('L2: an Authority Server that cannot be asked is not an answer: the pairing stays open and is tried again', async () => {
+    const w = await world();
+    const { qr } = await toCompare(w);
+    await doneFor(w, qr);
+    w.g.probe.transient = true;
+    expect(await w.g.pairing.status()).toMatchObject({ flow: 'join', step: 'compare' });
+    w.as.clock += 700;                                        // past the QR, inside the grace
+    expect(await w.g.pairing.status()).toMatchObject({ flow: 'join', step: 'compare' });
+    w.as.clock += 1000;                                       // past the grace: now it ends, truthfully
+    expect(await w.g.pairing.status()).toEqual({ flow: 'join', step: 'failed', code: 'as_unreachable' });
+    expect(w.g.store.exists()).toBe(false);
+  });
+
+  it('M2: a login stored after the start is refused at the confirm, before anything is signed', async () => {
+    const w = await world();
+    await toReview(w);
+    w.g.vault.setCredential('gmail', { token: 'x' });
+    expect(await w.g.pairing.joinConfirm('Office Mac')).toEqual({ flow: 'join', step: 'failed', code: 'sign_in_first' });
+    expect(w.g.store.exists()).toBe(false);
+    expect(w.as.mailboxes.size).toBe(1);
+  });
+
+  it('M2: an account signed in after the start decides at the confirm too', async () => {
+    const w = await world();
+    await toReview(w);
+    w.g.vault.setSessionUser({ id: 'u9', did: 'did:key:z6MkSomeoneElse' });
+    expect(await w.g.pairing.joinConfirm('Office Mac')).toEqual({ flow: 'join', step: 'failed', code: 'other_account' });
+  });
+
+  it('M2: a restarted legacy gateway still has its account: another account is refused, its own joins', async () => {
+    const w = await world();
+    w.g.vault.setSessionUser({ id: 'u9', did: 'did:key:z6MkSomeoneElse' });     // signed in once; the DID is sealed in the vault
+    const again = await gateway(w.as, { dir: w.g.dir });                         // a restart: new process, no session
+    expect(again.vault.getSessionUser()).toBeNull();
+    const v0 = await again.pairing.joinStart();
+    if (v0.flow !== 'join' || v0.step !== 'qr') throw new Error('qr');
+    await w.admit.scanned(v0.qr);
+    expect(await until(again, v => v.flow === 'join' && v.step === 'failed')).toEqual({ flow: 'join', step: 'failed', code: 'other_account' });
+    expect(again.store.exists()).toBe(false);
+    // the same computer remembered the account that owns the chain: it joins
+    const w2 = await world();
+    w2.g.vault.setSessionUser({ id: 'u1', did: w2.as.rootDid });
+    const restarted = await gateway(w2.as, { dir: w2.g.dir });
+    const own = { ...w2, g: restarted };
+    const { compare } = await toCompare(own);
+    if (compare.flow !== 'join' || compare.step !== 'compare') throw new Error('compare');
+    await w2.admit.choose(compare.code);
+    expect(await until(restarted, v => v.flow === 'join' && v.step === 'done')).toMatchObject({ signedIn: true });
+  });
+
+  it('M2: an e2eKey that was there before a pairing is an account context; one a pairing made is not', async () => {
+    const w = await world();
+    await loadOrGenerateKeyPair(w.g.vault);                                       // an older gateway made it
+    expect(await refusalOf(w.g.pairing.joinStart())).toBe('sign_in_first');
+    const fresh = await world();
+    await fresh.g.pairing.joinStart();                                            // this pairing makes the key
+    await fresh.g.pairing.cancel();
+    expect((await fresh.g.pairing.joinStart()).flow).toBe('join');                // a second try on a new computer is fine
+  });
+
+  it('M3: a cancel while the touch and the append are running is refused, and the answer is the truth: the phone is added once', async () => {
+    const as = await FakeAs.create();
+    const g = await gateway(as);
+    await setUp(as, g);
+    const rt = testRuntime(as);
+    const join = new JoinDriver({ keys: rt.keys, check: rt.check, transport: rt.transport, api: rt.api, accounts: rt.accounts, asUrl: rt.asUrl, now: rt.now });
+    const v0 = await g.pairing.admitStart();
+    if (v0.flow !== 'admit' || v0.step !== 'qr') throw new Error('qr');
+    await join.scanned(v0.qr); join.confirmReview(); await join.submitName('My iPhone');
+    await g.pairing.status(); await join.poll(); await g.pairing.status();
+    const code = (join.get() as { code: string }).code;
+    let release!: () => void;
+    const gate = new Promise<void>(r => { release = r; });
+    const orig = g.checks!.sign.bind(g.checks!);
+    g.checks!.sign = async (...a) => { await gate; return orig(...a); };
+    const choosing = g.pairing.admitChoose(code);
+    expect(await refusalOf(g.pairing.cancel())).toBe('pairing_busy');
+    expect(await refusalOf(g.pairing.admitChoose(code))).toBe('pairing_busy');      // L1: a second tap meets the first at once
+    expect(g.pairing.view()).toEqual({ flow: 'admit', step: 'checking' });
+    release();
+    expect(await choosing).toMatchObject({ flow: 'admit', step: 'done' });
+    expect(as.entries).toHaveLength(2);
+  });
+
+  it('L1: two confirms at once: the second is refused, one commit is sent', async () => {
+    const w = await world();
+    await toReview(w);
+    const [a, b] = await Promise.allSettled([w.g.pairing.joinConfirm('Office Mac'), w.g.pairing.joinConfirm('Office Mac')]);
+    expect([a.status, b.status].sort()).toEqual(['fulfilled', 'rejected']);
+  });
+
+  it('L5: a code tapped after the QR ran out adds nothing', async () => {
+    const as = await FakeAs.create();
+    const g = await gateway(as);
+    await setUp(as, g);
+    const rt = testRuntime(as);
+    const join = new JoinDriver({ keys: rt.keys, check: rt.check, transport: rt.transport, api: rt.api, accounts: rt.accounts, asUrl: rt.asUrl, now: rt.now });
+    const v0 = await g.pairing.admitStart();
+    if (v0.flow !== 'admit' || v0.step !== 'qr') throw new Error('qr');
+    await join.scanned(v0.qr); join.confirmReview(); await join.submitName('My iPhone');
+    await g.pairing.status(); await join.poll(); await g.pairing.status();
+    const code = (join.get() as { code: string }).code;
+    as.clock += 601;
+    expect(await g.pairing.admitChoose(code)).toEqual({ flow: 'admit', step: 'failed', code: 'qr_expired' });
+    expect(as.entries).toHaveLength(1);
+  });
+
+  it('L4: a join that fails or is cancelled leaves no check key behind (the blob only ever lived in memory)', async () => {
+    const w = await world();
+    const { qr } = await toCompare(w);
+    await w.g.pairing.cancel();
+    expect(w.g.pairing.view()).toEqual({ flow: 'none' });
+    expect(w.g.checkStore.has()).toBe(false);
+    expect(JSON.stringify(w.g.pairing.view())).not.toContain(qr.secret);
   });
 });

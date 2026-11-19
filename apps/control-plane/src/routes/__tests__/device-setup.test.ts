@@ -165,7 +165,8 @@ describe('set-up by a pasted enrolment code', () => {
     const store = new DeviceChainStore(w.gw.vault);
     expect(JSON.stringify(store.read())).not.toContain(code);
     const slotNames = Object.keys((JSON.parse(readFileSync(join(w.gw.dir, 'vault.enc.json'), 'utf-8')) as { slots: Record<string, unknown> }).slots);
-    expect(slotNames.sort()).toEqual(['deviceChain', 'deviceSetupPending', 'deviceSigningKey']);
+    // `accountDid` is the public DID of the account signed in to (plan 20.2), sealed so a restart remembers it: no secret.
+    expect(slotNames.sort()).toEqual(['accountDid', 'deviceChain', 'deviceSetupPending', 'deviceSigningKey']);
     for (const n of slotNames.filter(x => x !== 'deviceSigningKey')) for (const sec of [code, compact, ...rootSeed]) expect(JSON.stringify(w.gw.vault.getSecretSlot(n))).not.toContain(sec);
     for (const n of w.gw.vault.listCredentials()) for (const sec of [code, compact, ...rootSeed, ...devSeed]) expect(JSON.stringify(w.gw.vault.getCredential(n))).not.toContain(sec);
   });

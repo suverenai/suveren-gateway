@@ -164,7 +164,7 @@ export class AdmitDriver extends Driver<AdmitState> {
     let joinerSig: string;
     try {
       ({ entry, rJ, joinerSig } = await checkOpen(body, {
-        chain: session.chain, rootDid: h.account.root_did, admitterKeyId: h.account.key_id, kind: 'gateway', commit: h.commit as string,
+        chain: session.chain, rootDid: h.account.root_did, admitterKeyId: h.account.key_id, kind: 'gateway', commit: h.commit as string, now: d.now(),
       }));
     } catch (e) {
       await this.stop(e instanceof OpenCheckError ? e.code : 'open_invalid', true);

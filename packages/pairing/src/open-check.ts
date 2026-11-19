@@ -31,7 +31,13 @@ export interface OpenExpectation {
   kind: 'gateway' | 'approve-app';
   /** The `c` of message 2. */
   commit: string;
+  /** Epoch seconds now. With it the entry's `created_at` must be within {@link CREATED_AT_PAST} before and {@link CREATED_AT_FUTURE} after (the chain check only needs an integer). */
+  now?: number;
 }
+
+/** How old an opened entry may be (an hour: the QR lives ten minutes) and how far ahead of this clock (clocks differ). Seconds. */
+export const CREATED_AT_PAST = 3600;
+export const CREATED_AT_FUTURE = 300;
 
 export interface OpenedEntry {
   /** The entry as the new device built it: no `sigs`. */
@@ -59,6 +65,7 @@ export async function checkOpen(body: Record<string, unknown>, expect: OpenExpec
     if (entry.op !== 'add' || entry.root_did !== expect.rootDid || entry.seq !== head.seq + 1 || entry.prev !== head.hash
       || entry.signer !== expect.admitterKeyId || entry.target !== null || entry.check !== null || entry.new_root !== null) throw new Error('entry');
     if (dev.kind !== expect.kind) throw new Error('kind');
+    if (expect.now !== undefined && (entry.created_at < expect.now - CREATED_AT_PAST || entry.created_at > expect.now + CREATED_AT_FUTURE)) throw new Error('created_at');
     if (dev.key_id !== (await keyIdOf(b64uDecode(dev.sign_pub)))) throw new Error('key id');
     if (!(await verifyEd25519(b64uDecode(dev.sign_pub), entrySignedBytes(entry), sigBytes))) throw new Error('signature');
   } catch {

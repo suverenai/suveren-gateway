@@ -7,6 +7,7 @@ import {
 import { Mailbox, pairingKeysOf, type MailboxPort } from './mailbox';
 import { codeChoices, sameCode } from './codes';
 import { checkOpen, OpenCheckError } from './open-check';
+import { entryInChain } from './stored';
 import { deviceRows, labelTaken, originOf } from './chain-view';
 
 const NOW = 1_800_000_000;
@@ -80,6 +81,30 @@ describe('checkOpen: what an admitter checks of message 4', () => {
     const o = await opened(a);
     const forged = { ...o.body, sig: b64uEncode(await signEd25519(randomBytes(32), entrySignedBytes(o.entry))) };
     expect(await codeOf(checkOpen(forged, expectFor(a, o.commit)))).toBe('open_invalid');
+  });
+});
+
+describe('checkOpen: the entry\'s time and entryInChain', () => {
+  it('created_at must be near now when the admitter says what now is', async () => {
+    const a = await account();
+    const o = await opened(a);
+    expect(await codeOf(checkOpen(o.body, { ...expectFor(a, o.commit), now: NOW }))).toBe('accepted');
+    expect(await codeOf(checkOpen(o.body, { ...expectFor(a, o.commit), now: NOW + 7200 }))).toBe('open_invalid');   // made two hours ago
+    expect(await codeOf(checkOpen(o.body, { ...expectFor(a, o.commit), now: NOW - 600 }))).toBe('open_invalid');    // ten minutes ahead of this clock
+  });
+
+  it('entryInChain: only a chain that verifies and holds this very entry, active', async () => {
+    const a = await account();
+    const g = a.entries[0];
+    const hash = await (await import('@hap/core/device-keys')).entryHash(g);
+    const want = { rootDid: a.root.did, seq: 0, hash, keyId: a.rec.key_id };
+    expect(await entryInChain({ root_did: a.root.did, entries: a.entries }, want)).toBe(true);
+    expect(await entryInChain({ root_did: a.root.did, entries: a.entries }, { ...want, hash: 'sha256:' + '0'.repeat(64) })).toBe(false);
+    expect(await entryInChain({ root_did: a.root.did, entries: a.entries }, { ...want, seq: 1 })).toBe(false);
+    expect(await entryInChain({ root_did: a.root.did, entries: a.entries }, { ...want, keyId: 'nobody' })).toBe(false);
+    expect(await entryInChain({ root_did: 'did:key:other', entries: a.entries }, want)).toBe(false);
+    expect(await entryInChain({ root_did: a.root.did, entries: [{ ...g, seq: 3 }] }, want)).toBe(false);
+    expect(await entryInChain(undefined, want)).toBe(false);
   });
 });
 
